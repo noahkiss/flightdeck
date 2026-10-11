@@ -7,7 +7,7 @@ struct DuoSceneHost<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        #if !targetEnvironment(macCatalyst) && !os(visionOS)
+        #if !targetEnvironment(macCatalyst) && !os(visionOS) && !FLIGHTDECK_PRE_IOS27_SDK
         if #available(iOS 27.1, *), UIDevice.current.userInterfaceIdiom == .phone {
             NavigationStack {
                 DuoSceneContext(content: content)
@@ -21,7 +21,7 @@ struct DuoSceneHost<Content: View>: View {
     }
 }
 
-#if !targetEnvironment(macCatalyst) && !os(visionOS)
+#if !targetEnvironment(macCatalyst) && !os(visionOS) && !FLIGHTDECK_PRE_IOS27_SDK
 @available(iOS 27.1, *)
 private struct DuoSceneContext<Content: View>: View {
     @Environment(\.toolbarVerticalEdge) private var verticalEdge
@@ -100,7 +100,7 @@ struct DuoWorkspaceGeometry<Content: View>: View {
         var occlusions: [CGRect] = []
         var occlusionContentFrames: [CGRect] = []
         var divisions: [CGRect] = []
-        #if !targetEnvironment(macCatalyst) && !os(visionOS)
+        #if !targetEnvironment(macCatalyst) && !os(visionOS) && !FLIGHTDECK_PRE_IOS27_SDK
         if #available(iOS 27.1, *) {
             let regions = expanded.reservedRegions(kind: .occlusion, layoutDirectionBehavior: .fixed)
             occlusions = regions.map(\.frame)
@@ -140,7 +140,7 @@ struct DuoControlClearance: ViewModifier {
     }
 
     private func clearance(in proxy: GeometryProxy) -> CGFloat {
-        #if !targetEnvironment(macCatalyst) && !os(visionOS)
+        #if !targetEnvironment(macCatalyst) && !os(visionOS) && !FLIGHTDECK_PRE_IOS27_SDK
         if #available(iOS 27.1, *), layout.usesFullWidth {
             return max(0, proxy.reservedRegions(kind: .occlusion).filter {
                 $0.frame.intersects(CGRect(origin: .zero, size: proxy.size))

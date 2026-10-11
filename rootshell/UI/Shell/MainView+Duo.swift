@@ -34,7 +34,7 @@ extension MainView {
 
     @ViewBuilder
     func applyDuoChrome<Content: View>(_ content: Content) -> some View {
-        #if !targetEnvironment(macCatalyst) && !os(visionOS)
+        #if !targetEnvironment(macCatalyst) && !os(visionOS) && !FLIGHTDECK_PRE_IOS27_SDK
         if #available(iOS 27.1, *) {
             content
                 .toolbarVisibility(showsDuoSideRail ? .visible : .hidden, for: .navigationBar)
