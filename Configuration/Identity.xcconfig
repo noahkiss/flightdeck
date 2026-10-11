@@ -47,6 +47,8 @@ ROOTSHELL_ICLOUD_CONTAINER = iCloud.rootshell
 // discovery and nothing else; clearing the override restores it.
 ROOTSHELL_APP_ENTITLEMENTS_SUFFIX =
 
+#include? "Flightdeck.xcconfig"
+
 // Personal Apple Developer team, org identifier, and iCloud container for a
 // contributor building under their own paid account instead of upstream's.
 // Untracked (see .gitignore), like Secrets.xcconfig alongside it. Set only the
