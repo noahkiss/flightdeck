@@ -768,6 +768,7 @@ private struct ChooserAvailableWidth<Content: View>: View {
         let right = max(0, frame.maxX - safeFrame.maxX)
         let fallback = EdgeInsets(top: 0, leading: direction == .rightToLeft ? right : left,
                                   bottom: 0, trailing: direction == .rightToLeft ? left : right)
+        #if !FLIGHTDECK_PRE_IOS27_SDK
         if #available(iOS 27.1, *), layout.hasHinge {
             let bounds = CGRect(origin: .zero, size: expanded.size)
             let occlusions = expanded.reservedRegions(kind: .occlusion, layoutDirectionBehavior: .fixed)
@@ -781,6 +782,7 @@ private struct ChooserAvailableWidth<Content: View>: View {
                 return EdgeInsets(top: clearance, leading: 0, bottom: 0, trailing: 0)
             }
         }
+        #endif
         return fallback
     }
 }

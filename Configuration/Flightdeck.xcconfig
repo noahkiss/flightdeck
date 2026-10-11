@@ -36,4 +36,12 @@ FLIGHTDECK_ENTITLEMENTS_SUFFIX = -flightdeck
 // `#if FLIGHTDECK` block in Swift. It turns off OSC 52 clipboard reads, croc,
 // the AI and voice agents, Tailscale and HTTPS capture. $(inherited) keeps the
 // DEBUG condition that project-level settings add.
-SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) FLIGHTDECK
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) FLIGHTDECK $(FLIGHTDECK_SDK_COMPAT_$(XCODE_VERSION_MAJOR))
+
+// TEMPORARY: Xcode 26 lacks the iOS 27.1 SDK API GeometryProxy.reservedRegions,
+// which upstream's iPhone Duo layout calls. Under Xcode 26 the
+// FLIGHTDECK_PRE_IOS27_SDK condition compiles those blocks out; under Xcode 27
+// the lookup resolves to nothing and upstream code builds unchanged. Drop this
+// and the matching #if lines once CI runs on Xcode 27. The lookup is appended
+// to SWIFT_ACTIVE_COMPILATION_CONDITIONS above.
+FLIGHTDECK_SDK_COMPAT_2600 = FLIGHTDECK_PRE_IOS27_SDK
