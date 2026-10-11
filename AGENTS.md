@@ -33,8 +33,16 @@ below it still apply to the code.
 2. **Never merge upstream into `main`.** Move the base by rebasing:
    `git rebase --onto <new-base> <old-base> main`. Then run
    `git range-diff <old-base>..<old-tip> <new-base>..<new-tip>` and read every patch marked `!`.
-3. The nightly sync workflow does step 2 on CI. On a conflict or a red build it opens an issue for
-   an agent fixer instead of pushing.
+3. The nightly `upstream-sync.yml` does step 2 on CI. It pushes the rebased series to `sync/main`,
+   builds it with `ci.yml`, and force-pushes it to `main` only when the build is green. The old tip
+   stays on a `backup/main-pre-sync-<date>-<sha>` branch; the newest five are kept. On a conflict
+   or a red build, `main` does not move: the run opens or updates the issue
+   `Upstream sync failed: main` (label `claude-triage`), and `claude-sync-fix.yml` tries a repair.
+   Claude runs with a read-only token and writes nothing remote. A second job with no AI runs
+   `.github/scripts/validate-sync-fix.sh` from `main` on Claude's bundle, then pushes only
+   `claude/sync-<run id>` and posts the comment. It rejects a branch with any commit that changes
+   `.github/`. To promote a repaired series, dispatch the sync with `candidate_ref` set to that
+   branch. It is built and gated like a nightly run.
 4. Release tags are `v<upstream-version>-fd.<n>`. Upstream tags have no `v`, so the two never
    collide. Push tags by name; this repo sets `push.followTags false`.
 
