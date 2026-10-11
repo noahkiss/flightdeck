@@ -146,6 +146,10 @@ final class CaptureController {
     }
 
     private func performStart(name: String?) async {
+        #if FLIGHTDECK
+        lastError = "HTTPS capture is disabled in flightdeck."
+        return
+        #endif
         guard !isStarting, activeSessionID == nil else { return }
         isStarting = true
         lastError = nil
