@@ -7,8 +7,8 @@ ENABLE_HARDENED_RUNTIME = YES
 // Standalone entitlements (platform-specific)
 // iOS/iPadOS/visionOS: includes NFC for YubiKey PIV
 // Mac Catalyst: excludes NFC (not supported on macOS)
-CODE_SIGN_ENTITLEMENTS = rootshell/Entitlements/Standalone.entitlements
-CODE_SIGN_ENTITLEMENTS[sdk=macosx*] = rootshell/Entitlements/Standalone-MacCatalyst.entitlements
+CODE_SIGN_ENTITLEMENTS = rootshell/Entitlements/Standalone$(FLIGHTDECK_ENTITLEMENTS_SUFFIX).entitlements
+CODE_SIGN_ENTITLEMENTS[sdk=macosx*] = rootshell/Entitlements/Standalone-MacCatalyst$(FLIGHTDECK_ENTITLEMENTS_SUFFIX).entitlements
 
 // Shell commands may request permission to automate other macOS applications.
 INFOPLIST_KEY_NSAppleEventsUsageDescription[sdk=macosx*] = Programs you run in rootshell may control other applications using Apple events.
