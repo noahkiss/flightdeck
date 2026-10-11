@@ -1,0 +1,78 @@
+name: Upstream sync
+
+# Nightly: rebase the flightdeck patch series onto upstream main, build the
+# result with ci.yml, and force-push it to main only when the build is green.
+# The old main tip is kept on a backup/main-pre-sync-<date>-<sha> branch.
+#
+# A conflict or a red build leaves main alone, opens or updates the issue
+# "Upstream sync failed: <branch>" with the claude-triage label, and fails the
+# run. claude-sync-fix.yml picks that up.
+#
+# Dispatch inputs:
+#   target_branch  Run against another branch, for a dry run on a scratch copy.
+#   candidate_ref  Skip the rebase and build a series fixed by hand or by the
+#                  fixer, then promote it like a normal sync.
+#
+# Pushes use GITHUB_TOKEN. main must stay free of branch protection that
+# blocks force-pushes, or the promote step fails.
+
+on:
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: Branch that carries the series.
+        required: false
+        type: string
+        default: main
+      candidate_ref:
+        description: Branch or SHA to adopt instead of rebasing. Empty rebases.
+        required: false
+        type: string
+        default: ''
+
+permissions: {}
+
+concurrency:
+  group: flightdeck-upstream-sync-${{ inputs.target_branch || 'main' }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    permissions:
+      contents: write
+      issues: write
+    uses: noahkiss/workflows/.github/workflows/upstream-sync.yml@main
+    with:
+      mode: sync
+      upstream_url: https://github.com/kitknox/rootshell.git
+      upstream_branch: main
+      target_branch: ${{ inputs.target_branch || 'main' }}
+      candidate_ref: ${{ inputs.candidate_ref }}
+      issue_label: claude-triage
+
+  build:
+    needs: sync
+    if: needs.sync.outputs.changed == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.sync.outputs.candidate_sha }}
+
+  finish:
+    needs: [sync, build]
+    if: ${{ !cancelled() && needs.sync.outputs.changed == 'true' }}
+    permissions:
+      contents: write
+      issues: write
+    uses: noahkiss/workflows/.github/workflows/upstream-sync.yml@main
+    with:
+      mode: finish
+      target_branch: ${{ inputs.target_branch || 'main' }}
+      issue_label: claude-triage
+      candidate_sha: ${{ needs.sync.outputs.candidate_sha }}
+      target_sha: ${{ needs.sync.outputs.target_sha }}
+      build_result: ${{ needs.build.result }}
+      range_diff: ${{ needs.sync.outputs.range_diff }}
