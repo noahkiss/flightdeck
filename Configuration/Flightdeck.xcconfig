@@ -25,3 +25,13 @@ ROOTSHELL_ICLOUD_CONTAINER = iCloud.com.nkmkdigital.flightdeck
 
 // Home-screen and menu-bar name of the app targets.
 FLIGHTDECK_DISPLAY_NAME = FlightDeck
+
+// Entitlements. Each "-flightdeck" file is upstream's file minus push
+// (aps-environment), upstream's associated domains and, in the iOS App Store
+// file, the request-gated multicast grant. scripts/flightdeck-entitlements.py
+// derives them; CI fails when they drift from upstream.
+// ROOTSHELL_APP_ENTITLEMENTS_SUFFIX is upstream's switch for the iOS App Store
+// file; FLIGHTDECK_ENTITLEMENTS_SUFFIX covers the Mac Catalyst and Standalone
+// files, which upstream does not switch.
+ROOTSHELL_APP_ENTITLEMENTS_SUFFIX = -flightdeck
+FLIGHTDECK_ENTITLEMENTS_SUFFIX = -flightdeck
