@@ -1,0 +1,4 @@
+# fastlane for the release workflow. match reads the signing store read-only.
+source "https://rubygems.org"
+
+gem "fastlane", "2.240.1"
