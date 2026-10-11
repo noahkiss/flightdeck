@@ -18,3 +18,6 @@ ROOTSHELL_ORG_IDENTIFIER = com.nkmkdigital.flightdeck
 // CloudKit container. Set wholesale, not derived. CloudKit sync stays off by
 // default.
 ROOTSHELL_ICLOUD_CONTAINER = iCloud.com.nkmkdigital.flightdeck
+
+// Home-screen and menu-bar name of the app targets.
+FLIGHTDECK_DISPLAY_NAME = flightdeck
