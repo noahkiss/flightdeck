@@ -1615,7 +1615,7 @@ struct SettingsNotificationsContent: View {
             }
 
             // Updates section (Standalone Mac Catalyst only)
-            #if STANDALONE && targetEnvironment(macCatalyst)
+            #if STANDALONE && targetEnvironment(macCatalyst) && !FLIGHTDECK
             Section {
                 Toggle(isOn: Binding(
                     get: { UpdateManager.shared.automaticallyChecksForUpdates },

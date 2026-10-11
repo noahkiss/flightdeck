@@ -35,3 +35,10 @@ FLIGHTDECK_DISPLAY_NAME = FlightDeck
 // files, which upstream does not switch.
 ROOTSHELL_APP_ENTITLEMENTS_SUFFIX = -flightdeck
 FLIGHTDECK_ENTITLEMENTS_SUFFIX = -flightdeck
+
+// Compile-time switch for flightdeck's feature gates. Every gate is an
+// `#if FLIGHTDECK` block in Swift. It turns off OSC 52 clipboard reads, croc,
+// the AI and voice agents, Tailscale, HTTPS capture and the upstream Sparkle
+// updater. $(inherited) keeps the DEBUG condition that project-level settings
+// add.
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) FLIGHTDECK

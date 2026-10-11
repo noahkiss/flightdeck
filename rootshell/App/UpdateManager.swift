@@ -64,6 +64,9 @@ final class UpdateManager: ObservableObject {
     #endif
 
     private init() {
+        #if FLIGHTDECK
+        return
+        #endif
         #if STANDALONE && targetEnvironment(macCatalyst)
         setupSparkle()
         #endif

@@ -1031,7 +1031,7 @@ class CatalystAppDelegate: AppDelegate {
         }
 
         // Add "Check for Updates..." menu item (Standalone builds only)
-        #if STANDALONE
+        #if STANDALONE && !FLIGHTDECK
         let checkForUpdatesMenu = UIMenu(
             title: "",
             options: .displayInline,
