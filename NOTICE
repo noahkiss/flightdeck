@@ -1,0 +1,14 @@
+flightdeck
+==========
+
+flightdeck is a modified build of rootshell.
+
+rootshell
+  https://github.com/kitknox/rootshell
+  Copyright (c) 2026 Rootshell LLC, Kit Knox
+  Licensed under the MIT License; see LICENSE.
+
+flightdeck's own changes are released under the same MIT License.
+Third-party components keep their own licenses; see THIRD_PARTY_NOTICES.md.
+
+flightdeck is not affiliated with or endorsed by Rootshell LLC.
