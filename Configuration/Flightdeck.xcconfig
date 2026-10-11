@@ -1,0 +1,20 @@
+// Flightdeck.xcconfig - flightdeck's identity and build-time switches.
+//
+// Tracked, unlike DeveloperSettings.xcconfig. Identity.xcconfig includes this
+// file just before that optional override, so it replaces upstream's
+// ROOTSHELL_* defaults for every target and configuration, and a local
+// DeveloperSettings.xcconfig still wins over it. Set only variables here:
+// settings assigned later in the chain (Base.xcconfig, the variant files)
+// would win over a plain assignment.
+
+// Apple Developer team.
+ROOTSHELL_DEVELOPMENT_TEAM = 2Z88BYP37C
+
+// Bundle identifier namespace. Every bundle id, app group and keychain group
+// derives from it; the app is $(ROOTSHELL_ORG_IDENTIFIER).rootshell. Change the
+// prefix here and nowhere else.
+ROOTSHELL_ORG_IDENTIFIER = com.nkmkdigital.flightdeck
+
+// CloudKit container. Set wholesale, not derived. CloudKit sync stays off by
+// default.
+ROOTSHELL_ICLOUD_CONTAINER = iCloud.com.nkmkdigital.flightdeck
