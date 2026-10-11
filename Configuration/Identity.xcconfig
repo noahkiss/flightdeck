@@ -47,6 +47,9 @@ ROOTSHELL_ICLOUD_CONTAINER = iCloud.rootshell
 // discovery and nothing else; clearing the override restores it.
 ROOTSHELL_APP_ENTITLEMENTS_SUFFIX =
 
+// Home-screen name of the app targets. Flightdeck.xcconfig overrides it.
+FLIGHTDECK_DISPLAY_NAME = rootshell
+
 #include? "Flightdeck.xcconfig"
 
 // Personal Apple Developer team, org identifier, and iCloud container for a
