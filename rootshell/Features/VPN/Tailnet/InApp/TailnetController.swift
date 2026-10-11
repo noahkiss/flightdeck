@@ -38,6 +38,9 @@ enum TailnetController {
 
     /// Asks for a fresh login URL; returns an error message on failure.
     static func login() async -> String? {
+        #if FLIGHTDECK
+        return "Tailscale is disabled in flightdeck."
+        #endif
         switch mode {
         case .wholeDevice: return await VPNManager.shared.tailnetLogin()
         case .rootshellOnly: return await TailnetInAppEngine.shared.login()
