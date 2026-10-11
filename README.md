@@ -1,3 +1,8 @@
+> **flightdeck** — this repository is flightdeck, a personal build of
+> [rootshell](https://github.com/kitknox/rootshell) by Kit Knox, carried as a small patch series
+> on top of upstream. It is not affiliated with Rootshell LLC. The text below is upstream's README.
+> Report rootshell issues upstream. See [FLIGHTDECK.md](FLIGHTDECK.md) and [NOTICE](NOTICE).
+
 <p align="center">
   <img src="icon.png" alt="rootshell" width="160" height="160">
 </p>
