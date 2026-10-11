@@ -133,6 +133,9 @@ nonisolated final class CrocClient: @unchecked Sendable {
 
     /// Send files.
     func send(paths: [String]) async throws {
+        #if FLIGHTDECK
+        throw CrocError.protocolError("croc is disabled in flightdeck")
+        #endif
         startTime = Date()
         options.isSender = true
         usingLocalRelay = options.onlyLocal
@@ -215,6 +218,9 @@ nonisolated final class CrocClient: @unchecked Sendable {
 
     /// Receive files using a code phrase.
     func receive(code: String) async throws {
+        #if FLIGHTDECK
+        throw CrocError.protocolError("croc is disabled in flightdeck")
+        #endif
         startTime = Date()
         options.isSender = false
         options.sharedSecret = code
@@ -260,6 +266,9 @@ nonisolated final class CrocClient: @unchecked Sendable {
 
     /// Start a standalone relay server.
     func startRelay() async throws {
+        #if FLIGHTDECK
+        throw CrocError.protocolError("croc is disabled in flightdeck")
+        #endif
         let relayPorts = findOpenPorts(starting: options.port, count: max(options.transfers, 2))
         guard relayPorts.count >= max(options.transfers, 2) else {
             throw CrocError.connectionFailed("not enough open ports to run relay")
