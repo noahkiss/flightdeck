@@ -65,6 +65,12 @@ enum VPNStartController {
         guard snapshot.isBackgroundStartable else {
             throw StartError.profileNotStartable
         }
+        #if FLIGHTDECK
+        // Widgets and Shortcuts start tunnels here, not through VPNManager.
+        if snapshot.transportType == .tailscale || snapshot.transportType == .direct {
+            throw StartError.profileNotStartable
+        }
+        #endif
         if background, snapshot.transportType == .tailscale, !VPNTailnetProfile.isSignedIn {
             throw StartError.tailnetSignInRequired
         }

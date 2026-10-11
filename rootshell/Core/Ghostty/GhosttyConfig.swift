@@ -311,7 +311,12 @@ extension Ghostty {
 
             // Enable OSC 52 clipboard access for terminal applications (e.g., neovim, tmux)
             // This allows programs to read/write the system clipboard via escape sequences
+            #if FLIGHTDECK
+            // flightdeck: programs may write the clipboard but never read it.
+            configLines.append("clipboard-read = deny")
+            #else
             configLines.append("clipboard-read = allow")
+            #endif
             configLines.append("clipboard-write = allow")
 
             // Auto-copy selected text to clipboard (default on, matches macOS Ghostty)
@@ -479,7 +484,12 @@ extension Ghostty {
             configLines.append("clipboard-paste-bracketed-safe-newline = true")
 
             // Enable OSC 52 clipboard access for terminal applications (e.g., neovim, tmux)
+            #if FLIGHTDECK
+            // flightdeck: programs may write the clipboard but never read it.
+            configLines.append("clipboard-read = deny")
+            #else
             configLines.append("clipboard-read = allow")
+            #endif
             configLines.append("clipboard-write = allow")
 
             // Auto-copy selected text to clipboard (default on, matches macOS Ghostty)
