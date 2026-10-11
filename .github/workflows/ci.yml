@@ -1,0 +1,163 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to build. Empty builds github.sha.
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flightdeck-ci-${{ inputs.ref || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Shared flags: unsigned builds, packages cloned to a cacheable path, and no
+  # interactive trust prompts for package macros and plugins.
+  XCODEBUILD_FLAGS: >-
+    -project rootshell.xcodeproj
+    -clonedSourcePackagesDirPath SourcePackages
+    -skipMacroValidation
+    -skipPackagePluginValidation
+    CODE_SIGNING_ALLOWED=NO
+    CODE_SIGNING_REQUIRED=NO
+
+jobs:
+  ios:
+    name: iOS (rootshell-AppStore)
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Use example secrets
+        run: cp Configuration/Secrets.example.xcconfig Configuration/Secrets.xcconfig
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('rootshell.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Pick an iPhone simulator
+        # A device id, not the generic destination: the generic simulator
+        # destination also builds x86_64, which does not compile (see AGENTS.md).
+        run: |
+          udid=$(xcrun simctl list devices available -j \
+            | jq -r '[.devices | to_entries[] | select(.key | contains("iOS")) | .value[] | select(.name | startswith("iPhone"))][0].udid')
+          test -n "$udid" && test "$udid" != null
+          echo "SIM_UDID=$udid" >> "$GITHUB_ENV"
+          xcrun simctl list devices available | grep "$udid"
+
+      - name: Resolve packages
+        run: xcodebuild $XCODEBUILD_FLAGS -scheme rootshell-AppStore -resolvePackageDependencies
+
+      - name: Check flightdeck configuration
+        run: |
+          python3 scripts/flightdeck-entitlements.py --check
+          xcodebuild $XCODEBUILD_FLAGS -scheme rootshell-AppStore \
+            -configuration DebugAppStore -destination "id=$SIM_UDID" \
+            -showBuildSettings > settings-ios.log
+          grep -E ' (DEVELOPMENT_TEAM|PRODUCT_BUNDLE_IDENTIFIER|CODE_SIGN_ENTITLEMENTS|INFOPLIST_KEY_CFBundleDisplayName|SWIFT_ACTIVE_COMPILATION_CONDITIONS) = ' settings-ios.log | sort -u
+          grep -q ' SWIFT_ACTIVE_COMPILATION_CONDITIONS = .*FLIGHTDECK' settings-ios.log
+          grep -q ' INFOPLIST_KEY_CFBundleDisplayName = flightdeck$' settings-ios.log
+          grep -q ' CODE_SIGN_ENTITLEMENTS = .*-flightdeck.entitlements$' settings-ios.log
+
+      - name: Build app
+        run: |
+          set -o pipefail
+          xcodebuild $XCODEBUILD_FLAGS -scheme rootshell-AppStore \
+            -configuration DebugAppStore -destination "id=$SIM_UDID" build \
+            | tee build-ios.log | grep -E '(error|warning: unable|BUILD (SUCCEEDED|FAILED))' || true
+          grep -q 'BUILD SUCCEEDED' build-ios.log
+
+      - name: Unit tests (rootshellTests)
+        run: |
+          set -o pipefail
+          xcodebuild $XCODEBUILD_FLAGS -scheme rootshellTests \
+            -destination "id=$SIM_UDID" test \
+            | tee test-ios.log | grep -E '(error|Test Suite|Executed|TEST (SUCCEEDED|FAILED))' || true
+          grep -q 'TEST SUCCEEDED' test-ios.log
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-logs
+          path: "*.log"
+          if-no-files-found: ignore
+
+  macos:
+    name: macOS (rootshell-Standalone)
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Use example secrets
+        run: cp Configuration/Secrets.example.xcconfig Configuration/Secrets.xcconfig
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('rootshell.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Resolve packages
+        run: xcodebuild $XCODEBUILD_FLAGS -scheme rootshell-Standalone -resolvePackageDependencies
+
+      - name: Check flightdeck configuration
+        run: |
+          xcodebuild $XCODEBUILD_FLAGS -scheme rootshell-Standalone \
+            -configuration DebugStandalone \
+            -destination 'platform=macOS,variant=Mac Catalyst,arch=arm64' \
+            -showBuildSettings > settings-macos.log
+          grep -E ' (DEVELOPMENT_TEAM|PRODUCT_BUNDLE_IDENTIFIER|CODE_SIGN_ENTITLEMENTS|INFOPLIST_KEY_CFBundleDisplayName|SWIFT_ACTIVE_COMPILATION_CONDITIONS) = ' settings-macos.log | sort -u
+          grep -q ' SWIFT_ACTIVE_COMPILATION_CONDITIONS = .*FLIGHTDECK' settings-macos.log
+          grep -q ' CODE_SIGN_ENTITLEMENTS = .*Standalone-MacCatalyst-flightdeck.entitlements$' settings-macos.log
+
+      - name: Build app
+        run: |
+          set -o pipefail
+          xcodebuild $XCODEBUILD_FLAGS -scheme rootshell-Standalone \
+            -configuration DebugStandalone \
+            -destination 'platform=macOS,variant=Mac Catalyst,arch=arm64' build \
+            | tee build-macos.log | grep -E '(error|warning: unable|BUILD (SUCCEEDED|FAILED))' || true
+          grep -q 'BUILD SUCCEEDED' build-macos.log
+
+      - name: Unit tests (rootshell-helperTests)
+        run: |
+          set -o pipefail
+          xcodebuild $XCODEBUILD_FLAGS -scheme rootshell-helper \
+            -destination 'platform=macOS,arch=arm64' test \
+            | tee test-macos.log | grep -E '(error|Test Suite|Executed|TEST (SUCCEEDED|FAILED))' || true
+          grep -q 'TEST SUCCEEDED' test-macos.log
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-logs
+          path: "*.log"
+          if-no-files-found: ignore
