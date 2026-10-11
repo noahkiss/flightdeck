@@ -104,6 +104,9 @@ final class VPNManager {
 
     /// Start the serverless "Local Capture" tunnel used for HTTP capture.
     func startDirectVPN(dnsServers: [String]) async throws {
+        #if FLIGHTDECK
+        throw VPNError.unsupportedTransport("Local Capture is disabled in flightdeck")
+        #endif
         Self.logger.info("Starting Local Capture VPN")
 #if STANDALONE && targetEnvironment(macCatalyst)
         try await MacVPNController.shared.activateExtension()
@@ -140,6 +143,9 @@ final class VPNManager {
 
     /// Start the Tailscale VPN; `restart` reconnects so changed settings apply.
     func startTailnetVPN(restart: Bool = false) async throws {
+        #if FLIGHTDECK
+        throw VPNError.unsupportedTransport("Tailscale is disabled in flightdeck")
+        #endif
         Self.logger.info("Starting Tailscale VPN (restart=\(restart))")
         // The in-app engine holds the same node key.
         await TailnetInAppEngine.shared.stopForVPN()
