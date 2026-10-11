@@ -1,3 +1,48 @@
+# flightdeck
+
+flightdeck is a personal build of [rootshell](https://github.com/kitknox/rootshell), carried as
+a patch series on top of upstream `main`. This section holds the fork's rules. The upstream notes
+below it still apply to the code.
+
+## What this repo is
+
+- A new repository that carries upstream's full history. It is not a linked GitHub fork.
+- Remotes: `origin` is this repo, `upstream` is `kitknox/rootshell`.
+- **Upstreaming is not a goal.** Issues here are for the sync workflow and its fixer; report rootshell bugs upstream.
+- `FLIGHTDECK.md` is the patch ledger. Every patch has an entry there. It also names the base.
+
+## Patch rules
+
+- Keep patches **surgical and additive**. Prefer a build setting, an xcconfig line or a new file
+  over a rewrite of upstream code.
+- One patch, one commit on top of upstream. A rebase replays them one at a time. A patch that
+  upstream makes redundant is dropped whole.
+- Identity changes go through `Configuration/Flightdeck.xcconfig`, never through literals in
+  `project.pbxproj`, `.entitlements` or `Info.plist` (see the upstream section below).
+- Update `FLIGHTDECK.md` in the same commit as the patch it describes.
+
+## Branch, sync, release
+
+1. **Branch per patch.** Never commit a patch to `main` directly. Land by squash-merge, so one
+   ledger entry is one commit.
+2. **Never merge upstream into `main`.** Move the base by rebasing:
+   `git rebase --onto <new-base> <old-base> main`. Then run
+   `git range-diff <old-base>..<old-tip> <new-base>..<new-tip>` and read every patch marked `!`.
+3. The nightly sync workflow does step 2 on CI. On a conflict or a red build it opens an issue for
+   an agent fixer instead of pushing.
+4. Release tags are `v<upstream-version>-fd.<n>`. Upstream tags have no `v`, so the two never
+   collide. Push tags by name; this repo sets `push.followTags false`.
+
+## Conventions
+
+- **Conventional commits** for our patches: `feat(identity):`, `ci:`, `docs:`, `chore:`.
+- **Never add an AI or agent attribution footer** to a commit or pull request.
+- **The repo is public.** Nothing tracked may name a private machine, network, account, path or
+  credential location. Secrets reach CI only as GitHub Actions secrets.
+- Linux cannot build this project. Every build and test runs on GitHub-hosted macOS runners.
+
+---
+
 # Notes for coding agents
 
 Conventions in this repo that are not obvious from the code. See
