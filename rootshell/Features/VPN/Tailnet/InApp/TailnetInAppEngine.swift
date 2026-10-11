@@ -176,6 +176,9 @@ final class TailnetInAppEngine {
     }
 
     func start() async throws {
+        #if FLIGHTDECK
+        throw VPNError.unsupportedTransport("Tailscale is disabled in flightdeck")
+        #endif
         if isStarted { return }
         if let startTask { return try await startTask.value }
         // Captured before the task runs, so a stop() before it begins counts.
