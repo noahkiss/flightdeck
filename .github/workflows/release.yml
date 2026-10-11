@@ -1,0 +1,406 @@
+name: Release
+
+# Tags are v<upstream-version>-fd.<n>, optionally with an -rc.<m> suffix.
+# iOS: archive rootshell-AppStore and upload it to App Store Connect.
+# macOS: archive rootshell-Standalone, export it with Developer ID, notarize,
+# staple, and attach a zip to the GitHub release.
+#
+# Signing is manual. fastlane match reads the certificates and profiles from
+# the signing store, read-only; this workflow never creates or changes
+# anything in the Apple Developer portal.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to rebuild.
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: flightdeck-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  # Pinned Xcode, selected by path. Never the image default, never a beta.
+  XCODE_APP: /Applications/Xcode_27.1.app
+  BUNDLE_GEMFILE: ${{ github.workspace }}/.github/fastlane/Gemfile
+  FASTLANE_SKIP_UPDATE_CHECK: "1"
+  FASTLANE_HIDE_CHANGELOG: "1"
+  FASTLANE_OPT_OUT_USAGE: "1"
+  XCODEBUILD_FLAGS: >-
+    -project rootshell.xcodeproj
+    -clonedSourcePackagesDirPath SourcePackages
+    -skipMacroValidation
+    -skipPackagePluginValidation
+
+jobs:
+  ios:
+    name: iOS to App Store Connect
+    runs-on: xcode-27
+    environment: release
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - &xcode
+        name: Select Xcode
+        run: |
+          if [ ! -d "$XCODE_APP" ]; then
+            echo "::error title=Pinned Xcode missing::$XCODE_APP is not on this runner. Installed: $(ls /Applications | grep '^Xcode' | tr '\n' ' ')"
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE_APP"
+          xcode-select -p
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - &metal
+        name: Install Metal toolchain
+        # The image ships Xcode without it; the app compiles .metal shaders.
+        run: |
+          xcrun metal --version >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
+          xcrun metal --version
+
+      - &ruby
+        name: Set up Ruby and fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+
+      - &identity
+        name: Derive identity and versions
+        # Team and bundle-ID prefix come from Flightdeck.xcconfig, the one
+        # place they are set. v1.0.14-fd.0-rc.1 -> marketing 1.0.14. The
+        # build number only has to grow, so the workflow run number serves.
+        run: |
+          team=$(sed -n 's/^ROOTSHELL_DEVELOPMENT_TEAM = //p' Configuration/Flightdeck.xcconfig)
+          org=$(sed -n 's/^ROOTSHELL_ORG_IDENTIFIER = //p' Configuration/Flightdeck.xcconfig)
+          test -n "$team" && test -n "$org"
+          marketing=$(printf '%s' "$TAG" | sed -E 's/^v([0-9]+(\.[0-9]+)*).*/\1/')
+          printf '%s' "$marketing" | grep -Eq '^[0-9]+(\.[0-9]+){1,2}$' \
+            || { echo "::error::cannot derive a version from tag $TAG"; exit 1; }
+          {
+            echo "TEAM_ID=$team"
+            echo "ORG_ID=$org"
+            echo "MARKETING_VERSION=$marketing"
+            echo "BUILD_NUMBER=${{ github.run_number }}"
+          } >> "$GITHUB_ENV"
+          echo "Team $team, org $org, version $marketing ($GITHUB_RUN_NUMBER)"
+
+      - &secrets
+        name: Use example secrets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # The netrc lets Swift Package Manager fetch binary targets from the
+        # GitHub API with a token instead of the shared anonymous rate limit.
+        run: |
+          cp Configuration/Secrets.example.xcconfig Configuration/Secrets.xcconfig
+          ( umask 077; printf 'machine api.github.com\n  login x-access-token\n  password %s\n' "$GH_TOKEN" > ~/.netrc )
+
+      - &cache
+        name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('rootshell.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - &keychain
+        name: Create keychain and API key
+        env:
+          UPLOAD_KEY_P8: ${{ secrets.UPLOAD_KEY_P8 }}
+          UPLOAD_KEY_ID: ${{ secrets.UPLOAD_KEY_ID }}
+        run: |
+          KC="$RUNNER_TEMP/signing.keychain-db"
+          KC_PW=$(openssl rand -base64 24)
+          echo "::add-mask::$KC_PW"
+          security create-keychain -p "$KC_PW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KC_PW" "$KC"
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          { echo "SIGNING_KEYCHAIN=$KC"; echo "SIGNING_KEYCHAIN_PASSWORD=$KC_PW"; } >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/keys"
+          ( umask 077; printf '%s\n' "$UPLOAD_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey_$UPLOAD_KEY_ID.p8" )
+          echo "ASC_KEY_PATH=$RUNNER_TEMP/keys/AuthKey_$UPLOAD_KEY_ID.p8" >> "$GITHUB_ENV"
+
+      - name: Fetch signing assets (match, read-only)
+        env:
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_DEPLOY_KEY: ${{ secrets.MATCH_DEPLOY_KEY }}
+          # SSH URL of the private signing store: a variable of the release environment.
+          MATCH_GIT_URL: ${{ vars.MATCH_GIT_URL }}
+        run: |
+          : "${MATCH_GIT_URL:?set MATCH_GIT_URL in the release environment}"
+          ids="$ORG_ID.rootshell,$ORG_ID.rootshell.SessionActivityWidget,$ORG_ID.rootshell.PushNotificationService,$ORG_ID.rootshell.vpntunnel"
+          # GitHub's published SSH host key; the deploy key only reads.
+          ( umask 077
+            printf '%s\n' "$MATCH_DEPLOY_KEY" > "$RUNNER_TEMP/keys/match_deploy_key"
+            echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$RUNNER_TEMP/keys/known_hosts" )
+          export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/keys/match_deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$RUNNER_TEMP/keys/known_hosts"
+          bundle exec fastlane match appstore --readonly --platform ios \
+            --app_identifier "$ids" --team_id "$TEAM_ID" \
+            --git_url "$MATCH_GIT_URL" --git_branch main --skip_docs \
+            --keychain_name "$SIGNING_KEYCHAIN" --keychain_password "$SIGNING_KEYCHAIN_PASSWORD"
+          rm -f "$RUNNER_TEMP/keys/match_deploy_key"
+          security find-identity -v -p codesigning "$SIGNING_KEYCHAIN"
+
+      - name: Archive
+        # Manual signing for every target that takes a profile. The profile
+        # name is derived per target: apps and app extensions get match's
+        # "match AppStore <bundle id>"; Swift packages and plain bundles get
+        # none, since they cannot take one.
+        run: |
+          set -o pipefail
+          cat > "$RUNNER_TEMP/signing.xcconfig" <<EOF
+          CODE_SIGN_STYLE = Manual
+          DEVELOPMENT_TEAM = $TEAM_ID
+          CODE_SIGN_IDENTITY = Apple Distribution
+          CODE_SIGN_IDENTITY[sdk=iphoneos*] = Apple Distribution
+          OTHER_CODE_SIGN_FLAGS = --keychain $SIGNING_KEYCHAIN
+          FD_PROFILE_app = match AppStore \$(PRODUCT_BUNDLE_IDENTIFIER)
+          FD_PROFILE_appex = match AppStore \$(PRODUCT_BUNDLE_IDENTIFIER)
+          PROVISIONING_PROFILE_SPECIFIER = \$(FD_PROFILE_\$(WRAPPER_EXTENSION))
+          EOF
+          cat "$RUNNER_TEMP/signing.xcconfig"
+          xcodebuild $XCODEBUILD_FLAGS -scheme rootshell-AppStore \
+            -configuration ReleaseAppStore -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/flightdeck-ios.xcarchive" \
+            -xcconfig "$RUNNER_TEMP/signing.xcconfig" \
+            MARKETING_VERSION="$MARKETING_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            archive | tee archive-ios.log | grep -E '(error|warning: .*(sign|profile|entitlement)|ARCHIVE (SUCCEEDED|FAILED))' || true
+          grep -q 'ARCHIVE SUCCEEDED' archive-ios.log
+
+      - name: Check the archive
+        # Export compliance: every app and extension declares no non-exempt
+        # encryption, so App Store Connect does not hold the build.
+        run: |
+          app="$RUNNER_TEMP/flightdeck-ios.xcarchive/Products/Applications/rootshell.app"
+          test -d "$app"
+          for plist in "$app/Info.plist" "$app"/PlugIns/*.appex/Info.plist; do
+            id=$(plutil -extract CFBundleIdentifier raw -o - "$plist")
+            enc=$(plutil -extract ITSAppUsesNonExemptEncryption raw -o - "$plist" 2>/dev/null || echo missing)
+            echo "$id ITSAppUsesNonExemptEncryption=$enc"
+          done
+          test "$(plutil -extract ITSAppUsesNonExemptEncryption raw -o - "$app/Info.plist")" = false
+          for bundle in "$app" "$app"/PlugIns/*.appex; do
+            security cms -D -i "$bundle/embedded.mobileprovision" | plutil -extract Name raw -o - -
+            codesign -dv "$bundle" 2>&1 | grep -E '^(Identifier|Authority)=' | head -2
+          done
+
+      - name: Export and upload
+        env:
+          UPLOAD_KEY_ID: ${{ secrets.UPLOAD_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -o pipefail
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Apple Distribution</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>$ORG_ID.rootshell</key><string>match AppStore $ORG_ID.rootshell</string>
+              <key>$ORG_ID.rootshell.SessionActivityWidget</key><string>match AppStore $ORG_ID.rootshell.SessionActivityWidget</string>
+              <key>$ORG_ID.rootshell.PushNotificationService</key><string>match AppStore $ORG_ID.rootshell.PushNotificationService</string>
+              <key>$ORG_ID.rootshell.vpntunnel</key><string>match AppStore $ORG_ID.rootshell.vpntunnel</string>
+            </dict>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+            <key>uploadSymbols</key><true/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/flightdeck-ios.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export-ios" \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$UPLOAD_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            | tee export-ios.log | grep -E '(error|EXPORT (SUCCEEDED|FAILED)|Upload|upload)' || true
+          grep -q 'EXPORT SUCCEEDED' export-ios.log
+
+      - &cleanup
+        name: Remove keychain and keys
+        if: always()
+        run: |
+          [ -n "${SIGNING_KEYCHAIN:-}" ] && security delete-keychain "$SIGNING_KEYCHAIN" || true
+          rm -rf "$RUNNER_TEMP/keys" ~/.netrc
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-ios-logs
+          path: "*.log"
+          if-no-files-found: ignore
+
+  macos:
+    name: macOS Developer ID
+    runs-on: xcode-27
+    environment: release
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - *xcode
+      - *metal
+      - *ruby
+      - *identity
+      - *secrets
+      - *cache
+      - *keychain
+
+      - name: Fetch signing assets (match, read-only)
+        # The app and its push extension are Mac Catalyst; the helper is a
+        # native macOS app embedded in Contents/Helpers.
+        env:
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_DEPLOY_KEY: ${{ secrets.MATCH_DEPLOY_KEY }}
+          MATCH_GIT_URL: ${{ vars.MATCH_GIT_URL }}
+        run: |
+          : "${MATCH_GIT_URL:?set MATCH_GIT_URL in the release environment}"
+          ( umask 077
+            printf '%s\n' "$MATCH_DEPLOY_KEY" > "$RUNNER_TEMP/keys/match_deploy_key"
+            echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$RUNNER_TEMP/keys/known_hosts" )
+          export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/keys/match_deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$RUNNER_TEMP/keys/known_hosts"
+          match() {
+            bundle exec fastlane match developer_id --readonly --platform "$1" \
+              --app_identifier "$2" --team_id "$TEAM_ID" \
+              --git_url "$MATCH_GIT_URL" --git_branch main --skip_docs \
+              --keychain_name "$SIGNING_KEYCHAIN" --keychain_password "$SIGNING_KEYCHAIN_PASSWORD"
+          }
+          match catalyst "$ORG_ID.rootshell,$ORG_ID.rootshell.PushNotificationService"
+          match macos "$ORG_ID.rootshell-helper"
+          rm -f "$RUNNER_TEMP/keys/match_deploy_key"
+          security find-identity -v -p codesigning "$SIGNING_KEYCHAIN"
+
+      - name: Archive
+        # Profile names follow match: "match Direct <bundle id> catalyst" for
+        # Mac Catalyst targets, "... macos" for the native helper.
+        run: |
+          set -o pipefail
+          cat > "$RUNNER_TEMP/signing.xcconfig" <<EOF
+          CODE_SIGN_STYLE = Manual
+          DEVELOPMENT_TEAM = $TEAM_ID
+          CODE_SIGN_IDENTITY = Developer ID Application
+          CODE_SIGN_IDENTITY[sdk=macosx*] = Developer ID Application
+          OTHER_CODE_SIGN_FLAGS = --keychain $SIGNING_KEYCHAIN --timestamp
+          DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO
+          FD_PLATFORM_YES = catalyst
+          FD_PLATFORM_NO = macos
+          FD_PLATFORM_ = macos
+          FD_PROFILE_app = match Direct \$(PRODUCT_BUNDLE_IDENTIFIER) \$(FD_PLATFORM_\$(IS_MACCATALYST))
+          FD_PROFILE_appex = match Direct \$(PRODUCT_BUNDLE_IDENTIFIER) \$(FD_PLATFORM_\$(IS_MACCATALYST))
+          PROVISIONING_PROFILE_SPECIFIER = \$(FD_PROFILE_\$(WRAPPER_EXTENSION))
+          EOF
+          cat "$RUNNER_TEMP/signing.xcconfig"
+          xcodebuild $XCODEBUILD_FLAGS -scheme rootshell-Standalone \
+            -configuration ReleaseStandalone \
+            -destination 'generic/platform=macOS,variant=Mac Catalyst' \
+            -archivePath "$RUNNER_TEMP/flightdeck-macos.xcarchive" \
+            -xcconfig "$RUNNER_TEMP/signing.xcconfig" \
+            MARKETING_VERSION="$MARKETING_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            archive | tee archive-macos.log | grep -E '(error|warning: .*(sign|profile|entitlement)|ARCHIVE (SUCCEEDED|FAILED))' || true
+          grep -q 'ARCHIVE SUCCEEDED' archive-macos.log
+
+      - name: Export with Developer ID
+        # Export re-signs the app and everything nested in it (helper,
+        # extension, frameworks) with Developer ID, hardened runtime and a
+        # secure timestamp, each with its own entitlements and profile.
+        run: |
+          set -o pipefail
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>developer-id</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Developer ID Application</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>$ORG_ID.rootshell</key><string>match Direct $ORG_ID.rootshell catalyst</string>
+              <key>$ORG_ID.rootshell.PushNotificationService</key><string>match Direct $ORG_ID.rootshell.PushNotificationService catalyst</string>
+              <key>$ORG_ID.rootshell-helper</key><string>match Direct $ORG_ID.rootshell-helper macos</string>
+            </dict>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/flightdeck-macos.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export-macos" \
+            | tee export-macos.log | grep -E '(error|EXPORT (SUCCEEDED|FAILED))' || true
+          grep -q 'EXPORT SUCCEEDED' export-macos.log
+          app=$(find "$RUNNER_TEMP/export-macos" -maxdepth 1 -name '*.app' | head -1)
+          test -n "$app"
+          echo "APP_PATH=$app" >> "$GITHUB_ENV"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv --verbose=4 "$app" 2>&1 | grep -E '^(Identifier|Authority|TeamIdentifier|Timestamp|CodeDirectory)'
+
+      - name: Notarize and staple
+        env:
+          UPLOAD_KEY_ID: ${{ secrets.UPLOAD_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          notary=(--key "$ASC_KEY_PATH" --key-id "$UPLOAD_KEY_ID" --issuer "$ASC_ISSUER_ID")
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$RUNNER_TEMP/notarize.zip"
+          submitted=$(xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" "${notary[@]}" --output-format json)
+          id=$(plutil -extract id raw -o - - <<<"$submitted")
+          echo "Notary submission $id"
+          result=$(xcrun notarytool wait "$id" "${notary[@]}" --output-format json) || true
+          status=$(plutil -extract status raw -o - - <<<"$result" 2>/dev/null || echo unknown)
+          echo "Notarization $id: $status"
+          if [ "$status" != Accepted ]; then
+            xcrun notarytool log "$id" "${notary[@]}" || true
+            echo "::error::notarization $id ended $status"
+            exit 1
+          fi
+          xcrun stapler staple "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+          spctl -a -vv "$APP_PATH" 2>&1 | tee spctl.log
+          grep -q 'source=Notarized Developer ID' spctl.log
+
+      - name: Attach to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          zip="flightdeck-$TAG-macos.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$zip"
+          shasum -a 256 "$zip" | tee "$zip.sha256"
+          prerelease=()
+          case "$TAG" in *-rc*) prerelease=(--prerelease) ;; esac
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$zip" "$zip.sha256" --clobber
+          else
+            gh release create "$TAG" "$zip" "$zip.sha256" --verify-tag \
+              --title "flightdeck $TAG" --generate-notes "${prerelease[@]}"
+          fi
+
+      - *cleanup
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-logs
+          path: "*.log"
+          if-no-files-found: ignore
