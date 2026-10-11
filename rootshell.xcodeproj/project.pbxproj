@@ -2512,7 +2512,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -2574,7 +2574,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -2636,7 +2636,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -3761,7 +3761,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -3878,7 +3878,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -4006,7 +4006,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -4136,7 +4136,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -4486,7 +4486,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -4545,7 +4545,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -4782,7 +4782,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -4848,7 +4848,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -4913,7 +4913,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -4973,7 +4973,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -5033,7 +5033,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -5094,7 +5094,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -5154,7 +5154,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -5212,7 +5212,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -5543,7 +5543,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -5608,7 +5608,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -6321,7 +6321,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -6387,7 +6387,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -6454,7 +6454,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -6516,7 +6516,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
@@ -6574,7 +6574,7 @@
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = rootshell/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = rootshell;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(FLIGHTDECK_DISPLAY_NAME)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
