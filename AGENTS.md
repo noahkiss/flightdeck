@@ -20,6 +20,11 @@ below it still apply to the code.
 - Identity changes go through `Configuration/Flightdeck.xcconfig`, never through literals in
   `project.pbxproj`, `.entitlements` or `Info.plist` (see the upstream section below).
 - Update `FLIGHTDECK.md` in the same commit as the patch it describes.
+- Turn upstream features off with an `#if FLIGHTDECK` block around the fewest lines that close the
+  entry point; do not delete upstream code. `Flightdeck.xcconfig` sets the `FLIGHTDECK` condition.
+  `rg FLIGHTDECK` must list every gate.
+- Entitlements changes go into `scripts/flightdeck-entitlements.py`, which derives the tracked
+  `*-flightdeck.entitlements` files. Do not edit those files by hand; CI runs `--check`.
 
 ## Branch, sync, release
 

@@ -129,6 +129,9 @@ extension MainView {
     }
 
     func toggleAIAgent() {
+        #if FLIGHTDECK
+        return
+        #endif
         Ghostty.logger.info("toggleAIAgent called")
 
         guard terminals.indices.contains(selectedTabIndex) else {
@@ -288,6 +291,9 @@ extension MainView {
 extension MainView {
 
     func toggleVoiceAgent() {
+        #if FLIGHTDECK
+        return
+        #endif
         guard terminals.indices.contains(selectedTabIndex) else { return }
         guard let focusedTerminal = terminals[selectedTabIndex].focusedTerminal else { return }
 
