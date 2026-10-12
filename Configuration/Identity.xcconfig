@@ -56,6 +56,12 @@ FLIGHTDECK_DISPLAY_NAME = rootshell
 FLIGHTDECK_ALTERNATE_APPICON_NAMES = AppIconBlack AppIconCRT AppIconNoBorder AppIconOrig AppIconRadicalBases AppIconRadicalCatppuccin AppIconRadicalDracula AppIconRadicalGruvboxDark AppIconRadicalMonoDark AppIconRadicalMonokai AppIconRadicalMonoLight AppIconRadicalNord AppIconRadicalRosePine AppIconRadicalSolarizedDark AppIconRadicalSolarizedLight AppIconRadicalTokyoNight AppIconSixColors AppIconSixColorsDark AppIconUnderscore
 FLIGHTDECK_INCLUDE_ALL_APPICON_ASSETS = YES
 
+// Sparkle update feed and its EdDSA public key, read by the app's Info.plist
+// (Standalone Mac builds). An xcconfig value treats "//" as a comment, so the
+// URL spells it "/$()/". Flightdeck.xcconfig overrides both.
+FLIGHTDECK_SPARKLE_FEED_URL = https:/$()/beta.rootshell.com/downloads/appcast.xml
+FLIGHTDECK_SPARKLE_PUBLIC_KEY = 5y4NHLHb4vlOmDFBRJzu3wT5EeAgcH+odS1HVIaRf2g=
+
 #include? "Flightdeck.xcconfig"
 
 // Personal Apple Developer team, org identifier, and iCloud container for a
