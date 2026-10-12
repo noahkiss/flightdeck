@@ -46,7 +46,7 @@ jobs:
       - name: Check flightdeck hooks
         # Before any build, so a lost hook fails fast and names itself.
         run: |
-          python3 -m unittest scripts/tests/test_flightdeck_hooks.py
+          python3 -m unittest scripts/tests/test_flightdeck_hooks.py scripts/tests/test_flightdeck_catalogs.py
           python3 scripts/flightdeck-hooks.py --check
 
       - name: Select Xcode
@@ -112,6 +112,7 @@ jobs:
           python3 scripts/flightdeck-entitlements.py --check
           python3 scripts/flightdeck-infoplist.py --check
           python3 scripts/flightdeck-icons.py --check
+          python3 scripts/flightdeck-catalogs.py --check
           xcodebuild $XCODEBUILD_FLAGS -scheme rootshell-AppStore \
             -configuration DebugAppStore -destination "id=$SIM_UDID" \
             -showBuildSettings > settings-ios.log
@@ -122,8 +123,8 @@ jobs:
           grep -q ' INFOPLIST_KEY_CFBundleDisplayName = FlightDeck$' settings-ios.log
           grep -q ' CODE_SIGN_ENTITLEMENTS = .*-flightdeck.entitlements$' settings-ios.log
 
-      - name: Name FlightDeck in the string catalogs
-        # Build-time only: the tracked catalogs stay upstream's (see AGENTS.md).
+      - name: Name FlightDeck in catalogs, Swift literals and resources
+        # Build-time only: the tracked files stay upstream's (see AGENTS.md).
         run: python3 scripts/flightdeck-catalogs.py
 
       - name: Build app
@@ -136,7 +137,8 @@ jobs:
 
       - name: Check FlightDeck names in the built app
         # The generated InfoPlist.xcstrings must reach every language, or the
-        # system falls back to upstream's rootshell text.
+        # system falls back to upstream's rootshell text. brandcheck then reads
+        # every binary, string table, Info.plist and text file in the bundle.
         run: |
           products=$(awk -F' = ' '/^ *BUILT_PRODUCTS_DIR = /{print $2; exit}' settings-ios.log)
           app="$products/rootshell.app"
@@ -146,10 +148,11 @@ jobs:
             plutil -convert json -o - "$strings" | jq -e '.CFBundleName == "FlightDeck" and (.NSLocalNetworkUsageDescription | startswith("FlightDeck"))'
             plutil -convert json -o - "$app/PlugIns/PushNotificationService.appex/$lang.lproj/InfoPlist.strings" \
               | jq -e '.CFBundleDisplayName == "FlightDeck Push"'
-            start=$(plutil -convert json -o - "$app/$lang.lproj/Localizable.strings" | jq -r '."Start Using rootshell"')
-            echo "$lang: Start Using rootshell -> $start"
+            start=$(plutil -convert json -o - "$app/$lang.lproj/Localizable.strings" | jq -r '."Start Using FlightDeck"')
+            echo "$lang: Start Using FlightDeck -> $start"
             [[ "$start" == *FlightDeck* ]]
           done
+          python3 scripts/flightdeck-brandcheck.py --report "$app"
 
       - name: Unit tests (rootshellTests)
         # Retries once, after a simulator reboot, only when the test runner
@@ -245,8 +248,8 @@ jobs:
           grep -q ' SWIFT_ACTIVE_COMPILATION_CONDITIONS = .*FLIGHTDECK' settings-macos.log
           grep -q ' CODE_SIGN_ENTITLEMENTS = .*Standalone-MacCatalyst-flightdeck.entitlements$' settings-macos.log
 
-      - name: Name FlightDeck in the string catalogs
-        # Build-time only: the tracked catalogs stay upstream's (see AGENTS.md).
+      - name: Name FlightDeck in catalogs, Swift literals and resources
+        # Build-time only: the tracked files stay upstream's (see AGENTS.md).
         run: python3 scripts/flightdeck-catalogs.py
 
       - name: Build app
@@ -266,10 +269,11 @@ jobs:
             plutil -convert json -o - "$resources/$lang.lproj/InfoPlist.strings" | tee "infoplist-macos-$lang.json"; echo
             plutil -convert json -o - "$resources/$lang.lproj/InfoPlist.strings" \
               | jq -e '.CFBundleName == "FlightDeck" and (.NSAppleEventsUsageDescription | contains("FlightDeck"))'
-            start=$(plutil -convert json -o - "$resources/$lang.lproj/Localizable.strings" | jq -r '."Start Using rootshell"')
-            echo "$lang: Start Using rootshell -> $start"
+            start=$(plutil -convert json -o - "$resources/$lang.lproj/Localizable.strings" | jq -r '."Start Using FlightDeck"')
+            echo "$lang: Start Using FlightDeck -> $start"
             [[ "$start" == *FlightDeck* ]]
           done
+          python3 scripts/flightdeck-brandcheck.py --report "$products/rootshell.app"
 
       - name: Check the Sparkle feed in the built app
         # The built Info.plist must carry flightdeck's feed and public key, not
