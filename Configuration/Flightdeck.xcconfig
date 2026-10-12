@@ -48,3 +48,9 @@ FLIGHTDECK_ENTITLEMENTS_SUFFIX = -flightdeck
 // the AI and voice agents, Tailscale and HTTPS capture. $(inherited) keeps the
 // DEBUG condition that project-level settings add.
 SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) FLIGHTDECK
+
+// Sparkle updates for the Mac app. release.yml signs each zip with the private
+// key that matches this public key and commits appcast.xml to the orphan
+// `appcast` branch, which this URL reads. "/$()/" spells "//" in an xcconfig.
+FLIGHTDECK_SPARKLE_FEED_URL = https:/$()/raw.githubusercontent.com/noahkiss/flightdeck/appcast/appcast.xml
+FLIGHTDECK_SPARKLE_PUBLIC_KEY = XGZiohinEOgZMPJhNEKUZwEX+xMT7vHjFm+iDmQHoEk=
