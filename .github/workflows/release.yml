@@ -162,8 +162,8 @@ jobs:
           rm -f "$RUNNER_TEMP/keys/match_deploy_key"
           security find-identity -v -p codesigning "$SIGNING_KEYCHAIN"
 
-      - name: Name FlightDeck in the string catalogs
-        # Build-time only: the tracked catalogs stay upstream's (see AGENTS.md).
+      - name: Name FlightDeck in catalogs, Swift literals and resources
+        # Build-time only: the tracked files stay upstream's (see AGENTS.md).
         run: python3 scripts/flightdeck-catalogs.py
 
       - name: Archive
@@ -304,8 +304,8 @@ jobs:
           rm -f "$RUNNER_TEMP/keys/match_deploy_key"
           security find-identity -v -p codesigning "$SIGNING_KEYCHAIN"
 
-      - name: Name FlightDeck in the string catalogs
-        # Build-time only: the tracked catalogs stay upstream's (see AGENTS.md).
+      - name: Name FlightDeck in catalogs, Swift literals and resources
+        # Build-time only: the tracked files stay upstream's (see AGENTS.md).
         run: python3 scripts/flightdeck-catalogs.py
 
       - name: Archive
