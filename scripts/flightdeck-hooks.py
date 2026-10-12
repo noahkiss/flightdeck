@@ -20,6 +20,8 @@ which has no test host and compiles only the app sources it lists.
     rootshell/Flightdeck/;
   - a listed test source is missing from the rootshellTests target, or the
     target lists a rootshell/Flightdeck/ source the manifest does not;
+  - an `upstreamText` entry (upstream source text that flightdeck code
+    matches on) is missing from its file;
   - the FLIGHTDECK.md hooks table differs from --table.
 
 --table prints the FLIGHTDECK.md hooks table. --write rewrites it in place.
@@ -195,6 +197,18 @@ def check_test_sources(root: Path, manifest: dict) -> list[str]:
     return errors
 
 
+def check_upstream_text(root: Path, manifest: dict) -> list[str]:
+    errors: list[str] = []
+    for item in manifest.get("upstreamText", []):
+        path = root / item["file"]
+        if not path.is_file():
+            errors.append(f"upstream text: file {item['file']} is missing")
+        elif item["text"] not in path.read_text(encoding="utf-8"):
+            errors.append(f"upstream text {item['text']!r} is missing from {item['file']}"
+                          f" (used by {item['usedBy']})")
+    return errors
+
+
 def render_table(manifest: dict) -> str:
     rows = [
         "| Hook | Upstream file | Inside | Line |",
@@ -209,6 +223,12 @@ def render_table(manifest: dict) -> str:
                     " (four lines each: build file, file reference, group child, Sources entry):")
         rows.append("")
         rows.extend(f"- `{rel}`" for rel in tests)
+    texts = manifest.get("upstreamText", [])
+    if texts:
+        rows.append("")
+        rows.append("flightdeck code matches this upstream text, and `--check` fails if it changes:")
+        rows.append("")
+        rows.extend(f"- `{item['file']}`: `{item['text']}` (`{item['usedBy']}`)" for item in texts)
     return "\n".join(rows)
 
 
@@ -242,6 +262,7 @@ def check(root: Path) -> list[str]:
     manifest = load_manifest(root)
     return (check_hooks(root, manifest)
             + check_test_sources(root, manifest)
+            + check_upstream_text(root, manifest)
             + check_ledger(root, manifest))
 
 
