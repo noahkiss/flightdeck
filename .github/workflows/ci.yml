@@ -104,6 +104,7 @@ jobs:
       - name: Check flightdeck configuration
         run: |
           python3 scripts/flightdeck-entitlements.py --check
+          python3 scripts/flightdeck-infoplist.py --check
           xcodebuild $XCODEBUILD_FLAGS -scheme rootshell-AppStore \
             -configuration DebugAppStore -destination "id=$SIM_UDID" \
             -showBuildSettings > settings-ios.log
@@ -119,6 +120,20 @@ jobs:
             -configuration DebugAppStore -destination "id=$SIM_UDID" build \
             | tee build-ios.log | grep -E '(error|warning: unable|BUILD (SUCCEEDED|FAILED))' || true
           grep -q 'BUILD SUCCEEDED' build-ios.log
+
+      - name: Check FlightDeck names in the built app
+        # The generated InfoPlist.xcstrings must reach every language, or the
+        # system falls back to upstream's rootshell text.
+        run: |
+          products=$(awk -F' = ' '/^ *BUILT_PRODUCTS_DIR = /{print $2; exit}' settings-ios.log)
+          app="$products/rootshell.app"
+          for lang in de ja; do
+            strings="$app/$lang.lproj/InfoPlist.strings"
+            plutil -convert json -o - "$strings" | tee "infoplist-ios-$lang.json"; echo
+            plutil -convert json -o - "$strings" | jq -e '.CFBundleName == "FlightDeck" and (.NSLocalNetworkUsageDescription | startswith("FlightDeck"))'
+            plutil -convert json -o - "$app/PlugIns/PushNotificationService.appex/$lang.lproj/InfoPlist.strings" \
+              | jq -e '.CFBundleDisplayName == "FlightDeck Push"'
+          done
 
       - name: Unit tests (rootshellTests)
         # Retries once, after a simulator reboot, only when the test runner
@@ -148,7 +163,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ios-logs
-          path: "*.log"
+          path: |
+            *.log
+            infoplist-*.json
           if-no-files-found: ignore
 
   macos:
@@ -221,6 +238,16 @@ jobs:
             | tee build-macos.log | grep -E '(error|warning: unable|BUILD (SUCCEEDED|FAILED))' || true
           grep -q 'BUILD SUCCEEDED' build-macos.log
 
+      - name: Check FlightDeck names in the built app
+        run: |
+          products=$(awk -F' = ' '/^ *BUILT_PRODUCTS_DIR = /{print $2; exit}' settings-macos.log)
+          resources="$products/rootshell.app/Contents/Resources"
+          for lang in de ja; do
+            plutil -convert json -o - "$resources/$lang.lproj/InfoPlist.strings" | tee "infoplist-macos-$lang.json"; echo
+            plutil -convert json -o - "$resources/$lang.lproj/InfoPlist.strings" \
+              | jq -e '.CFBundleName == "FlightDeck" and (.NSAppleEventsUsageDescription | contains("FlightDeck"))'
+          done
+
       - name: Unit tests (rootshell-helperTests)
         run: |
           set -o pipefail
@@ -234,5 +261,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-logs
-          path: "*.log"
+          path: |
+            *.log
+            infoplist-*.json
           if-no-files-found: ignore
