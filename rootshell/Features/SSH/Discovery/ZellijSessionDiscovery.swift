@@ -23,6 +23,7 @@ struct ZellijSessionInfo: Identifiable, Equatable, Sendable {
     let createdAgo: String
     /// ANSI-captured terminal content for preview rendering
     var capturedContent: String?
+    var flightdeck: FlightdeckZellijExtras? = nil  // FLIGHTDECK-HOOK: zellij.info.extras
 
     var id: String { name }
 }
