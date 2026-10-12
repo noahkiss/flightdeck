@@ -105,6 +105,7 @@ enum SessionDiscoveryCommand {
                         + " \(ZellijDiscoveryCommand.captureLoop)"
                         + " fi;"
                 }
+                section = FlightdeckHooks.zellijSessionsSection(stock: section, skipCaptures: skipCaptures)  // FLIGHTDECK-HOOK: discovery.command
                 zellijParts.append(section)
             }
 
@@ -323,7 +324,7 @@ enum SessionDiscoveryParser {
            let zellijEnd = output.range(of: "::ZELLIJ_END_\(nonce)::") {
             let zellijOutput = String(output[zellijStart.upperBound..<zellijEnd.lowerBound])
             if !skipZellijSessions {
-                zellijSessions = ZellijDiscoveryParser.parse(output: zellijOutput)
+                zellijSessions = FlightdeckHooks.parseZellij(zellijOutput) ?? ZellijDiscoveryParser.parse(output: zellijOutput)  // FLIGHTDECK-HOOK: discovery.parse
             }
             if discoverZellijBindings {
                 swipeBindings = swipeBindings.merging(ZellijSwipeBindingParser.parse(output: zellijOutput, nonce: nonce))
