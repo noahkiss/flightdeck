@@ -1105,6 +1105,7 @@ class CatalystAppDelegate: AppDelegate {
         buildTabsMenu(builder)
         buildShellMenu(builder)
         buildTerminalMenu(builder)
+        FlightdeckHooks.buildMainMenu(builder)  // FLIGHTDECK-HOOK: mac.menu
     }
 
     // MARK: - Stock Menu Key Equivalents

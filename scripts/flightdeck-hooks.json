@@ -19,6 +19,12 @@
       "call": ".modifier(FlightdeckHooks.SceneRoot())"
     },
     {
+      "id": "mac.menu",
+      "file": "rootshell/App/CatalystAppDelegate.swift",
+      "anchor": "override func buildMenu(with builder: UIMenuBuilder) {",
+      "call": "FlightdeckHooks.buildMainMenu(builder)"
+    },
+    {
       "id": "discovery.command",
       "file": "rootshell/Features/SSH/Discovery/SessionDiscoveryRunner.swift",
       "anchor": "static func command(",
