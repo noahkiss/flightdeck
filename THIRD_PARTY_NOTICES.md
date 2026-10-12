@@ -62,6 +62,7 @@ and complete licensing information.
 | [0xProto](https://github.com/0xType/0xProto) | Copyright (c) 2024 0xType Project Authors | SIL Open Font License 1.1 |
 | [Fira Code](https://github.com/tonsky/FiraCode) | Copyright (c) 2014 The Fira Code Project Authors | SIL Open Font License 1.1 |
 | [Geist Mono](https://github.com/vercel/geist-font) | Copyright (c) 2023 Vercel | SIL Open Font License 1.1 |
+| [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) | Copyright 2020 The JetBrains Mono Project Authors | SIL Open Font License 1.1 |
 | [Nerd Fonts](https://github.com/ryanoasis/nerd-fonts) | Copyright (c) 2014 Ryan L McIntyre | MIT; individual fonts and glyph sources retain their own licenses, including SIL OFL 1.1 |
 
 The rootshell MIT license does not apply to the font files under

@@ -264,6 +264,13 @@ struct LicenseAcknowledgementsView: View {
                 licenseText: silOFLLicenseText
             ),
             LicenseEntry(
+                name: "JetBrains Mono",
+                licenseType: "SIL OFL 1.1",
+                copyright: "Copyright 2020 The JetBrains Mono Project Authors",
+                repositoryURL: "https://github.com/JetBrains/JetBrainsMono",
+                licenseText: silOFLLicenseText
+            ),
+            LicenseEntry(
                 name: "Nerd Fonts",
                 licenseType: "MIT / SIL OFL 1.1",
                 copyright: "Copyright (c) 2014 Ryan L McIntyre",
