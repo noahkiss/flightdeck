@@ -29,6 +29,24 @@
       "file": "rootshell/Features/SSH/Session/MultiplexerSession.swift",
       "anchor": "static func from(zellij session: ZellijSessionInfo)",
       "call": "subtitle: FlightdeckHooks.zellijSubtitle(session),"
+    },
+    {
+      "id": "config.url.initial",
+      "file": "rootshell/Core/SettingsSync/ConfigOverlay/ConfigOverlayManager.swift",
+      "anchor": "final class ConfigOverlayManager {",
+      "call": "FlightdeckHooks.configURL(stock: ConfigOverlayLocation.canonicalURL)"
+    },
+    {
+      "id": "config.path.display",
+      "file": "rootshell/Core/SettingsSync/ConfigOverlay/ConfigOverlayManager.swift",
+      "anchor": "final class ConfigOverlayManager {",
+      "call": "FlightdeckHooks.configShellPath(stock: ConfigOverlayLocation.canonicalShellPath, active: activeURL)"
+    },
+    {
+      "id": "config.url.resolve",
+      "file": "rootshell/Core/SettingsSync/ConfigOverlay/ConfigOverlayManager.swift",
+      "anchor": "final class ConfigOverlayManager {",
+      "call": "activeURL = FlightdeckHooks.configURL(stock: ConfigOverlayLocation.canonicalURL)"
     }
   ],
   "testSources": [
@@ -45,6 +63,31 @@
       "file": "rootshell/Features/SSH/Discovery/SessionDiscoveryRunner.swift",
       "text": " _zv=$(zellij --version",
       "usedBy": "ZellijForkDiscovery.stockCaptureStart"
+    },
+    {
+      "file": "rootshell/Core/SettingsSync/ConfigOverlay/ConfigOverlayLocation.swift",
+      "text": ".appendingPathComponent(\".config/rootshell/config\")",
+      "usedBy": "FlightdeckConfigPath.renamed"
+    },
+    {
+      "file": "rootshell/Core/SettingsSync/ConfigOverlay/ConfigOverlayLocation.swift",
+      "text": ".appendingPathComponent(\"rootshell.conf\")",
+      "usedBy": "FlightdeckConfigPath.renamed"
+    },
+    {
+      "file": "rootshell/Core/SettingsSync/ConfigOverlay/ConfigOverlayLocation.swift",
+      "text": "static let canonicalShellPath = \"~/.config/rootshell/config\"",
+      "usedBy": "FlightdeckConfigPath.shellPath"
+    },
+    {
+      "file": "rootshell/Core/SettingsSync/ConfigOverlay/ConfigOverlayLocation.swift",
+      "text": "static let canonicalShellPath = \"~/Documents/rootshell.conf\"",
+      "usedBy": "FlightdeckConfigPath.shellPath"
+    },
+    {
+      "file": "rootshell/Core/SettingsSync/ConfigOverlay/ConfigOverlayLocation.swift",
+      "text": "static let canonicalShellPath = \"~/rootshell.conf\"",
+      "usedBy": "FlightdeckConfigPath.shellPath"
     }
   ]
 }
