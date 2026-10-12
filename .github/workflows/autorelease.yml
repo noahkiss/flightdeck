@@ -1,0 +1,184 @@
+name: Auto release
+
+# Tag the next release candidate when main is green and something that ships
+# changed, then start release.yml on that tag.
+#
+# Triggers: a green CI run for a push to main (or a dispatch on main), and a
+# green upstream sync that promoted a new series to main. The sync pushes main
+# with GITHUB_TOKEN, which starts no CI run, and its own build runs ci.yml as a
+# reusable workflow inside the sync run, so each change to main reaches this
+# workflow through exactly one of the two triggers.
+#
+# Guards, in order. Any failed guard ends the run green with a notice.
+#   - The triggering run succeeded, ran on main in this repository, and was
+#     started by push, schedule or workflow_dispatch.
+#   - CI: the run's head SHA is main's current tip.
+#     Sync: its build jobs and its promote job succeeded, and main's tip is
+#     the candidate the sync pushed to sync/main.
+#     A later push to main has its own run, which releases the newer tip.
+#   - No v* tag points at the tip yet.
+#   - Files that ship changed since the newest v* tag: not only .github/,
+#     docs/, top-level Markdown, license files or tests.
+#
+# The tag is v<MARKETING_VERSION>-fd.<n>-rc.<m>, MARKETING_VERSION being the
+# highest value in project.pbxproj. The next tag is the highest rc of the
+# newest fd.<n> for that version plus one; a new version starts at fd.0-rc.1.
+# A tag created with GITHUB_TOKEN starts no workflow, so this workflow
+# dispatches release.yml on the tag ref, which the release environment
+# admits. A tag pushed by hand still starts release.yml on its own.
+#
+# This workflow never checks out or runs code from the triggering commit. It
+# reads refs, trees and one file through git and the API.
+
+on:
+  workflow_run:
+    workflows: ["CI", "Upstream sync"]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: flightdeck-autorelease
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag and release
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      contains(fromJSON('["push", "schedule", "workflow_dispatch"]'), github.event.workflow_run.event)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      WORKFLOW: ${{ github.event.workflow_run.name }}
+      RUN_EVENT: ${{ github.event.workflow_run.event }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+      RUN_URL: ${{ github.event.workflow_run.html_url }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Find the commit to release
+        id: candidate
+        run: |
+          set -euo pipefail
+          skip() { echo "::notice title=No release::$1"; exit 0; }
+          tip=$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)
+          case "$WORKFLOW" in
+            CI)
+              case "$RUN_EVENT" in push|workflow_dispatch) ;; *) skip "CI ran for $RUN_EVENT." ;; esac
+              candidate="$HEAD_SHA"
+              ;;
+            "Upstream sync")
+              case "$RUN_EVENT" in schedule|workflow_dispatch) ;; *) skip "The sync ran for $RUN_EVENT." ;; esac
+              jobs=$(gh api --paginate "repos/$GH_REPO/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs" \
+                --jq '.jobs[] | [.name, (.conclusion // "none")] | @tsv')
+              printf '%s\n' "$jobs"
+              builds=$(printf '%s\n' "$jobs" | awk -F'\t' '$1 ~ /^build \/ /' | wc -l)
+              [ "$builds" -gt 0 ] || skip "The sync built nothing, so it did not move main."
+              printf '%s\n' "$jobs" | awk -F'\t' '$1 ~ /^build \/ / && $2 != "success" { bad = 1 } END { exit bad }' \
+                || skip "A sync build job did not succeed."
+              grep -qxF $'finish / Promote or report\tsuccess' <<<"$jobs" \
+                || skip "The sync did not promote its candidate."
+              candidate=$(gh api "repos/$GH_REPO/git/ref/heads/sync/main" --jq .object.sha)
+              # The fixer's branch is adopted as is, so its head is the candidate.
+              fixer=$(gh api --paginate "repos/$GH_REPO/git/matching-refs/heads/claude/sync-" \
+                --jq ".[] | select(.object.sha == \"$candidate\") | .ref")
+              if [ -n "$fixer" ]; then
+                echo "::notice title=Fixer series::main is the series from ${fixer#refs/heads/}."
+              fi
+              ;;
+            *) skip "Unexpected workflow $WORKFLOW." ;;
+          esac
+          [ "$candidate" = "$tip" ] || skip "main is at ${tip:0:9}, not ${candidate:0:9}. The run for the newer tip releases it."
+          echo "Candidate ${tip} from ${RUN_URL}"
+          echo "sha=$tip" >> "$GITHUB_OUTPUT"
+
+      - name: Check what changed since the last release
+        id: changes
+        if: steps.candidate.outputs.sha != ''
+        env:
+          SHA: ${{ steps.candidate.outputs.sha }}
+        run: |
+          set -euo pipefail
+          skip() { echo "::notice title=No release::$1"; exit 0; }
+          # Trees only, no checkout: nothing from the commit runs here.
+          git init -q repo
+          cd repo
+          git remote add origin "https://github.com/$GH_REPO.git"
+          git fetch -q --no-tags --depth=1 --filter=blob:none origin "$SHA" '+refs/tags/v*:refs/tags/v*'
+          released=$(git for-each-ref --format='%(refname:short) %(*objectname)%(objectname)' 'refs/tags/v*' \
+            | awk -v sha="$SHA" 'index($2, sha) { print $1 }')
+          [ -z "$released" ] || skip "${SHA:0:9} is already tagged: $released."
+          last=$(git for-each-ref --sort=-creatordate --count=1 --format='%(refname:short)' 'refs/tags/v*')
+          if [ -n "$last" ]; then
+            git diff --no-renames --name-only "$last" "$SHA" > ../changed.txt
+            # Paths that never reach a build: CI, docs, top-level Markdown,
+            # license and repo files, and tests.
+            grep -Ev '^(\.github/|docs/|[^/]+\.md$|LICENSE$|NOTICE$|\.gitignore$|\.gitattributes$|icon\.png$|scripts/tests/|rootshellTests/|rootshellvpnTests/|rootshellvpnUITests/)' \
+              ../changed.txt > ../shipping.txt || true
+            echo "$(wc -l < ../changed.txt) files changed since $last; $(wc -l < ../shipping.txt) ship."
+            head -50 ../shipping.txt
+            [ -s ../shipping.txt ] || skip "Nothing that ships changed since $last."
+          fi
+          echo "last=$last" >> "$GITHUB_OUTPUT"
+          echo "ship=true" >> "$GITHUB_OUTPUT"
+
+      - name: Tag the next release candidate
+        id: tag
+        if: steps.changes.outputs.ship == 'true'
+        env:
+          SHA: ${{ steps.candidate.outputs.sha }}
+          LAST: ${{ steps.changes.outputs.last }}
+        run: |
+          set -euo pipefail
+          skip() { echo "::notice title=No release::$1"; exit 0; }
+          version=$(gh api -H 'Accept: application/vnd.github.raw' \
+              "repos/$GH_REPO/contents/rootshell.xcodeproj/project.pbxproj?ref=$SHA" \
+            | sed -n 's/.*MARKETING_VERSION = \([0-9.]*\);.*/\1/p' | sort -uV | tail -1)
+          printf '%s' "$version" | grep -Eq '^[0-9]+(\.[0-9]+){1,2}$' \
+            || { echo "::error::cannot read MARKETING_VERSION at $SHA"; exit 1; }
+          # Tags for this version: v<version>-fd.<n> and v<version>-fd.<n>-rc.<m>.
+          re="^v${version//./\\.}-fd\\.([0-9]+)(-rc\\.([0-9]+))?\$"
+          fd=-1; rc=0; final=false
+          while read -r name; do
+            [[ $name =~ $re ]] || continue
+            n=${BASH_REMATCH[1]}; m=${BASH_REMATCH[3]}
+            if [ "$n" -gt "$fd" ]; then fd=$n; rc=0; final=false; fi
+            [ "$n" -eq "$fd" ] || continue
+            if [ -z "$m" ]; then final=true; elif [ "$m" -gt "$rc" ]; then rc=$m; fi
+          done < <(gh api --paginate "repos/$GH_REPO/git/matching-refs/tags/v" --jq '.[].ref | ltrimstr("refs/tags/")')
+          if [ "$fd" -lt 0 ]; then fd=0; rc=1
+          elif [ "$final" = true ]; then fd=$((fd + 1)); rc=1
+          else rc=$((rc + 1)); fi
+          tag="v${version}-fd.${fd}-rc.${rc}"
+          # Last look: tag only main's current tip.
+          tip=$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)
+          [ "$tip" = "$SHA" ] || skip "main moved to ${tip:0:9} before tagging."
+          object=$(gh api "repos/$GH_REPO/git/tags" -f tag="$tag" -f object="$SHA" -f type=commit \
+            -f message="$tag: automatic release candidate after ${RUN_URL}" --jq .sha)
+          if ! gh api "repos/$GH_REPO/git/refs" -f ref="refs/tags/$tag" -f sha="$object" --silent; then
+            if gh api "repos/$GH_REPO/git/ref/tags/$tag" --silent 2>/dev/null; then
+              skip "$tag already exists; it was not created here."
+            fi
+            echo "::error::could not create $tag"; exit 1
+          fi
+          echo "Tagged ${SHA:0:9} as $tag (previous release: ${LAST:-none})."
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Start the release
+        if: steps.tag.outputs.tag != ''
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # A dispatch made with GITHUB_TOKEN starts a run; a tag push does not.
+          gh workflow run release.yml --ref "$TAG" -f tag="$TAG"
+          echo "Dispatched release.yml on $TAG." | tee -a "$GITHUB_STEP_SUMMARY"
