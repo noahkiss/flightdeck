@@ -120,6 +120,9 @@ nonisolated struct SessionActivityAttributes: ActivityAttributes, Sendable {
         /// The widget's asset catalog carries copies of these imagesets so
         /// the widget doesn't depend on the main-app bundle.
         var appIconDisplayAssetName: String {
+            #if FLIGHTDECK // FlightDeck previews: SessionActivityWidget/Flightdeck/
+            return appIconVariant.isEmpty ? "FDAppIconPreview" : appIconVariant + "Preview"
+            #else
             switch appIconVariant {
             case "AppIconBlack":         return "AppIconBlackPreview"
             case "AppIconCRT":           return "AppIconCRTPreview"
@@ -143,6 +146,7 @@ nonisolated struct SessionActivityAttributes: ActivityAttributes, Sendable {
                 return appIconVariant
             default:                     return "AppIconPreview"
             }
+            #endif
         }
     }
 }
