@@ -19,3 +19,30 @@ Each patch is one commit on top of the base. Entries are in series order.
 | 11 | `ci: name FlightDeck in the string catalogs at build time` | Adds `scripts/flightdeck-catalogs.py`, which `ci.yml` and `release.yml` run on their checkout just before each build or archive. It rewrites the rootshell name to FlightDeck in the values (never the keys) of `Localizable.xcstrings` and the push and widget catalogs, in every language, and adds an English value where English would show the key. It keeps command, file and host names (`.rootshellrc`, `rootshell-notify`, `rootshell-askpass`, `rootshell-open-clipboard`, `push.rootshell.com`, ...) and strings about upstream's herdr fork and the "Based on rootshell" credit. The built-app check in `ci.yml` also reads the `de` and `ja` value of one catalog string. `AGENTS.md` records the rule. | Upstream changed `Localizable.xcstrings` 31 times in the 30 days before this patch, so a tracked edit would conflict on most nightly rebases. A build-time rewrite touches no tracked upstream line and renames strings and languages that upstream adds. The tracked catalogs stay upstream's, so a local Xcode build still shows rootshell in these strings. |
 | 12 | `feat: bundle JetBrains Mono` | Adds `Resources/fonts/JetBrainsMono/`: the Regular, Bold, Italic and Bold Italic TTFs and `OFL.txt` from the JetBrains Mono v2.304 release, unmodified (each file's blob hash matches the upstream tag). Adds a license entry in `LicenseAcknowledgementsView.swift` and a row in `THIRD_PARTY_NOTICES.md`. | `Resources/fonts` is a folder reference, and the font catalog registers and lists every TTF and OTF in it, so the files alone make "JetBrains Mono" selectable. No `project.pbxproj` or font-list edit. The unpatched font is enough: Ghostty's built-in Symbols Nerd Font fallback draws Nerd Font glyphs, which is why upstream dropped its own Nerd Font Mono variants. |
 | 13 | `feat(icons): replace the app icons with the flightdeck set` | Replaces the contents of `AppIcon.icon` with the flightdeck default icon and adds 16 alternate `.icon` bundles under `rootshell/Flightdeck/Icons/AltIcons/`, with preview image sets in `rootshell/Flightdeck/Icons/FlightdeckIcons.xcassets` (512 px HEIC) and `SessionActivityWidget/Flightdeck/FlightdeckIconPreviews.xcassets` (256 px). `scripts/flightdeck-icons.json` lists each icon's name, label and picker section; `scripts/flightdeck-icons.py` generates `AppIconVariant+Flightdeck.swift` and `Configuration/FlightdeckIcons.xcconfig` from it, and `--check` (run by `ci.yml`) reports stale output and missing or unlisted bundles and previews. `project.pbxproj` reads `ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES` and `ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS` from `$(FLIGHTDECK_ALTERNATE_APPICON_NAMES)` and `$(FLIGHTDECK_INCLUDE_ALL_APPICON_ASSETS)`; `Identity.xcconfig` defaults them to upstream's values and `Flightdeck.xcconfig` sets ours and `NO`. `#if FLIGHTDECK` gates swap in the flightdeck variant list (`AppIconManager.swift`, `AppIconVariant+AppEnum.swift`), the picker (`AppIconSettingsView.swift`) and the widget's preview names (`SessionActivityAttributes.swift`). | The icon set is flightdeck's own. New files sit in synchronized folders, so they need no `project.pbxproj` entries; upstream's `AltIcons/` and its project references stay untouched but are not compiled, which keeps rebases cheap. The two `project.pbxproj` settings are one value per line and stay the same on every rebase; a new upstream alternate icon changes the literal and so conflicts there. |
+| 14 | `feat: add the FlightDeck hook toolkit` | Adds `rootshell/Flightdeck/`, the home for flightdeck code: `Core/FlightdeckHooks.swift` (every hook entry point) and `Core/FlightdeckBootstrap.swift` (starts features once per launch). One hook line in `RootShellApp.init`, after the protected-data guard, calls `FlightdeckHooks.launch()`. Adds the hook manifest `scripts/flightdeck-hooks.json`, `scripts/flightdeck-hooks.py` (`--check`, `--table`, `--write`) with its tests in `scripts/tests/test_flightdeck_hooks.py`, the "Hooks" section below, and a `ci.yml` step that runs the tests and `--check` before any build. | New features live in new files, so a rebase touches only single hook lines. When upstream moves a hook site, the nightly sync fails on a named hook instead of on a silent no-op. `rootshell/` is a synchronized group, so new files need no `project.pbxproj` edit; the widget and VPN extensions list their files and never see ours. |
+
+## Hooks
+
+flightdeck code lives in `rootshell/Flightdeck/`. An upstream file reaches it only through a
+one-line hook:
+
+```swift
+FlightdeckHooks.<point>(...)  // FLIGHTDECK-HOOK: <id>
+```
+
+- A hook returns `nil` or the stock value when no feature is registered.
+- A hook hands control to flightdeck code; it holds no logic in the upstream file.
+- `#if FLIGHTDECK` stays reserved for turning upstream features off.
+- Every hook is listed in `scripts/flightdeck-hooks.json` with its file, the enclosing function or
+  type (`anchor`), and its exact text. `scripts/flightdeck-hooks.py --check` fails when a hook is
+  missing, duplicated, outside its anchor, unlisted, or calls an undefined symbol, and when the
+  table below is stale. Regenerate the table with `--write`.
+- `rootshellTests` has no test host and compiles only the app sources `project.pbxproj` lists.
+  flightdeck sources it tests are listed in the manifest under `testSources`, and `--check`
+  verifies their membership.
+
+<!-- flightdeck-hooks:begin -->
+| Hook | Upstream file | Inside | Line |
+|---|---|---|---|
+| `app.launch` | `rootshell/App/RootShellApp.swift` | `init() {` | `FlightdeckHooks.launch()` |
+<!-- flightdeck-hooks:end -->
