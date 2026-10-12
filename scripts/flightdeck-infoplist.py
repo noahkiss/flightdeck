@@ -8,7 +8,9 @@ places:
 
 - target-level INFOPLIST_KEY_* settings in project.pbxproj,
 - INFOPLIST_KEY_* lines in Configuration/Standalone.xcconfig,
-- the Info.plist files themselves.
+- the Info.plist files themselves, including type descriptions
+  (UTTypeDescription, CFBundleTypeName), which InfoPlist.strings localizes
+  under their own text as the key.
 
 It rewrites the name to FlightDeck and writes one InfoPlist.xcstrings beside
 each Info.plist, with the same value in every language the project knows. The
@@ -115,6 +117,15 @@ def collect(pbx: str) -> dict:
         for key, value in data.items():
             if LOCALIZABLE.match(key) and isinstance(value, str) and BRAND.search(value):
                 add(found, plist, key, value, plist)
+        # Type names (Finder's Kind column) are localized by their own text.
+        for decl in data.get("UTExportedTypeDeclarations", []) + data.get("UTImportedTypeDeclarations", []):
+            value = decl.get("UTTypeDescription")
+            if isinstance(value, str) and BRAND.search(value):
+                add(found, plist, value, value, plist)
+        for doc_type in data.get("CFBundleDocumentTypes", []):
+            value = doc_type.get("CFBundleTypeName")
+            if isinstance(value, str) and BRAND.search(value):
+                add(found, plist, value, value, plist)
     return found
 
 
