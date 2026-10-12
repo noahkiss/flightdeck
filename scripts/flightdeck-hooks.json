@@ -1,0 +1,11 @@
+{
+  "hooks": [
+    {
+      "id": "app.launch",
+      "file": "rootshell/App/RootShellApp.swift",
+      "anchor": "init() {",
+      "call": "FlightdeckHooks.launch()"
+    }
+  ],
+  "testSources": []
+}
