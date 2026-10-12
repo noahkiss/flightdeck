@@ -29,6 +29,10 @@ below it still apply to the code.
   through `scripts/flightdeck-infoplist.py`. It derives the tracked `InfoPlist.xcstrings` files
   beside each `Info.plist`, in every language in `knownRegions`. Do not edit those files by hand;
   rerun the script after an upstream change. CI runs `--check`.
+- String catalog text is renamed at build time, not in git: CI runs `scripts/flightdeck-catalogs.py`
+  on its checkout before `xcodebuild`. Never commit its output. Any workflow that builds the app
+  for users must run it too. To keep a name that contains rootshell, add it to `PROTECTED` or
+  `SKIP_KEY` in the script.
 
 ## Branch, sync, release
 
