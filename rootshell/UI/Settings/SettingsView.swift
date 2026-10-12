@@ -97,20 +97,16 @@ struct SettingsHomeList: View {
             Section {
                 VStack(spacing: 12) {
                     AnimatedAboutIcon(
-                        onTap: {
-                            if let url = URL(string: "https://www.rootshell.com") {
-                                UIApplication.shared.open(url)
-                            }
-                        },
+                        onTap: {},
                         onLongPress: {
                             showDebugSettings = true
                         }
                     )
 
-                    Text("Rootshell")
+                    Text(verbatim: FlightdeckBrand.name)
                         .font(.headline)
 
-                    Text("Written by Kit Knox")
+                    Link("Based on rootshell by Kit Knox", destination: URL(string: "https://github.com/kitknox/rootshell")!)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
 
