@@ -347,7 +347,7 @@ enum BackupError: LocalizedError {
         case .wrongPassword:
             "Incorrect password. Please try again."
         case .invalidFileFormat:
-            "This file is not a valid Rootshell backup."
+            "This file is not a valid \(FlightdeckBrand.name) backup."
         case .unsupportedVersion(let v):
             "This backup was created with a newer version (v\(v)) and cannot be read."
         case .encryptionFailed(let e):
