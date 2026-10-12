@@ -271,6 +271,21 @@ jobs:
             [[ "$start" == *FlightDeck* ]]
           done
 
+      - name: Check the Sparkle feed in the built app
+        # The built Info.plist must carry flightdeck's feed and public key, not
+        # upstream's. Flightdeck.xcconfig spells "//" as "/$()/".
+        run: |
+          products=$(awk -F' = ' '/^ *BUILT_PRODUCTS_DIR = /{print $2; exit}' settings-macos.log)
+          plist="$products/rootshell.app/Contents/Info.plist"
+          want_feed=$(sed -n 's/^FLIGHTDECK_SPARKLE_FEED_URL = //p' Configuration/Flightdeck.xcconfig | sed 's|/\$()/|//|')
+          want_key=$(sed -n 's/^FLIGHTDECK_SPARKLE_PUBLIC_KEY = //p' Configuration/Flightdeck.xcconfig)
+          feed=$(plutil -extract SUFeedURL raw -o - "$plist")
+          key=$(plutil -extract SUPublicEDKey raw -o - "$plist")
+          echo "SUFeedURL=$feed"; echo "SUPublicEDKey=$key"
+          [ "$feed" = https://raw.githubusercontent.com/noahkiss/flightdeck/appcast/appcast.xml ]
+          [ "$feed" = "$want_feed" ] && [ "$key" = "$want_key" ]
+          test "$(plutil -extract SUAutomaticallyUpdate raw -o - "$plist")" = false
+
       - name: Unit tests (rootshell-helperTests)
         run: |
           set -o pipefail
