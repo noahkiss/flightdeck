@@ -25,6 +25,36 @@
       "call": "FlightdeckHooks.buildMainMenu(builder)"
     },
     {
+      "id": "ghostty.thicken.app",
+      "file": "rootshell/Core/Ghostty/GhosttyConfig.swift",
+      "anchor": "private func writeConfigFile(",
+      "call": "configLines.append(FlightdeckHooks.fontThickenLine(stock: \"font-thicken = true\"))"
+    },
+    {
+      "id": "ghostty.thicken.theme",
+      "file": "rootshell/Core/Ghostty/GhosttyConfig.swift",
+      "anchor": "private static func writeConfigFileForTheme(",
+      "call": "configLines.append(FlightdeckHooks.fontThickenLine(stock: \"font-thicken = true\"))"
+    },
+    {
+      "id": "terminal.scale.setup",
+      "file": "rootshell/UI/Terminal/TerminalView.swift",
+      "anchor": "private func setupView() {",
+      "call": "self.contentScaleFactor = FlightdeckHooks.terminalContentScale(traitCollection.displayScale)"
+    },
+    {
+      "id": "terminal.scale.trait",
+      "file": "rootshell/UI/Terminal/TerminalView.swift",
+      "anchor": "private func setupView() {",
+      "call": "view.contentScaleFactor = FlightdeckHooks.terminalContentScale(view.traitCollection.displayScale)"
+    },
+    {
+      "id": "settings.font",
+      "file": "rootshell/UI/Settings/Appearance/FontSettingsView.swift",
+      "anchor": "struct FontSettingsView: View {",
+      "call": "FlightdeckHooks.fontSettingsRows()"
+    },
+    {
       "id": "discovery.command",
       "file": "rootshell/Features/SSH/Discovery/SessionDiscoveryRunner.swift",
       "anchor": "static func command(",

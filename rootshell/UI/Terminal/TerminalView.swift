@@ -1862,9 +1862,9 @@ extension Ghostty {
             
             // FIX: Set content scale to match screen for Retina rendering
             // By default UIView has contentScaleFactor = 1.0, but we need 2.0+ for Retina
-            self.contentScaleFactor = traitCollection.displayScale
+            self.contentScaleFactor = FlightdeckHooks.terminalContentScale(traitCollection.displayScale)  // FLIGHTDECK-HOOK: terminal.scale.setup
             registerForTraitChanges([UITraitDisplayScale.self]) { (view: TerminalView, _) in
-                view.contentScaleFactor = view.traitCollection.displayScale
+                view.contentScaleFactor = FlightdeckHooks.terminalContentScale(view.traitCollection.displayScale)  // FLIGHTDECK-HOOK: terminal.scale.trait
                 view.setNeedsLayout()
             }
             

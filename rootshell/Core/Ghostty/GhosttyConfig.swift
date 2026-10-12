@@ -363,7 +363,7 @@ extension Ghostty {
             // Per-font cell box adjustments (adjust-cell-width / -height)
             configLines.append(contentsOf: fontManager.cellAdjustmentConfigLines())
 
-            configLines.append("font-thicken = true")
+            configLines.append(FlightdeckHooks.fontThickenLine(stock: "font-thicken = true"))  // FLIGHTDECK-HOOK: ghostty.thicken.app
             configLines.append(contentsOf: SelectionManager.shared.generateSelectionConfigLines())
             configLines.append(contentsOf: CursorManager.shared.generateCursorConfigLines())
             configLines.append(contentsOf: PaletteManager.shared.generatePaletteConfigLines())
@@ -536,7 +536,7 @@ extension Ghostty {
             // Per-font cell box adjustments (adjust-cell-width / -height)
             configLines.append(contentsOf: fontManager.cellAdjustmentConfigLines())
 
-            configLines.append("font-thicken = true")
+            configLines.append(FlightdeckHooks.fontThickenLine(stock: "font-thicken = true"))  // FLIGHTDECK-HOOK: ghostty.thicken.theme
             configLines.append(contentsOf: SelectionManager.shared.generateSelectionConfigLines())
             configLines.append(contentsOf: CursorManager.shared.generateCursorConfigLines())
             configLines.append(contentsOf: PaletteManager.shared.generatePaletteConfigLines())

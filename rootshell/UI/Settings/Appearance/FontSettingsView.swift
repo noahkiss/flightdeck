@@ -217,6 +217,7 @@ struct FontSettingsView: View {
                 SettingToggle(Settings.Font.ligatures, isOn: $fontManager.ligaturesEnabled, title: "Enable Ligatures")
                     .padding(.vertical, 4)
                     .themedRow()
+                FlightdeckHooks.fontSettingsRows()  // FLIGHTDECK-HOOK: settings.font
 
                 NavigationLink {
                     FontFeatureSettingsView()
