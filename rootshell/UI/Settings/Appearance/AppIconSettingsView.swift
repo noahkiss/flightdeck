@@ -12,6 +12,9 @@ struct AppIconSettingsView: View {
     }
 
     var body: some View {
+        #if FLIGHTDECK // FlightDeck's picker: rootshell/Flightdeck/Icons/
+        FlightdeckAppIconSettingsView()
+        #else
         List {
             Section {
                 ForEach(AppIconManager.AppIconVariant.standardVariants) { variant in
@@ -74,6 +77,7 @@ struct AppIconSettingsView: View {
         .navigationTitle(String(localized: "App Icon", comment: "Settings navigation title: app icon picker"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { SettingsScreenPinMenu(groups: [.theme]) }
+        #endif
     }
 }
 

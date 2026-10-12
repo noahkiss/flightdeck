@@ -73,6 +73,7 @@ final class AppIconManager: ObservableObject {
     private static let storageKey = "selectedAppIconVariant"
     private static let appGroupIdentifier = AppIdentifiers.defaultAppGroupID
 
+    #if !FLIGHTDECK // FlightDeck's list: rootshell/Flightdeck/Icons/AppIconVariant+Flightdeck.swift
     /// Selectable app-icon variants. Raw values match the alternate-icon names
     /// declared in the Xcode build setting `ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES`.
     /// The empty string represents the primary icon (passed as `nil` to
@@ -218,6 +219,7 @@ final class AppIconManager: ObservableObject {
             self = variant
         }
     }
+    #endif
 
     /// True when the running platform supports alternate icons. Hides the
     /// settings UI on visionOS. Mac Catalyst reports
