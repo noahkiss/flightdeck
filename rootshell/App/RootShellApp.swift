@@ -66,6 +66,7 @@ struct RootShellApp: App {
         // that write values back — if defaults are empty (encrypted), they overwrite
         // the real settings with zeros/nils.
         guard ProtectedDataGuard.isAvailable else { return }
+        FlightdeckHooks.launch()  // FLIGHTDECK-HOOK: app.launch
 
         // Initialize FontManager early to register the selected font
         // before Ghostty surfaces try to use it (full catalog loads on a worker)
