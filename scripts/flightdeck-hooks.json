@@ -49,6 +49,18 @@
       "call": "view.contentScaleFactor = FlightdeckHooks.terminalContentScale(view.traitCollection.displayScale)"
     },
     {
+      "id": "scroll.decay",
+      "file": "rootshell/UI/Terminal/TerminalView+Scroll.swift",
+      "anchor": "// Shared momentum physics implementation for both Mac Catalyst and iOS/visionOS",
+      "call": "private static let decelerationPerSecond: CGFloat = FlightdeckHooks.scrollMomentumDecay(stock: 0.01)"
+    },
+    {
+      "id": "scroll.gain",
+      "file": "rootshell/UI/Terminal/TerminalView+Scroll.swift",
+      "anchor": "@objc private func handleCatalystScrollGesture(",
+      "call": "sendNativeScrollEvent(deltaX: translation.x * FlightdeckHooks.catalystScrollGain(self), deltaY: translation.y * FlightdeckHooks.catalystScrollGain(self))"
+    },
+    {
       "id": "settings.font",
       "file": "rootshell/UI/Settings/Appearance/FontSettingsView.swift",
       "anchor": "struct FontSettingsView: View {",

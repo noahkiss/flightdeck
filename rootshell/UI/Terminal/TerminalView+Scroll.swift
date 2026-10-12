@@ -45,7 +45,7 @@ extension Ghostty.TerminalView {
 
     // Deceleration rate per second (velocity multiplier)
     // 0.01 means velocity decays to 1% after 1 second - fast decay for snappy feel
-    private static let decelerationPerSecond: CGFloat = 0.01
+    private static let decelerationPerSecond: CGFloat = FlightdeckHooks.scrollMomentumDecay(stock: 0.01)  // FLIGHTDECK-HOOK: scroll.decay
     private static let minimumVelocity: CGFloat = 100.0  // Points per second threshold (higher = stops sooner)
 
     // MARK: - Momentum State Properties
@@ -773,11 +773,11 @@ extension Ghostty.TerminalView {
         _ = trackScrollVelocity(translation: translation, gesture: gesture)
 
         // Send scroll event with 2x multiplier
-        sendNativeScrollEvent(deltaX: translation.x * 2, deltaY: translation.y * 2)
+        sendNativeScrollEvent(deltaX: translation.x * FlightdeckHooks.catalystScrollGain(self), deltaY: translation.y * FlightdeckHooks.catalystScrollGain(self))  // FLIGHTDECK-HOOK: scroll.gain
 
         // Schedule momentum start after scroll events stop
         // 50ms timeout - long enough to batch scroll events, short enough to feel responsive
-        scrollEndTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: false) { [weak self] _ in
+        scrollEndTimer =Timer.scheduledTimer(withTimeInterval: 0.05, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.startMomentumFromTrackedVelocity() }
         }
     }
