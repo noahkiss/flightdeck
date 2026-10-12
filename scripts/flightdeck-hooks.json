@@ -7,6 +7,18 @@
       "call": "FlightdeckHooks.launch()"
     },
     {
+      "id": "app.scene.main",
+      "file": "rootshell/App/RootShellApp.swift",
+      "anchor": "WindowGroup(id: \"main-terminal\") {",
+      "call": ".modifier(FlightdeckHooks.SceneRoot())"
+    },
+    {
+      "id": "app.scene.visor",
+      "file": "rootshell/App/RootShellApp.swift",
+      "anchor": "WindowGroup(id: \"visor\") {",
+      "call": ".modifier(FlightdeckHooks.SceneRoot())"
+    },
+    {
       "id": "discovery.command",
       "file": "rootshell/Features/SSH/Discovery/SessionDiscoveryRunner.swift",
       "anchor": "static func command(",

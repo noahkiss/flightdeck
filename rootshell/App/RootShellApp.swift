@@ -93,6 +93,7 @@ struct RootShellApp: App {
         WindowGroup(id: "main-terminal") {
             DuoSceneHost { MainView() }
                 .overlay { MCPApprovalOverlay() }
+                .modifier(FlightdeckHooks.SceneRoot())  // FLIGHTDECK-HOOK: app.scene.main
                 .environmentObject(ghosttyApp)
                 .preferredColorScheme(appearanceManager.colorScheme)
                 .statusBarStyleForTerminalTheme()
@@ -348,6 +349,7 @@ struct RootShellApp: App {
         // visor intentionally starts hidden until explicitly summoned.
         WindowGroup(id: "visor") {
             VisorContentView()
+                .modifier(FlightdeckHooks.SceneRoot())  // FLIGHTDECK-HOOK: app.scene.visor
                 .environmentObject(ghosttyApp)
                 .onContinueUserActivity("com.rootshell.visor") { _ in }
         }
