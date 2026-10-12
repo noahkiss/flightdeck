@@ -1,0 +1,21 @@
+<?xml version='1.0' encoding='utf-8'?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+  <channel>
+    <title>FlightDeck</title>
+    <link>https://github.com/noahkiss/flightdeck</link>
+    <description>FlightDeck updates</description>
+    <language>en</language>
+    <item>
+      <title>FlightDeck 1.0.14-fd.0-rc.6</title>
+      <link>https://github.com/noahkiss/flightdeck/releases/tag/v1.0.14-fd.0-rc.6</link>
+      <guid isPermaLink="false">v1.0.14-fd.0-rc.6</guid>
+      <sparkle:version>8</sparkle:version>
+      <sparkle:shortVersionString>1.0.14-fd.0-rc.6</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <sparkle:fullReleaseNotesLink>https://github.com/noahkiss/flightdeck/releases/tag/v1.0.14-fd.0-rc.6</sparkle:fullReleaseNotesLink>
+      <description>&lt;p&gt;FlightDeck 1.0.14-fd.0-rc.6. &lt;a href="https://github.com/noahkiss/flightdeck/releases/tag/v1.0.14-fd.0-rc.6"&gt;Release notes&lt;/a&gt;&lt;/p&gt;</description>
+      <pubDate>Mon, 12 Oct 2026 21:04:25 GMT</pubDate>
+      <enclosure url="https://github.com/noahkiss/flightdeck/releases/download/v1.0.14-fd.0-rc.6/flightdeck-v1.0.14-fd.0-rc.6-macos.zip" length="75681876" type="application/octet-stream" sparkle:edSignature="gG2MccdUPPXxQSIHipGU92mgtXS5sSXr62uD9NelUDfKOwNIoonhEnZuKSmiUTbNln7/vJR0Pqk+lJCuF27eAg==" />
+    </item>
+  </channel>
+</rss>
