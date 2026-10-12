@@ -43,6 +43,12 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.sha }}
 
+      - name: Check flightdeck hooks
+        # Before any build, so a lost hook fails fast and names itself.
+        run: |
+          python3 -m unittest scripts/tests/test_flightdeck_hooks.py
+          python3 scripts/flightdeck-hooks.py --check
+
       - name: Select Xcode
         run: |
           if [ ! -d "$XCODE_APP" ]; then
