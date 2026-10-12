@@ -304,7 +304,7 @@ struct PushPairingView: View {
 
 /// A shell command with "Type into Current Terminal" and "Copy" actions.
 struct PushCommandSection: View {
-    static let installCommand = "curl -fsSL https://push.rootshell.com/install.sh | sh"
+    static let installCommand = FlightdeckHooks.pushInstallCommand(stock: "curl -fsSL https://push.rootshell.com/install.sh | sh")  // FLIGHTDECK-HOOK: push.install
     /// Installs or upgrades the client and refreshes hooks without re-pairing.
     static let upgradeCommand = "\(installCommand) -s -- --hooks auto"
 

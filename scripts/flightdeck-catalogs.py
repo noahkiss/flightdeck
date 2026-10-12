@@ -8,8 +8,9 @@ adds are renamed on the next build.
 
 Only values change, never keys, so the Swift code still finds every string.
 A key that names rootshell and has no English value gets one, because English
-otherwise shows the key itself. Command, file and host names that contain
-rootshell (.rootshellrc, rootshell-notify, push.rootshell.com, ...) are kept,
+otherwise shows the key itself. Upstream's push relay host becomes "FlightDeck
+Push", since FlightDeck never uses it. Other command, file and host names that
+contain rootshell (.rootshellrc, rootshell-notify, ...) are kept,
 and so are strings about upstream's own projects (its herdr fork, the "Based
 on rootshell" credit).
 
@@ -44,6 +45,11 @@ PROTECTED = [
     "rootshellbackup",
     "rootshellvpn",
 ]
+# Upstream's relay host, named in the push registration status. FlightDeck
+# registers with its own relay, so the host is replaced, not kept.
+HOSTS = {"push.rootshell.com": "FlightDeck Push"}
+HOSTS_RE = re.compile("|".join(re.escape(h) for h in HOSTS), re.IGNORECASE)
+
 # Entries left as they are, in every language: they name upstream's projects.
 SKIP_KEY = re.compile(r"herdr fork|Based on rootshell", re.IGNORECASE)
 
@@ -61,6 +67,7 @@ def rebrand(text: str) -> str:
         kept.append(m.group(0))
         return f"\x00{len(kept) - 1}\x00"
 
+    text = HOSTS_RE.sub(lambda m: HOSTS[m.group(0).lower()], text)
     text = BRAND.sub(NAME, PROTECTED_RE.sub(mask, text))
     return re.sub(r"\x00(\d+)\x00", lambda m: kept[int(m.group(1))], text)
 

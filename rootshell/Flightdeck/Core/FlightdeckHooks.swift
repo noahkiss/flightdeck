@@ -50,4 +50,13 @@ enum FlightdeckHooks {
         guard let extras = session.flightdeck else { return nil }
         return ZellijForkDiscovery.subtitle(for: extras.agents)
     }
+
+    // MARK: - push
+
+    /// `PushCommandSection.installCommand`: the command the pairing and
+    /// settings screens show and type, instead of upstream's installer.
+    /// `stock` is never shown: FlightDeck pushes through its own relay.
+    nonisolated static func pushInstallCommand(stock: String) -> String {
+        FlightdeckPush.installCommand
+    }
 }

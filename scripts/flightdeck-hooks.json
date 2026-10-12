@@ -29,6 +29,12 @@
       "file": "rootshell/Features/SSH/Session/MultiplexerSession.swift",
       "anchor": "static func from(zellij session: ZellijSessionInfo)",
       "call": "subtitle: FlightdeckHooks.zellijSubtitle(session),"
+    },
+    {
+      "id": "push.install",
+      "file": "rootshell/Features/Push/Settings/PushNotificationSettingsView.swift",
+      "anchor": "struct PushCommandSection: View {",
+      "call": "static let installCommand = FlightdeckHooks.pushInstallCommand(stock: \"curl -fsSL https://push.rootshell.com/install.sh | sh\")"
     }
   ],
   "testSources": [

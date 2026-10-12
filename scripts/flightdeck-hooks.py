@@ -215,7 +215,9 @@ def render_table(manifest: dict) -> str:
         "|---|---|---|---|",
     ]
     for hook in manifest.get("hooks", []):
-        rows.append(f"| `{hook['id']}` | `{hook['file']}` | `{hook['anchor']}` | `{hook['call']}` |")
+        # A pipe inside a code span still splits a table cell unless escaped.
+        cells = [hook[k].replace("|", "\\|") for k in ("id", "file", "anchor", "call")]
+        rows.append("| " + " | ".join(f"`{c}`" for c in cells) + " |")
     tests = manifest.get("testSources", [])
     if tests:
         rows.append("")
