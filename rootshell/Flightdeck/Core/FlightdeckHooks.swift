@@ -50,4 +50,17 @@ enum FlightdeckHooks {
         guard let extras = session.flightdeck else { return nil }
         return ZellijForkDiscovery.subtitle(for: extras.agents)
     }
+
+    // MARK: - Text config file
+
+    /// `ConfigOverlayManager`: the config file under FlightDeck's name, or
+    /// upstream's rootshell file while only that one exists.
+    nonisolated static func configURL(stock: URL) -> URL {
+        FlightdeckConfigPath.url(stock: stock)
+    }
+
+    /// `ConfigOverlayManager.shellDisplayPath`: the path Settings shows.
+    nonisolated static func configShellPath(stock: String, active: URL) -> String {
+        FlightdeckConfigPath.shellPath(stock: stock, active: active)
+    }
 }
