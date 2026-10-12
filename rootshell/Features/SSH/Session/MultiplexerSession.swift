@@ -74,7 +74,7 @@ extension MultiplexerSession {
             name: session.name,
             isAttached: session.isAttached,
             detail: session.createdAgo,
-            subtitle: nil,
+            subtitle: FlightdeckHooks.zellijSubtitle(session),  // FLIGHTDECK-HOOK: session.subtitle
             workingDirectory: nil,
             capturedContent: session.capturedContent,
             isExited: session.isExited

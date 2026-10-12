@@ -5,7 +5,46 @@
       "file": "rootshell/App/RootShellApp.swift",
       "anchor": "init() {",
       "call": "FlightdeckHooks.launch()"
+    },
+    {
+      "id": "discovery.command",
+      "file": "rootshell/Features/SSH/Discovery/SessionDiscoveryRunner.swift",
+      "anchor": "static func command(",
+      "call": "section = FlightdeckHooks.zellijSessionsSection(stock: section, skipCaptures: skipCaptures)"
+    },
+    {
+      "id": "discovery.parse",
+      "file": "rootshell/Features/SSH/Discovery/SessionDiscoveryRunner.swift",
+      "anchor": "static func parse(",
+      "call": "zellijSessions = FlightdeckHooks.parseZellij(zellijOutput) ?? ZellijDiscoveryParser.parse(output: zellijOutput)"
+    },
+    {
+      "id": "zellij.info.extras",
+      "file": "rootshell/Features/SSH/Discovery/ZellijSessionDiscovery.swift",
+      "anchor": "struct ZellijSessionInfo",
+      "call": "var flightdeck: FlightdeckZellijExtras? = nil"
+    },
+    {
+      "id": "session.subtitle",
+      "file": "rootshell/Features/SSH/Session/MultiplexerSession.swift",
+      "anchor": "static func from(zellij session: ZellijSessionInfo)",
+      "call": "subtitle: FlightdeckHooks.zellijSubtitle(session),"
     }
   ],
-  "testSources": []
+  "testSources": [
+    "rootshell/Flightdeck/Zellij/ZellijForkModels.swift",
+    "rootshell/Flightdeck/Zellij/ZellijForkDiscovery.swift"
+  ],
+  "upstreamText": [
+    {
+      "file": "rootshell/Features/SSH/Discovery/ZellijSessionDiscovery.swift",
+      "text": "$(zellij list-sessions --no-formatting 2>/dev/null | grep -v EXITED | cut -d \\\" \\\" -f1)",
+      "usedBy": "ZellijForkDiscovery.stockCaptureNames"
+    },
+    {
+      "file": "rootshell/Features/SSH/Discovery/SessionDiscoveryRunner.swift",
+      "text": " _zv=$(zellij --version",
+      "usedBy": "ZellijForkDiscovery.stockCaptureStart"
+    }
+  ]
 }
