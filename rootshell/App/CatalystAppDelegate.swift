@@ -425,12 +425,12 @@ extension UIApplication {
 
         let linkAttributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: 11),
-            .link: URL(string: "https://www.rootshell.com")!,
+            .link: URL(string: "https://github.com/kitknox/rootshell")!,
             .paragraphStyle: paragraphStyle
         ]
 
-        credits.append(NSAttributedString(string: "By Kit Knox\n", attributes: normalAttributes))
-        credits.append(NSAttributedString(string: "www.rootshell.com\n\n", attributes: linkAttributes))
+        credits.append(NSAttributedString(string: "Based on rootshell by Kit Knox\n", attributes: normalAttributes))
+        credits.append(NSAttributedString(string: "github.com/kitknox/rootshell\n\n", attributes: linkAttributes))
         credits.append(NSAttributedString(string: "Terminal emulator based on libghostty\nby Mitchell Hashimoto", attributes: normalAttributes))
 
         // Use dynamic Objective-C runtime to access NSApplication (not directly available in Catalyst)
@@ -440,7 +440,7 @@ extension UIApplication {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
         var options: [String: Any] = [
             "Credits": credits,
-            "ApplicationName": "Rootshell",
+            "ApplicationName": FlightdeckBrand.name,
             "ApplicationVersion": "\(version) (\(BuildInfo.date))"
         ]
         if let applicationIcon = AppIconManager.shared.makeMacCatalystAboutPanelIcon() {
@@ -494,7 +494,7 @@ extension UIApplication {
             : "You have \(tabCount) open terminals. Are you sure you want to quit?"
 
         let alert = UIAlertController(
-            title: "Quit Rootshell?",
+            title: "Quit \(FlightdeckBrand.name)?",
             message: message,
             preferredStyle: .alert
         )
@@ -1024,7 +1024,7 @@ class CatalystAppDelegate: AppDelegate {
         // Replace About menu item with custom About dialog
         builder.replaceChildren(ofMenu: .about) { _ in
             let aboutCommand = UICommand(
-                title: "About Rootshell",
+                title: "About \(FlightdeckBrand.name)",
                 action: aboutSelector
             )
             return [aboutCommand]
@@ -1070,7 +1070,7 @@ class CatalystAppDelegate: AppDelegate {
         #if CMD_Q_INTERCEPT
         builder.replaceChildren(ofMenu: .quit) { _ in
             let quitCommand = UIKeyCommand(
-                title: String(localized: "Quit Rootshell"),
+                title: "Quit \(FlightdeckBrand.name)",
                 action: quitSelector,
                 input: "q",
                 modifierFlags: [.command]
@@ -1747,12 +1747,12 @@ class CatalystAppDelegate: AppDelegate {
 
         let linkAttributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: 11),
-            .link: URL(string: "https://www.rootshell.com")!,
+            .link: URL(string: "https://github.com/kitknox/rootshell")!,
             .paragraphStyle: paragraphStyle
         ]
 
-        credits.append(NSAttributedString(string: "By Kit Knox\n", attributes: normalAttributes))
-        credits.append(NSAttributedString(string: "www.rootshell.com\n\n", attributes: linkAttributes))
+        credits.append(NSAttributedString(string: "Based on rootshell by Kit Knox\n", attributes: normalAttributes))
+        credits.append(NSAttributedString(string: "github.com/kitknox/rootshell\n\n", attributes: linkAttributes))
         credits.append(NSAttributedString(string: "Terminal emulator based on libghostty\nby Mitchell Hashimoto", attributes: normalAttributes))
 
         // Use dynamic Objective-C runtime to access NSApplication (not directly available in Catalyst)
@@ -1762,7 +1762,7 @@ class CatalystAppDelegate: AppDelegate {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
         var options: [String: Any] = [
             "Credits": credits,
-            "ApplicationName": "Rootshell",
+            "ApplicationName": FlightdeckBrand.name,
             "ApplicationVersion": "\(version) (\(BuildInfo.date))"
         ]
         if let applicationIcon = AppIconManager.shared.makeMacCatalystAboutPanelIcon() {
@@ -1819,7 +1819,7 @@ class CatalystAppDelegate: AppDelegate {
             : "You have \(tabCount) open terminals. Are you sure you want to quit?"
 
         let alert = UIAlertController(
-            title: "Quit Rootshell?",
+            title: "Quit \(FlightdeckBrand.name)?",
             message: message,
             preferredStyle: .alert
         )
