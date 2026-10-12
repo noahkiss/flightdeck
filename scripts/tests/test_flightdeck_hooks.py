@@ -149,6 +149,22 @@ class HookCheckTests(unittest.TestCase):
         fh.write_ledger(self.root, self.manifest)
         self.assertError("which scripts/flightdeck-hooks.json does not list")
 
+    def test_upstream_text_present(self):
+        self.manifest["upstreamText"] = [{
+            "file": "rootshell/App/App.swift", "text": "guard ready else", "usedBy": "Parser.swift",
+        }]
+        self.save_manifest()
+        fh.write_ledger(self.root, self.manifest)
+        self.assertEqual(self.errors(), [])
+
+    def test_upstream_text_missing(self):
+        self.manifest["upstreamText"] = [{
+            "file": "rootshell/App/App.swift", "text": "guard gone else", "usedBy": "Parser.swift",
+        }]
+        self.save_manifest()
+        fh.write_ledger(self.root, self.manifest)
+        self.assertError("upstream text 'guard gone else' is missing from rootshell/App/App.swift")
+
     def test_stale_ledger(self):
         self.write("FLIGHTDECK.md", f"# ledger\n\n{fh.TABLE_BEGIN}\n| old |\n{fh.TABLE_END}\n")
         self.assertError("hooks table is stale")
