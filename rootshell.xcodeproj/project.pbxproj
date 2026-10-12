@@ -128,6 +128,8 @@
 		47AEC0020000000000000002 /* rootshell/Core/Shell/LoginShellCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47AEC0020000000000000010 /* rootshell/Core/Shell/LoginShellCommand.swift */; };
 		47AEC0020000000000000003 /* rootshell/Core/Shell/LoginShellCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47AEC0020000000000000010 /* rootshell/Core/Shell/LoginShellCommand.swift */; };
 		47AF04300000000000000A01 /* rootshell/Features/Multiplexer/MuxSessionTarget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47AF04300000000000000B01 /* rootshell/Features/Multiplexer/MuxSessionTarget.swift */; };
+		47FDK00000000000000000A2 /* rootshell/Flightdeck/Zellij/ZellijForkDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47FDK00000000000000000B2 /* rootshell/Flightdeck/Zellij/ZellijForkDiscovery.swift */; };
+		47FDK00000000000000000A1 /* rootshell/Flightdeck/Zellij/ZellijForkModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47FDK00000000000000000B1 /* rootshell/Flightdeck/Zellij/ZellijForkModels.swift */; };
 		47AF04310000000000000A01 /* rootshell/Features/Tmux/TmuxWindowCloseState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47AF04310000000000000B01 /* rootshell/Features/Tmux/TmuxWindowCloseState.swift */; };
 		47AF04710000000000000001 /* rootshell/Core/Keybinds/ModTapState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47AF04710000000000000002 /* rootshell/Core/Keybinds/ModTapState.swift */; };
 		47AF04710000000000000003 /* rootshell/Core/Keybinds/KeyTrigger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47AF04710000000000000004 /* rootshell/Core/Keybinds/KeyTrigger.swift */; platformFilter = ios; };
@@ -627,6 +629,8 @@
 		47AEC0010000000000000015 /* rootshell-helper/Sources/LocaleHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "rootshell-helper/Sources/LocaleHelper.swift"; sourceTree = SOURCE_ROOT; };
 		47AEC0020000000000000010 /* rootshell/Core/Shell/LoginShellCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = rootshell/Core/Shell/LoginShellCommand.swift; sourceTree = SOURCE_ROOT; };
 		47AF04300000000000000B01 /* rootshell/Features/Multiplexer/MuxSessionTarget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = rootshell/Features/Multiplexer/MuxSessionTarget.swift; sourceTree = SOURCE_ROOT; };
+		47FDK00000000000000000B2 /* rootshell/Flightdeck/Zellij/ZellijForkDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = rootshell/Flightdeck/Zellij/ZellijForkDiscovery.swift; sourceTree = SOURCE_ROOT; };
+		47FDK00000000000000000B1 /* rootshell/Flightdeck/Zellij/ZellijForkModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = rootshell/Flightdeck/Zellij/ZellijForkModels.swift; sourceTree = SOURCE_ROOT; };
 		47AF04310000000000000B01 /* rootshell/Features/Tmux/TmuxWindowCloseState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = rootshell/Features/Tmux/TmuxWindowCloseState.swift; sourceTree = SOURCE_ROOT; };
 		47AF04710000000000000002 /* rootshell/Core/Keybinds/ModTapState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = rootshell/Core/Keybinds/ModTapState.swift; sourceTree = SOURCE_ROOT; };
 		47AF04710000000000000004 /* rootshell/Core/Keybinds/KeyTrigger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = rootshell/Core/Keybinds/KeyTrigger.swift; sourceTree = SOURCE_ROOT; };
@@ -1272,6 +1276,8 @@
 				47ABC10E2FF50000AABB000E /* rootshell-helper/Sources/ProcessSpawner.m */,
 				47AEC0020000000000000010 /* rootshell/Core/Shell/LoginShellCommand.swift */,
 				47AF04300000000000000B01 /* rootshell/Features/Multiplexer/MuxSessionTarget.swift */,
+				47FDK00000000000000000B2 /* rootshell/Flightdeck/Zellij/ZellijForkDiscovery.swift */,
+				47FDK00000000000000000B1 /* rootshell/Flightdeck/Zellij/ZellijForkModels.swift */,
 				47AEC0010000000000000010 /* rootshell/Core/Persistence/LocalMultiplexerAttachment.swift */,
 				47AF04710000000000000004 /* rootshell/Core/Keybinds/KeyTrigger.swift */,
 				47AF04710000000000000006 /* rootshell/Core/Keybinds/HardwareKeyboardText.swift */,
@@ -2335,6 +2341,8 @@
 				47AF04850000000000000A01 /* rootshell/Core/Terminal/TerminalScrollbarAvailabilityPolicy.swift in Sources */,
 				47AEC0020000000000000003 /* rootshell/Core/Shell/LoginShellCommand.swift in Sources */,
 				47AF04300000000000000A01 /* rootshell/Features/Multiplexer/MuxSessionTarget.swift in Sources */,
+				47FDK00000000000000000A2 /* rootshell/Flightdeck/Zellij/ZellijForkDiscovery.swift in Sources */,
+				47FDK00000000000000000A1 /* rootshell/Flightdeck/Zellij/ZellijForkModels.swift in Sources */,
 				47AF0F1D0000000000000B01 /* rootshell/Core/Shell/InitialDirectoryCommand.swift in Sources */,
 				47F11E0000000000000000B1 /* rootshell/Features/FileManager/Transfers/FileTransferLogic.swift in Sources */,
 				47F11E0000000000000000B2 /* rootshell/Features/FileManager/Model/FileListSelection.swift in Sources */,
