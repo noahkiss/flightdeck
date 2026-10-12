@@ -25,6 +25,10 @@ below it still apply to the code.
   `rg FLIGHTDECK` must list every gate.
 - Entitlements changes go into `scripts/flightdeck-entitlements.py`, which derives the tracked
   `*-flightdeck.entitlements` files. Do not edit those files by hand; CI runs `--check`.
+- Info.plist text that names rootshell (permission prompts, bundle and extension names) goes
+  through `scripts/flightdeck-infoplist.py`. It derives the tracked `InfoPlist.xcstrings` files
+  beside each `Info.plist`, in every language in `knownRegions`. Do not edit those files by hand;
+  rerun the script after an upstream change. CI runs `--check`.
 
 ## Branch, sync, release
 
