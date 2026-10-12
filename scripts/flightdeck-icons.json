@@ -1,0 +1,112 @@
+{
+  "default": "FD1bTeal",
+  "sections": [
+    "Classic",
+    "Colorways",
+    "Illustrated"
+  ],
+  "icons": [
+    {
+      "name": "FD1bTeal",
+      "label": "Teal",
+      "section": "Classic",
+      "source": "1b-r1-teal"
+    },
+    {
+      "name": "FD1bMono",
+      "label": "Mono",
+      "section": "Classic",
+      "source": "1b-r1-mono"
+    },
+    {
+      "name": "FD1bOcean",
+      "label": "Ocean",
+      "section": "Classic",
+      "source": "1b-r1-ocean"
+    },
+    {
+      "name": "FD1bIce",
+      "label": "Ice",
+      "section": "Classic",
+      "source": "1b-r1-ice"
+    },
+    {
+      "name": "FD1bDracula",
+      "label": "Dracula",
+      "section": "Classic",
+      "source": "1b-r1-dracula"
+    },
+    {
+      "name": "FD2aLight",
+      "label": "Light (round)",
+      "section": "Classic",
+      "source": "2a-light"
+    },
+    {
+      "name": "FDCw1bSixChevron",
+      "label": "Six Colors Chevron",
+      "section": "Colorways",
+      "source": "r3-1b-six-chevron"
+    },
+    {
+      "name": "FDCw1bSixGround",
+      "label": "Six Colors Ground",
+      "section": "Colorways",
+      "source": "r3-1b-six-ground"
+    },
+    {
+      "name": "FDCw2aSixRing",
+      "label": "Six Colors Ring",
+      "section": "Colorways",
+      "source": "r3-2a-six-ring"
+    },
+    {
+      "name": "FDCw2aApollo",
+      "label": "Apollo (round)",
+      "section": "Colorways",
+      "source": "r3-2a-apollo"
+    },
+    {
+      "name": "FDCw2aDark",
+      "label": "Dark (round)",
+      "section": "Colorways",
+      "source": "r3-2a-dark"
+    },
+    {
+      "name": "FDCw2aWhite",
+      "label": "White (round)",
+      "section": "Colorways",
+      "source": "r3-2a-white"
+    },
+    {
+      "name": "FDCw1bSynthwave",
+      "label": "Synthwave",
+      "section": "Colorways",
+      "source": "r3-1b-synthwave"
+    },
+    {
+      "name": "FDCw1bOneDark",
+      "label": "One Dark",
+      "section": "Colorways",
+      "source": "r3-1b-one-dark"
+    },
+    {
+      "name": "FDArtStorybookPeek",
+      "label": "Peek",
+      "section": "Illustrated",
+      "source": "storybook-peek-b"
+    },
+    {
+      "name": "FDArtHorizon",
+      "label": "Horizon",
+      "section": "Illustrated",
+      "source": "storybook-horizon-a"
+    },
+    {
+      "name": "FDArtTerminal",
+      "label": "Terminal",
+      "section": "Illustrated",
+      "source": "storybook-terminal-a"
+    }
+  ]
+}
