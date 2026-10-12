@@ -100,9 +100,9 @@
 	<key>SUAutomaticallyUpdate</key>
 	<false/>
 	<key>SUFeedURL</key>
-	<string>https://beta.rootshell.com/downloads/appcast.xml</string>
+	<string>$(FLIGHTDECK_SPARKLE_FEED_URL)</string>
 	<key>SUPublicEDKey</key>
-	<string>5y4NHLHb4vlOmDFBRJzu3wT5EeAgcH+odS1HVIaRf2g=</string>
+	<string>$(FLIGHTDECK_SPARKLE_PUBLIC_KEY)</string>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
 	<key>SUShowReleaseNotes</key>
