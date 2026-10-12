@@ -36,7 +36,7 @@ final class ConfigOverlayManager {
     private(set) var lastLoaded: Date?
     /// Setting name -> where the file defines it.
     private(set) var boundEntries: [String: BoundEntry] = [:]
-    private(set) var activeURL: URL = ConfigOverlayLocation.canonicalURL
+    private(set) var activeURL: URL = FlightdeckHooks.configURL(stock: ConfigOverlayLocation.canonicalURL)  // FLIGHTDECK-HOOK: config.url.initial
     private(set) var isExternal = false
 
     @ObservationIgnored private let store: SettingsStore
@@ -64,7 +64,7 @@ final class ConfigOverlayManager {
     }
 
     var shellDisplayPath: String {
-        isExternal ? ConfigOverlayLocation.shellDisplayPath(for: activeURL) : ConfigOverlayLocation.canonicalShellPath
+        isExternal ? ConfigOverlayLocation.shellDisplayPath(for: activeURL) : FlightdeckHooks.configShellPath(stock: ConfigOverlayLocation.canonicalShellPath, active: activeURL)  // FLIGHTDECK-HOOK: config.path.display
     }
 
     var fileExists: Bool { FileManager.default.fileExists(atPath: activeURL.path) }
@@ -118,7 +118,7 @@ final class ConfigOverlayManager {
             }
             if external.url.startAccessingSecurityScopedResource() { securityScopeActive = true }
         } else {
-            activeURL = ConfigOverlayLocation.canonicalURL
+            activeURL = FlightdeckHooks.configURL(stock: ConfigOverlayLocation.canonicalURL)  // FLIGHTDECK-HOOK: config.url.resolve
             isExternal = false
         }
     }
