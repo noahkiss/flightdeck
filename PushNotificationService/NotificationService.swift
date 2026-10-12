@@ -61,7 +61,7 @@ nonisolated final class NotificationService: UNNotificationServiceExtension {
     }
 
     private func fallback(_ content: UNMutableNotificationContent) -> UNNotificationContent {
-        content.title = "rootshell"
+        content.title = FlightdeckBrand.name
         content.body = String(localized: "Encrypted notification. Open rootshell to view.")
         content.categoryIdentifier = PushConfiguration.categoryIdentifier
         var info = content.userInfo
