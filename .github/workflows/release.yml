@@ -170,9 +170,26 @@ jobs:
         # name is derived per target: apps and app extensions get match's
         # "match AppStore <bundle id>"; Swift packages and plain bundles get
         # none, since they cannot take one.
+        # The push relay URL comes from a secret and goes into its own
+        # xcconfig, which is never printed. An -xcconfig file overrides the
+        # push extension's target-level ROOTSHELL_PUSH_SERVER.
+        env:
+          FLIGHTDECK_PUSH_SERVER: ${{ secrets.FLIGHTDECK_PUSH_SERVER }}
         run: |
           set -o pipefail
+          case "$FLIGHTDECK_PUSH_SERVER" in
+            https://*) ;;
+            *) echo "::error::set the FLIGHTDECK_PUSH_SERVER secret (https URL) in the release environment"; exit 1 ;;
+          esac
+          case "$FLIGHTDECK_PUSH_SERVER" in
+            *push.rootshell.com*) echo "::error::FLIGHTDECK_PUSH_SERVER must not be upstream's relay"; exit 1 ;;
+          esac
+          # "//" starts an xcconfig comment; $() breaks it up.
+          push_xc=$(printf '%s' "$FLIGHTDECK_PUSH_SERVER" | sed 's|//|/$()/|')
+          echo "::add-mask::$push_xc"
+          printf 'ROOTSHELL_PUSH_SERVER = %s\n' "$push_xc" > "$RUNNER_TEMP/push.xcconfig"
           cat > "$RUNNER_TEMP/signing.xcconfig" <<EOF
+          #include "push.xcconfig"
           CODE_SIGN_STYLE = Manual
           DEVELOPMENT_TEAM = $TEAM_ID
           CODE_SIGN_IDENTITY = Apple Distribution
@@ -193,7 +210,11 @@ jobs:
 
       - name: Check the archive
         # Export compliance: every app and extension declares no non-exempt
-        # encryption, so App Store Connect does not hold the build.
+        # encryption, so App Store Connect does not hold the build. Push: the
+        # app and its extension name our relay, and the app carries
+        # aps-environment.
+        env:
+          FLIGHTDECK_PUSH_SERVER: ${{ secrets.FLIGHTDECK_PUSH_SERVER }}
         run: |
           app="$RUNNER_TEMP/flightdeck-ios.xcarchive/Products/Applications/rootshell.app"
           test -d "$app"
@@ -203,6 +224,13 @@ jobs:
             echo "$id ITSAppUsesNonExemptEncryption=$enc"
           done
           test "$(plutil -extract ITSAppUsesNonExemptEncryption raw -o - "$app/Info.plist")" = false
+          for plist in "$app/Info.plist" "$app/PlugIns/PushNotificationService.appex/Info.plist"; do
+            test "$(plutil -extract RootshellPushServer raw -o - "$plist")" = "$FLIGHTDECK_PUSH_SERVER" \
+              || { echo "::error::$plist does not name the FlightDeck push relay"; exit 1; }
+          done
+          echo "Push relay URL set in the app and the push extension."
+          codesign -d --entitlements :- "$app" 2>/dev/null | plutil -extract aps-environment raw -o - - \
+            | grep -qx production || { echo "::error::the app is not signed with aps-environment"; exit 1; }
           for bundle in "$app" "$app"/PlugIns/*.appex; do
             security cms -D -i "$bundle/embedded.mobileprovision" | plutil -extract Name raw -o - -
             codesign -dv "$bundle" 2>&1 | grep -E '^(Identifier|Authority)=' | head -2

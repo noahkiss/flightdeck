@@ -33,10 +33,11 @@ FLIGHTDECK_DISPLAY_NAME = FlightDeck
 #include "FlightdeckIcons.xcconfig"
 FLIGHTDECK_INCLUDE_ALL_APPICON_ASSETS = NO
 
-// Entitlements. Each "-flightdeck" file is upstream's file minus push
-// (aps-environment), upstream's associated domains and, in the iOS App Store
-// file, the request-gated multicast grant. scripts/flightdeck-entitlements.py
-// derives them; CI fails when they drift from upstream.
+// Entitlements. Each "-flightdeck" file is upstream's file minus upstream's
+// associated domains, minus the request-gated multicast grant in the iOS App
+// Store file, and minus push (aps-environment) in every file but the iOS App
+// Store one. scripts/flightdeck-entitlements.py derives them; CI fails when
+// they drift from upstream. The push relay URL comes from release.yml.
 // ROOTSHELL_APP_ENTITLEMENTS_SUFFIX is upstream's switch for the iOS App Store
 // file; FLIGHTDECK_ENTITLEMENTS_SUFFIX covers the Mac Catalyst and Standalone
 // files, which upstream does not switch.

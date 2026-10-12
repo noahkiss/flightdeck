@@ -2,8 +2,10 @@
 """Derive flightdeck's *-flightdeck.entitlements from upstream's files.
 
 Each derived file is the upstream file minus the capabilities flightdeck's
-team cannot sign: push (aps-environment), upstream's associated domains, and,
-in the iOS App Store file, Apple's request-gated multicast grant.
+team cannot sign or does not use: upstream's associated domains; in the iOS
+App Store file, Apple's request-gated multicast grant; and push
+(aps-environment) everywhere except the iOS App Store file, which pushes
+through flightdeck's own relay.
 
 Run with no arguments to rewrite the derived files. Run with --check to exit 1
 when a derived file no longer matches its upstream source (CI runs this, so an
@@ -16,12 +18,13 @@ from pathlib import Path
 
 ENTITLEMENTS = Path(__file__).resolve().parent.parent / "rootshell" / "Entitlements"
 
-DROP = ["aps-environment", "com.apple.developer.associated-domains"]
+DOMAINS = "com.apple.developer.associated-domains"
+PUSH = "aps-environment"
 SOURCES = {
-    "AppStore": DROP + ["com.apple.developer.networking.multicast"],
-    "AppStore-MacCatalyst": DROP,
-    "Standalone": DROP,
-    "Standalone-MacCatalyst": DROP,
+    "AppStore": [DOMAINS, "com.apple.developer.networking.multicast"],
+    "AppStore-MacCatalyst": [PUSH, DOMAINS],
+    "Standalone": [PUSH, DOMAINS],
+    "Standalone-MacCatalyst": [PUSH, DOMAINS],
 }
 
 
