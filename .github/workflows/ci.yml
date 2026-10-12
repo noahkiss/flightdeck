@@ -105,10 +105,13 @@ jobs:
         run: |
           python3 scripts/flightdeck-entitlements.py --check
           python3 scripts/flightdeck-infoplist.py --check
+          python3 scripts/flightdeck-icons.py --check
           xcodebuild $XCODEBUILD_FLAGS -scheme rootshell-AppStore \
             -configuration DebugAppStore -destination "id=$SIM_UDID" \
             -showBuildSettings > settings-ios.log
           grep -E ' (DEVELOPMENT_TEAM|PRODUCT_BUNDLE_IDENTIFIER|CODE_SIGN_ENTITLEMENTS|INFOPLIST_KEY_CFBundleDisplayName|SWIFT_ACTIVE_COMPILATION_CONDITIONS) = ' settings-ios.log | sort -u
+          grep -q ' ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = FD' settings-ios.log
+          grep -q ' ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO$' settings-ios.log
           grep -q ' SWIFT_ACTIVE_COMPILATION_CONDITIONS = .*FLIGHTDECK' settings-ios.log
           grep -q ' INFOPLIST_KEY_CFBundleDisplayName = FlightDeck$' settings-ios.log
           grep -q ' CODE_SIGN_ENTITLEMENTS = .*-flightdeck.entitlements$' settings-ios.log
