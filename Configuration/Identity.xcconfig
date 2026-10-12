@@ -50,6 +50,12 @@ ROOTSHELL_APP_ENTITLEMENTS_SUFFIX =
 // Home-screen name of the app targets. Flightdeck.xcconfig overrides it.
 FLIGHTDECK_DISPLAY_NAME = rootshell
 
+// Alternate app icons of the app targets, and whether actool compiles every
+// app icon in the target or only the primary and these alternates.
+// Flightdeck.xcconfig overrides both.
+FLIGHTDECK_ALTERNATE_APPICON_NAMES = AppIconBlack AppIconCRT AppIconNoBorder AppIconOrig AppIconRadicalBases AppIconRadicalCatppuccin AppIconRadicalDracula AppIconRadicalGruvboxDark AppIconRadicalMonoDark AppIconRadicalMonokai AppIconRadicalMonoLight AppIconRadicalNord AppIconRadicalRosePine AppIconRadicalSolarizedDark AppIconRadicalSolarizedLight AppIconRadicalTokyoNight AppIconSixColors AppIconSixColorsDark AppIconUnderscore
+FLIGHTDECK_INCLUDE_ALL_APPICON_ASSETS = YES
+
 #include? "Flightdeck.xcconfig"
 
 // Personal Apple Developer team, org identifier, and iCloud container for a

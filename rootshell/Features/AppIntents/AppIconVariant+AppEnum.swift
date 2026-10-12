@@ -7,6 +7,7 @@
 
 import AppIntents
 
+#if !FLIGHTDECK // FlightDeck's conformance: rootshell/Flightdeck/Icons/AppIconVariant+Flightdeck.swift
 extension AppIconManager.AppIconVariant: AppEnum {
     nonisolated static var typeDisplayRepresentation: TypeDisplayRepresentation {
         TypeDisplayRepresentation(name: "App Icon")
@@ -41,3 +42,4 @@ extension AppIconManager.AppIconVariant: AppEnum {
         ]
     }
 }
+#endif

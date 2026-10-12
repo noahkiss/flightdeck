@@ -26,6 +26,13 @@ ROOTSHELL_ICLOUD_CONTAINER = iCloud.com.nkmkdigital.flightdeck
 // Home-screen and menu-bar name of the app targets.
 FLIGHTDECK_DISPLAY_NAME = FlightDeck
 
+// App icons. AppIcon.icon is the primary icon; the alternates live in
+// rootshell/Flightdeck/Icons/AltIcons/. scripts/flightdeck-icons.py generates
+// FlightdeckIcons.xcconfig with their names. Upstream's AltIcons/ stay in the
+// project but are not compiled: actool builds only the named icons.
+#include "FlightdeckIcons.xcconfig"
+FLIGHTDECK_INCLUDE_ALL_APPICON_ASSETS = NO
+
 // Entitlements. Each "-flightdeck" file is upstream's file minus push
 // (aps-environment), upstream's associated domains and, in the iOS App Store
 // file, the request-gated multicast grant. scripts/flightdeck-entitlements.py
