@@ -60,6 +60,14 @@ nonisolated private enum HelperProcessIDStore {
         defer { lock.unlock() }
         return value
     }
+
+    static func clear(ifMatching pid: pid_t) {
+        lock.lock()
+        if value == pid {
+            value = 0
+        }
+        lock.unlock()
+    }
 }
 #endif
 
@@ -95,7 +103,11 @@ public class HelperConnection {
     }
 
     public var helperProcessID: pid_t {
+        #if STANDALONE
+        return HelperProcessIDStore.get()
+        #else
         helperPID
+        #endif
     }
 
     /// True once a ping/ensure has confirmed the helper is reachable. Lets the
@@ -388,6 +400,7 @@ public class HelperConnection {
 
         Ghostty.logger.error("Helper launched but not responding after 2s")
         isKnownRunning = false
+        stopHelper()
         return false
     }
 
@@ -476,22 +489,23 @@ public class HelperConnection {
     }
 
     /// Checks if the helper process we launched is still running
-    private func isHelperProcessRunning() -> Bool {
-        guard helperPID > 0 else { return false }
+    private func isHelperProcessRunning(_ processID: pid_t? = nil) -> Bool {
+        let pid = processID ?? helperProcessID
+        guard pid > 0 else { return false }
 
         // Check if process exists by sending signal 0
-        let result = kill(helperPID, 0)
+        let result = kill(pid, 0)
         return result == 0
     }
 
     /// Stops the helper process (call on app termination)
     public func stopHelper() {
-        guard helperPID > 0, isHelperProcessRunning() else {
+        let pid = helperProcessID
+        guard pid > 0, isHelperProcessRunning(pid) else {
             Ghostty.logger.debug("stopHelper: No running helper process to stop")
             return
         }
 
-        let pid = helperPID
         Ghostty.logger.info("Stopping helper process (PID: \(pid))")
         isKnownRunning = false
 
@@ -500,11 +514,17 @@ public class HelperConnection {
 
         // Give 1 second to clean up, then SIGKILL if still running
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            if self?.isHelperProcessRunning() == true {
+            if self?.isHelperProcessRunning(pid) == true {
                 Ghostty.logger.warning("Helper didn't respond to SIGTERM, sending SIGKILL")
                 kill(pid, SIGKILL)
             }
-            self?.helperPID = 0
+            #if STANDALONE
+            HelperProcessIDStore.clear(ifMatching: pid)
+            #else
+            if self?.helperPID == pid {
+                self?.helperPID = 0
+            }
+            #endif
         }
     }
 
