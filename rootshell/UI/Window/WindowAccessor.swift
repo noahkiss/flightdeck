@@ -329,6 +329,15 @@ private class TransparentWindowView: UIView {
             return
         }
 
+        // SwiftUI can detach and reattach this accessor without replacing the
+        // underlying NSWindow, which resets lastAppliedTitle above. Consult the
+        // window itself before writing: even an identical title assignment
+        // makes AppKit rebuild and redisplay parts of the titlebar.
+        if (nsWindow.value(forKey: "title") as? String) == title {
+            lastAppliedTitle = title
+            return
+        }
+
         nsWindow.setValue(title, forKey: "title")
         lastAppliedTitle = title
 
