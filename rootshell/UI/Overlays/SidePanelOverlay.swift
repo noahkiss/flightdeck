@@ -156,15 +156,19 @@ class SidePanelOverlayViewController: UIViewController {
     /// Host `EmptyView` while the panel is fully dismissed. A "closed" panel
     /// is only translated offscreen — its hosting view stays in the window,
     /// fully live — so hidden content keeps ticking TimelineViews and
-    /// re-rendering on `objectWillChange` churn, burning idle CPU. Gesture-free
-    /// adopters opt in; the tab sidebar must stay false because its edge-swipe
-    /// drags the panel in before the binding flips, so content has to exist
-    /// while hidden. Behaviorally free for adopters: `presentationVersion`
-    /// already resets hosted @State on every fresh open.
+    /// re-rendering on `objectWillChange` churn, burning idle CPU. Interactive
+    /// adopters can call `mountHostedContentForInteractivePresentation()` at
+    /// gesture-begin, before their binding flips. Behaviorally free for
+    /// adopters: `presentationVersion` already resets hosted @State on every
+    /// fresh open.
     var unmountsContentWhenHidden = false
     /// Whether the hosting controller currently holds caller content (vs the
     /// EmptyView placeholder).
     private var hostsLiveContent = false
+    /// Latest caller content, retained cheaply while an unmounting panel is
+    /// closed so an interactive presentation can restore it before moving the
+    /// panel onscreen.
+    private var preparedRootView: AnyView?
 
     var onClose: (() -> Void)?
 
@@ -266,9 +270,9 @@ class SidePanelOverlayViewController: UIViewController {
         // animation completion, not here, so mid-animation host updates can't
         // blank the departing panel).
         let identity = SidePanelPresentationIdentity(contentID: contentID, presentationVersion: presentationVersion)
+        preparedRootView = AnyView(rootView.id(identity))
         if !unmountsContentWhenHidden || isPresented || currentPresented {
-            hostingController.rootView = AnyView(rootView.id(identity))
-            hostsLiveContent = true
+            mountPreparedContent()
         }
 
         guard isPresented != currentPresented else { return }
@@ -280,6 +284,20 @@ class SidePanelOverlayViewController: UIViewController {
     /// auto-spring while an interactive drag owns the transform).
     func applyPresentationChange(_ isPresented: Bool) {
         animatePresentationChange(isPresented)
+    }
+
+    /// Restore the most recently supplied content before an interactive open
+    /// starts revealing the panel. This keeps the steady hidden state inert
+    /// without introducing a blank first frame during an edge swipe.
+    func mountHostedContentForInteractivePresentation() {
+        guard unmountsContentWhenHidden, !hostsLiveContent else { return }
+        mountPreparedContent()
+    }
+
+    private func mountPreparedContent() {
+        guard let preparedRootView else { return }
+        hostingController.rootView = preparedRootView
+        hostsLiveContent = true
     }
 
     override func viewDidLayoutSubviews() {
