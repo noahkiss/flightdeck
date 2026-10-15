@@ -124,6 +124,7 @@
 		47AEC0010000000000000003 /* rootshell-helper/Sources/LocalMultiplexerRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47AEC0010000000000000011 /* rootshell-helper/Sources/LocalMultiplexerRecovery.swift */; };
 		47AEC0010000000000000004 /* rootshell-helper/Sources/EnvironmentBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47AEC0010000000000000014 /* rootshell-helper/Sources/EnvironmentBuilder.swift */; };
 		47AEC0010000000000000005 /* rootshell-helper/Sources/LocaleHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47AEC0010000000000000015 /* rootshell-helper/Sources/LocaleHelper.swift */; };
+		47FDH0010000000000000001 /* rootshell-helper/Sources/HelperInstanceLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47FDH0010000000000000002 /* rootshell-helper/Sources/HelperInstanceLock.swift */; };
 		47AEC0020000000000000001 /* rootshell/Core/Shell/LoginShellCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47AEC0020000000000000010 /* rootshell/Core/Shell/LoginShellCommand.swift */; };
 		47AEC0020000000000000002 /* rootshell/Core/Shell/LoginShellCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47AEC0020000000000000010 /* rootshell/Core/Shell/LoginShellCommand.swift */; };
 		47AEC0020000000000000003 /* rootshell/Core/Shell/LoginShellCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47AEC0020000000000000010 /* rootshell/Core/Shell/LoginShellCommand.swift */; };
@@ -627,6 +628,7 @@
 		47AEC0010000000000000011 /* rootshell-helper/Sources/LocalMultiplexerRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "rootshell-helper/Sources/LocalMultiplexerRecovery.swift"; sourceTree = SOURCE_ROOT; };
 		47AEC0010000000000000014 /* rootshell-helper/Sources/EnvironmentBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "rootshell-helper/Sources/EnvironmentBuilder.swift"; sourceTree = SOURCE_ROOT; };
 		47AEC0010000000000000015 /* rootshell-helper/Sources/LocaleHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "rootshell-helper/Sources/LocaleHelper.swift"; sourceTree = SOURCE_ROOT; };
+		47FDH0010000000000000002 /* rootshell-helper/Sources/HelperInstanceLock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "rootshell-helper/Sources/HelperInstanceLock.swift"; sourceTree = SOURCE_ROOT; };
 		47AEC0020000000000000010 /* rootshell/Core/Shell/LoginShellCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = rootshell/Core/Shell/LoginShellCommand.swift; sourceTree = SOURCE_ROOT; };
 		47AF04300000000000000B01 /* rootshell/Features/Multiplexer/MuxSessionTarget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = rootshell/Features/Multiplexer/MuxSessionTarget.swift; sourceTree = SOURCE_ROOT; };
 		47FDK00000000000000000B2 /* rootshell/Flightdeck/Zellij/ZellijForkDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = rootshell/Flightdeck/Zellij/ZellijForkDiscovery.swift; sourceTree = SOURCE_ROOT; };
@@ -1338,6 +1340,7 @@
 				47AEC0010000000000000011 /* rootshell-helper/Sources/LocalMultiplexerRecovery.swift */,
 				47AEC0010000000000000015 /* rootshell-helper/Sources/LocaleHelper.swift */,
 				47AEC0010000000000000014 /* rootshell-helper/Sources/EnvironmentBuilder.swift */,
+				47FDH0010000000000000002 /* rootshell-helper/Sources/HelperInstanceLock.swift */,
 			);
 			name = "Recovered References";
 			sourceTree = "<group>";
@@ -2282,6 +2285,7 @@
 				47AF04970000000000000C01 /* rootshell/Features/Tmux/TmuxPaneZoomCommand.swift in Sources */,
 				47AF04970000000000000C02 /* rootshell/Features/Multiplexer/PaneZoomSelection.swift in Sources */,
 				47AEC0010000000000000005 /* rootshell-helper/Sources/LocaleHelper.swift in Sources */,
+				47FDH0010000000000000001 /* rootshell-helper/Sources/HelperInstanceLock.swift in Sources */,
 				47AEC0010000000000000004 /* rootshell-helper/Sources/EnvironmentBuilder.swift in Sources */,
 				47AEC0010000000000000002 /* rootshell/Core/Persistence/LocalMultiplexerAttachment.swift in Sources */,
 				47AEC0020000000000000002 /* rootshell/Core/Shell/LoginShellCommand.swift in Sources */,
