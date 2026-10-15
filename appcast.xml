@@ -6,6 +6,18 @@
     <description>FlightDeck updates</description>
     <language>en</language>
     <item>
+      <title>FlightDeck 1.0.14-fd.0-rc.9</title>
+      <link>https://github.com/noahkiss/flightdeck/releases/tag/v1.0.14-fd.0-rc.9</link>
+      <guid isPermaLink="false">v1.0.14-fd.0-rc.9</guid>
+      <sparkle:version>11</sparkle:version>
+      <sparkle:shortVersionString>1.0.14-fd.0-rc.9</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <sparkle:fullReleaseNotesLink>https://github.com/noahkiss/flightdeck/releases/tag/v1.0.14-fd.0-rc.9</sparkle:fullReleaseNotesLink>
+      <description>&lt;p&gt;FlightDeck 1.0.14-fd.0-rc.9. &lt;a href="https://github.com/noahkiss/flightdeck/releases/tag/v1.0.14-fd.0-rc.9"&gt;Release notes&lt;/a&gt;&lt;/p&gt;</description>
+      <pubDate>Thu, 15 Oct 2026 06:06:35 GMT</pubDate>
+      <enclosure url="https://github.com/noahkiss/flightdeck/releases/download/v1.0.14-fd.0-rc.9/flightdeck-v1.0.14-fd.0-rc.9-macos.zip" length="75682243" type="application/octet-stream" sparkle:edSignature="BAyPX5w4cXlposjVOSg3rre4HNmYiJC5IDgKgwQiyp0yJeoSenOw1htyx0uODAUp1BbDOMHaRRkpiIBep1WSAQ==" />
+    </item>
+    <item>
       <title>FlightDeck 1.0.14-fd.0-rc.8</title>
       <link>https://github.com/noahkiss/flightdeck/releases/tag/v1.0.14-fd.0-rc.8</link>
       <guid isPermaLink="false">v1.0.14-fd.0-rc.8</guid>
