@@ -276,7 +276,7 @@ nonisolated extension Settings {
             configKey: "power-auto-saver",
             title: String(localized: "Automatic Battery Saver", comment: "Setting title"))
         static let maxRefreshRate = SettingKey(
-            "powerMaxRefreshRate", default: PowerManager.RefreshRateSetting.auto, group: .power, policy: .localByDefault,
+            "powerMaxRefreshRate", default: FlightdeckHooks.powerRefreshRateDefault(stock: .auto), group: .power, policy: .localByDefault, // FLIGHTDECK-HOOK: power.refresh.default
             configKey: "power-max-refresh-rate",
             title: String(localized: "Maximum Refresh Rate", comment: "Setting title"))
         static let batteryRefreshRate = SettingKey(
