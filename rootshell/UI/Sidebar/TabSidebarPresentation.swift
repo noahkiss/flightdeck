@@ -113,6 +113,10 @@ private struct TabSidebarUIKitOverlay<SidebarContent: View>: UIViewControllerRep
         overlayController.allowPhoneBottom = true
         overlayController.clearsWindowControls = true
         overlayController.resignFirstResponderOnDismiss = true
+        // The hidden sidebar contains per-agent TimelineViews and observed
+        // models. Keep it unmounted at rest; the edge-swipe handler restores
+        // the cached root synchronously before revealing the first frame.
+        overlayController.unmountsContentWhenHidden = true
         // NOTE: do NOT set escapeDismisses here. The tab sidebar's search field
         // (SidebarSearchField) auto-focuses on open and owns first responder so
         // it can drive Up/Down tab navigation (pressesBegan) and two-stage
@@ -337,6 +341,7 @@ private final class TabSidebarOverlayViewController: SidePanelOverlayViewControl
     @objc
     private func handleBeginInteractiveOpen(_ note: Notification) {
         guard isForThisWindow(note) else { return }
+        mountHostedContentForInteractivePresentation()
         elevateAboveWindowContent()
         interactiveOpenActive = true
         // Sit fully hidden; the drag notifications drive the panel in. Content
@@ -401,6 +406,7 @@ private final class TabSidebarOverlayViewController: SidePanelOverlayViewControl
         } completion: { _ in
             if !self.currentPresented {
                 self.view.isUserInteractionEnabled = false
+                self.clearHostedContentIfUnmounting()
             }
         }
     }
