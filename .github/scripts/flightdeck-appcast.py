@@ -80,9 +80,8 @@ def main(argv=None):
     ET.SubElement(item, s("shortVersionString")).text = a.short_version
     ET.SubElement(item, s("minimumSystemVersion")).text = a.min_os
     ET.SubElement(item, s("fullReleaseNotesLink")).text = a.notes_url
-    ET.SubElement(item, "description").text = (
-        f'<p>{a.title} {a.short_version}. <a href="{a.notes_url}">Release notes</a></p>'
-    )
+    description = ET.SubElement(item, "description", {s("format"): "plain-text"})
+    description.text = f"{a.title} {a.short_version}."
     ET.SubElement(item, "pubDate").text = a.date or email.utils.formatdate(usegmt=True)
     ET.SubElement(item, "enclosure", {
         "url": a.url,
