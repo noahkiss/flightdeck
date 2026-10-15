@@ -15,4 +15,12 @@ enum FlightdeckPowerPolicy {
     ) -> PowerManager.RefreshRateSetting {
         .adaptive
     }
+
+    /// Long-running terminals favor the saver tier on battery. Explicitly
+    /// stored 60 Hz choices still override this registry fallback.
+    nonisolated static func defaultBatteryRefreshRate(
+        stock _: PowerManager.BatteryRefreshRate
+    ) -> PowerManager.BatteryRefreshRate {
+        .thirty
+    }
 }

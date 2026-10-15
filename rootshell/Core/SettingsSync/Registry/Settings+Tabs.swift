@@ -243,7 +243,7 @@ nonisolated extension Settings {
             configKey: "power-max-refresh-rate",
             title: String(localized: "Maximum Refresh Rate", comment: "Setting title"))
         static let batteryRefreshRate = SettingKey(
-            "powerBatteryRefreshRate", default: PowerManager.BatteryRefreshRate.sixty, group: .power, policy: .localByDefault,
+            "powerBatteryRefreshRate", default: FlightdeckHooks.powerBatteryRefreshRateDefault(stock: .sixty), group: .power, policy: .localByDefault, // FLIGHTDECK-HOOK: power.battery-refresh.default
             configKey: "power-battery-refresh-rate",
             title: String(localized: "Refresh Rate on Battery", comment: "Setting title"))
         static let alwaysOnDisplayMinutes = SettingKey(

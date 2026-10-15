@@ -31,6 +31,14 @@ enum FlightdeckHooks {
         FlightdeckPowerPolicy.defaultRefreshRate(stock: stock)
     }
 
+    /// `Settings.Power.batteryRefreshRate`: prefer the saver tier for an
+    /// unconfigured FlightDeck while preserving an explicit 60 Hz choice.
+    nonisolated static func powerBatteryRefreshRateDefault(
+        stock: PowerManager.BatteryRefreshRate
+    ) -> PowerManager.BatteryRefreshRate {
+        FlightdeckPowerPolicy.defaultBatteryRefreshRate(stock: stock)
+    }
+
     // MARK: - zellij discovery
 
     /// `SessionDiscoveryCommand.command`: wraps upstream's zellij section so
