@@ -21,6 +21,16 @@ enum FlightdeckHooks {
         FlightdeckBootstrap.start()
     }
 
+    // MARK: - Power
+
+    /// `Settings.Power.maxRefreshRate`: prefer a battery-aware default in
+    /// FlightDeck while preserving any explicit user setting.
+    nonisolated static func powerRefreshRateDefault(
+        stock: PowerManager.RefreshRateSetting
+    ) -> PowerManager.RefreshRateSetting {
+        FlightdeckPowerPolicy.defaultRefreshRate(stock: stock)
+    }
+
     // MARK: - zellij discovery
 
     /// `SessionDiscoveryCommand.command`: wraps upstream's zellij section so
