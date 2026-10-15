@@ -65,6 +65,7 @@ private enum HelperPeerTrust {
 class SocketCommandServer {
     private var listenSocket: Int32 = -1
     private var isRunning = false
+    private var instanceLock: HelperInstanceLock?
     private var acceptQueue: DispatchQueue
     private var handleQueue: DispatchQueue
 
@@ -88,6 +89,11 @@ class SocketCommandServer {
         guard let socketPath = AppGroupHelper.commandSocketPath else {
             throw SocketServerError.noAppGroupContainer
         }
+
+        // Acquire this before unlinking the command socket. Without a separate
+        // stable lock, overlapping launches can each unlink and replace the
+        // other's socket, leaking a live but permanently unreachable helper.
+        instanceLock = try HelperInstanceLock(path: socketPath + ".lock")
 
         // Remove existing socket file if present
         unlink(socketPath)
@@ -157,6 +163,8 @@ class SocketCommandServer {
         if let socketPath = AppGroupHelper.commandSocketPath {
             unlink(socketPath)
         }
+
+        instanceLock = nil
 
         NSLog("SocketCommandServer stopped")
     }
