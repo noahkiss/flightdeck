@@ -47,6 +47,12 @@
       "file": "rootshell/Core/SettingsSync/ConfigOverlay/ConfigOverlayManager.swift",
       "anchor": "final class ConfigOverlayManager {",
       "call": "activeURL = FlightdeckHooks.configURL(stock: ConfigOverlayLocation.canonicalURL)"
+    },
+    {
+      "id": "power.refresh.default",
+      "file": "rootshell/Core/SettingsSync/Registry/Settings+Tabs.swift",
+      "anchor": "enum Power {",
+      "call": "\"powerMaxRefreshRate\", default: FlightdeckHooks.powerRefreshRateDefault(stock: .auto), group: .power, policy: .localByDefault,"
     }
   ],
   "testSources": [
