@@ -205,9 +205,12 @@ Built choices (`internal/hook`, `internal/harness`, `gff-hab hook`):
   private directory, and a caller running as another user is refused. No TCP port.
 - **Address.** `GFF_HAB` is `http+unix://<absolute socket path>/hooks/<token>`. The token is 32
   hex digits from a per-pane registry in gff-hab; minting it again for a respawned pane drops the
-  old one. The holder link (a later stage) mints tokens and puts `GFF_HAB` into the pane's
-  environment. Until then every token is unknown and gff-hab drops the post, and the welcome
-  does not list the `agent-state` capability.
+  old one. When the link reports a pane gone, gff-hab drops its token and its agent state.
+  Not built yet: gff-hab has no spawn path, so nothing mints a token or puts `GFF_HAB` into a
+  pane's environment. Every token is unknown, gff-hab drops the post, and the welcome does not
+  list the `agent-state` capability. That stage must also decide how a token survives a
+  gff-hab restart while the pane lives on: store the registry in the state directory, or derive
+  each token from the pane uuid with a keyed hash under a secret kept there.
 - **Answers.** `POST /hooks/<token>` answers 204 when accepted, 400 for a bad envelope, 404
   for an unknown token (logged once per token) and 413 above 8 MiB. A post with no `t` gets the
   server's clock.

@@ -49,6 +49,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/habkey"
 	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/hook"
+	"github.com/noahkiss/flightdeck/internal/link"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
@@ -232,9 +233,21 @@ func serve(args []string) error {
 		l.Close()
 		return err
 	}
-	// Tokens are minted per pane by the holder link (later stage); until then every token is
-	// unknown and posts are dropped.
-	hooks := hook.NewServer(hook.NewRegistry(), func(pane string, env harness.Envelope) { agents.Hook(pane, env) }, logger.Printf)
+	// Tokens will be minted when gff-hab spawns a pane with GFF_HAB in its environment; no spawn
+	// path exists yet, so every token is unknown and posts are dropped. A pane the link reports
+	// gone loses its token and its agent state.
+	tokens := hook.NewRegistry()
+	if lk != nil {
+		stopWatch := lk.Watch(func(n link.Notice) {
+			if n.Kind == link.PaneGone {
+				id := n.Pane.UUID.String()
+				tokens.Revoke(id)
+				agents.Forget(id)
+			}
+		})
+		defer stopWatch()
+	}
+	hooks := hook.NewServer(tokens, func(pane string, env harness.Envelope) { agents.Hook(pane, env) }, logger.Printf)
 	go func() {
 		if err := hooks.Serve(hl); err != nil {
 			logger.Printf("%v: %v", errHookServe, err)
