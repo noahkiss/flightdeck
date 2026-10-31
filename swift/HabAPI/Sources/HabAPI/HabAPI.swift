@@ -837,8 +837,8 @@ public struct Welcome: Codable, Sendable, Hashable {
     /// Optional features this host offers (spec 3.4).
     public var capabilities: [String]
     public var clientId: String
-    /// SHA-256 fingerprint of the hab's own SSH host key, in the standard SSH form. Clients pin it (transport.md 5).
-    public var deviceId: String
+    /// SHA-256 fingerprint of the hab's own SSH host key, in the standard SSH form. Clients pin it (transport.md 5). Optional, so a newer client accepts a welcome from an older revision 1 hab.
+    public var deviceId: String?
     /// Random id of this gff-hab process.
     public var epoch: String
     public var host: HostInfo
@@ -860,7 +860,7 @@ public struct Welcome: Codable, Sendable, Hashable {
         case seq = "seq"
     }
 
-    public init(build: String, capabilities: [String], clientId: String, deviceId: String, epoch: String, host: HostInfo, reconnectToken: String, revision: Int, seq: UInt64) {
+    public init(build: String, capabilities: [String], clientId: String, deviceId: String? = nil, epoch: String, host: HostInfo, reconnectToken: String, revision: Int, seq: UInt64) {
         self.build = build
         self.capabilities = capabilities
         self.clientId = clientId

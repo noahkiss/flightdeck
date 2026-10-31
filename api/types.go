@@ -57,7 +57,7 @@ type Welcome struct {
 	Capabilities   []string `json:"capabilities" doc:"Optional features this host offers (spec 3.4)."`
 	ClientID       string   `json:"client_id"`
 	ReconnectToken string   `json:"reconnect_token"`
-	DeviceID       string   `json:"device_id" doc:"SHA-256 fingerprint of the hab's own SSH host key, in the standard SSH form. Clients pin it (transport.md 5)."`
+	DeviceID       string   `json:"device_id,omitempty" doc:"SHA-256 fingerprint of the hab's own SSH host key, in the standard SSH form. Clients pin it (transport.md 5). Optional, so a newer client accepts a welcome from an older revision 1 hab."`
 }
 
 // --- Structure (spec 2.2) ---
