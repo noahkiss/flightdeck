@@ -46,24 +46,33 @@ func checkpointPath(dir string, u hp.UUID) string {
 	return filepath.Join(dir, u.String()+checkpointSuffix)
 }
 
-// writeCheckpoint writes c atomically: a temporary file in the same directory, synced, then
-// renamed over the old checkpoint, and the directory synced. A crash leaves the old checkpoint or
-// the new one, never half.
+// writeCheckpoint writes c atomically (writeAtomic). A crash leaves the old checkpoint or the new
+// one, never half.
 func writeCheckpoint(dir string, u hp.UUID, c *checkpoint) error {
 	c.Len, c.CRC = len(c.Snapshot), crc32.ChecksumIEEE(c.Snapshot)
 	hdr, err := json.Marshal(c)
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(dir, ".tmp-"+u.String()+"-")
+	return writeAtomicParts(dir, u.String()+checkpointSuffix, hdr, []byte{'\n'}, c.Snapshot)
+}
+
+// writeAtomic writes data to dir/name atomically: a temporary file in the same directory,
+// synced, then renamed over the old file, and the directory synced.
+func writeAtomic(dir, name string, data []byte) error {
+	return writeAtomicParts(dir, name, data)
+}
+
+func writeAtomicParts(dir, name string, parts ...[]byte) error {
+	f, err := os.CreateTemp(dir, ".tmp-"+name+"-")
 	if err != nil {
 		return err
 	}
 	tmp := f.Name()
 	w := bufio.NewWriter(f)
-	w.Write(hdr)
-	w.WriteByte('\n')
-	w.Write(c.Snapshot)
+	for _, p := range parts {
+		w.Write(p)
+	}
 	err = w.Flush()
 	if err == nil {
 		err = f.Sync()
@@ -72,7 +81,7 @@ func writeCheckpoint(dir string, u hp.UUID, c *checkpoint) error {
 		err = cerr
 	}
 	if err == nil {
-		err = os.Rename(tmp, checkpointPath(dir, u))
+		err = os.Rename(tmp, filepath.Join(dir, name))
 	}
 	if err != nil {
 		os.Remove(tmp)

@@ -214,11 +214,12 @@ func TestStaleCheckpointIgnored(t *testing.T) {
 
 // TestSpawnRefusesUsedUUID: a spawn of a live pane's uuid on the same holder is a retry; a uuid
 // the link lists as lost, or has dropped, is refused, so a new program never takes an old pane's
-// identity.
+// identity. The refusal of a dropped uuid outlasts a restart of the link.
 func TestSpawnRefusesUsedUUID(t *testing.T) {
-	hdir := shortDir(t)
+	hdir, state := shortDir(t), shortDir(t)
 	one := startHolder(t, hdir, "one", 0)
-	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond, KeepLost: 500 * time.Millisecond})
+	cfg := Config{HolderDir: hdir, StateDir: state, Rescan: 50 * time.Millisecond, KeepLost: 500 * time.Millisecond}
+	l := openLink(t, cfg)
 	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
 	u := uuidN(50)
 	first := spawn(t, l, u, "echo first; exec sleep 1000")
@@ -234,7 +235,7 @@ func TestSpawnRefusesUsedUUID(t *testing.T) {
 		h := l.client.Current()
 		return h != nil && h.Instance() == "two"
 	})
-	try := func() error {
+	try := func() error { // l is the link of the moment: a restart below replaces it
 		ctx, cancel := context.WithTimeout(context.Background(), waitLong)
 		defer cancel()
 		_, err := l.Spawn(ctx, hp.Spawn{UUID: u, Cols: 80, Rows: 24, Cwd: "/",
@@ -249,6 +250,15 @@ func TestSpawnRefusesUsedUUID(t *testing.T) {
 	waitFor(t, "the lost pane dropped", func() bool { _, ok := paneStatus(l, u); return !ok })
 	if err := try(); !errors.Is(err, ErrUUIDUsed) {
 		t.Fatalf("spawn of a dropped pane's uuid: %v, want ErrUUIDUsed", err)
+	}
+	l.Close()
+	l = openLink(t, cfg)
+	waitFor(t, "holder two current after the restart", func() bool {
+		h := l.client.Current()
+		return h != nil && h.Instance() == "two"
+	})
+	if err := try(); !errors.Is(err, ErrUUIDUsed) {
+		t.Fatalf("spawn of a dropped pane's uuid after a restart: %v, want ErrUUIDUsed", err)
 	}
 	v := uuidN(51)
 	if st := spawn(t, l, v, "echo fresh; exec sleep 1000"); st.Lost || st.Instance != "two" {

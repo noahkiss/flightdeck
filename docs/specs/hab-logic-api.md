@@ -288,6 +288,15 @@ Decisions taken in stage 4 (`internal/link`):
   that matches any other pane the link lists or has dropped is refused. If a pane with the uuid
   appears while the spawn runs, the new pane replaces it, and watchers get gone for the old pane
   before added for the new one.
+- **Retired uuids outlive a restart.** A pane's uuid is retired when the pane goes gone (released,
+  closed by a client, or its holder said bye) and when the prune drops it. The retired set lives
+  in `<state>/checkpoints/retired.json`: `{"v": 1, "retired": {"<pane uuid>": "<time retired,
+  RFC 3339>"}}`, written to a temporary file, synced, renamed and the directory synced, like a
+  checkpoint. A spawn of a retired uuid is refused for 30 days after it was retired (`gff-hab
+  serve -retired-days N`, else `$GFF_HAB_RETIRED_DAYS`). Loading the file drops the entries past
+  that TTL and rewrites it; every save drops them too. An unreadable file is logged and treated as
+  empty. A lost pane's uuid is refused while the link lists the pane, and retired when the prune
+  drops it.
 - When output jumps past bytes that never arrived, the screen is suspect and every subscriber
   gets a snapshot at the new offset before the next bytes.
 - A pane's notices keep their order: added, then exited, then gone. A spawned pane is added on

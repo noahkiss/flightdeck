@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/noahkiss/flightdeck/internal/vt"
 )
@@ -78,6 +79,43 @@ func TestScrollbackBudgetFlag(t *testing.T) {
 		}
 		if err != nil || got != c.want {
 			t.Errorf("flag %d env %q: got %d, %v; want %d", c.flag, c.env, got, err, c.want)
+		}
+	}
+}
+
+// TestRetiredDaysFlag: the TTL comes from -retired-days, else $GFF_HAB_RETIRED_DAYS, else 30 days.
+func TestRetiredDaysFlag(t *testing.T) {
+	env := func(v string) func(string) string {
+		return func(k string) string {
+			if k == "GFF_HAB_RETIRED_DAYS" {
+				return v
+			}
+			return ""
+		}
+	}
+	day := 24 * time.Hour
+	for _, c := range []struct {
+		flag int
+		env  string
+		want time.Duration
+		bad  bool
+	}{
+		{0, "", DefaultRetiredDays * day, false},
+		{0, "7", 7 * day, false},
+		{90, "7", 90 * day, false},
+		{-1, "", 0, true},
+		{0, "0", 0, true},
+		{0, "week", 0, true},
+	} {
+		got, err := retiredTTL(c.flag, env(c.env))
+		if c.bad {
+			if err == nil {
+				t.Errorf("flag %d env %q: got %v, want an error", c.flag, c.env, got)
+			}
+			continue
+		}
+		if err != nil || got != c.want {
+			t.Errorf("flag %d env %q: got %v, %v; want %v", c.flag, c.env, got, err, c.want)
 		}
 	}
 }

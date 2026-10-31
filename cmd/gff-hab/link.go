@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"time"
 
 	"github.com/noahkiss/flightdeck/internal/holderreg"
 	"github.com/noahkiss/flightdeck/internal/link"
@@ -56,12 +57,43 @@ func mibSetting(flagMiB int, flagName, env string, def int, getenv func(string) 
 	return mib << 20, nil
 }
 
+// DefaultRetiredDays is how long gff-hab refuses the uuid of a pane that is gone, across
+// restarts (spec 2.3).
+const DefaultRetiredDays = 30
+
+// retiredTTL returns how long a retired pane uuid stays refused: from -retired-days when it is
+// set, else $GFF_HAB_RETIRED_DAYS, else DefaultRetiredDays.
+func retiredTTL(flagDays int, getenv func(string) string) (time.Duration, error) {
+	days, from := flagDays, "-retired-days"
+	if flagDays == 0 {
+		days, from = DefaultRetiredDays, ""
+		if v := getenv("GFF_HAB_RETIRED_DAYS"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return 0, fmt.Errorf("GFF_HAB_RETIRED_DAYS=%q: want a whole number of days", v)
+			}
+			days, from = n, "GFF_HAB_RETIRED_DAYS"
+		}
+	}
+	if days < 1 || days > 3650 {
+		return 0, fmt.Errorf("%s %d: must be 1 to 3650 days", from, days)
+	}
+	return time.Duration(days) * 24 * time.Hour, nil
+}
+
+// linkOptions are the holder link settings that come from flags or the environment.
+type linkOptions struct {
+	scrollback int           // scrollback cap per pane, bytes
+	budget     int           // scrollback cap for all panes, bytes
+	retiredTTL time.Duration // how long a retired pane uuid stays refused
+}
+
 // openLink starts the holder link (spec 2.3). The holder directory comes from -holders, else
 // $GFF_HOLDER_DIR, else the directory the holder picks by default. Checkpoints go to
-// <state>/checkpoints. Every pane parser, new or restored, gets scrollback bytes of scrollback,
-// or its share of budget when that is less. It returns nil, and gff-hab serves with no panes,
-// when no holder directory can be chosen.
-func openLink(holders, state string, scrollback, budget int, logger *log.Logger) (*link.Link, error) {
+// <state>/checkpoints, with the retired pane uuids. Every pane parser, new or restored, gets
+// opt.scrollback bytes of scrollback, or its share of opt.budget when that is less. It returns
+// nil, and gff-hab serves with no panes, when no holder directory can be chosen.
+func openLink(holders, state string, opt linkOptions, logger *log.Logger) (*link.Link, error) {
 	dir := holders
 	if dir == "" {
 		var err error
@@ -72,14 +104,15 @@ func openLink(holders, state string, scrollback, budget int, logger *log.Logger)
 	}
 	p, name := parser()
 	logger.Printf("holder link: holders in %s, parser %s, scrollback %d MiB per pane, %d MiB for all panes",
-		dir, name, scrollback>>20, budget>>20)
+		dir, name, opt.scrollback>>20, opt.budget>>20)
 	return link.Open(link.Config{
 		HolderDir:        dir,
 		StateDir:         filepath.Join(state, "checkpoints"),
 		Build:            build,
 		Parser:           p,
-		ScrollbackBytes:  scrollback,
-		ScrollbackBudget: budget,
+		ScrollbackBytes:  opt.scrollback,
+		ScrollbackBudget: opt.budget,
+		RetiredTTL:       opt.retiredTTL,
 		Logf:             logger.Printf,
 	})
 }

@@ -3,7 +3,7 @@
 // structure store, and follows every holder's panes through the holder link (internal/link).
 //
 //	gff-hab serve   [-socket path] [-hook-socket path] [-state dir] [-host-id id] [-holders dir]
-//	                [-scrollback-mib n] [-scrollback-budget-mib n]
+//	                [-scrollback-mib n] [-scrollback-budget-mib n] [-retired-days n]
 //	gff-hab connect [-socket path]
 //	gff-hab api call [-socket path | -via command] <method> [params-json]
 //	gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
@@ -21,7 +21,8 @@
 // control socket. Each pane parser's scrollback cap comes from -scrollback-mib, else
 // $GFF_HAB_SCROLLBACK_MIB, else 10 MiB. The cap for all parsers together comes from
 // -scrollback-budget-mib, else $GFF_HAB_SCROLLBACK_BUDGET_MIB, else 256 MiB; past it each parser
-// gets an equal share, at least 1 MiB.
+// gets an equal share, at least 1 MiB. The uuid of a pane that is gone stays refused to new
+// spawns, across restarts, for -retired-days, else $GFF_HAB_RETIRED_DAYS, else 30 days.
 //
 // `gff-hab connect` copies stdin to the socket and the socket to stdout, so
 // `ssh <host> gff-hab connect` reaches a remote hab with no new listener. -via runs a command
@@ -62,7 +63,7 @@ var build = "dev"
 
 const usage = `usage:
   gff-hab serve   [-socket path] [-hook-socket path] [-state dir] [-host-id id] [-holders dir]
-                  [-scrollback-mib n] [-scrollback-budget-mib n]
+                  [-scrollback-mib n] [-scrollback-budget-mib n] [-retired-days n]
   gff-hab connect [-socket path]
   gff-hab api call [-socket path | -via command] <method> [params-json]
   gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
@@ -159,6 +160,7 @@ func serve(args []string) error {
 	hostID := fs.String("host-id", os.Getenv("GFF_HAB_HOST_ID"), "host id sent in the welcome (default: $GFF_HAB_HOST_ID, else the system host name)")
 	holders := fs.String("holders", "", "holder registry directory (default: $GFF_HOLDER_DIR, else the holder's default)")
 	scrollMiB := fs.Int("scrollback-mib", 0, "scrollback cap per pane in MiB (default: $GFF_HAB_SCROLLBACK_MIB, else 10)")
+	retiredDays := fs.Int("retired-days", 0, "days a gone pane's uuid stays refused (default: $GFF_HAB_RETIRED_DAYS, else 30)")
 	budgetMiB := fs.Int("scrollback-budget-mib", 0, "scrollback cap for all panes together in MiB (default: $GFF_HAB_SCROLLBACK_BUDGET_MIB, else 256)")
 	fs.Parse(args)
 	logger := log.New(os.Stderr, "gff-hab: ", log.LstdFlags)
@@ -189,7 +191,11 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
-	lk, err := openLink(*holders, dir, scrollback, budget, logger)
+	ttl, err := retiredTTL(*retiredDays, os.Getenv)
+	if err != nil {
+		return err
+	}
+	lk, err := openLink(*holders, dir, linkOptions{scrollback, budget, ttl}, logger)
 	if err != nil {
 		return err
 	}

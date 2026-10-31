@@ -44,8 +44,8 @@ import (
 type Config struct {
 	// HolderDir is the holder registry directory (holder spec 4.2).
 	HolderDir string
-	// StateDir holds the checkpoint files, one <pane uuid>.ckpt per pane. It is created if
-	// missing.
+	// StateDir holds the checkpoint files, one <pane uuid>.ckpt per pane, and retired.json, the
+	// retired pane uuids. It is created if missing.
 	StateDir string
 	// Build is this gff-hab's build id. Holders of other builds are drained once a holder of
 	// this build is connected.
@@ -76,6 +76,9 @@ type Config struct {
 	// MinScrollbackShare; shrinking a cap drops the oldest scrollback at once. Zero or less means
 	// no budget.
 	ScrollbackBudget int
+	// RetiredTTL is how long a retired pane uuid stays refused, across restarts. Default
+	// DefaultRetiredTTL.
+	RetiredTTL time.Duration
 	// SnapshotScrollback is the most scrollback rows a subscription's snapshot, a jump snapshot
 	// or Screen's VT carries. Scrollback reads older rows. Default DefaultSnapshotScrollback;
 	// negative means all.
@@ -90,6 +93,9 @@ const DefaultSnapshotScrollback = 1000
 
 // MinScrollbackShare is the smallest scrollback cap the budget gives a parser.
 const MinScrollbackShare = 1 << 20
+
+// DefaultRetiredTTL is the default of Config.RetiredTTL.
+const DefaultRetiredTTL = 30 * 24 * time.Hour
 
 // MaxScrollbackPage is the most rows one Scrollback call returns.
 const MaxScrollbackPage = 10000
@@ -133,8 +139,10 @@ type Link struct {
 	holders  map[*holderclient.Holder]bool
 	orphans  map[paneKey][]hp.Frame // frames for a pane not attached yet (a spawn in flight)
 
-	// retired holds the uuids of panes the link has dropped. Spawn refuses them.
-	retired map[hp.UUID]bool
+	// retired holds the uuids of panes that went gone or that the link dropped, with the time
+	// each was retired. Spawn refuses them for RetiredTTL. retired.json in the state directory
+	// keeps them across restarts.
+	retired map[hp.UUID]time.Time
 	// afterSpawnCheck runs in Spawn after the uuid check, before the holder spawns. Tests use it
 	// to land a pane with the same uuid inside that window.
 	afterSpawnCheck func()
@@ -174,6 +182,9 @@ func Open(cfg Config) (*Link, error) {
 	if cfg.BufferBytes <= 0 {
 		cfg.BufferBytes = 4 << 20
 	}
+	if cfg.RetiredTTL <= 0 {
+		cfg.RetiredTTL = DefaultRetiredTTL
+	}
 	if cfg.SnapshotScrollback == 0 {
 		cfg.SnapshotScrollback = DefaultSnapshotScrollback
 	} else if cfg.SnapshotScrollback < 0 {
@@ -186,6 +197,16 @@ func Open(cfg Config) (*Link, error) {
 		return nil, err
 	}
 	removeTemps(cfg.StateDir)
+	now := time.Now()
+	retired, pruned, err := loadRetired(cfg.StateDir, cfg.RetiredTTL, now)
+	if err != nil {
+		cfg.Logf("link: retired uuids: %v; starting with none", err)
+	}
+	if pruned {
+		if err := saveRetired(cfg.StateDir, retired, cfg.RetiredTTL, now); err != nil {
+			cfg.Logf("link: retired uuids: %v", err)
+		}
+	}
 	encs := cfg.Parser.Encodings()
 	if len(encs) == 0 {
 		return nil, errors.New("link: parser has no snapshot encoding")
@@ -202,7 +223,7 @@ func Open(cfg Config) (*Link, error) {
 		byHandle: map[paneKey]*pane{},
 		holders:  map[*holderclient.Holder]bool{},
 		orphans:  map[paneKey][]hp.Frame{},
-		retired:  map[hp.UUID]bool{},
+		retired:  retired,
 		watchers: map[int]func(Notice){},
 	}
 	l.sbCap.Store(int64(l.scrollbackShare(0)))
@@ -369,6 +390,7 @@ func (l *Link) releaseEnded(p *pane) {
 			}
 			if n, ok := p.lose(ErrGone); ok {
 				removeCheckpoint(l.cfg.StateDir, p.uuid)
+				l.retire(p.uuid)
 				l.notify([]Notice{n})
 			}
 		})
@@ -422,7 +444,7 @@ func (l *Link) prune() {
 		case old:
 			drop = append(drop, p)
 			delete(l.panes, u)
-			l.retired[u] = true
+			l.retired[u] = now
 			for k, q := range l.byHandle {
 				if q == p {
 					delete(l.byHandle, k)
@@ -433,6 +455,9 @@ func (l *Link) prune() {
 		}
 	}
 	l.mu.Unlock()
+	if len(drop) > 0 {
+		l.saveRetired()
+	}
 	for _, p := range drop {
 		p.close()
 		l.cfg.Logf("link: pane %s: dropped: no holder lists it", p.uuid)
@@ -599,6 +624,7 @@ func (l *Link) holderEnded(h *holderclient.Holder, err error) {
 		}
 		if why == ErrGone {
 			removeCheckpoint(l.cfg.StateDir, p.uuid)
+			l.retire(p.uuid)
 		}
 	}
 	l.notify(notices)
@@ -780,6 +806,7 @@ func (l *Link) ClosePane(ctx context.Context, u hp.UUID) error {
 		}
 		if n, ok := p.lose(ErrGone); ok {
 			removeCheckpoint(l.cfg.StateDir, p.uuid)
+			l.retire(p.uuid)
 			l.notify([]Notice{n})
 		}
 	}) {
@@ -788,13 +815,43 @@ func (l *Link) ClosePane(ctx context.Context, u hp.UUID) error {
 	return nil
 }
 
+// retire refuses uuid u to later spawns from now on, here and after a restart. A pane that went
+// gone never comes back under its uuid, so it is retired at once; a lost one only when the prune
+// drops it. It runs on the event loop.
+func (l *Link) retire(u hp.UUID) {
+	l.mu.Lock()
+	l.retired[u] = time.Now()
+	l.mu.Unlock()
+	l.saveRetired()
+}
+
+// saveRetired writes the retired uuids to the state directory, without the expired ones, which
+// it forgets. It runs on the event loop.
+func (l *Link) saveRetired() {
+	now := time.Now()
+	l.mu.Lock()
+	set := make(map[hp.UUID]time.Time, len(l.retired))
+	for u, at := range l.retired {
+		if now.Sub(at) >= l.cfg.RetiredTTL {
+			delete(l.retired, u)
+			continue
+		}
+		set[u] = at
+	}
+	l.mu.Unlock()
+	if err := saveRetired(l.cfg.StateDir, set, l.cfg.RetiredTTL, now); err != nil {
+		l.cfg.Logf("link: retired uuids: %v", err)
+	}
+}
+
 // spawnable reports whether a spawn of uuid u on holder h may go ahead: u is unknown and was
 // never retired, or it names a live pane on h (a retry).
 func (l *Link) spawnable(u hp.UUID, h *holderclient.Holder) bool {
 	l.mu.Lock()
-	old, retired := l.panes[u], l.retired[u]
+	old := l.panes[u]
+	at, retired := l.retired[u]
 	l.mu.Unlock()
-	if retired {
+	if retired && time.Since(at) < l.cfg.RetiredTTL {
 		return false
 	}
 	if old == nil {
