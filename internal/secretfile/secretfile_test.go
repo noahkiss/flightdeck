@@ -93,3 +93,44 @@ func TestRace(t *testing.T) {
 		}
 	}
 }
+
+// noLinks makes link fail the way it does on a filesystem without hard links, and runs before
+// on each call first.
+func noLinks(t *testing.T, before func(newname string)) {
+	t.Cleanup(func() { link = os.Link })
+	link = func(oldname, newname string) error {
+		if before != nil {
+			before(newname)
+		}
+		return &os.LinkError{Op: "link", Old: oldname, New: newname, Err: errors.ErrUnsupported}
+	}
+}
+
+// TestNoHardLinks: without hard links, the secret is created under its final name with mode
+// 0600, read back after, and a file that appears first is never replaced.
+func TestNoHardLinks(t *testing.T) {
+	noLinks(t, nil)
+	dir := t.TempDir()
+	b, created, err := LoadOrCreate(dir, "s", 64, fixed("one"))
+	if err != nil || !created || string(b) != "one" {
+		t.Fatalf("first: %q, %v, %v", b, created, err)
+	}
+	fi, err := os.Stat(filepath.Join(dir, "s"))
+	if err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("file %v, %v", fi.Mode(), err)
+	}
+	b, created, err = LoadOrCreate(dir, "s", 64, fixed("two"))
+	if err != nil || created || string(b) != "one" {
+		t.Fatalf("second: %q, %v, %v", b, created, err)
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, "s.tmp-*")); len(left) != 0 {
+		t.Fatalf("temp files left: %v", left)
+	}
+
+	// Another creator wins between the read and the fallback create.
+	noLinks(t, func(newname string) { os.WriteFile(newname, []byte("theirs"), 0o600) })
+	b, created, err = LoadOrCreate(dir, "r", 64, fixed("mine"))
+	if err != nil || created || string(b) != "theirs" {
+		t.Fatalf("lost race: %q, %v, %v", b, created, err)
+	}
+}

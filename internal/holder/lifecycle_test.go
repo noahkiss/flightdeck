@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -172,7 +173,7 @@ func TestGoSafe(t *testing.T) {
 
 	h := New(Config{Logf: logf})
 	done := make(chan struct{})
-	h.goSafe("free", func() { defer close(done); panic("boom") })
+	h.goSafe("free", func() { defer close(done); panic("boom") }, nil)
 	<-done
 	lockFree(h, "free")
 
@@ -196,11 +197,11 @@ func TestGoSafe(t *testing.T) {
 		}()
 	}
 	done = make(chan struct{})
-	h.goSafe("contended", func() { defer close(done); panic("boom") })
+	h.goSafe("contended", func() { defer close(done); panic("boom") }, nil)
 	<-done
 	// A panic inside a locked section under the same contention.
 	done = make(chan struct{})
-	h.goSafe("contended section", func() { defer close(done); h.locked(func() { panic("boom") }) })
+	h.goSafe("contended section", func() { defer close(done); h.locked(func() { panic("boom") }) }, nil)
 	<-done
 	close(stop)
 	wg.Wait()
@@ -227,7 +228,7 @@ func TestGoSafe(t *testing.T) {
 		}
 	})
 	c := dial(t, path, true)
-	c.sh(1, "echo first; exec sleep 30")
+	s1 := c.sh(1, "echo first; exec sleep 30")
 	deadline := time.Now().Add(waitLong)
 	for !logged("panic in pump: boom in output") {
 		if time.Now().After(deadline) {
@@ -236,10 +237,101 @@ func TestGoSafe(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	lockFree(h2, "pump")
+	// Pane 1 lost its pump, so the holder hung it up: its reader counts as ended, the sleep
+	// ends on the hang-up, and its exit is reported.
+	p1 := paneOf(t, h2, s1.Handle)
+	if e := c.exited(s1.Handle); !e.Status.Signaled || e.Status.Signal != hp.SigHUP {
+		t.Errorf("pane 1 after its pump panicked: %+v", e.Status)
+	}
+	h2.locked(func() {
+		if !p1.readerEnded || !p1.masterClosed {
+			t.Errorf("pane 1: readerEnded %v, masterClosed %v", p1.readerEnded, p1.masterClosed)
+		}
+	})
 	c.sync()
 	s := c.sh(2, "echo alive")
 	c.waitOutput(s.Handle, "alive")
 	c.exited(s.Handle)
+}
+
+// TestConnPanic: a panic in the connection's writer or reader drops the connection, so gff-hab
+// sees a crash and replays. The pumps keep running, and the next hello says crash.
+func TestConnPanic(t *testing.T) {
+	for _, where := range []string{"writer", "reader"} {
+		t.Run(where, func(t *testing.T) {
+			var arm atomic.Bool
+			boom := func() {
+				if arm.CompareAndSwap(true, false) {
+					panic("boom in " + where)
+				}
+			}
+			h, path := testHolder(t, Config{}, func(h *Holder) {
+				if where == "writer" {
+					h.beforeWrite = func(*conn) { boom() }
+				} else {
+					h.beforeDispatch = func(*conn, hp.Frame) { boom() }
+				}
+			})
+			c1 := dial(t, path, true)
+			s := c1.sh(1, "while :; do echo tick; sleep 0.01; done")
+			c1.waitOutput(s.Handle, "tick")
+			arm.Store(true)
+			c1.send(&hp.Ping{Token: c1.tok()})
+			if err := c1.closed(); !isEOF(err) {
+				t.Fatalf("connection after the panic: %v", err)
+			}
+			eventually(t, h, "connection dropped", func() bool { return h.conn == nil })
+
+			p := paneOf(t, h, s.Handle)
+			var before uint64
+			h.locked(func() { before = p.ring.count })
+			eventually(t, h, "pump still running", func() bool { return p.ring.count > before })
+
+			c2 := dial(t, path, true)
+			if c2.w.Previous != hp.PreviousCrash {
+				t.Fatalf("welcome after the panic: previous %v", c2.w.Previous)
+			}
+			c2.send(&hp.Replay{Handle: s.Handle, Token: c2.tok(), From: c2.w.Panes[0].Count})
+			c2.waitOutput(s.Handle, "tick")
+		})
+	}
+}
+
+// TestWaiterPanic: a waiter that panics still reports the pane exited, with an unknown status,
+// and closes final. Once released, the pane is no longer owned, so a draining holder exits.
+func TestWaiterPanic(t *testing.T) {
+	h, path := testHolder(t, Config{}, func(h *Holder) {
+		h.afterWait = func(p *pane) {
+			if p.uuid == uuidN(1) {
+				panic("boom in waiter")
+			}
+		}
+	})
+	c := dial(t, path, true)
+	s := c.sh(1, "exit 3")
+	e := c.exited(s.Handle)
+	if e.Status != (hp.ExitStatus{Code: -1}) {
+		t.Errorf("exit after the waiter panicked: %+v", e.Status)
+	}
+	p := paneOf(t, h, s.Handle)
+	select {
+	case <-p.final:
+	case <-time.After(waitLong):
+		t.Fatal("final never closed")
+	}
+	c.send(&hp.Release{Handle: s.Handle, Token: c.tok()})
+	c.sync()
+	h.locked(func() {
+		if len(h.owned) != 0 {
+			t.Errorf("owned after release: %d panes", len(h.owned))
+		}
+	})
+	c.send(&hp.Drain{Token: c.tok()})
+	select {
+	case <-h.Done():
+	case <-time.After(waitLong):
+		t.Fatal("the drained holder did not exit")
+	}
 }
 
 // TestHandoverPrevious: a connection that sends handover and closes leaves previous = handover.

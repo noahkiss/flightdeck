@@ -208,7 +208,10 @@ Built choices (`internal/hook`, `internal/harness`, `gff-hab hook`):
 - **Token.** 96 lower-case hex digits: the pane uuid (32), then
   HMAC-SHA256(secret, `"gff-hab hook token v1\0"` + uuid) (64). The secret is 32 random bytes in
   `hook.key` in the state directory. gff-hab creates it on first start with mode 0600, as a
-  complete temp file hard-linked into place, so racing starts agree on one secret. It refuses to
+  complete temp file hard-linked into place, so racing starts agree on one secret. On a
+  filesystem without hard links it creates the final name with O_EXCL, then writes and syncs it:
+  the first start still wins and no file is replaced, but a racing start may read the file
+  before it is complete and refuse to start. It refuses to
   start when the file is a symlink, not a regular file, owned by another user, open to group or
   others, or not 32 bytes; it never replaces such a file. No registry is stored: the same secret
   gives the same token after a gff-hab restart, so a pane that outlives gff-hab keeps posting. A

@@ -177,6 +177,10 @@ type Holder struct {
 	// onOutput runs in the pump under the lock, at the start of each output step. Tests use it
 	// to panic inside a real critical section.
 	onOutput func(p *pane)
+	// beforeWrite runs in the connection writer before each socket write, outside the lock.
+	beforeWrite func(c *conn)
+	// afterWait runs in the waiter after the child is collected, outside the lock.
+	afterWait func(p *pane)
 }
 
 // acceptor is the listener Serve accepts on. Tests wrap a real listener to inject errors.
@@ -322,7 +326,7 @@ func (h *Holder) serve(l acceptor) error {
 		return err
 	}
 	if h.cfg.RegistryDir != "" {
-		h.goSafe("registry check", h.registryCheck)
+		h.goSafe("registry check", h.registryCheck, nil)
 	}
 	var backoff time.Duration
 	var lastLog time.Time
@@ -330,7 +334,7 @@ func (h *Holder) serve(l acceptor) error {
 		nc, err := l.AcceptUnix()
 		if err == nil {
 			backoff = 0
-			h.goSafe("connection", func() { h.serveConn(nc) })
+			h.goSafe("connection", func() { h.serveConn(nc) }, func() { nc.Close() })
 			continue
 		}
 		var closing, owns bool
@@ -367,19 +371,29 @@ func transientAccept(err error) bool {
 	return errors.As(err, &ne) && ne.Timeout()
 }
 
-// goSafe runs fn in a goroutine and logs a panic instead of ending the holder (spec 6.6): a
-// holder exit ends every program. The panic cannot leave the holder lock held, because every
-// critical section unlocks through a deferred Unlock that runs while the panic unwinds (see the
-// package comment). So goSafe only recovers and logs; it never needs to inspect the lock.
-func (h *Holder) goSafe(name string, fn func()) {
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				h.cfg.Logf("holder: panic in %s: %v", name, r)
-			}
-		}()
-		fn()
+// goSafe runs fn in a goroutine through runSafe.
+func (h *Holder) goSafe(name string, fn func(), onPanic func()) {
+	go h.runSafe(name, fn, onPanic)
+}
+
+// runSafe runs fn and logs a panic instead of ending the holder (spec 6.6): a holder exit ends
+// every program. The panic cannot leave the holder lock held, because every critical section
+// unlocks through a deferred Unlock that runs while the panic unwinds (see the package comment).
+// So runSafe never needs to inspect the lock. After a panic it calls onPanic, when not nil, to
+// repair what the dead goroutine owned: a connection without its writer or reader is dropped, a
+// pane without its pump or waiter is ended. A panic in onPanic is logged too.
+func (h *Holder) runSafe(name string, fn func(), onPanic func()) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		h.cfg.Logf("holder: panic in %s: %v", name, r)
+		if onPanic != nil {
+			h.runSafe(name+" recovery", onPanic, nil)
+		}
 	}()
+	fn()
 }
 
 func (h *Holder) closeListener() {
@@ -421,8 +435,14 @@ func (h *Holder) serveConn(nc *net.UnixConn) {
 	if h.afterWelcome != nil {
 		h.afterWelcome()
 	}
-	h.goSafe("writer", c.writer)
-	c.readLoop()
+	// A writer or reader that panics leaves the connection half dead: frames queue with no one
+	// to write them, or requests go unread. Dropping it records a crash, so gff-hab reconnects
+	// and replays, and the pumps paused by its queue resume.
+	drop := func(what string) func() {
+		return func() { h.locked(func() { h.dropLocked(c, "panic in "+what) }) }
+	}
+	h.goSafe("writer", c.writer, drop("writer"))
+	h.runSafe("reader", c.readLoop, drop("reader"))
 }
 
 func (h *Holder) checkPeer(nc *net.UnixConn) error {
@@ -635,7 +655,7 @@ func (h *Holder) drainExitLocked() {
 	}
 	if len(h.owned) == 0 {
 		h.closing = true
-		h.goSafe("drain exit", h.exit)
+		h.goSafe("drain exit", h.exit, nil)
 		return
 	}
 	if h.drainKill {
@@ -644,15 +664,20 @@ func (h *Holder) drainExitLocked() {
 	h.drainKill = true
 	h.cfg.Logf("holder: draining with %d released program(s) still running; killing them in %v", len(h.owned), h.cfg.ShutdownGrace)
 	time.AfterFunc(h.cfg.ShutdownGrace, func() {
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		if h.closing || len(h.panes) > 0 {
-			return
-		}
-		for p := range h.owned {
-			p.killLocked()
-		}
+		h.runSafe("drain kill", h.drainKillStep, nil)
 	})
+}
+
+// drainKillStep kills the released children a draining holder still owns.
+func (h *Holder) drainKillStep() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closing || len(h.panes) > 0 {
+		return
+	}
+	for p := range h.owned {
+		p.killLocked()
+	}
 }
 
 // register writes the holder's registry file (spec 4.2) for the socket at sock. A file this

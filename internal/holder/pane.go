@@ -131,9 +131,56 @@ func (h *Holder) spawn(c *conn, f *hp.Spawn) {
 	}
 
 	h.addPane(c, f, p)
-	h.goSafe("pump", func() { h.pump(p) })
-	h.goSafe("input", func() { h.inputWriter(p) })
-	h.goSafe("waiter", func() { h.waiter(p) })
+	h.goSafe("pump", func() { h.pump(p) }, func() { h.locked(func() { h.pumpDiedLocked(p) }) })
+	h.goSafe("input", func() { h.inputWriter(p) }, nil)
+	h.goSafe("waiter", func() { h.waiter(p) }, func() { h.waiterDied(p) })
+}
+
+// pumpDiedLocked ends a pane whose pump panicked. Nothing reads its PTY any more, so a program
+// that writes would block for good. The holder hangs the pane up instead, and the pane's exit
+// is reported as usual once the waiter reaps the child. The pump's deferred close of readerDone
+// has run, so the waiter does not wait out the exit window.
+func (h *Holder) pumpDiedLocked(p *pane) {
+	p.readerEnded = true
+	p.paused = false
+	p.hangupLocked()
+}
+
+// waiterDied ends a pane whose waiter panicked. Without it the pane's exit is never reported,
+// final never closes and a released pane stays owned, so a draining holder would never exit.
+// The pane is reported exited with an unknown status, and its program is hung up. A child the
+// waiter had not yet collected is reaped in the background, so it does not stay a zombie. It
+// runs in the waiter's goroutine, the only one that closes final.
+func (h *Holder) waiterDied(p *pane) {
+	var reap bool
+	h.locked(func() {
+		reap = !p.reaped
+		if !p.reaped {
+			p.hangupLocked()
+			p.reaped = true // the waiter's Wait may have collected the pid; never signal it again
+		} else {
+			p.closeMasterLocked()
+		}
+		if !p.exited {
+			p.exited = true
+			p.status = hp.ExitStatus{Code: -1}
+			if c := h.conn; c != nil && c.ready && !c.closed && !p.released {
+				c.sendLocked(&hp.Exited{Handle: p.handle, Status: p.status, Final: p.ring.count})
+			}
+		}
+		if p.released {
+			delete(h.owned, p)
+			h.drainExitLocked()
+		}
+	})
+	select {
+	case <-p.final:
+	default:
+		close(p.final)
+	}
+	if reap {
+		h.goSafe("reap", func() { _, _ = p.cmd.Process.Wait() }, nil)
+	}
 }
 
 // spawnAnswered answers a spawn that needs no new program: the uuid already has a pane, or the
@@ -376,6 +423,9 @@ func (h *Holder) waiter(p *pane) {
 		p.reaped = true
 		p.status = status
 	})
+	if h.afterWait != nil {
+		h.afterWait(p)
+	}
 
 	h.awaitOutputEnd(p)
 

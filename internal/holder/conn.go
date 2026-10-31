@@ -116,6 +116,9 @@ func (c *conn) writer() {
 		if !ok {
 			return
 		}
+		if h.beforeWrite != nil {
+			h.beforeWrite(c)
+		}
 		err := c.write(b)
 		if !c.wrote(len(b), err) {
 			return
@@ -188,7 +191,9 @@ func (c *conn) writeErrorLocked(err error) {
 	h.bp.Broadcast()
 	h.cfg.Logf("holder: write: %v (waiting for the reader)", err)
 	c.writeTimer = time.AfterFunc(h.cfg.HangTimeout, func() {
-		h.locked(func() { h.dropLocked(c, "write: "+err.Error()) })
+		h.runSafe("write timer", func() {
+			h.locked(func() { h.dropLocked(c, "write: "+err.Error()) })
+		}, nil)
 	})
 }
 
@@ -337,7 +342,7 @@ func (h *Holder) dispatch(c *conn, f hp.Frame) {
 		h.markDraining()
 		h.locked(h.drainExitLocked)
 	case *hp.Shutdown:
-		h.goSafe("shutdown", h.Shutdown)
+		h.goSafe("shutdown", h.Shutdown, nil)
 	case *hp.Spawn:
 		h.spawn(c, f)
 	case *hp.Input:

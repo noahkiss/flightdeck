@@ -550,8 +550,29 @@ This is the case the design cannot save today, and later stages must not promise
 Mitigations now: keep the holder tiny; no parsing; recover from a panic in every goroutine and log
 it instead of exiting; fuzz the protocol decoder. Every critical section on the holder lock
 releases it through a deferred unlock, so a panic frees the lock while it unwinds, and recovery
-never has to guess whether the lock is still held. A source check in the tests enforces this. Mitigation in reserve: the Linux systemd fd store
-(option E), which keeps the masters open across a holder restart. macOS has no equivalent.
+never has to guess whether the lock is still held. A source check in the tests enforces this.
+
+A recovered panic also repairs what its goroutine owned, so no part of the holder is left
+waiting on a goroutine that is gone:
+
+- Connection writer or reader: the holder drops the connection and records a crash. gff-hab
+  reconnects and replays, and pumps paused by the dead connection's queue resume.
+- Pane pump: nothing reads the PTY any more, so the holder hangs the pane up and counts its
+  reader as ended. The exit is reported as usual once the child is reaped.
+- Pane waiter: the holder reports the pane exited with an unknown status (code -1), hangs it
+  up, and reaps an uncollected child in the background. A released pane leaves the owned set,
+  so a draining holder can still exit.
+
+Accepted risk: a panic part way through a critical section leaves that section's change half
+done. The holder keeps serving rather than ending every program, so state can be left
+inconsistent: a pane missing from one index but not the other, a ring count that does not match
+a queued frame, an input count that counts bytes never queued, or a connection's queue byte
+count that is off (which can pause or never pause the pumps). gff-hab sees these as protocol
+errors or gaps on that pane, and can release it. The panic is logged, so the fault can be found
+and fixed.
+
+Mitigation in reserve: the Linux systemd fd store (option E), which keeps the masters open across
+a holder restart. macOS has no equivalent.
 
 ### 6.7 A crash during drain
 

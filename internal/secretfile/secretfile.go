@@ -52,6 +52,9 @@ func Read(path string, max int64) ([]byte, error) {
 // with mode 0600 and returns them with created true. dir is created with mode 0700 when missing.
 // The new file is written whole to a temp file and hard-linked into place: the link fails when
 // the file exists, so a racing creator never sees a half-written secret, and the first one wins.
+// On a filesystem without hard links, the file is created under its final name with O_EXCL and
+// then written and synced. The first creator still wins and an existing file is still never
+// replaced, but a racing reader can see the file before its bytes are complete.
 // A file that exists but fails the checks is an error; it is never replaced.
 func LoadOrCreate(dir, name string, max int64, make func() ([]byte, error)) (data []byte, created bool, err error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -85,7 +88,11 @@ func LoadOrCreate(dir, name string, max int64, make func() ([]byte, error)) (dat
 	if err != nil {
 		return nil, false, err
 	}
-	if err := os.Link(tmp, path); errors.Is(err, os.ErrExist) {
+	err = link(tmp, path)
+	if err != nil && !errors.Is(err, os.ErrExist) {
+		err = createExcl(path, b)
+	}
+	if errors.Is(err, os.ErrExist) {
 		b, err := Read(path, max) // another process made it first
 		return b, false, err
 	} else if err != nil {
@@ -96,4 +103,30 @@ func LoadOrCreate(dir, name string, max int64, make func() ([]byte, error)) (dat
 		d.Close()
 	}
 	return b, true, nil
+}
+
+// link is os.Link. Tests replace it to act as a filesystem without hard links.
+var link = os.Link
+
+// createExcl creates path, which must not exist, with mode 0600 and writes b to it. It is the
+// fallback when the filesystem refuses hard links. A failed write removes the file it created.
+func createExcl(path string, b []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	err = f.Chmod(0o600) // the umask may have narrowed the mode further; never widen it past 0600
+	if err == nil {
+		_, err = f.Write(b)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(path)
+	}
+	return err
 }
