@@ -94,7 +94,9 @@ Behaviour:
 - **Refresh.** herdr serves a catalogue index over HTTPS. Its updater refuses a manifest older
   than the cached one. Ours does the same: compare `version`, never downgrade, skip a manifest
   whose `min_engine_version` is above our matcher's engine version, and keep the last good copy.
-  The rounds job in the master plan runs the refresh; this part only defines the behaviour.
+  gff-hab runs the refresh itself, on a schedule and by command, and reports drift: a manifest
+  it cannot use, or a harness version newer than any manifest knows. A manual refresh from a
+  downloaded catalogue works offline. The vendored copies in the repo are the starting point.
 - **Screen state is a fallback.** A manifest match may set state only when no hook, OSC 7501 or
   server signal arrived for that pane in the current turn. It never sets `blocked:permission`
   for the purpose of answering. It may raise a "looks blocked" hint in the UI.
@@ -346,7 +348,7 @@ Further rules:
 | A hook fires with no terminal | Claude may start hooks without a controlling terminal. Our hooks never need one: they post to `GFF_HAB` and never write escape codes to a TTY. |
 | Nested agent in a pane | Claude: entrypoint guard. Codex and opencode: the adapter binds the pane to the first session per process and ignores hooks whose session id differs while that session lives, unless the foreground process changed. |
 | Subagents | Claude hooks with `agent_id` never rebind the pane. |
-| Transcript format drift | Each reader pins the harness versions it was tested on. An unknown version reads in a tolerant mode that skips unknown records and flags the adapter as degraded. The drift rounds job runs new harness versions against our fixtures. |
+| Transcript format drift | Each reader pins the harness versions it was tested on. An unknown version reads in a tolerant mode that skips unknown records and flags the adapter as degraded. gff-hab reports the degraded adapter as drift. A CI job runs new harness versions against our fixtures. |
 | Transcript not yet written | Claude may create the file after the first hook. The reader waits for the file; it does not fail the pane. |
 | `gff-hab` restarts | Hook posts during the gap are lost. On start, the adapter rebuilds state from the transcript tail, the last OSC 7501 report in the holder's byte ring, and the process table. It marks state as `source: screen` until the next hook. |
 | Harness upgrade mid-session | The running process keeps its version; only new panes see the new one. The reader picks its parser per session from the version in the transcript, not from the installed binary. |
@@ -434,6 +436,5 @@ Opened while writing this spec, 2026-10-31.
 - Daemon default since Codex 0.157 (secondary source):
   https://codex.danielvaughan.com/2026/09/25/codex-cli-daemon-auto-start-stable-default-v0157/
 
-Internal inputs: the Part 4 plan and study task in bm, the harness and sessions research
-reports, and the GFF interim hook endpoint task. None of their private detail is reproduced
-here.
+Internal inputs: the project's planning notes and research reports on harnesses and sessions.
+None of their private detail is reproduced here.
