@@ -1,0 +1,68 @@
+# flightdeck
+
+One personal workspace for coding agents, and later for the rest of a homelab and daily life.
+Agents run on several machines. Flightdeck shows them all in one place: a native chat view, a
+terminal view, approvals and status. It does not replace any agent harness. It starts, hosts,
+observes and presents them.
+
+The plan and its stages live in bm (project `flightdeck`). Start with the master plan:
+`bm ls -t plan -p flightdeck`.
+
+## Names
+
+| Name | What it is |
+|---|---|
+| GFF (Go For Flight) | The system as a whole, and the `gff` terminal client (Go) |
+| Flightdeck | The native iOS, iPadOS and macOS app (Swift, SwiftUI) |
+| hab | The server on each host: `gff-hab` (logic, restarts any time) and `gff-hab-holder` (owns the PTYs, almost never restarts) |
+| Capcom | The conversation that needs no project folder: it answers or routes anything |
+| modules | Extensions: JS that returns native building blocks, rendered by the app and the Go client |
+
+Use these plain words for the rest: console (a shell beside a session), approvals, flight rules
+(the context ledger), status board, channels (agent messages), rounds (scheduled jobs),
+online and offline, session. One word per concept; do not rotate synonyms.
+
+## How we build it
+
+- **New code, one architecture.** We study how the best tools behave (herdr, Rex, Moshi, the
+  earlier GFF and the zellij fork). We write down the behaviour, then write our own code from
+  that spec. Do not paste chunks of other projects' code.
+- **Spec first.** Each part of the plan starts with a study task that writes a behaviour spec
+  (what the reference tools do, edge cases, why). Implementation tasks work from the spec.
+- **Harnesses.** Supported now: Claude Code, Codex, opencode. pi comes later; others after that.
+  Agent detection comes from herdr's detection manifests, used as data and refreshed on a
+  schedule. Each harness gets a thin adapter of our own: state events from hooks, a transcript
+  reader for the chat view, input through the PTY. Each adapter ships fixture transcripts.
+- **Native data stays native.** Transcripts stay where each harness writes them. Resuming a
+  session from a plain terminal must always work.
+- **Sessions outlive updates.** Restarting `gff-hab` never kills a running program.
+- **Many machines from day one.** The repo builds and runs on macOS and Linux. Nothing assumes
+  one host.
+
+## Build and test
+
+Local builds and tests are fine on any of the owner's machines for now. CI arrives later
+(shared workflows from `noahkiss/workflows`, macOS jobs only where Apple code changed).
+
+- Go code (hab, `gff`, modules runtime) is developed mostly on the Linux dev box.
+- Swift and SwiftUI work happens on a Mac, with Xcode and the simulator.
+- Signing and release builds will move to CI once it exists.
+
+Commands go here as the code lands.
+
+## Delegation
+
+- Split work into tasks one subagent can finish and verify: one outcome, clear acceptance.
+- Use Opus subagents for code and research. Use Fable only for copywriting (README, site,
+  store text), and sparingly.
+- Run `/consensus` on key decisions with no ground truth.
+
+## Hygiene: the repo stays publishable
+
+- The repo is public. Nothing homelab-specific goes in it: no real hostnames, IPs, tailnet
+  names, usernames, home paths, or vault and item names. This covers code, docs, examples,
+  commit messages and CI.
+- Configuration comes from the environment or a config file. No baked-in default names a real
+  machine.
+- Test fixtures are written by hand or scrubbed. Never commit a real transcript.
+- No agent footers in commits or PRs.

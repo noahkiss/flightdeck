@@ -1,0 +1,5 @@
+.bm.yml
+.DS_Store
+/build/
+*.xcodeproj/xcuserdata/
+.claude/worktrees/
