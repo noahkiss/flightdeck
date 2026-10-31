@@ -478,9 +478,14 @@ either way, so the child is reaped whenever it ends.
 - **Output ends, child lives.** The child closed its terminal descriptors, or redirected them. The
   reader ends; the pane shows output closed and the child running. The exit frame comes later from
   the waiter.
-- **Child exits, output continues.** A background job still holds the PTY, so the reader never
-  ends. The exit frame goes out 200 ms after exit (2.7). The pane keeps pumping until release
+- **Child exits, output continues (Linux).** A background job still holds the PTY, so the reader
+  never ends. The exit frame goes out 200 ms after exit (2.7). The pane keeps pumping until release
   hangs up the remaining processes.
+- **Child exits, terminal revoked (macOS).** When the session leader exits, macOS revokes its
+  controlling terminal. The master reads end of file at once, and a surviving background job's
+  writes fail with EIO, even when it ignores SIGHUP. The reader ends; the job keeps running
+  without a terminal until release or shutdown kills the process group. Checked on macOS 27
+  (arm64).
 - **macOS.** After the last slave descriptor closes, reading the master may end early. Stage 3
   tests that output written just before exit is not lost on macOS.
 

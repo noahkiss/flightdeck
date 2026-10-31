@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"syscall"
 	"testing"
@@ -251,15 +252,26 @@ func TestBackgroundJobHoldsPTY(t *testing.T) {
 		t.Fatalf("exit %+v", e.Status)
 	}
 	p := paneOf(t, h, s.Handle)
-	c.until(func(f hp.Frame) bool {
-		o, ok := f.(*hp.Output)
-		return ok && o.Handle == s.Handle && o.Offset >= e.Final
-	})
-	h.mu.Lock()
-	ended := p.readerEnded
-	h.mu.Unlock()
-	if ended || groupGone(int(s.Pid)) {
-		t.Fatal("the background job is gone before shutdown")
+	if runtime.GOOS == "darwin" {
+		// macOS revokes the terminal when the session leader exits: the master reads EOF at once
+		// and the background job's writes fail with EIO. The holder must end the reader without
+		// hanging and still kill the surviving group at shutdown (hab-holder.md 6.3).
+		eventually(t, h, "reader ended after the leader exited", func() bool { return p.readerEnded })
+		if groupGone(int(s.Pid)) {
+			t.Fatal("the background job is gone before shutdown")
+		}
+	} else {
+		// Linux keeps the slave usable: the job's output keeps landing in the ring.
+		c.until(func(f hp.Frame) bool {
+			o, ok := f.(*hp.Output)
+			return ok && o.Handle == s.Handle && o.Offset >= e.Final
+		})
+		h.mu.Lock()
+		ended := p.readerEnded
+		h.mu.Unlock()
+		if ended || groupGone(int(s.Pid)) {
+			t.Fatal("the background job is gone before shutdown")
+		}
 	}
 	h.Shutdown()
 	eventually(t, h, "background job killed", func() bool { return groupGone(int(s.Pid)) })
