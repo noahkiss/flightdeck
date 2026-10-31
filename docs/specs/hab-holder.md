@@ -271,16 +271,16 @@ The encoding is in [`docs/protocol/holder.md`](../protocol/holder.md).
 | holder → logic | refuse | the holder's version range, a reason |
 | logic → holder | spawn | pane uuid, argv, env, cwd, size |
 | holder → logic | spawned / spawn failed | handle and pid, or an error |
-| logic → holder | input | handle, bytes |
-| holder → logic | input refused | handle, reason (queue full, pane gone) |
+| logic → holder | input | handle, input offset, bytes |
+| holder → logic | input refused | handle, reason (queue full, wrong offset, pane gone), the input offset expected |
 | holder → logic | output | handle, start offset, bytes |
 | logic → holder | replay | handle, from offset, optional to offset |
-| holder → logic | replay data | handle, actual start offset, gap flag, bytes |
+| holder → logic | replay data | handle, offset, bytes; then a replay end with the actual start offset, end offset and gap flag |
 | logic → holder | resize | handle, cols, rows |
 | logic → holder | signal | handle, target (child or foreground group), signal |
 | logic → holder | foreground query | handle |
 | holder → logic | foreground | handle, process group id, or none |
-| holder → logic | exited | handle, code or signal, final byte count |
+| holder → logic | exited | handle, code or signal (in protocol numbers), final byte count |
 | logic → holder | release | handle |
 | logic → holder | handover | (nothing) |
 | logic → holder | drain | (nothing) |
@@ -518,7 +518,7 @@ logic process holds a lock in the state directory, so this happens only by accid
 
 ## 7. Open questions
 
-### Q1. Who finds the OSC 133 prompt marks? **Decision: option 2** (owner, stage 2)
+### Q1. Who finds the OSC 133 prompt marks? **Decision: option 2, coordinator ruling**
 
 The four marks (prompt start, command start, output start, command end with exit status) let the
 console show each command as a card. The design doc says the holder can record them; "parses
@@ -534,8 +534,9 @@ covered: gff-hab replays the ring from its checkpoint on return and finds the sa
 the same condition as rebuilding the screen. Both options lose command output that has left the
 ring, so long-term card output needs storage in gff-hab either way.
 
-If the owner picks option 2, stage 7 moves its detection and command list into gff-hab (Part 2),
-and the holder protocol needs no version bump for it.
+Ruling (coordinator, not an owner decision): option 2. gff-hab finds the marks; libghostty tracks
+them. The holder only serves replay with an upper bound. Stage 7 moves its detection and command
+list into gff-hab (Part 2), and the holder protocol has no mark frames.
 
 ### Q2. TCC identity for holder builds on macOS. **Decision: open**
 

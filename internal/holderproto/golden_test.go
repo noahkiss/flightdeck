@@ -52,7 +52,7 @@ func TestGolden(t *testing.T) {
 		// Every kind the version carries must have a sample, so every kind has a golden.
 		have := map[hp.Kind]bool{}
 		for _, s := range tc.samples {
-			have[s.f.Kind()] = true
+			have[s.f.Header().Kind] = true
 		}
 		for _, k := range tc.reg.Kinds() {
 			if since, _ := tc.reg.Since(k); since <= tc.v && !have[k] {
@@ -120,6 +120,30 @@ func FuzzDecodeFrame(f *testing.F) {
 		}
 		if !reflect.DeepEqual(fr, fr2) {
 			t.Fatalf("re-encode changed the frame: %#v vs %#v", fr, fr2)
+		}
+	})
+}
+
+// FuzzReadFrame feeds a byte stream, after a handshake at version 2, to Conn.ReadFrame with the
+// test version 2 registry. Any input must end in a frame sequence and an error, never a panic.
+func FuzzReadFrame(f *testing.F) {
+	var seed []byte
+	for _, s := range v2Samples() {
+		seed, _ = hp.AppendFrame(seed, s.f, 2)
+	}
+	f.Add(seed)
+	f.Add([]byte{0x7e, 0xee, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 1, 'x'})
+	welcome, _ := hp.AppendFrame(nil, &hp.Welcome{Version: 2}, 2)
+	f.Fuzz(func(t *testing.T, b []byte) {
+		c := hp.NewConn(rawConn{bytes.NewReader(append(append([]byte{}, welcome...), b...))}, v2Registry())
+		c.OnSkip = func(hp.Header) {}
+		if _, err := c.Hello("fuzz"); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 1000; i++ {
+			if _, err := c.ReadFrame(); err != nil {
+				return
+			}
 		}
 	})
 }

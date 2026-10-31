@@ -208,9 +208,9 @@ gff-hab is a client of every live holder on its host: the current one and any th
   `TestMemoryLongScrollback` in `internal/vt/ghostty` reproduces it (`go test -v`).
 - It writes a **checkpoint** per pane (a parser snapshot plus the offset it covers) when the pane
   goes idle and every N seconds. The holder spec owns the ring; this spec owns the checkpoint.
-- **Planned restart:** gff-hab writes fresh checkpoints, tells each holder it is handing over with
-  the offsets it saved, and exits. The next gff-hab loads the checkpoints and asks for bytes after
-  each saved offset.
+- **Planned restart:** gff-hab writes fresh checkpoints, tells each holder it is handing over, and
+  exits. Handover carries no offsets: the checkpoints hold them. The next gff-hab loads the
+  checkpoints and asks each holder for a replay from each saved offset.
 - **Crash:** the next gff-hab loads the latest checkpoint and replays the ring from that offset. If
   the ring no longer reaches back that far, it rebuilds from the ring alone and marks the pane's
   screen as **suspect** (see 6.7).

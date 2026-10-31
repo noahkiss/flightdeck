@@ -1,10 +1,11 @@
 // Package holderproto is the wire protocol between gff-hab (the logic process) and
 // gff-hab-holder (the process that owns the PTYs).
 //
-// A connection carries frames. Each frame is a 10-byte header (kind, pane handle, payload length)
-// and a payload. Payloads are compact big-endian binary. The protocol version is negotiated once
-// per connection, and a Conn keeps the version it negotiated, so one gff-hab can hold connections
-// to several holders at different versions at once (a draining old holder beside the current one).
+// A connection carries frames. Each frame is a 14-byte header (kind, pane handle, request token,
+// payload length) and a payload. Payloads are compact big-endian binary. The protocol version is
+// negotiated once per connection, and a Conn keeps the version it negotiated, so one gff-hab can
+// hold connections to several holders at different versions at once (a draining old holder
+// beside the current one).
 //
 // docs/protocol/holder.md describes every frame byte by byte. This package is pure Go: the holder
 // must build with CGO_ENABLED=0.
@@ -34,15 +35,33 @@ type Kind uint16
 // connection, or the pane has no handle yet (spawn).
 type Handle uint32
 
+// Header is the fixed part of every frame, without the payload length.
+type Header struct {
+	Kind Kind
+	// Pane is the pane handle, or 0.
+	Pane Handle
+	// Token is chosen by gff-hab on a request and echoed by the holder on every reply to it.
+	// It is 0 on events and on the handshake.
+	Token uint32
+}
+
 // HeaderSize is the length of a frame header in bytes.
-const HeaderSize = 10
+const HeaderSize = 14
 
-// MaxPayload is the largest payload a receiver accepts. A larger length is a protocol violation
-// and ends the connection, because the receiver cannot tell a corrupt length from a real one.
-const MaxPayload = 16 << 20
+// Size limits. A frame over a limit is a protocol violation and ends the connection: the receiver
+// cannot tell a corrupt length from a real one.
+const (
+	// MaxPayload caps every payload. Spawn, with its environment, is the largest frame.
+	MaxPayload = 16 << 20
+	// MaxOutputData caps the bytes in one output or replay data frame.
+	MaxOutputData = 64 << 10
+	// MaxInputData caps the bytes in one input frame. The holder queues an input frame whole or
+	// refuses it whole.
+	MaxInputData = 1 << 20
+)
 
-// ErrTooLarge means a frame header announced a payload over MaxPayload.
-var ErrTooLarge = errors.New("holderproto: payload over the size limit")
+// ErrTooLarge means a frame, or the data in it, is over its size limit.
+var ErrTooLarge = errors.New("holderproto: frame over the size limit")
 
 // ErrNotInVersion means a frame kind is not part of the connection's negotiated version, or the
 // version is not negotiated yet. The frame was not sent.
@@ -50,17 +69,20 @@ var ErrNotInVersion = errors.New("holderproto: frame kind not in the negotiated 
 
 // Frame is one protocol message.
 type Frame interface {
-	// Kind returns the frame's kind.
-	Kind() Kind
-	// Pane returns the pane handle for the header, or 0.
-	Pane() Handle
+	// Header returns the frame's kind, pane handle and token.
+	Header() Header
 	// MarshalPayload returns the payload as version v lays it out.
 	MarshalPayload(v Version) []byte
 }
 
-// DecodeFunc builds a frame of one kind from its header pane handle and payload, as version v
-// lays it out. It must ignore bytes after the last field it knows.
-type DecodeFunc func(v Version, pane Handle, payload []byte) (Frame, error)
+// validator is a frame with limits beyond MaxPayload. AppendFrame and the decoder both check it.
+type validator interface {
+	validate() error
+}
+
+// DecodeFunc builds a frame of one kind from its header and payload, as version v lays it out.
+// It must ignore bytes after the last field it knows.
+type DecodeFunc func(v Version, h Header, payload []byte) (Frame, error)
 
 type entry struct {
 	since  Version
@@ -115,14 +137,43 @@ func (r *Registry) Range() Range { return Range{r.Min, r.Max} }
 
 // AppendFrame appends the header and payload of f, encoded at version v, to b.
 func AppendFrame(b []byte, f Frame, v Version) ([]byte, error) {
+	if val, ok := f.(validator); ok {
+		if err := val.validate(); err != nil {
+			return b, err
+		}
+	}
 	p := f.MarshalPayload(v)
 	if len(p) > MaxPayload {
 		return b, ErrTooLarge
 	}
-	b = binary.BigEndian.AppendUint16(b, uint16(f.Kind()))
-	b = binary.BigEndian.AppendUint32(b, uint32(f.Pane()))
+	h := f.Header()
+	b = binary.BigEndian.AppendUint16(b, uint16(h.Kind))
+	b = binary.BigEndian.AppendUint32(b, uint32(h.Pane))
+	b = binary.BigEndian.AppendUint32(b, h.Token)
 	b = binary.BigEndian.AppendUint32(b, uint32(len(p)))
 	return append(b, p...), nil
+}
+
+// parseHeader reads a header and its payload length.
+func parseHeader(b []byte) (Header, uint32) {
+	return Header{
+		Kind:  Kind(binary.BigEndian.Uint16(b[0:2])),
+		Pane:  Handle(binary.BigEndian.Uint32(b[2:6])),
+		Token: binary.BigEndian.Uint32(b[6:10]),
+	}, binary.BigEndian.Uint32(b[10:14])
+}
+
+func (e entry) run(v Version, h Header, p []byte) (Frame, error) {
+	f, err := e.decode(v, h, p)
+	if err == nil {
+		if val, ok := f.(validator); ok {
+			err = val.validate()
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("holderproto: %s: %w", h.Kind, err)
+	}
+	return f, nil
 }
 
 // DecodeFrame decodes the first frame in b at version v and returns it with the number of bytes
@@ -133,9 +184,7 @@ func (r *Registry) DecodeFrame(v Version, b []byte) (Frame, int, error) {
 	if len(b) < HeaderSize {
 		return nil, 0, io.ErrUnexpectedEOF
 	}
-	kind := Kind(binary.BigEndian.Uint16(b[0:2]))
-	pane := Handle(binary.BigEndian.Uint32(b[2:6]))
-	n := binary.BigEndian.Uint32(b[6:10])
+	h, n := parseHeader(b)
 	if n > MaxPayload {
 		return nil, 0, ErrTooLarge
 	}
@@ -143,14 +192,13 @@ func (r *Registry) DecodeFrame(v Version, b []byte) (Frame, int, error) {
 	if len(b) < end {
 		return nil, 0, io.ErrUnexpectedEOF
 	}
-	e, ok := r.kinds[kind]
+	e, ok := r.kinds[h.Kind]
 	if !ok || e.since > v {
 		return nil, end, nil
 	}
-	p := append([]byte{}, b[HeaderSize:end]...)
-	f, err := e.decode(v, pane, p)
+	f, err := e.run(v, h, append([]byte{}, b[HeaderSize:end]...))
 	if err != nil {
-		return nil, 0, fmt.Errorf("holderproto: kind %#04x: %w", uint16(kind), err)
+		return nil, 0, err
 	}
 	return f, end, nil
 }
@@ -158,6 +206,10 @@ func (r *Registry) DecodeFrame(v Version, b []byte) (Frame, int, error) {
 // Conn reads and writes frames on one connection. WriteFrame is safe for concurrent use;
 // ReadFrame must be called from one goroutine at a time.
 type Conn struct {
+	// OnSkip, when set, is called from ReadFrame with the header of every frame it skips. The
+	// holder sets it to answer a skipped request with UnknownKind.
+	OnSkip func(Header)
+
 	reg     *Registry
 	r       *bufio.Reader
 	w       io.Writer
@@ -196,8 +248,9 @@ func (c *Conn) legal(k Kind) (entry, bool) {
 
 // WriteFrame encodes f at the connection's version and writes it in one Write call.
 func (c *Conn) WriteFrame(f Frame) error {
-	if _, ok := c.legal(f.Kind()); !ok {
-		return fmt.Errorf("%w: kind %#04x at version %d", ErrNotInVersion, uint16(f.Kind()), c.Version())
+	k := f.Header().Kind
+	if _, ok := c.legal(k); !ok {
+		return fmt.Errorf("%w: %s at version %d", ErrNotInVersion, k, c.Version())
 	}
 	b, err := AppendFrame(make([]byte, 0, HeaderSize+64), f, c.Version())
 	if err != nil {
@@ -210,36 +263,33 @@ func (c *Conn) WriteFrame(f Frame) error {
 }
 
 // ReadFrame returns the next frame. It skips, by length, every frame whose kind is unknown or not
-// part of the negotiated version. A malformed payload of a known kind is an error, and the caller
-// should drop the connection.
+// part of the negotiated version, and reports each skip to OnSkip. A malformed payload of a known
+// kind, or a frame over a size limit, is an error, and the caller should drop the connection.
 func (c *Conn) ReadFrame() (Frame, error) {
 	for {
 		if _, err := io.ReadFull(c.r, c.hdr[:]); err != nil {
 			return nil, err
 		}
-		kind := Kind(binary.BigEndian.Uint16(c.hdr[0:2]))
-		pane := Handle(binary.BigEndian.Uint32(c.hdr[2:6]))
-		n := binary.BigEndian.Uint32(c.hdr[6:10])
+		h, n := parseHeader(c.hdr[:])
 		if n > MaxPayload {
 			return nil, ErrTooLarge
 		}
-		e, ok := c.legal(kind)
+		e, ok := c.legal(h.Kind)
 		if !ok {
 			if _, err := c.r.Discard(int(n)); err != nil {
 				return nil, noEOF(err)
 			}
 			c.skipped.Add(1)
+			if c.OnSkip != nil {
+				c.OnSkip(h)
+			}
 			continue
 		}
 		p := make([]byte, n)
 		if _, err := io.ReadFull(c.r, p); err != nil {
 			return nil, noEOF(err)
 		}
-		f, err := e.decode(c.Version(), pane, p)
-		if err != nil {
-			return nil, fmt.Errorf("holderproto: kind %#04x: %w", uint16(kind), err)
-		}
-		return f, nil
+		return e.run(c.Version(), h, p)
 	}
 }
 

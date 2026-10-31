@@ -44,6 +44,14 @@ func (e *Enc) Bool(v bool) {
 // Raw appends bytes with no length prefix. Only the last field of a payload may be raw.
 func (e *Enc) Raw(p []byte) { e.b = append(e.b, p...) }
 
+// Fixed appends the fixed part of a kind whose payload ends in raw bytes: a uint16 length, then
+// the fixed fields. A receiver finds the raw bytes after the fixed part even when a newer
+// version appended fixed fields it does not know.
+func (e *Enc) Fixed(fields []byte) {
+	e.U16(uint16(len(fields)))
+	e.b = append(e.b, fields...)
+}
+
 // Blob appends a uint32 length, then the bytes.
 func (e *Enc) Blob(p []byte) {
 	e.U32(uint32(len(p)))
@@ -148,6 +156,17 @@ func (d *Dec) Rest() []byte {
 	p := append([]byte{}, d.b...)
 	d.b = nil
 	return p
+}
+
+// Fixed reads a uint16 length and returns a decoder over that many bytes: the fixed part written
+// by Enc.Fixed. Decode the fixed fields from it and the raw bytes from d.Rest.
+func (d *Dec) Fixed() *Dec {
+	n := d.U16()
+	p := d.take(int(n))
+	if d.err != nil {
+		return &Dec{err: d.err}
+	}
+	return &Dec{b: p}
 }
 
 // Blob reads a uint32 length, then that many bytes, as a copy.

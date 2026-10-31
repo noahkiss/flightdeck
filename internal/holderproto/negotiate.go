@@ -57,7 +57,7 @@ func (c *Conn) Hello(build string) (*Welcome, error) {
 	case *Refuse:
 		return nil, &RefusedError{Offered: offered, Holder: Range{f.Min, f.Max}, Reason: f.Reason}
 	default:
-		return nil, fmt.Errorf("%w: kind %#04x", ErrHandshake, uint16(f.Kind()))
+		return nil, fmt.Errorf("%w: kind %#04x", ErrHandshake, uint16(f.Header().Kind))
 	}
 }
 
@@ -72,7 +72,7 @@ func (c *Conn) AcceptHello() (*Hello, error) {
 	}
 	h, ok := f.(*Hello)
 	if !ok {
-		return nil, fmt.Errorf("%w: kind %#04x", ErrHandshake, uint16(f.Kind()))
+		return nil, fmt.Errorf("%w: kind %#04x", ErrHandshake, uint16(f.Header().Kind))
 	}
 	offered, own := Range{h.Min, h.Max}, c.reg.Range()
 	v, ok := Negotiate(offered, own)
