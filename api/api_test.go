@@ -99,10 +99,13 @@ func TestNoNullArrays(t *testing.T) {
 // reader must skip. The Swift tests in swift/HabAPI decode every file, and the apigen tests check
 // each one against the schemas, in both directions.
 //
-// `go test ./api -run TestGoldens -update` rewrites the directory of the current revision only.
-// The directories of older revisions are frozen: they are what an old hab sends.
+// Golden files are frozen once written: they are what a hab of that revision sends, and an old
+// client must keep reading them. `go test ./api -run TestGoldens -update` only adds the files of
+// new messages to the current revision's directory. It never rewrites or removes a file. A sample
+// that no longer matches its file fails the test: an existing message changed shape, which needs
+// a new revision (spec 3.3), with its messages in the next revision's directory.
 
-var update = flag.Bool("update", false, "rewrite the golden messages of the current revision")
+var update = flag.Bool("update", false, "add the golden files of new messages to the current revision; existing files are never rewritten")
 
 // goldenDir is the directory of revision r's golden messages, relative to this package.
 func goldenDir(r int) string { return filepath.Join("testdata", fmt.Sprintf("rev%d", r)) }
@@ -290,7 +293,7 @@ func addUnknown(v any, top bool) {
 
 // rawFields names nested fields of type RawJSON. Like an event's data, they keep extra fields on
 // a round trip.
-var rawFields = map[string]bool{"input": true} // PermissionRequest.Input
+var rawFields = map[string]bool{"input": true} // PermissionRequest.Input, ChatTool.Input
 
 // stripUnknown removes the x_unknown_* fields from every object in v, recursively. Below a key
 // in keep (such as an event's data), or a key in rawFields, it leaves v as it is.
@@ -347,14 +350,20 @@ func TestGoldens(t *testing.T) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		old, _ := filepath.Glob(filepath.Join(dir, "*.json"))
-		for _, p := range old {
-			if err := os.Remove(p); err != nil {
+		for _, s := range samples {
+			p := filepath.Join(dir, s.name+".json")
+			if _, err := os.Stat(p); err == nil {
+				continue // frozen: never rewritten
+			}
+			f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+			if err != nil {
 				t.Fatal(err)
 			}
-		}
-		for _, s := range samples {
-			if err := os.WriteFile(filepath.Join(dir, s.name+".json"), goldenBytes(t, s.value), 0o644); err != nil {
+			_, err = f.Write(goldenBytes(t, s.value))
+			if cerr := f.Close(); err == nil {
+				err = cerr
+			}
+			if err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -365,17 +374,17 @@ func TestGoldens(t *testing.T) {
 		want[s.name+".json"] = true
 		got, err := os.ReadFile(filepath.Join(dir, s.name+".json"))
 		if err != nil {
-			t.Errorf("%v (run go test ./api -run TestGoldens -update)", err)
+			t.Errorf("%v (a new message: run go test ./api -run TestGoldens -update)", err)
 			continue
 		}
 		if string(got) != string(goldenBytes(t, s.value)) {
-			t.Errorf("%s/%s.json is stale (run go test ./api -run TestGoldens -update)", dir, s.name)
+			t.Errorf("%s/%s.json no longer matches its message: golden files are frozen, so an existing message must not change shape (spec 3.3)", dir, s.name)
 		}
 	}
 	files, _ := filepath.Glob(filepath.Join(dir, "*.json"))
 	for _, p := range files {
 		if !want[filepath.Base(p)] {
-			t.Errorf("%s has no sample (run go test ./api -run TestGoldens -update)", p)
+			t.Errorf("%s has no sample: a message was removed, which needs a new revision (spec 3.3)", p)
 		}
 	}
 

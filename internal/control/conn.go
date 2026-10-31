@@ -3,6 +3,7 @@ package control
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -530,7 +531,35 @@ func (c *conn) decodeUp(m message, v any) *Error {
 const (
 	hintNoHolder  = "%s needs the holder link, which this build does not have yet"
 	hintNoDevices = "%s needs pairing, which this build does not have yet; the devices capability is absent"
+	hintNoActions = "%s needs the holder link, which this hab is running without"
 )
+
+// later names the stage that builds each method this build defines but does not serve yet
+// (spec 3.9). Each answers unavailable with a hint that names it.
+var later = map[string]string{
+	"session.resume":         "Part 4 stage 4 (harness adapters: state and input)",
+	"session.interrupt":      "Part 4 stage 4 (harness adapters: state and input)",
+	"session.send":           "Part 4 stage 4 (harness adapters: state and input)",
+	"approval.answer":        "Part 4 stage 4 (harness adapters: permission answers)",
+	"chat.page":              "Part 4 stage 5 (the transcript reader for the chat view)",
+	"attachment.put":         "Part 6 stage 5 (the app's chat view, images and files)",
+	"attachment.get":         "Part 6 stage 5 (the app's chat view, images and files)",
+	"session.focus":          "Part 6 stage 7 (approvals, push and Live Activity)",
+	"push.register":          "Part 6 stage 7 (approvals, push and Live Activity)",
+	"push.register_activity": "Part 6 stage 7 (approvals, push and Live Activity)",
+	"push.unregister":        "Part 6 stage 7 (approvals, push and Live Activity)",
+	"usage.list":             "Part 4 (adapters that report harness usage)",
+	"hab.stats":              "Part 5 stage 5 (system info)",
+}
+
+// actionErr turns an Actions error into an application error.
+func actionErr(method string, err error) *Error {
+	var e *Error
+	if errors.As(err, &e) {
+		return e
+	}
+	return appErr(api.ErrorKindUnavailable, "%s: %v", method, err)
+}
 
 func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 	s := api.Seq{Seq: seq}
@@ -552,6 +581,41 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		return nil, appErr(api.ErrorKindUnavailable, hintNoHolder, m.Method)
 	case "devices.pair", "devices.list", "devices.revoke":
 		return nil, appErr(api.ErrorKindUnavailable, hintNoDevices, m.Method)
+	case "session.create":
+		var p api.SessionCreateParams
+		if e := c.decodeUp(m, &p); e != nil {
+			return nil, e
+		}
+		if c.s.cfg.Actions == nil {
+			return nil, appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
+		defer cancel()
+		session, pane, err := c.s.cfg.Actions.CreateSession(ctx, p)
+		if err != nil {
+			return nil, actionErr(m.Method, err)
+		}
+		return api.SessionCreated{Seq: s, Session: session, Pane: pane}, nil
+	case "pane.close":
+		var p api.PaneRef
+		if e := c.decodeUp(m, &p); e != nil {
+			return nil, e
+		}
+		if p.Pane == "" {
+			return nil, appErr(api.ErrorKindInvalid, "pane.close needs a pane")
+		}
+		if c.s.cfg.Actions == nil {
+			return nil, appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
+		defer cancel()
+		if err := c.s.cfg.Actions.ClosePane(ctx, p.Pane); err != nil {
+			return nil, actionErr(m.Method, err)
+		}
+		return api.Empty{Seq: s}, nil
+	}
+	if stage, ok := later[m.Method]; ok {
+		return nil, appErr(api.ErrorKindUnavailable, "%s is not built yet; %s builds it", m.Method, stage)
 	}
 	return nil, protoErr(codeMethodNotFound, "method %q does not exist", m.Method)
 }

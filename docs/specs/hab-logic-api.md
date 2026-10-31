@@ -275,7 +275,7 @@ Decisions taken in stage 4 (`internal/link`):
   removed, watchers get a gone notice, and its parsed screen stays readable until the prune
   drops it. The holder exits after its last release. A running pane on a draining holder is
   never released by this rule. Ended panes on the current holder stay until a client closes
-  them (`pane.close`, not built yet).
+  them with `pane.close` (3.9), which releases a pane on any holder.
 
 ### 2.4 Backends
 
@@ -302,7 +302,8 @@ by gff-hab, never taken from zellij. Whether this interim backend exists at all 
 - Every result is a JSON object, never a bare value, so fields can be added later.
 - Requests on one connection may run side by side. A client must match responses by id.
 - Method names are grouped by prefix: `hab.*`, `structure.*`, `pane.*`, `session.*`, `project.*`,
-  `data.*`, `events.*`, `devices.*`, `rpc.discover`.
+  `data.*`, `events.*`, `devices.*`, `approval.*`, `chat.*`, `attachment.*`, `push.*`, `usage.*`,
+  `rpc.discover`. The calls the clients need are listed in 3.9.
 - `devices.pair`, `devices.list` and `devices.revoke` manage the hab's trust store
   (`transport.md` 5, 6). They need the `devices` capability. Until pairing is built they answer
   `unavailable`. Rename and rotate (`transport.md` 6.5) are added the same way when they are built.
@@ -389,10 +390,11 @@ The schema lives in `api/` (layout and commands: `docs/layout.md`). Built choice
 ### 3.4 Capabilities
 
 Capability strings name optional features: `data-streams`, `snapshot-vt`, `snapshot-ghostty`,
-`agent-state`, `transcripts`, `devices`. `devices` means the embedded SSH server is on and the
-`devices.*` methods work. A client checks for a capability before it uses the feature. The
-zellij backend omits `data-streams`. Capabilities are for features that a host may lack. They are
-not a second versioning scheme.
+`agent-state`, `transcripts`, `devices`, `push`, `host-stats`. `devices` means the embedded SSH
+server is on and the `devices.*` methods work. `push` means the hab has working push config;
+`host-stats` means `hab.stats` works (3.9). A client checks for a capability before it uses the
+feature. The zellij backend omits `data-streams`. Capabilities are for features that a host may
+lack. They are not a second versioning scheme.
 
 ### 3.5 Events, seq and epoch
 
@@ -411,8 +413,9 @@ not a second versioning scheme.
   revision is not higher than the one it holds. Deleting an object emits a final event with a final
   revision. Revisions order events only within an epoch; they are not compared across epochs.
 - **Ephemeral events carry no revision.** `pane.owner` and `pane.activity` describe state that is
-  not stored (owners are dropped on a new epoch). Their `revision` is absent, and the "ignore a
-  revision not higher" rule does not apply: a client applies them in seq order.
+  not stored (owners are dropped on a new epoch); so do the activity, chat, turn and usage events
+  of 3.9. Their `revision` is absent, and the "ignore a revision not higher" rule does not apply:
+  a client applies them in seq order.
 - **Epoch.** A random id chosen at each gff-hab start, sent in the welcome. A client that reconnects
   and sees a new epoch drops everything ephemeral (owners, tickets, desired sizes) and takes a fresh
   snapshot. It replaces all its objects with the snapshot's, whatever revisions it held: a lost or
@@ -482,6 +485,96 @@ Clients branch on `kind`, never on `message`.
   interleave inside a call. Calls are applied in the order gff-hab receives them.
 - Input counts as activity for size ownership (6.2).
 - gff-hab never writes to a program's input on its own, except for answers to terminal queries (5.6).
+
+### 3.9 Calls and events the clients need
+
+`gff-client.md` 14 and `app.md` 17 list what the terminal client and the app need. Every call
+and event below is in the revision 1 schema, added under the 3.3 rule (new methods, new event
+types, new capabilities and new word sets only; no field or word was added to an existing type).
+The owning stage builds the behaviour. Until then a method answers `unavailable` with a hint that
+names the stage, and an event is defined but never sent.
+
+| Method | Purpose | Built |
+|---|---|---|
+| `session.create` | Start a program in a new pane and file it as a session | Yes (this stage) |
+| `pane.close` | Release a pane; a running program gets a hang-up first | Yes (this stage) |
+| `session.resume` | Start an exited session's harness again in a new pane, with its resume id | Part 4 stage 4 |
+| `session.interrupt` | Stop the current turn through the adapter (the chat view's Stop) | Part 4 stage 4 |
+| `session.send` | Send a message through the adapter, under the input rules | Part 4 stage 4 |
+| `approval.answer` | Answer a pending request by id; a closed or expired id is refused with `conflict` | Part 4 stage 4 |
+| `chat.page` | Read a page of chat messages from the transcript reader (capability `transcripts`) | Part 4 stage 5 |
+| `attachment.put` | Start an upload of a file for a session | Part 6 stage 5 |
+| `attachment.get` | Fetch an attachment or its thumbnail | Part 6 stage 5 |
+| `session.focus` | Report focus: marks `done` seen, and holds pushes while watched | Part 6 stage 7 |
+| `push.register` | Store an APNs device token with the kinds the device wants (capability `push`) | Part 6 stage 7 |
+| `push.register_activity` | Store a Live Activity token for the tracked session (capability `push`) | Part 6 stage 7 |
+| `push.unregister` | Drop a token (capability `push`) | Part 6 stage 7 |
+| `usage.list` | The latest usage reading of each harness account | Part 4 (usage readings) |
+| `hab.stats` | CPU, memory, disk, battery and uptime of the host (capability `host-stats`) | Part 5 stage 5 |
+
+| Event | Purpose | Id | Sent from |
+|---|---|---|---|
+| `pane.bell` | A pane rang the bell; at most once per second per pane, with the count | Pane | Part 2 stage 7 |
+| `pane.output` | A pane printed; at most once per second per pane, with its offset | Pane | Part 2 stage 7 |
+| `chat.message` | A chat message was appended or changed in place | Message | Part 4 stage 5 |
+| `session.turn_end` | The agent's turn ended; names the final message | Session | Part 4 stage 4 |
+| `usage.updated` | An account's usage reading changed | Account key | Part 4 (usage readings) |
+
+All five events are ephemeral (3.5): they carry no revision, and a client applies them in seq
+order. A chat message lives in the transcript, not in gff-hab, so it has no stored revision
+either; an update repeats the message id and replaces the message.
+
+New capabilities: `push` (the hab has working push config, `app.md` 8.4) and `host-stats`.
+
+Shapes the specs left open, and the choice taken (the smallest that serves both clients):
+
+- **`session.create`** takes `name`, `project` or `project_dir`, `harness`, `argv`, `cwd`, `env`,
+  `cols` and `rows`, all optional, and returns the `session` and `pane` ids. The objects arrive as
+  events. Defaults: the hab's `$SHELL` (else `/bin/sh`); `cwd` is `project_dir`, else the hab's
+  home; 80x24; the name is the program's base name, then `-2`, `-3` and so on. `env` entries are
+  added to the hab's own environment and replace the hab's value for the same key; `GFF_HAB` is
+  always the pane's own. `project_dir` finds the project by the repository's remote (`origin`,
+  else the first), else its root commit, and creates the project, named after the repository
+  folder, when it is new. `project` and `project_dir` together are `invalid`. `harness` needs
+  the adapter and answers `unavailable` until Part 4 stage 4. Every input is checked before the
+  spawn; if filing the session fails after it, the new pane is closed again. `gff-client.md`
+  proposed `command`; `argv` is that command, unparsed.
+- **`session.resume`** takes `{session}` and returns the same ids as `session.create`.
+- **`pane.close`** takes `{pane}` (the `PaneRef` of the size methods) and returns the seq only.
+- **`session.send`** returns the seq only. Whether the message waits for the turn follows from
+  the pane's agent state, which the client already holds. A "not delivered" report is added as
+  an event when Part 4 builds delivery.
+- **`approval.answer`** `choice` is a closed set: `allow`, `deny`, or `answer` with the option or
+  free text in `text`. `via` is `app`, `banner`, `watch`, `voice` or `terminal`.
+- **`chat.page`** pages backwards by message id (`before`); `limit` defaults to 50, at most 200.
+  The result holds `messages`, oldest first, and `more`. A message has `id`, `session`, `kind`
+  (`user`, `agent`, `tool`, `event`, `plan`; open), `at`, and the optional `text`, `sender`,
+  `parent` (the subagent call), `tool` (name, target, status, input, the first part of the
+  output) and `plan` (steps with `pending`, `in_progress` or `done`).
+- **`attachment.put`** returns `id` and `path`. The channel the bytes take is designed in its
+  stage; it may add an optional field to the result. **`attachment.get`** returns the bytes in
+  `data`, with `name` and `type`.
+- **`push.register`** `environment` is `development` or `production`; `kinds` are `permission`,
+  `question`, `auth`, `error`, `done` and `usage`.
+- **`hab.stats`** is a method, not an event: a client asks while it shows the numbers. Sizes are
+  bytes; `cpu_pct` is over all cores; `battery_pct` is absent with no battery.
+- **`usage.list`** returns `accounts`, each with `key`, `label`, `harness` and `windows` (`name`,
+  `used_pct` in whole percent, `resets_at`, `read_at`). `usage.updated` carries one account.
+- The session fields (`title`, `model`, `context_pct`), request fields and project fields that
+  `app.md` 17 lists are not added yet. Adding a field to an existing type changes its golden
+  messages, which are frozen (`docs/testing.md`); each lands as an optional field with the stage
+  that fills it, together with a golden decision for that revision.
+
+**`pane.close` on a running pane.** gff-hab asks the pane's holder to release it. The holder
+hangs up the pane's session (SIGHUP) and closes the terminal; it keeps the child's waiter, so
+the program is reaped whenever it ends (holder spec 2.7). Neither the holder nor gff-hab
+escalates to TERM or KILL: a program that ignores the hang-up lives on with no terminal until it
+exits, or until the holder shuts down (holder spec 6.1). An ended pane is released the same way,
+on any holder, so ended panes on the current holder do not pile up. After the release the pane is
+gone (2.3): its data streams end, its checkpoint is removed, a `pane.deleted` event goes out, and
+its session is marked exited. The session record stays until a client closes it. Closing a pane
+that is already gone succeeds. A lost pane (its holder is not connected) answers `unavailable`;
+an unknown pane answers `not_found`. The client confirms with the owner before it calls.
 
 ---
 

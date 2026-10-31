@@ -1,0 +1,47 @@
+{
+  "data": {
+    "at": "at-5",
+    "attachments": [
+      "attachments-14"
+    ],
+    "id": "id-3",
+    "kind": "plan",
+    "parent": "parent-8",
+    "plan": [
+      {
+        "status": "done",
+        "text": "text-13",
+        "x_unknown_field": "later"
+      }
+    ],
+    "sender": "sender-7",
+    "session": "session-4",
+    "text": "text-6",
+    "tool": {
+      "input": {
+        "input": 11,
+        "x_unknown_field": "later"
+      },
+      "name": "name-9",
+      "output": "output-12",
+      "output_truncated": true,
+      "status": "denied",
+      "target": "target-10",
+      "x_unknown_field": "later"
+    },
+    "x_unknown_field": "later"
+  },
+  "id": "id-17",
+  "revision": 15,
+  "seq": 16,
+  "type": "chat.message",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

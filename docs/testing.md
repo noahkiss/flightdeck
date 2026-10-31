@@ -57,9 +57,18 @@ The first five are the core set. If only five tests could exist, these would be 
 | 14 | The app on a device (release smoke) | Connects over SSH, lists sessions, the terminal echoes typing, one approval round trip |
 
 Test 5 lives in three places. `api/api_test.go` writes the messages of the current revision to
-`api/testdata/rev<N>/`, with every field set and extra `x_unknown_*` fields in every object
-(`-update` rewrites them; older revisions stay frozen). The apigen tests check every golden
-against the schemas in both directions. The Swift `GoldenTests` decode every golden.
+`api/testdata/rev<N>/`, with every field set and extra `x_unknown_*` fields in every object. The
+apigen tests check every golden against the schemas in both directions. The Swift `GoldenTests`
+decode every golden.
+
+Golden files are frozen once written, because they are what a hab of that revision sends:
+
+- The goldens of a released revision are never regenerated.
+- New messages go into the next revision's set.
+- Revision 1 is still unreleased (`api/released/1.json` is the pre-release baseline). New
+  revision 1 messages get new files beside the existing ones; existing files never change.
+- `-update` only adds the files of new messages. It never rewrites or removes a file. A sample
+  that no longer matches its file fails the test.
 
 ## Deliberately not tested
 

@@ -78,6 +78,21 @@ var Methods = []Method{
 	{"devices.pair", "Make a one-time pairing offer for a new device (transport.md 6.1). Needs the devices capability.", DevicesPairParams{}, PairingOffer{}},
 	{"devices.list", "List the devices in the hab's trust store (transport.md 5). Needs the devices capability.", DevicesListParams{}, DeviceList{}},
 	{"devices.revoke", "Revoke a device and close its connections (transport.md 6.6). Needs the devices capability.", DevicesRevokeParams{}, Empty{}},
+	{"session.create", "Start a program in a new pane and file it as a session (spec 3.9).", SessionCreateParams{}, SessionCreated{}},
+	{"session.resume", "Start an exited session's harness again in a new pane, with its resume id.", SessionRef{}, SessionCreated{}},
+	{"pane.close", "Release a pane: a running program gets a hang-up first (spec 3.9).", PaneRef{}, Empty{}},
+	{"session.focus", "Report whether the session is in focus on this client: marks done seen, and holds pushes while watched.", SessionFocusParams{}, Empty{}},
+	{"session.interrupt", "Stop the agent's current turn through its adapter.", SessionRef{}, Empty{}},
+	{"session.send", "Send a message to the session's agent through its adapter, under the input rules.", SessionSendParams{}, Empty{}},
+	{"approval.answer", "Answer a pending request by id. A closed or expired id is refused with conflict.", ApprovalAnswerParams{}, Empty{}},
+	{"chat.page", "Read a page of the session's chat messages from the transcript reader. Needs the transcripts capability.", ChatPageParams{}, ChatMessages{}},
+	{"attachment.put", "Start an upload of a file for a session; the bytes follow on their own channel.", AttachmentPutParams{}, AttachmentStored{}},
+	{"attachment.get", "Fetch an attachment or its thumbnail.", AttachmentGetParams{}, AttachmentData{}},
+	{"push.register", "Store an APNs device token for this device. Needs the push capability.", PushRegisterParams{}, Empty{}},
+	{"push.register_activity", "Store a Live Activity token for the session this device tracks. Needs the push capability.", PushActivityParams{}, Empty{}},
+	{"push.unregister", "Drop a push token. Needs the push capability.", PushUnregisterParams{}, Empty{}},
+	{"usage.list", "The latest usage reading of each harness account on this hab.", UsageListParams{}, UsageReadings{}},
+	{"hab.stats", "CPU, memory, disk, battery and uptime of the host. Needs the host-stats capability.", HabStatsParams{}, HostStats{}},
 }
 
 // Notifications is every notification the server sends on a control connection.
@@ -98,6 +113,11 @@ var Events = []EventDef{
 	{"pane.owner", "The pane's size owner changed (spec 6.5).", PaneOwner{}},
 	{"pane.activity", "A client sent input; at most once per second per client (spec 7.1).", PaneActivity{}},
 	{"agent.state", "A pane's agent state changed (harness-adapters.md, State event model). The id is the pane id.", AgentState{}},
+	{"pane.bell", "A pane rang the bell; at most once per second per pane. Ephemeral.", PaneBell{}},
+	{"pane.output", "A pane printed; at most once per second per pane, for activity marks. Ephemeral.", PaneOutput{}},
+	{"chat.message", "A chat message was appended or changed; the id is the message id. Ephemeral.", ChatMessage{}},
+	{"session.turn_end", "The agent's turn ended; the id is the session id. Ephemeral.", TurnEnd{}},
+	{"usage.updated", "An account's usage reading changed; the id is the account key. Ephemeral.", UsageAccount{}},
 }
 
 // Frames is every data connection frame kind. A frame is the kind byte, a 4-byte big-endian
@@ -128,6 +148,15 @@ var Enums = map[string][]string{
 	"BlockedKind":   {"permission", "question", "auth"},
 	"StateSource":   {"server", "hook", "osc", "screen", "spawn"},
 	"ErrorKind":     {"not_found", "conflict", "unavailable", "revision_unsupported", "not_owner", "ticket_invalid", "invalid"},
+	// Sets added for the clients' calls (spec 3.9).
+	"SendOrigin":      {"typed", "dictated", "voice"},
+	"ApprovalChoice":  {"allow", "deny", "answer"},
+	"AnswerVia":       {"app", "banner", "watch", "voice", "terminal"},
+	"ChatKind":        {"user", "agent", "tool", "event", "plan"},
+	"ToolStatus":      {"running", "done", "error", "denied"},
+	"PlanStepStatus":  {"pending", "in_progress", "done"},
+	"PushEnvironment": {"development", "production"},
+	"PushKind":        {"permission", "question", "auth", "error", "done", "usage"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per
@@ -145,5 +174,6 @@ type Translator interface {
 var Translators = map[int]Translator{}
 
 // Capabilities lists the known capability strings (spec 3.4). "devices" means the hab's embedded
-// SSH server is on and the devices.* methods work (transport.md 9.4).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices"}
+// SSH server is on and the devices.* methods work (transport.md 9.4). "push" means the hab has
+// working push config (app.md 8.4). "host-stats" means hab.stats works.
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats"}

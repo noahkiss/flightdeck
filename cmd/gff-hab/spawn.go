@@ -13,8 +13,8 @@ import (
 
 // spawner starts programs in panes through the holder link. Each pane's environment gets
 // GFF_HAB: the hook socket and the pane's token, so the hooks of an agent in the pane reach
-// gff-hab and name the pane (harness-adapters.md, Hook endpoint). The API methods that create
-// panes call it; until they exist, only tests do.
+// gff-hab and name the pane (harness-adapters.md, Hook endpoint). session.create calls it
+// (actions.go).
 type spawner struct {
 	lk       *link.Link
 	tokens   *hook.Tokens
@@ -89,8 +89,3 @@ func newHookKeyWarning(created bool, live int) string {
 	}
 	return fmt.Sprintf("WARNING: made a new %s while %d live pane(s) exist: their hook tokens no longer match, so their hooks are refused and they show no agent state until respawned", hook.KeyFile, live)
 }
-
-// startupSpawns runs once gff-hab serves, when set. Only the gfftest build sets it
-// (spawn_gfftest.go): the end-to-end tests spawn panes through it until the API has methods
-// that create panes.
-var startupSpawns func(s *spawner, logf func(string, ...any))

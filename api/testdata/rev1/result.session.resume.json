@@ -1,0 +1,14 @@
+{
+  "pane": "pane-5",
+  "seq": 3,
+  "session": "session-4",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

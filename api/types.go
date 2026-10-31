@@ -180,7 +180,7 @@ type Event struct {
 	Seq      uint64    `json:"seq"`
 	Type     EventType `json:"type"`
 	ID       string    `json:"id" doc:"Id of the object the event is about."`
-	Revision *uint64   `json:"revision,omitempty" doc:"The object's revision after the change. Absent on ephemeral events (pane.owner, pane.activity)."`
+	Revision *uint64   `json:"revision,omitempty" doc:"The object's revision after the change. Absent on ephemeral events (spec 3.5, 3.9)."`
 	Data     RawJSON   `json:"data"`
 }
 

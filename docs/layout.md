@@ -23,8 +23,8 @@ One Go module, `github.com/noahkiss/flightdeck`, at the repo root. Swift package
 | `internal/hook/` | The hook endpoint: HTTP on a local Unix socket, the pane tokens (a keyed hash of the pane uuid under `<state>/hook.key`), the `gff-hab hook` client and the printed hook configs. Pure Go. Spec: `docs/specs/harness-adapters.md`, Hook endpoint |
 | `internal/habkey/` | The hab's own SSH host key and its fingerprint, the device id. Pure Go. Spec: `docs/specs/transport.md` 5 |
 | `internal/secretfile/` | Reads and creates owner-only secret files (no symlink, owner and mode checked on the open file, atomic create); used by `hook.key` and the host key. Pure Go |
-| `internal/link/` | gff-hab's holder link: one parsed screen per pane on every holder, checkpoints in `<state>/checkpoints`, rebuild after a planned restart or a crash, panes marked lost when a holder dies, ended panes released on a draining holder, and a subscriber API (output with absolute offsets, or a snapshot). The parser is injected, so it is pure Go. Spec: `docs/specs/hab-logic-api.md` 2.3 |
-| `cmd/gff-hab/` | The logic binary: `serve`, `connect`, `api call`, `events`, `manifests`, `hook`. `serve` runs the holder link; the parser is libghostty with `-tags ghostty`, else `vt.Fake` (`parser_*.go`), and the log says which. `spawn.go` starts panes through the link with `GFF_HAB` in their environment. Until the API has methods that create panes, only the `gfftest` build spawns, from `$GFF_HAB_TEST_SPAWN` at start (`spawn_gfftest.go`); the package tests build that way |
+| `internal/link/` | gff-hab's holder link: one parsed screen per pane on every holder, checkpoints in `<state>/checkpoints`, rebuild after a planned restart or a crash, panes marked lost when a holder dies, ended panes released on a draining holder, panes released when a client closes them (`pane.close`), and a subscriber API (output with absolute offsets, or a snapshot). The parser is injected, so it is pure Go. Spec: `docs/specs/hab-logic-api.md` 2.3 |
+| `cmd/gff-hab/` | The logic binary: `serve`, `connect`, `api call`, `events`, `manifests`, `hook`. `serve` runs the holder link; the parser is libghostty with `-tags ghostty`, else `vt.Fake` (`parser_*.go`), and the log says which. `spawn.go` starts panes through the link with `GFF_HAB` in their environment. `actions.go` serves `session.create` (spawn, then file the session) and `pane.close` (release through the link) |
 | `internal/vt/` | The terminal parser interface gff-hab keeps per pane, and `Fake`, a pure-Go stand-in for tests |
 | `internal/vt/ghostty/` | The libghostty-vt parser through cgo. Builds only with the `ghostty` build tag |
 | `internal/vt/vttest/` | The shared parser tests and their hand-written fixture |
@@ -46,6 +46,14 @@ Split a module out only when something outside this repo must import it on its o
   revision (spec 3.3). A breaking change needs a new revision and its translator.
 - `make release-schema` records the current schema in `api/released/`. Run it when a revision ships.
   Until the first release, `1.json` is a baseline that may be rewritten on purpose.
+- Golden messages (`api/testdata/rev<N>/`, `docs/testing.md` core test 5) are frozen:
+  - The goldens of a released revision are never regenerated.
+  - New messages go into the next revision's set.
+  - Revision 1 is still unreleased (`api/released/1.json` is the pre-release baseline). New
+    revision 1 messages get new files beside the existing ones; existing files never change.
+  - `go test ./api -run TestGoldens -update` only adds missing files. A message whose sample no
+    longer matches its file fails the test. Do not add a field or a word to an existing type when
+    that changes an existing golden: add a new type, or wait for the next revision.
 
 Rules the generator follows:
 

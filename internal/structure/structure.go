@@ -377,6 +377,17 @@ func (s *Store) findProject(remote, rootCommit string) *projectRecord {
 	return nil
 }
 
+// Project returns the project with id.
+func (s *Store) Project(id string) (api.Project, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.project(id)
+	if p == nil {
+		return api.Project{}, false
+	}
+	return projectAPI(p), true
+}
+
 // RenameProject changes a project's name. Project names need not be unique.
 func (s *Store) RenameProject(id, name string) (api.Project, error) {
 	s.mu.Lock()
@@ -492,6 +503,17 @@ func (s *Store) CreateSession(spec SessionSpec) (api.Session, error) {
 	events = append(events, s.paneEvent(spec.Pane))
 	s.commit(events)
 	return sessionAPI(ss), nil
+}
+
+// SessionByName returns the session record named name, exited ones included.
+func (s *Store) SessionByName(name string) (api.Session, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ss := s.sessionByName(name)
+	if ss == nil {
+		return api.Session{}, false
+	}
+	return sessionAPI(ss), true
 }
 
 // RenameSession changes a session's name. A name another session holds is a conflict.

@@ -4,11 +4,13 @@
 // response, and closes a client whose event backlog grows past a limit. It also holds the client
 // that the CLI and tests use.
 //
-// The pane methods (input, tickets, size ownership, redraw) and the devices methods answer
-// "unavailable" until the holder link and pairing land.
+// session.create and pane.close run through Config.Actions. The other pane methods (input,
+// tickets, size ownership, redraw), the devices methods and the calls later stages build answer
+// "unavailable", with a hint that names the stage.
 package control
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -37,6 +39,16 @@ type Source interface {
 	Snapshot(host api.HostInfo) api.Structure
 }
 
+// Actions carries out the calls that start and stop programs (spec 3.9). gff-hab implements it
+// over the holder link and the structure store. An error that is an *Error keeps its kind; any
+// other error answers with kind unavailable.
+type Actions interface {
+	// CreateSession starts a program in a new pane and files it as a session.
+	CreateSession(ctx context.Context, p api.SessionCreateParams) (session, pane string, err error)
+	// ClosePane releases a pane; a running program gets a hang-up first.
+	ClosePane(ctx context.Context, pane string) error
+}
+
 // Config is what New needs. Source is required.
 type Config struct {
 	Build        string
@@ -44,6 +56,9 @@ type Config struct {
 	DeviceID     string   // the hab's host-key fingerprint; sent in every welcome
 	Capabilities []string // strings for the features this hab offers (spec 3.4)
 	Source       Source
+	Actions      Actions // nil: session.create and pane.close answer unavailable
+	// ActionTimeout bounds one Actions call. Default 30 s.
+	ActionTimeout time.Duration
 
 	BacklogLimit   int           // bytes queued for one connection before it is closed
 	Heartbeat      time.Duration // heartbeat after this long with nothing sent
@@ -89,6 +104,9 @@ func New(cfg Config) *Server {
 	}
 	if cfg.CloseGrace <= 0 {
 		cfg.CloseGrace = DefaultCloseGrace
+	}
+	if cfg.ActionTimeout <= 0 {
+		cfg.ActionTimeout = 30 * time.Second
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now

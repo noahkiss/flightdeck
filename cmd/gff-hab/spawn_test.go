@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -89,8 +90,26 @@ while :; do
 done
 `
 
+// createSession calls session.create through the CLI and returns the new session and pane ids.
+func createSession(t *testing.T, sock string, p api.SessionCreateParams) api.SessionCreated {
+	t.Helper()
+	b, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res api.SessionCreated
+	if err := json.Unmarshal([]byte(run(t, "api", "call", "-socket", sock, "session.create", string(b))), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Session == "" || res.Pane == "" {
+		t.Fatalf("session.create: %+v", res)
+	}
+	return res
+}
+
 // TestSpawnHookTokens is the spawn path end to end, with the real holder and gff-hab binaries:
-// gff-hab spawns two panes with GFF_HAB in their environment; a hook run inside a pane changes
+// session.create over the control connection spawns two panes with GFF_HAB in their
+// environment and files them as sessions; a hook run inside a pane changes
 // that pane's agent state; forged and spliced tokens and the token of a pane gff-hab does not
 // follow are refused; after a gff-hab restart the same pane's token still lands; and once the
 // panes end and their holder drains, gff-hab releases them, the holder exits, and their tokens
@@ -106,23 +125,29 @@ func TestSpawnHookTokens(t *testing.T) {
 	sock := filepath.Join(d, "run", "hab.sock")
 	one := startHolder(t, hdir, "one")
 
-	const uuidA, uuidB = "fd0000000000400080000000000000a1", "fd0000000000400080000000000000b2"
-	idA, idB := "fd000000-0000-4000-8000-0000000000a1", "fd000000-0000-4000-8000-0000000000b2"
 	paneEnv := func(name string) []string {
 		return []string{"PATH=/usr/bin:/bin", "LC_ALL=C", "DIR=" + work, "HAB=" + bin, "NAME=" + name, noRaceExitSleep}
 	}
-	type testSpawn struct { // as spawn_gfftest.go reads it
-		UUID string   `json:"uuid"`
-		Argv []string `json:"argv"`
-		Env  []string `json:"env"`
-	}
-	spawns, _ := json.Marshal([]testSpawn{
-		{UUID: uuidA, Argv: []string{"/bin/sh", "-c", paneScript}, Env: paneEnv("a")},
-		{UUID: uuidB, Argv: []string{"/bin/sh", "-c", paneScript}, Env: paneEnv("b")},
-	})
-	srv := startServeWith(t, sock, state, []string{"GFF_HAB_TEST_SPAWN=" + string(spawns)}, "-holders", hdir)
+	srv := startServeWith(t, sock, state, nil, "-holders", hdir)
 	if w := welcome(t, sock); !slices.Contains(w.Capabilities, "agent-state") {
 		t.Errorf("welcome capabilities %v lack agent-state", w.Capabilities)
+	}
+	created := map[string]api.SessionCreated{}
+	for _, name := range []string{"a", "b"} {
+		created[name] = createSession(t, sock, api.SessionCreateParams{
+			Name: "pane-" + name, Argv: []string{"/bin/sh", "-c", paneScript}, Env: paneEnv(name), Cwd: "/"})
+	}
+	idA, idB := created["a"].Pane, created["b"].Pane
+	uuidA := strings.ReplaceAll(idA, "-", "")
+	var st api.StructureResult
+	if err := json.Unmarshal([]byte(run(t, "api", "call", "-socket", sock, "structure.get")), &st); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a", "b"} {
+		i := slices.IndexFunc(st.Sessions, func(s api.Session) bool { return s.ID == created[name].Session })
+		if i < 0 || st.Sessions[i].Name != "pane-"+name || st.Sessions[i].Pane != created[name].Pane || st.Sessions[i].State != api.SessionStateRunning {
+			t.Errorf("session %s in the structure: %+v", name, st.Sessions)
+		}
 	}
 
 	addr := func(name string) string {
@@ -236,5 +261,113 @@ func TestNewHookKeyWarning(t *testing.T) {
 	}
 	if m := newHookKeyWarning(false, 3); m != "" {
 		t.Errorf("existing key: %q", m)
+	}
+}
+
+// callErr calls method through the CLI, which must fail, and returns the error kind it printed.
+func callErr(t *testing.T, sock, method string, params any) string {
+	t.Helper()
+	b, _ := json.Marshal(params)
+	out, err := exec.Command(bin, "api", "call", "-socket", sock, method, string(b)).CombinedOutput()
+	if err == nil {
+		t.Fatalf("%s %s succeeded: %s", method, b, out)
+	}
+	for _, kind := range api.Enums["ErrorKind"] {
+		if strings.Contains(string(out), "("+kind+")") {
+			return kind
+		}
+	}
+	return string(out)
+}
+
+// TestSessionCreateAndClose: session.create files a session in the project of a git directory
+// and refuses a taken name; pane.close hangs up a running program and releases an ended pane on
+// the current holder. Both panes leave the structure and their sessions are exited.
+func TestSessionCreateAndClose(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	d := shortDir(t)
+	hdir, state, work, repo := filepath.Join(d, "h"), filepath.Join(d, "state"), filepath.Join(d, "w"), filepath.Join(d, "repo")
+	for _, dir := range []string{hdir, work, repo} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", "https://example.com/team/thing.git"}} {
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	sock := filepath.Join(d, "run", "hab.sock")
+	startHolder(t, hdir, "one")
+	startServeWith(t, sock, state, nil, "-holders", hdir)
+
+	pidFile := filepath.Join(work, "pid")
+	running := createSession(t, sock, api.SessionCreateParams{
+		Name:       "loop",
+		ProjectDir: repo,
+		Argv:       []string{"/bin/sh", "-c", `echo $$ > "$PIDF.tmp" && mv "$PIDF.tmp" "$PIDF"; while :; do sleep 0.05; done`},
+		Env:        []string{"PIDF=" + pidFile, noRaceExitSleep},
+	})
+	ended := createSession(t, sock, api.SessionCreateParams{Argv: []string{"/bin/sh", "-c", "exit 0"}, Env: []string{noRaceExitSleep}})
+	if kind := callErr(t, sock, "session.create", api.SessionCreateParams{Name: "loop", Argv: []string{"/bin/true"}}); kind != "conflict" {
+		t.Errorf("a taken name: %s, want conflict", kind)
+	}
+	if kind := callErr(t, sock, "session.create", api.SessionCreateParams{Harness: "claude"}); kind != "unavailable" {
+		t.Errorf("a harness: %s, want unavailable", kind)
+	}
+	if kind := callErr(t, sock, "pane.close", api.PaneRef{Pane: "fd000000-0000-4000-8000-0000000000ff"}); kind != "not_found" {
+		t.Errorf("an unknown pane: %s, want not_found", kind)
+	}
+
+	structureNow := func() api.StructureResult {
+		var st api.StructureResult
+		if err := json.Unmarshal([]byte(run(t, "api", "call", "-socket", sock, "structure.get")), &st); err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	session := func(st api.StructureResult, id string) api.Session {
+		i := slices.IndexFunc(st.Sessions, func(s api.Session) bool { return s.ID == id })
+		if i < 0 {
+			t.Fatalf("no session %s in %+v", id, st.Sessions)
+		}
+		return st.Sessions[i]
+	}
+	hasPane := func(st api.StructureResult, id string) bool {
+		return slices.ContainsFunc(st.Panes, func(p api.Pane) bool { return p.ID == id })
+	}
+	st := structureNow()
+	if len(st.Projects) != 1 || st.Projects[0].Name != "repo" || st.Projects[0].Remote != "example.com/team/thing" ||
+		!slices.Equal(st.Projects[0].Sessions, []string{running.Session}) {
+		t.Errorf("projects: %+v", st.Projects)
+	}
+	if s := session(st, ended.Session); s.Name != "sh" || s.Project != "" {
+		t.Errorf("the default-named session: %+v", s)
+	}
+
+	var pid int
+	waitUntil(t, "the pid file", func() bool {
+		b, err := os.ReadFile(pidFile)
+		if err != nil {
+			return false
+		}
+		_, err = fmt.Sscan(string(b), &pid)
+		return err == nil
+	})
+	waitUntil(t, "the short program exited", func() bool { return session(structureNow(), ended.Session).State == api.SessionStateExited })
+	for _, c := range []api.SessionCreated{running, ended} {
+		run(t, "api", "call", "-socket", sock, "pane.close", `{"pane":"`+c.Pane+`"}`)
+	}
+	waitUntil(t, "the hung-up program ended", func() bool { return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) })
+	st = structureNow()
+	for _, c := range []api.SessionCreated{running, ended} {
+		if hasPane(st, c.Pane) {
+			t.Errorf("pane %s still listed after pane.close", c.Pane)
+		}
+		if s := session(st, c.Session); s.State != api.SessionStateExited {
+			t.Errorf("session %s after pane.close: %+v", c.Session, s)
+		}
 	}
 }

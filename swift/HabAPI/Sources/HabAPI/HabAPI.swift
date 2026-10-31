@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -86,12 +86,278 @@ public struct AgentStatus: RawRepresentable, Codable, Sendable, Hashable {
 }
 
 /// An open word set: values outside the known list decode and round-trip unchanged.
+public struct AnswerVia: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let app = AnswerVia(rawValue: "app")
+    public static let banner = AnswerVia(rawValue: "banner")
+    public static let watch = AnswerVia(rawValue: "watch")
+    public static let voice = AnswerVia(rawValue: "voice")
+    public static let terminal = AnswerVia(rawValue: "terminal")
+}
+
+public struct ApprovalAnswerParams: Codable, Sendable, Hashable {
+    /// allow or deny a permission; answer a question with text.
+    public var choice: ApprovalChoice
+    public var pane: String
+    /// The request id from the pane's agent state.
+    public var request: String
+    /// With choice answer: the chosen option or free text.
+    public var text: String?
+    public var via: AnswerVia?
+
+    enum CodingKeys: String, CodingKey {
+        case choice = "choice"
+        case pane = "pane"
+        case request = "request"
+        case text = "text"
+        case via = "via"
+    }
+
+    public init(choice: ApprovalChoice, pane: String, request: String, text: String? = nil, via: AnswerVia? = nil) {
+        self.choice = choice
+        self.pane = pane
+        self.request = request
+        self.text = text
+        self.via = via
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct ApprovalChoice: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let allow = ApprovalChoice(rawValue: "allow")
+    public static let deny = ApprovalChoice(rawValue: "deny")
+    public static let answer = ApprovalChoice(rawValue: "answer")
+}
+
+public struct AttachmentData: Codable, Sendable, Hashable {
+    public var data: Data
+    public var id: String
+    public var name: String
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// Media type of data.
+    public var type: String
+
+    enum CodingKeys: String, CodingKey {
+        case data = "data"
+        case id = "id"
+        case name = "name"
+        case seq = "seq"
+        case type = "type"
+    }
+
+    public init(data: Data, id: String, name: String, seq: UInt64, type: String) {
+        self.data = data
+        self.id = id
+        self.name = name
+        self.seq = seq
+        self.type = type
+    }
+}
+
+public struct AttachmentGetParams: Codable, Sendable, Hashable {
+    public var id: String
+    /// Return a small preview image instead of the file.
+    public var thumbnail: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case thumbnail = "thumbnail"
+    }
+
+    public init(id: String, thumbnail: Bool? = nil) {
+        self.id = id
+        self.thumbnail = thumbnail
+    }
+}
+
+public struct AttachmentPutParams: Codable, Sendable, Hashable {
+    /// File name as the owner sees it.
+    public var name: String
+    public var session: String
+    /// Hex SHA-256 of the bytes.
+    public var sha256: String
+    /// Bytes.
+    public var size: UInt64
+    /// Media type, such as image/png.
+    public var type: String
+
+    enum CodingKeys: String, CodingKey {
+        case name = "name"
+        case session = "session"
+        case sha256 = "sha256"
+        case size = "size"
+        case type = "type"
+    }
+
+    public init(name: String, session: String, sha256: String, size: UInt64, type: String) {
+        self.name = name
+        self.session = session
+        self.sha256 = sha256
+        self.size = size
+        self.type = type
+    }
+}
+
+public struct AttachmentStored: Codable, Sendable, Hashable {
+    public var id: String
+    /// Where the hab stored the file, inside the project's attachment folder.
+    public var path: String
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case path = "path"
+        case seq = "seq"
+    }
+
+    public init(id: String, path: String, seq: UInt64) {
+        self.id = id
+        self.path = path
+        self.seq = seq
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
 public struct BlockedKind: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
     public static let permission = BlockedKind(rawValue: "permission")
     public static let question = BlockedKind(rawValue: "question")
     public static let auth = BlockedKind(rawValue: "auth")
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct ChatKind: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let user = ChatKind(rawValue: "user")
+    public static let agent = ChatKind(rawValue: "agent")
+    public static let tool = ChatKind(rawValue: "tool")
+    public static let event = ChatKind(rawValue: "event")
+    public static let plan = ChatKind(rawValue: "plan")
+}
+
+public struct ChatMessage: Codable, Sendable, Hashable {
+    /// RFC 3339 time from the transcript.
+    public var at: String
+    /// Attachment ids shown on the message.
+    public var attachments: [String]?
+    /// Stable within the session; an update carries the same id.
+    public var id: String
+    public var kind: ChatKind
+    /// The message id of the subagent call this message belongs to.
+    public var parent: String?
+    /// With kind plan: the steps in order.
+    public var plan: [PlanStep]?
+    /// Another agent that sent this message (channels).
+    public var sender: String?
+    public var session: String
+    /// Markdown for user and agent text; a line for an event.
+    public var text: String?
+    /// With kind tool.
+    public var tool: ChatTool?
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case attachments = "attachments"
+        case id = "id"
+        case kind = "kind"
+        case parent = "parent"
+        case plan = "plan"
+        case sender = "sender"
+        case session = "session"
+        case text = "text"
+        case tool = "tool"
+    }
+
+    public init(at: String, attachments: [String]? = nil, id: String, kind: ChatKind, parent: String? = nil, plan: [PlanStep]? = nil, sender: String? = nil, session: String, text: String? = nil, tool: ChatTool? = nil) {
+        self.at = at
+        self.attachments = attachments
+        self.id = id
+        self.kind = kind
+        self.parent = parent
+        self.plan = plan
+        self.sender = sender
+        self.session = session
+        self.text = text
+        self.tool = tool
+    }
+}
+
+public struct ChatMessages: Codable, Sendable, Hashable {
+    public var messages: [ChatMessage]
+    /// True when older messages exist.
+    public var more: Bool
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case messages = "messages"
+        case more = "more"
+        case seq = "seq"
+    }
+
+    public init(messages: [ChatMessage], more: Bool, seq: UInt64) {
+        self.messages = messages
+        self.more = more
+        self.seq = seq
+    }
+}
+
+public struct ChatPageParams: Codable, Sendable, Hashable {
+    /// Message id: return the messages before it. Absent means the tail.
+    public var before: String?
+    /// Most messages to return. Default 50, at most 200.
+    public var limit: Int?
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case before = "before"
+        case limit = "limit"
+        case session = "session"
+    }
+
+    public init(before: String? = nil, limit: Int? = nil, session: String) {
+        self.before = before
+        self.limit = limit
+        self.session = session
+    }
+}
+
+public struct ChatTool: Codable, Sendable, Hashable {
+    /// The tool input as the harness wrote it, when it is at most 64 KiB.
+    public var input: JSONValue?
+    public var name: String
+    /// The first part of the tool output.
+    public var output: String?
+    /// True when output holds only the first part of a longer output.
+    public var outputTruncated: Bool?
+    public var status: ToolStatus
+    /// A short target: a file, a command.
+    public var target: String?
+
+    enum CodingKeys: String, CodingKey {
+        case input = "input"
+        case name = "name"
+        case output = "output"
+        case outputTruncated = "output_truncated"
+        case status = "status"
+        case target = "target"
+    }
+
+    public init(input: JSONValue? = nil, name: String, output: String? = nil, outputTruncated: Bool? = nil, status: ToolStatus, target: String? = nil) {
+        self.input = input
+        self.name = name
+        self.output = output
+        self.outputTruncated = outputTruncated
+        self.status = status
+        self.target = target
+    }
 }
 
 public struct ClientInfo: Codable, Sendable, Hashable {
@@ -407,7 +673,7 @@ public struct Event: Codable, Sendable, Hashable {
     public var data: JSONValue
     /// Id of the object the event is about.
     public var id: String
-    /// The object's revision after the change. Absent on ephemeral events (pane.owner, pane.activity).
+    /// The object's revision after the change. Absent on ephemeral events (spec 3.5, 3.9).
     public var revision: UInt64?
     public var seq: UInt64
     public var type: String
@@ -456,6 +722,11 @@ public struct ExitedFrame: Codable, Sendable, Hashable {
     public init(code: Int? = nil, signal: String? = nil) {
         self.code = code
         self.signal = signal
+    }
+}
+
+public struct HabStatsParams: Codable, Sendable, Hashable {
+    public init() {
     }
 }
 
@@ -509,6 +780,51 @@ public struct HostInfo: Codable, Sendable, Hashable {
 
     public init(id: String) {
         self.id = id
+    }
+}
+
+public struct HostStats: Codable, Sendable, Hashable {
+    /// RFC 3339 time of the reading.
+    public var at: String
+    /// Absent on a host with no battery.
+    public var batteryPct: Int?
+    /// CPU in use over the last few seconds, as a percentage of all cores.
+    public var cpuPct: Int
+    /// Bytes.
+    public var diskTotal: UInt64
+    /// Bytes, on the file system of the hab's state directory.
+    public var diskUsed: UInt64
+    /// Bytes.
+    public var memTotal: UInt64
+    /// Bytes.
+    public var memUsed: UInt64
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// Seconds since the host booted.
+    public var uptimeS: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case batteryPct = "battery_pct"
+        case cpuPct = "cpu_pct"
+        case diskTotal = "disk_total"
+        case diskUsed = "disk_used"
+        case memTotal = "mem_total"
+        case memUsed = "mem_used"
+        case seq = "seq"
+        case uptimeS = "uptime_s"
+    }
+
+    public init(at: String, batteryPct: Int? = nil, cpuPct: Int, diskTotal: UInt64, diskUsed: UInt64, memTotal: UInt64, memUsed: UInt64, seq: UInt64, uptimeS: UInt64) {
+        self.at = at
+        self.batteryPct = batteryPct
+        self.cpuPct = cpuPct
+        self.diskTotal = diskTotal
+        self.diskUsed = diskUsed
+        self.memTotal = memTotal
+        self.memUsed = memUsed
+        self.seq = seq
+        self.uptimeS = uptimeS
     }
 }
 
@@ -640,6 +956,32 @@ public struct PaneActivity: Codable, Sendable, Hashable {
     }
 }
 
+public struct PaneBell: Codable, Sendable, Hashable {
+    /// Bells since the last pane.bell for this pane.
+    public var count: Int
+
+    enum CodingKeys: String, CodingKey {
+        case count = "count"
+    }
+
+    public init(count: Int) {
+        self.count = count
+    }
+}
+
+public struct PaneOutput: Codable, Sendable, Hashable {
+    /// The pane's holder offset after the output.
+    public var offset: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case offset = "offset"
+    }
+
+    public init(offset: UInt64) {
+        self.offset = offset
+    }
+}
+
 public struct PaneOwner: Codable, Sendable, Hashable {
     public var cols: Int
     /// New owner client id. Absent means no owner.
@@ -714,6 +1056,30 @@ public struct PingParams: Codable, Sendable, Hashable {
     }
 }
 
+public struct PlanStep: Codable, Sendable, Hashable {
+    public var status: PlanStepStatus
+    public var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case status = "status"
+        case text = "text"
+    }
+
+    public init(status: PlanStepStatus, text: String) {
+        self.status = status
+        self.text = text
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct PlanStepStatus: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let pending = PlanStepStatus(rawValue: "pending")
+    public static let inProgress = PlanStepStatus(rawValue: "in_progress")
+    public static let done = PlanStepStatus(rawValue: "done")
+}
+
 public struct Project: Codable, Sendable, Hashable {
     public var id: String
     public var name: String
@@ -741,6 +1107,84 @@ public struct Project: Codable, Sendable, Hashable {
         self.revision = revision
         self.rootCommit = rootCommit
         self.sessions = sessions
+    }
+}
+
+public struct PushActivityParams: Codable, Sendable, Hashable {
+    public var deviceId: String
+    public var session: String
+    /// Live Activity push token, hex.
+    public var token: String
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case session = "session"
+        case token = "token"
+    }
+
+    public init(deviceId: String, session: String, token: String) {
+        self.deviceId = deviceId
+        self.session = session
+        self.token = token
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct PushEnvironment: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let development = PushEnvironment(rawValue: "development")
+    public static let production = PushEnvironment(rawValue: "production")
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct PushKind: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let permission = PushKind(rawValue: "permission")
+    public static let question = PushKind(rawValue: "question")
+    public static let auth = PushKind(rawValue: "auth")
+    public static let error = PushKind(rawValue: "error")
+    public static let done = PushKind(rawValue: "done")
+    public static let usage = PushKind(rawValue: "usage")
+}
+
+public struct PushRegisterParams: Codable, Sendable, Hashable {
+    /// The device's key fingerprint (transport.md 5).
+    public var deviceId: String
+    public var environment: PushEnvironment
+    /// The kinds of push this device wants.
+    public var kinds: [PushKind]
+    /// APNs device token, hex.
+    public var token: String
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case environment = "environment"
+        case kinds = "kinds"
+        case token = "token"
+    }
+
+    public init(deviceId: String, environment: PushEnvironment, kinds: [PushKind], token: String) {
+        self.deviceId = deviceId
+        self.environment = environment
+        self.kinds = kinds
+        self.token = token
+    }
+}
+
+public struct PushUnregisterParams: Codable, Sendable, Hashable {
+    public var deviceId: String
+    public var token: String
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case token = "token"
+    }
+
+    public init(deviceId: String, token: String) {
+        self.deviceId = deviceId
+        self.token = token
     }
 }
 
@@ -829,6 +1273,15 @@ public struct ScopeKind: RawRepresentable, Codable, Sendable, Hashable {
     public static let sessions = ScopeKind(rawValue: "sessions")
 }
 
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct SendOrigin: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let typed = SendOrigin(rawValue: "typed")
+    public static let dictated = SendOrigin(rawValue: "dictated")
+    public static let voice = SendOrigin(rawValue: "voice")
+}
+
 public struct Session: Codable, Sendable, Hashable {
     public var exit: ExitStatus?
     public var id: String
@@ -858,6 +1311,122 @@ public struct Session: Codable, Sendable, Hashable {
         self.project = project
         self.revision = revision
         self.state = state
+    }
+}
+
+public struct SessionCreateParams: Codable, Sendable, Hashable {
+    /// Program and arguments. Default: the hab's $SHELL, else /bin/sh.
+    public var argv: [String]?
+    /// Initial width. Default 80.
+    public var cols: Int?
+    /// Absolute working directory. Default: project_dir, else the hab's home directory.
+    public var cwd: String?
+    /// KEY=value entries added to the hab's own environment; an entry replaces the hab's value for its key.
+    public var env: [String]?
+    /// Detection manifest id of a harness to start, such as claude. Needs that harness's adapter.
+    public var harness: String?
+    /// Session name, unique on the host. Default: the program's base name, with -2, -3 and so on when taken.
+    public var name: String?
+    /// Project id to file the session in. Give project or project_dir, or neither for an unfiled session.
+    public var project: String?
+    /// Absolute path inside a git repository. The hab finds the project by the repository's remote, else its root commit, and creates the project when it is new.
+    public var projectDir: String?
+    /// Initial height. Default 24.
+    public var rows: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case argv = "argv"
+        case cols = "cols"
+        case cwd = "cwd"
+        case env = "env"
+        case harness = "harness"
+        case name = "name"
+        case project = "project"
+        case projectDir = "project_dir"
+        case rows = "rows"
+    }
+
+    public init(argv: [String]? = nil, cols: Int? = nil, cwd: String? = nil, env: [String]? = nil, harness: String? = nil, name: String? = nil, project: String? = nil, projectDir: String? = nil, rows: Int? = nil) {
+        self.argv = argv
+        self.cols = cols
+        self.cwd = cwd
+        self.env = env
+        self.harness = harness
+        self.name = name
+        self.project = project
+        self.projectDir = projectDir
+        self.rows = rows
+    }
+}
+
+public struct SessionCreated: Codable, Sendable, Hashable {
+    /// Pane id.
+    public var pane: String
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// Session id.
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case pane = "pane"
+        case seq = "seq"
+        case session = "session"
+    }
+
+    public init(pane: String, seq: UInt64, session: String) {
+        self.pane = pane
+        self.seq = seq
+        self.session = session
+    }
+}
+
+public struct SessionFocusParams: Codable, Sendable, Hashable {
+    /// True while the session is on screen in an active window.
+    public var active: Bool
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case active = "active"
+        case session = "session"
+    }
+
+    public init(active: Bool, session: String) {
+        self.active = active
+        self.session = session
+    }
+}
+
+public struct SessionRef: Codable, Sendable, Hashable {
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case session = "session"
+    }
+
+    public init(session: String) {
+        self.session = session
+    }
+}
+
+public struct SessionSendParams: Codable, Sendable, Hashable {
+    /// Attachment ids from attachment.put.
+    public var attachments: [String]?
+    public var origin: SendOrigin
+    public var session: String
+    public var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case attachments = "attachments"
+        case origin = "origin"
+        case session = "session"
+        case text = "text"
+    }
+
+    public init(attachments: [String]? = nil, origin: SendOrigin, session: String, text: String) {
+        self.attachments = attachments
+        self.origin = origin
+        self.session = session
+        self.text = text
     }
 }
 
@@ -962,6 +1531,101 @@ public struct TicketParams: Codable, Sendable, Hashable {
     }
 }
 
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct ToolStatus: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let running = ToolStatus(rawValue: "running")
+    public static let done = ToolStatus(rawValue: "done")
+    public static let error = ToolStatus(rawValue: "error")
+    public static let denied = ToolStatus(rawValue: "denied")
+}
+
+public struct TurnEnd: Codable, Sendable, Hashable {
+    /// Id of the turn's last agent message.
+    public var finalMessage: String?
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case finalMessage = "final_message"
+        case session = "session"
+    }
+
+    public init(finalMessage: String? = nil, session: String) {
+        self.finalMessage = finalMessage
+        self.session = session
+    }
+}
+
+public struct UsageAccount: Codable, Sendable, Hashable {
+    public var harness: String
+    /// Stable, not secret: the adapter's hash of an account id, else the host and harness.
+    public var key: String
+    /// Plan name, such as Max 5x.
+    public var label: String?
+    public var windows: [UsageWindow]
+
+    enum CodingKeys: String, CodingKey {
+        case harness = "harness"
+        case key = "key"
+        case label = "label"
+        case windows = "windows"
+    }
+
+    public init(harness: String, key: String, label: String? = nil, windows: [UsageWindow]) {
+        self.harness = harness
+        self.key = key
+        self.label = label
+        self.windows = windows
+    }
+}
+
+public struct UsageListParams: Codable, Sendable, Hashable {
+    public init() {
+    }
+}
+
+public struct UsageReadings: Codable, Sendable, Hashable {
+    public var accounts: [UsageAccount]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case accounts = "accounts"
+        case seq = "seq"
+    }
+
+    public init(accounts: [UsageAccount], seq: UInt64) {
+        self.accounts = accounts
+        self.seq = seq
+    }
+}
+
+public struct UsageWindow: Codable, Sendable, Hashable {
+    /// 5h, 7d, or a model name.
+    public var name: String
+    /// RFC 3339 time of the reading.
+    public var readAt: String
+    /// RFC 3339 time the window resets.
+    public var resetsAt: String?
+    /// Used, in whole percent.
+    public var usedPct: Int
+
+    enum CodingKeys: String, CodingKey {
+        case name = "name"
+        case readAt = "read_at"
+        case resetsAt = "resets_at"
+        case usedPct = "used_pct"
+    }
+
+    public init(name: String, readAt: String, resetsAt: String? = nil, usedPct: Int) {
+        self.name = name
+        self.readAt = readAt
+        self.resetsAt = resetsAt
+        self.usedPct = usedPct
+    }
+}
+
 public struct VersionWarning: Codable, Sendable, Hashable {
     /// newer_than_tested or unreadable.
     public var reason: String
@@ -1060,6 +1724,36 @@ public enum HabMethods {
     public static let devicesList = HabMethod<DevicesListParams, DeviceList>(name: "devices.list")
     /// Revoke a device and close its connections (transport.md 6.6). Needs the devices capability.
     public static let devicesRevoke = HabMethod<DevicesRevokeParams, Empty>(name: "devices.revoke")
+    /// Start a program in a new pane and file it as a session (spec 3.9).
+    public static let sessionCreate = HabMethod<SessionCreateParams, SessionCreated>(name: "session.create")
+    /// Start an exited session's harness again in a new pane, with its resume id.
+    public static let sessionResume = HabMethod<SessionRef, SessionCreated>(name: "session.resume")
+    /// Release a pane: a running program gets a hang-up first (spec 3.9).
+    public static let paneClose = HabMethod<PaneRef, Empty>(name: "pane.close")
+    /// Report whether the session is in focus on this client: marks done seen, and holds pushes while watched.
+    public static let sessionFocus = HabMethod<SessionFocusParams, Empty>(name: "session.focus")
+    /// Stop the agent's current turn through its adapter.
+    public static let sessionInterrupt = HabMethod<SessionRef, Empty>(name: "session.interrupt")
+    /// Send a message to the session's agent through its adapter, under the input rules.
+    public static let sessionSend = HabMethod<SessionSendParams, Empty>(name: "session.send")
+    /// Answer a pending request by id. A closed or expired id is refused with conflict.
+    public static let approvalAnswer = HabMethod<ApprovalAnswerParams, Empty>(name: "approval.answer")
+    /// Read a page of the session's chat messages from the transcript reader. Needs the transcripts capability.
+    public static let chatPage = HabMethod<ChatPageParams, ChatMessages>(name: "chat.page")
+    /// Start an upload of a file for a session; the bytes follow on their own channel.
+    public static let attachmentPut = HabMethod<AttachmentPutParams, AttachmentStored>(name: "attachment.put")
+    /// Fetch an attachment or its thumbnail.
+    public static let attachmentGet = HabMethod<AttachmentGetParams, AttachmentData>(name: "attachment.get")
+    /// Store an APNs device token for this device. Needs the push capability.
+    public static let pushRegister = HabMethod<PushRegisterParams, Empty>(name: "push.register")
+    /// Store a Live Activity token for the session this device tracks. Needs the push capability.
+    public static let pushRegisterActivity = HabMethod<PushActivityParams, Empty>(name: "push.register_activity")
+    /// Drop a push token. Needs the push capability.
+    public static let pushUnregister = HabMethod<PushUnregisterParams, Empty>(name: "push.unregister")
+    /// The latest usage reading of each harness account on this hab.
+    public static let usageList = HabMethod<UsageListParams, UsageReadings>(name: "usage.list")
+    /// CPU, memory, disk, battery and uptime of the host. Needs the host-stats capability.
+    public static let habStats = HabMethod<HabStatsParams, HostStats>(name: "hab.stats")
 }
 
 public enum HabNotification {
@@ -1088,6 +1782,16 @@ public enum HabEvent: Sendable, Hashable {
     case paneActivity(PaneActivity)
     /// A pane's agent state changed (harness-adapters.md, State event model). The id is the pane id.
     case agentState(AgentState)
+    /// A pane rang the bell; at most once per second per pane. Ephemeral.
+    case paneBell(PaneBell)
+    /// A pane printed; at most once per second per pane, for activity marks. Ephemeral.
+    case paneOutput(PaneOutput)
+    /// A chat message was appended or changed; the id is the message id. Ephemeral.
+    case chatMessage(ChatMessage)
+    /// The agent's turn ended; the id is the session id. Ephemeral.
+    case sessionTurnEnd(TurnEnd)
+    /// An account's usage reading changed; the id is the account key. Ephemeral.
+    case usageUpdated(UsageAccount)
     case unknown(type: String, data: JSONValue)
 
     public init(_ event: Event) throws {
@@ -1101,6 +1805,11 @@ public enum HabEvent: Sendable, Hashable {
         case "pane.owner": self = .paneOwner(try event.data.decode(PaneOwner.self))
         case "pane.activity": self = .paneActivity(try event.data.decode(PaneActivity.self))
         case "agent.state": self = .agentState(try event.data.decode(AgentState.self))
+        case "pane.bell": self = .paneBell(try event.data.decode(PaneBell.self))
+        case "pane.output": self = .paneOutput(try event.data.decode(PaneOutput.self))
+        case "chat.message": self = .chatMessage(try event.data.decode(ChatMessage.self))
+        case "session.turn_end": self = .sessionTurnEnd(try event.data.decode(TurnEnd.self))
+        case "usage.updated": self = .usageUpdated(try event.data.decode(UsageAccount.self))
         default: self = .unknown(type: event.type, data: event.data)
         }
     }

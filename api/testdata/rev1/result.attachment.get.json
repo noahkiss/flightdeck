@@ -1,0 +1,16 @@
+{
+  "data": "ZGF0YS03AP8=",
+  "id": "id-4",
+  "name": "name-5",
+  "seq": 3,
+  "type": "type-6",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

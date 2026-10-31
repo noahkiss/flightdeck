@@ -65,6 +65,11 @@ func appErr(kind api.ErrorKind, format string, args ...any) *Error {
 	return &Error{Code: api.ErrorCode, Message: hint, Data: api.ErrorData{Kind: kind, Hint: hint}}
 }
 
+// Errorf builds an application error of kind (spec 3.6). Actions return it to choose the kind.
+func Errorf(kind api.ErrorKind, format string, args ...any) *Error {
+	return appErr(kind, format, args...)
+}
+
 // protoErr builds a JSON-RPC protocol error. Its data still carries kind invalid and the seq.
 func protoErr(code int, format string, args ...any) *Error {
 	hint := fmt.Sprintf(format, args...)

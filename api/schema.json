@@ -17,7 +17,9 @@
     "snapshot-ghostty",
     "agent-state",
     "transcripts",
-    "devices"
+    "devices",
+    "push",
+    "host-stats"
   ],
   "methods": [
     {
@@ -408,6 +410,564 @@
       "x-params": {
         "$ref": "#/components/schemas/DevicesRevokeParams"
       }
+    },
+    {
+      "name": "session.create",
+      "summary": "Start a program in a new pane and file it as a session (spec 3.9).",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "argv",
+          "description": "Program and arguments. Default: the hab's $SHELL, else /bin/sh.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "name": "cols",
+          "description": "Initial width. Default 80.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "cwd",
+          "description": "Absolute working directory. Default: project_dir, else the hab's home directory.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "env",
+          "description": "KEY=value entries added to the hab's own environment; an entry replaces the hab's value for its key.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "name": "harness",
+          "description": "Detection manifest id of a harness to start, such as claude. Needs that harness's adapter.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "name",
+          "description": "Session name, unique on the host. Default: the program's base name, with -2, -3 and so on when taken.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "project",
+          "description": "Project id to file the session in. Give project or project_dir, or neither for an unfiled session.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "project_dir",
+          "description": "Absolute path inside a git repository. The hab finds the project by the repository's remote, else its root commit, and creates the project when it is new.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "rows",
+          "description": "Initial height. Default 24.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SessionCreated"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/SessionCreateParams"
+      }
+    },
+    {
+      "name": "session.resume",
+      "summary": "Start an exited session's harness again in a new pane, with its resume id.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SessionCreated"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/SessionRef"
+      }
+    },
+    {
+      "name": "pane.close",
+      "summary": "Release a pane: a running program gets a hang-up first (spec 3.9).",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "pane",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PaneRef"
+      }
+    },
+    {
+      "name": "session.focus",
+      "summary": "Report whether the session is in focus on this client: marks done seen, and holds pushes while watched.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "active",
+          "description": "True while the session is on screen in an active window.",
+          "required": true,
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/SessionFocusParams"
+      }
+    },
+    {
+      "name": "session.interrupt",
+      "summary": "Stop the agent's current turn through its adapter.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/SessionRef"
+      }
+    },
+    {
+      "name": "session.send",
+      "summary": "Send a message to the session's agent through its adapter, under the input rules.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "attachments",
+          "description": "Attachment ids from attachment.put.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "name": "origin",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SendOrigin"
+          }
+        },
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/SessionSendParams"
+      }
+    },
+    {
+      "name": "approval.answer",
+      "summary": "Answer a pending request by id. A closed or expired id is refused with conflict.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "choice",
+          "description": "allow or deny a permission; answer a question with text.",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/ApprovalChoice"
+          }
+        },
+        {
+          "name": "pane",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "request",
+          "description": "The request id from the pane's agent state.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "description": "With choice answer: the chosen option or free text.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "via",
+          "schema": {
+            "$ref": "#/components/schemas/AnswerVia"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/ApprovalAnswerParams"
+      }
+    },
+    {
+      "name": "chat.page",
+      "summary": "Read a page of the session's chat messages from the transcript reader. Needs the transcripts capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "before",
+          "description": "Message id: return the messages before it. Absent means the tail.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "description": "Most messages to return. Default 50, at most 200.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ChatMessages"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/ChatPageParams"
+      }
+    },
+    {
+      "name": "attachment.put",
+      "summary": "Start an upload of a file for a session; the bytes follow on their own channel.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "name",
+          "description": "File name as the owner sees it.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "sha256",
+          "description": "Hex SHA-256 of the bytes.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "size",
+          "description": "Bytes.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        {
+          "name": "type",
+          "description": "Media type, such as image/png.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AttachmentStored"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/AttachmentPutParams"
+      }
+    },
+    {
+      "name": "attachment.get",
+      "summary": "Fetch an attachment or its thumbnail.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "thumbnail",
+          "description": "Return a small preview image instead of the file.",
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AttachmentData"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/AttachmentGetParams"
+      }
+    },
+    {
+      "name": "push.register",
+      "summary": "Store an APNs device token for this device. Needs the push capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "device_id",
+          "description": "The device's key fingerprint (transport.md 5).",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "environment",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/PushEnvironment"
+          }
+        },
+        {
+          "name": "kinds",
+          "description": "The kinds of push this device wants.",
+          "required": true,
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PushKind"
+            }
+          }
+        },
+        {
+          "name": "token",
+          "description": "APNs device token, hex.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PushRegisterParams"
+      }
+    },
+    {
+      "name": "push.register_activity",
+      "summary": "Store a Live Activity token for the session this device tracks. Needs the push capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "device_id",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "token",
+          "description": "Live Activity push token, hex.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PushActivityParams"
+      }
+    },
+    {
+      "name": "push.unregister",
+      "summary": "Drop a push token. Needs the push capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "device_id",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "token",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PushUnregisterParams"
+      }
+    },
+    {
+      "name": "usage.list",
+      "summary": "The latest usage reading of each harness account on this hab.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/UsageReadings"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/UsageListParams"
+      }
+    },
+    {
+      "name": "hab.stats",
+      "summary": "CPU, memory, disk, battery and uptime of the host. Needs the host-stats capability.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/HostStats"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/HabStatsParams"
+      }
     }
   ],
   "x-notifications": [
@@ -495,6 +1055,41 @@
       "summary": "A pane's agent state changed (harness-adapters.md, State event model). The id is the pane id.",
       "data": {
         "$ref": "#/components/schemas/AgentState"
+      }
+    },
+    {
+      "type": "pane.bell",
+      "summary": "A pane rang the bell; at most once per second per pane. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/PaneBell"
+      }
+    },
+    {
+      "type": "pane.output",
+      "summary": "A pane printed; at most once per second per pane, for activity marks. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/PaneOutput"
+      }
+    },
+    {
+      "type": "chat.message",
+      "summary": "A chat message was appended or changed; the id is the message id. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/ChatMessage"
+      }
+    },
+    {
+      "type": "session.turn_end",
+      "summary": "The agent's turn ended; the id is the session id. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/TurnEnd"
+      }
+    },
+    {
+      "type": "usage.updated",
+      "summary": "An account's usage reading changed; the id is the account key. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/UsageAccount"
       }
     }
   ],
@@ -638,12 +1233,298 @@
           "exited"
         ]
       },
+      "AnswerVia": {
+        "type": "string",
+        "x-known-values": [
+          "app",
+          "banner",
+          "watch",
+          "voice",
+          "terminal"
+        ]
+      },
+      "ApprovalAnswerParams": {
+        "type": "object",
+        "properties": {
+          "choice": {
+            "$ref": "#/components/schemas/ApprovalChoice",
+            "description": "allow or deny a permission; answer a question with text."
+          },
+          "pane": {
+            "type": "string"
+          },
+          "request": {
+            "type": "string",
+            "description": "The request id from the pane's agent state."
+          },
+          "text": {
+            "type": "string",
+            "description": "With choice answer: the chosen option or free text."
+          },
+          "via": {
+            "$ref": "#/components/schemas/AnswerVia"
+          }
+        },
+        "required": [
+          "pane",
+          "request",
+          "choice"
+        ]
+      },
+      "ApprovalChoice": {
+        "type": "string",
+        "x-known-values": [
+          "allow",
+          "deny",
+          "answer"
+        ]
+      },
+      "AttachmentData": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "string",
+            "contentEncoding": "base64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "type": {
+            "type": "string",
+            "description": "Media type of data."
+          }
+        },
+        "required": [
+          "seq",
+          "id",
+          "name",
+          "type",
+          "data"
+        ]
+      },
+      "AttachmentGetParams": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "thumbnail": {
+            "type": "boolean",
+            "description": "Return a small preview image instead of the file."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "AttachmentPutParams": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "File name as the owner sees it."
+          },
+          "session": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Hex SHA-256 of the bytes."
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Bytes."
+          },
+          "type": {
+            "type": "string",
+            "description": "Media type, such as image/png."
+          }
+        },
+        "required": [
+          "session",
+          "name",
+          "type",
+          "size",
+          "sha256"
+        ]
+      },
+      "AttachmentStored": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "description": "Where the hab stored the file, inside the project's attachment folder."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "id",
+          "path"
+        ]
+      },
       "BlockedKind": {
         "type": "string",
         "x-known-values": [
           "permission",
           "question",
           "auth"
+        ]
+      },
+      "ChatKind": {
+        "type": "string",
+        "x-known-values": [
+          "user",
+          "agent",
+          "tool",
+          "event",
+          "plan"
+        ]
+      },
+      "ChatMessage": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time from the transcript."
+          },
+          "attachments": {
+            "type": "array",
+            "description": "Attachment ids shown on the message.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable within the session; an update carries the same id."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ChatKind"
+          },
+          "parent": {
+            "type": "string",
+            "description": "The message id of the subagent call this message belongs to."
+          },
+          "plan": {
+            "type": "array",
+            "description": "With kind plan: the steps in order.",
+            "items": {
+              "$ref": "#/components/schemas/PlanStep"
+            }
+          },
+          "sender": {
+            "type": "string",
+            "description": "Another agent that sent this message (channels)."
+          },
+          "session": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "description": "Markdown for user and agent text; a line for an event."
+          },
+          "tool": {
+            "$ref": "#/components/schemas/ChatTool",
+            "description": "With kind tool."
+          }
+        },
+        "required": [
+          "id",
+          "session",
+          "kind",
+          "at"
+        ]
+      },
+      "ChatMessages": {
+        "type": "object",
+        "properties": {
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            }
+          },
+          "more": {
+            "type": "boolean",
+            "description": "True when older messages exist."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "messages",
+          "more"
+        ]
+      },
+      "ChatPageParams": {
+        "type": "object",
+        "properties": {
+          "before": {
+            "type": "string",
+            "description": "Message id: return the messages before it. Absent means the tail."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Most messages to return. Default 50, at most 200."
+          },
+          "session": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session"
+        ]
+      },
+      "ChatTool": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "description": "The tool input as the harness wrote it, when it is at most 64 KiB."
+          },
+          "name": {
+            "type": "string"
+          },
+          "output": {
+            "type": "string",
+            "description": "The first part of the tool output."
+          },
+          "output_truncated": {
+            "type": "boolean",
+            "description": "True when output holds only the first part of a longer output."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ToolStatus"
+          },
+          "target": {
+            "type": "string",
+            "description": "A short target: a file, a command."
+          }
+        },
+        "required": [
+          "name",
+          "status"
         ]
       },
       "ClientInfo": {
@@ -966,7 +1847,7 @@
           "revision": {
             "type": "integer",
             "format": "uint64",
-            "description": "The object's revision after the change. Absent on ephemeral events (pane.owner, pane.activity)."
+            "description": "The object's revision after the change. Absent on ephemeral events (spec 3.5, 3.9)."
           },
           "seq": {
             "type": "integer",
@@ -1006,6 +1887,9 @@
             "type": "string"
           }
         }
+      },
+      "HabStatsParams": {
+        "type": "object"
       },
       "Heartbeat": {
         "type": "object",
@@ -1060,6 +1944,65 @@
         },
         "required": [
           "id"
+        ]
+      },
+      "HostStats": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time of the reading."
+          },
+          "battery_pct": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Absent on a host with no battery."
+          },
+          "cpu_pct": {
+            "type": "integer",
+            "format": "int64",
+            "description": "CPU in use over the last few seconds, as a percentage of all cores."
+          },
+          "disk_total": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Bytes."
+          },
+          "disk_used": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Bytes, on the file system of the hab's state directory."
+          },
+          "mem_total": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Bytes."
+          },
+          "mem_used": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Bytes."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "uptime_s": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seconds since the host booted."
+          }
+        },
+        "required": [
+          "seq",
+          "cpu_pct",
+          "mem_used",
+          "mem_total",
+          "disk_used",
+          "disk_total",
+          "uptime_s",
+          "at"
         ]
       },
       "InputParams": {
@@ -1204,6 +2147,32 @@
           "client"
         ]
       },
+      "PaneBell": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bells since the last pane.bell for this pane."
+          }
+        },
+        "required": [
+          "count"
+        ]
+      },
+      "PaneOutput": {
+        "type": "object",
+        "properties": {
+          "offset": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The pane's holder offset after the output."
+          }
+        },
+        "required": [
+          "offset"
+        ]
+      },
       "PaneOwner": {
         "type": "object",
         "properties": {
@@ -1276,6 +2245,29 @@
       "PingParams": {
         "type": "object"
       },
+      "PlanStep": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/PlanStepStatus"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "status"
+        ]
+      },
+      "PlanStepStatus": {
+        "type": "string",
+        "x-known-values": [
+          "pending",
+          "in_progress",
+          "done"
+        ]
+      },
       "Project": {
         "type": "object",
         "properties": {
@@ -1310,6 +2302,88 @@
           "revision",
           "name",
           "sessions"
+        ]
+      },
+      "PushActivityParams": {
+        "type": "object",
+        "properties": {
+          "device_id": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string",
+            "description": "Live Activity push token, hex."
+          }
+        },
+        "required": [
+          "device_id",
+          "session",
+          "token"
+        ]
+      },
+      "PushEnvironment": {
+        "type": "string",
+        "x-known-values": [
+          "development",
+          "production"
+        ]
+      },
+      "PushKind": {
+        "type": "string",
+        "x-known-values": [
+          "permission",
+          "question",
+          "auth",
+          "error",
+          "done",
+          "usage"
+        ]
+      },
+      "PushRegisterParams": {
+        "type": "object",
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "description": "The device's key fingerprint (transport.md 5)."
+          },
+          "environment": {
+            "$ref": "#/components/schemas/PushEnvironment"
+          },
+          "kinds": {
+            "type": "array",
+            "description": "The kinds of push this device wants.",
+            "items": {
+              "$ref": "#/components/schemas/PushKind"
+            }
+          },
+          "token": {
+            "type": "string",
+            "description": "APNs device token, hex."
+          }
+        },
+        "required": [
+          "device_id",
+          "token",
+          "environment",
+          "kinds"
+        ]
+      },
+      "PushUnregisterParams": {
+        "type": "object",
+        "properties": {
+          "device_id": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "token"
         ]
       },
       "RedrawMode": {
@@ -1401,6 +2475,14 @@
           "sessions"
         ]
       },
+      "SendOrigin": {
+        "type": "string",
+        "x-known-values": [
+          "typed",
+          "dictated",
+          "voice"
+        ]
+      },
       "Session": {
         "type": "object",
         "properties": {
@@ -1434,6 +2516,131 @@
           "revision",
           "name",
           "state"
+        ]
+      },
+      "SessionCreateParams": {
+        "type": "object",
+        "properties": {
+          "argv": {
+            "type": "array",
+            "description": "Program and arguments. Default: the hab's $SHELL, else /bin/sh.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cols": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Initial width. Default 80."
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Absolute working directory. Default: project_dir, else the hab's home directory."
+          },
+          "env": {
+            "type": "array",
+            "description": "KEY=value entries added to the hab's own environment; an entry replaces the hab's value for its key.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "harness": {
+            "type": "string",
+            "description": "Detection manifest id of a harness to start, such as claude. Needs that harness's adapter."
+          },
+          "name": {
+            "type": "string",
+            "description": "Session name, unique on the host. Default: the program's base name, with -2, -3 and so on when taken."
+          },
+          "project": {
+            "type": "string",
+            "description": "Project id to file the session in. Give project or project_dir, or neither for an unfiled session."
+          },
+          "project_dir": {
+            "type": "string",
+            "description": "Absolute path inside a git repository. The hab finds the project by the repository's remote, else its root commit, and creates the project when it is new."
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Initial height. Default 24."
+          }
+        }
+      },
+      "SessionCreated": {
+        "type": "object",
+        "properties": {
+          "pane": {
+            "type": "string",
+            "description": "Pane id."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "type": "string",
+            "description": "Session id."
+          }
+        },
+        "required": [
+          "seq",
+          "session",
+          "pane"
+        ]
+      },
+      "SessionFocusParams": {
+        "type": "object",
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "description": "True while the session is on screen in an active window."
+          },
+          "session": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session",
+          "active"
+        ]
+      },
+      "SessionRef": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session"
+        ]
+      },
+      "SessionSendParams": {
+        "type": "object",
+        "properties": {
+          "attachments": {
+            "type": "array",
+            "description": "Attachment ids from attachment.put.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "origin": {
+            "$ref": "#/components/schemas/SendOrigin"
+          },
+          "session": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session",
+          "text",
+          "origin"
         ]
       },
       "SessionState": {
@@ -1548,6 +2755,107 @@
         },
         "required": [
           "pane"
+        ]
+      },
+      "ToolStatus": {
+        "type": "string",
+        "x-known-values": [
+          "running",
+          "done",
+          "error",
+          "denied"
+        ]
+      },
+      "TurnEnd": {
+        "type": "object",
+        "properties": {
+          "final_message": {
+            "type": "string",
+            "description": "Id of the turn's last agent message."
+          },
+          "session": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session"
+        ]
+      },
+      "UsageAccount": {
+        "type": "object",
+        "properties": {
+          "harness": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "description": "Stable, not secret: the adapter's hash of an account id, else the host and harness."
+          },
+          "label": {
+            "type": "string",
+            "description": "Plan name, such as Max 5x."
+          },
+          "windows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UsageWindow"
+            }
+          }
+        },
+        "required": [
+          "key",
+          "harness",
+          "windows"
+        ]
+      },
+      "UsageListParams": {
+        "type": "object"
+      },
+      "UsageReadings": {
+        "type": "object",
+        "properties": {
+          "accounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UsageAccount"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "accounts"
+        ]
+      },
+      "UsageWindow": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "5h, 7d, or a model name."
+          },
+          "read_at": {
+            "type": "string",
+            "description": "RFC 3339 time of the reading."
+          },
+          "resets_at": {
+            "type": "string",
+            "description": "RFC 3339 time the window resets."
+          },
+          "used_pct": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Used, in whole percent."
+          }
+        },
+        "required": [
+          "name",
+          "used_pct",
+          "read_at"
         ]
       },
       "VersionWarning": {

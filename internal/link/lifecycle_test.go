@@ -6,6 +6,7 @@ package link
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -407,5 +408,55 @@ func TestDrainReleasesEndedPanes(t *testing.T) {
 	defer mu.Unlock()
 	if len(gone) < 2 {
 		t.Errorf("gone notices for %v, want both panes", gone)
+	}
+}
+
+// TestClosePane: a client's close releases a pane on the current holder. A running program gets
+// the hang-up and ends; an ended pane is released at once. Both panes are gone, with their last
+// output on their screens, and a second close of a gone pane succeeds.
+func TestClosePane(t *testing.T) {
+	hdir := shortDir(t)
+	startHolder(t, hdir, "one", 0)
+	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond})
+	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
+	running, ended := uuidN(70), uuidN(71)
+	pidFile := filepath.Join(shortDir(t), "pid")
+	ctx, cancel := context.WithTimeout(context.Background(), waitLong)
+	defer cancel()
+	if _, err := l.Spawn(ctx, hp.Spawn{UUID: running, Cols: 80, Rows: 24, Cwd: "/",
+		Argv: []string{"/bin/sh", "-c", `echo $$ > "$PIDF.tmp" && mv "$PIDF.tmp" "$PIDF"; echo running; while :; do sleep 0.05; done`},
+		Env:  append(testEnv, "PIDF="+pidFile)}); err != nil {
+		t.Fatal(err)
+	}
+	spawn(t, l, ended, "echo ended-early; exit 0")
+	waitFor(t, "the running pane printed", func() bool { return screenHas(t, l, running, "running") })
+	waitFor(t, "the ended pane exited", func() bool { st, _ := paneStatus(l, ended); return st.Exited })
+	var pid int
+	waitFor(t, "the pid file", func() bool {
+		b, err := os.ReadFile(pidFile)
+		if err != nil {
+			return false
+		}
+		_, err = fmt.Sscan(string(b), &pid)
+		return err == nil
+	})
+
+	for _, u := range []hp.UUID{running, ended} {
+		if err := l.ClosePane(ctx, u); err != nil {
+			t.Fatalf("close %s: %v", u, err)
+		}
+		if st, _ := paneStatus(l, u); !st.Gone {
+			t.Errorf("pane %s after close: %+v, want gone", u, st)
+		}
+		if err := l.ClosePane(ctx, u); err != nil {
+			t.Errorf("second close of %s: %v", u, err)
+		}
+	}
+	waitFor(t, "the hung-up program ended", func() bool { return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) })
+	if !screenHas(t, l, ended, "ended-early") {
+		t.Error("the closed pane lost its last output")
+	}
+	if err := l.ClosePane(ctx, uuidN(72)); !errors.Is(err, ErrNoPane) {
+		t.Errorf("close of an unknown pane: %v, want ErrNoPane", err)
 	}
 }

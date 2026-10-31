@@ -18,9 +18,31 @@ const (
 )
 
 const (
+	AnswerViaApp      AnswerVia = "app"
+	AnswerViaBanner   AnswerVia = "banner"
+	AnswerViaWatch    AnswerVia = "watch"
+	AnswerViaVoice    AnswerVia = "voice"
+	AnswerViaTerminal AnswerVia = "terminal"
+)
+
+const (
+	ApprovalChoiceAllow  ApprovalChoice = "allow"
+	ApprovalChoiceDeny   ApprovalChoice = "deny"
+	ApprovalChoiceAnswer ApprovalChoice = "answer"
+)
+
+const (
 	BlockedKindPermission BlockedKind = "permission"
 	BlockedKindQuestion   BlockedKind = "question"
 	BlockedKindAuth       BlockedKind = "auth"
+)
+
+const (
+	ChatKindUser  ChatKind = "user"
+	ChatKindAgent ChatKind = "agent"
+	ChatKindTool  ChatKind = "tool"
+	ChatKindEvent ChatKind = "event"
+	ChatKindPlan  ChatKind = "plan"
 )
 
 const (
@@ -69,6 +91,26 @@ const (
 )
 
 const (
+	PlanStepStatusPending    PlanStepStatus = "pending"
+	PlanStepStatusInProgress PlanStepStatus = "in_progress"
+	PlanStepStatusDone       PlanStepStatus = "done"
+)
+
+const (
+	PushEnvironmentDevelopment PushEnvironment = "development"
+	PushEnvironmentProduction  PushEnvironment = "production"
+)
+
+const (
+	PushKindPermission PushKind = "permission"
+	PushKindQuestion   PushKind = "question"
+	PushKindAuth       PushKind = "auth"
+	PushKindError      PushKind = "error"
+	PushKindDone       PushKind = "done"
+	PushKindUsage      PushKind = "usage"
+)
+
+const (
 	RedrawModeSnapshot RedrawMode = "snapshot"
 	RedrawModeNudge    RedrawMode = "nudge"
 )
@@ -77,6 +119,12 @@ const (
 	ScopeKindHost     ScopeKind = "host"
 	ScopeKindProjects ScopeKind = "projects"
 	ScopeKindSessions ScopeKind = "sessions"
+)
+
+const (
+	SendOriginTyped    SendOrigin = "typed"
+	SendOriginDictated SendOrigin = "dictated"
+	SendOriginVoice    SendOrigin = "voice"
 )
 
 const (
@@ -92,6 +140,13 @@ const (
 	StateSourceSpawn  StateSource = "spawn"
 )
 
+const (
+	ToolStatusRunning ToolStatus = "running"
+	ToolStatusDone    ToolStatus = "done"
+	ToolStatusError   ToolStatus = "error"
+	ToolStatusDenied  ToolStatus = "denied"
+)
+
 // Event types.
 const (
 	EventProjectUpdated EventType = "project.updated"
@@ -103,6 +158,11 @@ const (
 	EventPaneOwner      EventType = "pane.owner"
 	EventPaneActivity   EventType = "pane.activity"
 	EventAgentState     EventType = "agent.state"
+	EventPaneBell       EventType = "pane.bell"
+	EventPaneOutput     EventType = "pane.output"
+	EventChatMessage    EventType = "chat.message"
+	EventSessionTurnEnd EventType = "session.turn_end"
+	EventUsageUpdated   EventType = "usage.updated"
 )
 
 // DecodeData decodes e.Data into the type its event type names. It returns
@@ -143,6 +203,26 @@ func (e Event) DecodeData() (any, error) {
 		return v, err
 	case EventAgentState:
 		var v AgentState
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventPaneBell:
+		var v PaneBell
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventPaneOutput:
+		var v PaneOutput
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventChatMessage:
+		var v ChatMessage
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventSessionTurnEnd:
+		var v TurnEnd
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventUsageUpdated:
+		var v UsageAccount
 		err := json.Unmarshal(e.Data, &v)
 		return v, err
 	}
@@ -261,5 +341,110 @@ func (c Client) DevicesList(ctx context.Context, params DevicesListParams) (Devi
 func (c Client) DevicesRevoke(ctx context.Context, params DevicesRevokeParams) (Empty, error) {
 	var result Empty
 	err := c.Caller.Call(ctx, "devices.revoke", params, &result)
+	return result, err
+}
+
+// SessionCreate calls session.create. Start a program in a new pane and file it as a session (spec 3.9).
+func (c Client) SessionCreate(ctx context.Context, params SessionCreateParams) (SessionCreated, error) {
+	var result SessionCreated
+	err := c.Caller.Call(ctx, "session.create", params, &result)
+	return result, err
+}
+
+// SessionResume calls session.resume. Start an exited session's harness again in a new pane, with its resume id.
+func (c Client) SessionResume(ctx context.Context, params SessionRef) (SessionCreated, error) {
+	var result SessionCreated
+	err := c.Caller.Call(ctx, "session.resume", params, &result)
+	return result, err
+}
+
+// PaneClose calls pane.close. Release a pane: a running program gets a hang-up first (spec 3.9).
+func (c Client) PaneClose(ctx context.Context, params PaneRef) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "pane.close", params, &result)
+	return result, err
+}
+
+// SessionFocus calls session.focus. Report whether the session is in focus on this client: marks done seen, and holds pushes while watched.
+func (c Client) SessionFocus(ctx context.Context, params SessionFocusParams) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "session.focus", params, &result)
+	return result, err
+}
+
+// SessionInterrupt calls session.interrupt. Stop the agent's current turn through its adapter.
+func (c Client) SessionInterrupt(ctx context.Context, params SessionRef) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "session.interrupt", params, &result)
+	return result, err
+}
+
+// SessionSend calls session.send. Send a message to the session's agent through its adapter, under the input rules.
+func (c Client) SessionSend(ctx context.Context, params SessionSendParams) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "session.send", params, &result)
+	return result, err
+}
+
+// ApprovalAnswer calls approval.answer. Answer a pending request by id. A closed or expired id is refused with conflict.
+func (c Client) ApprovalAnswer(ctx context.Context, params ApprovalAnswerParams) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "approval.answer", params, &result)
+	return result, err
+}
+
+// ChatPage calls chat.page. Read a page of the session's chat messages from the transcript reader. Needs the transcripts capability.
+func (c Client) ChatPage(ctx context.Context, params ChatPageParams) (ChatMessages, error) {
+	var result ChatMessages
+	err := c.Caller.Call(ctx, "chat.page", params, &result)
+	return result, err
+}
+
+// AttachmentPut calls attachment.put. Start an upload of a file for a session; the bytes follow on their own channel.
+func (c Client) AttachmentPut(ctx context.Context, params AttachmentPutParams) (AttachmentStored, error) {
+	var result AttachmentStored
+	err := c.Caller.Call(ctx, "attachment.put", params, &result)
+	return result, err
+}
+
+// AttachmentGet calls attachment.get. Fetch an attachment or its thumbnail.
+func (c Client) AttachmentGet(ctx context.Context, params AttachmentGetParams) (AttachmentData, error) {
+	var result AttachmentData
+	err := c.Caller.Call(ctx, "attachment.get", params, &result)
+	return result, err
+}
+
+// PushRegister calls push.register. Store an APNs device token for this device. Needs the push capability.
+func (c Client) PushRegister(ctx context.Context, params PushRegisterParams) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "push.register", params, &result)
+	return result, err
+}
+
+// PushRegisterActivity calls push.register_activity. Store a Live Activity token for the session this device tracks. Needs the push capability.
+func (c Client) PushRegisterActivity(ctx context.Context, params PushActivityParams) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "push.register_activity", params, &result)
+	return result, err
+}
+
+// PushUnregister calls push.unregister. Drop a push token. Needs the push capability.
+func (c Client) PushUnregister(ctx context.Context, params PushUnregisterParams) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "push.unregister", params, &result)
+	return result, err
+}
+
+// UsageList calls usage.list. The latest usage reading of each harness account on this hab.
+func (c Client) UsageList(ctx context.Context, params UsageListParams) (UsageReadings, error) {
+	var result UsageReadings
+	err := c.Caller.Call(ctx, "usage.list", params, &result)
+	return result, err
+}
+
+// HabStats calls hab.stats. CPU, memory, disk, battery and uptime of the host. Needs the host-stats capability.
+func (c Client) HabStats(ctx context.Context, params HabStatsParams) (HostStats, error) {
+	var result HostStats
+	err := c.Caller.Call(ctx, "hab.stats", params, &result)
 	return result, err
 }

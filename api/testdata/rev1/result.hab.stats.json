@@ -1,0 +1,20 @@
+{
+  "at": "at-11",
+  "battery_pct": 9,
+  "cpu_pct": 4,
+  "disk_total": 8,
+  "disk_used": 7,
+  "mem_total": 6,
+  "mem_used": 5,
+  "seq": 3,
+  "uptime_s": 10,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

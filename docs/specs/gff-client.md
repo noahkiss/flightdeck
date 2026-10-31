@@ -655,8 +655,9 @@ decides (Part 5 decision "which zellij behaviours and plugins become `gff` featu
 
 ## 14. Calls gff needs from the hab
 
-These are not in `api/methods.go` today. Names are proposals. Where `app.md` 17 already proposes a
-call, `gff` uses the same one.
+These are in the API schema now, as `hab-logic-api.md` 3.9 lists them with their final shapes
+and owning stages. `session.create` and `pane.close` work; the rest answer `unavailable` until
+their stage. Where `app.md` 17 already proposes a call, `gff` uses the same one.
 
 | Call or event | Purpose | Also needed by |
 |---|---|---|

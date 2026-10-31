@@ -86,6 +86,8 @@ var (
 	// or once followed. A pane's uuid is its hook identity: a new program under an old uuid
 	// would take the old pane's token, and a leftover process of the old pane could post as it.
 	ErrUUIDUsed = errors.New("link: uuid belongs to another pane; a new pane needs a new uuid")
+	// ErrReleasing refuses a close while a release of the same pane is in flight.
+	ErrReleasing = errors.New("link: a release of this pane is in flight")
 )
 
 type paneKey struct {
@@ -692,6 +694,61 @@ func (l *Link) Spawn(ctx context.Context, s hp.Spawn) (PaneStatus, error) {
 		return PaneStatus{}, ErrClosed
 	}
 	return st, nil
+}
+
+// ClosePane releases pane u on its holder, at a client's request (pane.close, spec 3.9). On a
+// running program the holder hangs up its session (SIGHUP) and closes the terminal; the program
+// is reaped whenever it ends, and the holder does not escalate (holder spec 2.7, 6.1). An ended
+// pane is released at once, on any holder, so its record and ring are freed. After the release
+// the pane is gone, as after releaseEnded: its subscriptions end, its checkpoint is removed,
+// watchers get PaneGone, and its parsed screen stays readable until the prune drops it. A pane
+// already gone is a success. A lost pane cannot be released: its holder is not connected.
+func (l *Link) ClosePane(ctx context.Context, u hp.UUID) error {
+	p := l.pane(u)
+	if p == nil {
+		return ErrNoPane
+	}
+	p.mu.Lock()
+	h, hd, lost, busy := p.holder, p.handle, p.lost, p.releasing
+	if lost == nil && !busy && h != nil {
+		p.releasing = true
+	}
+	p.mu.Unlock()
+	switch {
+	case errors.Is(lost, ErrGone):
+		return nil
+	case lost != nil:
+		return lost
+	case busy:
+		return ErrReleasing
+	case h == nil:
+		return ErrNoPane
+	}
+	err := h.Release(ctx, hd)
+	if err != nil {
+		p.mu.Lock()
+		p.releasing = false
+		p.mu.Unlock()
+		return err
+	}
+	l.cfg.Logf("link: pane %s: closed by a client: released on holder %s", u, h.Instance())
+	// The pane keeps its handle in byHandle until the prune, so output the holder sent before
+	// the release lands on the gone pane, which ignores it, rather than in the orphans.
+	if !l.run(func() {
+		p.mu.Lock()
+		mine := p.holder == h && p.handle == hd
+		p.mu.Unlock()
+		if !mine {
+			return
+		}
+		if n, ok := p.lose(ErrGone); ok {
+			removeCheckpoint(l.cfg.StateDir, p.uuid)
+			l.notify([]Notice{n})
+		}
+	}) {
+		return ErrClosed
+	}
+	return nil
 }
 
 // spawnable reports whether a spawn of uuid u on holder h may go ahead: u is unknown and was

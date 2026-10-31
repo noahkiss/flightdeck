@@ -220,9 +220,36 @@ func serve(args []string) error {
 		},
 		Logf: debugf,
 	})
+	hpath, err := hookSocketPath(*hookSock, path)
+	if err != nil {
+		return err
+	}
+	// A pane's hook token is a keyed hash of its uuid under the secret in the state directory, so
+	// it outlives a gff-hab restart. A token resolves only while the link follows the pane: a
+	// pane the link reports gone loses its token and its agent state.
+	secret, created, err := hook.LoadOrCreateKey(dir)
+	if err != nil {
+		return err
+	}
+	if msg := newHookKeyWarning(created, livePanes(lk)); msg != "" {
+		logger.Print(msg)
+	}
+	tokens := hook.NewTokens(secret, livePane(lk))
 	var caps []string
+	var acts control.Actions
 	if lk != nil {
 		caps = append(caps, "agent-state") // panes gff-hab spawns post hooks
+		home, err := os.UserHomeDir()
+		if err != nil {
+			home = "/"
+		}
+		acts = &actions{
+			sp:      &spawner{lk: lk, tokens: tokens, hookSock: hpath},
+			store:   store,
+			getenv:  os.Getenv,
+			environ: os.Environ,
+			home:    home,
+		}
 	}
 	s := control.New(control.Config{
 		Build:        build,
@@ -230,13 +257,10 @@ func serve(args []string) error {
 		DeviceID:     key.Fingerprint(),
 		Source:       agentSource{store: store, agents: agents},
 		Capabilities: caps,
+		Actions:      acts,
 		Logf:         logger.Printf,
 	})
 	srv.Store(s)
-	hpath, err := hookSocketPath(*hookSock, path)
-	if err != nil {
-		return err
-	}
 	l, err := control.Listen(path)
 	if err != nil {
 		return err
@@ -246,19 +270,6 @@ func serve(args []string) error {
 		l.Close()
 		return err
 	}
-	// A pane's hook token is a keyed hash of its uuid under the secret in the state directory, so
-	// it outlives a gff-hab restart. A token resolves only while the link follows the pane: a
-	// pane the link reports gone loses its token and its agent state.
-	secret, created, err := hook.LoadOrCreateKey(dir)
-	if err != nil {
-		l.Close()
-		hl.Close()
-		return err
-	}
-	if msg := newHookKeyWarning(created, livePanes(lk)); msg != "" {
-		logger.Print(msg)
-	}
-	tokens := hook.NewTokens(secret, livePane(lk))
 	if lk != nil {
 		stopWatch := lk.Watch(func(n link.Notice) {
 			if n.Kind == link.PaneGone {
@@ -274,9 +285,6 @@ func serve(args []string) error {
 		}
 	}()
 	defer hooks.Close()
-	if lk != nil && startupSpawns != nil {
-		startupSpawns(&spawner{lk: lk, tokens: tokens, hookSock: hpath}, logger.Printf)
-	}
 	logger.Printf("epoch %s build %s device %s listening on %s, hooks on %s", s.Epoch(), build, key.Fingerprint(), path, hpath)
 
 	sigs := make(chan os.Signal, 1)
