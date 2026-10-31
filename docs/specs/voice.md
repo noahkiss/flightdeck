@@ -10,13 +10,13 @@ This spec picks the speech models and the pipeline behind voice mode. The user e
 | Cloud features | On device by default and free. Cloud summaries, cloud voices and realtime speech APIs are opt-in settings that use the user's own key. No Flightdeck service sits in the path |
 | Spoken summary | In voice mode the app appends a request for a two-sentence spoken summary to each spoken prompt. The app reads that summary aloud and skips code, diffs and tables |
 | Devices | iPhone and iPad in the first build; the Mac follows with the same speech APIs |
-| Speech engine | Apple SpeechAnalyzer first; NVIDIA Parakeet (through a Core ML port) as the downloadable fallback. Both sit behind one interface |
+| Speech engine | NVIDIA Parakeet first, on device through a Core ML port, because it handles software-engineering speech better (owner, 2026-10-31). The model downloads on first use (about 470 MB int8), not with the app. Apple SpeechAnalyzer is the fallback before the download finishes and on devices that cannot run Parakeet. A hosted Parakeet endpoint with the user's key (about $0.0015 per audio minute in October 2026) is an opt-in option. All engines sit behind one interface |
 
 ## Recommendation
 
 First build: an on-device pipeline with no extra model in the loop.
 
-1. **Speech-to-text:** Apple SpeechAnalyzer. No download, live partial results, accuracy level with the best open models. Fallback: NVIDIA Parakeet through FluidAudio (Core ML).
+1. **Speech-to-text:** NVIDIA Parakeet through a Core ML port, downloaded on first use. Fallback: Apple SpeechAnalyzer (no download, live partial results). A small streaming Parakeet variant can show live partials while the larger model gives the final text; test both on a device.
 2. **Identifier fix-up:** the hab sends a session vocabulary (file names, symbols). The app passes it as recognizer hints and fuzzy-matches the transcript against it.
 3. **Turn in:** the cleaned transcript goes straight into the session as a normal prompt.
 4. **Turn out:** speak only the agent's final text. A deterministic trimmer drops code, diffs and tables ("3 files changed"). Voice mode may append "end with a two-sentence spoken summary" to each prompt, so the agent summarizes from full context at no extra cost.
