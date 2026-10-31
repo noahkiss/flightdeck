@@ -37,6 +37,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/holderclient"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/holderreg"
+	"github.com/noahkiss/flightdeck/internal/termq"
 	"github.com/noahkiss/flightdeck/internal/vt"
 )
 
@@ -83,6 +84,9 @@ type Config struct {
 	// or Screen's VT carries. Scrollback reads older rows. Default DefaultSnapshotScrollback;
 	// negative means all.
 	SnapshotScrollback int
+	// Colors are reported to programs that ask for their colours (spec 5.6). Nil means
+	// termq.DefaultColors.
+	Colors *termq.Colors
 	// Logf receives diagnostics. Nil discards them.
 	Logf func(format string, args ...any)
 
@@ -129,6 +133,7 @@ type Link struct {
 	cfg    Config
 	client *holderclient.Client
 	enc    vt.Encoding // checkpoint encoding
+	colors termq.Colors
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -225,6 +230,7 @@ func Open(cfg Config) (*Link, error) {
 			Dir: cfg.HolderDir, Build: cfg.Build, Protocol: cfg.Protocol, Logf: cfg.Logf,
 		}),
 		enc:          checkpointEncoding(encs),
+		colors:       termq.DefaultColors(),
 		rescan:       make(chan struct{}, 1),
 		tasks:        make(chan func()),
 		panes:        map[hp.UUID]*pane{},
@@ -235,6 +241,9 @@ func Open(cfg Config) (*Link, error) {
 		saveRetiredC: make(chan struct{}, 1),
 		retiredSaved: make(chan struct{}, 1),
 		watchers:     map[int]func(Notice){},
+	}
+	if cfg.Colors != nil {
+		l.colors = *cfg.Colors
 	}
 	l.sbCap.Store(int64(l.scrollbackShare(0)))
 	l.ctx, l.cancel = context.WithCancel(context.Background())
@@ -819,6 +828,65 @@ func (l *Link) ClosePane(ctx context.Context, u hp.UUID) error {
 			removeCheckpoint(l.cfg.StateDir, p.uuid)
 			l.retire(p.uuid)
 			l.notify([]Notice{n})
+		}
+	}) {
+		return ErrClosed
+	}
+	return nil
+}
+
+// Input writes data to pane u's program as one write (spec 3.8). Writes to one pane, client input
+// and the link's own answers to terminal queries alike, reach the holder one at a time in the
+// order they were queued.
+func (l *Link) Input(ctx context.Context, u hp.UUID, data []byte) error {
+	p := l.pane(u)
+	if p == nil {
+		return ErrNoPane
+	}
+	done := make(chan error, 1)
+	p.mu.Lock()
+	if p.lost != nil {
+		err := p.lost
+		p.mu.Unlock()
+		return err
+	}
+	p.queueInputLocked(l, data, done)
+	p.mu.Unlock()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Resize sets pane u's size: the holder resizes the PTY, then the parser takes the size and every
+// subscriber gets a ChunkResize at the offset the parser has reached.
+func (l *Link) Resize(ctx context.Context, u hp.UUID, cols, rows int) error {
+	p := l.pane(u)
+	if p == nil {
+		return ErrNoPane
+	}
+	if cols <= 0 || rows <= 0 || cols > 0xffff || rows > 0xffff {
+		return fmt.Errorf("link: bad size %dx%d", cols, rows)
+	}
+	p.mu.Lock()
+	h, hd, lost := p.holder, p.handle, p.lost
+	p.mu.Unlock()
+	if lost != nil {
+		return lost
+	}
+	if h == nil {
+		return ErrNoPane
+	}
+	if err := h.Resize(ctx, hd, uint16(cols), uint16(rows)); err != nil {
+		return err
+	}
+	if !l.run(func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.holder == h && p.handle == hd {
+			p.resizeLocked(cols, rows)
 		}
 	}) {
 		return ErrClosed

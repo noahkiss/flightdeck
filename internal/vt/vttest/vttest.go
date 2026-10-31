@@ -133,6 +133,22 @@ func Run(t *testing.T, p vt.Parser, golden string) {
 		}
 	})
 
+	t.Run("cursor and modes", func(t *testing.T) {
+		// gff-hab answers terminal queries from these (spec 5.6).
+		term := newTerm(t)
+		term.Write([]byte("ab\r\ncde"))
+		if c, r := term.Cursor(); c != 3 || r != 1 {
+			t.Errorf("cursor = %d,%d, want 3,1", c, r)
+		}
+		if set, known := term.Mode(1049, false); !known || set {
+			t.Errorf("mode 1049 before = %v,%v, want reset and known", set, known)
+		}
+		term.Write([]byte("\x1b[?1049h"))
+		if set, known := term.Mode(1049, false); !known || !set {
+			t.Errorf("mode 1049 after = %v,%v, want set and known", set, known)
+		}
+	})
+
 	for _, enc := range p.Encodings() {
 		t.Run("restore "+string(enc), func(t *testing.T) {
 			term := newTerm(t)

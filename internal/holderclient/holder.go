@@ -411,6 +411,11 @@ func (h *Holder) Input(ctx context.Context, hd hp.Handle, data []byte) error {
 	}
 }
 
+// Resize sets a pane's size in cells.
+func (h *Holder) Resize(ctx context.Context, hd hp.Handle, cols, rows uint16) error {
+	return h.do(ctx, func(tok uint32) hp.Frame { return &hp.Resize{Handle: hd, Token: tok, Cols: cols, Rows: rows} })
+}
+
 // Release drops a pane (spec 2.7). On a draining holder, releasing the last pane ends the
 // holder: it sends bye and exits.
 func (h *Holder) Release(ctx context.Context, hd hp.Handle) error {

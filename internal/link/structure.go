@@ -50,6 +50,9 @@ func holderPane(st PaneStatus) structure.HolderPane {
 	return p
 }
 
+// APIExit returns an exit status as the API carries it.
+func APIExit(e hp.ExitStatus) api.ExitStatus { return *exitStatus(e) }
+
 func exitStatus(e hp.ExitStatus) *api.ExitStatus {
 	if !e.Signaled {
 		code := int(e.Code)

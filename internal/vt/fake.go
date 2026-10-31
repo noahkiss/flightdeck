@@ -355,6 +355,18 @@ func (t *fakeTerm) Resize(cols, rows int) error {
 
 func (t *fakeTerm) Size() (int, int) { return t.cols, t.rows }
 
+func (t *fakeTerm) Cursor() (int, int) { return t.x, t.y }
+
+// Mode knows the alternate screen modes only.
+func (t *fakeTerm) Mode(n int, ansi bool) (bool, bool) {
+	if !ansi && (n == 1049 || n == 1047 || n == 47) {
+		return t.altActive, true
+	}
+	return false, false
+}
+
+func (t *fakeTerm) KeyboardFlags() int { return 0 }
+
 func (t *fakeTerm) lines() []string {
 	var rows [][]rune
 	if !t.altActive {

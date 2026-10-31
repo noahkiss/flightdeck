@@ -76,6 +76,14 @@ type Terminal interface {
 	// ScrollbackPage. skip is the number of the newest scrollback rows to pass over, and n the
 	// most rows to return. On the alternate screen it reads the primary screen's scrollback.
 	Scrollback(skip, n int) (ScrollbackPage, error)
+	// Cursor returns the cursor's 0-based column and row on the active screen. gff-hab answers
+	// cursor position queries from it (spec 5.6).
+	Cursor() (col, row int)
+	// Mode reports whether mode n is set: an ANSI mode when ansi, else a DEC private mode. known
+	// is false for a mode the parser does not track.
+	Mode(n int, ansi bool) (set, known bool)
+	// KeyboardFlags returns the keyboard protocol flags the program set (CSI > u), 0 for none.
+	KeyboardFlags() int
 	// PlainText returns the active screen with its scrollback as text, one line per row, with
 	// trailing spaces and trailing blank lines removed. Tests compare it with golden files.
 	PlainText() (string, error)

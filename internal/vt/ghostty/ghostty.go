@@ -121,6 +121,35 @@ func (t *terminal) Size() (int, int) {
 	return int(c), int(r)
 }
 
+func (t *terminal) Cursor() (int, int) {
+	if t.t == nil {
+		return 0, 0
+	}
+	x, _ := t.t.CursorX()
+	y, _ := t.t.CursorY()
+	return int(x), int(y)
+}
+
+// Mode asks libghostty; a mode it does not track answers with an error, which is not known.
+func (t *terminal) Mode(n int, ansi bool) (bool, bool) {
+	if t.t == nil || n < 0 || n > 0x7fff {
+		return false, false
+	}
+	set, err := t.t.Mode(libghostty.NewMode(uint16(n), ansi))
+	if err != nil {
+		return false, false
+	}
+	return set, true
+}
+
+func (t *terminal) KeyboardFlags() int {
+	if t.t == nil {
+		return 0
+	}
+	f, _ := t.t.KittyKeyboardFlags()
+	return int(f)
+}
+
 func (t *terminal) Snapshot(enc vt.Encoding, opts vt.SnapshotOptions) ([]byte, error) {
 	if t.t == nil {
 		return nil, vt.ErrClosed

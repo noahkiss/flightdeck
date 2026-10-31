@@ -11,6 +11,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/internal/holderclient"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
+	"github.com/noahkiss/flightdeck/internal/termq"
 	"github.com/noahkiss/flightdeck/internal/vt"
 )
 
@@ -84,6 +85,7 @@ const (
 	ChunkBytes    ChunkKind = iota + 1 // program output from Offset
 	ChunkSnapshot                      // a snapshot covering output up to Offset
 	ChunkExited                        // the pane's child was reaped; Exit is set
+	ChunkResize                        // the pane's size changed to Cols x Rows at Offset
 )
 
 // Chunk is one item on a subscription.
@@ -100,6 +102,8 @@ type Chunk struct {
 	// (spec 5.6).
 	Live bool
 	Exit hp.ExitStatus
+	// Cols and Rows are the new size, for ChunkResize.
+	Cols, Rows int
 }
 
 // Subscription delivers one pane's output in offset order with no gap and no repeat.
@@ -190,10 +194,24 @@ type pane struct {
 	ckAt      time.Time
 	subs      map[*Subscription]struct{}
 	snapRows  int // scrollback rows in a snapshot: Config.SnapshotScrollback
+	// queries follows the stream for terminal queries; the link answers those in live bytes
+	// (spec 5.6). Its offset is off whenever it holds nothing back.
+	queries *termq.Scanner
+	// inq holds writes to the program's input in order: client input and query answers.
+	// inBusy is true while a writer goroutine drains it.
+	inq    []inputReq
+	inBusy bool
+}
+
+// inputReq is one write to a pane's input. done, when set, gets the result.
+type inputReq struct {
+	data []byte
+	done chan error
 }
 
 func newPane(u hp.UUID, snapRows int) *pane {
-	return &pane{uuid: u, ready: make(chan struct{}), subs: map[*Subscription]struct{}{}, snapRows: snapRows}
+	return &pane{uuid: u, ready: make(chan struct{}), subs: map[*Subscription]struct{}{}, snapRows: snapRows,
+		queries: termq.NewScanner(0)}
 }
 
 func (p *pane) markReady() {
@@ -240,7 +258,7 @@ func (p *pane) prepare(l *Link, h *holderclient.Holder, pi hp.PaneInfo) (from ui
 		// The same gff-hab reconnects to a holder that dropped it: keep the screen and replay
 		// what it missed. A gap shows in the replay end.
 		if c, r := p.term.Size(); c != cols || r != rows {
-			p.term.Resize(cols, rows)
+			p.resizeLocked(cols, rows)
 		}
 		return p.off, back
 	}
@@ -279,6 +297,7 @@ func (p *pane) prepare(l *Link, h *holderclient.Holder, pi hp.PaneInfo) (from ui
 			p.off, p.bufStart, p.buf = ck.Offset, ck.Offset, nil
 			p.ckOff, p.ckValid, p.restored = ck.Offset, true, true
 			p.seq.reset()
+			p.queries.Reset(p.off) // a checkpoint is taken in the ground state only
 			return p.off, back
 		}
 	}
@@ -295,6 +314,7 @@ func (p *pane) prepare(l *Link, h *holderclient.Holder, pi hp.PaneInfo) (from ui
 	p.off, p.bufStart, p.buf = pi.Oldest, pi.Oldest, nil
 	p.ckValid, p.restored = false, false
 	p.seq.reset()
+	p.queries.Reset(p.off)
 	return p.off, back
 }
 
@@ -309,6 +329,7 @@ func (p *pane) spawned(l *Link, h *holderclient.Holder, pi hp.PaneInfo) {
 		t, _ = vt.Fake{}.New(vt.Config{Cols: 80, Rows: 24})
 	}
 	p.holder, p.handle, p.pid, p.term = h, pi.Handle, pi.Pid, t
+	p.queries.Reset(0)
 	now := time.Now()
 	p.ckAt, p.lastOut = now, now
 	p.markReady()
@@ -334,7 +355,7 @@ func (p *pane) feed(l *Link, off uint64, data []byte, live bool) {
 		l.cfg.Logf("link: pane %s: gap: bytes %d to %d never arrived; screen is suspect", p.uuid, p.off, off)
 		p.jump(off)
 	}
-	p.term.Write(data)
+	p.parse(l, data, live)
 	p.seq.write(data)
 	p.off = end
 	p.buf = append(p.buf, data...)
@@ -347,6 +368,104 @@ func (p *pane) feed(l *Link, off uint64, data []byte, live bool) {
 	ch := Chunk{Kind: ChunkBytes, Offset: off, Data: data, Live: live}
 	for s := range p.subs {
 		if !s.send(ch) {
+			delete(p.subs, s)
+		}
+	}
+}
+
+// parse writes data to the parser and follows it for terminal queries. In live bytes it answers
+// each query once, from the parser's state just after the query, and queues the answer to the
+// program's input (spec 5.6). Replayed bytes get no answer. The caller holds p.mu.
+func (p *pane) parse(l *Link, data []byte, live bool) {
+	if !live {
+		p.queries.Feed(data, func(termq.Segment) {})
+		p.term.Write(data)
+		return
+	}
+	start, done := p.queries.Offset(), 0
+	p.queries.Feed(data, func(seg termq.Segment) {
+		if seg.Query == nil {
+			return
+		}
+		end := int(seg.Off + uint64(len(seg.Data)) - start) // the query ends inside data
+		p.term.Write(data[done:end])
+		done = end
+		if ans := termq.Answer(*seg.Query, p.factsLocked(l)); len(ans) > 0 {
+			p.queueInputLocked(l, ans, nil)
+		}
+	})
+	p.term.Write(data[done:])
+}
+
+// factsLocked reads what an answer needs from the parser. The caller holds p.mu.
+func (p *pane) factsLocked(l *Link) termq.Facts {
+	col, row := p.term.Cursor()
+	cols, rows := p.term.Size()
+	return termq.Facts{
+		Col: col, Row: row, Cols: cols, Rows: rows,
+		Mode: p.term.Mode, KeyboardFlags: p.term.KeyboardFlags(),
+		Colors: l.colors, Version: l.cfg.Build,
+	}
+}
+
+// queueInputLocked queues a write to the program's input and starts a writer when none runs.
+// Writes reach the holder one at a time, in queue order. The caller holds p.mu.
+func (p *pane) queueInputLocked(l *Link, data []byte, done chan error) {
+	p.inq = append(p.inq, inputReq{data: data, done: done})
+	if !p.inBusy {
+		p.inBusy = true
+		go p.inputWriter(l)
+	}
+}
+
+// inputWriter drains the input queue. An answer that fails is logged; client input gets its
+// error back.
+func (p *pane) inputWriter(l *Link) {
+	for {
+		p.mu.Lock()
+		if len(p.inq) == 0 {
+			p.inBusy = false
+			p.mu.Unlock()
+			return
+		}
+		r := p.inq[0]
+		p.inq = p.inq[1:]
+		h, hd, lost := p.holder, p.handle, p.lost
+		p.mu.Unlock()
+		var err error
+		switch {
+		case lost != nil:
+			err = lost
+		case h == nil:
+			err = ErrClosed
+		default:
+			ctx, cancel := context.WithTimeout(l.ctx, inputTimeout)
+			err = h.Input(ctx, hd, r.data)
+			cancel()
+		}
+		if r.done != nil {
+			r.done <- err
+		} else if err != nil {
+			l.cfg.Logf("link: pane %s: answer to a terminal query: %v", p.uuid, err)
+		}
+	}
+}
+
+// inputTimeout bounds one write to a pane's input.
+const inputTimeout = 10 * time.Second
+
+// resizeLocked resizes the parser and tells every subscriber, at the current offset. The caller
+// holds p.mu.
+func (p *pane) resizeLocked(cols, rows int) {
+	if p.term == nil {
+		return
+	}
+	if c, r := p.term.Size(); c == cols && r == rows {
+		return
+	}
+	p.term.Resize(cols, rows)
+	for s := range p.subs {
+		if !s.send(Chunk{Kind: ChunkResize, Offset: p.off, Cols: cols, Rows: rows}) {
 			delete(p.subs, s)
 		}
 	}
@@ -374,6 +493,7 @@ func (p *pane) jump(to uint64) {
 	p.suspect = true
 	p.buf, p.bufStart, p.off = nil, to, to
 	p.seq.reset()
+	p.queries.Reset(to)
 	if len(p.subs) == 0 {
 		return
 	}
