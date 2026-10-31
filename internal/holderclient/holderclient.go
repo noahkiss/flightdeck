@@ -294,6 +294,7 @@ func (c *Client) connect(ctx context.Context, e holderreg.Entry) error {
 		c: c, nc: nc, pc: pc, welcome: w, entry: e, sock: sock,
 		draining: w.Draining || e.Draining,
 		done:     make(chan struct{}),
+		byeC:     make(chan struct{}),
 		waits:    map[uint32]chan hp.Frame{},
 		panes:    map[hp.Handle]*pane{},
 	}

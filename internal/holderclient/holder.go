@@ -20,6 +20,7 @@ type Holder struct {
 	welcome *hp.Welcome
 	sock    fileID // the socket file this connection was dialled at
 	done    chan struct{}
+	byeC    chan struct{} // closed when the holder's bye is read: it will answer nothing more
 
 	mu       sync.Mutex
 	entry    holderreg.Entry
@@ -151,7 +152,10 @@ func (h *Holder) track(f hp.Frame) {
 			p.info.Exited, p.info.Exit = true, f.Status
 		}
 	case *hp.Bye:
-		h.bye = true
+		if !h.bye {
+			h.bye = true
+			close(h.byeC)
+		}
 	}
 }
 
@@ -192,7 +196,7 @@ func (h *Holder) call(ctx context.Context, mk func(tok uint32) hp.Frame, last fu
 	tok := h.nextToken()
 	w := make(chan hp.Frame, 16)
 	h.mu.Lock()
-	if h.closed {
+	if h.closed || h.bye {
 		h.mu.Unlock()
 		return nil, ErrClosed
 	}
@@ -207,15 +211,32 @@ func (h *Holder) call(ctx context.Context, mk func(tok uint32) hp.Frame, last fu
 		return nil, h.writeFailed(err)
 	}
 	var got []hp.Frame
+	// handle takes one reply; done reports whether the call is over.
+	handle := func(f hp.Frame) (done bool, err error) {
+		if e, ok := f.(*hp.Error); ok {
+			return true, &RequestError{Ref: e.Ref, Code: e.Code, Offset: e.Offset, Message: e.Message}
+		}
+		got = append(got, f)
+		return last(f), nil
+	}
 	for {
 		select {
 		case f := <-w:
-			if e, ok := f.(*hp.Error); ok {
-				return got, &RequestError{Ref: e.Ref, Code: e.Code, Offset: e.Offset, Message: e.Message}
+			if done, err := handle(f); done {
+				return got, err
 			}
-			got = append(got, f)
-			if last(f) {
-				return got, nil
+		case <-h.byeC:
+			// The reader delivers frames in order, so every reply sent before the bye is
+			// already queued. Take those, then end: the holder answers nothing after its bye.
+			for {
+				select {
+				case f := <-w:
+					if done, err := handle(f); done {
+						return got, err
+					}
+				default:
+					return got, ErrClosed
+				}
 			}
 		case <-h.done:
 			return got, ErrClosed
@@ -232,7 +253,7 @@ func (h *Holder) do(ctx context.Context, mk func(tok uint32) hp.Frame) error {
 	tok := h.nextToken()
 	w := make(chan hp.Frame, 4)
 	h.mu.Lock()
-	if h.closed {
+	if h.closed || h.bye {
 		h.mu.Unlock()
 		return ErrClosed
 	}
