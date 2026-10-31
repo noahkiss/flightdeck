@@ -3,7 +3,7 @@
 // docs/specs/hab-holder.md.
 //
 // The socket path comes from -socket, or from -dir plus the instance id. -dir defaults to
-// $GFF_HOLDER_DIR. Without it, macOS uses gff/holders under the user's cache directory, and
+// $GFF_HOLDER_DIR. Without it, macOS uses gff/holders under ~/Library/Application Support, and
 // other systems use $XDG_RUNTIME_DIR/gff/holders; with no XDG_RUNTIME_DIR the holder refuses to
 // start rather than fall back to a shared directory.
 //

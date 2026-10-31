@@ -40,6 +40,7 @@ const (
 	DefaultExitWindow    = 200 * time.Millisecond // spec 2.7
 	DefaultShutdownGrace = 5 * time.Second        // spec 2.8
 	DefaultHelloTimeout  = 10 * time.Second
+	DefaultRegistryCheck = 10 * time.Second
 )
 
 // Config sets up a holder. Zero fields take the defaults above.
@@ -74,6 +75,9 @@ type Config struct {
 	// <RegistryDir>/<Instance>.json, rewrites it when the holder starts draining, and removes
 	// it when the holder exits. Empty writes no registry file.
 	RegistryDir string
+	// RegistryCheck is how often the holder checks that its registry file is still there, and
+	// rewrites it when a reader's prune removed it by mistake (spec 4.2).
+	RegistryCheck time.Duration
 	// Logf receives diagnostics. Nil discards them.
 	Logf func(format string, args ...any)
 }
@@ -99,6 +103,9 @@ func (c *Config) fill() {
 	}
 	if c.HelloTimeout <= 0 {
 		c.HelloTimeout = DefaultHelloTimeout
+	}
+	if c.RegistryCheck <= 0 {
+		c.RegistryCheck = DefaultRegistryCheck
 	}
 	if c.Instance == "" {
 		c.Instance = NewInstanceID()
@@ -148,6 +155,9 @@ type Holder struct {
 	draining bool
 	closing  bool
 	listener acceptor
+	// drainKill is set once a draining holder with no pane left has scheduled the kill of the
+	// released children that still run.
+	drainKill bool
 
 	exitOnce sync.Once
 	done     chan struct{}
@@ -215,11 +225,11 @@ func Listen(path string) (*net.UnixListener, error) {
 	}
 	uid := os.Getuid()
 	for _, d := range append(created, dir) {
-		if err := checkPrivateDir(d, uid); err != nil {
+		if err := holderreg.CheckPrivateDir(d, uid); err != nil {
 			return nil, err
 		}
 	}
-	if err := checkParent(filepath.Dir(dir), uid); err != nil {
+	if err := holderreg.CheckParent(filepath.Dir(dir), uid); err != nil {
 		return nil, err
 	}
 	if _, err := os.Lstat(path); err == nil {
@@ -271,52 +281,6 @@ func mkdirs(dir string) ([]string, error) {
 	return created, nil
 }
 
-func ownerOf(fi os.FileInfo) (int, bool) {
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
-		return 0, false
-	}
-	return int(st.Uid), true
-}
-
-// checkPrivateDir requires d to be a real directory owned by uid with no access for others.
-func checkPrivateDir(d string, uid int) error {
-	fi, err := os.Lstat(d)
-	if err != nil {
-		return err
-	}
-	if !fi.IsDir() {
-		return fmt.Errorf("holder: socket directory %s is not a directory (mode %v)", d, fi.Mode())
-	}
-	if owner, ok := ownerOf(fi); !ok || owner != uid {
-		return fmt.Errorf("holder: socket directory %s is owned by uid %d, not %d", d, owner, uid)
-	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("holder: socket directory %s is open to other users (mode %v)", d, fi.Mode().Perm())
-	}
-	return nil
-}
-
-// checkParent requires that no other user can rename entries in d, unless d is sticky. A
-// symlinked parent (macOS has /tmp -> /private/tmp) is checked at its target.
-func checkParent(d string, uid int) error {
-	fi, err := os.Stat(d)
-	if err != nil {
-		return err
-	}
-	owner, ok := ownerOf(fi)
-	if !ok {
-		return fmt.Errorf("holder: cannot read the owner of %s", d)
-	}
-	if owner != uid && owner != 0 {
-		return fmt.Errorf("holder: %s is owned by uid %d, not by this user or root", d, owner)
-	}
-	if fi.Mode().Perm()&0o022 != 0 && fi.Mode()&os.ModeSticky == 0 {
-		return fmt.Errorf("holder: %s is writable by other users and not sticky (mode %v)", d, fi.Mode())
-	}
-	return nil
-}
-
 // Serve accepts logic connections on l until the holder exits. With Config.RegistryDir set, it
 // first writes the holder's registry file, and returns the error if that fails. It returns nil
 // after a shutdown or a drain exit; the listener is closed and its socket and registry files
@@ -347,6 +311,9 @@ func (h *Holder) serve(l acceptor) error {
 		h.closeListener()
 		h.exit()
 		return err
+	}
+	if h.cfg.RegistryDir != "" {
+		h.goSafe("registry check", h.registryCheck)
 	}
 	var backoff time.Duration
 	var lastLog time.Time
@@ -479,17 +446,9 @@ func (h *Holder) serveConn(nc *net.UnixConn) {
 }
 
 func (h *Holder) checkPeer(nc *net.UnixConn) error {
-	sc, err := nc.SyscallConn()
+	uid, err := holderreg.PeerUID(nc)
 	if err != nil {
 		return err
-	}
-	uid := -1
-	var uerr error
-	if err := sc.Control(func(fd uintptr) { uid, uerr = peerUID(int(fd)) }); err != nil {
-		return err
-	}
-	if uerr != nil {
-		return uerr
 	}
 	if uid != h.uid {
 		return fmt.Errorf("peer uid %d is not the holder's uid %d", uid, h.uid)
@@ -662,12 +621,37 @@ func (h *Holder) exit() {
 	})
 }
 
-// drainExitLocked starts the exit of a draining holder whose last pane is gone (spec 4.3).
+// drainExitLocked starts the exit of a draining holder whose last pane is gone (spec 4.3). A
+// released pane's program may still run: the release hung it up, and a program that ignores the
+// hang-up outlives it. The holder must not exit before it has reaped such a child, because no
+// one else would, and launchd does not end a job's processes the way a systemd unit's control
+// group does. So the holder exits only once it owns no pane, and when released programs still
+// run, it kills their process groups after ShutdownGrace (spec 6.1). The waiter calls this again
+// as each one is reaped.
 func (h *Holder) drainExitLocked() {
-	if h.draining && len(h.panes) == 0 && !h.closing {
+	if !h.draining || h.closing || len(h.panes) > 0 {
+		return
+	}
+	if len(h.owned) == 0 {
 		h.closing = true
 		h.goSafe("drain exit", h.exit)
+		return
 	}
+	if h.drainKill {
+		return
+	}
+	h.drainKill = true
+	h.cfg.Logf("holder: draining with %d released program(s) still running; killing them in %v", len(h.owned), h.cfg.ShutdownGrace)
+	time.AfterFunc(h.cfg.ShutdownGrace, func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if h.closing || len(h.panes) > 0 {
+			return
+		}
+		for p := range h.owned {
+			p.killLocked()
+		}
+	})
 }
 
 // register writes the holder's registry file (spec 4.2) for the socket at sock. A file this
@@ -722,6 +706,32 @@ func (h *Holder) markDraining() {
 	h.regEntry.Draining = true
 	if err := holderreg.Write(h.cfg.RegistryDir, h.regEntry); err != nil {
 		h.cfg.Logf("holder: registry file: %v", err)
+	}
+}
+
+// registryCheck rewrites the holder's registry file whenever it has gone missing, until the
+// holder exits. A reader prunes a file only when it looks stale, but a prune can race a restart
+// of the same instance; without its file, a live holder would be invisible to gff-hab for good.
+func (h *Holder) registryCheck() {
+	t := time.NewTicker(h.cfg.RegistryCheck)
+	defer t.Stop()
+	for {
+		select {
+		case <-h.done:
+			return
+		case <-t.C:
+		}
+		h.regMu.Lock()
+		if !h.regGone && h.regEntry.Instance != "" {
+			path := holderreg.Path(h.cfg.RegistryDir, h.regEntry.Instance)
+			if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+				h.cfg.Logf("holder: registry file %s is gone; writing it again", path)
+				if err := holderreg.Write(h.cfg.RegistryDir, h.regEntry); err != nil {
+					h.cfg.Logf("holder: registry file: %v", err)
+				}
+			}
+		}
+		h.regMu.Unlock()
 	}
 }
 

@@ -3,7 +3,9 @@ package holderclient
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/noahkiss/flightdeck/internal/holder"
@@ -19,15 +21,83 @@ type probe struct{ Token uint32 }
 func (f *probe) Header() hp.Header              { return hp.Header{Kind: kindProbe, Token: f.Token} }
 func (*probe) MarshalPayload(hp.Version) []byte { return nil }
 
-// v2 is a test-only protocol version 2: version 1 plus one kind that only version 2 carries.
-// holderproto's own test version 2 also changes resize and output, which the real holder core
-// does not implement; this one changes nothing the holder must understand, so a real holder can
-// run it.
-func v2() *hp.Registry {
+// resizePx is resize with a pixel width appended at version 2: one frame laid out differently
+// per version.
+type resizePx struct {
+	Handle     hp.Handle
+	Token      uint32
+	Cols, Rows uint16
+	PixelW     uint16
+}
+
+func (f *resizePx) Header() hp.Header {
+	return hp.Header{Kind: hp.KindResize, Pane: f.Handle, Token: f.Token}
+}
+
+func (f *resizePx) MarshalPayload(v hp.Version) []byte {
+	var e hp.Enc
+	e.U16(f.Cols)
+	e.U16(f.Rows)
+	if v >= 2 {
+		e.U16(f.PixelW)
+	}
+	return e.Bytes()
+}
+
+// resizeLog records the resize payloads a holder decoded.
+type resizeLog struct {
+	mu   sync.Mutex
+	lens []int
+	px   []uint16
+}
+
+func (l *resizeLog) add(n int, px uint16) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.lens, l.px = append(l.lens, n), append(l.px, px)
+}
+
+func (l *resizeLog) get() ([]int, []uint16) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.lens), slices.Clone(l.px)
+}
+
+// v1 is protocol version 1 with its resize decoder recording into log.
+func v1(log *resizeLog) *hp.Registry {
+	r := hp.V1().Clone()
+	r.Register(hp.KindResize, 1, func(v hp.Version, h hp.Header, p []byte) (hp.Frame, error) {
+		log.add(len(p), 0)
+		return hp.DecodeResize(v, h, p)
+	})
+	return r
+}
+
+// v2 is a test-only protocol version 2: version 1 plus one kind that only version 2 carries,
+// and resize with a pixel width appended at version 2. The holder core gets a plain resize, so
+// a real holder can run it; log records what was decoded. holderproto's own test version 2
+// changes output too, which the real holder core does not implement.
+func v2(log *resizeLog) *hp.Registry {
 	r := hp.V1().Clone()
 	r.Max = 2
 	r.Register(kindProbe, 2, func(_ hp.Version, h hp.Header, _ []byte) (hp.Frame, error) {
 		return &probe{Token: h.Token}, nil
+	})
+	r.Register(hp.KindResize, 1, func(v hp.Version, h hp.Header, p []byte) (hp.Frame, error) {
+		d := hp.NewDec(p)
+		f := &hp.Resize{Handle: h.Pane, Token: h.Token, Cols: d.U16(), Rows: d.U16()}
+		var px uint16
+		if v >= 2 {
+			px = d.U16()
+		}
+		if d.Err() == nil && d.Len() != 0 {
+			return nil, errors.New("resize: trailing bytes")
+		}
+		log.add(len(p), px)
+		return f, d.Err()
 	})
 	return r
 }
@@ -38,7 +108,8 @@ func v2() *hp.Registry {
 // drain of A to its exit.
 func TestTwoProtocolVersions(t *testing.T) {
 	dir := regDir(t)
-	a := inproc(t, dir, "A", "hv1", hp.V1())
+	logA, logB := &resizeLog{}, &resizeLog{}
+	a := inproc(t, dir, "A", "hv1", v1(logA))
 
 	// gff-hab build A puts a pane on A.
 	ca := New(Config{Dir: dir, Build: "A"})
@@ -55,8 +126,8 @@ func TestTwoProtocolVersions(t *testing.T) {
 
 	// gff-hab build B, speaking 1..2, starts an in-process holder B at 1..2.
 	var b *holder.Holder
-	cb := New(Config{Dir: dir, Build: "B", Protocol: v2(), Start: func(context.Context) error {
-		b = inproc(t, dir, "B", "hv2", v2())
+	cb := New(Config{Dir: dir, Build: "B", Protocol: v2(nil), Start: func(context.Context) error {
+		b = inproc(t, dir, "B", "hv2", v2(logB))
 		return nil
 	}})
 	ev := collect(t, cb)
@@ -102,6 +173,23 @@ func TestTwoProtocolVersions(t *testing.T) {
 	}
 	ev.waitOutput(t, pa2, "got-1:ping")
 	ev.waitOutput(t, pb, "got-2:ping")
+
+	// One frame, two layouts: the resize to A goes out at version 1 without the appended pixel
+	// width; the resize to B carries it, and B decodes it.
+	for _, p := range []*Pane{pa2, pb} {
+		err := p.Holder.do(ctx(t), func(tok uint32) hp.Frame {
+			return &resizePx{Handle: p.Handle, Token: tok, Cols: 100, Rows: 30, PixelW: 1234}
+		})
+		if err != nil {
+			t.Fatalf("resize on %s: %v", p.Holder.Instance(), err)
+		}
+	}
+	if lens, _ := logA.get(); !slices.Equal(lens, []int{4}) {
+		t.Fatalf("A decoded resize payloads of %v bytes, want [4]", lens)
+	}
+	if lens, px := logB.get(); !slices.Equal(lens, []int{6}) || !slices.Equal(px, []uint16{1234}) {
+		t.Fatalf("B decoded resize payloads of %v bytes, pixel width %v; want [6], [1234]", lens, px)
+	}
 	for _, s := range cb.Panes() {
 		want := map[hp.UUID]hp.Version{uuidN(1): 1, uuidN(2): 2}[s.UUID]
 		if s.Version != want {
@@ -136,7 +224,7 @@ func TestTwoProtocolVersions(t *testing.T) {
 // unreachable and left alone; gff-hab starts its own holder beside it (spec 4.3).
 func TestUnreachableHolder(t *testing.T) {
 	dir := regDir(t)
-	only2 := v2()
+	only2 := v2(nil)
 	only2.Min = 2
 	old := inproc(t, dir, "Z", "hz", only2)
 	c := New(Config{Dir: dir, Build: "B", Start: func(context.Context) error {

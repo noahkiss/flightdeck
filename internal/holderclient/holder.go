@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/holderreg"
@@ -17,6 +18,7 @@ type Holder struct {
 	nc      net.Conn
 	pc      *hp.Conn
 	welcome *hp.Welcome
+	sock    fileID // the socket file this connection was dialled at
 	done    chan struct{}
 
 	mu       sync.Mutex
@@ -168,8 +170,19 @@ func (h *Holder) close(err error) {
 	close(h.done)
 	h.c.forget(h)
 	// The end event must not be lost, but nobody may be reading any more: deliver it from its
-	// own goroutine. Every frame event before it was delivered already.
-	go func() { h.c.events <- Event{Holder: h, Err: err} }()
+	// own goroutine, which gives up once the client is closed. Every frame event before it was
+	// delivered already.
+	ev := Event{Holder: h, Err: err}
+	select {
+	case h.c.events <- ev:
+	default:
+		go func() {
+			select {
+			case h.c.events <- ev:
+			case <-h.c.quit:
+			}
+		}()
+	}
 }
 
 // call sends the request mk builds with a fresh token, and returns every frame answering it up
@@ -191,7 +204,7 @@ func (h *Holder) call(ctx context.Context, mk func(tok uint32) hp.Frame, last fu
 		h.mu.Unlock()
 	}()
 	if err := h.pc.WriteFrame(mk(tok)); err != nil {
-		return nil, err
+		return nil, h.writeFailed(err)
 	}
 	var got []hp.Frame
 	for {
@@ -231,7 +244,7 @@ func (h *Holder) do(ctx context.Context, mk func(tok uint32) hp.Frame) error {
 		h.mu.Unlock()
 	}()
 	if err := h.pc.WriteFrame(mk(tok)); err != nil {
-		return err
+		return h.writeFailed(err)
 	}
 	_, err := h.call(ctx, func(t uint32) hp.Frame { return &hp.Ping{Token: t} }, isPong)
 	select {
@@ -241,6 +254,39 @@ func (h *Holder) do(ctx context.Context, mk func(tok uint32) hp.Frame) error {
 		}
 	default:
 	}
+	return err
+}
+
+// writeFailGrace is how long a failed write waits for the reader to see the holder's end.
+const writeFailGrace = time.Second
+
+// writeFailed turns a failed request write into the error the caller sees. A holder that sent
+// bye and exited (the last release on a draining holder, or a drain of an empty one) makes the
+// next write fail with a broken pipe, possibly before the reader has read the bye. That is the
+// connection's normal end, so it is ErrClosed, as it would be had the reader been first. The
+// reader gets a short grace to catch up. Any other write failure leaves a frame half written, so
+// the connection ends with that error.
+func (h *Holder) writeFailed(err error) error {
+	ended := func() (closed, bye bool) {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return h.closed, h.bye
+	}
+	closed, bye := ended()
+	if !closed && !bye {
+		select {
+		case <-h.done:
+		case <-time.After(writeFailGrace):
+		}
+		closed, bye = ended()
+	}
+	if closed || bye {
+		if bye {
+			h.close(nil)
+		}
+		return ErrClosed
+	}
+	h.close(err)
 	return err
 }
 

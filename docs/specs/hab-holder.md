@@ -344,23 +344,38 @@ The optional upper bound on replay lets gff-hab fetch one command's byte range (
   unrelated process may reuse it, so a live pid with a refusing socket is stale too. When it
   removes a stale file, gff-hab also removes the socket file beside it, unless something listens
   there again. It removes a file only while the file still names the same pid and start time, so
-  a holder restarted under the same instance id keeps its new file. Temporary files and
-  unreadable registry files older than one minute are left over from a crash and removed too.
+  a holder restarted under the same instance id keeps its new file. To close the window between
+  that check and the removal, it first renames the file aside, checks what it took, and puts a
+  newer holder's file back. It removes a socket the same way: renamed aside, probed at the new
+  name, and put back if something answers. Temporary files and unreadable registry files older
+  than one minute are left over from a crash and removed on every scan.
+- A holder checks its own file every 10 s and writes it again if it is gone, so a prune that
+  raced its restart cannot hide it from gff-hab for good.
+- gff-hab trusts a registry file only as far as it can check it. The directory must pass the
+  holder's own socket-directory check (2.10). The socket must be `<instance>.sock` in that
+  directory, a real socket file (not a symlink) of this user, and not the same file as a socket
+  gff-hab is already connected to. The peer must run as this user, and its welcome must name the
+  file's instance and pid. A file that fails is skipped, not pruned. Without these checks a file
+  could point at another holder's socket, and two connections to that holder would replace each
+  other by hello takeover (6.8).
 - A holder removes only its own file, and only while it still names its own pid and start time.
 - gff-hab keeps one connection per live holder, each at that holder's protocol version. Status
   shows which holder (build) each pane lives on.
 
 ### 4.3 Drain lifecycle
 
-1. A new gff-hab build starts. It finds holder H1 of another build.
+1. A new gff-hab build starts. It finds holder H1 of another build, or an older holder of its own
+   build (a start that was retried leaves two); either is drained.
 2. gff-hab connects to H1 if a common protocol version exists, and keeps serving H1's panes.
 3. gff-hab starts holder H2 of its own build through the init system (5.4) and waits for H2's
    registry file and socket.
 4. gff-hab sends drain to H1. H1 sets its draining flag, rewrites its registry file, refuses new
    spawns, and keeps serving its panes.
 5. New panes go to H2.
-6. When H1's last pane is released, H1 removes its socket and registry file and exits with status
-   0. The init system does not restart a clean exit. A pane whose program has ended still counts
+6. When H1's last pane is released, and every released pane's program has been reaped, H1
+   removes its socket and registry file and exits with status 0. A released program that
+   ignores the hang-up is killed, with its process group, ShutdownGrace (5 s) after the last
+   release (6.1). The init system does not restart a clean exit. A pane whose program has ended still counts
    until gff-hab releases it, so gff-hab releases each ended pane on a draining holder once it
    holds the pane's last output.
 7. gff-hab removes H1's job definition (5.4) and, if no other holder uses it, H1's binary copy.
@@ -476,8 +491,11 @@ instance needs its own label.
 On release or shutdown the holder sends SIGHUP and closes the master. A child that ignores SIGHUP
 keeps running; its terminal writes then fail. The holder does not escalate on its own after
 release; gff-hab decides whether to send TERM, then KILL (signals stay allowed until the child is
-reaped). On shutdown the holder escalates to SIGKILL after 5 s (2.8). The holder keeps its waiter
-either way, so the child is reaped whenever it ends.
+reaped). On shutdown the holder escalates to SIGKILL after 5 s (2.8). A draining holder whose last
+pane is released escalates the same way: it never exits with a child it has not reaped, because
+nothing else would reap it, and launchd, unlike a systemd unit's control group, does not end
+the processes a job leaves behind. The holder keeps its waiter either way, so the child is
+reaped whenever it ends.
 
 ### 6.2 Zombies and reaping
 

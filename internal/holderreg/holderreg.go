@@ -10,11 +10,14 @@
 //	<instance>.json         the registry file of holder <instance>
 //	<instance>.sock         its socket (the socket path is also in the file)
 //	.tmp-<instance>-<rand>  a registry file being written; renamed into place when complete
+//	.tmp-rm-<instance>-<rand>  a file being removed; renamed aside first, see Remove
 //
 // The package is pure Go and has no state.
 package holderreg
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -137,6 +140,15 @@ func Write(dir string, e Entry) error {
 
 // Read reads one registry file.
 func Read(path string) (Entry, error) {
+	e, err := readAs(path, strings.TrimSuffix(filepath.Base(path), Suffix))
+	if err == nil && filepath.Base(path) != e.Instance+Suffix {
+		err = fmt.Errorf("holderreg: %s: instance %q does not match the file name", path, e.Instance)
+	}
+	return e, err
+}
+
+// readAs reads a registry file that must describe instance, whatever the file is called now.
+func readAs(path, instance string) (Entry, error) {
 	var e Entry
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -145,7 +157,7 @@ func Read(path string) (Entry, error) {
 	if err := json.Unmarshal(b, &e); err != nil {
 		return e, fmt.Errorf("holderreg: %s: %w", path, err)
 	}
-	if !ValidInstance(e.Instance) || filepath.Base(path) != e.Instance+Suffix {
+	if !ValidInstance(e.Instance) || e.Instance != instance {
 		return e, fmt.Errorf("holderreg: %s: instance %q does not match the file name", path, e.Instance)
 	}
 	return e, nil
@@ -183,19 +195,57 @@ func List(dir string) (entries []Entry, errs []error) {
 // holder (same instance, pid and start time). A holder restarted under the same instance id
 // writes a new file, and a reader that decided the old one was stale must not remove the new
 // one. A missing file is not an error.
+//
+// Reading the file and then removing it would leave a window in which a restarted holder's new
+// file is removed. So Remove first renames the file aside (one atomic step), then reads what it
+// took. When that is a newer holder's file, Remove puts it back, unless an even newer one has
+// been written meanwhile.
 func Remove(dir string, e Entry) error {
+	if !ValidInstance(e.Instance) {
+		return fmt.Errorf("holderreg: bad instance id %q", e.Instance)
+	}
 	path := Path(dir, e.Instance)
-	cur, err := Read(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
+	return removeAside(dir, path, e.Instance, func(aside string) bool {
+		cur, err := readAs(aside, e.Instance)
+		return err != nil || (cur.Pid == e.Pid && cur.Started.Equal(e.Started))
+	})
+}
+
+// hookAside runs after removeAside has moved a file aside and before it decides. Tests use it.
+var hookAside func(path string)
+
+// removeAside renames path to a temporary name in dir and asks gone whether what it took may go.
+// If not, it links the file back to path, which fails harmlessly when a newer file is there.
+func removeAside(dir, path, instance string, gone func(aside string) bool) error {
+	aside := filepath.Join(dir, tmpPrefix+"rm-"+instance+"-"+randSuffix())
+	if err := os.Rename(path, aside); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
 	}
-	if err == nil && (cur.Pid != e.Pid || !cur.Started.Equal(e.Started)) {
-		return nil // a newer holder owns the file now
+	if hookAside != nil {
+		hookAside(path)
 	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if !gone(aside) {
+		if err := os.Link(aside, path); err != nil && !errors.Is(err, os.ErrExist) {
+			// No hard links here: rename back. A file written meanwhile is newer still, so
+			// prefer it.
+			if _, serr := os.Lstat(path); errors.Is(serr, os.ErrNotExist) {
+				return os.Rename(aside, path)
+			}
+		}
+	}
+	if err := os.Remove(aside); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil
+}
+
+func randSuffix() string {
+	var b [6]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 // Alive reports whether a process with pid exists. EPERM means it exists under another user.
@@ -236,30 +286,29 @@ func Stale(e Entry, probe bool) (bool, string) {
 }
 
 // RemoveStale removes a stale holder's registry file and, when it lies in dir and refuses
-// connections, its socket file. Call it only for an entry Stale reported.
+// connections, its socket file. Call it only for an entry Stale reported. The socket is renamed
+// aside before it is probed, so a socket a restarted holder created meanwhile answers the probe
+// and is put back, never removed.
 func RemoveStale(dir string, e Entry) error {
 	if err := Remove(dir, e); err != nil {
 		return err
 	}
-	if filepath.Dir(e.Socket) != filepath.Clean(dir) {
+	if filepath.Dir(e.Socket) != filepath.Clean(dir) || e.Socket != SocketPath(dir, e.Instance) {
 		return nil // not ours to remove
 	}
-	if c, err := net.DialTimeout("unix", e.Socket, time.Second); err == nil {
-		c.Close() // a new holder listens there now
-		return nil
-	} else if !Refused(err) {
-		return nil
-	}
-	if err := os.Remove(e.Socket); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
+	return removeAside(dir, e.Socket, e.Instance, func(aside string) bool {
+		c, err := net.DialTimeout("unix", aside, time.Second)
+		if err == nil {
+			c.Close() // a new holder listens on it
+			return false
+		}
+		return Refused(err)
+	})
 }
 
 // Prune removes what dead holders left in dir: registry files Stale reports (with probe), their
-// sockets, and temporary or unreadable files older than TmpGrace. Dialling a live holder's socket
-// to probe it costs that holder one connection that ends without a hello. It returns the
-// entries it removed.
+// sockets, and the junk PruneJunk removes. Dialling a live holder's socket to probe it costs
+// that holder one connection that ends without a hello. It returns the entries it removed.
 func Prune(dir string, now time.Time) ([]Entry, error) {
 	entries, _ := List(dir)
 	var removed []Entry
@@ -273,6 +322,16 @@ func Prune(dir string, now time.Time) ([]Entry, error) {
 			removed = append(removed, e)
 		}
 	}
+	if err := PruneJunk(dir, now); err != nil {
+		errs = append(errs, err)
+	}
+	return removed, errors.Join(errs...)
+}
+
+// PruneJunk removes temporary files and unreadable registry files in dir that are older than
+// TmpGrace. It dials nothing.
+func PruneJunk(dir string, now time.Time) error {
+	var errs []error
 	des, err := os.ReadDir(dir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		errs = append(errs, err)
@@ -297,5 +356,5 @@ func Prune(dir string, now time.Time) ([]Entry, error) {
 			}
 		}
 	}
-	return removed, errors.Join(errs...)
+	return errors.Join(errs...)
 }

@@ -52,7 +52,8 @@ func TestMain(m *testing.M) {
 			return 1
 		}
 		defer os.RemoveAll(dir)
-		if _, err := exec.LookPath("go"); err == nil {
+		// The drain helper process runs no holder of its own.
+		if _, err := exec.LookPath("go"); err == nil && os.Getenv(helperEnv) == "" {
 			for _, b := range []string{"A", "B"} {
 				cmd := exec.Command("go", "build", "-o", filepath.Join(dir, "holder-"+b),
 					"-ldflags", "-X main.build="+b, "github.com/noahkiss/flightdeck/cmd/gff-hab-holder")

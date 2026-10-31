@@ -318,7 +318,8 @@ difference is how fresh the checkpoint is. The holder keeps no state about gff-h
 2. gff-hab sends drain to H1. H1 refuses new spawns with spawn failed, code 3, and keeps serving
    its panes. Later welcomes from H1 say draining.
 3. New panes go to H2. gff-hab serves both connections, each at its own version.
-4. When H1's last pane is released, H1 sends bye and exits.
+4. When H1's last pane is released, H1 sends bye and exits. A released program that ignores the
+   hang-up is killed first, after the shutdown grace (spec 4.3 step 6).
 
 **Shutdown.** gff-hab sends shutdown. The holder ends every pane (spec 2.8), sends bye and
 closes.

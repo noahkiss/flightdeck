@@ -19,8 +19,11 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync"
+	"syscall"
 	"time"
 
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
@@ -84,6 +87,7 @@ type Event struct {
 type Client struct {
 	cfg    Config
 	events chan Event
+	quit   chan struct{} // closed by Close
 
 	mu          sync.Mutex
 	holders     map[string]*Holder // by instance id
@@ -114,6 +118,7 @@ func New(cfg Config) *Client {
 	return &Client{
 		cfg:         cfg,
 		events:      make(chan Event, cfg.Events),
+		quit:        make(chan struct{}),
 		holders:     map[string]*Holder{},
 		unreachable: map[string]holderreg.Entry{},
 	}
@@ -126,7 +131,17 @@ func (c *Client) Events() <-chan Event { return c.events }
 // socket refuses connections), connects to every live holder it is not yet connected to, and
 // refreshes the draining flag of the ones it is. A holder that shares no protocol version with
 // this gff-hab is recorded as unreachable (spec 4.3) and left alone.
+//
+// Scan trusts the directory only as far as the holder does: it must be a private directory of
+// this user (Listen's check), or Scan fails. It also removes temporary and unreadable files that
+// a crash left there.
 func (c *Client) Scan(ctx context.Context) error {
+	if err := holderreg.CheckDir(c.cfg.Dir); err != nil {
+		return fmt.Errorf("holderclient: registry directory: %w", err)
+	}
+	if err := holderreg.PruneJunk(c.cfg.Dir, time.Now()); err != nil {
+		c.cfg.Logf("holderclient: %v", err)
+	}
 	entries, errs := holderreg.List(c.cfg.Dir)
 	for _, err := range errs {
 		c.cfg.Logf("holderclient: %v", err)
@@ -203,7 +218,37 @@ func (w deadlineWriter) Write(b []byte) (int, error) {
 	return w.Conn.Write(b)
 }
 
+// connect dials the holder e describes. It trusts the registry file only as far as it can check
+// it: the socket must be the conventional one for the instance, in the registry directory, a real
+// socket of this user; no other connected holder may listen on the same socket (a hard link to
+// it); the process that accepts
+// must run as this user; and its welcome must name the instance and pid of the file. A file that
+// fails a check is skipped, never pruned. Without these checks a file could point at another
+// holder's socket, and the two connections to that one holder would take each other's place by
+// hello takeover (protocol section 9) in a loop.
 func (c *Client) connect(ctx context.Context, e holderreg.Entry) error {
+	if want := holderreg.SocketPath(c.cfg.Dir, e.Instance); filepath.Clean(e.Socket) != filepath.Clean(want) {
+		return fmt.Errorf("registry file names socket %s, want %s; skipped", e.Socket, want)
+	}
+	if err := holderreg.CheckSocket(e.Socket); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			c.prune(e, err.Error())
+			return nil
+		}
+		return fmt.Errorf("%w; skipped", err)
+	}
+	sock, err := socketID(e.Socket)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	for id, o := range c.holders {
+		if id != e.Instance && o.sock == sock && !o.Closed() {
+			c.mu.Unlock()
+			return fmt.Errorf("socket is holder %s's, already connected; skipped", id)
+		}
+	}
+	c.mu.Unlock()
 	dctx, cancel := context.WithTimeout(ctx, c.cfg.DialTimeout)
 	defer cancel()
 	var d net.Dialer
@@ -212,6 +257,16 @@ func (c *Client) connect(ctx context.Context, e holderreg.Entry) error {
 		if holderreg.Refused(err) {
 			c.prune(e, err.Error())
 			return nil
+		}
+		return err
+	}
+	if uc, ok := nc.(*net.UnixConn); !ok {
+		nc.Close()
+		return errors.New("not a Unix socket connection")
+	} else if uid, err := holderreg.PeerUID(uc); err != nil || uid != os.Getuid() {
+		nc.Close()
+		if err == nil {
+			err = fmt.Errorf("holder runs as uid %d, not %d", uid, os.Getuid())
 		}
 		return err
 	}
@@ -230,9 +285,13 @@ func (c *Client) connect(ctx context.Context, e holderreg.Entry) error {
 		}
 		return err
 	}
+	if w.Instance != e.Instance || int(w.Pid) != e.Pid {
+		nc.Close()
+		return fmt.Errorf("welcome names holder %s pid %d, registry file %s pid %d; skipped", w.Instance, w.Pid, e.Instance, e.Pid)
+	}
 	_ = nc.SetDeadline(time.Time{})
 	h := &Holder{
-		c: c, nc: nc, pc: pc, welcome: w, entry: e,
+		c: c, nc: nc, pc: pc, welcome: w, entry: e, sock: sock,
 		draining: w.Draining || e.Draining,
 		done:     make(chan struct{}),
 		waits:    map[uint32]chan hp.Frame{},
@@ -255,6 +314,21 @@ func (c *Client) connect(ctx context.Context, e holderreg.Entry) error {
 	c.cfg.Logf("holderclient: connected to holder %s (build %s) at version %d", e.Instance, w.Build, pc.Version())
 	go h.readLoop()
 	return nil
+}
+
+// fileID names a file by device and inode, so two paths to one socket compare equal.
+type fileID struct{ dev, ino uint64 }
+
+func socketID(path string) (fileID, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return fileID{}, err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fileID{}, fmt.Errorf("cannot read the inode of %s", path)
+	}
+	return fileID{uint64(st.Dev), uint64(st.Ino)}, nil
 }
 
 // Holders returns the connected holders, oldest start first.
@@ -296,7 +370,7 @@ func (c *Client) Current() *Holder {
 // Upgrade makes sure a holder of this build takes new panes, and drains the rest (spec 4.3).
 // It scans the registry; when no current holder exists it calls Start and waits, until ctx
 // ends, for the new holder's registry file and a connection to it. Then it sends drain to every
-// connected holder of another build that is not draining yet. Their panes stay where they are
+// connected holder other than the current one that is not draining yet. Their panes stay where they are
 // and stay served. It returns the current holder.
 func (c *Client) Upgrade(ctx context.Context) (*Holder, error) {
 	if err := c.Scan(ctx); err != nil {
@@ -326,7 +400,9 @@ func (c *Client) Upgrade(ctx context.Context) (*Holder, error) {
 	}
 	var errs []error
 	for _, h := range c.Holders() {
-		if h == cur || h.Build() == c.cfg.Build || h.Draining() || h.Closed() {
+		// Every other holder drains: one of another build, and an older one of this build too
+		// (a slow start that was retried leaves two).
+		if h == cur || h.Draining() || h.Closed() {
 			continue
 		}
 		if err := h.Drain(ctx); err != nil {
@@ -402,6 +478,9 @@ func (c *Client) Pane(u hp.UUID) *Pane {
 // holders keep their panes for the next gff-hab.
 func (c *Client) Close() {
 	c.mu.Lock()
+	if !c.closed {
+		close(c.quit)
+	}
 	c.closed = true
 	hs := make([]*Holder, 0, len(c.holders))
 	for _, h := range c.holders {

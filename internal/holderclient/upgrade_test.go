@@ -1,7 +1,11 @@
 package holderclient
 
 import (
+	"bufio"
 	"errors"
+	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"syscall"
 	"testing"
@@ -68,6 +72,35 @@ func TestUpgradeByDrain(t *testing.T) {
 	}
 	if ha2.Welcome().Previous != hp.PreviousHandover {
 		t.Fatalf("A's welcome to gff-hab B: previous %d", ha2.Welcome().Previous)
+	}
+
+	// Core test 3: restart gff-hab B while A drains and B runs. The new gff-hab takes A's
+	// draining flag from its registry file, picks B as the current holder, and starts no holder
+	// and drains nothing again. Both panes on A stay reachable through it (checked below).
+	cb.Close()
+	cb = New(Config{Dir: dir, Build: "B", Start: ps.starter("B", &startedB)})
+	evb = collect(t, cb)
+	hb, err = cb.Upgrade(ctx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(startedB) != 1 || hb.Instance() != startedB[0].instance {
+		t.Fatalf("after restart: started %d holders B, current %s", len(startedB), hb.Instance())
+	}
+	ha2 = nil
+	for _, h := range cb.Holders() {
+		if h.Instance() == ha.Instance() {
+			ha2 = h
+		}
+	}
+	if ha2 == nil || len(cb.Holders()) != 2 {
+		t.Fatalf("holders after restart: %d", len(cb.Holders()))
+	}
+	if !ha2.Entry().Draining || !ha2.Draining() || !ha2.Welcome().Draining {
+		t.Fatalf("A after restart: file draining %v, client draining %v", ha2.Entry().Draining, ha2.Draining())
+	}
+	if pa := startedA[0]; !running(pa) {
+		t.Fatal("holder A ended on the restart")
 	}
 
 	// A refuses new panes; the client puts them on B.
@@ -265,6 +298,144 @@ func TestCrashDuringDrainPruned(t *testing.T) {
 	}
 	waitGone(t, holderreg.Path(dir, "hprune"))
 	waitGone(t, holderreg.SocketPath(dir, "hprune"))
+}
+
+// TestClientKilledDuringDrain (core test 3): gff-hab is killed with SIGKILL in the middle of a
+// drain. It runs as a separate process, the test binary run again as the helper below: it finds
+// holder A with two panes, drains it towards holder B, talks to both panes on A, and is killed.
+// A loses no child: both programs still run, and a new gff-hab reaches them through A.
+func TestClientKilledDuringDrain(t *testing.T) {
+	dir := regDir(t)
+	ps := newProcs(t, dir)
+	pa := ps.start("A", "hkilla")
+	ca := New(Config{Dir: dir, Build: "A"})
+	eva := collect(t, ca)
+	waitFor(t, "holder A listed", func() bool { _ = ca.Scan(ctx(t)); return ca.Current() != nil })
+	pids := map[hp.UUID]int{}
+	for n := 1; n <= 2; n++ {
+		p, err := ca.Spawn(ctx(t), echoSpawn(n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		eva.waitOutput(t, p, "ready-")
+	}
+	for _, s := range ca.Panes() {
+		pids[s.UUID] = int(s.Pid)
+	}
+	ca.Close()
+	ps.start("B", "hkillb")
+	waitFor(t, "holder B listed", func() bool { return exists(holderreg.Path(dir, "hkillb")) })
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHelperDrainClient$", "-test.v")
+	cmd.Env = append(os.Environ(), helperEnv+"="+dir)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	lines := bufio.NewScanner(out)
+	mid := false
+	for !mid && lines.Scan() {
+		mid = lines.Text() == "mid-drain"
+	}
+	if !mid {
+		t.Fatalf("helper ended before the drain: %v", lines.Err())
+	}
+	if err := cmd.Process.Signal(syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Wait()
+
+	// No child lost, and A still drains.
+	for u, pid := range pids {
+		if err := syscall.Kill(pid, 0); err != nil {
+			t.Fatalf("pane %v's program (pid %d) is gone: %v", u, pid, err)
+		}
+	}
+	if !running(pa) {
+		t.Fatal("holder A ended")
+	}
+	if e, err := holderreg.Read(holderreg.Path(dir, "hkilla")); err != nil || !e.Draining {
+		t.Fatalf("A's registry file: %+v %v", e, err)
+	}
+
+	// A new gff-hab reaches both programs through A.
+	cb := New(Config{Dir: dir, Build: "B"})
+	ev := collect(t, cb)
+	hb, err := cb.Upgrade(ctx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hb.Instance() != "hkillb" || len(cb.Holders()) != 2 {
+		t.Fatalf("current %s, %d holders", hb.Instance(), len(cb.Holders()))
+	}
+	for n := 1; n <= 2; n++ {
+		p := cb.Pane(uuidN(n))
+		if p == nil || p.Holder.Instance() != "hkilla" || !p.Holder.Draining() {
+			t.Fatalf("pane %d not on draining A: %+v", n, p)
+		}
+		if prev := p.Holder.Welcome().Previous; prev != hp.PreviousCrash {
+			t.Fatalf("A's welcome after the kill: previous %d, want crash", prev)
+		}
+		data, _, err := p.Holder.Replay(ctx(t), p.Handle, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := fmt.Sprintf("got-%d:mid", n); !strings.Contains(string(data), want) {
+			t.Fatalf("pane %d replay %q lacks %q", n, data, want)
+		}
+		if err := p.Holder.Input(ctx(t), p.Handle, []byte("after\n")); err != nil {
+			t.Fatal(err)
+		}
+		ev.waitOutput(t, p, fmt.Sprintf("got-%d:after", n))
+	}
+}
+
+// helperEnv names the registry directory for TestHelperDrainClient; unset, it does nothing.
+const helperEnv = "GFF_HOLDERCLIENT_DRAIN_HELPER"
+
+// TestHelperDrainClient is the gff-hab that TestClientKilledDuringDrain kills. It drains A
+// towards B, writes to both panes on A and waits for their answers, prints mid-drain, and
+// blocks until it is killed.
+func TestHelperDrainClient(t *testing.T) {
+	dir := os.Getenv(helperEnv)
+	if dir == "" {
+		t.Skip("helper process for TestClientKilledDuringDrain")
+	}
+	c := New(Config{Dir: dir, Build: "B"})
+	ev := collect(t, c)
+	if _, err := c.Upgrade(ctx(t)); err != nil {
+		t.Fatal(err)
+	}
+	for n := 1; n <= 2; n++ {
+		p := c.Pane(uuidN(n))
+		if p == nil || !p.Holder.Draining() {
+			t.Fatalf("pane %d not on a draining holder", n)
+		}
+		if _, _, err := p.Holder.Replay(ctx(t), p.Handle, 0); err != nil {
+			t.Fatal(err)
+		}
+		if err := p.Holder.Input(ctx(t), p.Handle, []byte("mid\n")); err != nil {
+			t.Fatal(err)
+		}
+		ev.waitOutput(t, p, fmt.Sprintf("got-%d:mid", n))
+	}
+	fmt.Println("mid-drain")
+	select {}
+}
+
+// running reports whether a holder process has not exited.
+func running(p *proc) bool {
+	select {
+	case <-p.done:
+		return false
+	default:
+		return true
+	}
 }
 
 func isCode(err error, code hp.ErrorCode) bool {

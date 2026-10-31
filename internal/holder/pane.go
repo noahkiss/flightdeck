@@ -363,6 +363,7 @@ func (h *Holder) waiter(p *pane) {
 	}
 	if p.released {
 		delete(h.owned, p)
+		h.drainExitLocked()
 	}
 	h.mu.Unlock()
 	close(p.final)

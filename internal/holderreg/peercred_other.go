@@ -1,6 +1,6 @@
 //go:build !linux && !darwin
 
-package holder
+package holderreg
 
 import "errors"
 

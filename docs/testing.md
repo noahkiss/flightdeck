@@ -43,7 +43,7 @@ The first five are the core set. If only five tests could exist, these would be 
 |---|---|---|
 | 1 | gff-hab restarts mid-stream, planned and by SIGKILL, 20 times per push and 200 nightly, with a full-screen program and a printing loop | Child PIDs unchanged; client byte stream has no gap and no repeat; screen dump equal |
 | 2 | The service manager restarts the logic service (`systemctl --user restart`, `launchctl kickstart -k`) | Child PID unchanged and still writing |
-| 3 | Drain from holder build A to build B | New panes land on B; A's children stay reachable; A exits and leaves the registry after its last child; versions N and N+1 work with one gff-hab |
+| 3 | Drain from holder build A to build B | New panes land on B; A's children stay reachable; A exits and leaves the registry after its last release; versions N and N+1 work with one gff-hab |
 | 4 | A client resumes from a stored offset, across a dropped connection and across a gff-hab restart | Bytes equal the holder's, with no gap and no repeat; an offset past the ring gives a snapshot |
 | 5 | Cross-version golden messages for each released API revision, in Go and Swift, in both directions | An old client reads a new hab's messages and a new client reads an old hab's messages; unknown fields survive |
 | 6 | Control connection after a gff-hab restart | New epoch; the structure matches; events arrive once and in order |
