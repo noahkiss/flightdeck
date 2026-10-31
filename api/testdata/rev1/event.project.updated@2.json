@@ -1,0 +1,30 @@
+{
+  "data": {
+    "ahead": 11,
+    "behind": 12,
+    "branch": "branch-9",
+    "head": "head-10",
+    "id": "id-3",
+    "name": "name-5",
+    "remote": "remote-6",
+    "revision": 4,
+    "root_commit": "root_commit-7",
+    "sessions": [
+      "sessions-8"
+    ],
+    "x_unknown_field": "later"
+  },
+  "id": "id-15",
+  "revision": 13,
+  "seq": 14,
+  "type": "project.updated",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

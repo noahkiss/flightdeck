@@ -1,0 +1,32 @@
+{
+  "data": {
+    "context_pct": 12,
+    "exit": {
+      "code": 8,
+      "signal": "signal-9",
+      "x_unknown_field": "later"
+    },
+    "id": "id-3",
+    "model": "model-11",
+    "name": "name-5",
+    "pane": "pane-7",
+    "project": "project-6",
+    "revision": 4,
+    "state": "exited",
+    "title": "title-10",
+    "x_unknown_field": "later"
+  },
+  "id": "id-15",
+  "revision": 13,
+  "seq": 14,
+  "type": "session.updated",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

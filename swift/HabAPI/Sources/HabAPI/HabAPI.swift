@@ -1019,7 +1019,13 @@ public struct PaneRef: Codable, Sendable, Hashable {
 public struct PermissionRequest: Codable, Sendable, Hashable {
     /// The exact command, for a shell tool.
     public var command: String?
+    /// The agent's last message before the request, one or two lines, when the transcript has one.
+    public var contextLine: String?
     public var cwd: String?
+    /// A longer description of the call, when the harness gives one.
+    public var description: String?
+    /// RFC 3339 time after which the hab refuses a remote answer with conflict. Absent when no deadline applies.
+    public var expiresAt: String?
     /// The exact files, for a file tool.
     public var files: [String]?
     /// The harness's id for the request, when it gives one. A permission answer must name it.
@@ -1028,25 +1034,35 @@ public struct PermissionRequest: Codable, Sendable, Hashable {
     public var input: JSONValue?
     /// True when the tool input was over 64 KiB and input is left out.
     public var inputTruncated: Bool?
+    /// A short question: the harness's own description of the call, else one built from the tool.
+    public var title: String?
     public var tool: String?
 
     enum CodingKeys: String, CodingKey {
         case command = "command"
+        case contextLine = "context_line"
         case cwd = "cwd"
+        case description = "description"
+        case expiresAt = "expires_at"
         case files = "files"
         case id = "id"
         case input = "input"
         case inputTruncated = "input_truncated"
+        case title = "title"
         case tool = "tool"
     }
 
-    public init(command: String? = nil, cwd: String? = nil, files: [String]? = nil, id: String? = nil, input: JSONValue? = nil, inputTruncated: Bool? = nil, tool: String? = nil) {
+    public init(command: String? = nil, contextLine: String? = nil, cwd: String? = nil, description: String? = nil, expiresAt: String? = nil, files: [String]? = nil, id: String? = nil, input: JSONValue? = nil, inputTruncated: Bool? = nil, title: String? = nil, tool: String? = nil) {
         self.command = command
+        self.contextLine = contextLine
         self.cwd = cwd
+        self.description = description
+        self.expiresAt = expiresAt
         self.files = files
         self.id = id
         self.input = input
         self.inputTruncated = inputTruncated
+        self.title = title
         self.tool = tool
     }
 }
@@ -1081,6 +1097,14 @@ public struct PlanStepStatus: RawRepresentable, Codable, Sendable, Hashable {
 }
 
 public struct Project: Codable, Sendable, Hashable {
+    /// Commits on the branch that its upstream lacks. Absent with no upstream.
+    public var ahead: Int?
+    /// Commits on the upstream that the branch lacks. Absent with no upstream.
+    public var behind: Int?
+    /// Current branch of the repository in the project's folder. Absent on a detached HEAD or outside a repository.
+    public var branch: String?
+    /// Full commit id of HEAD. Absent outside a repository.
+    public var head: String?
     public var id: String
     public var name: String
     /// Git remote that identifies the project.
@@ -1092,6 +1116,10 @@ public struct Project: Codable, Sendable, Hashable {
     public var sessions: [String]
 
     enum CodingKeys: String, CodingKey {
+        case ahead = "ahead"
+        case behind = "behind"
+        case branch = "branch"
+        case head = "head"
         case id = "id"
         case name = "name"
         case remote = "remote"
@@ -1100,7 +1128,11 @@ public struct Project: Codable, Sendable, Hashable {
         case sessions = "sessions"
     }
 
-    public init(id: String, name: String, remote: String? = nil, revision: UInt64, rootCommit: String? = nil, sessions: [String]) {
+    public init(ahead: Int? = nil, behind: Int? = nil, branch: String? = nil, head: String? = nil, id: String, name: String, remote: String? = nil, revision: UInt64, rootCommit: String? = nil, sessions: [String]) {
+        self.ahead = ahead
+        self.behind = behind
+        self.branch = branch
+        self.head = head
         self.id = id
         self.name = name
         self.remote = remote
@@ -1283,8 +1315,12 @@ public struct SendOrigin: RawRepresentable, Codable, Sendable, Hashable {
 }
 
 public struct Session: Codable, Sendable, Hashable {
+    /// How full the context window is, in whole percent of the current model's window. Absent when unknown; never guessed.
+    public var contextPct: Int?
     public var exit: ExitStatus?
     public var id: String
+    /// The model in use, as the harness names it.
+    public var model: String?
     /// Unique on the host.
     public var name: String
     public var pane: String?
@@ -1292,25 +1328,33 @@ public struct Session: Codable, Sendable, Hashable {
     public var project: String?
     public var revision: UInt64
     public var state: SessionState
+    /// The agent session's title, from its adapter. Absent when the harness has none.
+    public var title: String?
 
     enum CodingKeys: String, CodingKey {
+        case contextPct = "context_pct"
         case exit = "exit"
         case id = "id"
+        case model = "model"
         case name = "name"
         case pane = "pane"
         case project = "project"
         case revision = "revision"
         case state = "state"
+        case title = "title"
     }
 
-    public init(exit: ExitStatus? = nil, id: String, name: String, pane: String? = nil, project: String? = nil, revision: UInt64, state: SessionState) {
+    public init(contextPct: Int? = nil, exit: ExitStatus? = nil, id: String, model: String? = nil, name: String, pane: String? = nil, project: String? = nil, revision: UInt64, state: SessionState, title: String? = nil) {
+        self.contextPct = contextPct
         self.exit = exit
         self.id = id
+        self.model = model
         self.name = name
         self.pane = pane
         self.project = project
         self.revision = revision
         self.state = state
+        self.title = title
     }
 }
 

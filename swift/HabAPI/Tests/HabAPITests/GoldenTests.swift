@@ -6,7 +6,8 @@ import XCTest
 /// message a hab of revision N sends to api/testdata/rev<N>/, with every field set and extra
 /// x_unknown_* fields in every object. These types must decode every file of every revision. For
 /// the current revision, each value must also survive a round trip: re-encoding it gives the file
-/// less its extra fields.
+/// less its extra fields. A file named <message>@<n>.json is a later field set of the message;
+/// an older field set lacks only optional fields, so its round trip leaves them absent.
 final class GoldenTests: XCTestCase {
     /// api/testdata in the repo, found from this file's path so plain `swift test` works.
     static let goldenRoot = URL(fileURLWithPath: #filePath)
@@ -33,12 +34,18 @@ final class GoldenTests: XCTestCase {
             for file in files.sorted() where file.hasSuffix(".json") {
                 let data = try Data(contentsOf: dir.appendingPathComponent(file))
                 try check(
-                    name: String(file.dropLast(".json".count)), data: data,
+                    name: Self.messageName(file), data: data,
                     roundTrip: revision == HabAPI.revision, label: "rev\(revision)/\(file)")
                 checked += 1
             }
         }
         XCTAssertGreaterThan(checked, 0, "no golden messages under \(Self.goldenRoot.path)")
+    }
+
+    /// The message a golden file holds: its name less ".json" and any "@<n>" field set number.
+    static func messageName(_ file: String) -> String {
+        let base = String(file.dropLast(".json".count))
+        return base.split(separator: "@", maxSplits: 1).first.map(String.init) ?? base
     }
 
     /// Readers for every golden that is not an event, keyed by the file name without .json.

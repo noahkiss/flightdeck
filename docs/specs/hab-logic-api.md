@@ -517,8 +517,8 @@ Clients branch on `kind`, never on `message`.
 ### 3.9 Calls and events the clients need
 
 `gff-client.md` 14 and `app.md` 17 list what the terminal client and the app need. Every call
-and event below is in the revision 1 schema, added under the 3.3 rule (new methods, new event
-types, new capabilities and new word sets only; no field or word was added to an existing type).
+and event below is in the revision 1 schema, added under the 3.3 rule: new methods, new event
+types, new capabilities, new word sets, and new optional fields on existing types.
 The owning stage builds the behaviour. Until then a method answers `unavailable` with a hint that
 names the stage, and an event is defined but never sent.
 
@@ -588,10 +588,27 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   bytes; `cpu_pct` is over all cores; `battery_pct` is absent with no battery.
 - **`usage.list`** returns `accounts`, each with `key`, `label`, `harness` and `windows` (`name`,
   `used_pct` in whole percent, `resets_at`, `read_at`). `usage.updated` carries one account.
-- The session fields (`title`, `model`, `context_pct`), request fields and project fields that
-  `app.md` 17 lists are not added yet. Adding a field to an existing type changes its golden
-  messages, which are frozen (`docs/testing.md`); each lands as an optional field with the stage
-  that fills it, together with a golden decision for that revision.
+- The session, request and project fields that `app.md` 17 lists are in the schema as optional
+  fields. Their golden messages are a second field set (`<message>@2.json`, `docs/testing.md`);
+  the first field set stays as an older revision 1 hab sent it. Each field is defined now and
+  filled by the stage named here; until then a hab leaves it out.
+
+  | Type | Field | Shape and choice | Filled by |
+  |---|---|---|---|
+  | `Session` | `title` | String; absent when the harness gives none | Part 4 stage 5 (transcript reader), then each adapter |
+  | `Session` | `model` | String, as the harness names the model | Part 4 stage 4 (Claude Code adapter), then each adapter |
+  | `Session` | `context_pct` | Integer, whole percent of the current model's window; absent when unknown, never guessed | Part 4 stages 4 and 5 (adapter and transcript reader) |
+  | `PermissionRequest` | `title` | String. `app.md` 17 lists it as always present; it is optional here, because a request from an older hab has none. A client builds a title from `tool` when it is absent | Part 4 stage 4 |
+  | `PermissionRequest` | `description` | String, the harness's longer description of the call | Part 4 stage 4 |
+  | `PermissionRequest` | `context_line` | String, the agent's last message before the request | Part 4 stage 5 (transcript reader) |
+  | `PermissionRequest` | `expires_at` | RFC 3339 string, like `AgentState.at`; absent when no deadline applies (`app.md` 7.4) | Part 4 stage 4 |
+  | `Project` | `branch` | String; absent on a detached HEAD or outside a repository | No stage yet: a repository reader in gff-hab, to be planned in Part 2 |
+  | `Project` | `head` | String, the full commit id of HEAD; the app shortens it | As `branch` |
+  | `Project` | `ahead`, `behind` | Integers, pointers so 0 is sent; both absent with no upstream | As `branch` |
+
+  The approval request is `PermissionRequest`, which `AgentState.request` carries. The other
+  `app.md` 17 rows were already in place: chat kind `plan`, `approval.answer` field `via`, and
+  push kind `usage`.
 
 **`pane.close` on a running pane.** gff-hab asks the pane's holder to release it. The holder
 hangs up the pane's session (SIGHUP) and closes the terminal; it keeps the child's waiter, so

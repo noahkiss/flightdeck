@@ -1234,7 +1234,8 @@ Moshi docs, apple-watch and notifications; mirrored notifications and their acti
 
 The calls and events below are in the API schema now; `hab-logic-api.md` 3.9 lists their final
 shapes and owning stages. Until its stage, a call answers `unavailable`. The new session,
-request and project fields are not in the schema yet: each lands with the stage that fills it.
+request and project fields are in the schema as optional fields; a hab leaves each out until the
+stage that fills it.
 
 | Call or field | Purpose |
 |---|---|

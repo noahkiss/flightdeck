@@ -67,8 +67,21 @@ Golden files are frozen once written, because they are what a hab of that revisi
 - New messages go into the next revision's set.
 - Revision 1 is still unreleased (`api/released/1.json` is the pre-release baseline). New
   revision 1 messages get new files beside the existing ones; existing files never change.
-- `-update` only adds the files of new messages. It never rewrites or removes a file. A sample
-  that no longer matches its file fails the test.
+- `-update` only adds files. It never rewrites or removes a file.
+
+An old golden is a message an older hab really sent, so it checks only the fields that existed
+when it was written:
+
+- A message can have several files, one per field set. `<message>.json` is the first field set;
+  `<message>@<n>.json` is field set n. A new optional field on an existing type goes into a new
+  field set; the older files stay byte for byte as they are.
+- The newest field set of each message must match the current sample, which fills every field.
+  When it no longer matches, `-update` adds the next field set.
+- An older field set must decode, and its round trip must give back exactly its own fields. A
+  field it lacks must therefore be optional: this is the compatibility promise that a new client
+  reads an older hab. Making such a field required fails these files.
+- Any other change to an existing message (a removed, renamed or retyped field) fails the older
+  files too, and needs a new revision (spec `hab-logic-api.md` 3.3).
 
 ## Deliberately not tested
 

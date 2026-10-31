@@ -320,7 +320,8 @@ func decodeGolden(b []byte) (any, error) {
 }
 
 // checkGolden validates one golden file under d. The file name says which message it is:
-// result.<method>, notification.<name>, event.<type>, frame.<name> or error.data. With
+// result.<method>, notification.<name>, event.<type>, frame.<name> or error.data, with an
+// optional @<n> for a later field set of the message (docs/testing.md). With
 // mustKnow, a message d does not describe is an error; without it, the message is skipped, as
 // an old client skips an event type or never calls a method it does not know.
 func checkGolden(d *Document, path string, mustKnow bool) []string {
@@ -332,7 +333,7 @@ func checkGolden(d *Document, path string, mustKnow bool) []string {
 	if err != nil {
 		return []string{fmt.Sprintf("%s: %v", path, err)}
 	}
-	name := strings.TrimSuffix(filepath.Base(path), ".json")
+	name, _, _ := strings.Cut(strings.TrimSuffix(filepath.Base(path), ".json"), "@")
 	kind, rest, _ := strings.Cut(name, ".")
 	var s, data *Schema
 	switch kind {

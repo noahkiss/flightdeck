@@ -71,6 +71,12 @@ type Project struct {
 	Remote     string   `json:"remote,omitempty" doc:"Git remote that identifies the project."`
 	RootCommit string   `json:"root_commit,omitempty" doc:"Root commit, when the project has no remote."`
 	Sessions   []string `json:"sessions" doc:"Session ids in order."`
+	// The repository fields feed the app's sidebar header (app.md 3.5). Optional, so a newer
+	// client reads a project from an older revision 1 hab.
+	Branch string `json:"branch,omitempty" doc:"Current branch of the repository in the project's folder. Absent on a detached HEAD or outside a repository."`
+	Head   string `json:"head,omitempty" doc:"Full commit id of HEAD. Absent outside a repository."`
+	Ahead  *int   `json:"ahead,omitempty" doc:"Commits on the branch that its upstream lacks. Absent with no upstream."`
+	Behind *int   `json:"behind,omitempty" doc:"Commits on the upstream that the branch lacks. Absent with no upstream."`
 }
 
 type ExitStatus struct {
@@ -86,6 +92,11 @@ type Session struct {
 	Pane     string       `json:"pane,omitempty"`
 	State    SessionState `json:"state"`
 	Exit     *ExitStatus  `json:"exit,omitempty"`
+	// The agent fields feed the session's row (app.md 3.4, 3.5). Optional, so a newer client
+	// reads a session from an older revision 1 hab.
+	Title      string `json:"title,omitempty" doc:"The agent session's title, from its adapter. Absent when the harness has none."`
+	Model      string `json:"model,omitempty" doc:"The model in use, as the harness names it."`
+	ContextPct *int   `json:"context_pct,omitempty" doc:"How full the context window is, in whole percent of the current model's window. Absent when unknown; never guessed."`
 }
 
 type Pane struct {
@@ -127,6 +138,12 @@ type PermissionRequest struct {
 	// InputTruncated keeps a large tool input (a whole file being written) out of every event
 	// and snapshot; command and files are still exact.
 	InputTruncated bool `json:"input_truncated,omitempty" doc:"True when the tool input was over 64 KiB and input is left out."`
+	// What the approval sheet and the banner show (app.md 7.2, 7.4, 16.2). Optional, so a newer
+	// client reads a request from an older revision 1 hab.
+	Title       string `json:"title,omitempty" doc:"A short question: the harness's own description of the call, else one built from the tool."`
+	Description string `json:"description,omitempty" doc:"A longer description of the call, when the harness gives one."`
+	ContextLine string `json:"context_line,omitempty" doc:"The agent's last message before the request, one or two lines, when the transcript has one."`
+	ExpiresAt   string `json:"expires_at,omitempty" doc:"RFC 3339 time after which the hab refuses a remote answer with conflict. Absent when no deadline applies."`
 }
 
 // VersionWarning says the harness reported a version its adapter was not tested on.

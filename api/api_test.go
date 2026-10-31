@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -100,12 +101,18 @@ func TestNoNullArrays(t *testing.T) {
 // each one against the schemas, in both directions.
 //
 // Golden files are frozen once written: they are what a hab of that revision sends, and an old
-// client must keep reading them. `go test ./api -run TestGoldens -update` only adds the files of
-// new messages to the current revision's directory. It never rewrites or removes a file. A sample
-// that no longer matches its file fails the test: an existing message changed shape, which needs
-// a new revision (spec 3.3), with its messages in the next revision's directory.
+// client must keep reading them. `go test ./api -run TestGoldens -update` only adds files to the
+// current revision's directory. It never rewrites or removes a file.
+//
+// A message can have several files, one per field set. <message>.json is the first field set;
+// <message>@<n>.json is field set n, written when optional fields were added to the message
+// within the revision (spec 3.3). Only the newest field set must match the current sample, and
+// so fill every field. An older field set is what an older hab of the same revision sent: the
+// current types must read it and give back exactly its fields, so a field it lacks must be
+// optional. A newest file that no longer matches its sample fails the test; -update then adds
+// the next field set.
 
-var update = flag.Bool("update", false, "add the golden files of new messages to the current revision; existing files are never rewritten")
+var update = flag.Bool("update", false, "add golden files for new messages and new field sets to the current revision; existing files are never rewritten")
 
 // goldenDir is the directory of revision r's golden messages, relative to this package.
 func goldenDir(r int) string { return filepath.Join("testdata", fmt.Sprintf("rev%d", r)) }
@@ -154,8 +161,55 @@ func goldenSamples() []golden {
 	return out
 }
 
-// goldenType returns a pointer to a new zero value of the Go type a golden file name holds, and
-// whether the file is an event (an Event whose data has the event type's shape).
+// fieldSetSep separates a message name from its field set number in a golden file name.
+const fieldSetSep = "@"
+
+// goldenName splits a golden file's base name, without .json, into its message and its field
+// set number: result.structure.get is set 1, result.structure.get@2 is set 2.
+func goldenName(base string) (message string, set int, ok bool) {
+	message, n, found := strings.Cut(base, fieldSetSep)
+	if !found {
+		return message, 1, true
+	}
+	if _, err := fmt.Sscanf(n, "%d", &set); err != nil || set < 2 || fmt.Sprint(set) != n {
+		return "", 0, false
+	}
+	return message, set, true
+}
+
+// goldenFile is the base name of a message's field set, without .json.
+func goldenFile(message string, set int) string {
+	if set == 1 {
+		return message
+	}
+	return fmt.Sprintf("%s%s%d", message, fieldSetSep, set)
+}
+
+// goldenSets returns the field set numbers of each message in dir, ascending, and the files
+// whose names do not parse.
+func goldenSets(t *testing.T, dir string) (sets map[string][]int, bad []string) {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(dir, "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sets = map[string][]int{}
+	for _, p := range files { // Glob sorts, but @10 sorts before @2: sort numerically below
+		msg, n, ok := goldenName(strings.TrimSuffix(filepath.Base(p), ".json"))
+		if !ok {
+			bad = append(bad, p)
+			continue
+		}
+		sets[msg] = append(sets[msg], n)
+	}
+	for _, ns := range sets {
+		slices.Sort(ns)
+	}
+	return sets, bad
+}
+
+// goldenType returns a pointer to a new zero value of the Go type a golden message name holds,
+// and whether the file is an event (an Event whose data has the event type's shape).
 func goldenType(name string) (ptr any, event *EventDef, ok bool) {
 	kind, rest, _ := strings.Cut(name, ".")
 	newOf := func(v any) any { return reflect.New(reflect.TypeOf(v)).Interface() }
@@ -350,41 +404,55 @@ func TestGoldens(t *testing.T) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
+		sets, _ := goldenSets(t, dir)
 		for _, s := range samples {
-			p := filepath.Join(dir, s.name+".json")
-			if _, err := os.Stat(p); err == nil {
-				continue // frozen: never rewritten
+			b := goldenBytes(t, s.value)
+			next := 1
+			if ns := sets[s.name]; len(ns) > 0 {
+				newest := ns[len(ns)-1]
+				got, err := os.ReadFile(filepath.Join(dir, goldenFile(s.name, newest)+".json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if bytes.Equal(got, b) {
+					continue
+				}
+				next = newest + 1 // a new field set; the old files stay as they are
 			}
-			f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = f.Write(goldenBytes(t, s.value))
-			if cerr := f.Close(); err == nil {
-				err = cerr
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
+			writeNew(t, filepath.Join(dir, goldenFile(s.name, next)+".json"), b)
 		}
 	}
 
+	sets, bad := goldenSets(t, dir)
+	for _, p := range bad {
+		t.Errorf("%s: not a golden name (<message>.json or <message>%s<n>.json, n >= 2)", p, fieldSetSep)
+	}
 	want := map[string]bool{}
 	for _, s := range samples {
-		want[s.name+".json"] = true
-		got, err := os.ReadFile(filepath.Join(dir, s.name+".json"))
-		if err != nil {
-			t.Errorf("%v (a new message: run go test ./api -run TestGoldens -update)", err)
+		want[s.name] = true
+		ns := sets[s.name]
+		if len(ns) == 0 {
+			t.Errorf("%s/%s.json is missing (a new message: run go test ./api -run TestGoldens -update)", dir, s.name)
 			continue
 		}
+		for i, n := range ns {
+			if n != i+1 {
+				t.Errorf("%s: field set %d is missing; sets are numbered from 1 without gaps", s.name, i+1)
+				break
+			}
+		}
+		newest := goldenFile(s.name, ns[len(ns)-1])
+		got, err := os.ReadFile(filepath.Join(dir, newest+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
 		if string(got) != string(goldenBytes(t, s.value)) {
-			t.Errorf("%s/%s.json no longer matches its message: golden files are frozen, so an existing message must not change shape (spec 3.3)", dir, s.name)
+			t.Errorf("%s/%s.json no longer matches its message. Added optional fields: run go test ./api -run TestGoldens -update to add the next field set. Any other change needs a new revision (spec 3.3)", dir, newest)
 		}
 	}
-	files, _ := filepath.Glob(filepath.Join(dir, "*.json"))
-	for _, p := range files {
-		if !want[filepath.Base(p)] {
-			t.Errorf("%s has no sample: a message was removed, which needs a new revision (spec 3.3)", p)
+	for msg := range sets {
+		if !want[msg] {
+			t.Errorf("%s/%s has no sample: a message was removed, which needs a new revision (spec 3.3)", dir, msg)
 		}
 	}
 
@@ -399,15 +467,36 @@ func TestGoldens(t *testing.T) {
 	}
 }
 
+// writeNew creates a golden file that must not exist yet.
+func writeNew(t *testing.T, path string, b []byte) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.Write(b)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 // checkGolden decodes one golden file into the current Go type. With roundTrip, re-encoding the
-// value must give the file's content less its extra fields.
+// value must give the file's content less its extra fields. For an older field set this is the
+// compatibility promise: the fields the file lacks are optional, so they stay absent.
 func checkGolden(t *testing.T, path string, roundTrip bool) {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	name := strings.TrimSuffix(filepath.Base(path), ".json")
+	name, _, ok := goldenName(strings.TrimSuffix(filepath.Base(path), ".json"))
+	if !ok {
+		t.Errorf("%s: not a golden name", path)
+		return
+	}
 	ptr, ev, ok := goldenType(name)
 	if !ok {
 		t.Errorf("%s: no current type reads it", path)
@@ -470,7 +559,8 @@ func sameJSON(t *testing.T, what string, v, want any) {
 }
 
 // TestGoldensFillEveryField checks the samples leave no field at its zero value, so a golden
-// shows every field to the readers.
+// shows every field to the readers. The samples are the newest field set of each message; an
+// older field set holds only the fields that existed when it was written.
 func TestGoldensFillEveryField(t *testing.T) {
 	for _, s := range goldenSamples() {
 		b, _ := json.Marshal(NonNil(s.value))

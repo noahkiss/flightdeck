@@ -51,9 +51,11 @@ Split a module out only when something outside this repo must import it on its o
   - New messages go into the next revision's set.
   - Revision 1 is still unreleased (`api/released/1.json` is the pre-release baseline). New
     revision 1 messages get new files beside the existing ones; existing files never change.
-  - `go test ./api -run TestGoldens -update` only adds missing files. A message whose sample no
-    longer matches its file fails the test. Do not add a field or a word to an existing type when
-    that changes an existing golden: add a new type, or wait for the next revision.
+  - `go test ./api -run TestGoldens -update` only adds files: a new message's first file, or
+    the next field set (`<message>@<n>.json`) of a message that gained optional fields. Only
+    the newest field set must match the current sample; older ones must still decode and round
+    trip. Any other change to an existing message needs the next revision. The full rule is in
+    `docs/testing.md`.
 
 Rules the generator follows:
 

@@ -2216,8 +2216,20 @@
             "type": "string",
             "description": "The exact command, for a shell tool."
           },
+          "context_line": {
+            "type": "string",
+            "description": "The agent's last message before the request, one or two lines, when the transcript has one."
+          },
           "cwd": {
             "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "description": "A longer description of the call, when the harness gives one."
+          },
+          "expires_at": {
+            "type": "string",
+            "description": "RFC 3339 time after which the hab refuses a remote answer with conflict. Absent when no deadline applies."
           },
           "files": {
             "type": "array",
@@ -2236,6 +2248,10 @@
           "input_truncated": {
             "type": "boolean",
             "description": "True when the tool input was over 64 KiB and input is left out."
+          },
+          "title": {
+            "type": "string",
+            "description": "A short question: the harness's own description of the call, else one built from the tool."
           },
           "tool": {
             "type": "string"
@@ -2271,6 +2287,24 @@
       "Project": {
         "type": "object",
         "properties": {
+          "ahead": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Commits on the branch that its upstream lacks. Absent with no upstream."
+          },
+          "behind": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Commits on the upstream that the branch lacks. Absent with no upstream."
+          },
+          "branch": {
+            "type": "string",
+            "description": "Current branch of the repository in the project's folder. Absent on a detached HEAD or outside a repository."
+          },
+          "head": {
+            "type": "string",
+            "description": "Full commit id of HEAD. Absent outside a repository."
+          },
           "id": {
             "type": "string"
           },
@@ -2486,11 +2520,20 @@
       "Session": {
         "type": "object",
         "properties": {
+          "context_pct": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How full the context window is, in whole percent of the current model's window. Absent when unknown; never guessed."
+          },
           "exit": {
             "$ref": "#/components/schemas/ExitStatus"
           },
           "id": {
             "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "description": "The model in use, as the harness names it."
           },
           "name": {
             "type": "string",
@@ -2509,6 +2552,10 @@
           },
           "state": {
             "$ref": "#/components/schemas/SessionState"
+          },
+          "title": {
+            "type": "string",
+            "description": "The agent session's title, from its adapter. Absent when the harness has none."
           }
         },
         "required": [
