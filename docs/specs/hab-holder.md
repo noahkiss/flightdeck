@@ -211,9 +211,10 @@ Two weak points we fix (section 2.6):
   This is a deliberate change from herdr-core: the holder holds no state about the logic
   process's saves. The logic process names the offset it wants.
 - **Backpressure.** The holder queues frames for gff-hab through one writer. When more than 8 MiB
-  is queued, readers pause, and programs slow down. A pause longer than 5 s marks the connection
-  hung: the holder drops it, records "crash", and resumes pumping into the rings alone. A hung
-  logic process therefore cannot stall programs for long.
+  is queued, readers pause, and programs slow down. When the writer makes no progress for 5 s
+  (not one byte reaches the socket while frames are queued), the connection is hung: the holder
+  drops it, records "crash", and resumes pumping into the rings alone. A hung logic process
+  therefore cannot stall programs for long. A slow but moving reader is not hung.
 - **Ping.** Either side may ping; the other answers. gff-hab uses it to detect a hung holder.
 
 ### 2.7 Reap and exit
@@ -484,8 +485,8 @@ incomplete. A full ring never blocks a program.
 
 ### 6.5 A slow or hung logic process
 
-Covered in 2.6: readers pause while more than 8 MiB is queued, for at most 5 s, after which the
-holder drops the connection as a crash. With no logic connected, output goes only to the rings.
+Covered in 2.6: readers pause while more than 8 MiB is queued. When the writer makes no progress
+for 5 s, the holder drops the connection as a crash. With no logic connected, output goes only to the rings.
 
 ### 6.6 A holder crash
 

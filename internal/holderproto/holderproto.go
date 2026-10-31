@@ -163,6 +163,8 @@ func parseHeader(b []byte) (Header, uint32) {
 	}, binary.BigEndian.Uint32(b[10:14])
 }
 
+// run decodes a payload, then checks the frame's own limits. Every receive path goes through
+// here, so the data caps on input, output and replay data hold on decode as well as on encode.
 func (e entry) run(v Version, h Header, p []byte) (Frame, error) {
 	f, err := e.decode(v, h, p)
 	if err == nil {

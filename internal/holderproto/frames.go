@@ -29,6 +29,7 @@ const (
 	KindReplay     Kind = 0x010b
 	KindReplayData Kind = 0x010c
 	KindReplayEnd  Kind = 0x010d
+	KindInputReady Kind = 0x010e
 )
 
 var kindNames = map[Kind]string{
@@ -38,7 +39,7 @@ var kindNames = map[Kind]string{
 	KindSpawnFail: "spawn-failed", KindInput: "input", KindOutput: "output", KindResize: "resize",
 	KindSignal: "signal", KindFgQuery: "foreground-query", KindFg: "foreground",
 	KindExited: "exited", KindRelease: "release", KindReplay: "replay",
-	KindReplayData: "replay-data", KindReplayEnd: "replay-end",
+	KindReplayData: "replay-data", KindReplayEnd: "replay-end", KindInputReady: "input-ready",
 }
 
 // String returns the kind's name, or its number for a kind this build does not know.
@@ -77,6 +78,7 @@ func V1() *Registry {
 	r.Register(KindReplay, 1, decodeReplay)
 	r.Register(KindReplayData, 1, decodeReplayData)
 	r.Register(KindReplayEnd, 1, decodeReplayEnd)
+	r.Register(KindInputReady, 1, decodeInputReady)
 	return r
 }
 
@@ -462,6 +464,7 @@ func (f *Input) MarshalPayload(Version) []byte {
 	return e.Bytes()
 }
 
+// The data cap is checked after decoding, by validate (see entry.run).
 func decodeInput(_ Version, h Header, p []byte) (Frame, error) {
 	d := NewDec(p)
 	fx := d.Fixed()
@@ -492,6 +495,7 @@ func (f *Output) MarshalPayload(Version) []byte {
 	return e.Bytes()
 }
 
+// The data cap is checked after decoding, by validate (see entry.run).
 func decodeOutput(_ Version, h Header, p []byte) (Frame, error) {
 	d := NewDec(p)
 	fx := d.Fixed()
@@ -670,6 +674,7 @@ func (f *ReplayData) MarshalPayload(Version) []byte {
 	return e.Bytes()
 }
 
+// The data cap is checked after decoding, by validate (see entry.run).
 func decodeReplayData(_ Version, h Header, p []byte) (Frame, error) {
 	d := NewDec(p)
 	fx := d.Fixed()
@@ -702,5 +707,26 @@ func (f *ReplayEnd) MarshalPayload(Version) []byte {
 func decodeReplayEnd(_ Version, h Header, p []byte) (Frame, error) {
 	d := NewDec(p)
 	f := &ReplayEnd{Handle: h.Pane, Token: h.Token, Start: d.U64(), End: d.U64(), Gap: d.Bool()}
+	return f, d.Err()
+}
+
+// InputReady tells gff-hab that a pane's input queue, which refused an input frame with
+// CodeQueueFull, is empty again. Offset is the input offset the holder now expects. After a
+// queue-full error, gff-hab waits for this frame before it resends. It is an event: token 0.
+type InputReady struct {
+	Handle Handle
+	Offset uint64
+}
+
+func (f *InputReady) Header() Header { return Header{Kind: KindInputReady, Pane: f.Handle} }
+func (f *InputReady) MarshalPayload(Version) []byte {
+	var e Enc
+	e.U64(f.Offset)
+	return e.Bytes()
+}
+
+func decodeInputReady(_ Version, h Header, p []byte) (Frame, error) {
+	d := NewDec(p)
+	f := &InputReady{Handle: h.Pane, Offset: d.U64()}
 	return f, d.Err()
 }

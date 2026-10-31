@@ -47,8 +47,8 @@ Every frame is a 14-byte header followed by the payload. All integers are big-en
 | 14 | length | payload | Fields of the kind, at the negotiated version |
 
 **Token.** gff-hab picks a token for each request. The holder copies it into every reply to that
-request: the answer, the replay frames, or an error. Events (output, exited, bye) and the
-handshake carry 0. The token sits in the header, not the payload, so the holder can echo it even
+request: the answer, the replay frames, or an error. Events (output, exited, input ready, bye)
+and the handshake carry 0. The token sits in the header, not the payload, so the holder can echo it even
 for a request whose kind it does not know. gff-hab should not reuse a token while a request with
 it is open; 0 is a legal token but cannot be told apart from an event.
 
@@ -187,6 +187,7 @@ failed:
 | 0x010b | replay | L→H | handle | yes | from u64, has to bool, to u64 |
 | 0x010c | replay data | H→L | handle | replay's | fixed {offset u64}, rest: the bytes |
 | 0x010d | replay end | H→L | handle | replay's | start u64, end u64, gap bool |
+| 0x010e | input ready | H→L | handle | 0 | offset u64 (the input offset the holder now expects) |
 
 Notes:
 
@@ -203,7 +204,10 @@ Notes:
   21 TTIN, 22 TTOU, 23 XCPU, 24 XFSZ, 25 VTALRM, 26 PROF, 255 other.
 - **exited.** The holder always sends exited when it reaps a pane's child while a logic process
   is connected, whether or not the pane is subscribed (section 6). A child reaped while no logic
-  process is connected shows in the next welcome's pane record. *final* is the pane's byte count
+  process is connected shows in the next welcome's pane record. For a child reaped during the
+  handshake, exactly one of the two reports it, never both and never neither: if the welcome's
+  pane record says exited, no exited frame follows for that pane on this connection; otherwise an
+  exited frame follows the welcome. *final* is the pane's byte count
   when the holder sent the frame: gff-hab holds all output once it holds every byte before
   *final* (spec 2.7).
 - **No mark frames.** gff-hab finds OSC 133 prompt marks itself (spec Q1). A command's bytes are
@@ -226,10 +230,16 @@ Notes:
 - **Subscribing.** After welcome the holder sends no output on its own. An open replay
   subscribes the pane: after its replay end, live output follows from *end*. A pane spawned on
   this connection is subscribed from offset 0 at once.
-- **Re-opening.** An open replay on a pane that is already subscribed is one atomic step under
-  the pane's lock: the holder stops live output for the pane, sends the replay, sends replay end,
-  then resumes live output from *end*. No live output for the pane sits between the replay data
-  and its replay end, so the stream has no gap and no overlap.
+- **Re-opening.** gff-hab may send an open replay for a pane that is already subscribed. What it
+  observes:
+  - No live output for the pane arrives between the re-open and its replay end.
+  - The pane's reader keeps filling the ring the whole time; programs never wait on a replay.
+  - The holder sends replay data up to the pane's count at the moment it sends replay end. That
+    count is *end*.
+  - Live output resumes at *end*, with no overlap.
+  - If the ring overwrote bytes before the holder sent them, the next replay data or output
+    frame starts at a later offset than the previous frame ended. gff-hab sees the gap from the
+    offsets and treats the screen as it would after a gap at the start.
 - **Bounded replays** do not change the live stream. Their replay data may arrive between live
   output frames; the token and the frame kind tell them apart.
 - The holder never discards ring bytes at handover. Only the ring size limits how far back a
@@ -245,8 +255,12 @@ Notes:
   frame.
 - Otherwise the holder refuses the whole frame with an error: code 8 (input offset) when the
   offset is wrong, code 1 (queue full) when the pane's 1 MiB input queue cannot take all of it
-  (spec 2.5). The error's *offset* is the input count the holder expects. gff-hab resends from
-  there.
+  (spec 2.5). The error's *offset* is the input count the holder expects.
+- After code 8, gff-hab resends from that offset at once.
+- After code 1, gff-hab waits for input ready before it resends. The holder sends input ready
+  once, when the pane's input queue is empty again after a queue-full refusal. It carries the
+  input offset the holder now expects, and gff-hab resends from there. A full queue therefore
+  costs no retry loop.
 - After a restart, gff-hab starts from the input count in the welcome. Input that a crashed
   gff-hab sent but the holder never accepted is not written twice.
 
@@ -255,8 +269,8 @@ Notes:
 | Limit | Value | On a violation |
 |---|---|---|
 | Any payload | 16 MiB | Protocol error: the receiver drops the connection |
-| Bytes in one output or replay data frame | 64 KiB | Protocol error. The codec refuses to send it |
-| Bytes in one input frame | 1 MiB | Protocol error. The codec refuses to send it. gff-hab splits larger input over several frames |
+| Bytes in one output or replay data frame | 64 KiB | Protocol error. The codec refuses to send it, and a receiver drops the connection |
+| Bytes in one input frame | 1 MiB | Protocol error, as above. gff-hab splits larger input over several frames |
 
 - **Replay pacing.** The holder produces replay data as its writer drains, one frame at a time,
   never the whole range up front. A large replay therefore holds no more memory than the writer
@@ -332,7 +346,8 @@ closes.
 - The cross-version tests run, over `net.Pipe`, a v1 client against a v2 holder, a v2 client
   against a v1 holder, and v2 against v2. A further test holds a v1 and a v2 connection open from
   one client at once. Another sends a v2 hello with appended fields to a v1 holder.
-- Other tests cover input offsets and resend, the unknown-kind reply, size limits, the fixed
+- Other tests cover input offsets and resend, a full input queue and input ready, the
+  unknown-kind reply, size limits, the fixed
   part, and protocol signal numbers.
 - `go test ./internal/holderproto/ -update` rewrites the golden files. Only do that on purpose:
   once version 1 is frozen, a changed version 1 golden means version 1 broke.

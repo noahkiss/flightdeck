@@ -168,6 +168,7 @@ func v1Samples() []sample {
 		{"replay", &hp.Replay{Handle: 3, Token: 7, From: 1000, HasTo: true, To: 2000}},
 		{"replay-data", &hp.ReplayData{Handle: 3, Token: 7, Offset: 1000, Data: []byte("ring bytes")}},
 		{"replay-end", &hp.ReplayEnd{Handle: 3, Token: 7, Start: 1500, End: 2000, Gap: true}},
+		{"input-ready", &hp.InputReady{Handle: 3, Offset: 640}},
 	}
 }
 

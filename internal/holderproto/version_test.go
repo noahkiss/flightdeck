@@ -504,6 +504,10 @@ func TestSizeCaps(t *testing.T) {
 		if _, _, err := hp.V1().DecodeFrame(1, big); !errors.Is(err, hp.ErrTooLarge) {
 			t.Errorf("%s decode over the cap: %v, want ErrTooLarge", c.name, err)
 		}
+		// The same frame on a live connection ends it with ErrTooLarge.
+		if _, err := handshaken(t, hp.V1(), 1, big).ReadFrame(); !errors.Is(err, hp.ErrTooLarge) {
+			t.Errorf("%s read over the cap: %v, want ErrTooLarge", c.name, err)
+		}
 	}
 }
 
@@ -532,5 +536,83 @@ func TestBadFrames(t *testing.T) {
 	c := hp.NewConn(rawConn{bytes.NewReader(nil)}, hp.V1())
 	if err := c.WriteFrame(&hp.Input{Handle: 1, Data: []byte("x")}); !errors.Is(err, hp.ErrNotInVersion) {
 		t.Errorf("pre-handshake write: %v, want ErrNotInVersion", err)
+	}
+}
+
+// TestInputQueueFull: after a queue-full refusal gff-hab waits for input ready, then resends
+// from the offset it names.
+func TestInputQueueFull(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	// A holder whose input queue holds 4 bytes and drains when gff-hab pings.
+	go func() {
+		defer b.Close()
+		c := hp.NewConn(b, hp.V1())
+		if _, err := c.AcceptHello(); err != nil {
+			t.Error(err)
+			return
+		}
+		out := make(chan hp.Frame, 16)
+		go func() {
+			for f := range out {
+				_ = c.WriteFrame(f)
+			}
+		}()
+		defer close(out)
+		out <- &hp.Welcome{Version: c.Version()}
+		var count uint64
+		var queued int
+		full := false
+		for {
+			f, err := c.ReadFrame()
+			if err != nil {
+				return
+			}
+			switch f := f.(type) {
+			case *hp.Input:
+				if f.Offset != count || queued+len(f.Data) > 4 {
+					code := hp.CodeInputOffset
+					if f.Offset == count {
+						code, full = hp.CodeQueueFull, true
+					}
+					out <- &hp.Error{Handle: f.Handle, Token: f.Token, Ref: hp.KindInput, Code: code, Offset: count}
+					continue
+				}
+				count += uint64(len(f.Data))
+				queued += len(f.Data)
+			case *hp.Ping: // the child read everything
+				queued = 0
+				if full {
+					full = false
+					out <- &hp.InputReady{Handle: 3, Offset: count}
+				}
+				out <- &hp.Pong{Token: f.Token}
+			}
+		}
+	}()
+	c := hp.NewConn(a, hp.V1())
+	if _, err := c.Hello("gff-hab"); err != nil {
+		t.Fatal(err)
+	}
+	must(t, c.WriteFrame(&hp.Input{Handle: 3, Token: 1, Offset: 0, Data: []byte("abc")}))
+	must(t, c.WriteFrame(&hp.Input{Handle: 3, Token: 2, Offset: 3, Data: []byte("de")}))
+	f, err := c.ReadFrame()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := f.(*hp.Error)
+	if e.Code != hp.CodeQueueFull || e.Token != 2 || e.Offset != 3 {
+		t.Fatalf("error %+v", e)
+	}
+	must(t, c.WriteFrame(&hp.Ping{Token: 9}))
+	recv := readUntilPong(t, c)
+	r, ok := recv[0].(*hp.InputReady)
+	if !ok || r.Handle != 3 || r.Offset != 3 {
+		t.Fatalf("got %v", kinds(recv))
+	}
+	must(t, c.WriteFrame(&hp.Input{Handle: 3, Token: 3, Offset: r.Offset, Data: []byte("de")}))
+	must(t, c.WriteFrame(&hp.Ping{Token: 10}))
+	if recv := readUntilPong(t, c); len(recv) != 1 {
+		t.Fatalf("resend refused: %v", kinds(recv))
 	}
 }
