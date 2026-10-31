@@ -1,0 +1,587 @@
+package control
+
+import (
+	"bufio"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/structure"
+)
+
+// changer makes a run of structure changes: projects, panes, sessions, renames, moves, closes.
+func changer(t *testing.T, h *hab, prefix string, n int) {
+	t.Helper()
+	var projects []string
+	for i := range n {
+		p, err := h.store.CreateProject(fmt.Sprintf("%s-p%d", prefix, i), fmt.Sprintf("example.com/o/%s-%d", prefix, i), "")
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		projects = append(projects, p.ID)
+		pane := fmt.Sprintf("%s-pane-%d", prefix, i)
+		h.holder.Add(structure.HolderPane{ID: pane, HolderID: "h1", HolderBuild: "b", Cols: 80, Rows: 24})
+		s, err := h.store.CreateSession(structure.SessionSpec{Name: fmt.Sprintf("%s-s%d", prefix, i), Project: p.ID, Pane: pane, Index: -1})
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if _, err := h.store.RenameProject(p.ID, fmt.Sprintf("%s-renamed-%d", prefix, i)); err != nil {
+			t.Error(err)
+		}
+		h.holder.Resize(pane, 100+i, 30)
+		if i > 0 {
+			if _, err := h.store.MoveSession(s.ID, projects[i-1], 0); err != nil {
+				t.Error(err)
+			}
+		}
+		if i%3 == 2 {
+			if err := h.store.CloseSession(s.ID); err != nil {
+				t.Error(err)
+			}
+			h.holder.Remove(pane)
+		}
+		if i%4 == 3 {
+			if err := h.store.DeleteProject(projects[i-1]); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+}
+
+// collect reads notifications until an event with seq last has arrived, checking that every
+// event seq is exactly one higher than the one before.
+func collect(t *testing.T, c *Client, events *[]api.Event, last uint64) {
+	t.Helper()
+	timeout := time.After(10 * time.Second)
+	for {
+		if n := len(*events); n > 0 && (*events)[n-1].Seq >= last {
+			return
+		}
+		if last == 0 {
+			return
+		}
+		select {
+		case n, ok := <-c.Notifications():
+			if !ok {
+				t.Fatalf("connection ended: %v", c.Err())
+			}
+			if n.Method != "event" {
+				continue
+			}
+			e, err := n.Event()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if k := len(*events); k > 0 && e.Seq != (*events)[k-1].Seq+1 {
+				t.Fatalf("seq %d after %d: a gap or a repeat", e.Seq, (*events)[k-1].Seq)
+			} else if k == 0 && e.Seq != 1 {
+				t.Fatalf("first seq %d, want 1", e.Seq)
+			}
+			*events = append(*events, e)
+		case <-timeout:
+			t.Fatalf("waited for seq %d; have %d events", last, len(*events))
+		}
+	}
+}
+
+// TestEventsOnceInOrder is the stage acceptance test: a client subscribes while changes run,
+// sees every event once and in order, and the seq on each response lets it drop the events the
+// response already covers. Its mirror ends equal to the hab's structure.
+func TestEventsOnceInOrder(t *testing.T) {
+	h := startHab(t, "", socketPath(t), nil)
+	c := dial(t, h.path)
+	hello(t, c, "")
+	cl := api.Client{Caller: c}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { defer wg.Done(); changer(t, h, "a", 12) }()
+
+	// Subscribe while the changes run.
+	m := newMirror()
+	var events []api.Event
+	r1, err := cl.EventsSubscribe(ctx(t), api.SubscribeParams{Scope: api.Scope{Kind: api.ScopeKindHost}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.snapshot(t, r1)
+	wg.Wait()
+
+	// Subscribe again while more changes run: the second response's seq is above some
+	// events already received, and the client drops those.
+	wg.Add(1)
+	go func() { defer wg.Done(); changer(t, h, "b", 12) }()
+	time.Sleep(5 * time.Millisecond)
+	r2, err := cl.EventsSubscribe(ctx(t), api.SubscribeParams{Scope: api.Scope{Kind: api.ScopeKindHost}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wg.Wait()
+	ping, err := cl.HabPing(ctx(t), api.PingParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	collect(t, c, &events, ping.Seq.Seq)
+	if ping.Seq.Seq == 0 || uint64(len(events)) != ping.Seq.Seq {
+		t.Fatalf("ping seq %d, %d events", ping.Seq.Seq, len(events))
+	}
+	if r2.Seq.Seq < r1.Seq.Seq || r2.Seq.Seq == 0 {
+		t.Fatalf("second subscribe seq %d, first %d", r2.Seq.Seq, r1.Seq.Seq)
+	}
+
+	// Replay as a client would: events up to r2's seq apply to the first snapshot, then the
+	// second snapshot replaces everything and older events drop.
+	for _, e := range events {
+		if e.Seq > r2.Seq.Seq {
+			break
+		}
+		m.apply(e)
+	}
+	m.snapshot(t, r2)
+	for _, e := range events {
+		m.apply(e)
+	}
+	if m.dropped < int(r2.Seq.Seq) {
+		t.Fatalf("dropped %d events, want at least %d", m.dropped, r2.Seq.Seq)
+	}
+	m.sameAs(t, h.store.Snapshot(api.HostInfo{ID: "host-a"}))
+
+	// Every revision an object carries rises along the stream.
+	revs := map[string]uint64{}
+	for _, e := range events {
+		if e.Revision == nil {
+			continue
+		}
+		k := string(e.Type[:strings.IndexByte(string(e.Type), '.')]) + "/" + e.ID
+		if *e.Revision <= revs[k] {
+			t.Fatalf("event %d: %s revision %d after %d", e.Seq, k, *e.Revision, revs[k])
+		}
+		revs[k] = *e.Revision
+	}
+}
+
+// TestRestartGivesNewEpoch restarts the hab under a connected client. The client sees closing
+// (shutdown), reconnects, sees a new epoch, its token is refused, and its fresh snapshot holds
+// the stored structure.
+func TestRestartGivesNewEpoch(t *testing.T) {
+	dir := t.TempDir()
+	path := socketPath(t)
+	h := startHab(t, dir, path, nil)
+	c := dial(t, path)
+	w1 := hello(t, c, "")
+	if _, err := (api.Client{Caller: c}).EventsSubscribe(ctx(t), api.SubscribeParams{Scope: api.Scope{Kind: api.ScopeKindHost}}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := h.store.CreateProject("kept", "example.com/o/kept", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.stop()
+	select {
+	case <-c.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("client not closed by the shutdown")
+	}
+	if c.ClosingReason() != api.ClosingReasonShutdown {
+		t.Fatalf("closing reason %q", c.ClosingReason())
+	}
+
+	startHab(t, dir, path, nil)
+	c2 := dial(t, path)
+	w2 := hello(t, c2, w1.ReconnectToken)
+	if w2.Epoch == w1.Epoch {
+		t.Fatal("same epoch after a restart")
+	}
+	if w2.ClientID == w1.ClientID {
+		t.Fatal("a token from the old epoch kept its client id")
+	}
+	r, err := (api.Client{Caller: c2}).EventsSubscribe(ctx(t), api.SubscribeParams{Scope: api.Scope{Kind: api.ScopeKindHost}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Projects) != 1 || r.Projects[0].ID != p.ID || r.Projects[0].Revision != p.Revision {
+		t.Fatalf("snapshot after restart: %+v", r.Projects)
+	}
+}
+
+func TestReconnectTokenKeepsClientID(t *testing.T) {
+	now := time.Unix(1000, 0)
+	var mu sync.Mutex
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	h := startHab(t, "", socketPath(t), func(c *Config) { c.Now = clock; c.ReconnectGrace = time.Minute })
+	c1 := dial(t, h.path)
+	w1 := hello(t, c1, "")
+	c1.Close()
+	waitConns(t, h.srv, 0)
+
+	c2 := dial(t, h.path)
+	w2 := hello(t, c2, w1.ReconnectToken)
+	if w2.ClientID != w1.ClientID || w2.Epoch != w1.Epoch {
+		t.Fatalf("reconnect in grace: client %s -> %s", w1.ClientID, w2.ClientID)
+	}
+	if w2.ReconnectToken == w1.ReconnectToken {
+		t.Fatal("token was not replaced")
+	}
+	c3 := dial(t, h.path)
+	if w := hello(t, c3, w1.ReconnectToken); w.ClientID == w1.ClientID {
+		t.Fatal("a used token worked twice")
+	}
+
+	c2.Close()
+	waitConns(t, h.srv, 1)
+	mu.Lock()
+	now = now.Add(2 * time.Minute)
+	mu.Unlock()
+	c4 := dial(t, h.path)
+	if w := hello(t, c4, w2.ReconnectToken); w.ClientID == w1.ClientID {
+		t.Fatal("token worked after the grace period")
+	}
+}
+
+func waitConns(t *testing.T, s *Server, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		k := len(s.conns)
+		s.mu.Unlock()
+		if k == n {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("connections did not drop to %d", n)
+}
+
+// TestBacklogClosesSlowClient: a client that stops reading is closed with event_backlog once
+// its queue passes the limit. Publish never blocks. What it read is gapless, and closing is the
+// last message.
+func TestBacklogClosesSlowClient(t *testing.T) {
+	src := &fakeSource{}
+	srv := New(func() Config {
+		c := testConfig(src)
+		c.BacklogLimit = 64 << 10
+		c.CloseGrace = 10 * time.Second
+		return c
+	}())
+	t.Cleanup(srv.Close)
+	path := socketPath(t)
+	l, err := Listen(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(l)
+
+	nc, err := net.Dial("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+	fmt.Fprintln(nc, `{"jsonrpc":"2.0","id":1,"method":"hab.hello","params":{"revision":1,"min_revision":1,"client":{"name":"t","version":"0","kind":"script"}}}`)
+	fmt.Fprintln(nc, `{"jsonrpc":"2.0","id":2,"method":"events.subscribe","params":{"scope":{"kind":"host"}}}`)
+	br := bufio.NewReader(nc)
+	for range 2 {
+		if _, err := br.ReadBytes('\n'); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Stop reading; publish well past the limit plus any socket buffers.
+	name := strings.Repeat("x", 1000)
+	start := time.Now()
+	for i := range 4000 {
+		srv.Publish(structure.Event{Type: structure.ProjectUpdated, ID: "p", Revision: uint64(i + 1),
+			Data: api.Project{ID: "p", Revision: uint64(i + 1), Name: name, Sessions: []string{}}})
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("publishing took %v: it blocked on the slow client", d)
+	}
+
+	var last uint64
+	var closing *api.Closing
+	nc.SetReadDeadline(time.Now().Add(10 * time.Second))
+	for {
+		line, err := br.ReadBytes('\n')
+		if err != nil {
+			break
+		}
+		if closing != nil {
+			t.Fatalf("message after closing: %s", line)
+		}
+		var m message
+		if err := json.Unmarshal(line, &m); err != nil {
+			t.Fatal(err)
+		}
+		switch m.Method {
+		case "event":
+			var e api.Event
+			json.Unmarshal(m.Params, &e)
+			if e.Seq != last+1 {
+				t.Fatalf("seq %d after %d", e.Seq, last)
+			}
+			last = e.Seq
+		case "closing":
+			closing = &api.Closing{}
+			json.Unmarshal(m.Params, closing)
+		}
+	}
+	if closing == nil || closing.Reason != api.ClosingReasonEventBacklog {
+		t.Fatalf("no closing event_backlog; read %d events", last)
+	}
+	if last >= 4000 {
+		t.Fatalf("read all %d events; the limit never applied", last)
+	}
+}
+
+func TestNoNullsAndWelcomeFields(t *testing.T) {
+	srv := New(testConfig(&fakeSource{}))
+	t.Cleanup(srv.Close)
+	nc := pipeServe(t, srv)
+	br := bufio.NewReader(nc)
+	send := func(s string) map[string]any {
+		t.Helper()
+		go fmt.Fprintln(nc, s)
+		nc.SetReadDeadline(time.Now().Add(5 * time.Second))
+		line, err := br.ReadBytes('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(line), "null") {
+			t.Fatalf("null in %s", line)
+		}
+		var m map[string]any
+		json.Unmarshal(line, &m)
+		return m
+	}
+	w := send(`{"jsonrpc":"2.0","id":"a","method":"hab.hello","params":{"revision":5,"min_revision":1,"client":{"name":"t","version":"0","kind":"app"},"later_field":true}}`)
+	res := w["result"].(map[string]any)
+	if res["revision"].(float64) != 1 || res["seq"].(float64) != 0 || res["device_id"] != "SHA256:test" || w["id"] != "a" {
+		t.Fatalf("welcome %v", w)
+	}
+	if caps, ok := res["capabilities"].([]any); !ok || len(caps) != 0 {
+		t.Fatalf("capabilities %v", res["capabilities"])
+	}
+	st := send(`{"jsonrpc":"2.0","id":2,"method":"structure.get"}`)
+	r := st["result"].(map[string]any)
+	if _, ok := r["projects"].([]any); !ok || r["seq"] == nil {
+		t.Fatalf("structure.get %v", st)
+	}
+	d := send(`{"jsonrpc":"2.0","id":3,"method":"rpc.discover"}`)
+	if d["result"].(map[string]any)["openrpc"] == nil || d["result"].(map[string]any)["seq"] != nil {
+		t.Fatalf("rpc.discover %v", d)
+	}
+	for _, method := range []string{"devices.list", "devices.pair", "devices.revoke", "pane.input", "data.ticket"} {
+		e := send(`{"jsonrpc":"2.0","id":4,"method":"` + method + `","params":{}}`)["error"].(map[string]any)
+		data := e["data"].(map[string]any)
+		if data["kind"] != "unavailable" || data["seq"] == nil || e["code"].(float64) != api.ErrorCode {
+			t.Fatalf("%s: %v", method, e)
+		}
+	}
+	e := send(`{"jsonrpc":"2.0","id":5,"method":"no.such"}`)["error"].(map[string]any)
+	if e["code"].(float64) != codeMethodNotFound {
+		t.Fatalf("unknown method: %v", e)
+	}
+	e = send(`{"jsonrpc":"2.0","id":6,"method":"events.subscribe","params":{"scope":{"kind":"galaxy"}}}`)["error"].(map[string]any)
+	if e["data"].(map[string]any)["kind"] != "invalid" {
+		t.Fatalf("closed word set: %v", e)
+	}
+	e = send(`{"jsonrpc":"2.0","id":7,"method":"hab.hello","params":{"revision":1,"min_revision":1,"client":{"name":"t","version":"0","kind":"app"}}}`)["error"].(map[string]any)
+	if e["data"].(map[string]any)["kind"] != "invalid" {
+		t.Fatalf("second hello: %v", e)
+	}
+}
+
+func TestHelloRules(t *testing.T) {
+	srv := New(testConfig(&fakeSource{}))
+	t.Cleanup(srv.Close)
+	cases := []struct {
+		name, line, kind string
+	}{
+		{"not first", `{"jsonrpc":"2.0","id":1,"method":"structure.get"}`, "invalid"},
+		{"too new", `{"jsonrpc":"2.0","id":1,"method":"hab.hello","params":{"revision":4,"min_revision":2,"client":{"name":"t","version":"0","kind":"cli"}}}`, "revision_unsupported"},
+		{"bad kind", `{"jsonrpc":"2.0","id":1,"method":"hab.hello","params":{"revision":1,"min_revision":1,"client":{"name":"t","version":"0","kind":"robot"}}}`, "invalid"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			nc := pipeServe(t, srv)
+			go fmt.Fprintln(nc, tc.line)
+			br := bufio.NewReader(nc)
+			nc.SetReadDeadline(time.Now().Add(5 * time.Second))
+			line, err := br.ReadBytes('\n')
+			if err != nil {
+				t.Fatal(err)
+			}
+			var m message
+			json.Unmarshal(line, &m)
+			if m.Error == nil || string(m.Error.Data.Kind) != tc.kind {
+				t.Fatalf("got %s", line)
+			}
+			if tc.kind == "revision_unsupported" {
+				d := m.Error.Data
+				if d.Server == nil || d.Client == nil || d.Server.Max != api.Revision || d.Client.Min != 2 {
+					t.Fatalf("ranges missing: %s", line)
+				}
+			}
+			if _, err := br.ReadBytes('\n'); err == nil {
+				t.Fatal("connection stayed open")
+			}
+		})
+	}
+}
+
+func TestScopeProjects(t *testing.T) {
+	src := &fakeSource{st: api.Structure{
+		Projects: []api.Project{{ID: "p1", Revision: 1, Sessions: []string{"s1"}}, {ID: "p2", Revision: 1, Sessions: []string{"s2"}}},
+		Sessions: []api.Session{{ID: "s1", Revision: 1, Project: "p1", Pane: "x1"}, {ID: "s2", Revision: 1, Project: "p2", Pane: "x2"}},
+		Panes:    []api.Pane{{ID: "x1", Revision: 1, Session: "s1"}, {ID: "x2", Revision: 1, Session: "s2"}, {ID: "x3", Revision: 1}},
+	}}
+	srv := New(testConfig(src))
+	t.Cleanup(srv.Close)
+	c := NewClient(pipeServe(t, srv))
+	hello(t, c, "")
+	r, err := (api.Client{Caller: c}).EventsSubscribe(ctx(t), api.SubscribeParams{Scope: api.Scope{Kind: api.ScopeKindProjects, IDs: []string{"p1"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Projects) != 1 || len(r.Sessions) != 1 || len(r.Panes) != 1 || r.Panes[0].ID != "x1" {
+		t.Fatalf("scoped snapshot %+v", r.Structure)
+	}
+	pub := func(typ api.EventType, id string, data any) {
+		srv.Publish(structure.Event{Type: typ, ID: id, Revision: 2, Data: data})
+	}
+	pub(structure.ProjectUpdated, "p2", api.Project{ID: "p2"})                // out
+	pub(structure.PaneUpdated, "x2", api.Pane{ID: "x2", Session: "s2"})       // out
+	pub(structure.SessionUpdated, "s2", api.Session{ID: "s2", Project: "p1"}) // moves in
+	pub(structure.PaneUpdated, "x2", api.Pane{ID: "x2", Session: "s2"})       // now in
+	pub(structure.SessionUpdated, "s1", api.Session{ID: "s1", Project: "p2"}) // leaves: one last
+	pub(structure.SessionUpdated, "s1", api.Session{ID: "s1", Project: "p2"}) // out
+	pub(structure.ProjectUpdated, "p1", api.Project{ID: "p1"})                // in
+	pub(structure.PaneDeleted, "x3", api.Deleted{})                           // out
+	ping, err := (api.Client{Caller: c}).HabPing(ctx(t), api.PingParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []api.Event
+	collect(t, c, &events, ping.Seq.Seq)
+	var got []string
+	for _, e := range events {
+		got = append(got, string(e.Type)+" "+e.ID)
+	}
+	want := []string{"session.updated s2", "pane.updated x2", "session.updated s1", "project.updated p1"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("events %v, want %v", got, want)
+	}
+}
+
+func TestHeartbeatAndIdleTimeout(t *testing.T) {
+	srv := New(func() Config {
+		c := testConfig(&fakeSource{})
+		c.Heartbeat = 30 * time.Millisecond
+		c.IdleTimeout = 300 * time.Millisecond
+		return c
+	}())
+	t.Cleanup(srv.Close)
+	c := NewClient(pipeServe(t, srv))
+	hello(t, c, "")
+	select {
+	case n := <-c.Notifications():
+		if n.Method != "heartbeat" {
+			t.Fatalf("got %s", n.Method)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no heartbeat")
+	}
+	select {
+	case <-c.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("a silent client was not closed")
+	}
+
+	// A client that pings stays open.
+	c2 := NewClient(pipeServe(t, srv))
+	hello(t, c2, "")
+	c2.KeepAlive(60 * time.Millisecond)
+	select {
+	case <-c2.Done():
+		t.Fatalf("a pinging client was closed: %v", c2.Err())
+	case <-time.After(time.Second):
+	}
+}
+
+func TestListenPermissions(t *testing.T) {
+	path := socketPath(t)
+	l, err := Listen(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("socket mode %v", fi.Mode().Perm())
+	}
+	if di, _ := os.Stat(filepath.Dir(path)); di.Mode().Perm() != 0o700 {
+		t.Fatalf("dir mode %v", di.Mode().Perm())
+	}
+	if _, err := Listen(path); err == nil {
+		t.Fatal("a live socket was taken over")
+	}
+	l.Close()
+
+	open := filepath.Join(filepath.Dir(filepath.Dir(path)), "open")
+	os.Mkdir(open, 0o755)
+	os.Chmod(open, 0o755)
+	if _, err := Listen(filepath.Join(open, "hab.sock")); err == nil {
+		t.Fatal("a socket in a directory others can enter was accepted")
+	}
+}
+
+func TestDataHelloIsRejected(t *testing.T) {
+	srv := New(testConfig(&fakeSource{}))
+	t.Cleanup(srv.Close)
+	nc := pipeServe(t, srv)
+	go nc.Write([]byte{byte(api.FrameHello), 0, 0, 0, 2, '{', '}'})
+	nc.SetReadDeadline(time.Now().Add(5 * time.Second))
+	hdr := make([]byte, 5)
+	if _, err := ioReadFull(nc, hdr); err != nil {
+		t.Fatal(err)
+	}
+	if hdr[0] != byte(api.FrameReject) {
+		t.Fatalf("frame kind %d", hdr[0])
+	}
+}
+
+func ioReadFull(c net.Conn, b []byte) (int, error) {
+	n := 0
+	for n < len(b) {
+		k, err := c.Read(b[n:])
+		n += k
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
+}
+
+func TestCallAfterCloseFails(t *testing.T) {
+	srv := New(testConfig(&fakeSource{}))
+	c := NewClient(pipeServe(t, srv))
+	hello(t, c, "")
+	srv.Close()
+	<-c.Done()
+	err := c.Call(ctx(t), "hab.ping", nil, nil)
+	if !errors.Is(err, ErrClosed) {
+		t.Fatalf("got %v", err)
+	}
+}
