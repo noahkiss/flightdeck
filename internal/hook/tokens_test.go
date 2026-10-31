@@ -94,30 +94,30 @@ func TestTokens(t *testing.T) {
 // size or type is refused, not replaced.
 func TestKeyFile(t *testing.T) {
 	dir := filepath.Join(shortDir(t), "state")
-	k1, err := LoadOrCreateKey(dir)
-	if err != nil {
-		t.Fatal(err)
+	k1, created, err := LoadOrCreateKey(dir)
+	if err != nil || !created {
+		t.Fatalf("first load: %v, created %v", err, created)
 	}
 	path := filepath.Join(dir, KeyFile)
 	fi, err := os.Stat(path)
 	if err != nil || fi.Mode().Perm() != 0o600 || len(k1) != keySize {
 		t.Fatalf("key file %v, %v, %d bytes", fi.Mode(), err, len(k1))
 	}
-	k2, err := LoadOrCreateKey(dir)
-	if err != nil || !bytes.Equal(k1, k2) {
-		t.Fatalf("second load: %v, same key %v", err, bytes.Equal(k1, k2))
+	k2, created, err := LoadOrCreateKey(dir)
+	if err != nil || !bytes.Equal(k1, k2) || created {
+		t.Fatalf("second load: %v, same key %v, created %v", err, bytes.Equal(k1, k2), created)
 	}
 	if left, _ := filepath.Glob(filepath.Join(dir, KeyFile+".tmp-*")); len(left) != 0 {
 		t.Fatalf("temp files left: %v", left)
 	}
 
 	os.Chmod(path, 0o644)
-	if _, err := LoadOrCreateKey(dir); err == nil {
+	if _, _, err := LoadOrCreateKey(dir); err == nil {
 		t.Error("a key file others can read was used")
 	}
 	os.Chmod(path, 0o600)
 	os.WriteFile(path, []byte("short"), 0o600)
-	if _, err := LoadOrCreateKey(dir); err == nil {
+	if _, _, err := LoadOrCreateKey(dir); err == nil {
 		t.Error("a key file of the wrong size was used")
 	}
 	if b, _ := os.ReadFile(path); string(b) != "short" {
@@ -128,7 +128,7 @@ func TestKeyFile(t *testing.T) {
 	real := filepath.Join(dir, "elsewhere")
 	os.WriteFile(real, k1, 0o600)
 	os.Symlink(real, path)
-	if _, err := LoadOrCreateKey(dir); err == nil {
+	if _, _, err := LoadOrCreateKey(dir); err == nil {
 		t.Error("a symlinked key file was used")
 	}
 }
@@ -142,7 +142,7 @@ func TestKeyFileRace(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			k, err := LoadOrCreateKey(dir)
+			k, _, err := LoadOrCreateKey(dir)
 			if err != nil {
 				t.Error(err)
 			}

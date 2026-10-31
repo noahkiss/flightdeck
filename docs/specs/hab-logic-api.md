@@ -255,8 +255,11 @@ Decisions taken in stage 4 (`internal/link`):
   offset its screen holds. A late end event from an older connection leaves a pane that already moved to a newer
   one alone.
 - After a scan that reached every holder in the registry, the link drops panes no holder lists
-  (a lost pane after 30 s), frees their parsers and removes their checkpoints. A spawn whose
-  uuid matches a lost pane, or one on another holder, makes a new pane.
+  (a lost pane after 30 s), frees their parsers and removes their checkpoints. A spawn needs a
+  new uuid: one that matches a live pane on the current holder is a retry of that spawn, and one
+  that matches any other pane the link lists or has dropped is refused. If a pane with the uuid
+  appears while the spawn runs, the new pane replaces it, and watchers get gone for the old pane
+  before added for the new one.
 - When output jumps past bytes that never arrived, the screen is suspect and every subscriber
   gets a snapshot at the new offset before the next bytes.
 - A pane's notices keep their order: added, then exited, then gone. A spawned pane is added on

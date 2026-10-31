@@ -1,7 +1,7 @@
 // Package habkey keeps the hab's own SSH host key and its device id (docs/specs/transport.md 5).
 // The key is an Ed25519 key in the state directory, made on first start, owner-only. The device
 // id is the key's SHA-256 fingerprint in the standard SSH form, "SHA256:" plus unpadded base64.
-// The package uses the standard library only.
+// The key file goes through internal/secretfile, as the hook key does.
 package habkey
 
 import (
@@ -12,10 +12,10 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/pem"
-	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
+
+	"github.com/noahkiss/flightdeck/internal/secretfile"
 )
 
 // FileName is the key file's name inside the state directory.
@@ -26,69 +26,31 @@ type Key struct {
 	Private ed25519.PrivateKey
 }
 
+// maxFile bounds the key file's size; a PEM Ed25519 key is about 120 bytes.
+const maxFile = 4 << 10
+
 // LoadOrCreate reads the key from dir, or makes and saves one if none exists. It refuses a key
-// file that others can read.
+// file that is a symlink or not a regular file, that another user owns, or that group or others
+// may access, and never replaces such a file.
 func LoadOrCreate(dir string) (*Key, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	path := filepath.Join(dir, FileName)
-	k, err := load(path)
-	if err == nil || !errors.Is(err, os.ErrNotExist) {
-		return k, err
-	}
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	b, _, err := secretfile.LoadOrCreate(dir, FileName, maxFile, func() ([]byte, error) {
+		_, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, err
+		}
+		der, err := x509.MarshalPKCS8PrivateKey(priv)
+		if err != nil {
+			return nil, err
+		}
+		return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), nil
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("habkey: %w", err)
 	}
-	der, err := x509.MarshalPKCS8PrivateKey(priv)
-	if err != nil {
-		return nil, err
-	}
-	block := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-	// Write a complete temp file, then hard-link it into place. The link fails if the key
-	// exists, so a racing process never sees a half-written key, and the first one wins.
-	f, err := os.CreateTemp(dir, FileName+".tmp-*")
-	if err != nil {
-		return nil, err
-	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	if err := f.Chmod(0o600); err != nil {
-		f.Close()
-		return nil, err
-	}
-	if _, err := f.Write(block); err != nil {
-		f.Close()
-		return nil, err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return nil, err
-	}
-	if err := f.Close(); err != nil {
-		return nil, err
-	}
-	if err := os.Link(tmp, path); errors.Is(err, os.ErrExist) {
-		return load(path) // another process made it first
-	} else if err != nil {
-		return nil, err
-	}
-	return &Key{Private: priv}, nil
+	return parse(filepath.Join(dir, FileName), b)
 }
 
-func load(path string) (*Key, error) {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return nil, err
-	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("habkey: %s is readable by others (mode %v)", path, fi.Mode().Perm())
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
+func parse(path string, b []byte) (*Key, error) {
 	block, _ := pem.Decode(b)
 	if block == nil || block.Type != "PRIVATE KEY" {
 		return nil, fmt.Errorf("habkey: %s holds no PKCS#8 private key", path)

@@ -221,9 +221,14 @@ func (p *pane) prepare(l *Link, h *holderclient.Holder, pi hp.PaneInfo) (from ui
 		p.term.Close()
 		p.term = nil
 	}
+	// A release in flight for this very pane stays marked, so a scan does not send a second.
+	same := p.holder == h && p.handle == pi.Handle
 	p.holder, p.handle, p.pid = h, pi.Handle, pi.Pid
 	p.lost = nil
-	p.exited, p.exit, p.final, p.releasing = pi.Exited, pi.Exit, pi.Count, false
+	p.exited, p.exit, p.final = pi.Exited, pi.Exit, pi.Count
+	if !same {
+		p.releasing = false
+	}
 	if p.isReady {
 		p.ready, p.isReady = make(chan struct{}), false
 	}

@@ -99,3 +99,23 @@ func TestRefusesAnOpenKeyFile(t *testing.T) {
 		t.Fatal("a key readable by others was accepted")
 	}
 }
+
+// TestKeyFileRefused: a symlinked key file, or one open to group, is refused and not replaced.
+func TestKeyFileRefused(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := LoadOrCreate(dir); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, FileName)
+	os.Chmod(path, 0o640)
+	if _, err := LoadOrCreate(dir); err == nil {
+		t.Error("a key file open to group was used")
+	}
+	real := filepath.Join(dir, "elsewhere")
+	os.Rename(path, real)
+	os.Chmod(real, 0o600)
+	os.Symlink(real, path)
+	if _, err := LoadOrCreate(dir); err == nil {
+		t.Error("a symlinked key file was used")
+	}
+}

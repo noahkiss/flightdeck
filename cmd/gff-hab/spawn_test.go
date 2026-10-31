@@ -224,3 +224,17 @@ func must[T any](v T, err error) T {
 	}
 	return v
 }
+
+// TestNewHookKeyWarning: a hook key made while live panes exist is logged loudly with the count;
+// a key made with no panes, or an existing key, logs nothing.
+func TestNewHookKeyWarning(t *testing.T) {
+	if m := newHookKeyWarning(true, 3); !strings.Contains(m, "WARNING") || !strings.Contains(m, "3 live pane(s)") {
+		t.Errorf("new key with panes: %q", m)
+	}
+	if m := newHookKeyWarning(true, 0); m != "" {
+		t.Errorf("new key, no panes: %q", m)
+	}
+	if m := newHookKeyWarning(false, 3); m != "" {
+		t.Errorf("existing key: %q", m)
+	}
+}

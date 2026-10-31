@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"fmt"
 	"strings"
 
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
@@ -63,6 +64,30 @@ func livePane(lk *link.Link) func([16]byte) (string, bool) {
 		}
 		return st.UUID.String(), true
 	}
+}
+
+// livePanes counts the panes the link follows now: not lost and not gone.
+func livePanes(lk *link.Link) int {
+	if lk == nil {
+		return 0
+	}
+	n := 0
+	for _, st := range lk.Panes() {
+		if !st.Lost && !st.Gone {
+			n++
+		}
+	}
+	return n
+}
+
+// newHookKeyWarning returns the line gff-hab logs when it made a new hook key while live panes
+// exist, or "". Those panes got their tokens under the old key, which is gone, so their hooks are
+// refused from now on and they show no agent state until they are respawned.
+func newHookKeyWarning(created bool, live int) string {
+	if !created || live == 0 {
+		return ""
+	}
+	return fmt.Sprintf("WARNING: made a new %s while %d live pane(s) exist: their hook tokens no longer match, so their hooks are refused and they show no agent state until respawned", hook.KeyFile, live)
 }
 
 // startupSpawns runs once gff-hab serves, when set. Only the gfftest build sets it

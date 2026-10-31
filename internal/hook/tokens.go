@@ -5,11 +5,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
+
+	"github.com/noahkiss/flightdeck/internal/secretfile"
 )
 
 // KeyFile is the hook secret's file name inside the state directory.
@@ -72,83 +71,22 @@ func (t *Tokens) Pane(token string) (string, bool) {
 	return t.known(uuid)
 }
 
-// LoadOrCreateKey reads the hook secret from dir, or makes one if none exists. The file is
-// created with mode 0600 and appears complete or not at all. It refuses a key file that is not a
-// regular file, that another user owns, that group or others may access, or that has the wrong
-// size.
-func LoadOrCreateKey(dir string) ([]byte, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	path := filepath.Join(dir, KeyFile)
-	k, err := loadKey(path)
-	if err == nil || !errors.Is(err, os.ErrNotExist) {
+// LoadOrCreateKey reads the hook secret from dir, or makes one if none exists, and reports
+// whether it made one. The file is created with mode 0600 and appears complete or not at all. It
+// refuses a key file that is a symlink or not a regular file, that another user owns, that group
+// or others may access, or that has the wrong size, and never replaces such a file. A new secret
+// changes every pane's token, so panes that outlived the old one can no longer post.
+func LoadOrCreateKey(dir string) (key []byte, created bool, err error) {
+	key, created, err = secretfile.LoadOrCreate(dir, KeyFile, keySize, func() ([]byte, error) {
+		k := make([]byte, keySize)
+		_, err := rand.Read(k)
 		return k, err
-	}
-	key := make([]byte, keySize)
-	if _, err := rand.Read(key); err != nil {
-		return nil, err
-	}
-	// Write a complete temp file, then hard-link it into place. The link fails if the key
-	// exists, so a racing process never sees a half-written key, and the first one wins.
-	f, err := os.CreateTemp(dir, KeyFile+".tmp-*")
+	})
 	if err != nil {
-		return nil, err
+		return nil, false, fmt.Errorf("hook: %w", err)
 	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	err = f.Chmod(0o600)
-	if err == nil {
-		_, err = f.Write(key)
+	if len(key) != keySize {
+		return nil, false, fmt.Errorf("hook: %s holds %d bytes, want %d", filepath.Join(dir, KeyFile), len(key), keySize)
 	}
-	if err == nil {
-		err = f.Sync()
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return nil, err
-	}
-	if err := os.Link(tmp, path); errors.Is(err, os.ErrExist) {
-		return loadKey(path) // another process made it first
-	} else if err != nil {
-		return nil, err
-	}
-	if d, err := os.Open(dir); err == nil {
-		d.Sync()
-		d.Close()
-	}
-	return key, nil
-}
-
-// loadKey opens the key without following a symlink and checks the open file itself, so the
-// checks and the read see the same file.
-func loadKey(path string) ([]byte, error) {
-	f, err := openNoFollow(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("hook: %s is not a regular file", path)
-	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("hook: %s is open to group or others (mode %v); want 0600", path, fi.Mode().Perm())
-	}
-	if err := checkOwner(fi); err != nil {
-		return nil, fmt.Errorf("hook: %s: %w", path, err)
-	}
-	if fi.Size() != keySize {
-		return nil, fmt.Errorf("hook: %s holds %d bytes, want %d", path, fi.Size(), keySize)
-	}
-	key := make([]byte, keySize)
-	if _, err := io.ReadFull(f, key); err != nil {
-		return nil, fmt.Errorf("hook: %s: %w", path, err)
-	}
-	return key, nil
+	return key, created, nil
 }

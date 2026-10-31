@@ -1,6 +1,6 @@
 //go:build unix
 
-package hook
+package secretfile
 
 import (
 	"errors"
@@ -13,7 +13,7 @@ import (
 func openNoFollow(path string) (*os.File, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if errors.Is(err, syscall.ELOOP) {
-		return nil, fmt.Errorf("hook: %s is a symlink", path)
+		return nil, fmt.Errorf("%s is a symlink", path)
 	}
 	return f, err
 }

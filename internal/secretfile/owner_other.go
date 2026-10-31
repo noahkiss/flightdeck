@@ -1,6 +1,6 @@
 //go:build !unix
 
-package hook
+package secretfile
 
 import (
 	"errors"

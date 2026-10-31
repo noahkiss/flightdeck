@@ -82,6 +82,10 @@ var (
 	ErrClosed = errors.New("link: closed")
 	ErrAhead  = errors.New("link: offset is past the pane's output")
 	ErrSlow   = errors.New("link: subscriber fell behind")
+	// ErrUUIDUsed refuses a spawn whose uuid names a pane the link follows, follows no longer,
+	// or once followed. A pane's uuid is its hook identity: a new program under an old uuid
+	// would take the old pane's token, and a leftover process of the old pane could post as it.
+	ErrUUIDUsed = errors.New("link: uuid belongs to another pane; a new pane needs a new uuid")
 )
 
 type paneKey struct {
@@ -106,6 +110,13 @@ type Link struct {
 	byHandle map[paneKey]*pane
 	holders  map[*holderclient.Holder]bool
 	orphans  map[paneKey][]hp.Frame // frames for a pane not attached yet (a spawn in flight)
+
+	// retired holds the uuids of panes the link has dropped. Spawn refuses them.
+	retired map[hp.UUID]bool
+	// afterSpawnCheck runs in Spawn after the uuid check, before the holder spawns. Tests use it
+	// to land a pane with the same uuid inside that window.
+	afterSpawnCheck func()
+
 	watchers map[int]func(Notice)
 	nextW    int
 	closed   bool
@@ -160,6 +171,7 @@ func Open(cfg Config) (*Link, error) {
 		byHandle: map[paneKey]*pane{},
 		holders:  map[*holderclient.Holder]bool{},
 		orphans:  map[paneKey][]hp.Frame{},
+		retired:  map[hp.UUID]bool{},
 		watchers: map[int]func(Notice){},
 	}
 	l.ctx, l.cancel = context.WithCancel(context.Background())
@@ -378,6 +390,7 @@ func (l *Link) prune() {
 		case old:
 			drop = append(drop, p)
 			delete(l.panes, u)
+			l.retired[u] = true
 			for k, q := range l.byHandle {
 				if q == p {
 					delete(l.byHandle, k)
@@ -603,11 +616,19 @@ func (l *Link) attach(h *holderclient.Holder, pi hp.PaneInfo) {
 }
 
 // Spawn starts a program in a new pane on the current holder and follows its output from the
-// first byte.
+// first byte. s.UUID must be new: Spawn refuses, with ErrUUIDUsed, a uuid the link knows or once
+// knew, unless it names a live pane on the current holder, which makes the call a retry of a
+// spawn that already ran (the holder starts nothing then).
 func (l *Link) Spawn(ctx context.Context, s hp.Spawn) (PaneStatus, error) {
 	h := l.client.Current()
 	if h == nil {
 		return PaneStatus{}, holderclient.ErrNoHolder
+	}
+	if !l.spawnable(s.UUID, h) {
+		return PaneStatus{}, ErrUUIDUsed
+	}
+	if l.afterSpawnCheck != nil {
+		l.afterSpawnCheck()
 	}
 	pn, err := h.Spawn(ctx, s)
 	if err != nil {
@@ -621,21 +642,31 @@ func (l *Link) Spawn(ctx context.Context, s hp.Spawn) (PaneStatus, error) {
 	}
 	var st PaneStatus
 	ok := l.run(func() {
+		var replaced []Notice
 		l.mu.Lock()
 		if old := l.panes[pn.UUID]; old != nil {
 			old.mu.Lock()
 			retry := old.holder == h && old.handle == pn.Handle && old.lost == nil
+			live := old.lost == nil
 			old.mu.Unlock()
 			if retry {
 				l.mu.Unlock()
 				st = old.status() // a retry of a spawn that already ran
 				return
 			}
-			// A stale pane with the same uuid, lost or on another holder: the new one replaces it.
+			// A pane with the same uuid that became lost, or showed up on another holder, after
+			// the check in spawnable: the new one replaces it. Watchers hear the old one go
+			// first, so state kept for it (agent state among it) is dropped, not inherited. A
+			// lost pane's watchers heard it go when it was lost.
 			for k, q := range l.byHandle {
 				if q == old {
 					delete(l.byHandle, k)
 				}
+			}
+			if live {
+				gone := old.status()
+				gone.Gone = true
+				replaced = []Notice{{Kind: PaneGone, Pane: gone}}
 			}
 			defer old.close()
 		}
@@ -651,6 +682,7 @@ func (l *Link) Spawn(ctx context.Context, s hp.Spawn) (PaneStatus, error) {
 		// Notify the add on the event loop, before the orphan frames and before any later
 		// frame: a child that exits at once must not be reported exited before it was added.
 		st = p.status()
+		l.notify(replaced)
 		l.notify([]Notice{{Kind: PaneAdded, Pane: st}})
 		for _, f := range orphans {
 			l.apply(p, f)
@@ -660,6 +692,23 @@ func (l *Link) Spawn(ctx context.Context, s hp.Spawn) (PaneStatus, error) {
 		return PaneStatus{}, ErrClosed
 	}
 	return st, nil
+}
+
+// spawnable reports whether a spawn of uuid u on holder h may go ahead: u is unknown and was
+// never retired, or it names a live pane on h (a retry).
+func (l *Link) spawnable(u hp.UUID, h *holderclient.Holder) bool {
+	l.mu.Lock()
+	old, retired := l.panes[u], l.retired[u]
+	l.mu.Unlock()
+	if retired {
+		return false
+	}
+	if old == nil {
+		return true
+	}
+	old.mu.Lock()
+	defer old.mu.Unlock()
+	return old.holder == h && old.lost == nil
 }
 
 // Pane reports one pane as the link sees it.

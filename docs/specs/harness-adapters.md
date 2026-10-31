@@ -212,7 +212,13 @@ Built choices (`internal/hook`, `internal/harness`, `gff-hab hook`):
   start when the file is a symlink, not a regular file, owned by another user, open to group or
   others, or not 32 bytes; it never replaces such a file. No registry is stored: the same secret
   gives the same token after a gff-hab restart, so a pane that outlives gff-hab keeps posting. A
-  respawned pane has a new uuid, so its token changes.
+  respawned pane has a new uuid, so its token changes: the link refuses a spawn whose uuid names
+  a pane it follows, has lost or has dropped (a retry of a spawn on the same holder excepted), so
+  a leftover process of an old pane can never post as a new one.
+- **Key rotation.** A new `hook.key` (deleted, or a reset state directory) detaches every live
+  pane: their tokens were made under the old secret, so their hooks get 404 and they show no
+  agent state until respawned. gff-hab logs one warning line with the live pane count when it
+  makes a key while the link already follows panes.
 - **Checks.** gff-hab accepts a token only when its hash matches (a constant-time compare) and
   the holder link follows the pane: listed, not lost with its holder, and not released. A forged
   token, one spliced from two panes, one made under another secret, and the token of a pane that

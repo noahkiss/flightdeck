@@ -211,31 +211,80 @@ func TestStaleCheckpointIgnored(t *testing.T) {
 	}
 }
 
-// TestSpawnReplacesStalePane: spawning a uuid the link still lists as lost, on another holder,
-// makes a new pane rather than returning the lost one as a retry.
-func TestSpawnReplacesStalePane(t *testing.T) {
+// TestSpawnRefusesUsedUUID: a spawn of a live pane's uuid on the same holder is a retry; a uuid
+// the link lists as lost, or has dropped, is refused, so a new program never takes an old pane's
+// identity.
+func TestSpawnRefusesUsedUUID(t *testing.T) {
 	hdir := shortDir(t)
 	one := startHolder(t, hdir, "one", 0)
-	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond})
+	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond, KeepLost: 500 * time.Millisecond})
 	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
 	u := uuidN(50)
-	spawn(t, l, u, "echo first; exec sleep 1000")
+	first := spawn(t, l, u, "echo first; exec sleep 1000")
 	waitFor(t, "first output", func() bool { return screenHas(t, l, u, "first") })
+	if again := spawn(t, l, u, "echo never; exec sleep 1000"); again.Handle != first.Handle || again.Pid != first.Pid {
+		t.Fatalf("retry gave handle %d pid %d, want %d %d", again.Handle, again.Pid, first.Handle, first.Pid)
+	}
+
 	one.Process.Signal(syscall.SIGKILL)
 	waitFor(t, "the pane lost", func() bool { st, _ := paneStatus(l, u); return st.Lost })
-
 	startHolder(t, hdir, "two", 0)
 	waitFor(t, "holder two current", func() bool {
 		h := l.client.Current()
 		return h != nil && h.Instance() == "two"
 	})
-	st := spawn(t, l, u, "echo second; exec sleep 1000")
-	if st.Lost || st.Instance != "two" {
-		t.Fatalf("spawn returned lost %v on holder %q, want a live pane on two", st.Lost, st.Instance)
+	try := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), waitLong)
+		defer cancel()
+		_, err := l.Spawn(ctx, hp.Spawn{UUID: u, Cols: 80, Rows: 24, Cwd: "/",
+			Argv: []string{"/bin/sh", "-c", "echo second; exec sleep 1000"}, Env: testEnv})
+		return err
 	}
-	waitFor(t, "second output", func() bool { return screenHas(t, l, u, "second") })
-	if screenHas(t, l, u, "first") {
-		t.Error("the new pane shows the old pane's screen")
+	if st, _ := paneStatus(l, u); st.Lost {
+		if err := try(); !errors.Is(err, ErrUUIDUsed) {
+			t.Fatalf("spawn of a lost pane's uuid: %v, want ErrUUIDUsed", err)
+		}
+	}
+	waitFor(t, "the lost pane dropped", func() bool { _, ok := paneStatus(l, u); return !ok })
+	if err := try(); !errors.Is(err, ErrUUIDUsed) {
+		t.Fatalf("spawn of a dropped pane's uuid: %v, want ErrUUIDUsed", err)
+	}
+	v := uuidN(51)
+	if st := spawn(t, l, v, "echo fresh; exec sleep 1000"); st.Lost || st.Instance != "two" {
+		t.Fatalf("fresh spawn: lost %v on %q", st.Lost, st.Instance)
+	}
+}
+
+// TestSpawnReplaceSaysGone: when a live pane with the same uuid lands between Spawn's uuid check
+// and the holder's answer, the new pane replaces it, and watchers hear the old one go before
+// the new one is added, so nothing kept for the old pane carries over.
+func TestSpawnReplaceSaysGone(t *testing.T) {
+	hdir := shortDir(t)
+	startHolder(t, hdir, "one", 0)
+	l := openLink(t, Config{HolderDir: hdir})
+	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
+	u := uuidN(52)
+	var mu sync.Mutex
+	var kinds []NoticeKind
+	stop := l.Watch(func(n Notice) {
+		if n.Pane.UUID == u {
+			mu.Lock()
+			kinds = append(kinds, n.Kind)
+			mu.Unlock()
+		}
+	})
+	defer stop()
+	l.afterSpawnCheck = func() {
+		l.mu.Lock()
+		l.panes[u] = newPane(u) // live, on no holder: not a retry
+		l.mu.Unlock()
+	}
+	spawn(t, l, u, "echo new; exec sleep 1000")
+	l.afterSpawnCheck = nil
+	mu.Lock()
+	defer mu.Unlock()
+	if len(kinds) < 2 || kinds[0] != PaneGone || kinds[1] != PaneAdded {
+		t.Fatalf("notices %v, want gone then added", kinds)
 	}
 }
 

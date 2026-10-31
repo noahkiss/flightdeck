@@ -249,11 +249,14 @@ func serve(args []string) error {
 	// A pane's hook token is a keyed hash of its uuid under the secret in the state directory, so
 	// it outlives a gff-hab restart. A token resolves only while the link follows the pane: a
 	// pane the link reports gone loses its token and its agent state.
-	secret, err := hook.LoadOrCreateKey(dir)
+	secret, created, err := hook.LoadOrCreateKey(dir)
 	if err != nil {
 		l.Close()
 		hl.Close()
 		return err
+	}
+	if msg := newHookKeyWarning(created, livePanes(lk)); msg != "" {
+		logger.Print(msg)
 	}
 	tokens := hook.NewTokens(secret, livePane(lk))
 	if lk != nil {
