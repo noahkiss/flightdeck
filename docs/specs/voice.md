@@ -26,6 +26,22 @@ First build: an on-device pipeline with no extra model in the loop.
 
 Upgrade path, each a setting: Kokoro-82M voice; a long-reply summarizer (Apple Foundation Models, then a cloud model with the user's key); a realtime speech API as an optional front end.
 
+## Where transcription runs
+
+Three engines sit behind one interface, chosen per device:
+
+| Engine | Runs on | Memory cost to the app | Notes |
+|---|---|---|---|
+| Parakeet on device | The phone's Neural Engine | The model loads into the app: about 0.5 to 0.8 GB peak for a 0.6B model (a streaming 0.6B port measured 757 MB peak on an iPhone 15 Pro Max) | Best accuracy on software speech. Load only while voice mode is open; unload on exit and on a memory warning |
+| Apple SpeechAnalyzer | A system process | Almost none: the model lives outside the app | Always available; the fallback |
+| Transcription on the hab | The host | None on the phone | The app sends a short compressed clip (a few kilobytes per second) over the existing SSH connection; the hab runs Parakeet (Core ML on a Mac, an ONNX or GPU runtime on Linux) and returns text. Adds one network round trip |
+
+Rule: a device spike decides the default before the build. It measures peak memory, load time,
+speed and battery for Parakeet on the oldest supported iPhone and on the owner's devices. If peak
+memory exceeds the budget (default 1 GB, or the app is killed in testing), that device class
+defaults to the hab engine or Apple's. Voice mode never runs Parakeet in the background: a
+suspended app gets far less memory, so the model unloads when the app leaves the foreground.
+
 ## Speech-to-text
 
 WER is LibriSpeech test-clean / test-other, mostly from one M2 Pro benchmark (Lyonesse, July 2026). iPhone latency is largely unpublished.
