@@ -1,5 +1,5 @@
 {
-  "note": "Written by hand. Shapes follow the Codex hooks documentation for version 0.166 (started with --no-daemon). A turn with a permission request, a late duplicate of that request after its approval, a nested Codex session in the same pane, an interrupt, and the end.",
+  "note": "Written by hand. Shapes follow the Codex hooks documentation for version 0.166 (started with --no-daemon). A turn with a permission request, a late duplicate of that request after its approval, a nested agent of another harness in the same pane (dropped), an interrupt, and the end.",
   "harness_version": "0.166",
   "events": [
     {"harness": "codex", "event": "SessionStart", "t": 5000, "n": 1, "payload": {"session_id": "019a-codex-1", "transcript_path": "/home/user/.codex/sessions/2026/10/31/rollout-2026-10-31T10-00-00-019a-codex-1.jsonl", "cwd": "/work/app", "hook_event_name": "SessionStart", "model": "gpt-5", "source": "startup"}},
@@ -8,8 +8,8 @@
     {"harness": "codex", "event": "PermissionRequest", "t": 5300, "n": 1, "payload": {"session_id": "019a-codex-1", "turn_id": "turn-1", "cwd": "/work/app", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": {"command": "make test"}, "tool_use_id": "call_1"}},
     {"harness": "codex", "event": "PostToolUse", "t": 5400, "n": 1, "payload": {"session_id": "019a-codex-1", "turn_id": "turn-1", "cwd": "/work/app", "hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": {"command": "make test"}, "tool_use_id": "call_1"}},
     {"harness": "codex", "event": "PermissionRequest", "t": 5300, "n": 1, "payload": {"session_id": "019a-codex-1", "turn_id": "turn-1", "cwd": "/work/app", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": {"command": "make test"}, "tool_use_id": "call_1"}},
-    {"harness": "codex", "event": "SessionStart", "t": 5450, "n": 1, "payload": {"session_id": "019a-codex-nested", "cwd": "/work/app/sub", "hook_event_name": "SessionStart", "source": "startup"}},
-    {"harness": "codex", "event": "Stop", "t": 5460, "n": 1, "payload": {"session_id": "019a-codex-nested", "turn_id": "turn-x", "cwd": "/work/app/sub", "hook_event_name": "Stop"}},
+    {"harness": "claude", "event": "SessionStart", "t": 5450, "n": 1, "payload": {"session_id": "nested-claude", "cwd": "/work/app/sub", "hook_event_name": "SessionStart", "source": "startup"}},
+    {"harness": "claude", "event": "Stop", "t": 5460, "n": 1, "payload": {"session_id": "nested-claude", "cwd": "/work/app/sub", "hook_event_name": "Stop"}},
     {"harness": "codex", "event": "Interrupt", "t": 5500, "n": 1, "payload": {"session_id": "019a-codex-1", "turn_id": "turn-1", "cwd": "/work/app", "hook_event_name": "Interrupt"}},
     {"harness": "codex", "event": "SessionEnd", "t": 5600, "n": 1, "payload": {"session_id": "019a-codex-1", "cwd": "/work/app", "hook_event_name": "SessionEnd"}}
   ],

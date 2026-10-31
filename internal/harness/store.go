@@ -13,6 +13,10 @@ import (
 // EventAgentState is the event type of an agent state change.
 const EventAgentState api.EventType = "agent.state"
 
+// clockStep is how far behind the last accepted clock an event may be and still count as late.
+// Further back means the wall clock was stepped, and the event is taken as current.
+const clockStep = 5 * time.Second
+
 // maxResolved bounds the remembered resolved request ids per pane.
 const maxResolved = 64
 
@@ -81,14 +85,16 @@ func (s *Store) Hook(paneID string, env Envelope) bool {
 // the spec's State event model:
 //
 //   - Binding: while a session lives in the pane, events from another harness or session are
-//     dropped (a nested agent). A session start binds a free pane; Claude Code's own session
-//     start rebinds, since its entrypoint guard already keeps nested runs out. A subagent never
-//     binds.
+//     dropped (a nested agent). A session start of the same harness rebinds the pane, so a
+//     session that ended with no end hook never holds it. A subagent never binds.
 //   - Ordering: an event older than the last accepted one from the same source is late and
 //     changes nothing, except a resolution of the open request, which applies regardless of t.
-//     A blocked state for a request already resolved is dropped.
+//     A blocked state for a request already resolved is dropped. A session start or a new turn
+//     is never late, and a clock more than clockStep behind is taken as a clock reset.
 //   - Precedence: inside one turn a weaker source cannot overwrite a stronger one. A new turn
-//     resets it.
+//     (a prompt submit, or a new turn id) resets it.
+//   - Blocked: a second blocked report of the same kind without a request keeps the request.
+//     A subagent's progress never leaves blocked; only a resolution or the main agent does.
 //   - Exit keeps the last done or error in Last and drops working and blocked.
 //
 // A change is accepted and published only when a visible field changes.
@@ -103,7 +109,7 @@ func (s *Store) Apply(paneID, harness string, src api.StateSource, t int64, u Up
 
 	// Binding.
 	if p.bound && (harness != p.st.Harness || (u.Session != "" && p.st.Session != "" && u.Session != p.st.Session)) {
-		rebind := u.Bind && !u.Subagent && harness == p.st.Harness && harness == detect.KindClaude
+		rebind := u.Bind && !u.Subagent && harness == p.st.Harness
 		if !rebind {
 			s.logf("pane %s: dropped %s event for %s session %q; bound to %s session %q", paneID, harness, harness, u.Session, p.st.Harness, p.st.Session)
 			return false
@@ -115,13 +121,15 @@ func (s *Store) Apply(paneID, harness string, src api.StateSource, t int64, u Up
 	if u.State == api.AgentStatusBlocked && u.Request != nil && u.Request.ID != "" && contains(p.resolved, u.Request.ID) {
 		return false // a late blocked for a request already resolved
 	}
-	late := t < p.lastT[src]
+	newTurn := u.NewTurn || (u.Turn != "" && u.Turn != p.st.Turn) || (u.Bind && !u.Subagent)
+	last, seen := p.lastT[src]
+	late := seen && t < last && !newTurn && last-t <= clockStep.Milliseconds()
 	if late && !resolvesOpen {
 		return false
 	}
 
 	// Precedence.
-	if u.NewTurn {
+	if newTurn {
 		p.turnSource = ""
 	}
 	if p.turnSource != "" && rank[src] < rank[p.turnSource] && !resolvesOpen {
@@ -131,7 +139,7 @@ func (s *Store) Apply(paneID, harness string, src api.StateSource, t int64, u Up
 		p.turnSource = src
 	}
 	if !late {
-		p.lastT[src] = t
+		p.lastT[src] = t // may move back: a new turn or a clock reset
 	}
 
 	next := p.st
@@ -165,7 +173,8 @@ func (s *Store) Apply(paneID, harness string, src api.StateSource, t int64, u Up
 			next.State, next.Kind, next.Request = api.AgentStatusWorking, "", nil
 		}
 	}
-	if u.State != "" && !(late && resolvesOpen) {
+	keepBlocked := u.Subagent && next.State == api.AgentStatusBlocked && u.State != api.AgentStatusBlocked
+	if u.State != "" && !(late && resolvesOpen) && !keepBlocked {
 		if next.State == api.AgentStatusBlocked && u.State != api.AgentStatusBlocked && p.open != "" {
 			p.resolve(p.open) // leaving blocked resolves the open request
 		}
@@ -177,6 +186,9 @@ func (s *Store) Apply(paneID, harness string, src api.StateSource, t int64, u Up
 			}
 			next.Kind, next.Request = "", nil
 		case api.AgentStatusBlocked:
+			if next.State == api.AgentStatusBlocked && next.Kind == u.Kind && u.Request == nil {
+				break // the same prompt reported again without its request (Claude's Notification)
+			}
 			next.Last, next.Kind, next.Request = "", u.Kind, nil
 			if u.Kind == api.BlockedKindPermission {
 				next.Request = u.Request
@@ -278,7 +290,7 @@ func same(a, b api.AgentState) bool {
 	if a.Request != nil {
 		x, y := a.Request, b.Request
 		if x.ID != y.ID || x.Tool != y.Tool || x.Command != y.Command || x.Cwd != y.Cwd ||
-			string(x.Input) != string(y.Input) || len(x.Files) != len(y.Files) {
+			string(x.Input) != string(y.Input) || x.InputTruncated != y.InputTruncated || len(x.Files) != len(y.Files) {
 			return false
 		}
 		for i := range x.Files {

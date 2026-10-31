@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +18,20 @@ import (
 // noRaceExitSleep stops a -race build from sleeping one second at exit (its default), which
 // would hide the hook's own timing.
 const noRaceExitSleep = "GORACE=atexit_sleep_ms=0"
+
+// scaleTimeout multiplies d by $GFF_TEST_TIMEOUT_SCALE, a positive number (docs/testing.md).
+// Unset, it returns d.
+func scaleTimeout(d time.Duration) time.Duration {
+	v := os.Getenv("GFF_TEST_TIMEOUT_SCALE")
+	if v == "" {
+		return d
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || f <= 0 {
+		panic(fmt.Sprintf("GFF_TEST_TIMEOUT_SCALE=%q: want a positive number", v))
+	}
+	return time.Duration(float64(d) * f)
+}
 
 // runHook runs `gff-hab hook` as a harness would: payload on stdin, the given environment.
 func runHook(t *testing.T, env []string, payload string, args ...string) (stdout string, d time.Duration, code int) {
@@ -46,7 +62,7 @@ func TestHookNeverBlocks(t *testing.T) {
 	check := func(name string, env []string) {
 		t.Helper()
 		out, d, code := runHook(t, env, payload, "claude", "Stop")
-		if code != 0 || out != "" || d > 200*time.Millisecond {
+		if code != 0 || out != "" || d > scaleTimeout(200*time.Millisecond) {
 			t.Errorf("%s: exit %d after %v, stdout %q", name, code, d, out)
 		}
 	}

@@ -89,7 +89,8 @@ export const GffHab = async () => ({
   event: async ({ event }) => {
     if (!process.env.GFF_HAB || !EVENTS.has(event.type)) return
     try {
-      const proc = Bun.spawn([` + string(cmd) + `, "hook", "opencode", event.type], {
+      // Stamp the time here: each event spawns its own process, and those may run out of order.
+      const proc = Bun.spawn([` + string(cmd) + `, "hook", "-t", String(Date.now()), "opencode", event.type], {
         stdin: "pipe",
         stdout: "ignore",
         stderr: "ignore",

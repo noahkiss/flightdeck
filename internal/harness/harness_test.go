@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,5 +195,60 @@ func TestHarnessChangeAfterExit(t *testing.T) {
 	st, _ := s.Get("p")
 	if st.Harness != "codex" || st.Session != "x1" || st.Version != "" || st.Warning != nil {
 		t.Fatalf("old harness carried over: %+v", st)
+	}
+}
+
+// TestLargeInputLeftOut: a tool input over MaxInput stays out of the state; the command and
+// files stay exact.
+func TestLargeInputLeftOut(t *testing.T) {
+	big, _ := json.Marshal(map[string]string{"file_path": "/work/app/big.txt", "content": strings.Repeat("x", MaxInput)})
+	payload, _ := json.Marshal(map[string]any{"session_id": "s", "tool_name": "Write", "tool_use_id": "t1", "tool_input": json.RawMessage(big)})
+	u, err := Normalise(Envelope{Harness: "claude", Event: "PermissionRequest", T: 1, Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := u.Request
+	if r == nil || !r.InputTruncated || r.Input != nil || len(r.Files) != 1 || r.Files[0] != "/work/app/big.txt" {
+		t.Fatalf("request %+v", r)
+	}
+}
+
+// TestClockStepBack: a wall clock stepped back does not freeze the pane.
+func TestClockStepBack(t *testing.T) {
+	var events []structure.Event
+	s := newTestStore(&events)
+	s.Apply("p", "codex", api.StateSourceHook, 100_000, Update{NewTurn: true, State: api.AgentStatusWorking})
+	// A little behind: a late arrival, dropped.
+	if s.Apply("p", "codex", api.StateSourceHook, 99_000, Update{State: api.AgentStatusDone}) {
+		t.Fatal("a late event applied")
+	}
+	// Far behind: the clock was reset; the event is current.
+	if !s.Apply("p", "codex", api.StateSourceHook, 10_000, Update{State: api.AgentStatusDone}) {
+		t.Fatal("an event after a clock reset was dropped")
+	}
+	if !s.Apply("p", "codex", api.StateSourceHook, 10_100, Update{State: api.AgentStatusIdle}) {
+		t.Fatal("the pane froze after a clock reset")
+	}
+	// A new turn is never late, even a little behind.
+	if !s.Apply("p", "codex", api.StateSourceHook, 9_000, Update{NewTurn: true, State: api.AgentStatusWorking}) {
+		t.Fatal("a new turn behind the clock was dropped")
+	}
+}
+
+// TestSameHarnessSessionStartRebinds: a session that ended with no end hook does not hold the
+// pane; the next session start of the same harness takes it.
+func TestSameHarnessSessionStartRebinds(t *testing.T) {
+	var events []structure.Event
+	s := newTestStore(&events)
+	s.Apply("p", "codex", api.StateSourceHook, 1, Update{Bind: true, Session: "old", State: api.AgentStatusIdle})
+	s.Apply("p", "codex", api.StateSourceHook, 2, Update{NewTurn: true, Session: "old", State: api.AgentStatusWorking})
+	if !s.Apply("p", "codex", api.StateSourceHook, 3, Update{Bind: true, Session: "new", State: api.AgentStatusIdle}) {
+		t.Fatal("same-harness session start did not rebind")
+	}
+	if s.Apply("p", "codex", api.StateSourceHook, 4, Update{Session: "old", State: api.AgentStatusDone}) {
+		t.Fatal("an event of the old session applied after the rebind")
+	}
+	if st, _ := s.Get("p"); st.Session != "new" || st.State != api.AgentStatusIdle {
+		t.Fatalf("state %+v", st)
 	}
 }

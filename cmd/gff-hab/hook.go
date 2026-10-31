@@ -23,6 +23,7 @@ import (
 func hookCmd(args []string, stdin io.Reader, stdout io.Writer) int {
 	fs := flag.NewFlagSet("hook", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	stamp := fs.Int64("t", 0, "the event's time in ms since the Unix epoch, when the caller stamps it (default: now)")
 	print := fs.String("print", "", "print the hook config for this harness (claude, codex, opencode) and exit")
 	command := fs.String("command", "gff-hab", "with -print: how the harness should run gff-hab")
 	if err := fs.Parse(args); err != nil {
@@ -45,7 +46,7 @@ func hookCmd(args []string, stdin io.Reader, stdout io.Writer) int {
 	defer timer.Stop()
 	ctx, cancel := context.WithTimeout(context.Background(), hook.Budget)
 	defer cancel()
-	err := hook.Run(ctx, hook.Invocation{Harness: fs.Arg(0), Event: fs.Arg(1), Stdin: stdin, Getenv: os.Getenv})
+	err := hook.Run(ctx, hook.Invocation{Harness: fs.Arg(0), Event: fs.Arg(1), T: *stamp, Stdin: stdin, Getenv: os.Getenv})
 	if err != nil && os.Getenv("GFF_HOOK_DEBUG") != "" {
 		fmt.Fprintf(os.Stderr, "gff-hab hook: %v\n", err)
 	}

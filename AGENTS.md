@@ -60,7 +60,7 @@ build are in `docs/layout.md`.
 | `make test` | Build libghostty, then run every Go test with `-tags ghostty` |
 | `make build`, `make vet` | Build or vet every package with `-tags ghostty` |
 | `make test-pure` | Run the Go tests without cgo or libghostty |
-| `make race` | Run the holder, holderproto, holderclient, holderreg, structure and `cmd` tests with `-race -count=3` |
+| `make race` | Run the holder, holderproto, holderclient, holderreg, structure, link, harness, hook and `cmd` tests with `-race -count=3` |
 | `make fuzz [FUZZTIME=30s]` | Run each holderproto fuzz target for `FUZZTIME` in turn (nightly) |
 | `make check-pure` | Fail when a package other than `internal/vt/ghostty` needs cgo |
 | `make check-gen` | Fail when a generated file is stale |
@@ -70,9 +70,9 @@ build are in `docs/layout.md`.
 | `gff-hab connect [-socket path]` | Bridge stdin and stdout to the local socket, for `ssh <host> gff-hab connect` |
 | `gff-hab api call [-socket path \| -via command] <method> [params-json]` | Say hello, send one request, print its result as JSON (`hab.hello` prints the welcome). Exit 3 on an API error |
 | `gff-hab events [-socket path \| -via command] [-scope host\|projects:id,...\|sessions:id,...]` | Subscribe and print the welcome, the snapshot and every notification, one JSON line each. Exit 1 when the hab ends the connection with no `closing` or with a reason other than shutdown |
-| `gff-hab manifests refresh [-state dir] [-from url\|path] [-dry-run]` | Pull herdr's detection catalogue (default `https://herdr.dev/agent-detection/index.toml`; a local index or directory works offline), print a diff per newer manifest, and write them to `manifests/` in the state directory. Never downgrades; the vendored set stays the fallback |
+| `gff-hab manifests refresh [-state dir] [-from url\|path] [-dry-run]` | Pull herdr's detection catalogue over https (default `https://herdr.dev/agent-detection/index.toml`; a local index or directory works offline), print a diff per newer manifest, and write them to `manifests/` in the state directory. Never downgrades; the vendored set stays the fallback |
 | `gff-hab manifests list [-state dir]` | Print the active detection manifest per agent and where it came from. Exit 1 when a manifest could not be used (drift) |
-| `gff-hab hook <harness> [event]` | What each harness's hook config runs: posts the payload on stdin to the hook endpoint named by `$GFF_HAB`. Always exits 0, prints nothing, gives up after 900 ms |
+| `gff-hab hook [-t ms] <harness> [event]` | What each harness's hook config runs: posts the payload on stdin to the hook endpoint named by `$GFF_HAB`. Always exits 0, prints nothing, gives up after 900 ms |
 | `gff-hab hook -print <harness> [-command name]` | Print the hook config for `claude` or `codex` (JSON) or `opencode` (a plugin file). Prints only; it writes no settings |
 | `go test -race ./internal/harness/... ./internal/hook/...` | Hook fixtures per harness to the exact `agent.state` stream, precedence and ordering rules, the endpoint over a real socket into a control connection |
 | `go test ./internal/detect/...` | Detection tests: process and screen matching for Claude Code, Codex and opencode, refresh, version warnings |

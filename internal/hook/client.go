@@ -61,6 +61,7 @@ type Invocation struct {
 	Stdin   io.Reader
 	Getenv  func(string) string
 	Now     func() time.Time
+	T       int64 // the event's time in ms, stamped by the caller (the opencode plugin); 0 means now
 }
 
 // Run reads the payload, wraps it and posts it. It returns why nothing was sent, or the post
@@ -104,6 +105,10 @@ func Run(ctx context.Context, in Invocation) error {
 	if in.Now != nil {
 		now = in.Now
 	}
-	env := harness.Envelope{Harness: in.Harness, Event: event, T: now().UnixMilli(), N: 1, Payload: payload}
+	t := in.T
+	if t <= 0 {
+		t = now().UnixMilli()
+	}
+	env := harness.Envelope{Harness: in.Harness, Event: event, T: t, N: 1, Payload: payload}
 	return Post(ctx, addr, env)
 }

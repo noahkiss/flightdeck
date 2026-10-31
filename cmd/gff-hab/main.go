@@ -8,7 +8,7 @@
 //	gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
 //	gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
 //	gff-hab manifests list    [-state dir]
-//	gff-hab hook <harness> [event] < payload
+//	gff-hab hook [-t ms] <harness> [event] < payload
 //	gff-hab hook -print <harness> [-command name]
 //
 // The socket path comes from -socket, else $GFF_HAB_SOCKET, else gff/hab.sock under the user
@@ -62,7 +62,7 @@ const usage = `usage:
   gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
   gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
   gff-hab manifests list    [-state dir]
-  gff-hab hook <harness> [event] < payload
+  gff-hab hook [-t ms] <harness> [event] < payload
   gff-hab hook -print <harness> [-command name]
 `
 

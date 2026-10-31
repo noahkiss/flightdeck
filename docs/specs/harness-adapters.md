@@ -124,7 +124,11 @@ Built choices (`internal/detect`, `gff-hab manifests`):
 - **`AGENT_KIND`.** A detection's kind is the manifest id: `claude`, `codex`, `opencode`, or
   another manifest's id. Aliases resolve to the id.
 - **Data directory.** `gff-hab manifests refresh` writes into `manifests/` under the state
-  directory. A copy there replaces the vendored one only when it is valid and not older, so a
+  directory. A manifest id must match `^[a-z0-9][a-z0-9_-]*$`, since it names the file, and each
+  write is checked to land in that directory. The catalogue must be an https URL or a local
+  path; a redirect that leaves https is refused. A date-shaped version (first segment 1000 or
+  more) from after next year is refused by refresh and ignored by load, so one absurd version
+  cannot outrank every later update. A copy there replaces the vendored one only when it is valid and not older, so a
   gff-hab upgrade with newer vendored copies wins. `-from` takes a URL, a local `index.toml` or a
   directory, so a refresh works offline. `-dry-run` prints the diff and writes nothing.
   `gff-hab manifests list` prints the active set and exits 1 on drift. `gff-hab serve` logs
@@ -181,8 +185,8 @@ endpoint, which takes an optional `harness` field that defaults to `claude`.
 - **Transport.** HTTP over the hab's local Unix socket, at the path in `GFF_HAB`. The pane
   token in the path names the pane.
 - **Caller.** One small command, `gff-hab hook <harness> <event>`, reads the harness's hook JSON on
-  stdin once, adds our envelope, posts it, and exits. It backgrounds the post with a short cap
-  (one second) so a dead `gff-hab` costs the turn nothing. It never writes to stdout, except in
+  stdin once, adds our envelope, posts it, and exits. The post is synchronous, with a cap under
+  one second, so a dead `gff-hab` costs the turn nothing. It never writes to stdout, except in
   blocking permission mode.
 - **Envelope.** `harness`, `event` (the native event name), `t` (client clock, ms since epoch),
   `n` (a per-process counter from the hook command, see ordering), `payload` (the native JSON,
@@ -221,17 +225,22 @@ Built choices (`internal/hook`, `internal/harness`, `gff-hab hook`):
   hooks shape (`{"hooks": {"<Event>": [{"hooks": [{"type": "command", ...}]}]}}`), one entry per
   event the adapter uses, with a 5 second timeout (2 seconds for Codex's `SessionEnd` and
   `Interrupt`, which Codex caps at three). opencode gets a JavaScript plugin that spawns
-  `gff-hab hook opencode <event type>` with the event JSON on stdin. `-command` sets how the
-  harness runs gff-hab.
+  `gff-hab hook -t <ms> opencode <event type>` with the event JSON on stdin. The plugin stamps
+  `Date.now()` itself, because each event spawns its own process and those may run out of
+  order. `-t` sets the envelope's `t`; without it the command stamps its own clock. `-command`
+  sets how the harness runs gff-hab.
+- **Permission input.** A permission request copies the tool input only up to 64 KiB. A larger
+  input (a whole file being written) is left out and `input_truncated` is set; `command` and
+  `files` stay exact. This keeps one request from filling a client's 8 MiB event backlog.
 - **opencode events.** The plugin posts `session.created` (binds, `idle`), `session.deleted`
   (unbinds), `session.status` (`busy` or `retry` → `working`; `idle` is left to
   `session.idle`), `session.idle` (→ `done`), `session.error` (→ `error`), `permission.asked`
   and `permission.updated` (→ `blocked:permission`, request from the event's id, permission and
   metadata), and `permission.replied` (resolves the request, → `working`).
 
-Why a client clock: hook payloads carry no timestamp or sequence. Posts land out of order
-because they run in the background. Without `t`, the server cannot tell a late event from a
-new one.
+Why a client clock: hook payloads carry no timestamp or sequence. A harness may run its hooks
+in parallel, and the opencode plugin spawns one process per event, so posts can land out of
+order. Without `t`, the server cannot tell a late event from a new one.
 
 ## State event model
 
@@ -288,8 +297,16 @@ Built choices:
 - The snapshot carries the states as the optional `agents` array of the structure. A scoped
   subscription gets the states of the panes in its scope.
 - While a session lives in the pane, a hook from another harness or another session is dropped.
-  A session start binds a free pane. Claude Code's own `SessionStart` rebinds (after `/clear`),
-  since the entrypoint guard keeps nested runs out. A subagent hook never binds.
+  A session start binds a free pane, and a session start of the same harness rebinds it, so a
+  session that died with no end hook never holds the pane. A subagent hook never binds.
+- Known gap until the holder link reports foreground-process changes: a nested run of the
+  same harness (Codex inside Codex) rebinds the pane at its session start, and a harness that
+  died with no end hook keeps the pane from another harness until that harness's process exit
+  is seen. Claude's entrypoint guard keeps nested `claude -p` runs out already.
+- A second `blocked` of the same kind with no request keeps the open request. Claude fires both
+  `PermissionRequest` and `Notification` (`permission_prompt`) for one prompt, in either order.
+- A subagent's hook never moves the pane out of `blocked`; only a resolution of the open
+  request or the main agent does.
 - `done` becomes `idle` through `Store.Seen`, which the input path and focus will call once
   they exist.
 
@@ -312,6 +329,10 @@ When sources disagree inside one turn, the stronger one wins:
   X clears `blocked` for X regardless of `t`. A late `blocked` for X after its resolution is
   dropped.
 - Clocks are local: the hook command and `gff-hab` run on the same host.
+- Built: a session start or a new turn (a prompt submit, or a new turn id) is never late, and it
+  resets precedence. An event more than 5 seconds behind the last accepted `t` is taken as a
+  wall-clock step back, not a late arrival, so a stepped clock cannot freeze the pane. There is
+  no per-pane history yet; a late arrival is dropped.
 
 ### How events reach the stream
 

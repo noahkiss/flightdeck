@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -127,10 +129,10 @@ func TestRunPostsEnvelope(t *testing.T) {
 
 	// The event named on the command line wins; opencode's event type is read when none is.
 	Run(ctx, Invocation{Harness: "codex", Event: "SessionStart", Stdin: strings.NewReader(`{"session_id":"x"}`), Getenv: env(map[string]string{Env: Addr(sock, tok)})})
-	Run(ctx, Invocation{Harness: "opencode", Stdin: strings.NewReader(`{"type":"session.idle","properties":{}}`), Getenv: env(map[string]string{Env: Addr(sock, tok)})})
+	Run(ctx, Invocation{Harness: "opencode", T: 777, Stdin: strings.NewReader(`{"type":"session.idle","properties":{}}`), Getenv: env(map[string]string{Env: Addr(sock, tok)})})
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
-	if len(rec.got) != 3 || rec.got[1].Event != "SessionStart" || rec.got[2].Event != "session.idle" {
+	if len(rec.got) != 3 || rec.got[1].Event != "SessionStart" || rec.got[2].Event != "session.idle" || rec.got[2].T != 777 {
 		t.Fatalf("events %+v", rec.got)
 	}
 }
@@ -162,6 +164,20 @@ func TestRunSendsNothing(t *testing.T) {
 	}
 }
 
+// scaleTimeout multiplies d by $GFF_TEST_TIMEOUT_SCALE, a positive number (docs/testing.md).
+// Unset, it returns d.
+func scaleTimeout(d time.Duration) time.Duration {
+	v := os.Getenv("GFF_TEST_TIMEOUT_SCALE")
+	if v == "" {
+		return d
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || f <= 0 {
+		panic(fmt.Sprintf("GFF_TEST_TIMEOUT_SCALE=%q: want a positive number", v))
+	}
+	return time.Duration(float64(d) * f)
+}
+
 // TestDeadHabIsFast: with nothing listening, a post fails at once.
 func TestDeadHabIsFast(t *testing.T) {
 	sock := filepath.Join(shortDir(t), "hook.sock")
@@ -171,7 +187,7 @@ func TestDeadHabIsFast(t *testing.T) {
 	if err == nil {
 		t.Fatal("post to a dead hab succeeded")
 	}
-	if d := time.Since(start); d > 200*time.Millisecond {
+	if d := time.Since(start); d > scaleTimeout(200*time.Millisecond) {
 		t.Fatalf("post to a dead hab took %v", d)
 	}
 }
@@ -240,7 +256,7 @@ func TestConfig(t *testing.T) {
 		t.Errorf("command with a space is not quoted:\n%s", out)
 	}
 	js, err := Config("opencode", "")
-	if err != nil || !strings.Contains(js, `"hook", "opencode", event.type`) || !strings.Contains(js, "permission.asked") {
+	if err != nil || !strings.Contains(js, `"hook", "-t", String(Date.now()), "opencode", event.type`) || !strings.Contains(js, "permission.asked") {
 		t.Errorf("opencode plugin: %v\n%s", err, js)
 	}
 	if _, err := Config("nonesuch", ""); err == nil {
