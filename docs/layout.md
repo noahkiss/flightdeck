@@ -18,7 +18,8 @@ One Go module, `github.com/noahkiss/flightdeck`, at the repo root. Swift package
 | `internal/structure/` | gff-hab's shared structure (projects, sessions, order, pane links), its JSON state file and restart mapping, plus `FakeHolder` for tests. Pure Go. Spec: `docs/specs/hab-logic-api.md` 2.2 |
 | `internal/control/` | gff-hab's control connection: the Unix socket, hello, per-connection seq, scoped events, backlog close, reconnect tokens, and the client the CLI uses. Pure Go. Spec: `docs/specs/hab-logic-api.md` 3, 4.1, 4.2 |
 | `internal/habkey/` | The hab's own SSH host key and its fingerprint, the device id. Pure Go. Spec: `docs/specs/transport.md` 5 |
-| `cmd/gff-hab/` | The logic binary: `serve`, `connect`, `api call`, `events`. No holder link yet: its pane source is empty |
+| `internal/link/` | gff-hab's holder link: one parsed screen per pane on every holder, checkpoints in `<state>/checkpoints`, rebuild after a planned restart or a crash, panes marked lost when a holder dies, and a subscriber API (output with absolute offsets, or a snapshot). The parser is injected, so it is pure Go. Spec: `docs/specs/hab-logic-api.md` 2.3 |
+| `cmd/gff-hab/` | The logic binary: `serve`, `connect`, `api call`, `events`. `serve` runs the holder link; the parser is libghostty with `-tags ghostty`, else `vt.Fake` (`parser_*.go`), and the log says which |
 | `internal/vt/` | The terminal parser interface gff-hab keeps per pane, and `Fake`, a pure-Go stand-in for tests |
 | `internal/vt/ghostty/` | The libghostty-vt parser through cgo. Builds only with the `ghostty` build tag |
 | `internal/vt/vttest/` | The shared parser tests and their hand-written fixture |

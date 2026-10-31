@@ -1,8 +1,8 @@
 // Command gff-hab is the logic server on each host (docs/specs/hab-logic-api.md). This build
-// serves the control connection on a local Unix socket, with no TCP port, and carries the
-// structure store. It has no holder link yet: its pane source is empty.
+// serves the control connection on a local Unix socket, with no TCP port, carries the
+// structure store, and follows every holder's panes through the holder link (internal/link).
 //
-//	gff-hab serve   [-socket path] [-state dir] [-host-id id]
+//	gff-hab serve   [-socket path] [-state dir] [-host-id id] [-holders dir]
 //	gff-hab connect [-socket path]
 //	gff-hab api call [-socket path | -via command] <method> [params-json]
 //	gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
@@ -10,7 +10,8 @@
 // The socket path comes from -socket, else $GFF_HAB_SOCKET, else gff/hab.sock under the user
 // config directory on macOS and under $XDG_RUNTIME_DIR elsewhere. The state directory comes from
 // -state, else $GFF_HAB_STATE, else gff/hab under the user config directory on macOS and under
-// $XDG_STATE_HOME (or ~/.local/state) elsewhere.
+// $XDG_STATE_HOME (or ~/.local/state) elsewhere. The holder directory comes from -holders, else
+// $GFF_HOLDER_DIR, else the holder's own default; screen checkpoints go to <state>/checkpoints.
 //
 // `gff-hab connect` copies stdin to the socket and the socket to stdout, so
 // `ssh <host> gff-hab connect` reaches a remote hab with no new listener. -via runs a command
@@ -47,7 +48,7 @@ import (
 var build = "dev"
 
 const usage = `usage:
-  gff-hab serve   [-socket path] [-state dir] [-host-id id]
+  gff-hab serve   [-socket path] [-state dir] [-host-id id] [-holders dir]
   gff-hab connect [-socket path]
   gff-hab api call [-socket path | -via command] <method> [params-json]
   gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
@@ -121,7 +122,7 @@ func stateDir(flagValue string) (string, error) {
 	return filepath.Join(home, ".local", "state", "gff", "hab"), nil
 }
 
-// emptyHolders is the pane source until the holder link lands: no panes, no notices.
+// emptyHolders is the pane source when the holder link is off: no panes, no notices.
 type emptyHolders struct{}
 
 func (emptyHolders) Panes() ([]structure.HolderPane, error)           { return nil, nil }
@@ -132,6 +133,7 @@ func serve(args []string) error {
 	sock := socketFlag(fs)
 	state := fs.String("state", "", "state directory (default: see gff-hab -h)")
 	hostID := fs.String("host-id", os.Getenv("GFF_HAB_HOST_ID"), "host id sent in the welcome (default: $GFF_HAB_HOST_ID, else the system host name)")
+	holders := fs.String("holders", "", "holder registry directory (default: $GFF_HOLDER_DIR, else the holder's default)")
 	fs.Parse(args)
 	logger := log.New(os.Stderr, "gff-hab: ", log.LstdFlags)
 
@@ -153,10 +155,18 @@ func serve(args []string) error {
 		return err
 	}
 
+	lk, err := openLink(*holders, dir, logger)
+	if err != nil {
+		return err
+	}
+	var hs structure.Holders = emptyHolders{}
+	if lk != nil {
+		hs = lk.Structure()
+	}
 	var srv atomic.Pointer[control.Server]
 	store, err := structure.Open(structure.Config{
 		Dir:     dir,
-		Holders: emptyHolders{},
+		Holders: hs,
 		OnEvent: func(e structure.Event) {
 			if s := srv.Load(); s != nil {
 				s.Publish(e)
@@ -191,6 +201,11 @@ func serve(args []string) error {
 		sig := <-sigs
 		logger.Printf("%v: shutting down", sig)
 		s.Close() // sends closing (shutdown) to every client and waits for it to flush
+		if lk != nil {
+			if err := lk.Close(); err != nil { // planned stop: checkpoints, then handover
+				logger.Printf("holder link: %v", err)
+			}
+		}
 		close(stopped)
 	}()
 	if err := s.Serve(l); err != nil {

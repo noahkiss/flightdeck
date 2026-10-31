@@ -58,6 +58,31 @@ type Entry struct {
 // Path returns the registry file path of instance in dir.
 func Path(dir, instance string) string { return filepath.Join(dir, instance+Suffix) }
 
+// ErrNoDir means no holder directory could be chosen: on Linux, neither $GFF_HOLDER_DIR nor
+// $XDG_RUNTIME_DIR is set.
+var ErrNoDir = errors.New("no socket directory: set XDG_RUNTIME_DIR or GFF_HOLDER_DIR, or pass -dir or -socket")
+
+// DefaultDir picks the per-user holder directory (spec 4.2): $GFF_HOLDER_DIR when set; on macOS,
+// gff/holders under configDir (the user's Application Support directory); elsewhere,
+// $XDG_RUNTIME_DIR/gff/holders. With no runtime directory it fails rather than fall back to a
+// shared directory. The holder and gff-hab both use it, so they agree.
+func DefaultDir(goos string, getenv func(string) string, configDir func() (string, error)) (string, error) {
+	if d := getenv("GFF_HOLDER_DIR"); d != "" {
+		return d, nil
+	}
+	if goos == "darwin" {
+		d, err := configDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(d, "gff", "holders"), nil
+	}
+	if d := getenv("XDG_RUNTIME_DIR"); d != "" {
+		return filepath.Join(d, "gff", "holders"), nil
+	}
+	return "", ErrNoDir
+}
+
 // SocketPath returns the conventional socket path of instance in dir.
 func SocketPath(dir, instance string) string { return filepath.Join(dir, instance+".sock") }
 

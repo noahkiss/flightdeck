@@ -290,6 +290,25 @@ func (h *Holder) Replay(ctx context.Context, hd hp.Handle, from uint64) ([]byte,
 	return data, fs[len(fs)-1].(*hp.ReplayEnd), nil
 }
 
+// ReplayRange sends a bounded replay of [from, to). It does not change the live stream
+// (protocol section 6). It returns the replayed bytes and the replay end, which says what range
+// the holder really sent and whether part of it had left the ring.
+func (h *Holder) ReplayRange(ctx context.Context, hd hp.Handle, from, to uint64) ([]byte, *hp.ReplayEnd, error) {
+	fs, err := h.call(ctx, func(tok uint32) hp.Frame {
+		return &hp.Replay{Handle: hd, Token: tok, From: from, HasTo: true, To: to}
+	}, func(f hp.Frame) bool { _, ok := f.(*hp.ReplayEnd); return ok })
+	if err != nil {
+		return nil, nil, err
+	}
+	var data []byte
+	for _, f := range fs {
+		if d, ok := f.(*hp.ReplayData); ok {
+			data = append(data, d.Data...)
+		}
+	}
+	return data, fs[len(fs)-1].(*hp.ReplayEnd), nil
+}
+
 // Input writes data to the pane's PTY at the input offset the client tracks. After a wrong
 // offset (another gff-hab wrote meanwhile) it resends once at the offset the holder expects.
 func (h *Holder) Input(ctx context.Context, hd hp.Handle, data []byte) error {
@@ -354,5 +373,10 @@ func (h *Holder) Drain(ctx context.Context) error {
 }
 
 // Send writes a frame the caller built, at this connection's version. Use it for requests the
-// client has no method for; answers with a token arrive as events.
+// client has no method for; answers with a token arrive as events. Take the token from Token, so
+// it never collides with a request of the client's own.
 func (h *Holder) Send(f hp.Frame) error { return h.pc.WriteFrame(f) }
+
+// Token returns a fresh request token for a frame sent with Send. Answers to it arrive as
+// events, in order with the holder's other events.
+func (h *Holder) Token() uint32 { return h.nextToken() }

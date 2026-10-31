@@ -16,12 +16,10 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
@@ -114,23 +112,8 @@ func main() {
 	}
 }
 
-var errNoRuntimeDir = errors.New("no socket directory: set XDG_RUNTIME_DIR or GFF_HOLDER_DIR, or pass -dir or -socket")
+var errNoRuntimeDir = holderreg.ErrNoDir
 
 // defaultDir picks the per-user directory for holder sockets (spec 4.2). On macOS it is under
 // ~/Library/Application Support (os.UserConfigDir), not Caches, which storage cleanup may empty.
-func defaultDir(goos string, getenv func(string) string, stateDir func() (string, error)) (string, error) {
-	if d := getenv("GFF_HOLDER_DIR"); d != "" {
-		return d, nil
-	}
-	if goos == "darwin" {
-		d, err := stateDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(d, "gff", "holders"), nil
-	}
-	if d := getenv("XDG_RUNTIME_DIR"); d != "" {
-		return filepath.Join(d, "gff", "holders"), nil
-	}
-	return "", errNoRuntimeDir
-}
+var defaultDir = holderreg.DefaultDir

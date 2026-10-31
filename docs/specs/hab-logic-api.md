@@ -220,6 +220,29 @@ gff-hab is a client of every live holder on its host: the current one and any th
 
 Decision: proposed. Details of the frames belong to the holder spec.
 
+Decisions taken in stage 4 (`internal/link`):
+
+- A checkpoint is one file per pane, `<state>/checkpoints/<pane uuid>.ckpt`: a JSON header line
+  (format version, pane, holder, offset, encoding, size, suspect, time), then the raw snapshot.
+  It is written to a temporary file, synced and renamed, so a crash leaves the old or the new one.
+  The encoding is `snapshot-ghostty` when the parser has it, else `snapshot-vt`.
+- Cadence: when a pane has printed nothing for 1 s, and at least every 10 s while it keeps
+  printing; only when the screen changed. Both are configurable.
+- One event loop applies every holder frame in the order the holder sent it, replay data and
+  live output alike, so a pane's parser always sees its bytes in offset order.
+- A checkpoint the ring no longer reaches, one past the pane's byte count, or one in an encoding
+  this parser lacks is ignored: the screen is rebuilt from the ring alone. It is suspect only when
+  the ring has lost bytes (its oldest offset is above 0). A pane resized after its checkpoint is
+  suspect too: where the resize fell in the stream is unknown. Suspect is kept in the checkpoint.
+- A subscriber that resumes from before the link's buffer (for example from before the
+  checkpoint the link restarted from) is served by a bounded replay from the ring. Only when the
+  ring has lost those bytes does it get a snapshot instead (5.4).
+- Every byte that did not arrive as live output carries no "live" mark. Only live bytes may get
+  answers to terminal queries (5.6).
+- When a holder connection ends, its panes are marked lost at once and their subscriptions end.
+  The link rescans the registry then and every 2 s, and replays a pane that comes back from the
+  offset its screen holds.
+
 ### 2.4 Backends
 
 gff-hab talks to its terminals through a backend interface with two implementations:

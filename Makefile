@@ -48,9 +48,9 @@ test: libghostty
 test-pure:
 	CGO_ENABLED=0 $(GO) test ./...
 
-# Run the holder and structure tests three times under the race detector. No libghostty needed.
+# Run the holder, structure and link tests three times under the race detector. No libghostty needed.
 RACE_PKGS := ./internal/holder/... ./internal/holderproto/... ./internal/holderclient/... \
-	./internal/holderreg/... ./internal/structure/... ./cmd/...
+	./internal/holderreg/... ./internal/structure/... ./internal/link/... ./cmd/...
 race:
 	$(GO) test -race -count=3 $(RACE_PKGS)
 

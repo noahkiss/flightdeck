@@ -78,4 +78,5 @@ against the schemas in both directions. The Swift `GoldenTests` decode every gol
 
 Each holder stage close records a passing `make race` run (`go test -race -count=3` of the holder
 packages) on macOS as well as Linux. `make fuzz` runs each holderproto fuzz target for `FUZZTIME`
-(default 30s); the nightly job will run it.
+(default 30s); the nightly job will run it. `GFF_RESTART_LOOP=200 go test -run TestRestartLoop
+./internal/link/` is the nightly restart loop of core test 1; the push run does 20.

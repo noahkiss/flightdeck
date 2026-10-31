@@ -9,7 +9,7 @@ import (
 // Fake is a Parser for tests that must run without cgo. It keeps a plain grid of runes: it moves the
 // cursor, wraps, scrolls into a scrollback, switches to the alternate screen, and counts wide
 // characters as two cells. It ignores colours, styles, titles and most modes. Its only snapshot
-// encoding is EncodingVT, which holds the text alone.
+// encoding is EncodingVT, which holds the text and the cursor position alone.
 type Fake struct{}
 
 var _ Parser = Fake{}
@@ -406,6 +406,8 @@ func (t *fakeTerm) Snapshot(enc Encoding, opts SnapshotOptions) ([]byte, error) 
 		b.WriteString("\x1b[?1049h\x1b[H\x1b[2J")
 		b.WriteString(strings.Join(rowText(t.alt), "\r\n"))
 	}
+	// The cursor goes last, so bytes written after a restore land where they would have.
+	b.WriteString("\x1b[" + strconv.Itoa(t.y+1) + ";" + strconv.Itoa(t.x+1) + "H")
 	return []byte(b.String()), nil
 }
 

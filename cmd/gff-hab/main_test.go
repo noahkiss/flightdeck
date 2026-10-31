@@ -34,6 +34,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	bin = filepath.Join(d, "gff-hab")
+	os.Setenv("GFF_HOLDER_DIR", filepath.Join(d, "holders")) // never the user's real holders
 	out, err := exec.Command("go", append(append([]string{"build"}, buildFlags...), "-o", bin, ".")...).CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "build gff-hab: %v\n%s", err, out)
