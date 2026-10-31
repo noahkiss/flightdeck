@@ -33,6 +33,8 @@ type actions struct {
 	getenv  func(string) string
 	environ func() []string
 	home    string // the default working directory
+	// refresh asks for a read of a project's repository state (internal/gitstatus); nil for none.
+	refresh func(project string)
 }
 
 var _ control.Actions = (*actions)(nil)
@@ -71,7 +73,7 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 		return "", "", err
 	}
 
-	project := p.Project
+	project, projectTop := p.Project, ""
 	switch {
 	case p.Project != "" && p.ProjectDir != "":
 		return "", "", control.Errorf(api.ErrorKindInvalid, "give project or project_dir, not both")
@@ -83,7 +85,7 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 		if !filepath.IsAbs(p.ProjectDir) {
 			return "", "", control.Errorf(api.ErrorKindInvalid, "project_dir %q is not an absolute path", p.ProjectDir)
 		}
-		if project, err = a.projectFor(ctx, p.ProjectDir); err != nil {
+		if project, projectTop, err = a.projectFor(ctx, p.ProjectDir); err != nil {
 			return "", "", err
 		}
 	}
@@ -124,7 +126,32 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 		}
 		return "", "", storeErr(err)
 	}
+	a.noteDir(ctx, project, projectTop, p.Project != "" && p.Cwd != "", cwd)
 	return ss.ID, pane, nil
+}
+
+// noteDir records the repository folder a new session works in as its project's most recently
+// used directory, then asks for a read of the project's repository state. top is the folder
+// project_dir resolved to. With a project given by id and a cwd, the cwd's repository counts
+// when it has the project's identity.
+func (a *actions) noteDir(ctx context.Context, project, top string, checkCwd bool, cwd string) {
+	if project == "" {
+		return
+	}
+	if top == "" && checkCwd {
+		t, remote, root, err := gitIdentity(ctx, cwd)
+		if err == nil {
+			if pr, ok := a.store.ProjectByIdentity(remote, root); ok && pr.ID == project {
+				top = t
+			}
+		}
+	}
+	if top != "" {
+		_ = a.store.AddProjectDir(project, top) // the project may be gone meanwhile
+	}
+	if a.refresh != nil {
+		a.refresh(project)
+	}
 }
 
 // ClosePane releases a pane through the link (hab-logic-api.md 3.9).
@@ -162,35 +189,35 @@ func (a *actions) freeName(base string) string {
 }
 
 // projectFor finds the project of the git repository that holds dir, by its remote, else its root
-// commit, and creates it when it is new. The new project takes the repository folder's name.
-func (a *actions) projectFor(ctx context.Context, dir string) (string, error) {
-	name, remote, root, err := gitIdentity(ctx, dir)
+// commit, and creates it when it is new. The new project takes the repository folder's name. It
+// also returns the repository's top folder.
+func (a *actions) projectFor(ctx context.Context, dir string) (id, top string, err error) {
+	top, remote, root, err := gitIdentity(ctx, dir)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if pr, ok := a.store.ProjectByIdentity(remote, root); ok {
-		return pr.ID, nil
+		return pr.ID, top, nil
 	}
-	pr, err := a.store.CreateProject(name, remote, root)
+	pr, err := a.store.CreateProject(filepath.Base(top), remote, root)
 	if errors.Is(err, structure.ErrConflict) { // created meanwhile by another call
 		if pr, ok := a.store.ProjectByIdentity(remote, root); ok {
-			return pr.ID, nil
+			return pr.ID, top, nil
 		}
 	}
 	if err != nil {
-		return "", storeErr(err)
+		return "", "", storeErr(err)
 	}
-	return pr.ID, nil
+	return pr.ID, top, nil
 }
 
-// gitIdentity reads the identity of the repository that holds dir: the folder name, the remote
+// gitIdentity reads the identity of the repository that holds dir: its top folder, the remote
 // (origin, else the first remote) and, with no remote, the root commit.
-func gitIdentity(ctx context.Context, dir string) (name, remote, root string, err error) {
-	top, err := git(ctx, dir, "rev-parse", "--show-toplevel")
+func gitIdentity(ctx context.Context, dir string) (top, remote, root string, err error) {
+	top, err = git(ctx, dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", "", "", control.Errorf(api.ErrorKindInvalid, "project_dir %s is not inside a git repository", dir)
 	}
-	name = filepath.Base(top)
 	if remote, err = git(ctx, dir, "remote", "get-url", "origin"); err != nil {
 		remote = ""
 		if list, err := git(ctx, dir, "remote"); err == nil && list != "" {
@@ -199,7 +226,7 @@ func gitIdentity(ctx context.Context, dir string) (name, remote, root string, er
 		}
 	}
 	if remote != "" {
-		return name, remote, "", nil
+		return top, remote, "", nil
 	}
 	roots, err := git(ctx, dir, "rev-list", "--max-parents=0", "HEAD")
 	if err != nil || roots == "" {
@@ -207,7 +234,7 @@ func gitIdentity(ctx context.Context, dir string) (name, remote, root string, er
 	}
 	list := strings.Fields(roots)
 	slices.Sort(list) // a repository with several roots: pick one the same way every time
-	return name, "", list[0], nil
+	return top, "", list[0], nil
 }
 
 // git runs git in dir and returns its trimmed output.

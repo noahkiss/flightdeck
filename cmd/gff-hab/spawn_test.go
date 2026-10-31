@@ -343,6 +343,11 @@ func TestSessionCreateAndClose(t *testing.T) {
 		!slices.Equal(st.Projects[0].Sessions, []string{running.Session}) {
 		t.Errorf("projects: %+v", st.Projects)
 	}
+	// The new project's repository state follows: an empty repository has a branch and no head.
+	waitUntil(t, "the project's branch", func() bool {
+		ps := structureNow().Projects
+		return len(ps) == 1 && ps[0].Branch != "" && ps[0].Head == "" && ps[0].Ahead == nil
+	})
 	if s := session(st, ended.Session); s.Name != "sh" || s.Project != "" {
 		t.Errorf("the default-named session: %+v", s)
 	}

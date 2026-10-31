@@ -765,6 +765,8 @@ func (s *Store) state() *stateFile {
 	for _, p := range s.projects {
 		cp := *p
 		cp.Sessions = append([]string{}, p.Sessions...)
+		cp.Dirs = slices.Clone(p.Dirs)
+		cp.Ahead, cp.Behind = copyInt(p.Ahead), copyInt(p.Behind)
 		st.Projects = append(st.Projects, cp)
 	}
 	for _, ss := range s.sessions {
@@ -859,7 +861,16 @@ func projectAPI(p *projectRecord) api.Project {
 	return api.NonNil(api.Project{
 		ID: p.ID, Revision: p.Revision, Name: p.Name, Remote: p.Remote, RootCommit: p.RootCommit,
 		Sessions: slices.Clone(p.Sessions),
+		Branch:   p.Branch, Head: p.Head, Ahead: copyInt(p.Ahead), Behind: copyInt(p.Behind),
 	})
+}
+
+func copyInt(v *int) *int {
+	if v == nil {
+		return nil
+	}
+	c := *v
+	return &c
 }
 
 func sessionAPI(ss *sessionRecord) api.Session {

@@ -60,7 +60,7 @@ build are in `docs/layout.md`.
 | `make test` | Build libghostty, then run every Go test with `-tags ghostty` |
 | `make build`, `make vet` | Build or vet every package with `-tags ghostty` |
 | `make test-pure` | Run the Go tests without cgo or libghostty |
-| `make race` | Run the holder, holderproto, holderclient, holderreg, structure, link, harness, hook and `cmd` tests with `-race -count=3` |
+| `make race` | Run the holder, holderproto, holderclient, holderreg, structure, link, harness, hook, gitstatus and `cmd` tests with `-race -count=3` |
 | `make fuzz [FUZZTIME=30s]` | Run each holderproto fuzz target for `FUZZTIME` in turn (nightly) |
 | `make check-pure` | Fail when a package other than `internal/vt/ghostty` needs cgo |
 | `make check-gen` | Fail when a generated file is stale |
@@ -75,6 +75,7 @@ build are in `docs/layout.md`.
 | `gff-hab hook [-t ms] <harness> [event]` | What each harness's hook config runs: posts the payload on stdin to the hook endpoint named by `$GFF_HAB`. Always exits 0, prints nothing, gives up after 900 ms |
 | `gff-hab hook -print <harness> [-command name]` | Print the hook config for `claude` or `codex` (JSON) or `opencode` (a plugin file). Prints only; it writes no settings |
 | `go test -race ./internal/harness/... ./internal/hook/...` | Hook fixtures per harness to the exact `agent.state` stream, precedence and ordering rules, the endpoint over a real socket into a control connection |
+| `go test -race ./internal/gitstatus/` | Project git status with real git in temp folders (skips with no git): ahead and behind against a local bare upstream, a branch switch seen by the ref poll, a folder outside a repository, a hung git that times out, no event without a change |
 | `go test ./internal/detect/...` | Detection tests: process and screen matching for Claude Code, Codex and opencode, refresh, version warnings |
 | `go test -race ./internal/control/... ./cmd/gff-hab/...` | Control connection tests: seq and epoch rules, backlog close, the binary over a real socket and over `connect` |
 | `go test ./internal/link/` | Holder link end-to-end tests: real holder, the link as its own process, restarted by plan and SIGKILL; `-tags ghostty` uses libghostty. `GFF_RESTART_LOOP=200` sets the restart count (nightly) |

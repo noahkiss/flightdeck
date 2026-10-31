@@ -4,6 +4,7 @@
 //
 //	gff-hab serve   [-socket path] [-hook-socket path] [-state dir] [-host-id id] [-holders dir]
 //	                [-scrollback-mib n] [-scrollback-budget-mib n] [-retired-days n]
+//	                [-git-interval d]
 //	gff-hab connect [-socket path]
 //	gff-hab api call [-socket path | -via command] <method> [params-json]
 //	gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
@@ -22,7 +23,9 @@
 // $GFF_HAB_SCROLLBACK_MIB, else 10 MiB. The cap for all parsers together comes from
 // -scrollback-budget-mib, else $GFF_HAB_SCROLLBACK_BUDGET_MIB, else 256 MiB; past it each parser
 // gets an equal share, at least 1 MiB. The uuid of a pane that is gone stays refused to new
-// spawns, across restarts, for -retired-days, else $GFF_HAB_RETIRED_DAYS, else 30 days.
+// spawns, across restarts, for -retired-days, else $GFF_HAB_RETIRED_DAYS, else 30 days. Each
+// project's repository state (branch, head, ahead, behind) is read again every -git-interval,
+// else $GFF_HAB_GIT_INTERVAL, else 60s, besides the reads that hooks and ref changes trigger.
 //
 // `gff-hab connect` copies stdin to the socket and the socket to stdout, so
 // `ssh <host> gff-hab connect` reaches a remote hab with no new listener. -via runs a command
@@ -52,6 +55,7 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/datastream"
+	"github.com/noahkiss/flightdeck/internal/gitstatus"
 	"github.com/noahkiss/flightdeck/internal/habkey"
 	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/hook"
@@ -163,6 +167,7 @@ func serve(args []string) error {
 	scrollMiB := fs.Int("scrollback-mib", 0, "scrollback cap per pane in MiB (default: $GFF_HAB_SCROLLBACK_MIB, else 10)")
 	retiredDays := fs.Int("retired-days", 0, "days a gone pane's uuid stays refused (default: $GFF_HAB_RETIRED_DAYS, else 30)")
 	budgetMiB := fs.Int("scrollback-budget-mib", 0, "scrollback cap for all panes together in MiB (default: $GFF_HAB_SCROLLBACK_BUDGET_MIB, else 256)")
+	gitEvery := fs.Duration("git-interval", 0, "read each project's repository state this often (default: $GFF_HAB_GIT_INTERVAL, else 60s)")
 	fs.Parse(args)
 	logger := log.New(os.Stderr, "gff-hab: ", log.LstdFlags)
 
@@ -196,6 +201,10 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	gitInterval, err := gitInterval(*gitEvery, os.Getenv)
+	if err != nil {
+		return err
+	}
 	lk, err := openLink(*holders, dir, linkOptions{scrollback, budget, ttl}, logger)
 	if err != nil {
 		return err
@@ -222,6 +231,10 @@ func serve(args []string) error {
 		logger.Printf("state: %s", h.Problem)
 	}
 	logManifestDrift(dir, logger.Printf)
+	// Repository state per project (hab-logic-api.md 3.9): reads run off the event loop, with a
+	// timeout, and change a project only when a value changed.
+	repos := gitstatus.New(gitstatus.Config{Store: store, Interval: gitInterval, Logf: logger.Printf})
+	defer repos.Close()
 	debugf := func(string, ...any) {}
 	if os.Getenv("GFF_HAB_DEBUG") != "" {
 		debugf = logger.Printf
@@ -269,6 +282,7 @@ func serve(args []string) error {
 			getenv:  os.Getenv,
 			environ: os.Environ,
 			home:    home,
+			refresh: repos.Refresh,
 		}
 	}
 	s := control.New(control.Config{
@@ -300,7 +314,12 @@ func serve(args []string) error {
 		})
 		defer stopWatch()
 	}
-	hooks := hook.NewServer(tokens, func(pane string, env harness.Envelope) { agents.Hook(pane, env) }, logger.Printf)
+	hooks := hook.NewServer(tokens, func(pane string, env harness.Envelope) {
+		agents.Hook(pane, env)
+		// A hook from a pane in a project may follow a commit or a checkout: read the project's
+		// repository again, debounced.
+		repos.Refresh(store.ProjectOfPane(pane))
+	}, logger.Printf)
 	go func() {
 		if err := hooks.Serve(hl); err != nil {
 			logger.Printf("%v: %v", errHookServe, err)

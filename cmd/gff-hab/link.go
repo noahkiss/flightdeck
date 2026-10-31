@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/noahkiss/flightdeck/internal/gitstatus"
 	"github.com/noahkiss/flightdeck/internal/holderreg"
 	"github.com/noahkiss/flightdeck/internal/link"
 )
@@ -79,6 +80,26 @@ func retiredTTL(flagDays int, getenv func(string) string) (time.Duration, error)
 		return 0, fmt.Errorf("%s %d: must be 1 to 3650 days", from, days)
 	}
 	return time.Duration(days) * 24 * time.Hour, nil
+}
+
+// gitInterval picks how often each project's repository state is read: -git-interval, else
+// $GFF_HAB_GIT_INTERVAL (a Go duration), else gitstatus.DefaultInterval.
+func gitInterval(flagValue time.Duration, getenv func(string) string) (time.Duration, error) {
+	d, from := flagValue, "-git-interval"
+	if d == 0 {
+		d, from = gitstatus.DefaultInterval, ""
+		if v := getenv("GFF_HAB_GIT_INTERVAL"); v != "" {
+			var err error
+			if d, err = time.ParseDuration(v); err != nil {
+				return 0, fmt.Errorf("GFF_HAB_GIT_INTERVAL=%q: want a duration such as 60s", v)
+			}
+			from = "GFF_HAB_GIT_INTERVAL"
+		}
+	}
+	if d < time.Second || d > 24*time.Hour {
+		return 0, fmt.Errorf("%s %v: must be 1s to 24h", from, d)
+	}
+	return d, nil
 }
 
 // linkOptions are the holder link settings that come from flags or the environment.

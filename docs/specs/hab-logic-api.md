@@ -622,9 +622,39 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   | `PermissionRequest` | `description` | String, the harness's longer description of the call | Part 4 stage 4 |
   | `PermissionRequest` | `context_line` | String, the agent's last message before the request | Part 4 stage 5 (transcript reader) |
   | `PermissionRequest` | `expires_at` | RFC 3339 string, like `AgentState.at`; absent when no deadline applies (`app.md` 7.4) | Part 4 stage 4 |
-  | `Project` | `branch` | String; absent on a detached HEAD or outside a repository | No stage yet: a repository reader in gff-hab, to be planned in Part 2 |
+  | `Project` | `branch` | String; absent on a detached HEAD or outside a repository | Part 2, project git status (`internal/gitstatus`); built |
   | `Project` | `head` | String, the full commit id of HEAD; the app shortens it | As `branch` |
   | `Project` | `ahead`, `behind` | Integers, pointers so 0 is sent; both absent with no upstream | As `branch` |
+
+  **How gff-hab fills the project's repository fields** (`internal/gitstatus`):
+
+  - **Which folder.** gff-hab keeps each project's working directories, most recently used
+    first, at most 8, in the state file (not in the API). `session.create` adds the repository
+    top folder of `project_dir`. With `project` and a `cwd`, it adds the cwd's top folder when
+    that repository has the project's identity. A project with several worktrees or clones
+    shows the one most recently used for a new session; a folder that no longer exists is
+    skipped for the next. A project with no known folder has empty fields.
+  - **The reads.** git runs in that folder with the C locale, `GIT_OPTIONAL_LOCKS=0`
+    (`--no-optional-locks`), no pager, no prompt and only `PATH`, `HOME`, `XDG_CONFIG_HOME`
+    and `TMPDIR` from the hab's environment. Commands: `rev-parse --absolute-git-dir
+    --git-common-dir`, `symbolic-ref -q HEAD` (the branch; an unborn branch counts),
+    `rev-parse -q --verify HEAD^{commit}` (the head), `rev-parse --symbolic-full-name
+    @{upstream}`, and `rev-list --left-right --count HEAD...@{upstream}`. gff-hab never
+    fetches and never writes to the repository; behind counts what the last fetch brought.
+  - **Edge cases.** A detached HEAD has no branch and no counts. An empty repository has a
+    branch and no head. No upstream, or an upstream ref that was never fetched, gives no counts.
+    A folder outside a repository clears the fields.
+  - **Limits.** One read (all its git runs) has 2 s. A timeout or a git failure keeps the last
+    values and is logged once until a read succeeds. Each project has at most one read
+    running; at most 4 run at once on the host. Reads run off the event loop; the store is
+    locked only to look up the folder and to store the result.
+  - **When.** On `session.create` into the project (so on project create), on any hook event
+    from a pane of the project (debounced 500 ms), every 60 s (`-git-interval`, else
+    `GFF_HAB_GIT_INTERVAL`), and when a poll every 2 s sees a change in the size or time of
+    `HEAD`, the branch ref, the upstream ref or `packed-refs`. No file watcher is needed.
+  - **Events.** A read that changes a value raises the project's revision and sends
+    `project.updated`. An unchanged read sends nothing. The last values are kept in the state
+    file, so a restarted hab shows them until its first read.
 
   The approval request is `PermissionRequest`, which `AgentState.request` carries. The other
   `app.md` 17 rows were already in place: chat kind `plan`, `approval.answer` field `via`, and

@@ -47,6 +47,15 @@ type projectRecord struct {
 	Remote     string   `json:"remote,omitempty"`
 	RootCommit string   `json:"root_commit,omitempty"`
 	Sessions   []string `json:"sessions"`
+	// Dirs are the project's known working directories (repository top levels), most recently
+	// used first. gff-hab reads the repository state from them. Not part of the API.
+	Dirs []string `json:"dirs,omitempty"`
+	// The last repository state read from Dirs (hab-logic-api.md 3.9). Kept so a restart shows
+	// the last values until the next read.
+	Branch string `json:"branch,omitempty"`
+	Head   string `json:"head,omitempty"`
+	Ahead  *int   `json:"ahead,omitempty"`
+	Behind *int   `json:"behind,omitempty"`
 }
 
 type sessionRecord struct {
