@@ -336,7 +336,7 @@ func TestRestartUnfiledAndGone(t *testing.T) {
 func TestCorruptStateFile(t *testing.T) {
 	for name, content := range map[string]string{
 		"garbage":      "{not json",
-		"future":       `{"schema": 99, "projects": [], "sessions": [], "panes": []}`,
+		"old schema":   `{"schema": 0, "projects": [], "sessions": [], "panes": []}`,
 		"inconsistent": `{"schema": 1, "projects": [], "sessions": [{"id":"s-1","revision":1,"name":"x","project":"p-gone","state":"running"}], "panes": []}`,
 	} {
 		t.Run(name, func(t *testing.T) {

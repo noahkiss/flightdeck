@@ -43,6 +43,8 @@ var (
 	ErrNotFound = errors.New("not_found")
 	ErrConflict = errors.New("conflict")
 	ErrInvalid  = errors.New("invalid")
+	// ErrLocked means another process holds the state directory.
+	ErrLocked = errors.New("state directory in use by another process")
 )
 
 // Event is one structure change, before it gets a seq. Data is api.Project, api.Session,
@@ -70,6 +72,9 @@ type Health struct {
 	StatePath string // the state file
 	Problem   string // why the stored state could not be loaded; the store started empty
 	KeptAs    string // where the unreadable file was kept, when Problem is set and it existed
+	// ReadOnly is set when the state file was written by a newer build. The store leaves that
+	// file untouched and saves nothing until a build that reads it takes over.
+	ReadOnly  bool
 	SaveError string // the last save failure; cleared by the next good save
 }
 
@@ -88,25 +93,38 @@ type paneState struct {
 	exit     *api.ExitStatus
 }
 
+// maxTombstones bounds the final revisions kept for gone panes no session links. A gone pane a
+// session links keeps its tombstone as long as the session record does.
+const maxTombstones = 1024
+
 // Store holds the structure. It is safe for use from many goroutines. OnEvent runs under the
-// store lock and must not call back into the store.
+// store lock and must not call back into the store. The store never calls into Holders while it
+// holds its lock, so a holder notice may arrive at any time.
 type Store struct {
-	mu       sync.Mutex
-	path     string
-	holders  Holders
-	onEvent  func(Event)
-	now      func() time.Time
-	cancel   func()
-	health   Health
-	projects []*projectRecord // creation order
-	sessions []*sessionRecord // creation order
-	panes    map[string]*paneState
+	mu        sync.Mutex
+	path      string
+	holders   Holders
+	onEvent   func(Event)
+	now       func() time.Time
+	cancel    func()
+	lock      *dirLock
+	ready     bool     // reconcile has run; notices before it wait in pending
+	pending   []Notice // notices that arrived before reconcile, in order
+	closed    bool
+	health    Health
+	projects  []*projectRecord // creation order
+	sessions  []*sessionRecord // creation order
+	panes     map[string]*paneState
+	gone      map[string]uint64 // tombstones: final revision of each gone pane
+	goneOrder []string          // tombstone ids, oldest first
 }
 
 // Open loads the state from cfg.Dir and matches it to the live holder panes. An unreadable or
 // corrupt state file never stops it: the store starts empty, the live panes appear unfiled, the
-// bad file is kept aside and Health reports the problem. Open fails only when the state
-// directory cannot be made or the holders cannot list their panes; it never touches a pane.
+// bad file is kept aside and Health reports the problem. A file from a newer build is not
+// corrupt: the store starts empty and read-only and leaves the file alone. Open fails when the
+// state directory cannot be made, when another process holds it (ErrLocked), or when the
+// holders cannot list their panes. It never touches a pane.
 func Open(cfg Config) (*Store, error) {
 	if cfg.Dir == "" || cfg.Holders == nil {
 		return nil, fmt.Errorf("%w: structure needs a state directory and holders", ErrInvalid)
@@ -114,12 +132,18 @@ func Open(cfg Config) (*Store, error) {
 	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
 		return nil, fmt.Errorf("state directory: %w", err)
 	}
+	lock, err := lockDir(cfg.Dir)
+	if err != nil {
+		return nil, err
+	}
 	s := &Store{
 		path:    filepath.Join(cfg.Dir, StateFile),
 		holders: cfg.Holders,
 		onEvent: cfg.OnEvent,
 		now:     cfg.Now,
+		lock:    lock,
 		panes:   map[string]*paneState{},
+		gone:    map[string]uint64{},
 	}
 	if s.onEvent == nil {
 		s.onEvent = func(Event) {}
@@ -130,9 +154,13 @@ func Open(cfg Config) (*Store, error) {
 	s.health.StatePath = s.path
 
 	st, problem := loadState(s.path)
-	if problem != nil {
+	switch {
+	case errors.Is(problem, errNewerSchema):
 		s.health.Problem = problem.Error()
-		if _, err := os.Stat(s.path); err == nil {
+		s.health.ReadOnly = true
+	case problem != nil:
+		s.health.Problem = problem.Error()
+		if _, err := os.Lstat(s.path); err == nil {
 			aside, err := keepAside(s.path, s.now())
 			if err != nil {
 				s.health.Problem += "; could not keep the bad file aside: " + err.Error()
@@ -141,27 +169,40 @@ func Open(cfg Config) (*Store, error) {
 		}
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	// Subscribe before listing so no notice falls between the list and the subscription. A
-	// notice that arrives now waits for the lock and then applies to the reconciled state.
-	s.cancel = cfg.Holders.Subscribe(s.handle)
+	// Subscribe before listing so no notice falls between the list and the subscription.
+	// Notices that arrive before reconcile wait in pending and apply after it, in order.
+	cancel := cfg.Holders.Subscribe(s.handle)
 	live, err := cfg.Holders.Panes()
 	if err != nil {
-		s.cancel()
+		cancel()
+		lock.release()
 		return nil, fmt.Errorf("list holder panes: %w", err)
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cancel = cancel
 	s.reconcile(&st, live)
+	for _, n := range s.pending {
+		s.apply(n)
+	}
+	s.pending = nil
+	s.ready = true
 	return s, nil
 }
 
-// Close stops listening to the holders. It touches no pane.
+// Close stops listening to the holders and releases the state directory. It touches no pane.
+// The store must not be used after Close.
 func (s *Store) Close() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.cancel != nil {
-		s.cancel()
-		s.cancel = nil
+	cancel, lock := s.cancel, s.lock
+	s.cancel, s.lock = nil, nil
+	s.closed = true
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if lock != nil {
+		lock.release()
 	}
 }
 
@@ -176,8 +217,9 @@ func (s *Store) Health() Health {
 //   - a live pane keeps its stored revision; a size or build change while gff-hab was down
 //     raises it;
 //   - a live pane no session links is unfiled;
-//   - a stored pane that is gone emits pane.deleted with a final revision;
-//   - a running session whose pane is gone, or whose child exited, is marked exited.
+//   - a stored pane that is gone emits pane.deleted with a final revision, kept as a tombstone;
+//   - a running session whose pane is gone, or whose child exited, is marked exited;
+//   - an exited session with no exit status whose pane is live again runs again.
 func (s *Store) reconcile(st *stateFile, live []HolderPane) {
 	var events []Event
 	for i := range st.Projects {
@@ -187,6 +229,10 @@ func (s *Store) reconcile(st *stateFile, live []HolderPane) {
 	for i := range st.Sessions {
 		ss := st.Sessions[i]
 		s.sessions = append(s.sessions, &ss)
+	}
+	for _, g := range st.Gone {
+		s.gone[g.ID] = g.Revision
+		s.goneOrder = append(s.goneOrder, g.ID)
 	}
 	stored := map[string]paneRecord{}
 	for _, p := range st.Panes {
@@ -203,7 +249,7 @@ func (s *Store) reconcile(st *stateFile, live []HolderPane) {
 				changed = append(changed, hp.ID)
 			}
 		} else {
-			ps.rec = paneRecord{ID: hp.ID, Revision: 1, HolderBuild: hp.HolderBuild, Cols: hp.Cols, Rows: hp.Rows}
+			ps.rec = paneRecord{ID: hp.ID, Revision: s.firstRevision(hp.ID), HolderBuild: hp.HolderBuild, Cols: hp.Cols, Rows: hp.Rows}
 			changed = append(changed, hp.ID)
 		}
 		s.panes[hp.ID] = ps
@@ -215,20 +261,24 @@ func (s *Store) reconcile(st *stateFile, live []HolderPane) {
 	sort.Strings(ids)
 	for _, id := range ids {
 		if _, ok := s.panes[id]; !ok {
-			events = append(events, Event{PaneDeleted, id, stored[id].Revision + 1, api.Deleted{}})
+			final := stored[id].Revision + 1
+			s.bury(id, final)
+			events = append(events, Event{PaneDeleted, id, final, api.Deleted{}})
 		}
 	}
 	for _, ss := range s.sessions {
-		if ss.State != stateRunning || ss.Pane == "" {
+		if ss.Pane == "" {
 			continue
 		}
 		ps, ok := s.panes[ss.Pane]
 		switch {
-		case !ok:
+		case ss.State == stateRunning && !ok:
 			ss.State = stateExited
-		case ps.exit != nil:
+		case ss.State == stateRunning && ps.exit != nil:
 			ss.State = stateExited
 			ss.Exit = copyExit(ps.exit)
+		case ss.State == stateExited && ok && ss.Exit == nil && ps.exit == nil:
+			ss.State = stateRunning
 		default:
 			continue
 		}
@@ -241,10 +291,48 @@ func (s *Store) reconcile(st *stateFile, live []HolderPane) {
 	s.commit(events)
 }
 
+// firstRevision is the revision of a pane the store has not seen live: one past its tombstone
+// when it had one (it came back after a holder dropped out), else 1. It removes the tombstone.
+func (s *Store) firstRevision(id string) uint64 {
+	rev, ok := s.gone[id]
+	if !ok {
+		return 1
+	}
+	delete(s.gone, id)
+	s.goneOrder = slices.DeleteFunc(s.goneOrder, func(x string) bool { return x == id })
+	return rev + 1
+}
+
+// bury records a gone pane's final revision, so the pane keeps rising revisions if it comes
+// back. Tombstones of panes no session links are bounded by maxTombstones, oldest dropped first.
+func (s *Store) bury(id string, final uint64) {
+	if _, ok := s.gone[id]; !ok {
+		s.goneOrder = append(s.goneOrder, id)
+	}
+	s.gone[id] = final
+	unlinked := 0
+	for _, g := range s.goneOrder {
+		if s.sessionByPane(g) == nil {
+			unlinked++
+		}
+	}
+	for i := 0; unlinked > maxTombstones && i < len(s.goneOrder); {
+		g := s.goneOrder[i]
+		if s.sessionByPane(g) != nil {
+			i++
+			continue
+		}
+		delete(s.gone, g)
+		s.goneOrder = slices.Delete(s.goneOrder, i, i+1)
+		unlinked--
+	}
+}
+
 // --- Projects ---
 
-// CreateProject adds a project. remote identifies it; rootCommit is the fallback when there is
-// no remote. A second project with the same identity is a conflict.
+// CreateProject adds a project. remote identifies it, stored in its NormalizeRemote form;
+// rootCommit is the fallback when there is no remote. A second project with the same identity
+// is a conflict.
 func (s *Store) CreateProject(name, remote, rootCommit string) (api.Project, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -254,6 +342,7 @@ func (s *Store) CreateProject(name, remote, rootCommit string) (api.Project, err
 	if remote == "" && rootCommit == "" {
 		return api.Project{}, fmt.Errorf("%w: a project needs a git remote or a root commit", ErrInvalid)
 	}
+	remote = NormalizeRemote(remote)
 	if p := s.findProject(remote, rootCommit); p != nil {
 		return api.Project{}, fmt.Errorf("%w: project %s has the same identity", ErrConflict, p.ID)
 	}
@@ -264,7 +353,7 @@ func (s *Store) CreateProject(name, remote, rootCommit string) (api.Project, err
 }
 
 // ProjectByIdentity finds the project for a git remote, or for a root commit when remote is
-// empty.
+// empty. Remotes compare in their NormalizeRemote form.
 func (s *Store) ProjectByIdentity(remote, rootCommit string) (api.Project, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -276,8 +365,9 @@ func (s *Store) ProjectByIdentity(remote, rootCommit string) (api.Project, bool)
 }
 
 func (s *Store) findProject(remote, rootCommit string) *projectRecord {
+	remote = NormalizeRemote(remote)
 	for _, p := range s.projects {
-		if remote != "" && p.Remote == remote {
+		if remote != "" && NormalizeRemote(p.Remote) == remote {
 			return p
 		}
 		if remote == "" && p.Remote == "" && p.RootCommit == rootCommit {
@@ -503,18 +593,35 @@ func (s *Store) CloseSession(id string) error {
 func (s *Store) handle(n Notice) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	if !s.ready {
+		s.pending = append(s.pending, n)
+		return
+	}
+	s.apply(n)
+}
+
+func (s *Store) apply(n Notice) {
 	switch n.Kind {
 	case PaneAdded, PaneResized:
 		s.paneSeen(n.Pane)
 	case PaneExited:
+		// An exit always carries a status, even an empty one: a session exited with no status
+		// means "pane lost", and only that kind revives when the pane is seen again.
+		exit := copyExit(n.Exit)
+		if exit == nil {
+			exit = &api.ExitStatus{}
+		}
 		if ps := s.panes[n.Pane.ID]; ps != nil {
-			ps.exit = copyExit(n.Exit)
+			ps.exit = exit
 			ps.offset = max(ps.offset, n.Pane.Offset)
 		}
 		ss := s.sessionByPane(n.Pane.ID)
-		if ss != nil && ss.State == stateRunning {
+		if ss != nil && (ss.State == stateRunning || ss.Exit == nil) {
 			ss.State = stateExited
-			ss.Exit = copyExit(n.Exit)
+			ss.Exit = copyExit(exit)
 			ss.Revision++
 			s.commit([]Event{s.sessionEvent(ss)})
 		}
@@ -531,7 +638,9 @@ func (s *Store) handle(n Notice) {
 			ss.Revision++
 			events = append(events, s.sessionEvent(ss))
 		}
-		events = append(events, Event{PaneDeleted, n.Pane.ID, ps.rec.Revision + 1, api.Deleted{}})
+		final := ps.rec.Revision + 1
+		s.bury(n.Pane.ID, final)
+		events = append(events, Event{PaneDeleted, n.Pane.ID, final, api.Deleted{}})
 		s.commit(events)
 	}
 }
@@ -539,11 +648,21 @@ func (s *Store) handle(n Notice) {
 func (s *Store) paneSeen(hp HolderPane) {
 	ps := s.panes[hp.ID]
 	if ps == nil {
-		s.panes[hp.ID] = &paneState{
-			rec:      paneRecord{ID: hp.ID, Revision: 1, HolderBuild: hp.HolderBuild, Cols: hp.Cols, Rows: hp.Rows},
+		ps = &paneState{
+			rec:      paneRecord{ID: hp.ID, Revision: s.firstRevision(hp.ID), HolderBuild: hp.HolderBuild, Cols: hp.Cols, Rows: hp.Rows},
 			holderID: hp.HolderID, offset: hp.Offset, exit: copyExit(hp.Exit),
 		}
-		s.commit([]Event{s.paneEvent(hp.ID)})
+		s.panes[hp.ID] = ps
+		var events []Event
+		// A session marked exited with no status lost its pane to a holder that dropped out.
+		// The pane is back, so the program still runs.
+		if ss := s.sessionByPane(hp.ID); ss != nil && ss.State == stateExited && ss.Exit == nil && ps.exit == nil {
+			ss.State = stateRunning
+			ss.Revision++
+			events = append(events, s.sessionEvent(ss))
+		}
+		events = append(events, s.paneEvent(hp.ID))
+		s.commit(events)
 		return
 	}
 	ps.holderID = hp.HolderID
@@ -604,10 +723,15 @@ func (s *Store) Unfiled() []string {
 // commit saves the state, then emits the events in order. A failed save keeps the change in
 // memory and is reported in Health; the next good save writes it.
 func (s *Store) commit(events []Event) {
-	if err := writeState(s.path, s.state()); err != nil {
-		s.health.SaveError = err.Error()
-	} else {
-		s.health.SaveError = ""
+	if s.closed {
+		return
+	}
+	if !s.health.ReadOnly {
+		if err := writeState(s.path, s.state()); err != nil {
+			s.health.SaveError = err.Error()
+		} else {
+			s.health.SaveError = ""
+		}
 	}
 	for _, e := range events {
 		s.onEvent(e)
@@ -626,6 +750,9 @@ func (s *Store) state() *stateFile {
 	}
 	for _, id := range s.paneIDs() {
 		st.Panes = append(st.Panes, s.panes[id].rec)
+	}
+	for _, id := range s.goneOrder {
+		st.Gone = append(st.Gone, tombstone{ID: id, Revision: s.gone[id]})
 	}
 	return st
 }

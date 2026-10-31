@@ -43,10 +43,13 @@ type Notice struct {
 
 // Holders is what the structure needs from the live holders on its host.
 type Holders interface {
-	// Panes lists every live pane on every live holder.
+	// Panes lists every live pane on every live holder. It fails unless every holder answered:
+	// a partial list would make the panes of a missing holder look gone.
 	Panes() ([]HolderPane, error)
 	// Subscribe calls fn for every notice until cancel is called. fn may be called from any
-	// goroutine, but never while the holder side holds a lock the caller could need.
+	// goroutine, but never from inside Panes, Subscribe or cancel, and never while the holder
+	// side holds a lock. Notices for one pane arrive in order. PaneGone means the pane is
+	// destroyed, not that its holder is out of reach.
 	Subscribe(fn func(Notice)) (cancel func())
 }
 

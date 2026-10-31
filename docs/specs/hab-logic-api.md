@@ -181,16 +181,19 @@ Rules:
 Decisions taken in stage 5 (`internal/structure`):
 
 - Ids are random, so a lost state file can never cause an id to be reused.
-- Project identity is the remote when there is one, else the root commit. Project names need not
-  be unique; session names are unique among all session records, exited ones included.
+- Project identity is the remote when there is one, else the root commit. Remotes are stored as
+  host/path (no scheme, user, port or `.git`; host in lower case). Project names need not be unique; session names are unique among all session records, exited ones included.
 - A pane's revision is stored too. Linking or unlinking a session raises it, since
   `Pane.session` changed.
 - Deleting a project keeps its sessions, with no project. Closing a session removes the record
   only; the pane, if live, becomes unfiled.
-- A session whose pane vanished while gff-hab was down is marked exited with no exit status.
+- A session whose pane is gone is marked exited with no exit status. If the pane comes back (its
+  holder only dropped out), the session runs again. A gone pane keeps a tombstone of its final
+  revision, so a returning pane's revision keeps rising.
 - A corrupt or unreadable state file is renamed `structure.json.bad-<time>`; gff-hab starts empty
-  with every live pane unfiled and reports the problem. Revisions then restart at 1; clients
-  recover because the restart is a new epoch, which forces a fresh snapshot.
+  with every live pane unfiled and reports the problem. A file from a newer build is left alone:
+  gff-hab starts empty, saves nothing and reports it. A lock file stops two gff-hab processes
+  sharing one state directory.
 
 ### 2.3 The holder link (logic side only)
 
@@ -330,14 +333,16 @@ not a second versioning scheme.
   `error.data.seq`. The client applies the response, then only events with a higher seq. This
   closes the race between reading and subscribing.
 - **Every object carries a revision.** It rises by one on each change to that object and is stored
-  with the object, so it survives restarts. A client ignores an event whose revision is not higher
-  than the one it holds. Deleting an object emits a final event with a final revision.
+  with the object, so it survives restarts. Within one epoch, a client ignores an event whose
+  revision is not higher than the one it holds. Deleting an object emits a final event with a final
+  revision. Revisions order events only within an epoch; they are not compared across epochs.
 - **Ephemeral events carry no revision.** `pane.owner` and `pane.activity` describe state that is
   not stored (owners are dropped on a new epoch). Their `revision` is absent, and the "ignore a
   revision not higher" rule does not apply: a client applies them in seq order.
 - **Epoch.** A random id chosen at each gff-hab start, sent in the welcome. A client that reconnects
   and sees a new epoch drops everything ephemeral (owners, tickets, desired sizes) and takes a fresh
-  snapshot. Object revisions stay comparable across epochs because they are stored.
+  snapshot. It replaces all its objects with the snapshot's, whatever revisions it held: a lost or
+  unreadable state file can restart revisions lower than before.
 - **Heartbeat.** A `heartbeat` notification with the current seq every 15 s when no other event was
   sent. A client that hears nothing for 45 s treats the connection as dead.
 - **Client liveness.** A client sends `hab.ping` every 15 s when it has sent nothing else. gff-hab

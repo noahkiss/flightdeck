@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -25,7 +26,19 @@ type stateFile struct {
 	Projects []projectRecord `json:"projects"`
 	Sessions []sessionRecord `json:"sessions"`
 	Panes    []paneRecord    `json:"panes"`
+	Gone     []tombstone     `json:"gone,omitempty"`
 }
+
+// tombstone keeps a gone pane's final revision, so a pane that comes back after a holder dropped
+// out keeps rising revisions.
+type tombstone struct {
+	ID       string `json:"id"`
+	Revision uint64 `json:"revision"`
+}
+
+// errNewerSchema marks a state file written by a newer build. It is not corrupt; the store must
+// leave it alone.
+var errNewerSchema = errors.New("state file is from a newer build")
 
 type projectRecord struct {
 	ID         string   `json:"id"`
@@ -69,6 +82,9 @@ func loadState(path string) (stateFile, error) {
 	var st stateFile
 	if err := json.Unmarshal(b, &st); err != nil {
 		return stateFile{Schema: SchemaVersion}, fmt.Errorf("parse state file: %w", err)
+	}
+	if st.Schema > SchemaVersion {
+		return stateFile{Schema: SchemaVersion}, fmt.Errorf("%w: schema %d, this build reads %d; running without saving", errNewerSchema, st.Schema, SchemaVersion)
 	}
 	if st.Schema != SchemaVersion {
 		return stateFile{Schema: SchemaVersion}, fmt.Errorf("state file schema %d, this build reads %d", st.Schema, SchemaVersion)
@@ -190,11 +206,19 @@ func writeState(path string, st *stateFile) error {
 	return syncDir(dir)
 }
 
+// syncFile is f.Sync; tests replace it.
+var syncFile = (*os.File).Sync
+
+// syncDir fsyncs a directory. Some filesystems refuse fsync on a directory with EINVAL; the
+// rename is as durable as they make it, so that counts as success.
 func syncDir(dir string) error {
 	d, err := os.Open(dir)
 	if err != nil {
 		return err
 	}
 	defer d.Close()
-	return d.Sync()
+	if err := syncFile(d); err != nil && !errors.Is(err, syscall.EINVAL) {
+		return err
+	}
+	return nil
 }
