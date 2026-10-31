@@ -39,8 +39,9 @@ Split a module out only when something outside this repo must import it on its o
 Rules the generator follows:
 
 - A pointer field, or a field tagged `omitempty`, is optional. Every other field is required.
-- A named string type listed in `api.Enums` is an open word set. Swift decodes unknown words.
-  Adding a word to an input set is compatible; adding one to an output set is breaking.
+- A named string type listed in `api.Enums` is a word set. A set the server sends is open:
+  clients map unknown words to a fallback, so adding a word is compatible. A set the client sends
+  is closed: removing a word, or turning a plain string into a word set, is breaking (spec 3.3).
 - A required array must go out as `[]`, never `null`. Go marshals a nil slice as `null`, so the
   server must make every required slice non-nil.
 
