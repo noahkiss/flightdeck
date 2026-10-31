@@ -57,6 +57,7 @@ type Welcome struct {
 	Capabilities   []string `json:"capabilities" doc:"Optional features this host offers (spec 3.4)."`
 	ClientID       string   `json:"client_id"`
 	ReconnectToken string   `json:"reconnect_token"`
+	DeviceID       string   `json:"device_id" doc:"SHA-256 fingerprint of the hab's own SSH host key, in the standard SSH form. Clients pin it (transport.md 5)."`
 }
 
 // --- Structure (spec 2.2) ---
@@ -214,6 +215,47 @@ type RedrawMode string
 type RedrawParams struct {
 	Pane string     `json:"pane"`
 	Mode RedrawMode `json:"mode,omitempty" doc:"Default snapshot."`
+}
+
+// --- Devices (transport.md 5, 6) ---
+
+type DeviceKind string
+
+type DeviceState string
+
+// Device is one device record in the hab's trust store.
+type Device struct {
+	ID       string      `json:"id" doc:"SHA-256 fingerprint of the device's public key, in the standard SSH form."`
+	Label    string      `json:"label"`
+	Kind     DeviceKind  `json:"kind"`
+	State    DeviceState `json:"state"`
+	PairedAt string      `json:"paired_at" doc:"RFC 3339 time."`
+	PairedBy string      `json:"paired_by,omitempty" doc:"Device id of the client that confirmed the pairing."`
+	LastSeen string      `json:"last_seen,omitempty" doc:"RFC 3339 time."`
+}
+
+type DevicesPairParams struct {
+	Label string `json:"label,omitempty" doc:"Label for the device that will pair."`
+}
+
+// PairingOffer is what a QR code carries (transport.md 6.1).
+type PairingOffer struct {
+	Seq
+	DeviceID    string   `json:"device_id" doc:"The hab's host-key fingerprint, to pin."`
+	Endpoints   []string `json:"endpoints" doc:"Embedded SSH server addresses, host:port."`
+	Token       string   `json:"token" doc:"One-time pairing token."`
+	ExpiresInMS int      `json:"expires_in_ms"`
+}
+
+type DevicesListParams struct{}
+
+type DeviceList struct {
+	Seq
+	Devices []Device `json:"devices" doc:"Paired and revoked devices; revoked ones stay as tombstones."`
+}
+
+type DevicesRevokeParams struct {
+	ID string `json:"id" doc:"Device id to revoke."`
 }
 
 // --- Discovery ---

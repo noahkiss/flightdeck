@@ -75,6 +75,9 @@ var Methods = []Method{
 	{"pane.disown", "Give up size ownership; the pane keeps its size (spec 6.3).", PaneRef{}, OwnerResult{}},
 	{"pane.set_desired_size", "Store this client's wanted size (spec 6.3).", DesiredSizeParams{}, DesiredSizeResult{}},
 	{"pane.redraw", "Send a fresh snapshot, or nudge the program to redraw (spec 6.7).", RedrawParams{}, Empty{}},
+	{"devices.pair", "Make a one-time pairing offer for a new device (transport.md 6.1). Needs the devices capability.", DevicesPairParams{}, PairingOffer{}},
+	{"devices.list", "List the devices in the hab's trust store (transport.md 5). Needs the devices capability.", DevicesListParams{}, DeviceList{}},
+	{"devices.revoke", "Revoke a device and close its connections (transport.md 6.6). Needs the devices capability.", DevicesRevokeParams{}, Empty{}},
 }
 
 // Notifications is every notification the server sends on a control connection.
@@ -118,6 +121,8 @@ var Enums = map[string][]string{
 	"OwnerReason":   {"create", "take", "request", "typed", "disown", "lost", "disconnect", "restore"},
 	"ClosingReason": {"event_backlog", "shutdown"},
 	"RedrawMode":    {"snapshot", "nudge"},
+	"DeviceKind":    {"hab", "phone", "desktop", "gff"},
+	"DeviceState":   {"paired", "revoked"},
 	"ErrorKind":     {"not_found", "conflict", "unavailable", "revision_unsupported", "not_owner", "ticket_invalid", "invalid"},
 }
 
@@ -135,5 +140,6 @@ type Translator interface {
 // Translators maps revision N to the translator between N and N-1. Revision 1 needs none.
 var Translators = map[int]Translator{}
 
-// Capabilities lists the known capability strings (spec 3.4).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts"}
+// Capabilities lists the known capability strings (spec 3.4). "devices" means the hab's embedded
+// SSH server is on and the devices.* methods work (transport.md 9.4).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices"}

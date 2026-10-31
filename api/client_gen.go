@@ -20,6 +20,18 @@ const (
 )
 
 const (
+	DeviceKindHab     DeviceKind = "hab"
+	DeviceKindPhone   DeviceKind = "phone"
+	DeviceKindDesktop DeviceKind = "desktop"
+	DeviceKindGff     DeviceKind = "gff"
+)
+
+const (
+	DeviceStatePaired  DeviceState = "paired"
+	DeviceStateRevoked DeviceState = "revoked"
+)
+
+const (
 	ErrorKindNotFound            ErrorKind = "not_found"
 	ErrorKindConflict            ErrorKind = "conflict"
 	ErrorKindUnavailable         ErrorKind = "unavailable"
@@ -199,5 +211,26 @@ func (c Client) PaneSetDesiredSize(ctx context.Context, params DesiredSizeParams
 func (c Client) PaneRedraw(ctx context.Context, params RedrawParams) (Empty, error) {
 	var result Empty
 	err := c.Caller.Call(ctx, "pane.redraw", params, &result)
+	return result, err
+}
+
+// DevicesPair calls devices.pair. Make a one-time pairing offer for a new device (transport.md 6.1). Needs the devices capability.
+func (c Client) DevicesPair(ctx context.Context, params DevicesPairParams) (PairingOffer, error) {
+	var result PairingOffer
+	err := c.Caller.Call(ctx, "devices.pair", params, &result)
+	return result, err
+}
+
+// DevicesList calls devices.list. List the devices in the hab's trust store (transport.md 5). Needs the devices capability.
+func (c Client) DevicesList(ctx context.Context, params DevicesListParams) (DeviceList, error) {
+	var result DeviceList
+	err := c.Caller.Call(ctx, "devices.list", params, &result)
+	return result, err
+}
+
+// DevicesRevoke calls devices.revoke. Revoke a device and close its connections (transport.md 6.6). Needs the devices capability.
+func (c Client) DevicesRevoke(ctx context.Context, params DevicesRevokeParams) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "devices.revoke", params, &result)
 	return result, err
 }

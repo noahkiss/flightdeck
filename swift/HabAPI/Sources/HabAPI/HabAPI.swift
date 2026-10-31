@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices"]
 }
 
 public struct ClientInfo: Codable, Sendable, Hashable {
@@ -162,6 +162,106 @@ public struct DesiredSizeResult: Codable, Sendable, Hashable {
     public init(applied: Bool, seq: UInt64) {
         self.applied = applied
         self.seq = seq
+    }
+}
+
+public struct Device: Codable, Sendable, Hashable {
+    /// SHA-256 fingerprint of the device's public key, in the standard SSH form.
+    public var id: String
+    public var kind: DeviceKind
+    public var label: String
+    /// RFC 3339 time.
+    public var lastSeen: String?
+    /// RFC 3339 time.
+    public var pairedAt: String
+    /// Device id of the client that confirmed the pairing.
+    public var pairedBy: String?
+    public var state: DeviceState
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case kind = "kind"
+        case label = "label"
+        case lastSeen = "last_seen"
+        case pairedAt = "paired_at"
+        case pairedBy = "paired_by"
+        case state = "state"
+    }
+
+    public init(id: String, kind: DeviceKind, label: String, lastSeen: String? = nil, pairedAt: String, pairedBy: String? = nil, state: DeviceState) {
+        self.id = id
+        self.kind = kind
+        self.label = label
+        self.lastSeen = lastSeen
+        self.pairedAt = pairedAt
+        self.pairedBy = pairedBy
+        self.state = state
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct DeviceKind: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let hab = DeviceKind(rawValue: "hab")
+    public static let phone = DeviceKind(rawValue: "phone")
+    public static let desktop = DeviceKind(rawValue: "desktop")
+    public static let gff = DeviceKind(rawValue: "gff")
+}
+
+public struct DeviceList: Codable, Sendable, Hashable {
+    /// Paired and revoked devices; revoked ones stay as tombstones.
+    public var devices: [Device]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case devices = "devices"
+        case seq = "seq"
+    }
+
+    public init(devices: [Device], seq: UInt64) {
+        self.devices = devices
+        self.seq = seq
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct DeviceState: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let paired = DeviceState(rawValue: "paired")
+    public static let revoked = DeviceState(rawValue: "revoked")
+}
+
+public struct DevicesListParams: Codable, Sendable, Hashable {
+    public init() {
+    }
+}
+
+public struct DevicesPairParams: Codable, Sendable, Hashable {
+    /// Label for the device that will pair.
+    public var label: String?
+
+    enum CodingKeys: String, CodingKey {
+        case label = "label"
+    }
+
+    public init(label: String? = nil) {
+        self.label = label
+    }
+}
+
+public struct DevicesRevokeParams: Codable, Sendable, Hashable {
+    /// Device id to revoke.
+    public var id: String
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+    }
+
+    public init(id: String) {
+        self.id = id
     }
 }
 
@@ -379,6 +479,34 @@ public struct OwnerResult: Codable, Sendable, Hashable {
     public init(owner: String? = nil, seq: UInt64) {
         self.owner = owner
         self.seq = seq
+    }
+}
+
+public struct PairingOffer: Codable, Sendable, Hashable {
+    /// The hab's host-key fingerprint, to pin.
+    public var deviceId: String
+    /// Embedded SSH server addresses, host:port.
+    public var endpoints: [String]
+    public var expiresInMs: Int
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// One-time pairing token.
+    public var token: String
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case endpoints = "endpoints"
+        case expiresInMs = "expires_in_ms"
+        case seq = "seq"
+        case token = "token"
+    }
+
+    public init(deviceId: String, endpoints: [String], expiresInMs: Int, seq: UInt64, token: String) {
+        self.deviceId = deviceId
+        self.endpoints = endpoints
+        self.expiresInMs = expiresInMs
+        self.seq = seq
+        self.token = token
     }
 }
 
@@ -709,6 +837,8 @@ public struct Welcome: Codable, Sendable, Hashable {
     /// Optional features this host offers (spec 3.4).
     public var capabilities: [String]
     public var clientId: String
+    /// SHA-256 fingerprint of the hab's own SSH host key, in the standard SSH form. Clients pin it (transport.md 5).
+    public var deviceId: String
     /// Random id of this gff-hab process.
     public var epoch: String
     public var host: HostInfo
@@ -722,6 +852,7 @@ public struct Welcome: Codable, Sendable, Hashable {
         case build = "build"
         case capabilities = "capabilities"
         case clientId = "client_id"
+        case deviceId = "device_id"
         case epoch = "epoch"
         case host = "host"
         case reconnectToken = "reconnect_token"
@@ -729,10 +860,11 @@ public struct Welcome: Codable, Sendable, Hashable {
         case seq = "seq"
     }
 
-    public init(build: String, capabilities: [String], clientId: String, epoch: String, host: HostInfo, reconnectToken: String, revision: Int, seq: UInt64) {
+    public init(build: String, capabilities: [String], clientId: String, deviceId: String, epoch: String, host: HostInfo, reconnectToken: String, revision: Int, seq: UInt64) {
         self.build = build
         self.capabilities = capabilities
         self.clientId = clientId
+        self.deviceId = deviceId
         self.epoch = epoch
         self.host = host
         self.reconnectToken = reconnectToken
@@ -771,6 +903,12 @@ public enum HabMethods {
     public static let paneSetDesiredSize = HabMethod<DesiredSizeParams, DesiredSizeResult>(name: "pane.set_desired_size")
     /// Send a fresh snapshot, or nudge the program to redraw (spec 6.7).
     public static let paneRedraw = HabMethod<RedrawParams, Empty>(name: "pane.redraw")
+    /// Make a one-time pairing offer for a new device (transport.md 6.1). Needs the devices capability.
+    public static let devicesPair = HabMethod<DevicesPairParams, PairingOffer>(name: "devices.pair")
+    /// List the devices in the hab's trust store (transport.md 5). Needs the devices capability.
+    public static let devicesList = HabMethod<DevicesListParams, DeviceList>(name: "devices.list")
+    /// Revoke a device and close its connections (transport.md 6.6). Needs the devices capability.
+    public static let devicesRevoke = HabMethod<DevicesRevokeParams, Empty>(name: "devices.revoke")
 }
 
 public enum HabNotification {

@@ -16,7 +16,8 @@
     "snapshot-vt",
     "snapshot-ghostty",
     "agent-state",
-    "transcripts"
+    "transcripts",
+    "devices"
   ],
   "methods": [
     {
@@ -345,6 +346,68 @@
       "x-params": {
         "$ref": "#/components/schemas/RedrawParams"
       }
+    },
+    {
+      "name": "devices.pair",
+      "summary": "Make a one-time pairing offer for a new device (transport.md 6.1). Needs the devices capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "label",
+          "description": "Label for the device that will pair.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PairingOffer"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/DevicesPairParams"
+      }
+    },
+    {
+      "name": "devices.list",
+      "summary": "List the devices in the hab's trust store (transport.md 5). Needs the devices capability.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DeviceList"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/DevicesListParams"
+      }
+    },
+    {
+      "name": "devices.revoke",
+      "summary": "Revoke a device and close its connections (transport.md 6.6). Needs the devices capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "id",
+          "description": "Device id to revoke.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/DevicesRevokeParams"
+      }
     }
   ],
   "x-notifications": [
@@ -647,6 +710,104 @@
           "applied"
         ]
       },
+      "Device": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "SHA-256 fingerprint of the device's public key, in the standard SSH form."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DeviceKind"
+          },
+          "label": {
+            "type": "string"
+          },
+          "last_seen": {
+            "type": "string",
+            "description": "RFC 3339 time."
+          },
+          "paired_at": {
+            "type": "string",
+            "description": "RFC 3339 time."
+          },
+          "paired_by": {
+            "type": "string",
+            "description": "Device id of the client that confirmed the pairing."
+          },
+          "state": {
+            "$ref": "#/components/schemas/DeviceState"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "kind",
+          "state",
+          "paired_at"
+        ]
+      },
+      "DeviceKind": {
+        "type": "string",
+        "x-known-values": [
+          "hab",
+          "phone",
+          "desktop",
+          "gff"
+        ]
+      },
+      "DeviceList": {
+        "type": "object",
+        "properties": {
+          "devices": {
+            "type": "array",
+            "description": "Paired and revoked devices; revoked ones stay as tombstones.",
+            "items": {
+              "$ref": "#/components/schemas/Device"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "devices"
+        ]
+      },
+      "DeviceState": {
+        "type": "string",
+        "x-known-values": [
+          "paired",
+          "revoked"
+        ]
+      },
+      "DevicesListParams": {
+        "type": "object"
+      },
+      "DevicesPairParams": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Label for the device that will pair."
+          }
+        }
+      },
+      "DevicesRevokeParams": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Device id to revoke."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
       "DiscoverParams": {
         "type": "object"
       },
@@ -858,6 +1019,42 @@
         },
         "required": [
           "seq"
+        ]
+      },
+      "PairingOffer": {
+        "type": "object",
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "description": "The hab's host-key fingerprint, to pin."
+          },
+          "endpoints": {
+            "type": "array",
+            "description": "Embedded SSH server addresses, host:port.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "expires_in_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "token": {
+            "type": "string",
+            "description": "One-time pairing token."
+          }
+        },
+        "required": [
+          "seq",
+          "device_id",
+          "endpoints",
+          "token",
+          "expires_in_ms"
         ]
       },
       "Pane": {
@@ -1229,6 +1426,10 @@
           "client_id": {
             "type": "string"
           },
+          "device_id": {
+            "type": "string",
+            "description": "SHA-256 fingerprint of the hab's own SSH host key, in the standard SSH form. Clients pin it (transport.md 5)."
+          },
           "epoch": {
             "type": "string",
             "description": "Random id of this gff-hab process."
@@ -1258,7 +1459,8 @@
           "host",
           "capabilities",
           "client_id",
-          "reconnect_token"
+          "reconnect_token",
+          "device_id"
         ]
       }
     }
