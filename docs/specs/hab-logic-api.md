@@ -670,7 +670,7 @@ holder link off, a data hello gets a reject frame (`unavailable`).
   the socket; it exits when gff-hab closes the connection.
 - `gff-hab api call -via <command>` and `gff-hab events -via <command>` run a command such as
   `ssh <host> gff-hab connect` and speak over its stdio.
-- **How data connections ride it** is Decision: open (Q2). The options:
+- **How data connections ride it** is decided: option A (Q2). The options were:
   - **A. One SSH channel per connection.** The control connection is one `gff-hab connect`
     session. Each data connection is another session on the same SSH connection
     (`gff-hab connect --data`). The Go client opens several session channels on one SSH
@@ -745,7 +745,7 @@ WebSocket, one binary message is one frame.
 
 Program output is always inside a bytes frame, so a program cannot forge a resize or exited
 message. This replaces Rex's in-band escape sequence with a nonce. Whether to frame or to use an
-in-band nonce is Decision: open (Q3); this spec recommends frames.
+in-band nonce is decided: frames (Q3).
 
 ### 5.4 Offsets and resume
 
@@ -1052,7 +1052,7 @@ because gff-hab keeps one connection model and the bridge stays dumb. Fallback: 
 
 Built: A (4.2), pending the owner's decision.
 
-Decision: open.
+Decision: A, one SSH channel per data connection (owner, with the SSH-everywhere consensus: one SSH connection per host, one channel per visible pane).
 
 ### Q3. Control messages in the data stream
 
@@ -1068,7 +1068,7 @@ ignores it" still applies and passes by construction.
 Built: A (5.8), pending the owner's decision. `TestDataFakeFrames` in `cmd/gff-hab` prints frame
 headers and a JSON-RPC `closing` from a program; the client gets them as output.
 
-Decision: open.
+Decision: A, frames on every transport (coordinator ruling): a program cannot forge a frame, offsets stay explicit, and one framing works on every transport.
 
 ### Q4. The revision floor
 
