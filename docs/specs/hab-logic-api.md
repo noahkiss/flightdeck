@@ -206,6 +206,10 @@ gff-hab is a client of every live holder on its host: the current one and any th
   lines of scrollback reports 10 MiB resident (libghostty's own memory figure, Linux amd64, release
   build). Its `snapshot-ghostty` is 4.6 MiB and its `snapshot-vt` 1.3 MiB, for 1.2 MiB of input.
   `TestMemoryLongScrollback` in `internal/vt/ghostty` reproduces it (`go test -v`).
+- Each parser's scrollback is capped at 10 MiB by default, about the 10,000 lines above. `gff-hab
+  serve -scrollback-mib N`, else `$GFF_HAB_SCROLLBACK_MIB`, sets another cap. A new parser and one
+  restored from a checkpoint get the same cap, so a restored screen drops scrollback at the same
+  points as one that parsed every byte. libghostty's own default (about 10 kB) is never used.
 - It writes a **checkpoint** per pane (a parser snapshot plus the offset it covers) when the pane
   goes idle and every N seconds. The holder spec owns the ring; this spec owns the checkpoint.
 - **Planned restart:** gff-hab writes fresh checkpoints, tells each holder it is handing over, and

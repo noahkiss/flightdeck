@@ -86,3 +86,5 @@ ring alone cannot pass. Each restart asserts that the link restored the pane's c
 loop compares the rebuilt screen with a reference parser fed the same stream to the same offset.
 The parsers in these tests use a 16 MiB scrollback cap: near libghostty's default cap (about
 10 kB) a restored terminal drops scrollback at other points than one that parsed every byte.
+gff-hab itself defaults to 10 MiB (spec 2.3); `TestScrollbackRestoreMatches` in `cmd/gff-hab`
+checks that a restored terminal keeps the same scrollback as a continuous one with that cap.

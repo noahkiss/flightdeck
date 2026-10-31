@@ -3,6 +3,7 @@
 // structure store, and follows every holder's panes through the holder link (internal/link).
 //
 //	gff-hab serve   [-socket path] [-hook-socket path] [-state dir] [-host-id id] [-holders dir]
+//	                [-scrollback-mib n]
 //	gff-hab connect [-socket path]
 //	gff-hab api call [-socket path | -via command] <method> [params-json]
 //	gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
@@ -17,7 +18,8 @@
 // $XDG_STATE_HOME (or ~/.local/state) elsewhere. The holder directory comes from -holders, else
 // $GFF_HOLDER_DIR, else the holder's own default; screen checkpoints go to <state>/checkpoints.
 // The hook socket comes from -hook-socket, else $GFF_HAB_HOOK_SOCKET, else hook.sock beside the
-// control socket.
+// control socket. Each pane parser's scrollback cap comes from -scrollback-mib, else
+// $GFF_HAB_SCROLLBACK_MIB, else 10 MiB.
 //
 // `gff-hab connect` copies stdin to the socket and the socket to stdout, so
 // `ssh <host> gff-hab connect` reaches a remote hab with no new listener. -via runs a command
@@ -58,6 +60,7 @@ var build = "dev"
 
 const usage = `usage:
   gff-hab serve   [-socket path] [-hook-socket path] [-state dir] [-host-id id] [-holders dir]
+                  [-scrollback-mib n]
   gff-hab connect [-socket path]
   gff-hab api call [-socket path | -via command] <method> [params-json]
   gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
@@ -153,6 +156,7 @@ func serve(args []string) error {
 	state := fs.String("state", "", "state directory (default: see gff-hab -h)")
 	hostID := fs.String("host-id", os.Getenv("GFF_HAB_HOST_ID"), "host id sent in the welcome (default: $GFF_HAB_HOST_ID, else the system host name)")
 	holders := fs.String("holders", "", "holder registry directory (default: $GFF_HOLDER_DIR, else the holder's default)")
+	scrollMiB := fs.Int("scrollback-mib", 0, "scrollback cap per pane in MiB (default: $GFF_HAB_SCROLLBACK_MIB, else 10)")
 	fs.Parse(args)
 	logger := log.New(os.Stderr, "gff-hab: ", log.LstdFlags)
 
@@ -174,7 +178,11 @@ func serve(args []string) error {
 		return err
 	}
 
-	lk, err := openLink(*holders, dir, logger)
+	scrollback, err := scrollbackBytes(*scrollMiB, os.Getenv)
+	if err != nil {
+		return err
+	}
+	lk, err := openLink(*holders, dir, scrollback, logger)
 	if err != nil {
 		return err
 	}
