@@ -25,6 +25,10 @@ type conn struct {
 	// writeFailed: a write to the socket failed. The writer has stopped and frames are no longer
 	// queued; the reader drops the connection when it reaches end of file.
 	writeFailed bool
+	// writeTimer drops the connection if the reader has not done so after a write failure.
+	writeTimer *time.Timer
+	// replacing: a newer hello is waiting for this connection's reader to finish.
+	replacing bool
 
 	cond   *sync.Cond // the writer waits here for items
 	q      []item
@@ -35,6 +39,7 @@ type conn struct {
 	subs map[*pane]bool
 
 	writerDone chan struct{}
+	readerDone chan struct{} // closed when readLoop returns
 
 	// maxQueued is the most bytes ever queued at once. Tests read it to check pacing.
 	maxQueued int
@@ -66,6 +71,7 @@ func newConn(h *Holder, nc *net.UnixConn, pc *hp.Conn) *conn {
 		cond:       sync.NewCond(&h.mu),
 		subs:       map[*pane]bool{},
 		writerDone: make(chan struct{}),
+		readerDone: make(chan struct{}),
 	}
 }
 
@@ -167,7 +173,7 @@ func (c *conn) writeErrorLocked(err error) {
 	c.queued = 0
 	h.bp.Broadcast()
 	h.cfg.Logf("holder: write: %v (waiting for the reader)", err)
-	time.AfterFunc(h.cfg.HangTimeout, func() {
+	c.writeTimer = time.AfterFunc(h.cfg.HangTimeout, func() {
 		h.mu.Lock()
 		h.dropLocked(c, "write: "+err.Error())
 		h.mu.Unlock()
@@ -280,11 +286,16 @@ func (h *Holder) replay(c *conn, f *hp.Replay) {
 // readLoop reads frames until the connection ends and handles each in order.
 func (c *conn) readLoop() {
 	h := c.h
+	defer close(c.readerDone)
 	for {
 		f, err := c.pc.ReadFrame()
 		if err != nil {
 			h.mu.Lock()
-			h.dropLocked(c, "read: "+err.Error())
+			reason := "read: " + err.Error()
+			if c.replacing {
+				reason = "replaced by a newer hello"
+			}
+			h.dropLocked(c, reason)
 			h.mu.Unlock()
 			return
 		}

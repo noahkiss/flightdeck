@@ -431,13 +431,10 @@ func (h *Holder) serveConn(nc *net.UnixConn) {
 		h.beforeWelcome()
 	}
 	h.mu.Lock()
-	if h.closing {
+	if !h.replaceLocked() {
 		h.mu.Unlock()
 		nc.Close()
 		return
-	}
-	if old := h.conn; old != nil {
-		h.dropLocked(old, "replaced by a newer hello")
 	}
 	// The welcome snapshot and installing c as the current connection happen under one lock
 	// hold. A child whose exit is reported before this point shows in the welcome; one reported
@@ -495,6 +492,45 @@ func (h *Holder) welcomeLocked(v hp.Version) *hp.Welcome {
 	return w
 }
 
+// replaceRead is the read deadline a newer hello gives the old connection's reader;
+// replaceWait bounds how long the newer hello waits for that reader to end.
+const (
+	replaceRead = 100 * time.Millisecond
+	replaceWait = time.Second
+)
+
+// replaceLocked ends the current connection, if any, before a newer one is installed (spec 6.8).
+// A handover the old gff-hab sent just before its successor's hello may still sit unread in the
+// old socket. So the holder gives the old reader a short read deadline, waits for it to read and
+// handle what is there and end, and only then records handover or crash. It returns false when
+// the holder is closing. It may release the lock while it waits.
+func (h *Holder) replaceLocked() bool {
+	for {
+		if h.closing {
+			return false
+		}
+		old := h.conn
+		if old == nil {
+			return true
+		}
+		if old.handover || old.closed {
+			h.dropLocked(old, "replaced by a newer hello")
+			continue
+		}
+		old.replacing = true
+		// A deadline in the future: one already past fails the read before it takes any
+		// buffered bytes.
+		_ = old.nc.SetReadDeadline(time.Now().Add(replaceRead))
+		h.mu.Unlock()
+		select {
+		case <-old.readerDone:
+		case <-time.After(replaceWait):
+		}
+		h.mu.Lock()
+		h.dropLocked(old, "replaced by a newer hello") // a no-op when the reader dropped it
+	}
+}
+
 // dropLocked ends connection c. When c is the current connection, the holder records how the
 // logic process left: handover if it said so, crash otherwise.
 func (h *Holder) dropLocked(c *conn, reason string) {
@@ -502,6 +538,9 @@ func (h *Holder) dropLocked(c *conn, reason string) {
 		return
 	}
 	c.closed = true
+	if c.writeTimer != nil {
+		c.writeTimer.Stop()
+	}
 	c.cond.Broadcast()
 	c.nc.Close()
 	if h.conn == c {

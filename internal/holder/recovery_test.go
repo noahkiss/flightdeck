@@ -153,11 +153,30 @@ func TestHandoverReplayExact(t *testing.T) {
 	h, path := testHolder(t, Config{}, nil)
 	c1 := dial(t, path, true)
 	s := c1.sh(1, numbered(20))
-	const saved = 505
-	for len(c1.output(s.Handle)) < saved {
+	for len(c1.output(s.Handle)) < 700 {
 		c1.next()
 	}
 	checkNumbered(t, 0, c1.output(s.Handle))
+	// The saved offset lies strictly inside a frame, and not at a line start: the client
+	// applied part of a frame.
+	var saved uint64
+	for _, f := range c1.all {
+		o, ok := f.(*hp.Output)
+		if !ok || o.Handle != s.Handle || o.Offset+uint64(len(o.Data)) <= 500 {
+			continue
+		}
+		at := max(o.Offset, 500) + 1
+		if at%10 == 0 {
+			at++
+		}
+		if at > o.Offset && at < o.Offset+uint64(len(o.Data)) {
+			saved = at
+			break
+		}
+	}
+	if saved == 0 {
+		t.Fatal("no frame past offset 500 is long enough to save inside")
+	}
 	c1.send(&hp.Handover{Token: c1.tok()})
 	c1.nc.Close()
 	eventually(t, h, "client gone", func() bool { return h.conn == nil })
@@ -177,7 +196,7 @@ func TestHandoverReplayExact(t *testing.T) {
 	}
 	tk := c2.tok()
 	c2.send(&hp.Replay{Handle: s.Handle, Token: tk, From: saved})
-	applied := uint64(saved)
+	applied := saved
 	var end *hp.ReplayEnd
 	for end == nil || applied < end.End+500 {
 		e, x := follow(t, s.Handle, tk, saved, &applied, c2.next(), 0)
@@ -310,6 +329,8 @@ func TestWelcomePaneRecords(t *testing.T) {
 	b := c.spawn(2, 80, 24, "/bin/sh", "-c", "echo bye; exit 3")
 	eb := c.exited(b.Handle)
 	c.send(&hp.Resize{Handle: a.Handle, Token: c.tok(), Cols: 120, Rows: 40})
+	c.send(&hp.Input{Handle: a.Handle, Token: c.tok(), Offset: 0, Data: []byte("x")})
+	c.waitOutput(a.Handle, "ready\r\nx") // the terminal echoes it
 	c.sync()
 	countA := uint64(len(c.output(a.Handle)))
 
@@ -318,11 +339,12 @@ func TestWelcomePaneRecords(t *testing.T) {
 		uuid       hp.UUID
 		cols, rows uint16
 		count      uint64
+		input      uint64
 		exited     bool
 	}
 	wants := []want{
-		{a, uuidN(1), 120, 40, countA, false},
-		{b, uuidN(2), 80, 24, eb.Final, true},
+		{a, uuidN(1), 120, 40, countA, 1, false},
+		{b, uuidN(2), 80, 24, eb.Final, 0, true},
 	}
 	check := func(w *hp.Welcome) {
 		t.Helper()
@@ -332,7 +354,7 @@ func TestWelcomePaneRecords(t *testing.T) {
 		for i, x := range wants {
 			pi := w.Panes[i]
 			if pi.Handle != x.s.Handle || pi.UUID != x.uuid || pi.Pid != x.s.Pid || pi.Cols != x.cols || pi.Rows != x.rows ||
-				pi.Count != x.count || pi.Oldest != 0 || pi.InputCount != 0 || pi.Exited != x.exited {
+				pi.Count != x.count || pi.Oldest != 0 || pi.InputCount != x.input || pi.Exited != x.exited {
 				t.Fatalf("pane record %d: %+v, want %+v", i, pi, x)
 			}
 			if x.exited && (pi.Exit.Code != 3 || pi.Exit.Signaled) {
@@ -362,7 +384,7 @@ func TestWelcomePaneRecords(t *testing.T) {
 	if n.Handle == a.Handle || n.Handle == b.Handle {
 		t.Fatalf("new pane reused handle %d", n.Handle)
 	}
-	wants = append(wants, want{n, uuidN(3), 90, 20, uint64(len(c.output(n.Handle))), false})
+	wants = append(wants, want{n, uuidN(3), 90, 20, uint64(len(c.output(n.Handle))), 0, false})
 	leave(c, false)
 	c = dial(t, path, true)
 	if c.w.Previous != hp.PreviousCrash {
@@ -396,7 +418,7 @@ func TestReconnectSoak(t *testing.T) {
 	h, path := testHolder(t, Config{}, nil)
 	// A setup client spawns the pane and leaves at once; its live output is not applied.
 	c0 := dial(t, path, true)
-	s := c0.sh(1, numbered(20))
+	s := c0.sh(1, numbered(50))
 	hd := s.Handle
 	c0.send(&hp.Handover{Token: c0.tok()})
 	c0.nc.Close()
@@ -447,11 +469,7 @@ func TestReconnectSoak(t *testing.T) {
 		} else {
 			prev = hp.PreviousCrash
 		}
-		if replace {
-			if handover {
-				c.sync() // the handover is handled before the next hello arrives
-			}
-		} else {
+		if !replace {
 			c.nc.Close()
 			eventually(t, h, "client gone", func() bool { return h.conn == nil })
 		}
@@ -540,4 +558,52 @@ func TestHandoverBeforeWriteError(t *testing.T) {
 	if c2.w.Previous != hp.PreviousHandover || len(c2.w.Panes) != 1 {
 		t.Fatalf("welcome %+v", c2.w)
 	}
+}
+
+// TestReplaceAfterHandover: gff-hab sends handover and its successor says hello at once, with
+// no round trip in between. The handover may not be handled yet when the newer hello arrives:
+// the holder lets the old connection's reader finish what was sent before it decides, so the
+// successor is told handover. First with the old reader held inside the handover's handling,
+// then many times with no hook, with the old connection left open or closed.
+func TestReplaceAfterHandover(t *testing.T) {
+	t.Run("held", func(t *testing.T) {
+		read := make(chan struct{}, 1)
+		_, path := testHolder(t, Config{}, func(h *Holder) {
+			h.beforeDispatch = func(c *conn, f hp.Frame) {
+				if _, ok := f.(*hp.Handover); ok {
+					read <- struct{}{}
+					time.Sleep(50 * time.Millisecond)
+				}
+			}
+		})
+		c1 := dial(t, path, true)
+		c1.send(&hp.Handover{Token: c1.tok()})
+		<-read
+		c2 := dial(t, path, true)
+		if c2.w.Previous != hp.PreviousHandover {
+			t.Fatalf("previous %d, want handover", c2.w.Previous)
+		}
+	})
+	t.Run("stress", func(t *testing.T) {
+		_, path := testHolder(t, Config{}, nil)
+		c := dial(t, path, true)
+		s := c.sh(1, numbered(20))
+		for i := 0; i < 40; i++ {
+			handover := i%4 < 2
+			if handover {
+				c.send(&hp.Handover{Token: c.tok()})
+			}
+			if i%2 == 1 {
+				c.nc.Close()
+			}
+			c = dial(t, path, true)
+			want := hp.PreviousCrash
+			if handover {
+				want = hp.PreviousHandover
+			}
+			if c.w.Previous != want || len(c.w.Panes) != 1 || c.w.Panes[0].Handle != s.Handle {
+				t.Fatalf("round %d: previous %d, want %d; welcome %+v", i, c.w.Previous, want, c.w)
+			}
+		}
+	})
 }

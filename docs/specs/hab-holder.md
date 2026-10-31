@@ -207,7 +207,7 @@ Two weak points we fix (section 2.6):
   holder records "handover" for the next welcome. It discards nothing. A write that fails
   because gff-hab already closed does not turn this into a crash: the holder stops writing,
   reads what gff-hab sent before it closed, and records "handover" when that includes the
-  handover frame.
+  handover frame. If it cannot read that within the hang timeout, it records "crash".
 - **Crash.** The connection ends without handover, or a newer hello arrives while a connection
   that has not sent handover is open. The holder records "crash". A newer hello that replaces a
   connection which already sent handover records "handover". The next gff-hab replays from its
@@ -530,7 +530,9 @@ panes, sees it is a non-current build, and exits at once. gff-hab treats its pan
 ### 6.8 Two logic processes
 
 A second gff-hab that says hello takes over; the first is dropped. It is recorded as a crash,
-unless it had already sent handover. Each
+unless it had already sent handover. The holder first lets the first connection's reader take
+what is already in its socket (up to 100 ms), so a handover sent just before the second hello
+counts. Each
 logic process holds a lock in the state directory, so this happens only by accident.
 
 ---

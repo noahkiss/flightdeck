@@ -293,8 +293,10 @@ Notes:
 2. gff-hab sends handover and closes the connection. Handover carries no offsets: the
    checkpoints hold them.
 3. The holder records "handover". It keeps every pane and every ring byte, and keeps pumping.
-   The holder reads every frame sent before the close, even when a write to the closing
-   connection fails first, so a handover followed by a close is never recorded as a crash.
+   The holder reads the frames sent before the close even when a write to the closing
+   connection fails first, so a handover followed by a close is recorded as handover. The
+   exception: if the holder cannot read the handover within the hang timeout after such a
+   write failure, it drops the connection and records crash.
 4. The next gff-hab sends hello. welcome says previous = 1 and lists every pane with its count,
    oldest kept offset and input count.
 5. For each pane, gff-hab loads its checkpoint and sends an open replay from the checkpoint's
@@ -304,8 +306,10 @@ Notes:
 or a newer hello arrives while a connection that has not sent handover is open. The holder
 records "crash"; the next welcome says previous = 2. A newer hello that replaces a connection
 which already sent handover records "handover": a gff-hab may still be closing when its
-successor says hello. Recovery is the same as step 5. The only difference is how fresh the
-checkpoint is. The holder keeps no state about gff-hab's saves.
+successor says hello. Before it decides, the holder lets the old connection's reader take
+what is already in the socket, for up to 100 ms, so a handover sent just before the newer
+hello counts even if the holder has not read it yet. Recovery is the same as step 5. The only
+difference is how fresh the checkpoint is. The holder keeps no state about gff-hab's saves.
 
 **Drain (upgrade).**
 
