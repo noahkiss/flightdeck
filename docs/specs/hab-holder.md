@@ -336,8 +336,17 @@ The optional upper bound on replay lets gff-hab fetch one command's byte range (
   (write, then rename) and removes it on exit. Its socket is `<instance>.sock` beside it.
 - One file per holder, rather than one shared registry file, avoids lock races between holders
   that start and exit independently.
+- A holder writes the file after its socket listens, so a listed holder accepts connections. It
+  rewrites the file when it starts draining, before it can exit. The temporary file is
+  `.tmp-<instance>-<random>`; readers skip dot files.
 - gff-hab lists the directory at start and on change. A file whose pid is gone, or whose socket
-  refuses connections, is stale; gff-hab removes it.
+  refuses connections, is stale; gff-hab removes it. The pid alone is not enough, because an
+  unrelated process may reuse it, so a live pid with a refusing socket is stale too. When it
+  removes a stale file, gff-hab also removes the socket file beside it, unless something listens
+  there again. It removes a file only while the file still names the same pid and start time, so
+  a holder restarted under the same instance id keeps its new file. Temporary files and
+  unreadable registry files older than one minute are left over from a crash and removed too.
+- A holder removes only its own file, and only while it still names its own pid and start time.
 - gff-hab keeps one connection per live holder, each at that holder's protocol version. Status
   shows which holder (build) each pane lives on.
 
@@ -351,7 +360,9 @@ The optional upper bound on replay lets gff-hab fetch one command's byte range (
    spawns, and keeps serving its panes.
 5. New panes go to H2.
 6. When H1's last pane is released, H1 removes its socket and registry file and exits with status
-   0. The init system does not restart a clean exit.
+   0. The init system does not restart a clean exit. A pane whose program has ended still counts
+   until gff-hab releases it, so gff-hab releases each ended pane on a draining holder once it
+   holds the pane's last output.
 7. gff-hab removes H1's job definition (5.4) and, if no other holder uses it, H1's binary copy.
 
 Two or more builds can coexist for weeks. A third build simply adds H3 and drains H2 as well.
@@ -526,6 +537,13 @@ it instead of exiting; fuzz the protocol decoder. Mitigation in reserve: the Lin
 
 A drained holder that crashes is restarted by its job only if it failed. A restarted holder has no
 panes, sees it is a non-current build, and exits at once. gff-hab treats its panes as lost (6.6).
+
+How the restarted holder knows: the crash left its registry file, marked draining. A holder that
+starts and finds its own instance's file marked draining starts draining itself. With no panes,
+it removes its socket and registry file and exits with status 0, so the init system does not
+restart it again. If gff-hab pruned the stale file first, the restarted holder comes up empty and
+not draining. gff-hab's next upgrade pass finds a holder of another build and drains it, which
+ends it at once.
 
 ### 6.8 Two logic processes
 

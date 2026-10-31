@@ -326,6 +326,11 @@ func (h *Holder) dispatch(c *conn, f hp.Frame) {
 	case *hp.Drain:
 		h.mu.Lock()
 		h.draining = true
+		h.mu.Unlock()
+		// The registry file says draining before the holder can exit, so a reader never sees
+		// a draining holder listed as one that takes new panes.
+		h.markDraining()
+		h.mu.Lock()
 		h.drainExitLocked()
 		h.mu.Unlock()
 	case *hp.Shutdown:

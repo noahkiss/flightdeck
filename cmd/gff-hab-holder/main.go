@@ -6,6 +6,13 @@
 // $GFF_HOLDER_DIR. Without it, macOS uses gff/holders under the user's cache directory, and
 // other systems use $XDG_RUNTIME_DIR/gff/holders; with no XDG_RUNTIME_DIR the holder refuses to
 // start rather than fall back to a shared directory.
+//
+// Without -socket, the holder also writes its registry file, <instance>.json, in that directory
+// (spec 4.2), so gff-hab can find it. With -socket it writes none.
+//
+// Exit status 0 means a clean exit: a shutdown, the end of a drain, or a holder that was
+// restarted after it crashed while draining (spec 6.7). The init system restarts only a
+// failed holder.
 package main
 
 import (
@@ -20,6 +27,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/internal/holder"
+	"github.com/noahkiss/flightdeck/internal/holderreg"
 )
 
 // build is set at link time: -ldflags "-X main.build=<id>".
@@ -53,7 +61,11 @@ func main() {
 	if id == "" {
 		id = holder.NewInstanceID()
 	}
+	if !holderreg.ValidInstance(id) {
+		logger.Fatalf("bad instance id %q", id)
+	}
 	path := *socket
+	var regDir string
 	if path == "" {
 		d := *dir
 		if d == "" {
@@ -62,7 +74,8 @@ func main() {
 				logger.Fatal(err)
 			}
 		}
-		path = filepath.Join(d, id+".sock")
+		path = holderreg.SocketPath(d, id)
+		regDir = d
 	}
 
 	h := holder.New(holder.Config{
@@ -70,6 +83,7 @@ func main() {
 		Instance:    id,
 		RingSize:    *ring,
 		HangTimeout: *hang,
+		RegistryDir: regDir,
 		Logf:        logger.Printf,
 	})
 	l, err := holder.Listen(path)

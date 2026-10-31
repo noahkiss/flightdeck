@@ -1,0 +1,276 @@
+// Package holderreg is the holder registry: one small JSON file per live holder in a per-user
+// directory (docs/specs/hab-holder.md 4.2). Each holder writes and removes its own file;
+// gff-hab lists the directory to find every holder and prunes files that outlived their holder.
+//
+// One file per holder, rather than one shared file, means holders that start and exit
+// independently never contend for a lock.
+//
+// Layout of the directory:
+//
+//	<instance>.json         the registry file of holder <instance>
+//	<instance>.sock         its socket (the socket path is also in the file)
+//	.tmp-<instance>-<rand>  a registry file being written; renamed into place when complete
+//
+// The package is pure Go and has no state.
+package holderreg
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"syscall"
+	"time"
+)
+
+// Suffix is the registry file extension.
+const Suffix = ".json"
+
+// tmpPrefix starts the name of a registry file that is still being written. List ignores such
+// files; Prune removes them once they are older than TmpGrace.
+const tmpPrefix = ".tmp-"
+
+// TmpGrace is how old a temporary or unreadable file must be before Prune removes it. A holder
+// writes and renames its file within milliseconds, so anything older was left by a crash.
+const TmpGrace = time.Minute
+
+// Protocol is the range of protocol versions a holder speaks.
+type Protocol struct {
+	Min uint16 `json:"min"`
+	Max uint16 `json:"max"`
+}
+
+// Entry is the content of one registry file.
+type Entry struct {
+	Instance string    `json:"instance"`
+	Build    string    `json:"build"`
+	Protocol Protocol  `json:"protocol"`
+	Pid      int       `json:"pid"`
+	Socket   string    `json:"socket"`
+	Started  time.Time `json:"started"`
+	Draining bool      `json:"draining"`
+}
+
+// Path returns the registry file path of instance in dir.
+func Path(dir, instance string) string { return filepath.Join(dir, instance+Suffix) }
+
+// SocketPath returns the conventional socket path of instance in dir.
+func SocketPath(dir, instance string) string { return filepath.Join(dir, instance+".sock") }
+
+// ValidInstance reports whether id can name a registry file: non-empty, no path separator, no
+// leading dot, and short enough to keep the socket path within macOS's 104-byte limit.
+func ValidInstance(id string) bool {
+	return id != "" && len(id) <= 64 && !strings.HasPrefix(id, ".") &&
+		!strings.ContainsAny(id, "/\\\x00")
+}
+
+// Write writes e's registry file in dir atomically: a temporary file in the same directory,
+// synced, then renamed over <instance>.json. A reader sees the old file or the new one, never
+// a partial one. The file gets mode 0600.
+func Write(dir string, e Entry) error {
+	if !ValidInstance(e.Instance) {
+		return fmt.Errorf("holderreg: bad instance id %q", e.Instance)
+	}
+	b, err := json.MarshalIndent(e, "", "  ")
+	if err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, tmpPrefix+e.Instance+"-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	ok := false
+	defer func() {
+		if !ok {
+			f.Close()
+			os.Remove(tmp)
+		}
+	}()
+	if err := f.Chmod(0o600); err != nil {
+		return err
+	}
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, Path(dir, e.Instance)); err != nil {
+		return err
+	}
+	ok = true
+	return nil
+}
+
+// Read reads one registry file.
+func Read(path string) (Entry, error) {
+	var e Entry
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return e, err
+	}
+	if err := json.Unmarshal(b, &e); err != nil {
+		return e, fmt.Errorf("holderreg: %s: %w", path, err)
+	}
+	if !ValidInstance(e.Instance) || filepath.Base(path) != e.Instance+Suffix {
+		return e, fmt.Errorf("holderreg: %s: instance %q does not match the file name", path, e.Instance)
+	}
+	return e, nil
+}
+
+// List reads every registry file in dir, oldest start first. Files it cannot read are reported
+// in errs and left alone; Prune deals with them. A missing directory is an empty registry.
+func List(dir string) (entries []Entry, errs []error) {
+	des, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, []error{err}
+	}
+	for _, de := range des {
+		name := de.Name()
+		if strings.HasPrefix(name, ".") || !strings.HasSuffix(name, Suffix) || de.IsDir() {
+			continue
+		}
+		e, err := Read(filepath.Join(dir, name))
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) { // removed while we listed
+				errs = append(errs, err)
+			}
+			continue
+		}
+		entries = append(entries, e)
+	}
+	slices.SortStableFunc(entries, func(a, b Entry) int { return a.Started.Compare(b.Started) })
+	return entries, errs
+}
+
+// Remove removes e's registry file in dir, but only while the file still describes the same
+// holder (same instance, pid and start time). A holder restarted under the same instance id
+// writes a new file, and a reader that decided the old one was stale must not remove the new
+// one. A missing file is not an error.
+func Remove(dir string, e Entry) error {
+	path := Path(dir, e.Instance)
+	cur, err := Read(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err == nil && (cur.Pid != e.Pid || !cur.Started.Equal(e.Started)) {
+		return nil // a newer holder owns the file now
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// Alive reports whether a process with pid exists. EPERM means it exists under another user.
+func Alive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// Refused reports whether a dial error means nothing listens on the socket: the socket file is
+// gone, or no process accepts on it.
+func Refused(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT)
+}
+
+// Stale reports whether e has outlived its holder, and why. The rule (spec 4.2): the pid is not
+// alive, or the socket refuses connections. A pid that is alive may belong to an unrelated
+// process that reused it, so the socket decides then. probe dials the socket; with probe false
+// only the pid is checked, for callers that are about to dial anyway.
+func Stale(e Entry, probe bool) (bool, string) {
+	if !Alive(e.Pid) {
+		return true, fmt.Sprintf("pid %d is not running", e.Pid)
+	}
+	if !probe {
+		return false, ""
+	}
+	c, err := net.DialTimeout("unix", e.Socket, time.Second)
+	if err != nil {
+		if Refused(err) {
+			return true, fmt.Sprintf("socket refuses connections: %v", err)
+		}
+		return false, ""
+	}
+	c.Close()
+	return false, ""
+}
+
+// RemoveStale removes a stale holder's registry file and, when it lies in dir and refuses
+// connections, its socket file. Call it only for an entry Stale reported.
+func RemoveStale(dir string, e Entry) error {
+	if err := Remove(dir, e); err != nil {
+		return err
+	}
+	if filepath.Dir(e.Socket) != filepath.Clean(dir) {
+		return nil // not ours to remove
+	}
+	if c, err := net.DialTimeout("unix", e.Socket, time.Second); err == nil {
+		c.Close() // a new holder listens there now
+		return nil
+	} else if !Refused(err) {
+		return nil
+	}
+	if err := os.Remove(e.Socket); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// Prune removes what dead holders left in dir: registry files Stale reports (with probe), their
+// sockets, and temporary or unreadable files older than TmpGrace. Dialling a live holder's socket
+// to probe it costs that holder one connection that ends without a hello. It returns the
+// entries it removed.
+func Prune(dir string, now time.Time) ([]Entry, error) {
+	entries, _ := List(dir)
+	var removed []Entry
+	var errs []error
+	for _, e := range entries {
+		if stale, _ := Stale(e, true); stale {
+			if err := RemoveStale(dir, e); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			removed = append(removed, e)
+		}
+	}
+	des, err := os.ReadDir(dir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		errs = append(errs, err)
+	}
+	for _, de := range des {
+		name := de.Name()
+		path := filepath.Join(dir, name)
+		var junk bool
+		switch {
+		case strings.HasPrefix(name, tmpPrefix):
+			junk = true
+		case !strings.HasPrefix(name, ".") && strings.HasSuffix(name, Suffix):
+			_, rerr := Read(path)
+			junk = rerr != nil && !errors.Is(rerr, os.ErrNotExist)
+		}
+		if !junk {
+			continue
+		}
+		if fi, err := de.Info(); err == nil && now.Sub(fi.ModTime()) >= TmpGrace {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				errs = append(errs, err)
+			}
+		}
+	}
+	return removed, errors.Join(errs...)
+}

@@ -12,7 +12,9 @@ One Go module, `github.com/noahkiss/flightdeck`, at the repo root. Swift package
 | `internal/apigen/` | Schema builder, Go and Swift generators, compat checker |
 | `internal/holderproto/` | The gff-hab to holder wire protocol: frames, codec, version negotiation. Pure Go. Spec: `docs/protocol/holder.md` |
 | `internal/holder/` | The holder core: panes in PTYs, byte rings, pump, reaper, input queues, and the protocol server with one writer queue per connection. Pure Go. Spec: `docs/specs/hab-holder.md` 2 |
-| `cmd/gff-hab-holder/` | The holder binary: flags and environment for the socket path, then `internal/holder` |
+| `internal/holderreg/` | The holder registry: one `<instance>.json` per live holder in the holder directory, atomic writes, the stale rule and pruning. Pure Go. Spec: `docs/specs/hab-holder.md` 4.2 |
+| `internal/holderclient/` | gff-hab's side of the holders: finds them through the registry, keeps one connection per holder at its own protocol version, puts new panes on the holder of its build, drains the rest, reports where each pane lives. Starting a holder is an injected function (the init system's job). Pure Go. Spec: `docs/specs/hab-holder.md` 4.3 |
+| `cmd/gff-hab-holder/` | The holder binary: flags and environment for the socket path and registry directory, then `internal/holder` |
 | `internal/structure/` | gff-hab's shared structure (projects, sessions, order, pane links), its JSON state file and restart mapping, plus `FakeHolder` for tests. Pure Go. Spec: `docs/specs/hab-logic-api.md` 2.2 |
 | `internal/control/` | gff-hab's control connection: the Unix socket, hello, per-connection seq, scoped events, backlog close, reconnect tokens, and the client the CLI uses. Pure Go. Spec: `docs/specs/hab-logic-api.md` 3, 4.1, 4.2 |
 | `internal/habkey/` | The hab's own SSH host key and its fingerprint, the device id. Pure Go. Spec: `docs/specs/transport.md` 5 |

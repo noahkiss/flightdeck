@@ -28,6 +28,7 @@ import (
 	"time"
 
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
+	"github.com/noahkiss/flightdeck/internal/holderreg"
 )
 
 // Defaults from the spec. Tests shrink them.
@@ -66,6 +67,13 @@ type Config struct {
 	ShutdownGrace time.Duration
 	// HelloTimeout bounds the wait for a new connection's hello.
 	HelloTimeout time.Duration
+	// Protocol is the set of frame kinds and the version range the holder speaks. Nil means
+	// holderproto.V1(). Tests pass another registry to run a holder at another version.
+	Protocol *hp.Registry
+	// RegistryDir is the holder registry directory (spec 4.2). When set, Serve writes
+	// <RegistryDir>/<Instance>.json, rewrites it when the holder starts draining, and removes
+	// it when the holder exits. Empty writes no registry file.
+	RegistryDir string
 	// Logf receives diagnostics. Nil discards them.
 	Logf func(format string, args ...any)
 }
@@ -98,6 +106,9 @@ func (c *Config) fill() {
 	if c.Logf == nil {
 		c.Logf = func(string, ...any) {}
 	}
+	if c.Protocol == nil {
+		c.Protocol = hp.V1()
+	}
 }
 
 // NewInstanceID returns a random holder instance id.
@@ -109,9 +120,16 @@ func NewInstanceID() string {
 
 // Holder owns the panes and serves the protocol.
 type Holder struct {
-	cfg Config
-	reg *hp.Registry
-	uid int
+	cfg     Config
+	reg     *hp.Registry
+	uid     int
+	started time.Time
+
+	// regMu guards the registry file. regGone is set once the file is removed for good, so a
+	// late rewrite (a drain racing the exit) cannot bring it back.
+	regMu    sync.Mutex
+	regEntry holderreg.Entry
+	regGone  bool
 
 	// spawnMu serialises spawns, so two spawns of one uuid cannot both start a program.
 	spawnMu sync.Mutex
@@ -153,6 +171,7 @@ type Holder struct {
 // acceptor is the listener Serve accepts on. Tests wrap a real listener to inject errors.
 type acceptor interface {
 	AcceptUnix() (*net.UnixConn, error)
+	Addr() net.Addr
 	Close() error
 }
 
@@ -160,13 +179,14 @@ type acceptor interface {
 func New(cfg Config) *Holder {
 	cfg.fill()
 	h := &Holder{
-		cfg:    cfg,
-		reg:    hp.V1(),
-		uid:    os.Getuid(),
-		panes:  map[hp.Handle]*pane{},
-		byUUID: map[hp.UUID]*pane{},
-		owned:  map[*pane]struct{}{},
-		done:   make(chan struct{}),
+		cfg:     cfg,
+		reg:     cfg.Protocol,
+		uid:     os.Getuid(),
+		started: time.Now(),
+		panes:   map[hp.Handle]*pane{},
+		byUUID:  map[hp.UUID]*pane{},
+		owned:   map[*pane]struct{}{},
+		done:    make(chan struct{}),
 
 		lockProbe: 2 * time.Second,
 		crash:     func(msg string) { panic(msg) },
@@ -297,8 +317,10 @@ func checkParent(d string, uid int) error {
 	return nil
 }
 
-// Serve accepts logic connections on l until the holder exits. It returns nil after a shutdown
-// or a drain exit; the listener is closed and its socket file removed by then. An accept error
+// Serve accepts logic connections on l until the holder exits. With Config.RegistryDir set, it
+// first writes the holder's registry file, and returns the error if that fails. It returns nil
+// after a shutdown or a drain exit; the listener is closed and its socket and registry files
+// removed by then. An accept error
 // never ends the holder while it owns a pane, because a holder exit ends every program: Serve
 // backs off and tries again. Only a lasting error with no pane left is returned.
 func (h *Holder) Serve(l *net.UnixListener) error {
@@ -321,6 +343,11 @@ func (h *Holder) serve(l acceptor) error {
 	}
 	h.listener = l
 	h.mu.Unlock()
+	if err := h.register(l.Addr().String()); err != nil {
+		h.closeListener()
+		h.exit()
+		return err
+	}
 	var backoff time.Duration
 	var lastLog time.Time
 	for {
@@ -579,6 +606,7 @@ func (h *Holder) Shutdown() {
 		ps = append(ps, p)
 	}
 	h.mu.Unlock()
+	h.unregister()
 	h.closeListener()
 
 	for _, p := range ps {
@@ -612,6 +640,7 @@ func waitFinal(ps []*pane, d time.Duration) {
 // exit sends bye, closes the connection and the listener, and closes Done.
 func (h *Holder) exit() {
 	h.exitOnce.Do(func() {
+		h.unregister()
 		h.mu.Lock()
 		h.closing = true
 		c := h.conn
@@ -638,5 +667,77 @@ func (h *Holder) drainExitLocked() {
 	if h.draining && len(h.panes) == 0 && !h.closing {
 		h.closing = true
 		h.goSafe("drain exit", h.exit)
+	}
+}
+
+// register writes the holder's registry file (spec 4.2) for the socket at sock. A file this
+// instance left behind that says draining means the holder was draining when it died, and its
+// init job restarted it (spec 6.7). The restarted holder has no panes and is not the current
+// build, so it starts draining and exits at once, which removes the file and the socket.
+func (h *Holder) register(sock string) error {
+	dir := h.cfg.RegistryDir
+	if dir == "" {
+		return nil
+	}
+	if old, err := holderreg.Read(holderreg.Path(dir, h.cfg.Instance)); err == nil && old.Draining {
+		h.cfg.Logf("holder: restarted after a crash while draining (pid %d); exiting", old.Pid)
+		h.mu.Lock()
+		h.draining = true
+		h.mu.Unlock()
+	}
+	h.mu.Lock()
+	draining := h.draining
+	h.mu.Unlock()
+	r := h.reg.Range()
+	h.regMu.Lock()
+	h.regEntry = holderreg.Entry{
+		Instance: h.cfg.Instance,
+		Build:    h.cfg.Build,
+		Protocol: holderreg.Protocol{Min: uint16(r.Min), Max: uint16(r.Max)},
+		Pid:      os.Getpid(),
+		Socket:   sock,
+		Started:  h.started,
+		Draining: draining,
+	}
+	err := holderreg.Write(dir, h.regEntry)
+	h.regMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("holder: registry file: %w", err)
+	}
+	if draining {
+		h.mu.Lock()
+		h.drainExitLocked()
+		h.mu.Unlock()
+	}
+	return nil
+}
+
+// markDraining rewrites the registry file with the draining flag set (spec 4.3 step 4).
+func (h *Holder) markDraining() {
+	h.regMu.Lock()
+	defer h.regMu.Unlock()
+	if h.cfg.RegistryDir == "" || h.regGone || h.regEntry.Instance == "" || h.regEntry.Draining {
+		return
+	}
+	h.regEntry.Draining = true
+	if err := holderreg.Write(h.cfg.RegistryDir, h.regEntry); err != nil {
+		h.cfg.Logf("holder: registry file: %v", err)
+	}
+}
+
+// unregister removes the holder's own registry file, once. It leaves a file that a newer holder
+// of the same instance id has written since.
+func (h *Holder) unregister() {
+	h.regMu.Lock()
+	defer h.regMu.Unlock()
+	if h.regGone {
+		return
+	}
+	h.regGone = true
+	if h.cfg.RegistryDir == "" || h.regEntry.Instance == "" {
+		return
+	}
+	if err := holderreg.Remove(h.cfg.RegistryDir, h.regEntry); err != nil {
+		h.cfg.Logf("holder: registry file: %v", err)
 	}
 }
