@@ -101,6 +101,40 @@ Behaviour:
   server signal arrived for that pane in the current turn. It never sets `blocked:permission`
   for the purpose of answering. It may raise a "looks blocked" hint in the UI.
 
+Built choices (`internal/detect`, `gff-hab manifests`):
+
+- **Vendored set.** `internal/detect/manifests/` holds every herdr manifest and `index.toml`,
+  copied unchanged from one pinned herdr commit. `SOURCE` names the commit; `LICENSE` is the
+  Apache-2.0 text; the repo `NOTICE` names both. gff-hab embeds the set.
+- **Engine version 3.** The matcher reads every region and gate of manifest engine 3. A
+  manifest with a higher `min_engine_version`, an unknown key, an unknown state or region, a
+  rule with no matcher, or a regex Go cannot compile is unusable. An unusable manifest is a
+  problem (drift), never a crash; the previous copy stays in force.
+- **Regex dialect.** The manifests use a regex dialect close to Go's. The loader rewrites
+  `\uXXXX` and `\u{...}` to `\x{...}`, and `\p{Alphabetic}` to letters plus letter numbers.
+  `\d`, `\w`, `\s` and `\b` are ASCII in Go; the vendored rules use them around ASCII text.
+- **Matching.** `contains` needles match the lower-cased region; every needle must appear.
+  Every `regex` must match the region; every `line_regex` must match at least one line. `all`,
+  `any` and `not` nest. The matching rule with the highest priority wins; the first in the file
+  wins a tie. No match gives `unknown`.
+- **Process names.** Each foreground process offers its executable name, the base of argv[0],
+  and, for a script interpreter (node, bun, deno, python), the base of its script with the
+  extension removed. argv[0] catches a harness installed as a versioned binary behind a
+  symlink. The leader is tried first, then the other members in order.
+- **`AGENT_KIND`.** A detection's kind is the manifest id: `claude`, `codex`, `opencode`, or
+  another manifest's id. Aliases resolve to the id.
+- **Data directory.** `gff-hab manifests refresh` writes into `manifests/` under the state
+  directory. A copy there replaces the vendored one only when it is valid and not older, so a
+  gff-hab upgrade with newer vendored copies wins. `-from` takes a URL, a local `index.toml` or a
+  directory, so a refresh works offline. `-dry-run` prints the diff and writes nothing.
+  `gff-hab manifests list` prints the active set and exits 1 on drift. `gff-hab serve` logs
+  drift at start. A scheduled refresh inside gff-hab is later work; it calls the same code.
+- **Tested versions.** `detect.Tested` records the newest harness version each adapter was
+  tested on, as a prefix (`claude` 2.1, `codex` 0.166; opencode has none yet). A reported
+  version above it, or one with no number in it, gives a version warning. The warning rides on
+  the pane's `agent.state` (see [State event model](#state-event-model)); it does not stop the
+  adapter.
+
 **Claude session id at spawn.** When `gff-hab` starts Claude, it may pass
 `--session-id <uuid>`. The adapter then knows the transcript before the first hook fires. Codex
 and opencode have no such flag; their id arrives with the first hook or server event.

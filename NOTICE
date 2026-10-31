@@ -33,6 +33,19 @@ OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
+The gff-hab binary also carries, as data, the agent detection manifests of herdr:
+
+herdr, https://github.com/herdrdev/herdr
+Apache License 2.0. The files are copied unchanged from distribution/agent-detection/ at commit
+ee5bfb5041bb3e4a49d591c72308aae3c81ecdde. The licence text and the source record sit beside
+them in internal/detect/manifests/ (LICENSE, SOURCE).
+
+The gff-hab binary links this Go module:
+
+github.com/BurntSushi/toml, https://github.com/BurntSushi/toml
+MIT License (text above). Copyright (c) 2013 TOML authors
+
+------------------------------------------------------------------------------
 The gff-hab-holder binary links the following Go modules.
 
 github.com/creack/pty, https://github.com/creack/pty

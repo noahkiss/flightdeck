@@ -70,6 +70,9 @@ build are in `docs/layout.md`.
 | `gff-hab connect [-socket path]` | Bridge stdin and stdout to the local socket, for `ssh <host> gff-hab connect` |
 | `gff-hab api call [-socket path \| -via command] <method> [params-json]` | Say hello, send one request, print its result as JSON (`hab.hello` prints the welcome). Exit 3 on an API error |
 | `gff-hab events [-socket path \| -via command] [-scope host\|projects:id,...\|sessions:id,...]` | Subscribe and print the welcome, the snapshot and every notification, one JSON line each. Exit 1 when the hab ends the connection with no `closing` or with a reason other than shutdown |
+| `gff-hab manifests refresh [-state dir] [-from url\|path] [-dry-run]` | Pull herdr's detection catalogue (default `https://herdr.dev/agent-detection/index.toml`; a local index or directory works offline), print a diff per newer manifest, and write them to `manifests/` in the state directory. Never downgrades; the vendored set stays the fallback |
+| `gff-hab manifests list [-state dir]` | Print the active detection manifest per agent and where it came from. Exit 1 when a manifest could not be used (drift) |
+| `go test ./internal/detect/...` | Detection tests: process and screen matching for Claude Code, Codex and opencode, refresh, version warnings |
 | `go test -race ./internal/control/... ./cmd/gff-hab/...` | Control connection tests: seq and epoch rules, backlog close, the binary over a real socket and over `connect` |
 | `go test ./internal/link/` | Holder link end-to-end tests: real holder, the link as its own process, restarted by plan and SIGKILL; `-tags ghostty` uses libghostty. `GFF_RESTART_LOOP=200` sets the restart count (nightly) |
 | `cd swift/HabAPI && swift test` | Build and test the generated Swift package (Mac) |

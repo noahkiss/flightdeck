@@ -6,6 +6,8 @@
 //	gff-hab connect [-socket path]
 //	gff-hab api call [-socket path | -via command] <method> [params-json]
 //	gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
+//	gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
+//	gff-hab manifests list    [-state dir]
 //
 // The socket path comes from -socket, else $GFF_HAB_SOCKET, else gff/hab.sock under the user
 // config directory on macOS and under $XDG_RUNTIME_DIR elsewhere. The state directory comes from
@@ -52,6 +54,8 @@ const usage = `usage:
   gff-hab connect [-socket path]
   gff-hab api call [-socket path | -via command] <method> [params-json]
   gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
+  gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
+  gff-hab manifests list    [-state dir]
 `
 
 func main() {
@@ -73,6 +77,8 @@ func main() {
 		err = apiCall(os.Args[3:])
 	case "events":
 		err = events(os.Args[2:])
+	case "manifests":
+		err = manifests(os.Args[2:], os.Stdout)
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
@@ -180,6 +186,7 @@ func serve(args []string) error {
 	if h := store.Health(); h.Problem != "" {
 		logger.Printf("state: %s", h.Problem)
 	}
+	logManifestDrift(dir, logger.Printf)
 	s := control.New(control.Config{
 		Build:    build,
 		Host:     api.HostInfo{ID: *hostID},

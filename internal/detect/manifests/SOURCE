@@ -1,0 +1,12 @@
+Agent detection manifests from herdr, used as data.
+
+Project:  herdr, https://github.com/herdrdev/herdr
+Path:     distribution/agent-detection/ (index.toml and one TOML file per agent)
+Commit:   ee5bfb5041bb3e4a49d591c72308aae3c81ecdde (2026-10-29)
+Licence:  Apache License 2.0, full text in LICENSE beside this file
+Changes:  none; the files are copied byte for byte
+
+The live catalogue is https://herdr.dev/agent-detection/index.toml. `gff-hab manifests refresh`
+writes newer copies into the hab's data directory; these vendored copies stay the fallback.
+To update the vendored set, copy the files from a newer herdr commit, then update this file and
+the herdr entry in the repository's NOTICE.
