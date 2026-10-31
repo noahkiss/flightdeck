@@ -178,6 +178,20 @@ Rules:
   shows it, unfiled, so the owner can file or close it.
 - **Native data stays native.** gff-hab keeps a path to each harness transcript, never a copy.
 
+Decisions taken in stage 5 (`internal/structure`):
+
+- Ids are random, so a lost state file can never cause an id to be reused.
+- Project identity is the remote when there is one, else the root commit. Project names need not
+  be unique; session names are unique among all session records, exited ones included.
+- A pane's revision is stored too. Linking or unlinking a session raises it, since
+  `Pane.session` changed.
+- Deleting a project keeps its sessions, with no project. Closing a session removes the record
+  only; the pane, if live, becomes unfiled.
+- A session whose pane vanished while gff-hab was down is marked exited with no exit status.
+- A corrupt or unreadable state file is renamed `structure.json.bad-<time>`; gff-hab starts empty
+  with every live pane unfiled and reports the problem. Revisions then restart at 1; clients
+  recover because the restart is a new epoch, which forces a fresh snapshot.
+
 ### 2.3 The holder link (logic side only)
 
 gff-hab is a client of every live holder on its host: the current one and any that are draining.
