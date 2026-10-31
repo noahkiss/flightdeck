@@ -417,13 +417,26 @@ Decision: proposed.
 - **Recommendation: A.** gff-hab keeps one connection model on every transport, the bridge stays
   dumb, and SSH gives each channel its own flow-control window. Its cost: OpenSSH allows 10
   sessions per SSH connection by default, so a client showing more than nine panes on one host
-  opens a second SSH connection. B is the fallback if a client cannot open many channels.
+  opens a second SSH connection; the embedded server (4.3) lifts that cap. B is the fallback if a
+  client cannot open many channels.
+- The welcome carries the hab's host-key fingerprint as `device_id` (`transport.md` 5). The client
+  pins it on first contact and refuses a changed id until the owner accepts it.
 
-### 4.3 Tailnet WebSocket (Part 3)
+### 4.3 Embedded gff-hab SSH server (Part 3)
 
-The tailnet WebSocket belongs to Part 3, including its authentication, which the owner must approve.
-This spec only requires that it carries the same messages: one WebSocket text message per JSON-RPC
-message on the control connection, and one binary message per data frame on a data connection.
+- gff-hab can run its own SSH server, off by default, on one address the owner names. Its
+  authentication, QR pairing and revocation live in `transport.md` (4.2, 6). The owner approves it
+  before any real host enables it.
+- It carries the same connections as 4.2: the control connection and each data connection are
+  channels on one SSH connection, as in option A. It serves the API subsystems only.
+- It sets its own channel limit, so one connection carries one channel per visible pane.
+- The transport reports the authenticated device id to gff-hab, so events and input record who
+  sent them. Data tickets are bound to that device.
+- WebSocket stays possible only as a later carrier for a client that cannot speak SSH. If it comes,
+  it carries one text message per JSON-RPC message on the control connection and one binary
+  message per data frame on a data connection.
+
+Decision: settled (`transport.md`, /consensus 3/3).
 
 ---
 

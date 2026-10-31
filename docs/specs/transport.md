@@ -1,6 +1,6 @@
 # Transport security: behaviour spec
 
-Status: draft for review. Part 3, study task.
+Status: recommendation settled by /consensus (3/3), 2026-10-31. Part 3, study task.
 
 This spec says how Flightdeck clients and habs authenticate and encrypt their connections, and how
 habs do the same with each other. It covers device identity, pairing, rotation and revocation. It
@@ -10,7 +10,7 @@ Owner rules this spec works within:
 
 - A tailnet is fine as a network underneath. It is not part of the product. No hab trusts a caller
   because of its tailnet identity.
-- SSH stays the first transport.
+- SSH stays the first transport. The owner prefers SSH key auth: simple and familiar.
 - One Mac alone must work with no network, no hub and no pairing.
 
 Each section that settles a question ends with a **Decision** line, as in `hab-logic-api.md`.
@@ -89,8 +89,8 @@ Source: happy.engineering/docs/security and /docs/how-it-works.
 - Private keys live in the iOS Keychain, gated by Face ID or Touch ID.
 - Mosh starts with SSH, which hands a session key to a UDP carrier that survives network changes.
 
-What we take: keys in the Keychain behind biometrics; the pattern of an SSH-authenticated start
-that sets up a faster carrier.
+What we take: SSH from the phone with keys behind biometrics; the pattern of an SSH-authenticated
+start that can set up a faster carrier later.
 
 Source: the App Store listing and getmoshi.app.
 
@@ -99,8 +99,9 @@ Source: the App Store listing and getmoshi.app.
 - An iOS SSH client. It can make keys inside the Secure Enclave, so the private key never leaves
   the device. It also takes keys from a hardware token and short-lived certificates from a CA.
 
-What we take: Secure Enclave keys for the phone. Note: the Secure Enclave makes P-256 keys only,
-not Ed25519.
+What we take: Secure Enclave keys for the phone. The Secure Enclave makes P-256 keys only, not
+Ed25519. P-256 is a standard SSH key type (`ecdsa-sha2-nistp256`), so the phone's key is an
+ordinary SSH key.
 
 Source: secureshellfish.app/help/ssh-keys.
 
@@ -113,8 +114,8 @@ Source: secureshellfish.app/help/ssh-keys.
 - Known weak points: long ids are hard to compare by eye, and unauthenticated local discovery lets
   a device claim another's id (the TLS check still refuses it).
 
-What we take: device id as a hash of the device's certificate, checked against a pinned list, with
-standard TLS doing the rest.
+What we take: a device id that is a hash of the device's public key, checked against a pinned list.
+Under SSH the key is the hab's host key, and the id is its fingerprint.
 
 Source: docs.syncthing.net/dev/device-ids.html.
 
@@ -124,17 +125,19 @@ Source: docs.syncthing.net/dev/device-ids.html.
   send their static keys. IK: the initiator already knows the responder's static key.
 - Some designs pair with a QR code or PIN that feeds a PAKE, then run Noise XX between device keys.
 
-What we take: nothing in the first build (see 3). Noise stays the fallback if TLS client
-authentication proves unworkable on iOS.
+What we take: nothing (see 3).
 
-### 1.8 Apple platform facts
+### 1.8 SSH libraries and platform facts
 
-- Network.framework does TLS 1.3 and WebSocket. A verify block replaces the system trust check, so
-  the app can pin a certificate hash instead of trusting a CA.
-- Network.framework can export keying material from a TLS session (an exporter secret). That lets a
-  client sign a value bound to this exact TLS session. Verify this in the stage that builds it.
-- A jailbroken or instrumented device can bypass pinning in its own app. That attacks the phone's
-  owner only, not the hab.
+- Go: `golang.org/x/crypto/ssh` implements an SSH server and client. The server decides which
+  channel and request types it accepts, so a server can offer named subsystems and refuse shell,
+  exec, PTY, forwarding and agent requests.
+- OpenSSH limits a connection to 10 session channels by default (`MaxSessions`). An embedded
+  server sets its own limit.
+- Swift: `swift-nio-ssh` implements SSH client and server on Apple platforms. It accepts P-256
+  keys, including keys held in the Secure Enclave. Verify this in a spike before Part 6 builds on it.
+- A jailbroken or instrumented device can bypass host-key pinning in its own app. That attacks the
+  phone's owner only, not the hab.
 
 ---
 
@@ -142,8 +145,8 @@ authentication proves unworkable on iOS.
 
 | Threat | Goal |
 |---|---|
-| Someone on the same LAN, café Wi-Fi or tailnet connects to a hab | Refused unless their device key is paired with that hab |
-| Someone on the path watches or changes traffic | Everything encrypted and integrity-checked; endpoints pinned, so no CA can be abused |
+| Someone on the same LAN, café Wi-Fi or tailnet connects to a hab | Refused unless their key is authorized on that hab |
+| Someone on the path watches or changes traffic | Everything encrypted and integrity-checked by SSH; host keys pinned, so no CA can be abused |
 | A lost or stolen phone | Revoked from any hab; the revocation reaches every hab; the key cannot be copied off the phone |
 | A compromised hab | It can act on its own host only; it cannot mint trust for new devices on other habs without the owner |
 | A hosted service goes away | Nothing depends on one; no hub, no relay in the default path |
@@ -158,60 +161,89 @@ runs as the owner can already reach the local socket.
 
 | Option | How it works | For | Against |
 |---|---|---|---|
-| A. SSH only | Every client and peer runs `ssh <host> gff-hab connect`. The phone holds a Secure Enclave key in each host's authorized keys | No new listener; proven crypto; works today for `gff` and peers | The phone needs sshd reachable and a key added to every host by hand; no QR pairing; each host's SSH config becomes product config; a restricted key entry is needed so the phone gets `gff-hab connect` and not a shell |
-| B. TLS 1.3 with pinned self-signed device keys and QR pairing | Each device has a key and a self-signed certificate. Its device id is the certificate hash. A hab listener admits only paired device ids. Pairing scans a QR code from the hab | Standard TLS in Go and in Network.framework; WebSocket rides on it, as `hab-logic-api.md` 4.3 already expects; same model later carries QUIC; Syncthing proves it at scale | A new listening port; client certificates on iOS need care (a Keychain identity); a second credential beside SSH keys |
-| C. Noise handshake with device keys | Noise XX or IK over TCP or inside a WebSocket, with pinned static keys | Small, no certificates, strong identity hiding | Needs a Swift Noise library or our own; custom framing; harder to inspect with standard tools; we would own more crypto code |
-| D. Tailnet identity (WhoIs) | The hab binds to the tailnet address and trusts the tailnet's view of the caller | No new keys | Ruled out by the owner: the tailnet would become part of the product; a loose ACL becomes a loose API |
-| E. End-to-end encrypted relay (Happy) | Both sides connect outward to a relay that forwards sealed messages | Works from anywhere with no inbound port and no VPN | A hosted service in the path; latency; a relay to run or trust for liveness; contradicts "no hub" if it becomes the default |
-| F. SSH-started fast carrier (Mosh pattern) | SSH starts the session and hands a key to a UDP or QUIC carrier | Survives roaming | A second protocol; the first build does not need roaming beyond reconnect |
+| A. SSH everywhere: system sshd, then an embedded gff-hab SSH server | Clients and peers run `ssh <host> gff-hab connect` over the system sshd. Later, gff-hab can run its own SSH server, off by default, for the phone, with QR pairing | One credential type (SSH keys); proven crypto in Go and Swift; no new listener until the owner wants one; the embedded server removes hand-editing of `~/.ssh` and the 10-session cap | The embedded server is new network-facing security code; the phone needs an SSH library on iOS |
+| B. TLS 1.3 listener with pinned self-signed device keys | A hab listener admits only paired device ids; QR pairing | Standard TLS in Go and Network.framework | Considered, not chosen: a second credential type beside SSH keys, and client certificates on iOS need extra work |
+| C. Noise handshake with device keys | Noise XX or IK with pinned static keys | Small, no certificates | Considered, not chosen: we would own custom framing and more crypto code, with no Swift library to lean on |
+| D. Tailnet identity (WhoIs) | The hab trusts the tailnet's view of the caller | No new keys | Ruled out by the owner: the tailnet would become part of the product |
+| E. End-to-end encrypted relay (Happy) | Both sides connect outward to a relay | Works from anywhere with no inbound port | A hosted service in the path; contradicts "no hub" as a default. A later carrier at most |
+| F. SSH-started fast carrier (Mosh pattern) | SSH starts the session and hands a key to a UDP or QUIC carrier | Survives roaming | A second protocol; the first build needs only reconnect. A later carrier at most |
 
-Carriers are a separate axis from identity. Under B, the same device-key check runs whether the
-bytes arrive over the LAN, a tailnet, an embedded tailnet node in the app, or (later) a relay.
+Carriers are a separate axis from identity. Under A, the same SSH key check runs whether the bytes
+arrive over the LAN, a tailnet, or a later carrier. WebSocket stays possible only as a later
+carrier for a client that cannot speak SSH.
+
+Decision: A (/consensus 3/3).
 
 ---
 
 ## 4. Recommendation
 
-**Keep SSH first, and add B: a paired TLS listener with pinned device keys, off by default.**
+**SSH everywhere. System sshd first. Later, an SSH server embedded in gff-hab, off by default, for
+the phone, with QR pairing and pinned host keys.**
+
+### 4.1 First build
 
 1. **Local socket, unchanged.** One Mac alone uses only the Unix socket. No keys, no pairing.
-2. **SSH stdio, unchanged and first.** `gff` and hab peers keep using `ssh <host> gff-hab connect`.
-   SSH keys stay their authentication. New: the welcome carries the hab's device id, and the caller
-   pins it. So SSH bootstraps hab-to-hab trust with no QR code.
-3. **Paired TLS listener, new and off by default.** A hab can open one TLS 1.3 listener carrying
-   WebSocket, with the same messages as `hab-logic-api.md` 4.3. It admits a connection only when
-   both sides present a pinned device id. The owner enables it and names the bind address: loopback,
-   one LAN address, or the tailnet address. A tailnet is one possible bind address, not an identity.
-4. **The phone uses the listener**, paired by QR code. It does not need SSH. Its key lives in the
-   Secure Enclave.
-5. **Carriers for the phone off the LAN** are a later, separate choice: an embedded tailnet node in
-   the app (the original task-iv89iwd8), or an end-to-end relay. The device-key check does not
-   change. Neither is in the first build.
+2. **SSH stdio over the system sshd.** `gff`, the Mac app off-host, and hab peers run
+   `ssh <host> gff-hab connect`. The user's SSH keys authenticate them. sshd does the crypto.
+3. **The welcome carries the hab's host-key fingerprint.** Each hab has its own SSH host key (its
+   device id, see 5), separate from the system sshd's host key. The welcome carries its
+   fingerprint. The caller pins it on first contact. A changed id is refused until the owner runs
+   `gff-hab peers accept <label>`.
 
-Reasons:
+### 4.2 Next: the embedded gff-hab SSH server
 
+4. **Off by default.** gff-hab can run an SSH server built on `golang.org/x/crypto/ssh`. The owner
+   enables it per hab and names one bind address: loopback, one LAN address, or the tailnet
+   address. Never all interfaces. A tailnet address is a bind address, not an identity.
+5. **Narrow surface.** Public-key auth only, and only for keys admitted by pairing. It serves the
+   API subsystems only (control and data). It refuses shell, exec, PTY, port forwarding and agent
+   forwarding.
+6. **Its own authorized-keys file** in gff-hab's state directory. It never reads or writes
+   `~/.ssh`.
+7. **Its own channel limit**, so one connection can carry one channel per visible pane without
+   OpenSSH's 10-session cap.
+8. **Its host key is the hab's device id** from 4.1, so a peer or client that pinned it over the
+   system sshd already trusts the embedded server.
+
+### 4.3 The phone
+
+9. **A P-256 key in the Secure Enclave**, used as an ordinary SSH key, gated by Face ID or the
+   passcode.
+10. **QR pairing** (6.1) admits the phone's key to one hab's authorized-keys file. After pairing,
+    the phone connects with plain key auth.
+11. **One QR per hab.** Introduction between habs stays an owner choice, off by default (6.2).
+
+### 4.4 Per-pane data
+
+- One SSH channel per visible pane on one connection (`hab-logic-api.md` 4.2, option A).
+- SSH channel windows plus our credit frames give per-pane flow control.
+- TCP head-of-line blocking is accepted. A QUIC carrier stays possible later.
+
+### 4.5 Hab peers after pairing
+
+After pairing, hab peers move from the system sshd to each other's embedded servers, where those
+servers are enabled. The system sshd stays the bootstrap and the fallback. (Recommendation, 2/3.)
+
+Open note (1/3): a host with no sshd could join by a one-line invitation, a pairing offer like 6.1
+shown as text, instead of needing sshd for the first contact. Revisit when a real host lacks sshd.
+
+### 4.6 Reasons
+
+- One credential type everywhere: SSH keys. The owner already uses and likes them.
 - It meets the owner rule: the product has its own security, and a tailnet is only a network.
-- SSH stays first and loses nothing. Hab-to-hab trust grows from SSH, which the owner already uses.
+- SSH stays first, and the first build opens no new port.
 - The phone gets a real pairing flow instead of hand-editing authorized keys on every host.
-- TLS 1.3 is in the Go standard library and in Network.framework. We write the trust check, not the
-  crypto. Syncthing has run this model for years.
-- The listener is off by default, so a hab that never enables it opens no port.
-- QUIC is TLS 1.3 underneath, so a QUIC carrier later reuses the same device certificates.
+- SSH is mature in Go and Swift. We write the admission policy, not the crypto.
 
-How the client proves its key over TLS has two workable forms. The build stage picks one after a
-spike on iOS:
+### 4.7 Risks
 
-- **B1. Mutual TLS.** The client presents its device certificate in the handshake. Needs a Keychain
-  identity built from a Secure Enclave key and our self-signed certificate on iOS.
-- **B2. Server-pinned TLS plus a signed exporter.** The client pins the hab's certificate. In
-  `hab.hello` it sends its device certificate and a signature, made with its device key, over the TLS
-  exporter value. The hab checks the signature before it answers. This binds the proof to this TLS
-  session and avoids client certificates on iOS.
+- The embedded server is new network-facing security code. Fuzz its handshake and subsystem
+  parsing. Rate-limit refusals. A fresh-eyes security review runs before any real host enables it.
+- `swift-nio-ssh` with Secure Enclave keys is not yet proven in this app. A spike runs before
+  Part 6 builds on it.
 
-Prefer B1 if the iOS spike works, because the hab refuses an unknown device before any API message.
-Noise (C) is the fallback only if both forms fail on iOS.
-
-Decision: open (/consensus).
+Decision: settled (/consensus 3/3, 2026-10-31).
 
 ---
 
@@ -219,15 +251,15 @@ Decision: open (/consensus).
 
 | Item | Rule |
 |---|---|
-| Device key | One per device, made on first start. P-256 (the Secure Enclave's curve) on Apple devices; P-256 or Ed25519 on habs. One curve everywhere is simpler; the stage decides |
-| Where it lives | Phone and iPad: Secure Enclave, this device only, never in backups. Mac app: Keychain. Hab: a key file, owner-only permissions, in the hab's state directory |
-| Certificate | Self-signed, long-lived. Its only job is to carry the key through TLS |
-| Device id | SHA-256 of the certificate, base32, grouped, with check digits. Shown short (first group) in lists and full on request |
+| Hab key | An SSH host key owned by gff-hab, made on first start, in its state directory with owner-only permissions. Not the system sshd's host key |
+| Hab device id | The SHA-256 fingerprint of that host key, in the standard SSH form. Shown short in lists and full on request |
+| Client key | Phone and iPad: P-256 in the Secure Enclave, this device only, never in backups. Mac app: a key in the Keychain. `gff`: the user's own SSH keys over the system sshd |
+| Client device id | The SHA-256 fingerprint of the client's public key |
 | Device record | id, label, kind (hab, phone, desktop, gff), paired at, paired by, last seen, state (paired, revoked) |
-| Trust store | One file per hab: the devices it admits and the peers it pins. Revocations stay in the file as tombstones |
+| Trust store | One per hab: the embedded server's authorized-keys file (devices it admits) and the peers it pins. Revocations stay as tombstones |
 
-A hab has one device id for both roles: as the listener's server identity and as a peer that dials
-other habs.
+A hab has one device id for both roles: as the embedded server's host key and as the id it shows
+in the welcome over the system sshd.
 
 Decision: proposed.
 
@@ -237,73 +269,82 @@ Decision: proposed.
 
 ### 6.1 First pairing: a phone and a hab
 
-1. The owner runs `gff-hab pair` on the hab, or presses "Pair a device" in the Mac app.
-2. The hab makes a pairing offer: its device id, its listener endpoints, and a one-time token
-   (128 bits). The token expires after five minutes or one use.
-3. The hab shows the offer as a QR code, and as text for a device with no camera.
-4. The phone scans it. It connects to an endpoint over TLS and pins the hab's device id from the
-   code. A different certificate fails the connection.
-5. The phone sends a pair request: the token, its device certificate and its label.
-6. The hab checks the token. It shows the phone's short id and label and asks the owner to confirm.
-   Scanning proves the phone saw the screen; the confirm step stops a photo of the code from being
-   enough.
-7. The hab adds the phone to its trust store, burns the token, and logs the pairing.
-8. The phone stores the hab: id, label, endpoints.
+1. The owner enables the embedded server on the hab (owner approval, see 8).
+2. The owner runs `gff-hab pair` on the hab, or presses "Pair a device" in the Mac app.
+3. The hab makes a pairing offer: its host-key fingerprint, its embedded server endpoints, and a
+   one-time token (128 bits). The token expires after five minutes or one use.
+4. The hab shows the offer as a QR code, and as text for a device with no camera.
+5. The phone scans it. It opens SSH to an endpoint and pins the hab's host key from the code. A
+   different host key fails the connection.
+6. The phone presents the token and its public key (see the open note below).
+7. The hab checks the token. It shows the phone's short fingerprint and label and asks the owner to
+   confirm. Scanning proves the phone saw the screen; the confirm step stops a photo of the code
+   from being enough.
+8. The hab adds the phone's key to its authorized-keys file, burns the token, and logs the pairing.
+9. The phone stores the hab: device id, label, endpoints. From then on it uses plain key auth,
+   behind Face ID.
 
-The hab's listener must be enabled for this flow. The hab opens it for pairing only if the owner
-asks; otherwise `gff-hab pair` says the listener is off.
+If the embedded server is off, `gff-hab pair` says so and stops.
+
+Open note: how the phone presents the token is undecided (split 1/3 and 1/3). Either SSH
+keyboard-interactive auth carries the token before any channel opens, or a pair request runs in a
+pairing-only subsystem. The build stage picks one. Both refuse every other request until the owner
+confirms.
 
 ### 6.2 The phone and the other habs
 
 A phone paired with one hab still needs admission to each other hab. Two options:
 
 - **Pair each hab.** Repeat 6.1 on each hab. Simple; one QR per host.
-- **Introduction.** The first hab sends the phone's record to its peers over the authenticated
+- **Introduction.** The first hab sends the phone's key to its peers over the authenticated
   hab-to-hab path. Each peer admits the phone only after the owner confirms on any client that is
   already paired with that peer.
 
-Recommendation: pair each hab in the first build. Introduction is a trust-propagation choice for
-the owner (see 8).
+Recommendation: pair each hab. Introduction is a trust-propagation choice for the owner, off by
+default (see 8).
 
-The phone learns the other habs' device ids and endpoints from the first hab. Learning a server's
-id this way is safe: it came over a pinned, authenticated channel.
+The phone may learn the other habs' device ids and endpoints from the first hab. Learning a host
+key this way is safe: it came over a pinned, authenticated channel.
 
 ### 6.3 Hab to hab
 
-1. A hab reaches a peer over SSH, as Part 3 stage 2 already plans.
-2. The welcome carries the peer's device id. The caller stores it in its trust store as a pinned
-   peer.
-3. If the listener is in use between habs later, each side already knows the other's id, so no QR
-   code is needed.
-4. If an endpoint later presents a different id, the caller refuses it and says so. This replaces
-   the host-id check in stage 2.
+1. A hab reaches a peer with `ssh <endpoint> gff-hab connect` over the system sshd, as Part 3
+   stage 2 plans.
+2. The welcome carries the peer's host-key fingerprint. The caller pins it in its trust store.
+3. Where the peer's embedded server is enabled, the caller may move to it (4.5). It already knows
+   the host key, so no QR code is needed. The peer admits the caller's hab key after the owner
+   approves it once.
+4. If an endpoint later presents a different id, the caller refuses it and says so, until
+   `gff-hab peers accept <label>`.
 
 ### 6.4 The desktop client and `gff`
 
 - On the same host, they use the local socket. No pairing.
-- On another host, `gff` uses SSH first. The Mac app may use SSH or pair with the listener, by the
-  same flow as the phone.
+- On another host, `gff` uses the system sshd with the user's SSH keys. The Mac app does the same,
+  or pairs with the embedded server by the same flow as the phone.
 
 ### 6.5 Key rotation
 
-- **A client rotates.** It makes a new key and certificate. Over a live, authenticated connection
-  it sends a rotate request, signed by the old key, carrying the new certificate. Each hab replaces
-  the record and keeps the old id as a tombstone. The client repeats this on each hab it knows.
-- **A hab rotates.** It sends the new certificate to each connected client and peer, signed by the
-  old key. They pin both ids for a grace period (seven days), then only the new one. A client that
-  was offline for the whole grace period must pair again.
+- **A client rotates.** It makes a new key. Over a live, authenticated connection it sends a rotate
+  request carrying the new public key, signed by the old key. Each hab replaces the entry and keeps
+  the old fingerprint as a tombstone. The client repeats this on each hab it knows.
+- **A hab rotates.** It sends its new host key to each connected client and peer, signed by the old
+  key. They pin both for a grace period (seven days), then only the new one. A client that was
+  offline for the whole grace period must pair again.
 - No automatic schedule in the first build. Rotation runs when the owner asks.
 
 ### 6.6 Revocation
 
 1. The owner runs `gff-hab devices revoke <id>` on any hab, or revokes from any paired client.
-2. That hab marks the record revoked and closes the device's live connections at once.
-3. It sends a revocation to every peer over the hab-to-hab path. Each peer revokes and closes too.
-4. A peer that is offline gets the revocation from its peers' outbox when it comes back (the outbox
+2. That hab marks the key revoked in its authorized-keys file and closes the device's live SSH
+   connections at once.
+3. It sends a revocation tombstone to every peer over the hab-to-hab path. Each peer revokes and
+   closes too.
+4. A peer that is offline gets the tombstone from its peers' outbox when it comes back (the outbox
    from Part 3 stage 5).
 5. Revocation always wins. A hab accepts a revocation from any pinned peer. It never accepts an
    admission that way without the owner (see 6.2).
-6. A revoked device that reconnects gets a clear "revoked" error and nothing else.
+6. A revoked key that reconnects fails authentication, and the hab logs it as revoked.
 
 ---
 
@@ -312,14 +353,15 @@ id this way is safe: it came over a pinned, authenticated channel.
 ### 7.1 One Mac alone
 
 - The Mac app and `gff` talk to the local socket. Unix peer credentials authenticate them.
-- No listener, no keys in use, no pairing, no network. The hab still makes its device key on first
+- No listener, no keys in use, no pairing, no network. The hab still makes its host key on first
   start, so pairing later needs no migration.
 
 ### 7.2 The iPhone with no system VPN
 
-- On the home LAN: the phone reaches a hab whose listener binds a LAN address. Works with no VPN.
-- On a tailnet with the system VPN on: the phone reaches a listener on the tailnet address. The
-  device-key check still applies.
+- On the home LAN: the phone reaches a hab whose embedded server binds a LAN address. Works with no
+  VPN.
+- On a tailnet with the system VPN on: the phone reaches an embedded server on the tailnet address.
+  The SSH key check still applies.
 - Away from home with no VPN: the first build shows the hab as offline. Later carriers, each its own
   owner decision: an embedded tailnet node in the app, or an end-to-end relay. A router port forward
   is possible but not recommended.
@@ -330,7 +372,7 @@ id this way is safe: it came over a pinned, authenticated channel.
 ### 7.3 A lost phone
 
 1. The owner revokes the phone from any hab or any other paired client (6.6).
-2. Every hab closes the phone's connections and refuses it from then on.
+2. Every hab closes the phone's live sessions and refuses its key from then on.
 3. The phone's key cannot be copied: it lives in the Secure Enclave and is excluded from backups.
 4. Until revoked, a thief also needs the phone's passcode or biometrics to use the key, because the
    app gates key use behind them.
@@ -339,15 +381,21 @@ id this way is safe: it came over a pinned, authenticated channel.
 
 ### 7.4 A hab's disk dies
 
-- Its device key is gone. A rebuilt hab makes a new key and pairs again.
+- Its host key is gone. A rebuilt hab makes a new key and pairs again.
 - Peers see a different id at the old endpoint and refuse it until the owner accepts the new id
   (`gff-hab peers accept <label>`), which shows both ids.
 
-### 7.5 The listener on a shared network
+### 7.5 The embedded server on a shared network
 
-- Port scanners see a TLS listener. The handshake fails for every device that is not paired.
-- The hab logs each refusal with the presented device id and source address, rate-limits repeats,
-  and never answers an API message before authentication.
+- Port scanners see an SSH server. Authentication fails for every key that is not paired.
+- The hab logs each refusal with the presented key fingerprint and source address, rate-limits
+  repeats, and opens no channel before authentication.
+
+### 7.6 More than ten panes on one host
+
+- Over the system sshd, OpenSSH's default limit of 10 sessions means a client showing more than nine
+  panes opens a second SSH connection.
+- Over the embedded server, its own channel limit applies, so one connection is enough.
 
 ---
 
@@ -358,67 +406,58 @@ authenticates.
 
 | Item | Why it is discuss-first | Proposed default |
 |---|---|---|
-| Enabling the paired TLS listener on any hab | A new listening port | Off. The owner enables it per hab and names the bind address |
-| The bind address: LAN, tailnet address, or both | Decides who can reach the port | One address per hab, never all interfaces; tailnet address first |
+| Enabling the embedded SSH server on any hab | A new listening port | Off. The owner enables it per hab, after the security review |
+| The bind address: LAN, tailnet address, or both | Decides who can reach the port | One address per hab, never all interfaces |
 | The port number | A new port on each host | One fixed default in the 2700-9999 range, checked against ports in use, overridable by config |
-| Device keys as a new way to authenticate to a hab | Changes how the owner authenticates (a second credential beside SSH keys) | Yes, for the listener only; SSH keys unchanged |
+| Device keys in gff-hab's authorized-keys file | A new credential that authenticates to a hab | Yes, for the embedded server only; the system sshd and `~/.ssh` unchanged |
 | Introduction between habs (6.2) | Trust spreads from one hab to others | Off; pair each hab |
-| An embedded tailnet node in the iOS app | A new tailnet node; may need a tag, grant or ACL change | Later; propose the ACL diff first |
-| An end-to-end relay | A service reachable from outside the LAN and tailnet | Later, if at all |
-| A router port forward | Exposes a port beyond the LAN and tailnet | Not recommended |
-| Adding the phone's key to sshd (option A for the phone) | Changes how the owner authenticates to every host | Not needed under the recommendation |
+| Any off-LAN reach: a relay, an embedded tailnet node in the app, a router port forward | Reach beyond the LAN, or a new tailnet node that may need an ACL change | Later, each its own proposal; port forward not recommended |
 
-Not discuss-first: the local socket, SSH stdio, the hab making its own device key, and the welcome
-carrying the device id. None opens a port or changes how the owner authenticates.
+Not discuss-first: the local socket, SSH stdio over the system sshd, the hab making its own host
+key, and the welcome carrying its fingerprint. None opens a port or changes how the owner
+authenticates.
 
 ---
 
 ## 9. Plan changes
 
-These change only if the owner adopts the recommendation. This study does not edit them.
+Applied 2026-10-31 after the /consensus.
 
 ### 9.1 Part 3 stage 2, task-phkmrjaw (peer list, SSH transport, online and offline)
 
-- Add: each hab makes its device key on first start; the welcome carries its device id.
-- Add: each peer entry may carry a pinned device id; the first SSH connection fills it in.
-- Change: "detect that an endpoint now leads to a different hab (host id in the welcome)" becomes a
-  device-id check, with `gff-hab peers accept` for a deliberate change.
-- Change: online and offline come from the connection; the tailnet's local status becomes optional,
-  never required.
+- Peers connect over the system sshd.
+- Each hab makes its own host key on first start; the welcome carries its fingerprint.
+- Each peer entry pins that fingerprint on first connection; a changed id is refused until
+  `gff-hab peers accept`.
+- Online and offline come from the connection; a tailnet's local status is optional, never required.
 
-### 9.2 Part 3 stage 3, task-99pfhjlg (shelved tailnet listener)
+### 9.2 Part 3 stage 3, task-99pfhjlg (unshelved)
 
-Replace its scope and unshelve it as **"Paired TLS listener with device keys and QR pairing
-(owner)"**:
+Rescoped as **"Embedded gff-hab SSH server with QR pairing (off by default, owner approval to
+enable)"**:
 
-- A TLS 1.3 WebSocket listener, off by default, on one configured address, never all interfaces.
-- Device-id admission (B1 or B2 after the iOS spike); refusal before any API message.
-- `gff-hab pair`, `gff-hab devices list|revoke|rename`, rotation (6.5) and revocation fan-out to
-  peers (6.6).
-- Drop WhoIs authorization and the ACL-grant work. The tailnet is a bind address only.
-- The owner approves the port, the bind address and the auth model before the listener is enabled
-  on any real host.
+- An SSH server in gff-hab, off by default, on one configured address.
+- Public-key auth for paired keys only; API subsystems only; its own authorized-keys file; its own
+  channel limit.
+- `gff-hab pair`, `gff-hab devices list|revoke|rename`, rotation (6.5) and revocation fan-out (6.6).
+- Fuzzing, rate-limited refusals, and a fresh-eyes security review before any real host enables it.
+- No WhoIs authorization, no ACL work. A tailnet is a bind address only.
 
 ### 9.3 Part 6, task-iv89iwd8 (iOS transport)
 
-Rescope from "embedded tailnet on iOS" to **"iOS transport: device key, QR pairing, pinned TLS"**:
-
-- A Secure Enclave device key and self-signed certificate; the device id shown in Settings.
-- QR pairing (6.1) with a camera scanner and a text fallback.
-- A Network.framework TLS 1.3 WebSocket client with the hab's id pinned in the verify block.
-- The `Transport` protocol keeps its unit-tested fake; the first carrier is the plain network
-  (LAN, or the tailnet when the system VPN is on).
-- The embedded tailnet node becomes an optional follow-up task, marked owner.
-- A spike decides B1 or B2 and records the result in this spec.
+- A spike first: `swift-nio-ssh` with a Secure Enclave P-256 key, against gff-hab's embedded server
+  or a system sshd.
+- A Secure Enclave SSH key; its fingerprint shown in Settings.
+- QR pairing (6.1) with a camera scanner and a text fallback; the hab's host key pinned.
+- The `Transport` protocol keeps its unit-tested fake.
 
 ### 9.4 `hab-logic-api.md`
 
-- **3.2 Handshake:** add `device_id` to the welcome. On the paired listener under B2, the hello
-  carries the client's certificate and exporter signature.
-- **3.1 Protocol:** add a `devices.*` method group (list, revoke, rename, rotate) and `hab.pair`.
-- **3.4 Capabilities:** add a capability string that says the hab's paired listener is on.
-- **4.2 SSH stdio:** add that the client pins the welcome's `device_id`.
-- **4.3:** rename from "Tailnet WebSocket" to "Paired TLS listener (Part 3)". Keep the message
-  mapping. Add: data tickets are bound to the authenticated device, and the transport reports the
-  device id to gff-hab so events and input carry who sent them. Point to this spec for
-  authentication.
+Section 4 is updated. The section 3 items wait for the Part 2 stage that builds the handshake.
+
+- **4.2 SSH stdio:** the client pins the welcome's `device_id` (done).
+- **4.3:** now the embedded gff-hab SSH server; WebSocket only as a later carrier (done).
+- **3.2 Handshake:** the welcome carries `device_id`, the hab's host-key fingerprint (pending).
+- **3.1 Protocol:** add a `devices.*` method group (list, revoke, rename, rotate) and `hab.pair`
+  (pending).
+- **3.4 Capabilities:** add a capability string that says the embedded SSH server is on (pending).
