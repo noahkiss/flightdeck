@@ -1,4 +1,41 @@
 {
+  "agents": [
+    {
+      "at": "at-37",
+      "harness": "harness-28",
+      "kind": "auth",
+      "last": "exited",
+      "pane": "pane-26",
+      "request": {
+        "command": "command-32",
+        "cwd": "cwd-34",
+        "files": [
+          "files-33"
+        ],
+        "id": "id-30",
+        "input": {
+          "input": 35,
+          "x_unknown_field": "later"
+        },
+        "input_truncated": true,
+        "tool": "tool-31",
+        "x_unknown_field": "later"
+      },
+      "revision": 27,
+      "session": "session-29",
+      "source": "spawn",
+      "state": "exited",
+      "turn": "turn-36",
+      "version": "version-38",
+      "warning": {
+        "reason": "reason-41",
+        "tested": "tested-40",
+        "version": "version-39",
+        "x_unknown_field": "later"
+      },
+      "x_unknown_field": "later"
+    }
+  ],
   "host": {
     "id": "id-4",
     "x_unknown_field": "later"

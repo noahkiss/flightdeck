@@ -133,14 +133,17 @@ final class GoldenTests: XCTestCase {
         XCTAssertEqual(got, want, "\(label): a value did not survive the round trip")
     }
 
-    /// Removes the x_unknown_* fields from every object. Below the key `keep` it leaves the
-    /// value as it is.
+    /// Nested fields that hold any JSON value. Like an event's data, they keep extra fields.
+    static let rawFields: Set<String> = ["input"]  // PermissionRequest.input
+
+    /// Removes the x_unknown_* fields from every object. Below the key `keep`, or a key in
+    /// `rawFields`, it leaves the value as it is.
     static func strip(_ v: JSONValue, keep: String? = nil) -> JSONValue {
         switch v {
         case .object(let fields):
             var out: [String: JSONValue] = [:]
             for (k, x) in fields where !k.hasPrefix(unknownPrefix) {
-                out[k] = k == keep ? x : strip(x)
+                out[k] = (k == keep || rawFields.contains(k)) ? x : strip(x)
             }
             return .object(out)
         case .array(let items):

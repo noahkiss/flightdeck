@@ -288,8 +288,12 @@ func addUnknown(v any, top bool) {
 	}
 }
 
+// rawFields names nested fields of type RawJSON. Like an event's data, they keep extra fields on
+// a round trip.
+var rawFields = map[string]bool{"input": true} // PermissionRequest.Input
+
 // stripUnknown removes the x_unknown_* fields from every object in v, recursively. Below a key
-// in keep (such as an event's data) it leaves v as it is.
+// in keep (such as an event's data), or a key in rawFields, it leaves v as it is.
 func stripUnknown(v any, keep string) any {
 	switch v := v.(type) {
 	case map[string]any:
@@ -297,7 +301,7 @@ func stripUnknown(v any, keep string) any {
 		for k, x := range v {
 			switch {
 			case strings.HasPrefix(k, unknownPrefix):
-			case k == keep:
+			case k == keep || rawFields[k]:
 				out[k] = x
 			default:
 				out[k] = stripUnknown(x, "")

@@ -682,8 +682,10 @@ public struct PermissionRequest: Codable, Sendable, Hashable {
     public var files: [String]?
     /// The harness's id for the request, when it gives one. A permission answer must name it.
     public var id: String?
-    /// The tool input as the harness sent it.
+    /// The tool input as the harness sent it, when it is at most 64 KiB.
     public var input: JSONValue?
+    /// True when the tool input was over 64 KiB and input is left out.
+    public var inputTruncated: Bool?
     public var tool: String?
 
     enum CodingKeys: String, CodingKey {
@@ -692,15 +694,17 @@ public struct PermissionRequest: Codable, Sendable, Hashable {
         case files = "files"
         case id = "id"
         case input = "input"
+        case inputTruncated = "input_truncated"
         case tool = "tool"
     }
 
-    public init(command: String? = nil, cwd: String? = nil, files: [String]? = nil, id: String? = nil, input: JSONValue? = nil, tool: String? = nil) {
+    public init(command: String? = nil, cwd: String? = nil, files: [String]? = nil, id: String? = nil, input: JSONValue? = nil, inputTruncated: Bool? = nil, tool: String? = nil) {
         self.command = command
         self.cwd = cwd
         self.files = files
         self.id = id
         self.input = input
+        self.inputTruncated = inputTruncated
         self.tool = tool
     }
 }

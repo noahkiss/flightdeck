@@ -1262,7 +1262,11 @@
             "description": "The harness's id for the request, when it gives one. A permission answer must name it."
           },
           "input": {
-            "description": "The tool input as the harness sent it."
+            "description": "The tool input as the harness sent it, when it is at most 64 KiB."
+          },
+          "input_truncated": {
+            "type": "boolean",
+            "description": "True when the tool input was over 64 KiB and input is left out."
           },
           "tool": {
             "type": "string"

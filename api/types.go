@@ -123,7 +123,10 @@ type PermissionRequest struct {
 	Command string   `json:"command,omitempty" doc:"The exact command, for a shell tool."`
 	Files   []string `json:"files,omitempty" doc:"The exact files, for a file tool."`
 	Cwd     string   `json:"cwd,omitempty"`
-	Input   RawJSON  `json:"input,omitempty" doc:"The tool input as the harness sent it."`
+	Input   RawJSON  `json:"input,omitempty" doc:"The tool input as the harness sent it, when it is at most 64 KiB."`
+	// InputTruncated keeps a large tool input (a whole file being written) out of every event
+	// and snapshot; command and files are still exact.
+	InputTruncated bool `json:"input_truncated,omitempty" doc:"True when the tool input was over 64 KiB and input is left out."`
 }
 
 // VersionWarning says the harness reported a version its adapter was not tested on.

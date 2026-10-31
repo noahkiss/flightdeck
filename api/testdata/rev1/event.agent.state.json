@@ -1,0 +1,50 @@
+{
+  "data": {
+    "at": "at-14",
+    "harness": "harness-5",
+    "kind": "auth",
+    "last": "exited",
+    "pane": "pane-3",
+    "request": {
+      "command": "command-9",
+      "cwd": "cwd-11",
+      "files": [
+        "files-10"
+      ],
+      "id": "id-7",
+      "input": {
+        "input": 12,
+        "x_unknown_field": "later"
+      },
+      "input_truncated": true,
+      "tool": "tool-8",
+      "x_unknown_field": "later"
+    },
+    "revision": 4,
+    "session": "session-6",
+    "source": "spawn",
+    "state": "exited",
+    "turn": "turn-13",
+    "version": "version-15",
+    "warning": {
+      "reason": "reason-18",
+      "tested": "tested-17",
+      "version": "version-16",
+      "x_unknown_field": "later"
+    },
+    "x_unknown_field": "later"
+  },
+  "id": "id-21",
+  "revision": 19,
+  "seq": 20,
+  "type": "agent.state",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

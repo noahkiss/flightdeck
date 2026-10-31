@@ -150,7 +150,7 @@ func normaliseHookJSON(env Envelope) (Update, error) {
 func request(id, tool string, input json.RawMessage, cwd string) *api.PermissionRequest {
 	r := &api.PermissionRequest{ID: id, Tool: tool, Cwd: cwd}
 	if len(input) > 0 && string(input) != "null" {
-		r.Input = append(api.RawJSON(nil), input...)
+		setInput(r, input)
 		var in struct {
 			Command      json.RawMessage `json:"command"`
 			FilePath     string          `json:"file_path"`
@@ -220,7 +220,7 @@ func normaliseOpencode(env Envelope) (Update, error) {
 		u.State, u.Kind = api.AgentStatusBlocked, api.BlockedKindPermission
 		r := &api.PermissionRequest{ID: pr.ID, Tool: firstNonEmpty(pr.Permission, pr.Kind)}
 		if len(pr.Metadata) > 0 && string(pr.Metadata) != "null" {
-			r.Input = append(api.RawJSON(nil), pr.Metadata...)
+			setInput(r, pr.Metadata)
 			var md struct {
 				Command  string `json:"command"`
 				FilePath string `json:"filepath"`
@@ -243,6 +243,18 @@ func normaliseOpencode(env Envelope) (Update, error) {
 		return Update{}, fmt.Errorf("%w opencode %s", ErrUnknownEvent, env.Event)
 	}
 	return u, nil
+}
+
+// MaxInput bounds the tool input copied into a permission request. A larger one is left out
+// and flagged, so one large write cannot fill a client's event backlog.
+const MaxInput = 64 << 10
+
+func setInput(r *api.PermissionRequest, input []byte) {
+	if len(input) > MaxInput {
+		r.Input, r.InputTruncated = nil, true
+		return
+	}
+	r.Input = append(api.RawJSON(nil), input...)
 }
 
 func firstNonEmpty(s ...string) string {
