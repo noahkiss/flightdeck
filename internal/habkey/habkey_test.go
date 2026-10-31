@@ -51,6 +51,42 @@ func TestLoadOrCreateKeepsTheKey(t *testing.T) {
 	}
 }
 
+// TestRacingCreatorsAgree: processes that start together all get the same, complete key.
+func TestRacingCreatorsAgree(t *testing.T) {
+	for range 20 {
+		dir := t.TempDir()
+		fps := make(chan string, 8)
+		errs := make(chan error, 8)
+		for range 8 {
+			go func() {
+				k, err := LoadOrCreate(dir)
+				if err != nil {
+					errs <- err
+					return
+				}
+				fps <- k.Fingerprint()
+			}()
+		}
+		var first string
+		for range 8 {
+			select {
+			case err := <-errs:
+				t.Fatal(err)
+			case fp := <-fps:
+				if first == "" {
+					first = fp
+				} else if fp != first {
+					t.Fatalf("fingerprints %s and %s", first, fp)
+				}
+			}
+		}
+		entries, _ := os.ReadDir(dir)
+		if len(entries) != 1 {
+			t.Fatalf("left %d files in the state directory", len(entries))
+		}
+	}
+}
+
 func TestRefusesAnOpenKeyFile(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := LoadOrCreate(dir); err != nil {

@@ -46,20 +46,32 @@ func LoadOrCreate(dir string) (*Key, error) {
 		return nil, err
 	}
 	block := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, os.ErrExist) {
-		// Another process made it first.
-		return load(path)
-	}
+	// Write a complete temp file, then hard-link it into place. The link fails if the key
+	// exists, so a racing process never sees a half-written key, and the first one wins.
+	f, err := os.CreateTemp(dir, FileName+".tmp-*")
 	if err != nil {
+		return nil, err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
 		return nil, err
 	}
 	if _, err := f.Write(block); err != nil {
 		f.Close()
-		os.Remove(path)
+		return nil, err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
 		return nil, err
 	}
 	if err := f.Close(); err != nil {
+		return nil, err
+	}
+	if err := os.Link(tmp, path); errors.Is(err, os.ErrExist) {
+		return load(path) // another process made it first
+	} else if err != nil {
 		return nil, err
 	}
 	return &Key{Private: priv}, nil
