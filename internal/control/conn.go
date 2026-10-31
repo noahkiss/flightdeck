@@ -49,11 +49,11 @@ type conn struct {
 	pending  []pubEvent // events that arrived while seeding, in order
 }
 
-func newConn(s *Server, nc net.Conn) *conn {
+func newConn(s *Server, nc net.Conn, br *bufio.Reader) *conn {
 	return &conn{
 		s:    s,
 		nc:   nc,
-		br:   bufio.NewReaderSize(nc, 64<<10),
+		br:   br,
 		wake: make(chan struct{}, 1),
 		done: make(chan struct{}),
 	}
@@ -529,7 +529,7 @@ func (c *conn) decodeUp(m message, v any) *Error {
 }
 
 const (
-	hintNoHolder  = "%s needs the holder link, which this build does not have yet"
+	hintNoHolder  = "%s is not built yet; Part 2 stage 8 (pane size) builds it"
 	hintNoDevices = "%s needs pairing, which this build does not have yet; the devices capability is absent"
 	hintNoActions = "%s needs the holder link, which this hab is running without"
 )
@@ -576,7 +576,44 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 			return nil, e
 		}
 		return api.StructureResult{Seq: s, Structure: c.s.cfg.Source.Snapshot(c.s.cfg.Host)}, nil
-	case "pane.input", "data.ticket", "pane.take", "pane.request", "pane.disown",
+	case "data.ticket":
+		var p api.TicketParams
+		if e := c.decodeUp(m, &p); e != nil {
+			return nil, e
+		}
+		if c.s.cfg.Data == nil {
+			return nil, appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
+		}
+		if p.Pane == "" {
+			return nil, appErr(api.ErrorKindInvalid, "data.ticket needs a pane")
+		}
+		tok, ttl, err := c.s.cfg.Data.Ticket(c.clientID, p.Pane, p.Observe)
+		if err != nil {
+			return nil, actionErr(m.Method, err)
+		}
+		return api.Ticket{Seq: s, Ticket: tok, ExpiresInMS: int(ttl / time.Millisecond)}, nil
+	case "pane.input":
+		var p api.InputParams
+		if e := c.decodeUp(m, &p); e != nil {
+			return nil, e
+		}
+		data := p.Data
+		if len(data) == 0 {
+			data = []byte(p.Text)
+		}
+		if c.s.cfg.Input == nil {
+			return nil, appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
+		}
+		if p.Pane == "" || len(data) == 0 {
+			return nil, appErr(api.ErrorKindInvalid, "pane.input needs a pane and data or text")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
+		defer cancel()
+		if err := c.s.cfg.Input.Input(ctx, c.clientID, p.Pane, data); err != nil {
+			return nil, actionErr(m.Method, err)
+		}
+		return api.Empty{Seq: s}, nil
+	case "pane.take", "pane.request", "pane.disown",
 		"pane.set_desired_size", "pane.redraw":
 		return nil, appErr(api.ErrorKindUnavailable, hintNoHolder, m.Method)
 	case "devices.pair", "devices.list", "devices.revoke":

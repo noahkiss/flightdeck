@@ -1578,7 +1578,8 @@
         "properties": {
           "bytes": {
             "type": "integer",
-            "format": "uint64"
+            "format": "uint64",
+            "description": "Bytes the client applied: the screen bytes of snapshot frames and the program output of bytes frames, without their offsets and names."
           }
         },
         "required": [
@@ -1631,7 +1632,8 @@
             "format": "int64"
           },
           "stream": {
-            "type": "string"
+            "type": "string",
+            "description": "Id of this stream, for logs."
           }
         },
         "required": [

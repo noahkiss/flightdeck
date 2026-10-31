@@ -437,6 +437,8 @@ server is on and the `devices.*` methods work. `push` means the hab has working 
 feature. The zellij backend omits `data-streams`. Capabilities are for features that a host may
 lack. They are not a second versioning scheme.
 
+Built: with the holder link on, gff-hab sends `agent-state`, `data-streams` and `snapshot-vt`.
+
 ### 3.5 Events, seq and epoch
 
 - **Subscribe.** `events.subscribe {scope}` returns a snapshot of the objects in scope and starts
@@ -526,6 +528,11 @@ Clients branch on `kind`, never on `message`.
   interleave inside a call. Calls are applied in the order gff-hab receives them.
 - Input counts as activity for size ownership (6.2).
 - gff-hab never writes to a program's input on its own, except for answers to terminal queries (5.6).
+
+Built (stage 7, `internal/link`): `pane.input` writes through the holder link. Each pane has one
+input queue: client input and gff-hab's answers to terminal queries reach the holder one write at
+a time, in the order they were queued. A pane that is gone or unknown answers `not_found`; a lost
+pane answers `unavailable`. Input as activity for size ownership (6.2) is stage 8.
 
 ### 3.9 Calls and events the clients need
 
@@ -651,8 +658,9 @@ Decision: proposed.
 
 Built: the socket is `gff/hab.sock` under the user config directory on macOS and under
 `$XDG_RUNTIME_DIR` elsewhere (`$GFF_HAB_SOCKET` or `-socket` override it). Its directory must be
-mode 0700 and owned by the user. A data hello on this socket gets a reject frame (`unavailable`)
-until data connections are built.
+mode 0700 and owned by the user. gff-hab peeks at the first byte of each connection: the hello
+frame's kind byte (1) makes it a data connection, anything else a control connection. With the
+holder link off, a data hello gets a reject frame (`unavailable`).
 
 ### 4.2 `gff-hab connect` over SSH stdio
 
@@ -677,6 +685,10 @@ until data connections are built.
   sessions per SSH connection by default, so a client showing more than nine panes on one host
   opens a second SSH connection; the embedded server (4.3) lifts that cap. B is the fallback if a
   client cannot open many channels.
+- **Built: A**, while Q2 stays open for the owner. Because the socket tells a data connection
+  from a control connection by its first byte (4.1), the dumb bridge carries either. A data
+  connection over SSH is one more `ssh <host> gff-hab connect` session; no `--data` flag is
+  needed. `TestDataResumeAfterDrop` in `cmd/gff-hab` resumes a stream through `gff-hab connect`.
 - The welcome carries the hab's host-key fingerprint as `device_id` (`transport.md` 5). The client
   pins it on first contact and refuses a changed id until the owner accepts it. A welcome with no
   `device_id` leaves the hab unpinned (`transport.md` 4.1).
@@ -804,6 +816,69 @@ keyboard protocol queries, termcap queries, window size reports.
   the holder ring). A resume from before the buffer gets a snapshot.
 
 Decision: proposed.
+
+### 5.8 Built choices (stage 7)
+
+Data streams (`internal/datastream`), query answering (`internal/termq`, `internal/link`):
+
+- **Tickets.** `data.ticket` checks that the link follows the pane (else `not_found`) and returns
+  a random 128-bit ticket. It works once, for 30 s, and records the client id and `observe`. A
+  ticket that is unknown, used or expired is rejected with `ticket_invalid`.
+- **Hello.** The hello frame must come within 10 s. A pane that is gone or unknown is rejected
+  with `not_found`; a lost pane, or one whose replay does not end within 30 s, with
+  `unavailable`. Any other bad first frame gets `invalid`. gff-hab closes after a reject.
+- **Frame layouts confirmed as proposed** in `api/methods.go`: a snapshot payload is the 8-byte
+  big-endian offset it covers, a 1-byte encoding name length, the name, the screen bytes; a bytes
+  payload is the 8-byte big-endian offset of its first byte, then output. The encoding is always
+  `snapshot-vt` for now. Payloads are at most 64 MiB; a bytes frame carries at most 64 KiB.
+- **Each bytes frame covers one contiguous run of holder offsets.** A removed terminal query is a
+  skip between two frames, never inside one. So the client's offset, the frame's offset plus its
+  length, is always exact, and a resume from it neither repeats nor skips a byte.
+- **Order.** Welcome (stream id, size; no owner until stage 8), then a snapshot unless the resume
+  is served from bytes, then bytes, resize and exited frames in stream order. An `exited` frame
+  comes after the program's last bytes, then gff-hab closes the connection (7.7).
+- **Resume.** From the link's buffer, else a bounded replay from the holder's ring, else a
+  snapshot (2.3). An offset past the pane's output (a client that kept an offset from another
+  pane's life) gets a snapshot too.
+- **Credit.** It counts the screen bytes of snapshot frames and the output of bytes frames, not
+  their offsets and names (`CreditFrame.bytes`). A bytes frame is split to fit the credit. A
+  snapshot cannot be split, so it may take the credit below zero once; nothing more is sent
+  until the client returns enough. Resize and exited frames cost nothing.
+- **Behind.** Frames that wait for credit count towards 4 MiB. Past it, gff-hab drops them and
+  ends the stream's link subscription, so a stalled client costs nothing. When credit comes back,
+  it subscribes again from a snapshot at the pane's current offset. A stream that falls behind
+  the link's own queue does the same. The writer has its own goroutine and each data connection
+  its own socket, so a stalled stream blocks neither the control connection nor another stream.
+- **Resize frames.** The link resizes the PTY and then the parser, and every stream gets a resize
+  frame at the offset the parser had reached. Until stage 8 tracks owners, a resize frame names
+  no owner and gives reason `disown`.
+- **Observers** (6.4) are recorded on the ticket. A data connection carries no input and no size,
+  so an observer can do neither by construction; stage 8 keeps an observer's size out of
+  ownership.
+- **On a planned stop** gff-hab closes every data connection after the control connections, then
+  checkpoints; clients resume by offset (7.4).
+
+Terminal queries (5.6):
+
+- **One scanner shape.** Every query starts with ESC, and an ESC ends any escape sequence or
+  control string a terminal parser is in. A scanner that holds nothing back is therefore in the
+  same state as a new one. A stream may restart at any frame boundary, and the link's scanner
+  and each stream's scanner agree on what is a query. The scanner holds back the bytes of a
+  sequence that may still be a query, at most 64 bytes of CSI or 512 of OSC and DCS.
+- **Answered and removed:** DSR (`CSI 5 n`), cursor position (`CSI 6 n`, `CSI ? 6 n`), primary,
+  secondary and tertiary device attributes, XTVERSION (`CSI > q`), mode queries (`CSI ? Ps $ p`,
+  `CSI Ps $ p`), the text area size in cells (`CSI 18 t`), the keyboard protocol flags
+  (`CSI ? u`), colour queries (OSC 10, 11 and 12 with `?`, and OSC 4 when every entry asks), and
+  DECRQSS and XTGETTCAP (answered "not supported").
+- **From the parser:** the cursor, the size, mode states and keyboard flags. `vt.Terminal` has
+  `Cursor`, `Mode` and `KeyboardFlags` for this; libghostty supplies all three, the fake knows the
+  alternate screen modes only. The link writes the parser up to the end of each query before it
+  answers, so the cursor is where the query found it. Colours come from a default dark theme with
+  the xterm palette (`link.Config.Colors`); the owner client's display facts are a later stage.
+- **Live only.** The link answers queries in live output. Replayed bytes get no answer, but every
+  stream removes every query, replayed or live, so a client never sees one.
+- **Left to the clients:** pixel size reports (`CSI 14 t`, `CSI 16 t`), clipboard reads
+  (OSC 52), a query with a control byte inside its CSI, and a query cut off by a gap.
 
 ---
 
@@ -975,6 +1050,8 @@ Decision: open.
 Options and recommendation in 4.2. Recommendation: **A, one SSH channel per data connection**,
 because gff-hab keeps one connection model and the bridge stays dumb. Fallback: B, framed mode.
 
+Built: A (4.2), pending the owner's decision.
+
 Decision: open.
 
 ### Q3. Control messages in the data stream
@@ -987,6 +1064,9 @@ Decision: open.
 Recommendation: **A.** We need framing on the Unix socket and SSH anyway, and it makes the nonce
 unnecessary. Stage 7's acceptance check "a program prints a fake control message; the client
 ignores it" still applies and passes by construction.
+
+Built: A (5.8), pending the owner's decision. `TestDataFakeFrames` in `cmd/gff-hab` prints frame
+headers and a JSON-RPC `closing` from a program; the client gets them as output.
 
 Decision: open.
 

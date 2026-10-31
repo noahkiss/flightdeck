@@ -4,12 +4,14 @@
 // response, and closes a client whose event backlog grows past a limit. It also holds the client
 // that the CLI and tests use.
 //
-// session.create and pane.close run through Config.Actions. The other pane methods (input,
-// tickets, size ownership, redraw), the devices methods and the calls later stages build answer
-// "unavailable", with a hint that names the stage.
+// session.create and pane.close run through Config.Actions, data.ticket and data connections
+// through Config.Data, pane.input through Config.Input. The size ownership and redraw methods, the
+// devices methods and the calls later stages build answer "unavailable", with a hint that names
+// the stage.
 package control
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -49,6 +51,21 @@ type Actions interface {
 	ClosePane(ctx context.Context, pane string) error
 }
 
+// Data serves data connections and issues their tickets (spec 5). gff-hab implements it with
+// internal/datastream. An error that is an *Error keeps its kind.
+type Data interface {
+	// Ticket issues a single-use ticket for client to open one data connection to pane.
+	Ticket(client, pane string, observe bool) (ticket string, ttl time.Duration, err error)
+	// ServeConn runs a data connection. br reads nc and holds the hello's first byte.
+	ServeConn(nc net.Conn, br *bufio.Reader)
+}
+
+// Input writes a client's bytes to a pane's program (spec 3.8). An error that is an *Error keeps
+// its kind.
+type Input interface {
+	Input(ctx context.Context, client, pane string, data []byte) error
+}
+
 // Config is what New needs. Source is required.
 type Config struct {
 	Build        string
@@ -57,6 +74,8 @@ type Config struct {
 	Capabilities []string // strings for the features this hab offers (spec 3.4)
 	Source       Source
 	Actions      Actions // nil: session.create and pane.close answer unavailable
+	Data         Data    // nil: data.ticket answers unavailable and a data hello is rejected
+	Input        Input   // nil: pane.input answers unavailable
 	// ActionTimeout bounds one Actions call. Default 30 s.
 	ActionTimeout time.Duration
 
@@ -163,9 +182,25 @@ func (s *Server) Serve(l net.Listener) error {
 	}
 }
 
-// ServeConn runs one connection until it closes. Tests use it with net.Pipe.
+// ServeConn runs one connection until it closes. Tests use it with net.Pipe. The first byte
+// tells a data connection from a control connection (spec 4.1): a data hello frame starts with
+// its kind byte, a control connection with the JSON of hab.hello.
 func (s *Server) ServeConn(nc net.Conn) {
-	c := newConn(s, nc)
+	br := bufio.NewReaderSize(nc, 64<<10)
+	if s.cfg.Data != nil {
+		nc.SetReadDeadline(time.Now().Add(s.cfg.IdleTimeout))
+		first, err := br.Peek(1)
+		nc.SetReadDeadline(time.Time{})
+		if err != nil {
+			nc.Close()
+			return
+		}
+		if first[0] == byte(api.FrameHello) {
+			s.cfg.Data.ServeConn(nc, br)
+			return
+		}
+	}
+	c := newConn(s, nc, br)
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()

@@ -51,6 +51,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/datastream"
 	"github.com/noahkiss/flightdeck/internal/habkey"
 	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/hook"
@@ -250,8 +251,14 @@ func serve(args []string) error {
 	tokens := hook.NewTokens(secret, livePane(lk))
 	var caps []string
 	var acts control.Actions
+	var data control.Data
+	var input control.Input
+	var ds *datastream.Server
 	if lk != nil {
 		caps = append(caps, "agent-state") // panes gff-hab spawns post hooks
+		caps = append(caps, "data-streams", "snapshot-vt")
+		ds = datastream.New(datastream.Config{Source: linkSource{lk}, Logf: debugf})
+		data, input = dataService{ds}, inputService{lk}
 		home, err := os.UserHomeDir()
 		if err != nil {
 			home = "/"
@@ -271,6 +278,8 @@ func serve(args []string) error {
 		Source:       agentSource{store: store, agents: agents},
 		Capabilities: caps,
 		Actions:      acts,
+		Data:         data,
+		Input:        input,
 		Logf:         logger.Printf,
 	})
 	srv.Store(s)
@@ -307,6 +316,9 @@ func serve(args []string) error {
 		sig := <-sigs
 		logger.Printf("%v: shutting down", sig)
 		s.Close() // sends closing (shutdown) to every client and waits for it to flush
+		if ds != nil {
+			ds.Close() // clients resume each stream from its offset (spec 7.4)
+		}
 		if lk != nil {
 			if err := lk.Close(); err != nil { // planned stop: checkpoints, then handover
 				logger.Printf("holder link: %v", err)

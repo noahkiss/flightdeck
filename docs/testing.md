@@ -115,3 +115,9 @@ scrollback rows). `TestSubscribeScrollbackBound` in `internal/link` checks that 
 `Link.Scrollback` returns the older rows page by page. `TestScrollbackCost` in
 `internal/vt/ghostty` logs the cost table in spec 2.3 (`-v`; set `GFF_MEASURE_DIR` to a directory
 on a real disk to time the fsync there).
+
+Core test 4 lives in `cmd/gff-hab/data_test.go`, with the real holder and gff-hab binaries and a
+test client that speaks the data frames. Each resume test compares the client's bytes with the
+pane's ring, read from the holder after gff-hab stops, with the terminal queries left out: same
+bytes at the same offsets. The file also holds the first two checks of test 9 (two clients, one
+answer to a query) and the stalled-client and fake-frame checks of spec 5.

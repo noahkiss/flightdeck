@@ -2,6 +2,7 @@ package control
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -581,6 +582,72 @@ func TestDataHelloIsRejected(t *testing.T) {
 	}
 	if hdr[0] != byte(api.FrameReject) {
 		t.Fatalf("frame kind %d", hdr[0])
+	}
+}
+
+type fakeData struct {
+	served chan byte
+	client string
+}
+
+func (d *fakeData) Ticket(client, pane string, observe bool) (string, time.Duration, error) {
+	if pane != "p1" {
+		return "", 0, Errorf(api.ErrorKindNotFound, "no pane %s", pane)
+	}
+	d.client = client
+	return "tok", 30 * time.Second, nil
+}
+
+func (d *fakeData) ServeConn(nc net.Conn, br *bufio.Reader) {
+	b, _ := br.ReadByte()
+	d.served <- b
+	nc.Close()
+}
+
+type fakeInput struct{ got chan string }
+
+func (f *fakeInput) Input(_ context.Context, client, pane string, data []byte) error {
+	f.got <- client + "/" + pane + "/" + string(data)
+	return nil
+}
+
+// TestDataAndInput: data.ticket and pane.input reach their services with the client id, and a
+// connection that starts with a data hello goes to the data service.
+func TestDataAndInput(t *testing.T) {
+	cfg := testConfig(&fakeSource{})
+	d := &fakeData{served: make(chan byte, 1)}
+	in := &fakeInput{got: make(chan string, 1)}
+	cfg.Data, cfg.Input = d, in
+	srv := New(cfg)
+	t.Cleanup(srv.Close)
+	c := NewClient(pipeServe(t, srv))
+	w := hello(t, c, "")
+	var tk api.Ticket
+	if err := c.Call(ctx(t), "data.ticket", api.TicketParams{Pane: "p1"}, &tk); err != nil {
+		t.Fatal(err)
+	}
+	if tk.Ticket != "tok" || tk.ExpiresInMS != 30000 || d.client != w.ClientID {
+		t.Errorf("ticket %+v for client %q", tk, d.client)
+	}
+	var ce *Error
+	if err := c.Call(ctx(t), "data.ticket", api.TicketParams{Pane: "nope"}, &tk); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindNotFound {
+		t.Errorf("unknown pane: %v", err)
+	}
+	if err := c.Call(ctx(t), "pane.input", api.InputParams{Pane: "p1", Text: "hi"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-in.got; got != w.ClientID+"/p1/hi" {
+		t.Errorf("input %q", got)
+	}
+	nc := pipeServe(t, srv)
+	go nc.Write([]byte{byte(api.FrameHello), 0, 0, 0, 0})
+	select {
+	case b := <-d.served:
+		if b != byte(api.FrameHello) {
+			t.Errorf("data service read %d first", b)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the data hello never reached the data service")
 	}
 }
 

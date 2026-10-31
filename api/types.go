@@ -355,7 +355,7 @@ type DataHello struct {
 }
 
 type DataWelcome struct {
-	Stream string `json:"stream"`
+	Stream string `json:"stream" doc:"Id of this stream, for logs."`
 	Cols   int    `json:"cols"`
 	Rows   int    `json:"rows"`
 	Owner  string `json:"owner,omitempty"`
@@ -378,5 +378,5 @@ type ExitedFrame struct {
 }
 
 type CreditFrame struct {
-	Bytes uint64 `json:"bytes"`
+	Bytes uint64 `json:"bytes" doc:"Bytes the client applied: the screen bytes of snapshot frames and the program output of bytes frames, without their offsets and names."`
 }

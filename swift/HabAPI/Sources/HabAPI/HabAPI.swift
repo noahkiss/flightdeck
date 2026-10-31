@@ -409,6 +409,7 @@ public struct ClosingReason: RawRepresentable, Codable, Sendable, Hashable {
 }
 
 public struct CreditFrame: Codable, Sendable, Hashable {
+    /// Bytes the client applied: the screen bytes of snapshot frames and the program output of bytes frames, without their offsets and names.
     public var bytes: UInt64
 
     enum CodingKeys: String, CodingKey {
@@ -455,6 +456,7 @@ public struct DataWelcome: Codable, Sendable, Hashable {
     public var cols: Int
     public var owner: String?
     public var rows: Int
+    /// Id of this stream, for logs.
     public var stream: String
 
     enum CodingKeys: String, CodingKey {
