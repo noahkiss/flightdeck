@@ -1,0 +1,3 @@
+# Go is pinned in .go-version. Zig builds libghostty-vt (see `make libghostty`).
+[tools]
+zig = "0.17.0"

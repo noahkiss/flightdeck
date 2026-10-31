@@ -1,0 +1,30 @@
+# Hand-written fixture for the vt parser tests. Not a real transcript.
+# Each line that is not a comment or blank is a Go string literal. The test unquotes the lines and
+# joins them into one byte stream, fed to a 40x10 terminal.
+
+# Plain text.
+"plain line\r\n"
+
+# Colours: 16 colours, bold, 256 colours, truecolour, background, reset.
+"\x1b[31mred\x1b[0m \x1b[1;32mbold green\x1b[0m \x1b[38;5;208m256\x1b[0m \x1b[38;2;10;20;30mrgb\x1b[0m\r\n"
+"\x1b[44;97m white on blue \x1b[0m\r\n"
+
+# Wide characters: CJK and emoji take two cells each.
+"CJK: 漢字かな한글\r\n"
+"emoji: \U0001F680\U0001F389 ok\r\n"
+
+# A wide character that does not fit at the end of a row wraps to the next row.
+"0123456789012345678901234567890123456789漢\r\n"
+
+# A title (OSC 0). It must not show in the text.
+"\x1b]0;fixture title\x07"
+
+# Alternate screen: enter, clear, draw, leave. The primary screen comes back unchanged.
+"\x1b[?1049h\x1b[H\x1b[2Jalt screen text\r\nmore alt\x1b[?1049l"
+"after alt\r\n"
+
+# Enough lines to push the top rows into the scrollback.
+"line 01\r\nline 02\r\nline 03\r\nline 04\r\nline 05\r\n"
+
+# Cursor moves: go to row 9, column 1, overwrite, erase the rest of the row.
+"\x1b[9;1Hrow nine\x1b[K"

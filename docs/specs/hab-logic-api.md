@@ -185,6 +185,10 @@ gff-hab is a client of every live holder on its host: the current one and any th
 - On start it connects to each holder, agrees a holder protocol version, and reads the pane list.
 - It keeps one parser per pane. Holder output enters the parser in order, with its absolute byte
   offset.
+- Measured cost of one parser: a 120x40 libghostty terminal holding 10,000 coloured 120-column
+  lines of scrollback reports 10 MiB resident (libghostty's own memory figure, Linux amd64, release
+  build). Its `snapshot-ghostty` is 4.6 MiB and its `snapshot-vt` 1.3 MiB, for 1.2 MiB of input.
+  `TestMemoryLongScrollback` in `internal/vt/ghostty` reproduces it (`go test -v`).
 - It writes a **checkpoint** per pane (a parser snapshot plus the offset it covers) when the pane
   goes idle and every N seconds. The holder spec owns the ring; this spec owns the checkpoint.
 - **Planned restart:** gff-hab writes fresh checkpoints, tells each holder it is handing over with

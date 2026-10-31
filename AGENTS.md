@@ -48,12 +48,17 @@ Local builds and tests are fine on any of the owner's machines for now. CI arriv
 - Swift and SwiftUI work happens on a Mac, with Xcode and the simulator.
 - Signing and release builds will move to CI once it exists.
 
-Go is pinned in `.go-version` (mise). The repo layout is in `docs/layout.md`.
+Go is pinned in `.go-version` and Zig in `mise.toml` (mise). The repo layout and the libghostty
+build are in `docs/layout.md`.
 
 | Command | What it does |
 |---|---|
 | `make gen` | Regenerate the API schema, Go client and Swift package from `api/` |
-| `make test` | Run the Go tests, including the API compat test |
+| `make libghostty` | Fetch the pinned Ghostty commit and build libghostty-vt into `build/` (needs zig) |
+| `make test` | Build libghostty, then run every Go test with `-tags ghostty` |
+| `make build`, `make vet` | Build or vet every package with `-tags ghostty` |
+| `make test-pure` | Run the Go tests without cgo or libghostty |
+| `make check-pure` | Fail when a package other than `internal/vt/ghostty` needs cgo |
 | `make check-gen` | Fail when a generated file is stale |
 | `cd swift/HabAPI && swift test` | Build and test the generated Swift package (Mac) |
 
