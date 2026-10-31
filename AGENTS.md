@@ -42,7 +42,9 @@ online and offline, session. One word per concept; do not rotate synonyms.
 ## Build and test
 
 Local builds and tests are fine on any of the owner's machines for now. CI arrives later
-(shared workflows from `noahkiss/workflows`, macOS jobs only where Apple code changed).
+(shared workflows from `noahkiss/workflows`; macOS jobs run when Apple code or holder packages
+change, plus a nightly macOS end-to-end run). Which tests we keep, and why, is in
+`docs/testing.md`.
 
 - Go code (hab, `gff`, modules runtime) is developed mostly on the Linux dev box.
 - Swift and SwiftUI work happens on a Mac, with Xcode and the simulator.
