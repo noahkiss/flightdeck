@@ -550,8 +550,7 @@ Decision: proposed.
 | `pane.disown {pane}` | Give up ownership; the pane keeps its size and has no owner (reason `disown`) |
 | `pane.set_desired_size {pane, cols, rows}` | Store this client's wanted size; applied at once if this client is owner, or the pane has no owner |
 
-The bm task for stage 8 says "release"; this spec uses `disown` throughout, following Rex. One word
-per concept: the stage 8 task should use `disown`.
+This spec uses `disown` throughout, following Rex, not "release". One word per concept.
 
 ### 6.4 Observers
 
