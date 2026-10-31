@@ -11,8 +11,8 @@ import (
 )
 
 // Listen opens the control socket at path (spec 4.1). It makes the socket's directory with mode
-// 0700 when missing and refuses a directory that other users can reach. A stale socket file is
-// removed; a live one is an error. The socket itself is mode 0600. Listen opens no TCP port.
+// 0700 when missing and refuses a directory that other users can reach. A stale socket is
+// removed; a live one is an error, and so is any path that is not a socket. The socket itself is mode 0600. Listen opens no TCP port.
 func Listen(path string) (*net.UnixListener, error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -21,7 +21,10 @@ func Listen(path string) (*net.UnixListener, error) {
 	if err := checkPrivateDir(dir); err != nil {
 		return nil, err
 	}
-	if _, err := os.Lstat(path); err == nil {
+	if fi, err := os.Lstat(path); err == nil {
+		if fi.Mode().Type() != os.ModeSocket {
+			return nil, fmt.Errorf("control: %s exists and is not a socket; not removing it", path)
+		}
 		if c, err := net.DialTimeout("unix", path, time.Second); err == nil {
 			c.Close()
 			return nil, fmt.Errorf("control: socket %s is in use by another gff-hab", path)

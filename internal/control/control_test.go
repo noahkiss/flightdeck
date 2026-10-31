@@ -539,7 +539,29 @@ func TestListenPermissions(t *testing.T) {
 	}
 	l.Close()
 
-	open := filepath.Join(filepath.Dir(filepath.Dir(path)), "open")
+	// A stale socket is replaced; a regular file is never deleted.
+	stale, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale.SetUnlinkOnClose(false)
+	stale.Close()
+	l, err = Listen(path)
+	if err != nil {
+		t.Fatalf("stale socket: %v", err)
+	}
+	l.Close()
+	if err := os.WriteFile(path, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Listen(path); err == nil {
+		t.Fatal("Listen took over a regular file")
+	}
+	if b, _ := os.ReadFile(path); string(b) != "keep" {
+		t.Fatal("Listen deleted a regular file")
+	}
+
+	open :=filepath.Join(filepath.Dir(filepath.Dir(path)), "open")
 	os.Mkdir(open, 0o755)
 	os.Chmod(open, 0o755)
 	if _, err := Listen(filepath.Join(open, "hab.sock")); err == nil {
