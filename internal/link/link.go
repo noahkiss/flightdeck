@@ -85,6 +85,9 @@ type Config struct {
 	SnapshotScrollback int
 	// Logf receives diagnostics. Nil discards them.
 	Logf func(format string, args ...any)
+
+	// saveDelay delays each write of the retired file, so tests can stand in for a slow fsync.
+	saveDelay time.Duration
 }
 
 // DefaultSnapshotScrollback is the default of Config.SnapshotScrollback. 1000 rows of 120
@@ -143,6 +146,11 @@ type Link struct {
 	// each was retired. Spawn refuses them for RetiredTTL. retired.json in the state directory
 	// keeps them across restarts.
 	retired map[hp.UUID]time.Time
+	// saveRetiredC asks retiredWriter to write the retired file. Buffered: requests made while a
+	// write runs coalesce into one more write.
+	saveRetiredC chan struct{}
+	// retiredSaved gets a value after each write of the retired file; tests wait on it.
+	retiredSaved chan struct{}
 	// afterSpawnCheck runs in Spawn after the uuid check, before the holder spawns. Tests use it
 	// to land a pane with the same uuid inside that window.
 	afterSpawnCheck func()
@@ -216,15 +224,17 @@ func Open(cfg Config) (*Link, error) {
 		client: holderclient.New(holderclient.Config{
 			Dir: cfg.HolderDir, Build: cfg.Build, Protocol: cfg.Protocol, Logf: cfg.Logf,
 		}),
-		enc:      checkpointEncoding(encs),
-		rescan:   make(chan struct{}, 1),
-		tasks:    make(chan func()),
-		panes:    map[hp.UUID]*pane{},
-		byHandle: map[paneKey]*pane{},
-		holders:  map[*holderclient.Holder]bool{},
-		orphans:  map[paneKey][]hp.Frame{},
-		retired:  retired,
-		watchers: map[int]func(Notice){},
+		enc:          checkpointEncoding(encs),
+		rescan:       make(chan struct{}, 1),
+		tasks:        make(chan func()),
+		panes:        map[hp.UUID]*pane{},
+		byHandle:     map[paneKey]*pane{},
+		holders:      map[*holderclient.Holder]bool{},
+		orphans:      map[paneKey][]hp.Frame{},
+		retired:      retired,
+		saveRetiredC: make(chan struct{}, 1),
+		retiredSaved: make(chan struct{}, 1),
+		watchers:     map[int]func(Notice){},
 	}
 	l.sbCap.Store(int64(l.scrollbackShare(0)))
 	l.ctx, l.cancel = context.WithCancel(context.Background())
@@ -232,9 +242,10 @@ func Open(cfg Config) (*Link, error) {
 	l.wg.Add(1)
 	go l.eventLoop()
 	l.scan()
-	l.wg.Add(2)
+	l.wg.Add(3)
 	go l.rescanLoop()
 	go l.checkpointLoop()
+	go l.retiredWriter()
 	return l, nil
 }
 
@@ -456,7 +467,7 @@ func (l *Link) prune() {
 	}
 	l.mu.Unlock()
 	if len(drop) > 0 {
-		l.saveRetired()
+		l.requestRetiredSave()
 	}
 	for _, p := range drop {
 		p.close()
@@ -817,17 +828,42 @@ func (l *Link) ClosePane(ctx context.Context, u hp.UUID) error {
 
 // retire refuses uuid u to later spawns from now on, here and after a restart. A pane that went
 // gone never comes back under its uuid, so it is retired at once; a lost one only when the prune
-// drops it. It runs on the event loop.
+// drops it. The refusal holds at once; retiredWriter writes the file soon after, off the event
+// loop, so a slow fsync never delays a release or a prune.
 func (l *Link) retire(u hp.UUID) {
 	l.mu.Lock()
 	l.retired[u] = time.Now()
 	l.mu.Unlock()
-	l.saveRetired()
+	l.requestRetiredSave()
+}
+
+func (l *Link) requestRetiredSave() {
+	select {
+	case l.saveRetiredC <- struct{}{}:
+	default: // a write is already asked for; it will carry this change
+	}
+}
+
+// retiredWriter writes the retired file whenever asked, until the link closes. Close writes it
+// once more after this returns.
+func (l *Link) retiredWriter() {
+	defer l.wg.Done()
+	for {
+		select {
+		case <-l.ctx.Done():
+			return
+		case <-l.saveRetiredC:
+		}
+		l.saveRetired()
+	}
 }
 
 // saveRetired writes the retired uuids to the state directory, without the expired ones, which
-// it forgets. It runs on the event loop.
+// it forgets. One write at a time: retiredWriter, then Close after the writer stopped.
 func (l *Link) saveRetired() {
+	if l.cfg.saveDelay > 0 {
+		time.Sleep(l.cfg.saveDelay)
+	}
 	now := time.Now()
 	l.mu.Lock()
 	set := make(map[hp.UUID]time.Time, len(l.retired))
@@ -841,6 +877,10 @@ func (l *Link) saveRetired() {
 	l.mu.Unlock()
 	if err := saveRetired(l.cfg.StateDir, set, l.cfg.RetiredTTL, now); err != nil {
 		l.cfg.Logf("link: retired uuids: %v", err)
+	}
+	select {
+	case l.retiredSaved <- struct{}{}:
+	default:
 	}
 }
 
@@ -1018,6 +1058,11 @@ func (l *Link) Close() error {
 	l.mu.Unlock()
 	l.cancel()
 	l.wg.Wait()
+	select {
+	case <-l.saveRetiredC: // a write asked for and not yet made
+		l.saveRetired()
+	default:
+	}
 	err := l.Checkpoint()
 	l.client.Close()
 	l.mu.Lock()

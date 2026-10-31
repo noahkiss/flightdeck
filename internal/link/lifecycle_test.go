@@ -131,7 +131,9 @@ func TestPrune(t *testing.T) {
 		t.Fatal(err)
 	}
 	doomed := startHolder(t, hdir, "a", 0)
-	l := openLink(t, Config{HolderDir: hdir, StateDir: state, Rescan: 50 * time.Millisecond, KeepLost: time.Millisecond})
+	// A slow retired-file write must not hold up the prune.
+	l := openLink(t, Config{HolderDir: hdir, StateDir: state, Rescan: 50 * time.Millisecond, KeepLost: time.Millisecond,
+		saveDelay: 200 * time.Millisecond})
 	if _, err := readCheckpoint(state, stale); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("stale checkpoint after open: %v", err)
 	}
@@ -160,15 +162,16 @@ func TestPrune(t *testing.T) {
 
 	doomed.Process.Signal(syscall.SIGKILL)
 	waitFor(t, "the lost pane dropped", func() bool { _, ok := paneStatus(l, u); return !ok })
-	if _, err := readCheckpoint(state, u); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("checkpoint of the dropped pane: %v", err)
-	}
-	p.mu.Lock()
-	freed := p.term == nil
-	p.mu.Unlock()
-	if !freed {
-		t.Error("the dropped pane's parser was not freed")
-	}
+	// The prune unlists the pane first, then frees its parser and removes its checkpoint.
+	waitFor(t, "the dropped pane's parser freed", func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return p.term == nil
+	})
+	waitFor(t, "the dropped pane's checkpoint removed", func() bool {
+		_, err := readCheckpoint(state, u)
+		return errors.Is(err, os.ErrNotExist)
+	})
 	if st, ok := paneStatus(l, v); !ok || st.Lost {
 		t.Errorf("live pane: listed %v, lost %v", ok, st.Lost)
 	}
@@ -357,7 +360,7 @@ func TestAddedBeforeExited(t *testing.T) {
 func TestDrainReleasesEndedPanes(t *testing.T) {
 	hdir := shortDir(t)
 	old := startHolder(t, hdir, "old", 0)
-	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond})
+	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond, saveDelay: 200 * time.Millisecond})
 	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
 	var mu sync.Mutex
 	var gone []hp.UUID
@@ -414,11 +417,11 @@ func TestDrainReleasesEndedPanes(t *testing.T) {
 	if _, err := os.Stat(holderreg.Path(hdir, "old")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the drained holder's registry file: %v", err)
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	if len(gone) < 2 {
-		t.Errorf("gone notices for %v, want both panes", gone)
-	}
+	waitFor(t, "gone notices for both panes", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(gone) >= 2
+	})
 }
 
 // TestClosePane: a client's close releases a pane on the current holder. A running program gets

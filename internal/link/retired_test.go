@@ -69,10 +69,10 @@ func TestRetiredAcrossRestart(t *testing.T) {
 	if err := l.ClosePane(ctx, u); err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(filepath.Join(state, retiredFile))
-	if err != nil || !strings.Contains(string(b), u.String()) {
-		t.Fatalf("retired file after the close: %v\n%s", err, b)
-	}
+	waitFor(t, "the retired file names the closed pane", func() bool {
+		b, _ := os.ReadFile(filepath.Join(state, retiredFile))
+		return strings.Contains(string(b), u.String())
+	})
 	l.Close()
 
 	l = openLink(t, cfg)
@@ -80,7 +80,7 @@ func TestRetiredAcrossRestart(t *testing.T) {
 	if _, ok := paneStatus(l, u); ok {
 		t.Fatal("the restarted link lists the closed pane")
 	}
-	_, err = l.Spawn(ctx, hp.Spawn{UUID: u, Cols: 80, Rows: 24, Cwd: "/",
+	_, err := l.Spawn(ctx, hp.Spawn{UUID: u, Cols: 80, Rows: 24, Cwd: "/",
 		Argv: []string{"/bin/sh", "-c", "echo again; exec sleep 1000"}, Env: testEnv})
 	if !errors.Is(err, ErrUUIDUsed) {
 		t.Fatalf("spawn of a retired uuid after a restart: %v, want ErrUUIDUsed", err)
@@ -97,5 +97,56 @@ func TestRetiredAcrossRestart(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(state, retiredFile)); strings.Contains(string(b), u.String()) {
 		t.Errorf("the expired uuid is still in the file:\n%s", b)
+	}
+}
+
+// TestSlowRetiredSave: the retired file is written off the event loop. With each write taking
+// 2 s, a client's close still returns, the pane goes gone and its uuid is refused at once; the
+// file follows. A close of the link right after a retire still writes the file.
+func TestSlowRetiredSave(t *testing.T) {
+	const delay = 2 * time.Second
+	hdir, state := shortDir(t), shortDir(t)
+	startHolder(t, hdir, "slow", 0)
+	cfg := Config{HolderDir: hdir, StateDir: state, Rescan: time.Hour, saveDelay: delay}
+	l := openLink(t, cfg)
+	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
+	u, v := uuidN(84), uuidN(85)
+	spawn(t, l, u, "exec sleep 1000")
+	spawn(t, l, v, "exec sleep 1000")
+	ctx, cancel := context.WithTimeout(context.Background(), waitLong)
+	defer cancel()
+
+	start := time.Now()
+	if err := l.ClosePane(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	took := time.Since(start)
+	t.Logf("close with a %v retired-file write took %v", delay, took)
+	if took >= delay/2 {
+		t.Errorf("the close waited for the retired-file write: %v", took)
+	}
+	if st, _ := paneStatus(l, u); !st.Gone {
+		t.Error("the closed pane is not gone")
+	}
+	if l.spawnable(u, l.client.Current()) {
+		t.Error("the closed pane's uuid is not refused at once")
+	}
+	select {
+	case <-l.retiredSaved:
+	case <-time.After(waitLong):
+		t.Fatal("the retired file was never written")
+	}
+	if took := time.Since(start); took < delay {
+		t.Errorf("the retired file was written after %v, before the injected delay", took)
+	}
+
+	// Retire v, then close the link at once: the close writes what the writer had not.
+	if err := l.ClosePane(ctx, v); err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	b, _ := os.ReadFile(filepath.Join(state, retiredFile))
+	if !strings.Contains(string(b), u.String()) || !strings.Contains(string(b), v.String()) {
+		t.Errorf("retired file after the close of the link:\n%s", b)
 	}
 }

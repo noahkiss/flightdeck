@@ -295,7 +295,11 @@ Decisions taken in stage 4 (`internal/link`):
   checkpoint. A spawn of a retired uuid is refused for 30 days after it was retired (`gff-hab
   serve -retired-days N`, else `$GFF_HAB_RETIRED_DAYS`). Loading the file drops the entries past
   that TTL and rewrites it; every save drops them too. An unreadable file is logged and treated as
-  empty. A lost pane's uuid is refused while the link lists the pane, and retired when the prune
+  empty. The refusal holds the moment a uuid is retired; the file is written soon after by a
+  writer of its own, off the event loop, so a slow fsync (about 1 ms on a Linux SSD, more on
+  APFS) never delays a release or a prune. Requests made during a write coalesce into one more
+  write, and a planned stop writes any change still pending. A crash in the moment between
+  retire and write loses that one uuid's persistence. A lost pane's uuid is refused while the link lists the pane, and retired when the prune
   drops it.
 - When output jumps past bytes that never arrived, the screen is suspect and every subscriber
   gets a snapshot at the new offset before the next bytes.
