@@ -141,6 +141,8 @@ type Holder struct {
 	beforeWelcome    func()
 	afterWelcome     func()
 	afterReplayFrame func()
+	// beforeDispatch runs in the reader before each request is handled, outside the lock.
+	beforeDispatch func(c *conn, f hp.Frame)
 
 	// lockProbe is how long goSafe waits for the holder lock after a panic before it decides
 	// the panicking goroutine held it. crash ends the process; tests replace it.

@@ -293,6 +293,8 @@ Notes:
 2. gff-hab sends handover and closes the connection. Handover carries no offsets: the
    checkpoints hold them.
 3. The holder records "handover". It keeps every pane and every ring byte, and keeps pumping.
+   The holder reads every frame sent before the close, even when a write to the closing
+   connection fails first, so a handover followed by a close is never recorded as a crash.
 4. The next gff-hab sends hello. welcome says previous = 1 and lists every pane with its count,
    oldest kept offset and input count.
 5. For each pane, gff-hab loads its checkpoint and sends an open replay from the checkpoint's

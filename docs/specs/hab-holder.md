@@ -204,7 +204,10 @@ Two weak points we fix (section 2.6):
   program writes. Live output frames resume from the end of each replay and queue behind it. The
   holder delivers the replay and live frames in offset order, so nothing is lost or doubled.
 - **Handover.** gff-hab saves its screens and their offsets, then sends handover and closes. The
-  holder records "handover" for the next welcome. It discards nothing.
+  holder records "handover" for the next welcome. It discards nothing. A write that fails
+  because gff-hab already closed does not turn this into a crash: the holder stops writing,
+  reads what gff-hab sent before it closed, and records "handover" when that includes the
+  handover frame.
 - **Crash.** The connection ends without handover, or a newer hello arrives while a connection
   that has not sent handover is open. The holder records "crash". A newer hello that replaces a
   connection which already sent handover records "handover". The next gff-hab replays from its
@@ -558,12 +561,15 @@ list into gff-hab (Part 2), and the holder protocol has no mark frames.
 
 See 5.3. Recommendation: a signed helper bundle with a fixed bundle identifier.
 
-### Q3. Should the holder restart a crashed gff-hab? **Decision: open**
+### Q3. Should the holder restart a crashed gff-hab? **Decision: no (coordinator)**
 
 herdr-core's holder does. Recommendation: no; the init system restarts gff-hab. With drain,
 several holders run at once, and only one supervisor should start gff-hab. The init system already
 has backoff and logging. The holder's grace period would only matter where no init system runs,
 which we do not support.
+
+Ruling (coordinator, not an owner decision): the init system supervises gff-hab; the holder does
+not start or restart it. See 2.1 (fixed choices) and 2.9.
 
 ### Q4. Who ends processes that escaped a pane? **Decision: open**
 
@@ -585,7 +591,7 @@ Recommendation in 5.3: refuse by default, allow a flagged `Background` holder by
 |---|---|---|
 | 2. Wire protocol | task-n7roe6ye | 3.1, 3.2, 2.6 |
 | 3. Holder core | task-bqffgxz8 | 2.2 to 2.5, 2.7, 2.8, 2.10, 6.1 to 6.4 |
-| 4. Handover and crash recovery | task-fuqwlsop | 2.6, 2.4, 6.5, 6.8; Q3 |
+| 4. Handover and crash recovery | task-fuqwlsop | 2.6, 2.4, 6.5, 6.8 (Q3 decided: no supervision) |
 | 5. Upgrade by drain | task-sm3zgmxm | 4.1 to 4.4, 6.7 |
 | 6. Service install | task-6xtx0tqr | 5.1 to 5.5, 6.6; Q2, Q5 |
 | 7. OSC 133 marks | task-m845kpi9 | Q1, 3.1 (replay with upper bound) |

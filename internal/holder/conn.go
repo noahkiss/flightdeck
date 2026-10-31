@@ -22,6 +22,9 @@ type conn struct {
 	ready    bool // the welcome is queued; events may follow
 	closed   bool
 	handover bool // the logic process said it is leaving on purpose
+	// writeFailed: a write to the socket failed. The writer has stopped and frames are no longer
+	// queued; the reader drops the connection when it reaches end of file.
+	writeFailed bool
 
 	cond   *sync.Cond // the writer waits here for items
 	q      []item
@@ -77,7 +80,7 @@ func (c *conn) sendLastLocked(f hp.Frame) {
 }
 
 func (c *conn) pushLocked(f hp.Frame, last bool) {
-	if c.closed {
+	if c.closed || c.writeFailed {
 		return
 	}
 	b, err := hp.AppendFrame(nil, f, c.pc.Version())
@@ -131,7 +134,7 @@ func (c *conn) writer() {
 		c.queued -= len(b)
 		h.bp.Broadcast()
 		if err != nil {
-			h.dropLocked(c, err.Error())
+			c.writeErrorLocked(err)
 			h.mu.Unlock()
 			return
 		}
@@ -146,6 +149,29 @@ func (c *conn) writer() {
 			return
 		}
 	}
+}
+
+// writeErrorLocked ends the writer after a failed write. A hung connection is dropped at once
+// (spec 2.6). Any other failure means the peer is gone or going, but frames it sent before it
+// closed, a handover among them, may still wait in the socket. The reader reads them and drops
+// the connection at end of file, so a handover sent before the close is recorded as handover.
+// If the reader has not dropped it within the hang timeout, the connection is dropped anyway.
+func (c *conn) writeErrorLocked(err error) {
+	h := c.h
+	if errors.Is(err, errHung) || c.closed {
+		h.dropLocked(c, err.Error())
+		return
+	}
+	c.writeFailed = true
+	c.q = nil
+	c.queued = 0
+	h.bp.Broadcast()
+	h.cfg.Logf("holder: write: %v (waiting for the reader)", err)
+	time.AfterFunc(h.cfg.HangTimeout, func() {
+		h.mu.Lock()
+		h.dropLocked(c, "write: "+err.Error())
+		h.mu.Unlock()
+	})
 }
 
 func (c *conn) popLocked() {
@@ -229,7 +255,7 @@ func (h *Holder) replay(c *conn, f *hp.Replay) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	p := h.paneLocked(c, f.Header())
-	if p == nil || c.closed {
+	if p == nil || c.closed || c.writeFailed {
 		return
 	}
 	r := p.ring
@@ -267,6 +293,9 @@ func (c *conn) readLoop() {
 		h.mu.Unlock()
 		if closed {
 			return
+		}
+		if h.beforeDispatch != nil {
+			h.beforeDispatch(c, f)
 		}
 		h.dispatch(c, f)
 	}
