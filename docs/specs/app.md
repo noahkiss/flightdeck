@@ -163,6 +163,7 @@ Its long-running command cards are the closest match.
 | Usage readings | Each hab's adapters (14.1) | The latest reading per account, for widgets |
 | Attachments | The owner's photos and files (4.4) | No. The hab keeps the copy it received; the original stays where it was |
 | Device key | Made on first start | Secure Enclave (phone, iPad) or Keychain (Mac) |
+| Imported SSH keys | The owner's own key files (10.4) | Keychain, this device only, never in backups |
 | Push tokens | APNs | Sent to each hab that has push set up |
 
 The hab owns structure. The app owns presentation (`hab-logic-api.md` 2.2). No layout, split or
@@ -766,7 +767,8 @@ The connection follows `transport.md`. This section says what the app does.
   the hab (`transport.md` 6.1).
 - **One QR per hab.** The app pairs with each hab on its own (`transport.md` 6.2).
 - **Device key.** iPhone and iPad make a P-256 key in the Secure Enclave on first start. The Mac app
-  keeps its key in the Keychain. Settings shows the key's fingerprint.
+  keeps its key in the Keychain. Settings shows the key's fingerprint. The owner may also import an
+  existing SSH key (10.4); each hab entry says which key it uses.
 - **Endpoints.** A paired hab may list several endpoints: a LAN address, a tailnet address (useful
   only when a system VPN is on), a hostname. The app tries them in the hab's order, the next one a
   short time after the previous one, and keeps the first that completes. It never needs a VPN of its
@@ -805,6 +807,67 @@ The connection follows `transport.md`. This section says what the app does.
 Sources: `transport.md` 4, 6, 7; `hab-logic-api.md` 3.5, 3.7, 4; Heeler README (several routes
 per host, one long-lived event channel). Heeler's embedded overlay networks are a reference only;
 the app does not embed one (owner rule).
+
+### 10.4 SSH keys
+
+Settings › Keys offers two kinds of key per device.
+
+| | Generated key (default) | Imported key |
+|---|---|---|
+| What | A P-256 key made in the Secure Enclave on first start | The owner's existing OpenSSH private key |
+| Types | P-256 only (the Secure Enclave makes no other) | Ed25519; ECDSA P-256, P-384 and P-521 |
+| Where | Secure Enclave; the private key never exists outside it | Keychain, this device only, not synced, never in backups |
+| Usable | Only while the device is unlocked | Only while the device is unlocked |
+| Can be copied off the device | No | Not by the app, but a copy already exists wherever it came from |
+| A host admits it by | Pairing (`transport.md` 6.1) | Already trusting it; no pairing step |
+
+- **New users** get the generated key and pair. Nothing to import.
+- **Import from** Files, the share sheet ("Open in Flightdeck"), or paste. The app reads the
+  OpenSSH private key format, encrypted or not.
+- **Passphrase.** For an encrypted key, the app asks for the passphrase once. It derives the
+  decryption key with the format's bcrypt-based key derivation, decrypts the private key in memory,
+  checks the format's built-in check words to confirm the passphrase, then discards the passphrase
+  and the file's bytes. The ciphers to accept are the AES-CTR ones `ssh-keygen` writes by default
+  *(gk)*. The passphrase is never stored.
+- **Stored** as a Keychain item marked usable only when unlocked, this device only, and not
+  synchronisable, so neither iCloud Keychain nor a backup carries it to another device. With the
+  Face ID setting on (7.6), using the key also asks for Face ID.
+- **Never sent anywhere.** The private key goes to no hab, no log, no crash report, and no export.
+  The app has no "export key" control. Only signatures leave the device, as with any SSH key.
+- **Shown** in Settings: type, fingerprint, the key's comment, and which habs use it.
+- **Use.** Each hab entry picks its key. A host whose system sshd already trusts the imported key
+  is reachable at once: the app connects over SSH and runs `gff-hab connect` (10.1, the fallback
+  path), with no QR code and no pairing. QR pairing (`transport.md` 6.1) may admit either key; the
+  app offers the generated key first.
+- **Delete** removes the Keychain item. Hab entries that used it fall back to "no key: pair or
+  choose a key".
+- **Mac app:** the same import, into the Mac's Keychain.
+
+**The trade-off.** A generated key exists only on this device, and revoking it touches nothing
+else. An imported key is a copy of a key that also lives elsewhere and that many hosts may trust. If
+the phone is compromised while unlocked, that key can reach every host that trusts it, not only the
+habs. Revoking it means removing it from every host and replacing it everywhere it was used. The
+benefit is real: hosts that already trust the key need no pairing at all. The app says this in one
+line on the import screen, and keeps the generated key as the default.
+
+| Case | Behaviour |
+|---|---|
+| An RSA key | Refused: "RSA keys are not supported. Make an Ed25519 key with `ssh-keygen -t ed25519`." The SSH library has no RSA support (`transport.md` 1.8) |
+| A security-key type (`sk-` keys) | Refused: its private part lives on the hardware key, not in the file |
+| A key in the older PEM format | Unencrypted PKCS#8 or EC keys import. An encrypted older PEM key is refused with the command that rewrites it in the OpenSSH format (`ssh-keygen -p`) |
+| A wrong passphrase | The check words do not match; the app says so and asks again. No limit on tries, since the file is already in the owner's hands |
+| A cipher the app does not support | Refused, naming the cipher and the command to re-encrypt with the default |
+| A public key file instead of a private one | "This is a public key. Import the private key file" |
+| The same key imported twice | The app spots the fingerprint and keeps one |
+| The same imported key on several devices | Every hab sees one key, so it cannot tell those devices apart. Revoking it on a hab locks out every device that uses it. The app warns when a key is used for pairing with the embedded server, and suggests the generated key there |
+| The device restores from a backup | Imported keys are not in it. The app lists the hab entries that need a key again |
+| A file from the share sheet with extra text around the key | The app takes the first private key block and ignores the rest |
+
+Sources: owner decision 2026-10-31 (import a personal Ed25519 key beside the generated key);
+`swift-nio-ssh` private key source (key types; no RSA, no key-file reader) and its open RSA pull
+request; Citadel source (OpenSSH key reader with bcrypt and AES-CTR); Moshi store text (SSH keys in
+the Keychain behind Face ID); OpenSSH key format and `ssh-keygen` defaults *(gk)*; `transport.md`
+1.8, 4.3, 7.3.
 
 ---
 
@@ -1302,6 +1365,20 @@ exception to 12.1, and it lasts only while the owner chose voice mode.
 Recommendation: **A**, as 4.4 says. The hab adds the ignore rule to the repository's local exclude
 file, never to a tracked file, and clears old files after 30 days.
 
+### 18.13 Reading imported OpenSSH keys
+
+`swift-nio-ssh` takes keys as ready-made key objects. It does not read OpenSSH key files or
+decrypt them (`transport.md` 1.8).
+
+| Option | For | Against |
+|---|---|---|
+| A. Our own reader for the OpenSSH key format, from OpenSSH's published format description, with the system's AES-CTR and a bcrypt-based key derivation | Small, our own code, covers Ed25519 and every ECDSA curve; fixtures from `ssh-keygen` test it | We own a crypto-adjacent parser and a key derivation; both need test vectors |
+| B. A dependency that already reads the format (Citadel, MIT, built on `swift-nio-ssh`) | Proven reader with bcrypt and AES-CTR | Its reader covers Ed25519 and RSA only, not ECDSA; it pulls in a whole SSH layer we do not use |
+
+Recommendation: **A.** The format is short and documented. Test it against keys `ssh-keygen`
+writes (each type, with and without a passphrase, each round count) and against OpenSSH's own
+key-derivation test vectors.
+
 ---
 
 ## 19. Sources
@@ -1316,6 +1393,9 @@ Opened while writing this spec, 2026-10-31.
   (message view, tool view, permission footer); https://happy.engineering/docs/how-it-works
 - Heeler repository (Apache-2.0): https://github.com/ZingerLittleBee/Heeler (README)
 - rootshell repository (MIT): https://github.com/kitknox/rootshell (README)
+- swift-nio-ssh (Apache-2.0): https://github.com/apple/swift-nio-ssh, `NIOSSHPrivateKey.swift`
+  on the main branch, and pull request 219 (RSA keys, open)
+- Citadel (MIT): https://github.com/orlandos-nl/Citadel, `OpenSSHKey.swift`
 - Our specs: `docs/specs/transport.md`, `docs/specs/hab-logic-api.md`,
   `docs/specs/harness-adapters.md`
 

@@ -134,8 +134,12 @@ What we take: nothing (see 3).
   exec, PTY, forwarding and agent requests.
 - OpenSSH limits a connection to 10 session channels by default (`MaxSessions`). An embedded
   server sets its own limit.
-- Swift: `swift-nio-ssh` implements SSH client and server on Apple platforms. It accepts P-256
-  keys, including keys held in the Secure Enclave. Verify this in a spike before Part 6 builds on it.
+- Swift: `swift-nio-ssh` implements SSH client and server on Apple platforms. Its private key type
+  accepts Ed25519, ECDSA P-256, P-384 and P-521, and a P-256 key held in the Secure Enclave (Apple
+  platforms only). It has no RSA support; a pull request adding RSA is open, not merged
+  (checked 2026-10-31). It takes keys as ready-made key objects: it does not read OpenSSH key files
+  or decrypt passphrase-protected ones, so the app needs its own reader (`app.md` 18.13). Verify
+  the Secure Enclave path in a spike before Part 6 builds on it.
 - A jailbroken or instrumented device can bypass host-key pinning in its own app. That attacks the
   phone's owner only, not the hab.
 
@@ -210,8 +214,16 @@ the phone, with QR pairing and pinned host keys.**
 
 ### 4.3 The phone
 
-9. **A P-256 key in the Secure Enclave**, used as an ordinary SSH key. It works only while the
-   device is unlocked. Face ID inside the app is optional and off by default (`app.md` 18.2).
+9. **Two kinds of key per device** (`app.md` 10.4):
+   - **Generated (default):** a P-256 key in the Secure Enclave, used as an ordinary SSH key.
+   - **Imported:** the owner's existing OpenSSH key (Ed25519 or ECDSA; not RSA, see 1.8),
+     decrypted once with its passphrase on import, kept in the Keychain this device only, never in
+     backups, never sent anywhere. Hosts that already trust it need no pairing.
+
+   Both work only while the device is unlocked. Face ID inside the app is optional and off by
+   default (`app.md` 18.2). An imported key trades the generated key's containment for reach: if
+   the device is compromised, the key opens every host that trusts it, and revoking it means
+   replacing it everywhere. The generated key stays the default.
 10. **QR pairing** (6.1) admits the phone's key to one hab's authorized-keys file. After pairing,
     the phone connects with plain key auth.
 11. **One QR per hab.** Introduction between habs stays an owner choice, off by default (6.2).
@@ -255,8 +267,8 @@ Decision: settled (/consensus 3/3, 2026-10-31).
 |---|---|
 | Hab key | An SSH host key owned by gff-hab, made on first start, in its state directory with owner-only permissions. Not the system sshd's host key |
 | Hab device id | The SHA-256 fingerprint of that host key, in the standard SSH form. Shown short in lists and full on request |
-| Client key | Phone and iPad: P-256 in the Secure Enclave, this device only, never in backups. Mac app: a key in the Keychain. `gff`: the user's own SSH keys over the system sshd |
-| Client device id | The SHA-256 fingerprint of the client's public key |
+| Client key | Phone and iPad: P-256 in the Secure Enclave, this device only, never in backups; or an imported OpenSSH key in the Keychain, this device only, never in backups (4.3). Mac app: a key in the Keychain, made or imported. `gff`: the user's own SSH keys over the system sshd |
+| Client device id | The SHA-256 fingerprint of the client's public key. An imported key used on several devices gives them one id, so a hab cannot tell them apart or revoke one alone |
 | Device record | id, label, kind (hab, phone, desktop, gff), paired at, paired by, last seen, state (paired, revoked) |
 | Trust store | One per hab: the embedded server's authorized-keys file (devices it admits) and the peers it pins. Revocations stay as tombstones |
 
@@ -367,19 +379,26 @@ key this way is safe: it came over a pinned, authenticated channel.
 - Away from home with no VPN: the first build shows the hab as offline. Later carriers, each its own
   owner decision: an embedded tailnet node in the app, or an end-to-end relay. A router port forward
   is possible but not recommended.
-- Background notification actions: the Secure Enclave key needs the device unlocked when biometrics
-  gate it. iOS already asks for unlock on actions marked as needing authentication, so an approval
-  from the lock screen fits this.
+- Background notification actions: the device key, generated or imported, works only while the
+  device is unlocked (4.3). iOS already asks for unlock on actions marked as needing
+  authentication, so an approval from the lock screen fits this.
 
 ### 7.3 A lost phone
 
 1. The owner revokes the phone from any hab or any other paired client (6.6).
 2. Every hab closes the phone's live sessions and refuses its key from then on.
-3. The phone's key cannot be copied: it lives in the Secure Enclave and is excluded from backups.
+3. A generated key cannot be copied: it lives in the Secure Enclave and is excluded from backups.
+   An imported key is in the Keychain, this device only, and also excluded from backups, but it
+   was copied onto the phone in the first place, and other devices may hold it too.
 4. Until revoked, a thief also needs to unlock the phone to use the key, because the key works only
    while the device is unlocked.
-5. A new phone pairs from scratch. Nothing to restore: each device has its own key, so no shared
-   secret was on the lost phone.
+5. A new phone pairs from scratch. With generated keys there is nothing to restore: each device
+   has its own key, so no shared secret was on the lost phone.
+6. **An imported key on the lost phone** needs more. Revoking it on the habs is not enough: the
+   owner removes it from every host that trusts it (each `authorized_keys` file, any forge or
+   service account) and replaces it on every device that used it. Until then a thief who can unlock
+   the phone can reach those hosts. The app's key list says which habs used it; it cannot know the
+   other hosts.
 
 ### 7.4 A hab's disk dies
 
@@ -450,6 +469,9 @@ enable)"**:
 - A spike first: `swift-nio-ssh` with a Secure Enclave P-256 key, against gff-hab's embedded server
   or a system sshd.
 - A Secure Enclave SSH key; its fingerprint shown in Settings.
+- Import of an existing OpenSSH key (Ed25519, ECDSA), with our own key-file reader and passphrase
+  decryption (`app.md` 10.4, 18.13). Acceptance: a passphrase-protected Ed25519 key reaches a host
+  over SSH.
 - QR pairing (6.1) with a camera scanner and a text fallback; the hab's host key pinned.
 - The `Transport` protocol keeps its unit-tested fake.
 
