@@ -245,7 +245,7 @@ The first request on a control connection must be `hab.hello`.
 | `revision` | The revision this connection uses |
 | `epoch` | Random id of this gff-hab process |
 | `build` | gff-hab build string |
-| `host` | Host id and capabilities of the host |
+| `host` | Host id (capabilities are in `capabilities`) |
 | `capabilities` | Strings for optional features, see 3.4 |
 | `client_id` | This client's id |
 | `reconnect_token` | Token to resume this client within the grace period |
@@ -274,6 +274,16 @@ ranges, then closes. The client tells the user which side to update.
   translator.
 
 How long the floor stays is Decision: open (Q4).
+
+The schema lives in `api/` (layout and commands: `docs/layout.md`). Built choices:
+
+- The document is OpenRPC 1.3.2. Notifications, event types, data frames and capabilities sit in
+  `x-` extensions, because OpenRPC has no place for server-sent messages.
+- Event types are `<object>.updated` and `<object>.deleted` for projects, sessions and panes, plus
+  `pane.owner` (6.5) and `pane.activity` (7.1).
+- Word sets (error kinds, owner reasons and the like) are open: clients keep unknown words. A new
+  word in a set the server sends counts as a breaking change.
+- `rpc.discover` returns the schema document itself, so its result carries no `seq`.
 
 ### 3.4 Capabilities
 

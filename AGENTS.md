@@ -48,7 +48,14 @@ Local builds and tests are fine on any of the owner's machines for now. CI arriv
 - Swift and SwiftUI work happens on a Mac, with Xcode and the simulator.
 - Signing and release builds will move to CI once it exists.
 
-Commands go here as the code lands.
+Go is pinned in `.go-version` (mise). The repo layout is in `docs/layout.md`.
+
+| Command | What it does |
+|---|---|
+| `make gen` | Regenerate the API schema, Go client and Swift package from `api/` |
+| `make test` | Run the Go tests, including the API compat test |
+| `make check-gen` | Fail when a generated file is stale |
+| `cd swift/HabAPI && swift test` | Build and test the generated Swift package (Mac) |
 
 ## Delegation
 

@@ -1,0 +1,1267 @@
+{
+  "openrpc": "1.3.2",
+  "info": {
+    "title": "gff-hab API",
+    "version": "1",
+    "description": "Generated from the Go types in package api. Do not edit. See docs/specs/hab-logic-api.md."
+  },
+  "x-revision": 1,
+  "x-min-revision": 1,
+  "x-error-code": -32000,
+  "x-error-data": {
+    "$ref": "#/components/schemas/ErrorData"
+  },
+  "x-capabilities": [
+    "data-streams",
+    "snapshot-vt",
+    "snapshot-ghostty",
+    "agent-state",
+    "transcripts"
+  ],
+  "methods": [
+    {
+      "name": "hab.hello",
+      "summary": "First request on a control connection: agree a revision (spec 3.2).",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "client",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/ClientInfo"
+          }
+        },
+        {
+          "name": "label",
+          "description": "Human label, such as phone or desk.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "min_revision",
+          "description": "Oldest API revision the client accepts.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "reconnect_token",
+          "description": "Token from an earlier welcome (spec 3.7).",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "revision",
+          "description": "Newest API revision the client speaks.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Welcome"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/HelloParams"
+      }
+    },
+    {
+      "name": "hab.ping",
+      "summary": "Client liveness; send every 15 s when idle (spec 3.5).",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PingParams"
+      }
+    },
+    {
+      "name": "rpc.discover",
+      "summary": "The schema of this API. Its result is the schema document and carries no seq.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {}
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/DiscoverParams"
+      }
+    },
+    {
+      "name": "structure.get",
+      "summary": "Read the whole structure of the host.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/StructureResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/StructureGetParams"
+      }
+    },
+    {
+      "name": "events.subscribe",
+      "summary": "Snapshot the objects in scope and start events (spec 3.5).",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "scope",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Scope"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/StructureResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/SubscribeParams"
+      }
+    },
+    {
+      "name": "pane.input",
+      "summary": "Write bytes to a pane's program as one write (spec 3.8).",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "data",
+          "description": "Bytes to write. Give data or text.",
+          "schema": {
+            "type": "string",
+            "contentEncoding": "base64"
+          }
+        },
+        {
+          "name": "pane",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "description": "UTF-8 text to write. Give data or text.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/InputParams"
+      }
+    },
+    {
+      "name": "data.ticket",
+      "summary": "A single-use ticket, valid 30 s, to open a data connection (spec 5.2).",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "observe",
+          "description": "Observer stream: never takes ownership (spec 6.4).",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "pane",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Ticket"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/TicketParams"
+      }
+    },
+    {
+      "name": "pane.take",
+      "summary": "Become the pane's size owner now (spec 6.3).",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "pane",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/OwnerResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PaneRef"
+      }
+    },
+    {
+      "name": "pane.request",
+      "summary": "Become the size owner only if the pane has none (spec 6.3).",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "pane",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/OwnerResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PaneRef"
+      }
+    },
+    {
+      "name": "pane.disown",
+      "summary": "Give up size ownership; the pane keeps its size (spec 6.3).",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "pane",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/OwnerResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PaneRef"
+      }
+    },
+    {
+      "name": "pane.set_desired_size",
+      "summary": "Store this client's wanted size (spec 6.3).",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "cols",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "pane",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "rows",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DesiredSizeResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/DesiredSizeParams"
+      }
+    },
+    {
+      "name": "pane.redraw",
+      "summary": "Send a fresh snapshot, or nudge the program to redraw (spec 6.7).",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "mode",
+          "description": "Default snapshot.",
+          "schema": {
+            "$ref": "#/components/schemas/RedrawMode"
+          }
+        },
+        {
+          "name": "pane",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/RedrawParams"
+      }
+    }
+  ],
+  "x-notifications": [
+    {
+      "name": "event",
+      "summary": "One event; see the event types (spec 3.5).",
+      "params": {
+        "$ref": "#/components/schemas/Event"
+      }
+    },
+    {
+      "name": "heartbeat",
+      "summary": "Sent every 15 s when no other event was sent.",
+      "params": {
+        "$ref": "#/components/schemas/Heartbeat"
+      }
+    },
+    {
+      "name": "closing",
+      "summary": "Sent once before the server closes the connection.",
+      "params": {
+        "$ref": "#/components/schemas/Closing"
+      }
+    }
+  ],
+  "x-events": [
+    {
+      "type": "project.updated",
+      "summary": "A project was created or changed.",
+      "data": {
+        "$ref": "#/components/schemas/Project"
+      }
+    },
+    {
+      "type": "project.deleted",
+      "summary": "A project was removed.",
+      "data": {
+        "$ref": "#/components/schemas/Deleted"
+      }
+    },
+    {
+      "type": "session.updated",
+      "summary": "A session was created or changed, including its exit.",
+      "data": {
+        "$ref": "#/components/schemas/Session"
+      }
+    },
+    {
+      "type": "session.deleted",
+      "summary": "A session record was removed.",
+      "data": {
+        "$ref": "#/components/schemas/Deleted"
+      }
+    },
+    {
+      "type": "pane.updated",
+      "summary": "A pane appeared or changed.",
+      "data": {
+        "$ref": "#/components/schemas/Pane"
+      }
+    },
+    {
+      "type": "pane.deleted",
+      "summary": "A pane is gone.",
+      "data": {
+        "$ref": "#/components/schemas/Deleted"
+      }
+    },
+    {
+      "type": "pane.owner",
+      "summary": "The pane's size owner changed (spec 6.5).",
+      "data": {
+        "$ref": "#/components/schemas/PaneOwner"
+      }
+    },
+    {
+      "type": "pane.activity",
+      "summary": "A client sent input; at most once per second per client (spec 7.1).",
+      "data": {
+        "$ref": "#/components/schemas/PaneActivity"
+      }
+    }
+  ],
+  "x-frames": [
+    {
+      "name": "hello",
+      "kind": 1,
+      "direction": "client",
+      "payload": {
+        "$ref": "#/components/schemas/DataHello"
+      }
+    },
+    {
+      "name": "welcome",
+      "kind": 2,
+      "direction": "server",
+      "payload": {
+        "$ref": "#/components/schemas/DataWelcome"
+      }
+    },
+    {
+      "name": "reject",
+      "kind": 3,
+      "direction": "server",
+      "payload": {
+        "$ref": "#/components/schemas/DataReject"
+      }
+    },
+    {
+      "name": "snapshot",
+      "kind": 4,
+      "direction": "server",
+      "layout": "8-byte big-endian offset it covers, 1-byte encoding name length, encoding name, screen bytes"
+    },
+    {
+      "name": "bytes",
+      "kind": 5,
+      "direction": "server",
+      "layout": "8-byte big-endian offset of the first byte, then program output"
+    },
+    {
+      "name": "resize",
+      "kind": 6,
+      "direction": "server",
+      "payload": {
+        "$ref": "#/components/schemas/ResizeFrame"
+      }
+    },
+    {
+      "name": "exited",
+      "kind": 7,
+      "direction": "server",
+      "payload": {
+        "$ref": "#/components/schemas/ExitedFrame"
+      }
+    },
+    {
+      "name": "credit",
+      "kind": 8,
+      "direction": "client",
+      "payload": {
+        "$ref": "#/components/schemas/CreditFrame"
+      }
+    }
+  ],
+  "components": {
+    "schemas": {
+      "ClientInfo": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ClientKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "kind"
+        ]
+      },
+      "ClientKind": {
+        "type": "string",
+        "x-known-values": [
+          "app",
+          "terminal",
+          "cli",
+          "script"
+        ]
+      },
+      "Closing": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "$ref": "#/components/schemas/ClosingReason"
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      },
+      "ClosingReason": {
+        "type": "string",
+        "x-known-values": [
+          "event_backlog",
+          "shutdown"
+        ]
+      },
+      "CreditFrame": {
+        "type": "object",
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        "required": [
+          "bytes"
+        ]
+      },
+      "DataHello": {
+        "type": "object",
+        "properties": {
+          "offset": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Holder offset after the last byte the client applied, to resume."
+          },
+          "ticket": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticket"
+        ]
+      },
+      "DataReject": {
+        "type": "object",
+        "properties": {
+          "hint": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ErrorKind"
+          }
+        },
+        "required": [
+          "kind",
+          "hint"
+        ]
+      },
+      "DataWelcome": {
+        "type": "object",
+        "properties": {
+          "cols": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "stream": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "stream",
+          "cols",
+          "rows"
+        ]
+      },
+      "Deleted": {
+        "type": "object"
+      },
+      "DesiredSizeParams": {
+        "type": "object",
+        "properties": {
+          "cols": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pane": {
+            "type": "string"
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "pane",
+          "cols",
+          "rows"
+        ]
+      },
+      "DesiredSizeResult": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "True when the PTY took this size."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "applied"
+        ]
+      },
+      "DiscoverParams": {
+        "type": "object"
+      },
+      "Empty": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq"
+        ]
+      },
+      "ErrorData": {
+        "type": "object",
+        "properties": {
+          "client": {
+            "$ref": "#/components/schemas/RevisionRange",
+            "description": "Client revision range, on revision_unsupported."
+          },
+          "hint": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ErrorKind"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64"
+          },
+          "server": {
+            "$ref": "#/components/schemas/RevisionRange",
+            "description": "Server revision range, on revision_unsupported."
+          }
+        },
+        "required": [
+          "kind",
+          "hint",
+          "seq"
+        ]
+      },
+      "ErrorKind": {
+        "type": "string",
+        "x-known-values": [
+          "not_found",
+          "conflict",
+          "unavailable",
+          "revision_unsupported",
+          "not_owner",
+          "ticket_invalid",
+          "invalid"
+        ]
+      },
+      "Event": {
+        "type": "object",
+        "properties": {
+          "data": {},
+          "id": {
+            "type": "string",
+            "description": "Id of the object the event is about."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The object's revision after the change."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "type",
+          "id",
+          "revision",
+          "data"
+        ]
+      },
+      "ExitStatus": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "signal": {
+            "type": "string"
+          }
+        }
+      },
+      "ExitedFrame": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "signal": {
+            "type": "string"
+          }
+        }
+      },
+      "Heartbeat": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        "required": [
+          "seq"
+        ]
+      },
+      "HelloParams": {
+        "type": "object",
+        "properties": {
+          "client": {
+            "$ref": "#/components/schemas/ClientInfo"
+          },
+          "label": {
+            "type": "string",
+            "description": "Human label, such as phone or desk."
+          },
+          "min_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Oldest API revision the client accepts."
+          },
+          "reconnect_token": {
+            "type": "string",
+            "description": "Token from an earlier welcome (spec 3.7)."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Newest API revision the client speaks."
+          }
+        },
+        "required": [
+          "revision",
+          "min_revision",
+          "client"
+        ]
+      },
+      "HostInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The hab's host id, from config."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "InputParams": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "string",
+            "contentEncoding": "base64",
+            "description": "Bytes to write. Give data or text."
+          },
+          "pane": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "description": "UTF-8 text to write. Give data or text."
+          }
+        },
+        "required": [
+          "pane"
+        ]
+      },
+      "OwnerReason": {
+        "type": "string",
+        "x-known-values": [
+          "create",
+          "take",
+          "request",
+          "typed",
+          "disown",
+          "lost",
+          "disconnect",
+          "restore"
+        ]
+      },
+      "OwnerResult": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string",
+            "description": "Owner after the call. Absent means no owner."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq"
+        ]
+      },
+      "Pane": {
+        "type": "object",
+        "properties": {
+          "cols": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "holder_build": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "description": "Holder pane id, never reused."
+          },
+          "offset": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Holder absolute output offset (spec 5.4)."
+          },
+          "owner": {
+            "type": "string",
+            "description": "Client id of the size owner (spec 6.1)."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64"
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session": {
+            "type": "string",
+            "description": "Absent means unfiled."
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "holder_build",
+          "cols",
+          "rows",
+          "offset"
+        ]
+      },
+      "PaneActivity": {
+        "type": "object",
+        "properties": {
+          "client": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "client"
+        ]
+      },
+      "PaneOwner": {
+        "type": "object",
+        "properties": {
+          "cols": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "owner": {
+            "type": "string",
+            "description": "New owner client id. Absent means no owner."
+          },
+          "reason": {
+            "$ref": "#/components/schemas/OwnerReason"
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "reason",
+          "cols",
+          "rows"
+        ]
+      },
+      "PaneRef": {
+        "type": "object",
+        "properties": {
+          "pane": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pane"
+        ]
+      },
+      "PingParams": {
+        "type": "object"
+      },
+      "Project": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "remote": {
+            "type": "string",
+            "description": "Git remote that identifies the project."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64"
+          },
+          "root_commit": {
+            "type": "string",
+            "description": "Root commit, when the project has no remote."
+          },
+          "sessions": {
+            "type": "array",
+            "description": "Session ids in order.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "name",
+          "sessions"
+        ]
+      },
+      "RedrawMode": {
+        "type": "string",
+        "x-known-values": [
+          "snapshot",
+          "nudge"
+        ]
+      },
+      "RedrawParams": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/RedrawMode",
+            "description": "Default snapshot."
+          },
+          "pane": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pane"
+        ]
+      },
+      "ResizeFrame": {
+        "type": "object",
+        "properties": {
+          "cols": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/OwnerReason"
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "cols",
+          "rows",
+          "reason"
+        ]
+      },
+      "RevisionRange": {
+        "type": "object",
+        "properties": {
+          "max": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "min": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "min",
+          "max"
+        ]
+      },
+      "Scope": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "description": "Project or session ids, for kind projects or sessions.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ScopeKind"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "ScopeKind": {
+        "type": "string",
+        "x-known-values": [
+          "host",
+          "projects",
+          "sessions"
+        ]
+      },
+      "Session": {
+        "type": "object",
+        "properties": {
+          "exit": {
+            "$ref": "#/components/schemas/ExitStatus"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "Unique on the host."
+          },
+          "pane": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string",
+            "description": "Project id. Absent means unfiled."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64"
+          },
+          "state": {
+            "$ref": "#/components/schemas/SessionState"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "name",
+          "state"
+        ]
+      },
+      "SessionState": {
+        "type": "string",
+        "x-known-values": [
+          "running",
+          "exited"
+        ]
+      },
+      "StructureGetParams": {
+        "type": "object"
+      },
+      "StructureResult": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "$ref": "#/components/schemas/HostInfo"
+          },
+          "panes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Pane"
+            }
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Project"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Session"
+            }
+          }
+        },
+        "required": [
+          "seq",
+          "host",
+          "projects",
+          "sessions",
+          "panes"
+        ]
+      },
+      "SubscribeParams": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          }
+        },
+        "required": [
+          "scope"
+        ]
+      },
+      "Ticket": {
+        "type": "object",
+        "properties": {
+          "expires_in_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "ticket": {
+            "type": "string",
+            "description": "Single use, bound to this client."
+          }
+        },
+        "required": [
+          "seq",
+          "ticket",
+          "expires_in_ms"
+        ]
+      },
+      "TicketParams": {
+        "type": "object",
+        "properties": {
+          "observe": {
+            "type": "boolean",
+            "description": "Observer stream: never takes ownership (spec 6.4)."
+          },
+          "pane": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pane"
+        ]
+      },
+      "Welcome": {
+        "type": "object",
+        "properties": {
+          "build": {
+            "type": "string",
+            "description": "gff-hab build string."
+          },
+          "capabilities": {
+            "type": "array",
+            "description": "Optional features this host offers (spec 3.4).",
+            "items": {
+              "type": "string"
+            }
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "epoch": {
+            "type": "string",
+            "description": "Random id of this gff-hab process."
+          },
+          "host": {
+            "$ref": "#/components/schemas/HostInfo"
+          },
+          "reconnect_token": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The revision this connection uses."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "revision",
+          "epoch",
+          "build",
+          "host",
+          "capabilities",
+          "client_id",
+          "reconnect_token"
+        ]
+      }
+    }
+  }
+}

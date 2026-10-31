@@ -3,3 +3,5 @@
 /build/
 *.xcodeproj/xcuserdata/
 .claude/worktrees/
+.build/
+.swiftpm/
