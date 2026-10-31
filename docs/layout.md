@@ -10,6 +10,7 @@ One Go module, `github.com/noahkiss/flightdeck`, at the repo root. Swift package
 | `api/client_gen.go` | Generated Go word constants, event decoding and client stubs |
 | `api/released/<revision>.json` | The schema as released for each revision; the compat test compares against it |
 | `internal/apigen/` | Schema builder, Go and Swift generators, compat checker |
+| `internal/holderproto/` | The gff-hab to holder wire protocol: frames, codec, version negotiation. Pure Go. Spec: `docs/protocol/holder.md` |
 | `internal/vt/` | The terminal parser interface gff-hab keeps per pane, and `Fake`, a pure-Go stand-in for tests |
 | `internal/vt/ghostty/` | The libghostty-vt parser through cgo. Builds only with the `ghostty` build tag |
 | `internal/vt/vttest/` | The shared parser tests and their hand-written fixture |
@@ -17,6 +18,7 @@ One Go module, `github.com/noahkiss/flightdeck`, at the repo root. Swift package
 | `swift/HabAPI/` | Swift package of generated `Codable` types for the app |
 | `cmd/` | Binaries, as they land: `gff`, `gff-hab`, `gff-hab-holder` |
 | `docs/specs/` | Behaviour specs |
+| `docs/protocol/` | Wire protocol documents |
 
 Why one module: the binaries and the API ship together, and one `go.mod` keeps versions in step.
 Split a module out only when something outside this repo must import it on its own schedule.

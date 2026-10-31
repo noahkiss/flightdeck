@@ -260,6 +260,7 @@ Two weak points we fix (section 2.6):
 ## 3. Protocol needs
 
 Stage 2 designs the encoding. This section states what the protocol must carry.
+The encoding is in [`docs/protocol/holder.md`](../protocol/holder.md).
 
 ### 3.1 Frames
 
@@ -517,7 +518,7 @@ logic process holds a lock in the state directory, so this happens only by accid
 
 ## 7. Open questions
 
-### Q1. Who finds the OSC 133 prompt marks? **Decision: open**
+### Q1. Who finds the OSC 133 prompt marks? **Decision: option 2** (owner, stage 2)
 
 The four marks (prompt start, command start, output start, command end with exit status) let the
 console show each command as a card. The design doc says the holder can record them; "parses
