@@ -106,55 +106,69 @@ func (c *conn) errorLocked(hd hp.Header, code hp.ErrorCode, offset uint64, msg s
 }
 
 // writer drains the queue onto the socket. It produces replay frames lazily, one per step, so
-// replay is paced by how fast the socket takes bytes. It locks and unlocks by hand, with no
-// deferred unlock, so a panic never unlocks a lock this goroutine does not hold (see goSafe).
+// replay is paced by how fast the socket takes bytes. Each locked part is its own step with a
+// deferred unlock; the socket write runs between steps, outside the lock.
 func (c *conn) writer() {
 	h := c.h
 	defer close(c.writerDone)
-	h.mu.Lock()
 	for {
-		for len(c.q) == 0 && !c.closed {
-			c.cond.Wait()
-		}
-		if c.closed {
-			h.mu.Unlock()
+		it, b, ok := c.next()
+		if !ok {
 			return
 		}
-		it := c.q[0]
-		var b []byte
-		if it.job != nil {
-			var done bool
-			b, done = c.stepLocked(it.job)
-			if done {
-				c.popLocked()
-			}
-			c.queued += len(b)
-			c.maxQueued = max(c.maxQueued, c.queued)
-		} else {
-			b = it.b
-			c.popLocked()
-		}
-		h.mu.Unlock()
 		err := c.write(b)
-		h.mu.Lock()
-		c.queued -= len(b)
-		h.bp.Broadcast()
-		if err != nil {
-			c.writeErrorLocked(err)
-			h.mu.Unlock()
+		if !c.wrote(len(b), err) {
 			return
 		}
 		if it.job != nil && h.afterReplayFrame != nil {
-			h.mu.Unlock()
 			h.afterReplayFrame()
-			h.mu.Lock()
 		}
 		if it.last {
-			h.dropLocked(c, "closed after the last frame")
-			h.mu.Unlock()
+			h.locked(func() { h.dropLocked(c, "closed after the last frame") })
 			return
 		}
 	}
+}
+
+// next waits for the next queue item and returns it with the bytes to write. A replay item
+// stays queued until its last frame. ok is false once the connection is closed.
+func (c *conn) next() (it item, b []byte, ok bool) {
+	c.h.mu.Lock()
+	defer c.h.mu.Unlock()
+	for len(c.q) == 0 && !c.closed {
+		c.cond.Wait()
+	}
+	if c.closed {
+		return item{}, nil, false
+	}
+	it = c.q[0]
+	if it.job != nil {
+		var done bool
+		b, done = c.stepLocked(it.job)
+		if done {
+			c.popLocked()
+		}
+		c.queued += len(b)
+		c.maxQueued = max(c.maxQueued, c.queued)
+	} else {
+		b = it.b
+		c.popLocked()
+	}
+	return it, b, true
+}
+
+// wrote accounts for n bytes the writer has written or failed to write, and wakes paused pumps.
+// It returns false when the write failed and the writer must stop.
+func (c *conn) wrote(n int, err error) bool {
+	c.h.mu.Lock()
+	defer c.h.mu.Unlock()
+	c.queued -= n
+	c.h.bp.Broadcast()
+	if err != nil {
+		c.writeErrorLocked(err)
+		return false
+	}
+	return true
 }
 
 // writeErrorLocked ends the writer after a failed write. A hung connection is dropped at once
@@ -174,9 +188,7 @@ func (c *conn) writeErrorLocked(err error) {
 	h.bp.Broadcast()
 	h.cfg.Logf("holder: write: %v (waiting for the reader)", err)
 	c.writeTimer = time.AfterFunc(h.cfg.HangTimeout, func() {
-		h.mu.Lock()
-		h.dropLocked(c, "write: "+err.Error())
-		h.mu.Unlock()
+		h.locked(func() { h.dropLocked(c, "write: "+err.Error()) })
 	})
 }
 
@@ -290,18 +302,17 @@ func (c *conn) readLoop() {
 	for {
 		f, err := c.pc.ReadFrame()
 		if err != nil {
-			h.mu.Lock()
-			reason := "read: " + err.Error()
-			if c.replacing {
-				reason = "replaced by a newer hello"
-			}
-			h.dropLocked(c, reason)
-			h.mu.Unlock()
+			h.locked(func() {
+				reason := "read: " + err.Error()
+				if c.replacing {
+					reason = "replaced by a newer hello"
+				}
+				h.dropLocked(c, reason)
+			})
 			return
 		}
-		h.mu.Lock()
-		closed := c.closed
-		h.mu.Unlock()
+		var closed bool
+		h.locked(func() { closed = c.closed })
 		if closed {
 			return
 		}
@@ -315,24 +326,16 @@ func (c *conn) readLoop() {
 func (h *Holder) dispatch(c *conn, f hp.Frame) {
 	switch f := f.(type) {
 	case *hp.Ping:
-		h.mu.Lock()
-		c.sendLocked(&hp.Pong{Token: f.Token})
-		h.mu.Unlock()
+		h.locked(func() { c.sendLocked(&hp.Pong{Token: f.Token}) })
 	case *hp.Pong:
 	case *hp.Handover:
-		h.mu.Lock()
-		c.handover = true
-		h.mu.Unlock()
+		h.locked(func() { c.handover = true })
 	case *hp.Drain:
-		h.mu.Lock()
-		h.draining = true
-		h.mu.Unlock()
+		h.locked(func() { h.draining = true })
 		// The registry file says draining before the holder can exit, so a reader never sees
 		// a draining holder listed as one that takes new panes.
 		h.markDraining()
-		h.mu.Lock()
-		h.drainExitLocked()
-		h.mu.Unlock()
+		h.locked(h.drainExitLocked)
 	case *hp.Shutdown:
 		h.goSafe("shutdown", h.Shutdown)
 	case *hp.Spawn:
@@ -351,8 +354,8 @@ func (h *Holder) dispatch(c *conn, f hp.Frame) {
 		h.replay(c, f)
 	default:
 		// A kind the holder knows but only ever sends, or a second hello.
-		h.mu.Lock()
-		c.errorLocked(f.Header(), hp.CodeBadRequest, 0, fmt.Sprintf("%s is not a request", f.Header().Kind))
-		h.mu.Unlock()
+		h.locked(func() {
+			c.errorLocked(f.Header(), hp.CodeBadRequest, 0, fmt.Sprintf("%s is not a request", f.Header().Kind))
+		})
 	}
 }

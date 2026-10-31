@@ -108,23 +108,13 @@ func (h *Holder) spawn(c *conn, f *hp.Spawn) {
 	h.spawnMu.Lock()
 	defer h.spawnMu.Unlock()
 
-	h.mu.Lock()
-	if p := h.byUUID[f.UUID]; p != nil {
-		c.sendLocked(&hp.Spawned{Handle: p.handle, Token: f.Token, UUID: f.UUID, Pid: uint32(p.pid), Existing: true})
-		h.mu.Unlock()
+	if h.spawnAnswered(c, f) {
 		return
 	}
-	if h.draining || h.closing {
-		c.sendLocked(&hp.SpawnFailed{Token: f.Token, UUID: f.UUID, Code: hp.CodeDraining, Message: "holder is draining"})
-		h.mu.Unlock()
-		return
-	}
-	h.mu.Unlock()
-
 	fail := func(code hp.ErrorCode, msg string) {
-		h.mu.Lock()
-		c.sendLocked(&hp.SpawnFailed{Token: f.Token, UUID: f.UUID, Code: code, Message: msg})
-		h.mu.Unlock()
+		h.locked(func() {
+			c.sendLocked(&hp.SpawnFailed{Token: f.Token, UUID: f.UUID, Code: code, Message: msg})
+		})
 	}
 	if len(f.Argv) == 0 || f.Argv[0] == "" {
 		fail(hp.CodeBadRequest, "empty argv")
@@ -140,7 +130,32 @@ func (h *Holder) spawn(c *conn, f *hp.Spawn) {
 		return
 	}
 
+	h.addPane(c, f, p)
+	h.goSafe("pump", func() { h.pump(p) })
+	h.goSafe("input", func() { h.inputWriter(p) })
+	h.goSafe("waiter", func() { h.waiter(p) })
+}
+
+// spawnAnswered answers a spawn that needs no new program: the uuid already has a pane, or the
+// holder is draining or closing. It returns false when the spawn must go ahead.
+func (h *Holder) spawnAnswered(c *conn, f *hp.Spawn) bool {
 	h.mu.Lock()
+	defer h.mu.Unlock()
+	if p := h.byUUID[f.UUID]; p != nil {
+		c.sendLocked(&hp.Spawned{Handle: p.handle, Token: f.Token, UUID: f.UUID, Pid: uint32(p.pid), Existing: true})
+		return true
+	}
+	if h.draining || h.closing {
+		c.sendLocked(&hp.SpawnFailed{Token: f.Token, UUID: f.UUID, Code: hp.CodeDraining, Message: "holder is draining"})
+		return true
+	}
+	return false
+}
+
+// addPane gives a started pane its handle, records it, and answers the spawn.
+func (h *Holder) addPane(c *conn, f *hp.Spawn, p *pane) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.next++
 	p.handle = h.next
 	h.panes[p.handle] = p
@@ -149,14 +164,9 @@ func (h *Holder) spawn(c *conn, f *hp.Spawn) {
 	if h.conn == c && !c.closed {
 		c.sendLocked(&hp.Spawned{Handle: p.handle, Token: f.Token, UUID: f.UUID, Pid: uint32(p.pid)})
 		// A pane spawned on this connection is subscribed from offset 0 at once. The pump
-		// starts below, so no byte can precede the spawned frame.
+		// starts after this, so no byte can precede the spawned frame.
 		c.subs[p] = true
 	}
-	h.mu.Unlock()
-
-	h.goSafe("pump", func() { h.pump(p) })
-	h.goSafe("input", func() { h.inputWriter(p) })
-	h.goSafe("waiter", func() { h.waiter(p) })
 }
 
 // startPane opens a PTY and starts the program in a new session with the PTY as its
@@ -251,19 +261,10 @@ func (h *Holder) pump(p *pane) {
 	defer close(p.readerDone)
 	buf := make([]byte, readSize)
 	for {
-		h.mu.Lock()
-		for h.backpressureLocked() && !p.masterClosed {
-			p.paused = true
-			h.bp.Wait()
-		}
-		p.paused = false
-		h.mu.Unlock()
-
+		h.awaitFlow(p)
 		n, err := p.master.Read(buf)
 		if n > 0 {
-			h.mu.Lock()
-			h.outputLocked(p, buf[:n])
-			h.mu.Unlock()
+			h.output(p, buf[:n])
 		}
 		if err != nil {
 			// EIO on Linux once every slave descriptor is closed; EOF elsewhere; ErrClosed
@@ -274,15 +275,29 @@ func (h *Holder) pump(p *pane) {
 			break
 		}
 	}
-	h.mu.Lock()
-	p.readerEnded = true
-	h.mu.Unlock()
+	h.locked(func() { p.readerEnded = true })
 }
 
-// outputLocked appends a read to the ring and, when the current connection follows the pane
-// live, queues it as an output frame. Ring order and queue order are the same because both
-// happen under one lock hold.
-func (h *Holder) outputLocked(p *pane, data []byte) {
+// awaitFlow waits while backpressure pauses the pumps, unless the pane's master is closed.
+func (h *Holder) awaitFlow(p *pane) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for h.backpressureLocked() && !p.masterClosed {
+		p.paused = true
+		h.bp.Wait()
+	}
+	p.paused = false
+}
+
+// output appends a read to the ring and, when the current connection follows the pane live,
+// queues it as an output frame. Ring order and queue order are the same because both happen
+// under one lock hold.
+func (h *Holder) output(p *pane, data []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.onOutput != nil {
+		h.onOutput(p)
+	}
 	off := p.ring.count
 	p.ring.write(data)
 	c := h.conn
@@ -298,31 +313,39 @@ func (h *Holder) outputLocked(p *pane, data []byte) {
 // pane's writer.
 func (h *Holder) inputWriter(p *pane) {
 	for {
-		h.mu.Lock()
-		for len(p.inq) == 0 && !p.masterClosed {
-			h.mu.Unlock()
-			<-p.inWake
-			h.mu.Lock()
-		}
-		if p.masterClosed {
-			h.mu.Unlock()
+		data, closed := h.takeInput(p)
+		if closed {
 			return
 		}
-		data := p.inq
-		p.inq = nil
-		h.mu.Unlock()
+		if len(data) == 0 {
+			<-p.inWake
+			continue
+		}
 
 		// A failed write (the child is gone, the master closed) drops the bytes: they were
 		// accepted, and the input count already includes them.
 		_, _ = p.master.Write(data)
 
-		h.mu.Lock()
-		p.inQueued -= len(data)
-		if p.inQueued == 0 {
-			h.inputReadyLocked(p)
-		}
-		h.mu.Unlock()
+		h.locked(func() {
+			p.inQueued -= len(data)
+			if p.inQueued == 0 {
+				h.inputReadyLocked(p)
+			}
+		})
 	}
+}
+
+// takeInput takes the pane's queued input. It returns closed true once the master is closed,
+// and no data when nothing is queued.
+func (h *Holder) takeInput(p *pane) (data []byte, closed bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if p.masterClosed {
+		return nil, true
+	}
+	data = p.inq
+	p.inq = nil
+	return data, false
 }
 
 // inputReadyLocked sends input ready once the queue is empty after a queue-full refusal, to the
@@ -349,23 +372,23 @@ func (h *Holder) waiter(p *pane) {
 	} else {
 		h.cfg.Logf("holder: pane %d wait: %v", p.handle, err)
 	}
-	h.mu.Lock()
-	p.reaped = true
-	p.status = status
-	h.mu.Unlock()
+	h.locked(func() {
+		p.reaped = true
+		p.status = status
+	})
 
 	h.awaitOutputEnd(p)
 
-	h.mu.Lock()
-	p.exited = true
-	if c := h.conn; c != nil && c.ready && !c.closed && !p.released {
-		c.sendLocked(&hp.Exited{Handle: p.handle, Status: p.status, Final: p.ring.count})
-	}
-	if p.released {
-		delete(h.owned, p)
-		h.drainExitLocked()
-	}
-	h.mu.Unlock()
+	h.locked(func() {
+		p.exited = true
+		if c := h.conn; c != nil && c.ready && !c.closed && !p.released {
+			c.sendLocked(&hp.Exited{Handle: p.handle, Status: p.status, Final: p.ring.count})
+		}
+		if p.released {
+			delete(h.owned, p)
+			h.drainExitLocked()
+		}
+	})
 	close(p.final)
 }
 
@@ -383,9 +406,8 @@ func (h *Holder) awaitOutputEnd(p *pane) {
 			return
 		case <-t.C:
 		}
-		h.mu.Lock()
-		paused := p.paused
-		h.mu.Unlock()
+		var paused bool
+		h.locked(func() { paused = p.paused })
 		if !paused {
 			left -= step
 		}

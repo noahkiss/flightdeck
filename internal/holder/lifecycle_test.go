@@ -2,10 +2,12 @@ package holder
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -135,26 +137,46 @@ func TestWriteHangBound(t *testing.T) {
 	}
 }
 
-// TestGoSafe: a panic with the lock free is logged and survived; a panic that leaves the lock
-// held crashes the holder.
+// TestGoSafe: a panic is logged and survived, with the lock free afterwards: when the lock was
+// free, under heavy contention, and inside a real critical section.
 func TestGoSafe(t *testing.T) {
-	h := New(Config{})
-	crashed := make(chan string, 1)
-	h.lockProbe = 100 * time.Millisecond
-	h.crash = func(msg string) { crashed <- msg }
+	var logMu sync.Mutex
+	var logs []string
+	logged := func(want string) bool {
+		logMu.Lock()
+		defer logMu.Unlock()
+		for _, l := range logs {
+			if strings.Contains(l, want) {
+				return true
+			}
+		}
+		return false
+	}
+	logf := func(format string, args ...any) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}
+	// lockFree waits until the holder lock can be taken, without blocking on it for good.
+	lockFree := func(h *Holder, what string) {
+		t.Helper()
+		deadline := time.Now().Add(waitLong)
+		for !h.mu.TryLock() {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: the holder lock stayed held", what)
+			}
+			time.Sleep(time.Millisecond)
+		}
+		h.mu.Unlock()
+	}
 
+	h := New(Config{Logf: logf})
 	done := make(chan struct{})
 	h.goSafe("free", func() { defer close(done); panic("boom") })
 	<-done
-	select {
-	case m := <-crashed:
-		t.Fatalf("crashed: %s", m)
-	case <-time.After(300 * time.Millisecond):
-	}
-	h.mu.Lock() // still usable
-	h.mu.Unlock()
+	lockFree(h, "free")
 
-	// Heavy contention (which can put the mutex in starvation mode) is not a held lock.
+	// Heavy contention (which can put the mutex in starvation mode) changes nothing.
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 	for range 16 {
@@ -176,20 +198,48 @@ func TestGoSafe(t *testing.T) {
 	done = make(chan struct{})
 	h.goSafe("contended", func() { defer close(done); panic("boom") })
 	<-done
-	select {
-	case m := <-crashed:
-		t.Fatalf("crashed under contention: %s", m)
-	case <-time.After(300 * time.Millisecond):
-	}
+	// A panic inside a locked section under the same contention.
+	done = make(chan struct{})
+	h.goSafe("contended section", func() { defer close(done); h.locked(func() { panic("boom") }) })
+	<-done
 	close(stop)
 	wg.Wait()
-
-	h.goSafe("held", func() { h.mu.Lock(); panic("boom") })
-	select {
-	case <-crashed:
-	case <-time.After(waitLong):
-		t.Fatal("a panic with the lock held did not crash")
+	lockFree(h, "contended")
+	for _, name := range []string{"free", "contended", "contended section"} {
+		if !logged("panic in " + name + ": boom") {
+			t.Errorf("no log for the panic in %s", name)
+		}
 	}
+
+	// A panic inside a real critical section: the pump of pane 1 panics while it holds the lock
+	// to record output. The lock is free afterwards and the holder keeps serving.
+	boom := uuidN(1)
+	h2, path := testHolder(t, Config{}, func(h *Holder) {
+		testLogf := h.cfg.Logf
+		h.cfg.Logf = func(format string, args ...any) {
+			testLogf(format, args...)
+			logf(format, args...)
+		}
+		h.onOutput = func(p *pane) {
+			if p.uuid == boom {
+				panic("boom in output")
+			}
+		}
+	})
+	c := dial(t, path, true)
+	c.sh(1, "echo first; exec sleep 30")
+	deadline := time.Now().Add(waitLong)
+	for !logged("panic in pump: boom in output") {
+		if time.Now().After(deadline) {
+			t.Fatal("the pump never panicked")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	lockFree(h2, "pump")
+	c.sync()
+	s := c.sh(2, "echo alive")
+	c.waitOutput(s.Handle, "alive")
+	c.exited(s.Handle)
 }
 
 // TestHandoverPrevious: a connection that sends handover and closes leaves previous = handover.

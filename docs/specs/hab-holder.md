@@ -548,7 +548,9 @@ This is the case the design cannot save today, and later stages must not promise
   Native transcripts make this possible.
 
 Mitigations now: keep the holder tiny; no parsing; recover from a panic in every goroutine and log
-it instead of exiting; fuzz the protocol decoder. Mitigation in reserve: the Linux systemd fd store
+it instead of exiting; fuzz the protocol decoder. Every critical section on the holder lock
+releases it through a deferred unlock, so a panic frees the lock while it unwinds, and recovery
+never has to guess whether the lock is still held. A source check in the tests enforces this. Mitigation in reserve: the Linux systemd fd store
 (option E), which keeps the masters open across a holder restart. macOS has no equivalent.
 
 ### 6.7 A crash during drain

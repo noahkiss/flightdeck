@@ -9,7 +9,10 @@
 // Concurrency: one mutex (Holder.mu) guards every pane, ring and connection. Pumps, waiters,
 // input writers and the connection writer take it briefly and never hold it across a blocking
 // read or write. Frames to the logic process go through one queue and one writer per
-// connection, so the reader never waits on a write.
+// connection, so the reader never waits on a write. Every critical section releases the lock
+// through a deferred Unlock in the function that took it (Holder.locked, or a method that locks
+// and defers), so a panic frees the lock while it unwinds. A function that must drop the lock
+// part way, to do I/O or to wait, is split into locked steps. lockcheck_test.go enforces this.
 //
 // The behaviour is specified in docs/specs/hab-holder.md, section 2.
 package holder
@@ -171,11 +174,9 @@ type Holder struct {
 	afterReplayFrame func()
 	// beforeDispatch runs in the reader before each request is handled, outside the lock.
 	beforeDispatch func(c *conn, f hp.Frame)
-
-	// lockProbe is how long goSafe waits for the holder lock after a panic before it decides
-	// the panicking goroutine held it. crash ends the process; tests replace it.
-	lockProbe time.Duration
-	crash     func(msg string)
+	// onOutput runs in the pump under the lock, at the start of each output step. Tests use it
+	// to panic inside a real critical section.
+	onOutput func(p *pane)
 }
 
 // acceptor is the listener Serve accepts on. Tests wrap a real listener to inject errors.
@@ -197,9 +198,6 @@ func New(cfg Config) *Holder {
 		byUUID:  map[hp.UUID]*pane{},
 		owned:   map[*pane]struct{}{},
 		done:    make(chan struct{}),
-
-		lockProbe: 2 * time.Second,
-		crash:     func(msg string) { panic(msg) },
 	}
 	h.bp = sync.NewCond(&h.mu)
 	return h
@@ -298,15 +296,26 @@ const (
 	acceptLogEvery   = time.Minute
 )
 
-func (h *Holder) serve(l acceptor) error {
+// locked runs f with the holder lock held. The deferred Unlock frees the lock even when f
+// panics, so the panic cannot leave every other goroutine blocked.
+func (h *Holder) locked(f func()) {
 	h.mu.Lock()
-	if h.closing {
-		h.mu.Unlock()
+	defer h.mu.Unlock()
+	f()
+}
+
+func (h *Holder) serve(l acceptor) error {
+	var closing bool
+	h.locked(func() {
+		closing = h.closing
+		if !closing {
+			h.listener = l
+		}
+	})
+	if closing {
 		l.Close()
 		return nil
 	}
-	h.listener = l
-	h.mu.Unlock()
 	if err := h.register(l.Addr().String()); err != nil {
 		h.closeListener()
 		h.exit()
@@ -324,9 +333,8 @@ func (h *Holder) serve(l acceptor) error {
 			h.goSafe("connection", func() { h.serveConn(nc) })
 			continue
 		}
-		h.mu.Lock()
-		closing, owns := h.closing, len(h.owned) > 0
-		h.mu.Unlock()
+		var closing, owns bool
+		h.locked(func() { closing, owns = h.closing, len(h.owned) > 0 })
 		if closing {
 			return nil
 		}
@@ -360,30 +368,14 @@ func transientAccept(err error) bool {
 }
 
 // goSafe runs fn in a goroutine and logs a panic instead of ending the holder (spec 6.6): a
-// holder exit ends every program. A panic that left the holder lock held cannot be recovered
-// from: the state it guards may be half changed, and every other goroutine would block. goSafe
-// probes the lock; if it stays held, it crashes the holder with a clear message.
+// holder exit ends every program. The panic cannot leave the holder lock held, because every
+// critical section unlocks through a deferred Unlock that runs while the panic unwinds (see the
+// package comment). So goSafe only recovers and logs; it never needs to inspect the lock.
 func (h *Holder) goSafe(name string, fn func()) {
 	go func() {
 		defer func() {
-			r := recover()
-			if r == nil {
-				return
-			}
-			h.cfg.Logf("holder: panic in %s: %v", name, r)
-			// Probe with a blocking Lock raced against a timer. TryLock would fail whenever the
-			// mutex is in starvation mode, so heavy contention could fake a held lock and crash
-			// the holder. A blocking Lock joins the queue and gets the lock unless it is held.
-			got := make(chan struct{})
-			go func() {
-				h.mu.Lock()
-				close(got)
-				h.mu.Unlock()
-			}()
-			select {
-			case <-got:
-			case <-time.After(h.lockProbe):
-				h.crash(fmt.Sprintf("holder: panic in %s left the holder lock held: %v", name, r))
+			if r := recover(); r != nil {
+				h.cfg.Logf("holder: panic in %s: %v", name, r)
 			}
 		}()
 		fn()
@@ -391,9 +383,8 @@ func (h *Holder) goSafe(name string, fn func()) {
 }
 
 func (h *Holder) closeListener() {
-	h.mu.Lock()
-	l := h.listener
-	h.mu.Unlock()
+	var l acceptor
+	h.locked(func() { l = h.listener })
 	if l != nil {
 		l.Close()
 	}
@@ -416,27 +407,16 @@ func (h *Holder) serveConn(nc *net.UnixConn) {
 	_ = nc.SetReadDeadline(time.Time{})
 	c := newConn(h, nc, pc)
 	pc.OnSkip = func(hd hp.Header) {
-		h.mu.Lock()
-		c.sendLocked(hp.UnknownKind(hd))
-		h.mu.Unlock()
+		h.locked(func() { c.sendLocked(hp.UnknownKind(hd)) })
 	}
 
 	if h.beforeWelcome != nil {
 		h.beforeWelcome()
 	}
-	h.mu.Lock()
-	if !h.replaceLocked() {
-		h.mu.Unlock()
+	if !h.install(c) {
 		nc.Close()
 		return
 	}
-	// The welcome snapshot and installing c as the current connection happen under one lock
-	// hold. A child whose exit is reported before this point shows in the welcome; one reported
-	// after it gets an exited frame on c. Never both, never neither.
-	c.sendLocked(h.welcomeLocked(pc.Version()))
-	h.conn = c
-	c.ready = true
-	h.mu.Unlock()
 
 	if h.afterWelcome != nil {
 		h.afterWelcome()
@@ -485,19 +465,47 @@ const (
 	replaceWait = time.Second
 )
 
-// replaceLocked ends the current connection, if any, before a newer one is installed (spec 6.8).
-// A handover the old gff-hab sent just before its successor's hello may still sit unread in the
-// old socket. So the holder gives the old reader a short read deadline, waits for it to read and
-// handle what is there and end, and only then records handover or crash. It returns false when
-// the holder is closing. It may release the lock while it waits.
-func (h *Holder) replaceLocked() bool {
+// install makes c the current connection and queues its welcome. It first ends the current
+// connection, if any (spec 6.8). A handover the old gff-hab sent just before its successor's
+// hello may still sit unread in the old socket. So the holder gives the old reader a short read
+// deadline, waits outside the lock for it to read and handle what is there and end, and only
+// then records handover or crash. It returns false when the holder is closing.
+func (h *Holder) install(c *conn) bool {
 	for {
-		if h.closing {
+		old, ok := h.installStep(c)
+		if !ok {
 			return false
 		}
-		old := h.conn
 		if old == nil {
 			return true
+		}
+		select {
+		case <-old.readerDone:
+		case <-time.After(replaceWait):
+		}
+		h.locked(func() { h.dropLocked(old, "replaced by a newer hello") }) // a no-op when the reader dropped it
+	}
+}
+
+// installStep is one locked step of install. It installs c and returns (nil, true) when no
+// connection is current; it returns the old connection to wait for, with its read deadline set;
+// it returns ok false when the holder is closing.
+func (h *Holder) installStep(c *conn) (old *conn, ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for {
+		if h.closing {
+			return nil, false
+		}
+		old = h.conn
+		if old == nil {
+			// The welcome snapshot and installing c as the current connection happen under one
+			// lock hold. A child whose exit is reported before this point shows in the welcome;
+			// one reported after it gets an exited frame on c. Never both, never neither.
+			c.sendLocked(h.welcomeLocked(c.pc.Version()))
+			h.conn = c
+			c.ready = true
+			return nil, true
 		}
 		if old.handover || old.closed {
 			h.dropLocked(old, "replaced by a newer hello")
@@ -507,13 +515,7 @@ func (h *Holder) replaceLocked() bool {
 		// A deadline in the future: one already past fails the read before it takes any
 		// buffered bytes.
 		_ = old.nc.SetReadDeadline(time.Now().Add(replaceRead))
-		h.mu.Unlock()
-		select {
-		case <-old.readerDone:
-		case <-time.After(replaceWait):
-		}
-		h.mu.Lock()
-		h.dropLocked(old, "replaced by a newer hello") // a no-op when the reader dropped it
+		return old, true
 	}
 }
 
@@ -553,31 +555,31 @@ func (h *Holder) backpressureLocked() bool {
 // for the children, kill what remains, reap, send bye, close. Released panes whose programs
 // still run are ended too. It returns when the holder is done.
 func (h *Holder) Shutdown() {
-	h.mu.Lock()
-	if h.closing {
-		h.mu.Unlock()
+	var ps []*pane
+	var already bool
+	h.locked(func() {
+		if already = h.closing; already {
+			return
+		}
+		h.closing = true
+		ps = make([]*pane, 0, len(h.owned))
+		for p := range h.owned {
+			ps = append(ps, p)
+		}
+	})
+	if already {
 		<-h.done
 		return
 	}
-	h.closing = true
-	ps := make([]*pane, 0, len(h.owned))
-	for p := range h.owned {
-		ps = append(ps, p)
-	}
-	h.mu.Unlock()
 	h.unregister()
 	h.closeListener()
 
 	for _, p := range ps {
-		h.mu.Lock()
-		p.hangupLocked()
-		h.mu.Unlock()
+		h.locked(p.hangupLocked)
 	}
 	waitFinal(ps, h.cfg.ShutdownGrace)
 	for _, p := range ps {
-		h.mu.Lock()
-		p.killLocked()
-		h.mu.Unlock()
+		h.locked(p.killLocked)
 	}
 	waitFinal(ps, h.cfg.ShutdownGrace)
 	h.exit()
@@ -600,22 +602,21 @@ func waitFinal(ps []*pane, d time.Duration) {
 func (h *Holder) exit() {
 	h.exitOnce.Do(func() {
 		h.unregister()
-		h.mu.Lock()
-		h.closing = true
-		c := h.conn
-		if c != nil && !c.closed {
-			c.sendLastLocked(&hp.Bye{})
-		}
-		h.mu.Unlock()
+		var c *conn
+		h.locked(func() {
+			h.closing = true
+			c = h.conn
+			if c != nil && !c.closed {
+				c.sendLastLocked(&hp.Bye{})
+			}
+		})
 		h.closeListener()
 		if c != nil {
 			select {
 			case <-c.writerDone:
 			case <-time.After(h.cfg.HangTimeout):
 			}
-			h.mu.Lock()
-			h.dropLocked(c, "holder exit")
-			h.mu.Unlock()
+			h.locked(func() { h.dropLocked(c, "holder exit") })
 		}
 		close(h.done)
 	})
@@ -665,15 +666,24 @@ func (h *Holder) register(sock string) error {
 	}
 	if old, err := holderreg.Read(holderreg.Path(dir, h.cfg.Instance)); err == nil && old.Draining {
 		h.cfg.Logf("holder: restarted after a crash while draining (pid %d); exiting", old.Pid)
-		h.mu.Lock()
-		h.draining = true
-		h.mu.Unlock()
+		h.locked(func() { h.draining = true })
 	}
-	h.mu.Lock()
-	draining := h.draining
-	h.mu.Unlock()
+	var draining bool
+	h.locked(func() { draining = h.draining })
+	if err := h.writeRegistry(sock, draining); err != nil {
+		return fmt.Errorf("holder: registry file: %w", err)
+	}
+	if draining {
+		h.locked(h.drainExitLocked)
+	}
+	return nil
+}
+
+// writeRegistry records the holder's registry entry and writes its file.
+func (h *Holder) writeRegistry(sock string, draining bool) error {
 	r := h.reg.Range()
 	h.regMu.Lock()
+	defer h.regMu.Unlock()
 	h.regEntry = holderreg.Entry{
 		Instance: h.cfg.Instance,
 		Build:    h.cfg.Build,
@@ -683,17 +693,7 @@ func (h *Holder) register(sock string) error {
 		Started:  h.started,
 		Draining: draining,
 	}
-	err := holderreg.Write(dir, h.regEntry)
-	h.regMu.Unlock()
-	if err != nil {
-		return fmt.Errorf("holder: registry file: %w", err)
-	}
-	if draining {
-		h.mu.Lock()
-		h.drainExitLocked()
-		h.mu.Unlock()
-	}
-	return nil
+	return holderreg.Write(h.cfg.RegistryDir, h.regEntry)
 }
 
 // markDraining rewrites the registry file with the draining flag set (spec 4.3 step 4).
@@ -721,17 +721,23 @@ func (h *Holder) registryCheck() {
 			return
 		case <-t.C:
 		}
-		h.regMu.Lock()
-		if !h.regGone && h.regEntry.Instance != "" {
-			path := holderreg.Path(h.cfg.RegistryDir, h.regEntry.Instance)
-			if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
-				h.cfg.Logf("holder: registry file %s is gone; writing it again", path)
-				if err := holderreg.Write(h.cfg.RegistryDir, h.regEntry); err != nil {
-					h.cfg.Logf("holder: registry file: %v", err)
-				}
-			}
+		h.restoreRegistry()
+	}
+}
+
+// restoreRegistry writes the registry file again when it has gone missing.
+func (h *Holder) restoreRegistry() {
+	h.regMu.Lock()
+	defer h.regMu.Unlock()
+	if h.regGone || h.regEntry.Instance == "" {
+		return
+	}
+	path := holderreg.Path(h.cfg.RegistryDir, h.regEntry.Instance)
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		h.cfg.Logf("holder: registry file %s is gone; writing it again", path)
+		if err := holderreg.Write(h.cfg.RegistryDir, h.regEntry); err != nil {
+			h.cfg.Logf("holder: registry file: %v", err)
 		}
-		h.regMu.Unlock()
 	}
 }
 
