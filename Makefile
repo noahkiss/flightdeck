@@ -11,7 +11,7 @@ GHOSTTY_STAMP := $(GHOSTTY_PREFIX)/.built-$(GHOSTTY_COMMIT)
 # The ghostty build tag selects the cgo parser in internal/vt/ghostty.
 GHOSTTY_ENV := PKG_CONFIG_PATH=$(GHOSTTY_PREFIX)/share/pkgconfig CGO_ENABLED=1
 
-.PHONY: gen test test-pure check-gen check-pure release-schema libghostty build vet clean-libghostty
+.PHONY: gen test test-pure race fuzz check-gen check-pure release-schema libghostty build vet clean-libghostty
 
 # Regenerate api/schema.json, api/client_gen.go and the Swift package.
 gen:
@@ -47,6 +47,21 @@ test: libghostty
 # Run the tests that need no C toolchain and no libghostty.
 test-pure:
 	CGO_ENABLED=0 $(GO) test ./...
+
+# Run the holder and structure tests three times under the race detector. No libghostty needed.
+RACE_PKGS := ./internal/holder/... ./internal/holderproto/... ./internal/holderclient/... \
+	./internal/holderreg/... ./internal/structure/... ./cmd/...
+race:
+	$(GO) test -race -count=3 $(RACE_PKGS)
+
+# Run each fuzz target in internal/holderproto for FUZZTIME, one after the other. For nightly use.
+FUZZTIME ?= 30s
+FUZZ_PKG := ./internal/holderproto
+fuzz:
+	@set -e; for f in $$($(GO) test -list '^Fuzz' $(FUZZ_PKG) | grep '^Fuzz'); do \
+		echo "fuzz $$f for $(FUZZTIME)"; \
+		$(GO) test -run '^$$' -fuzz "^$$f$$" -fuzztime $(FUZZTIME) $(FUZZ_PKG); \
+	done
 
 # Prove that every package except internal/vt/ghostty builds without cgo.
 check-pure:

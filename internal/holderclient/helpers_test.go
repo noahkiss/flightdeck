@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -19,7 +20,22 @@ import (
 )
 
 // waitLong bounds every wait. Conditions are waited for, never slept on.
-const waitLong = 15 * time.Second
+// GFF_TEST_TIMEOUT_SCALE multiplies it on slow machines; see docs/testing.md.
+var waitLong = scaleTimeout(15 * time.Second)
+
+// scaleTimeout multiplies d by $GFF_TEST_TIMEOUT_SCALE, a positive number such as 3 or 2.5.
+// Unset, it returns d. A value that does not parse panics, so a typo is not silently ignored.
+func scaleTimeout(d time.Duration) time.Duration {
+	v := os.Getenv("GFF_TEST_TIMEOUT_SCALE")
+	if v == "" {
+		return d
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || f <= 0 {
+		panic(fmt.Sprintf("GFF_TEST_TIMEOUT_SCALE=%q: want a positive number", v))
+	}
+	return time.Duration(float64(d) * f)
+}
 
 var testEnv = []string{"PATH=/usr/bin:/bin", "TERM=dumb", "LC_ALL=C", "HOME=/"}
 
