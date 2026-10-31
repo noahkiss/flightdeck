@@ -47,7 +47,23 @@ type conn struct {
 	sub      *filter    // nil until events.subscribe
 	seeding  bool       // a subscribe is taking its snapshot; events wait in pending
 	pending  []pubEvent // events that arrived while seeding, in order
+	// lanes run pane.input calls off the read loop, one goroutine per pane while it has calls,
+	// so calls to one pane keep their order and a stuck pane holds up nothing else.
+	lanes   map[string][]inputCall
+	waiting int // pane.input calls in lanes
 }
+
+// inputCall is one pane.input call waiting in its pane's lane.
+type inputCall struct {
+	m      message
+	seq    uint64
+	data   []byte
+	ctx    context.Context // its deadline runs from when the call was read
+	cancel context.CancelFunc
+}
+
+// maxWaitingInput bounds the pane.input calls one connection may have waiting.
+const maxWaitingInput = 256
 
 func newConn(s *Server, nc net.Conn, br *bufio.Reader) *conn {
 	return &conn{
@@ -366,9 +382,88 @@ func (c *conn) handleLine(line []byte) {
 		c.handleSubscribe(m)
 		return
 	}
+	if m.Method == "pane.input" {
+		c.handleInput(m)
+		return
+	}
 	seq := c.currentSeq()
 	result, e := c.dispatch(m, seq)
 	c.reply(m, seq, result, e)
+}
+
+// handleInput checks a pane.input call and queues it on its pane's lane (spec 3.8). The read
+// loop goes on at once: a pane that takes its input slowly holds up neither other calls nor
+// other panes. Calls to one pane are written in the order they were read. A call that times out
+// while it waits is never written.
+func (c *conn) handleInput(m message) {
+	seq := c.currentSeq()
+	var p api.InputParams
+	if e := c.decodeUp(m, &p); e != nil {
+		c.reply(m, seq, nil, e)
+		return
+	}
+	data := p.Data
+	if len(data) == 0 {
+		data = []byte(p.Text)
+	}
+	switch {
+	case c.s.cfg.Input == nil:
+		c.reply(m, seq, nil, appErr(api.ErrorKindUnavailable, hintNoActions, m.Method))
+		return
+	case p.Pane == "" || len(data) == 0:
+		c.reply(m, seq, nil, appErr(api.ErrorKindInvalid, "pane.input needs a pane and data or text"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
+	call := inputCall{m: m, seq: seq, data: data, ctx: ctx, cancel: cancel}
+	c.mu.Lock()
+	if c.waiting >= maxWaitingInput {
+		c.mu.Unlock()
+		cancel()
+		c.reply(m, seq, nil, appErr(api.ErrorKindUnavailable, "%d pane.input calls already wait on this connection", maxWaitingInput))
+		return
+	}
+	if c.lanes == nil {
+		c.lanes = map[string][]inputCall{}
+	}
+	q, running := c.lanes[p.Pane]
+	c.lanes[p.Pane] = append(q, call)
+	c.waiting++
+	c.mu.Unlock()
+	if !running {
+		go c.runLane(p.Pane)
+	}
+}
+
+// runLane writes one pane's queued pane.input calls in order, then ends.
+func (c *conn) runLane(pane string) {
+	for {
+		c.mu.Lock()
+		q := c.lanes[pane]
+		if len(q) == 0 {
+			delete(c.lanes, pane)
+			c.mu.Unlock()
+			return
+		}
+		call := q[0]
+		c.lanes[pane] = q[1:]
+		c.mu.Unlock()
+		var e *Error
+		if err := call.ctx.Err(); err != nil {
+			e = actionErr(call.m.Method, err) // timed out while it waited: never written
+		} else if err := c.s.cfg.Input.Input(call.ctx, c.clientID, pane, call.data); err != nil {
+			e = actionErr(call.m.Method, err)
+		}
+		call.cancel()
+		c.mu.Lock()
+		c.waiting--
+		c.mu.Unlock()
+		if e != nil {
+			c.reply(call.m, call.seq, nil, e)
+		} else {
+			c.reply(call.m, call.seq, api.Empty{Seq: api.Seq{Seq: call.seq}}, nil)
+		}
+	}
 }
 
 func (c *conn) withSeq(e *Error) *Error {
@@ -592,27 +687,6 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 			return nil, actionErr(m.Method, err)
 		}
 		return api.Ticket{Seq: s, Ticket: tok, ExpiresInMS: int(ttl / time.Millisecond)}, nil
-	case "pane.input":
-		var p api.InputParams
-		if e := c.decodeUp(m, &p); e != nil {
-			return nil, e
-		}
-		data := p.Data
-		if len(data) == 0 {
-			data = []byte(p.Text)
-		}
-		if c.s.cfg.Input == nil {
-			return nil, appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
-		}
-		if p.Pane == "" || len(data) == 0 {
-			return nil, appErr(api.ErrorKindInvalid, "pane.input needs a pane and data or text")
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
-		defer cancel()
-		if err := c.s.cfg.Input.Input(ctx, c.clientID, p.Pane, data); err != nil {
-			return nil, actionErr(m.Method, err)
-		}
-		return api.Empty{Seq: s}, nil
 	case "pane.take", "pane.request", "pane.disown",
 		"pane.set_desired_size", "pane.redraw":
 		return nil, appErr(api.ErrorKindUnavailable, hintNoHolder, m.Method)

@@ -83,7 +83,8 @@ func (c *Client) write(k api.FrameKind, p []byte) error {
 	return err
 }
 
-// Next reads the next frame. It returns io.EOF when the hab closed the stream.
+// Next reads the next frame. It returns io.EOF when the hab closed the stream, and a
+// *RejectError when the hab ended it with a reject frame.
 func (c *Client) Next() (Msg, error) {
 	f, err := ReadFrame(c.br)
 	if err != nil {
@@ -103,6 +104,13 @@ func (c *Client) Next() (Msg, error) {
 	case api.FrameExited:
 		m.Exited = &api.ExitedFrame{}
 		err = json.Unmarshal(f.Payload, m.Exited)
+	case api.FrameReject:
+		// The stream cannot go on (the pane is gone or lost); the hab closes after this frame.
+		var r RejectError
+		if err := json.Unmarshal(f.Payload, &r.DataReject); err != nil {
+			return m, err
+		}
+		return m, &r
 	}
 	return m, err
 }

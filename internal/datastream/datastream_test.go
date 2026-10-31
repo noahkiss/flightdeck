@@ -55,6 +55,9 @@ type fakeSource struct {
 	subs []*fakeSub
 	from []uint64
 	new  chan *fakeSub
+	snap []byte // the snapshot's screen; "SNAP" when nil
+	fail error  // when set, Subscribe fails with it
+	n    int    // Subscribe calls
 }
 
 func newFakeSource() *fakeSource { return &fakeSource{new: make(chan *fakeSub, 16)} }
@@ -65,12 +68,20 @@ func (f *fakeSource) Subscribe(_ context.Context, pane string, from uint64) (Sub
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.n++
+	if f.fail != nil {
+		return nil, f.fail
+	}
 	if from != link.FromNow && from > f.off {
 		return nil, link.ErrAhead
 	}
 	s := &fakeSub{c: make(chan link.Chunk, 4096)}
 	if from == link.FromNow {
-		s.c <- link.Chunk{Kind: link.ChunkSnapshot, Offset: f.off, Data: []byte("SNAP"), Encoding: "snapshot-vt"}
+		snap := f.snap
+		if snap == nil {
+			snap = []byte("SNAP")
+		}
+		s.c <- link.Chunk{Kind: link.ChunkSnapshot, Offset: f.off, Data: snap, Encoding: "snapshot-vt"}
 	}
 	f.subs = append(f.subs, s)
 	f.from = append(f.from, from)
@@ -259,5 +270,162 @@ func TestResume(t *testing.T) {
 	}
 	if m := next(t, c2); m.Kind != api.FrameSnapshot || m.Offset != 50 {
 		t.Fatalf("got %+v", m)
+	}
+}
+
+// TestSnapshotOverMaxBehind: a snapshot larger than MaxBehind reaches the client, and the
+// stream subscribes once rather than dropping it and fetching it again for ever.
+func TestSnapshotOverMaxBehind(t *testing.T) {
+	src := newFakeSource()
+	src.snap = bytes.Repeat([]byte("s"), 1000)
+	srv := New(Config{Source: src, InitialCredit: 10, MaxBehind: 100, Logf: t.Logf})
+	defer srv.Close()
+	tok, _, _ := srv.Ticket("c", "p", false)
+	c, _, err := open(t, srv, api.DataHello{Ticket: tok})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub := <-src.new
+	if m := next(t, c); m.Kind != api.FrameSnapshot || len(m.Data) != 1000 {
+		t.Fatalf("got %+v, want the 1000-byte snapshot", m.Kind)
+	}
+	c.Credit(2000)
+	src.out(sub, "after")
+	if m := next(t, c); m.Kind != api.FrameBytes || string(m.Data) != "after" {
+		t.Fatalf("got %+v", m)
+	}
+	src.mu.Lock()
+	n := src.n
+	src.mu.Unlock()
+	if n != 1 {
+		t.Errorf("%d subscribes, want 1", n)
+	}
+}
+
+// TestCreditCapped: the credit a stream holds stops at MaxBehind; credit past it is ignored.
+func TestCreditCapped(t *testing.T) {
+	src := newFakeSource()
+	srv := New(Config{Source: src, InitialCredit: 4, MaxBehind: 100, Logf: t.Logf})
+	defer srv.Close()
+	tok, _, _ := srv.Ticket("c", "p", false)
+	c, _, err := open(t, srv, api.DataHello{Ticket: tok})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub := <-src.new
+	next(t, c) // the 4-byte snapshot uses all the credit
+	c.Credit(1 << 40)
+	src.out(sub, "x") // flows only once the credit frame was read
+	if m := next(t, c); string(m.Data) != "x" {
+		t.Fatalf("got %+v", m)
+	}
+	src.out(sub, string(bytes.Repeat([]byte("a"), 60)))
+	src.out(sub, string(bytes.Repeat([]byte("b"), 60)))
+	got := 0
+	for got < 99 {
+		got += len(next(t, c).Data)
+	}
+	if got != 99 {
+		t.Fatalf("got %d bytes, want 99: the credit was capped at 100", got)
+	}
+	ch := make(chan Msg, 1)
+	go func() { m, _ := c.Next(); ch <- m }()
+	select {
+	case m := <-ch:
+		t.Fatalf("a frame past the capped credit: %+v", m)
+	case <-time.After(100 * time.Millisecond):
+	}
+	c.Credit(21)
+	if m := <-ch; len(m.Data) != 21 {
+		t.Fatalf("after credit: %+v", m)
+	}
+}
+
+// TestResubscribeFails: a stream whose resubscribe fails ends with a reject frame, then closes.
+func TestResubscribeFails(t *testing.T) {
+	src := newFakeSource()
+	srv := New(Config{Source: src, InitialCredit: 4, MaxBehind: 100, Logf: t.Logf})
+	defer srv.Close()
+	tok, _, _ := srv.Ticket("c", "p", false)
+	c, _, err := open(t, srv, api.DataHello{Ticket: tok})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub := <-src.new
+	next(t, c)
+	src.out(sub, string(bytes.Repeat([]byte("0123456789"), 30))) // past MaxBehind: dropped
+	for len(sub.c) > 0 {
+		time.Sleep(time.Millisecond)
+	}
+	src.mu.Lock()
+	src.fail = link.ErrGone
+	src.mu.Unlock()
+	c.Credit(1000)
+	_, err = c.Next()
+	var re *RejectError
+	if !errors.As(err, &re) || re.Kind != api.ErrorKindNotFound {
+		t.Fatalf("got %v, want a not_found reject", err)
+	}
+	if _, err := c.Next(); !errors.Is(err, io.EOF) {
+		t.Errorf("after the reject: %v", err)
+	}
+}
+
+// TestSubscriptionLost: a subscription that ends without an exit (the pane was lost) ends the
+// stream with an unavailable reject.
+func TestSubscriptionLost(t *testing.T) {
+	src := newFakeSource()
+	srv := New(Config{Source: src, Logf: t.Logf})
+	defer srv.Close()
+	tok, _, _ := srv.Ticket("c", "p", false)
+	c, _, err := open(t, srv, api.DataHello{Ticket: tok})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub := <-src.new
+	next(t, c)
+	sub.mu.Lock()
+	sub.closed, sub.err = true, link.ErrLost
+	close(sub.c)
+	sub.mu.Unlock()
+	_, err = c.Next()
+	var re *RejectError
+	if !errors.As(err, &re) || re.Kind != api.ErrorKindUnavailable {
+		t.Fatalf("got %v, want an unavailable reject", err)
+	}
+}
+
+// TestResizeAfterHeldBytes: a resize at an offset the stream's scanner has not passed (it holds
+// back the start of a sequence) goes out after the bytes before that offset.
+func TestResizeAfterHeldBytes(t *testing.T) {
+	src := newFakeSource()
+	srv := New(Config{Source: src, Logf: t.Logf})
+	defer srv.Close()
+	tok, _, _ := srv.Ticket("c", "p", false)
+	c, _, err := open(t, srv, api.DataHello{Ticket: tok})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub := <-src.new
+	next(t, c)
+	src.out(sub, "ab\x1b[") // the scanner holds back ESC [
+	sub.send(link.Chunk{Kind: link.ChunkResize, Offset: 4, Cols: 100, Rows: 30})
+	src.out(sub, "1mcd")
+	var off uint64
+	for {
+		m := next(t, c)
+		if m.Kind == api.FrameResize {
+			if off != 4 || m.Resize.Cols != 100 {
+				t.Fatalf("resize after offset %d, want 4: %+v", off, m.Resize)
+			}
+			break
+		}
+		if m.Kind != api.FrameBytes || m.Offset != off {
+			t.Fatalf("frame %+v at %d", m, off)
+		}
+		off = m.End()
+	}
+	if m := next(t, c); m.Kind != api.FrameBytes || m.Offset != 4 || string(m.Data) != "1mcd" {
+		t.Fatalf("after the resize: %+v", m)
 	}
 }

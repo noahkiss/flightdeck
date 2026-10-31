@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -672,5 +673,69 @@ func TestCallAfterCloseFails(t *testing.T) {
 	err := c.Call(ctx(t), "hab.ping", nil, nil)
 	if !errors.Is(err, ErrClosed) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// stuckInput records each call. Input to pane "stuck" returns only 200 ms after its context
+// ends, as a write already in flight does.
+type stuckInput struct {
+	mu  sync.Mutex
+	got []string
+}
+
+func (f *stuckInput) Input(ctx context.Context, _, pane string, data []byte) error {
+	f.mu.Lock()
+	f.got = append(f.got, pane+"/"+string(data))
+	f.mu.Unlock()
+	if pane != "stuck" {
+		return nil
+	}
+	<-ctx.Done()
+	time.Sleep(200 * time.Millisecond)
+	return ctx.Err()
+}
+
+func (f *stuckInput) calls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.got...)
+}
+
+// TestInputOffReadLoop: a pane that takes its input slowly holds up neither hab.ping nor input
+// to another pane, and a call that timed out while it waited behind it is never written.
+func TestInputOffReadLoop(t *testing.T) {
+	cfg := testConfig(&fakeSource{})
+	in := &stuckInput{}
+	cfg.Input, cfg.ActionTimeout = in, 300*time.Millisecond
+	srv := New(cfg)
+	t.Cleanup(srv.Close)
+	c := NewClient(pipeServe(t, srv))
+	hello(t, c, "")
+
+	errs := make(chan error, 2)
+	go func() { errs <- c.Call(ctx(t), "pane.input", api.InputParams{Pane: "stuck", Text: "a"}, nil) }()
+	for len(in.calls()) == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	go func() { errs <- c.Call(ctx(t), "pane.input", api.InputParams{Pane: "stuck", Text: "b"}, nil) }()
+
+	start := time.Now()
+	if err := c.Call(ctx(t), "hab.ping", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Call(ctx(t), "pane.input", api.InputParams{Pane: "other", Text: "c"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > 200*time.Millisecond {
+		t.Errorf("ping and input to another pane took %v behind a stuck pane", took)
+	}
+	for range 2 {
+		var ce *Error
+		if err := <-errs; !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindUnavailable {
+			t.Errorf("input to the stuck pane: %v", err)
+		}
+	}
+	if got := in.calls(); !slices.Equal(got, []string{"stuck/a", "other/c"}) {
+		t.Errorf("Input calls %v; the timed-out b must never be written", got)
 	}
 }

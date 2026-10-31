@@ -534,6 +534,20 @@ input queue: client input and gff-hab's answers to terminal queries reach the ho
 a time, in the order they were queued. A pane that is gone or unknown answers `not_found`; a lost
 pane answers `unavailable`. Input as activity for size ownership (6.2) is stage 8.
 
+- The control connection runs `pane.input` off its read loop, in one lane per pane: calls to one
+  pane keep their order, and a pane that takes its input slowly holds up neither `hab.ping`, other
+  calls, nor input to other panes. One connection may have 256 calls waiting; past that a call
+  answers `unavailable`.
+- A call's 30 s timeout runs from when gff-hab read it. A call that times out while it still waits
+  is never written, so a client that tries again types it once. A call already being written
+  answers with that write's result.
+- Answers to terminal queries are bounded per pane: at most 64 answers or 4 KiB wait (one larger
+  answer may wait alone). Past that, gff-hab drops new answers. While the holder refuses the
+  pane's input as queue full, gff-hab drops the waiting answers and every new one, until the
+  holder says it takes input again. A burst of drops is logged once at its start and once at its
+  end. Client input therefore waits behind at most one bounded batch of answers. Answers next to
+  each other in the queue go to the holder as one write.
+
 ### 3.9 Calls and events the clients need
 
 `gff-client.md` 14 and `app.md` 17 list what the terminal client and the app need. Every call
@@ -835,6 +849,11 @@ keyboard protocol queries, termcap queries, window size reports.
   should answer a fixed few queries itself in that window is Decision: open (Q7).
 - **Focus reports** (focus in and out, when a program asks for them) come only from the size owner's
   client. Other clients' focus changes are dropped.
+- **Queries gff-hab does not recognise reach every client** (5.8 lists them: OSC 52 clipboard
+  reads, `CSI 14 t` and `CSI 16 t`, a query with a C0 byte inside its CSI, a query cut by a gap).
+  Each client's parser must discard its own replies to those queries, and the client stages must
+  build this. Otherwise two clients on one pane answer twice, and an OSC 52 read could send a
+  client's clipboard to the program.
 
 ### 5.7 Backlog and flow
 
@@ -873,14 +892,24 @@ Data streams (`internal/datastream`), query answering (`internal/termq`, `intern
 - **Credit.** It counts the screen bytes of snapshot frames and the output of bytes frames, not
   their offsets and names (`CreditFrame.bytes`). A bytes frame is split to fit the credit. A
   snapshot cannot be split, so it may take the credit below zero once; nothing more is sent
-  until the client returns enough. Resize and exited frames cost nothing.
-- **Behind.** Frames that wait for credit count towards 4 MiB. Past it, gff-hab drops them and
-  ends the stream's link subscription, so a stalled client costs nothing. When credit comes back,
+  until the client returns enough. Resize, exited and reject frames cost nothing. The credit a
+  stream holds is capped at 4 MiB (the behind limit): credit a client returns past the cap is
+  ignored, so no client can make gff-hab queue more than that for it.
+- **Behind.** Output that waits for credit counts towards 4 MiB. A snapshot does not count: it
+  cannot be split or skipped, so a snapshot larger than 4 MiB is still sent. Past the limit,
+  gff-hab drops the waiting frames and ends the stream's link subscription, so a stalled client
+  costs nothing. When credit comes back,
   it subscribes again from a snapshot at the pane's current offset. A stream that falls behind
   the link's own queue does the same. The writer has its own goroutine and each data connection
   its own socket, so a stalled stream blocks neither the control connection nor another stream.
+- **End without an exit.** When a stream cannot go on (its subscription ends because the pane
+  is lost or gone, or a resubscribe after falling behind fails), gff-hab sends a reject frame
+  (`not_found` for a pane that is gone, else `unavailable`) and closes. After an exited frame no
+  reject follows.
 - **Resize frames.** The link resizes the PTY and then the parser, and every stream gets a resize
-  frame at the offset the parser had reached. Until stage 8 tracks owners, a resize frame names
+  frame at the offset the parser had reached. When the stream's scanner holds back the start of
+  a possible query from before that offset, the resize frame waits until those bytes go out, so
+  it always follows every byte before its offset. Until stage 8 tracks owners, a resize frame names
   no owner and gives reason `disown`.
 - **Observers** (6.4) are recorded on the ticket. A data connection carries no input and no size,
   so an observer can do neither by construction; stage 8 keeps an observer's size out of

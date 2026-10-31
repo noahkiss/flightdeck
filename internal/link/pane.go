@@ -199,14 +199,34 @@ type pane struct {
 	queries *termq.Scanner
 	// inq holds writes to the program's input in order: client input and query answers.
 	// inBusy is true while a writer goroutine drains it.
-	inq    []inputReq
+	inq    []*inputReq
 	inBusy bool
+	// ansN and ansBytes count the answers in inq; past maxAnswers or maxAnswerBytes a new
+	// answer is dropped. ansRefused is set while the holder refuses input as queue full:
+	// answers are dropped until it is ready again. ansDropped counts the answers dropped in
+	// the current burst, which ends when no answer waits and the holder takes input.
+	ansN, ansBytes int
+	ansRefused     bool
+	ansDropped     int
 }
 
-// inputReq is one write to a pane's input. done, when set, gets the result.
+// Bounds on a pane's answers to terminal queries waiting to be written. A program that floods
+// queries gets some answers, never an unbounded queue, and client input waits behind at most
+// this many.
+const (
+	maxAnswers     = 64
+	maxAnswerBytes = 4 << 10
+)
+
+// inputReq is one write to a pane's input: client input, with done for the result, or an
+// answer to a terminal query. The fields after data are guarded by the pane's mu.
 type inputReq struct {
-	data []byte
-	done chan error
+	data   []byte
+	done   chan error // buffered; nil for an answer
+	answer bool
+	// taken is set when the writer takes the request; cancelled when its caller gave up
+	// first, so the writer skips it and it is never written.
+	taken, cancelled bool
 }
 
 func newPane(u hp.UUID, snapRows int) *pane {
@@ -244,6 +264,7 @@ func (p *pane) prepare(l *Link, h *holderclient.Holder, pi hp.PaneInfo) (from ui
 	same := p.holder == h && p.handle == pi.Handle
 	p.holder, p.handle, p.pid = h, pi.Handle, pi.Pid
 	p.lost = nil
+	p.ansRefused = false // a refusal belongs to the old holder connection
 	p.exited, p.exit, p.final = pi.Exited, pi.Exit, pi.Count
 	if !same {
 		p.releasing = false
@@ -391,7 +412,7 @@ func (p *pane) parse(l *Link, data []byte, live bool) {
 		p.term.Write(data[done:end])
 		done = end
 		if ans := termq.Answer(*seg.Query, p.factsLocked(l)); len(ans) > 0 {
-			p.queueInputLocked(l, ans, nil)
+			p.queueAnswerLocked(l, ans)
 		}
 	})
 	p.term.Write(data[done:])
@@ -410,26 +431,94 @@ func (p *pane) factsLocked(l *Link) termq.Facts {
 
 // queueInputLocked queues a write to the program's input and starts a writer when none runs.
 // Writes reach the holder one at a time, in queue order. The caller holds p.mu.
-func (p *pane) queueInputLocked(l *Link, data []byte, done chan error) {
-	p.inq = append(p.inq, inputReq{data: data, done: done})
+func (p *pane) queueInputLocked(l *Link, r *inputReq) {
+	p.inq = append(p.inq, r)
 	if !p.inBusy {
 		p.inBusy = true
 		go p.inputWriter(l)
 	}
 }
 
-// inputWriter drains the input queue. An answer that fails is logged; client input gets its
-// error back.
+// queueAnswerLocked queues an answer to a terminal query, or drops it when too many wait or
+// the holder refuses input. One answer larger than maxAnswerBytes may wait alone. The first
+// drop of a burst is logged. The caller holds p.mu.
+func (p *pane) queueAnswerLocked(l *Link, ans []byte) {
+	if p.ansRefused || p.ansN >= maxAnswers || p.ansN > 0 && p.ansBytes+len(ans) > maxAnswerBytes {
+		if p.ansDropped == 0 {
+			why := "too many wait"
+			if p.ansRefused {
+				why = "the holder refuses input"
+			}
+			l.cfg.Logf("link: pane %s: dropping answers to terminal queries: %s", p.uuid, why)
+		}
+		p.ansDropped++
+		return
+	}
+	p.ansN++
+	p.ansBytes += len(ans)
+	p.queueInputLocked(l, &inputReq{data: ans, answer: true})
+}
+
+// endBurstLocked logs the end of a burst of dropped answers once answers flow again. The
+// caller holds p.mu.
+func (p *pane) endBurstLocked(l *Link) {
+	if p.ansDropped > 0 && p.ansN == 0 && !p.ansRefused {
+		l.cfg.Logf("link: pane %s: dropped %d answers to terminal queries", p.uuid, p.ansDropped)
+		p.ansDropped = 0
+	}
+}
+
+// dropAnswersLocked removes the answers waiting in the queue. The caller holds p.mu.
+func (p *pane) dropAnswersLocked() {
+	kept := p.inq[:0]
+	for _, r := range p.inq {
+		if r.answer {
+			p.ansDropped++
+			continue
+		}
+		kept = append(kept, r)
+	}
+	clear(p.inq[len(kept):])
+	p.inq = kept
+	p.ansN, p.ansBytes = 0, 0
+}
+
+// inputReady is the holder's word that it takes input again after refusing it.
+func (p *pane) inputReady(l *Link) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.ansRefused = false
+	p.endBurstLocked(l)
+}
+
+// inputWriter drains the input queue. Answers next to each other go in one write. Client input
+// gets its error back; a failed answer is logged. A refusal for a full queue drops the waiting
+// answers until the holder is ready again.
 func (p *pane) inputWriter(l *Link) {
 	for {
 		p.mu.Lock()
+		for len(p.inq) > 0 && p.inq[0].cancelled {
+			p.inq = p.inq[1:]
+		}
 		if len(p.inq) == 0 {
+			p.inq = nil
 			p.inBusy = false
+			p.endBurstLocked(l)
 			p.mu.Unlock()
 			return
 		}
 		r := p.inq[0]
 		p.inq = p.inq[1:]
+		r.taken = true
+		data, n, nb := r.data, 0, 0
+		if r.answer {
+			n, nb = 1, len(data)
+			for len(p.inq) > 0 && p.inq[0].answer && len(data)+len(p.inq[0].data) <= maxAnswerBytes {
+				data = append(data[:len(data):len(data)], p.inq[0].data...)
+				n, nb = n+1, nb+len(p.inq[0].data)
+				p.inq = p.inq[1:]
+			}
+		}
 		h, hd, lost := p.holder, p.handle, p.lost
 		p.mu.Unlock()
 		var err error
@@ -440,12 +529,29 @@ func (p *pane) inputWriter(l *Link) {
 			err = ErrClosed
 		default:
 			ctx, cancel := context.WithTimeout(l.ctx, inputTimeout)
-			err = h.Input(ctx, hd, r.data)
+			err = h.Input(ctx, hd, data)
 			cancel()
 		}
-		if r.done != nil {
+		var re *holderclient.RequestError
+		refused := errors.As(err, &re) && re.Code == hp.CodeQueueFull
+		p.mu.Lock()
+		p.ansN, p.ansBytes = p.ansN-n, p.ansBytes-nb
+		first := refused && !p.ansRefused
+		switch {
+		case refused:
+			p.ansRefused = true
+			p.dropAnswersLocked()
+		case err == nil:
+			p.ansRefused = false
+		}
+		p.endBurstLocked(l)
+		p.mu.Unlock()
+		switch {
+		case r.done != nil:
 			r.done <- err
-		} else if err != nil {
+		case first:
+			l.cfg.Logf("link: pane %s: the holder refuses input: dropping answers to terminal queries until it is ready", p.uuid)
+		case err != nil && !refused:
 			l.cfg.Logf("link: pane %s: answer to a terminal query: %v", p.uuid, err)
 		}
 	}

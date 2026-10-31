@@ -48,8 +48,8 @@ type Config struct {
 	// InitialCredit is a stream's credit at the start, in bytes of screen and output (the data
 	// of snapshot and bytes frames). Default 256 KiB.
 	InitialCredit int
-	// MaxBehind is how many bytes may wait for credit before the stream drops them and sends a
-	// fresh snapshot instead. Default 4 MiB.
+	// MaxBehind is how many bytes of output may wait for credit before the stream drops them and
+	// sends a fresh snapshot instead. It also caps the credit a stream holds. Default 4 MiB.
 	MaxBehind int
 	// HelloTimeout bounds the wait for the hello frame. Default 10 s.
 	HelloTimeout time.Duration
@@ -184,11 +184,7 @@ func (s *Server) open(nc net.Conn, br *bufio.Reader) (*stream, error) {
 		sub, err = s.cfg.Source.Subscribe(ctx, t.Pane, link.FromNow)
 	}
 	if err != nil {
-		kind := api.ErrorKindUnavailable
-		if errors.Is(err, link.ErrNoPane) || errors.Is(err, link.ErrGone) {
-			kind = api.ErrorKindNotFound
-		}
-		return nil, &RefusedError{Kind: kind, Hint: "pane " + t.Pane + ": " + err.Error()}
+		return nil, refusal(t.Pane, err)
 	}
 	cols, rows, _ := s.cfg.Source.Size(t.Pane)
 	id := make([]byte, 8)
@@ -205,11 +201,21 @@ func (s *Server) open(nc net.Conn, br *bufio.Reader) (*stream, error) {
 	return st, nil
 }
 
+// refusal names why pane cannot be followed: not_found for a pane that is gone or unknown,
+// unavailable for the rest.
+func refusal(pane string, err error) *RefusedError {
+	kind := api.ErrorKindUnavailable
+	if errors.Is(err, link.ErrNoPane) || errors.Is(err, link.ErrGone) {
+		kind = api.ErrorKindNotFound
+	}
+	return &RefusedError{Kind: kind, Hint: "pane " + pane + ": " + err.Error()}
+}
+
 // item is one frame waiting for credit. cost is the screen or output bytes it carries (snapshot
 // and bytes frames), and 0 for the rest.
 type item struct {
 	kind  api.FrameKind
-	off   uint64 // bytes frames: offset of data[0]
+	off   uint64 // bytes frames: offset of data[0]; resize frames: the offset they apply at
 	data  []byte // bytes frames: program output; other frames: the payload
 	cost  int
 	final bool // the stream ends after this frame
@@ -224,9 +230,12 @@ type stream struct {
 
 	scan    *termq.Scanner // nil until the first snapshot or bytes chunk
 	pending []item         // frames waiting for credit, in order
-	behind  int            // bytes in pending
-	resync  bool           // the backlog was dropped: resubscribe for a snapshot once there is credit
-	ended   bool           // the subscription ended; finish once pending is sent
+	behind  int            // output bytes in pending; a snapshot does not count
+	// held are resize frames at offsets the scanner has not passed: they follow the bytes it
+	// holds back, so they wait until those come out.
+	held   []item
+	resync bool // the backlog was dropped: resubscribe for a snapshot once there is credit
+	ended  bool // the subscription ended; finish once pending is sent
 
 	wake chan struct{} // the reader or the writer has news
 	done chan struct{} // the reader or the writer stopped
@@ -298,6 +307,15 @@ func (st *stream) subEnded() {
 	}
 	st.s.cfg.Logf("data stream for pane %s: %v", st.t.Pane, err)
 	st.ended = true
+	st.endWith(refusal(st.t.Pane, err))
+}
+
+// endWith queues a reject frame naming why the stream cannot go on; the stream ends after it.
+// After an exited frame it is never sent, since the stream already ended there.
+func (st *stream) endWith(re *RefusedError) {
+	st.resync = false
+	payload, _ := json.Marshal(api.DataReject{Kind: re.Kind, Hint: re.Hint})
+	st.pending = append(st.pending, item{kind: api.FrameReject, data: payload, final: true})
 }
 
 // dropBacklog drops every frame that waits for credit; a fresh snapshot follows (spec 5.7).
@@ -306,14 +324,40 @@ func (st *stream) dropBacklog() {
 		st.sub.Close()
 		st.sub = nil
 	}
-	st.pending, st.behind, st.resync = nil, 0, true
+	st.pending, st.behind, st.held, st.resync = nil, 0, nil, true
 }
 
+// add queues a frame. Output past MaxBehind drops the backlog. A snapshot does not count
+// towards it: it cannot be split or skipped, and a snapshot larger than MaxBehind would
+// otherwise be dropped and fetched again for ever.
 func (st *stream) add(it item) {
 	st.pending = append(st.pending, it)
+	if it.kind != api.FrameBytes {
+		return
+	}
 	st.behind += it.cost
 	if st.behind > st.s.cfg.MaxBehind {
 		st.dropBacklog()
+	}
+}
+
+// release queues the held resize frames whose offset the scanner has passed: every byte before
+// it has come out as text or a query.
+func (st *stream) release() {
+	out := st.scan.Offset() - uint64(st.scan.Held())
+	for len(st.held) > 0 && st.held[0].off <= out && !st.resync {
+		h := st.held[0]
+		st.held = st.held[1:]
+		st.add(h)
+	}
+}
+
+// releaseAll queues every held resize frame, as before a snapshot or an exit.
+func (st *stream) releaseAll() {
+	for len(st.held) > 0 && !st.resync {
+		h := st.held[0]
+		st.held = st.held[1:]
+		st.add(h)
 	}
 }
 
@@ -325,6 +369,7 @@ func (st *stream) chunk(ch link.Chunk) {
 	}
 	switch ch.Kind {
 	case link.ChunkSnapshot:
+		st.releaseAll()
 		st.scan = termq.NewScanner(ch.Offset)
 		p := SnapshotPayload(ch.Offset, string(ch.Encoding), ch.Data)
 		st.add(item{kind: api.FrameSnapshot, data: p, cost: len(ch.Data)})
@@ -333,14 +378,22 @@ func (st *stream) chunk(ch link.Chunk) {
 			st.scan = termq.NewScanner(ch.Offset)
 		}
 		st.scan.Feed(ch.Data, st.text)
+		st.release()
 	case link.ChunkResize:
 		// Owners are stage 8 (spec 6): until then a resize names no owner, reason disown.
 		p, _ := json.Marshal(api.ResizeFrame{Cols: ch.Cols, Rows: ch.Rows, Reason: api.OwnerReasonDisown})
-		st.add(item{kind: api.FrameResize, data: p})
+		it := item{kind: api.FrameResize, off: ch.Offset, data: p}
+		if st.scan != nil && st.scan.Held() > 0 {
+			// The scanner holds back bytes from before the resize: it goes out after them.
+			st.held = append(st.held, it)
+			return
+		}
+		st.add(it)
 	case link.ChunkExited:
 		if st.scan != nil {
 			st.scan.Flush(st.text) // a sequence cut off by the exit is text
 		}
+		st.releaseAll()
 		p, _ := json.Marshal(api.ExitedFrame{ExitStatus: link.APIExit(ch.Exit)})
 		st.add(item{kind: api.FrameExited, data: p, final: true})
 	}
@@ -348,6 +401,21 @@ func (st *stream) chunk(ch link.Chunk) {
 
 // text queues program output, joining it to the last bytes frame when the offsets touch.
 func (st *stream) text(seg termq.Segment) {
+	// A held resize inside this segment splits it, so the resize goes out at its offset.
+	for len(st.held) > 0 && !st.resync {
+		h := st.held[0]
+		if h.off > seg.Off {
+			if seg.Query != nil || h.off >= seg.Off+uint64(len(seg.Data)) {
+				break
+			}
+			n := h.off - seg.Off
+			st.text(termq.Segment{Off: seg.Off, Data: seg.Data[:n]})
+			seg.Off, seg.Data = h.off, seg.Data[n:]
+			continue
+		}
+		st.held = st.held[1:]
+		st.add(h)
+	}
 	if seg.Query != nil || st.resync {
 		return
 	}
@@ -388,11 +456,14 @@ func (st *stream) flush() bool {
 		sub, err := st.s.cfg.Source.Subscribe(ctx, st.t.Pane, link.FromNow)
 		cancel()
 		if err != nil {
+			// Tell the client why the stream ends rather than closing on it.
 			st.s.cfg.Logf("data stream for pane %s: resubscribe: %v", st.t.Pane, err)
-			return false
+			st.ended = true
+			st.endWith(refusal(st.t.Pane, err))
+		} else {
+			st.sub, st.resync, st.scan = sub, false, nil
+			return true // the snapshot arrives as the next chunk
 		}
-		st.sub, st.resync, st.scan = sub, false, nil
-		return true // the snapshot arrives as the next chunk
 	}
 	var frames [][]byte
 	final := false
@@ -422,7 +493,9 @@ func (st *stream) flush() bool {
 			payload = it.data
 		}
 		credit -= int64(cost)
-		st.behind -= cost
+		if it.kind == api.FrameBytes {
+			st.behind -= cost
+		}
 		final = it.final
 		frames = append(frames, AppendFrame(nil, it.kind, payload))
 		st.pending = st.pending[1:]
@@ -503,11 +576,18 @@ func (st *stream) readLoop(br *bufio.Reader, stop func()) {
 			continue // the server ignores frames it does not expect
 		}
 		var c api.CreditFrame
-		if json.Unmarshal(f.Payload, &c) != nil || c.Bytes > 1<<40 {
+		if json.Unmarshal(f.Payload, &c) != nil {
 			continue
 		}
+		// The credit a stream holds is capped at MaxBehind: credit past it is ignored, so a
+		// client cannot make gff-hab queue more than that for it.
+		lim := int64(st.s.cfg.MaxBehind)
 		st.mu.Lock()
-		st.credit += int64(c.Bytes)
+		if room := lim - st.credit; room <= 0 || c.Bytes >= uint64(room) {
+			st.credit = max(st.credit, lim)
+		} else {
+			st.credit += int64(c.Bytes)
+		}
 		st.mu.Unlock()
 		st.signal()
 	}

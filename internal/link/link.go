@@ -591,6 +591,8 @@ func (l *Link) apply(p *pane, f hp.Frame) {
 			notices = append(notices, n)
 		}
 		defer l.releaseEnded(p)
+	case *hp.InputReady:
+		p.inputReady(l)
 	case *hp.Error:
 		if f.Ref == hp.KindReplay {
 			l.cfg.Logf("link: pane %s: replay refused: code %d: %s", p.uuid, f.Code, f.Message)
@@ -837,27 +839,36 @@ func (l *Link) ClosePane(ctx context.Context, u hp.UUID) error {
 
 // Input writes data to pane u's program as one write (spec 3.8). Writes to one pane, client input
 // and the link's own answers to terminal queries alike, reach the holder one at a time in the
-// order they were queued.
+// order they were queued. When ctx ends while the write still waits in the queue, it is never
+// written; when it is already being written, Input returns that write's result.
 func (l *Link) Input(ctx context.Context, u hp.UUID, data []byte) error {
 	p := l.pane(u)
 	if p == nil {
 		return ErrNoPane
 	}
-	done := make(chan error, 1)
+	r := &inputReq{data: data, done: make(chan error, 1)}
 	p.mu.Lock()
 	if p.lost != nil {
 		err := p.lost
 		p.mu.Unlock()
 		return err
 	}
-	p.queueInputLocked(l, data, done)
+	p.queueInputLocked(l, r)
 	p.mu.Unlock()
 	select {
-	case err := <-done:
+	case err := <-r.done:
 		return err
 	case <-ctx.Done():
+	}
+	p.mu.Lock()
+	if !r.taken {
+		// Still queued: it is never written, so a client that tries again types it once.
+		r.cancelled = true
+		p.mu.Unlock()
 		return ctx.Err()
 	}
+	p.mu.Unlock()
+	return <-r.done // being written: its result, within inputTimeout
 }
 
 // Resize sets pane u's size: the holder resizes the PTY, then the parser takes the size and every
