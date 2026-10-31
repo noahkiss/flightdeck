@@ -1,0 +1,12 @@
+{
+  "note": "Written by hand. A Claude Code version above the adapter's tested range (2.1) yields a version warning on the pane's state; the adapter keeps working.",
+  "harness_version": "2.2.0 (fictional)",
+  "events": [
+    {"harness": "claude", "event": "SessionStart", "t": 3000, "n": 1, "version": "2.2.0", "payload": {"session_id": "s-new", "cwd": "/work/app", "hook_event_name": "SessionStart", "source": "startup"}},
+    {"harness": "claude", "event": "UserPromptSubmit", "t": 3100, "n": 1, "payload": {"session_id": "s-new", "cwd": "/work/app", "hook_event_name": "UserPromptSubmit"}}
+  ],
+  "expect": [
+    {"harness": "claude", "session": "s-new", "state": "idle", "version": "2.2.0", "warning": "newer_than_tested"},
+    {"harness": "claude", "session": "s-new", "state": "working", "version": "2.2.0", "warning": "newer_than_tested"}
+  ]
+}

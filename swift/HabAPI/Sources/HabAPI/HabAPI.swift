@@ -13,6 +13,87 @@ public enum HabAPI {
     public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices"]
 }
 
+public struct AgentState: Codable, Sendable, Hashable {
+    /// RFC 3339 time gff-hab accepted the change.
+    public var at: String
+    /// claude, codex, opencode, or another detection manifest id.
+    public var harness: String
+    /// Only with state blocked.
+    public var kind: BlockedKind?
+    /// With state exited: the last done or error before the harness ended.
+    public var last: AgentStatus?
+    /// Pane id; also the event's id.
+    public var pane: String
+    /// Only with state blocked and kind permission.
+    public var request: PermissionRequest?
+    /// Per pane, raised on every accepted change. Restarts with the epoch.
+    public var revision: UInt64
+    /// The harness's native session id, once known.
+    public var session: String?
+    public var source: StateSource
+    public var state: AgentStatus
+    /// The harness's turn or prompt id, where it gives one.
+    public var turn: String?
+    /// Harness version, once reported.
+    public var version: String?
+    /// Set while the harness version is outside the adapter's tested range.
+    public var warning: VersionWarning?
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case harness = "harness"
+        case kind = "kind"
+        case last = "last"
+        case pane = "pane"
+        case request = "request"
+        case revision = "revision"
+        case session = "session"
+        case source = "source"
+        case state = "state"
+        case turn = "turn"
+        case version = "version"
+        case warning = "warning"
+    }
+
+    public init(at: String, harness: String, kind: BlockedKind? = nil, last: AgentStatus? = nil, pane: String, request: PermissionRequest? = nil, revision: UInt64, session: String? = nil, source: StateSource, state: AgentStatus, turn: String? = nil, version: String? = nil, warning: VersionWarning? = nil) {
+        self.at = at
+        self.harness = harness
+        self.kind = kind
+        self.last = last
+        self.pane = pane
+        self.request = request
+        self.revision = revision
+        self.session = session
+        self.source = source
+        self.state = state
+        self.turn = turn
+        self.version = version
+        self.warning = warning
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct AgentStatus: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let idle = AgentStatus(rawValue: "idle")
+    public static let working = AgentStatus(rawValue: "working")
+    public static let blocked = AgentStatus(rawValue: "blocked")
+    public static let done = AgentStatus(rawValue: "done")
+    public static let error = AgentStatus(rawValue: "error")
+    public static let none = AgentStatus(rawValue: "none")
+    public static let exited = AgentStatus(rawValue: "exited")
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct BlockedKind: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let permission = BlockedKind(rawValue: "permission")
+    public static let question = BlockedKind(rawValue: "question")
+    public static let auth = BlockedKind(rawValue: "auth")
+}
+
 public struct ClientInfo: Codable, Sendable, Hashable {
     public var kind: ClientKind
     public var name: String
@@ -593,6 +674,37 @@ public struct PaneRef: Codable, Sendable, Hashable {
     }
 }
 
+public struct PermissionRequest: Codable, Sendable, Hashable {
+    /// The exact command, for a shell tool.
+    public var command: String?
+    public var cwd: String?
+    /// The exact files, for a file tool.
+    public var files: [String]?
+    /// The harness's id for the request, when it gives one. A permission answer must name it.
+    public var id: String?
+    /// The tool input as the harness sent it.
+    public var input: JSONValue?
+    public var tool: String?
+
+    enum CodingKeys: String, CodingKey {
+        case command = "command"
+        case cwd = "cwd"
+        case files = "files"
+        case id = "id"
+        case input = "input"
+        case tool = "tool"
+    }
+
+    public init(command: String? = nil, cwd: String? = nil, files: [String]? = nil, id: String? = nil, input: JSONValue? = nil, tool: String? = nil) {
+        self.command = command
+        self.cwd = cwd
+        self.files = files
+        self.id = id
+        self.input = input
+        self.tool = tool
+    }
+}
+
 public struct PingParams: Codable, Sendable, Hashable {
     public init() {
     }
@@ -753,12 +865,25 @@ public struct SessionState: RawRepresentable, Codable, Sendable, Hashable {
     public static let exited = SessionState(rawValue: "exited")
 }
 
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct StateSource: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let server = StateSource(rawValue: "server")
+    public static let hook = StateSource(rawValue: "hook")
+    public static let osc = StateSource(rawValue: "osc")
+    public static let screen = StateSource(rawValue: "screen")
+    public static let spawn = StateSource(rawValue: "spawn")
+}
+
 public struct StructureGetParams: Codable, Sendable, Hashable {
     public init() {
     }
 }
 
 public struct StructureResult: Codable, Sendable, Hashable {
+    /// The current agent state of each pane that has one (harness-adapters.md, State event model). Absent from a hab without the agent-state capability.
+    public var agents: [AgentState]?
     public var host: HostInfo
     public var panes: [Pane]
     public var projects: [Project]
@@ -767,6 +892,7 @@ public struct StructureResult: Codable, Sendable, Hashable {
     public var sessions: [Session]
 
     enum CodingKeys: String, CodingKey {
+        case agents = "agents"
         case host = "host"
         case panes = "panes"
         case projects = "projects"
@@ -774,7 +900,8 @@ public struct StructureResult: Codable, Sendable, Hashable {
         case sessions = "sessions"
     }
 
-    public init(host: HostInfo, panes: [Pane], projects: [Project], seq: UInt64, sessions: [Session]) {
+    public init(agents: [AgentState]? = nil, host: HostInfo, panes: [Pane], projects: [Project], seq: UInt64, sessions: [Session]) {
+        self.agents = agents
         self.host = host
         self.panes = panes
         self.projects = projects
@@ -828,6 +955,26 @@ public struct TicketParams: Codable, Sendable, Hashable {
     public init(observe: Bool? = nil, pane: String) {
         self.observe = observe
         self.pane = pane
+    }
+}
+
+public struct VersionWarning: Codable, Sendable, Hashable {
+    /// newer_than_tested or unreadable.
+    public var reason: String
+    /// Newest tested version, as a prefix: 2.1 covers every 2.1.x.
+    public var tested: String
+    public var version: String
+
+    enum CodingKeys: String, CodingKey {
+        case reason = "reason"
+        case tested = "tested"
+        case version = "version"
+    }
+
+    public init(reason: String, tested: String, version: String) {
+        self.reason = reason
+        self.tested = tested
+        self.version = version
     }
 }
 
@@ -935,6 +1082,8 @@ public enum HabEvent: Sendable, Hashable {
     case paneOwner(PaneOwner)
     /// A client sent input; at most once per second per client (spec 7.1).
     case paneActivity(PaneActivity)
+    /// A pane's agent state changed (harness-adapters.md, State event model). The id is the pane id.
+    case agentState(AgentState)
     case unknown(type: String, data: JSONValue)
 
     public init(_ event: Event) throws {
@@ -947,6 +1096,7 @@ public enum HabEvent: Sendable, Hashable {
         case "pane.deleted": self = .paneDeleted(try event.data.decode(Deleted.self))
         case "pane.owner": self = .paneOwner(try event.data.decode(PaneOwner.self))
         case "pane.activity": self = .paneActivity(try event.data.decode(PaneActivity.self))
+        case "agent.state": self = .agentState(try event.data.decode(AgentState.self))
         default: self = .unknown(type: event.type, data: event.data)
         }
     }

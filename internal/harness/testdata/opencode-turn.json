@@ -1,0 +1,24 @@
+{
+  "note": "Written by hand. Shapes follow the opencode server and plugin documentation as of 2026-10-31: bus events as a plugin receives them, posted by the plugin that gff-hab hook -print opencode prints. A turn with a permission request and its reply, the end of the turn, then a failed turn.",
+  "harness_version": "documented 2026-10-31",
+  "events": [
+    {"harness": "opencode", "event": "session.created", "t": 7000, "n": 1, "payload": {"type": "session.created", "properties": {"sessionID": "ses_abc", "info": {"id": "ses_abc", "directory": "/work/app"}}}},
+    {"harness": "opencode", "event": "session.status", "t": 7100, "n": 1, "payload": {"type": "session.status", "properties": {"sessionID": "ses_abc", "status": {"type": "busy"}}}},
+    {"harness": "opencode", "event": "message.part.updated", "t": 7150, "n": 1, "payload": {"type": "message.part.updated", "properties": {"sessionID": "ses_abc"}}},
+    {"harness": "opencode", "event": "permission.asked", "t": 7200, "n": 1, "payload": {"type": "permission.asked", "properties": {"id": "per_1", "sessionID": "ses_abc", "permission": "bash", "patterns": ["go test ./..."], "metadata": {"command": "go test ./..."}}}},
+    {"harness": "opencode", "event": "permission.replied", "t": 7300, "n": 1, "payload": {"type": "permission.replied", "properties": {"sessionID": "ses_abc", "permissionID": "per_1", "response": "once"}}},
+    {"harness": "opencode", "event": "session.status", "t": 7400, "n": 1, "payload": {"type": "session.status", "properties": {"sessionID": "ses_abc", "status": {"type": "idle"}}}},
+    {"harness": "opencode", "event": "session.idle", "t": 7410, "n": 1, "payload": {"type": "session.idle", "properties": {"sessionID": "ses_abc"}}},
+    {"harness": "opencode", "event": "session.status", "t": 7500, "n": 1, "payload": {"type": "session.status", "properties": {"sessionID": "ses_abc", "status": {"type": "busy"}}}},
+    {"harness": "opencode", "event": "session.error", "t": 7600, "n": 1, "payload": {"type": "session.error", "properties": {"sessionID": "ses_abc", "error": {"name": "ProviderError"}}}}
+  ],
+  "expect": [
+    {"harness": "opencode", "session": "ses_abc", "state": "idle"},
+    {"harness": "opencode", "session": "ses_abc", "state": "working"},
+    {"harness": "opencode", "session": "ses_abc", "state": "blocked", "kind": "permission", "request": {"id": "per_1", "tool": "bash", "command": "go test ./..."}},
+    {"harness": "opencode", "session": "ses_abc", "state": "working"},
+    {"harness": "opencode", "session": "ses_abc", "state": "done"},
+    {"harness": "opencode", "session": "ses_abc", "state": "working"},
+    {"harness": "opencode", "session": "ses_abc", "state": "error"}
+  ]
+}

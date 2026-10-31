@@ -97,6 +97,7 @@ var Events = []EventDef{
 	{"pane.deleted", "A pane is gone.", Deleted{}},
 	{"pane.owner", "The pane's size owner changed (spec 6.5).", PaneOwner{}},
 	{"pane.activity", "A client sent input; at most once per second per client (spec 7.1).", PaneActivity{}},
+	{"agent.state", "A pane's agent state changed (harness-adapters.md, State event model). The id is the pane id.", AgentState{}},
 }
 
 // Frames is every data connection frame kind. A frame is the kind byte, a 4-byte big-endian
@@ -123,6 +124,9 @@ var Enums = map[string][]string{
 	"RedrawMode":    {"snapshot", "nudge"},
 	"DeviceKind":    {"hab", "phone", "desktop", "gff"},
 	"DeviceState":   {"paired", "revoked"},
+	"AgentStatus":   {"idle", "working", "blocked", "done", "error", "none", "exited"},
+	"BlockedKind":   {"permission", "question", "auth"},
+	"StateSource":   {"server", "hook", "osc", "screen", "spawn"},
 	"ErrorKind":     {"not_found", "conflict", "unavailable", "revision_unsupported", "not_owner", "ticket_invalid", "invalid"},
 }
 

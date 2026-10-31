@@ -100,10 +100,54 @@ type Pane struct {
 }
 
 type Structure struct {
-	Host     HostInfo  `json:"host"`
-	Projects []Project `json:"projects"`
-	Sessions []Session `json:"sessions"`
-	Panes    []Pane    `json:"panes"`
+	Host     HostInfo     `json:"host"`
+	Projects []Project    `json:"projects"`
+	Sessions []Session    `json:"sessions"`
+	Panes    []Pane       `json:"panes"`
+	Agents   []AgentState `json:"agents,omitempty" doc:"The current agent state of each pane that has one (harness-adapters.md, State event model). Absent from a hab without the agent-state capability."`
+}
+
+// --- Agent state (docs/specs/harness-adapters.md, State event model) ---
+
+type AgentStatus string
+
+type BlockedKind string
+
+type StateSource string
+
+// PermissionRequest is what a harness asks permission for, copied from its structured payload,
+// never summarised.
+type PermissionRequest struct {
+	ID      string   `json:"id,omitempty" doc:"The harness's id for the request, when it gives one. A permission answer must name it."`
+	Tool    string   `json:"tool,omitempty"`
+	Command string   `json:"command,omitempty" doc:"The exact command, for a shell tool."`
+	Files   []string `json:"files,omitempty" doc:"The exact files, for a file tool."`
+	Cwd     string   `json:"cwd,omitempty"`
+	Input   RawJSON  `json:"input,omitempty" doc:"The tool input as the harness sent it."`
+}
+
+// VersionWarning says the harness reported a version its adapter was not tested on.
+type VersionWarning struct {
+	Version string `json:"version"`
+	Tested  string `json:"tested" doc:"Newest tested version, as a prefix: 2.1 covers every 2.1.x."`
+	Reason  string `json:"reason" doc:"newer_than_tested or unreadable."`
+}
+
+// AgentState is the data of an agent.state event and one entry of Structure.agents.
+type AgentState struct {
+	Pane     string             `json:"pane" doc:"Pane id; also the event's id."`
+	Revision uint64             `json:"revision" doc:"Per pane, raised on every accepted change. Restarts with the epoch."`
+	Harness  string             `json:"harness" doc:"claude, codex, opencode, or another detection manifest id."`
+	Session  string             `json:"session,omitempty" doc:"The harness's native session id, once known."`
+	State    AgentStatus        `json:"state"`
+	Last     AgentStatus        `json:"last,omitempty" doc:"With state exited: the last done or error before the harness ended."`
+	Kind     BlockedKind        `json:"kind,omitempty" doc:"Only with state blocked."`
+	Request  *PermissionRequest `json:"request,omitempty" doc:"Only with state blocked and kind permission."`
+	Source   StateSource        `json:"source"`
+	Turn     string             `json:"turn,omitempty" doc:"The harness's turn or prompt id, where it gives one."`
+	At       string             `json:"at" doc:"RFC 3339 time gff-hab accepted the change."`
+	Version  string             `json:"version,omitempty" doc:"Harness version, once reported."`
+	Warning  *VersionWarning    `json:"warning,omitempty" doc:"Set while the harness version is outside the adapter's tested range."`
 }
 
 type StructureGetParams struct{}

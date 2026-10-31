@@ -489,6 +489,13 @@
       "data": {
         "$ref": "#/components/schemas/PaneActivity"
       }
+    },
+    {
+      "type": "agent.state",
+      "summary": "A pane's agent state changed (harness-adapters.md, State event model). The id is the pane id.",
+      "data": {
+        "$ref": "#/components/schemas/AgentState"
+      }
     }
   ],
   "x-frames": [
@@ -555,6 +562,90 @@
   ],
   "components": {
     "schemas": {
+      "AgentState": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time gff-hab accepted the change."
+          },
+          "harness": {
+            "type": "string",
+            "description": "claude, codex, opencode, or another detection manifest id."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/BlockedKind",
+            "description": "Only with state blocked."
+          },
+          "last": {
+            "$ref": "#/components/schemas/AgentStatus",
+            "description": "With state exited: the last done or error before the harness ended."
+          },
+          "pane": {
+            "type": "string",
+            "description": "Pane id; also the event's id."
+          },
+          "request": {
+            "$ref": "#/components/schemas/PermissionRequest",
+            "description": "Only with state blocked and kind permission."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Per pane, raised on every accepted change. Restarts with the epoch."
+          },
+          "session": {
+            "type": "string",
+            "description": "The harness's native session id, once known."
+          },
+          "source": {
+            "$ref": "#/components/schemas/StateSource"
+          },
+          "state": {
+            "$ref": "#/components/schemas/AgentStatus"
+          },
+          "turn": {
+            "type": "string",
+            "description": "The harness's turn or prompt id, where it gives one."
+          },
+          "version": {
+            "type": "string",
+            "description": "Harness version, once reported."
+          },
+          "warning": {
+            "$ref": "#/components/schemas/VersionWarning",
+            "description": "Set while the harness version is outside the adapter's tested range."
+          }
+        },
+        "required": [
+          "pane",
+          "revision",
+          "harness",
+          "state",
+          "source",
+          "at"
+        ]
+      },
+      "AgentStatus": {
+        "type": "string",
+        "x-known-values": [
+          "idle",
+          "working",
+          "blocked",
+          "done",
+          "error",
+          "none",
+          "exited"
+        ]
+      },
+      "BlockedKind": {
+        "type": "string",
+        "x-known-values": [
+          "permission",
+          "question",
+          "auth"
+        ]
+      },
       "ClientInfo": {
         "type": "object",
         "properties": {
@@ -1149,6 +1240,35 @@
           "pane"
         ]
       },
+      "PermissionRequest": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The exact command, for a shell tool."
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "description": "The exact files, for a file tool.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string",
+            "description": "The harness's id for the request, when it gives one. A permission answer must name it."
+          },
+          "input": {
+            "description": "The tool input as the harness sent it."
+          },
+          "tool": {
+            "type": "string"
+          }
+        }
+      },
       "PingParams": {
         "type": "object"
       },
@@ -1319,12 +1439,29 @@
           "exited"
         ]
       },
+      "StateSource": {
+        "type": "string",
+        "x-known-values": [
+          "server",
+          "hook",
+          "osc",
+          "screen",
+          "spawn"
+        ]
+      },
       "StructureGetParams": {
         "type": "object"
       },
       "StructureResult": {
         "type": "object",
         "properties": {
+          "agents": {
+            "type": "array",
+            "description": "The current agent state of each pane that has one (harness-adapters.md, State event model). Absent from a hab without the agent-state capability.",
+            "items": {
+              "$ref": "#/components/schemas/AgentState"
+            }
+          },
           "host": {
             "$ref": "#/components/schemas/HostInfo"
           },
@@ -1407,6 +1544,27 @@
         },
         "required": [
           "pane"
+        ]
+      },
+      "VersionWarning": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "newer_than_tested or unreadable."
+          },
+          "tested": {
+            "type": "string",
+            "description": "Newest tested version, as a prefix: 2.1 covers every 2.1.x."
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "tested",
+          "reason"
         ]
       },
       "Welcome": {

@@ -342,7 +342,9 @@ The schema lives in `api/` (layout and commands: `docs/layout.md`). Built choice
 - The document is OpenRPC 1.3.2. Notifications, event types, data frames and capabilities sit in
   `x-` extensions, because OpenRPC has no place for server-sent messages.
 - Event types are `<object>.updated` and `<object>.deleted` for projects, sessions and panes, plus
-  `pane.owner` (6.5) and `pane.activity` (7.1).
+  `pane.owner` (6.5), `pane.activity` (7.1) and `agent.state` (harness-adapters.md, State event
+  model). `agent.state` carries a per-pane revision that restarts with the epoch; the snapshot
+  holds the current states in the structure's optional `agents` array.
 - Word sets the server sends are open and may gain words; word sets the client sends are closed
   (see above). The compat test applies both rules.
 - The compat test compares against the highest released revision. A higher current revision must

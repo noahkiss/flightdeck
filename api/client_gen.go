@@ -8,6 +8,22 @@ import (
 )
 
 const (
+	AgentStatusIdle    AgentStatus = "idle"
+	AgentStatusWorking AgentStatus = "working"
+	AgentStatusBlocked AgentStatus = "blocked"
+	AgentStatusDone    AgentStatus = "done"
+	AgentStatusError   AgentStatus = "error"
+	AgentStatusNone    AgentStatus = "none"
+	AgentStatusExited  AgentStatus = "exited"
+)
+
+const (
+	BlockedKindPermission BlockedKind = "permission"
+	BlockedKindQuestion   BlockedKind = "question"
+	BlockedKindAuth       BlockedKind = "auth"
+)
+
+const (
 	ClientKindApp      ClientKind = "app"
 	ClientKindTerminal ClientKind = "terminal"
 	ClientKindCli      ClientKind = "cli"
@@ -68,6 +84,14 @@ const (
 	SessionStateExited  SessionState = "exited"
 )
 
+const (
+	StateSourceServer StateSource = "server"
+	StateSourceHook   StateSource = "hook"
+	StateSourceOsc    StateSource = "osc"
+	StateSourceScreen StateSource = "screen"
+	StateSourceSpawn  StateSource = "spawn"
+)
+
 // Event types.
 const (
 	EventProjectUpdated EventType = "project.updated"
@@ -78,6 +102,7 @@ const (
 	EventPaneDeleted    EventType = "pane.deleted"
 	EventPaneOwner      EventType = "pane.owner"
 	EventPaneActivity   EventType = "pane.activity"
+	EventAgentState     EventType = "agent.state"
 )
 
 // DecodeData decodes e.Data into the type its event type names. It returns
@@ -114,6 +139,10 @@ func (e Event) DecodeData() (any, error) {
 		return v, err
 	case EventPaneActivity:
 		var v PaneActivity
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventAgentState:
+		var v AgentState
 		err := json.Unmarshal(e.Data, &v)
 		return v, err
 	}

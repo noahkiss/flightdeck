@@ -1,0 +1,22 @@
+{
+  "note": "Written by hand. Shapes follow the Claude Code hooks reference for version 2.1.3xx. One turn: start, prompt, a tool that needs permission, approval, stop, exit.",
+  "harness_version": "2.1.3xx",
+  "events": [
+    {"harness": "claude", "event": "SessionStart", "t": 1000, "n": 1, "payload": {"session_id": "0b5c-session-a", "transcript_path": "/home/user/.claude/projects/-work-app/0b5c-session-a.jsonl", "cwd": "/work/app", "hook_event_name": "SessionStart", "source": "startup"}},
+    {"harness": "claude", "event": "UserPromptSubmit", "t": 1100, "n": 1, "payload": {"session_id": "0b5c-session-a", "cwd": "/work/app", "hook_event_name": "UserPromptSubmit", "prompt_id": "prompt-1", "prompt": "clean the build"}},
+    {"harness": "claude", "event": "PreToolUse", "t": 1200, "n": 1, "payload": {"session_id": "0b5c-session-a", "cwd": "/work/app", "hook_event_name": "PreToolUse", "prompt_id": "prompt-1", "tool_name": "Bash", "tool_input": {"command": "rm -rf build", "description": "Remove build output"}, "tool_use_id": "toolu_01"}},
+    {"harness": "claude", "event": "PermissionRequest", "t": 1300, "n": 1, "payload": {"session_id": "0b5c-session-a", "cwd": "/work/app", "hook_event_name": "PermissionRequest", "prompt_id": "prompt-1", "tool_name": "Bash", "tool_input": {"command": "rm -rf build", "description": "Remove build output"}, "tool_use_id": "toolu_01"}},
+    {"harness": "claude", "event": "PostToolUse", "t": 1400, "n": 1, "payload": {"session_id": "0b5c-session-a", "cwd": "/work/app", "hook_event_name": "PostToolUse", "prompt_id": "prompt-1", "tool_name": "Bash", "tool_input": {"command": "rm -rf build"}, "tool_response": {"stdout": ""}, "tool_use_id": "toolu_01"}},
+    {"harness": "claude", "event": "PreToolUse", "t": 1500, "n": 1, "payload": {"session_id": "0b5c-session-a", "cwd": "/work/app", "hook_event_name": "PreToolUse", "prompt_id": "prompt-1", "tool_name": "Write", "tool_input": {"file_path": "/work/app/NOTES", "content": "done"}, "tool_use_id": "toolu_02"}},
+    {"harness": "claude", "event": "Stop", "t": 1600, "n": 1, "payload": {"session_id": "0b5c-session-a", "cwd": "/work/app", "hook_event_name": "Stop", "stop_hook_active": false}},
+    {"harness": "claude", "event": "SessionEnd", "t": 1700, "n": 1, "payload": {"session_id": "0b5c-session-a", "cwd": "/work/app", "hook_event_name": "SessionEnd", "reason": "prompt_input_exit"}}
+  ],
+  "expect": [
+    {"harness": "claude", "session": "0b5c-session-a", "state": "idle"},
+    {"harness": "claude", "session": "0b5c-session-a", "state": "working", "turn": "prompt-1"},
+    {"harness": "claude", "session": "0b5c-session-a", "state": "blocked", "kind": "permission", "turn": "prompt-1", "request": {"id": "toolu_01", "tool": "Bash", "command": "rm -rf build", "cwd": "/work/app"}},
+    {"harness": "claude", "session": "0b5c-session-a", "state": "working", "turn": "prompt-1"},
+    {"harness": "claude", "session": "0b5c-session-a", "state": "done", "turn": "prompt-1"},
+    {"harness": "claude", "session": "0b5c-session-a", "state": "exited", "last": "done", "turn": "prompt-1"}
+  ]
+}

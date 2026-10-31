@@ -1,0 +1,26 @@
+{
+  "note": "Written by hand. Shapes follow the Claude Code hooks reference for version 2.1.3xx. A subagent hook, a late hook, an event the adapter does not use, a question, a permission prompt notification, a failed turn, and /clear starting a new session.",
+  "harness_version": "2.1.3xx",
+  "events": [
+    {"harness": "claude", "event": "SessionStart", "t": 2000, "n": 1, "version": "2.1.312", "payload": {"session_id": "s-one", "cwd": "/work/app", "hook_event_name": "SessionStart", "source": "resume"}},
+    {"harness": "claude", "event": "UserPromptSubmit", "t": 2100, "n": 1, "payload": {"session_id": "s-one", "cwd": "/work/app", "hook_event_name": "UserPromptSubmit", "prompt_id": "prompt-7"}},
+    {"harness": "claude", "event": "SessionStart", "t": 2150, "n": 1, "payload": {"session_id": "s-sub", "agent_id": "agent-9", "cwd": "/work/app", "hook_event_name": "SessionStart", "source": "startup"}},
+    {"harness": "claude", "event": "PreToolUse", "t": 2200, "n": 1, "payload": {"session_id": "s-one", "agent_id": "agent-9", "cwd": "/work/app", "hook_event_name": "PreToolUse", "tool_name": "Read", "tool_input": {"file_path": "/work/app/main.go"}, "tool_use_id": "toolu_10"}},
+    {"harness": "claude", "event": "PreCompact", "t": 2250, "n": 1, "payload": {"session_id": "s-one", "cwd": "/work/app", "hook_event_name": "PreCompact", "trigger": "auto"}},
+    {"harness": "claude", "event": "Notification", "t": 2300, "n": 1, "payload": {"session_id": "s-one", "cwd": "/work/app", "hook_event_name": "Notification", "notification_type": "elicitation_dialog", "message": "Claude has a question"}},
+    {"harness": "claude", "event": "PreToolUse", "t": 2290, "n": 1, "payload": {"session_id": "s-one", "cwd": "/work/app", "hook_event_name": "PreToolUse", "tool_name": "Grep", "tool_input": {"pattern": "x"}, "tool_use_id": "toolu_11"}},
+    {"harness": "claude", "event": "Notification", "t": 2400, "n": 1, "payload": {"session_id": "s-one", "cwd": "/work/app", "hook_event_name": "Notification", "notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash"}},
+    {"harness": "claude", "event": "StopFailure", "t": 2500, "n": 1, "payload": {"session_id": "s-one", "cwd": "/work/app", "hook_event_name": "StopFailure", "error": "overloaded"}},
+    {"harness": "claude", "event": "Notification", "t": 2600, "n": 1, "payload": {"session_id": "s-one", "cwd": "/work/app", "hook_event_name": "Notification", "notification_type": "idle_prompt", "message": "Claude is waiting for your input"}},
+    {"harness": "claude", "event": "SessionStart", "t": 2700, "n": 1, "payload": {"session_id": "s-two", "cwd": "/work/app", "hook_event_name": "SessionStart", "source": "clear"}}
+  ],
+  "expect": [
+    {"harness": "claude", "session": "s-one", "state": "idle", "version": "2.1.312"},
+    {"harness": "claude", "session": "s-one", "state": "working", "turn": "prompt-7", "version": "2.1.312"},
+    {"harness": "claude", "session": "s-one", "state": "blocked", "kind": "question", "turn": "prompt-7", "version": "2.1.312"},
+    {"harness": "claude", "session": "s-one", "state": "blocked", "kind": "permission", "turn": "prompt-7", "version": "2.1.312"},
+    {"harness": "claude", "session": "s-one", "state": "error", "turn": "prompt-7", "version": "2.1.312"},
+    {"harness": "claude", "session": "s-one", "state": "idle", "turn": "prompt-7", "version": "2.1.312"},
+    {"harness": "claude", "session": "s-two", "state": "idle"}
+  ]
+}

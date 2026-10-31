@@ -62,6 +62,10 @@ func checkPrivateDir(d string) error {
 	return nil
 }
 
+// CheckPeer refuses a caller that runs as another user (spec 4.1). The hook endpoint uses it
+// on its own socket.
+func CheckPeer(nc *net.UnixConn) error { return checkPeer(nc) }
+
 // checkPeer refuses a caller that runs as another user (spec 4.1).
 func checkPeer(nc *net.UnixConn) error {
 	raw, err := nc.SyscallConn()

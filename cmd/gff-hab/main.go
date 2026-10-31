@@ -2,18 +2,22 @@
 // serves the control connection on a local Unix socket, with no TCP port, carries the
 // structure store, and follows every holder's panes through the holder link (internal/link).
 //
-//	gff-hab serve   [-socket path] [-state dir] [-host-id id] [-holders dir]
+//	gff-hab serve   [-socket path] [-hook-socket path] [-state dir] [-host-id id] [-holders dir]
 //	gff-hab connect [-socket path]
 //	gff-hab api call [-socket path | -via command] <method> [params-json]
 //	gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
 //	gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
 //	gff-hab manifests list    [-state dir]
+//	gff-hab hook <harness> [event] < payload
+//	gff-hab hook -print <harness> [-command name]
 //
 // The socket path comes from -socket, else $GFF_HAB_SOCKET, else gff/hab.sock under the user
 // config directory on macOS and under $XDG_RUNTIME_DIR elsewhere. The state directory comes from
 // -state, else $GFF_HAB_STATE, else gff/hab under the user config directory on macOS and under
 // $XDG_STATE_HOME (or ~/.local/state) elsewhere. The holder directory comes from -holders, else
 // $GFF_HOLDER_DIR, else the holder's own default; screen checkpoints go to <state>/checkpoints.
+// The hook socket comes from -hook-socket, else $GFF_HAB_HOOK_SOCKET, else hook.sock beside the
+// control socket.
 //
 // `gff-hab connect` copies stdin to the socket and the socket to stdout, so
 // `ssh <host> gff-hab connect` reaches a remote hab with no new listener. -via runs a command
@@ -43,6 +47,8 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/habkey"
+	"github.com/noahkiss/flightdeck/internal/harness"
+	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
@@ -50,18 +56,23 @@ import (
 var build = "dev"
 
 const usage = `usage:
-  gff-hab serve   [-socket path] [-state dir] [-host-id id] [-holders dir]
+  gff-hab serve   [-socket path] [-hook-socket path] [-state dir] [-host-id id] [-holders dir]
   gff-hab connect [-socket path]
   gff-hab api call [-socket path | -via command] <method> [params-json]
   gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
   gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
   gff-hab manifests list    [-state dir]
+  gff-hab hook <harness> [event] < payload
+  gff-hab hook -print <harness> [-command name]
 `
 
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
+	}
+	if os.Args[1] == "hook" {
+		os.Exit(hookCmd(os.Args[2:], os.Stdin, os.Stdout))
 	}
 	var err error
 	switch os.Args[1] {
@@ -137,6 +148,7 @@ func (emptyHolders) Subscribe(func(structure.Notice)) (cancel func()) { return f
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	sock := socketFlag(fs)
+	hookSock := fs.String("hook-socket", "", "hook endpoint socket path (default: see gff-hab -h)")
 	state := fs.String("state", "", "state directory (default: see gff-hab -h)")
 	hostID := fs.String("host-id", os.Getenv("GFF_HAB_HOST_ID"), "host id sent in the welcome (default: $GFF_HAB_HOST_ID, else the system host name)")
 	holders := fs.String("holders", "", "holder registry directory (default: $GFF_HOLDER_DIR, else the holder's default)")
@@ -187,19 +199,49 @@ func serve(args []string) error {
 		logger.Printf("state: %s", h.Problem)
 	}
 	logManifestDrift(dir, logger.Printf)
+	debugf := func(string, ...any) {}
+	if os.Getenv("GFF_HAB_DEBUG") != "" {
+		debugf = logger.Printf
+	}
+	agents := harness.NewStore(harness.Config{
+		Publish: func(e structure.Event) {
+			if s := srv.Load(); s != nil {
+				s.Publish(e)
+			}
+		},
+		Logf: debugf,
+	})
 	s := control.New(control.Config{
 		Build:    build,
 		Host:     api.HostInfo{ID: *hostID},
 		DeviceID: key.Fingerprint(),
-		Source:   store,
+		Source:   agentSource{store: store, agents: agents},
 		Logf:     logger.Printf,
 	})
 	srv.Store(s)
+	hpath, err := hookSocketPath(*hookSock, path)
+	if err != nil {
+		return err
+	}
 	l, err := control.Listen(path)
 	if err != nil {
 		return err
 	}
-	logger.Printf("epoch %s build %s device %s listening on %s", s.Epoch(), build, key.Fingerprint(), path)
+	hl, err := control.Listen(hpath)
+	if err != nil {
+		l.Close()
+		return err
+	}
+	// Tokens are minted per pane by the holder link (later stage); until then every token is
+	// unknown and posts are dropped.
+	hooks := hook.NewServer(hook.NewRegistry(), func(pane string, env harness.Envelope) { agents.Hook(pane, env) }, logger.Printf)
+	go func() {
+		if err := hooks.Serve(hl); err != nil {
+			logger.Printf("%v: %v", errHookServe, err)
+		}
+	}()
+	defer hooks.Close()
+	logger.Printf("epoch %s build %s device %s listening on %s, hooks on %s", s.Epoch(), build, key.Fingerprint(), path, hpath)
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)

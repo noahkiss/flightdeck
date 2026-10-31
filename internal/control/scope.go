@@ -60,6 +60,11 @@ func (f *filter) seed(st api.Structure) api.Structure {
 			out.Panes = append(out.Panes, p)
 		}
 	}
+	for _, a := range st.Agents {
+		if f.panes[a.Pane] {
+			out.Agents = append(out.Agents, a)
+		}
+	}
 	return out
 }
 
@@ -124,6 +129,6 @@ func (f *filter) pass(e structure.Event) bool {
 		}
 		return false
 	}
-	// Event types this filter does not know yet (pane.owner, pane.activity) are about a pane.
+	// Other event types (pane.owner, pane.activity, agent.state) are about a pane: the id is the pane.
 	return f.panes[e.ID]
 }

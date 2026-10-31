@@ -146,7 +146,7 @@ its hooks and tool commands, so anything inside the pane can find `gff-hab`.
 
 | Variable | Set by | Value | Who reads it |
 |---|---|---|---|
-| `GFF_HAB` | holder, at spawn | The hook endpoint URL for this pane, with a per-pane token (see below) | `gff hook`, the agent kit, any agent that wants to name itself |
+| `GFF_HAB` | holder, at spawn | The hook endpoint URL for this pane, with a per-pane token (see below) | `gff-hab hook`, the agent kit, any agent that wants to name itself |
 | `AGENT_KIND` | holder when it starts a known harness; else the harness's own start hook | `claude`, `codex` or `opencode` | hooks, tools, the agent kit |
 | `AGENT_SESSION_ID` | the harness, through its start hook, where the harness allows it | The harness's native session id | tools and child processes that must name their session |
 
@@ -180,7 +180,7 @@ endpoint, which takes an optional `harness` field that defaults to `claude`.
 
 - **Transport.** HTTP over the hab's local Unix socket, at the path in `GFF_HAB`. The pane
   token in the path names the pane.
-- **Caller.** One small command, `gff hook <harness> <event>`, reads the harness's hook JSON on
+- **Caller.** One small command, `gff-hab hook <harness> <event>`, reads the harness's hook JSON on
   stdin once, adds our envelope, posts it, and exits. It backgrounds the post with a short cap
   (one second) so a dead `gff-hab` costs the turn nothing. It never writes to stdout, except in
   blocking permission mode.
@@ -192,6 +192,42 @@ endpoint, which takes an optional `harness` field that defaults to `claude`.
   native events are logged at debug level and dropped.
 - **Hook config.** `gff-hab` prints the hook config for each harness. Writing it into a
   harness's settings is a separate, approved step (plan decision, owner).
+
+Built choices (`internal/hook`, `internal/harness`, `gff-hab hook`):
+
+- **Socket.** The endpoint is HTTP on its own Unix socket, `hook.sock` beside the control
+  socket (`-hook-socket` or `$GFF_HAB_HOOK_SOCKET` override it). The control socket speaks
+  JSON-RPC lines, so the hook endpoint does not share it. The socket is mode 0600 in the same
+  private directory, and a caller running as another user is refused. No TCP port.
+- **Address.** `GFF_HAB` is `http+unix://<absolute socket path>/hooks/<token>`. The token is 32
+  hex digits from a per-pane registry in gff-hab; minting it again for a respawned pane drops the
+  old one. The holder link (a later stage) mints tokens and puts `GFF_HAB` into the pane's
+  environment. Until then every token is unknown and gff-hab drops the post, and the welcome
+  does not list the `agent-state` capability.
+- **Answers.** `POST /hooks/<token>` answers 204 when accepted, 400 for a bad envelope, 404
+  for an unknown token (logged once per token) and 413 above 8 MiB. A post with no `t` gets the
+  server's clock.
+- **The command.** `gff-hab hook <harness> [event]` reads stdin, wraps it and posts it, then
+  exits 0, always, and never writes to stdout. With no event argument it takes
+  `hook_event_name` (Claude Code, Codex) or `type` (opencode) from the payload. The post is
+  synchronous with a 900 ms budget for the whole run, enforced by a timer that exits 0: a
+  stopped gff-hab fails at dial in a few milliseconds, and a hung one costs at most the budget.
+  This keeps posts in order, which a background post would not. `n` is always 1, since each
+  hook is its own process; ordering uses `t`.
+- **Entrypoint guard.** For Claude Code the command sends nothing when
+  `CLAUDE_CODE_ENTRYPOINT` is set and is not `cli`. An unset variable is allowed, so a Claude
+  build that does not export it still reports.
+- **`gff-hab hook -print <harness>`.** Claude Code and Codex get a JSON object in their shared
+  hooks shape (`{"hooks": {"<Event>": [{"hooks": [{"type": "command", ...}]}]}}`), one entry per
+  event the adapter uses, with a 5 second timeout (2 seconds for Codex's `SessionEnd` and
+  `Interrupt`, which Codex caps at three). opencode gets a JavaScript plugin that spawns
+  `gff-hab hook opencode <event type>` with the event JSON on stdin. `-command` sets how the
+  harness runs gff-hab.
+- **opencode events.** The plugin posts `session.created` (binds, `idle`), `session.deleted`
+  (unbinds), `session.status` (`busy` or `retry` → `working`; `idle` is left to
+  `session.idle`), `session.idle` (→ `done`), `session.error` (→ `error`), `permission.asked`
+  and `permission.updated` (→ `blocked:permission`, request from the event's id, permission and
+  metadata), and `permission.replied` (resolves the request, → `working`).
 
 Why a client clock: hook payloads carry no timestamp or sequence. Posts land out of order
 because they run in the background. Without `t`, the server cannot tell a late event from a
@@ -222,7 +258,7 @@ Two further values describe the pane, not the agent:
 
 ### Fields
 
-Each `agent.state` event carries:
+Each `agent.state` event carries (built as `api.AgentState`; the event's id is the pane id):
 
 | Field | Type | Notes |
 |---|---|---|
@@ -236,6 +272,26 @@ Each `agent.state` event carries:
 | `turn` | string, optional | Native turn or prompt id where the harness gives one (Claude `prompt_id`, Codex `turn_id`). |
 | `at` | time | When `gff-hab` accepted the event. |
 | `revision` | integer | Per pane, raised on every accepted change. |
+| `last` | enum, optional | With `exited`: the last `done` or `error` before the exit. |
+| `version` | string, optional | The harness version, once reported (envelope `version`, or a `version` or `cli_version` field in the payload). |
+| `warning` | object, optional | Set while `version` is above the adapter's tested range, or unreadable (see Detection). |
+
+Built choices:
+
+- `state` takes the agent states and the pane values in one word set: `idle`, `working`,
+  `blocked`, `done`, `error`, `none`, `exited`. On `exited`, `last` keeps the last `done` or
+  `error`; `working` and `blocked` are dropped.
+- A change is accepted only when a visible field changes, so a run of `PreToolUse` hooks emits
+  one `working`. The source alone changing is not a change.
+- `revision` lives in memory and restarts with each gff-hab epoch, like the state itself, which
+  is rebuilt after a restart.
+- The snapshot carries the states as the optional `agents` array of the structure. A scoped
+  subscription gets the states of the panes in its scope.
+- While a session lives in the pane, a hook from another harness or another session is dropped.
+  A session start binds a free pane. Claude Code's own `SessionStart` rebinds (after `/clear`),
+  since the entrypoint guard keeps nested runs out. A subagent hook never binds.
+- `done` becomes `idle` through `Store.Seen`, which the input path and focus will call once
+  they exist.
 
 ### Source precedence
 
@@ -260,7 +316,7 @@ When sources disagree inside one turn, the stronger one wins:
 ### How events reach the stream
 
 - The adapter produces state changes. `gff-hab` writes each accepted change as an
-  `agent.state` delta on Part 2's event stream, with the stream's `epoch` and `seq`.
+  `agent.state` event on Part 2's event stream, with the stream's `epoch` and `seq`.
 - The Part 2 snapshot includes the current `agent.state` for every pane. A client that sees a
   new `epoch`, or a `missed` notice, takes a fresh snapshot.
 - The adapter never writes escape codes into the pane. The pane's own OSC 7501 reports are
