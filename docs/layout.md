@@ -11,6 +11,8 @@ One Go module, `github.com/noahkiss/flightdeck`, at the repo root. Swift package
 | `api/released/<revision>.json` | The schema as released for each revision; the compat test compares against it |
 | `internal/apigen/` | Schema builder, Go and Swift generators, compat checker |
 | `internal/holderproto/` | The gff-hab to holder wire protocol: frames, codec, version negotiation. Pure Go. Spec: `docs/protocol/holder.md` |
+| `internal/holder/` | The holder core: panes in PTYs, byte rings, pump, reaper, input queues, and the protocol server with one writer queue per connection. Pure Go. Spec: `docs/specs/hab-holder.md` 2 |
+| `cmd/gff-hab-holder/` | The holder binary: flags and environment for the socket path, then `internal/holder` |
 | `internal/structure/` | gff-hab's shared structure (projects, sessions, order, pane links), its JSON state file and restart mapping, plus `FakeHolder` for tests. Pure Go. Spec: `docs/specs/hab-logic-api.md` 2.2 |
 | `internal/vt/` | The terminal parser interface gff-hab keeps per pane, and `Fake`, a pure-Go stand-in for tests |
 | `internal/vt/ghostty/` | The libghostty-vt parser through cgo. Builds only with the `ghostty` build tag |
