@@ -208,8 +208,8 @@ the phone, with QR pairing and pinned host keys.**
 
 ### 4.3 The phone
 
-9. **A P-256 key in the Secure Enclave**, used as an ordinary SSH key, gated by Face ID or the
-   passcode.
+9. **A P-256 key in the Secure Enclave**, used as an ordinary SSH key. It works only while the
+   device is unlocked. Face ID inside the app is optional and off by default (`app.md` 14.2).
 10. **QR pairing** (6.1) admits the phone's key to one hab's authorized-keys file. After pairing,
     the phone connects with plain key auth.
 11. **One QR per hab.** Introduction between habs stays an owner choice, off by default (6.2).
@@ -282,7 +282,7 @@ Decision: proposed.
    from being enough.
 8. The hab adds the phone's key to its authorized-keys file, burns the token, and logs the pairing.
 9. The phone stores the hab: device id, label, endpoints. From then on it uses plain key auth,
-   behind Face ID.
+   usable only while the device is unlocked.
 
 If the embedded server is off, `gff-hab pair` says so and stops.
 
@@ -374,8 +374,8 @@ key this way is safe: it came over a pinned, authenticated channel.
 1. The owner revokes the phone from any hab or any other paired client (6.6).
 2. Every hab closes the phone's live sessions and refuses its key from then on.
 3. The phone's key cannot be copied: it lives in the Secure Enclave and is excluded from backups.
-4. Until revoked, a thief also needs the phone's passcode or biometrics to use the key, because the
-   app gates key use behind them.
+4. Until revoked, a thief also needs to unlock the phone to use the key, because the key works only
+   while the device is unlocked.
 5. A new phone pairs from scratch. Nothing to restore: each device has its own key, so no shared
    secret was on the lost phone.
 

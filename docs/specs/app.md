@@ -702,8 +702,8 @@ Face ID is optional and off by default.
 
 Recommendation: the key needs the device unlocked (this device only, never in backups). It does not
 need biometrics. The Face ID setting, when on, gates the app and in-app answers. Lock-screen actions
-always need unlock. Update `transport.md` 4.3 item 9 and 7.2 to say "usable only while unlocked"
-once the owner agrees.
+always need unlock. Decided (coordinator, following the owner's Face ID decision): `transport.md`
+4.3, 7.2 and 7.3 now say the key is usable only while the device is unlocked.
 
 ### 14.3 Bring your own APNs key versus who signs the build
 
