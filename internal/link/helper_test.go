@@ -40,6 +40,11 @@ type helperEvent struct {
 	Chunk    *Chunk                 `json:"chunk,omitempty"`
 }
 
+// testScrollback is the scrollback cap of every parser in the tests. libghostty's default is
+// about 10 kB, and near the cap a restored terminal drops pages at other points than one that
+// parsed the whole stream, so the restart loop's screens would differ for that reason alone.
+const testScrollback = 16 << 20
+
 func envDuration(name string) time.Duration {
 	d, err := time.ParseDuration(os.Getenv(name))
 	if err != nil {
@@ -67,6 +72,8 @@ func helperMain() int {
 		IdleAfter:       envDuration("GFF_LINK_IDLE"),
 		CheckpointEvery: envDuration("GFF_LINK_EVERY"),
 		Rescan:          100 * time.Millisecond,
+		KeepLost:        envDuration("GFF_LINK_KEEPLOST"),
+		ScrollbackBytes: testScrollback,
 		Logf:            logger.Printf,
 	})
 	if err != nil {

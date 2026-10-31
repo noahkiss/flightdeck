@@ -37,6 +37,8 @@ type PaneStatus struct {
 	Ready bool
 	// Suspect means the screen was rebuilt from incomplete bytes (spec 2.3, 6.7).
 	Suspect bool
+	// Restored means the screen was restored from the pane's checkpoint when the link attached.
+	Restored bool
 	// Lost means the pane's holder connection ended. Gone means the holder released it.
 	Lost   bool
 	Gone   bool
@@ -167,14 +169,17 @@ type pane struct {
 	handle    hp.Handle
 	pid       uint32
 	term      vt.Terminal
-	off       uint64 // the parser holds every byte before off
-	buf       []byte // recent output: bytes [bufStart, off)
+	off       uint64     // the parser holds every byte before off
+	seq       seqScanner // whether off falls in the parser's ground state
+	buf       []byte     // recent output: bytes [bufStart, off)
 	bufStart  uint64
 	ready     chan struct{}
 	isReady   bool
 	replayTok uint32
 	suspect   bool
+	restored  bool
 	lost      error // ErrLost or ErrGone once the pane is no longer followed
+	lostAt    time.Time
 	exited    bool
 	exit      hp.ExitStatus
 	lastOut   time.Time
@@ -208,6 +213,12 @@ func (p *pane) prepare(l *Link, h *holderclient.Holder, pi hp.PaneInfo) (from ui
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	back = p.lost != nil
+	if p.term != nil && p.holder != nil && p.holder.Instance() != h.Instance() {
+		// Another holder lists this uuid: the screen held belongs to a different pane.
+		l.cfg.Logf("link: pane %s: was on holder %s, now on %s: starting a new screen", pi.UUID, p.holder.Instance(), h.Instance())
+		p.term.Close()
+		p.term = nil
+	}
 	p.holder, p.handle, p.pid = h, pi.Handle, pi.Pid
 	p.lost = nil
 	p.exited, p.exit = pi.Exited, pi.Exit
@@ -230,6 +241,9 @@ func (p *pane) prepare(l *Link, h *holderclient.Holder, pi hp.PaneInfo) (from ui
 	switch {
 	case err != nil && !errors.Is(err, os.ErrNotExist):
 		l.cfg.Logf("link: pane %s: unusable checkpoint: %v", pi.UUID, err)
+		ck = nil
+	case ck != nil && ck.Holder != h.Instance():
+		l.cfg.Logf("link: pane %s: checkpoint is from holder %q, the pane is on %q: ignoring it", pi.UUID, ck.Holder, h.Instance())
 		ck = nil
 	case ck != nil && !slices.Contains(l.cfg.Parser.Encodings(), ck.Encoding):
 		l.cfg.Logf("link: pane %s: checkpoint encoding %s not supported by this parser", pi.UUID, ck.Encoding)
@@ -255,7 +269,8 @@ func (p *pane) prepare(l *Link, h *holderclient.Holder, pi hp.PaneInfo) (from ui
 				p.suspect = true
 			}
 			p.off, p.bufStart, p.buf = ck.Offset, ck.Offset, nil
-			p.ckOff, p.ckValid = ck.Offset, true
+			p.ckOff, p.ckValid, p.restored = ck.Offset, true, true
+			p.seq.reset()
 			return p.off, back
 		}
 	}
@@ -270,6 +285,8 @@ func (p *pane) prepare(l *Link, h *holderclient.Holder, pi hp.PaneInfo) (from ui
 		l.cfg.Logf("link: pane %s: no checkpoint and the ring starts at %d: screen is suspect", pi.UUID, pi.Oldest)
 	}
 	p.off, p.bufStart, p.buf = pi.Oldest, pi.Oldest, nil
+	p.ckValid, p.restored = false, false
+	p.seq.reset()
 	return p.off, back
 }
 
@@ -307,11 +324,10 @@ func (p *pane) feed(l *Link, off uint64, data []byte, live bool) {
 	}
 	if off > p.off {
 		l.cfg.Logf("link: pane %s: gap: bytes %d to %d never arrived; screen is suspect", p.uuid, p.off, off)
-		p.suspect = true
-		p.buf, p.bufStart = nil, off
-		p.off = off
+		p.jump(off)
 	}
 	p.term.Write(data)
+	p.seq.write(data)
 	p.off = end
 	p.buf = append(p.buf, data...)
 	if lim := l.cfg.BufferBytes; len(p.buf) > 2*lim {
@@ -339,10 +355,31 @@ func (p *pane) replayEnd(l *Link, e *hp.ReplayEnd) {
 		p.suspect = true
 	}
 	if e.End > p.off {
-		p.suspect = true
-		p.buf, p.bufStart, p.off = nil, e.End, e.End
+		p.jump(e.End)
 	}
 	p.markReady()
+}
+
+// jump moves the pane past bytes that never arrived: the screen is suspect, and every subscriber
+// gets a snapshot covering the new offset so its stream stays contiguous. The caller holds p.mu.
+func (p *pane) jump(to uint64) {
+	p.suspect = true
+	p.buf, p.bufStart, p.off = nil, to, to
+	p.seq.reset()
+	if len(p.subs) == 0 {
+		return
+	}
+	snap, err := p.term.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: vt.AllScrollback})
+	for s := range p.subs {
+		if err != nil {
+			s.end(err)
+			delete(p.subs, s)
+			continue
+		}
+		if !s.send(Chunk{Kind: ChunkSnapshot, Offset: to, Data: snap, Encoding: vt.EncodingVT}) {
+			delete(p.subs, s)
+		}
+	}
 }
 
 func (p *pane) reaped(st hp.ExitStatus) (Notice, bool) {
@@ -368,7 +405,7 @@ func (p *pane) lose(why error) (Notice, bool) {
 		p.mu.Unlock()
 		return Notice{}, false
 	}
-	p.lost = why
+	p.lost, p.lostAt = why, time.Now()
 	for s := range p.subs {
 		s.end(why)
 		delete(p.subs, s)
@@ -397,7 +434,7 @@ func (p *pane) status() PaneStatus {
 	defer p.mu.Unlock()
 	st := PaneStatus{
 		UUID: p.uuid, Handle: p.handle, Pid: p.pid, Offset: p.off, Ready: p.isReady,
-		Suspect: p.suspect, Lost: errors.Is(p.lost, ErrLost), Gone: errors.Is(p.lost, ErrGone),
+		Suspect: p.suspect, Restored: p.restored, Lost: errors.Is(p.lost, ErrLost), Gone: errors.Is(p.lost, ErrGone),
 		Exited: p.exited, Exit: p.exit,
 	}
 	if p.holder != nil {
@@ -434,6 +471,15 @@ func (p *pane) checkpoint(l *Link, force bool) error {
 	defer p.ckMu.Unlock()
 	p.mu.Lock()
 	if p.term == nil || !p.isReady || p.lost != nil || (p.ckValid && p.ckOff == p.off) {
+		p.mu.Unlock()
+		return nil
+	}
+	if !p.seq.ground() {
+		// The stream ends inside an escape sequence or a UTF-8 character, which a snapshot
+		// cannot carry. Keep the older checkpoint; the next tick tries again.
+		if force {
+			l.cfg.Logf("link: pane %s: output ends mid-sequence at %d: keeping the checkpoint at %d", p.uuid, p.off, p.ckOff)
+		}
 		p.mu.Unlock()
 		return nil
 	}

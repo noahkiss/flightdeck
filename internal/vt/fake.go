@@ -401,7 +401,15 @@ func (t *fakeTerm) Snapshot(enc Encoding, opts SnapshotOptions) ([]byte, error) 
 	}
 	// The primary screen goes first, so leaving the alternate screen after a restore shows it.
 	var b strings.Builder
-	b.WriteString(strings.Join(rowText(append(append([][]rune{}, sb...), t.primary...)), "\r\n"))
+	lines := rowText(append(append([][]rune{}, sb...), t.primary...))
+	if len(sb) > 0 {
+		// Every row of the screen is written, blank ones too, so exactly the scrollback rows
+		// scroll off and each line lands on its own row.
+		for len(lines) < len(sb)+len(t.primary) {
+			lines = append(lines, "")
+		}
+	}
+	b.WriteString(strings.Join(lines, "\r\n"))
 	if t.altActive {
 		b.WriteString("\x1b[?1049h\x1b[H\x1b[2J")
 		b.WriteString(strings.Join(rowText(t.alt), "\r\n"))

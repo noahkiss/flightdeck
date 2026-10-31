@@ -13,7 +13,7 @@ import (
 // and listed, and its exit is reported with the exit code.
 func TestStructureNotices(t *testing.T) {
 	hdir := shortDir(t)
-	startHolder(t, hdir, "st")
+	startHolder(t, hdir, "st", 0)
 	l, err := Open(Config{HolderDir: hdir, StateDir: shortDir(t), Build: "test", Parser: testParser(), Logf: t.Logf})
 	if err != nil {
 		t.Fatal(err)

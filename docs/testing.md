@@ -80,3 +80,9 @@ Each holder stage close records a passing `make race` run (`go test -race -count
 packages) on macOS as well as Linux. `make fuzz` runs each holderproto fuzz target for `FUZZTIME`
 (default 30s); the nightly job will run it. `GFF_RESTART_LOOP=200 go test -run TestRestartLoop
 ./internal/link/` is the nightly restart loop of core test 1; the push run does 20.
+
+Core test 1 runs its holder with a ring smaller than the program's output, so a rebuild from the
+ring alone cannot pass. Each restart asserts that the link restored the pane's checkpoint, and the
+loop compares the rebuilt screen with a reference parser fed the same stream to the same offset.
+The parsers in these tests use a 16 MiB scrollback cap: near libghostty's default cap (about
+10 kB) a restored terminal drops scrollback at other points than one that parsed every byte.

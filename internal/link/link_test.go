@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -101,13 +102,18 @@ func (l *lockedBuffer) String() string {
 	return l.b.String()
 }
 
-// startHolder runs the holder binary in its own session, as an init system would.
-func startHolder(t *testing.T, dir, id string) *exec.Cmd {
+// startHolder runs the holder binary in its own session, as an init system would. ring is the
+// per-pane ring size; 0 keeps the default.
+func startHolder(t *testing.T, dir, id string, ring int) *exec.Cmd {
 	t.Helper()
 	if holderBin == "" {
 		t.Skip("no go toolchain to build the holder binary")
 	}
-	cmd := exec.Command(holderBin, "-dir", dir, "-instance", id)
+	args := []string{"-dir", dir, "-instance", id}
+	if ring > 0 {
+		args = append(args, "-ring", strconv.Itoa(ring))
+	}
+	cmd := exec.Command(holderBin, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	logs := &lockedBuffer{}
 	cmd.Stderr = logs
@@ -287,11 +293,21 @@ func uuidN(n int) hp.UUID {
 	return u
 }
 
+// dumpRing is the holder ring in the dump tests: smaller than tuiScript's output, larger than its
+// phase two.
+const dumpRing = 2048
+
 // tuiScript is a full-screen program: alternate screen, colours, absolute and relative cursor
-// moves, a terminal query, and an erase. It draws phase one, waits for the file $GO, draws phase
-// two, then sleeps.
+// moves, a terminal query, and an erase. It prints a few KiB of padding, so the ring loses its
+// first bytes, draws phase one, waits for the file $GO, draws phase two, then sleeps.
 const tuiScript = `
-printf '\033[?1049h\033[2J\033[H'
+printf '\033[?1049h'
+i=0
+while [ $i -lt 60 ]; do
+  printf 'padding %02d ......................................................\r\n' $i
+  i=$((i+1))
+done
+printf '\033[2J\033[H'
 printf '\033[1;31mTITLE\033[0m\033[3;5Hphase one\033[5;1H'
 i=1
 while [ $i -le 5 ]; do
@@ -312,7 +328,9 @@ exec sleep 1000
 // halfway, then a restart by plan or by SIGKILL. The new link's screen must equal the old one's.
 func testDumpAcrossRestart(t *testing.T, crash bool) {
 	hdir, state := shortDir(t), shortDir(t)
-	startHolder(t, hdir, "dump")
+	// The ring is smaller than the program's output, so a rebuild from the ring alone cannot
+	// match: only the checkpoint can.
+	startHolder(t, hdir, "dump", dumpRing)
 	env := habEnv{holders: hdir, state: state, idle: "-1s", every: "-1s"} // checkpoints on request only
 	h1 := startHab(t, env)
 	u := uuidN(1)
@@ -369,6 +387,12 @@ func testDumpAcrossRestart(t *testing.T, crash bool) {
 	if after.Suspect {
 		t.Error("screen marked suspect, but the ring reached the checkpoint")
 	}
+	if st := h2.pane(u); !st.Restored {
+		t.Error("the screen was not restored from the checkpoint")
+	}
+	if int(before.Offset) <= dumpRing {
+		t.Errorf("the program printed %d bytes, no more than the ring holds", before.Offset)
+	}
 	if after.Text != before.Text {
 		t.Errorf("screen differs\n--- before ---\n%s\n--- after ---\n%s", before.Text, after.Text)
 	}
@@ -385,10 +409,43 @@ func TestDumpAcrossPlannedRestart(t *testing.T) { testDumpAcrossRestart(t, false
 
 func TestDumpAcrossCrash(t *testing.T) { testDumpAcrossRestart(t, true) }
 
+// loopRing is the holder ring in TestRestartLoop: big enough to reach back past a checkpoint,
+// small enough that the program's output overflows it within a few rounds.
+const loopRing = 8 << 10
+
+// loopPrinter prints numbered lines full of escapes: colours, wide characters, relative and
+// absolute cursor moves, erases and trips to the alternate screen. Each step is one printf, so
+// one write. It waits while the file $PAUSE exists, so a slow restart does not overflow the ring.
+const loopPrinter = `
+i=0
+while :; do
+  while [ -e "$PAUSE" ]; do sleep 0.01; done
+  i=$((i+1))
+  printf '\033[3%dmline %d\033[0m \033[1;4m\344\270\226\347\225\214\033[0m \033[7m%d\033[0m\r\n' $((i%8)) $i $((i*7))
+  if [ $((i%5)) -eq 0 ]; then
+    printf '\033[?1049h\033[2J\033[%d;%dH\033[45malt %d\033[0m\033[?1049l' $((i%20+1)) $((i%60+1)) $i
+  fi
+  if [ $((i%9)) -eq 0 ]; then
+    printf '\033[A\033[60G\033[K\033[42mtick %d\033[0m\r\033[B' $i
+  fi
+  sleep 0.01
+done
+`
+
+var loopLine = regexp.MustCompile(`line (\d+)\x1b`)
+
 // TestRestartLoop restarts the link many times, alternating plan and SIGKILL, while a program
-// prints numbered lines and a subscriber follows it (core test 1). The child pid never changes;
-// the subscriber's offsets are contiguous across every restart, with no gap and no repeat; and
-// the text it received is every line in order. GFF_RESTART_LOOP sets the count (default 20).
+// prints escape-heavy output and a subscriber follows it from the first byte (core test 1).
+// Every round:
+//   - the child pid never changes;
+//   - the new link restored the pane's checkpoint, and the screen is not suspect;
+//   - its screen equals, byte for byte, a reference parser in the test fed the same stream to the
+//     same offset;
+//   - the subscriber's offsets are contiguous, with no gap and no repeat;
+//   - a second subscriber resumes from behind the checkpoint and gets those bytes from the ring.
+//
+// At the end the numbered lines are all there, in order. GFF_RESTART_LOOP sets the count
+// (default 20).
 func TestRestartLoop(t *testing.T) {
 	n := 20
 	if v := os.Getenv("GFF_RESTART_LOOP"); v != "" {
@@ -398,76 +455,96 @@ func TestRestartLoop(t *testing.T) {
 		}
 	}
 	hdir, state := shortDir(t), shortDir(t)
-	startHolder(t, hdir, "loop")
+	startHolder(t, hdir, "loop", loopRing)
 	// Timed checkpoints are rarer than restarts, so a crash often leaves the subscriber ahead of
-	// the checkpoint and its resume must come from the holder ring.
-	env := habEnv{holders: hdir, state: state, idle: "50ms", every: "500ms"}
+	// the checkpoint and the new link replays from the ring into the restored screen.
+	env := habEnv{holders: hdir, state: state, idle: "50ms", every: "100ms"}
 	u := uuidN(2)
-	const printer = `i=0; while :; do i=$((i+1)); echo "line $i"; sleep 0.002; done`
+	pause := filepath.Join(shortDir(t), "pause")
 
+	ref, err := testParser().New(vt.Config{Cols: 80, Rows: 24, ScrollbackBytes: testScrollback})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ref.Close()
 	var (
-		pid    uint32
-		next   uint64 // the offset after the last byte the subscriber holds
-		base   uint64 // the offset of the first byte it holds
-		stream bytes.Buffer
-		chunks int
+		pid      uint32
+		next     uint64 // the offset after the last byte the subscriber holds
+		fed      uint64 // the offset after the last byte the reference parser holds
+		stream   bytes.Buffer
+		chunks   int
+		replayed int // rounds whose screen needed bytes from the ring past the checkpoint
 	)
+	feedRef := func(to uint64) {
+		ref.Write(stream.Bytes()[fed:to])
+		fed = to
+	}
 	for round := 0; round < n; round++ {
+		var ck *checkpoint
+		if round > 0 {
+			if ck, err = readCheckpoint(state, u); err != nil {
+				t.Fatalf("round %d: %v", round, err)
+			}
+		}
 		h := startHab(t, env)
 		if round == 0 {
 			pid = h.call(helperCmd{Cmd: "spawn", Pane: u, Cols: 80, Rows: 24,
-				Argv: []string{"/bin/sh", "-c", printer}, Env: testEnv}).Pane.Pid
+				Argv: []string{"/bin/sh", "-c", loopPrinter}, Env: append(testEnv, "PAUSE="+pause)}).Pane.Pid
 		}
 		st := h.pane(u)
 		if st.Pid != pid || st.Exited || st.Lost {
 			t.Fatalf("round %d: pane pid %d (want %d), exited %v, lost %v", round, st.Pid, pid, st.Exited, st.Lost)
 		}
-		readyAt := st.Offset
-		from := next
-		if round == 0 {
-			from = FromNow // attach mid-stream
+		if round > 0 && (!st.Restored || st.Suspect) {
+			t.Fatalf("round %d: restored %v, suspect %v; want a clean restore from the checkpoint at %d",
+				round, st.Restored, st.Suspect, ck.Offset)
 		}
-		h.call(helperCmd{Cmd: "sub", Pane: u, From: from})
+		screen := h.screen(u)
+		if round > 0 && screen.Offset > ck.Offset {
+			replayed++
+		}
+		readyAt := st.Offset
+		os.Remove(pause)
+		h.call(helperCmd{Cmd: "sub", Pane: u, From: next})
 		got := 0
 		var early bytes.Buffer // the second subscription's bytes
+		var resume uint64      // where the second subscription starts
+		second := false
 		check := func(ev helperEvent) {
 			if ev.Ev != "chunk" {
 				return
 			}
 			if ev.Sub == 1 {
-				if ev.Chunk.Kind != ChunkBytes || ev.Chunk.Offset != base+uint64(early.Len()) {
+				if ev.Chunk.Kind != ChunkBytes || ev.Chunk.Offset != resume+uint64(early.Len()) {
 					t.Fatalf("round %d: resume from the ring: chunk kind %d at %d, want bytes at %d",
-						round, ev.Chunk.Kind, ev.Chunk.Offset, base+uint64(early.Len()))
+						round, ev.Chunk.Kind, ev.Chunk.Offset, resume+uint64(early.Len()))
 				}
 				early.Write(ev.Chunk.Data)
 				return
 			}
 			c := ev.Chunk
-			switch {
-			case c.Kind == ChunkSnapshot && round == 0 && chunks == 0:
-				next, base = c.Offset, c.Offset
-			case c.Kind == ChunkBytes:
-				if c.Offset != next {
-					t.Fatalf("round %d: chunk at %d, want %d (gap or repeat)", round, c.Offset, next)
-				}
-				if c.Live && c.Offset < readyAt && round > 0 {
-					t.Fatalf("round %d: replayed bytes at %d marked live", round, c.Offset)
-				}
-				stream.Write(c.Data)
-				next += uint64(len(c.Data))
-				got += len(c.Data)
-			default:
+			if c.Kind != ChunkBytes {
 				t.Fatalf("round %d: unexpected chunk kind %d at %d", round, c.Kind, c.Offset)
 			}
+			if c.Offset != next {
+				t.Fatalf("round %d: chunk at %d, want %d (gap or repeat)", round, c.Offset, next)
+			}
+			if c.Live && c.Offset < readyAt && round > 0 {
+				t.Fatalf("round %d: replayed bytes at %d marked live", round, c.Offset)
+			}
+			stream.Write(c.Data)
+			next += uint64(len(c.Data))
+			got += len(c.Data)
 			chunks++
 		}
-		if round > 0 {
-			// A second subscriber resumes from the first byte the test holds. That is behind
-			// every checkpoint, so the link must fetch it from the holder ring.
-			h.call(helperCmd{Cmd: "sub", Pane: u, From: base, Sub: 1})
+		if round > 0 && ck.Offset > 0 {
+			// The second subscriber resumes from behind the checkpoint the link restored, where
+			// its buffer starts, so the link must fetch those bytes from the holder ring.
+			resume, second = ck.Offset-min(ck.Offset, 512), true
+			h.call(helperCmd{Cmd: "sub", Pane: u, From: resume, Sub: 1})
 		}
 		deadline := time.After(waitLong)
-		for got < 400 || (round > 0 && early.Len() < stream.Len()) {
+		for got < 1000 || next < screen.Offset || (second && resume+uint64(early.Len()) < next) {
 			select {
 			case ev := <-h.chunks:
 				check(ev)
@@ -475,8 +552,25 @@ func TestRestartLoop(t *testing.T) {
 				t.Fatalf("round %d: only %d bytes arrived", round, got)
 			}
 		}
-		if round > 0 && !bytes.Equal(early.Bytes()[:stream.Len()], stream.Bytes()) {
+		// The screen the new link rebuilt equals the reference parser's at the same offset.
+		feedRef(screen.Offset)
+		wantText, _ := ref.PlainText()
+		wantVT, _ := ref.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: vt.AllScrollback})
+		if screen.Text != wantText {
+			t.Fatalf("round %d: screen at %d differs from the reference\n--- link ---\n%s\n--- reference ---\n%s",
+				round, screen.Offset, screen.Text, wantText)
+		}
+		if !bytes.Equal(screen.VT, wantVT) {
+			t.Fatalf("round %d: snapshot-vt at %d differs from the reference\n--- link ---\n%q\n--- reference ---\n%q",
+				round, screen.Offset, screen.VT, wantVT)
+		}
+		if second && !bytes.Equal(early.Bytes()[:next-resume], stream.Bytes()[resume:next]) {
 			t.Fatalf("round %d: bytes resumed from the ring differ from the bytes first received", round)
+		}
+		// The printer pauses while the link is down; bytes printed after the last checkpoint
+		// still come back from the ring.
+		if err := os.WriteFile(pause, nil, 0o600); err != nil {
+			t.Fatal(err)
 		}
 		if round%2 == 0 {
 			h.stop()
@@ -487,30 +581,31 @@ func TestRestartLoop(t *testing.T) {
 			check(ev)
 		}
 	}
+	if n > 2 && replayed == 0 {
+		t.Error("no round replayed bytes past its checkpoint")
+	}
+	if stream.Len() <= loopRing {
+		t.Errorf("the program printed %d bytes, no more than the ring holds", stream.Len())
+	}
 
-	// The text is consecutive numbered lines. The first may be cut by the mid-stream attach.
-	lines := strings.Split(stream.String(), "\r\n")
-	lines = lines[1 : len(lines)-1]
-	if len(lines) < n {
-		t.Fatalf("only %d whole lines", len(lines))
+	// The numbered lines are all there, in order.
+	ms := loopLine.FindAllStringSubmatch(stream.String(), -1)
+	if len(ms) < n {
+		t.Fatalf("only %d lines", len(ms))
 	}
-	first, err := strconv.Atoi(strings.TrimPrefix(lines[0], "line "))
-	if err != nil {
-		t.Fatalf("line %q", lines[0])
-	}
-	for i, l := range lines {
-		if want := fmt.Sprintf("line %d", first+i); l != want {
-			t.Fatalf("line %d is %q, want %q", i, l, want)
+	for i, m := range ms {
+		if m[1] != strconv.Itoa(i+1) {
+			t.Fatalf("line %d is numbered %s", i+1, m[1])
 		}
 	}
-	t.Logf("%d restarts, %d bytes, %d lines, %d chunks", n, stream.Len(), len(lines), chunks)
+	t.Logf("%d restarts (%d replayed past the checkpoint), %d bytes, %d lines, %d chunks", n, replayed, stream.Len(), len(ms), chunks)
 }
 
 // TestHolderKilled is core test 10 from the link's side: SIGKILL the holder, and the link marks
 // its panes lost within 5 s, ends their subscriptions, and still answers and stops.
 func TestHolderKilled(t *testing.T) {
 	hdir, state := shortDir(t), shortDir(t)
-	holder := startHolder(t, hdir, "doomed")
+	holder := startHolder(t, hdir, "doomed", 0)
 	h := startHab(t, habEnv{holders: hdir, state: state, idle: "50ms", every: "1s"})
 	u := uuidN(3)
 	h.call(helperCmd{Cmd: "spawn", Pane: u, Cols: 80, Rows: 24,

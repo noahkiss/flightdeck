@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,8 +16,9 @@ import (
 	"github.com/noahkiss/flightdeck/internal/vt"
 )
 
-// checkpointVersion is the format version of a checkpoint file.
-const checkpointVersion = 1
+// checkpointVersion is the format version of a checkpoint file. Version 2 added the snapshot
+// length and CRC32.
+const checkpointVersion = 2
 
 // checkpointSuffix ends the name of every checkpoint file: <pane uuid>.ckpt.
 const checkpointSuffix = ".ckpt"
@@ -33,7 +35,11 @@ type checkpoint struct {
 	Rows     int         `json:"rows"`
 	Suspect  bool        `json:"suspect,omitempty"`
 	Written  time.Time   `json:"written"`
-	Snapshot []byte      `json:"-"`
+	// Len and CRC are the snapshot's length and CRC-32 (IEEE). A file that disagrees with them
+	// counts as no checkpoint.
+	Len      int    `json:"len"`
+	CRC      uint32 `json:"crc32"`
+	Snapshot []byte `json:"-"`
 }
 
 func checkpointPath(dir string, u hp.UUID) string {
@@ -41,8 +47,10 @@ func checkpointPath(dir string, u hp.UUID) string {
 }
 
 // writeCheckpoint writes c atomically: a temporary file in the same directory, synced, then
-// renamed over the old checkpoint. A crash leaves the old checkpoint or the new one, never half.
+// renamed over the old checkpoint, and the directory synced. A crash leaves the old checkpoint or
+// the new one, never half.
 func writeCheckpoint(dir string, u hp.UUID, c *checkpoint) error {
+	c.Len, c.CRC = len(c.Snapshot), crc32.ChecksumIEEE(c.Snapshot)
 	hdr, err := json.Marshal(c)
 	if err != nil {
 		return err
@@ -68,6 +76,20 @@ func writeCheckpoint(dir string, u hp.UUID, c *checkpoint) error {
 	}
 	if err != nil {
 		os.Remove(tmp)
+		return err
+	}
+	return syncDir(dir)
+}
+
+// syncDir makes a rename in dir durable.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	err = d.Sync()
+	if cerr := d.Close(); err == nil {
+		err = cerr
 	}
 	return err
 }
@@ -95,6 +117,12 @@ func readCheckpoint(dir string, u hp.UUID) (*checkpoint, error) {
 	if c.Cols <= 0 || c.Rows <= 0 {
 		return nil, fmt.Errorf("checkpoint size %dx%d", c.Cols, c.Rows)
 	}
+	if len(snap) != c.Len {
+		return nil, fmt.Errorf("checkpoint snapshot is %d bytes, header says %d", len(snap), c.Len)
+	}
+	if sum := crc32.ChecksumIEEE(snap); sum != c.CRC {
+		return nil, fmt.Errorf("checkpoint snapshot CRC %08x, header says %08x", sum, c.CRC)
+	}
 	c.Snapshot = snap
 	return &c, nil
 }
@@ -114,4 +142,24 @@ func removeTemps(dir string) {
 			os.Remove(filepath.Join(dir, e.Name()))
 		}
 	}
+}
+
+// removeCheckpointsExcept removes every checkpoint file whose pane is not in keep (pane uuid
+// strings). It returns the panes it removed.
+func removeCheckpointsExcept(dir string, keep map[string]bool) []string {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var removed []string
+	for _, e := range ents {
+		name, ok := strings.CutSuffix(e.Name(), checkpointSuffix)
+		if !ok || strings.HasPrefix(name, ".") || keep[name] {
+			continue
+		}
+		if os.Remove(filepath.Join(dir, e.Name())) == nil {
+			removed = append(removed, name)
+		}
+	}
+	return removed
 }

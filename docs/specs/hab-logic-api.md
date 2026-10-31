@@ -224,8 +224,15 @@ Decisions taken in stage 4 (`internal/link`):
 
 - A checkpoint is one file per pane, `<state>/checkpoints/<pane uuid>.ckpt`: a JSON header line
   (format version, pane, holder, offset, encoding, size, suspect, time), then the raw snapshot.
-  It is written to a temporary file, synced and renamed, so a crash leaves the old or the new one.
-  The encoding is `snapshot-ghostty` when the parser has it, else `snapshot-vt`.
+  The header also holds the snapshot's length and CRC-32; a file that disagrees counts as no
+  checkpoint. It is written to a temporary file, synced, renamed, and the directory synced, so a
+  crash leaves the old or the new one. The encoding is `snapshot-ghostty` when the parser has it,
+  else `snapshot-vt`.
+- A checkpoint is taken only where the output stream is in the parser's ground state: not inside
+  an escape sequence, a control string or a UTF-8 character. A snapshot cannot carry a half-parsed
+  sequence. A small scanner in the link tracks this; mid-sequence, the tick is skipped, and a
+  planned stop keeps the older checkpoint.
+- A checkpoint is restored only onto a pane of the holder that wrote it.
 - Cadence: when a pane has printed nothing for 1 s, and at least every 10 s while it keeps
   printing; only when the screen changed. Both are configurable.
 - One event loop applies every holder frame in the order the holder sent it, replay data and
@@ -241,7 +248,13 @@ Decisions taken in stage 4 (`internal/link`):
   answers to terminal queries (5.6).
 - When a holder connection ends, its panes are marked lost at once and their subscriptions end.
   The link rescans the registry then and every 2 s, and replays a pane that comes back from the
-  offset its screen holds.
+  offset its screen holds. A late end event from an older connection leaves a pane that already moved to a newer
+  one alone.
+- After a scan that reached every holder in the registry, the link drops panes no holder lists
+  (a lost pane after 30 s), frees their parsers and removes their checkpoints. A spawn whose
+  uuid matches a lost pane, or one on another holder, makes a new pane.
+- When output jumps past bytes that never arrived, the screen is suspect and every subscriber
+  gets a snapshot at the new offset before the next bytes.
 
 ### 2.4 Backends
 

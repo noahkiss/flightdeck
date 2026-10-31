@@ -16,6 +16,8 @@
 //     can answer live bytes only.
 //   - When a holder connection ends, its panes are marked lost at once and their subscribers
 //     are told; a rescan picks up a holder that comes back.
+//   - After a scan that reached every holder in the registry, panes no holder lists are dropped
+//     (lost ones after KeepLost) and their checkpoints removed.
 //
 // The parser is injected (vt.Parser), so this package is pure Go.
 package link
@@ -25,11 +27,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/noahkiss/flightdeck/internal/holderclient"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
+	"github.com/noahkiss/flightdeck/internal/holderreg"
 	"github.com/noahkiss/flightdeck/internal/vt"
 )
 
@@ -56,6 +60,9 @@ type Config struct {
 	// Rescan is how often the link lists the registry for new holders. Default 2 s. A holder
 	// connection that ends triggers a rescan at once.
 	Rescan time.Duration
+	// KeepLost is how long a lost or released pane stays listed before a clean scan drops it.
+	// Default 30 s.
+	KeepLost time.Duration
 	// BufferBytes is the recent output kept per pane for subscribers that resume (spec 5.7).
 	// Default 4 MiB.
 	BufferBytes int
@@ -100,6 +107,8 @@ type Link struct {
 	watchers map[int]func(Notice)
 	nextW    int
 	closed   bool
+
+	pruned chan struct{} // gets a value after each prune; tests wait on it
 }
 
 // Open connects to every live holder, loads the checkpoints and starts a replay for every pane.
@@ -120,6 +129,9 @@ func Open(cfg Config) (*Link, error) {
 	if cfg.Rescan <= 0 {
 		cfg.Rescan = 2 * time.Second
 	}
+	if cfg.KeepLost <= 0 {
+		cfg.KeepLost = 30 * time.Second
+	}
 	if cfg.BufferBytes <= 0 {
 		cfg.BufferBytes = 4 << 20
 	}
@@ -134,18 +146,12 @@ func Open(cfg Config) (*Link, error) {
 	if len(encs) == 0 {
 		return nil, errors.New("link: parser has no snapshot encoding")
 	}
-	enc := encs[0]
-	for _, e := range encs {
-		if e == vt.EncodingGhostty { // keeps the most state, and the whole scrollback
-			enc = e
-		}
-	}
 	l := &Link{
 		cfg: cfg,
 		client: holderclient.New(holderclient.Config{
 			Dir: cfg.HolderDir, Build: cfg.Build, Protocol: cfg.Protocol, Logf: cfg.Logf,
 		}),
-		enc:      enc,
+		enc:      checkpointEncoding(encs),
 		rescan:   make(chan struct{}, 1),
 		tasks:    make(chan func()),
 		panes:    map[hp.UUID]*pane{},
@@ -155,6 +161,7 @@ func Open(cfg Config) (*Link, error) {
 		watchers: map[int]func(Notice){},
 	}
 	l.ctx, l.cancel = context.WithCancel(context.Background())
+	l.pruned = make(chan struct{}, 1)
 	l.wg.Add(1)
 	go l.eventLoop()
 	l.scan()
@@ -162,6 +169,15 @@ func Open(cfg Config) (*Link, error) {
 	go l.rescanLoop()
 	go l.checkpointLoop()
 	return l, nil
+}
+
+// checkpointEncoding picks snapshot-ghostty when the parser has it: it keeps the most state, and
+// the whole scrollback.
+func checkpointEncoding(encs []vt.Encoding) vt.Encoding {
+	if slices.Contains(encs, vt.EncodingGhostty) {
+		return vt.EncodingGhostty
+	}
+	return encs[0]
 }
 
 // Ready waits until every pane known now has finished its replay.
@@ -230,6 +246,79 @@ func (l *Link) scan() {
 				l.attach(h, pi)
 			}
 		})
+	}
+	if l.complete() {
+		l.run(l.prune)
+	}
+}
+
+// complete reports whether the client is connected to every holder in the registry, so the panes
+// the link follows are every pane on the host.
+func (l *Link) complete() bool {
+	if len(l.client.Unreachable()) > 0 {
+		return false
+	}
+	entries, errs := holderreg.List(l.cfg.HolderDir)
+	if len(errs) > 0 {
+		return false
+	}
+	live := map[string]bool{}
+	for _, h := range l.client.Holders() {
+		if !h.Closed() {
+			live[h.Instance()] = true
+		}
+	}
+	for _, e := range entries {
+		if !live[e.Instance] {
+			return false
+		}
+	}
+	return true
+}
+
+// prune drops the panes no connected holder lists, once lost for KeepLost, frees their parsers,
+// and removes every checkpoint of a pane the link does not follow. It runs on the event loop,
+// after a scan that reached every holder.
+func (l *Link) prune() {
+	now := time.Now()
+	keep := map[string]bool{}
+	var drop []*pane
+	l.mu.Lock()
+	if l.closed {
+		l.mu.Unlock()
+		return
+	}
+	for u, p := range l.panes {
+		p.mu.Lock()
+		live := p.lost == nil && p.holder != nil && l.holders[p.holder]
+		old := p.lost != nil && now.Sub(p.lostAt) >= l.cfg.KeepLost
+		p.mu.Unlock()
+		switch {
+		case live:
+			keep[u.String()] = true
+		case old:
+			drop = append(drop, p)
+			delete(l.panes, u)
+			for k, q := range l.byHandle {
+				if q == p {
+					delete(l.byHandle, k)
+				}
+			}
+		default:
+			keep[u.String()] = true // lost lately: listed a while longer
+		}
+	}
+	l.mu.Unlock()
+	for _, p := range drop {
+		p.close()
+		l.cfg.Logf("link: pane %s: dropped: no holder lists it", p.uuid)
+	}
+	for _, u := range removeCheckpointsExcept(l.cfg.StateDir, keep) {
+		l.cfg.Logf("link: removed the checkpoint of pane %s: no holder lists it", u)
+	}
+	select {
+	case l.pruned <- struct{}{}:
+	default:
 	}
 }
 
@@ -370,6 +459,12 @@ func (l *Link) holderEnded(h *holderclient.Holder, err error) {
 	}
 	var notices []Notice
 	for _, p := range ps {
+		p.mu.Lock()
+		mine := p.holder == h
+		p.mu.Unlock()
+		if !mine {
+			continue // the pane moved to a newer connection before this end event arrived
+		}
 		if n, ok := p.lose(why); ok {
 			notices = append(notices, n)
 		}
@@ -394,6 +489,11 @@ func (l *Link) attach(h *holderclient.Holder, pi hp.PaneInfo) {
 	if fresh {
 		p = newPane(pi.UUID)
 		l.panes[pi.UUID] = p
+	}
+	for k, q := range l.byHandle {
+		if q == p {
+			delete(l.byHandle, k) // frames from an older connection no longer reach the pane
+		}
 	}
 	k := paneKey{h, pi.Handle}
 	l.byHandle[k] = p
@@ -442,11 +542,24 @@ func (l *Link) Spawn(ctx context.Context, s hp.Spawn) (PaneStatus, error) {
 	var added bool
 	ok := l.run(func() {
 		l.mu.Lock()
-		if p := l.panes[pn.UUID]; p != nil {
-			l.mu.Unlock()
-			st = p.status() // a retry of a spawn that already ran
-			return
+		if old := l.panes[pn.UUID]; old != nil {
+			old.mu.Lock()
+			retry := old.holder == h && old.handle == pn.Handle && old.lost == nil
+			old.mu.Unlock()
+			if retry {
+				l.mu.Unlock()
+				st = old.status() // a retry of a spawn that already ran
+				return
+			}
+			// A stale pane with the same uuid, lost or on another holder: the new one replaces it.
+			for k, q := range l.byHandle {
+				if q == old {
+					delete(l.byHandle, k)
+				}
+			}
+			defer old.close()
 		}
+		removeCheckpoint(l.cfg.StateDir, pn.UUID) // a fresh pane: an older checkpoint is stale
 		p := newPane(pn.UUID)
 		p.spawned(l, h, pi)
 		l.panes[pn.UUID] = p
