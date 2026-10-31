@@ -325,7 +325,8 @@ The optional upper bound on replay lets gff-hab fetch one command's byte range (
 ### 4.2 Holder registry: how gff-hab finds every holder
 
 - Holders live under one per-user directory: `$XDG_RUNTIME_DIR/gff/holders/` on Linux, and a
-  per-user directory under the user's cache or state directory on macOS. The path comes from
+  `~/Library/Application Support/gff/holders/` on macOS (not Caches, which storage cleanup may
+  empty). The path comes from
   configuration, never from a baked-in name.
 - Each holder writes one small file, `<instance>.json`, with instance id, build id, protocol
   version range, pid, socket path, start time and draining flag. It writes the file atomically

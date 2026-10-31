@@ -141,7 +141,7 @@ func runBinary(t *testing.T, stderr io.Writer) {
 
 func TestDefaultDir(t *testing.T) {
 	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
-	cache := func() (string, error) { return "/cache", nil }
+	state := func() (string, error) { return "/appsupport", nil }
 	for _, tc := range []struct {
 		goos string
 		env  map[string]string
@@ -151,10 +151,10 @@ func TestDefaultDir(t *testing.T) {
 		{"linux", map[string]string{"GFF_HOLDER_DIR": "/x", "XDG_RUNTIME_DIR": "/run/u"}, "/x", nil},
 		{"linux", map[string]string{"XDG_RUNTIME_DIR": "/run/u"}, "/run/u/gff/holders", nil},
 		{"linux", map[string]string{}, "", errNoRuntimeDir},
-		{"darwin", map[string]string{"XDG_RUNTIME_DIR": "/run/u"}, "/cache/gff/holders", nil},
+		{"darwin", map[string]string{"XDG_RUNTIME_DIR": "/run/u"}, "/appsupport/gff/holders", nil},
 		{"darwin", map[string]string{"GFF_HOLDER_DIR": "/x"}, "/x", nil},
 	} {
-		got, err := defaultDir(tc.goos, env(tc.env), cache)
+		got, err := defaultDir(tc.goos, env(tc.env), state)
 		if got != tc.want || !errors.Is(err, tc.err) {
 			t.Errorf("%s %v: got %q, %v; want %q, %v", tc.goos, tc.env, got, err, tc.want, tc.err)
 		}

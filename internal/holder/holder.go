@@ -375,15 +375,20 @@ func (h *Holder) goSafe(name string, fn func()) {
 				return
 			}
 			h.cfg.Logf("holder: panic in %s: %v", name, r)
-			deadline := time.Now().Add(h.lockProbe)
-			for !h.mu.TryLock() {
-				if time.Now().After(deadline) {
-					h.crash(fmt.Sprintf("holder: panic in %s left the holder lock held: %v", name, r))
-					return
-				}
-				time.Sleep(time.Millisecond)
+			// Probe with a blocking Lock raced against a timer. TryLock would fail whenever the
+			// mutex is in starvation mode, so heavy contention could fake a held lock and crash
+			// the holder. A blocking Lock joins the queue and gets the lock unless it is held.
+			got := make(chan struct{})
+			go func() {
+				h.mu.Lock()
+				close(got)
+				h.mu.Unlock()
+			}()
+			select {
+			case <-got:
+			case <-time.After(h.lockProbe):
+				h.crash(fmt.Sprintf("holder: panic in %s left the holder lock held: %v", name, r))
 			}
-			h.mu.Unlock()
 		}()
 		fn()
 	}()

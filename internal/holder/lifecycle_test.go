@@ -154,6 +154,36 @@ func TestGoSafe(t *testing.T) {
 	h.mu.Lock() // still usable
 	h.mu.Unlock()
 
+	// Heavy contention (which can put the mutex in starvation mode) is not a held lock.
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				h.mu.Lock()
+				time.Sleep(2 * time.Millisecond)
+				h.mu.Unlock()
+			}
+		}()
+	}
+	done = make(chan struct{})
+	h.goSafe("contended", func() { defer close(done); panic("boom") })
+	<-done
+	select {
+	case m := <-crashed:
+		t.Fatalf("crashed under contention: %s", m)
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(stop)
+	wg.Wait()
+
 	h.goSafe("held", func() { h.mu.Lock(); panic("boom") })
 	select {
 	case <-crashed:

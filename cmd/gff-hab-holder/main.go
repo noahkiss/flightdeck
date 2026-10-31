@@ -58,7 +58,7 @@ func main() {
 		d := *dir
 		if d == "" {
 			var err error
-			if d, err = defaultDir(runtime.GOOS, os.Getenv, os.UserCacheDir); err != nil {
+			if d, err = defaultDir(runtime.GOOS, os.Getenv, os.UserConfigDir); err != nil {
 				logger.Fatal(err)
 			}
 		}
@@ -102,13 +102,14 @@ func main() {
 
 var errNoRuntimeDir = errors.New("no socket directory: set XDG_RUNTIME_DIR or GFF_HOLDER_DIR, or pass -dir or -socket")
 
-// defaultDir picks the per-user directory for holder sockets (spec 4.2).
-func defaultDir(goos string, getenv func(string) string, cacheDir func() (string, error)) (string, error) {
+// defaultDir picks the per-user directory for holder sockets (spec 4.2). On macOS it is under
+// ~/Library/Application Support (os.UserConfigDir), not Caches, which storage cleanup may empty.
+func defaultDir(goos string, getenv func(string) string, stateDir func() (string, error)) (string, error) {
 	if d := getenv("GFF_HOLDER_DIR"); d != "" {
 		return d, nil
 	}
 	if goos == "darwin" {
-		d, err := cacheDir()
+		d, err := stateDir()
 		if err != nil {
 			return "", err
 		}
