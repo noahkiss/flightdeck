@@ -22,7 +22,10 @@ import (
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
-var bin string
+var (
+	bin        string
+	buildFlags []string // race_test.go adds -race under the race detector
+)
 
 func TestMain(m *testing.M) {
 	d, err := os.MkdirTemp("", "gffhab")
@@ -30,7 +33,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	bin = filepath.Join(d, "gff-hab")
-	out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput()
+	out, err := exec.Command("go", append(append([]string{"build"}, buildFlags...), "-o", bin, ".")...).CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "build gff-hab: %v\n%s", err, out)
 		os.Exit(1)
@@ -367,14 +370,78 @@ func TestConnectCarriesFullSession(t *testing.T) {
 	}
 }
 
-// TestVia runs `api call -via` through `gff-hab connect`, the shape of a call over ssh.
+// TestVia runs `api call -via` through `gff-hab connect`, the shape of a call over ssh. It runs
+// several times: under -race the binary is a race build, and a race in it fails the call.
 func TestVia(t *testing.T) {
 	d := shortDir(t)
 	sock := filepath.Join(d, "run", "hab.sock")
 	startServe(t, sock, filepath.Join(d, "state"))
+	for range 5 {
+		var w api.Welcome
+		out := run(t, "api", "call", "-via", bin+" connect -socket "+sock, "hab.hello")
+		if err := json.Unmarshal([]byte(out), &w); err != nil || w.Host.ID != "test-host" {
+			t.Fatalf("welcome via connect: %v %s", err, out)
+		}
+	}
+	// A bridge that fails at once: the client sees EOF and closes while the caller's own Close
+	// runs. The race build reports any race on stderr, and the exit code alone hides it.
+	for range 5 {
+		cmd := exec.Command(bin, "api", "call", "-via", bin+" connect -socket "+filepath.Join(d, "none.sock"), "hab.hello")
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err == nil {
+			t.Fatal("a call through a failed bridge succeeded")
+		}
+		if strings.Contains(stderr.String(), "DATA RACE") {
+			t.Fatalf("race in gff-hab:\n%s", stderr.String())
+		}
+	}
+}
+
+// TestViaSSH runs the call through the system sshd to this machine. It skips unless key-based
+// ssh to localhost already works; it changes no ssh configuration.
+func TestViaSSH(t *testing.T) {
+	if err := exec.Command("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "localhost", "true").Run(); err != nil {
+		t.Skipf("ssh to localhost is not set up: %v", err)
+	}
+	d := shortDir(t)
+	sock := filepath.Join(d, "run", "hab.sock")
+	startServe(t, sock, filepath.Join(d, "state"))
 	var w api.Welcome
-	out := run(t, "api", "call", "-via", bin+" connect -socket "+sock, "hab.hello")
+	out := run(t, "api", "call", "-via", "ssh -o BatchMode=yes localhost "+bin+" connect -socket "+sock, "hab.hello")
 	if err := json.Unmarshal([]byte(out), &w); err != nil || w.Host.ID != "test-host" {
-		t.Fatalf("welcome via connect: %v %s", err, out)
+		t.Fatalf("welcome via ssh: %v %s", err, out)
+	}
+}
+
+// TestEventsFailsWithoutClosing: a hab that dies without closing makes `gff-hab events` fail.
+func TestEventsFailsWithoutClosing(t *testing.T) {
+	d := shortDir(t)
+	sock := filepath.Join(d, "run", "hab.sock")
+	s := startServe(t, sock, filepath.Join(d, "state"))
+	ev := exec.Command(bin, "events", "-socket", sock)
+	out, err := ev.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr strings.Builder
+	ev.Stderr = &stderr
+	if err := ev.Start(); err != nil {
+		t.Fatal(err)
+	}
+	lines := bufio.NewScanner(out)
+	for i := 0; i < 2 && lines.Scan(); i++ {
+	}
+	s.stopped = true
+	s.cmd.Process.Kill()
+	<-s.done
+	for lines.Scan() {
+	}
+	err = ev.Wait()
+	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 1 {
+		t.Fatalf("events exit %v, stderr %q", err, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "no closing message") {
+		t.Fatalf("stderr %q", stderr.String())
 	}
 }

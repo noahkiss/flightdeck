@@ -32,6 +32,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -225,24 +226,29 @@ func connect(args []string) error {
 	return err
 }
 
-// cmdConn runs a command and speaks over its stdin and stdout.
+// cmdConn runs a command and speaks over its stdin and stdout. Close may be called more than
+// once (the client closes at EOF, and the caller closes again); the command is waited for once.
 type cmdConn struct {
 	cmd *exec.Cmd
 	io.Reader
 	io.WriteCloser
+	once sync.Once
+	err  error
 }
 
 func (c *cmdConn) Close() error {
-	c.WriteCloser.Close()
-	done := make(chan error, 1)
-	go func() { done <- c.cmd.Wait() }()
-	select {
-	case err := <-done:
-		return err
-	case <-time.After(5 * time.Second):
-		c.cmd.Process.Kill()
-		return <-done
-	}
+	c.once.Do(func() {
+		c.WriteCloser.Close()
+		done := make(chan error, 1)
+		go func() { done <- c.cmd.Wait() }()
+		select {
+		case c.err = <-done:
+		case <-time.After(5 * time.Second):
+			c.cmd.Process.Kill()
+			c.err = <-done
+		}
+	})
+	return c.err
 }
 
 func open(sock, via string) (*control.Client, error) {
@@ -374,8 +380,12 @@ func events(args []string) error {
 			return err
 		}
 	}
-	if reason := c.ClosingReason(); reason != "" && reason != api.ClosingReasonShutdown {
+	switch reason := c.ClosingReason(); reason {
+	case api.ClosingReasonShutdown:
+		return nil
+	case "":
+		return fmt.Errorf("connection ended with no closing message: %w", c.Err())
+	default:
 		return fmt.Errorf("hab closed the connection: %s", reason)
 	}
-	return nil
 }
