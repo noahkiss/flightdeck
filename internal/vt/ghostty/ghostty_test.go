@@ -25,14 +25,14 @@ func TestGhosttySnapshotKeepsStyles(t *testing.T) {
 	}
 	defer term.Close()
 	term.Write(vttest.Fixture(t))
-	want, err := term.Snapshot(vt.EncodingVT)
+	want, err := term.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: vt.AllScrollback})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(want, []byte("38;2;10;20;30")) {
 		t.Fatalf("VT snapshot lost the truecolour run: %q", want)
 	}
-	snap, err := term.Snapshot(vt.EncodingGhostty)
+	snap, err := term.Snapshot(vt.EncodingGhostty, vt.SnapshotOptions{Scrollback: vt.AllScrollback})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestGhosttySnapshotKeepsStyles(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restored.Close()
-	got, err := restored.Snapshot(vt.EncodingVT)
+	got, err := restored.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: vt.AllScrollback})
 	if err != nil {
 		t.Fatal(err)
 	}

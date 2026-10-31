@@ -2,6 +2,7 @@ package apigen
 
 import (
 	"encoding/json"
+	"github.com/noahkiss/flightdeck/api"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,29 +29,56 @@ func TestGeneratedFilesFresh(t *testing.T) {
 	}
 }
 
-// TestCompatWithReleased compares the current schema with every released schema of the same
-// revision. A breaking change needs a new revision and its translator (spec 3.3).
+// TestCompatWithReleased checks the schema against api/released (spec 3.3).
 func TestCompatWithReleased(t *testing.T) {
 	cur, err := Build()
 	if err != nil {
 		t.Fatal(err)
 	}
 	paths, _ := filepath.Glob(filepath.Join(root, ReleasedDir, "*.json"))
-	if len(paths) == 0 {
-		t.Fatal("no released schema found")
-	}
-	compared := 0
+	var released []*Document
 	for _, path := range paths {
-		old := load(t, path)
-		if old.Revision != cur.Revision {
-			continue
-		}
-		compared++
-		for _, b := range Compare(old, cur) {
-			t.Errorf("%s: breaking change: %s", filepath.Base(path), b)
-		}
+		released = append(released, load(t, path))
 	}
-	t.Logf("compared against %d released schema(s) of revision %d", compared, cur.Revision)
+	hasTranslator := func(r int) bool { return api.Translators[r] != nil }
+	for _, e := range CheckReleased(cur, released, hasTranslator) {
+		t.Error(e)
+	}
+}
+
+func TestCheckReleased(t *testing.T) {
+	none := func(int) bool { return false }
+	some := func(int) bool { return true }
+	rev := func(r int) *Document { d := clone(t); d.Revision = r; return d }
+	cases := []struct {
+		name     string
+		cur      *Document
+		released []*Document
+		trans    func(int) bool
+		ok       bool
+	}{
+		{"same revision", rev(1), []*Document{rev(1)}, none, true},
+		{"nothing released", rev(1), nil, none, false},
+		{"bump without translator", rev(2), []*Document{rev(1)}, none, false},
+		{"bump with translator", rev(2), []*Document{rev(1)}, some, true},
+		{"skipped revision", rev(3), []*Document{rev(1)}, some, false},
+		{"older than released", rev(1), []*Document{rev(1), rev(2)}, some, false},
+		{"compares the highest released", rev(2), []*Document{rev(2), rev(1)}, some, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := CheckReleased(tc.cur, tc.released, tc.trans)
+			if tc.ok != (len(errs) == 0) {
+				t.Fatalf("ok = %v, errors %v", tc.ok, errs)
+			}
+		})
+	}
+	// A breaking change in the same revision fails.
+	cur := clone(t)
+	delete(cur.Components.Schemas["Welcome"].Properties, "epoch")
+	if errs := CheckReleased(cur, []*Document{clone(t)}, none); len(errs) == 0 {
+		t.Fatal("a removed field passed")
+	}
 }
 
 func load(t *testing.T, path string) *Document {
@@ -129,7 +157,13 @@ func TestCompare(t *testing.T) {
 		{"output word added", func(d *Document) {
 			s := d.Components.Schemas["ErrorKind"]
 			s.KnownValues = append(s.KnownValues, "brand_new")
-		}, `output gained word "brand_new"`},
+		}, ""},
+		{"output word set became a plain string", func(d *Document) {
+			d.Components.Schemas["ErrorKind"].KnownValues = nil
+		}, ""},
+		{"input string became a closed word set", func(d *Document) {
+			d.Components.Schemas["InputParams"].Properties["text"].KnownValues = []string{"a"}
+		}, "input string became a closed word set"},
 		{"input word removed", func(d *Document) {
 			s := d.Components.Schemas["ScopeKind"]
 			s.KnownValues = without(s.KnownValues, "sessions")

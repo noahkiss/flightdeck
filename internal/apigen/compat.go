@@ -22,6 +22,38 @@ func (d direction) String() string {
 	return "output"
 }
 
+// CheckReleased checks the current schema against the released ones (spec 3.3). The current
+// revision must equal the highest released revision, and then be compatible with it, or be one
+// higher with a translator for every step down to MinRevision.
+func CheckReleased(cur *Document, released []*Document, hasTranslator func(revision int) bool) []string {
+	if len(released) == 0 {
+		return []string{"no released schema to compare against"}
+	}
+	latest := released[0]
+	for _, d := range released[1:] {
+		if d.Revision > latest.Revision {
+			latest = d
+		}
+	}
+	var errs []string
+	switch {
+	case cur.Revision == latest.Revision:
+		for _, b := range Compare(latest, cur) {
+			errs = append(errs, fmt.Sprintf("breaking change against released revision %d: %s", latest.Revision, b))
+		}
+	case cur.Revision == latest.Revision+1:
+		// A new revision may break; its translator carries old clients.
+	default:
+		errs = append(errs, fmt.Sprintf("revision %d must equal the released revision %d or be one higher", cur.Revision, latest.Revision))
+	}
+	for r := cur.MinRevision + 1; r <= cur.Revision; r++ {
+		if !hasTranslator(r) {
+			errs = append(errs, fmt.Sprintf("no translator from revision %d down to %d", r, r-1))
+		}
+	}
+	return errs
+}
+
 // Compare lists every change from old to cur that an old peer cannot skip (spec 3.3).
 // An empty list means cur is compatible with old.
 func Compare(old, cur *Document) []string {
@@ -169,20 +201,20 @@ func (c *comparer) object(path string, o, n *Schema, dir direction) {
 	}
 }
 
-// words compares an open word set. An input must keep every old word; an output must not
-// gain a word, because an old client would receive a value it never knew.
+// words compares a word set. A set the client sends is closed, so the server must keep every
+// old word and must not turn a plain string into a word set. A set the server sends is open:
+// clients map unknown words to a fallback, so any change is compatible.
 func (c *comparer) words(path string, o, n []string, dir direction) {
-	if dir == input {
-		for _, w := range o {
-			if !contains(n, w) {
-				c.fail(path, "input word %q removed", w)
-			}
-		}
+	if dir == output {
 		return
 	}
-	for _, w := range n {
-		if !contains(o, w) {
-			c.fail(path, "output gained word %q", w)
+	if o == nil && n != nil {
+		c.fail(path, "input string became a closed word set")
+		return
+	}
+	for _, w := range o {
+		if !contains(n, w) {
+			c.fail(path, "input word %q removed", w)
 		}
 	}
 }

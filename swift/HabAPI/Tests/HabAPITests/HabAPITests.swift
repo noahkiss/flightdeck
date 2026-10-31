@@ -22,7 +22,7 @@ final class HabAPITests: XCTestCase {
     }
 
     func testEventDecodesByType() throws {
-        let json = #"{"seq":1,"type":"pane.owner","id":"p1","revision":4,"data":{"reason":"typed","cols":80,"rows":24}}"#
+        let json = #"{"seq":1,"type":"pane.owner","id":"p1","data":{"reason":"typed","cols":80,"rows":24}}"#
         let event = try JSONDecoder().decode(Event.self, from: Data(json.utf8))
         guard case .paneOwner(let owner) = try HabEvent(event) else {
             return XCTFail("wrong case")
@@ -38,6 +38,24 @@ final class HabAPITests: XCTestCase {
             return XCTFail("wrong case")
         }
         XCTAssertEqual(type, "later.thing")
+    }
+
+    func testLargeOffsetSurvivesEventDecoding() throws {
+        // 2^53 + 1 cannot be held by a Double.
+        let json = #"{"seq":1,"type":"pane.updated","id":"p1","revision":9007199254740993,"data":{"id":"p1","revision":9007199254740993,"holder_build":"b","cols":80,"rows":24,"offset":18446744073709551615}}"#
+        let event = try JSONDecoder().decode(Event.self, from: Data(json.utf8))
+        XCTAssertEqual(event.revision, 9_007_199_254_740_993)
+        guard case .paneUpdated(let pane) = try HabEvent(event) else {
+            return XCTFail("wrong case")
+        }
+        XCTAssertEqual(pane.offset, UInt64.max)
+        XCTAssertEqual(pane.revision, 9_007_199_254_740_993)
+    }
+
+    func testOwnerEventHasNoRevision() throws {
+        let json = #"{"seq":3,"type":"pane.owner","id":"p1","data":{"reason":"take","cols":80,"rows":24}}"#
+        let event = try JSONDecoder().decode(Event.self, from: Data(json.utf8))
+        XCTAssertNil(event.revision)
     }
 
     func testInputDataIsBase64() throws {

@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -82,6 +83,21 @@ func dump(t testing.TB, term vt.Terminal) string {
 }
 
 // Run runs the shared parser tests. golden names the file the fixture's plain-text dump must match.
+// Queries is one of every terminal query form a program may send. No snapshot may contain one.
+var Queries = []string{
+	"\x1b[c", "\x1b[0c", "\x1b[>c", "\x1b[>0c", "\x1b[=c", // device attributes
+	"\x1b[5n", "\x1b[6n", "\x1b[?6n", // device status, cursor position
+	"\x1b[?2004$p", "\x1b[4$p", // mode queries
+	"\x1b[>q", "\x1b[>0q", // terminal version
+	"\x1b]10;?\x07", "\x1b]11;?\x1b\\", "\x1b]12;?\x07", "\x1b]4;1;?\x07", // colour queries
+	"\x1b[?u",                             // keyboard protocol query
+	"\x1bP+q544e\x1b\\", "\x1bP$qm\x1b\\", // termcap and setting queries
+	"\x1b[14t", "\x1b[16t", "\x1b[18t", // window size reports
+	"\x1b[x", // terminal parameters
+}
+
+var all = vt.SnapshotOptions{Scrollback: vt.AllScrollback}
+
 func Run(t *testing.T, p vt.Parser, golden string) {
 	cfg := vt.Config{Cols: FixtureCols, Rows: FixtureRows}
 	fixture := Fixture(t)
@@ -122,12 +138,9 @@ func Run(t *testing.T, p vt.Parser, golden string) {
 			term := newTerm(t)
 			term.Write(fixture)
 			want := dump(t, term)
-			snap, err := term.Snapshot(enc)
+			snap, err := term.Snapshot(enc, all)
 			if err != nil {
 				t.Fatal(err)
-			}
-			if bytes.Contains(snap, []byte("\x1b[6n")) || bytes.Contains(snap, []byte("\x1b[c")) {
-				t.Error("snapshot contains a terminal query (spec 5.5)")
 			}
 			restored, err := p.Restore(enc, snap, cfg)
 			if err != nil {
@@ -149,7 +162,7 @@ func Run(t *testing.T, p vt.Parser, golden string) {
 		t.Run("restore on alternate screen "+string(enc), func(t *testing.T) {
 			term := newTerm(t)
 			term.Write([]byte("primary\r\n\x1b[?1049h\x1b[H\x1b[2Jon alt"))
-			snap, err := term.Snapshot(enc)
+			snap, err := term.Snapshot(enc, all)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -161,8 +174,67 @@ func Run(t *testing.T, p vt.Parser, golden string) {
 			if got := dump(t, restored); got != "on alt" {
 				t.Errorf("restored dump = %q, want %q", got, "on alt")
 			}
+			// Leaving the alternate screen must show the primary screen from before.
+			restored.Write([]byte("\x1b[?1049l"))
+			if got := dump(t, restored); got != "primary" {
+				t.Errorf("primary after leaving alt = %q, want %q", got, "primary")
+			}
 		})
 	}
+
+	for _, enc := range p.Encodings() {
+		t.Run("snapshot holds no query, palette or directory "+string(enc), func(t *testing.T) {
+			term := newTerm(t)
+			term.Write([]byte("before\r\n"))
+			for _, q := range Queries {
+				term.Write([]byte(q))
+			}
+			// A palette change and a working directory report from the program.
+			term.Write([]byte("\x1b]4;1;rgb:ff/00/00\x07\x1b]7;file://host/tmp\x07after"))
+			snap, err := term.Snapshot(enc, all)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, q := range Queries {
+				if bytes.Contains(snap, []byte(q)) {
+					t.Errorf("snapshot contains the query %q (spec 5.5)", q)
+				}
+			}
+			if enc == vt.EncodingVT {
+				for _, bad := range []string{"\x1b]4;", "\x1b]7;", "\x1b]104"} {
+					if bytes.Contains(snap, []byte(bad)) {
+						t.Errorf("snapshot-vt contains %q: it would change the client's own terminal", bad)
+					}
+				}
+			}
+		})
+	}
+
+	t.Run("scrollback bound", func(t *testing.T) {
+		term := newTerm(t)
+		for i := range FixtureRows + 20 {
+			fmt.Fprintf(term, "line %d\r\n", i)
+		}
+		full := dump(t, term)
+		for _, n := range []int{0, 5} {
+			snap, err := term.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: n})
+			if err != nil {
+				t.Fatal(err)
+			}
+			restored, err := p.Restore(vt.EncodingVT, snap, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := dump(t, restored)
+			restored.Close()
+			lines := strings.Split(full, "\n")
+			// The bounded dump is the last n scrollback lines plus the screen.
+			want := strings.Join(lines[len(lines)-(FixtureRows-1)-n:], "\n")
+			if got != want {
+				t.Errorf("scrollback %d: dump\n%s\nwant\n%s", n, got, want)
+			}
+		}
+	})
 
 	t.Run("alternate screen", func(t *testing.T) {
 		term := newTerm(t)
@@ -195,7 +267,7 @@ func Run(t *testing.T, p vt.Parser, golden string) {
 
 	t.Run("unsupported encoding", func(t *testing.T) {
 		term := newTerm(t)
-		if _, err := term.Snapshot("snapshot-nope"); err == nil {
+		if _, err := term.Snapshot("snapshot-nope", all); err == nil {
 			t.Error("Snapshot of an unknown encoding succeeded")
 		}
 	})

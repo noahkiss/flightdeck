@@ -39,11 +39,11 @@ func TestMemoryLongScrollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, err := term.Snapshot(vt.EncodingGhostty)
+	snap, err := term.Snapshot(vt.EncodingGhostty, vt.SnapshotOptions{Scrollback: vt.AllScrollback})
 	if err != nil {
 		t.Fatal(err)
 	}
-	vtSnap, err := term.Snapshot(vt.EncodingVT)
+	vtSnap, err := term.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: vt.AllScrollback})
 	if err != nil {
 		t.Fatal(err)
 	}

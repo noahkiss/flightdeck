@@ -109,7 +109,8 @@ var Frames = []FrameDef{
 	{"credit", FrameCredit, "client", CreditFrame{}, ""},
 }
 
-// Enums lists the known words of each open word set. Clients keep unknown words they receive.
+// Enums lists the known words of each word set. A set the server sends is open: a client maps an
+// unknown word to a fallback. A set the client sends is closed: the server refuses unknown words.
 var Enums = map[string][]string{
 	"ClientKind":    {"app", "terminal", "cli", "script"},
 	"SessionState":  {"running", "exited"},
@@ -119,6 +120,20 @@ var Enums = map[string][]string{
 	"RedrawMode":    {"snapshot", "nudge"},
 	"ErrorKind":     {"not_found", "conflict", "unavailable", "revision_unsupported", "not_owner", "ticket_invalid", "invalid"},
 }
+
+// Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per
+// revision step down to MinRevision.
+type Translator interface {
+	// UpParams rewrites a request's params from a revision To-1 client into revision To.
+	UpParams(method string, params RawJSON) (RawJSON, error)
+	// DownResult rewrites a revision To result for a revision To-1 client.
+	DownResult(method string, result RawJSON) (RawJSON, error)
+	// DownEvent rewrites a revision To event for a revision To-1 client. ok false drops it.
+	DownEvent(e Event) (out Event, ok bool, err error)
+}
+
+// Translators maps revision N to the translator between N and N-1. Revision 1 needs none.
+var Translators = map[int]Translator{}
 
 // Capabilities lists the known capability strings (spec 3.4).
 var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts"}

@@ -219,6 +219,11 @@ const jsonValueSwift = `/// Any JSON value, for fields whose shape the receiver 
 public enum JSONValue: Codable, Sendable, Hashable {
     case null
     case bool(Bool)
+    /// A whole number that fits Int64. Kept exact, unlike a Double.
+    case int(Int64)
+    /// A whole number above Int64.max, such as a large offset. Kept exact.
+    case uint(UInt64)
+    /// Any other number.
     case number(Double)
     case string(String)
     case array([JSONValue])
@@ -230,6 +235,10 @@ public enum JSONValue: Codable, Sendable, Hashable {
             self = .null
         } else if let v = try? c.decode(Bool.self) {
             self = .bool(v)
+        } else if let v = try? c.decode(Int64.self) {
+            self = .int(v)
+        } else if let v = try? c.decode(UInt64.self) {
+            self = .uint(v)
         } else if let v = try? c.decode(Double.self) {
             self = .number(v)
         } else if let v = try? c.decode(String.self) {
@@ -246,6 +255,8 @@ public enum JSONValue: Codable, Sendable, Hashable {
         switch self {
         case .null: try c.encodeNil()
         case .bool(let v): try c.encode(v)
+        case .int(let v): try c.encode(v)
+        case .uint(let v): try c.encode(v)
         case .number(let v): try c.encode(v)
         case .string(let v): try c.encode(v)
         case .array(let v): try c.encode(v)

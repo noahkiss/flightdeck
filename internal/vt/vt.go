@@ -33,6 +33,17 @@ type Config struct {
 	ScrollbackBytes int
 }
 
+// AllScrollback asks a snapshot for the whole scrollback.
+const AllScrollback = -1
+
+// SnapshotOptions bounds a snapshot.
+type SnapshotOptions struct {
+	// Scrollback is the number of scrollback lines to include: AllScrollback for all of it, 0
+	// for none. It bounds EncodingVT only: EncodingGhostty always carries the whole scrollback,
+	// because libghostty's snapshot format has no bound.
+	Scrollback int
+}
+
 // Terminal parses one pane's output. A Terminal is not safe for concurrent use.
 type Terminal interface {
 	// Write feeds pane output to the parser. It always consumes all of p.
@@ -41,8 +52,9 @@ type Terminal interface {
 	Resize(cols, rows int) error
 	// Size returns the screen size.
 	Size() (cols, rows int)
-	// Snapshot encodes the terminal state in enc.
-	Snapshot(enc Encoding) ([]byte, error)
+	// Snapshot encodes the terminal state in enc. A snapshot never contains a terminal query
+	// and never sets the palette (spec 5.5).
+	Snapshot(enc Encoding, opts SnapshotOptions) ([]byte, error)
 	// PlainText returns the active screen with its scrollback as text, one line per row, with
 	// trailing spaces and trailing blank lines removed. Tests compare it with golden files.
 	PlainText() (string, error)

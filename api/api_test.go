@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -18,7 +19,7 @@ func TestSchemaEmbedded(t *testing.T) {
 }
 
 func TestEventDecodeData(t *testing.T) {
-	e := Event{Seq: 1, Type: EventPaneOwner, ID: "p1", Revision: 2,
+	e := Event{Seq: 1, Type: EventPaneOwner, ID: "p1",
 		Data: RawJSON(`{"reason":"typed","cols":80,"rows":24}`)}
 	v, err := e.DecodeData()
 	if err != nil {
@@ -44,6 +45,42 @@ func TestResultsCarrySeq(t *testing.T) {
 		_ = json.Unmarshal(b, &fields)
 		if _, ok := fields["seq"]; !ok {
 			t.Errorf("%s: result has no seq (spec 3.5)", m.Name)
+		}
+	}
+}
+
+// TestNoNullArrays marshals every zero-value message through NonNil and fails on a null, which a
+// Swift client would refuse for a required array.
+func TestNoNullArrays(t *testing.T) {
+	var values []any
+	for _, m := range Methods {
+		values = append(values, m.Result)
+	}
+	for _, n := range Notifications {
+		values = append(values, n.Params)
+	}
+	for _, e := range Events {
+		values = append(values, e.Data)
+	}
+	for _, f := range Frames {
+		if f.Payload != nil {
+			values = append(values, f.Payload)
+		}
+	}
+	// A nested list: a structure with one project whose session list is nil.
+	values = append(values, StructureResult{Structure: Structure{Projects: []Project{{ID: "p"}}}})
+	for _, v := range values {
+		if _, raw := v.(RawJSON); raw {
+			continue
+		}
+		b, err := json.Marshal(NonNil(v))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Event.data is any JSON value, so only its own null is allowed.
+		s := strings.ReplaceAll(string(b), `"data":null`, "")
+		if strings.Contains(s, "null") {
+			t.Errorf("%T marshals a null: %s", v, b)
 		}
 	}
 }

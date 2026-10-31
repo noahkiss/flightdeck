@@ -360,7 +360,11 @@ func (t *fakeTerm) lines() []string {
 	if !t.altActive {
 		rows = append(rows, t.scrollback...)
 	}
-	rows = append(rows, t.grid()...)
+	return rowText(append(rows, t.grid()...))
+}
+
+// rowText turns grid rows into lines, with trailing spaces and trailing blank lines removed.
+func rowText(rows [][]rune) []string {
 	out := make([]string, 0, len(rows))
 	for _, row := range rows {
 		var b strings.Builder
@@ -384,18 +388,24 @@ func (t *fakeTerm) PlainText() (string, error) {
 	return strings.Join(t.lines(), "\n"), nil
 }
 
-func (t *fakeTerm) Snapshot(enc Encoding) ([]byte, error) {
+func (t *fakeTerm) Snapshot(enc Encoding, opts SnapshotOptions) ([]byte, error) {
 	if t.closed {
 		return nil, ErrClosed
 	}
 	if enc != EncodingVT {
 		return nil, ErrEncoding
 	}
-	var b strings.Builder
-	if t.altActive {
-		b.WriteString("\x1b[?1049h")
+	sb := t.scrollback
+	if opts.Scrollback >= 0 && opts.Scrollback < len(sb) {
+		sb = sb[len(sb)-opts.Scrollback:]
 	}
-	b.WriteString(strings.Join(t.lines(), "\r\n"))
+	// The primary screen goes first, so leaving the alternate screen after a restore shows it.
+	var b strings.Builder
+	b.WriteString(strings.Join(rowText(append(append([][]rune{}, sb...), t.primary...)), "\r\n"))
+	if t.altActive {
+		b.WriteString("\x1b[?1049h\x1b[H\x1b[2J")
+		b.WriteString(strings.Join(rowText(t.alt), "\r\n"))
+	}
 	return []byte(b.String()), nil
 }
 

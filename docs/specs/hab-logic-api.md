@@ -265,8 +265,12 @@ ranges, then closes. The client tells the user which side to update.
   capability is added within the current revision. Clients skip unknown fields, event types and
   capabilities; the server ignores unknown optional request fields.
 - **A new revision marks a change an old client cannot skip:** a removed or renamed field, a field
-  whose meaning changes, a new required input, a narrower input, a result that can carry a new kind
-  of value.
+  whose meaning changes, a new required input, a narrower input (a removed word, or a plain string
+  that becomes a word set).
+- **Word sets the server sends are open.** Error kinds, owner reasons, closing reasons, session
+  states and the like may gain words within a revision. Every client maps an unknown word to a
+  fallback (for an error kind, treat it as a generic failure; for a reason, show it as given).
+  Word sets the client sends are closed: the server refuses an unknown word with `invalid`.
 - **The server translates down to a floor.** Each revision step has a translator for requests,
   responses and events. The server keeps translators back to `min_revision`. It never translates
   up: a server older than the client simply speaks the older revision, and the client must accept
@@ -285,8 +289,11 @@ The schema lives in `api/` (layout and commands: `docs/layout.md`). Built choice
   `x-` extensions, because OpenRPC has no place for server-sent messages.
 - Event types are `<object>.updated` and `<object>.deleted` for projects, sessions and panes, plus
   `pane.owner` (6.5) and `pane.activity` (7.1).
-- Word sets (error kinds, owner reasons and the like) are open: clients keep unknown words. A new
-  word in a set the server sends counts as a breaking change.
+- Word sets the server sends are open and may gain words; word sets the client sends are closed
+  (see above). The compat test applies both rules.
+- The compat test compares against the highest released revision. A higher current revision must
+  be exactly one higher and have a translator (`api.Translators`) for every step down to
+  `min_revision`.
 - `rpc.discover` returns the schema document itself, so its result carries no `seq`.
 
 ### 3.4 Capabilities
@@ -311,6 +318,9 @@ not a second versioning scheme.
 - **Every object carries a revision.** It rises by one on each change to that object and is stored
   with the object, so it survives restarts. A client ignores an event whose revision is not higher
   than the one it holds. Deleting an object emits a final event with a final revision.
+- **Ephemeral events carry no revision.** `pane.owner` and `pane.activity` describe state that is
+  not stored (owners are dropped on a new epoch). Their `revision` is absent, and the "ignore a
+  revision not higher" rule does not apply: a client applies them in seq order.
 - **Epoch.** A random id chosen at each gff-hab start, sent in the welcome. A client that reconnects
   and sees a new epoch drops everything ephemeral (owners, tickets, desired sizes) and takes a fresh
   snapshot. Object revisions stay comparable across epochs because they are stored.
@@ -456,6 +466,12 @@ in-band nonce is Decision: open (Q3); this spec recommends frames.
   state. Which one is the baseline is Decision: open (Q6); this spec recommends `snapshot-vt` as the
   baseline, with `snapshot-ghostty` offered as a capability.
 - A snapshot never contains a terminal query.
+- A `snapshot-vt` never sets the palette (OSC 4) or the working directory (OSC 7). On a
+  pass-through client those would change the user's own terminal.
+- On the alternate screen, a `snapshot-vt` draws the primary screen first, then switches to the
+  alternate screen, so a client that later leaves it sees the primary screen.
+- The scrollback bound applies to `snapshot-vt`. A `snapshot-ghostty` always carries the whole
+  scrollback, because libghostty's format has no bound.
 
 ### 5.6 Terminal queries
 

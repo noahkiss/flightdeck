@@ -714,7 +714,7 @@
           "revision": {
             "type": "integer",
             "format": "uint64",
-            "description": "The object's revision after the change."
+            "description": "The object's revision after the change. Absent on ephemeral events (pane.owner, pane.activity)."
           },
           "seq": {
             "type": "integer",
@@ -728,7 +728,6 @@
           "seq",
           "type",
           "id",
-          "revision",
           "data"
         ]
       },

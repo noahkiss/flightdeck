@@ -110,31 +110,96 @@ func (t *terminal) Size() (int, int) {
 	return int(c), int(r)
 }
 
-func (t *terminal) Snapshot(enc vt.Encoding) ([]byte, error) {
+func (t *terminal) Snapshot(enc vt.Encoding, opts vt.SnapshotOptions) ([]byte, error) {
 	if t.t == nil {
 		return nil, vt.ErrClosed
 	}
 	switch enc {
 	case vt.EncodingVT:
-		return t.format(libghostty.FormatterFormatVT,
-			libghostty.WithFormatterTrim(false),
-			libghostty.WithFormatterExtraPalette(true),
-			libghostty.WithFormatterExtraModes(true),
-			libghostty.WithFormatterExtraScrollingRegion(true),
-			libghostty.WithFormatterExtraTabstops(true),
-			libghostty.WithFormatterExtraPwd(true),
-			libghostty.WithFormatterExtraKeyboard(true),
-			libghostty.WithFormatterExtraCursor(true),
-			libghostty.WithFormatterExtraStyle(true),
-			libghostty.WithFormatterExtraHyperlink(true),
-			libghostty.WithFormatterExtraProtection(true),
-			libghostty.WithFormatterExtraKittyKeyboard(true),
-			libghostty.WithFormatterExtraCharsets(true),
-		)
+		return t.snapshotVT(opts.Scrollback)
 	case vt.EncodingGhostty:
 		return t.t.Snapshot()
 	}
 	return nil, vt.ErrEncoding
+}
+
+// snapshotVT formats the terminal as VT bytes. The formatter writes only the active screen, so
+// on the alternate screen it formats a copy that has left the alternate screen first: the
+// snapshot then carries the primary screen, then switches to the alternate screen and draws it.
+func (t *terminal) snapshotVT(scrollback int) ([]byte, error) {
+	screen, err := t.t.ActiveScreen()
+	if err != nil {
+		return nil, fmt.Errorf("ghostty: active screen: %w", err)
+	}
+	active, err := t.formatVT(scrollback)
+	if err != nil || screen != libghostty.ScreenAlternate {
+		return active, err
+	}
+	raw, err := t.t.Snapshot()
+	if err != nil {
+		return nil, fmt.Errorf("ghostty: copy for primary screen: %w", err)
+	}
+	cols, rows := t.Size()
+	cp, err := Parser{}.Restore(vt.EncodingGhostty, raw, vt.Config{Cols: cols, Rows: rows})
+	if err != nil {
+		return nil, err
+	}
+	defer cp.Close()
+	cp.Write([]byte("\x1b[?1049l"))
+	primary, err := cp.(*terminal).formatVT(scrollback)
+	if err != nil {
+		return nil, err
+	}
+	out := append(primary, "\x1b[?1049h\x1b[H\x1b[2J"...)
+	return append(out, active...), nil
+}
+
+func (t *terminal) formatVT(scrollback int) ([]byte, error) {
+	sel, err := t.scrollbackSelection(scrollback)
+	if err != nil {
+		return nil, err
+	}
+	// No palette and no working directory: on a pass-through client those would recolour the
+	// user's own terminal and rename its tab.
+	return t.format(libghostty.FormatterFormatVT,
+		libghostty.WithFormatterSelection(sel),
+		libghostty.WithFormatterTrim(false),
+		libghostty.WithFormatterExtraModes(true),
+		libghostty.WithFormatterExtraScrollingRegion(true),
+		libghostty.WithFormatterExtraTabstops(true),
+		libghostty.WithFormatterExtraKeyboard(true),
+		libghostty.WithFormatterExtraCursor(true),
+		libghostty.WithFormatterExtraStyle(true),
+		libghostty.WithFormatterExtraHyperlink(true),
+		libghostty.WithFormatterExtraProtection(true),
+		libghostty.WithFormatterExtraKittyKeyboard(true),
+		libghostty.WithFormatterExtraCharsets(true),
+	)
+}
+
+// scrollbackSelection returns a selection that keeps the last n scrollback lines and the whole
+// screen, or nil to keep everything.
+func (t *terminal) scrollbackSelection(n int) (*libghostty.Selection, error) {
+	if n < 0 {
+		return nil, nil
+	}
+	sb, err := t.t.ScrollbackRows()
+	if err != nil {
+		return nil, err
+	}
+	if uint(n) >= sb {
+		return nil, nil
+	}
+	cols, rows := t.Size()
+	start, err := t.t.GridRef(libghostty.Point{Tag: libghostty.PointTagScreen, X: 0, Y: uint32(sb - uint(n))})
+	if err != nil {
+		return nil, fmt.Errorf("ghostty: scrollback start: %w", err)
+	}
+	end, err := t.t.GridRef(libghostty.Point{Tag: libghostty.PointTagScreen, X: uint16(cols - 1), Y: uint32(sb) + uint32(rows) - 1})
+	if err != nil {
+		return nil, fmt.Errorf("ghostty: scrollback end: %w", err)
+	}
+	return &libghostty.Selection{Start: *start, End: *end}, nil
 }
 
 func (t *terminal) PlainText() (string, error) {
