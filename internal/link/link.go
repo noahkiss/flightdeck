@@ -18,6 +18,8 @@
 //     are told; a rescan picks up a holder that comes back.
 //   - After a scan that reached every holder in the registry, panes no holder lists are dropped
 //     (lost ones after KeepLost) and their checkpoints removed.
+//   - On a draining holder, a pane whose program ended is released once the link holds its last
+//     output, so the holder can exit after its last release (releaseEnded).
 //
 // The parser is injected (vt.Parser), so this package is pure Go.
 package link
@@ -247,9 +249,86 @@ func (l *Link) scan() {
 			}
 		})
 	}
+	l.run(func() {
+		// A holder drained since the last scan may hold ended panes already.
+		for _, p := range l.allPanes() {
+			l.releaseEnded(p)
+		}
+	})
 	if l.complete() {
 		l.run(l.prune)
 	}
+}
+
+func (l *Link) allPanes() []*pane {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	ps := make([]*pane, 0, len(l.panes))
+	for _, p := range l.panes {
+		ps = append(ps, p)
+	}
+	return ps
+}
+
+// releaseEnded releases pane p when it has ended on a draining holder, so the holder can exit
+// after its last release (holder spec 4.3). It waits until the link holds the pane's last output:
+// the exit is recorded, the replay after attach has ended, and the parser holds every byte before
+// the exit's final count. Subscribers have those bytes then too, since the link queues each byte
+// to every subscriber as it parses it. After the release the pane is gone: its subscriptions
+// end, its checkpoint is removed and watchers get PaneGone. It runs on the event loop; the release
+// itself runs on its own goroutine, because the holder's answer arrives through the event loop.
+func (l *Link) releaseEnded(p *pane) {
+	p.mu.Lock()
+	h, hd := p.holder, p.handle
+	ok := h != nil && p.lost == nil && p.exited && p.isReady && !p.releasing && p.off >= p.final && h.Draining()
+	if ok {
+		p.releasing = true
+	}
+	p.mu.Unlock()
+	if !ok {
+		return
+	}
+	l.mu.Lock()
+	ok = l.holders[h] && !l.closed
+	l.mu.Unlock()
+	if !ok {
+		p.mu.Lock()
+		p.releasing = false
+		p.mu.Unlock()
+		return
+	}
+	l.wg.Add(1) // on the event loop, which the wait group counts, so never after Close's Wait
+	go func() {
+		defer l.wg.Done()
+		ctx, cancel := context.WithTimeout(l.ctx, 10*time.Second)
+		err := h.Release(ctx, hd)
+		cancel()
+		if err != nil {
+			l.cfg.Logf("link: pane %s: release on draining holder %s: %v", p.uuid, h.Instance(), err)
+			p.mu.Lock()
+			p.releasing = false // the next scan tries again
+			p.mu.Unlock()
+			return
+		}
+		l.cfg.Logf("link: pane %s: ended on draining holder %s: released", p.uuid, h.Instance())
+		l.run(func() {
+			l.mu.Lock()
+			if l.byHandle[paneKey{h, hd}] == p {
+				delete(l.byHandle, paneKey{h, hd})
+			}
+			l.mu.Unlock()
+			p.mu.Lock()
+			mine := p.holder == h && p.handle == hd
+			p.mu.Unlock()
+			if !mine {
+				return
+			}
+			if n, ok := p.lose(ErrGone); ok {
+				removeCheckpoint(l.cfg.StateDir, p.uuid)
+				l.notify([]Notice{n})
+			}
+		})
+	}()
 }
 
 // complete reports whether the client is connected to every holder in the registry, so the panes
@@ -413,10 +492,12 @@ func (l *Link) apply(p *pane, f hp.Frame) {
 		p.feed(l, f.Offset, f.Data, false)
 	case *hp.ReplayEnd:
 		p.replayEnd(l, f)
+		defer l.releaseEnded(p)
 	case *hp.Exited:
-		if n, ok := p.reaped(f.Status); ok {
+		if n, ok := p.reaped(f.Status, f.Final); ok {
 			notices = append(notices, n)
 		}
+		defer l.releaseEnded(p)
 	case *hp.Error:
 		if f.Ref == hp.KindReplay {
 			l.cfg.Logf("link: pane %s: replay refused: code %d: %s", p.uuid, f.Code, f.Message)
@@ -513,11 +594,11 @@ func (l *Link) attach(h *holderclient.Holder, pi hp.PaneInfo) {
 		}
 		return
 	}
-	for _, f := range orphans {
-		l.apply(p, f)
-	}
 	if fresh || back {
 		l.notify([]Notice{{Kind: PaneAdded, Pane: p.status()}})
+	}
+	for _, f := range orphans {
+		l.apply(p, f)
 	}
 }
 
@@ -539,7 +620,6 @@ func (l *Link) Spawn(ctx context.Context, s hp.Spawn) (PaneStatus, error) {
 		}
 	}
 	var st PaneStatus
-	var added bool
 	ok := l.run(func() {
 		l.mu.Lock()
 		if old := l.panes[pn.UUID]; old != nil {
@@ -568,18 +648,27 @@ func (l *Link) Spawn(ctx context.Context, s hp.Spawn) (PaneStatus, error) {
 		orphans := l.orphans[k]
 		delete(l.orphans, k)
 		l.mu.Unlock()
+		// Notify the add on the event loop, before the orphan frames and before any later
+		// frame: a child that exits at once must not be reported exited before it was added.
+		st = p.status()
+		l.notify([]Notice{{Kind: PaneAdded, Pane: st}})
 		for _, f := range orphans {
 			l.apply(p, f)
 		}
-		st, added = p.status(), true
 	})
 	if !ok {
 		return PaneStatus{}, ErrClosed
 	}
-	if added {
-		l.notify([]Notice{{Kind: PaneAdded, Pane: st}})
-	}
 	return st, nil
+}
+
+// Pane reports one pane as the link sees it.
+func (l *Link) Pane(u hp.UUID) (PaneStatus, bool) {
+	p := l.pane(u)
+	if p == nil {
+		return PaneStatus{}, false
+	}
+	return p.status(), true
 }
 
 func (l *Link) pane(u hp.UUID) *pane {

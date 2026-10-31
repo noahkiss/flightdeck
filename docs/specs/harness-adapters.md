@@ -150,14 +150,14 @@ its hooks and tool commands, so anything inside the pane can find `gff-hab`.
 
 | Variable | Set by | Value | Who reads it |
 |---|---|---|---|
-| `GFF_HAB` | holder, at spawn | The hook endpoint URL for this pane, with a per-pane token (see below) | `gff-hab hook`, the agent kit, any agent that wants to name itself |
+| `GFF_HAB` | gff-hab, at spawn | The hook endpoint URL for this pane, with a per-pane token (see below) | `gff-hab hook`, the agent kit, any agent that wants to name itself |
 | `AGENT_KIND` | holder when it starts a known harness; else the harness's own start hook | `claude`, `codex` or `opencode` | hooks, tools, the agent kit |
 | `AGENT_SESSION_ID` | the harness, through its start hook, where the harness allows it | The harness's native session id | tools and child processes that must name their session |
 
 `GFF_HAB` is the one hab address variable. One variable must carry two facts: where `gff-hab`
 listens, and which pane is calling. So its value is per pane:
-`http+unix://<socket path>/hooks/<pane token>` locally. The token is random per pane, known
-only to the holder and `gff-hab`, and rotates when the pane is respawned. This gives
+`http+unix://<socket path>/hooks/<pane token>` locally. The token is per pane, known only to
+the pane and `gff-hab`, and changes when the pane is respawned (see Hook endpoint, Token). This gives
 attribution and a light capability check in one value. A hook with no `GFF_HAB` is outside any
 pane we own; it exits 0 and sends nothing.
 
@@ -203,14 +203,21 @@ Built choices (`internal/hook`, `internal/harness`, `gff-hab hook`):
   socket (`-hook-socket` or `$GFF_HAB_HOOK_SOCKET` override it). The control socket speaks
   JSON-RPC lines, so the hook endpoint does not share it. The socket is mode 0600 in the same
   private directory, and a caller running as another user is refused. No TCP port.
-- **Address.** `GFF_HAB` is `http+unix://<absolute socket path>/hooks/<token>`. The token is 32
-  hex digits from a per-pane registry in gff-hab; minting it again for a respawned pane drops the
-  old one. When the link reports a pane gone, gff-hab drops its token and its agent state.
-  Not built yet: gff-hab has no spawn path, so nothing mints a token or puts `GFF_HAB` into a
-  pane's environment. Every token is unknown, gff-hab drops the post, and the welcome does not
-  list the `agent-state` capability. That stage must also decide how a token survives a
-  gff-hab restart while the pane lives on: store the registry in the state directory, or derive
-  each token from the pane uuid with a keyed hash under a secret kept there.
+- **Address.** `GFF_HAB` is `http+unix://<absolute socket path>/hooks/<token>`. gff-hab puts
+  it into the environment of each pane it spawns, replacing any `GFF_HAB` the caller passed.
+- **Token.** 96 lower-case hex digits: the pane uuid (32), then
+  HMAC-SHA256(secret, `"gff-hab hook token v1\0"` + uuid) (64). The secret is 32 random bytes in
+  `hook.key` in the state directory. gff-hab creates it on first start with mode 0600, as a
+  complete temp file hard-linked into place, so racing starts agree on one secret. It refuses to
+  start when the file is a symlink, not a regular file, owned by another user, open to group or
+  others, or not 32 bytes; it never replaces such a file. No registry is stored: the same secret
+  gives the same token after a gff-hab restart, so a pane that outlives gff-hab keeps posting. A
+  respawned pane has a new uuid, so its token changes.
+- **Checks.** gff-hab accepts a token only when its hash matches (a constant-time compare) and
+  the holder link follows the pane: listed, not lost with its holder, and not released. A forged
+  token, one spliced from two panes, one made under another secret, and the token of a pane that
+  is gone are all unknown. When the link reports a pane gone, gff-hab also drops its agent state.
+- The welcome lists the `agent-state` capability whenever the holder link is on.
 - **Answers.** `POST /hooks/<token>` answers 204 when accepted, 400 for a bad envelope, 404
   for an unknown token (logged once per token) and 413 above 8 MiB. A post with no `t` gets the
   server's clock.

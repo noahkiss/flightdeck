@@ -25,6 +25,7 @@ import (
 
 var (
 	bin        string
+	holderBin  string
 	buildFlags []string // race_test.go adds -race under the race detector
 )
 
@@ -34,10 +35,18 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	bin = filepath.Join(d, "gff-hab")
+	holderBin = filepath.Join(d, "gff-hab-holder")
 	os.Setenv("GFF_HOLDER_DIR", filepath.Join(d, "holders")) // never the user's real holders
-	out, err := exec.Command("go", append(append([]string{"build"}, buildFlags...), "-o", bin, ".")...).CombinedOutput()
+	// The gfftest tag lets the tests spawn panes at start (spawn_gfftest.go).
+	out, err := exec.Command("go", append(append([]string{"build", "-tags", "gfftest"}, buildFlags...), "-o", bin, ".")...).CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "build gff-hab: %v\n%s", err, out)
+		os.Exit(1)
+	}
+	hb := exec.Command("go", "build", "-o", holderBin, "github.com/noahkiss/flightdeck/cmd/gff-hab-holder")
+	hb.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if out, err := hb.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "build gff-hab-holder: %v\n%s", err, out)
 		os.Exit(1)
 	}
 	code := m.Run()
@@ -67,7 +76,14 @@ type served struct {
 // startServe runs `gff-hab serve` and waits until its socket answers.
 func startServe(t *testing.T, sock, state string) *served {
 	t.Helper()
-	cmd := exec.Command(bin, "serve", "-socket", sock, "-state", state, "-host-id", "test-host")
+	return startServeWith(t, sock, state, nil)
+}
+
+// startServeWith is startServe with extra environment and arguments.
+func startServeWith(t *testing.T, sock, state string, env []string, args ...string) *served {
+	t.Helper()
+	cmd := exec.Command(bin, append([]string{"serve", "-socket", sock, "-state", state, "-host-id", "test-host"}, args...)...)
+	cmd.Env = append(os.Environ(), env...)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)

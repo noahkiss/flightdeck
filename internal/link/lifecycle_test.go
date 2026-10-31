@@ -7,7 +7,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/internal/holderclient"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
+	"github.com/noahkiss/flightdeck/internal/holderreg"
 	"github.com/noahkiss/flightdeck/internal/vt"
 )
 
@@ -233,5 +236,127 @@ func TestSpawnReplacesStalePane(t *testing.T) {
 	waitFor(t, "second output", func() bool { return screenHas(t, l, u, "second") })
 	if screenHas(t, l, u, "first") {
 		t.Error("the new pane shows the old pane's screen")
+	}
+}
+
+// TestAddedBeforeExited: a child that exits at once is reported added before exited. Its exit
+// frame can reach the link before the spawn answer, so it waits as an orphan frame; the add must
+// still come first.
+func TestAddedBeforeExited(t *testing.T) {
+	hdir := shortDir(t)
+	startHolder(t, hdir, "ae", 0)
+	l := openLink(t, Config{HolderDir: hdir})
+	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
+	var mu sync.Mutex
+	seen := map[hp.UUID][]NoticeKind{}
+	stop := l.Watch(func(n Notice) {
+		mu.Lock()
+		seen[n.Pane.UUID] = append(seen[n.Pane.UUID], n.Kind)
+		mu.Unlock()
+	})
+	defer stop()
+	// Spawn from many goroutines at once: the more the event loop has to do, the more often an
+	// exit frame overtakes the spawn's bookkeeping.
+	const n = 64
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), waitLong)
+			defer cancel()
+			if _, err := l.Spawn(ctx, hp.Spawn{UUID: uuidN(100 + i), Cols: 80, Rows: 24, Cwd: "/",
+				Argv: []string{"/bin/sh", "-c", "exit 0"}, Env: testEnv}); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	waitFor(t, "every exit", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for i := range n {
+			if len(seen[uuidN(100+i)]) < 2 {
+				return false
+			}
+		}
+		return true
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	for i := range n {
+		if ks := seen[uuidN(100+i)]; ks[0] != PaneAdded || ks[1] != PaneExited {
+			t.Errorf("pane %d: notices %v, want added then exited", i, ks)
+		}
+	}
+}
+
+// TestDrainReleasesEndedPanes: on a draining holder, the link releases each pane once it has
+// ended, and not before; after the last release the holder exits and leaves the registry. Each
+// released pane is gone, with its last output on its screen.
+func TestDrainReleasesEndedPanes(t *testing.T) {
+	hdir := shortDir(t)
+	old := startHolder(t, hdir, "old", 0)
+	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond})
+	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
+	var mu sync.Mutex
+	var gone []hp.UUID
+	stop := l.Watch(func(n Notice) {
+		if n.Kind == PaneGone {
+			mu.Lock()
+			gone = append(gone, n.Pane.UUID)
+			mu.Unlock()
+		}
+	})
+	defer stop()
+	ended, live := uuidN(60), uuidN(61)
+	goFile := filepath.Join(shortDir(t), "go")
+	spawn(t, l, ended, "echo ended-early; exit 0")
+	ctx, cancel := context.WithTimeout(context.Background(), waitLong)
+	defer cancel()
+	if _, err := l.Spawn(ctx, hp.Spawn{UUID: live, Cols: 80, Rows: 24, Cwd: "/",
+		Argv: []string{"/bin/sh", "-c", `while [ ! -e "$GO" ]; do sleep 0.02; done; echo ended-late`},
+		Env:  append(testEnv, "GO="+goFile)}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the first pane exited", func() bool { st, _ := paneStatus(l, ended); return st.Exited })
+	for range 3 { // whole scans, each of which would release it: a current holder keeps ended panes
+		select {
+		case <-l.pruned:
+		case <-time.After(waitLong):
+			t.Fatal("no scan finished")
+		}
+	}
+	if st, _ := paneStatus(l, ended); st.Gone {
+		t.Fatal("an ended pane on the current holder was released")
+	}
+
+	startHolder(t, hdir, "new", 0)
+	waitFor(t, "the ended pane released", func() bool { st, _ := paneStatus(l, ended); return st.Gone })
+	if !screenHas(t, l, ended, "ended-early") {
+		t.Error("the released pane lost its last output")
+	}
+	if st, _ := paneStatus(l, live); st.Gone || st.Lost {
+		t.Fatalf("a running pane on the draining holder was released: %+v", st)
+	}
+	if err := syscall.Kill(old.Process.Pid, 0); err != nil {
+		t.Fatal("the draining holder exited with a pane still running")
+	}
+
+	os.WriteFile(goFile, nil, 0o600)
+	waitFor(t, "the second pane released", func() bool { st, _ := paneStatus(l, live); return st.Gone })
+	if !screenHas(t, l, live, "ended-late") {
+		t.Error("the released pane lost its last output")
+	}
+	waitFor(t, "the draining holder exits", func() bool {
+		return errors.Is(syscall.Kill(old.Process.Pid, 0), syscall.ESRCH)
+	})
+	if _, err := os.Stat(holderreg.Path(hdir, "old")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the drained holder's registry file: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(gone) < 2 {
+		t.Errorf("gone notices for %v, want both panes", gone)
 	}
 }

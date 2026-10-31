@@ -3,17 +3,14 @@
 // envelope to gff-hab over HTTP on a local Unix socket. No TCP port is opened.
 //
 // The address is the GFF_HAB variable, one per pane: http+unix://<socket path>/hooks/<token>.
-// The token is random per pane and names the pane; the Registry maps tokens to panes. The holder
-// puts GFF_HAB into each pane's environment at spawn (holder link, later stage).
+// The token names the pane: its uuid plus a keyed hash of that uuid under a secret in the state
+// directory (Tokens). gff-hab puts GFF_HAB into each pane's environment when it spawns the pane.
 package hook
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 )
 
 // Scheme is the URL scheme of GFF_HAB for a local hab.
@@ -55,54 +52,6 @@ func validToken(t string) bool {
 		}
 	}
 	return true
-}
-
-// Registry maps pane tokens to pane ids. It is safe for concurrent use.
-type Registry struct {
-	mu     sync.Mutex
-	byTok  map[string]string
-	byPane map[string]string
-}
-
-// NewRegistry returns an empty registry.
-func NewRegistry() *Registry {
-	return &Registry{byTok: map[string]string{}, byPane: map[string]string{}}
-}
-
-// Mint makes a new random token for pane and drops any earlier one, so a respawned pane gets a
-// fresh token.
-func (r *Registry) Mint(pane string) string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
-	tok := hex.EncodeToString(b)
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if old, ok := r.byPane[pane]; ok {
-		delete(r.byTok, old)
-	}
-	r.byTok[tok] = pane
-	r.byPane[pane] = tok
-	return tok
-}
-
-// Revoke drops pane's token.
-func (r *Registry) Revoke(pane string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if tok, ok := r.byPane[pane]; ok {
-		delete(r.byTok, tok)
-		delete(r.byPane, pane)
-	}
-}
-
-// Pane returns the pane a token names.
-func (r *Registry) Pane(token string) (string, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	p, ok := r.byTok[token]
-	return p, ok
 }
 
 // ErrNoHab means GFF_HAB is unset: the hook runs outside any pane gff-hab owns.

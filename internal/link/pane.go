@@ -182,6 +182,8 @@ type pane struct {
 	lostAt    time.Time
 	exited    bool
 	exit      hp.ExitStatus
+	final     uint64 // the byte count when the child was reaped; valid once exited
+	releasing bool   // a release of the ended pane is in flight
 	lastOut   time.Time
 	ckOff     uint64
 	ckValid   bool
@@ -221,7 +223,7 @@ func (p *pane) prepare(l *Link, h *holderclient.Holder, pi hp.PaneInfo) (from ui
 	}
 	p.holder, p.handle, p.pid = h, pi.Handle, pi.Pid
 	p.lost = nil
-	p.exited, p.exit = pi.Exited, pi.Exit
+	p.exited, p.exit, p.final, p.releasing = pi.Exited, pi.Exit, pi.Count, false
 	if p.isReady {
 		p.ready, p.isReady = make(chan struct{}), false
 	}
@@ -382,13 +384,13 @@ func (p *pane) jump(to uint64) {
 	}
 }
 
-func (p *pane) reaped(st hp.ExitStatus) (Notice, bool) {
+func (p *pane) reaped(st hp.ExitStatus, final uint64) (Notice, bool) {
 	p.mu.Lock()
 	if p.exited {
 		p.mu.Unlock()
 		return Notice{}, false
 	}
-	p.exited, p.exit = true, st
+	p.exited, p.exit, p.final = true, st, final
 	for s := range p.subs {
 		if !s.send(Chunk{Kind: ChunkExited, Offset: p.off, Exit: st}) {
 			delete(p.subs, s)

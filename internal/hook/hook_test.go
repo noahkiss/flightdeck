@@ -57,22 +57,6 @@ func TestAddr(t *testing.T) {
 	}
 }
 
-func TestRegistryRotates(t *testing.T) {
-	r := NewRegistry()
-	t1 := r.Mint("pane-a")
-	if p, ok := r.Pane(t1); !ok || p != "pane-a" {
-		t.Fatal("token does not resolve")
-	}
-	t2 := r.Mint("pane-a") // respawn
-	if _, ok := r.Pane(t1); ok || t1 == t2 {
-		t.Fatal("old token still resolves after respawn")
-	}
-	r.Revoke("pane-a")
-	if _, ok := r.Pane(t2); ok {
-		t.Fatal("revoked token resolves")
-	}
-}
-
 type recorder struct {
 	mu   sync.Mutex
 	got  []harness.Envelope
@@ -86,7 +70,7 @@ func (r *recorder) sink(pane string, env harness.Envelope) {
 	r.pane = append(r.pane, pane)
 }
 
-func startHooks(t *testing.T, reg *Registry, sink Sink) string {
+func startHooks(t *testing.T, reg Resolver, sink Sink) string {
 	t.Helper()
 	sock := filepath.Join(shortDir(t), "hook.sock")
 	l, err := control.Listen(sock)
@@ -104,10 +88,10 @@ func env(vars map[string]string) func(string) string {
 }
 
 func TestRunPostsEnvelope(t *testing.T) {
-	reg := NewRegistry()
+	reg := newTestPanes()
 	rec := &recorder{}
 	sock := startHooks(t, reg, rec.sink)
-	tok := reg.Mint("pane-7")
+	tok := reg.mint("pane-7")
 	ctx := context.Background()
 	clock := func() time.Time { return time.UnixMilli(1234) }
 
@@ -138,10 +122,10 @@ func TestRunPostsEnvelope(t *testing.T) {
 }
 
 func TestRunSendsNothing(t *testing.T) {
-	reg := NewRegistry()
+	reg := newTestPanes()
 	rec := &recorder{}
 	sock := startHooks(t, reg, rec.sink)
-	tok := reg.Mint("p")
+	tok := reg.mint("p")
 	ctx := context.Background()
 	in := func() *strings.Reader { return strings.NewReader(`{"hook_event_name":"Stop"}`) }
 
@@ -193,10 +177,10 @@ func TestDeadHabIsFast(t *testing.T) {
 }
 
 func TestServerRejects(t *testing.T) {
-	reg := NewRegistry()
+	reg := newTestPanes()
 	rec := &recorder{}
 	sock := startHooks(t, reg, rec.sink)
-	tok := reg.Mint("p")
+	tok := reg.mint("p")
 	addr := Addr(sock, tok)
 	ctx := context.Background()
 	for name, e := range map[string]harness.Envelope{
@@ -288,9 +272,9 @@ func TestHookToEventStream(t *testing.T) {
 	go srv.Serve(cl)
 	t.Cleanup(srv.Close)
 
-	reg := NewRegistry()
+	reg := newTestPanes()
 	sock := startHooks(t, reg, func(p string, e harness.Envelope) { agents.Hook(p, e) })
-	tok := reg.Mint("pane-1")
+	tok := reg.mint("pane-1")
 
 	c, err := control.Dial(filepath.Join(dir, "hab.sock"))
 	if err != nil {

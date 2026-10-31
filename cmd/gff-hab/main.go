@@ -212,12 +212,17 @@ func serve(args []string) error {
 		},
 		Logf: debugf,
 	})
+	var caps []string
+	if lk != nil {
+		caps = append(caps, "agent-state") // panes gff-hab spawns post hooks
+	}
 	s := control.New(control.Config{
-		Build:    build,
-		Host:     api.HostInfo{ID: *hostID},
-		DeviceID: key.Fingerprint(),
-		Source:   agentSource{store: store, agents: agents},
-		Logf:     logger.Printf,
+		Build:        build,
+		Host:         api.HostInfo{ID: *hostID},
+		DeviceID:     key.Fingerprint(),
+		Source:       agentSource{store: store, agents: agents},
+		Capabilities: caps,
+		Logf:         logger.Printf,
 	})
 	srv.Store(s)
 	hpath, err := hookSocketPath(*hookSock, path)
@@ -233,16 +238,20 @@ func serve(args []string) error {
 		l.Close()
 		return err
 	}
-	// Tokens will be minted when gff-hab spawns a pane with GFF_HAB in its environment; no spawn
-	// path exists yet, so every token is unknown and posts are dropped. A pane the link reports
-	// gone loses its token and its agent state.
-	tokens := hook.NewRegistry()
+	// A pane's hook token is a keyed hash of its uuid under the secret in the state directory, so
+	// it outlives a gff-hab restart. A token resolves only while the link follows the pane: a
+	// pane the link reports gone loses its token and its agent state.
+	secret, err := hook.LoadOrCreateKey(dir)
+	if err != nil {
+		l.Close()
+		hl.Close()
+		return err
+	}
+	tokens := hook.NewTokens(secret, livePane(lk))
 	if lk != nil {
 		stopWatch := lk.Watch(func(n link.Notice) {
 			if n.Kind == link.PaneGone {
-				id := n.Pane.UUID.String()
-				tokens.Revoke(id)
-				agents.Forget(id)
+				agents.Forget(n.Pane.UUID.String())
 			}
 		})
 		defer stopWatch()
@@ -254,6 +263,9 @@ func serve(args []string) error {
 		}
 	}()
 	defer hooks.Close()
+	if lk != nil && startupSpawns != nil {
+		startupSpawns(&spawner{lk: lk, tokens: tokens, hookSock: hpath}, logger.Printf)
+	}
 	logger.Printf("epoch %s build %s device %s listening on %s, hooks on %s", s.Epoch(), build, key.Fingerprint(), path, hpath)
 
 	sigs := make(chan os.Signal, 1)

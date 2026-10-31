@@ -20,11 +20,16 @@ const MaxBody = 8 << 20
 // Sink receives each valid envelope for a known pane. *harness.Store's Hook method fits.
 type Sink func(pane string, env harness.Envelope)
 
+// Resolver names the pane a token belongs to. *Tokens is one.
+type Resolver interface {
+	Pane(token string) (pane string, ok bool)
+}
+
 // Server answers POST /hooks/<token>. It validates the envelope, resolves the pane from the
 // token and hands the envelope to the sink. It answers 204 on success, 400 on a bad envelope,
 // 404 on an unknown token and 413 on a body over MaxBody. The hook command ignores the answer.
 type Server struct {
-	reg  *Registry
+	reg  Resolver
 	sink Sink
 	now  func() time.Time
 	logf func(string, ...any)
@@ -35,7 +40,7 @@ type Server struct {
 }
 
 // NewServer returns a server. logf may be nil.
-func NewServer(reg *Registry, sink Sink, logf func(string, ...any)) *Server {
+func NewServer(reg Resolver, sink Sink, logf func(string, ...any)) *Server {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}

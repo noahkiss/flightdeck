@@ -255,6 +255,20 @@ Decisions taken in stage 4 (`internal/link`):
   uuid matches a lost pane, or one on another holder, makes a new pane.
 - When output jumps past bytes that never arrived, the screen is suspect and every subscriber
   gets a snapshot at the new offset before the next bytes.
+- A pane's notices keep their order: added, then exited, then gone. A spawned pane is added on
+  the event loop before any frame the holder sent for it, even an exit that arrived before the
+  spawn's answer.
+- **Releasing ended panes on a draining holder.** The link releases a pane when all of these hold:
+  its holder is draining; the exit is recorded (the exited frame, or an exited pane record at
+  attach); the replay after attach has ended; and the parser holds every byte before the exit's
+  final count. Subscribers have those bytes then too, because the link queues each byte to every
+  subscriber as it parses it. The link checks after each exit and replay end, and on every scan,
+  so a holder drained later releases its ended panes too. A failed release is tried again on the
+  next scan. After the release the pane is gone: its subscriptions end, its checkpoint is
+  removed, watchers get a gone notice, and its parsed screen stays readable until the prune
+  drops it. The holder exits after its last release. A running pane on a draining holder is
+  never released by this rule. Ended panes on the current holder stay until a client closes
+  them (`pane.close`, not built yet).
 
 ### 2.4 Backends
 
