@@ -60,6 +60,8 @@ build are in `docs/layout.md`.
 | `make test` | Build libghostty, then run every Go test with `-tags ghostty` |
 | `make build`, `make vet` | Build or vet every package with `-tags ghostty` |
 | `make test-pure` | Run the Go tests without cgo or libghostty |
+| `make race` | Run the holder, holderproto, holderclient, holderreg, structure and `cmd` tests with `-race -count=3` |
+| `make fuzz [FUZZTIME=30s]` | Run each holderproto fuzz target for `FUZZTIME` in turn (nightly) |
 | `make check-pure` | Fail when a package other than `internal/vt/ghostty` needs cgo |
 | `make check-gen` | Fail when a generated file is stale |
 | `go run ./cmd/gff-hab-holder [-socket path \| -dir dir]` | Run a holder; the socket directory defaults to `$GFF_HOLDER_DIR`, else `gff/holders` under `~/Library/Application Support` on macOS and under `$XDG_RUNTIME_DIR` elsewhere (no `XDG_RUNTIME_DIR`: it refuses to start) |
@@ -70,6 +72,7 @@ build are in `docs/layout.md`.
 | `gff-hab events [-socket path \| -via command] [-scope host\|projects:id,...\|sessions:id,...]` | Subscribe and print the welcome, the snapshot and every notification, one JSON line each. Exit 1 when the hab ends the connection with no `closing` or with a reason other than shutdown |
 | `go test -race ./internal/control/... ./cmd/gff-hab/...` | Control connection tests: seq and epoch rules, backlog close, the binary over a real socket and over `connect` |
 | `cd swift/HabAPI && swift test` | Build and test the generated Swift package (Mac) |
+| `go test ./api -run TestGoldens -update` | Rewrite the golden messages of the current API revision in `api/testdata/` |
 
 ## Delegation
 

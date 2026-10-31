@@ -1,0 +1,18 @@
+{
+  "device_id": "device_id-4",
+  "endpoints": [
+    "endpoints-5"
+  ],
+  "expires_in_ms": 7,
+  "seq": 3,
+  "token": "token-6",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

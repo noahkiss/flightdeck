@@ -1,0 +1,24 @@
+{
+  "devices": [
+    {
+      "id": "id-4",
+      "kind": "gff",
+      "label": "label-5",
+      "last_seen": "last_seen-8",
+      "paired_at": "paired_at-6",
+      "paired_by": "paired_by-7",
+      "state": "revoked",
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

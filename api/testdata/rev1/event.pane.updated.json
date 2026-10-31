@@ -1,0 +1,26 @@
+{
+  "data": {
+    "cols": 6,
+    "holder_build": "holder_build-5",
+    "id": "id-3",
+    "offset": 9,
+    "owner": "owner-8",
+    "revision": 4,
+    "rows": 7,
+    "session": "session-10",
+    "x_unknown_field": "later"
+  },
+  "id": "id-13",
+  "revision": 11,
+  "seq": 12,
+  "type": "pane.updated",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

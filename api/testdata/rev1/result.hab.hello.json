@@ -1,0 +1,25 @@
+{
+  "build": "build-6",
+  "capabilities": [
+    "capabilities-8"
+  ],
+  "client_id": "client_id-9",
+  "device_id": "device_id-11",
+  "epoch": "epoch-5",
+  "host": {
+    "id": "id-7",
+    "x_unknown_field": "later"
+  },
+  "reconnect_token": "reconnect_token-10",
+  "revision": 4,
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

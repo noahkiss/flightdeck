@@ -1,0 +1,58 @@
+{
+  "host": {
+    "id": "id-4",
+    "x_unknown_field": "later"
+  },
+  "panes": [
+    {
+      "cols": 21,
+      "holder_build": "holder_build-20",
+      "id": "id-18",
+      "offset": 24,
+      "owner": "owner-23",
+      "revision": 19,
+      "rows": 22,
+      "session": "session-25",
+      "x_unknown_field": "later"
+    }
+  ],
+  "projects": [
+    {
+      "id": "id-5",
+      "name": "name-7",
+      "remote": "remote-8",
+      "revision": 6,
+      "root_commit": "root_commit-9",
+      "sessions": [
+        "sessions-10"
+      ],
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "sessions": [
+    {
+      "exit": {
+        "code": 16,
+        "signal": "signal-17",
+        "x_unknown_field": "later"
+      },
+      "id": "id-11",
+      "name": "name-13",
+      "pane": "pane-15",
+      "project": "project-14",
+      "revision": 12,
+      "state": "exited",
+      "x_unknown_field": "later"
+    }
+  ],
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

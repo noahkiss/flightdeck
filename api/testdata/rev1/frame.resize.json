@@ -1,0 +1,15 @@
+{
+  "cols": 3,
+  "owner": "owner-5",
+  "reason": "restore",
+  "rows": 4,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

@@ -14,6 +14,9 @@ Every stage's acceptance checks follow it.
   feature. Use soak and fuzz runs for properties.
 - Tests wait on conditions, never on fixed sleeps, and log any random seed. A flaky test is fixed
   or deleted in the same stage; we never retry it.
+- Every wait has an upper bound, `waitLong` in the holder test helpers. On a slow machine or CI
+  runner, set `GFF_TEST_TIMEOUT_SCALE` (a positive number, such as `3`) to multiply it. Raise the
+  bound; never add a sleep.
 - No coverage targets and no benchmarks until a user-visible budget depends on one. Spec edge
   cases and review findings decide what gets a test.
 - Core functionality also gets a fresh-eyes review before its stage closes.
@@ -53,6 +56,11 @@ The first five are the core set. If only five tests could exist, these would be 
 | 13 | Uninstall (release smoke) | Every file the install wrote is gone |
 | 14 | The app on a device (release smoke) | Connects over SSH, lists sessions, the terminal echoes typing, one approval round trip |
 
+Test 5 lives in three places. `api/api_test.go` writes the messages of the current revision to
+`api/testdata/rev<N>/`, with every field set and extra `x_unknown_*` fields in every object
+(`-update` rewrites them; older revisions stay frozen). The apigen tests check every golden
+against the schemas in both directions. The Swift `GoldenTests` decode every golden.
+
 ## Deliberately not tested
 
 | Not tested | Why |
@@ -68,5 +76,6 @@ The first five are the core set. If only five tests could exist, these would be 
 
 ## Until CI exists
 
-Each holder stage close records a passing `go test -race -count=3` run of the holder packages on
-macOS as well as Linux.
+Each holder stage close records a passing `make race` run (`go test -race -count=3` of the holder
+packages) on macOS as well as Linux. `make fuzz` runs each holderproto fuzz target for `FUZZTIME`
+(default 30s); the nightly job will run it.
