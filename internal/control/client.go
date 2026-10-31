@@ -163,12 +163,7 @@ func (c *Client) Call(ctx context.Context, method string, params, result any) er
 	if err != nil {
 		return err
 	}
-	c.wmu.Lock()
-	c.w.Write(b)
-	c.w.WriteByte('\n')
-	err = c.w.Flush()
-	c.lastSend = time.Now()
-	c.wmu.Unlock()
+	err = c.write(ctx, b)
 	if err != nil {
 		return fmt.Errorf("control: send %s: %w", method, err)
 	}
@@ -193,12 +188,60 @@ func (c *Client) Call(ctx context.Context, method string, params, result any) er
 	}
 }
 
+// WriteTimeout bounds one request write when the call's context has no earlier deadline.
+const WriteTimeout = 30 * time.Second
+
+type writeDeadliner interface{ SetWriteDeadline(time.Time) error }
+
+// write sends one request line. A write that outlasts the context's deadline (or WriteTimeout)
+// ends the connection: a half-written line would corrupt the stream anyway.
+func (c *Client) write(ctx context.Context, b []byte) error {
+	deadline := time.Now().Add(WriteTimeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
+	if wd, ok := c.rw.(writeDeadliner); ok && wd.SetWriteDeadline(deadline) == nil {
+		defer wd.SetWriteDeadline(time.Time{})
+	} else {
+		t := time.AfterFunc(time.Until(deadline), func() { c.rw.Close() })
+		defer t.Stop()
+	}
+	c.w.Write(b)
+	c.w.WriteByte('\n')
+	err := c.w.Flush()
+	c.lastSend = time.Now()
+	if err != nil {
+		c.rw.Close()
+		c.w.Reset(c.rw) // drop the unsent bytes; the connection is over
+	}
+	return err
+}
+
+// readLine reads one line up to MaxMessage bytes. The server's backlog limit is smaller, so no
+// message it can deliver is longer.
+func readLine(br *bufio.Reader) ([]byte, error) {
+	var line []byte
+	for {
+		chunk, err := br.ReadSlice('\n')
+		if len(line)+len(chunk) > MaxMessage {
+			return nil, fmt.Errorf("control: a message from the server is longer than %d bytes", MaxMessage)
+		}
+		line = append(line, chunk...)
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		return line, err
+	}
+}
+
 func (c *Client) readLoop() {
 	br := bufio.NewReaderSize(c.rw, 64<<10)
 	var err error
 	for {
 		var line []byte
-		line, err = br.ReadBytes('\n')
+		line, err = readLine(br)
 		if len(line) > 0 && line[0] == '{' {
 			var m message
 			if jerr := json.Unmarshal(line, &m); jerr != nil {

@@ -561,7 +561,7 @@ func TestListenPermissions(t *testing.T) {
 		t.Fatal("Listen deleted a regular file")
 	}
 
-	open :=filepath.Join(filepath.Dir(filepath.Dir(path)), "open")
+	open := filepath.Join(filepath.Dir(filepath.Dir(path)), "open")
 	os.Mkdir(open, 0o755)
 	os.Chmod(open, 0o755)
 	if _, err := Listen(filepath.Join(open, "hab.sock")); err == nil {
