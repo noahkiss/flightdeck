@@ -16,7 +16,7 @@ func TestManifestsRefreshCLI(t *testing.T) {
 	state := t.TempDir()
 	files := map[string]string{
 		"index.toml":  "schema_version = 1\n[[agents]]\nid = \"claude\"\npath = \"claude.toml\"\n",
-		"claude.toml": "id = \"claude\"\nversion = \"2099.1.1.1\"\nmin_engine_version = 1\n\n[[rules]]\nid = \"r\"\nstate = \"working\"\ncontains = [\"busy\"]\n",
+		"claude.toml": "id = \"claude\"\nversion = \"2026.12.31.9\"\nmin_engine_version = 1\n\n[[rules]]\nid = \"r\"\nstate = \"working\"\ncontains = [\"busy\"]\n",
 	}
 	for name, body := range files {
 		if err := os.WriteFile(filepath.Join(cat, name), []byte(body), 0o600); err != nil {
@@ -25,7 +25,7 @@ func TestManifestsRefreshCLI(t *testing.T) {
 	}
 
 	out := run(t, "manifests", "refresh", "-dry-run", "-state", state, "-from", cat)
-	for _, want := range []string{"--- claude.toml ", "+++ claude.toml 2099.1.1.1", "+version = \"2099.1.1.1\"", "would update claude", "dry run, nothing written"} {
+	for _, want := range []string{"--- claude.toml ", "+++ claude.toml 2026.12.31.9", "+version = \"2026.12.31.9\"", "would update claude", "dry run, nothing written"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dry run output lacks %q:\n%s", want, out)
 		}
@@ -36,7 +36,7 @@ func TestManifestsRefreshCLI(t *testing.T) {
 
 	run(t, "manifests", "refresh", "-state", state, "-from", cat)
 	list := run(t, "manifests", "list", "-state", state)
-	if !strings.Contains(list, "claude\t2099.1.1.1\tdata\t") {
+	if !strings.Contains(list, "claude\t2026.12.31.9\tdata\t") {
 		t.Fatalf("list does not show the refreshed claude manifest:\n%s", list)
 	}
 

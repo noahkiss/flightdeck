@@ -97,6 +97,9 @@ type rawRule struct {
 	rawGate
 }
 
+// validID is the shape of a manifest id.
+var validID = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
 // ErrEngine marks a manifest that needs a newer matcher than this one.
 var ErrEngine = errors.New("needs a newer detection engine")
 
@@ -116,8 +119,9 @@ func Parse(data []byte) (*Manifest, error) {
 		}
 		return nil, fmt.Errorf("unknown keys: %s", strings.Join(keys, ", "))
 	}
-	if strings.TrimSpace(rm.ID) == "" {
-		return nil, errors.New("no id")
+	if !validID.MatchString(rm.ID) {
+		// The id names the file a refresh writes, so it must be a plain file name.
+		return nil, fmt.Errorf("id %q is not lower-case letters, digits, - and _", rm.ID)
 	}
 	if err := checkVersion(rm.Version); err != nil {
 		return nil, fmt.Errorf("manifest %s: %w", rm.ID, err)

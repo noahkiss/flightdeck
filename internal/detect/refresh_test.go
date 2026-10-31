@@ -52,7 +52,7 @@ path = "liar.toml"
 id = "gone"
 path = "gone.toml"
 `,
-		"claude.toml":   manifestText("claude", "2099.1.1.1", 3, ""),
+		"claude.toml":   manifestText("claude", "2026.12.31.9", 3, ""),
 		"codex.toml":    manifestText("codex", "2000.1.1.1", 3, ""),       // older: never downgrade
 		"opencode.toml": string(v.Lookup("opencode").Manifest.Raw),        // same version
 		"future.toml":   manifestText("future", "1", EngineVersion+1, ""), // needs a newer engine
@@ -83,7 +83,7 @@ func TestRefreshDryRunThenWrite(t *testing.T) {
 		t.Fatalf("changes %v, want claude,newagent", ids)
 	}
 	cl := res.Changes[0]
-	if cl.OldFrom != FromVendored || cl.NewVersion != "2099.1.1.1" || !strings.Contains(cl.Diff, "+version = \"2099.1.1.1\"") || !strings.Contains(cl.Diff, "-version = ") {
+	if cl.OldFrom != FromVendored || cl.NewVersion != "2026.12.31.9" || !strings.Contains(cl.Diff, "+version = \"2026.12.31.9\"") || !strings.Contains(cl.Diff, "-version = ") {
 		t.Fatalf("claude change: %+v", cl)
 	}
 	if len(res.Unchanged) != 1 || res.Unchanged[0] != "opencode" {
@@ -111,7 +111,7 @@ func TestRefreshDryRunThenWrite(t *testing.T) {
 	if len(s.Problems) > 0 {
 		t.Fatalf("problems after refresh: %v", s.Problems)
 	}
-	if e := s.Lookup("claude"); e.From != FromData || e.Manifest.Version != "2099.1.1.1" {
+	if e := s.Lookup("claude"); e.From != FromData || e.Manifest.Version != "2026.12.31.9" {
 		t.Fatalf("claude after refresh: %+v", e)
 	}
 	if e := s.Lookup("codex"); e.From != FromVendored {
@@ -136,7 +136,7 @@ func TestRefreshDryRunThenWrite(t *testing.T) {
 
 func TestRefreshOverHTTP(t *testing.T) {
 	cat := catalogueFixture(t)
-	srv := httptest.NewServer(http.StripPrefix("/agent-detection/", http.FileServer(http.Dir(cat))))
+	srv := httptest.NewTLSServer(http.StripPrefix("/agent-detection/", http.FileServer(http.Dir(cat))))
 	defer srv.Close()
 	data := t.TempDir()
 	res, err := Refresh(context.Background(), RefreshOptions{From: srv.URL + "/agent-detection/index.toml", Dir: data, Client: srv.Client()})
@@ -173,7 +173,7 @@ func TestLoadKeepsVendoredOverBadOrOlderData(t *testing.T) {
 	writeFiles(t, data, map[string]string{
 		"claude.toml":   manifestText("claude", "1.0", 1, ""),              // older than vendored: ignored
 		"codex.toml":    "id = \"codex\"\nversion = \"9999\"\n[[rules]]\n", // broken: a problem
-		"opencode.toml": manifestText("opencode", "9999.1", 1, ""),         // newer: used
+		"opencode.toml": manifestText("opencode", "2026.12.1.1", 1, ""),    // newer: used
 	})
 	s := Load(data)
 	if e := s.Lookup("claude"); e.From != FromVendored {
@@ -191,5 +191,62 @@ func TestLoadKeepsVendoredOverBadOrOlderData(t *testing.T) {
 	// The alias of the data copy still resolves to opencode.
 	if s.Lookup("open-code") != nil {
 		t.Errorf("the replacing manifest has no aliases, but open-code still resolves")
+	}
+}
+
+// TestRefreshPathTraversal: an id that is not a plain file name never writes outside the data
+// directory.
+func TestRefreshPathTraversal(t *testing.T) {
+	root := t.TempDir()
+	cat := filepath.Join(root, "cat")
+	data := filepath.Join(root, "data")
+	os.Mkdir(cat, 0o700)
+	writeFiles(t, cat, map[string]string{
+		"index.toml":   "schema_version = 1\n[[agents]]\nid = \"../escaped\"\npath = \"escaped.toml\"\n[[agents]]\nid = \"Upper\"\npath = \"upper.toml\"\n",
+		"escaped.toml": manifestText("../escaped", "1", 1, ""),
+		"upper.toml":   manifestText("Upper", "1", 1, ""),
+	})
+	res, err := Refresh(context.Background(), RefreshOptions{From: cat, Dir: data})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Changes) != 0 || len(res.Skipped) != 2 {
+		t.Fatalf("changes %+v skipped %+v", res.Changes, res.Skipped)
+	}
+	if _, err := os.Stat(filepath.Join(root, "escaped.toml")); !os.IsNotExist(err) {
+		t.Fatalf("a manifest escaped the data directory: %v", err)
+	}
+}
+
+// TestRefreshHTTPSOnly: plain http and a redirect from https to http are refused.
+func TestRefreshHTTPSOnly(t *testing.T) {
+	cat := catalogueFixture(t)
+	plain := httptest.NewServer(http.FileServer(http.Dir(cat)))
+	defer plain.Close()
+	if _, err := Refresh(context.Background(), RefreshOptions{From: plain.URL + "/index.toml", Dir: t.TempDir()}); err == nil {
+		t.Error("an http catalogue was accepted")
+	}
+	tls := httptest.NewTLSServer(http.RedirectHandler(plain.URL+"/index.toml", http.StatusFound))
+	defer tls.Close()
+	if _, err := Refresh(context.Background(), RefreshOptions{From: tls.URL + "/index.toml", Dir: t.TempDir(), Client: tls.Client()}); err == nil || !strings.Contains(err.Error(), "refusing a redirect") {
+		t.Errorf("a redirect to http was followed: %v", err)
+	}
+}
+
+// TestImplausibleVersion: a version dated far ahead cannot pin itself over later updates.
+func TestImplausibleVersion(t *testing.T) {
+	cat := t.TempDir()
+	writeFiles(t, cat, map[string]string{
+		"index.toml":  "schema_version = 1\n[[agents]]\nid = \"claude\"\npath = \"claude.toml\"\n",
+		"claude.toml": manifestText("claude", "9999.1.1.1", 3, ""),
+	})
+	data := t.TempDir()
+	res, err := Refresh(context.Background(), RefreshOptions{From: cat, Dir: data})
+	if err != nil || len(res.Changes) != 0 || len(res.Skipped) != 1 {
+		t.Fatalf("res %+v err %v", res, err)
+	}
+	writeFiles(t, data, map[string]string{"claude.toml": manifestText("claude", "9999.1.1.1", 3, "")})
+	if s := Load(data); s.Lookup("claude").From != FromVendored || len(s.Problems) != 1 {
+		t.Fatalf("a far-future data copy was used: %+v", s.Problems)
 	}
 }

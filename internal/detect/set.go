@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // vendored holds herdr's manifests as data, with their licence and source commit
@@ -95,6 +96,14 @@ func Load(dir string) *Set {
 		m, err := Parse(data)
 		if err != nil {
 			s.Problems = append(s.Problems, Problem{f, err.Error()})
+			continue
+		}
+		if err := plausibleVersion(m.Version, time.Now()); err != nil {
+			s.Problems = append(s.Problems, Problem{f, err.Error()})
+			continue
+		}
+		if filepath.Base(f) != m.ID+".toml" {
+			s.Problems = append(s.Problems, Problem{f, fmt.Sprintf("file name does not match manifest id %q", m.ID)})
 			continue
 		}
 		if cur := s.entries[m.ID]; cur != nil && CompareVersions(m.Version, cur.Manifest.Version) < 0 {

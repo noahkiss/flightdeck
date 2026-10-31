@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,14 +27,16 @@ const MaxManifestBytes = 256 << 10
 
 // RefreshOptions configure Refresh.
 type RefreshOptions struct {
-	// From is the catalogue: an http(s) URL of an index.toml, a local index.toml, or a local
+	// From is the catalogue: an https URL of an index.toml, a local index.toml, or a local
 	// directory holding one. Empty means DefaultCatalog. A local catalogue works offline.
+	// Plain http is refused, and so is a redirect to anything but https.
 	From string
 	// Dir is the data directory the new manifests go into. Load(Dir) gives the current set.
 	Dir string
 	// DryRun computes the changes and writes nothing.
 	DryRun bool
-	// Client fetches http(s) catalogues. Nil means a client with a 30 s timeout.
+	// Client fetches https catalogues. Nil means a client with a 30 s timeout. Refresh sets its
+	// redirect check on a copy, so a redirect never leaves https.
 	Client *http.Client
 }
 
@@ -120,7 +123,11 @@ func Refresh(ctx context.Context, opts RefreshOptions) (RefreshResult, error) {
 			res.Skipped = append(res.Skipped, Problem{p, err.Error()})
 			continue
 		}
-		if !strings.EqualFold(m.ID, id) {
+		if err := plausibleVersion(m.Version, time.Now()); err != nil {
+			res.Skipped = append(res.Skipped, Problem{p, err.Error()})
+			continue
+		}
+		if m.ID != id {
 			res.Skipped = append(res.Skipped, Problem{p, fmt.Sprintf("manifest id %q does not match catalogue id %q", m.ID, id)})
 			continue
 		}
@@ -149,11 +156,27 @@ func Refresh(ctx context.Context, opts RefreshOptions) (RefreshResult, error) {
 		return res, err
 	}
 	for _, ch := range res.Changes {
-		if err := writeAtomic(filepath.Join(opts.Dir, ch.ID+".toml"), ch.data); err != nil {
+		name := filepath.Join(opts.Dir, ch.ID+".toml")
+		if filepath.Dir(name) != filepath.Clean(opts.Dir) {
+			return res, fmt.Errorf("refresh: manifest id %q would write outside %s", ch.ID, opts.Dir)
+		}
+		if err := writeAtomic(name, ch.data); err != nil {
 			return res, fmt.Errorf("refresh: write %s: %w", ch.ID, err)
 		}
 	}
 	return res, nil
+}
+
+// plausibleVersion refuses a date-shaped version (first segment 1000 or more, as in 2026.10.11.1)
+// from after next year. Versions only ever rise, so one absurd version would otherwise outrank
+// every later vendored or fetched copy for good.
+func plausibleVersion(v string, now time.Time) error {
+	first, _, _ := strings.Cut(strings.TrimSpace(v), ".")
+	n, err := strconv.Atoi(first)
+	if err == nil && n >= 1000 && n > now.Year()+1 {
+		return fmt.Errorf("version %s is dated after %d; refusing it", v, now.Year()+1)
+	}
+	return nil
 }
 
 func orNone(v string) string {
@@ -180,14 +203,28 @@ type fetchFunc func(ctx context.Context, rel string) ([]byte, error)
 
 // fetcher returns a function that reads a file relative to the catalogue, and the index's name.
 func fetcher(from string, client *http.Client) (fetchFunc, string, error) {
-	if strings.HasPrefix(from, "https://") || strings.HasPrefix(from, "http://") {
+	if strings.Contains(from, "://") {
 		u, err := url.Parse(from)
 		if err != nil {
 			return nil, "", fmt.Errorf("refresh: catalogue URL: %w", err)
 		}
-		if client == nil {
-			client = &http.Client{Timeout: 30 * time.Second}
+		if u.Scheme != "https" {
+			return nil, "", fmt.Errorf("refresh: catalogue %s: only https URLs or local paths are allowed", from)
 		}
+		c := http.Client{Timeout: 30 * time.Second}
+		if client != nil {
+			c = *client
+		}
+		c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			if req.URL.Scheme != "https" {
+				return fmt.Errorf("refusing a redirect to %s", req.URL)
+			}
+			if len(via) >= 5 {
+				return errors.New("too many redirects")
+			}
+			return nil
+		}
+		client = &c
 		index := path.Base(u.Path)
 		base := *u
 		base.Path = path.Dir(u.Path) + "/"
