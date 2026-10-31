@@ -211,7 +211,7 @@ the phone, with QR pairing and pinned host keys.**
 ### 4.3 The phone
 
 9. **A P-256 key in the Secure Enclave**, used as an ordinary SSH key. It works only while the
-   device is unlocked. Face ID inside the app is optional and off by default (`app.md` 14.2).
+   device is unlocked. Face ID inside the app is optional and off by default (`app.md` 18.2).
 10. **QR pairing** (6.1) admits the phone's key to one hab's authorized-keys file. After pairing,
     the phone connects with plain key auth.
 11. **One QR per hab.** Introduction between habs stays an owner choice, off by default (6.2).

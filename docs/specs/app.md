@@ -3,8 +3,9 @@
 Status: draft for review. Part 6, study stage.
 
 This spec says how the Flightdeck app behaves on iPhone, iPad and Mac. Later Part 6 stages build
-from it: the status board, the chat view, the terminal view, the console, approvals, push and the
-Live Activity. It describes behaviour in our own words. It copies no code from the reference apps.
+from it: the status board, the chat view, the terminal view, the console, approvals, push, the
+Live Activity, voice mode, usage, widgets and notifications on the Watch. It describes behaviour
+in our own words. It copies no code from the reference apps.
 
 The app talks to habs only. What a hab serves is in `hab-logic-api.md`. How the app reaches a hab
 and proves who it is is in `transport.md`. What the agent is doing comes from the adapters in
@@ -33,15 +34,19 @@ of Apple platforms, not from a page opened for this spec. A device test must con
 4. [Chat view](#4-chat-view)
 5. [Terminal view](#5-terminal-view)
 6. [Console](#6-console)
-7. [Approvals (pending screens)](#7-approvals-pending-screens)
+7. [Approvals](#7-approvals)
 8. [Push](#8-push)
 9. [Live Activity](#9-live-activity)
 10. [Connection](#10-connection)
 11. [Layout per device](#11-layout-per-device)
 12. [Battery](#12-battery)
-13. [Calls the app needs from the hab](#13-calls-the-app-needs-from-the-hab)
-14. [Open questions](#14-open-questions)
-15. [Sources](#15-sources)
+13. [Voice mode](#13-voice-mode)
+14. [Usage](#14-usage)
+15. [Widgets](#15-widgets)
+16. [Notifications on Apple Watch](#16-notifications-on-apple-watch)
+17. [Calls the app needs from the hab](#17-calls-the-app-needs-from-the-hab)
+18. [Open questions](#18-open-questions)
+19. [Sources](#19-sources)
 
 ---
 
@@ -101,10 +106,19 @@ composer. What we leave: the embedded overlay networks (owner rule).
   Activity shows no approval buttons on a host whose key the phone lacks.
 - On a Mac host, the daemon can silence pushes while the Mac is unlocked (off by default). If the
   lock check fails, the push goes out, so an approval never disappears silently.
+- Its App Store screens add: an approval sheet with the command, project, host, model, context
+  percentage and an expiry countdown; a board grouped as needs you, working and done, with live
+  session cards and a connections list; a sidebar by project and branch; a marked-up screenshot
+  sent in chat; a plan checklist in chat; terminal dictation; a usage sheet with 5-hour, 7-day and
+  per-model windows, reset times and "alert me when free"; Home Screen usage widgets; a Watch app
+  with approvals, an inbox and usage. Its store text promises on-device voice recognition and SSH
+  keys in the Keychain behind Face ID.
 
 What we take: approvals on the banner and in the Live Activity, buttons withdrawn when answered
 elsewhere, no banner for a finished turn, one row per session, the tap-target setting, "never drop
-an approval silently". What we leave: a hosted server in the push path.
+an approval silently", and everything the App Store screens show (owner, 2026-10-31) except the
+Watch app. What we leave: a hosted server in the push path, Mosh, and a Watch app (we write banners
+for the Watch instead, 16).
 
 ### 1.4 rootshell
 
@@ -146,6 +160,8 @@ Its long-running command cards are the closest match.
 | Chat messages | The hab's transcript reader (capability `transcripts`) | A cache of recent pages only |
 | Terminal screens | Data streams (`hab-logic-api.md` 5) | Only while visible |
 | Layout, focus, theme, keyboard bar | The app | Yes, per device |
+| Usage readings | Each hab's adapters (14.1) | The latest reading per account, for widgets |
+| Attachments | The owner's photos and files (4.4) | No. The hab keeps the copy it received; the original stays where it was |
 | Device key | Made on first start | Secure Enclave (phone, iPad) or Keychain (Mac) |
 | Push tokens | APNs | Sent to each hab that has push set up |
 
@@ -185,11 +201,14 @@ focus is stored on a hab.
   list does not jump while the owner reads it.
 - **Grouping.** A switch groups rows by project or by hab. The order inside each group stays the
   same.
-- **A row shows:** session name, project, hab label, harness, state with its kind, time in that
-  state, and one line of context: the pending command for a permission, the question for a
-  question, else the last agent message.
+- **A row shows:** a title, one line of context, then project, model and hab label, with the
+  harness icon, the time in state and a state dot. The title is the pending request's title for a
+  permission (7.2), the question for a question, else the session name. The context line is the
+  pending command, the question's lead, or the last agent message ("Editing src/session/store.ts").
+- **Section labels.** The board labels its groups in plain words: Needs you (ranks 1 to 3),
+  Working, Done (rank 5), and Other.
 - **Seen.** Opening a session marks it seen. The hab turns `done` into `idle` when a client focuses
-  the pane (`harness-adapters.md`, States). The app reports focus (13).
+  the pane (`harness-adapters.md`, States). The app reports focus (17).
 - **Badge.** The app icon badge counts sessions that need you, across all online habs.
 - **Offline habs.** Their rows stay, dimmed, with "offline since" and the last known state. No
   action that needs the hab is offered.
@@ -213,6 +232,83 @@ Sources: Heeler README (status order, host filter); rootshell README (unread whe
 group by project); Moshi docs, hooks (one row per session); `hab-logic-api.md` 2.2, 3.5, 7.3, 7.9;
 `harness-adapters.md`, State event model.
 
+### 3.3 Session cards and connections
+
+On iPad and Mac the board has a second column beside the list.
+
+- **Session cards.** A row of cards for the sessions active most recently (default four). Each card
+  is a live, scaled preview of the session's pane through an observer stream (5.1), which never
+  takes size ownership. Under the preview: the session title and project. On the preview: the hab
+  label, and a badge for the route in use (local, LAN, VPN). Tap opens the session.
+- **Connections.** A list of paired habs: label, `user@endpoint`, and a dot for online or offline.
+  A count of online habs heads the list. Tap opens the hab: its projects, its endpoints, its
+  device list, and "Pair a device".
+- **New session.** A floating button starts a session: pick a hab, a project and a harness.
+- On iPhone the board is the list alone. Cards and connections live behind tabs in the top bar
+  (home, devices, network, settings).
+
+| Case | Behaviour |
+|---|---|
+| A card's hab goes offline | The card freezes on its last frame, dimmed, with "offline since" |
+| Low Power Mode or a hidden board | Cards stop their streams and show a still frame (12.1) |
+| More active sessions than cards | The row scrolls sideways. Streams run only for cards on screen |
+| A pane on the alternate screen (a full-screen program) | The card shows it as is |
+| A session with no pane output yet | The card shows the harness's name and "starting" |
+
+### 3.4 Context percentage
+
+- Each agent session reports how full its context window is, as a percentage, from its adapter
+  (`harness-adapters.md`). The hab sends it with the session's state.
+- It shows as a small bar with the number on: the session's sidebar row, the approval sheet and
+  lock-screen card (7.2), and the Live Activity.
+- The bar turns amber at 80 per cent and red at 95 per cent. A compaction resets it; the chat view
+  shows the compaction as a session event (4.1).
+
+| Case | Behaviour |
+|---|---|
+| The adapter cannot read token counts | No bar. Never a guessed number |
+| The model changed mid-session (a larger window) | The percentage uses the window of the model in use now |
+| A session with no agent | No bar |
+
+### 3.5 Sidebar
+
+On iPad and Mac, inside a session, a sidebar lists every session grouped by project.
+
+- **Project header:** project name, current branch, and how far it is ahead of or behind its
+  upstream ("main ↑2"). The hab reads this from the repository in the project's folder.
+- **Under each project:** its agent sessions (title, model, context percentage, state dot, time),
+  then its plain shells and consoles by name ("dev server", "logs").
+- Projects fold. The order inside follows the board's ranks.
+- On iPhone the same list opens as a sheet from the session's title.
+
+| Case | Behaviour |
+|---|---|
+| A project on two habs with different branches | Two headers, one per hab, each with its own branch |
+| A detached HEAD or no upstream | The header shows the short commit, and no ahead count |
+| A folder that is not a repository | The header shows the folder name only |
+
+### 3.6 Search
+
+- A search field heads the sidebar and the board. It filters as the owner types.
+- **First build:** it matches names the app already holds: projects, branches, session titles,
+  shells, habs, harnesses and models. It works offline, from the cache.
+- **Later:** full-text search over chat messages, run on each hab by its transcript reader
+  (`chat.search`, 17). Results show the message, its session and hab, and open the chat at it.
+
+| Case | Behaviour |
+|---|---|
+| An offline hab | Its cached names still match, dimmed |
+| No match | "No matches" and a hint to check the filter for project or hab |
+
+### 3.7 Usage footer
+
+The board's footer holds one bar per harness account in use: harness icon, name, and a bar for its
+tightest window. Tap opens the usage sheet (14).
+
+Sources: Moshi App Store screens (needs-you, working and done groups; session cards with live
+previews; connections list; sidebar by project and branch with shells; context percentage on
+rows; search field; usage bars in the footer); `hab-logic-api.md` 5, 6.4; `harness-adapters.md`.
+
 ---
 
 ## 4. Chat view
@@ -228,6 +324,7 @@ group by project); Moshi docs, hooks (one row per session); `hab-logic-api.md` 2
   done, error, denied). Body: input and output, collapsed by default. Reads and searches fold to one
   line. Edits show a diff. Shell commands show the exact command.
 - **Subagents** show as one card with their own nested messages, folded by default.
+- **Plans** render as a checklist (4.5), not as a tool card.
 - **Paging.** The view opens at the tail. Older messages load in pages as the owner scrolls up.
 - **Live updates.** New messages append while the session is visible. A running tool card updates
   in place.
@@ -236,7 +333,10 @@ group by project); Moshi docs, hooks (one row per session); `hab-logic-api.md` 2
 
 ### 4.2 The composer
 
-- The full system keyboard, with dictation and autocorrect. Multi-line text stays one message.
+- The full system keyboard, with autocorrect. Multi-line text stays one message.
+- **Controls:** an attach button (4.4), a button that opens the terminal view, a microphone for
+  dictation (13.4), and Send.
+- **Voice mode** opens from a long press on the microphone, or from the session's menu (13).
 - **Send follows the hab's input rules** (`harness-adapters.md`, Input delivery):
 
 | Pane state | What the owner sees |
@@ -268,6 +368,67 @@ Sources: Happy source, `packages/happy-app` (message kinds, tool cards, outgoing
 README (composer); `harness-adapters.md` (Input delivery, Edge cases, Rules 4); `hab-logic-api.md`
 3.4.
 
+### 4.4 Images and files
+
+The owner shows the agent something instead of describing it: a screenshot of a bug, a photo of a
+whiteboard, a log file.
+
+- **Attach.** The attach button offers: Photos, Camera, Files, and Paste. The share sheet from
+  another app ("Send to Flightdeck") lands in the same composer, after the owner picks a session.
+- **Mark up.** Before sending, an image opens in a markup view: draw, circle, arrow, text, crop.
+  The markup is drawn into the image the agent receives. The original stays on the device only.
+- **Preview.** Attachments sit above the text as thumbnails with a remove control. One message may
+  carry several.
+- **Send.** The app uploads each file to the session's hab over the authenticated connection
+  (`attachment.put`, 17). The hab writes it into the project's workspace, in a folder for
+  attachments that the hab excludes from version control with a local, untracked ignore rule. It
+  never edits a tracked ignore file.
+- **Handed to the harness.** The adapter delivers the message the way the harness accepts images:
+  as an image input when the harness has a structured input for one, else as the file path in the
+  message text, which every supported harness can read with its own file tools. Which path each
+  harness takes is the adapter's choice (`harness-adapters.md`, Input delivery).
+- **In the chat view** the attachment shows as a thumbnail on the owner's message. Tap opens it
+  full screen. The thumbnail comes from the hab's copy, so the chat view on another device shows it
+  too.
+- **Privacy.** The app strips location and camera metadata from photos before upload. A setting
+  keeps it, off by default.
+- **Clean-up.** The hab keeps attachments for a set time (default 30 days), then deletes them. A
+  file the agent moved or committed is no longer in the folder, so it is not touched.
+
+| Case | Behaviour |
+|---|---|
+| A file over the size limit (default 25 MB) | The app refuses it before upload and names the limit |
+| A large photo | The app downscales it to the longest side the harness accepts (default 2048 px), as PNG for screenshots and JPEG for photos. A setting sends the original |
+| The upload breaks off | The message stays "not sent" with a retry. The hab discards partial files |
+| The session is `working` | The file uploads at once; the message waits as "sends after this turn" (4.2) |
+| The harness accepts no images at all | The app warns before send. The path still goes in the text |
+| A name clash in the folder | The hab prefixes the time and a short id; it never overwrites |
+| The project is not a repository | The folder is still made; nothing to ignore |
+| The hab's disk is full | The hab refuses the upload with a clear error; nothing partial stays |
+| A file type the app cannot preview (an archive, a binary) | It sends as a file chip with name and size |
+
+### 4.5 Plan checklist
+
+- When the agent writes or updates a plan (Claude's task list tool, Codex's plan update), the chat
+  view draws it as a checklist card: one line per step, done steps ticked and struck through, the
+  step in progress marked.
+- A later update to the same plan changes the card in place, so the chat holds one live plan, not
+  a copy per update. Earlier versions fold under it.
+- The latest plan also shows as a small "3 of 5" chip in the session header. Tap scrolls to it.
+- The adapter maps each harness's plan record to one shape: steps with text and status (pending,
+  in progress, done).
+
+| Case | Behaviour |
+|---|---|
+| A harness with no plan record | No card; plans appear as the agent's text |
+| A plan with a step the agent dropped | The step leaves the card; the folded history keeps it |
+| Two plans in one turn (a subagent's plan) | The subagent's plan shows inside its subagent card |
+| A very long plan | The card shows the steps around the one in progress and "show all" |
+
+Sources: Moshi App Store screens ("Show it, don't describe it": a marked-up screenshot sent in chat;
+a plan checklist in chat); `harness-adapters.md` (Conversation, Input delivery); the
+`transcripts` capability in `hab-logic-api.md`.
+
 ---
 
 ## 5. Terminal view
@@ -288,6 +449,9 @@ README (composer); `harness-adapters.md` (Input delivery, Edge cases, Rules 4); 
 - **Keyboard bar.** Above the system keyboard: Esc, Tab, Ctrl, Alt, arrows, and keys the owner
   adds. Modifiers are sticky: one tap for one key, a double tap to lock. More rows open as a
   drawer. The bar is the owner's own, kept per device.
+- **Dictation.** A microphone key on the bar starts on-device dictation (13.4). A strip replaces the
+  bar while it listens: a level meter, "Dictating…", and a stop button. The text goes to the pane
+  as one bracketed paste when the owner stops. It never presses Enter on its own.
 - **Hardware keyboard.** On iPad and Mac, keys go straight to the pane. App shortcuts use Cmd only,
   so no terminal key is lost.
 - **Selection and links.** Long press selects. Detected links open in the browser.
@@ -350,27 +514,53 @@ plan (the hab finds prompt marks); OSC 133 marks as documented by terminal emula
 
 ---
 
-## 7. Approvals (pending screens)
+## 7. Approvals
 
-**Pending screens.** This section comes from Moshi's public docs and our adapter spec. The owner's
-five Moshi screens (lock-screen approval, Live Activity before and after an answer, Watch, inbox,
-turn complete) have not arrived. Stage 7 revises this section when they do. Items marked
-**(screens)** wait on them.
+This section comes from Moshi's public docs, nine screens from Moshi's App Store page, and our
+adapter spec. The screens show the approval sheet, the lock-screen card and Moshi's Watch app.
+We have no Watch app, so the Watch gets banners written for it (16). The screens do not show the
+Live Activity after an answer, so 7.5 keeps the behaviour from Moshi's docs.
 
 ### 7.1 Where an approval appears
 
 | Surface | Shows | Answers |
 |---|---|---|
 | Chat view | The request as a footer on its tool card: tool, exact command or file list, working directory | All choices the harness offers |
-| Status board | The row in rank 1 with the command | Allow, Deny |
-| Push banner | Session, hab, tool, the command (shortened to fit) | Allow, Deny; a text reply for questions |
+| Status board | The row in rank 1 with its title and command | Tap opens the approval sheet |
+| Approval sheet | Everything in 7.2 | Allow, Deny; "Open chat" for broader choices |
+| Push banner and lock screen | Project, model, context bar, title, the command (shortened to fit) | Allow, Deny; a text reply for questions |
 | Live Activity | The session's pending request | Allow, Deny |
-| Apple Watch | The mirrored banner | Allow, Deny |
+| Apple Watch | The mirrored banner, written for the Watch (16) | Approve, Deny; options for questions |
 
 "Allow for this session" and edit-wide choices appear only in the chat view. Broad choices need the
 full request on screen.
 
-### 7.2 Flow
+### 7.2 The approval sheet
+
+A sheet rises over the board when the owner taps a rank 1 row, a banner, or the Live Activity. It
+holds one request. Top to bottom:
+
+- **Header line:** harness, the request kind (permission, question, sign-in), and the session's
+  context bar with its percentage (3.4).
+- **Title:** a short question. It is the harness's own description of the call when the call has
+  one (Claude's shell tool carries a one-line description). Otherwise it is built from the tool:
+  "Run a command?", "Edit 3 files?". The app never asks a model to write the title.
+- **Facts line:** project, hab, model, and the time the request opened.
+- **The request:** the exact command in a monospaced block, or the file list with a diff link. It
+  never truncates in the sheet; a long command scrolls.
+- **Context line:** the agent's last message before the request, one or two lines, when the
+  transcript has one. It tells the owner why the agent asks.
+- **Expiry:** "Expires in 4m 12s", counting down (7.4).
+- **Buttons:** Deny and Allow, equal size, Allow on the right. A chat icon opens the session at the
+  request, where the broader choices live.
+
+After an answer the sheet closes and the row leaves rank 1. If the request resolves elsewhere while
+the sheet is open, the buttons turn off and the sheet says where it was answered.
+
+The lock-screen card holds the same facts in less room: project and model on the first line with
+the context bar, the title, then the command on one line in the accent colour, then Deny and Allow.
+
+### 7.3 Flow
 
 1. The adapter reports `blocked:permission` with a request id and the exact request
    (`harness-adapters.md`, Fields).
@@ -380,51 +570,76 @@ full request on screen.
 4. The hab checks that the request is still open and answers through the adapter
    (`harness-adapters.md`, Permission answers). A stale id is refused with `conflict`.
 5. The hab reports the resolution. Every client clears the request. The hab withdraws the banner
-   and the Live Activity buttons (7.3).
+   and the Live Activity buttons (7.5).
 6. If the adapter sees no resolution signal after a keystroke answer, the hab marks the pane
    "needs you in the terminal", and the app opens the terminal view on tap.
 
-### 7.3 Answered elsewhere
+### 7.4 Expiry
+
+- Each open request carries an `expires_at` from the hab. It is the earlier of two times: the
+  answer path's own deadline, and the hab's limit for remote answers.
+- **The answer path's deadline.** With a blocking permission hook, the hook gives up after its
+  timeout and the harness falls back to its own dialog (`harness-adapters.md`, open decisions).
+  After that, only a keystroke answer or the terminal can resolve it.
+- **The hab's limit.** A setting on the hab, default 60 minutes. A request older than this takes no
+  remote Allow. The owner must open the session and answer there. A stale approval is easy to
+  grant by habit, and the context may have changed.
+- When the countdown reaches zero, Allow and Deny turn off on every surface. The card says
+  "Expired: answer in the terminal" and opens the terminal view on tap. The hab refuses a late
+  answer with `conflict`.
+- When neither time applies (a keystroke answer path with no hab limit set), no countdown shows.
+- The countdown runs on the device from `expires_at`. The hab's clock decides; the app corrects for
+  the offset it measured on connect (3.2).
+
+### 7.5 Answered elsewhere
 
 - An answer on any client, or in the TUI itself, resolves the request everywhere.
 - The hab replaces the banner with a quiet one that says where it was answered (same collapse id,
-  passive level). It updates the Live Activity without buttons. **(screens)**: confirm what Moshi
-  shows after the answer.
+  passive level). It updates the Live Activity without buttons. Moshi's docs say its buttons go
+  away at once; the screens do not show the state after an answer.
 - A late tap on a withdrawn button reaches the hab with a closed id. The hab refuses it. The app
   shows "already answered on <client>".
 
-### 7.4 Authentication
+### 7.6 Authentication
 
 - A lock-screen Allow or Deny always needs the device unlocked (the action is marked "authentication
   required"). An Allow can run a command, so it never runs from a locked phone.
 - Face ID is a setting, off by default. When on, the app asks for Face ID before an approval from
-  the app, and before it opens. **(screens)**: Moshi's docs do not say whether its banner actions
-  ask for Face ID.
-- The Secure Enclave key needs the device unlocked to sign (`transport.md` 7.2). An unlocked device
-  is therefore enough for the background answer.
+  the app, and before it opens. Moshi's store text puts Face ID on its SSH keys, not on approvals.
+- The device key needs the device unlocked to sign (`transport.md` 7.2). An unlocked device is
+  therefore enough for the background answer.
+- A Watch answer needs the Watch on the wrist and unlocked (16.1).
 
-### 7.5 Questions
+### 7.7 Questions
 
 - `blocked:question` shows the question and its options as buttons, plus free text. On a banner,
   options become actions when they fit (up to the system limit); free text is a text reply action.
   Longer option sets open the app.
 
-### 7.6 Edge cases
+### 7.8 Edge cases
 
 | Case | Behaviour |
 |---|---|
 | The phone cannot reach the hab when the owner taps Allow | The background action fails within its time. The app posts a local notification: "Could not reach <hab>. Open to retry." It does not retry on its own |
-| The request is answered in the TUI before the push arrives | The hab sends the withdrawal (7.3). If the first push arrives late, its collapse id is already replaced |
+| The request is answered in the TUI before the push arrives | The hab sends the withdrawal (7.5). If the first push arrives late, its collapse id is already replaced |
 | Two habs ask at once | Two banners, two board rows. Each answer names its own hab and request |
-| The command is longer than the push allows | The banner shows the start and "open to see all". Allow from a banner needs the full command to fit within a set limit (default 256 characters); a longer command offers only "Open" |
+| The command is longer than the banner allows | The banner shows the start and "…". Approve from a banner needs the full command to fit the Watch body budget after safe shortening (16.1); a longer command offers only Deny and "Open" |
 | The hab restarts with a request open | The adapter rebuilds state (`harness-adapters.md`, Edge cases). The request id stays the harness's, so an answer still matches if the request is still open |
 | The adapter state comes from screen text only | No answer button appears. The row says "needs you in the terminal" (`harness-adapters.md`, Rule 2) |
 | Many approvals in a burst | One banner per request, grouped by session. The Live Activity shows the count and the oldest request |
 | Push not set up | Approvals appear in the app only, while it is open |
+| The request expires while the sheet is open | The buttons turn off at zero. The sheet says "Expired: answer in the terminal" and offers to open it |
+| The phone's clock is wrong | The countdown uses the offset from the hab's clock measured on connect. A banner shows the expiry as text from the hab, not a live timer |
+| The call has no description and an unknown tool | The title is "Allow <tool name>?". The request block shows the raw input |
+| The context percentage is unknown | The context bar is hidden, not shown as zero |
+| The agent's last message is very long | The context line shows its first two lines; the chat icon opens the rest |
+| A burst of approvals on the sheet | The sheet shows the oldest first, with "1 of 3". Answering moves to the next |
 
-Sources: Moshi docs, notifications, live-activity, apple-watch, hooks; Happy source (inline
-permission footer and its choices); `harness-adapters.md` (Permission answers, Rule 2, Fields);
-`transport.md` 7.2; platform facts in 1.5 *(gk)*.
+Sources: Moshi App Store screens (approval sheet with command, project, host, model, context
+percentage and expiry; lock-screen card; Watch approval); Moshi docs, notifications,
+live-activity, apple-watch, hooks; Happy source (inline permission footer and its
+choices); `harness-adapters.md` (Permission answers, Rule 2, Fields); `transport.md` 7.2;
+platform facts in 1.5 *(gk)*.
 
 ---
 
@@ -439,7 +654,7 @@ service.
 2. They put the key file path, key id, team id, the app's bundle id and the APNs environment in the
    hab's config file. The key file has owner-only permissions. Config holds a path, never the key.
 3. The app registers for push and gets a device token. It sends the token to each paired hab over
-   its authenticated connection, with the device id and the kinds it wants (13).
+   its authenticated connection, with the device id and the kinds it wants (17).
 4. Each hab sends pushes for its own sessions only. No hab relays another hab's events, so no
    push arrives twice.
 5. Revoking a device on a hab (`transport.md` 6.6) drops its push tokens too.
@@ -462,14 +677,14 @@ service.
 - **Never drop an approval silently.** If the hab cannot decide whether to hold a push, it sends it.
 - **Hold while watched.** If a client reports the session in focus in an active window within the
   last 60 s, the hab skips the banner for that session. The Live Activity still updates. (Open
-  question 14.4.)
+  question 18.4.)
 - **Collapse.** Each request uses its request id as the collapse id. A later push for the same
   request replaces the earlier one.
 - **Small payloads.** A push carries the hab, session, pane, state, request id and a short text. The
   full request loads when the app opens. A push stays under the APNs size limit.
 - **Privacy.** A push passes through Apple. In the first build its short text is plain. A setting
   "show commands in notifications" (default on) can hide the text and show only "approval needed".
-  Sealing payloads end to end is a plan decision for later (14.9).
+  Sealing payloads end to end is a plan decision for later (18.9).
 
 ### 8.4 Not set up
 
@@ -486,7 +701,7 @@ service.
 | APNs rate-limits | The hab backs off. Approvals keep priority over Live Activity updates |
 | The hab host is asleep or offline | No push. Nothing can push for a host that is not running |
 | The owner has a phone and a Mac | Both register. The hold-while-watched rule (8.3) applies per session, not per device |
-| The app is a TestFlight build signed by another team | The user's key cannot push to it (1.5). See 14.3 |
+| The app is a TestFlight build signed by another team | The user's key cannot push to it (1.5). See 18.3 |
 | A sandbox build and a production build | Each token is tagged with its environment. The hab uses the matching APNs host |
 
 Sources: owner decision (each user brings their own APNs setup; fail gracefully without it); Moshi
@@ -506,10 +721,14 @@ in 1.5 *(gk)*.
   Only that hab updates it, so two habs never overwrite each other.
 - **Start.** The app starts the activity when the owner sends a message and leaves the app. A hab
   may start one by push-to-start when a session needs the owner and no activity runs.
-- **Content.** Session name, hab, harness, state, time in state, and the latest event (tool
-  running, approval needed, finished). Two styles: Detailed (with the last agent line) and Compact.
+- **Content.** Session name, hab, harness, state, time in state, the context bar (3.4), and the
+  latest event (tool running, approval needed, finished). Two styles: Detailed (with the last agent
+  line) and Compact.
+- **Dynamic Island.** Expanded: the context bar and percentage, the model and project, the state in
+  one word ("Working"), and one line of what it does ("Refactoring the session store · 6 files").
+  Compact: the harness icon and the context percentage.
 - **Buttons.** In `blocked:permission`, Allow and Deny. They go away as soon as the request is
-  resolved anywhere (7.3).
+  resolved anywhere (7.5).
 - **Finish.** On `done` or `error` the activity shows the final state. No banner for `done` (8.2).
   It ends after about ten minutes, or when the owner opens the session.
 - **Other sessions.** While one session is tracked, others that need the owner raise banners. The
@@ -558,7 +777,7 @@ The connection follows `transport.md`. This section says what the app does.
   hosts it uses the system sshd with the user's keys, or pairs as the phone does.
 - **Before the embedded server is on.** A hab without the embedded SSH server cannot pair. The app
   offers a fallback: it shows its public key to copy, and the owner adds it to the system sshd's
-  authorized keys on that host. The app then runs `gff-hab connect` over SSH. (Open question 14.8.)
+  authorized keys on that host. The app then runs `gff-hab connect` over SSH. (Open question 18.8.)
 
 ### 10.2 Reconnect
 
@@ -576,7 +795,7 @@ The connection follows `transport.md`. This section says what the app does.
 |---|---|
 | The hab presents a different host key | The connection fails. The app shows both fingerprints and says to re-pair or accept on the hab. It never accepts on its own |
 | The phone was revoked | Authentication fails. The app marks the hab "this device was removed" and offers to pair again |
-| Away from home with no VPN | Habs on LAN addresses show offline. Push still arrives (APNs needs no route to the hab), but a lock-screen answer fails (7.6) |
+| Away from home with no VPN | Habs on LAN addresses show offline. Push still arrives (APNs needs no route to the hab), but a lock-screen answer fails (7.8) |
 | The pairing token expired | The hab refuses. The app says "run `gff-hab pair` again" |
 | The revision does not fit | The app shows which side to update (`hab-logic-api.md` 7.3) |
 | Many visible panes over the system sshd | Past nine panes, the app opens a second SSH connection (`transport.md` 7.6) |
@@ -640,8 +859,11 @@ Sources: the task (chat first on the phone, about 50/50 on larger screens); `hab
 - **Background: disconnect.** When the app leaves the foreground, it closes every connection
   within a few seconds, cleanly, so the hab ends size ownership at once instead of after 45 s.
 - **No background sockets, no background fetch, no silent-push wakes for updates.** Push is the only
-  wake path. The one background job is a notification action (Allow, Deny, Reply), which connects,
-  answers and disconnects.
+  wake path. The background jobs are a notification action (Allow, Deny, Reply, from the phone or
+  the Watch), which connects, answers and disconnects, and the notification service extension,
+  which updates the widget snapshot (15.1) and opens no connection.
+- **One exception: voice mode** keeps its one connection while its view is open, even with the
+  screen locked (13.1).
 - **Foreground: reconnect at once**, with the reconnect token if within 60 s.
 - **Low Power Mode:** thumbnails off, chat `working` updates coalesced to one per second.
 - **Mac app:** stays connected while any window is open. When every window is closed, it
@@ -655,14 +877,297 @@ Sources: the task (chat first on the phone, about 50/50 on larger screens); `hab
 | The app returns after an hour | New client id; fresh snapshot; data streams resume by offset or snapshot |
 | A slow cellular link | Events have their own 8 MiB backlog limit; data streams have credit. A slow terminal never stalls the board |
 | A Live Activity with no push | It ends when the app is suspended (9.2), so the app keeps no connection alive for it |
-| A notification action takes too long | iOS ends it. The app posts the local failure notice (7.6) |
+| A notification action takes too long | iOS ends it. The app posts the local failure notice (7.8) |
 
 Sources: the task (one event stream per hab while visible, disconnect in the background, push as
 the only wake path); `hab-logic-api.md` 3.5, 3.7, 5.7; platform facts in 1.5 *(gk)*.
 
 ---
 
-## 13. Calls the app needs from the hab
+## 13. Voice mode
+
+A hands-free conversation with one session, like the voice modes of the Claude and ChatGPT apps.
+The owner talks; the agent's reply is read aloud. It is part of the app, not Siri: no Siri intent,
+no wake word, no system assistant in the path.
+
+### 13.1 Behaviour
+
+- **Open.** One tap on the voice button in the session header, or a long press on the composer's
+  microphone. A full-screen view opens over the session: a large level meter, the session title,
+  hab and state, the live transcript of what the owner says, and three controls: end, mute the
+  microphone, and switch to the keyboard.
+- **The loop.**
+  1. **Listen.** On-device speech-to-text runs while the owner speaks. The words appear as they
+     are heard.
+  2. **Send.** A pause (default 1.2 s of silence) or a tap ends the turn. The text goes to the
+     session as an ordinary message (`session.send`, 17), under the input rules of 4.2. With
+     "confirm before send" on (off by default), the owner says "send" or taps.
+  3. **Wait.** While the agent works, the view shows the state and the latest tool line. A soft
+     tone repeats every so often (default 20 s), so the owner knows it is still running. Nothing
+     is read aloud while it works.
+  4. **Speak.** When the turn ends (`done`, `idle` or `blocked`), the app reads the reply aloud
+     (13.2), then listens again.
+- **Barge-in.** The microphone stays open while the app speaks, with the system's echo
+  cancellation. When the owner starts to talk, speech stops at once and a new turn starts. A tap
+  anywhere also stops speech.
+- **Spoken commands.** A short fixed set, matched only when the whole utterance is the command:
+  "stop" (interrupt the turn, as the Stop button), "repeat", "allow" or "approve", "deny", and
+  "end voice". Anything else is a message to the agent. A setting turns spoken commands off.
+- **One session.** Voice mode is bound to the session it opened on. Another session that needs the
+  owner plays a distinct chime and shows a banner; voice mode does not read it.
+- **The screen locks.** Voice mode keeps running while its view is open, the screen locks or the
+  app goes to the background: it holds the audio session and the one connection to the session's
+  hab. It ends after 10 minutes with no speech and no turn running, or when the owner ends it. This
+  is the one exception to the background rule in 12.1 (open question 18.11).
+- **Audio routes.** Speaker, wired and Bluetooth headsets. A route change pauses listening for a
+  moment, then carries on.
+
+### 13.2 What is read aloud
+
+- The final agent text of the turn, not tool calls and not tool output.
+- The app makes it speakable: a code block becomes "a code block, shown on screen"; a table becomes
+  "a table"; a file path becomes its file name; a link becomes its site name. Markdown marks are
+  dropped.
+- It is capped (default about 45 seconds of speech). Past the cap the app says "the rest is in the
+  chat" and stops.
+- A turn that ends with no text says "Done." A turn that ends in `error` says "The turn stopped"
+  and the first line of the error.
+- Whether a conversation layer writes a better spoken reply is a choice for `voice.md` (13.5).
+
+### 13.3 Approvals and questions by voice
+
+- When the session reaches `blocked:permission`, the app reads the request: the title (7.2), then
+  the command in a speakable form ("wrangler deploy, dash dash env prod"). It then asks "Allow or
+  deny?" and shows the approval sheet in large type.
+- It listens for the answer only after it has finished asking, so its own voice cannot answer. The
+  answer must be a clear match: allow, approve or yes; deny or no. Anything else, or a low-confidence
+  result, makes it ask once more, then wait for a tap.
+- It says what it did: "Allowed" or "Denied".
+- Voice Allow follows the same limits as a banner Allow (7.8): a command longer than the limit, or
+  a broad choice, can be denied by voice but allowed only by tap. Expiry applies (7.4). With the
+  Face ID setting on, a voice Allow asks for Face ID.
+- `blocked:question` reads the question and numbers its options. The owner says a number, an
+  option, or a free answer.
+
+### 13.4 Dictation
+
+- A microphone in the chat composer and on the terminal keyboard bar (5.1) starts dictation: the
+  same on-device speech-to-text, writing into the composer or the pane.
+- In the composer, words appear as heard and stay editable; the owner sends.
+- In the terminal, the text goes to the pane as one paste when the owner stops, without Enter.
+- The language follows the system; a setting picks another.
+
+### 13.5 Models and providers
+
+- This section describes what the owner experiences. The speech-to-text and text-to-speech models,
+  and whether a conversation layer sits between the voice and the agent, are chosen in
+  `docs/specs/voice.md` (a separate study, not yet written).
+- The owner's rule stands for that study: speech recognition runs on the device, with no cloud
+  fallback.
+- Audio is never stored. Only the text of a turn goes to the hab, the same as a typed message.
+
+### 13.6 Edge cases
+
+| Case | Behaviour |
+|---|---|
+| No on-device model for the language | Voice mode and dictation stay off, with "Download <language> for on-device dictation" and a link to the setting. Never a cloud fallback |
+| Microphone or speech permission denied | The voice button explains and links to Settings |
+| A phone call or alarm interrupts | Listening and speech pause. After the interruption, voice mode resumes listening; a running turn is not touched |
+| The hab goes offline mid-turn | The view says "lost <hab>" and keeps trying (10.2). It reads nothing until it reconnects and the turn's end is known |
+| The owner speaks while the agent works | The message waits as "sends after this turn" (4.2). The app says "queued" |
+| A noisy room keeps triggering barge-in | A setting raises the barge-in threshold, or turns barge-in off so only a tap stops speech |
+| A misheard turn | The live transcript shows it before send. "Confirm before send" catches it; "stop" interrupts the agent |
+| The reply is in another language than the voice | The app picks a system voice for the reply's language when one is installed |
+| The owner says "stop" meaning a word to the agent | With spoken commands on, a lone "stop" is the command. Longer sentences go to the agent |
+| The session has no chat reader | Voice mode is off for that session; the terminal view's dictation still works |
+| A request expires while being read | The app says "That request expired" and shows the terminal option |
+
+Sources: owner decision 2026-10-31 (voice mode like the Claude and ChatGPT apps, not Siri,
+on-device only); Moshi App Store screens (dictation strip in the terminal) and store text
+(voice to terminal with on-device recognition); voice modes of the Claude and ChatGPT apps,
+general behaviour *(gk)*. Model and provider choices: `voice.md`.
+
+---
+
+## 14. Usage
+
+The owner sees each harness account's usage limits before hitting them.
+
+### 14.1 Data
+
+- Each adapter reports usage for the account its harness uses: an account key, a label (the plan
+  name, such as "Max 5x" or "Plus"), the harness, and a list of windows. A window has a name ("5h",
+  "7d", or a model name), a used percentage, a reset time, and when it was read.
+- The account key is stable and not secret: a hash the adapter makes from an account or
+  organisation id the harness exposes. With no such id, the key is the hab plus the harness.
+- **Documented interfaces only.** The adapter reads usage from what the harness already gives it:
+  hook payloads, status-line input, transcript or rollout records, or the harness's own server
+  protocol. Examples to confirm in Part 4 *(gk)*: Claude Code's status-line input carries its
+  rate-limit windows in recent versions; Codex's rollout token-count events carry its primary and
+  secondary windows; opencode reports none. The adapter never reads credential files and never
+  calls a private usage endpoint with the user's token.
+- The hab sends usage with its state and on change (`usage.list`, `usage.updated`, 17).
+- The app merges readings from every hab by account key. The newest reading wins. The card says
+  which hab it came from and how old it is.
+
+### 14.2 The usage sheet
+
+- Opens from the footer bars (3.7), a widget, or Settings.
+- One card per account: harness icon, plan label, harness and hab, and the age of the reading.
+- One row per window: name, a bar, the used percentage, and the time to reset ("1h 58m",
+  "4d 23h").
+- **Pace marker.** A tick on each bar shows where usage would be if spent evenly over the window:
+  the share of the window already gone. Left of the tick is under pace; right is over.
+- **Status line** under the rows: "5h limit reached · resets in 1h 58m", "Over pace on 7d", or "On
+  pace".
+- **Alert me when free.** When a window is at 100 per cent, a button "Alert me when 5h is free"
+  appears (14.4).
+
+### 14.3 Warnings
+
+- At set thresholds per window (default 80 and 95 per cent), the app shows a banner while open.
+- With push set up, the hab whose reading crossed a threshold sends a passive push. The collapse id
+  is the account key, the window and its reset time, so two habs that see the same account
+  collapse into one notification on the device.
+- A per-device setting turns usage warnings off, or changes the thresholds.
+
+### 14.4 Alert me when free
+
+- The app schedules a local notification at the window's reset time. It needs no hab, no
+  connection and no push.
+- When a newer reading moves the reset time, the app moves the notification. When a reading shows
+  the window is no longer full, it cancels it.
+- The notification says "Claude 5h window has reset" and opens the usage sheet.
+
+### 14.5 Edge cases
+
+| Case | Behaviour |
+|---|---|
+| A stale reading (older than the window, or than an hour) | Shown grey with "as of <time>" |
+| The reset time passed with no new reading | The row says "reset at <time>; no reading since" and the bar shows empty, dashed |
+| A harness reports a percentage but no reset time | The row shows the percentage only; no "alert me" button |
+| An API-key account with no windows | The card says "No limits reported" |
+| Two accounts on one harness (work and personal) | Two cards, two footer bars |
+| The same account on two habs with no account id | Two cards, each labelled by hab |
+| A reading above 100 per cent | Shown as 100 per cent and "limit reached" |
+| The phone's clock is wrong | Reset times come from the hab as absolute times; the app applies the offset measured on connect |
+| The harness changes its format | The adapter marks usage degraded; the card says "usage unavailable", never a wrong number |
+
+Sources: Moshi App Store screens (usage sheet with 5h, 7d and per-model windows, reset times, a pace
+marker, "alert me when free"; usage bars in the footer; Home Screen widgets; Watch usage, not
+taken: no Watch app);
+`harness-adapters.md` (Conversation and hook data); owner decision 2026-10-31 (usage from adapters,
+never from private files).
+
+---
+
+## 15. Widgets
+
+### 15.1 Behaviour
+
+| Widget | Sizes | Shows |
+|---|---|---|
+| Usage | Small, medium | Small: one account as a ring with the used percentage, the window name, the reset countdown, and "Limit reached" or "On pace". Medium: two accounts side by side |
+| Needs you | Small, medium | Small: the count and the top item's title. Medium: the top three rows with project and time |
+| Lock Screen | Circular, rectangular | Circular: a gauge for the tightest usage window. Rectangular: the needs-you count and the top title |
+
+- **Data path.** Widgets never connect to a hab and hold no key. The app writes a small snapshot
+  (needs-you rows, usage readings, context percentages) into the app group's shared storage
+  whenever it has fresh data, and asks the system to reload the widgets.
+- **While the app is suspended.** When push is set up, the app's notification service extension
+  updates the snapshot from each push it handles (an approval adds a needs-you row; a withdrawal
+  removes it) and asks for a reload *(gk)*. The app never uses silent pushes to refresh widgets
+  (12.1).
+- **Countdowns** use the system's self-updating timer text, so a reset countdown ticks with no
+  reload *(gk)*.
+- **Configuration.** The owner picks which account a usage widget shows.
+- **Tap** opens the usage sheet or the session.
+- The Mac app offers the same widgets.
+
+### 15.2 Edge cases
+
+| Case | Behaviour |
+|---|---|
+| The snapshot is older than an hour | The widget shows "as of <time>" |
+| No snapshot yet | "Open Flightdeck" |
+| A Lock Screen widget on a locked phone | It shows counts and titles only, never a command. A setting hides titles too |
+| The widget's account no longer reports | It shows the last reading greyed and "no recent reading" |
+| The system throttles reloads | The widget may lag. Countdown text still ticks |
+
+Sources: Moshi App Store screens (Home Screen usage widgets with ring, percentage, reset countdown,
+"Limit reached" and "On pace"); WidgetKit, app groups and notification service extensions as
+documented by Apple *(gk)*.
+
+---
+
+## 16. Notifications on Apple Watch
+
+There is no Watch app (owner decision, 2026-10-31). Every notification works in full from its
+mirrored banner on a paired Watch. The hab writes each one for the Watch's small screen first; the
+phone shows the same words.
+
+### 16.1 Rules
+
+- **Most important first.** The title says what the agent wants or what happened. The subtitle
+  says where: project and hab. The body adds only what the title could not hold.
+- **Nothing cut off.** The hab fits each field to its word budget (16.2) itself. It shortens on
+  word boundaries and marks a cut with "…". It never cuts inside a word, a flag or a file name, and
+  never leaves the system to clip a line.
+- **Plain words.** No Markdown, no emoji, no harness jargon. The project's name, not its path. The
+  hab's label, not its address. Labels longer than 16 characters are refused at setup.
+- **Shortening a command.** Keep the program, its subcommand and the flags with their values. Drop,
+  in this order: a leading change of directory, environment assignments, the directory part of
+  paths inside the project, then the middle of long quoted strings. The key part stays visible:
+  "wrangler deploy --env prod", not "cd /srv/app && NODE_ENV=… wrangler…".
+- **Approve only what is shown.** The banner offers Approve only when the full command, after the
+  safe drops above, fits the body budget. Otherwise it offers Deny and "Open on iPhone". This
+  replaces the 256-character limit as the banner rule (7.8).
+- **Times as clock times.** A banner cannot count down. The push carries `expires_at`; the phone's
+  notification service extension writes it as a local clock time, "Expires 14:05", before display
+  *(gk)*.
+- **Actions.** Approve and Deny need authentication: on the Watch, that means on the wrist and
+  unlocked *(gk)*. The action runs the phone app's handler in the background, as for a lock-screen
+  answer (7.3).
+- **"Show commands in notifications" off** (8.3): the title becomes "Approval needed", the body
+  the project and hab only, and Approve is not offered from the banner.
+
+### 16.2 Word budgets
+
+Budgets are maximums. The hab counts words and characters; it keeps to both.
+
+| Kind | Title | Subtitle | Body | Actions |
+|---|---|---|---|---|
+| Permission | 4 words, 28 chars: verb and object, "Run wrangler deploy?", "Edit sign-in.ts?", "Write 3 files?" | 4 words: "web-app · <hab>" | 16 words, 100 chars: the shortened command or file list, then "Expires 14:05" | Approve, Deny (or Deny, Open on iPhone) |
+| Question | 8 words, 50 chars: the question, shortened | 4 words: project · hab | 16 words: the options, numbered, "1 Clerk · 2 Auth.js" | Up to three options as actions, plus Reply (dictation or Scribble on the Watch). More than three: the first two, then Open on iPhone |
+| Sign-in needed | 3 words: "Sign-in needed" | 4 words: project · hab | 10 words: "<harness> needs you to sign in on <hab>." | Open on iPhone |
+| Error | 4 words: "Turn stopped: <project>" | 4 words: hab · harness | 15 words: the first line of the error | Open on iPhone |
+| Done (when on) | 5 words: "Done: <session title>" | 4 words: project · hab | 15 words: the first sentence of the last agent message | None |
+| Answered elsewhere | 4 words: "Answered on <client>" | 4 words: project · hab | 8 words: "Allowed: wrangler deploy" or "Denied: …" | None |
+| Usage warning | 5 words: "Claude 5h at 90%" | 3 words: the plan label | 6 words: "Resets in 1h 58m" | None |
+| Usage free | 5 words: "Claude 5h window reset" | 3 words: the plan label | None | None |
+| Console command finished | 5 words: "<command> finished" | 4 words: project · hab | 6 words: "Exit 0 · 3m 12s" | None |
+| Could not reach | 4 words: "Could not reach <hab>" | None | 6 words: "Open on iPhone to retry." | None |
+
+### 16.3 Edge cases
+
+| Case | Behaviour |
+|---|---|
+| The command does not fit after safe drops | Body shows its start and "…"; actions are Deny and Open on iPhone |
+| The phone is out of reach of the Watch | The Watch shows the notification only if it was already delivered; an action there fails, and the phone posts "Could not reach" when it next runs |
+| The phone cannot reach the hab | The phone posts the "Could not reach" notification (7.8), which the Watch shows |
+| The request expires before the tap | The hab refuses it with `conflict`; the phone posts "Expired: answer in the terminal" |
+| The request was answered elsewhere | The replacement push (7.5) takes the same collapse id, so the Watch shows "Answered on <client>" |
+| A project or session name longer than its share of the budget | The hab shortens it on a word boundary with "…"; the command keeps its share first |
+| A language with long words | Character budgets win over word budgets |
+
+Sources: owner decision 2026-10-31 (no Watch app; notifications designed for the Watch); Moshi App
+Store screens (Watch approval: project and model under the title, the command, Approve and Deny);
+Moshi docs, apple-watch and notifications; mirrored notifications and their actions on watchOS
+*(gk)*.
+
+---
+
+## 17. Calls the app needs from the hab
 
 These do not exist yet in `hab-logic-api.md`. Part 2 and Part 6 stage 7 add them. Names are
 proposals.
@@ -678,14 +1183,30 @@ proposals.
 | `session.interrupt {session}` | Stop the current turn through the adapter (the chat view's Stop button) |
 | `chat.page {session, before?, limit}` | Read a page of chat messages from the transcript reader |
 | events for chat | Chat messages appended or updated while subscribed |
+| `session.send {session, text, attachments?, origin}` | Send a message through the adapter under the input rules of 4.2. `attachments` lists ids from `attachment.put`. `origin` is typed, dictated or voice, for the hab's log only |
+| `attachment.put {session, name, type, size, sha256}` | Start an upload (4.4). The bytes follow on their own channel of the same SSH connection. Returns `{id, path}` once the hash matches; refuses a file over the hab's limit |
+| `attachment.get {id, thumbnail?}` | Fetch an attachment or its thumbnail, for the chat view on any device |
+| event `session.turn_end {session, final_message?}` | The turn ended; names the final agent message. Voice mode reads it aloud (13.2) |
+| session fields `title`, `model`, `context_pct` | The row's title, the model in use, and how full the context window is (3.4). `context_pct` is absent when unknown |
+| request fields `title`, `description?`, `context_line?`, `expires_at?` | What the approval sheet and the banner show (7.2, 7.4, 16.2) |
+| chat message kind `plan` | Steps with text and status, one live plan per session (4.5) |
+| project fields `branch`, `ahead`, `behind`, `head` | The sidebar's project header (3.5) |
+| `usage.list {}` and event `usage.updated` | Usage readings per account: key, label, harness, windows with used percentage, reset time and read time (14.1) |
+| `push.register` kind `usage` | Opt in to usage warnings by push (14.3) |
+| `approval.answer` field `via` | Where the answer came from (app, banner, Watch banner, voice), for the hab's log |
+| `chat.search {query, limit}` (later) | Full-text search over chat messages on this hab (3.6) |
+
+Nothing new is needed for the Watch: it answers through the phone's notification actions (16).
+Voice mode needs no voice call: speech becomes text on the device and goes through
+`session.send`.
 
 ---
 
-## 14. Open questions
+## 18. Open questions
 
 Each question has options and a recommendation. All are **Decision: open** for the owner.
 
-### 14.1 Live Activity across several habs
+### 18.1 Live Activity across several habs
 
 | Option | For | Against |
 |---|---|---|
@@ -695,7 +1216,7 @@ Each question has options and a recommendation. All are **Decision: open** for t
 
 Recommendation: **A.** It works without a hub and matches the best reference.
 
-### 14.2 Face ID and the device key
+### 18.2 Face ID and the device key
 
 `transport.md` 4.3 says the phone's key is "gated by Face ID or the passcode". The owner decided
 Face ID is optional and off by default.
@@ -705,7 +1226,7 @@ need biometrics. The Face ID setting, when on, gates the app and in-app answers.
 always need unlock. Decided (coordinator, following the owner's Face ID decision): `transport.md`
 4.3, 7.2 and 7.3 now say the key is usable only while the device is unlocked.
 
-### 14.3 Bring your own APNs key versus who signs the build
+### 18.3 Bring your own APNs key versus who signs the build
 
 An APNs key pushes only to apps of its own team. The owner's TestFlight and Developer ID builds are
 signed by the owner's team, so another user's key cannot push to them.
@@ -719,18 +1240,18 @@ Recommendation: **A, with B as its consequence.** Document plainly in the push s
 needs a build signed by the same team as the key. The app works without push, so the owner's builds
 still serve others for live use.
 
-### 14.4 Hold banners while watched
+### 18.4 Hold banners while watched
 
 Recommendation: hold the banner when any client has the session in focus in an active window
 within the last 60 s. Never hold an approval when the focus report is older than that. Moshi's
 equivalent is off by default; ours is on because it keys on the session, not the whole machine.
 
-### 14.5 A banner for `done`
+### 18.5 A banner for `done`
 
 Recommendation: off by default. The Live Activity shows it. A per-device setting turns it on, as a
 passive banner.
 
-### 14.6 How "answered elsewhere" withdraws a banner
+### 18.6 How "answered elsewhere" withdraws a banner
 
 | Option | For | Against |
 |---|---|---|
@@ -739,36 +1260,58 @@ passive banner.
 
 Recommendation: **A**, plus B where iOS allows. Confirm against the owner's Moshi screens (7).
 
-### 14.7 A lock-screen answer when the hab is unreachable
+### 18.7 A lock-screen answer when the hab is unreachable
 
 Recommendation: fail fast, post a local "could not reach" notice, never retry on its own. A stale
 retry could approve a command the owner no longer wants.
 
-### 14.8 Connecting before the embedded SSH server exists
+### 18.8 Connecting before the embedded SSH server exists
 
 Recommendation: support the fallback in Part 6 stage 4. The app shows its public key; the owner
 adds it to the host's authorized keys by hand. This needs no new listener, and it is the path
 `transport.md` 4.1 already opens. QR pairing replaces it once the embedded server is enabled.
 
-### 14.9 Sealed push payloads
+### 18.9 Sealed push payloads
 
 The plan already calls a `/consensus` on this. Recommendation for the first release: plain short
 text through APNs, the "show commands in notifications" setting, and a payload shape that leaves
 room for a sealed body later.
 
-### 14.10 Apple Watch
+### 18.10 Apple Watch
 
-Recommendation: mirrored notifications first (Allow and Deny work on the wrist with no Watch app).
-A native Watch app with an inbox is a later stage.
+Decided (owner, 2026-10-31): no Watch app. Every notification works in full from its mirrored
+banner, written for the Watch first (16).
+
+### 18.11 Voice mode with the screen locked
+
+| Option | For | Against |
+|---|---|---|
+| A. Voice mode keeps running while its view is open, screen locked or not | Hands-free in a pocket, as the Claude and ChatGPT apps do | One live connection and the audio session in the background; battery |
+| B. Voice mode ends when the screen locks | Keeps the background rule in 12.1 whole | Not hands-free: the phone must stay awake and in hand |
+
+Recommendation: **A**, ending after 10 minutes with no speech and no turn running. It is the one
+exception to 12.1, and it lasts only while the owner chose voice mode.
+
+### 18.12 Where attachments live
+
+| Option | For | Against |
+|---|---|---|
+| A. A folder inside the project, excluded with a local, untracked ignore rule | Every harness can read it with no extra permission prompt; the agent can move it into the project | A folder in the owner's tree; must never be committed by accident |
+| B. The hab's state directory, outside the project | Nothing in the project | Harnesses may ask permission to read outside the project, which breaks the flow from a phone |
+
+Recommendation: **A**, as 4.4 says. The hab adds the ignore rule to the repository's local exclude
+file, never to a tracked file, and clears old files after 30 days.
 
 ---
 
-## 15. Sources
+## 19. Sources
 
 Opened while writing this spec, 2026-10-31.
 
 - Moshi docs: https://getmoshi.app/docs/live-activity, https://getmoshi.app/docs/notifications,
   https://getmoshi.app/docs/apple-watch, https://getmoshi.app/docs/hooks
+- Moshi's App Store page: nine screens and the store description, seen as screenshots the owner
+  sent. The example hosts and projects in them are not reproduced here.
 - Happy repository (MIT): https://github.com/slopus/happy, app source in `packages/happy-app`
   (message view, tool view, permission footer); https://happy.engineering/docs/how-it-works
 - Heeler repository (Apache-2.0): https://github.com/ZingerLittleBee/Heeler (README)
@@ -776,7 +1319,8 @@ Opened while writing this spec, 2026-10-31.
 - Our specs: `docs/specs/transport.md`, `docs/specs/hab-logic-api.md`,
   `docs/specs/harness-adapters.md`
 
-Not opened: Apple's ActivityKit, UserNotifications and APNs pages. Facts marked *(gk)* need a check
+Not opened: Apple's ActivityKit, UserNotifications, APNs, WidgetKit, Speech and watchOS
+notification pages. Facts marked *(gk)* need a check
 against them, or a device test, in stage 7.
 
 Internal inputs: the project's planning notes and research reports on native apps and

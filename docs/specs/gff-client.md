@@ -356,14 +356,14 @@ master plan owner decisions (a running agent stays on its host).
   observer stream (`observe: true`). An observer never resizes and never takes ownership
   (`hab-logic-api.md` 6.4).
 - **Seen.** Opening a session from the board, or focusing its pane anywhere, reports focus to the
-  hab, which turns `done` into `idle` (`app.md` 13, `session.focus`).
+  hab, which turns `done` into `idle` (`app.md` 17, `session.focus`).
 - **Leaving.** Esc returns to the tab view as it was.
 
 ### 7.2 Approvals
 
 - A `blocked:permission` row shows the tool, the exact command or file list, and the working
   directory, in full.
-- Allow and Deny keys answer it through the hab (`approval.answer`, `app.md` 13). Broader choices
+- Allow and Deny keys answer it through the hab (`approval.answer`, `app.md` 17). Broader choices
   ("allow for this session") open the pane so the owner answers in the harness itself.
 - An answer elsewhere (the app, another `gff`, the harness) clears the row at once.
 - A stale answer is refused with `conflict`; the board shows "already answered".
@@ -655,7 +655,7 @@ decides (Part 5 decision "which zellij behaviours and plugins become `gff` featu
 
 ## 14. Calls gff needs from the hab
 
-These are not in `api/methods.go` today. Names are proposals. Where `app.md` 13 already proposes a
+These are not in `api/methods.go` today. Names are proposals. Where `app.md` 17 already proposes a
 call, `gff` uses the same one.
 
 | Call or event | Purpose | Also needed by |
@@ -663,8 +663,8 @@ call, `gff` uses the same one.
 | `session.create {project_dir, harness?, command?, cwd?}` | Start a harness or a shell in a new pane, filed as a session | App (start, resume) |
 | `session.resume {session}` | Start the harness again with its resume id | App |
 | `pane.close {pane}` | End a program, after the client confirms | App (close an exited session) |
-| `session.focus {session, active}` | Mark `done` seen | App (`app.md` 13) |
-| `approval.answer {pane, request, choice}` | Answer a pending request by id | App (`app.md` 13) |
+| `session.focus {session, active}` | Mark `done` seen | App (`app.md` 17) |
+| `approval.answer {pane, request, choice}` | Answer a pending request by id | App (`app.md` 17) |
 | event `pane.bell` | A pane rang the bell; throttled | App (optional) |
 | event `pane.output` | A pane printed; at most once per second per pane, for activity marks on hidden tabs | App (thumbnails off) |
 | `hab.stats` or event `hab.stats` | CPU, memory, disk, battery, uptime of the host, with capability `host-stats` | App (optional) |
