@@ -14,6 +14,9 @@ One Go module, `github.com/noahkiss/flightdeck`, at the repo root. Swift package
 | `internal/holder/` | The holder core: panes in PTYs, byte rings, pump, reaper, input queues, and the protocol server with one writer queue per connection. Pure Go. Spec: `docs/specs/hab-holder.md` 2 |
 | `cmd/gff-hab-holder/` | The holder binary: flags and environment for the socket path, then `internal/holder` |
 | `internal/structure/` | gff-hab's shared structure (projects, sessions, order, pane links), its JSON state file and restart mapping, plus `FakeHolder` for tests. Pure Go. Spec: `docs/specs/hab-logic-api.md` 2.2 |
+| `internal/control/` | gff-hab's control connection: the Unix socket, hello, per-connection seq, scoped events, backlog close, reconnect tokens, and the client the CLI uses. Pure Go. Spec: `docs/specs/hab-logic-api.md` 3, 4.1, 4.2 |
+| `internal/habkey/` | The hab's own SSH host key and its fingerprint, the device id. Pure Go. Spec: `docs/specs/transport.md` 5 |
+| `cmd/gff-hab/` | The logic binary: `serve`, `connect`, `api call`, `events`. No holder link yet: its pane source is empty |
 | `internal/vt/` | The terminal parser interface gff-hab keeps per pane, and `Fake`, a pure-Go stand-in for tests |
 | `internal/vt/ghostty/` | The libghostty-vt parser through cgo. Builds only with the `ghostty` build tag |
 | `internal/vt/vttest/` | The shared parser tests and their hand-written fixture |

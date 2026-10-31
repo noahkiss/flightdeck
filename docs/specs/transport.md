@@ -453,11 +453,13 @@ enable)"**:
 
 ### 9.4 `hab-logic-api.md`
 
-Section 4 is updated. The section 3 items wait for the Part 2 stage that builds the handshake.
+Section 4 is updated. The Part 2 stage that built the handshake added the section 3 items.
 
 - **4.2 SSH stdio:** the client pins the welcome's `device_id` (done).
 - **4.3:** now the embedded gff-hab SSH server; WebSocket only as a later carrier (done).
-- **3.2 Handshake:** the welcome carries `device_id`, the hab's host-key fingerprint (pending).
-- **3.1 Protocol:** add a `devices.*` method group (list, revoke, rename, rotate) and `hab.pair`
-  (pending).
-- **3.4 Capabilities:** add a capability string that says the embedded SSH server is on (pending).
+- **3.2 Handshake:** the welcome carries `device_id`, the hab's host-key fingerprint (done).
+- **3.1 Protocol:** add a `devices.*` method group (done for `devices.pair`, `devices.list` and
+  `devices.revoke`, which answer `unavailable` until pairing is built; rename and rotate are
+  pending). Pairing is `devices.pair`, not `hab.pair`.
+- **3.4 Capabilities:** add a capability string that says the embedded SSH server is on (done:
+  `devices`).

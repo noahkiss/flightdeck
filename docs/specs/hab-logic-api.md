@@ -245,7 +245,10 @@ by gff-hab, never taken from zellij. Whether this interim backend exists at all 
 - Every result is a JSON object, never a bare value, so fields can be added later.
 - Requests on one connection may run side by side. A client must match responses by id.
 - Method names are grouped by prefix: `hab.*`, `structure.*`, `pane.*`, `session.*`, `project.*`,
-  `data.*`, `events.*`, `rpc.discover`.
+  `data.*`, `events.*`, `devices.*`, `rpc.discover`.
+- `devices.pair`, `devices.list` and `devices.revoke` manage the hab's trust store
+  (`transport.md` 5, 6). They need the `devices` capability. Until pairing is built they answer
+  `unavailable`. Rename and rotate (`transport.md` 6.5) are added the same way when they are built.
 
 Decision: proposed.
 
@@ -270,10 +273,21 @@ The first request on a control connection must be `hab.hello`.
 | `capabilities` | Strings for optional features, see 3.4 |
 | `client_id` | This client's id |
 | `reconnect_token` | Token to resume this client within the grace period |
+| `device_id` | The hab's host-key fingerprint, `SHA256:` plus base64 (`transport.md` 5). Optional in the schema, so a newer client accepts an older hab's welcome; this build always sends it |
 | `seq` | Always 0: no event has been queued yet |
 
 If no revision fits, gff-hab answers with an error of kind `revision_unsupported` that carries both
 ranges, then closes. The client tells the user which side to update.
+
+Built choices (`internal/control`):
+
+- The chosen revision is the lower of the two newest revisions. It must not fall below either
+  side's minimum.
+- A first request other than `hab.hello`, a second `hab.hello`, a `client.kind` outside its word
+  set, or a `revision` below `min_revision` is refused with `invalid`. A refused hello closes the
+  connection.
+- The hab key is an Ed25519 key in the state directory, made on first start, mode 0600
+  (`internal/habkey`).
 
 ### 3.3 Revisions
 
@@ -316,7 +330,8 @@ The schema lives in `api/` (layout and commands: `docs/layout.md`). Built choice
 ### 3.4 Capabilities
 
 Capability strings name optional features: `data-streams`, `snapshot-vt`, `snapshot-ghostty`,
-`agent-state`, `transcripts`. A client checks for a capability before it uses the feature. The
+`agent-state`, `transcripts`, `devices`. `devices` means the embedded SSH server is on and the
+`devices.*` methods work. A client checks for a capability before it uses the feature. The
 zellij backend omits `data-streams`. Capabilities are for features that a host may lack. They are
 not a second versioning scheme.
 
@@ -354,6 +369,24 @@ not a second versioning scheme.
 Decision: proposed. Whether a reconnect within the same epoch can replay missed events is
 Decision: open (Q5).
 
+Built choices (`internal/control`):
+
+- One queue per connection carries responses and notifications, so the wire order is the queue
+  order. Requests on one connection run one at a time, in order.
+- `events.subscribe` marks the connection subscribed and reads the seq under one lock, then takes
+  the snapshot. Events that arrive meanwhile wait and get seqs above the response's seq, after the
+  response. Each event is emitted after its change is stored, so every event at or below that seq
+  is already in the snapshot.
+- A second `events.subscribe` replaces the scope and answers with a new snapshot. Seq keeps
+  counting.
+- Scope `projects` covers those projects, the sessions filed in them and the panes those sessions
+  link. Scope `sessions` covers those sessions and their panes. An object that leaves the scope
+  sends one last event.
+- On a backlog close, gff-hab drops the queued events and sends `closing` alone, so the client is
+  not first made to read 8 MiB it will throw away. The flush has 5 s.
+- Heartbeats start after the welcome. A connection that sends nothing for 45 s is closed with no
+  message.
+
 ### 3.6 Errors
 
 JSON-RPC error objects with code `-32000` for application errors. `data` always carries:
@@ -374,6 +407,9 @@ Clients branch on `kind`, never on `message`.
 - Events from the gap are not replayed (unless Q5 decides otherwise). Seq starts again at 1. The
   client re-reads state with the seq rule.
 - After the grace period, or with a new epoch, the token is refused and the client starts fresh.
+  A refused token is not an error: the welcome gives a new `client_id`.
+- Each welcome issues a new token; the old one stops working. A token whose connection still looks
+  open is accepted, and that older connection is closed as dead.
 
 ### 3.8 Input
 
@@ -399,11 +435,19 @@ Clients branch on `kind`, never on `message`.
 
 Decision: proposed.
 
+Built: the socket is `gff/hab.sock` under the user config directory on macOS and under
+`$XDG_RUNTIME_DIR` elsewhere (`$GFF_HAB_SOCKET` or `-socket` override it). Its directory must be
+mode 0700 and owned by the user. A data hello on this socket gets a reject frame (`unavailable`)
+until data connections are built.
+
 ### 4.2 `gff-hab connect` over SSH stdio
 
 - `gff-hab connect` bridges its stdin and stdout to the local socket. `ssh <host> gff-hab connect`
   reaches a remote hab with no new listener. SSH keys stay the authentication.
-- The bridge is dumb: it copies bytes. It does not parse JSON-RPC.
+- The bridge is dumb: it copies bytes. It does not parse JSON-RPC. When stdin ends it half-closes
+  the socket; it exits when gff-hab closes the connection.
+- `gff-hab api call -via <command>` and `gff-hab events -via <command>` run a command such as
+  `ssh <host> gff-hab connect` and speak over its stdio.
 - **How data connections ride it** is Decision: open (Q2). The options:
   - **A. One SSH channel per connection.** The control connection is one `gff-hab connect`
     session. Each data connection is another session on the same SSH connection
