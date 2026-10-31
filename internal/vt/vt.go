@@ -40,8 +40,22 @@ const AllScrollback = -1
 type SnapshotOptions struct {
 	// Scrollback is the number of scrollback lines to include: AllScrollback for all of it, 0
 	// for none. It bounds EncodingVT only: EncodingGhostty always carries the whole scrollback,
-	// because libghostty's snapshot format has no bound.
+	// because libghostty's snapshot format has no bound. Terminal.Scrollback reads the older
+	// lines a bounded snapshot leaves out.
 	Scrollback int
+}
+
+// ScrollbackPage is a run of scrollback rows, oldest first. Rows are counted from the newest
+// scrollback row (the one just above the top of the screen) back towards the oldest.
+type ScrollbackPage struct {
+	// VT holds the rows as VT bytes: each row's text with its colours and styles, rows joined by
+	// CRLF, then an SGR reset. It holds no cursor move, mode or screen switch, so a client can
+	// draw it into its own scrollback view.
+	VT []byte
+	// Rows is the number of rows in VT. It is less than asked for when the scrollback ends.
+	Rows int
+	// Total is the number of scrollback rows the terminal holds.
+	Total int
 }
 
 // Terminal parses one pane's output. A Terminal is not safe for concurrent use.
@@ -52,9 +66,16 @@ type Terminal interface {
 	Resize(cols, rows int) error
 	// Size returns the screen size.
 	Size() (cols, rows int)
+	// SetScrollbackBytes changes the scrollback cap. Lowering it may drop the oldest scrollback at
+	// once. Zero or less leaves the cap as it is.
+	SetScrollbackBytes(n int) error
 	// Snapshot encodes the terminal state in enc. A snapshot never contains a terminal query
 	// and never sets the palette (spec 5.5).
 	Snapshot(enc Encoding, opts SnapshotOptions) ([]byte, error)
+	// Scrollback returns older scrollback rows than a bounded snapshot carries; see
+	// ScrollbackPage. skip is the number of the newest scrollback rows to pass over, and n the
+	// most rows to return. On the alternate screen it reads the primary screen's scrollback.
+	Scrollback(skip, n int) (ScrollbackPage, error)
 	// PlainText returns the active screen with its scrollback as text, one line per row, with
 	// trailing spaces and trailing blank lines removed. Tests compare it with golden files.
 	PlainText() (string, error)

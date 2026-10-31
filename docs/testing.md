@@ -97,3 +97,8 @@ The parsers in these tests use a 16 MiB scrollback cap: near libghostty's defaul
 10 kB) a restored terminal drops scrollback at other points than one that parsed every byte.
 gff-hab itself defaults to 10 MiB (spec 2.3); `TestScrollbackRestoreMatches` in `cmd/gff-hab`
 checks that a restored terminal keeps the same scrollback as a continuous one with that cap.
+The restart loop compares the full plain text, and the bounded `snapshot-vt` a client gets (1000
+scrollback rows). `TestSubscribeScrollbackBound` in `internal/link` checks that bound and that
+`Link.Scrollback` returns the older rows page by page. `TestScrollbackCost` in
+`internal/vt/ghostty` logs the cost table in spec 2.3 (`-v`; set `GFF_MEASURE_DIR` to a directory
+on a real disk to time the fsync there).

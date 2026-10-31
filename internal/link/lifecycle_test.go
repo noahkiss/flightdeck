@@ -277,7 +277,7 @@ func TestSpawnReplaceSaysGone(t *testing.T) {
 	defer stop()
 	l.afterSpawnCheck = func() {
 		l.mu.Lock()
-		l.panes[u] = newPane(u) // live, on no holder: not a retry
+		l.panes[u] = newPane(u, DefaultSnapshotScrollback) // live, on no holder: not a retry
 		l.mu.Unlock()
 	}
 	spawn(t, l, u, "echo new; exec sleep 1000")

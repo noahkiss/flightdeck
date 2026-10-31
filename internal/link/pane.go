@@ -58,7 +58,7 @@ type Screen struct {
 	Suspect bool
 	// Text is the active screen with its scrollback as plain text (vt.Terminal.PlainText).
 	Text string
-	// VT is a snapshot-vt of the whole screen and scrollback.
+	// VT is a snapshot-vt of the screen and at most Config.SnapshotScrollback scrollback rows.
 	VT []byte
 }
 
@@ -189,10 +189,11 @@ type pane struct {
 	ckValid   bool
 	ckAt      time.Time
 	subs      map[*Subscription]struct{}
+	snapRows  int // scrollback rows in a snapshot: Config.SnapshotScrollback
 }
 
-func newPane(u hp.UUID) *pane {
-	return &pane{uuid: u, ready: make(chan struct{}), subs: map[*Subscription]struct{}{}}
+func newPane(u hp.UUID, snapRows int) *pane {
+	return &pane{uuid: u, ready: make(chan struct{}), subs: map[*Subscription]struct{}{}, snapRows: snapRows}
 }
 
 func (p *pane) markReady() {
@@ -243,7 +244,7 @@ func (p *pane) prepare(l *Link, h *holderclient.Holder, pi hp.PaneInfo) (from ui
 		}
 		return p.off, back
 	}
-	cfg := vt.Config{Cols: cols, Rows: rows, ScrollbackBytes: l.cfg.ScrollbackBytes}
+	cfg := vt.Config{Cols: cols, Rows: rows, ScrollbackBytes: int(l.sbCap.Load())}
 	ck, err := readCheckpoint(l.cfg.StateDir, pi.UUID)
 	switch {
 	case err != nil && !errors.Is(err, os.ErrNotExist):
@@ -263,7 +264,7 @@ func (p *pane) prepare(l *Link, h *holderclient.Holder, pi hp.PaneInfo) (from ui
 		ck = nil
 	}
 	if ck != nil {
-		t, err := l.cfg.Parser.Restore(ck.Encoding, ck.Snapshot, vt.Config{Cols: ck.Cols, Rows: ck.Rows, ScrollbackBytes: l.cfg.ScrollbackBytes})
+		t, err := l.cfg.Parser.Restore(ck.Encoding, ck.Snapshot, vt.Config{Cols: ck.Cols, Rows: ck.Rows, ScrollbackBytes: int(l.sbCap.Load())})
 		if err != nil {
 			l.cfg.Logf("link: pane %s: restore checkpoint: %v", pi.UUID, err)
 			ck = nil
@@ -302,7 +303,7 @@ func (p *pane) spawned(l *Link, h *holderclient.Holder, pi hp.PaneInfo) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	cols, rows := size(pi.Cols, pi.Rows)
-	t, err := l.cfg.Parser.New(vt.Config{Cols: cols, Rows: rows, ScrollbackBytes: l.cfg.ScrollbackBytes})
+	t, err := l.cfg.Parser.New(vt.Config{Cols: cols, Rows: rows, ScrollbackBytes: int(l.sbCap.Load())})
 	if err != nil {
 		l.cfg.Logf("link: pane %s: new terminal: %v", pi.UUID, err)
 		t, _ = vt.Fake{}.New(vt.Config{Cols: 80, Rows: 24})
@@ -376,7 +377,7 @@ func (p *pane) jump(to uint64) {
 	if len(p.subs) == 0 {
 		return
 	}
-	snap, err := p.term.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: vt.AllScrollback})
+	snap, err := p.term.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: p.snapRows})
 	for s := range p.subs {
 		if err != nil {
 			s.end(err)
@@ -436,6 +437,27 @@ func (p *pane) close() {
 	p.markReady()
 }
 
+func (p *pane) scrollback(skip, n int) (ScrollbackPage, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.term == nil {
+		return ScrollbackPage{}, ErrClosed
+	}
+	pg, err := p.term.Scrollback(skip, n)
+	if err != nil {
+		return ScrollbackPage{}, err
+	}
+	return ScrollbackPage{ScrollbackPage: pg, Offset: p.off}, nil
+}
+
+func (p *pane) setScrollback(c int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.term != nil {
+		p.term.SetScrollbackBytes(c)
+	}
+}
+
 func (p *pane) status() PaneStatus {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -463,7 +485,7 @@ func (p *pane) screen() (Screen, error) {
 	if err != nil {
 		return Screen{}, err
 	}
-	snap, err := p.term.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: vt.AllScrollback})
+	snap, err := p.term.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: p.snapRows})
 	if err != nil {
 		return Screen{}, err
 	}
@@ -584,7 +606,7 @@ func (p *pane) subscribe(l *Link, from uint64, pre []byte) (*Subscription, error
 	c := make(chan Chunk, subQueue)
 	s := &Subscription{C: c, c: c, p: p}
 	if from == FromNow || (pre == nil && from < p.bufStart) {
-		snap, err := p.term.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: vt.AllScrollback})
+		snap, err := p.term.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: p.snapRows})
 		if err != nil {
 			return nil, err
 		}

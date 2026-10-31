@@ -46,6 +46,42 @@ func TestScrollbackFlag(t *testing.T) {
 	}
 }
 
+// TestScrollbackBudgetFlag: the budget comes from -scrollback-budget-mib, else
+// $GFF_HAB_SCROLLBACK_BUDGET_MIB, else the default.
+func TestScrollbackBudgetFlag(t *testing.T) {
+	env := func(v string) func(string) string {
+		return func(k string) string {
+			if k == "GFF_HAB_SCROLLBACK_BUDGET_MIB" {
+				return v
+			}
+			return ""
+		}
+	}
+	for _, c := range []struct {
+		flag int
+		env  string
+		want int
+		bad  bool
+	}{
+		{0, "", DefaultScrollbackBudgetMiB << 20, false},
+		{0, "64", 64 << 20, false},
+		{512, "64", 512 << 20, false},
+		{-5, "", 0, true},
+		{0, "lots", 0, true},
+	} {
+		got, err := scrollbackBudget(c.flag, env(c.env))
+		if c.bad {
+			if err == nil {
+				t.Errorf("flag %d env %q: got %d, want an error", c.flag, c.env, got)
+			}
+			continue
+		}
+		if err != nil || got != c.want {
+			t.Errorf("flag %d env %q: got %d, %v; want %d", c.flag, c.env, got, err, c.want)
+		}
+	}
+}
+
 // TestScrollbackRestoreMatches: with gff-hab's default cap, a terminal restored from a
 // checkpoint keeps the same scrollback as one that parsed every byte, well past libghostty's
 // own default of about 10 kB. Under `make test` the parser is libghostty.

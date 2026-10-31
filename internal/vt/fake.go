@@ -419,6 +419,37 @@ func (t *fakeTerm) Snapshot(enc Encoding, opts SnapshotOptions) ([]byte, error) 
 	return []byte(b.String()), nil
 }
 
+// SetScrollbackBytes does nothing: the fake keeps every scrollback line.
+func (t *fakeTerm) SetScrollbackBytes(int) error {
+	if t.closed {
+		return ErrClosed
+	}
+	return nil
+}
+
+func (t *fakeTerm) Scrollback(skip, n int) (ScrollbackPage, error) {
+	if t.closed {
+		return ScrollbackPage{}, ErrClosed
+	}
+	total := len(t.scrollback)
+	end := total - max(skip, 0)
+	start := max(end-max(n, 0), 0)
+	if end <= start {
+		return ScrollbackPage{Total: total}, nil
+	}
+	lines := make([]string, 0, end-start)
+	for _, row := range t.scrollback[start:end] {
+		var b strings.Builder
+		for _, r := range row {
+			if r != 0 {
+				b.WriteRune(r)
+			}
+		}
+		lines = append(lines, strings.TrimRight(b.String(), " "))
+	}
+	return ScrollbackPage{VT: []byte(strings.Join(lines, "\r\n") + "\x1b[0m"), Rows: end - start, Total: total}, nil
+}
+
 func (t *fakeTerm) Close() error {
 	t.closed = true
 	t.primary, t.alt, t.scrollback = nil, nil, nil

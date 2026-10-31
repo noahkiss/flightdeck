@@ -31,6 +31,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/noahkiss/flightdeck/internal/holderclient"
@@ -70,9 +71,28 @@ type Config struct {
 	BufferBytes int
 	// ScrollbackBytes caps each parser's scrollback. Zero keeps the parser's default.
 	ScrollbackBytes int
+	// ScrollbackBudget caps the scrollback of all parsers together. When the panes' equal
+	// shares fall below ScrollbackBytes, each parser gets its share instead, never less than
+	// MinScrollbackShare; shrinking a cap drops the oldest scrollback at once. Zero or less means
+	// no budget.
+	ScrollbackBudget int
+	// SnapshotScrollback is the most scrollback rows a subscription's snapshot, a jump snapshot
+	// or Screen's VT carries. Scrollback reads older rows. Default DefaultSnapshotScrollback;
+	// negative means all.
+	SnapshotScrollback int
 	// Logf receives diagnostics. Nil discards them.
 	Logf func(format string, args ...any)
 }
+
+// DefaultSnapshotScrollback is the default of Config.SnapshotScrollback. 1000 rows of 120
+// columns are about 0.14 MiB of snapshot-vt (spec 2.3).
+const DefaultSnapshotScrollback = 1000
+
+// MinScrollbackShare is the smallest scrollback cap the budget gives a parser.
+const MinScrollbackShare = 1 << 20
+
+// MaxScrollbackPage is the most rows one Scrollback call returns.
+const MaxScrollbackPage = 10000
 
 // Errors returned by the link.
 var (
@@ -124,6 +144,10 @@ type Link struct {
 	closed   bool
 
 	pruned chan struct{} // gets a value after each prune; tests wait on it
+
+	// sbCap is the scrollback cap every parser has now: ScrollbackBytes, or its share of
+	// ScrollbackBudget. New and restored parsers get it too. Read without l.mu.
+	sbCap atomic.Int64
 }
 
 // Open connects to every live holder, loads the checkpoints and starts a replay for every pane.
@@ -149,6 +173,11 @@ func Open(cfg Config) (*Link, error) {
 	}
 	if cfg.BufferBytes <= 0 {
 		cfg.BufferBytes = 4 << 20
+	}
+	if cfg.SnapshotScrollback == 0 {
+		cfg.SnapshotScrollback = DefaultSnapshotScrollback
+	} else if cfg.SnapshotScrollback < 0 {
+		cfg.SnapshotScrollback = vt.AllScrollback
 	}
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
@@ -176,6 +205,7 @@ func Open(cfg Config) (*Link, error) {
 		retired:  map[hp.UUID]bool{},
 		watchers: map[int]func(Notice){},
 	}
+	l.sbCap.Store(int64(l.scrollbackShare(0)))
 	l.ctx, l.cancel = context.WithCancel(context.Background())
 	l.pruned = make(chan struct{}, 1)
 	l.wg.Add(1)
@@ -407,6 +437,9 @@ func (l *Link) prune() {
 		p.close()
 		l.cfg.Logf("link: pane %s: dropped: no holder lists it", p.uuid)
 	}
+	if len(drop) > 0 {
+		l.rebalance()
+	}
 	for _, u := range removeCheckpointsExcept(l.cfg.StateDir, keep) {
 		l.cfg.Logf("link: removed the checkpoint of pane %s: no holder lists it", u)
 	}
@@ -583,7 +616,7 @@ func (l *Link) attach(h *holderclient.Holder, pi hp.PaneInfo) {
 	p := l.panes[pi.UUID]
 	fresh := p == nil
 	if fresh {
-		p = newPane(pi.UUID)
+		p = newPane(pi.UUID, l.cfg.SnapshotScrollback)
 		l.panes[pi.UUID] = p
 	}
 	for k, q := range l.byHandle {
@@ -608,6 +641,9 @@ func (l *Link) attach(h *holderclient.Holder, pi hp.PaneInfo) {
 			l.notify([]Notice{n})
 		}
 		return
+	}
+	if fresh {
+		l.rebalance()
 	}
 	if fresh || back {
 		l.notify([]Notice{{Kind: PaneAdded, Pane: p.status()}})
@@ -673,7 +709,7 @@ func (l *Link) Spawn(ctx context.Context, s hp.Spawn) (PaneStatus, error) {
 			defer old.close()
 		}
 		removeCheckpoint(l.cfg.StateDir, pn.UUID) // a fresh pane: an older checkpoint is stale
-		p := newPane(pn.UUID)
+		p := newPane(pn.UUID, l.cfg.SnapshotScrollback)
 		p.spawned(l, h, pi)
 		l.panes[pn.UUID] = p
 		k := paneKey{h, pn.Handle}
@@ -683,6 +719,7 @@ func (l *Link) Spawn(ctx context.Context, s hp.Spawn) (PaneStatus, error) {
 		l.mu.Unlock()
 		// Notify the add on the event loop, before the orphan frames and before any later
 		// frame: a child that exits at once must not be reported exited before it was added.
+		l.rebalance()
 		st = p.status()
 		l.notify(replaced)
 		l.notify([]Notice{{Kind: PaneAdded, Pane: st}})
@@ -806,6 +843,60 @@ func (l *Link) Screen(u hp.UUID) (Screen, error) {
 		return Screen{}, ErrNoPane
 	}
 	return p.screen()
+}
+
+// ScrollbackPage is a run of pane scrollback rows older than a snapshot carries; see Scrollback.
+type ScrollbackPage struct {
+	vt.ScrollbackPage
+	// Offset is the pane offset the rows were read at. Skip counts rows back from the newest
+	// scrollback row at this offset.
+	Offset uint64
+}
+
+// Scrollback reads up to n of pane u's scrollback rows, oldest first, that end skip rows above
+// the newest scrollback row (vt.Terminal.Scrollback). A client that applied a snapshot and the
+// bytes after it up to the returned Offset holds the newest rows of the same scrollback; it
+// passes the number of scrollback rows it holds as skip to fetch the rows before them. When the
+// client's offset differs from Offset, output scrolled rows in meanwhile and the count is off by
+// that much; it asks again once caught up. n is capped at MaxScrollbackPage.
+func (l *Link) Scrollback(u hp.UUID, skip, n int) (ScrollbackPage, error) {
+	p := l.pane(u)
+	if p == nil {
+		return ScrollbackPage{}, ErrNoPane
+	}
+	return p.scrollback(max(skip, 0), min(max(n, 0), MaxScrollbackPage))
+}
+
+// scrollbackShare returns the scrollback cap for each of n parsers.
+func (l *Link) scrollbackShare(n int) int {
+	c := l.cfg.ScrollbackBytes
+	if b := l.cfg.ScrollbackBudget; b > 0 {
+		share := max(b/max(n, 1), MinScrollbackShare)
+		if c <= 0 || share < c {
+			c = share
+		}
+	}
+	return c
+}
+
+// rebalance sets every parser's scrollback cap to its share of the budget for the panes the link
+// follows now. It runs on the event loop, after the set of panes changed, without l.mu held.
+func (l *Link) rebalance() {
+	l.mu.Lock()
+	n := len(l.panes)
+	ps := make([]*pane, 0, n)
+	for _, p := range l.panes {
+		ps = append(ps, p)
+	}
+	l.mu.Unlock()
+	c := l.scrollbackShare(n)
+	if old := l.sbCap.Swap(int64(c)); old == int64(c) {
+		return
+	}
+	l.cfg.Logf("link: %d panes: scrollback cap %.1f MiB per pane", n, float64(c)/(1<<20))
+	for _, p := range ps {
+		p.setScrollback(c)
+	}
 }
 
 // Checkpoint writes a checkpoint now for every ready pane whose screen changed since its last

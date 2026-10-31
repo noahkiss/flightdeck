@@ -555,7 +555,7 @@ func TestRestartLoop(t *testing.T) {
 		// The screen the new link rebuilt equals the reference parser's at the same offset.
 		feedRef(screen.Offset)
 		wantText, _ := ref.PlainText()
-		wantVT, _ := ref.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: vt.AllScrollback})
+		wantVT, _ := ref.Snapshot(vt.EncodingVT, vt.SnapshotOptions{Scrollback: DefaultSnapshotScrollback})
 		if screen.Text != wantText {
 			t.Fatalf("round %d: screen at %d differs from the reference\n--- link ---\n%s\n--- reference ---\n%s",
 				round, screen.Offset, screen.Text, wantText)

@@ -101,6 +101,17 @@ func (t *terminal) Resize(cols, rows int) error {
 	return t.t.Resize(uint16(cols), uint16(rows), 0, 0)
 }
 
+func (t *terminal) SetScrollbackBytes(n int) error {
+	if t.t == nil {
+		return vt.ErrClosed
+	}
+	if n <= 0 {
+		return nil
+	}
+	limit := uint(n)
+	return t.t.SetScrollbackMaxBytes(&limit)
+}
+
 func (t *terminal) Size() (int, int) {
 	if t.t == nil {
 		return 0, 0
@@ -135,6 +146,22 @@ func (t *terminal) snapshotVT(scrollback int) ([]byte, error) {
 	if err != nil || screen != libghostty.ScreenAlternate {
 		return active, err
 	}
+	cp, err := t.primaryCopy()
+	if err != nil {
+		return nil, err
+	}
+	defer cp.Close()
+	primary, err := cp.formatVT(scrollback)
+	if err != nil {
+		return nil, err
+	}
+	out := append(primary, "\x1b[?1049h\x1b[H\x1b[2J"...)
+	return append(out, active...), nil
+}
+
+// primaryCopy returns a copy of the terminal that has left the alternate screen. The caller
+// closes it.
+func (t *terminal) primaryCopy() (*terminal, error) {
 	raw, err := t.t.Snapshot()
 	if err != nil {
 		return nil, fmt.Errorf("ghostty: copy for primary screen: %w", err)
@@ -144,14 +171,55 @@ func (t *terminal) snapshotVT(scrollback int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer cp.Close()
 	cp.Write([]byte("\x1b[?1049l"))
-	primary, err := cp.(*terminal).formatVT(scrollback)
-	if err != nil {
-		return nil, err
+	return cp.(*terminal), nil
+}
+
+// Scrollback formats up to n scrollback rows, oldest first, ending skip rows above the newest.
+func (t *terminal) Scrollback(skip, n int) (vt.ScrollbackPage, error) {
+	if t.t == nil {
+		return vt.ScrollbackPage{}, vt.ErrClosed
 	}
-	out := append(primary, "\x1b[?1049h\x1b[H\x1b[2J"...)
-	return append(out, active...), nil
+	screen, err := t.t.ActiveScreen()
+	if err != nil {
+		return vt.ScrollbackPage{}, fmt.Errorf("ghostty: active screen: %w", err)
+	}
+	src := t
+	if screen == libghostty.ScreenAlternate {
+		if src, err = t.primaryCopy(); err != nil {
+			return vt.ScrollbackPage{}, err
+		}
+		defer src.Close()
+	}
+	sb, err := src.t.ScrollbackRows()
+	if err != nil {
+		return vt.ScrollbackPage{}, err
+	}
+	total := int(sb)
+	end := total - max(skip, 0)
+	start := max(end-max(n, 0), 0)
+	if end <= start {
+		return vt.ScrollbackPage{Total: total}, nil
+	}
+	cols, _ := src.Size()
+	from, err := src.t.GridRef(libghostty.Point{Tag: libghostty.PointTagScreen, X: 0, Y: uint32(start)})
+	if err != nil {
+		return vt.ScrollbackPage{}, fmt.Errorf("ghostty: scrollback start: %w", err)
+	}
+	to, err := src.t.GridRef(libghostty.Point{Tag: libghostty.PointTagScreen, X: uint16(cols - 1), Y: uint32(end - 1)})
+	if err != nil {
+		return vt.ScrollbackPage{}, fmt.Errorf("ghostty: scrollback end: %w", err)
+	}
+	// Rows only: no modes, cursor or other state, so the bytes draw lines and nothing else.
+	b, err := src.format(libghostty.FormatterFormatVT,
+		libghostty.WithFormatterSelection(&libghostty.Selection{Start: *from, End: *to}),
+		libghostty.WithFormatterTrim(true),
+		libghostty.WithFormatterExtraHyperlink(false),
+	)
+	if err != nil {
+		return vt.ScrollbackPage{}, err
+	}
+	return vt.ScrollbackPage{VT: append(b, "\x1b[0m"...), Rows: end - start, Total: total}, nil
 }
 
 func (t *terminal) formatVT(scrollback int) ([]byte, error) {

@@ -72,7 +72,7 @@ func TestCheckpointMidSequence(t *testing.T) {
 		enc: checkpointEncoding(parser.Encodings()),
 	}
 	u := uuidN(9)
-	p := newPane(u)
+	p := newPane(u, DefaultSnapshotScrollback)
 	term, err := parser.New(vt.Config{Cols: 80, Rows: 24})
 	if err != nil {
 		t.Fatal(err)

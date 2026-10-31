@@ -206,10 +206,38 @@ gff-hab is a client of every live holder on its host: the current one and any th
   lines of scrollback reports 10 MiB resident (libghostty's own memory figure, Linux amd64, release
   build). Its `snapshot-ghostty` is 4.6 MiB and its `snapshot-vt` 1.3 MiB, for 1.2 MiB of input.
   `TestMemoryLongScrollback` in `internal/vt/ghostty` reproduces it (`go test -v`).
+- Cost by scrollback cap, from `TestScrollbackCost` in `internal/vt/ghostty`: a 120x40 pane fed
+  twice the coloured 120-column lines its cap holds, so the scrollback is full. Linux amd64, a
+  12th-generation desktop CPU, release libghostty, the checkpoint written and fsynced to an ext4
+  SSD (`GFF_MEASURE_DIR` names the directory; `make libghostty`, then `go test -tags ghostty -v
+  -run TestScrollbackCost ./internal/vt/ghostty` with the Makefile's `PKG_CONFIG_PATH`). Times are
+  one call each, over two runs.
+
+  | Cap | Scrollback rows | Resident | Checkpoint | Encode | Write and fsync | `snapshot-vt`, all | `snapshot-vt`, 1000 rows | 1000-row page |
+  |---|---|---|---|---|---|---|---|---|
+  | 1 MiB | 413 | 0.8 MiB | 0.2 MiB | 0.4 ms | 1-2 ms | 0.06 MiB, 0.2 ms | 0.06 MiB, 0.1 ms | 0.05 MiB, 0.2 ms |
+  | 2 MiB | 1,639 | 1.9 MiB | 0.8 MiB | 1.1 ms | 1-2 ms | 0.22 MiB, 0.5 ms | 0.14 MiB, 0.3 ms | 0.13 MiB, 0.3 ms |
+  | 4 MiB | 3,704 | 3.8 MiB | 1.7 MiB | 2.1 ms | 1.7-2.5 ms | 0.50 MiB, 1.1 ms | 0.14 MiB, 0.5 ms | 0.13 MiB, 0.3 ms |
+  | 10 MiB | 9,899 | 10.0 MiB | 4.6 MiB | 6 ms | 3.4-4 ms | 1.32 MiB, 3.2 ms | 0.14 MiB, 0.3 ms | 0.13 MiB, 0.3 ms |
+
+  Resident memory tracks the cap. A parser allocates scrollback pages as output arrives, so a
+  pane that printed little costs little; only panes that printed past the cap cost the full cap.
 - Each parser's scrollback is capped at 10 MiB by default, about the 10,000 lines above. `gff-hab
   serve -scrollback-mib N`, else `$GFF_HAB_SCROLLBACK_MIB`, sets another cap. A new parser and one
   restored from a checkpoint get the same cap, so a restored screen drops scrollback at the same
   points as one that parsed every byte. libghostty's own default (about 10 kB) is never used.
+- **Scrollback budget.** All parsers together get at most 256 MiB of scrollback by default:
+  25 panes at the full cap. With more panes, each parser's cap is the budget divided by the number
+  of panes the link follows, never under 1 MiB, and never over the per-pane cap. The link sets
+  the new cap on every parser when a pane is added or dropped; lowering a cap drops the oldest
+  scrollback of every pane at once, and raising it again brings nothing back. `gff-hab serve
+  -scrollback-budget-mib N`, else `$GFF_HAB_SCROLLBACK_BUDGET_MIB`, sets another budget. Without
+  it, 50 busy panes would hold 500 MiB; with it they hold 256 MiB.
+- **Checkpoints stay complete.** A checkpoint carries the whole scrollback (`snapshot-ghostty` has
+  no bound). At the 10 MiB cap it costs about 10 ms of CPU and 4.6 MiB of disk writes, and only
+  a pane that prints without a 1 s pause writes one every 10 s: about 0.5 MiB/s of disk writes
+  per such pane, and nothing for a pane at rest. That is acceptable, so the cadence does not
+  change with size, and a crash restore keeps the whole scrollback.
 - It writes a **checkpoint** per pane (a parser snapshot plus the offset it covers) when the pane
   goes idle and every N seconds. The holder spec owns the ring; this spec owns the checkpoint.
 - **Planned restart:** gff-hab writes fresh checkpoints, tells each holder it is handing over, and
@@ -705,6 +733,17 @@ in-band nonce is Decision: open (Q3); this spec recommends frames.
   alternate screen, so a client that later leaves it sees the primary screen.
 - The scrollback bound applies to `snapshot-vt`. A `snapshot-ghostty` always carries the whole
   scrollback, because libghostty's format has no bound.
+- **Bounded by default.** A subscription's snapshot, and the snapshot a jump past lost bytes
+  sends, carry the screen and at most 1000 scrollback rows (`link.Config.SnapshotScrollback`):
+  about 0.14 MiB at 120 columns, where the whole 10 MiB scrollback is 1.3 MiB (2.3).
+- **More scrollback on demand.** `Link.Scrollback(pane, skip, n)` returns up to n older rows
+  (at most 10,000), oldest first, that end skip rows above the newest scrollback row, with the
+  pane offset it read them at and the scrollback's row count. A client passes the number of
+  scrollback rows it holds as skip. The rows are VT bytes: text, colours and styles, rows joined
+  by CRLF, then an SGR reset; no cursor move, mode or screen switch. On the alternate screen the
+  rows come from the primary screen's scrollback. If the client's offset differs from the
+  returned one, output scrolled rows in meanwhile; the client asks again once caught up. The
+  data connection stage exposes this as a client's "fetch more when scrolling".
 
 ### 5.6 Terminal queries
 

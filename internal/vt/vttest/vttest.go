@@ -236,6 +236,48 @@ func Run(t *testing.T, p vt.Parser, golden string) {
 		}
 	})
 
+	t.Run("scrollback pages", func(t *testing.T) {
+		term := newTerm(t)
+		for i := range FixtureRows + 20 {
+			fmt.Fprintf(term, "\x1b[3%dmline %d\x1b[0m\r\n", i%8, i)
+		}
+		lines := strings.Split(dump(t, term), "\n")
+		check := func(t *testing.T, term vt.Terminal, skip, n int) {
+			t.Helper()
+			page, err := term.Scrollback(skip, n)
+			if err != nil {
+				t.Fatal(err)
+			}
+			end := max(page.Total-skip, 0)
+			start := max(end-n, 0)
+			if page.Total < 20 || page.Rows != end-start {
+				t.Fatalf("skip %d n %d: %d rows of %d, want %d", skip, n, page.Rows, page.Total, end-start)
+			}
+			if page.Rows == 0 {
+				return
+			}
+			for _, bad := range []string{"\x1b[?", "\x1b[H", "\x1b]"} {
+				if bytes.Contains(page.VT, []byte(bad)) {
+					t.Errorf("skip %d n %d: page holds %q; it must hold rows only", skip, n, bad)
+				}
+			}
+			r, err := p.Restore(vt.EncodingVT, page.VT, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+			if got, want := dump(t, r), strings.Join(lines[start:end], "\n"); got != want {
+				t.Errorf("skip %d n %d: page\n%s\nwant\n%s", skip, n, got, want)
+			}
+		}
+		for _, c := range [][2]int{{0, 5}, {5, 5}, {0, 0}, {18, 5}, {100, 5}} {
+			check(t, term, c[0], c[1])
+		}
+		// On the alternate screen the pages come from the primary screen's scrollback.
+		term.Write([]byte("\x1b[?1049hfull screen app"))
+		check(t, term, 3, 4)
+	})
+
 	t.Run("alternate screen", func(t *testing.T) {
 		term := newTerm(t)
 		term.Write([]byte("primary\r\n\x1b[?1049h\x1b[H\x1b[2Jon alt"))

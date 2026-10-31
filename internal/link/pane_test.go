@@ -11,7 +11,7 @@ import (
 func TestGapSendsSnapshot(t *testing.T) {
 	parser := testParser()
 	l := &Link{cfg: Config{StateDir: t.TempDir(), Parser: parser, BufferBytes: 1 << 20, Logf: t.Logf}}
-	p := newPane(uuidN(60))
+	p := newPane(uuidN(60), DefaultSnapshotScrollback)
 	term, err := parser.New(vt.Config{Cols: 80, Rows: 24})
 	if err != nil {
 		t.Fatal(err)
