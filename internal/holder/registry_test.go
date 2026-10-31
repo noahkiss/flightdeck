@@ -227,8 +227,19 @@ func TestDrainWaitsForReleasedChild(t *testing.T) {
 	if err := <-served; err != nil {
 		t.Fatalf("serve: %v", err)
 	}
-	if err := syscall.Kill(-pid, 0); !errors.Is(err, syscall.ESRCH) {
-		t.Fatalf("program's group left behind: %v", err)
+	// The holder killed the whole group. A grandchild (the loop's sleep) is reparented and
+	// reaped by init, so as a zombie it can stay in the group for a moment after the holder
+	// exits. Wait for the group to empty rather than checking once.
+	deadline := time.Now().Add(waitLong)
+	for {
+		err := syscall.Kill(-pid, 0)
+		if errors.Is(err, syscall.ESRCH) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("program's group left behind: %v", err)
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
 	waitGone(t, holderreg.Path(dir, "inst-h"))
 	waitGone(t, holderreg.SocketPath(dir, "inst-h"))
