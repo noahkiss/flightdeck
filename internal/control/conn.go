@@ -39,6 +39,7 @@ type conn struct {
 	mu       sync.Mutex
 	queue    [][]byte
 	queued   int  // bytes in queue
+	inflight int  // bytes the writer took from the queue and has not finished writing
 	closing  bool // nothing more is queued; the writer drains, then closes
 	seq      uint64
 	revision int
@@ -66,13 +67,14 @@ func (c *conn) signal() {
 	}
 }
 
-// enqueueLocked queues one message. Past the backlog limit it drops the queue, queues a final
-// closing {reason: event_backlog} and stops the connection (spec 3.5). Callers hold c.mu.
+// enqueueLocked queues one message. When the bytes queued plus the bytes the writer is still
+// writing would pass the backlog limit, it drops the queue, queues a final closing
+// {reason: event_backlog} and stops the connection (spec 3.5). Callers hold c.mu.
 func (c *conn) enqueueLocked(b []byte) {
 	if c.closing {
 		return
 	}
-	if c.queued+len(b) > c.s.cfg.BacklogLimit {
+	if c.inflight+c.queued+len(b) > c.s.cfg.BacklogLimit {
 		c.queue = [][]byte{closingMessage(api.ClosingReasonEventBacklog)}
 		c.queued = len(c.queue[0])
 		c.closeLocked()
@@ -109,22 +111,23 @@ func (c *conn) writeLoop() {
 	defer c.nc.Close()
 	hb := time.NewTimer(c.s.cfg.Heartbeat)
 	defer hb.Stop()
-	var buf bytes.Buffer
 	for {
 		c.mu.Lock()
 		batch, closing := c.queue, c.closing
-		c.queue, c.queued = nil, 0
+		c.queue = nil
+		c.inflight, c.queued = c.queued, 0
 		c.mu.Unlock()
 		if len(batch) > 0 {
-			buf.Reset()
-			for _, b := range batch {
-				buf.Write(b)
-			}
-			if _, err := c.nc.Write(buf.Bytes()); err != nil {
-				c.mu.Lock()
+			bufs := net.Buffers(batch) // writev where the socket allows; no copy
+			_, err := bufs.WriteTo(c.nc)
+			c.mu.Lock()
+			c.inflight = 0
+			if err != nil {
 				c.closing = true
 				c.queue = nil
-				c.mu.Unlock()
+			}
+			c.mu.Unlock()
+			if err != nil {
 				return
 			}
 			hb.Reset(c.s.cfg.Heartbeat)
@@ -138,7 +141,9 @@ func (c *conn) writeLoop() {
 		case <-hb.C:
 			c.mu.Lock()
 			if c.revision != 0 && !c.closing {
-				c.queue = append(c.queue, notification("heartbeat", api.Heartbeat{Seq: c.seq}))
+				hbm := notification("heartbeat", api.Heartbeat{Seq: c.seq})
+				c.queue = append(c.queue, hbm)
+				c.queued += len(hbm)
 			}
 			c.mu.Unlock()
 			hb.Reset(c.s.cfg.Heartbeat)
