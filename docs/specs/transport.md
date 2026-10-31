@@ -189,7 +189,9 @@ the phone, with QR pairing and pinned host keys.**
 3. **The welcome carries the hab's host-key fingerprint.** Each hab has its own SSH host key (its
    device id, see 5), separate from the system sshd's host key. The welcome carries its
    fingerprint. The caller pins it on first contact. A changed id is refused until the owner runs
-   `gff-hab peers accept <label>`.
+   `gff-hab peers accept <label>`. The schema makes `device_id` optional, so an older hab may
+   omit it. A caller that gets no `device_id` treats the hab as unpinned: it may use the
+   connection, but it refuses to pair with that hab until a welcome carries `device_id`.
 
 ### 4.2 Next: the embedded gff-hab SSH server
 

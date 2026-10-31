@@ -382,8 +382,12 @@ Built choices (`internal/control`):
 - Scope `projects` covers those projects, the sessions filed in them and the panes those sessions
   link. Scope `sessions` covers those sessions and their panes. An object that leaves the scope
   sends one last event.
+- The backlog counts the bytes queued plus the bytes the writer is still writing.
 - On a backlog close, gff-hab drops the queued events and sends `closing` alone, so the client is
-  not first made to read 8 MiB it will throw away. The flush has 5 s.
+  not first made to read 8 MiB it will throw away. The flush has 5 s. `closing
+  {reason: "event_backlog"}` is best effort: if the client still does not read, the connection
+  closes without it. A client treats a close with no `closing` the same way: it reconnects and
+  reads state again.
 - Heartbeats start after the welcome. A connection that sends nothing for 45 s is closed with no
   message.
 
@@ -464,7 +468,8 @@ until data connections are built.
   opens a second SSH connection; the embedded server (4.3) lifts that cap. B is the fallback if a
   client cannot open many channels.
 - The welcome carries the hab's host-key fingerprint as `device_id` (`transport.md` 5). The client
-  pins it on first contact and refuses a changed id until the owner accepts it.
+  pins it on first contact and refuses a changed id until the owner accepts it. A welcome with no
+  `device_id` leaves the hab unpinned (`transport.md` 4.1).
 
 ### 4.3 Embedded gff-hab SSH server (Part 3)
 

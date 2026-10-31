@@ -67,7 +67,7 @@ build are in `docs/layout.md`.
 | `go run ./cmd/gff-hab serve [-socket path] [-state dir] [-host-id id]` | Run gff-hab with an empty pane source. Socket: `$GFF_HAB_SOCKET`, else `gff/hab.sock` under the user config directory on macOS and under `$XDG_RUNTIME_DIR` elsewhere. State: `$GFF_HAB_STATE`, else `gff/hab` under the user config directory on macOS and under `$XDG_STATE_HOME` (or `~/.local/state`) elsewhere. No TCP port |
 | `gff-hab connect [-socket path]` | Bridge stdin and stdout to the local socket, for `ssh <host> gff-hab connect` |
 | `gff-hab api call [-socket path \| -via command] <method> [params-json]` | Say hello, send one request, print its result as JSON (`hab.hello` prints the welcome). Exit 3 on an API error |
-| `gff-hab events [-socket path \| -via command] [-scope host\|projects:id,...\|sessions:id,...]` | Subscribe and print the welcome, the snapshot and every notification, one JSON line each |
+| `gff-hab events [-socket path \| -via command] [-scope host\|projects:id,...\|sessions:id,...]` | Subscribe and print the welcome, the snapshot and every notification, one JSON line each. Exit 1 when the hab ends the connection with no `closing` or with a reason other than shutdown |
 | `go test -race ./internal/control/... ./cmd/gff-hab/...` | Control connection tests: seq and epoch rules, backlog close, the binary over a real socket and over `connect` |
 | `cd swift/HabAPI && swift test` | Build and test the generated Swift package (Mac) |
 
