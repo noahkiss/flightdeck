@@ -27,19 +27,14 @@ type conn struct {
 	q      []item
 	queued int // bytes of encoded frames queued or being written
 
-	// subs holds the panes this connection follows. A pane is live when output frames go out as
-	// it pumps; while an open replay is in flight it is not live, and job is that replay.
-	subs map[*pane]*sub
+	// subs holds the panes this connection follows live: output frames go out as they pump. An
+	// open replay turns a pane live at once; its live frames queue behind the replay.
+	subs map[*pane]bool
 
 	writerDone chan struct{}
 
 	// maxQueued is the most bytes ever queued at once. Tests read it to check pacing.
 	maxQueued int
-}
-
-type sub struct {
-	live bool
-	job  *replayJob
 }
 
 // item is one entry in the writer queue: an encoded frame, or a replay that produces its frames
@@ -51,24 +46,22 @@ type item struct {
 }
 
 // replayJob is a replay in progress. The writer asks it for one frame at a time, so a large
-// replay never holds more memory than one frame (protocol section 8).
+// replay never holds more memory than one frame (protocol section 8). Its range is fixed when
+// the request arrives: [start, end), so every replay ends however fast the program writes.
 type replayJob struct {
-	p       *pane
-	token   uint32
-	from    uint64
-	hasTo   bool
-	to      uint64
-	started bool
-	start   uint64
-	next    uint64
-	gap     bool
+	p     *pane
+	token uint32
+	start uint64
+	end   uint64
+	next  uint64
+	gap   bool
 }
 
 func newConn(h *Holder, nc *net.UnixConn, pc *hp.Conn) *conn {
 	return &conn{
 		h: h, nc: nc, pc: pc,
 		cond:       sync.NewCond(&h.mu),
-		subs:       map[*pane]*sub{},
+		subs:       map[*pane]bool{},
 		writerDone: make(chan struct{}),
 	}
 }
@@ -104,17 +97,18 @@ func (c *conn) errorLocked(hd hp.Header, code hp.ErrorCode, offset uint64, msg s
 }
 
 // writer drains the queue onto the socket. It produces replay frames lazily, one per step, so
-// replay is paced by how fast the socket takes bytes.
+// replay is paced by how fast the socket takes bytes. It locks and unlocks by hand, with no
+// deferred unlock, so a panic never unlocks a lock this goroutine does not hold (see goSafe).
 func (c *conn) writer() {
 	h := c.h
 	defer close(c.writerDone)
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	for {
 		for len(c.q) == 0 && !c.closed {
 			c.cond.Wait()
 		}
 		if c.closed {
+			h.mu.Unlock()
 			return
 		}
 		it := c.q[0]
@@ -138,6 +132,7 @@ func (c *conn) writer() {
 		h.bp.Broadcast()
 		if err != nil {
 			h.dropLocked(c, err.Error())
+			h.mu.Unlock()
 			return
 		}
 		if it.job != nil && h.afterReplayFrame != nil {
@@ -147,6 +142,7 @@ func (c *conn) writer() {
 		}
 		if it.last {
 			h.dropLocked(c, "closed after the last frame")
+			h.mu.Unlock()
 			return
 		}
 	}
@@ -159,25 +155,35 @@ func (c *conn) popLocked() {
 
 var errHung = errors.New("connection hung: no write progress within the hang timeout")
 
+// writeStep bounds one blocking socket write: a second, or a fifth of the hang timeout when that
+// is shorter. Write reports bytes moved only when it returns, so the clock below can lag the
+// real progress by one step: a hung connection is found within HangTimeout plus one step (5 to
+// 6 s with the defaults).
+const writeStep = time.Second
+
 // write writes b fully. The connection is hung when no byte reaches the socket for
-// HangTimeout. A slow reader that keeps taking bytes renews the deadline with each write that
-// makes progress.
+// HangTimeout. A slow reader that keeps taking bytes is not hung: each write that moves bytes
+// restarts the clock.
 func (c *conn) write(b []byte) error {
 	hang := c.h.cfg.HangTimeout
+	step := min(writeStep, hang/5)
+	progress := time.Now()
 	for len(b) > 0 {
-		_ = c.nc.SetWriteDeadline(time.Now().Add(hang))
+		_ = c.nc.SetWriteDeadline(time.Now().Add(step))
 		n, err := c.nc.Write(b)
 		b = b[n:]
+		if n > 0 {
+			progress = time.Now()
+		}
 		if err == nil {
 			continue
 		}
-		if errors.Is(err, os.ErrDeadlineExceeded) {
-			if n > 0 {
-				continue
-			}
+		if !errors.Is(err, os.ErrDeadlineExceeded) {
+			return err
+		}
+		if n == 0 && time.Since(progress) >= hang {
 			return errHung
 		}
-		return err
 	}
 	return nil
 }
@@ -186,42 +192,23 @@ func (c *conn) write(b []byte) error {
 // is true for the replay end.
 func (c *conn) stepLocked(j *replayJob) (b []byte, done bool) {
 	r := j.p.ring
-	count := r.count
-	if !j.started {
-		j.started = true
-		j.start = min(j.from, count)
-		if j.start < r.oldest() {
-			j.start = r.oldest()
-			j.gap = true
-		}
-		j.next = j.start
+	// Bytes the ring overwrote before the writer reached them are gone. The next frame starts
+	// later, gff-hab sees the jump in the offsets, and the replay end says gap.
+	if j.next < j.end && j.next < r.oldest() {
+		j.next = min(r.oldest(), j.end)
+		j.gap = true
 	}
-	// Bytes the ring overwrote before the writer reached them are gone; the next frame starts
-	// later, and gff-hab sees the jump in the offsets.
-	j.next = max(j.next, r.oldest())
-	limit := count
-	if j.hasTo {
-		limit = max(min(j.to, count), j.start)
-	}
-	if !j.p.released && j.next < limit {
-		data := r.read(j.next, int(min(limit-j.next, hp.MaxOutputData)))
+	if !j.p.released && j.next < j.end {
+		data := r.read(j.next, int(min(j.end-j.next, hp.MaxOutputData)))
 		f := &hp.ReplayData{Handle: j.p.handle, Token: j.token, Offset: j.next, Data: data}
 		j.next += uint64(len(data))
 		return c.encode(f), false
 	}
-	end := j.next
-	if j.hasTo {
-		end = max(min(end, limit), j.start)
+	end := j.end
+	if j.p.released {
+		end = j.next // a release cut the replay short
 	}
 	f := &hp.ReplayEnd{Handle: j.p.handle, Token: j.token, Start: j.start, End: end, Gap: j.gap}
-	if !j.hasTo {
-		// An open replay subscribes the pane. The flip happens in the same lock hold that saw
-		// the replay reach the pane's count, so the next output frame starts exactly at end.
-		if s := c.subs[j.p]; s != nil && s.job == j {
-			s.live = true
-			s.job = nil
-		}
-	}
 	return c.encode(f), true
 }
 
@@ -234,7 +221,10 @@ func (c *conn) encode(f hp.Frame) []byte {
 	return b
 }
 
-// replay handles a replay request.
+// replay handles a replay request. The range is fixed now, at the pane's count: an open replay
+// ends at that count, and the pane turns live in the same lock hold, so its first live output
+// frame starts exactly at the replay's end. Live frames queue behind the replay in the one
+// writer queue; none can go out inside it.
 func (h *Holder) replay(c *conn, f *hp.Replay) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -242,19 +232,22 @@ func (h *Holder) replay(c *conn, f *hp.Replay) {
 	if p == nil || c.closed {
 		return
 	}
-	j := &replayJob{p: p, token: f.Token, from: f.From, hasTo: f.HasTo, to: f.To}
-	if !f.HasTo {
-		// Re-open: from now until this replay's end, no live output for the pane is queued.
-		// Output queued before this point still goes out first; it precedes the replay.
-		s := c.subs[p]
-		if s == nil {
-			s = &sub{}
-			c.subs[p] = s
-		}
-		s.live = false
-		s.job = j
+	r := p.ring
+	count := r.count
+	j := &replayJob{p: p, token: f.Token, start: min(f.From, count)}
+	if j.start < r.oldest() {
+		j.start = r.oldest()
+		j.gap = true
 	}
+	j.end = count
+	if f.HasTo {
+		j.end = max(min(f.To, count), j.start)
+	}
+	j.next = j.start
 	c.q = append(c.q, item{job: j})
+	if !f.HasTo {
+		c.subs[p] = true
+	}
 	c.cond.Signal()
 }
 

@@ -199,21 +199,24 @@ Two weak points we fix (section 2.6):
   size, whether it is draining, how the last logic process left (none, handover or crash), and every
   pane: uuid, handle, pid, size, byte count, oldest kept offset, and exit status if any. No bytes
   follow on their own.
-- **Replay.** gff-hab asks for each pane's bytes from the offset its checkpoint covers. Live output
-  frames resume from the end of each replay. The holder delivers the replay and live frames in
-  offset order, so nothing is lost or doubled.
+- **Replay.** gff-hab asks for each pane's bytes from the offset its checkpoint covers. Each
+  replay ends at the pane's byte count when the request arrives, so it ends however fast the
+  program writes. Live output frames resume from the end of each replay and queue behind it. The
+  holder delivers the replay and live frames in offset order, so nothing is lost or doubled.
 - **Handover.** gff-hab saves its screens and their offsets, then sends handover and closes. The
   holder records "handover" for the next welcome. It discards nothing.
-- **Crash.** The connection ends without handover, or a newer hello arrives while one is open.
-  The holder records "crash". The next gff-hab replays from its last checkpoint on disk; the only
-  difference from a handover is how fresh that checkpoint is.
+- **Crash.** The connection ends without handover, or a newer hello arrives while a connection
+  that has not sent handover is open. The holder records "crash". A newer hello that replaces a
+  connection which already sent handover records "handover". The next gff-hab replays from its
+  last checkpoint on disk; the only difference from a handover is how fresh that checkpoint is.
 
   This is a deliberate change from herdr-core: the holder holds no state about the logic
   process's saves. The logic process names the offset it wants.
 - **Backpressure.** The holder queues frames for gff-hab through one writer. When more than 8 MiB
   is queued, readers pause, and programs slow down. When the writer makes no progress for 5 s
-  (not one byte reaches the socket while frames are queued), the connection is hung: the holder
-  drops it, records "crash", and resumes pumping into the rings alone. A hung logic process
+  (not one byte reaches the socket while frames are queued; found within 5 to 6 s), the
+  connection is hung: the holder drops it, records "crash", and resumes pumping into the rings
+  alone. A hung logic process
   therefore cannot stall programs for long. A slow but moving reader is not hung.
 - **Ping.** Either side may ping; the other answers. gff-hab uses it to detect a hung holder.
 
@@ -235,6 +238,9 @@ Two weak points we fix (section 2.6):
 - An explicit shutdown (a shutdown frame, or SIGTERM from the init system) means: hang up every
   pane, wait up to 5 s for children, send SIGKILL to what remains, reap, remove the socket and
   registry entry, exit.
+- "Every pane" includes released panes whose programs still run. SIGKILL goes to each pane's
+  process group too, also after its leader was reaped, while the group still exists (a
+  background job that ignores SIGHUP).
 - Shutdown is the only path on which the holder ends programs on purpose.
 
 ### 2.9 What the holder does not do
@@ -251,7 +257,9 @@ Two weak points we fix (section 2.6):
 ### 2.10 Local socket and access
 
 - Each holder listens on its own Unix socket in a per-user runtime directory with mode `0700`;
-  the socket is `0600`.
+  the socket is `0600`. The holder refuses a socket directory that is a symlink, belongs to
+  another user or is open to others, and one whose parent lets other users rename it (a
+  writable parent must be sticky). It never falls back to a shared directory such as `/tmp`.
 - The holder checks the peer's uid on every connection (peer credentials) and refuses any other
   user.
 - Socket paths stay short: macOS limits a socket path to 104 bytes.
@@ -512,7 +520,8 @@ panes, sees it is a non-current build, and exits at once. gff-hab treats its pan
 
 ### 6.8 Two logic processes
 
-A second gff-hab that says hello takes over; the first is dropped and recorded as a crash. Each
+A second gff-hab that says hello takes over; the first is dropped. It is recorded as a crash,
+unless it had already sent handover. Each
 logic process holds a lock in the state directory, so this happens only by accident.
 
 ---

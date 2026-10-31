@@ -3,17 +3,19 @@
 // docs/specs/hab-holder.md.
 //
 // The socket path comes from -socket, or from -dir plus the instance id. -dir defaults to
-// $GFF_HOLDER_DIR, then $XDG_RUNTIME_DIR/gff/holders, then a per-user directory under the
-// system temporary directory.
+// $GFF_HOLDER_DIR. Without it, macOS uses gff/holders under the user's cache directory, and
+// other systems use $XDG_RUNTIME_DIR/gff/holders; with no XDG_RUNTIME_DIR the holder refuses to
+// start rather than fall back to a shared directory.
 package main
 
 import (
+	"errors"
 	"flag"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -32,7 +34,20 @@ func main() {
 		hang     = flag.Duration("hang-timeout", holder.DefaultHangTimeout, "drop a connection whose writer makes no progress for this long")
 	)
 	flag.Parse()
+
+	// A holder must not die of a hang-up, or of a write to a closed stderr: either would end
+	// every program. Catch SIGHUP and SIGPIPE rather than ignore them, because children
+	// inherit an ignored signal but not a caught one. This comes before the first log write.
+	quiet := make(chan os.Signal, 1)
+	signal.Notify(quiet, syscall.SIGHUP, syscall.SIGPIPE)
 	logger := log.New(os.Stderr, "gff-hab-holder: ", log.LstdFlags)
+	go func() {
+		for s := range quiet {
+			if s == syscall.SIGHUP {
+				logger.Print("SIGHUP ignored")
+			}
+		}
+	}()
 
 	id := *instance
 	if id == "" {
@@ -42,7 +57,10 @@ func main() {
 	if path == "" {
 		d := *dir
 		if d == "" {
-			d = defaultDir()
+			var err error
+			if d, err = defaultDir(runtime.GOOS, os.Getenv, os.UserCacheDir); err != nil {
+				logger.Fatal(err)
+			}
 		}
 		path = filepath.Join(d, id+".sock")
 	}
@@ -62,15 +80,6 @@ func main() {
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
-	// A holder must not die of a hang-up: that would end every program. Catch SIGHUP rather
-	// than ignore it, because children inherit an ignored signal but not a caught one.
-	hups := make(chan os.Signal, 1)
-	signal.Notify(hups, syscall.SIGHUP)
-	go func() {
-		for range hups {
-			logger.Print("SIGHUP ignored")
-		}
-	}()
 	go func() {
 		s := <-sigs
 		logger.Printf("%v: shutting down", s)
@@ -78,7 +87,10 @@ func main() {
 	}()
 
 	if err := h.Serve(l); err != nil {
-		logger.Fatal(err)
+		// Serve gives up only when no pane is left, so this ends no program.
+		logger.Printf("accept: %v", err)
+		h.Shutdown()
+		os.Exit(1)
 	}
 	select {
 	case <-h.Done():
@@ -88,13 +100,22 @@ func main() {
 	}
 }
 
-// defaultDir picks the per-user runtime directory for holder sockets.
-func defaultDir() string {
-	if d := os.Getenv("GFF_HOLDER_DIR"); d != "" {
-		return d
+var errNoRuntimeDir = errors.New("no socket directory: set XDG_RUNTIME_DIR or GFF_HOLDER_DIR, or pass -dir or -socket")
+
+// defaultDir picks the per-user directory for holder sockets (spec 4.2).
+func defaultDir(goos string, getenv func(string) string, cacheDir func() (string, error)) (string, error) {
+	if d := getenv("GFF_HOLDER_DIR"); d != "" {
+		return d, nil
 	}
-	if d := os.Getenv("XDG_RUNTIME_DIR"); d != "" {
-		return filepath.Join(d, "gff", "holders")
+	if goos == "darwin" {
+		d, err := cacheDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(d, "gff", "holders"), nil
 	}
-	return filepath.Join(os.TempDir(), fmt.Sprintf("gff-%d", os.Getuid()), "holders")
+	if d := getenv("XDG_RUNTIME_DIR"); d != "" {
+		return filepath.Join(d, "gff", "holders"), nil
+	}
+	return "", errNoRuntimeDir
 }

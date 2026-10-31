@@ -27,6 +27,12 @@ var testEnv = []string{"PATH=/usr/bin:/bin", "TERM=dumb", "LC_ALL=C", "HOME=/"}
 // there need no lock.
 func testHolder(t *testing.T, cfg Config, prep func(h *Holder)) (*Holder, string) {
 	t.Helper()
+	return testHolderOn(t, cfg, prep, nil)
+}
+
+// testHolderOn is testHolder with the listener wrapped by wrap, when wrap is not nil.
+func testHolderOn(t *testing.T, cfg Config, prep func(h *Holder), wrap func(*net.UnixListener) acceptor) (*Holder, string) {
+	t.Helper()
 	dir, err := os.MkdirTemp("", "fdh")
 	if err != nil {
 		t.Fatal(err)
@@ -50,10 +56,14 @@ func testHolder(t *testing.T, cfg Config, prep func(h *Holder)) (*Holder, string
 	if prep != nil {
 		prep(h)
 	}
+	var a acceptor = l
+	if wrap != nil {
+		a = wrap(l)
+	}
 	served := make(chan struct{})
 	go func() {
 		defer close(served)
-		if err := h.Serve(l); err != nil {
+		if err := h.serve(a); err != nil {
 			t.Errorf("serve: %v", err)
 		}
 	}()

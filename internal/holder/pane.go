@@ -81,6 +81,21 @@ func (p *pane) hangupLocked() {
 	p.closeMasterLocked()
 }
 
+// killLocked sends SIGKILL to the pane's child and its process group. After the waiter has
+// collected the child, its pid lives on only as the group id of processes left in the group (a
+// background job). The kernel does not reuse a pid while a group still carries it, so the group
+// is probed first and killed only while it exists.
+func (p *pane) killLocked() {
+	if !p.reaped {
+		_ = p.cmd.Process.Signal(syscall.SIGKILL)
+		_ = syscall.Kill(-p.pid, syscall.SIGKILL)
+		return
+	}
+	if syscall.Kill(-p.pid, 0) == nil {
+		_ = syscall.Kill(-p.pid, syscall.SIGKILL)
+	}
+}
+
 func (p *pane) wakeInput() {
 	select {
 	case p.inWake <- struct{}{}:
@@ -130,11 +145,12 @@ func (h *Holder) spawn(c *conn, f *hp.Spawn) {
 	p.handle = h.next
 	h.panes[p.handle] = p
 	h.byUUID[p.uuid] = p
+	h.owned[p] = struct{}{}
 	if h.conn == c && !c.closed {
 		c.sendLocked(&hp.Spawned{Handle: p.handle, Token: f.Token, UUID: f.UUID, Pid: uint32(p.pid)})
 		// A pane spawned on this connection is subscribed from offset 0 at once. The pump
 		// starts below, so no byte can precede the spawned frame.
-		c.subs[p] = &sub{live: true}
+		c.subs[p] = true
 	}
 	h.mu.Unlock()
 
@@ -273,7 +289,7 @@ func (h *Holder) outputLocked(p *pane, data []byte) {
 	if c == nil || !c.ready || c.closed {
 		return
 	}
-	if s := c.subs[p]; s != nil && s.live {
+	if c.subs[p] {
 		c.sendLocked(&hp.Output{Handle: p.handle, Offset: off, Data: append([]byte{}, data...)})
 	}
 }
@@ -344,6 +360,9 @@ func (h *Holder) waiter(p *pane) {
 	p.exited = true
 	if c := h.conn; c != nil && c.ready && !c.closed && !p.released {
 		c.sendLocked(&hp.Exited{Handle: p.handle, Status: p.status, Final: p.ring.count})
+	}
+	if p.released {
+		delete(h.owned, p)
 	}
 	h.mu.Unlock()
 	close(p.final)
@@ -455,8 +474,10 @@ func (h *Holder) signal(c *conn, f *hp.Signal) {
 			c.errorLocked(f.Header(), hp.CodeExited, 0, "child already reaped")
 			return
 		}
-		// Process.Signal refuses a process its Wait has collected, so the pid of a reaped
-		// child is never signalled even inside the window before p.reaped is set.
+		// Between Wait collecting the child and p.reaped being set, the pid is free. On Linux,
+		// Process.Signal uses a pidfd and cannot reach another process. Elsewhere (macOS has no
+		// pidfd) Go marks the process done only after Wait returns, so a signal in that short
+		// window could reach a reused pid; the kernel makes reuse that fast unlikely.
 		err = p.cmd.Process.Signal(hs)
 	case hp.TargetForeground:
 		if p.masterClosed {
@@ -524,6 +545,9 @@ func (h *Holder) release(c *conn, f *hp.Release) {
 	}
 	if h.conn != nil {
 		delete(h.conn.subs, p)
+	}
+	if p.exited {
+		delete(h.owned, p)
 	}
 	h.drainExitLocked()
 }

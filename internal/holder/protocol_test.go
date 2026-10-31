@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -74,47 +75,81 @@ func feed(t *testing.T, h *Holder, c *client, s *hp.Spawned, in *uint64, n int) 
 	}
 }
 
-// TestReopenAtomic re-opens a replay on a subscribed pane. No live output for the pane arrives
-// between the replay's first frame and its end; the ring keeps filling meanwhile (forced here
-// between two replay frames, so the ring wraps under the replay); the wrap shows as an offset
-// jump; live output resumes exactly at the end offset.
+// TestReopenAtomic re-opens a replay on a subscribed pane while the program outruns the
+// writer: after every replay frame the test pushes more than a frame of output through the
+// pane, so the ring wraps under the replay. The replay still ends, at the pane's count when the
+// request arrived. No live output arrives inside the replay; the wrap shows as an offset jump
+// and gap; live output, queued behind the replay, resumes exactly at end.
 func TestReopenAtomic(t *testing.T) {
-	const ringSize = 4096
-	var midReplay hook
-	h, path := testHolder(t, Config{RingSize: ringSize}, func(h *Holder) { h.afterReplayFrame = midReplay.run })
+	testReplayUnderWrap(t, false)
+}
+
+// TestBoundedReplayGap runs the same race with a bounded replay. Bytes the ring overwrote
+// before the writer reached them make the replay end say gap.
+func TestBoundedReplayGap(t *testing.T) {
+	testReplayUnderWrap(t, true)
+}
+
+func testReplayUnderWrap(t *testing.T, bounded bool) {
+	const ringSize = 256 << 10 // four replay frames
+	var calls atomic.Int32
+	var feedMid func()
+	h, path := testHolder(t, Config{RingSize: ringSize}, func(h *Holder) {
+		h.afterReplayFrame = func() {
+			if calls.Add(1) <= 16 && feedMid != nil {
+				feedMid()
+			}
+		}
+	})
 	c := dial(t, path, true)
 	s := echoPane(c, 1)
 	var in uint64
 	feed(t, h, c, s, &in, 3*ringSize)
-	p := paneOf(t, h, s.Handle)
-
-	// After the replay's first frame is written, push three rings' worth through the pane and
-	// wait until the ring has it. The pane is not live, so none of it is queued as output.
-	midReplay.arm(func() { feed(t, h, c, s, &in, 3*ringSize) })
+	countAtRequest := 6 + in
+	var inMu sync.Mutex // the hook feeds from the holder's writer goroutine
+	feedMid = func() {
+		inMu.Lock()
+		defer inMu.Unlock()
+		feed(t, h, c, s, &in, 128<<10)
+	}
 
 	tk := c.tok()
-	c.send(&hp.Replay{Handle: s.Handle, Token: tk, From: 0})
+	req := &hp.Replay{Handle: s.Handle, Token: tk, From: 0}
+	if bounded {
+		req.HasTo, req.To = true, 1<<40
+	}
+	c.send(req)
 	end := c.until(func(f hp.Frame) bool { e, ok := f.(*hp.ReplayEnd); return ok && e.Token == tk }).(*hp.ReplayEnd)
-	h.mu.Lock()
-	countAtEnd := p.ring.count
-	h.mu.Unlock()
+	if end.End != countAtRequest || end.Start != countAtRequest-ringSize || !end.Gap {
+		t.Fatalf("replay end %+v, count at request %d", end, countAtRequest)
+	}
+	if n := calls.Load(); n > 4 {
+		t.Fatalf("replay took %d frames; its end was not fixed", n)
+	}
 
-	// Live output resumes at end.
-	c.send(&hp.Input{Handle: s.Handle, Token: c.tok(), Offset: in, Data: pattern(int(in), 100)})
-	// The first output frame after the replay end, whatever its offset: any live output queued
-	// during the replay would show up here, behind the end.
-	first := c.until(func(f hp.Frame) bool { o, ok := f.(*hp.Output); return ok && o.Handle == s.Handle }).(*hp.Output)
+	// Wait until every echoed byte has come out live. c.output checks the live frames are
+	// contiguous, before the re-open and after it.
+	inMu.Lock()
+	total := 6 + in
+	inMu.Unlock()
+	for uint64(len(c.output(s.Handle))) < total {
+		c.next()
+	}
 
-	inReplay, jumps := false, 0
+	inReplay, jumps, sawEnd := false, 0, false
 	var next uint64
+	var firstAfter *hp.Output
 	for _, f := range c.all {
 		switch f := f.(type) {
 		case *hp.Output:
 			if f.Handle != s.Handle {
 				continue
 			}
-			if inReplay {
+			if inReplay && !bounded {
 				t.Fatalf("live output %s inside the replay", describe(f))
+			}
+			if sawEnd && firstAfter == nil {
+				firstAfter = f
 			}
 		case *hp.ReplayData:
 			if f.Token != tk {
@@ -134,26 +169,22 @@ func TestReopenAtomic(t *testing.T) {
 			next = f.Offset + uint64(len(f.Data))
 		case *hp.ReplayEnd:
 			if f.Token == tk {
-				inReplay = false
+				inReplay, sawEnd = false, true
 			}
 		}
-	}
-	if !end.Gap || end.Start < 3*ringSize-ringSize {
-		t.Fatalf("replay from 0 after a wrap: %+v", end)
 	}
 	if jumps == 0 {
 		t.Fatal("the ring wrapped under the replay, but no offset jump showed")
 	}
-	if next != end.End || end.End != countAtEnd || end.End != 6+6*ringSize {
-		t.Fatalf("replay sent up to %d, end %d, count %d", next, end.End, countAtEnd)
+	if next > end.End {
+		t.Fatalf("replay sent up to %d, past end %d", next, end.End)
 	}
-	if end.End-end.Start <= ringSize {
-		t.Fatalf("ring did not fill during the replay: %+v", end)
+	if !bounded {
+		if firstAfter == nil || firstAfter.Offset != end.End {
+			t.Fatalf("live output resumed at %+v, replay end %d", firstAfter, end.End)
+		}
+		checkStream(t, firstAfter.Offset, firstAfter.Data)
 	}
-	if first.Offset != end.End {
-		t.Fatalf("live output resumed at %d, replay end %d", first.Offset, end.End)
-	}
-	checkStream(t, first.Offset, first.Data)
 }
 
 // TestExitedInHandshake lands a child's exit on each side of the welcome. Exactly one of the

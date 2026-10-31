@@ -224,7 +224,11 @@ Notes:
   Replay end says the holder sent exactly [start, end).
   - *start* is from, or the oldest kept offset if from is older. Then *gap* is true: bytes in
     [from, start) left the ring (spec 6.4).
-  - *end* is to, or the pane's count if that is smaller, or the count for an open replay.
+  - *end* is to, or the pane's count if that is smaller, or the count for an open replay. The
+    count is the one when the request arrives, so every replay ends, however fast the program
+    writes.
+  - If the ring overwrote bytes in [start, end) before the holder sent them, the holder skips
+    them: the next replay data starts at a later offset, and *gap* is true as well.
   - A from beyond the count gives start = end = count.
   - An unknown handle gives an error with ref 0x010b and code 2, and no replay end.
 - **Subscribing.** After welcome the holder sends no output on its own. An open replay
@@ -232,14 +236,15 @@ Notes:
   this connection is subscribed from offset 0 at once.
 - **Re-opening.** gff-hab may send an open replay for a pane that is already subscribed. What it
   observes:
+  - Live output queued before the re-open arrives before the replay.
   - No live output for the pane arrives between the re-open and its replay end.
   - The pane's reader keeps filling the ring the whole time; programs never wait on a replay.
-  - The holder sends replay data up to the pane's count at the moment it sends replay end. That
-    count is *end*.
-  - Live output resumes at *end*, with no overlap.
-  - If the ring overwrote bytes before the holder sent them, the next replay data or output
-    frame starts at a later offset than the previous frame ended. gff-hab sees the gap from the
-    offsets and treats the screen as it would after a gap at the start.
+  - *end* is the pane's count when the re-open arrives. Live output from *end* on queues behind
+    the replay and counts against the backpressure limit (section 8). It resumes after the
+    replay end at *end*, with no overlap.
+  - If the ring overwrote bytes before the holder sent them, the next replay data frame starts
+    at a later offset than the previous frame ended, and the replay end says gap. gff-hab treats
+    the screen as it would after a gap at the start.
 - **Bounded replays** do not change the live stream. Their replay data may arrive between live
   output frames; the token and the frame kind tell them apart.
 - The holder never discards ring bytes at handover. Only the ring size limits how far back a
@@ -276,7 +281,8 @@ Notes:
   never the whole range up front. A large replay therefore holds no more memory than the writer
   queue allows, and counts against the same 8 MiB backpressure limit as live output (spec 2.6).
 - **Hung.** The holder marks a connection hung when its writer makes no progress for 5 s while
-  frames are queued: not one byte reaches the socket. A slow but moving reader is not hung. The
+  frames are queued: not one byte reaches the socket. It writes with 1 s deadlines, so it finds a
+  hung connection 5 to 6 s after the last byte moved. A slow but moving reader is not hung. The
   holder then drops the connection and records "crash" (spec 2.6).
 
 ## 9. Handover, crash and drain
@@ -293,8 +299,10 @@ Notes:
    offset. It parses the replay into the screen, then follows live output.
 
 **Crash.** The connection ends without handover, the holder drops a hung connection (section 8),
-or a newer hello arrives while a connection is open. The holder records "crash"; the next welcome
-says previous = 2. Recovery is the same as step 5. The only difference is how fresh the
+or a newer hello arrives while a connection that has not sent handover is open. The holder
+records "crash"; the next welcome says previous = 2. A newer hello that replaces a connection
+which already sent handover records "handover": a gff-hab may still be closing when its
+successor says hello. Recovery is the same as step 5. The only difference is how fresh the
 checkpoint is. The holder keeps no state about gff-hab's saves.
 
 **Drain (upgrade).**

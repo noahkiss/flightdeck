@@ -116,16 +116,20 @@ type Holder struct {
 	// spawnMu serialises spawns, so two spawns of one uuid cannot both start a program.
 	spawnMu sync.Mutex
 
-	mu       sync.Mutex
-	bp       *sync.Cond // pumps wait here while the connection is over QueueLimit
-	panes    map[hp.Handle]*pane
-	byUUID   map[hp.UUID]*pane
+	mu     sync.Mutex
+	bp     *sync.Cond // pumps wait here while the connection is over QueueLimit
+	panes  map[hp.Handle]*pane
+	byUUID map[hp.UUID]*pane
+	// owned holds every pane whose program the holder may still have to end: all panes in
+	// panes, plus released panes whose exit is not yet reported. Shutdown ends them all, and
+	// the holder never stops serving while it is not empty.
+	owned    map[*pane]struct{}
 	next     hp.Handle
 	conn     *conn // the current logic connection, or nil
 	previous hp.Previous
 	draining bool
 	closing  bool
-	listener *net.UnixListener
+	listener acceptor
 
 	exitOnce sync.Once
 	done     chan struct{}
@@ -137,6 +141,17 @@ type Holder struct {
 	beforeWelcome    func()
 	afterWelcome     func()
 	afterReplayFrame func()
+
+	// lockProbe is how long goSafe waits for the holder lock after a panic before it decides
+	// the panicking goroutine held it. crash ends the process; tests replace it.
+	lockProbe time.Duration
+	crash     func(msg string)
+}
+
+// acceptor is the listener Serve accepts on. Tests wrap a real listener to inject errors.
+type acceptor interface {
+	AcceptUnix() (*net.UnixConn, error)
+	Close() error
 }
 
 // New returns a holder. It runs nothing until Serve.
@@ -148,7 +163,11 @@ func New(cfg Config) *Holder {
 		uid:    os.Getuid(),
 		panes:  map[hp.Handle]*pane{},
 		byUUID: map[hp.UUID]*pane{},
+		owned:  map[*pane]struct{}{},
 		done:   make(chan struct{}),
+
+		lockProbe: 2 * time.Second,
+		crash:     func(msg string) { panic(msg) },
 	}
 	h.bp = sync.NewCond(&h.mu)
 	return h
@@ -160,21 +179,26 @@ func (h *Holder) Instance() string { return h.cfg.Instance }
 // Done is closed when the holder has exited: after shutdown, or after a drain's last release.
 func (h *Holder) Done() <-chan struct{} { return h.done }
 
-// Listen creates the holder's Unix socket at path. The directory is created with mode 0700 if
-// missing and must not be open to other users; the socket gets mode 0600. A stale socket file
-// that refuses connections is replaced; a live one is an error. Keep path short: macOS limits a
-// socket path to 104 bytes.
+// Listen creates the holder's Unix socket at path. Missing directories are created with mode
+// 0700. The socket's directory, and every directory Listen created, must be a real directory
+// (not a symlink) owned by this user and closed to other users. The directory's parent must not
+// let other users rename it away: when it is writable by them, it must be sticky. The socket
+// gets mode 0600. A stale socket file that refuses connections is replaced; a live one is an
+// error. Keep path short: macOS limits a socket path to 104 bytes.
 func Listen(path string) (*net.UnixListener, error) {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	fi, err := os.Stat(dir)
+	created, err := mkdirs(dir)
 	if err != nil {
 		return nil, err
 	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("holder: socket directory %s is open to other users (mode %v)", dir, fi.Mode().Perm())
+	uid := os.Getuid()
+	for _, d := range append(created, dir) {
+		if err := checkPrivateDir(d, uid); err != nil {
+			return nil, err
+		}
+	}
+	if err := checkParent(filepath.Dir(dir), uid); err != nil {
+		return nil, err
 	}
 	if _, err := os.Lstat(path); err == nil {
 		if c, err := net.DialTimeout("unix", path, time.Second); err == nil {
@@ -196,9 +220,97 @@ func Listen(path string) (*net.UnixListener, error) {
 	return l, nil
 }
 
+// mkdirs creates dir and any missing parents with mode 0700, and returns the ones it created,
+// outermost first.
+func mkdirs(dir string) ([]string, error) {
+	var missing []string
+	for d := filepath.Clean(dir); ; d = filepath.Dir(d) {
+		if _, err := os.Lstat(d); err == nil {
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		missing = append(missing, d)
+		if filepath.Dir(d) == d {
+			break
+		}
+	}
+	var created []string
+	for i := len(missing) - 1; i >= 0; i-- {
+		err := os.Mkdir(missing[i], 0o700)
+		if errors.Is(err, os.ErrExist) {
+			continue // made by someone else meanwhile; the checks still apply to dir
+		}
+		if err != nil {
+			return nil, err
+		}
+		created = append(created, missing[i])
+	}
+	return created, nil
+}
+
+func ownerOf(fi os.FileInfo) (int, bool) {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, false
+	}
+	return int(st.Uid), true
+}
+
+// checkPrivateDir requires d to be a real directory owned by uid with no access for others.
+func checkPrivateDir(d string, uid int) error {
+	fi, err := os.Lstat(d)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("holder: socket directory %s is not a directory (mode %v)", d, fi.Mode())
+	}
+	if owner, ok := ownerOf(fi); !ok || owner != uid {
+		return fmt.Errorf("holder: socket directory %s is owned by uid %d, not %d", d, owner, uid)
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("holder: socket directory %s is open to other users (mode %v)", d, fi.Mode().Perm())
+	}
+	return nil
+}
+
+// checkParent requires that no other user can rename entries in d, unless d is sticky. A
+// symlinked parent (macOS has /tmp -> /private/tmp) is checked at its target.
+func checkParent(d string, uid int) error {
+	fi, err := os.Stat(d)
+	if err != nil {
+		return err
+	}
+	owner, ok := ownerOf(fi)
+	if !ok {
+		return fmt.Errorf("holder: cannot read the owner of %s", d)
+	}
+	if owner != uid && owner != 0 {
+		return fmt.Errorf("holder: %s is owned by uid %d, not by this user or root", d, owner)
+	}
+	if fi.Mode().Perm()&0o022 != 0 && fi.Mode()&os.ModeSticky == 0 {
+		return fmt.Errorf("holder: %s is writable by other users and not sticky (mode %v)", d, fi.Mode())
+	}
+	return nil
+}
+
 // Serve accepts logic connections on l until the holder exits. It returns nil after a shutdown
-// or a drain exit; the listener is closed and its socket file removed by then.
+// or a drain exit; the listener is closed and its socket file removed by then. An accept error
+// never ends the holder while it owns a pane, because a holder exit ends every program: Serve
+// backs off and tries again. Only a lasting error with no pane left is returned.
 func (h *Holder) Serve(l *net.UnixListener) error {
+	return h.serve(l)
+}
+
+// Accept backoff bounds.
+const (
+	acceptBackoffMin = 5 * time.Millisecond
+	acceptBackoffMax = time.Second
+	acceptLogEvery   = time.Minute
+)
+
+func (h *Holder) serve(l acceptor) error {
 	h.mu.Lock()
 	if h.closing {
 		h.mu.Unlock()
@@ -207,29 +319,71 @@ func (h *Holder) Serve(l *net.UnixListener) error {
 	}
 	h.listener = l
 	h.mu.Unlock()
+	var backoff time.Duration
+	var lastLog time.Time
 	for {
 		nc, err := l.AcceptUnix()
-		if err != nil {
-			h.mu.Lock()
-			closing := h.closing
-			h.mu.Unlock()
-			if closing || errors.Is(err, net.ErrClosed) {
-				return nil
-			}
+		if err == nil {
+			backoff = 0
+			h.goSafe("connection", func() { h.serveConn(nc) })
+			continue
+		}
+		h.mu.Lock()
+		closing, owns := h.closing, len(h.owned) > 0
+		h.mu.Unlock()
+		if closing {
+			return nil
+		}
+		if !transientAccept(err) && !owns {
 			return err
 		}
-		h.goSafe("connection", func() { h.serveConn(nc) })
+		backoff = min(max(2*backoff, acceptBackoffMin), acceptBackoffMax)
+		if time.Since(lastLog) >= acceptLogEvery {
+			lastLog = time.Now()
+			h.cfg.Logf("holder: accept: %v (retrying)", err)
+		}
+		select {
+		case <-time.After(backoff):
+		case <-h.done:
+			return nil
+		}
 	}
 }
 
+// transientAccept reports whether an accept error is expected to clear on its own: out of
+// descriptors or memory, or a peer that went away mid-accept.
+func transientAccept(err error) bool {
+	for _, e := range []error{syscall.EMFILE, syscall.ENFILE, syscall.ENOBUFS, syscall.ENOMEM,
+		syscall.ECONNABORTED, syscall.ECONNRESET, syscall.EINTR, syscall.EAGAIN, syscall.EPROTO} {
+		if errors.Is(err, e) {
+			return true
+		}
+	}
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
+}
+
 // goSafe runs fn in a goroutine and logs a panic instead of ending the holder (spec 6.6): a
-// holder exit ends every program.
+// holder exit ends every program. A panic that left the holder lock held cannot be recovered
+// from: the state it guards may be half changed, and every other goroutine would block. goSafe
+// probes the lock; if it stays held, it crashes the holder with a clear message.
 func (h *Holder) goSafe(name string, fn func()) {
 	go func() {
 		defer func() {
-			if r := recover(); r != nil {
-				h.cfg.Logf("holder: panic in %s: %v", name, r)
+			r := recover()
+			if r == nil {
+				return
 			}
+			h.cfg.Logf("holder: panic in %s: %v", name, r)
+			deadline := time.Now().Add(h.lockProbe)
+			for !h.mu.TryLock() {
+				if time.Now().After(deadline) {
+					h.crash(fmt.Sprintf("holder: panic in %s left the holder lock held: %v", name, r))
+					return
+				}
+				time.Sleep(time.Millisecond)
+			}
+			h.mu.Unlock()
 		}()
 		fn()
 	}()
@@ -364,8 +518,8 @@ func (h *Holder) backpressureLocked() bool {
 }
 
 // Shutdown ends every pane and exits (spec 2.8): hang up every pane, wait up to ShutdownGrace
-// for the children, kill what remains, reap, send bye, close. It returns when the holder is
-// done.
+// for the children, kill what remains, reap, send bye, close. Released panes whose programs
+// still run are ended too. It returns when the holder is done.
 func (h *Holder) Shutdown() {
 	h.mu.Lock()
 	if h.closing {
@@ -374,8 +528,8 @@ func (h *Holder) Shutdown() {
 		return
 	}
 	h.closing = true
-	ps := make([]*pane, 0, len(h.panes))
-	for _, p := range h.panes {
+	ps := make([]*pane, 0, len(h.owned))
+	for p := range h.owned {
 		ps = append(ps, p)
 	}
 	h.mu.Unlock()
@@ -389,10 +543,7 @@ func (h *Holder) Shutdown() {
 	waitFinal(ps, h.cfg.ShutdownGrace)
 	for _, p := range ps {
 		h.mu.Lock()
-		if !p.reaped {
-			_ = p.cmd.Process.Signal(syscall.SIGKILL)
-			_ = syscall.Kill(-p.pid, syscall.SIGKILL)
-		}
+		p.killLocked()
 		h.mu.Unlock()
 	}
 	waitFinal(ps, h.cfg.ShutdownGrace)

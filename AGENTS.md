@@ -60,7 +60,7 @@ build are in `docs/layout.md`.
 | `make test-pure` | Run the Go tests without cgo or libghostty |
 | `make check-pure` | Fail when a package other than `internal/vt/ghostty` needs cgo |
 | `make check-gen` | Fail when a generated file is stale |
-| `go run ./cmd/gff-hab-holder [-socket path \| -dir dir]` | Run a holder; the socket defaults to `$GFF_HOLDER_DIR`, then `$XDG_RUNTIME_DIR/gff/holders`, then a per-user temp dir |
+| `go run ./cmd/gff-hab-holder [-socket path \| -dir dir]` | Run a holder; the socket directory defaults to `$GFF_HOLDER_DIR`, else `gff/holders` under the user cache directory on macOS and under `$XDG_RUNTIME_DIR` elsewhere (no `XDG_RUNTIME_DIR`: it refuses to start) |
 | `go test -race ./internal/holder/... ./cmd/...` | Holder end-to-end tests: real PTYs, a real Unix socket |
 | `cd swift/HabAPI && swift test` | Build and test the generated Swift package (Mac) |
 
