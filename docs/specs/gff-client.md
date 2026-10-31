@@ -442,8 +442,9 @@ trims that free program keys, tolerant config); `hab-logic-api.md` 3.8 (one inpu
 - **Clock** at the right end of the tab bar, in the local time zone, format configurable.
 - **Warnings badge** in the tab bar: a hab that needs an update, a hab or holder build that is
   superseded, a host key change, a host offline. Selecting it lists the warnings.
-- **Info row** (optional, second row): per-harness counts (working, needs you) across all habs, and
-  agent usage budgets once a source exists (15.6).
+- **Usage row** (on by default, second row): each harness account's usage windows (for example
+  5-hour, weekly, per model) with percent used and reset time, a warning colour near a limit, and
+  per-harness counts (working, needs you) across all habs. Usage is first-class (15.6).
 
 ### 9.2 Edge cases
 
@@ -596,7 +597,7 @@ read back through a terminal parser.
 | Workspace opens on launch | Every new terminal window lands in the same long-lived workspace, already holding its tabs | `gff` opens the default workspace and restores its tabs (5.1) | Screen test: start, add a tab, quit, start; the tab is back with the same panes |
 | Startup tabs | A new workspace starts with two named tabs in the projects directory | Startup tabs from config (5.1) | Screen test: a new workspace shows the configured tabs with their directories |
 | Tab bar with session name and clock | Glances at the top row for tabs, workspace name and time | Tab bar (5.1, 9.1) | Screen test: tab names, active mark and clock in the top row |
-| Agent usage row | Watches agent usage budgets and the count of running agents on a second row | Info row (9.1); budgets wait on a source (15.6) | Screen test: counts match the fake hab's agent states |
+| Agent usage row | Watches agent usage budgets and the count of running agents on a second row | Usage row (9.1), first-class (15.6) | Screen test: counts match the fake hab's agent states |
 | Mode-aware shortcut bar | Reads the bottom row for the keys of the current mode | Shortcut bar (8.1) | Unit: hints for each mode come from the loaded keymap |
 | Unbound key leaves the bar | Removing a binding also removes its hint | Hints derive from the live keymap (8.1) | Unit: unbind a key in config; its hint is absent |
 | Keys left to programs | Harness and shell keys (Ctrl+B, Alt+F, Alt+B, Ctrl+S, Alt+arrows) reach the program | Default keymap takes none of them (8.1) | Screen test: each key arrives in the fake hab's `pane.input` as typed |
@@ -636,7 +637,7 @@ decides (Part 5 decision "which zellij behaviours and plugins become `gff` featu
 | Plugin or add-on | What it does | Recommendation |
 |---|---|---|
 | Top tab bar (a fork built-in) | Tabs, workspace name alias, clock, warning badge; colours from the theme | **Carry over** as the `gff` tab bar (5.1) |
-| Agent usage bar (a local plugin) | Second row: per-provider usage windows and budgets with reset times, read from a file other tools write, plus a count of running agents | **Replace**: agent counts from hab events now; budgets later as a module (Part 7) or a hab source, not by reading another tool's file (15.6) |
+| Agent usage bar (a local plugin) | Second row: per-provider usage windows and budgets with reset times, read from a file other tools write, plus a count of running agents | **Carry over as first-class**: usage windows and resets come from the harness adapters through the hab, not from another tool's file; counts come from hab events (15.6) |
 | Bottom shortcut bar (a fork built-in) | Mode-aware hints from the live keymap; CPU, memory, disk, battery and uptime on the right | **Carry over** as the shortcut bar and system info (8, 9) |
 | Session event feed (a background plugin) | Pushes workspace events to the earlier GFF server, which then reads the tree | **Drop**: hab events replace it (`hab-logic-api.md` 3.5) |
 | Agent session hook script | Reports a harness session's id and state to the workspace through terminal escapes | **Replace** with the harness adapters (`harness-adapters.md`) |
@@ -735,8 +736,10 @@ Recommendation: **A** as the default, with B as a shipped alternative keymap.
 The current usage row reads a file that other tools write. Flightdeck must not read another tool's
 file.
 
-Recommendation: show agent counts now. Add budgets when a harness adapter can report usage for its
-harness, or as a module after the first release (Part 7).
+Decided (owner, 2026-10-31): usage is first-class in gff and the app. Each harness adapter reports
+its account's usage windows through a documented interface of that harness (for example the data a
+harness passes to its status line or hooks). gff-hab keeps the latest reading per account and host
+and serves it to clients, which show it in the usage row, alerts and widgets.
 
 ### 15.7 Activity marks on hidden tabs
 
