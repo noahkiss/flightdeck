@@ -10,7 +10,8 @@ This spec picks the speech models and the pipeline behind voice mode. The user e
 | Cloud features | On device by default and free. Cloud summaries, cloud voices and realtime speech APIs are opt-in settings that use the user's own key. No Flightdeck service sits in the path |
 | Spoken summary | In voice mode the app appends a request for a two-sentence spoken summary to each spoken prompt. The app reads that summary aloud and skips code, diffs and tables |
 | Devices | iPhone and iPad in the first build; the Mac follows with the same speech APIs |
-| Speech engine | NVIDIA Parakeet first, on device through a Core ML port, because it handles software-engineering speech better (owner, 2026-10-31). The model downloads on first use (about 470 MB int8), not with the app. Apple SpeechAnalyzer is the fallback before the download finishes and on devices that cannot run Parakeet. A hosted Parakeet endpoint with the user's key (about $0.0015 per audio minute in October 2026) is an opt-in option. All engines sit behind one interface |
+| Languages | English only (owner, 2026-10-31). So the engine is Parakeet TDT 0.6B v2, the English model: more accurate than the multilingual v3 and slightly smaller |
+| Speech engine | NVIDIA Parakeet first, on device through a Core ML port, because it handles software-engineering speech better (owner, 2026-10-31). The model downloads on first use (about 440 MB int8 for the English v2 model), not with the app. Apple SpeechAnalyzer is the fallback before the download finishes and on devices that cannot run Parakeet. A hosted Parakeet endpoint with the user's key (about $0.0015 per audio minute in October 2026) is an opt-in option. All engines sit behind one interface |
 
 ## Recommendation
 
@@ -62,10 +63,6 @@ WER is LibriSpeech test-clean / test-other, mostly from one M2 Pro benchmark (Ly
 | E. Realtime speech API | Natural turn-taking, barge-in | A second agent speaking for the real one. OpenAI ~$14/hour (mini ~$4.50); Gemini Live ~$1.40/hour, rising as context is rebilled each turn *(aggregator figures)* |
 
 Recommendation: **A** first; then **B** for long replies, **D** opt-in, **E** an experiment.
-
-## Open questions
-
-- Which languages beyond English the first build must support.
 
 ## Sources
 
