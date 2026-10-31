@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -144,14 +145,15 @@ func TestNoTCPListener(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("no lsof on this system")
 	}
-	if l := linuxTCPListeners(t, pid); len(l) > 0 {
-		t.Fatalf("gff-hab listens on TCP: %v", l)
+	if l := linuxInetSockets(t, pid); len(l) > 0 {
+		t.Fatalf("gff-hab has internet sockets: %v", l)
 	}
 }
 
-// linuxTCPListeners returns the LISTEN entries in /proc/net/tcp{,6} whose inode is one of pid's
-// file descriptors.
-func linuxTCPListeners(t *testing.T, pid int) []string {
+// linuxInetSockets returns every entry in /proc/<pid>/net/{tcp,udp}{,6}, in any state, whose
+// inode is one of pid's file descriptors. It fails the test when a table cannot be read; only
+// an IPv6 table may be missing, on a system with IPv6 off.
+func linuxInetSockets(t *testing.T, pid int) []string {
 	t.Helper()
 	inodes := map[string]bool{}
 	fds, err := os.ReadDir(fmt.Sprintf("/proc/%d/fd", pid))
@@ -165,15 +167,18 @@ func linuxTCPListeners(t *testing.T, pid int) []string {
 		}
 	}
 	var found []string
-	for _, f := range []string{"tcp", "tcp6"} {
+	for _, f := range []string{"tcp", "udp", "tcp6", "udp6"} {
 		b, err := os.ReadFile(fmt.Sprintf("/proc/%d/net/%s", pid, f))
 		if err != nil {
-			continue
+			if strings.HasSuffix(f, "6") && errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			t.Fatalf("cannot check for internet sockets: %v", err)
 		}
 		for _, line := range strings.Split(string(b), "\n")[1:] {
 			fields := strings.Fields(line)
-			if len(fields) > 9 && fields[3] == "0A" && inodes[fields[9]] {
-				found = append(found, f+" "+fields[1])
+			if len(fields) > 9 && inodes[fields[9]] {
+				found = append(found, f+" "+fields[1]+" state "+fields[3])
 			}
 		}
 	}
