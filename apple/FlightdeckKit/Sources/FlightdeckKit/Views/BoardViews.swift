@@ -138,7 +138,7 @@ public struct BoardScreen: View {
             SessionPlaceholder(row: row) { opened = nil }
         }
         #if os(macOS)
-        .frame(minWidth: 680, minHeight: 420)
+        .frame(minWidth: fleet != nil && opened != nil ? 960 : 680, minHeight: 420)
         #endif
     }
 }

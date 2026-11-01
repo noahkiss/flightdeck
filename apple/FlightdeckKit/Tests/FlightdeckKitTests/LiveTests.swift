@@ -6,6 +6,9 @@ import XCTest
 /// Live checks against a real gff-hab. Skipped unless the environment names one:
 ///
 /// - `FLIGHTDECK_LIVE_SOCKET`: a hab's socket (`gff-hab serve -socket <path>`).
+/// - `FLIGHTDECK_LIVE_CHAT_SESSION` with `FLIGHTDECK_LIVE_SOCKET`: a hab session that runs
+///   Claude Code with the hab's hooks. The test sends `FLIGHTDECK_LIVE_CHAT_TEXT` (default: a
+///   one-word request) through the chat model and waits for the reply in the chat.
 /// - `FLIGHTDECK_LIVE_SSH_HOST`: an ssh destination that runs `gff-hab connect`.
 ///   `FLIGHTDECK_LIVE_SSH_COMMAND` (words split on spaces) and
 ///   `FLIGHTDECK_LIVE_SSH_OPTIONS` (the same) adjust the command and options.
@@ -25,6 +28,44 @@ final class LiveTests: XCTestCase {
         }
         let words = { (k: String) in (self.env[k] ?? "").split(separator: " ").map(String.init) }
         try await check(SSHTransport(host: host, remoteCommand: words("FLIGHTDECK_LIVE_SSH_COMMAND"), options: words("FLIGHTDECK_LIVE_SSH_OPTIONS")))
+    }
+
+    /// The chat view's path against a real hab: tail page, send through the
+    /// composer's rules, the user record and the agent's reply as chat.message events.
+    @MainActor
+    func testLiveChatSendAndReply() async throws {
+        guard let path = env["FLIGHTDECK_LIVE_SOCKET"], !path.isEmpty,
+              let session = env["FLIGHTDECK_LIVE_CHAT_SESSION"], !session.isEmpty else {
+            throw XCTSkip("FLIGHTDECK_LIVE_SOCKET and FLIGHTDECK_LIVE_CHAT_SESSION not set")
+        }
+        let text = env["FLIGHTDECK_LIVE_CHAT_TEXT"] ?? "Reply with the single word pong."
+        let fleet = Fleet()
+        fleet.add(HabConnection(id: "live", transport: UnixSocketTransport(path: path), clientLabel: "test"), label: nil)
+        await fleet.setActive(true)
+        await eventually("online", timeout: 20) { fleet.board.habs.first?.state.status == .online }
+        let store = try XCTUnwrap(fleet.board.habs.first?.state.store)
+        let pane = try XCTUnwrap(store.sessions[session]?.pane, "session \(session) has no pane")
+        let model = fleet.chat(for: SessionTarget(habID: "live", session: session, pane: pane))
+        model.readBackWindow = .seconds(20)
+        model.start()
+        await eventually("send allowed (agent idle or done)", timeout: 60) { model.gate == .now }
+        await eventually("chat loaded", timeout: 30) { model.load == .ready || model.load == .waiting }
+        let before = model.messages.count
+        print("live chat: gate=\(model.gate) load=\(model.load) messages=\(before) agent=\(String(describing: model.context.agent?.state))")
+        model.send(text)
+        await eventually("the user record", timeout: 30) {
+            model.messages.dropFirst(before).contains { $0.kind == .user && $0.text?.contains(text) == true }
+        }
+        await eventually("the agent's reply", timeout: 120) {
+            guard let u = model.messages.lastIndex(where: { $0.kind == .user && $0.text?.contains(text) == true }) else { return false }
+            return model.messages[(u + 1)...].contains { $0.kind == .agent && !($0.text ?? "").isEmpty }
+        }
+        XCTAssertTrue(model.outgoing.isEmpty, "the transcript record clears the outgoing message")
+        for m in model.messages.dropFirst(before) {
+            print("live chat: \(m.kind.rawValue) \(m.tool?.name ?? "") \((m.text ?? "").prefix(80))")
+        }
+        print("live chat: native session \(model.context.agent?.session ?? "-")")
+        await fleet.setActive(false)
     }
 
     /// Hello, subscribe with scope host, a ping, then a clean stop with no stream left open.

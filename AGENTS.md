@@ -108,6 +108,8 @@ The repo layout and the libghostty build are in `docs/layout.md`.
 | `cd apple/FlightdeckKit && swift test` | Test the app's shared package (it links `swift/HabAPI`) |
 | `FLIGHTDECK_LIVE_SOCKET=<sock> [FLIGHTDECK_LIVE_SSH_HOST=<host> FLIGHTDECK_LIVE_SSH_COMMAND=... FLIGHTDECK_LIVE_SSH_OPTIONS=...] swift test --filter LiveTests` (in `apple/FlightdeckKit`) | Live check against a real hab: hello, subscribe, ping and a clean close over the Unix socket, and over `ssh <host> gff-hab connect`. Skipped when unset |
 | `FLIGHTDECK_LIVE_SOCKET=<sock> [FLIGHTDECK_LIVE_PROGRAM='vim -u NONE -N'] swift test --filter LiveTerminalTests` (in `apple/FlightdeckKit`) | Live terminal check against a real hab with a holder (`-tags ghostty` for real snapshots): starts the program in a new pane, views it without a resize, types to take the size, drops and resumes the data connection with no snapshot, redraws, quits. Skipped when unset |
+| `FLIGHTDECK_LIVE_SOCKET=<sock> FLIGHTDECK_LIVE_CHAT_SESSION=<session> swift test --filter LiveTests.testLiveChatSendAndReply` (in `apple/FlightdeckKit`) | Live chat check: the chat model sends one message to a Claude Code session started with the hab's hooks and waits for the reply in the chat. Start the hab with a clean environment: a pane that inherits `CLAUDECODE` writes no transcript |
+| `FLIGHTDECK_UPDATE_SNAPSHOTS=1 swift test --filter ChatSnapshotTests` (in `apple/FlightdeckKit`) | Rewrite the chat view's text snapshots from `internal/transcript/testdata/*.chat.json`; `FLIGHTDECK_SNAPSHOT_DIR=<dir>` also saves the rendered PNGs |
 | `go test ./api -run TestGoldens -update` | Rewrite the golden messages of the current API revision in `api/testdata/` |
 
 ## Delegation

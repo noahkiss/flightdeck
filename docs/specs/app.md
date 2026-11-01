@@ -437,6 +437,74 @@ Sources: Moshi App Store screens ("Show it, don't describe it": a marked-up scre
 a plan checklist in chat); `harness-adapters.md` (Conversation, Input delivery); the
 `transcripts` capability in `hab-logic-api.md`.
 
+
+### 4.6 Built choices (task-6aflfy2k)
+
+The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.swift`,
+`Views/SessionViews.swift`).
+
+- **One chat model per session.** `Fleet.chat(for:)` hands out a `ChatModel`, shared while a
+  view holds it. The fleet passes it the hab's state on every change: online or not, the
+  session, its pane and the pane's agent state.
+- **Events.** The connection actor gives each listener the hab's `chat.message` events with
+  their seq and a connection count. The model keeps only its session's messages. It replaces a
+  message by id and appends a new id.
+- **Tail and seq.** The view opens with `chat.page` for the tail (50 messages). Events that
+  arrive while the page loads wait. After it, the model drops those with a seq at or below the
+  page's seq on the same connection, and applies the rest.
+- **Older pages** load with `before` when the top row appears. An unknown `before` takes the
+  tail again.
+- **Reconnect.** A return to online asks `after: cursor` until `more` is false. A `conflict`,
+  an empty cursor or any error takes the tail again. A `reset` event takes the tail again.
+- **No reader yet.** `unavailable` from `chat.page` shows the hab's hint. The model tries again
+  when the agent state names a native session or a harness. An empty page with an empty cursor
+  shows "waiting for the first message".
+- **Send gate in the app.** `idle`, `done` and `error` send at once. `working` queues the
+  message in the app ("Sends after this turn", with Cancel); the next `idle` or `done` sends one
+  queued message. `blocked` shows the pending request above the composer. `none` and `exited`
+  turn send off; an exited session offers Resume (`session.resume`). Offline turns it off.
+- **Send path.** The composer calls `session.send`. While the hab answers `unavailable` (Part 4
+  stage 4 is not built), it types through `pane.input` as the adapter rules say: the text in
+  bracketed paste, then Enter as its own call. The first `unavailable` switches the model to
+  `pane.input` for the rest of its life. The app does not wait for typing to pause; the hab's
+  `session.send` will.
+- **Read back.** A sent message waits 5 s for a `working` state or a user record with the same
+  text. Then it shows "not delivered" with Retry and Dismiss. The app never retries on its own.
+  A matching user record removes the outgoing message; the end of the turn removes one that
+  `working` confirmed.
+- **Stop** calls `session.interrupt`, else sends Escape through `pane.input`. It shows only
+  while the agent works.
+- **Rows.** `ChatRender.items` turns messages into rows: user, agent (Markdown blocks), tool
+  card, event line, plan checklist, and "unsupported" for an unknown kind. A message whose
+  `parent` is a tool call nests in that card. Only the latest top-level plan shows its steps;
+  earlier plans fold to one line.
+- **Markdown.** A small line parser splits blocks: paragraphs, headings, fenced code, list
+  items (task boxes too), quotes and rules. Inline Markdown uses
+  `AttributedString(markdown:)`. No third-party renderer.
+- **Tool cards** are folded. Reads and searches fold to one line. Shell tools show the exact
+  command, edits a removed and added diff, `Write` its content as added lines, other tools
+  their input as JSON. Output shows 12 lines with "show all"; a truncated output says the hab
+  sent the first part (no call fetches more yet).
+- **Banners.** Offline or reconnecting shows a banner and turns the composer off. An agent
+  state with a version warning shows "chat view may be incomplete" with a Terminal button.
+- **Layout.** Phone: a board row pushes the session; chat first, a segmented switch flips to
+  the terminal. A session with no harness opens on the terminal. iPad and Mac: the board list
+  stays on the left; the session fills the rest with chat and terminal at 50/50 under one header
+  (harness, host, model). The divider does not drag yet.
+- **Terminal slot.** `.terminalSlot { target in ... }` sets the view in the terminal half. The
+  terminal view stage fills it; a placeholder holds it now.
+- **Snapshot tests.** The tests read `internal/transcript/testdata/<harness>-*.chat.json` in
+  place, so the app and the hab share one fixture set. Each renders to plain text
+  (`ChatRender.text`) and is compared with `Tests/FlightdeckKitTests/Snapshots/`. On macOS each
+  also renders through `ImageRenderer`, checked for size only: pixels change with fonts and OS
+  versions. Codex and opencode have no reader and no fixtures yet; their files drop in by name.
+- **Demo mode.** The fake hab serves `chat.page` (with `before` and a cursor), sends
+  `chat.message`, and records `pane.input`. In demo mode six sessions hold invented
+  conversations, and a sent message gets an invented reply.
+- **Live check.** `LiveTests.testLiveChatSendAndReply` drives a Claude Code session through
+  the same model. Run 2026-11-01: the message reached the TUI by `pane.input`, the user record
+  and the reply came back as events, and `claude --resume` from a plain terminal recalled the
+  turn.
 ---
 
 ## 5. Terminal view
@@ -999,8 +1067,9 @@ The first app stage: the connection to every hab and the status board. Code in
   row. Times in state use the phone's clock against the hab's stamp; the API has no hab clock yet.
 - **Seen.** Opening a `done` row marks it seen on this device, keyed by pane and state stamp, so
   a later `done` counts again. `session.focus` (17) replaces this in Part 6 stage 7.
-- **Open hook.** `Board.onOpen` receives a `SessionTarget` (hab, session, pane). Chat and terminal
-  views attach there; until then a sheet shows the session's fields.
+- **Open hook.** `Board.onOpen` receives a `SessionTarget` (hab, session, pane). The session view
+  (chat and the terminal slot, 4.6) opens from the board; a board with no fleet shows a sheet
+  of the session's fields.
 - **Layout.** iPhone: the list, with connections in a sheet. iPad and Mac: the list beside a
   column with a session cards placeholder and the connections list. The project and hab grouping
   switch, search and the usage footer are not built yet.

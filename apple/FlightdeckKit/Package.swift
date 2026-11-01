@@ -31,6 +31,7 @@ let package = Package(
         .testTarget(
             name: "FlightdeckKitTests",
             dependencies: ["FlightdeckKit"],
+            exclude: ["Snapshots"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ]
