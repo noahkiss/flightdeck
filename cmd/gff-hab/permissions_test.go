@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -46,15 +47,18 @@ func TestProbePane(t *testing.T) {
 	defer stop()
 	env := func() []string { return []string{"PATH=" + os.Getenv("PATH"), noRaceExitSleep} }
 
-	// The real probe: on Linux every macOS check answers "not applicable", as an error.
+	// The real probe. On Linux every macOS check answers "not applicable", as an error; on a Mac
+	// a test holder started from a shell is not in the Aqua domain unless the shell is.
 	pr := &prober{lk: lk, hide: hide, argv: []string{bin}, env: env, logf: t.Logf}
 	inst, checks, err := pr.run(ctx, []string{grants.Domain, grants.FullDiskAccess}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inst != "one" || len(checks) != 2 || checks[0].Grant != grants.Domain || checks[0].State != api.PermissionStateError ||
-		!strings.Contains(checks[0].Detail, "not applicable") {
+	if inst != "one" || len(checks) != 2 || checks[0].Grant != grants.Domain || checks[1].Grant != grants.FullDiskAccess || checks[1].State == "" {
 		t.Fatalf("instance %q, checks %+v", inst, checks)
+	}
+	if runtime.GOOS != "darwin" && (checks[0].State != api.PermissionStateError || !strings.Contains(checks[0].Detail, "not applicable")) {
+		t.Errorf("domain off a Mac: %+v", checks[0])
 	}
 
 	// A probe that prints no result: an error, and the pane goes.
