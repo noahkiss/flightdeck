@@ -12,6 +12,11 @@ struct FlightdeckApp: App {
         WindowGroup {
             FlightdeckRoot(fleet: fleet)
                 .onOpenURL { url in
+                    if url.isFileURL {
+                        // A key file from the share sheet or Files (app.md 10.4).
+                        fleet.ssh?.openKeyFile(url)
+                        return
+                    }
                     if fleet.usage?.open(url: url) == true { return }
                     if fleet.approvals?.open(url: url) != true { fleet.ssh?.open(url: url) }
                 }

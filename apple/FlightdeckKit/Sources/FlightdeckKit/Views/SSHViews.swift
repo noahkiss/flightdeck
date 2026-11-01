@@ -26,6 +26,7 @@ public struct SSHSettingsView: View {
     public var body: some View {
         Form {
             keySection
+            ImportedKeysSection(setup: setup)
             Section("Habs over SSH") {
                 ForEach(setup.entries) { e in
                     VStack(alignment: .leading, spacing: 2) {
@@ -38,6 +39,7 @@ public struct SSHSettingsView: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
+                        HabKeyMenu(setup: setup, entry: e, message: $message)
                     }
                     .contextMenu {
                         Button("Remove", role: .destructive) { remove(e) }
@@ -77,7 +79,10 @@ public struct SSHSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { setup.loadKey() }
+        .onAppear {
+            setup.loadKey()
+            setup.loadImportedKeys()
+        }
         .sheet(isPresented: $adding) {
             NavigationStack {
                 AddHabView(setup: setup, prefill: nil) { adding = false }
@@ -181,6 +186,8 @@ struct AddHabView: View {
     @State private var destination = ""
     @State private var label = ""
     @State private var command = ""
+    /// The key the new entry signs with: the generated key unless the user picks an imported one.
+    @State private var keyID = DeviceKeys.defaultID
     @State private var step: Step = .form
     @State private var error: String?
     /// The destination the shown host key came from.
@@ -211,15 +218,25 @@ struct AddHabView: View {
                 }
             }
             Section {
-                if let line = setup.authorizedKeysLine {
+                if !setup.importedKeys.isEmpty {
+                    Picker("Key", selection: $keyID) {
+                        Text(setup.keyName(DeviceKeys.defaultID)).tag(DeviceKeys.defaultID)
+                        ForEach(setup.importedKeys, id: \.id) { k in
+                            Text(setup.keyName(k.id)).tag(k.id)
+                        }
+                    }
+                }
+                if let line = keyLine {
                     PublicKeyLine(line: line)
                 } else {
                     Text(setup.keyError ?? "No device key yet.").foregroundStyle(.secondary)
                 }
             } header: {
-                Text("This device's key")
+                Text(setup.importedKeys.isEmpty ? "This device's key" : "Key")
             } footer: {
-                Text("Add this line to ~/.ssh/authorized_keys for that user on the host.")
+                Text(keyID == DeviceKeys.defaultID
+                    ? "Add this line to ~/.ssh/authorized_keys for that user on the host."
+                    : "A host that already trusts this key needs nothing more. Otherwise add this line to ~/.ssh/authorized_keys for that user on the host.")
             }
             Section {
                 TextField(NIOSSHTransport.defaultCommand, text: $command)
@@ -259,18 +276,26 @@ struct AddHabView: View {
                 case .probing, .testing: ProgressView()
                 default:
                     Button("Connect") { Task { await probe() } }
-                        .disabled(SSHDestination.parse(destination) == nil || setup.deviceKey == nil)
+                        .disabled(SSHDestination.parse(destination) == nil || keyLine == nil)
                 }
             }
         }
         .onChange(of: destination) { _, _ in resetConfirm() }
+        .onChange(of: keyID) { _, _ in resetConfirm() }
         .onChange(of: command) { _, _ in resetConfirm() }
         .onAppear {
             setup.loadKey()
+            setup.loadImportedKeys()
             if let p = prefill, label.isEmpty {
                 label = p.label ?? ""
             }
         }
+    }
+
+    /// The chosen key's line for the host's authorized keys.
+    private var keyLine: String? {
+        if keyID == DeviceKeys.defaultID { return setup.authorizedKeysLine }
+        return setup.importedKeys.first { $0.id == keyID }?.authorizedKeysLine
     }
 
     /// An edit after the probe drops the shown host key: it belongs to the old address.
@@ -286,7 +311,7 @@ struct AddHabView: View {
         error = nil
         step = .probing
         do {
-            let key = try await setup.probe(d)
+            let key = try await setup.probe(d, keyID: keyID)
             probed = d
             step = .confirm(SSHFingerprint.of(key), String(openSSHPublicKey: key))
         } catch {
@@ -304,6 +329,7 @@ struct AddHabView: View {
             endpoints: [d.endpoint],
             hostKeyFingerprint: fp,
             hostKey: line,
+            keyID: keyID,
             command: cmd.isEmpty ? nil : cmd,
             deviceID: prefill?.deviceID
         )
@@ -418,7 +444,13 @@ struct SSHSheets: ViewModifier {
         @Bindable var setup: SSHSetup
 
         func body(content: Content) -> some View {
-            content.sheet(isPresented: Binding(
+            content
+            .sheet(item: $setup.pendingKeyFile) { p in
+                NavigationStack {
+                    KeyImportView(setup: setup, pending: p) { setup.pendingKeyFile = nil }
+                }
+            }
+            .sheet(isPresented: Binding(
                 get: { setup.pendingCode != nil || setup.pendingCodeError != nil },
                 set: { if !$0 { setup.pendingCode = nil; setup.pendingCodeError = nil } }
             )) {

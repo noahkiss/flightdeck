@@ -19,6 +19,12 @@ public final class SSHSetup {
     public var pendingCode: PairingCode?
     /// A pairing link that did not parse, for its sheet.
     public var pendingCodeError: String?
+    /// Imported OpenSSH keys (app.md 10.4), oldest first.
+    public private(set) var importedKeys: [ImportedKey] = []
+    /// Why the imported keys could not be listed (a locked device).
+    public private(set) var importedKeysError: String?
+    /// A key file opened from the share sheet or Files, waiting for the import sheet.
+    public var pendingKeyFile: PendingKeyFile?
 
     @ObservationIgnored private let listURL: URL?
     @ObservationIgnored private weak var fleet: Fleet?
@@ -88,8 +94,9 @@ public final class SSHSetup {
     // MARK: - Add a hab by hand (app.md 18.8)
 
     /// Connects with nothing pinned and returns the host key to confirm.
-    public func probe(_ dest: SSHDestination) async throws -> NIOSSHPublicKey {
-        guard let key = loadKey() else { throw TransportError(keyError ?? "no device key") }
+    /// The probe never signs, so any key will do.
+    public func probe(_ dest: SSHDestination, keyID: String = DeviceKeys.defaultID) async throws -> NIOSSHPublicKey {
+        guard let key = key(keyID) else { throw TransportError(keyError ?? "no device key") }
         return try await NIOSSHTransport.probeHostKey(dest.endpoint, user: dest.user, key: key, timing: timing)
     }
 
@@ -130,6 +137,104 @@ public final class SSHSetup {
         }
     }
 
+    // MARK: - Imported keys (app.md 10.4)
+
+    /// Reads the imported keys from the store.
+    public func loadImportedKeys() {
+        do {
+            importedKeys = try keys.importedKeys()
+            importedKeysError = nil
+        } catch {
+            importedKeysError = DeviceKeys.explain(error).description
+        }
+    }
+
+    /// Decrypts a key file and stores the key. The passphrase and the file's
+    /// bytes stay with the caller, which drops them; only the raw key reaches
+    /// the Keychain. Decryption runs off the main actor.
+    public func importKey(_ file: OpenSSHKeyFile, passphrase: String?) async throws -> (key: ImportedKey, replaced: Bool) {
+        let keys = self.keys
+        let r = try await Task.detached(priority: .userInitiated) {
+            let m = try file.decrypt(passphrase: passphrase)
+            return try keys.importKey(m)
+        }.value
+        // The fingerprint only: the key never goes to a log.
+        log.notice("imported key \(r.key.type.rawValue, privacy: .public) \(r.key.fingerprint, privacy: .public)")
+        loadImportedKeys()
+        return r
+    }
+
+    /// Turns "Require Face ID" on or off for an imported key.
+    public func setBiometry(_ on: Bool, forImported id: String) throws {
+        try keys.setBiometry(on, forImported: id)
+        loadImportedKeys()
+        reconnect { $0.keyID == id }
+    }
+
+    /// Removes an imported key. Entries that used it say "no key" until one
+    /// is chosen.
+    public func deleteImportedKey(_ id: String) throws {
+        try keys.delete(id)
+        loadImportedKeys()
+        reconnect { $0.keyID == id }
+    }
+
+    /// The hab entries that sign with this key.
+    public func entries(using keyID: String) -> [SSHHabEntry] {
+        entries.filter { $0.keyID == keyID }
+    }
+
+    /// Whether the key an entry names exists on this device. False after a
+    /// restore from a backup, which carries no keys.
+    public func hasKey(_ e: SSHHabEntry) -> Bool {
+        (try? keys.key(e.keyID)) != nil
+    }
+
+    /// Points an entry at another key and reconnects it.
+    public func setKey(_ keyID: String, for e: SSHHabEntry) throws {
+        guard let i = entries.firstIndex(where: { $0.id == e.id }) else { return }
+        var next = entries
+        next[i].keyID = keyID
+        try SSHHabList(habs: next).save(to: listURL)
+        entries = next
+        reconnect { $0.id == e.id }
+    }
+
+    /// The key with this id: the generated one or an imported one.
+    public func key(_ id: String) -> (any SSHKeySource)? {
+        if id == DeviceKeys.defaultID { return loadKey() }
+        return try? keys.key(id)
+    }
+
+    /// Takes a key file opened from another app, for the import sheet. A
+    /// copy iOS placed in the app's Inbox is removed once read.
+    public func openKeyFile(_ url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let data = try Data(contentsOf: url)
+            pendingKeyFile = PendingKeyFile(name: url.lastPathComponent, data: data)
+        } catch {
+            pendingKeyFile = PendingKeyFile(name: url.lastPathComponent, data: Data())
+        }
+        #if os(iOS)
+        // "Open in" copies the file into this app's own Inbox; drop that copy.
+        let home = NSHomeDirectory()
+        if url.path.hasPrefix(home), url.path.contains("/Documents/Inbox/") || url.path.contains("-Inbox/") {
+            try? FileManager.default.removeItem(at: url)
+        }
+        #endif
+    }
+
+    private func reconnect(_ match: (SSHHabEntry) -> Bool) {
+        let affected = entries.filter(match)
+        guard !affected.isEmpty else { return }
+        Task {
+            for e in affected { await fleet?.remove(id: e.connectionID) }
+            for e in affected { attach(e) }
+        }
+    }
+
     // MARK: - Pairing links
 
     /// Opens a `flightdeck://pair` link: parses it and shows the pairing sheet.
@@ -162,6 +267,13 @@ public final class SSHSetup {
     public func entry(id: String) -> SSHHabEntry? {
         entries.first { $0.id == id }
     }
+}
+
+/// A key file handed to the app, before the import sheet reads it.
+public struct PendingKeyFile: Identifiable, Sendable {
+    public let id = UUID()
+    public let name: String
+    public let data: Data
 }
 
 /// A transport that always fails with one message: an entry whose key is gone.

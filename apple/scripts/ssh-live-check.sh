@@ -3,7 +3,9 @@
 # temporary directory that is removed on exit:
 #   a gff-hab-holder and a gff-hab serve with their own socket and state,
 #   a throwaway sshd with its own host key and authorized_keys on a high port,
-#   then SSHLiveTests (probe, pinning, one-shot ping, hello, subscribe, a data channel).
+#   a throwaway passphrase-protected ed25519 key the sshd trusts, for the import path,
+#   then SSHLiveTests (probe, pinning, one-shot ping, hello, subscribe, a data channel,
+#   and a ping signed with the imported key).
 # It never touches the system sshd config, ~/.ssh or any firewall setting.
 #
 # Usage: ssh-live-check.sh            run the test against 127.0.0.1
@@ -62,6 +64,10 @@ ssh-keygen -q -t ed25519 -N '' -f "$DIR/host_ed25519"
 if [ -n "${FLIGHTDECK_SSH_LIVE_PUBKEY:-}" ]; then
 	cat "$FLIGHTDECK_SSH_LIVE_PUBKEY" >>"$DIR/authorized_keys"
 fi
+# A key to import, as a user's own key would be: made here, trusted by the sshd.
+IMPORT_PASS="live-check $(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')"
+ssh-keygen -q -t ed25519 -N "$IMPORT_PASS" -C import-test@example -f "$DIR/import_ed25519"
+cat "$DIR/import_ed25519.pub" >>"$DIR/authorized_keys"
 chmod 600 "$DIR/authorized_keys"
 cat >"$DIR/sshd_config" <<EOF
 Port $PORT
@@ -93,6 +99,7 @@ if [ "$MODE" = serve ]; then
 	echo "address:  $(id -un)@$ADDR:$PORT"
 	echo "command:  $CMD"
 	echo "keys:     $DIR/authorized_keys (sshd reads it at each login; append a device's key line)"
+	echo "import:   $DIR/import_ed25519 (passphrase: $IMPORT_PASS), already trusted; import it on a device to test the import path"
 	echo "Ctrl-C stops everything and removes $DIR."
 	tail -f "$DIR/sshd.log" | grep --line-buffered -E 'Accepted|Failed|refused|Connection from' &
 	PIDS="$PIDS $!"
@@ -109,6 +116,8 @@ FLIGHTDECK_LIVE_NIO_HOSTKEY=$DIR/host_ed25519.pub \
 FLIGHTDECK_LIVE_NIO_AUTHKEYS=$DIR/authorized_keys \
 FLIGHTDECK_LIVE_NIO_COMMAND=$CMD \
 FLIGHTDECK_LIVE_NIO_PANE='echo flightdeck-nio-live; sleep 30' \
+FLIGHTDECK_LIVE_NIO_IMPORT_KEY=$DIR/import_ed25519 \
+FLIGHTDECK_LIVE_NIO_IMPORT_PASS=$IMPORT_PASS \
 	swift test --filter SSHLiveTests >"$DIR/test.log" 2>&1 || rc=$?
 grep -E 'live-nio:|error|passed|failed|skipped' "$DIR/test.log" || true
 
