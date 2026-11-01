@@ -425,3 +425,55 @@ func TestBuild(t *testing.T) {
 		t.Fatalf("stale and input: two %v/%v, new %v/%v, one input %v", two.Stale(), two.Input(), nw.Stale(), nw.Input(), m.Input("one"))
 	}
 }
+
+// TestReplaceKeepsCache: a host that is down keeps its rows, stale, when a Reload changes its
+// endpoints. The new connection starts with the old one's cache, takes no input, and replaces
+// the cache with its own snapshot when the hab comes back (merge review S2).
+func TestReplaceKeepsCache(t *testing.T) {
+	d := shortDir(t)
+	a := startHab(t, d, "a")
+	b := startHab(t, d, "b")
+	src := &source{specs: []hosts.Spec{spec("one", a), spec("two", b)}}
+	m := open(t, src)
+	l := &log{t: t, m: m}
+	l.wait("both online", func(m merge.Model) bool { return m.Input("one") && m.Input("two") })
+	want := sessionsOf(m.Model(), "two")
+	epoch := b.Epoch()
+
+	b.Stop()
+	l.wait("two stale", func(m merge.Model) bool { h, _ := m.Host("two"); return h.Stale() })
+	edited := spec("two", b)
+	edited.Endpoints = append(edited.Endpoints, hosts.Endpoint{Kind: hosts.EndpointSocket, Value: d + "/other.sock"})
+	src.mu.Lock()
+	src.specs[1] = edited
+	src.mu.Unlock()
+	mark := len(l.events)
+	if err := m.Set().Reload(); err != nil {
+		t.Fatal(err)
+	}
+	l.waitEvent("two replaced", mark, func(e merge.Event) bool {
+		return e.Kind == merge.KindHost && e.Key.Host == "two" && errors.Is(e.Err, hosts.ErrSpecChanged)
+	})
+	mod := m.Model()
+	h, _ := mod.Host("two")
+	if h.Status == hosts.Online || !h.Stale() || h.Input() || h.Epoch != epoch {
+		t.Fatalf("two after the edit: %+v, stale %v, input %v; want stale under epoch %s, no input", h, h.Stale(), h.Input(), epoch)
+	}
+	got := sessionsOf(mod, "two")
+	if len(got) != len(want) || len(got) == 0 {
+		t.Fatalf("two's sessions after the edit: %+v; want the cached %+v", got, want)
+	}
+	for i := range got {
+		if !got[i].Stale || got[i].Session.ID != want[i].Session.ID {
+			t.Fatalf("two's session after the edit: %+v; want %s, stale", got[i], want[i].Session.ID)
+		}
+	}
+
+	if err := b.Start(); err != nil {
+		t.Fatal(err)
+	}
+	l.wait("two fresh", func(m merge.Model) bool { return m.Input("two") })
+	if h, _ := m.Model().Host("two"); h.Epoch != b.Epoch() || h.Stale() || h.Epoch == epoch {
+		t.Fatalf("two after it came back: %+v", h)
+	}
+}

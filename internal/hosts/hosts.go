@@ -377,9 +377,9 @@ func (s *Set) Retry() {
 // Reload reads the Source again: new hosts start, hosts no longer listed close and report
 // Removed. A host whose spec is unchanged keeps its connection. A host listed under the same
 // label with other endpoints, another pin or another transport is replaced in place: its old
-// Conn closes, a new one starts Connecting, and one update with Kind UpdateOffline and Err
-// ErrSpecChanged reports it. Reloads run one at a time: two at once would both see a new host
-// and start it twice.
+// Conn closes, a new one starts Connecting with the old one's last welcome and structure, and
+// one update with Kind UpdateOffline and Err ErrSpecChanged reports it. Reloads run one at a
+// time: two at once would both see a new host and start it twice.
 func (s *Set) Reload() error {
 	s.reloading.Lock()
 	defer s.reloading.Unlock()
@@ -448,6 +448,10 @@ func (s *Set) replace(sp Spec) error {
 		return nil
 	}
 	old.gone = true
+	// The new Conn starts Connecting with the old one's last welcome and structure, so the
+	// host's rows stay, stale and with input off, until the new connection's snapshot
+	// replaces them (gff-client.md 4.2: no flash). Its Err says why it is connecting again.
+	e.model.Welcome, e.model.Structure, e.model.Err = old.model.Welcome, old.model.Structure, ErrSpecChanged
 	s.hosts[sp.Label] = e
 	s.wg.Add(1)
 	s.updates.push(Update{Host: sp.Label, Update: habconn.Update{Kind: habconn.UpdateOffline, Err: ErrSpecChanged}})
