@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import HabAPI
+import LocalAuthentication
 import NIOSSH
 import Security
 import XCTest
@@ -493,8 +494,11 @@ final class KeyImportTests: XCTestCase {
             asked.add()
             throw CancellationError()
         }
+        // A key loaded before the change follows it at its next use.
+        let held = try XCTUnwrap(try keys.key(k.id))
         // On needs nothing, and covers both keys.
         try await setup.setFaceID(true)
+        XCTAssertTrue(held.requiresBiometry, "read at use, not at load")
         XCTAssertEqual(asked.n, 0)
         XCTAssertTrue(setup.faceID)
         XCTAssertTrue(try XCTUnwrap(setup.importedKeys.first).requiresBiometry)
@@ -554,6 +558,50 @@ final class KeyImportTests: XCTestCase {
             XCTAssertEqual(try DeviceKeys(store: store, preferEnclave: false).faceID(), want)
             XCTAssertEqual(try store.accounts().count, want ? 3 : 2)
         }
+    }
+
+    /// An enclave key made with Face ID built in (an earlier build's
+    /// switch) is told apart by one signature with no interaction, and
+    /// still needs Face ID with the setting off; a plain one does not.
+    func testLegacyEnclaveKeyIsDetected() throws {
+        guard DeviceKeys.enclaveAvailable else { throw XCTSkip("no Secure Enclave") }
+        func enclaveKey(_ flags: SecAccessControlCreateFlags) throws -> Data {
+            let access = try XCTUnwrap(SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, flags, nil))
+            do {
+                return try SecureEnclave.P256.Signing.PrivateKey(accessControl: access).dataRepresentation
+            } catch {
+                throw XCTSkip("no enclave key here: \(error)")
+            }
+        }
+        let plain = try enclaveKey([.privateKeyUsage])
+        let built: Data
+        do {
+            built = try enclaveKey([.privateKeyUsage, .biometryCurrentSet])
+        } catch {
+            throw XCTSkip("no biometric enclave key here (no Touch ID enrolled?): \(error)")
+        }
+        XCTAssertFalse(GeneratedKey.enclaveNeedsUser(plain))
+        XCTAssertTrue(GeneratedKey.enclaveNeedsUser(built))
+
+        let store = MemorySecretStore()
+        try store.write(account: DeviceKeys.defaultID, data: JSONEncoder().encode(StoredKey(kind: .secureEnclave, data: built, biometry: true, created: Date())))
+        let keys = DeviceKeys(store: store)
+        XCTAssertTrue(try keys.faceID(), "the old switch was on")
+        try keys.setFaceID(false)
+        let k = try keys.defaultKey()
+        XCTAssertTrue(k.biometryBuiltIn)
+        XCTAssertTrue(k.requiresBiometry, "the enclave still asks")
+        let p = try DeviceKeys(store: { let s = MemorySecretStore(); try? s.write(account: DeviceKeys.defaultID, data: JSONEncoder().encode(StoredKey(kind: .secureEnclave, data: plain, created: Date()))); return s }()).defaultKey()
+        XCTAssertFalse(p.requiresBiometry)
+    }
+
+    /// Only "interaction not allowed" means Face ID; other failures do not.
+    func testOnlyNotInteractiveMeansFaceID() {
+        let la = NSError(domain: LAError.errorDomain, code: LAError.Code.notInteractive.rawValue)
+        XCTAssertTrue(GeneratedKey.isNotInteractive(la))
+        XCTAssertTrue(GeneratedKey.isNotInteractive(NSError(domain: "CryptoTokenKit", code: -3, userInfo: [NSUnderlyingErrorKey: la])))
+        XCTAssertFalse(GeneratedKey.isNotInteractive(NSError(domain: NSOSStatusErrorDomain, code: Int(errSecInteractionNotAllowed))))
+        XCTAssertFalse(GeneratedKey.isNotInteractive(NSError(domain: LAError.errorDomain, code: LAError.Code.biometryNotEnrolled.rawValue)))
     }
 
     /// The Inbox copy is found when the file URL and the home folder spell

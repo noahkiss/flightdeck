@@ -871,7 +871,9 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/Console`.
   text, with control characters other than tab dropped. Pasted text with a newline goes as one
   bracketed paste, so the shell does not run each line on its own. A stop button sends Ctrl+C.
   Inputs go one call at a time, in the order given: a Ctrl+C never overtakes the line it should
-  stop, and a failed call does not hold back the next. Typing in the console takes the pane's size like any input
+  stop. When a call fails, the inputs queued behind it are dropped with that one error, rather
+  than each waiting out its own timeout on a dead link; input given after the failure goes
+  again. Closing the console drops what is still queued. Typing in the console takes the pane's size like any input
   (5.3). The keyboard bar is the terminal view's, only while the terminal shows.
 - **Quick actions per host: none.** The hab serves no catalog yet (`mesh.md` 5, `catalog.get` is
   not built), so there are no declared facts to read. The console shows no quick actions until
@@ -1185,7 +1187,8 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
   push registered (without push nothing could update it after suspension, 9.2). Registered
   means the hab's last `push.register` succeeded: each new connection registers again, and the
   scene can turn inactive while that repeat is in flight, so a repeat counts as registered. A
-  first registration still in flight does not. One activity at
+  first registration still in flight does not, nor does one after a new device token, which no
+  hab holds until it answers. One activity at
   a time: any other is ended first, and its token dropped on its hab with `push.unregister`.
   The first content of a session blocked on an answerable permission carries its request with
   Allow and Deny, since the hab sends nothing until the state changes. The activity's push
@@ -1566,21 +1569,34 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH/KeyImport` and `Views/Key
   keeps no accessibility class (10.6), so there the test checks only the sync flag.
 - **Face ID.** One device-wide setting, "Require Face ID for SSH keys" (Settings › SSH, iOS), off
   by default, covers the generated key and every imported key, including keys imported later.
+  One app-level check over every key is the owner's decision (2026-11-01). It replaces the
+  hardware-enforced biometry the generated key had with the old switch; herdr, Paseo and Rex
+  offer no more.
   When on, the app asks for Face ID before each dial. It is an app check, not a Keychain access
   rule: items stay readable whenever the device is unlocked, and changing the setting keeps
   every key and its public line. Turning it off asks for the owner's authentication (Face ID or
   the passcode) first, so whoever holds the unlocked device cannot drop the check; turning it on
-  asks nothing. A change restarts every SSH connection with the keys read anew. Background
-  actions refuse a key that needs Face ID at once. The setting is its own item in the keys'
-  Keychain service (account `setting-face-id`; no item means off), so it shares their storage
-  class and never outlives them in a backup. A key's detail shows the setting, read-only.
+  asks nothing. Each key reads the setting when it signs, not when it loads, so a key already
+  loaded follows a change at its next dial. Live connections keep running: a change starts no
+  reconnect, so turning it on raises no burst of Face ID prompts, one per hab. A setting that
+  cannot be read counts as on. Background actions refuse a key that needs Face ID at once. The
+  setting is its own item in the keys' Keychain service (account `setting-face-id`, label
+  "Flightdeck setting"; no item means off), so it shares their storage class and never outlives
+  them in a backup. Changes and the migration hold one lock, so a first migration on another
+  thread cannot undo a change. A key's detail shows the setting, read-only.
 - **Migration from per-key switches.** Earlier builds kept a Face ID flag in each stored key. On
   first use `DeviceKeys` folds them: any key with the flag on turns the setting on, then every
   key is written again without the flag (setting first, so a stop halfway leaves it on and the
-  next start finishes). A generated enclave key made with the old switch has `.biometryCurrentSet`
+  next start finishes). Hands-off default: the setting takes the strictest choice any key had,
+  with no prompt. An owner who had Face ID on one imported key now has it on every key, and
+  background answers over the other keys say "needs Face ID" until it is turned off; the
+  migration logs the change. A generated enclave key made with the old switch has `.biometryCurrentSet`
   in the enclave, which cannot be removed. The app tells by signing once with no interaction
-  allowed, so no flag is kept: such a key still asks for Face ID with the setting off, and
-  Settings › SSH says so with "Make a new key".
+  allowed, so no flag is kept. Only LocalAuthentication's "not interactive" refusal counts; any
+  other failure (the device locked a moment ago, a key voided by a Face ID re-enrolment) says
+  nothing about Face ID and shows at the dial. Such a key still asks for Face ID with the
+  setting off, and Settings › SSH says so with "Make a new key". The test of this detection
+  needs an unlocked Mac with Touch ID enrolled; it skips otherwise.
 - **Choosing a key.** Each hab entry names its key (`keyID`). "Add a hab by address" shows a key
   picker once an imported key exists; the generated key is preselected. Each row in Habs over
   SSH has a key menu. An entry whose key is gone (deleted, or a restore from a backup) says "No

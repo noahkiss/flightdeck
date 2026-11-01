@@ -122,7 +122,7 @@ public struct SSHSettingsView: View {
                         }
                     }
                 ))
-                if !setup.faceID && k.requiresBiometry {
+                if !setup.faceID && k.biometryBuiltIn {
                     // A key made by an earlier build with Face ID in the Secure Enclave.
                     Text("This key asks for Face ID until you make a new one.").foregroundStyle(.secondary)
                     Button("Make a new key") { confirmNewKey = true }

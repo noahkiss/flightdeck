@@ -24,15 +24,18 @@ public struct ImportedKey: SSHKeySource {
     public let type: ImportedKeyType
     public let publicKey: NIOSSHPublicKey
     public let comment: String
-    public let requiresBiometry: Bool
     public let created: Date
     private let material: ImportedKeyMaterial
+    private let faceID: FaceIDSetting
 
-    init(id: String, stored: StoredImportedKey, faceID: Bool) throws {
+    /// The device-wide setting, read at each use (review S1).
+    public var requiresBiometry: Bool { faceID() }
+
+    init(id: String, stored: StoredImportedKey, faceID: @escaping FaceIDSetting) throws {
         self.id = id
         self.type = stored.type
         self.comment = stored.comment
-        self.requiresBiometry = faceID
+        self.faceID = faceID
         self.created = stored.created
         material = try ImportedKeyMaterial(type: stored.type, raw: stored.raw, comment: stored.comment)
         publicKey = material.publicKey
@@ -73,12 +76,12 @@ extension DeviceKeys {
     /// already (same public key), in which case the stored one is replaced.
     @discardableResult
     public func importKey(_ m: ImportedKeyMaterial) throws -> (key: ImportedKey, replaced: Bool) {
-        let on = try faceID()
+        _ = try faceID()
         let id = Self.importedID(for: m.publicKey)
         let replaced = try store.read(account: id) != nil
         let stored = StoredImportedKey(type: m.type, raw: m.raw, comment: m.comment, created: Date())
         try store.write(account: id, data: JSONEncoder().encode(stored))
-        let k = try ImportedKey(id: id, stored: stored, faceID: on)
+        let k = try ImportedKey(id: id, stored: stored, faceID: faceIDSetting)
         cacheKey(k)
         return (k, replaced)
     }
@@ -102,7 +105,7 @@ extension DeviceKeys {
 
     static let log = Logger(subsystem: "com.flightdeck.app", category: "ssh")
 
-    func loadImported(id: String, data: Data, faceID: Bool) throws -> ImportedKey {
+    func loadImported(id: String, data: Data, faceID: @escaping FaceIDSetting) throws -> ImportedKey {
         try ImportedKey(id: id, stored: JSONDecoder().decode(StoredImportedKey.self, from: data), faceID: faceID)
     }
 }

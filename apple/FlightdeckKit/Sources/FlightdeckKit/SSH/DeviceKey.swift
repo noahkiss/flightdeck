@@ -71,6 +71,10 @@ public enum SSHFingerprint {
     }
 }
 
+/// Reads the device-wide "Require Face ID for SSH keys" setting at the
+/// moment a key is used, so a change applies to keys already loaded.
+public typealias FaceIDSetting = @Sendable () -> Bool
+
 /// A generated P-256 key, as kept in the secret store.
 struct StoredKey: Codable {
     var kind: SSHKeyKind
@@ -87,11 +91,18 @@ public struct GeneratedKey: SSHKeySource {
     public let id: String
     public let kind: SSHKeyKind
     public let publicKey: NIOSSHPublicKey
-    public let requiresBiometry: Bool
     public let created: Date
     private let data: Data
+    private let faceID: FaceIDSetting
+    /// An enclave key made by an earlier build with `.biometryCurrentSet`:
+    /// it asks for Face ID whatever the setting says.
+    public let biometryBuiltIn: Bool
 
-    init(id: String, stored: StoredKey, faceID: Bool) throws {
+    /// Read at each use, not at load (review S1).
+    public var requiresBiometry: Bool { biometryBuiltIn || faceID() }
+
+    init(id: String, stored: StoredKey, faceID: @escaping FaceIDSetting) throws {
+        self.faceID = faceID
         self.id = id
         self.kind = stored.kind
         self.data = stored.data
@@ -106,12 +117,15 @@ public struct GeneratedKey: SSHKeySource {
         case .imported:
             throw TransportError("an imported key is not a generated key")
         }
-        requiresBiometry = faceID || (stored.kind == .secureEnclave && Self.enclaveNeedsUser(stored.data))
+        biometryBuiltIn = stored.kind == .secureEnclave && Self.enclaveNeedsUser(stored.data)
     }
 
     /// Whether a Secure Enclave key needs the user to sign: earlier builds
     /// made the key with `.biometryCurrentSet` when its Face ID switch was
     /// on. A signature with no interaction allowed tells, so no flag is kept.
+    /// Only the "needs interaction" refusal counts; any other failure (the
+    /// device locked a moment ago, a key Face ID re-enrolment voided) says
+    /// nothing about Face ID and surfaces at the dial instead.
     static func enclaveNeedsUser(_ data: Data) -> Bool {
         let ctx = LAContext()
         ctx.interactionNotAllowed = true
@@ -120,8 +134,18 @@ public struct GeneratedKey: SSHKeySource {
             _ = try k.signature(for: Data("flightdeck".utf8))
             return false
         } catch {
-            return true
+            return isNotInteractive(error)
         }
+    }
+
+    /// LocalAuthentication's "interaction not allowed", however CryptoKit wraps it.
+    static func isNotInteractive(_ error: Error) -> Bool {
+        var e: NSError? = error as NSError
+        while let n = e {
+            if n.domain == LAError.errorDomain && n.code == LAError.Code.notInteractive.rawValue { return true }
+            e = n.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return false
     }
 
     /// With Face ID required, asks for it first and signs with that
@@ -151,19 +175,21 @@ public final class DeviceKeys: @unchecked Sendable {
     public static let defaultID = "device"
     /// The store account of the device-wide "Require Face ID for SSH keys"
     /// setting. No item means off.
-    static let faceIDAccount = "setting-face-id"
+    static let faceIDAccount = FaceIDState.account
 
     let store: SecretStore
     private let lock = NSLock()
     private var cache: [String: any SSHKeySource] = [:]
     /// Whether new keys go to the Secure Enclave when it exists.
     private let preferEnclave: Bool
-    /// Whether the per-key flags of earlier builds were folded into the setting.
-    private var migrated = false
+    /// The Face ID setting. Keys hold it too, so they read it at each use
+    /// (review S1); it holds no key, so there is no cycle.
+    private let setting: FaceIDState
 
     public init(store: SecretStore, preferEnclave: Bool = true) {
         self.store = store
         self.preferEnclave = preferEnclave
+        setting = FaceIDState(store: store)
     }
 
     /// Whether this device has a Secure Enclave (false in the simulator).
@@ -175,12 +201,12 @@ public final class DeviceKeys: @unchecked Sendable {
         // The item first: a missing key reads as missing even when the
         // setting cannot be read yet.
         guard id != Self.faceIDAccount, let data = try store.read(account: id) else { return nil }
-        let on = try faceID()
+        _ = try faceID()
         let k: any SSHKeySource
         if id.hasPrefix(Self.importedPrefix) {
-            k = try loadImported(id: id, data: data, faceID: on)
+            k = try loadImported(id: id, data: data, faceID: faceIDSetting)
         } else {
-            k = try GeneratedKey(id: id, stored: JSONDecoder().decode(StoredKey.self, from: data), faceID: on)
+            k = try GeneratedKey(id: id, stored: JSONDecoder().decode(StoredKey.self, from: data), faceID: faceIDSetting)
         }
         cacheKey(k)
         return k
@@ -191,54 +217,19 @@ public final class DeviceKeys: @unchecked Sendable {
     /// The device-wide "Require Face ID for SSH keys" setting: every key,
     /// generated or imported, asks for Face ID before each dial when it is on.
     public func faceID() throws -> Bool {
-        try migrate()
-        return try store.read(account: Self.faceIDAccount) != nil
+        try setting.value()
+    }
+
+    /// What keys read at each use.
+    var faceIDSetting: FaceIDSetting {
+        let s = setting
+        return { s.current() }
     }
 
     /// Changes the setting. The caller asks for authentication before
-    /// turning it off. Loaded keys are dropped so the next use reads it.
+    /// turning it off. Loaded keys read it at their next use.
     public func setFaceID(_ on: Bool) throws {
-        try migrate()
-        if on {
-            try store.write(account: Self.faceIDAccount, data: Data("on".utf8))
-        } else {
-            try store.delete(account: Self.faceIDAccount)
-        }
-        lock.withLock { cache.removeAll() }
-    }
-
-    /// Folds the per-key Face ID flags of earlier builds into the setting:
-    /// any key that had it on turns the setting on, then every stored key is
-    /// written again without its flag. The setting is written first, so a
-    /// stop halfway leaves it on and the next run finishes the rest.
-    private func migrate() throws {
-        if lock.withLock({ migrated }) { return }
-        var anyOn = false
-        var rewrites: [(String, Data)] = []
-        for account in try store.accounts() where account != Self.faceIDAccount {
-            guard let data = try store.read(account: account) else { continue }
-            if account.hasPrefix(Self.importedPrefix) {
-                guard var k = try? JSONDecoder().decode(StoredImportedKey.self, from: data), let b = k.biometry else { continue }
-                anyOn = anyOn || b
-                k.biometry = nil
-                rewrites.append((account, try JSONEncoder().encode(k)))
-            } else {
-                guard var k = try? JSONDecoder().decode(StoredKey.self, from: data), let b = k.biometry else { continue }
-                anyOn = anyOn || b
-                k.biometry = nil
-                rewrites.append((account, try JSONEncoder().encode(k)))
-            }
-        }
-        if anyOn {
-            try store.write(account: Self.faceIDAccount, data: Data("on".utf8))
-        }
-        for (account, data) in rewrites {
-            try store.write(account: account, data: data)
-        }
-        if !rewrites.isEmpty {
-            Self.log.notice("moved \(rewrites.count, privacy: .public) per-key Face ID flags into the setting (on: \(anyOn, privacy: .public))")
-        }
-        lock.withLock { migrated = true }
+        try setting.set(on)
     }
 
     func cacheKey(_ k: any SSHKeySource) {
@@ -256,7 +247,7 @@ public final class DeviceKeys: @unchecked Sendable {
     /// rule, so turning the setting on or off keeps the key.
     @discardableResult
     public func create(id: String) throws -> GeneratedKey {
-        let on = try faceID()
+        _ = try faceID()
         let stored: StoredKey
         if preferEnclave && SecureEnclave.isAvailable {
             var error: Unmanaged<CFError>?
@@ -270,7 +261,7 @@ public final class DeviceKeys: @unchecked Sendable {
             stored = StoredKey(kind: .software, data: P256.Signing.PrivateKey().rawRepresentation, created: Date())
         }
         try store.write(account: id, data: JSONEncoder().encode(stored))
-        let k = try GeneratedKey(id: id, stored: stored, faceID: on)
+        let k = try GeneratedKey(id: id, stored: stored, faceID: faceIDSetting)
         lock.withLock { cache[id] = k }
         return k
     }
@@ -303,5 +294,86 @@ public final class DeviceKeys: @unchecked Sendable {
         #else
         return "flightdeck-ios"
         #endif
+    }
+}
+
+/// The "Require Face ID for SSH keys" setting: one item in the keys' store
+/// (no item means off), and the migration of earlier per-key flags into it.
+final class FaceIDState: @unchecked Sendable {
+    static let account = "setting-face-id"
+
+    private let store: SecretStore
+    /// Held for the whole migration and each change, so a first migration on
+    /// another thread cannot undo a change (review N2).
+    private let lock = NSRecursiveLock()
+    private var migrated = false
+    /// The setting as last read or written; nil until first read. The app
+    /// makes one `DeviceKeys`, so this copy is the truth once read.
+    private var cached: Bool?
+
+    init(store: SecretStore) {
+        self.store = store
+    }
+
+    func value() throws -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if let v = cached { return v }
+        try migrate()
+        let v = try store.read(account: Self.account) != nil
+        cached = v
+        return v
+    }
+
+    /// For keys at each use. A setting that cannot be read counts as on:
+    /// the check fails closed.
+    func current() -> Bool {
+        (try? value()) ?? true
+    }
+
+    func set(_ on: Bool) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        try migrate()
+        if on {
+            try store.write(account: Self.account, data: Data("on".utf8))
+        } else {
+            try store.delete(account: Self.account)
+        }
+        cached = on
+    }
+
+    /// Folds the per-key Face ID flags of earlier builds into the setting:
+    /// any key that had it on turns the setting on, then every stored key is
+    /// written again without its flag. The setting is written first, so a
+    /// stop halfway leaves it on and the next run finishes the rest.
+    private func migrate() throws {
+        if migrated { return }
+        var anyOn = false
+        var rewrites: [(String, Data)] = []
+        for account in try store.accounts() where account != Self.account {
+            guard let data = try store.read(account: account) else { continue }
+            if account.hasPrefix(DeviceKeys.importedPrefix) {
+                guard var k = try? JSONDecoder().decode(StoredImportedKey.self, from: data), let b = k.biometry else { continue }
+                anyOn = anyOn || b
+                k.biometry = nil
+                rewrites.append((account, try JSONEncoder().encode(k)))
+            } else {
+                guard var k = try? JSONDecoder().decode(StoredKey.self, from: data), let b = k.biometry else { continue }
+                anyOn = anyOn || b
+                k.biometry = nil
+                rewrites.append((account, try JSONEncoder().encode(k)))
+            }
+        }
+        if anyOn {
+            try store.write(account: Self.account, data: Data("on".utf8))
+        }
+        for (account, data) in rewrites {
+            try store.write(account: account, data: data)
+        }
+        if !rewrites.isEmpty {
+            DeviceKeys.log.notice("moved \(rewrites.count, privacy: .public) per-key Face ID flags into the setting (on: \(anyOn, privacy: .public))")
+        }
+        migrated = true
     }
 }

@@ -191,8 +191,9 @@ public final class SSHSetup {
 
     /// Turns "Require Face ID for SSH keys" on or off. Turning it off asks
     /// the owner to authenticate first, so whoever holds the unlocked device
-    /// cannot drop the check; turning it on asks nothing. Every connection
-    /// starts again with the keys read anew.
+    /// cannot drop the check; turning it on asks nothing. Keys read the
+    /// setting at each dial, so live connections keep running and the next
+    /// dial follows it: no burst of Face ID prompts, one per hab (review S1).
     public func setFaceID(_ on: Bool) async throws {
         let current = (try? keys.faceID()) ?? faceID
         guard on != current else { return }
@@ -201,10 +202,6 @@ public final class SSHSetup {
         }
         try keys.setFaceID(on)
         faceID = on
-        deviceKey = nil
-        loadKey()
-        loadImportedKeys()
-        reconnect { _ in true }
     }
 
     /// Removes an imported key. Entries that used it say "no key" until one

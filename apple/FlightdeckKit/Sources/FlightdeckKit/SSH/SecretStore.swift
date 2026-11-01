@@ -55,7 +55,8 @@ public struct KeychainStore: SecretStore {
         var q = base(account)
         q.merge(Self.protection) { _, new in new }
         q[kSecValueData as String] = data
-        q[kSecAttrLabel as String] = "Flightdeck SSH key"
+        // Keychain Access shows the label: the Face ID setting is not a key (review N3).
+        q[kSecAttrLabel as String] = account.hasPrefix("setting-") ? "Flightdeck setting" : "Flightdeck SSH key"
         return q
     }
 
