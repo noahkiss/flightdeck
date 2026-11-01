@@ -344,7 +344,7 @@ Decision: settled. `swift-nio-ssh` is the app's SSH library.
 | Client key | Phone and iPad: P-256 in the Secure Enclave, this device only, never in backups; or an imported OpenSSH key in the Keychain, this device only, never in backups (4.3). Mac app: a key in the Keychain, made or imported. `gff`: the user's own SSH keys over the system sshd |
 | Client device id | The SHA-256 fingerprint of the client's public key. An imported key used on several devices gives them one id, so a hab cannot tell them apart or revoke one alone |
 | Device record | id, label, kind (hab, phone, desktop, gff), paired at, paired by, last seen, state (paired, revoked) |
-| Trust store | One per hab: the embedded server's authorized-keys file (devices it admits) and the peers it pins. Revocations stay as tombstones |
+| Trust store | One per hab: the embedded server's authorized-keys file (devices it admits). The peers a hab pins live in its peer file, `peers.toml` (`mesh.md` 3.2 and 4.4), not here. Revocations stay as tombstones |
 
 A hab has one device id for both roles: as the embedded server's host key and as the id it shows
 in the welcome over the system sshd.
@@ -398,7 +398,8 @@ key this way is safe: it came over a pinned, authenticated channel.
 
 1. A hab reaches a peer with `ssh <endpoint> gff-hab connect` over the system sshd, as Part 3
    stage 2 plans.
-2. The welcome carries the peer's host-key fingerprint. The caller pins it in its trust store.
+2. The welcome carries the peer's host-key fingerprint. The caller pins it in its peer file,
+   `peers.toml` (`mesh.md` 4.4).
 3. Where the peer's embedded server is enabled, the caller may move to it (4.5). It already knows
    the host key, so no QR code is needed. The peer admits the caller's hab key after the owner
    approves it once.
