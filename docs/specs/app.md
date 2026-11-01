@@ -1952,8 +1952,9 @@ The owner sees each harness account's usage limits before hitting them.
 | Two accounts on one harness (work and personal) | Two cards, two footer bars |
 | The same account on two habs with no account id | Two cards, each labelled by hab |
 | A reading above 100 per cent | Shown as 100 per cent and "limit reached" |
-| The phone's clock is wrong | Reset times come from the hab as absolute times; the app applies the offset measured on connect |
-| The harness changes its format | The adapter marks usage degraded when no window reads, or a window it knows fails to parse; the card says "usage unavailable", never a wrong number. Drift in a key the adapter does not know is logged only while the known windows read (`harness-adapters.md`, Usage) |
+| The phone's clock is wrong | Reset times come from the hab as absolute times; the app moves them by the offset of the hab's clock, measured at each hello (14.6) |
+| The harness changes its format | The adapter marks usage degraded when no window reads, or a window it knows fails to parse. The footer, the card and the widget say "Usage unavailable", never a wrong number; the card adds the hab's one-line reason. Drift in a key the adapter does not know is logged only while the known windows read (`harness-adapters.md`, Usage) |
+| A hab too old to send `length_s`, `starts_at` or its `time` | The app reads the length from the window name and applies no clock offset |
 
 ### 14.6 Built choices (task-dj1wa3dx)
 
@@ -1980,10 +1981,28 @@ widget snapshot), `FlightdeckKit/Usage/` (book, alerts, center, views), `apple/W
   from the book and the widget.
 - **Demo mode** posts no notification and keeps its readings and alert marks in a defaults suite
   of its own, emptied at each start. The widget never sees demo accounts.
-- **Window length** comes from the window name (`5h`, `7d`, `30m`, `2w`, `7d opus`,
-  `spend monthly` as 30 days). The hab now sends `length_s` and `starts_at` (task-bw97v7dk 2);
-  the app does not read them yet. A name with no length
-  (`model-y`) gets no pace tick, no pace status and is stale after an hour.
+- **Window length** is the hab's `length_s`; else its `resets_at` less `starts_at`; else, from a
+  hab that sends neither, read from the window name (`5h`, `7d`, `30m`, `2w`, `7d opus`,
+  `spend monthly` as 30 days). A length of 0 counts as none. A window with no length (a model
+  name, a spend period with no fixed length) gets no pace tick, no pace status and is stale after
+  an hour. The widget snapshot keeps the length and start; a snapshot an earlier build wrote
+  still reads.
+- **Usage unavailable.** An account the hab marks `degraded` shows "Usage unavailable" in place of
+  its numbers: in the footer (no bar), on the card (no window rows, the hab's reason under it)
+  and in the widget (no ring; the Lock Screen gauge shows its plain icon). The windows it still
+  holds are kept, not shown. It sorts with the accounts that have no windows. It posts no
+  warning, and a waiting "alert me when free" request stays until its reset time; the card keeps
+  that request's cancel button. The mark set or cleared is a change, to the widget too. The
+  Live Activity shows no usage, so it has nothing to change.
+- **Clock offset.** At each hello the connection takes the welcome's `time` against the middle of
+  the hello's round trip: the hab's clock less this device's, per hab connection. A welcome
+  with no `time` clears it. The book moves every hab time (`resets_at`, `read_at`,
+  `starts_at`) onto this device's clock as it reads the account, so reset countdowns, pace,
+  staleness, warnings, "alert me when free" and the widget all run on local time. An offset
+  under 1 s is measurement noise and is not applied. Two times within 2 s count as one when the
+  book compares readings: one hab reached two ways measures its offset a little apart, and a
+  reconnect measures it again; neither is a change, and a window that matches keeps its held
+  times. The offset stays while the hab is offline, for its last readings.
 - **Stale** means older than an hour, or than the window when shorter. An account's age follows
   its newest window: a window the harness stopped sending greys only its own row. **Tightest** window: the
   highest percentage that counts now (a window whose reset passed counts as 0), ties to the later
@@ -2011,12 +2030,10 @@ widget snapshot), `FlightdeckKit/Usage/` (book, alerts, center, views), `apple/W
   Connections sheet closes first, also when a notification or widget tap arrives while it is up.
 - **Debug.** `-FlightdeckOpenUsage <key|all>` opens the sheet at launch (Debug builds).
 - **Tests.** `UsageTests.swift` (math, merge, warnings, alert when free, snapshot, the feed from a
-  fake hab). `apple/scripts/usage-live-check.sh` runs `LiveTests.testLiveUsage` against a real
+  fake hab; the hab's length and start, the name fallback, unavailable accounts, the clock
+  offset, its noise floor and tolerance, and a fake hab whose clock runs two hours behind). `apple/scripts/usage-live-check.sh` runs `LiveTests.testLiveUsage` against a real
   gff-hab: a hab pane pipes hand-written status lines (full, then with room) into
   `gff-hab statusline claude` once the test creates its trigger file.
-- **Not built.** The hab clock offset (14.5): the welcome now carries the hab's `time`
-  (task-bw97v7dk 5), but the app does not measure the offset yet. "Usage unavailable" (14.5): the
-  account now carries `degraded` (task-bw97v7dk 3), but the app does not show it yet.
 
 Sources: Moshi App Store screens (usage sheet with 5h, 7d and per-model windows, reset times, a pace
 marker, "alert me when free"; usage bars in the footer; Home Screen widgets; Watch usage, not
