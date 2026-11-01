@@ -537,3 +537,96 @@ func TestDeviceChanged(t *testing.T) {
 		t.Fatalf("connect with another pinned id: %v", err)
 	}
 }
+
+// TestCloseWakesNext: with the hab down, Next waits for the control connection to come back;
+// Close from another goroutine ends that wait with ErrClosed.
+func TestCloseWakesNext(t *testing.T) {
+	h := startFakeHab(t)
+	ended := make(chan struct{}, 1)
+	c := connect(t, pipeTransport{h}, func(cfg *Config) {
+		cfg.Logf = func(format string, _ ...any) {
+			if strings.Contains(format, "data connection ended") {
+				select {
+				case ended <- struct{}{}:
+				default:
+				}
+			}
+		}
+	})
+	p, err := c.OpenPane(testCtx(t), testPane, PaneOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.stop()
+	errc := make(chan error, 1)
+	go func() {
+		for {
+			if _, err := p.Next(testCtx(t)); err != nil {
+				errc <- err
+				return
+			}
+		}
+	}()
+	// The log comes after the data connection ended and before Next waits to reopen it.
+	select {
+	case <-ended:
+	case <-time.After(waitLong()):
+		t.Fatal("the data connection did not end with the hab")
+	}
+	p.Close()
+	select {
+	case err := <-errc:
+		if !errors.Is(err, ErrClosed) {
+			t.Fatalf("next after close: %v", err)
+		}
+	case <-time.After(waitLong()):
+		t.Fatal("Close did not wake Next")
+	}
+}
+
+// TestFrames: the channel delivers the pane's bytes in order across a dropped data connection,
+// and closes with ErrClosed after Close.
+func TestFrames(t *testing.T) {
+	h := startFakeHab(t)
+	c := connect(t, pipeTransport{h}, nil)
+	zero := uint64(0)
+	p, err := c.OpenPane(testCtx(t), testPane, PaneOptions{Offset: &zero})
+	if err != nil {
+		t.Fatal(err)
+	}
+	produce(h.src, 256<<10)
+	want, end := h.src.output()
+	var got []byte
+	dropped := false
+	timer := time.NewTimer(waitLong())
+	defer timer.Stop()
+	for uint64(len(got)) < end {
+		select {
+		case f, ok := <-p.Frames():
+			if !ok {
+				t.Fatalf("frames closed at %d: %v", len(got), p.Err())
+			}
+			if f.Kind != api.FrameBytes {
+				t.Fatalf("frame kind %d at %d", f.Kind, f.Offset)
+			}
+			if f.Offset != uint64(len(got)) {
+				t.Fatalf("bytes at %d, want %d", f.Offset, len(got))
+			}
+			got = append(got, f.Data...)
+			if !dropped && len(got) >= len(want)/2 && h.dropData() > 0 {
+				dropped = true
+			}
+		case <-timer.C:
+			t.Fatalf("timed out at %d of %d", len(got), end)
+		}
+	}
+	if !bytes.Equal(got, want) || !dropped {
+		t.Fatalf("bytes equal %v, dropped %v", bytes.Equal(got, want), dropped)
+	}
+	p.Close()
+	for range p.Frames() {
+	}
+	if err := p.Err(); !errors.Is(err, ErrClosed) {
+		t.Fatalf("frames ended with %v, want ErrClosed", err)
+	}
+}

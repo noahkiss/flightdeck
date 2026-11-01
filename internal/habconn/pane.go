@@ -41,11 +41,16 @@ type Frame struct {
 // PaneStream follows one pane over data connections: a snapshot, then the program's bytes.
 // When a data connection drops it opens another with a fresh ticket and the offset it holds,
 // so the hab continues with no gap and no repeat, or sends a fresh snapshot when it no longer
-// has the bytes. One goroutine calls Next; Close may come from any.
+// has the bytes. One goroutine calls Next, or one reads Frames; Close may come from any.
 type PaneStream struct {
 	c       *Conn
 	pane    string
 	observe bool
+	done    context.Context // ends at Close; it wakes a Next that waits
+	cancel  context.CancelFunc
+
+	framesOnce sync.Once
+	frames     chan Frame
 
 	mu      sync.Mutex
 	cur     *datastream.Client // nil between data connections
@@ -57,11 +62,13 @@ type PaneStream struct {
 	closed  bool
 	opens   int    // data connections opened
 	trimmed uint64 // bytes dropped by the repeat guard in take; the hab never sends any
+	err     error  // why Frames ended
 }
 
 // OpenPane opens the first data connection to pane and reads its welcome.
 func (c *Conn) OpenPane(ctx context.Context, pane string, opts PaneOptions) (*PaneStream, error) {
 	p := &PaneStream{c: c, pane: pane, observe: opts.Observe}
+	p.done, p.cancel = context.WithCancel(context.Background())
 	if opts.Offset != nil {
 		p.offset, p.have = *opts.Offset, true
 	}
@@ -73,11 +80,31 @@ func (c *Conn) OpenPane(ctx context.Context, pane string, opts PaneOptions) (*Pa
 	}
 	c.panes[p] = struct{}{}
 	c.mu.Unlock()
+	ctx, cancel := p.bind(ctx)
+	defer cancel()
 	if err := p.open(ctx); err != nil {
 		p.Close()
-		return nil, err
+		return nil, p.ended(ctx, err)
 	}
 	return p, nil
+}
+
+// bind returns ctx, ended early by Close.
+func (p *PaneStream) bind(ctx context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(p.done, cancel)
+	return ctx, func() { stop(); cancel() }
+}
+
+// ended turns err into ErrClosed when Close ended the call.
+func (p *PaneStream) ended(ctx context.Context, err error) error {
+	p.mu.Lock()
+	closed := p.closed
+	p.mu.Unlock()
+	if closed && ctx.Err() != nil {
+		return ErrClosed
+	}
+	return err
 }
 
 // Pane returns the pane id.
@@ -105,13 +132,14 @@ func (p *PaneStream) Opens() int {
 	return p.opens
 }
 
-// Close ends the stream.
+// Close ends the stream. A Next waiting on another goroutine returns ErrClosed.
 func (p *PaneStream) Close() {
 	p.mu.Lock()
 	p.closed = true
 	cur := p.cur
 	p.cur = nil
 	p.mu.Unlock()
+	p.cancel()
 	if cur != nil {
 		cur.Close()
 	}
@@ -132,9 +160,61 @@ func (p *PaneStream) kick() {
 
 // Next returns the next frame. Calling Next again tells the stream that the previous frame
 // was applied, which returns its credit. After an exited frame Next returns io.EOF. A pane
-// the hab no longer has ends with ErrPaneGone. When ctx ends Next returns its error; the
-// stream stays usable and resumes from its offset on the next call.
+// the hab no longer has ends with ErrPaneGone. Close from another goroutine wakes Next with
+// ErrClosed.
+//
+// When ctx ends Next returns its error, and the stream stays usable: the next call resumes from
+// its offset. But a ctx that ends while Next reads closes the data connection, so the next call
+// takes a new ticket and a new connection. Do not poll Next with short deadlines; a client that
+// selects over many panes reads Frames instead.
 func (p *PaneStream) Next(ctx context.Context) (Frame, error) {
+	ctx, cancel := p.bind(ctx)
+	defer cancel()
+	f, err := p.next(ctx)
+	if err != nil {
+		return Frame{}, p.ended(ctx, err)
+	}
+	return f, nil
+}
+
+// Frames delivers the stream's frames on a channel, for a client that selects over many panes.
+// A goroutine calls Next and sends each frame; taking a frame from the channel returns its
+// credit, so a client that must hold credit until a frame is applied calls Next itself. The
+// channel closes when the stream ends; Err then says why (io.EOF after the exit). Use Frames or
+// Next, never both.
+func (p *PaneStream) Frames() <-chan Frame {
+	p.framesOnce.Do(func() {
+		p.frames = make(chan Frame)
+		go func() {
+			defer close(p.frames)
+			for {
+				f, err := p.Next(p.done)
+				if err == nil {
+					select {
+					case p.frames <- f:
+						continue
+					case <-p.done.Done():
+						err = ErrClosed
+					}
+				}
+				p.mu.Lock()
+				p.err = err
+				p.mu.Unlock()
+				return
+			}
+		}()
+	})
+	return p.frames
+}
+
+// Err says why the Frames channel closed: nil while it is open.
+func (p *PaneStream) Err() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.err
+}
+
+func (p *PaneStream) next(ctx context.Context) (Frame, error) {
 	failures := 0
 	for {
 		p.mu.Lock()
