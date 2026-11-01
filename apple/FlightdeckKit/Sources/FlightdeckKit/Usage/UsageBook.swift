@@ -5,8 +5,10 @@ import Observation
 import os
 
 /// Every harness account's newest usage reading, merged over all habs by
-/// account key (app.md 14.1). The newest reading wins; a hab's own later
-/// report always replaces its earlier one. Readings outlive the connection:
+/// account key (app.md 14.1). The newest reading wins, by `read_at`, from
+/// any hab, the same hab included. The same reading from two habs (one hab
+/// reached two ways) stays with the hab that has it, unless that hab is
+/// offline and the other online. Readings outlive the connection:
 /// an offline hab's accounts stay with their age, and the book starts from
 /// the last widget snapshot.
 @MainActor
@@ -71,28 +73,24 @@ public final class UsageBook {
         if accounts.count != before { onChange?(Array(accounts.values)) }
     }
 
-    /// Drops the accounts of every hab whose id starts with `prefix`.
-    public func forget(habIDPrefix prefix: String) {
-        let before = accounts.count
-        accounts = accounts.filter { !$0.value.habID.hasPrefix(prefix) }
-        if accounts.count != before { onChange?(Array(accounts.values)) }
-    }
-
     /// Merges one reading. Returns whether the book changed.
     @discardableResult
     func merge(_ new: UsageAccountReading) -> Bool {
         if let old = accounts[new.key] {
-            if Self.sameContent(old, new) { return false }
-            // The newest reading wins, whichever hab sent it.
-            if new.readAt < old.readAt { return false }
+            if Self.sameContent(old, new) {
+                // A tie moves only from an offline hab to an online one.
+                guard old.habID != new.habID, !onlineHabs.contains(old.habID), onlineHabs.contains(new.habID) else { return false }
+            } else if new.readAt < old.readAt {
+                return false
+            }
         }
         accounts[new.key] = new
         return true
     }
 
-    /// The same reading again: nothing to show, nothing to alert.
+    /// The same reading, from any hab: nothing to show, nothing to alert.
     private static func sameContent(_ a: UsageAccountReading, _ b: UsageAccountReading) -> Bool {
-        a.habID == b.habID && a.label == b.label && a.harness == b.harness && a.windows == b.windows
+        a.label == b.label && a.harness == b.harness && a.windows == b.windows
     }
 
     /// Converts the hab's account. A window with an unreadable time keeps the
