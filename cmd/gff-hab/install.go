@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/noahkiss/flightdeck/internal/grants"
 	"github.com/noahkiss/flightdeck/internal/holderreg"
 	"github.com/noahkiss/flightdeck/internal/service"
 )
@@ -64,8 +65,8 @@ func osInit() (service.Init, error) {
 func (f *serviceFlags) config(in service.Init) (service.Config, error) {
 	c := service.Config{
 		Init: in, Prefix: *f.prefix, Path: os.Getenv("PATH"), Locale: service.LocaleEnv(os.Environ()), UID: os.Getuid(),
-		Grants: os.Getenv("GFF_MACOS_GRANTS"),
 	}
+	c.Grants, c.GrantsSet = os.LookupEnv("GFF_MACOS_GRANTS")
 	if c.Prefix == "" {
 		c.Prefix = os.Getenv("GFF_SERVICE_PREFIX")
 	}
@@ -166,6 +167,9 @@ func install(args []string, stdout io.Writer) error {
 	if err != nil && !(*dry && c.Init == service.Systemd) {
 		return err
 	}
+	if err := grantsNotice(&c, stdout); err != nil {
+		return err
+	}
 	if *dry {
 		if c.Init == service.Launchd {
 			// The plists name the build directory and bundle ids, which come from the bundles.
@@ -185,6 +189,22 @@ func install(args []string, stdout io.Writer) error {
 	return service.Install(context.Background(), c, service.Options{
 		HabSource: hab, HolderSource: holderSrc, Out: stdout,
 	})
+}
+
+// grantsNotice resolves the opt-in grant list the jobs get: $GFF_MACOS_GRANTS when set, else the
+// last install's. It says when it kept the old list, and names each entry gff-hab does not know.
+func grantsNotice(c *service.Config, out io.Writer) error {
+	kept, err := c.KeepGrants()
+	if err != nil {
+		return err
+	}
+	if kept {
+		fmt.Fprintf(out, "GFF_MACOS_GRANTS is not set: keeping %q from the last install (set it, even empty, to change it)\n", c.Grants)
+	}
+	if bad := grants.UnknownOptIns(macosGrants(func(string) string { return c.Grants })); len(bad) > 0 {
+		fmt.Fprintf(out, "warning: GFF_MACOS_GRANTS names unknown grants %q; gff setup --check fails until they are fixed\n", bad)
+	}
+	return nil
 }
 
 // uninstall stops and removes the jobs, after confirmation when holders run.

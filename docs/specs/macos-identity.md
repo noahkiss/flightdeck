@@ -670,7 +670,12 @@ beyond the paper spec:
   exists yet: `accessibility`, `screen-recording`, `developer-tools`, `pasteboard`,
   `automation:<bundle-id>`, and `no-full-disk-access`, which drops the holder's Full Disk Access
   for Files and Folders (Q1). An opt-in that is off is reported `off` without a probe. It moves to
-  `macos.grants` when the config file lands.
+  `macos.grants` when the config file lands. `gff-hab install` passes the variable to the jobs
+  and records it in `install.json`. A later install with the variable unset keeps the recorded
+  list and says so; setting it, even empty, replaces the list. A name gff-hab does not know (a
+  typo, or `automation:` with no bundle id) gets a warning at install and a required, `denied`
+  `opt-in` row on gff-hab, so `--check` exits 1 instead of passing without the grant the user
+  asked for. The walk cannot fix that row; it says to fix the variable and install again.
 - **gff-hab's own Full Disk Access** is always checked, and required only when a project folder
   the store knows lies under Desktop, Documents, Downloads, iCloud Drive or `/Volumes`.
 - **Background item.** For each launchd job (the logic job and each running holder's job):

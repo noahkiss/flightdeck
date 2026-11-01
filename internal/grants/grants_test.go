@@ -550,6 +550,31 @@ func TestServiceDropFDA(t *testing.T) {
 	}
 }
 
+// TestServiceUnknownOptIns: an opt-in list with a typo must fail the check, not drop the grant.
+func TestServiceUnknownOptIns(t *testing.T) {
+	ok := []string{Accessibility, ScreenRecording, DeveloperTools, Pasteboard, "no-full-disk-access", "automation:com.apple.Terminal"}
+	if bad := UnknownOptIns(ok); len(bad) != 0 {
+		t.Errorf("known names reported unknown: %q", bad)
+	}
+	if bad := UnknownOptIns([]string{"acessibility", "automation:x", Accessibility, Domain}); !slices.Equal(bad, []string{"acessibility", "automation:x", Domain}) {
+		t.Errorf("unknown %q", bad)
+	}
+	h := newHarness(t)
+	h.checks[LocalNetwork] = api.PermissionStateGranted
+	if got := failing(h.check(api.PermissionsParams{})); len(got) != 0 {
+		t.Fatalf("a set-up Mac fails %v", got)
+	}
+	h.cfg.Grants = []string{"acessibility"}
+	res := h.check(api.PermissionsParams{})
+	r, found := find(res, api.PermissionProcessHab, OptIns)
+	if !found || r.State != api.PermissionStateDenied || !r.Required || !strings.Contains(r.Detail, `"acessibility"`) {
+		t.Errorf("a typo in the opt-in list: %+v (found %v)", r, found)
+	}
+	if res = h.check(api.PermissionsParams{Grants: []string{FullDiskAccess}}); len(failing(res)) != 0 {
+		t.Errorf("a check of one grant reports the opt-in list: %v", failing(res))
+	}
+}
+
 func TestServiceKeepsWalkAnswers(t *testing.T) {
 	h := newHarness(t)
 	// The walk's request sees the network; a later check reports it.

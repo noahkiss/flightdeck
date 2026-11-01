@@ -23,6 +23,9 @@ type manifest struct {
 	Init    Init   `json:"init"`
 	Prefix  string `json:"prefix"`
 	UnitDir string `json:"unit_dir"`
+	// Grants is the GFF_MACOS_GRANTS the jobs got. A later install without the variable keeps
+	// it (macos-identity.md 7.9).
+	Grants string `json:"grants,omitempty"`
 	// Files are the files install wrote, or that systemctl or launchd write for it.
 	Files []string `json:"files"`
 	// Dirs are the directories install created, in the order made: parents first.

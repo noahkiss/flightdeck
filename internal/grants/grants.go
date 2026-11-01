@@ -27,6 +27,7 @@ const (
 	Pasteboard      = "pasteboard"
 	DevBuild        = "dev-build"    // a note: an ad-hoc build holds grants until its next rebuild
 	RegrantOwed     = "regrant-owed" // 6.4
+	OptIns          = "opt-ins"      // the opt-in list names a grant gff-hab does not know
 	Lingering       = "lingering"    // Linux: the user's systemd instance outlives the login
 	Units           = "units"        // Linux: the systemd user units
 	// AutomationPrefix starts an Automation grant: automation:<target bundle id>.
@@ -38,11 +39,28 @@ func Known(name string) bool {
 	switch name {
 	case Domain, BackgroundItem, Signature, FullDiskAccess, FilesAndFolders, LocalNetwork,
 		Accessibility, ScreenRecording, DeveloperTools, Pasteboard, DevBuild, RegrantOwed,
-		Lingering, Units:
+		OptIns, Lingering, Units:
 		return true
 	}
 	t, ok := strings.CutPrefix(name, AutomationPrefix)
 	return ok && validBundleID(t)
+}
+
+// UnknownOptIns returns the entries of an opt-in list (macos.grants) that name nothing gff-hab
+// checks: a typo, or an automation target that is not a bundle id.
+func UnknownOptIns(list []string) []string {
+	var out []string
+	for _, g := range list {
+		switch g {
+		case Accessibility, ScreenRecording, DeveloperTools, Pasteboard, "no-" + FullDiskAccess:
+			continue
+		}
+		if t, ok := strings.CutPrefix(g, AutomationPrefix); ok && validBundleID(t) {
+			continue
+		}
+		out = append(out, g)
+	}
+	return out
 }
 
 // Requestable reports whether a walk can ask macOS for the grant through an API (7.3).
@@ -93,6 +111,8 @@ func Label(name string) string {
 		return "dev"
 	case RegrantOwed:
 		return "regrant"
+	case OptIns:
+		return "opt-in"
 	case Lingering:
 		return "linger"
 	case Units:

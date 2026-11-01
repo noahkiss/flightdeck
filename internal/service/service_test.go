@@ -659,6 +659,54 @@ func TestUninstallNoRecord(t *testing.T) {
 
 // TestReinstallOtherPrefix: an install over a state directory that another prefix installed into
 // is refused, and so is an uninstall with the wrong prefix; neither changes a file or a job.
+// TestReinstallKeepsGrants: an update run from a shell without GFF_MACOS_GRANTS keeps the opt-in
+// list the last install gave the jobs; setting it, even empty, changes it.
+func TestReinstallKeepsGrants(t *testing.T) {
+	root := t.TempDir()
+	c := testConfig(Systemd, root)
+	hab, holder := writeBinaries(t, filepath.Join(root, "src"))
+	f := newFakeInit(t, c)
+	unit := func() string {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(c.UnitDir, c.LogicJob()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	install := func(grants string, set bool) {
+		t.Helper()
+		c := c
+		c.Grants, c.GrantsSet = grants, set
+		if err := Install(context.Background(), c, Options{HabSource: hab, HolderSource: holder, Run: f.run}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const want = `Environment="GFF_MACOS_GRANTS=accessibility"`
+	install("accessibility", true)
+	if !strings.Contains(unit(), want) {
+		t.Fatalf("the unit lacks the grants:\n%s", unit())
+	}
+	if m, err := readManifest(c); err != nil || m.Grants != "accessibility" {
+		t.Fatalf("install.json: %+v %v", m, err)
+	}
+	install("", false) // an update from a shell without the variable
+	if !strings.Contains(unit(), want) {
+		t.Errorf("a reinstall without GFF_MACOS_GRANTS dropped the grants:\n%s", unit())
+	}
+	kc := c
+	if kept, err := kc.KeepGrants(); err != nil || !kept || kc.Grants != "accessibility" {
+		t.Errorf("KeepGrants: %v %v %q", kept, err, kc.Grants)
+	}
+	install("", true) // set, but empty: the user turned them off
+	if strings.Contains(unit(), "GFF_MACOS_GRANTS") {
+		t.Errorf("GFF_MACOS_GRANTS= did not clear the grants:\n%s", unit())
+	}
+	if m, _ := readManifest(c); m.Grants != "" {
+		t.Errorf("install.json still records %q", m.Grants)
+	}
+}
+
 func TestReinstallOtherPrefix(t *testing.T) {
 	root := t.TempDir()
 	c := testConfig(Systemd, root)

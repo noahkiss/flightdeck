@@ -309,6 +309,9 @@ func (w *walker) walkOne(ctx context.Context, r api.PermissionRow) error {
 	case grants.RegrantOwed:
 		fmt.Fprintln(w.out, "  Grant each missing row again; the final check clears this.")
 		return nil
+	case grants.OptIns:
+		fmt.Fprintln(w.out, "  Fix GFF_MACOS_GRANTS, then run gff-hab install with it set.")
+		return nil
 	case grants.Domain, grants.DevBuild:
 		return nil
 	}

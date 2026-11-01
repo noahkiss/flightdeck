@@ -94,8 +94,12 @@ type Config struct {
 	// too, so programs in panes keep the user's locale.
 	Locale []string
 	// Grants is the opt-in permission list, $GFF_MACOS_GRANTS (macos-identity.md 7.9), which
-	// the jobs get when it is set.
+	// the jobs get when it is set. Install records it in install.json.
 	Grants string
+	// GrantsSet means Grants comes from the environment, even empty. When it is false, install
+	// keeps the list the last install recorded, so an update from a shell without the variable
+	// does not drop it.
+	GrantsSet bool
 	// UID is the user's id, for the launchd domain gui/<uid>.
 	UID int
 	// Build is the launchd build directory, <state>/builds/<build>, that the jobs run from.
@@ -110,6 +114,24 @@ var prefixRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
 // grantsRE matches a GFF_MACOS_GRANTS value: grant names and bundle ids.
 var grantsRE = regexp.MustCompile(`^[A-Za-z0-9.,:_ -]*$`)
+
+// KeepGrants takes the opt-in grant list from the last install's record when GrantsSet is false,
+// and reports whether it did. Afterwards GrantsSet is true, so a second call changes nothing.
+func (c *Config) KeepGrants() (bool, error) {
+	if c.GrantsSet {
+		return false, nil
+	}
+	c.GrantsSet = true
+	m, err := readManifest(*c)
+	if err != nil || m == nil || m.Grants == "" || m.check(*c) != nil {
+		return false, err
+	}
+	if !grantsRE.MatchString(m.Grants) {
+		return false, fmt.Errorf("service: install record %s: GFF_MACOS_GRANTS %q", c.manifestPath(), m.Grants)
+	}
+	c.Grants = m.Grants
+	return true, nil
+}
 
 // JobEnv is the environment every job gets beyond PATH: the locale, and GFF_MACOS_GRANTS when set.
 func (c Config) JobEnv() []string {
@@ -463,10 +485,6 @@ func Install(ctx context.Context, c Config, o Options) error {
 			return err
 		}
 	}
-	files, err := Render(c)
-	if err != nil {
-		return err
-	}
 	m, err := readManifest(c)
 	if err != nil {
 		return err
@@ -474,6 +492,14 @@ func Install(ctx context.Context, c Config, o Options) error {
 	if m == nil {
 		m = &manifest{Version: manifestVersion, Init: c.Init, Prefix: c.Prefix, UnitDir: c.UnitDir}
 	} else if err := m.check(c); err != nil {
+		return err
+	}
+	if _, err := c.KeepGrants(); err != nil {
+		return err
+	}
+	m.Grants = c.Grants
+	files, err := Render(c)
+	if err != nil {
 		return err
 	}
 	if c.Init == Launchd {

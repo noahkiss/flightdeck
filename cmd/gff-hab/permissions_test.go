@@ -17,6 +17,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/grants"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/link"
+	"github.com/noahkiss/flightdeck/internal/service"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
@@ -254,6 +255,28 @@ func TestPermissionsCall(t *testing.T) {
 func TestProbeCmdUsage(t *testing.T) {
 	if code := probeCmd([]string{"-checks", "domain"}); code != 64 {
 		t.Errorf("no nonce: exit %d", code)
+	}
+}
+
+// TestGrantsNotice: install names a typo in GFF_MACOS_GRANTS, and says when it keeps the last
+// install's list.
+func TestGrantsNotice(t *testing.T) {
+	c := service.Config{Init: service.Systemd, Prefix: "svctest", StateDir: t.TempDir(), Grants: "acessibility,screen-recording", GrantsSet: true}
+	var out strings.Builder
+	if err := grantsNotice(&c, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `unknown grants ["acessibility"]`) || strings.Contains(out.String(), "keeping") {
+		t.Errorf("%s", out.String())
+	}
+	out.Reset()
+	c = service.Config{Init: service.Systemd, Prefix: "svctest", StateDir: c.StateDir}
+	os.WriteFile(filepath.Join(c.StateDir, "install.json"), []byte(`{"version":1,"init":"systemd","prefix":"svctest","unit_dir":"","grants":"accessibility","files":[],"dirs":[]}`), 0o600)
+	if err := grantsNotice(&c, &out); err != nil {
+		t.Fatal(err)
+	}
+	if c.Grants != "accessibility" || !strings.Contains(out.String(), `keeping "accessibility"`) || strings.Contains(out.String(), "unknown") {
+		t.Errorf("%q: %s", c.Grants, out.String())
 	}
 }
 

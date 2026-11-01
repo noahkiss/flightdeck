@@ -324,6 +324,11 @@ func (s *Service) darwin(ctx context.Context, p api.PermissionsParams, want func
 		}
 		rows = append(rows, r)
 	}
+	if bad := UnknownOptIns(s.cfg.Grants); len(bad) > 0 && want(OptIns) {
+		// The user asked for these to be checked; a check that skips them must not pass.
+		rows = append(rows, row(api.PermissionProcessHab, "", Check{Grant: OptIns, State: api.PermissionStateDenied,
+			Detail: fmt.Sprintf("GFF_MACOS_GRANTS names unknown grants %q: fix it and run gff-hab install", bad)}, true))
+	}
 	if want(RegrantOwed) {
 		if b, err := os.ReadFile(s.regrantPath()); err == nil {
 			rows = append(rows, row(api.PermissionProcessHab, "", Check{Grant: RegrantOwed, State: api.PermissionStateDenied,
