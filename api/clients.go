@@ -558,3 +558,97 @@ type DetectRule struct {
 	Text      string `json:"text" doc:"The region's text as the rule read it, cut to its last 2048 bytes. osc_title and osc_progress read empty: this build does not track them."`
 	Truncated bool   `json:"truncated,omitempty" doc:"The text was cut."`
 }
+
+// --- Worktrees (spec 3.10) ---
+
+// WorktreeProject names the repository a worktree call is about: a project id, whose most
+// recently used folder on this hab is the source checkout, or a folder in the repository.
+type WorktreeProject struct {
+	Project    string `json:"project,omitempty" doc:"Project id. The hab uses the project's most recently used folder on this host. Give project or project_dir."`
+	ProjectDir string `json:"project_dir,omitempty" doc:"Absolute path inside a working tree of the repository. The hab finds or creates its project, as session.create does."`
+}
+
+// WorktreeListParams lists a repository's working trees.
+type WorktreeListParams struct {
+	WorktreeProject
+}
+
+// WorktreeList is a repository's working trees, the main one first.
+type WorktreeList struct {
+	Seq
+	Project   string     `json:"project" doc:"Project id."`
+	Worktrees []Worktree `json:"worktrees"`
+}
+
+// Worktree is one working tree of a repository.
+type Worktree struct {
+	Path     string `json:"path" doc:"Absolute folder of the working tree."`
+	Branch   string `json:"branch,omitempty" doc:"Checked-out branch. Absent on a detached HEAD."`
+	Head     string `json:"head,omitempty" doc:"Full commit id of HEAD. Absent in an empty repository."`
+	Main     bool   `json:"main,omitempty" doc:"The repository's main working tree. It is never removed."`
+	Locked   bool   `json:"locked,omitempty" doc:"Locked with git worktree lock; worktree.remove refuses it."`
+	Prunable bool   `json:"prunable,omitempty" doc:"Its folder is gone; worktree.remove prunes the entry."`
+	Managed  bool   `json:"managed,omitempty" doc:"Made by worktree.create on this hab."`
+}
+
+// SetupMode says whether worktree.create runs the setup script. A closed set the client sends.
+type SetupMode string
+
+// WorktreeCreateParams makes a worktree.
+type WorktreeCreateParams struct {
+	WorktreeProject
+	Branch string    `json:"branch,omitempty" doc:"Branch to check out: a local branch, or a branch of exactly one remote when base is absent; otherwise a new branch from base. Absent: a new branch named wt/<word>-<word>-<hex>."`
+	Base   string    `json:"base,omitempty" doc:"Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab never fetches."`
+	Path   string    `json:"path,omitempty" doc:"Absolute folder for the worktree; it must not exist. Default: <worktree root>/<repository folder>/<branch slug>."`
+	Setup  SetupMode `json:"setup,omitempty" doc:"auto (default): run the setup script unless the code may come from someone else; run: run it anyway, after the user said yes; skip: do not run it."`
+}
+
+// SetupState says what became of a worktree's setup script. An open set the server sends.
+type SetupState string
+
+// WorktreeSetup is what became of a worktree's setup script.
+type WorktreeSetup struct {
+	State   SetupState `json:"state" doc:"none: the project file names no setup; started: it runs in the session below; pending: it waits for a yes (worktree.setup); skipped: the call said skip; error: it could not start."`
+	Reason  string     `json:"reason,omitempty" doc:"Why setup is pending or could not start, in one line."`
+	Session string     `json:"session,omitempty" doc:"The session that runs the setup script. Its exit status says how setup ended."`
+	Pane    string     `json:"pane,omitempty" doc:"The pane that runs the setup script."`
+}
+
+// WorktreeCreated is a new worktree.
+type WorktreeCreated struct {
+	Seq
+	Project  string        `json:"project" doc:"Project id."`
+	Worktree Worktree      `json:"worktree"`
+	Copied   []string      `json:"copied" doc:"Ignored files copied from the source checkout by .worktreeinclude, relative to the worktree."`
+	Setup    WorktreeSetup `json:"setup"`
+}
+
+// WorktreeSetupParams runs a worktree's setup script now: the yes to a pending setup, or a rerun.
+type WorktreeSetupParams struct {
+	WorktreeProject
+	Path string `json:"path" doc:"Absolute folder of a linked worktree of the repository."`
+}
+
+// WorktreeSetupResult is what became of the setup script.
+type WorktreeSetupResult struct {
+	Seq
+	Setup WorktreeSetup `json:"setup"`
+}
+
+// WorktreeRemoveParams removes a linked worktree. Its branch stays.
+type WorktreeRemoveParams struct {
+	WorktreeProject
+	Path  string `json:"path" doc:"Absolute folder of a linked worktree of the repository."`
+	Force bool   `json:"force,omitempty" doc:"Remove it even with uncommitted or untracked changes, which are lost. The client confirms with the user first."`
+}
+
+// TeardownState says what became of a worktree's teardown script. An open set the server sends.
+type TeardownState string
+
+// WorktreeRemoved says how the removal went.
+type WorktreeRemoved struct {
+	Seq
+	Teardown       TeardownState `json:"teardown" doc:"none: no teardown ran (no script, or the worktree was not made and approved by this hab); ran: it exited 0; failed: it exited non-zero, timed out or could not start. The worktree is removed either way."`
+	TeardownExit   *int          `json:"teardown_exit,omitempty" doc:"The teardown script's exit code, when it exited."`
+	TeardownOutput string        `json:"teardown_output,omitempty" doc:"The last 4 KiB of the teardown script's output, when it failed."`
+}

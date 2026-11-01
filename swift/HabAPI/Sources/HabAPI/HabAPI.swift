@@ -3377,6 +3377,26 @@ public struct SessionState: RawRepresentable, Codable, Sendable, Hashable {
 }
 
 /// An open word set: values outside the known list decode and round-trip unchanged.
+public struct SetupMode: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let auto = SetupMode(rawValue: "auto")
+    public static let run = SetupMode(rawValue: "run")
+    public static let skip = SetupMode(rawValue: "skip")
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct SetupState: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let none = SetupState(rawValue: "none")
+    public static let started = SetupState(rawValue: "started")
+    public static let pending = SetupState(rawValue: "pending")
+    public static let skipped = SetupState(rawValue: "skipped")
+    public static let error = SetupState(rawValue: "error")
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
 public struct StateSource: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
@@ -3431,6 +3451,15 @@ public struct SubscribeParams: Codable, Sendable, Hashable {
     public init(scope: Scope) {
         self.scope = scope
     }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct TeardownState: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let none = TeardownState(rawValue: "none")
+    public static let ran = TeardownState(rawValue: "ran")
+    public static let failed = TeardownState(rawValue: "failed")
 }
 
 public struct Ticket: Codable, Sendable, Hashable {
@@ -3626,6 +3655,252 @@ public struct Welcome: Codable, Sendable, Hashable {
     }
 }
 
+public struct Worktree: Codable, Sendable, Hashable {
+    /// Checked-out branch. Absent on a detached HEAD.
+    public var branch: String?
+    /// Full commit id of HEAD. Absent in an empty repository.
+    public var head: String?
+    /// Locked with git worktree lock; worktree.remove refuses it.
+    public var locked: Bool?
+    /// The repository's main working tree. It is never removed.
+    public var main: Bool?
+    /// Made by worktree.create on this hab.
+    public var managed: Bool?
+    /// Absolute folder of the working tree.
+    public var path: String
+    /// Its folder is gone; worktree.remove prunes the entry.
+    public var prunable: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case branch = "branch"
+        case head = "head"
+        case locked = "locked"
+        case main = "main"
+        case managed = "managed"
+        case path = "path"
+        case prunable = "prunable"
+    }
+
+    public init(branch: String? = nil, head: String? = nil, locked: Bool? = nil, main: Bool? = nil, managed: Bool? = nil, path: String, prunable: Bool? = nil) {
+        self.branch = branch
+        self.head = head
+        self.locked = locked
+        self.main = main
+        self.managed = managed
+        self.path = path
+        self.prunable = prunable
+    }
+}
+
+public struct WorktreeCreateParams: Codable, Sendable, Hashable {
+    /// Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab never fetches.
+    public var base: String?
+    /// Branch to check out: a local branch, or a branch of exactly one remote when base is absent; otherwise a new branch from base. Absent: a new branch named wt/<word>-<word>-<hex>.
+    public var branch: String?
+    /// Absolute folder for the worktree; it must not exist. Default: <worktree root>/<repository folder>/<branch slug>.
+    public var path: String?
+    /// Project id. The hab uses the project's most recently used folder on this host. Give project or project_dir.
+    public var project: String?
+    /// Absolute path inside a working tree of the repository. The hab finds or creates its project, as session.create does.
+    public var projectDir: String?
+    /// auto (default): run the setup script unless the code may come from someone else; run: run it anyway, after the user said yes; skip: do not run it.
+    public var setup: SetupMode?
+
+    enum CodingKeys: String, CodingKey {
+        case base = "base"
+        case branch = "branch"
+        case path = "path"
+        case project = "project"
+        case projectDir = "project_dir"
+        case setup = "setup"
+    }
+
+    public init(base: String? = nil, branch: String? = nil, path: String? = nil, project: String? = nil, projectDir: String? = nil, setup: SetupMode? = nil) {
+        self.base = base
+        self.branch = branch
+        self.path = path
+        self.project = project
+        self.projectDir = projectDir
+        self.setup = setup
+    }
+}
+
+public struct WorktreeCreated: Codable, Sendable, Hashable {
+    /// Ignored files copied from the source checkout by .worktreeinclude, relative to the worktree.
+    public var copied: [String]
+    /// Project id.
+    public var project: String
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    public var setup: WorktreeSetup
+    public var worktree: Worktree
+
+    enum CodingKeys: String, CodingKey {
+        case copied = "copied"
+        case project = "project"
+        case seq = "seq"
+        case setup = "setup"
+        case worktree = "worktree"
+    }
+
+    public init(copied: [String], project: String, seq: UInt64, setup: WorktreeSetup, worktree: Worktree) {
+        self.copied = copied
+        self.project = project
+        self.seq = seq
+        self.setup = setup
+        self.worktree = worktree
+    }
+}
+
+public struct WorktreeList: Codable, Sendable, Hashable {
+    /// Project id.
+    public var project: String
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    public var worktrees: [Worktree]
+
+    enum CodingKeys: String, CodingKey {
+        case project = "project"
+        case seq = "seq"
+        case worktrees = "worktrees"
+    }
+
+    public init(project: String, seq: UInt64, worktrees: [Worktree]) {
+        self.project = project
+        self.seq = seq
+        self.worktrees = worktrees
+    }
+}
+
+public struct WorktreeListParams: Codable, Sendable, Hashable {
+    /// Project id. The hab uses the project's most recently used folder on this host. Give project or project_dir.
+    public var project: String?
+    /// Absolute path inside a working tree of the repository. The hab finds or creates its project, as session.create does.
+    public var projectDir: String?
+
+    enum CodingKeys: String, CodingKey {
+        case project = "project"
+        case projectDir = "project_dir"
+    }
+
+    public init(project: String? = nil, projectDir: String? = nil) {
+        self.project = project
+        self.projectDir = projectDir
+    }
+}
+
+public struct WorktreeRemoveParams: Codable, Sendable, Hashable {
+    /// Remove it even with uncommitted or untracked changes, which are lost. The client confirms with the user first.
+    public var force: Bool?
+    /// Absolute folder of a linked worktree of the repository.
+    public var path: String
+    /// Project id. The hab uses the project's most recently used folder on this host. Give project or project_dir.
+    public var project: String?
+    /// Absolute path inside a working tree of the repository. The hab finds or creates its project, as session.create does.
+    public var projectDir: String?
+
+    enum CodingKeys: String, CodingKey {
+        case force = "force"
+        case path = "path"
+        case project = "project"
+        case projectDir = "project_dir"
+    }
+
+    public init(force: Bool? = nil, path: String, project: String? = nil, projectDir: String? = nil) {
+        self.force = force
+        self.path = path
+        self.project = project
+        self.projectDir = projectDir
+    }
+}
+
+public struct WorktreeRemoved: Codable, Sendable, Hashable {
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// none: no teardown ran (no script, or the worktree was not made and approved by this hab); ran: it exited 0; failed: it exited non-zero, timed out or could not start. The worktree is removed either way.
+    public var teardown: TeardownState
+    /// The teardown script's exit code, when it exited.
+    public var teardownExit: Int?
+    /// The last 4 KiB of the teardown script's output, when it failed.
+    public var teardownOutput: String?
+
+    enum CodingKeys: String, CodingKey {
+        case seq = "seq"
+        case teardown = "teardown"
+        case teardownExit = "teardown_exit"
+        case teardownOutput = "teardown_output"
+    }
+
+    public init(seq: UInt64, teardown: TeardownState, teardownExit: Int? = nil, teardownOutput: String? = nil) {
+        self.seq = seq
+        self.teardown = teardown
+        self.teardownExit = teardownExit
+        self.teardownOutput = teardownOutput
+    }
+}
+
+public struct WorktreeSetup: Codable, Sendable, Hashable {
+    /// The pane that runs the setup script.
+    public var pane: String?
+    /// Why setup is pending or could not start, in one line.
+    public var reason: String?
+    /// The session that runs the setup script. Its exit status says how setup ended.
+    public var session: String?
+    /// none: the project file names no setup; started: it runs in the session below; pending: it waits for a yes (worktree.setup); skipped: the call said skip; error: it could not start.
+    public var state: SetupState
+
+    enum CodingKeys: String, CodingKey {
+        case pane = "pane"
+        case reason = "reason"
+        case session = "session"
+        case state = "state"
+    }
+
+    public init(pane: String? = nil, reason: String? = nil, session: String? = nil, state: SetupState) {
+        self.pane = pane
+        self.reason = reason
+        self.session = session
+        self.state = state
+    }
+}
+
+public struct WorktreeSetupParams: Codable, Sendable, Hashable {
+    /// Absolute folder of a linked worktree of the repository.
+    public var path: String
+    /// Project id. The hab uses the project's most recently used folder on this host. Give project or project_dir.
+    public var project: String?
+    /// Absolute path inside a working tree of the repository. The hab finds or creates its project, as session.create does.
+    public var projectDir: String?
+
+    enum CodingKeys: String, CodingKey {
+        case path = "path"
+        case project = "project"
+        case projectDir = "project_dir"
+    }
+
+    public init(path: String, project: String? = nil, projectDir: String? = nil) {
+        self.path = path
+        self.project = project
+        self.projectDir = projectDir
+    }
+}
+
+public struct WorktreeSetupResult: Codable, Sendable, Hashable {
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    public var setup: WorktreeSetup
+
+    enum CodingKeys: String, CodingKey {
+        case seq = "seq"
+        case setup = "setup"
+    }
+
+    public init(seq: UInt64, setup: WorktreeSetup) {
+        self.seq = seq
+        self.setup = setup
+    }
+}
+
 /// A method with its params and result types.
 public struct HabMethod<Params: Codable & Sendable, Result: Codable & Sendable>: Sendable {
     public let name: String
@@ -3734,6 +4009,14 @@ public enum HabMethods {
     public static let mailPush = HabMethod<MailPushParams, MailPushResult>(name: "mail.push")
     /// A peer link takes the outbox items waiting for its hab, and reports on its last pull (mesh.md 6.5). Needs the channels capability.
     public static let mailPull = HabMethod<MailPullParams, MailPullResult>(name: "mail.pull")
+    /// List a repository's working trees, the main one first (spec 3.10).
+    public static let worktreeList = HabMethod<WorktreeListParams, WorktreeList>(name: "worktree.list")
+    /// Make a worktree, copy the files .worktreeinclude names, and start its setup script in a session (spec 3.10).
+    public static let worktreeCreate = HabMethod<WorktreeCreateParams, WorktreeCreated>(name: "worktree.create")
+    /// Start a worktree's setup script in a session now: the yes to a pending setup, or a rerun (spec 3.10).
+    public static let worktreeSetup = HabMethod<WorktreeSetupParams, WorktreeSetupResult>(name: "worktree.setup")
+    /// Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).
+    public static let worktreeRemove = HabMethod<WorktreeRemoveParams, WorktreeRemoved>(name: "worktree.remove")
 }
 
 public enum HabNotification {

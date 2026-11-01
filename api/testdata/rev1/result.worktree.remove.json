@@ -1,0 +1,15 @@
+{
+  "seq": 3,
+  "teardown": "failed",
+  "teardown_exit": 4,
+  "teardown_output": "teardown_output-5",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

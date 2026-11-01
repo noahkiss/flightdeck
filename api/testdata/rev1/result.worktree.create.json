@@ -1,0 +1,33 @@
+{
+  "copied": [
+    "copied-8"
+  ],
+  "project": "project-4",
+  "seq": 3,
+  "setup": {
+    "pane": "pane-11",
+    "reason": "reason-9",
+    "session": "session-10",
+    "state": "error",
+    "x_unknown_field": "later"
+  },
+  "worktree": {
+    "branch": "branch-6",
+    "head": "head-7",
+    "locked": true,
+    "main": true,
+    "managed": true,
+    "path": "path-5",
+    "prunable": true,
+    "x_unknown_field": "later"
+  },
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

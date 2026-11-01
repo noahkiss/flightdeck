@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -452,6 +453,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleChannels(m)
 		return
 	}
+	if strings.HasPrefix(m.Method, "worktree.") {
+		c.handleWorktree(m)
+		return
+	}
 	seq := c.currentSeq()
 	result, e := c.dispatch(m, seq)
 	c.reply(m, seq, result, e)
@@ -698,6 +703,100 @@ func (c *conn) handleExplain(m message) {
 		}
 		res.Seq = api.Seq{Seq: seq}
 		c.reply(m, seq, api.NonNil(res), nil)
+	}()
+}
+
+// maxWorktreeTime bounds one worktree call: git, copying the included files, and a teardown script
+// (which gff-hab bounds itself to less).
+const maxWorktreeTime = 5 * time.Minute
+
+// handleWorktree runs a worktree.* call on its own goroutine (spec 3.10): git and a teardown
+// script take time, and the read loop goes on meanwhile. A setup pane belongs to the caller, as a
+// pane from session.create does.
+func (c *conn) handleWorktree(m message) {
+	seq := c.currentSeq()
+	var (
+		list   api.WorktreeListParams
+		create api.WorktreeCreateParams
+		setup  api.WorktreeSetupParams
+		remove api.WorktreeRemoveParams
+		target *api.WorktreeProject
+		e      *Error
+	)
+	switch m.Method {
+	case "worktree.list":
+		e, target = c.decodeUp(m, &list), &list.WorktreeProject
+	case "worktree.create":
+		e, target = c.decodeUp(m, &create), &create.WorktreeProject
+		if e == nil && create.Setup != "" && !isWord("SetupMode", string(create.Setup)) {
+			e = appErr(api.ErrorKindInvalid, "setup %q is not one of %v", create.Setup, api.Enums["SetupMode"])
+		}
+	case "worktree.setup":
+		e, target = c.decodeUp(m, &setup), &setup.WorktreeProject
+		if e == nil && setup.Path == "" {
+			e = appErr(api.ErrorKindInvalid, "worktree.setup needs a path")
+		}
+	case "worktree.remove":
+		e, target = c.decodeUp(m, &remove), &remove.WorktreeProject
+		if e == nil && remove.Path == "" {
+			e = appErr(api.ErrorKindInvalid, "worktree.remove needs a path")
+		}
+	default:
+		c.reply(m, seq, nil, protoErr(codeMethodNotFound, "method %q does not exist", m.Method))
+		return
+	}
+	if e == nil && (target.Project == "") == (target.ProjectDir == "") {
+		e = appErr(api.ErrorKindInvalid, "%s needs a project or a project_dir, not both", m.Method)
+	}
+	if e == nil && c.s.cfg.Worktrees == nil {
+		e = appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
+	}
+	if e != nil {
+		c.reply(m, seq, nil, e)
+		return
+	}
+	w := c.s.cfg.Worktrees
+	go func() {
+		// A call runs to its end when the connection drops: git cut off halfway leaves a
+		// worktree half made.
+		ctx, cancel := context.WithTimeout(context.Background(), maxWorktreeTime)
+		defer cancel()
+		var res any
+		var pane string
+		var err error
+		switch m.Method {
+		case "worktree.list":
+			var r api.WorktreeList
+			if r, err = w.ListWorktrees(ctx, list); r.Worktrees == nil {
+				r.Worktrees = []api.Worktree{}
+			}
+			r.Seq = api.Seq{Seq: seq}
+			res = r
+		case "worktree.create":
+			var r api.WorktreeCreated
+			if r, err = w.CreateWorktree(ctx, c.clientID, create); r.Copied == nil {
+				r.Copied = []string{}
+			}
+			r.Seq, pane = api.Seq{Seq: seq}, r.Setup.Pane
+			res = r
+		case "worktree.setup":
+			var r api.WorktreeSetup
+			r, err = w.SetupWorktree(ctx, c.clientID, setup)
+			res, pane = api.WorktreeSetupResult{Seq: api.Seq{Seq: seq}, Setup: r}, r.Pane
+		case "worktree.remove":
+			var r api.WorktreeRemoved
+			r, err = w.RemoveWorktree(ctx, remove)
+			r.Seq = api.Seq{Seq: seq}
+			res = r
+		}
+		if err != nil {
+			c.reply(m, seq, nil, actionErr(m.Method, err))
+			return
+		}
+		if pane != "" && c.s.cfg.Size != nil {
+			c.s.cfg.Size.Created(c.clientID, pane)
+		}
+		c.reply(m, seq, res, nil)
 	}()
 }
 

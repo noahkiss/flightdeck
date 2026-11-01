@@ -1690,6 +1690,177 @@
       "x-params": {
         "$ref": "#/components/schemas/MailPullParams"
       }
+    },
+    {
+      "name": "worktree.list",
+      "summary": "List a repository's working trees, the main one first (spec 3.10).",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "project",
+          "description": "Project id. The hab uses the project's most recently used folder on this host. Give project or project_dir.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "project_dir",
+          "description": "Absolute path inside a working tree of the repository. The hab finds or creates its project, as session.create does.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/WorktreeList"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/WorktreeListParams"
+      }
+    },
+    {
+      "name": "worktree.create",
+      "summary": "Make a worktree, copy the files .worktreeinclude names, and start its setup script in a session (spec 3.10).",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "base",
+          "description": "Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab never fetches.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "branch",
+          "description": "Branch to check out: a local branch, or a branch of exactly one remote when base is absent; otherwise a new branch from base. Absent: a new branch named wt/\u003cword\u003e-\u003cword\u003e-\u003chex\u003e.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "path",
+          "description": "Absolute folder for the worktree; it must not exist. Default: \u003cworktree root\u003e/\u003crepository folder\u003e/\u003cbranch slug\u003e.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "project",
+          "description": "Project id. The hab uses the project's most recently used folder on this host. Give project or project_dir.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "project_dir",
+          "description": "Absolute path inside a working tree of the repository. The hab finds or creates its project, as session.create does.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "setup",
+          "description": "auto (default): run the setup script unless the code may come from someone else; run: run it anyway, after the user said yes; skip: do not run it.",
+          "schema": {
+            "$ref": "#/components/schemas/SetupMode"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/WorktreeCreated"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/WorktreeCreateParams"
+      }
+    },
+    {
+      "name": "worktree.setup",
+      "summary": "Start a worktree's setup script in a session now: the yes to a pending setup, or a rerun (spec 3.10).",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "path",
+          "description": "Absolute folder of a linked worktree of the repository.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "project",
+          "description": "Project id. The hab uses the project's most recently used folder on this host. Give project or project_dir.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "project_dir",
+          "description": "Absolute path inside a working tree of the repository. The hab finds or creates its project, as session.create does.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/WorktreeSetupResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/WorktreeSetupParams"
+      }
+    },
+    {
+      "name": "worktree.remove",
+      "summary": "Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "force",
+          "description": "Remove it even with uncommitted or untracked changes, which are lost. The client confirms with the user first.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "path",
+          "description": "Absolute folder of a linked worktree of the repository.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "project",
+          "description": "Project id. The hab uses the project's most recently used folder on this host. Give project or project_dir.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "project_dir",
+          "description": "Absolute path inside a working tree of the repository. The hab finds or creates its project, as session.create does.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/WorktreeRemoved"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/WorktreeRemoveParams"
+      }
     }
   ],
   "x-notifications": [
@@ -5523,6 +5694,24 @@
           "exited"
         ]
       },
+      "SetupMode": {
+        "type": "string",
+        "x-known-values": [
+          "auto",
+          "run",
+          "skip"
+        ]
+      },
+      "SetupState": {
+        "type": "string",
+        "x-known-values": [
+          "none",
+          "started",
+          "pending",
+          "skipped",
+          "error"
+        ]
+      },
       "StateSource": {
         "type": "string",
         "x-known-values": [
@@ -5590,6 +5779,14 @@
         },
         "required": [
           "scope"
+        ]
+      },
+      "TeardownState": {
+        "type": "string",
+        "x-known-values": [
+          "none",
+          "ran",
+          "failed"
         ]
       },
       "Ticket": {
@@ -5803,6 +6000,255 @@
           "capabilities",
           "client_id",
           "reconnect_token"
+        ]
+      },
+      "Worktree": {
+        "type": "object",
+        "properties": {
+          "branch": {
+            "type": "string",
+            "description": "Checked-out branch. Absent on a detached HEAD."
+          },
+          "head": {
+            "type": "string",
+            "description": "Full commit id of HEAD. Absent in an empty repository."
+          },
+          "locked": {
+            "type": "boolean",
+            "description": "Locked with git worktree lock; worktree.remove refuses it."
+          },
+          "main": {
+            "type": "boolean",
+            "description": "The repository's main working tree. It is never removed."
+          },
+          "managed": {
+            "type": "boolean",
+            "description": "Made by worktree.create on this hab."
+          },
+          "path": {
+            "type": "string",
+            "description": "Absolute folder of the working tree."
+          },
+          "prunable": {
+            "type": "boolean",
+            "description": "Its folder is gone; worktree.remove prunes the entry."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "WorktreeCreateParams": {
+        "type": "object",
+        "properties": {
+          "base": {
+            "type": "string",
+            "description": "Where a new branch starts: a branch, remote branch, tag or commit. Default: the source checkout's HEAD. The hab never fetches."
+          },
+          "branch": {
+            "type": "string",
+            "description": "Branch to check out: a local branch, or a branch of exactly one remote when base is absent; otherwise a new branch from base. Absent: a new branch named wt/\u003cword\u003e-\u003cword\u003e-\u003chex\u003e."
+          },
+          "path": {
+            "type": "string",
+            "description": "Absolute folder for the worktree; it must not exist. Default: \u003cworktree root\u003e/\u003crepository folder\u003e/\u003cbranch slug\u003e."
+          },
+          "project": {
+            "type": "string",
+            "description": "Project id. The hab uses the project's most recently used folder on this host. Give project or project_dir."
+          },
+          "project_dir": {
+            "type": "string",
+            "description": "Absolute path inside a working tree of the repository. The hab finds or creates its project, as session.create does."
+          },
+          "setup": {
+            "$ref": "#/components/schemas/SetupMode",
+            "description": "auto (default): run the setup script unless the code may come from someone else; run: run it anyway, after the user said yes; skip: do not run it."
+          }
+        }
+      },
+      "WorktreeCreated": {
+        "type": "object",
+        "properties": {
+          "copied": {
+            "type": "array",
+            "description": "Ignored files copied from the source checkout by .worktreeinclude, relative to the worktree.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "project": {
+            "type": "string",
+            "description": "Project id."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "setup": {
+            "$ref": "#/components/schemas/WorktreeSetup"
+          },
+          "worktree": {
+            "$ref": "#/components/schemas/Worktree"
+          }
+        },
+        "required": [
+          "seq",
+          "project",
+          "worktree",
+          "copied",
+          "setup"
+        ]
+      },
+      "WorktreeList": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "description": "Project id."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "worktrees": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Worktree"
+            }
+          }
+        },
+        "required": [
+          "seq",
+          "project",
+          "worktrees"
+        ]
+      },
+      "WorktreeListParams": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "description": "Project id. The hab uses the project's most recently used folder on this host. Give project or project_dir."
+          },
+          "project_dir": {
+            "type": "string",
+            "description": "Absolute path inside a working tree of the repository. The hab finds or creates its project, as session.create does."
+          }
+        }
+      },
+      "WorktreeRemoveParams": {
+        "type": "object",
+        "properties": {
+          "force": {
+            "type": "boolean",
+            "description": "Remove it even with uncommitted or untracked changes, which are lost. The client confirms with the user first."
+          },
+          "path": {
+            "type": "string",
+            "description": "Absolute folder of a linked worktree of the repository."
+          },
+          "project": {
+            "type": "string",
+            "description": "Project id. The hab uses the project's most recently used folder on this host. Give project or project_dir."
+          },
+          "project_dir": {
+            "type": "string",
+            "description": "Absolute path inside a working tree of the repository. The hab finds or creates its project, as session.create does."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "WorktreeRemoved": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "teardown": {
+            "$ref": "#/components/schemas/TeardownState",
+            "description": "none: no teardown ran (no script, or the worktree was not made and approved by this hab); ran: it exited 0; failed: it exited non-zero, timed out or could not start. The worktree is removed either way."
+          },
+          "teardown_exit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The teardown script's exit code, when it exited."
+          },
+          "teardown_output": {
+            "type": "string",
+            "description": "The last 4 KiB of the teardown script's output, when it failed."
+          }
+        },
+        "required": [
+          "seq",
+          "teardown"
+        ]
+      },
+      "WorktreeSetup": {
+        "type": "object",
+        "properties": {
+          "pane": {
+            "type": "string",
+            "description": "The pane that runs the setup script."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why setup is pending or could not start, in one line."
+          },
+          "session": {
+            "type": "string",
+            "description": "The session that runs the setup script. Its exit status says how setup ended."
+          },
+          "state": {
+            "$ref": "#/components/schemas/SetupState",
+            "description": "none: the project file names no setup; started: it runs in the session below; pending: it waits for a yes (worktree.setup); skipped: the call said skip; error: it could not start."
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "WorktreeSetupParams": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Absolute folder of a linked worktree of the repository."
+          },
+          "project": {
+            "type": "string",
+            "description": "Project id. The hab uses the project's most recently used folder on this host. Give project or project_dir."
+          },
+          "project_dir": {
+            "type": "string",
+            "description": "Absolute path inside a working tree of the repository. The hab finds or creates its project, as session.create does."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "WorktreeSetupResult": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "setup": {
+            "$ref": "#/components/schemas/WorktreeSetup"
+          }
+        },
+        "required": [
+          "seq",
+          "setup"
         ]
       }
     }

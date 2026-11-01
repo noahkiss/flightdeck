@@ -47,6 +47,12 @@ func (g Git) Remove(ctx context.Context, repo string, w Worktree, force bool) er
 	if w.Main {
 		return fmt.Errorf("%w: %s is the repository's main working tree", ErrInvalid, w.Path)
 	}
+	// Run git from the main working tree: repo may be the worktree that goes.
+	if list, err := g.List(ctx, repo); err == nil && len(list) > 0 && list[0].Main {
+		if _, err := os.Stat(list[0].Path); err == nil {
+			repo = list[0].Path
+		}
+	}
 	if _, err := os.Stat(w.Path); errors.Is(err, fs.ErrNotExist) {
 		_, err := g.run(ctx, repo, "worktree", "prune")
 		return err

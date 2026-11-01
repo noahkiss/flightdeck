@@ -389,7 +389,21 @@ func TestNoNullsAndWelcomeFields(t *testing.T) {
 			t.Fatalf("%s: %v", method, e)
 		}
 	}
-	e := send(`{"jsonrpc":"2.0","id":5,"method":"no.such"}`)["error"].(map[string]any)
+	for _, method := range []string{"worktree.list", "worktree.create"} {
+		e := send(`{"jsonrpc":"2.0","id":4,"method":"` + method + `","params":{"project_dir":"/r"}}`)["error"].(map[string]any)
+		if data := e["data"].(map[string]any); data["kind"] != "unavailable" || data["seq"] == nil {
+			t.Fatalf("%s: %v", method, e)
+		}
+	}
+	e := send(`{"jsonrpc":"2.0","id":4,"method":"worktree.remove","params":{"project_dir":"/r"}}`)["error"].(map[string]any)
+	if e["data"].(map[string]any)["kind"] != "invalid" {
+		t.Fatalf("worktree.remove with no path: %v", e)
+	}
+	e = send(`{"jsonrpc":"2.0","id":5,"method":"worktree.nope","params":{}}`)["error"].(map[string]any)
+	if e["code"].(float64) != codeMethodNotFound {
+		t.Fatalf("unknown worktree method: %v", e)
+	}
+	e = send(`{"jsonrpc":"2.0","id":5,"method":"no.such"}`)["error"].(map[string]any)
 	if e["code"].(float64) != codeMethodNotFound {
 		t.Fatalf("unknown method: %v", e)
 	}

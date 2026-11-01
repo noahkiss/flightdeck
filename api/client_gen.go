@@ -222,11 +222,31 @@ const (
 )
 
 const (
+	SetupModeAuto SetupMode = "auto"
+	SetupModeRun  SetupMode = "run"
+	SetupModeSkip SetupMode = "skip"
+)
+
+const (
+	SetupStateNone    SetupState = "none"
+	SetupStateStarted SetupState = "started"
+	SetupStatePending SetupState = "pending"
+	SetupStateSkipped SetupState = "skipped"
+	SetupStateError   SetupState = "error"
+)
+
+const (
 	StateSourceServer StateSource = "server"
 	StateSourceHook   StateSource = "hook"
 	StateSourceOsc    StateSource = "osc"
 	StateSourceScreen StateSource = "screen"
 	StateSourceSpawn  StateSource = "spawn"
+)
+
+const (
+	TeardownStateNone   TeardownState = "none"
+	TeardownStateRan    TeardownState = "ran"
+	TeardownStateFailed TeardownState = "failed"
 )
 
 const (
@@ -712,5 +732,33 @@ func (c Client) MailPush(ctx context.Context, params MailPushParams) (MailPushRe
 func (c Client) MailPull(ctx context.Context, params MailPullParams) (MailPullResult, error) {
 	var result MailPullResult
 	err := c.Caller.Call(ctx, "mail.pull", params, &result)
+	return result, err
+}
+
+// WorktreeList calls worktree.list. List a repository's working trees, the main one first (spec 3.10).
+func (c Client) WorktreeList(ctx context.Context, params WorktreeListParams) (WorktreeList, error) {
+	var result WorktreeList
+	err := c.Caller.Call(ctx, "worktree.list", params, &result)
+	return result, err
+}
+
+// WorktreeCreate calls worktree.create. Make a worktree, copy the files .worktreeinclude names, and start its setup script in a session (spec 3.10).
+func (c Client) WorktreeCreate(ctx context.Context, params WorktreeCreateParams) (WorktreeCreated, error) {
+	var result WorktreeCreated
+	err := c.Caller.Call(ctx, "worktree.create", params, &result)
+	return result, err
+}
+
+// WorktreeSetup calls worktree.setup. Start a worktree's setup script in a session now: the yes to a pending setup, or a rerun (spec 3.10).
+func (c Client) WorktreeSetup(ctx context.Context, params WorktreeSetupParams) (WorktreeSetupResult, error) {
+	var result WorktreeSetupResult
+	err := c.Caller.Call(ctx, "worktree.setup", params, &result)
+	return result, err
+}
+
+// WorktreeRemove calls worktree.remove. Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).
+func (c Client) WorktreeRemove(ctx context.Context, params WorktreeRemoveParams) (WorktreeRemoved, error) {
+	var result WorktreeRemoved
+	err := c.Caller.Call(ctx, "worktree.remove", params, &result)
 	return result, err
 }

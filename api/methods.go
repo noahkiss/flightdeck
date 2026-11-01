@@ -114,6 +114,10 @@ var Methods = []Method{
 	{"channel.wait", "Wait for a message to a session, or for an agent's state, or the end of the time (mesh.md 6.4). Needs the channels capability.", ChannelWaitParams{}, ChannelWaitResult{}},
 	{"mail.push", "A peer link hands over outbox items for this hab; one result per item (mesh.md 6.5). Needs the channels capability.", MailPushParams{}, MailPushResult{}},
 	{"mail.pull", "A peer link takes the outbox items waiting for its hab, and reports on its last pull (mesh.md 6.5). Needs the channels capability.", MailPullParams{}, MailPullResult{}},
+	{"worktree.list", "List a repository's working trees, the main one first (spec 3.10).", WorktreeListParams{}, WorktreeList{}},
+	{"worktree.create", "Make a worktree, copy the files .worktreeinclude names, and start its setup script in a session (spec 3.10).", WorktreeCreateParams{}, WorktreeCreated{}},
+	{"worktree.setup", "Start a worktree's setup script in a session now: the yes to a pending setup, or a rerun (spec 3.10).", WorktreeSetupParams{}, WorktreeSetupResult{}},
+	{"worktree.remove", "Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).", WorktreeRemoveParams{}, WorktreeRemoved{}},
 }
 
 // Notifications is every notification the server sends on a control connection.
@@ -200,6 +204,10 @@ var Enums = map[string][]string{
 	// Sets added for channels (mesh.md 6.5).
 	"ChannelState": {"queued", "handed", "delivered", "not_delivered", "refused", "expired"},
 	"MailKind":     {"message", "status"},
+	// Sets added for worktrees (spec 3.10).
+	"SetupMode":     {"auto", "run", "skip"},
+	"SetupState":    {"none", "started", "pending", "skipped", "error"},
+	"TeardownState": {"none", "ran", "failed"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per

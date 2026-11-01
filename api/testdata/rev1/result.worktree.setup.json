@@ -1,0 +1,19 @@
+{
+  "seq": 3,
+  "setup": {
+    "pane": "pane-6",
+    "reason": "reason-4",
+    "session": "session-5",
+    "state": "error",
+    "x_unknown_field": "later"
+  },
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

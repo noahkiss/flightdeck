@@ -8,9 +8,10 @@
 // through Config.Data, pane.input through Config.Input, chat.page through Config.Chat, the size
 // ownership and redraw methods through Config.Size, command.list and command.output through
 // Config.Commands, session.send and approval.answer through Config.Agents, and
-// hab.permissions through Config.Permissions, detect.explain through Config.Detect, and the push methods, session.focus and
-// notice.raise through Config.Push. The devices methods and the calls later
-// stages build answer "unavailable", with a hint that names the stage.
+// hab.permissions through Config.Permissions, detect.explain through Config.Detect, the push
+// methods, session.focus and notice.raise through Config.Push, and the worktree.* methods
+// through Config.Worktrees. The devices methods and the calls later stages build answer
+// "unavailable", with a hint that names the stage.
 package control
 
 import (
@@ -149,6 +150,15 @@ type Detect interface {
 	Explain(ctx context.Context, p api.DetectExplainParams) (api.DetectExplain, error)
 }
 
+// Worktrees serves the worktree.* methods (spec 3.10). git and a teardown script take time, so
+// they run off the connection's read loop. An error that is an *Error keeps its kind.
+type Worktrees interface {
+	ListWorktrees(ctx context.Context, p api.WorktreeListParams) (api.WorktreeList, error)
+	CreateWorktree(ctx context.Context, client string, p api.WorktreeCreateParams) (api.WorktreeCreated, error)
+	SetupWorktree(ctx context.Context, client string, p api.WorktreeSetupParams) (api.WorktreeSetup, error)
+	RemoveWorktree(ctx context.Context, p api.WorktreeRemoveParams) (api.WorktreeRemoved, error)
+}
+
 // Peers keeps the hab's peer list and its links (mesh.md 3, 4). gff-hab implements it with
 // internal/peers. An error that is an *Error keeps its kind.
 type Peers interface {
@@ -190,6 +200,7 @@ type Config struct {
 	Usage        Usage       // nil: usage.list answers unavailable
 	Content      Content     // nil: the content.* methods answer unavailable
 	Channels     Channels    // nil: the channel and mail methods answer unavailable
+	Worktrees    Worktrees   // nil: the worktree.* methods answer unavailable
 	// ApproversChanged, if set, is called with no lock held after a connection closes or
 	// changes its subscription, so Approvers may have dropped.
 	ApproversChanged func()

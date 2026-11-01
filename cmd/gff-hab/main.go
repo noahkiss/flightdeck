@@ -13,6 +13,7 @@
 //	gff-hab notify   [-socket path | -via command] [-level l] [-session id] <title> [body]
 //	gff-hab send     [-socket path | -via command] [-from session] [-reply-to id] [-wait d] <address> <text... | ->
 //	gff-hab wait     [-socket path | -via command] [-session name] [-agent name] [-for states] [-timeout d] [-json]
+//	gff-hab worktree list|create|setup|remove [-socket path | -via command] [-project id | -dir path] ...
 //	gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
 //	gff-hab manifests list    [-state dir]
 //	gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
@@ -43,6 +44,8 @@
 // else 1s, and at least every $GFF_HAB_CHECKPOINT_EVERY, else 10s, while it prints.
 // Push config comes from -push-config, else <state>/push.json, with $GFF_HAB_PUSH_* over it
 // (docs/push.md); with none, the hab runs without push. `gff-hab notify` raises a notice.
+// New worktrees go to <root>/<repository folder>/<branch slug>, where root comes from
+// -worktrees, else $GFF_HAB_WORKTREES, else ~/.gff/worktrees (hab-logic-api.md 3.10).
 //
 // With -init systemd or launchd (as the jobs that `gff-hab install` writes run it), gff-hab asks
 // the init system for each holder as its own job (internal/service, holder spec 5.4) and removes
@@ -114,6 +117,10 @@ const usage = `usage:
   gff-hab show     [-socket path | -via command] [-session id] [-kind k] [-title t] <path>
   gff-hab send     [-socket path | -via command] [-from session] [-reply-to id] [-wait d] <label/name | name> <text... | ->
   gff-hab wait     [-socket path | -via command] [-session name] [-agent name] [-for state,...] [-timeout d] [-json]
+  gff-hab worktree list   [-socket path | -via command] [-project id | -dir path]
+  gff-hab worktree create [-socket path | -via command] [-project id | -dir path] [-branch b] [-base ref] [-path dir] [-setup auto|run|skip]
+  gff-hab worktree setup  [-socket path | -via command] [-project id | -dir path] <worktree>
+  gff-hab worktree remove [-socket path | -via command] [-project id | -dir path] [-force] <worktree>
   gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
   gff-hab manifests list    [-state dir]
   gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
@@ -171,6 +178,8 @@ func main() {
 		err = sendCmd(os.Args[2:], os.Stdin, os.Stdout)
 	case "wait":
 		err = waitCmd(os.Args[2:], os.Stdout)
+	case "worktree":
+		err = worktreeCmd(os.Args[2:])
 	case "manifests":
 		err = manifests(os.Args[2:], os.Stdout)
 	case "detect":
@@ -258,6 +267,7 @@ func serve(args []string) error {
 	habConfig := fs.String("config", "", "the hab's config file, with its [catalog] section (default: $GFF_HAB_CONFIG, else gff/hab.toml in the user config folder)")
 	pushConfig := fs.String("push-config", "", "push config file (default: <state>/push.json); $GFF_HAB_PUSH_* override its fields")
 	permWait := fs.Duration("permission-wait", 0, "hold Claude's PermissionRequest hook up to this long for the app's answer; 0 is off (default: $GFF_HAB_PERMISSION_WAIT, else off)")
+	wtRoot := fs.String("worktrees", "", "folder for new worktrees, as <folder>/<repository>/<branch> (default: $GFF_HAB_WORKTREES, else ~/.gff/worktrees)")
 	fs.Parse(args)
 	logger := log.New(os.Stderr, "gff-hab: ", log.LstdFlags)
 	// Catch SIGTERM and SIGINT before any socket is up: a stop that arrives while gff-hab starts
@@ -427,6 +437,7 @@ func serve(args []string) error {
 	defer usages.Close()
 	caps := []string{"usage"}
 	var acts control.Actions
+	var wts control.Worktrees
 	var data control.Data
 	var input control.Input
 	var sizes control.Size
@@ -451,7 +462,7 @@ func serve(args []string) error {
 		if err != nil {
 			home = "/"
 		}
-		acts = &actions{
+		sessionActs := &actions{
 			sp:       &spawner{lk: lk, tokens: tokens, hookSock: hpath},
 			store:    store,
 			getenv:   os.Getenv,
@@ -467,8 +478,14 @@ func serve(args []string) error {
 			},
 		}
 		if exe, err := os.Executable(); err == nil {
-			acts.(*actions).exe = exe
+			sessionActs.exe = exe
 		}
+		acts = sessionActs
+		root, err := worktreeRoot(*wtRoot, os.Getenv, home)
+		if err != nil {
+			return err
+		}
+		wts = newWorktrees(sessionActs, root, logger.Printf)
 		// The chat view reads each session's harness transcript where the harness writes it.
 		claudeDir, err := transcript.ClaudeConfigDir(os.Getenv)
 		if err != nil {
@@ -678,6 +695,7 @@ func serve(args []string) error {
 		Usage:       usageStore,
 		Content:     contents,
 		Channels:    chSvc,
+		Worktrees:   wts,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)
