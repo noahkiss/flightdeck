@@ -68,6 +68,28 @@ public enum AnswerOutcome: Equatable, Sendable {
     case failed(String)
     /// The hab could not be reached: no route, a dial failure or a timeout.
     case unreachable(String)
+    /// The live try dropped and the fresh try was refused: the first one most
+    /// likely landed.
+    case probablyAnswered(String)
+
+    /// The case's name, safe to log in public.
+    public var caseName: String {
+        switch self {
+        case .answered: return "answered"
+        case .refused: return "refused"
+        case .failed: return "failed"
+        case .unreachable: return "unreachable"
+        case .probablyAnswered: return "probably-answered"
+        }
+    }
+
+    /// The hint or error, which may name hosts or commands: log it private.
+    public var detail: String {
+        switch self {
+        case .answered: return ""
+        case .refused(let s), .failed(let s), .unreachable(let s), .probablyAnswered(let s): return s
+        }
+    }
 
     public static func classify(_ error: Error) -> AnswerOutcome {
         if let e = error as? RPCError, let kind = e.kind {
@@ -82,7 +104,7 @@ public enum AnswerOutcome: Equatable, Sendable {
     public var reraise: Bool {
         switch self {
         case .failed, .unreachable: return true
-        case .answered, .refused: return false
+        case .answered, .refused, .probablyAnswered: return false
         }
     }
 
@@ -101,6 +123,8 @@ public enum AnswerOutcome: Equatable, Sendable {
             return ("Could not answer on \(hab)", hint)
         case .unreachable:
             return ("Could not reach \(hab)", Self.openToRetry)
+        case .probablyAnswered:
+            return ("Answered", hab)
         }
     }
 
@@ -133,11 +157,17 @@ public struct ApprovalAnswerer: Sendable {
     }
 
     public func answer(host: String, _ params: ApprovalAnswerParams) async -> AnswerOutcome {
+        var liveDropped = false
         do {
-            _ = try await call(host: host, HabMethods.approvalAnswer, params)
+            _ = try await call(host: host, HabMethods.approvalAnswer, params, liveDropped: &liveDropped)
             return .answered
         } catch {
-            return AnswerOutcome.classify(error)
+            let o = AnswerOutcome.classify(error)
+            // The live try may have reached the hab before its connection
+            // dropped: then the fresh try's conflict is most likely our own
+            // answer, not someone else's.
+            if liveDropped, case .refused(let hint) = o { return .probablyAnswered(hint) }
+            return o
         }
     }
 
@@ -145,12 +175,19 @@ public struct ApprovalAnswerer: Sendable {
     /// connection, else a one-shot connection. A hab error from the live
     /// connection is final; a dropped live connection tries once on a fresh one.
     public func call<P: Encodable & Sendable, R: Decodable & Sendable>(host: String, _ method: HabMethod<P, R>, _ params: P) async throws -> R {
+        var dropped = false
+        return try await call(host: host, method, params, liveDropped: &dropped)
+    }
+
+    private func call<P: Encodable & Sendable, R: Decodable & Sendable>(host: String, _ method: HabMethod<P, R>, _ params: P, liveDropped: inout Bool) async throws -> R {
         if let conn = await live(host), await conn.state.status == .online {
             do {
                 return try await conn.call(method, params)
             } catch let e as RPCError where e.kind != nil {
                 throw e
-            } catch {}
+            } catch {
+                liveDropped = true
+            }
         }
         let t = try await oneShot(host)
         return try await HabOneShot.call(t, method, params, clientLabel: clientLabel, deadline: deadline).value

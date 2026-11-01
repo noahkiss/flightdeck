@@ -94,8 +94,20 @@ public final class ApprovalSheetModel {
         sending = false
         if let id, let r = rs.first(where: { $0.id == id }) {
             current = r
-        } else if let pane, let r = rs.first(where: { ($0.habID == habID || habID == nil) && $0.pane == pane && (request == nil || $0.requestID == request) }) {
-            current = r
+        } else if let request, let pane {
+            // A banner or Live Activity named this request. Never open another
+            // one in its place: a stale tap would put a different command under
+            // Allow. Once its hab is online and the request is gone, show it as
+            // answered elsewhere; before that, report nothing to show.
+            if let r = rs.first(where: { ($0.habID == habID || habID == nil) && $0.pane == pane && $0.requestID == request }) {
+                current = r
+            } else if let habID, let h = board.habs.first(where: { $0.id == habID }), h.state.status == .online {
+                current = OpenRequest(habID: habID, habLabel: h.label, host: h.state.welcome?.host.id, pane: pane, session: nil,
+                                      sessionName: pane, project: nil, model: nil, harness: "", contextPct: nil, kind: .permission,
+                                      request: PermissionRequest(id: request), since: nil, offline: false)
+            } else {
+                current = nil
+            }
         } else if let pane, let r = rs.first(where: { ($0.habID == habID || habID == nil) && $0.pane == pane }) {
             current = r
         } else {
@@ -138,7 +150,7 @@ public final class ApprovalSheetModel {
         let o = await answerer(c, ApprovalAnswerParams(choice: choice, pane: c.pane, request: rid, text: text, via: .app))
         sending = false
         switch o {
-        case .answered:
+        case .answered, .probablyAnswered:
             next()
         case .refused(let hint):
             // Closed or expired on the hab: show it as answered elsewhere.

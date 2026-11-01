@@ -205,7 +205,7 @@ public final class PushRegistrar {
                 } else {
                     self.status[id] = .failed(String(describing: error))
                 }
-                self.log.notice("push.register on \(id, privacy: .private) failed: \(String(describing: error), privacy: .public)")
+                self.log.notice("push.register on \(id, privacy: .private) failed: \(String(describing: error), privacy: .private)")
             }
         }
         inFlight[id] = t

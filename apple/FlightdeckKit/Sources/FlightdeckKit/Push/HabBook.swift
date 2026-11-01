@@ -51,21 +51,28 @@ public final class HabBook: @unchecked Sendable {
             map[host] = e
             return map
         }
-        guard let snapshot, let url else { return }
+        if let snapshot { write(snapshot) }
+    }
+
+    /// Drops every pair of a removed connection, in memory and in the file.
+    public func forget(connection: String) {
+        let snapshot: [String: Entry]? = lock.withLock {
+            let before = map.count
+            for (k, v) in map where v.connection == connection { map[k] = nil }
+            return map.count == before ? nil : map
+        }
+        if let snapshot { write(snapshot) }
+    }
+
+    private func write(_ snapshot: [String: Entry]) {
+        guard let url else { return }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             let data = try JSONEncoder().encode(snapshot)
             try data.write(to: url, options: .atomic)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         } catch {
-            log.error("hab book not written: \(String(describing: error), privacy: .public)")
-        }
-    }
-
-    /// Drops every pair of a removed connection.
-    public func forget(connection: String) {
-        lock.withLock {
-            for (k, v) in map where v.connection == connection { map[k] = nil }
+            log.error("hab book not written: \(String(describing: error), privacy: .private)")
         }
     }
 }

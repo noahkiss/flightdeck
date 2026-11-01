@@ -167,6 +167,13 @@ public enum RequestForm: Equatable, Sendable {
         return Question(header: header, question: text, options: options, multiSelect: multi)
     }
 
+    /// A plan as styled text: its Markdown when it parses, else the plain text.
+    /// Never a localization key, so `%@` or a key-like line shows as written.
+    public static func planText(_ plan: String) -> AttributedString {
+        let opts = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return (try? AttributedString(markdown: plan, options: opts)) ?? AttributedString(plan)
+    }
+
     /// The `text` of an `answer` for chosen option labels, one list per
     /// question in order. One question: the labels joined with ", ". Several:
     /// one line per question, "<header or question>: <labels>".

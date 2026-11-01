@@ -17,6 +17,13 @@ OTHER_CODE_SIGN_FLAGS[sdk=macosx*] = --timestamp
 //    bundle IDs of their own (Names.xcconfig), so each needs its own profile.
 // APP_NSE_PROFILE = <notification service profile name>
 // APP_WIDGET_PROFILE = <widget extension profile name>
+//    Debug builds sign with aps-environment development (Names.xcconfig), so
+//    a Debug build for a device needs development profiles and an Apple
+//    Development identity; App Store profiles fit Release only:
+// CODE_SIGN_IDENTITY[config=Debug][sdk=iphoneos*] = Apple Development
+// APP_IOS_PROFILE[config=Debug] = <iOS development profile name>
+// APP_NSE_PROFILE[config=Debug] = <notification service development profile name>
+// APP_WIDGET_PROFILE[config=Debug] = <widget development profile name>
 
 // 3. macOS: a Developer ID profile, only when an entitlement needs one
 //    (keychain groups, iCloud). Plain Developer ID signing needs none.
