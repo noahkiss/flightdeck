@@ -420,13 +420,21 @@ func (n *Notifier) process(st api.AgentState) {
 	st = n.effective(st)
 	prev, seen := n.last[st.Pane]
 	n.last[st.Pane] = st
+	k := key(st)
+	changed := !seen || key(prev) != k
+	ob := n.open[st.Pane]
+	resolved := ob != nil && !(st.State == api.AgentStatusBlocked && string(st.Kind) == ob.kind && requestID(st) == ob.request)
+	// Most changes are a pane that keeps working: skip the lookup when nothing can go out.
+	if !changed && !resolved && !n.anyActivity() {
+		return
+	}
 	w := n.cfg.Where(st.Pane, "")
 	w.Hab = n.cfg.Hab
 	if w.Harness == "" {
 		w.Harness = st.Harness
 	}
 	// The open approval resolved: replace its banner, same collapse id (app.md 7.5).
-	if ob := n.open[st.Pane]; ob != nil && !(st.State == api.AgentStatusBlocked && string(st.Kind) == ob.kind && requestID(st) == ob.request) {
+	if resolved {
 		delete(n.open, st.Pane)
 		n.mu.Lock()
 		a, ok := n.answers[st.Pane]
@@ -443,11 +451,20 @@ func (n *Notifier) process(st api.AgentState) {
 			n.send(Message{Token: t.token, Environment: t.env, Type: TypeAlert, Priority: 5, CollapseID: ob.collapse, Payload: payload}, true)
 		}
 	}
-	k := key(st)
-	if !seen || key(prev) != k {
+	if changed {
 		n.banner(st, w)
 	}
-	n.activity(st, w, !seen || key(prev) != k)
+	n.activity(st, w, changed)
+}
+
+// anyActivity reports whether some device has a Live Activity token.
+func (n *Notifier) anyActivity() bool {
+	for _, d := range n.cfg.Store.Devices() {
+		if d.Activity != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // banner sends the banner a new state raises, to each device that wants its kind and is not
