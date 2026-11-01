@@ -112,7 +112,7 @@ func TestSpeechVocab(t *testing.T) {
 	}
 	v := &speechVocab{store: st, cache: map[string]vocabEntry{}}
 	terms, ok := v.terms(t.Context(), filed.ID)
-	for _, want := range []string{"holderreg", "registry.go", "fetchUser.ts", "fetchUser", ".gitignore"} {
+	for _, want := range []string{"holderreg", "registry.go", "fetchUser.ts", "fetchUser", "gitignore"} { // a leading dot is dropped
 		if !ok || !slices.Contains(terms, want) {
 			t.Errorf("terms %q lack %q", terms, want)
 		}
