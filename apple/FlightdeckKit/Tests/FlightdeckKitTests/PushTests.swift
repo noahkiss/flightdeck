@@ -6,10 +6,13 @@ import XCTest
 @testable import FlightdeckKit
 
 /// Empty UserDefaults for a test, so settings and the device id never leak.
-/// The suites are a fixed set reused by every test: the n-th call in a test
-/// gets slot n, emptied first. A suite name used once leaves a preferences
-/// file behind even after `removePersistentDomain`, so names never vary per
-/// run. Tests run one at a time (`swift test` without `--parallel`).
+/// The n-th call in a test gets the suite `flightdeck.tests.<test>.<n>`,
+/// emptied first. A suite name used once leaves a preferences file behind
+/// even after `removePersistentDomain`, so the names stay the same from run
+/// to run (one file per test that uses them), and no two tests share one:
+/// an object a test left running cannot write into the next test's
+/// defaults. Two processes running the same test at once (`--parallel`)
+/// would share it; `swift test` here runs one at a time.
 extension XCTestCase {
     func emptyDefaults() -> UserDefaults {
         TestDefaultsSlots.next(for: name)
@@ -27,7 +30,8 @@ private enum TestDefaultsSlots {
             test = current
             used = 0
         }
-        let name = "flightdeck.tests.defaults.\(used)"
+        let test = String(current.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : "-" })
+        let name = "flightdeck.tests.\(test).\(used)"
         used += 1
         lock.unlock()
         let d = UserDefaults(suiteName: name)!
