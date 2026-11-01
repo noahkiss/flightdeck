@@ -340,6 +340,82 @@ func TestBoundedSharesOneListing(t *testing.T) {
 	}
 }
 
+// fakeProcArgs2 answers like the kernel's sysctl_procargsx for one args area: a size query
+// gives the size of sizes[i] on the i-th query (the last one after that); a read into a buffer
+// that holds the whole area copies it and replies with its length, and a read into a smaller
+// buffer copies argc and the tail of the area and fills the buffer.
+type fakeProcArgs2 struct {
+	area    []byte
+	sizes   []int
+	queries int
+	reads   []int // each read's buffer length
+}
+
+func (f *fakeProcArgs2) size() (int, error) {
+	n := f.sizes[min(f.queries, len(f.sizes)-1)]
+	f.queries++
+	return n, nil
+}
+
+func (f *fakeProcArgs2) read(buf []byte) (int, error) {
+	f.reads = append(f.reads, len(buf))
+	if len(buf) >= len(f.area) {
+		return copy(buf, f.area), nil
+	}
+	copy(buf, f.area[:4])
+	copy(buf[4:], f.area[len(f.area)-(len(buf)-4):])
+	return len(buf), nil
+}
+
+// TestReadProcArgs: argv is kept only from a reply shorter than its buffer, which proves a
+// whole copy. A program run through a link or a relative path keeps its argv: no name is
+// checked. A read that raced an exec into a larger args area gets the tail, which holds the
+// environment; it is refused, and the retry after a fresh size query reads the whole area.
+// A tail on both tries, or a buffer the kernel's cap makes too small, gives no Args.
+func TestReadProcArgs(t *testing.T) {
+	// A large environment, so a buffer sized for the old image is filled from it alone.
+	env := []string{"GFF_TEST_SECRET=x", "PATH=" + strings.Repeat("/p", 4000), "HOME=/x"}
+	area := procArgs("/opt/x/bin/claude", []string{"claude", "--resume"}, env)
+	want := []string{"claude", "--resume"}
+	small := 200 // the size the query saw before the exec
+
+	for _, tc := range []struct {
+		name   string
+		sizes  []int
+		argMax int
+		want   []string
+		reads  int
+	}{
+		{"a whole copy", []int{len(area)}, 1 << 20, want, 1},
+		{"a relative path, a link", nil, 1 << 20, []string{"x", "y"}, 1},
+		{"a read that raced an exec, then a whole copy", []int{small, len(area)}, 1 << 20, want, 2},
+		{"a tail on both tries", []int{small}, 1 << 20, nil, 2},
+		{"a forced 64-byte buffer", []int{len(area)}, 68, nil, 2},
+		{"a reply exactly at the cap", []int{len(area) - 64}, len(area) + 4, nil, 2},
+	} {
+		f := &fakeProcArgs2{area: area, sizes: tc.sizes}
+		if tc.sizes == nil {
+			f.area = procArgs("./bin/sleep-link", []string{"x", "y"}, env)
+			f.sizes = []int{len(f.area)}
+		}
+		got := readProcArgs(f.size, f.read, tc.argMax)
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: got %.80q, want %q", tc.name, got, tc.want)
+		}
+		if len(f.reads) != tc.reads {
+			t.Errorf("%s: %d reads %v, want %d", tc.name, len(f.reads), f.reads, tc.reads)
+		}
+		for _, a := range got {
+			if strings.Contains(a, "GFF_TEST_SECRET") || strings.HasPrefix(a, "PATH=") {
+				t.Errorf("%s: an environment string in argv: %.80q", tc.name, got)
+			}
+		}
+	}
+	if procArgsWhole(64, 64) || !procArgsWhole(63, 64) {
+		t.Error("procArgsWhole: a full buffer must count as a possible tail")
+	}
+}
+
 // TestReadsArgs: a macOS zombie's argv is never read.
 func TestReadsArgs(t *testing.T) {
 	if readsArgs(sZomb) || !readsArgs(2) {

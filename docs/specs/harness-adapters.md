@@ -170,6 +170,16 @@ Built choices (`internal/detect`, `gff-hab manifests`):
     the first environment string (perhaps a secret) as the last argument. The parse reads at
     most argc strings, so if the padding rule is ever wrong, an extra NUL reads as an empty
     argument and the parse stops earlier, never in the environment.
+  - **Only a whole copy.** A read must not race an exec. The kernel copies the whole args area
+    when the buffer holds it, and replies with its length. When the buffer is too small, it
+    copies only the tail (the environment) after the current argc, and fills the buffer. A
+    process that runs exec between the size query and the read, into a larger args area, gets
+    that tail. So gff-hab calls sysctl itself (x/sys sizes the buffer exactly) with a buffer
+    64 bytes larger than the reported size, capped at `kern.argmax` less 4. Only a reply
+    shorter than the buffer counts. A full buffer may be a tail: gff-hab asks the size again
+    and retries once with 4096 bytes spare, then the process has no Args. No name is
+    compared: the kernel keeps the exec path as the caller gave it (a link, a relative path),
+    while `p_comm` is the resolved file's name.
   - **Bounded listing.** A listing returns at most 256 processes and stops when the call's
     context ends. Every listing runs on its own goroutine, so a read that hangs (a `/proc` file,
     a sysctl, a `ps` that a kill cannot reach) cannot hold the reply. It never reads `cmdline`
