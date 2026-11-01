@@ -186,8 +186,8 @@ Why not `SMAppService`: it ties each agent to a plist inside one app bundle, at 
 with one label. Drain needs a label per holder instance and a binary copy per build
 (`hab-holder.md` 4.4, 5.4). The hab must also install without the Mac app (Homebrew or a tarball).
 So we keep plain plists in the user's LaunchAgents directory, and set
-`AssociatedBundleIdentifiers` in each plist so macOS attributes them (TN3179). **Decision: open**
-(Q3) whether the Mac app should switch to `SMAppService` later.
+`AssociatedBundleIdentifiers` in each plist so macOS attributes them (TN3179). Q3 decides no
+`SMAppService` for now; revisit when the Mac app lands.
 
 ### 3.3 What a bundle holds
 
@@ -563,7 +563,10 @@ Steps that need nothing (P0, P2, P8) can run at any time. The others wait for ap
 
 ## 9. Open questions
 
-### Q1. Holder Full Disk Access by default. **Decision: open**
+Q2 to Q5 are decided by the coordinator. Q1 and Q6 widen what the holder can reach, so they
+wait for the owner.
+
+### Q1. Holder Full Disk Access by default. **Decision: open (owner)**
 
 Full Disk Access is broad. The alternative is per-folder Files and Folders grants. Recommendation:
 require FDA for the holder. Agents work anywhere, every terminal user grants FDA to their terminal
@@ -571,21 +574,21 @@ for the same reason, and per-folder grants leave a silent permanent denial waiti
 nobody has opened yet (1.1). A user who declines can set `macos.grants` to drop it; `--check` then
 checks the listed folders instead.
 
-### Q2. Local Network as a required grant. **Decision: open**
+### Q2. Local Network as a required grant. **Decision: required for the holder; for gff-hab only with a peer hab (coordinator)**
 
 TN3179 says launch agents are not exempt. If P6 confirms it, every pane `ssh` to a LAN host fails
 until the holder holds the grant. Recommendation: required for the holder; required for gff-hab
 only when a peer hab is configured. `--check` cannot verify it without a connection, so the walk
 makes one.
 
-### Q3. `SMAppService` for the Mac app. **Decision: open**
+### Q3. `SMAppService` for the Mac app. **Decision: no `SMAppService` for now (coordinator)**
 
 Recommendation: no, for now. Drain needs a label per holder instance and a copy per build, and the
 hab installs without the app. Revisit if macOS starts to treat LaunchAgents plists outside
 `SMAppService` as second-class (Login Items attribution already needs
 `AssociatedBundleIdentifiers`).
 
-### Q4. How the probe calls the C checks. **Decision: open**
+### Q4. How the probe calls the C checks. **Decision: option A, `purego` (coordinator)**
 
 | Option | For | Against |
 |---|---|---|
@@ -595,13 +598,13 @@ hab installs without the app. Revisit if macOS starts to treat LaunchAgents plis
 
 Recommendation: A.
 
-### Q5. A Developer ID signature for local dev builds. **Decision: open**
+### Q5. A Developer ID signature for local dev builds. **Decision: no (coordinator)**
 
 Recommendation: no. Release builds sign in CI only; dev builds use `.dev` ids and may opt in to a
 local identity through `GFF_DEV_SIGN_IDENTITY` (3.5). This matches what the zellij fork learned:
 signing on each Mac needs an unlocked keychain and invites team mix-ups.
 
-### Q6. The opt-in entitlements on the holder. **Decision: open**
+### Q6. The opt-in entitlements on the holder. **Decision: open (owner)**
 
 Carrying camera, microphone, contacts and similar entitlements lets a pane program ask for them,
 as in a terminal app. It also widens what the holder could be asked for. Recommendation: carry
