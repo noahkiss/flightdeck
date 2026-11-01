@@ -124,7 +124,7 @@ RACE_PKGS := ./internal/holder/... ./internal/holderproto/... ./internal/holderc
 	./internal/cmdmarks/... \
 	./internal/harness/... ./internal/hook/... ./internal/opencode/... ./internal/gitstatus/... ./internal/worktree/... ./internal/transcript/... ./internal/usage/... \
 	./internal/service/... ./internal/grants/... ./internal/push/... \
-	./internal/speech/... ./internal/speechproto/... ./internal/oggopus/... \
+	./internal/speech/... ./internal/speechproto/... ./internal/oggopus/... ./internal/attach/... \
 	./cmd/...
 race:
 	$(GO) test -race -count=3 $(RACE_PKGS)
