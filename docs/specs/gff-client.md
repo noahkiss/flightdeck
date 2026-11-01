@@ -414,7 +414,7 @@ unchanged. Packages: `internal/hosts` (the hosts), `internal/board` (rows and ra
 - A host is a mesh peer entry (`mesh.md` 3.1): a label local to this client, one or more
   endpoints, an optional pinned device id. The device id is the host's identity; the label is
   only this client's name for it. Two labels that reach one hab (the same device id in the
-  welcome) show its rows once, under the first label.
+  welcome) show its rows once, under the first online label, else the first label.
 - The list comes from a `Source`. This stage reads gff's own config file and flags (`Static`).
   The mesh peer list (Part 3, task-phkmrjaw) plugs in as another `Source`; `Set.Reload` starts
   new hosts and closes removed ones.
@@ -460,21 +460,27 @@ agent state.
 **The sidebar.** A heading with the grouping, the filter, the groups and their rows, and at
 the bottom one line per host that is not online (`○ <label> offline 3m`, `connecting`,
 `update needed`, `host key changed`). A row is a view mark (`▸` in this tab, `·` in another),
-a state mark (`!` blocked, `x` error, `*` done, `~` working, `-` idle), the name cut in the
+a state mark (`!` blocked, `x` error, `*` done, `~` working, `-` idle, `_` exited), the name cut in the
 middle, and the host label. Keys while it has focus: arrows or `j`/`k` move, Enter opens, `t`
 opens in a new tab, `n` starts a session, `r` renames, `x` ends or removes, `/` filters by
 session, project or host name, `p` changes the grouping, Esc returns to the panes.
 
 - **Open** focuses a view that shows the pane already, in any tab; else it adds a view to the
-  current tab. An exited session says resume is not built yet; an offline host's row says so.
+  current tab. An exited session, whose pane id stays on its record, opens no view: it says
+  resume is not built yet. An offline host's row says so.
 - **Start** asks for the host (Tab cycles the online hosts, the selected row's host first) and
   a project directory, then a command (empty: the hab's shell). The hab starts it with
-  `session.create` at the size of its view in the current tab, and the new view opens there.
+  `session.create` at the size of its view in the current tab, and the new view opens in that
+  tab when the call returns, even if another tab shows by then. The keys move to the new view
+  only when that tab's sidebar still has them. A prompt, the board or the panes keep them; when
+  the tab is hidden, the bottom row says which tab holds the new view.
 - **Rename** asks for the new name and calls `session.rename`; a taken name shows the hab's
   `conflict`. An unfiled pane has no session to rename.
 - **Close** on a running session asks "end <name> on <host>?" and calls `pane.close` (the
   program gets a hang-up; the record stays, exited). On an exited session it asks "remove
-  <name> from <host>?" and calls `session.close`, which removes the record.
+  <name> from <host>?" and calls `session.close`, which removes the record. A yes to "end"
+  checks the row again: when the program ended while the question was up, gff sends nothing and
+  says "<name> has ended".
 - Every call runs off the loop; a failure shows on the bottom row. The results arrive as events.
 
 **Tabs.** Prefix `c` makes an empty tab and gives the sidebar the keys; `]` and `[` move, `1`
@@ -508,10 +514,13 @@ behind starts again from now, and the gap counts as output.
 | `hosts` `TestHostOfflineAndBack` | Two habs, one down at start: the other shows at once, the down one is connecting with an error; it comes up and shows; it goes down and its rows stay with the host offline; it restarts with a new epoch and its rows and a new agent state come back, no client restart |
 | `hosts` `TestBoardOrdersBlockedFirst` | Across two habs: blocked, then done, then working; a same-rank change moves no row; needs-you counts blocked and done |
 | `hosts` `TestSameDeviceOnce`, `TestReload`, `TestConfig` | Two labels to one hab show once; reload adds and removes hosts; the config file's entries, problems and paths |
+| `board` `TestSameDevicePrefersOnline` | Two labels to one hab: the rows go under an online label, whatever the order |
 | `board` unit tests | Ranks for every state word and an unknown one; order, offline rows, project groups across hosts, host groups, seen, the filter |
 | `gffclient` `TestSidebarRecovers` | gff's screen over two fake habs: both hosts' sessions; one goes down: its row stays, "○ two offline", 1/2 hosts; it comes back with a new epoch: its rows and a new session show, no restart |
 | `gffclient` `TestBoardBlockedAboveWorking` | The board puts a blocked session on one hab above a working one on the other, under Needs you and Working; the tab bar counts one |
-| `gffclient` `TestSidebarStartRenameClose` | From the sidebar: start a session (host, directory, command), rename it, end its program after a yes, remove its record after a yes; each reaches the hab and the screen |
+| `gffclient` `TestSidebarStartRenameClose` | From the sidebar: start a session (host, directory, command), rename it, end its program after a yes, see the exited mark, remove its record after a yes; each reaches the hab and the screen |
+| `gffclient` `TestStartKeepsPrompt`, `TestStartOpensInItsTab` | A start still in flight: a rename prompt opened meanwhile keeps the keys when the new view arrives; a tab made meanwhile stays empty and the view opens in the tab it was sized for |
+| `gffclient` `TestOpenExited`, `TestEndAfterExit` | An exited session shows `_` and Enter opens no view; a program that ends while "end?" is up gets no `pane.close` after the yes |
 | `gffclient` `TestTabsKeepPanes` | Real holder and gff-hab: open two sessions in two tabs; the hidden tab gets `~` from `pane.output`; showing it again shows what its program printed while hidden; opening a session on screen focuses it |
 | `cmd/gff-hab` `TestActivityEvents`, `TestBellScanner` | Two bells and a burst of output give the bell count and one or a few `pane.output` events ending at the pane's offset, with no revision; BEL inside OSC, DCS and APC strings does not ring, from every split |
 | `habconn` `TestStartWhileDown` | `Start` with the hab down: retrying updates with an error, calls refused offline, online once the hab starts; Close while down ends with no failure |

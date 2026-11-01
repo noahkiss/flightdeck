@@ -171,18 +171,109 @@ func TestSidebarStartRenameClose(t *testing.T) {
 		ss := a.Sessions()
 		return len(ss) == 1 && ss[0].State == api.SessionStateExited
 	})
-	// A sidebar row looks the same running or exited, and x asks to end until gff has the
-	// exited state. The board names the state: wait for it there, then go back to the sidebar.
-	hst.typ(prefix + "g")
-	hst.waitScreen("the exited row on the board", func(s string) bool {
-		r := line(s, "renamed")
-		return r > 0 && strings.Contains(strings.Split(s, "\n")[r], "exited")
-	})
-	hst.typ(prefix + "w")
-	hst.waitScreen("the sidebar again", func(s string) bool { return !strings.Contains(s, "status board") })
+	// x asks to end until gff has the exited state; the row's exited mark shows it has.
+	hst.waitScreen("the exited mark", func(s string) bool { return line(s, "▸_ renamed") > 0 })
 	hst.typ("x")
 	hst.waitScreen("the remove question", func(s string) bool { return strings.Contains(s, "remove renamed from one?") })
 	hst.typ("y")
 	waitUntil(t, "the record removed", func() bool { return len(a.Sessions()) == 0 })
 	hst.waitScreen("the row gone", func(s string) bool { return line(s, "renamed") < 0 && strings.Contains(s, "no sessions") })
+}
+
+// TestStartKeepsPrompt: a start on one host is still in flight when the owner opens a rename
+// prompt for a session on another. When the new pane arrives, the prompt keeps the keys: the
+// typed name and its Enter rename the session, and nothing goes to the new pane.
+func TestStartKeepsPrompt(t *testing.T) {
+	d := shortDir(t)
+	a := fakeHab(t, d, "a")
+	b := fakeHab(t, d, "b")
+	a.AddSession("alpha")
+	hst := newHost(t, 120, 30, false)
+	startWorkspace(t, hst, a.Sock, b.Sock)
+	hst.waitScreen("alpha, both hosts online", func(s string) bool {
+		return line(s, "alpha") > 0 && strings.Contains(s, "2/2 hosts")
+	})
+	release := b.HoldCreates()
+	defer release()
+
+	hst.typ("n")
+	hst.waitScreen("the directory prompt", func(s string) bool { return strings.Contains(s, "[one] new session") })
+	hst.typ("\t")
+	hst.waitScreen("host two", func(s string) bool { return strings.Contains(s, "[two] new session") })
+	hst.typ("\r")
+	hst.waitScreen("the command prompt", func(s string) bool { return strings.Contains(s, "command on two") })
+	hst.typ("\r")
+	hst.waitScreen("the start in flight", func(s string) bool { return strings.Contains(s, "starting on two") })
+
+	hst.typ("r")
+	hst.waitScreen("the rename prompt", func(s string) bool { return strings.Contains(s, "rename alpha on one: alpha") })
+	release()
+	hst.waitScreen("the new session in a view", func(s string) bool { return line(s, "▸  sh") > 0 })
+	hst.typ("zz\r")
+	waitUntil(t, "the rename on the hab", func() bool {
+		ss := a.Sessions()
+		return len(ss) == 1 && ss[0].Name == "alphazz"
+	})
+}
+
+// TestStartOpensInItsTab: a start is in flight when the owner makes a new tab. The new pane
+// opens in the tab it was sized for, not in the new one, and the new tab keeps the keys.
+func TestStartOpensInItsTab(t *testing.T) {
+	d := shortDir(t)
+	a := fakeHab(t, d, "a")
+	hst := newHost(t, 120, 30, false)
+	startWorkspace(t, hst, a.Sock)
+	hst.waitScreen("the host online", func(s string) bool { return strings.Contains(s, "1/1 hosts") })
+	release := a.HoldCreates()
+	defer release()
+
+	hst.typ("n")
+	hst.waitScreen("the directory prompt", func(s string) bool { return strings.Contains(s, "[one] new session") })
+	hst.typ("\r")
+	hst.waitScreen("the command prompt", func(s string) bool { return strings.Contains(s, "command on one") })
+	hst.typ("\r")
+	hst.waitScreen("the start in flight", func(s string) bool { return strings.Contains(s, "starting on one") })
+	hst.typ(prefix + "c")
+	hst.waitScreen("tab two", func(s string) bool { return strings.Contains(s, " 2:2 ") })
+	release()
+	hst.waitScreen("the pane in tab one", func(s string) bool {
+		return line(s, "·  sh") > 0 && strings.Contains(s, "shell on one is in tab 1") && strings.Contains(s, "empty tab")
+	})
+}
+
+// TestOpenExited: Enter on an exited session opens no view of its dead pane; it says resume is
+// not built yet. The row carries the exited mark.
+func TestOpenExited(t *testing.T) {
+	d := shortDir(t)
+	a := fakeHab(t, d, "a")
+	_, pane, _ := a.AddSession("job")
+	hst := newHost(t, 120, 30, false)
+	startWorkspace(t, hst, a.Sock)
+	hst.waitScreen("the running row", func(s string) bool { return line(s, "   job") > 0 })
+	a.ExitPane(pane)
+	hst.waitScreen("the exited mark", func(s string) bool { return line(s, " _ job") > 0 })
+	hst.typ("\r")
+	hst.waitScreen("the message", func(s string) bool {
+		return strings.Contains(s, "job has exited; resume is not built yet") && strings.Contains(s, "empty tab")
+	})
+}
+
+// TestEndAfterExit: the program ends while "end job?" is up. The yes sends no pane.close: the
+// session has ended already.
+func TestEndAfterExit(t *testing.T) {
+	d := shortDir(t)
+	a := fakeHab(t, d, "a")
+	_, pane, _ := a.AddSession("job")
+	hst := newHost(t, 120, 30, false)
+	startWorkspace(t, hst, a.Sock)
+	hst.waitScreen("the running row", func(s string) bool { return line(s, "   job") > 0 })
+	hst.typ("x")
+	hst.waitScreen("the end question", func(s string) bool { return strings.Contains(s, "end job on one?") })
+	a.ExitPane(pane)
+	hst.waitScreen("the exited mark", func(s string) bool { return line(s, " _ job") > 0 })
+	hst.typ("y")
+	hst.waitScreen("the message", func(s string) bool { return strings.Contains(s, "job has ended") })
+	if n := a.PaneCloses(); n != 0 {
+		t.Errorf("%d pane.close calls, want none", n)
+	}
 }

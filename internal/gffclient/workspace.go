@@ -341,7 +341,7 @@ func (u *workspaceUI) switchTab(i int) {
 func (u *workspaceUI) open(r board.Row, newTab bool) {
 	c := u.c
 	switch {
-	case r.Pane == "":
+	case r.Pane == "" || r.State == api.SessionStateExited:
 		u.msg = r.Name + " has exited; resume is not built yet"
 		return
 	case r.Offline():
@@ -558,7 +558,8 @@ func (u *workspaceUI) nextHost(label string) string {
 }
 
 // newSession asks for a host and a project directory, then a command, and has that hab start
-// it (gff-client.md 6.1). The new pane opens in the current tab at its view's size.
+// it (gff-client.md 6.1). The new pane opens in the tab that was current when it started, at
+// its view's size there.
 func (u *workspaceUI) newSession() {
 	host := ""
 	if r, _, ok := u.selected(); ok && !r.Offline() {
@@ -617,10 +618,16 @@ func (u *workspaceUI) create(host, dir, cmd string) {
 				if label == "" {
 					label = "shell"
 				}
-				t := c.tab()
+				// The size was for t, so the view goes there even when another tab shows now.
+				// The keys move to it only from the sidebar of that tab: a prompt, the board
+				// or the panes keep them.
 				c.addView(t, PaneSpec{ID: res.Pane, Label: label, Host: host}, hs)
-				t.focus = len(t.views) - 1
-				u.mode = modePanes
+				if t == c.tab() && u.mode == modeSidebar {
+					t.focus = len(t.views) - 1
+					u.mode = modePanes
+				} else if t != c.tab() {
+					u.msg = label + " on " + host + " is in tab " + t.name
+				}
 				c.layoutChanged()
 			}
 		})
@@ -666,6 +673,11 @@ func (u *workspaceUI) closeSession() {
 	if r.Pane != "" && r.State != api.SessionStateExited {
 		u.ask(&prompt{label: "end " + r.Name + " on " + r.Host + "? the program gets a hang-up (y/n)", yesNo: true,
 			done: func(string, string) {
+				// The program may have ended while the question was up.
+				if now, ok := u.row(r.Key); !ok || now.State == api.SessionStateExited {
+					u.msg = r.Name + " has ended"
+					return
+				}
 				u.call(r.Host, "end "+r.Name, func(ctx context.Context, a api.Client) error {
 					_, err := a.PaneClose(ctx, api.PaneRef{Pane: r.Pane})
 					return err
@@ -683,6 +695,18 @@ func (u *workspaceUI) closeSession() {
 				return err
 			})
 		}})
+}
+
+// row returns the current row of key k.
+func (u *workspaceUI) row(k board.Key) (board.Row, bool) {
+	u.dirty = true
+	u.refresh()
+	for _, r := range u.rows {
+		if r.Key == k {
+			return r, true
+		}
+	}
+	return board.Row{}, false
 }
 
 // call makes one call to a host off the loop and shows a failure on the bottom bar. The
@@ -739,6 +763,17 @@ var (
 		board.RankWorking: "~", board.RankIdle: "-", board.RankOther: " ",
 	}
 )
+
+// exitedMark is the state mark of an exited session.
+const exitedMark = "_"
+
+// stateMark is a row's state mark: its rank's, or the exited mark.
+func stateMark(r board.Row) string {
+	if r.State == api.SessionStateExited {
+		return exitedMark
+	}
+	return rankMarks[r.Rank]
+}
 
 func palette(i uint8) vt.Color { return vt.Color{Kind: vt.ColorPalette, Index: i} }
 
@@ -874,7 +909,7 @@ func (u *workspaceUI) drawSidebar(a rect) {
 			}
 			mark := [...]string{" ", "·", "▸"}[u.inView(r)]
 			name := middle(r.Name, a.w-4-min(len(r.Host), 8))
-			text := mark + rankMarks[r.Rank] + " " + name
+			text := mark + stateMark(r) + " " + name
 			host := r.Host
 			if len([]rune(host)) > 8 {
 				host = string([]rune(host)[:8])
@@ -928,7 +963,7 @@ func (u *workspaceUI) drawBoard(a rect) {
 			if r.Offline() {
 				when = "offline " + ago(now, r.HostSince)
 			}
-			text := fmt.Sprintf("%s %-20s %-14s %-10s %-9s %-18s %-10s %s", rankMarks[r.Rank], middle(r.Name, 20),
+			text := fmt.Sprintf("%s %-20s %-14s %-10s %-9s %-18s %-10s %s", stateMark(r), middle(r.Name, 20),
 				middle(proj, 14), middle(r.Host, 10), middle(harness, 9), middle(r.StateWord(), 18), when, r.Context())
 			st := rankStyles[r.Rank]
 			if r.Offline() {

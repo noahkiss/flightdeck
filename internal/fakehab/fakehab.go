@@ -37,6 +37,8 @@ type Hab struct {
 	served chan struct{}
 	agents map[string]api.AgentState
 	next   int
+	hold   chan struct{} // while set, session.create waits for it to close
+	closes int           // pane.close calls
 }
 
 // New makes a hab with its socket and state under dir (keep it short: socket paths are limited
@@ -183,6 +185,38 @@ func (h *Hab) SetAgent(pane string, state api.AgentStatus, kind api.BlockedKind)
 	}
 }
 
+// HoldCreates makes session.create wait until release is called, so a test can act while a
+// start is in flight.
+func (h *Hab) HoldCreates() (release func()) {
+	ch := make(chan struct{})
+	h.mu.Lock()
+	h.hold = ch
+	h.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			h.mu.Lock()
+			h.hold = nil
+			h.mu.Unlock()
+			close(ch)
+		})
+	}
+}
+
+// ExitPane ends a pane's program with exit code 0, as when it quits on its own. The pane stays
+// listed and its session becomes exited.
+func (h *Hab) ExitPane(pane string) {
+	code := 0
+	h.holder.Exit(pane, api.ExitStatus{Code: &code})
+}
+
+// PaneCloses counts the pane.close calls the hab has answered.
+func (h *Hab) PaneCloses() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.closes
+}
+
 // Sessions returns the hab's session records, for test checks.
 func (h *Hab) Sessions() []api.Session {
 	h.mu.Lock()
@@ -222,11 +256,24 @@ func (s source) Snapshot(host api.HostInfo) api.Structure {
 
 type actions struct{ h *Hab }
 
-func (a actions) CreateSession(_ context.Context, p api.SessionCreateParams) (string, string, error) {
+func (a actions) CreateSession(ctx context.Context, p api.SessionCreateParams) (string, string, error) {
+	a.h.mu.Lock()
+	hold := a.h.hold
+	a.h.mu.Unlock()
+	if hold != nil {
+		select {
+		case <-hold:
+		case <-ctx.Done():
+			return "", "", ctx.Err()
+		}
+	}
 	return a.h.create(p.Name)
 }
 
 func (a actions) ClosePane(_ context.Context, pane string) error {
+	a.h.mu.Lock()
+	a.h.closes++
+	a.h.mu.Unlock()
 	a.h.holder.Remove(pane) // released: the pane is gone and its session exited
 	return nil
 }
