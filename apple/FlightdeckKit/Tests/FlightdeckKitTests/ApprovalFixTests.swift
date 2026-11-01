@@ -86,6 +86,8 @@ final class LiveActivityFixTests: XCTestCase {
     func testStartsWhileANewConnectionRegistersAgain() async {
         let (hab, fleet, _, host) = await rig()
         let gate = Gate()
+        // A failed check must not leave the hab connection held.
+        defer { Task { await gate.open() } }
         await hab.setPushRegisterHook { _ in await gate.wait() }
         await fleet.setActive(false)
         await fleet.setActive(true)
@@ -102,6 +104,8 @@ final class LiveActivityFixTests: XCTestCase {
     func testNoStartWhileANewTokenRegisters() async {
         let (hab, fleet, tracker, host) = await rig()
         let gate = Gate()
+        // A failed check must not leave the hab connection held.
+        defer { Task { await gate.open() } }
         await hab.setPushRegisterHook { _ in await gate.wait() }
         fleet.push!.setDeviceToken(Data([2]))
         XCTAssertEqual(fleet.push?.status["h"], .registering)
