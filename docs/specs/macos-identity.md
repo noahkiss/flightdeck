@@ -653,7 +653,11 @@ beyond the paper spec:
 - **Local Network.** `--check` cannot connect without risking the alert, so it reports `unknown`
   until a walk's request ran: the probe connects to the default gateway's port 443. A connection,
   or a refusal from the gateway, is `granted`; no route is `denied`; it retries every 2 s and
-  stays alive up to 30 s. **The answer is kept** in `<state>/macos/seen.json`, keyed by process
+  stays alive up to 30 s. A gateway outside the private and link-local ranges (a VPN or an exit
+  node as the default route, public or CGNAT) is `unknown` with no connection, because reaching
+  it needs no grant. **Limits:** a full-tunnel VPN whose gateway has a private address still
+  reads as `granted` without the grant. An undecided grant gives no route, so it reads `denied`
+  ("may be off"), not `unknown`. **The answer is kept** in `<state>/macos/seen.json`, keyed by process
   and a hash of the designated requirement, and later checks report it with its date. Keying on
   the requirement follows TCC: an update with the same requirement keeps it (P12 needs exit 0),
   a dev rebuild or a new team loses it. The paper spec said "since start"; that would fail every

@@ -405,6 +405,12 @@ func localNetwork(ctx context.Context, sys System) Check {
 		c.State, c.Detail = api.PermissionStateUnknown, "no default gateway: "+err.Error()
 		return c
 	}
+	// A gateway outside the private and link-local ranges is not on the LAN: the default route
+	// goes through a VPN or an exit node, and a connection to it would not need the grant.
+	if ip := net.ParseIP(gw); ip == nil || !ip.IsPrivate() && !ip.IsLinkLocalUnicast() {
+		c.State, c.Detail = api.PermissionStateUnknown, "the default gateway "+gw+" is not a local address (a VPN?): check again without it"
+		return c
+	}
 	addr := net.JoinHostPort(gw, "443")
 	deadline := time.Now().Add(lanWindow)
 	for {

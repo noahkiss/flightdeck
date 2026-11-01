@@ -254,12 +254,16 @@ func TestLocalNetworkRequest(t *testing.T) {
 		gw   string
 		want api.PermissionState
 	}{
-		{"connected", []error{nil}, "192.0.2.1", api.PermissionStateGranted},
-		{"refused by the gateway", []error{syscall.ECONNREFUSED}, "192.0.2.1", api.PermissionStateGranted},
-		{"no route, then allowed", []error{syscall.EHOSTUNREACH, syscall.EHOSTUNREACH, nil}, "192.0.2.1", api.PermissionStateGranted},
-		{"no route", []error{syscall.EHOSTUNREACH}, "192.0.2.1", api.PermissionStateDenied},
-		{"silence", []error{context.DeadlineExceeded}, "192.0.2.1", api.PermissionStateUnknown},
+		{"connected", []error{nil}, "192.168.1.1", api.PermissionStateGranted},
+		{"refused by the gateway", []error{syscall.ECONNREFUSED}, "192.168.1.1", api.PermissionStateGranted},
+		{"no route, then allowed", []error{syscall.EHOSTUNREACH, syscall.EHOSTUNREACH, nil}, "192.168.1.1", api.PermissionStateGranted},
+		{"no route", []error{syscall.EHOSTUNREACH}, "192.168.1.1", api.PermissionStateDenied},
+		{"silence", []error{context.DeadlineExceeded}, "192.168.1.1", api.PermissionStateUnknown},
 		{"no gateway", []error{nil}, "", api.PermissionStateUnknown},
+		{"link-local gateway", []error{nil}, "169.254.1.1", api.PermissionStateGranted},
+		// A VPN or an exit node as the default route: a connection needs no Local Network grant.
+		{"public gateway (a VPN)", []error{nil}, "192.0.2.1", api.PermissionStateUnknown},
+		{"CGNAT gateway (an exit node)", []error{nil}, "100.64.0.1", api.PermissionStateUnknown},
 	} {
 		sys := &fakeSys{gw: tc.gw, dial: tc.dial}
 		c := stateOf(Probe(ctx, sys, ProbeOptions{Checks: []string{LocalNetwork}, Request: LocalNetwork}), LocalNetwork)
@@ -268,7 +272,7 @@ func TestLocalNetworkRequest(t *testing.T) {
 		}
 	}
 	// A denial keeps trying until the window ends: the alert needs a live process.
-	sys := &fakeSys{gw: "192.0.2.1", dial: []error{syscall.EHOSTUNREACH}}
+	sys := &fakeSys{gw: "192.168.1.1", dial: []error{syscall.EHOSTUNREACH}}
 	Probe(ctx, sys, ProbeOptions{Checks: []string{LocalNetwork}, Request: LocalNetwork})
 	if sys.dials < 5 {
 		t.Errorf("%d dials in the window", sys.dials)
