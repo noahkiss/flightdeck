@@ -66,6 +66,8 @@ public final class ConsoleModel {
 
     @ObservationIgnored private let calls: Calls
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
+    /// The last input sent; the next one waits for it.
+    @ObservationIgnored private var inputTail: Task<Void, Never>?
     @ObservationIgnored private var listGeneration: Int?
     @ObservationIgnored private var reading: Set<UInt64> = []
     /// How often the model checks for a control reconnect, and reads the
@@ -168,22 +170,27 @@ public final class ConsoleModel {
 
     /// Types `line` and Enter into the pane.
     public func run(_ line: String) {
+        input(Self.inputText(line))
+    }
+
+    /// Sends bytes as they are (Ctrl+C is "\u{03}").
+    public func sendRaw(_ text: String) {
+        input(text)
+    }
+
+    /// Sends input in the order the owner gave it: each call waits for the
+    /// one before, so a Ctrl+C never reaches the shell ahead of the command
+    /// it should stop. A failed call does not hold back the next one.
+    private func input(_ text: String) {
         let c = calls
-        let text = Self.inputText(line)
-        Task { [weak self] in
+        let previous = inputTail
+        inputTail = Task { [weak self] in
+            await previous?.value
             do {
                 try await c.input(text)
             } catch {
                 self?.lastError = String(describing: error)
             }
-        }
-    }
-
-    /// Sends bytes as they are (Ctrl+C is "\u{03}").
-    public func sendRaw(_ text: String) {
-        let c = calls
-        Task { [weak self] in
-            do { try await c.input(text) } catch { self?.lastError = String(describing: error) }
         }
     }
 

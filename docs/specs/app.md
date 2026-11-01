@@ -869,7 +869,9 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/Console`.
   line it leaves.
 - **Input line.** Enter sends the line and a carriage return through `pane.input`, as typed
   text, with control characters other than tab dropped. Pasted text with a newline goes as one
-  bracketed paste, so the shell does not run each line on its own. A stop button sends Ctrl+C. Typing in the console takes the pane's size like any input
+  bracketed paste, so the shell does not run each line on its own. A stop button sends Ctrl+C.
+  Inputs go one call at a time, in the order given: a Ctrl+C never overtakes the line it should
+  stop, and a failed call does not hold back the next. Typing in the console takes the pane's size like any input
   (5.3). The keyboard bar is the terminal view's, only while the terminal shows.
 - **Quick actions per host: none.** The hab serves no catalog yet (`mesh.md` 5, `catalog.get` is
   not built), so there are no declared facts to read. The console shows no quick actions until

@@ -34,6 +34,8 @@ final class ConsoleTests: XCTestCase {
         var outputReads = 0
         /// Answers output reads first, when set; nil falls back to `outputs`.
         var outputHook: (@Sendable (UInt64, UInt64?) async -> CommandOutput?)?
+        /// Runs before an input is recorded, when set: a slow link.
+        var inputHook: (@Sendable (String) async -> Void)?
         let events: AsyncStream<CommandUpdate>
         let sink: AsyncStream<CommandUpdate>.Continuation
 
@@ -67,7 +69,10 @@ final class ConsoleTests: XCTestCase {
                     guard let o else { throw RPCError(code: -1, message: "not found", data: nil) }
                     return o
                 },
-                input: { [self] text in with { inputs.append(text) } },
+                input: { [self] text in
+                    if let hook = with({ inputHook }) { await hook(text) }
+                    with { inputs.append(text) }
+                },
                 updates: { [self] in events },
                 generation: { [self] in with { generation } }
             )
@@ -270,6 +275,24 @@ final class ConsoleTests: XCTestCase {
         m.sendRaw("\u{03}")
         await eventually("typed") { fake.with { fake.inputs.count } == 2 }
         XCTAssertEqual(fake.with { fake.inputs }, ["sleep 2\r", "\u{03}"])
+    }
+
+    /// A slow first call still lands first: Ctrl+C never overtakes the
+    /// command it should stop.
+    func testInputKeepsOrderOverASlowCall() async {
+        let fake = FakeCalls([])
+        fake.with {
+            fake.inputHook = { text in
+                if text.hasSuffix("\r") { try? await Task.sleep(for: .milliseconds(100)) }
+            }
+        }
+        let m = ConsoleModel(pane: "%9", calls: fake.calls, terminal: nil)
+        m.draft = "sleep 2"
+        m.send()
+        m.sendRaw("\u{03}")
+        m.run("echo ok")
+        await eventually("typed") { fake.with { fake.inputs.count } == 3 }
+        XCTAssertEqual(fake.with { fake.inputs }, ["sleep 2\r", "\u{03}", "echo ok\r"])
     }
 
     /// A fresh page replaces the list, but a card newer than the page (an
