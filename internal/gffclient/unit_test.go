@@ -67,41 +67,49 @@ func TestPassFilterLongString(t *testing.T) {
 }
 
 func TestKeyReader(t *testing.T) {
-	ev := func(data string, cmd rune) keyEvent {
-		if data == "" {
-			return keyEvent{cmd: cmd}
-		}
-		return keyEvent{data: []byte(data)}
-	}
+	d := func(data string) keyEvent { return keyEvent{data: []byte(data)} }
+	a := func(act, key string) keyEvent { return keyEvent{act: act, key: key} }
+	pre := a(actPrefix, `ctrl-\`)
 	for _, tc := range []struct {
 		name   string
 		chunks []string
 		want   []keyEvent
 	}{
-		{"plain", []string{"abc"}, []keyEvent{ev("abc", 0)}},
-		{"command", []string{"ab\x1czcd"}, []keyEvent{ev("ab", 0), ev("", 'z'), ev("cd", 0)}},
-		{"prefix twice sends it", []string{"\x1c\x1c"}, []keyEvent{ev("\x1c", 0)}},
-		{"split after prefix", []string{"a\x1c", "o"}, []keyEvent{ev("a", 0), ev("", 'o')}},
-		{"esc cancels", []string{"\x1c\x1bx"}, []keyEvent{ev("x", 0)}},
-		{"kitty prefix", []string{"\x1b[92;5ur"}, []keyEvent{ev("", 'r')}},
-		{"kitty prefix split", []string{"q\x1b[9", "2;5", ":1u", "\x1b[100u"}, []keyEvent{ev("q", 0), ev("", 'd')}},
-		{"kitty other key passes", []string{"\x1b[97;5u"}, []keyEvent{ev("\x1b[97;5u", 0)}},
-		{"kitty prefix twice", []string{"\x1b[92;5u\x1b[92;5u"}, []keyEvent{ev("\x1c", 0)}},
+		{"plain", []string{"abc"}, []keyEvent{d("abc")}},
+		{"command", []string{"ab\x1czcd"}, []keyEvent{d("ab"), pre, a(actZoom, "z"), d("cd")}},
+		{"prefix twice sends it", []string{"\x1c\x1c"}, []keyEvent{pre, a(actSend, `ctrl-\`)}},
+		{"split after prefix", []string{"a\x1c", "o"}, []keyEvent{d("a"), pre, a(actFocusNext, "o")}},
+		{"tab after prefix", []string{"\x1c\t"}, []keyEvent{pre, a(actFocusNext, "tab")}},
+		{"esc cancels", []string{"\x1c\x1bx"}, []keyEvent{pre, a(actBack, "esc"), d("x")}},
+		{"unbound key cancels", []string{"\x1c\x01x"}, []keyEvent{pre, d("x")}},
+		{"kitty prefix", []string{"\x1b[92;5ur"}, []keyEvent{pre, a(actRedraw, "r")}},
+		{"kitty prefix split", []string{"q\x1b[9", "2;5", ":1u", "\x1b[100u"}, []keyEvent{d("q"), pre, a(actDetach, "d")}},
+		{"kitty other key passes", []string{"\x1b[97;5u"}, []keyEvent{d("\x1b[97;5u")}},
+		{"kitty prefix twice", []string{"\x1b[92;5u\x1b[92;5u"}, []keyEvent{pre, a(actSend, `ctrl-\`)}},
 		// A pane that asked for event types (kitty flag 2): the prefix's release is not the
 		// command and never reaches the pane; nor does a modifier key alone.
-		{"kitty release skipped", []string{"\x1b[92;5u\x1b[92;5:3uo"}, []keyEvent{ev("", 'o')}},
+		{"kitty release skipped", []string{"\x1b[92;5u\x1b[92;5:3uo"}, []keyEvent{pre, a(actFocusNext, "o")}},
 		{"kitty release and modifier", []string{"\x1b[92;5:1u", "\x1b[57442;5:3u\x1b[92;5:3u", "\x1b[57441;2u\x1b[122;1:1u"},
-			[]keyEvent{ev("", 'z')}},
-		{"kitty caps lock on", []string{"\x1b[92;69ud"}, []keyEvent{ev("", 'd')}},
-		{"lone release passes", []string{"a\x1b[97;1:3u"}, []keyEvent{ev("a\x1b[97;1:3u", 0)}},
+			[]keyEvent{pre, a(actZoom, "z")}},
+		{"kitty caps lock on", []string{"\x1b[92;69ud"}, []keyEvent{pre, a(actDetach, "d")}},
+		{"lone release passes", []string{"a\x1b[97;1:3u"}, []keyEvent{d("a\x1b[97;1:3u")}},
 		// vim turns on modifyOtherKeys 2 (CSI >4;2m): Ctrl+\ comes as CSI 27;5;92~.
-		{"modifyOtherKeys prefix", []string{"\x1b[27;5;92~o"}, []keyEvent{ev("", 'o')}},
-		{"modifyOtherKeys prefix split", []string{"x\x1b[2", "7;5;9", "2~", "\x1b[27;5;92~"}, []keyEvent{ev("x", 0), ev("\x1c", 0)}},
-		{"modifyOtherKeys other key passes", []string{"\x1b[27;5;99~"}, []keyEvent{ev("\x1b[27;5;99~", 0)}},
-		{"lone esc passes at once", []string{"\x1b"}, []keyEvent{ev("\x1b", 0)}},
+		{"modifyOtherKeys prefix", []string{"\x1b[27;5;92~o"}, []keyEvent{pre, a(actFocusNext, "o")}},
+		{"modifyOtherKeys prefix split", []string{"x\x1b[2", "7;5;9", "2~", "\x1b[27;5;92~"}, []keyEvent{d("x"), pre, a(actSend, `ctrl-\`)}},
+		{"modifyOtherKeys other key passes", []string{"\x1b[27;5;99~"}, []keyEvent{d("\x1b[27;5;99~")}},
+		{"lone esc passes at once", []string{"\x1b"}, []keyEvent{d("\x1b")}},
+		// Pane mode stays until Esc or Enter; keys it does not bind go nowhere.
+		{"pane mode stays", []string{"\x1cpzqo\rab"}, []keyEvent{pre, a(actPaneMode, "p"), a(actZoom, "z"),
+			a(actFocusNext, "o"), a(actBack, "enter"), d("ab")}},
+		{"tab mode arrows and digits", []string{"\x1ct3\x1b[A]\x1b"}, []keyEvent{pre, a(actTabMode, "t"), a(actTabN+"3", "3"),
+			a(actNextTab, "]"), a(actBack, "esc")}},
+		// Locked: the prefix reaches the pane; only Ctrl+G, the unlock key, does not.
+		{"locked passes the prefix", []string{"\x1cl\x1cz\x07\x1cz"}, []keyEvent{pre, a(actLock, "l"), d("\x1cz"),
+			a(actUnlock, "ctrl-g"), pre, a(actZoom, "z")}},
+		{"kitty unlock", []string{"\x1cl\x1b[103;5u\x1cz"}, []keyEvent{pre, a(actLock, "l"), a(actUnlock, "ctrl-g"), pre, a(actZoom, "z")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			k := newKeyReader(DefaultPrefix)
+			k := newKeyReader(DefaultKeymap())
 			var got []keyEvent
 			for _, c := range tc.chunks {
 				got = append(got, k.feed([]byte(c))...)
@@ -124,7 +132,7 @@ func TestKeyReader(t *testing.T) {
 func testClient(t *testing.T, w, h int, ids ...string) *client {
 	hs := &hostState{label: "hab", online: true}
 	c := &client{cfg: Config{Parser: vt.Fake{}, Logf: t.Logf, Now: time.Now}, hosts: map[string]*hostState{"hab": hs},
-		first: "hab", tabs: []*tab{{name: "1"}}, modes: map[int]bool{}, keys: newKeyReader(DefaultPrefix), w: w, h: h}
+		first: "hab", tabs: []*tab{{name: "1"}}, modes: map[int]bool{}, keys: newKeyReader(DefaultKeymap()), w: w, h: h}
 	c.canvas.resize(w, h)
 	for _, id := range ids {
 		c.tabs[0].views = append(c.tabs[0].views, &view{spec: PaneSpec{ID: id, Label: id}, h: hs, stream: &habconn.PaneStream{}, cols: w, rows: h})

@@ -2,8 +2,8 @@
 //
 //	gff [-config path] [-host label=endpoint[,endpoint...]]... [-socket path | -via command | -ssh host]
 //	    [-split columns|rows] [-prefix ctrl-<key>]
-//	gff [-socket path | -via command | -ssh host] [-new command]... [-split columns|rows]
-//	    [-observe] [-prefix ctrl-<key>] [pane...]
+//	gff [-config path] [-socket path | -via command | -ssh host] [-new command]...
+//	    [-split columns|rows] [-observe] [-prefix ctrl-<key>] [pane...]
 //
 // With no pane and no -new, gff opens the workspace: every host at once, with tabs, a sidebar of
 // every session on every host and a status board. Hosts come from gff's config file (-config,
@@ -24,13 +24,17 @@
 // that speaks over its stdio (-via), or through the system ssh running `gff-hab connect` on the
 // host (-ssh).
 //
-// Keys go to the focused pane. The prefix key, Ctrl+\ unless -prefix names another, then:
+// Keys go to the focused pane. The keymap has modes (docs/specs/gff-client.md 8); the bottom
+// row shows the keys of the current one. The default keymap: the prefix key, Ctrl+\ unless
+// -prefix names another, then one of
 //
 //	o or Tab  focus the next pane        z  zoom the focused pane, and back
 //	s         side by side or stacked    r  redraw: a fresh snapshot from the hab
 //	n         nudge: snapshot, and the program redraws after a one-column resize
 //	f         fit: make the pane this window's size (pane.take)
 //	d         detach: quit gff; the programs keep running
+//	p         pane mode: those pane keys until Esc or Enter
+//	l         lock: every key goes to the pane until Ctrl+G
 //	the prefix again sends it to the pane; Esc cancels
 //
 // In the workspace, also:
@@ -38,8 +42,12 @@
 //	w  the sidebar (j/k move, Enter open, t open in a new tab, n new session, r rename,
 //	   x end or remove, / filter, p grouping, Esc back)
 //	g  the status board          c  a new tab        ] [ 1-9  tabs
+//	t  tab mode: those tab keys until Esc or Enter
 //	x  close the focused view; the program keeps running
-//	b  hide or show the bars
+//	b  hide or show the bars     !  list the warnings
+//
+// The config file's [keys.<mode>] tables change the keymap and [bar] the bars (LoadSettings in
+// internal/gffclient).
 //
 // `gff setup` checks and walks the permission grants of the hab's processes (setup.go,
 // docs/specs/macos-identity.md 7).
@@ -104,15 +112,32 @@ func run(args []string) error {
 	fs.Var(&news, "new", "start this command in a new pane (repeatable)")
 	split := fs.String("split", "columns", "how panes share the screen: columns (side by side) or rows (stacked)")
 	observe := fs.Bool("observe", false, "open every pane as an observer: no input, no size")
-	prefixFlag := fs.String("prefix", "ctrl-\\", "the prefix key, as ctrl-<key>")
+	prefixFlag := fs.String("prefix", "", "the prefix key, as ctrl-<key> (default the config's, else ctrl-\\)")
 	configPath := fs.String("config", "", "gff's config file (default $GFF_CONFIG, else gff/config.toml in the user config directory)")
 	var hostFlags multi
 	fs.Var(&hostFlags, "host", "a host for the workspace, as label=endpoint[,endpoint...] (repeatable)")
 	fs.Parse(args)
 
-	prefix, err := gffclient.ParsePrefix(*prefixFlag)
+	path := *configPath
+	if path == "" {
+		var err error
+		if path, err = hosts.DefaultConfigPath(); err != nil {
+			return err
+		}
+	}
+	settings, problems, err := gffclient.LoadSettings(path)
 	if err != nil {
 		return err
+	}
+	for _, p := range problems {
+		fmt.Fprintln(os.Stderr, "gff:", p)
+	}
+	if *prefixFlag != "" {
+		k, err := gffclient.ParseKey(*prefixFlag)
+		if err != nil || !strings.HasPrefix(k, "ctrl-") {
+			return fmt.Errorf("-prefix %q: want ctrl-<key>, such as ctrl-\\ or ctrl-a", *prefixFlag)
+		}
+		settings.Keymap.SetPrefix(k)
 	}
 	var sp gffclient.Split
 	switch *split {
@@ -136,7 +161,7 @@ func run(args []string) error {
 	defer stop()
 	client := api.ClientInfo{Name: "gff", Version: build, Kind: api.ClientKindTerminal}
 	if len(fs.Args()) == 0 && len(news) == 0 {
-		specs, err := workspaceHosts(*configPath, hostFlags, tr, *sshHost)
+		specs, err := workspaceHosts(path, hostFlags, tr, *sshHost)
 		if err != nil {
 			return err
 		}
@@ -145,7 +170,7 @@ func run(args []string) error {
 			return err
 		}
 		defer set.Close()
-		return runTerminal(ctx, in, out, gffclient.Config{Hosts: set, Split: sp, Prefix: prefix})
+		return runTerminal(ctx, in, out, gffclient.Config{Hosts: set, Split: sp, Keymap: settings.Keymap, Bar: &settings.Bar})
 	}
 	octx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	conn, err := habconn.Connect(octx, habconn.Config{Transport: tr, Client: client})
@@ -185,7 +210,7 @@ func run(args []string) error {
 		panes = append(panes, gffclient.PaneSpec{ID: res.Pane, Label: label(cmd, res.Pane), Observe: *observe})
 	}
 
-	err = runTerminal(ctx, in, out, gffclient.Config{Conn: conn, Panes: panes, Split: sp, Prefix: prefix})
+	err = runTerminal(ctx, in, out, gffclient.Config{Conn: conn, Panes: panes, Split: sp, Keymap: settings.Keymap, Bar: &settings.Bar})
 	if err == nil {
 		return errEnded
 	}
@@ -235,17 +260,11 @@ func runTerminal(ctx context.Context, in, out int, cfg gffclient.Config) error {
 // none, the one hab of -socket, -via or -ssh, else the local socket. Config problems are
 // printed and the good entries kept.
 func workspaceHosts(path string, flags []string, single habconn.Transport, sshHost string) ([]hosts.Spec, error) {
-	if path == "" {
-		var err error
-		if path, err = hosts.DefaultConfigPath(); err != nil {
-			return nil, err
-		}
-	}
 	specs, problems, err := hosts.LoadConfig(path)
 	if err != nil {
 		return nil, err
 	}
-	for _, p := range problems {
+	for _, p := range hostProblems(path, problems) {
 		fmt.Fprintln(os.Stderr, "gff:", p)
 	}
 	for _, f := range flags {
@@ -272,6 +291,25 @@ func workspaceHosts(path string, flags []string, single habconn.Transport, sshHo
 		specs = []hosts.Spec{{Label: label, Transport: single}}
 	}
 	return specs, nil
+}
+
+// hostProblems drops the host reader's "unknown key" problems for the tables the keymap and
+// bar reader owns (gffclient.SettingsTables); LoadSettings reports its own.
+func hostProblems(path string, problems []string) []string {
+	var out []string
+	for _, p := range problems {
+		owned := false
+		for _, t := range gffclient.SettingsTables {
+			k := path + ": unknown key " + t
+			if p == k || strings.HasPrefix(p, k+".") {
+				owned = true
+			}
+		}
+		if !owned {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // transport picks how to reach the hab. local is true for the local socket.

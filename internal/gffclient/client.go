@@ -64,8 +64,12 @@ type Config struct {
 	Parser vt.Parser
 	Panes  []PaneSpec
 	Split  Split
-	// Prefix is the prefix key. Zero: DefaultPrefix.
-	Prefix byte
+	// Keymap is the keys and their modes (gff-client.md 8). Nil: DefaultKeymap.
+	Keymap *Keymap
+	// Bar shapes the workspace's bars. Nil: DefaultBar.
+	Bar *BarConfig
+	// Stats reads this machine's system info for the shortcut bar. Nil: a LocalStats.
+	Stats func() (api.HostStats, error)
 
 	// The host terminal: its input (already in raw mode), its output, its size, and a signal
 	// on each size change.
@@ -202,8 +206,15 @@ func Run(ctx context.Context, cfg Config) (err error) {
 	if !ws {
 		cfg.Hosts = hosts.Wrap("hab", cfg.Conn, cfg.Now)
 	}
-	if cfg.Prefix == 0 {
-		cfg.Prefix = DefaultPrefix
+	if cfg.Keymap == nil {
+		cfg.Keymap = DefaultKeymap()
+	}
+	if cfg.Bar == nil {
+		b := DefaultBar()
+		cfg.Bar = &b
+	}
+	if cfg.Stats == nil {
+		cfg.Stats = new(LocalStats).Read
 	}
 	if cfg.SizeDebounce <= 0 {
 		cfg.SizeDebounce = DefaultSizeDebounce
@@ -220,7 +231,7 @@ func Run(ctx context.Context, cfg Config) (err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
 	c := &client{cfg: cfg, ctx: ctx, wg: &wg, ws: ws, hosts: map[string]*hostState{}, modes: map[int]bool{},
-		keys: newKeyReader(cfg.Prefix), notes: make(chan paneNote, 64), frames: make(chan paneFrame),
+		keys: newKeyReader(cfg.Keymap), notes: make(chan paneNote, 64), frames: make(chan paneFrame),
 		later: make(chan func(), 64), debounce: cfg.NewTimer()}
 	c.ui.init(c)
 	c.tabs = []*tab{{name: "1", split: cfg.Split}}
@@ -647,7 +658,7 @@ func (c *client) frame(pf paneFrame) {
 // input handles host input.
 func (c *client) input(p []byte) error {
 	for _, ev := range c.keys.feed(p) {
-		if ev.cmd == 0 {
+		if ev.act == "" {
 			if c.ws && c.ui.mode != modePanes {
 				c.ui.keys(ev.data)
 				continue
@@ -655,7 +666,7 @@ func (c *client) input(p []byte) error {
 			c.typeKeys(ev.data)
 			continue
 		}
-		if err := c.command(ev.cmd); err != nil {
+		if err := c.command(ev); err != nil {
 			return err
 		}
 	}
@@ -686,11 +697,18 @@ func (c *client) focused() *view {
 	return t.views[min(t.focus, len(t.views)-1)]
 }
 
-func (c *client) command(r rune) error {
-	if r == cmdDetach {
+// command runs one action of the keymap.
+func (c *client) command(ev keyEvent) error {
+	switch ev.act {
+	case actDetach:
 		return ErrDetached
+	case actSend:
+		if b, ok := ctrlByte(ev.key); ok {
+			c.typeKeys([]byte{b})
+		}
+		return nil
 	}
-	if c.ws && c.ui.command(r) {
+	if c.ws && c.ui.command(ev.act) {
 		return nil
 	}
 	t := c.tab()
@@ -698,28 +716,28 @@ func (c *client) command(r rune) error {
 	if v == nil {
 		return nil
 	}
-	switch r {
-	case cmdFocusNext, '\t':
+	switch ev.act {
+	case actFocusNext:
 		t.focus = (t.focus + 1) % len(t.views)
 		if t.zoom {
 			c.layoutChanged()
 		}
 		c.ui.focusChanged()
-	case cmdZoom:
+	case actZoom:
 		if len(t.views) > 1 {
 			t.zoom = !t.zoom
 			c.layoutChanged()
 		}
-	case cmdSplit:
+	case actSplit:
 		if t.split == SplitColumns {
 			t.split = SplitRows
 		} else {
 			t.split = SplitColumns
 		}
 		c.layoutChanged()
-	case cmdRedraw, cmdNudge:
+	case actRedraw, actNudge:
 		mode := api.RedrawModeSnapshot
-		if r == cmdNudge {
+		if ev.act == actNudge {
 			if v.spec.Observe {
 				v.note, v.dirty = "observer: no nudge", true
 				return nil
@@ -729,7 +747,7 @@ func (c *client) command(r rune) error {
 		v.h.ops.push(op{kind: opRedraw, pane: v.spec.ID, mode: mode})
 		c.canvas.valid = false
 		c.pass = nil
-	case cmdFit:
+	case actFit:
 		if v.spec.Observe {
 			v.note, v.dirty = "observer: cannot fit", true
 			return nil
@@ -824,6 +842,9 @@ func (c *client) update(u hosts.Update) error {
 	case habconn.UpdateOnline:
 		hs.online = true
 		hs.me = u.Welcome.ClientID
+		if c.ws {
+			c.ui.listUsage(hs)
+		}
 		if u.NewEpoch {
 			// A new hab process keeps no desired sizes and no owners: ask again.
 			views(func(v *view) { v.sentCols, v.sentRows = 0, 0 })

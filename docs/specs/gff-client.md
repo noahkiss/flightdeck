@@ -210,7 +210,7 @@ r1-sessions section 2 (pass-through for one pane, a parser per pane for splits).
 
 The client core shows one or more panes of one hab in the terminal `gff` runs in. This is the
 single-hab view; the workspace with several habs, tabs, the sidebar and the status board is in
-4.3. The keymap with modes is a later stage.
+4.3. The keymap with modes is in 8.4; the prefix keys below are its default prefix mode.
 
 **Parser.** libghostty through `internal/vt` (3.2, 15.1). `vt.Terminal.ReadScreen` gives the
 composed view the active screen as cells: each cell's grapheme, width and style (palette colours
@@ -731,6 +731,90 @@ Sources: `app.md` 3 and 7 (ranks, row content, approval flow, answered elsewhere
 Sources: zellij modes and status bar (1.1); the owner's setup (1.6: hints from the live keymap,
 trims that free program keys, tolerant config); `hab-logic-api.md` 3.8 (one input call per paste).
 
+### 8.4 Built choices (task-8qy9nrvj: the keymap and the shortcut bar)
+
+Packages: `internal/gffclient` (`keymap.go`, `keys.go`, `bars.go`), `cmd/gff`.
+
+**Modes.** The keymap has seven modes. The key reader holds the current one.
+
+| Mode | Keys it takes | Left by |
+|---|---|---|
+| normal | Only its own Ctrl keys; the rest go to the pane | A leader moves to another mode |
+| prefix | One command key, then back to normal; a key it does not bind cancels | The command, or Esc |
+| pane, tab | Every key; a key the mode does not bind goes nowhere | Esc or Enter, always, even if unbound |
+| locked | Only its own Ctrl keys (unlock); every other key, the prefix included, goes to the pane | Unlock |
+| sidebar, board | The keys while that part has focus (4.3, 7) | Esc or `q` |
+
+**Default keymap.** Normal binds one leader, Ctrl+\, to prefix mode. Prefix mode has the keys of
+3.4 and 4.3, plus `p` pane mode, `t` tab mode, `l` lock and `!` the warnings. The prefix pressed
+twice sends it to the pane. Pane mode repeats the pane keys (focus, zoom, split, close view,
+redraw, nudge, fit); tab mode repeats the tab keys (new, next, previous, 1 to 9, close view).
+Locked mode's unlock key is Ctrl+G.
+
+Decided (implementer, 2026-11-01): the default keeps the one leader the client core shipped,
+and reaches the modes through it. 15.5 chose "modes with leaders" (A) as the default. A's Ctrl
+leaders are not chosen: zellij's (Ctrl+P, Ctrl+T, Ctrl+O, Ctrl+N, Ctrl+H, Ctrl+S) take keys that
+shells and harnesses use, and 8.1 leaves Ctrl+S to programs. The owner picks A's leaders; until
+then a user binds them in `[keys.normal]`, which takes any action, so one chord can enter a mode
+or run a command. The unlock key differs from the prefix, so locking gets the prefix through
+(8.3).
+
+**Config.** gff's config file (4.3) holds the keymap in `[keys.<mode>]` tables, `key =
+"action"` per line, over the default keymap:
+
+```toml
+[keys]
+defaults = false          # optional: start from no bindings
+[keys.normal]
+"ctrl-a" = "prefix"       # normal and locked take only ctrl-<key>
+[keys.prefix]
+q = "detach"
+d = "none"                # unbind
+```
+
+- A key is one character, `ctrl-<key>` (as `-prefix`), `tab`, `enter`, `esc`, `up`, `down`,
+  `backspace` or `space`.
+- Actions: `prefix`, `pane-mode`, `tab-mode`, `lock`, `unlock`, `back`, `send`, `focus-next`,
+  `zoom`, `split`, `redraw`, `nudge`, `fit`, `detach`, `sidebar`, `board`, `bars`, `new-tab`,
+  `next-tab`, `prev-tab`, `tab-1` to `tab-9`, `close-view`, `warnings`; in the sidebar and board
+  also `up`, `down`, `open`, `open-tab`, and in the sidebar `new-session`, `rename`,
+  `close-session`, `filter`, `group`. `none` unbinds.
+- An unknown mode, key or action, an action the mode cannot take, or a plain key in normal or
+  locked mode is a problem printed at start with the file and line; the rest loads (8.3).
+- TOML refuses a key written twice in one table, so the file does not load and gff says where.
+  Two spellings of one key (`esc`, `escape`) are a problem and the later line wins.
+- `-prefix ctrl-<key>` moves the prefix: the normal keys that enter prefix mode and the prefix
+  key that sends it.
+- The host reader (`internal/hosts`) warns about keys it does not know; `cmd/gff` drops those
+  warnings for the `keys` and `bar` tables, which `gffclient.LoadSettings` reads and checks.
+
+**The bar.** The bottom row shows the keys of the mode, from the loaded keymap: the reader's
+mode when it is not normal (named first: `prefix ·`, `pane ·`, `tab ·`, `locked ·`), else the
+sidebar's or board's while it has focus, else normal's. Keys with one label join: `o/Tab
+focus`, `↑/k/↓/j move`, a run of digits as `1-9 go to tab`. `send` is not listed. Binding order
+is priority. When the row is short, hints drop from the end until the rest fit with labels; when
+fewer than three would remain, the keys show alone, as many as fit. `[bar] max_hints` caps the
+count. A message (an error, the warnings) replaces the hints until the next key; a prompt
+replaces the row.
+
+**Tests.**
+
+| Test | Proves |
+|---|---|
+| `TestBarFollowsMode` | gff's screen over a fake hab: the bar shows the sidebar's keys, then normal's leader, the prefix mode's commands, pane mode's keys (kept after a command), tab mode's, then only the unlock key while locked; each Esc, Enter or unlock returns to normal |
+| `TestKeymapConfig` | An unbound key leaves the hints; a new key joins its action's hint; each bad line is a problem with its file and line; `defaults = false`; another prefix; `SetPrefix`; `max_hints` |
+| `TestKeyReader` | The reader's modes: prefix one-shot, cancel, send, pane and tab modes that stay, locked mode passing the prefix, unlock in legacy and kitty forms; the prefix in legacy, kitty and modifyOtherKeys forms across split reads, releases and modifier keys skipped |
+| `TestFitHints` | Hints drop by priority, then show keys alone |
+
+**Limits (not built).**
+
+| Limit | Why it is acceptable now |
+|---|---|
+| No resize, move or session modes | gff has no split resize or pane move yet (5.2); the sidebar covers sessions |
+| Normal and locked modes take only Ctrl keys; no Alt keys | Alt+letters are shell word moves (8.1); the reader knows Ctrl keys in three encodings |
+| No help overlay listing the whole keymap (13) | The bar shows each mode's keys |
+| Keys are not re-encoded per pane (8.2) | As 3.4 |
+
 ---
 
 ## 9. System info
@@ -760,6 +844,82 @@ trims that free program keys, tolerant config); `hab-logic-api.md` 3.8 (one inpu
 
 Sources: the owner's setup (1.6: system info on the bottom bar, clock and badges on the tab bar,
 usage row); `hab-logic-api.md` 3.4 (capabilities for features a host may lack).
+
+### 9.3 Built choices (task-8qy9nrvj: system info, the usage row, the warnings)
+
+Packages: `internal/gffclient` (`bars.go`, `sysinfo*.go`, `usage.go`).
+
+**System info.** The right end of the shortcut bar: `cpu 12% mem 51% disk 61% bat 80% up 3d
+4h`. `[bar] info` lists the items and their order; an item left out is hidden. The battery
+hides on a machine with none. The row gives the info at most half its width; the hints get the
+rest.
+
+- **Whose figures.** When the focused pane's host listed `host-stats` in its welcome, gff calls
+  `hab.stats` and labels the figures with the host label. Otherwise gff reads this machine's
+  own, unlabelled. Decided (implementer): a local hab that serves stats is labelled too; gff
+  does not guess whether a hab is this machine.
+- **Refresh.** On the workspace's one-second tick, at most every 2 s, never while the bars are
+  hidden, one reading at a time, off the loop.
+- **Offline.** A host that offered stats and is offline keeps its last figures, dimmed, with
+  their age.
+- **This machine.** Linux: CPU from `/proc/stat` since the last reading, memory in use as
+  MemTotal less MemAvailable, uptime, the first battery under `/sys/class/power_supply`.
+  macOS, with no cgo: CPU as the one-minute load over the core count (sysctl gives no CPU time
+  counters), memory in use as all but the free pages (it counts the file cache), uptime from
+  `kern.boottime`, the battery from `pmset -g batt` at most once a minute. Disk: the file system
+  of the home directory. Other systems: disk only.
+
+**Tab bar.** On the right: the needs-you count, the warnings count when there are any (`2
+warnings`), online hosts out of all, and the clock. `[bar] clock` is a Go time layout (default
+`15:04`); empty hides the clock. Prefix `!` lists the warnings on the bottom row: each host that
+is not online with its problem (`two offline 3m`, `connecting`, `update needed`, `host key
+changed`).
+
+**Usage row.** On by default (`[bar] usage = false` turns it off), under the tab bar, when the
+host has 8 rows or more. Readings come from `usage.list` when a host comes online and from
+`usage.updated` events. They merge by account key; the newest `read_at` wins, whichever host
+sent it (app.md 14.1). Each account, in first-seen order, separated by `│`:
+
+```
+claude Max 5x · 5h 42% resets 1h 58m · 7d 61% resets 4d 23h · over pace on 7d
+```
+
+- **Pace.** A window's length comes from its name (`5h`, `7d`, `30m`, `1w`). With a length and
+  a reset time, the pace is the share of the window already gone. A window used more than that
+  is over pace. The account ends with the first that holds: `<w> limit reached · resets in
+  <time>` for each window at 100 per cent or more; `over pace on <w>, <w>`; `on pace` when any
+  window has a pace. A window named for a model has no length, so no pace.
+- **Edge cases** as app.md 14.5: a reading above 100 shows 100 and "limit reached"; a reset time
+  that passed with no reading since says `<w> reset at 14:00; no reading since`; with no
+  reset time, the percentage only; an account with no windows says `no limits reported`; when
+  every window's reading is older than an hour or than its window, the account is grey with `as
+  of <time>`.
+- **Colour.** An account with a window at 80 per cent or more shows in the warning colour, at 95
+  in the limit colour (app.md 14.3 thresholds).
+- **No data.** With no reading from any host the row says `no usage reported`: absent, never
+  zero.
+- **Counts.** The right end: per harness, the sessions working and needing you on online hosts
+  (`claude 2 working 1 needs you`).
+
+**Tests.**
+
+| Test | Proves |
+|---|---|
+| `TestUsagePaceText` | Fixture readings give the expected text: over pace, on pace, limit reached, near a limit, a model window, no reset time, a reset with no reading since, stale, no windows |
+| `TestUsageRowReading` | The row shows two fixture accounts' pace text under the tab bar, the one at 96 per cent in the limit colour; the pane area starts below it |
+| `TestUsageRow` | Over a fake hab that serves no usage: `no usage reported`, and the count of working sessions |
+| `TestUsageBookNewestWins` | An older reading of one account from another host does not replace a newer one |
+| `TestInfoText` | The figures' text; the battery item hides with no battery; this machine's reader returns a reading |
+
+**Gaps in the API and the hab (reported, not built).**
+
+| Gap | Effect now |
+|---|---|
+| gff-hab does not serve `hab.stats` yet (it answers `unavailable`, `internal/control`) and no hab lists `host-stats` | gff shows this machine's figures, unlabelled |
+| `UsageWindow` has no length or start | Pace only for windows whose name gives the length; a model's window has none |
+| No "usage degraded" mark on an account (app.md 14.5 "usage unavailable") | The row shows the last reading, greyed when stale |
+| No field says a hab or holder build is superseded (9.1 warnings) | The warnings list hosts that are not online only |
+| The welcome carries no hab time | Reset and age times use this machine's clock against the hab's absolute times |
 
 ---
 

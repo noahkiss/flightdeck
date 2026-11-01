@@ -20,18 +20,6 @@ import (
 	"github.com/noahkiss/flightdeck/internal/vt"
 )
 
-// Prefix commands of the workspace (gff-client.md 4.1, 5.1, 7.1). The full keymap with modes
-// is a later stage (8.1).
-const (
-	cmdSidebar  = 'w' // focus the sidebar, showing it
-	cmdBars     = 'b' // hide or show the bars: the panes get the whole terminal
-	cmdBoard    = 'g' // the status board
-	cmdNewTab   = 'c' // a new, empty tab
-	cmdNextTab  = ']'
-	cmdPrevTab  = '['
-	cmdCloseVew = 'x' // close the focused view; the program keeps running
-)
-
 // SidebarWidth is the sidebar's width in columns, separator included (gff-client.md 4.1).
 const SidebarWidth = 28
 
@@ -76,6 +64,11 @@ type workspaceUI struct {
 	focusAt  map[string]string // host/session -> the last session.focus sent
 	msg      string            // one line on the bottom bar until the next key
 	prompt   *prompt
+
+	usage   usageBook   // each account's latest usage reading, from every host
+	sys     *sysReading // the last system info reading, or nil
+	sysAt   time.Time   // when the last reading started
+	sysBusy bool        // a reading is out
 }
 
 func (u *workspaceUI) init(c *client) {
@@ -99,6 +92,7 @@ func (u *workspaceUI) tick() {
 		}
 	}
 	u.c.eachView(func(_ *tab, v *view) { v.dirty = true })
+	u.readStats()
 }
 
 // refresh rebuilds the rows when the hosts changed.
@@ -215,6 +209,11 @@ func (u *workspaceUI) event(hs *hostState, e api.Event) {
 				}
 			}
 		}
+	case api.EventUsageUpdated:
+		var a api.UsageAccount
+		if json.Unmarshal(e.Data, &a) == nil && a.Key != "" {
+			u.usage.put(hs.label, a)
+		}
 	case api.EventPaneOutput:
 		var o api.PaneOutput
 		if json.Unmarshal(e.Data, &o) != nil {
@@ -258,15 +257,36 @@ func (u *workspaceUI) paneArea() rect {
 	if u.sidebarShown() {
 		x = min(SidebarWidth, c.w-1)
 	}
-	return rect{x, 1, max(c.w-x, 1), max(c.h-2, 2)}
+	top := u.top()
+	return rect{x, top, max(c.w-x, 1), max(c.h-top-1, 2)}
 }
 
-// command handles a prefix command of the workspace; false leaves it to the pane commands.
-func (u *workspaceUI) command(r rune) bool {
+// top is the first row under the bars on top: the tab bar, and the usage row when it shows.
+func (u *workspaceUI) top() int {
+	if u.usageShown() {
+		return 2
+	}
+	return 1
+}
+
+// usageShown reports whether the usage row shows: the config has it on and the host has the
+// rows for it beside a pane.
+func (u *workspaceUI) usageShown() bool { return u.bars && u.c.cfg.Bar.Usage && u.c.h >= 8 }
+
+// command handles an action of the workspace; false leaves it to the pane actions.
+func (u *workspaceUI) command(act string) bool {
 	c := u.c
 	u.msg = ""
-	switch r {
-	case cmdSidebar:
+	switch act {
+	case actBack, actPrefix, actPaneMode, actTabMode, actLock, actUnlock:
+		// Mode keys: the key reader moved the mode, and the bar shows it.
+	case actWarnings:
+		if w := u.warnings(); len(w) > 0 {
+			u.msg = strings.Join(w, " · ")
+		} else {
+			u.msg = "no warnings"
+		}
+	case actSidebar:
 		u.bars = true
 		if u.mode == modeSidebar {
 			u.mode = modePanes
@@ -274,36 +294,36 @@ func (u *workspaceUI) command(r rune) bool {
 			u.mode = modeSidebar
 		}
 		c.layoutChanged()
-	case cmdBars:
+	case actBars:
 		u.bars = !u.bars
 		if !u.bars {
 			u.mode = modePanes
 		}
 		c.layoutChanged()
-	case cmdBoard:
+	case actBoard:
 		if u.mode == modeBoard {
 			u.mode = modePanes
 		} else {
 			u.mode = modeBoard
 		}
 		c.canvas.valid = false
-	case cmdNewTab:
+	case actNewTab:
 		c.tabs = append(c.tabs, &tab{name: strconv.Itoa(len(c.tabs) + 1), split: c.cfg.Split})
 		u.switchTab(len(c.tabs) - 1)
 		u.mode = modeSidebar
-	case cmdNextTab:
+	case actNextTab:
 		u.switchTab((c.cur + 1) % len(c.tabs))
-	case cmdPrevTab:
+	case actPrevTab:
 		u.switchTab((c.cur + len(c.tabs) - 1) % len(c.tabs))
-	case cmdCloseVew:
+	case actCloseView:
 		if v := c.focused(); v != nil {
 			c.removeView(c.tab(), v)
 			c.layoutChanged()
 		}
 	default:
-		if r >= '1' && r <= '9' {
-			if i := int(r - '1'); i < len(c.tabs) {
-				u.switchTab(i)
+		if n, ok := strings.CutPrefix(act, actTabN); ok {
+			if i, err := strconv.Atoi(n); err == nil && i >= 1 && i <= len(c.tabs) {
+				u.switchTab(i - 1)
 			}
 			return true
 		}
@@ -452,49 +472,39 @@ func (u *workspaceUI) key(k key) {
 		}
 		return
 	}
-	switch k.name {
-	case "up":
+	name := k.name
+	if name == "" {
+		name = string(k.r)
+	}
+	m := ModeSidebar
+	if u.mode == modeBoard {
+		m = ModeBoard
+	}
+	switch u.c.cfg.Keymap.lookup(m, name) {
+	case actUp:
 		u.move(-1)
-		return
-	case "down":
+	case actDown:
 		u.move(1)
-		return
-	case "esc":
+	case actBack:
 		u.mode = modePanes
 		u.c.layoutChanged()
-		return
-	case "enter":
+	case actOpen:
 		if r, _, ok := u.selected(); ok {
 			u.open(r, false)
 		}
-		return
-	}
-	switch k.r {
-	case 'k':
-		u.move(-1)
-	case 'j':
-		u.move(1)
-	case 't':
+	case actOpenTab:
 		if r, _, ok := u.selected(); ok {
 			u.open(r, true)
 		}
-	case 'q':
-		u.mode = modePanes
-		u.c.layoutChanged()
-	}
-	if u.mode != modeSidebar {
-		return
-	}
-	switch k.r {
-	case 'n':
+	case actNew:
 		u.newSession()
-	case 'r':
+	case actRename:
 		u.rename()
-	case 'x':
+	case actClose:
 		u.closeSession()
-	case '/':
+	case actFilter:
 		u.filterOn = true
-	case 'p':
+	case actGroup:
 		u.group = (u.group + 1) % 3
 	}
 }
@@ -777,78 +787,6 @@ func stateMark(r board.Row) string {
 
 func palette(i uint8) vt.Color { return vt.Color{Kind: vt.ColorPalette, Index: i} }
 
-// draw draws the bars and, as the mode asks, the sidebar or the board. It returns where the
-// cursor goes when a prompt has the keys.
-func (u *workspaceUI) draw() (int, int, bool) {
-	u.refresh()
-	if !u.bars {
-		if u.mode == modeBoard {
-			u.drawBoard(rect{0, 0, u.c.w, u.c.h})
-		}
-		return 0, 0, false
-	}
-	c := u.c
-	u.drawTabBar()
-	if u.mode == modeBoard {
-		u.drawBoard(rect{0, 1, c.w, max(c.h-2, 1)})
-	} else if u.sidebarShown() {
-		sw := min(SidebarWidth, c.w-1)
-		u.drawSidebar(rect{0, 1, sw - 1, max(c.h-2, 1)})
-		for y := 1; y < c.h-1; y++ {
-			c.canvas.set(sw-1, y, hcell{text: "│", style: dimStyle})
-		}
-	}
-	if len(c.tab().views) == 0 && u.mode != modeBoard {
-		a := u.paneArea()
-		c.canvas.text(a.x+1, a.y+1, a.w-1, "empty tab: open a session from the sidebar (prefix w)", dimStyle)
-	}
-	return u.drawBottom()
-}
-
-func (u *workspaceUI) drawTabBar() {
-	c := u.c
-	c.canvas.text(0, 0, c.w, "", barStyle)
-	x := 0
-	needTabs := map[*tab]bool{}
-	for _, t := range c.tabs {
-		for _, v := range t.views {
-			if r, ok := rowOf(u.rows, v); ok && r.Rank.NeedsYou() && !r.Offline() {
-				needTabs[t] = true
-			}
-		}
-	}
-	now := c.cfg.Now()
-	for i, t := range c.tabs {
-		s := " " + strconv.Itoa(i+1) + ":" + t.name
-		switch {
-		case needTabs[t]:
-			s += "!"
-		case now.Before(t.bell):
-			s += "*"
-		case t.activity:
-			s += "~"
-		}
-		s += " "
-		st := barStyle
-		if i == c.cur {
-			st = activeTab
-		}
-		c.canvas.text(x, 0, min(len([]rune(s)), max(c.w-x, 0)), s, st)
-		x += len([]rune(s))
-	}
-	online, total := 0, 0
-	for _, h := range c.cfg.Hosts.Hosts() {
-		total++
-		if h.Online() {
-			online++
-		}
-	}
-	right := fmt.Sprintf(" %d need you · %d/%d hosts · %s ", board.NeedsYou(u.rows), online, total, now.Format("15:04"))
-	if rx := c.w - len([]rune(right)); rx > x {
-		c.canvas.text(rx, 0, c.w-rx, right, barStyle)
-	}
-}
-
 // inView says where a row's pane shows: 2 in the current tab, 1 in another tab, 0 nowhere.
 func (u *workspaceUI) inView(r board.Row) int {
 	best := 0
@@ -978,46 +916,6 @@ func (u *workspaceUI) drawBoard(a rect) {
 	if len(u.rows) == 0 {
 		line(" no sessions on any online host", dimStyle)
 	}
-}
-
-func (u *workspaceUI) drawBottom() (int, int, bool) {
-	c := u.c
-	y := c.h - 1
-	pre := prefixName(c.cfg.Prefix)
-	var s string
-	switch {
-	case u.prompt != nil:
-		p := u.prompt
-		s = " " + p.label
-		if p.hosts {
-			s = " [" + p.host + "] " + p.label
-		}
-		if !p.yesNo {
-			s += ": " + string(p.text)
-		}
-		c.canvas.text(0, y, c.w, s, vt.Style{})
-		return min(len([]rune(s)), c.w-1), y, true
-	case u.msg != "":
-		s = " " + u.msg
-	case u.mode == modeSidebar:
-		s = " ↑↓ move  ⏎ open  t tab  n new  r rename  x close  / filter  p group  esc back"
-	case u.mode == modeBoard:
-		s = " ↑↓ move  ⏎ open  t tab  esc back"
-	default:
-		s = " " + pre + " then: w sidebar  g board  c tab  ]/[ tabs  x close view  b bars  d detach"
-	}
-	c.canvas.text(0, y, c.w, s, barStyle)
-	return 0, 0, false
-}
-
-func prefixName(p byte) string {
-	switch {
-	case p == 0x1c:
-		return "Ctrl+\\"
-	case p >= 1 && p <= 26:
-		return "Ctrl+" + string(rune('A'+p-1))
-	}
-	return "Ctrl+" + string(rune(p|0x40))
 }
 
 // middle shortens s to n columns, cutting the middle so the end stays readable (4.1).
