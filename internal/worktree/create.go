@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/noahkiss/flightdeck/internal/structure"
@@ -228,7 +229,7 @@ type startPoint struct {
 func isPullRef(ref string) bool {
 	for _, seg := range strings.Split(ref, "/") {
 		switch strings.ToLower(seg) {
-		case "pull", "pr", "pull-requests", "merge-requests", "mr", "changes":
+		case "pull", "pr", "pull-request", "pull-requests", "merge-requests", "mr", "changes":
 			return true
 		}
 	}
@@ -398,29 +399,65 @@ func (g Git) readReflogs(ctx context.Context, dir string) reflogIndex {
 			return idx
 		}
 	}
-	type entry struct{ ref, hash, subject string }
-	var entries []entry
+	// git interleaves several refs' entries by date, so pair within each ref, by the n of
+	// name@{n}: entry n's old value is entry n+1's commit.
+	type entry struct{ hash, subject string }
+	logs := map[string]map[int]entry{}
 	for _, line := range strings.Split(log, "\n") {
-		sel, rest, ok := strings.Cut(line, " ")
-		if !ok {
+		sel, rest, _ := strings.Cut(line, " ")
+		hash, subject, _ := strings.Cut(rest, " ")
+		i := strings.LastIndex(sel, "@{")
+		if i <= 0 || !strings.HasSuffix(sel, "}") {
 			continue
 		}
-		hash, subject, _ := strings.Cut(rest, " ")
-		ref := sel
-		if i := strings.LastIndex(sel, "@{"); i > 0 {
-			ref = sel[:i]
+		n, err := strconv.Atoi(sel[i+2 : len(sel)-1])
+		if err != nil {
+			continue
 		}
-		entries = append(entries, entry{ref, hash, subject})
+		if logs[sel[:i]] == nil {
+			logs[sel[:i]] = map[int]entry{}
+		}
+		logs[sel[:i]][n] = entry{hash, subject}
 	}
-	for i, e := range entries {
-		switch {
-		case strings.HasPrefix(e.subject, "commit (amend):"):
-			if i+1 < len(entries) && entries[i+1].ref == e.ref {
-				idx.amendOf[e.hash] = append(idx.amendOf[e.hash], entries[i+1].hash)
+	type pair struct{ amended, replaced string }
+	var pairs []pair
+	for _, log := range logs {
+		for n, e := range log {
+			switch {
+			case strings.HasPrefix(e.subject, "commit (amend):"):
+				if old, ok := log[n+1]; ok && old.hash != e.hash {
+					pairs = append(pairs, pair{e.hash, old.hash})
+				}
+			case strings.HasPrefix(e.subject, "commit:"), strings.HasPrefix(e.subject, "commit (initial):"),
+				strings.HasPrefix(e.subject, "commit (merge):"):
+				idx.made[e.hash] = true
 			}
-		case strings.HasPrefix(e.subject, "commit:"), strings.HasPrefix(e.subject, "commit (initial):"),
-			strings.HasPrefix(e.subject, "commit (merge):"):
-			idx.made[e.hash] = true
+		}
+	}
+	// gc expires an entry whose commit became unreachable (30 days by default), so the entry
+	// before an amend may be gone, and the next one older a different commit. Keep a pair only
+	// when the two commits agree on what git commit --amend keeps: parents and author.
+	if len(pairs) == 0 {
+		return idx
+	}
+	args := []string{"log", "--no-walk=unsorted", "--date=raw", "--format=%H%x00%P%x00%an%x00%ae%x00%ad"}
+	for _, p := range pairs {
+		args = append(args, p.amended, p.replaced)
+	}
+	out, err := g.run(ctx, dir, args...)
+	if err != nil {
+		return idx
+	}
+	kept := map[string]string{} // commit -> parents and author
+	for _, line := range strings.Split(out, "\n") {
+		if h, rest, ok := strings.Cut(line, "\x00"); ok {
+			kept[h] = rest
+		}
+	}
+	for _, p := range pairs {
+		a, ok := kept[p.amended]
+		if ok && a == kept[p.replaced] && !slices.Contains(idx.amendOf[p.amended], p.replaced) {
+			idx.amendOf[p.amended] = append(idx.amendOf[p.amended], p.replaced)
 		}
 	}
 	return idx
@@ -434,10 +471,23 @@ func (g Git) readReflogs(ctx context.Context, dir string) reflogIndex {
 // pull request cannot claim an entry. Entries from rebase, cherry-pick and am do not count. No
 // reflog entry, an entry past its expiry, or more than maxLocalCommits commits: false.
 func (g Git) committedHere(ctx context.Context, dir, commit string, base []string) bool {
-	return g.ownHistory(ctx, dir, commit, base, g.readReflogs(ctx, dir), maxAmendDepth)
+	return g.ownHistory(ctx, dir, commit, base, g.readReflogs(ctx, dir), map[string]bool{}, maxAmendDepth)
 }
 
-func (g Git) ownHistory(ctx context.Context, dir, commit string, base []string, idx reflogIndex, depth int) bool {
+// ownHistory is committedHere for one commit. seen memoizes the answer per commit; a commit is
+// marked false while its own check runs, so a cycle of amends ends at once and the work is
+// linear in the amend entries.
+func (g Git) ownHistory(ctx context.Context, dir, commit string, base []string, idx reflogIndex, seen map[string]bool, depth int) bool {
+	if own, ok := seen[commit]; ok {
+		return own
+	}
+	seen[commit] = false
+	own := g.ownHistoryOnce(ctx, dir, commit, base, idx, seen, depth)
+	seen[commit] = own
+	return own
+}
+
+func (g Git) ownHistoryOnce(ctx context.Context, dir, commit string, base []string, idx reflogIndex, seen map[string]bool, depth int) bool {
 	var stdin strings.Builder
 	for _, b := range base {
 		stdin.WriteString("^" + b + "\n")
@@ -457,7 +507,7 @@ func (g Git) ownHistory(ctx context.Context, dir, commit string, base []string, 
 		replacedOwn := false
 		if depth > 0 {
 			for _, old := range idx.amendOf[c] {
-				if g.ownHistory(ctx, dir, old, base, idx, depth-1) {
+				if g.ownHistory(ctx, dir, old, base, idx, seen, depth-1) {
 					replacedOwn = true
 					break
 				}

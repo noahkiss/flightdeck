@@ -1180,7 +1180,8 @@ project's identity, so the session files into the same project. No method of its
   stranger's script. So the check leans to foreign. In `auto`, setup does not run when any of
   these holds:
   - the start ref, or a local branch's `branch.<b>.merge`, has a pull request segment: `pull`,
-    `pr`, `pull-requests`, `merge-requests`, `mr` or `changes`, in any case (`gh pr checkout`,
+    `pr`, `pull-request`, `pull-requests`, `merge-requests`, `mr` or `changes`, in any case
+    (`gh pr checkout`,
     a fetch of `pull/N/head`);
   - the start ref is a branch of a remote whose URL is not the project's remote;
   - a local branch's `branch.<b>.remote` is another remote or URL;
@@ -1205,9 +1206,17 @@ project's identity, so the session files into the same project. No method of its
   the commits in the start commit's history that no branch of the project's remote holds (at
   most 200; more is foreign). The start point counts as own only when each of them has a
   `commit:`, `commit (initial):` or `commit (merge):` entry in a reflog, or a
-  `commit (amend):` entry whose replaced commit (the entry's old value, the next older entry
-  of the same ref) is itself own by this rule, followed back at most 8 amends. So amending a
-  fetched pull request (`gh pr checkout 7 && git commit --amend`) stays foreign. gff-hab reads
+  `commit (amend):` entry whose replaced commit is itself own by this rule. The replaced
+  commit is the entry's old value: the next older entry of the same ref, by the `n` of
+  `ref@{n}` (git lists several refs' entries interleaved by date). gff-hab accepts that pair
+  only when both commits have the same parents and the same author name, email and date, which
+  `git commit --amend` keeps. The reason is gc: its expiry (30 days for an unreachable commit)
+  can drop the entry before an amend, so that the next older entry is a different commit.
+  `--reset-author` amends then give a false alarm only. The chain is followed back at most 8
+  amends, and a set of commits already visited (each marked foreign while its own check runs)
+  ends a cycle at once: `--no-edit` amends in one second make the same commit again. So
+  amending a fetched pull request (`gh pr checkout 7 && git commit --amend`) stays foreign.
+  gff-hab reads
   the reflogs `git commit` writes: each worktree's HEAD (`HEAD`, `main-worktree/HEAD`,
   `worktrees/<id>/HEAD`) and the local branches (`--branches`), never the remote-tracking
   reflogs, which can hold thousands of fetch entries.
