@@ -7,9 +7,37 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 )
 
 var execCommand = exec.CommandContext
+
+// pruneOne drops the entry of the one worktree whose folder is path from the repository's
+// worktree list: its private folder under <common dir>/worktrees. Unlike git worktree prune, it
+// leaves other entries alone, such as a worktree on a volume that is not mounted now.
+func (g Git) pruneOne(ctx context.Context, repo, path string) error {
+	common, err := g.run(ctx, repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(filepath.Join(common, "worktrees"))
+	if err != nil {
+		return err
+	}
+	want := canon(path)
+	for _, e := range entries {
+		dir := filepath.Join(common, "worktrees", e.Name())
+		b, err := os.ReadFile(filepath.Join(dir, "gitdir"))
+		if err != nil {
+			continue
+		}
+		if canon(filepath.Dir(strings.TrimSpace(string(b)))) == want {
+			return os.RemoveAll(dir)
+		}
+	}
+	return fmt.Errorf("%w: no worktree entry for %s", ErrNotFound, path)
+}
 
 // CheckRemove finds the worktree at path in the repository that holds repo and says whether it
 // may be removed. The main working tree and a locked worktree never may; a worktree with
@@ -54,8 +82,7 @@ func (g Git) Remove(ctx context.Context, repo string, w Worktree, force bool) er
 		}
 	}
 	if _, err := os.Stat(w.Path); errors.Is(err, fs.ErrNotExist) {
-		_, err := g.run(ctx, repo, "worktree", "prune")
-		return err
+		return g.pruneOne(ctx, repo, w.Path)
 	}
 	args := []string{"worktree", "remove"}
 	if force {

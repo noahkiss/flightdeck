@@ -78,6 +78,7 @@ func TestWorktrees(t *testing.T) {
 }}`)
 	git(repo, "add", ".")
 	git(repo, "commit", "-q", "-m", "first")
+	git(repo, "update-ref", "refs/remotes/origin/main", "HEAD") // as if pushed: the code is the project's own
 	write(filepath.Join(repo, ".env"), "TOKEN=local\n")
 	top := git(repo, "rev-parse", "--show-toplevel")
 

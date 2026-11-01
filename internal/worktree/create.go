@@ -107,16 +107,18 @@ func (g Git) Create(ctx context.Context, o CreateOptions) (Created, error) {
 
 	// Pick the start point and the git worktree add arguments.
 	var args []string
-	var startRef string // the full ref name the code comes from, for the foreign check
+	var sp startPoint // where the code comes from, for the foreign check
 	newBranch := false
 	switch local := g.refExists(ctx, src, "refs/heads/"+branch); {
 	case local && o.Base != "":
 		return Created{}, fmt.Errorf("%w: branch %s exists; give no base to check it out", ErrConflict, branch)
 	case local:
 		args = []string{"worktree", "add", "--", path, branch}
-		startRef, _ = g.run(ctx, src, "rev-parse", "--symbolic-full-name", branch+"@{upstream}")
-		if startRef == "" {
-			startRef = "refs/heads/" + branch
+		sp.Branch = branch
+		sp.Ref, _ = g.run(ctx, src, "rev-parse", "--symbolic-full-name", branch+"@{upstream}")
+		sp.Commit, err = g.run(ctx, src, "rev-parse", "--verify", "refs/heads/"+branch+"^{commit}")
+		if err != nil {
+			return Created{}, err
 		}
 	default:
 		base := o.Base
@@ -131,13 +133,13 @@ func (g Git) Create(ctx context.Context, o CreateOptions) (Created, error) {
 		if base == "" {
 			base = "HEAD"
 		}
-		if _, err := g.run(ctx, src, "rev-parse", "-q", "--verify", base+"^{commit}"); err != nil {
+		if sp.Commit, err = g.run(ctx, src, "rev-parse", "-q", "--verify", base+"^{commit}"); err != nil {
 			if exitCode(err) > 0 {
 				return Created{}, fmt.Errorf("%w: base %s is not a commit in this repository", ErrNotFound, base)
 			}
 			return Created{}, err
 		}
-		startRef, _ = g.run(ctx, src, "rev-parse", "--symbolic-full-name", base)
+		sp.Ref, _ = g.run(ctx, src, "rev-parse", "--symbolic-full-name", base)
 		trackFlag := "--no-track"
 		if track {
 			trackFlag = "--track"
@@ -145,7 +147,7 @@ func (g Git) Create(ctx context.Context, o CreateOptions) (Created, error) {
 		args = []string{"worktree", "add", trackFlag, "-b", branch, "--", path, base}
 		newBranch = true
 	}
-	foreign := g.foreign(ctx, src, startRef, o.Remote)
+	foreign := g.foreign(ctx, src, sp, o.Remote)
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return Created{}, fmt.Errorf("make %s: %w", filepath.Dir(path), err)
@@ -175,7 +177,7 @@ func (g Git) undo(ctx context.Context, src, path, branch string, newBranch bool)
 	_, _ = g.run(ctx, src, "worktree", "remove", "--force", "--", path)
 	if _, err := os.Lstat(path); err == nil {
 		_ = os.RemoveAll(path)
-		_, _ = g.run(ctx, src, "worktree", "prune")
+		_ = g.pruneOne(ctx, src, path)
 	}
 	if newBranch {
 		_, _ = g.run(ctx, src, "branch", "-D", "--", branch)
@@ -203,37 +205,96 @@ func (g Git) remoteBranches(ctx context.Context, dir, branch string) []string {
 	return out
 }
 
-// foreign says why the code at ref may come from someone other than the project: a remote branch
-// of a remote other than the project's own, or a pull request ref. ref is a full ref name; ""
-// (a commit id) counts as the project's own.
-func (g Git) foreign(ctx context.Context, dir, ref, identity string) string {
+// startPoint is where a worktree's code comes from, for the foreign check.
+type startPoint struct {
+	Ref    string // full ref name of the start point; "" for a commit id, FETCH_HEAD and the like
+	Branch string // the local branch checked out as it is; "" for a new branch
+	Commit string // the commit the worktree starts at
+}
+
+// isPullRef reports whether a ref name has a pull request segment.
+func isPullRef(ref string) bool {
 	for _, seg := range strings.Split(ref, "/") {
-		if seg == "pull" || seg == "pr" || seg == "merge-requests" {
-			return fmt.Sprintf("%s looks like a pull request ref", ref)
+		if seg == "pull" || seg == "pr" || seg == "merge-requests" || seg == "pull-requests" {
+			return true
 		}
 	}
-	rest, ok := strings.CutPrefix(ref, "refs/remotes/")
-	if !ok {
-		return ""
+	return false
+}
+
+// foreign says why the code at a start point may come from someone other than the project, or ""
+// when it is the project's own. False alarms cost the user one yes; a miss runs a stranger's
+// script, so the check leans to foreign:
+//   - a start ref, or a local branch's configured upstream (branch.<b>.merge), that names a pull
+//     request is foreign, as gh pr checkout and a fetch of pull/N/head leave it;
+//   - a local branch whose branch.<b>.remote is a remote, or a URL, other than the project's is
+//     foreign;
+//   - otherwise the start commit is the project's own only when a branch of the project's remote
+//     (refs/remotes/<remote>/ of each remote whose URL is the project's) contains it. A project
+//     with no remote has nothing to check against: its source checkout's HEAD stands in.
+func (g Git) foreign(ctx context.Context, dir string, sp startPoint, identity string) string {
+	if isPullRef(sp.Ref) {
+		return fmt.Sprintf("%s looks like a pull request ref", sp.Ref)
+	}
+	own := g.ownRemotes(ctx, dir, identity)
+	if rest, ok := strings.CutPrefix(sp.Ref, "refs/remotes/"); ok {
+		mine := false
+		for _, r := range own {
+			mine = mine || strings.HasPrefix(rest, r+"/")
+		}
+		if !mine {
+			return fmt.Sprintf("%s is a branch of another remote, not the project's", sp.Ref)
+		}
+	}
+	if sp.Branch != "" {
+		merge, _ := g.run(ctx, dir, "config", "--get", "branch."+sp.Branch+".merge")
+		if isPullRef(merge) {
+			return fmt.Sprintf("branch %s follows %s, a pull request", sp.Branch, merge)
+		}
+		if remote, _ := g.run(ctx, dir, "config", "--get", "branch."+sp.Branch+".remote"); remote != "" && remote != "." {
+			if !slices.Contains(own, remote) && (identity == "" || structure.NormalizeRemote(remote) != structure.NormalizeRemote(identity)) {
+				return fmt.Sprintf("branch %s follows remote %s, not the project's remote", sp.Branch, remote)
+			}
+		}
+	}
+	if identity == "" {
+		if g.contains(ctx, dir, sp.Commit, "HEAD") {
+			return ""
+		}
+		return fmt.Sprintf("commit %.12s is not in the source checkout's history", sp.Commit)
+	}
+	for _, r := range own {
+		if out, err := g.run(ctx, dir, "for-each-ref", "--count=1", "--contains", sp.Commit,
+			"--format=%(refname)", "refs/remotes/"+r+"/"); err == nil && out != "" {
+			return ""
+		}
+	}
+	return fmt.Sprintf("commit %.12s is not on a branch of the project's remote", sp.Commit)
+}
+
+// ownRemotes returns the names of the remotes whose URL is the project's remote.
+func (g Git) ownRemotes(ctx context.Context, dir, identity string) []string {
+	if identity == "" {
+		return nil
 	}
 	remotes, err := g.run(ctx, dir, "remote")
 	if err != nil {
-		return fmt.Sprintf("%s is a remote branch, and the remotes could not be read", ref)
+		return nil
 	}
-	// Remote names may hold a slash: take the longest name that prefixes the ref.
-	names := strings.Fields(remotes)
-	slices.SortFunc(names, func(a, b string) int { return len(b) - len(a) })
-	for _, r := range names {
-		if !strings.HasPrefix(rest, r+"/") {
-			continue
-		}
+	var own []string
+	for _, r := range strings.Fields(remotes) {
 		url, _ := g.run(ctx, dir, "remote", "get-url", r)
-		if identity != "" && url != "" && structure.NormalizeRemote(url) == structure.NormalizeRemote(identity) {
-			return ""
+		if url != "" && structure.NormalizeRemote(url) == structure.NormalizeRemote(identity) {
+			own = append(own, r)
 		}
-		return fmt.Sprintf("%s comes from remote %s, not the project's remote", ref, r)
 	}
-	return fmt.Sprintf("%s is a branch of an unknown remote", ref)
+	return own
+}
+
+// contains reports whether commit is an ancestor of (or is) the commit at rev.
+func (g Git) contains(ctx context.Context, dir, commit, rev string) bool {
+	_, err := g.run(ctx, dir, "merge-base", "--is-ancestor", commit, rev)
+	return err == nil
 }
 
 // freeBranch makes up a branch name that no local branch holds.
