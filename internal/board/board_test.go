@@ -92,3 +92,30 @@ func TestRowsAndGroups(t *testing.T) {
 		t.Error("filter")
 	}
 }
+
+// TestSameDevicePrefersOnline: two labels reach one hab. The rows go under an online label,
+// whatever the order, so they are not dimmed while one way to the hab works (mesh.md 2).
+func TestSameDevicePrefersOnline(t *testing.T) {
+	st := api.Structure{
+		Sessions: []api.Session{{ID: "s1", Name: "fix", Pane: "p1", State: api.SessionStateRunning}},
+		Panes:    []api.Pane{{ID: "p1", Session: "s1"}},
+	}
+	host := func(label string, s hosts.Status) hosts.Host {
+		return hosts.Host{Label: label, Status: s, Welcome: api.Welcome{DeviceID: "SHA256:x"}, Structure: st}
+	}
+	for _, c := range []struct {
+		hs   []hosts.Host
+		want string
+	}{
+		{[]hosts.Host{host("lan", hosts.Offline), host("vpn", hosts.Online)}, "vpn"},
+		{[]hosts.Host{host("lan", hosts.Online), host("vpn", hosts.Online)}, "lan"},
+		{[]hosts.Host{host("lan", hosts.Offline), host("vpn", hosts.Connecting)}, "lan"},
+		{[]hosts.Host{host("lan", hosts.Failed), host("vpn", hosts.Offline)}, "vpn"},
+	} {
+		rows := Rows(c.hs, nil)
+		if len(rows) != 1 || rows[0].Host != c.want {
+			t.Errorf("%v %v / %v %v: rows %+v, want one under %s", c.hs[0].Label, c.hs[0].Status,
+				c.hs[1].Label, c.hs[1].Status, rows, c.want)
+		}
+	}
+}

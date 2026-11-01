@@ -147,18 +147,24 @@ type Seen func(host, pane string, a *api.AgentState) bool
 // unordered; Order sorts them.
 func Rows(hs []hosts.Host, seen Seen) []Row {
 	var rows []Row
-	devices := map[string]bool{}
-	for _, h := range hs {
+	// The device id is the host's identity (mesh.md 2): two labels that reach one hab show its
+	// rows once, under the first online label, else the first label.
+	devices := map[string]int{}
+	for i, h := range hs {
+		d := h.DeviceID()
+		if d == "" || h.Status == hosts.Failed {
+			continue
+		}
+		if j, ok := devices[d]; !ok || hs[j].Status != hosts.Online && h.Status == hosts.Online {
+			devices[d] = i
+		}
+	}
+	for i, h := range hs {
 		if h.Status == hosts.Failed {
 			continue
 		}
-		// The device id is the host's identity (mesh.md 2): two labels that reach one hab show
-		// its rows once, under the first label.
-		if d := h.DeviceID(); d != "" {
-			if devices[d] {
-				continue
-			}
-			devices[d] = true
+		if d := h.DeviceID(); d != "" && devices[d] != i {
+			continue
 		}
 		st := h.Structure
 		projects := map[string]api.Project{}
