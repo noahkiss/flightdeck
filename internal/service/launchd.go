@@ -255,6 +255,15 @@ func uninstallLaunchd(ctx context.Context, c Config, o Options, m *manifest) err
 			return err
 		}
 	}
+	if m != nil { // removeFiles removes the build directories only with a record
+		bs, err := buildDirs(c)
+		if err != nil {
+			return err
+		}
+		for _, b := range bs {
+			unregisterBuild(ctx, o.Run, b)
+		}
+	}
 	if err := removeFiles(c, m); err != nil {
 		return err
 	}
@@ -313,13 +322,13 @@ func (s *launchdStarter) Retire(instance string, pid int) {
 		return
 	}
 	if s.remove(ctx, instance) {
-		s.prune()
+		s.prune(ctx)
 	}
 }
 
 // prune removes the build directories no job names any more (spec 4.3 step 7).
-func (s *launchdStarter) prune() {
-	removed, err := pruneBuilds(s.c)
+func (s *launchdStarter) prune(ctx context.Context) {
+	removed, err := pruneBuilds(ctx, s.c, s.run)
 	if err != nil {
 		s.logf("service: remove unused builds: %v", err)
 	}
@@ -389,5 +398,5 @@ func (s *launchdStarter) Sweep(ctx context.Context) {
 			}
 		}
 	}
-	s.prune()
+	s.prune(ctx)
 }

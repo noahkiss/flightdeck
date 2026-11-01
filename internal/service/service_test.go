@@ -227,10 +227,12 @@ type fakeInit struct {
 	// badSig makes codesign --verify fail for every path that contains it.
 	badSig string
 	dittos int
+	// registered holds the bundles registered with LaunchServices (lsregister -f, -u).
+	registered map[string]bool
 }
 
 func newFakeInit(t *testing.T, c Config) *fakeInit {
-	return &fakeInit{t: t, c: c, loaded: map[string]bool{}, idle: map[string]bool{}}
+	return &fakeInit{t: t, c: c, loaded: map[string]bool{}, idle: map[string]bool{}, registered: map[string]bool{}}
 }
 
 func (f *fakeInit) run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -239,6 +241,16 @@ func (f *fakeInit) run(_ context.Context, name string, args ...string) ([]byte, 
 	f.cmds = append(f.cmds, name+" "+strings.Join(args, " "))
 	fail := errors.New("exit status 1")
 	switch name {
+	case LSRegister:
+		if _, err := os.Stat(filepath.Join(args[1], "Contents", "Info.plist")); err != nil {
+			return nil, fail
+		}
+		if args[0] == "-f" {
+			f.registered[args[1]] = true
+		} else {
+			delete(f.registered, args[1])
+		}
+		return nil, nil
 	case "ditto":
 		f.dittos++
 		return nil, copyTree(args[0], args[1])

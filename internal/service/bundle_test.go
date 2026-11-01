@@ -137,6 +137,11 @@ func TestLaunchdPerBuildCopies(t *testing.T) {
 	if l, _ := os.Readlink(c.CurrentLink()); l != filepath.Join("builds", ca.Build) {
 		t.Errorf("current -> %s", l)
 	}
+	regA := []string{filepath.Join(ca.BuildDir(), HabBundle), filepath.Join(ca.BuildDir(), HolderBundle)}
+	regB := []string{filepath.Join(cb.BuildDir(), HabBundle), filepath.Join(cb.BuildDir(), HolderBundle)}
+	if got := registered(f); !slices.Equal(got, regA) {
+		t.Errorf("registered after install A: %q, want %q", got, regA)
+	}
 	// A holder of build A runs.
 	st, err := NewStarter(ca, f.run, func() string { return "aaaa0001" }, t.Logf)
 	if err != nil {
@@ -194,6 +199,29 @@ func TestLaunchdPerBuildCopies(t *testing.T) {
 	if _, err := os.Stat(cb.HabPath()); err != nil {
 		t.Errorf("build B: %v", err)
 	}
+	if got := registered(f); !slices.Equal(got, regB) {
+		t.Errorf("registered after build A went: %q, want only build B's %q", got, regB)
+	}
+
+	// Uninstall unregisters what is left.
+	if err := Uninstall(context.Background(), c, Options{Run: f.run}); err != nil {
+		t.Fatal(err)
+	}
+	if got := registered(f); len(got) != 0 {
+		t.Errorf("registered after uninstall: %q", got)
+	}
+}
+
+// registered lists the bundles the fake LaunchServices holds, sorted.
+func registered(f *fakeInit) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for p := range f.registered {
+		out = append(out, p)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // TestLaunchdCopyFailsVerify: a copy that fails codesign leaves no build directory and no
@@ -233,7 +261,7 @@ func TestPruneKeepsWhatIsInUse(t *testing.T) {
 	hc := c
 	hc.Build = "cccccccccccccccc"
 	os.WriteFile(c.holderPlist("aaaa0001"), holderPlist(hc, "aaaa0001"), 0o644)
-	removed, err := pruneBuilds(c)
+	removed, err := pruneBuilds(context.Background(), c, newFakeInit(t, c).run)
 	if err != nil {
 		t.Fatal(err)
 	}

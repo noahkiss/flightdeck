@@ -528,6 +528,10 @@ func Install(ctx context.Context, c Config, o Options) error {
 		if err := setCurrent(c); err != nil {
 			return err
 		}
+		// Not fatal: the job's first start registers the bundles too.
+		if err := registerBuild(ctx, o.Run, c.BuildDir()); err != nil {
+			fmt.Fprintf(o.Out, "warning: %v\n", err)
+		}
 	} else if err := installBinaries(c, o, m); err != nil {
 		return err
 	}
@@ -557,7 +561,7 @@ func Install(ctx context.Context, c Config, o Options) error {
 		}
 		// Older builds no job names any more go now; a drained holder's build stays until
 		// gff-hab retires it.
-		removed, err := pruneBuilds(c)
+		removed, err := pruneBuilds(ctx, c, o.Run)
 		if len(removed) > 0 {
 			fmt.Fprintf(o.Out, "removed %d unused build(s) from %s\n", len(removed), c.BuildsDir())
 		}

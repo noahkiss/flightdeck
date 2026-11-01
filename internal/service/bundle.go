@@ -412,12 +412,47 @@ func buildsInUse(c Config) (map[string]bool, error) {
 // tmpAge is how old a temporary build directory must be before a prune removes it.
 const tmpAge = 10 * time.Minute
 
+// LSRegister is the LaunchServices registration tool, part of every macOS release. No other
+// command registers a bundle.
+const LSRegister = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+
+// registerBuild registers both bundles of build directory dir with LaunchServices (spec 6.1).
+// System Settings and tccutil find a bundle by its id only through a registered copy. With none,
+// tccutil reset fails with -10814. A plain copy is not registered; a launch agent's first start
+// registers its bundle, but install does not rely on that.
+func registerBuild(ctx context.Context, run Runner, dir string) error {
+	var errs []error
+	for _, b := range []string{HabBundle, HolderBundle} {
+		p := filepath.Join(dir, b)
+		if _, err := run(ctx, LSRegister, "-f", p); err != nil {
+			errs = append(errs, fmt.Errorf("service: register %s with LaunchServices: %w", p, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// unregisterBuild removes both bundles of build directory dir from the LaunchServices database
+// before the directory goes, so no record names a deleted copy. Errors are ignored: a stale
+// record does no harm.
+func unregisterBuild(ctx context.Context, run Runner, dir string) {
+	if !ValidBuild(filepath.Base(dir)) {
+		return // a temporary copy is never registered
+	}
+	for _, b := range []string{HabBundle, HolderBundle} {
+		p := filepath.Join(dir, b)
+		if _, err := os.Stat(p); err == nil {
+			run(ctx, LSRegister, "-u", p)
+		}
+	}
+}
+
 // pruneBuilds removes each build directory no job names, except c.Build and the build current
-// points at, and each temporary directory older than tmpAge. It returns what it removed.
+// points at, and each temporary directory older than tmpAge. It unregisters a build's bundles
+// before it removes them. It returns what it removed.
 //
 // A concurrent install is safe: it sets current right after it renames its build into place,
 // before it writes the plist that names it.
-func pruneBuilds(c Config) ([]string, error) {
+func pruneBuilds(ctx context.Context, c Config, run Runner) ([]string, error) {
 	use, err := buildsInUse(c)
 	if err != nil {
 		return nil, err
@@ -446,6 +481,7 @@ func pruneBuilds(c Config) ([]string, error) {
 				continue
 			}
 		}
+		unregisterBuild(ctx, run, d)
 		if err := os.RemoveAll(d); err != nil {
 			errs = append(errs, err)
 			continue

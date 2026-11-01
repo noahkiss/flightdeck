@@ -5,7 +5,7 @@
 #   1. Build gff-hab and gff-hab-holder (build A; on macOS wrapped into dev helper bundles by
 #      scripts/macos-bundle.sh -dev), list every path under the unit directory and the work
 #      directory, and run `gff-hab install` with its own job prefix, a temporary state directory,
-#      holder directory and socket.
+#      holder directory and socket. On macOS, LaunchServices must hold build A's bundles.
 #   2. Start a long-running child in a pane through session.create. The child writes its pid, its
 #      environment and a rising count, and prints a line every 0.1 s. Its environment has TERM,
 #      COLORTERM and a locale, and none of the init system's job variables.
@@ -17,10 +17,11 @@
 #      starts a holder of its own build, and a new pane lands there. On macOS each build runs
 #      from its own bundle copy in <state>/builds, and A's stays while its holder runs.
 #   5. End the child. A's holder, drained and empty, exits; its job goes (on macOS gff-hab boots
-#      it out, deletes its plist and removes build A's bundle copies), and one holder is left.
+#      it out, deletes its plist, and unregisters and removes build A's bundle copies), and one
+#      holder is left.
 #   6. Uninstall, and check that the second pane's program is gone, no job is loaded (on macOS
 #      `launchctl print gui/<uid>/<label>` for the logic job and every holder seen), no process
-#      from the test runs, and the path list matches the one from step 1: nothing install wrote
+#      from the test runs, LaunchServices holds no build of the test (macOS), and the path list matches the one from step 1: nothing install wrote
 #      is left, nothing else was removed, and only gff-hab's own state stays in the state
 #      directory.
 #
@@ -109,6 +110,15 @@ welcome_field() { api hab.hello | sed -n "s/.*\"$1\":\"\\([^\"]*\\)\".*/\\1/p"; 
 pane_field() {
 	api structure.get | tr '{' '\n' | grep "\"id\":\"$1\"" |
 		sed -n -e "s/.*\"$2\":\"\\([^\"]*\\)\".*/\\1/p" -e "s/.*\"$2\":\\([0-9][0-9]*\\).*/\\1/p"
+}
+
+# registered_builds: the build directories under <state>/builds that LaunchServices holds a
+# record for (macOS). The database names a path by its real path (/tmp is /private/tmp).
+lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+registered_builds() {
+	local real
+	real=$(cd "$state" && pwd -P)/builds/
+	"$lsregister" -dump 2>/dev/null | sed -n "s|^path: *${real}\\([0-9a-f]\\{16\\}\\)/GFF Holder.app (.*|\\1|p" | sort -u
 }
 
 new_epoch() { local e; e=$(welcome_field epoch) && [ -n "$e" ] && [ "$e" != "$1" ]; }
@@ -282,6 +292,11 @@ before=$(paths)
 hab_install "$work/a"
 wait_until "gff-hab to answer" 30 api hab.ping
 epoch=$(welcome_field epoch)
+if [ "$init" = launchd ]; then
+	dir_a=$(ls "$state/builds")
+	[ "$(registered_builds)" = "$dir_a" ] || fail "LaunchServices holds builds '$(registered_builds)', want build A's $dir_a"
+	say "install registered build A's bundles with LaunchServices"
+fi
 
 created=$(api session.create "{\"argv\":[\"/bin/sh\",\"$scratch/child.sh\",\"$scratch\"]}")
 pane=$(printf '%s' "$created" | sed -n 's/.*"pane":"\([^"]*\)".*/\1/p')
@@ -331,6 +346,9 @@ if [ "$init" = launchd ]; then
 	n=$(find "$state/builds" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')
 	[ "$n" = 1 ] || fail "$n build directories after build A's holder retired, want 1: $(ls "$state/builds")"
 	[ -x "$state/current/GFF Hab.app/Contents/MacOS/gff-hab" ] || fail "current does not name build B's bundles"
+	dir_b=$(ls "$state/builds")
+	[ "$(registered_builds)" = "$dir_b" ] ||
+		fail "LaunchServices holds builds '$(registered_builds)' after build A went, want only build B's $dir_b"
 fi
 say "retire: holder $inst_a exited after its last program, and its job is gone"
 
@@ -357,6 +375,9 @@ installed=$(printf '%s\n' "$added" | grep -x -e "$state/bin.*" -e "$state/logs.*
 [ -z "$stray$installed" ] || fail "uninstall left:
 $stray$installed"
 holder_count_is 0 || fail "holder registry files left: $(ls "$holders")"
+if [ "$init" = launchd ]; then
+	[ -z "$(registered_builds)" ] || fail "LaunchServices still holds builds after uninstall: $(registered_builds)"
+fi
 passed=1
 say "PASS: $loops restarts and one reinstall kept child $child; its drained holder retired;" \
 	"uninstall removed every installed file and job ($(printf '%s' "$seen" | wc -w | tr -d ' ') holders seen)"
