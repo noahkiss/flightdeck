@@ -441,12 +441,30 @@ func (s *Service) folderFor(ctx context.Context, session string) (string, error)
 
 // makeFolder makes base/.flightdeck/attachments and checks that neither part is a link, so the
 // files stay inside base.
+//
+// Each level is checked before anything is made inside it, so nothing is made through a link.
 func makeFolder(base string) error {
-	if err := os.MkdirAll(filepath.Join(base, Folder), 0o700); err != nil {
+	fi, err := os.Stat(base)
+	if errors.Is(err, fs.ErrNotExist) {
+		// The hab's own fallback folder: made on first use.
+		if err := os.MkdirAll(base, 0o700); err != nil {
+			return err
+		}
+		fi, err = os.Stat(base)
+	}
+	if err != nil {
 		return err
+	} else if !fi.IsDir() {
+		return fmt.Errorf("%s is not a folder", base)
 	}
 	for _, d := range []string{filepath.Join(base, ".flightdeck"), filepath.Join(base, Folder)} {
 		fi, err := os.Lstat(d)
+		if errors.Is(err, fs.ErrNotExist) {
+			if err := os.Mkdir(d, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+				return err
+			}
+			fi, err = os.Lstat(d) // again: another writer may have made it meanwhile
+		}
 		if err != nil {
 			return err
 		}

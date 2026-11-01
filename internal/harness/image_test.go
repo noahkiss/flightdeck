@@ -19,8 +19,8 @@ func TestImageMessageWrites(t *testing.T) {
 	}{
 		{"claude", detect.KindClaude, "look", []string{a, b}, []string{pasteStart + "look\n\n" + a + "\n" + b + pasteEnd, "\r"}},
 		{"claude images alone", detect.KindClaude, "", []string{a}, []string{pasteStart + a + pasteEnd, "\r"}},
-		{"codex", detect.KindCodex, "look\n\n/w/p/log.txt", []string{a, b}, []string{pasteStart + a + pasteEnd, pasteStart + b + pasteEnd, pasteStart + "look\n\n/w/p/log.txt" + pasteEnd, "\r"}},
-		{"codex images alone", detect.KindCodex, " ", []string{a}, []string{pasteStart + a + pasteEnd, "\r"}},
+		{"codex", detect.KindCodex, "look\n\n/w/p/log.txt", []string{a, b}, []string{pasteStart + a + pasteEnd, " ", pasteStart + b + pasteEnd, " ", pasteStart + "look\n\n/w/p/log.txt" + pasteEnd, "\r"}},
+		{"codex images alone", detect.KindCodex, " ", []string{a}, []string{pasteStart + a + pasteEnd, " ", "\r"}},
 		{"no images", detect.KindCodex, "hi", nil, []string{pasteStart + "hi" + pasteEnd, "\r"}},
 	}
 	for _, c := range cases {

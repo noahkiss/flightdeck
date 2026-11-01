@@ -74,6 +74,11 @@ func TestLinkedFolderFallsBack(t *testing.T) {
 		if len(files) != 0 {
 			t.Errorf("link %s: the file went through the link: %v", link, files)
 		}
+		if link == ".flightdeck" {
+			if entries, _ := os.ReadDir(elsewhere); len(entries) != 0 {
+				t.Errorf("link %s: folders were made through the link: %v", link, entries)
+			}
+		}
 	}
 }
 

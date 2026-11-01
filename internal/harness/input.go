@@ -291,7 +291,9 @@ func MessageWrites(harness, text string) ([][]byte, error) {
 //     .jpg, .gif or .webp path as an image; other lines stay text. So the images go as path
 //     lines after the text, in the one paste MessageWrites makes.
 //   - Codex attaches an image when a paste is one image path and nothing else. So each image
-//     goes as its own paste, then the text as one more, then Enter.
+//     goes as its own paste, then the text as one more, then Enter. A space, typed outside the
+//     pastes, follows each image: should Codex keep a path as text, the path and what follows
+//     stay apart.
 //
 // text holds the owner's text and any paths of files that are not images.
 func ImageMessageWrites(harness, text string, images []string) ([][]byte, error) {
@@ -315,7 +317,7 @@ func ImageMessageWrites(harness, text string, images []string) ([][]byte, error)
 		if clean == "" {
 			continue
 		}
-		out = append(out, []byte(pasteStart+clean+pasteEnd))
+		out = append(out, []byte(pasteStart+clean+pasteEnd), []byte(" "))
 	}
 	if clean := CleanText(text); strings.TrimSpace(clean) != "" {
 		out = append(out, []byte(pasteStart+clean+pasteEnd))
