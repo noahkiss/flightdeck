@@ -1,0 +1,20 @@
+{
+  "comment": "Hand-written: a marked zsh in a console. ls, false, sleep 2, cd, a full-screen editor, a test run stopped with Ctrl+C (no D), and a tail still running. Each chunk is fed at its time.",
+  "start": 4096,
+  "chunks": [
+    {"at": "2026-10-31T12:00:00Z", "data": "\u001b]133;D;0\u0007\u001b]7;file://box/home/user/project\u0007\u001b]133;A\u0007$ \u001b]133;B\u0007"},
+    {"at": "2026-10-31T12:00:01Z", "data": "ls\r\n\u001b]133;C;cmdline_url=ls\u0007README.md  \u001b[1;34msrc\u001b[0m\r\nMakefile   notes.txt\r\n"},
+    {"at": "2026-10-31T12:00:01.120Z", "data": "\u001b]133;D;0\u0007\u001b]7;file://box/home/user/project\u0007\u001b]133;A\u0007$ \u001b]133;B\u0007"},
+    {"at": "2026-10-31T12:00:03Z", "data": "false\r\n\u001b]133;C;cmdline_url=false\u0007"},
+    {"at": "2026-10-31T12:00:03.010Z", "data": "\u001b]133;D;1\u0007\u001b]7;file://box/home/user/project\u0007\u001b]133;A\u0007$ \u001b]133;B\u0007"},
+    {"at": "2026-10-31T12:00:05Z", "data": "sleep 2\r\n\u001b]133;C;cmdline_url=sleep%202\u0007"},
+    {"at": "2026-10-31T12:00:07.004Z", "data": "\u001b]133;D;0\u0007\u001b]7;file://box/home/user/project\u0007\u001b]133;A\u0007$ \u001b]133;B\u0007"},
+    {"at": "2026-10-31T12:00:08Z", "data": "cd src\r\n\u001b]133;C;cmdline_url=cd%20src\u0007"},
+    {"at": "2026-10-31T12:00:08.002Z", "data": "\u001b]133;D;0\u0007\u001b]7;file://box/home/user/project/src\u0007\u001b]133;A\u0007$ \u001b]133;B\u0007"},
+    {"at": "2026-10-31T12:00:10Z", "data": "vim notes.txt\r\n\u001b]133;C;cmdline_url=vim%20notes.txt\u0007\u001b[?1049h\u001b[H\u001b[2J~\r\n~\r\n\"notes.txt\" 0L, 0B"},
+    {"at": "2026-10-31T12:00:14Z", "data": "\u001b[?1049l\u001b]133;D;0\u0007\u001b]7;file://box/home/user/project/src\u0007\u001b]133;A\u0007$ \u001b]133;B\u0007"},
+    {"at": "2026-10-31T12:00:20Z", "data": "make test\r\n\u001b]133;C;cmdline_url=make%20test\u0007ok   1 parse\r\nok   2 render\r\nrunning 3 slow\u001b[K\rrunning 3 slow.\u001b[K\r"},
+    {"at": "2026-10-31T12:00:25Z", "data": "^C\r\n\u001b]133;A\u0007$ \u001b]133;B\u0007"},
+    {"at": "2026-10-31T12:00:30Z", "data": "tail -f app.log\r\n\u001b]133;C;cmdline_url=tail%20-f%20app.log\u0007line 1\r\nline 2\r\n"}
+  ]
+}

@@ -1,0 +1,145 @@
+[
+  {
+    "seq": 0,
+    "command": {
+      "id": 4161,
+      "state": "done",
+      "prompt": 4139,
+      "input": 4157,
+      "output": 4184,
+      "end": 4233,
+      "exit": 0,
+      "text": "ls",
+      "started_at": "2026-10-31T12:00:01Z",
+      "ended_at": "2026-10-31T12:00:01.12Z",
+      "cwd": "/home/user/project"
+    },
+    "start": 4184,
+    "end": 4233,
+    "data": "UkVBRE1FLm1kICAbWzE7MzRtc3JjG1swbQ0KTWFrZWZpbGUgICBub3Rlcy50eHQNCg==",
+    "gap": false,
+    "more": false
+  },
+  {
+    "seq": 0,
+    "command": {
+      "id": 4301,
+      "state": "done",
+      "prompt": 4276,
+      "input": 4294,
+      "output": 4327,
+      "end": 4327,
+      "exit": 1,
+      "text": "false",
+      "started_at": "2026-10-31T12:00:03Z",
+      "ended_at": "2026-10-31T12:00:03.01Z",
+      "cwd": "/home/user/project"
+    },
+    "start": 4327,
+    "end": 4327,
+    "data": "",
+    "gap": false,
+    "more": false
+  },
+  {
+    "seq": 0,
+    "command": {
+      "id": 4397,
+      "state": "done",
+      "prompt": 4370,
+      "input": 4388,
+      "output": 4427,
+      "end": 4427,
+      "exit": 0,
+      "text": "sleep 2",
+      "started_at": "2026-10-31T12:00:05Z",
+      "ended_at": "2026-10-31T12:00:07.004Z",
+      "cwd": "/home/user/project"
+    },
+    "start": 4427,
+    "end": 4427,
+    "data": "",
+    "gap": false,
+    "more": false
+  },
+  {
+    "seq": 0,
+    "command": {
+      "id": 4496,
+      "state": "done",
+      "prompt": 4470,
+      "input": 4488,
+      "output": 4525,
+      "end": 4525,
+      "exit": 0,
+      "text": "cd src",
+      "started_at": "2026-10-31T12:00:08Z",
+      "ended_at": "2026-10-31T12:00:08.002Z",
+      "cwd": "/home/user/project"
+    },
+    "start": 4525,
+    "end": 4525,
+    "data": "",
+    "gap": false,
+    "more": false
+  },
+  {
+    "seq": 0,
+    "command": {
+      "id": 4605,
+      "state": "done",
+      "prompt": 4572,
+      "input": 4590,
+      "output": 4641,
+      "end": 4688,
+      "exit": 0,
+      "text": "vim notes.txt",
+      "started_at": "2026-10-31T12:00:10Z",
+      "ended_at": "2026-10-31T12:00:14Z",
+      "cwd": "/home/user/project/src"
+    },
+    "start": 4641,
+    "end": 4688,
+    "data": "G1s/MTA0OWgbW0gbWzJKfg0Kfg0KIm5vdGVzLnR4dCIgMEwsIDBCG1s/MTA0OWw=",
+    "gap": false,
+    "more": false
+  },
+  {
+    "seq": 0,
+    "command": {
+      "id": 4764,
+      "state": "unknown",
+      "prompt": 4735,
+      "input": 4753,
+      "output": 4796,
+      "end": 4866,
+      "text": "make test",
+      "started_at": "2026-10-31T12:00:20Z",
+      "ended_at": "2026-10-31T12:00:25Z",
+      "cwd": "/home/user/project/src"
+    },
+    "start": 4796,
+    "end": 4866,
+    "data": "b2sgICAxIHBhcnNlDQpvayAgIDIgcmVuZGVyDQpydW5uaW5nIDMgc2xvdxtbSw1ydW5uaW5nIDMgc2xvdy4bW0sNXkMNCg==",
+    "gap": false,
+    "more": false
+  },
+  {
+    "seq": 0,
+    "command": {
+      "id": 4901,
+      "state": "running",
+      "prompt": 4866,
+      "input": 4884,
+      "output": 4941,
+      "text": "tail -f app.log",
+      "started_at": "2026-10-31T12:00:30Z",
+      "cwd": "/home/user/project/src"
+    },
+    "start": 4941,
+    "end": 4957,
+    "data": "bGluZSAxDQpsaW5lIDINCg==",
+    "gap": false,
+    "more": true
+  }
+]
