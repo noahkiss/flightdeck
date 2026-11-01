@@ -245,6 +245,8 @@ final class ConsoleTests: XCTestCase {
         XCTAssertEqual(lines("é ✓\r\n"), ["é ✓"])
         XCTAssertEqual(lines("no newline"), ["no newline"])
         XCTAssertEqual(lines(""), [])
+        // zsh's partial-line mark (PROMPT_SP) after output that ended with a newline.
+        XCTAssertEqual(lines("a\r\n\u{1B}[1m\u{1B}[7m%\u{1B}[27m\u{1B}[1m\u{1B}[0m   \r \r"), ["a"])
     }
 
     // MARK: - Opening a console

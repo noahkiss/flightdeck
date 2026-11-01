@@ -45,7 +45,10 @@ public enum TerminalText {
             }
         }
         if !line.isEmpty { lines.append(line) }
-        return lines.map { String($0).replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression) }
+        var out = lines.map { String($0).replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression) }
+        // Blank lines at the end (zsh's partial-line mark, a final newline) say nothing.
+        while out.last?.isEmpty == true { out.removeLast() }
+        return out
     }
 
     /// Drops escape sequences and the alternate screen's bytes; keeps text

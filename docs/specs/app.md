@@ -682,6 +682,60 @@ The terminal view and its data-stream client. Code in `apple/FlightdeckKit/Sourc
 Sources: rootshell README (long-running command cards, unread when finished unseen); the Part 1
 plan (the hab finds prompt marks); OSC 133 marks as documented by terminal emulators.
 
+### 6.3 Built choices (task-3x22hva9)
+
+Code in `apple/FlightdeckKit/Sources/FlightdeckKit/Console`.
+
+- **The console is a session.** The session view's Console button finds or starts a session
+  named `<session> console`: `session.create` with the session's project and no argv, so the
+  hab starts its `$SHELL`. With a project and no cwd the hab starts it in the project's most
+  recently used folder (`hab-logic-api.md` 3.9); an unfiled session's console starts in the hab's
+  home. A running console of that name is reused, from any device. An exited one's record is
+  removed (`session.close`) before a new shell starts, so the name stays free. The hab has no
+  link from a console to its session beyond the name; closing a session does not yet ask about
+  its console.
+- **Where it shows.** A sheet over the session on every device, for now. The drawer under the
+  terminal on iPad and Mac (11) is not built.
+- **Cards.** `command.list` (newest page, then older pages on demand) and `command.updated`
+  events, through a tap on the control connection like the chat's. A card shows the command
+  line, its folder, the exit status ("Exit 0", red when not 0; "Ended" when no status came) and
+  the duration; a running card shows a spinner and the time so far. The list reads again when
+  an event says `dropped`, or when the control connection's generation changed (checked every
+  2 s), since events have no replay.
+- **The folder** comes from the hab: the shell's OSC 7 report before the command
+  (`Command.cwd`, `hab-logic-api.md` 2.5). A shell that sends no OSC 7 shows no folder.
+- **Output** is read on first open, at most the last 256 KiB of the range, and shown as plain
+  text: escape sequences dropped, carriage return, backspace, tab and erase-to-end-of-line
+  applied on the line, trailing blank lines dropped, at most the last 500 lines, with "Earlier
+  output not shown" when cut. What a program drew on the alternate screen is left out. An open
+  card of a running command reads again every 2 s, and again when it ends.
+- **Alternate screen.** The console keeps the pane's terminal model running while it is open.
+  The model follows `CSI ?1049h`, `?1047h`, `?47h` and their `l` forms, and RIS, in its stream
+  and snapshots (`ScreenModeScanner`). While the alternate screen is on, the view shows the
+  terminal and the Cards/Terminal switch is locked; when it ends, the cards return. The owner can
+  also choose the terminal by hand.
+- **No marks.** With no command yet, the console says commands show once the shell sends prompt
+  marks, and offers "Shell setup" (the zsh and bash lines, `ConsoleShellSetup`: OSC 133 A to D
+  and OSC 7) and "Show terminal". The app cannot tell "no marks" from "no command yet": the
+  hab's API does not say whether a pane ever sent a mark. The shipped zsh lines leave
+  `PROMPT_SP` on; its mark lands in the output before `D`, and the card text drops the blank
+  line it leaves.
+- **Input line.** Enter sends the line and a carriage return through `pane.input`, as typed
+  text. A stop button sends Ctrl+C. Typing in the console takes the pane's size like any input
+  (5.3). The keyboard bar is the terminal view's, only while the terminal shows.
+- **Quick actions per host: none.** The hab serves no catalog yet (`mesh.md` 5, `catalog.get` is
+  not built), so there are no declared facts to read. The console shows no quick actions until
+  it does.
+- **Tests.** `cmd/gff-hab/testdata/console/basic.marks.json` is a hand-written marked-shell
+  stream; `TestConsoleFixtures` feeds it through the hab's tracker into `basic.commands.json`,
+  and `ConsoleTests` renders the cards from it (`Snapshots/console-basic.txt`). `LiveConsoleTests`
+  (with `FLIGHTDECK_LIVE_SOCKET`) runs `ls`, `false`, `sleep 2` and `vim` in a real console.
+  Debug builds open a session's console at launch with `-FlightdeckOpenConsole <session>`.
+- **Not built:** the running badge's 30 s threshold and unread marks, the board badge, the push
+  for a finished command, "waiting for input", "show all" in the terminal view, closing a
+  console with its session, demo mode for the console, and a nonce for marks (so nothing acts on
+  a card's text or exit).
+
 ---
 
 ## 7. Approvals
