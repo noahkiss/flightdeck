@@ -1161,7 +1161,10 @@ project's identity, so the session files into the same project. No method of its
   the untracked files its patterns match (`ls-files --others --ignored --exclude-from`), keeps
   those git ignores anyway (`check-ignore --stdin`), and copies each: regular files with their
   mode, symbolic links as links, folders (nested repositories) skipped, a file the worktree has
-  kept. A copy error removes the worktree again, and the branch when gff-hab made it.
+  kept. Every write goes through an `os.Root` of the new worktree. So a folder the checkout holds
+  as a symbolic link that leaves the worktree is refused: a foreign branch cannot steer the
+  user's ignored files elsewhere. The copy stops past 10000 files or 1 GiB, or at the call's
+  deadline. Any copy error removes the worktree again, and the branch when gff-hab made it.
 - **The project file.** `flightdeck.json` at the repository root, read from the new worktree,
   so it is the version committed on the start point:
   `{"worktree": {"setup": "...", "teardown": "..."}}`, each a script or a list of commands.
@@ -1173,40 +1176,58 @@ project's identity, so the session files into the same project. No method of its
   ended. The caller owns the pane, as with `session.create`. `worktree.create` does not wait
   for it; a client that wants an agent after setup starts it once the session exits. Scripts
   get `GFF_SOURCE_CHECKOUT`, `GFF_WORKTREE` and `GFF_BRANCH`.
-- **Setup from someone else waits for a yes.** In `auto`, setup does not run when the code may
-  come from someone else: the start point (or a local branch's upstream) is a branch of a remote
-  whose URL is not the project's remote, or a ref with a `pull`, `pr` or `merge-requests`
-  segment. The result is `pending` with the reason. `worktree.setup` (or `setup: run` on create)
-  is the yes. A commit id or a local branch with no upstream counts as the project's own.
+- **Setup from someone else waits for a yes.** A false alarm costs one yes; a miss runs a
+  stranger's script. So the check leans to foreign. In `auto`, setup does not run when any of
+  these holds:
+  - the start ref, or a local branch's `branch.<b>.merge`, has a `pull`, `pr`,
+    `merge-requests` or `pull-requests` segment (`gh pr checkout`, a fetch of `pull/N/head`);
+  - the start ref is a branch of a remote whose URL is not the project's remote;
+  - a local branch's `branch.<b>.remote` is another remote or URL;
+  - no branch of the project's remote (`refs/remotes/<r>/` for each remote whose URL is the
+    project's) contains the start commit. This catches a commit id, `FETCH_HEAD`, `^{commit}`
+    and a fetched branch with no upstream. It also catches local commits not pushed yet; that
+    costs a yes. A project with no remote checks against the source checkout's HEAD instead.
+
+  The result is `pending` with the reason and both scripts (`script`, `teardown_script`), so
+  the client shows what the yes covers. `worktree.setup` (or `setup: run` on create) is the yes.
+  Any control client may give it; the hab is single-user, as at the bar.
 - **The mark.** gff-hab writes `gff-worktree.json` in the worktree's private git folder
-  (`.git/worktrees/<name>/`): the source checkout, when it was made, whether its scripts are
-  approved, and why setup waited. Git ignores the file and removes it with the worktree; the
-  working tree stays clean. `managed` in the list is "this file exists".
-- **Teardown.** Runs only in a worktree whose mark says approved: one this hab made from the
-  project's own code, or one the user said yes to. It runs in gff-hab, not in a pane, bounded to
-  2 minutes, with stdin empty. A non-zero exit, a timeout or a start failure is `failed` with
-  the last 4 KiB of output; the removal goes on either way.
+  (`.git/worktrees/<name>/`). It holds the source checkout, when it was made, whether its scripts
+  are approved, a SHA-256 digest of the setup and teardown scripts approved, and why setup
+  waited. Git ignores the file and removes it with the worktree; the working tree stays clean.
+  `managed` in the list and in the `worktree.remove` result is "this file exists".
+- **Teardown.** Runs only when the mark approves exactly the scripts in the worktree now: one
+  this hab made from the project's own code, or one the user said yes to, with no change to
+  `flightdeck.json` since. Otherwise teardown is `skipped`, and `teardown_output` says why (no
+  yes, or the scripts changed since). It runs in gff-hab, not in a pane, in its own process
+  group, bounded to 2 minutes, with stdin empty. At the deadline the whole group is killed. A
+  non-zero exit, a timeout or a start failure is `failed` with the last 4 KiB of output.
 - **Removal.** Never the main working tree (`invalid`, even with force). A locked worktree is a
   `conflict`: unlock it with git. Without `force`, modified, staged or untracked files are a
-  `conflict`; ignored files do not count. A tree that changes between the check and the removal
-  is refused by git. A worktree whose folder is gone is pruned. git runs from the main working
-  tree, so removing the folder the project resolved to works. The branch is never deleted, so
-  unpushed commits are never lost; that is why gff-hab, unlike Paseo, needs no unpushed check.
+  `conflict`; ignored files do not count. Without `force`, gff-hab checks again after teardown.
+  A teardown that left files (a log, say) stops the removal with a `conflict` that names the
+  teardown and the files; the worktree stays whole. A tree that changes otherwise between the
+  check and the removal is refused by git. A worktree whose folder is gone loses only its own
+  entry under `.git/worktrees/`; other entries stay, such as one on a volume that is not
+  mounted now. git runs from the main working tree, so removing the folder the project resolved
+  to works. The branch is never deleted, so unpushed commits are never lost; that is why
+  gff-hab, unlike Paseo, needs no unpushed check. The client's confirm before `force` says when
+  a worktree is not `managed`, and that ignored files (a local database, notes) go too.
 - **One at a time.** Each project has one create, setup or remove running at a time. A call
   runs to its end if the client goes away, so git is never cut off halfway; each call has
   5 minutes.
 
 **Limits** (at the bar, `landscape.md` 2.13):
 
-- No pull request checkout by number: fetch it as a branch first (it then counts as foreign
-  when its ref names a pull request or comes from another remote).
+- No pull request checkout by number: fetch it as a branch first (it then counts as foreign,
+  above).
 - No scripts, services, ports or terminals from the project file yet (Paseo has them).
 - A session whose program runs in a removed worktree keeps running in a folder that is gone.
   Removing an agent's worktree usually leaves it dirty, so the refusal without force catches
   most of these; the client confirms before force.
 - No events: a client calls `worktree.list` again after a change. The project's branch fields
   follow the folder of the most recent session (3.9).
-- A teardown script's child processes that outlive the 2 minutes are not killed as a group.
+- A teardown script runs with gff-hab's own environment, not the pane environment setup gets.
 
 ---
 
