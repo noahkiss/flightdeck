@@ -282,10 +282,10 @@ makes the size, take and redraw calls in order, and a size still waiting is repl
 one for the same pane. On a new epoch every size is asked again. Observer views ask for nothing.
 gff never takes a pane on its own: typing moves ownership through the hab's debounce (10.1).
 
-Note: 10.1 says the client coalesces a burst and sends the last size "at most every 50 ms"; the
-stage task asked for a debounce of about 300 ms on host resizes. The built client follows the
-task (`Config.SizeDebounce`, default 300 ms). Which one the spec keeps is an open question for
-the owner.
+Decided (implementer, 2026-11-01): `gff` waits until the layout has held still for 300 ms
+(`Config.SizeDebounce`), and 10.1 now says so. A window drag then costs one resize of the program,
+not one per 50 ms. The hab's own 50 ms trailing throttle (hab-logic-api.md 6.8) still bounds any
+client that sends more often.
 
 **`gff` command.** `gff [-socket path | -via command | -ssh host] [-new command]...
 [-split columns|rows] [-observe] [-prefix ctrl-<key>] [pane...]`. It shows the panes named,
@@ -590,9 +590,9 @@ usage row); `hab-logic-api.md` 3.4 (capabilities for features a host may lack).
   the latest source of input after about 300 ms, the hab makes it the owner (reason `typed`) and
   applies its desired size. Further typing changes nothing.
 - **Desired size.** Whenever a view's rectangle changes (a split, a zoom, a host resize), `gff`
-  sends `pane.set_desired_size` for that pane. It coalesces a burst and sends the last size,
-  trailing, at most every 50 ms. The hab applies it at once only if `gff` owns the pane or the pane
-  has no owner.
+  sends `pane.set_desired_size` for that pane. It waits until the layout has held still for
+  300 ms, then sends the last size. The hab applies it (at most every 50 ms, trailing) only if
+  `gff` owns the pane or the pane has no owner.
 - **Two views, one pane.** `gff` sends the size of the focused view.
 - **Fit.** A key sends `pane.take`: "fit this pane to this window" without typing.
 - **Observers never resize.** Board previews and sidebar thumbnails open data streams with
