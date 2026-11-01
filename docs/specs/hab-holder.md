@@ -436,8 +436,10 @@ end its children. gff-hab therefore asks the init system to start each holder as
 - Built (stage 6): install also writes the installing user's locale (`LANG` and every `LC_*`)
   into both units and both plists. gff-hab builds each pane's environment from its own, then the
   request's entries on top. Its own is changed first: `TERM=xterm-256color` and
-  `COLORTERM=truecolor` when unset, a UTF-8 `LANG` when no `LANG`, `LC_ALL` or `LC_CTYPE` is set
-  (`C.UTF-8` on Linux, `en_US.UTF-8` on macOS), and the job's own variables are dropped
+  `COLORTERM=truecolor` always, in every init mode including `-init none`, because the pane's
+  terminal is gff-hab's emulator, not the terminal gff-hab started in (coordinator ruling); a
+  `session.create` env that sets `TERM` still wins. Then a UTF-8 `LANG` when no `LANG`,
+  `LC_ALL` or `LC_CTYPE` is set (`C.UTF-8` on Linux, `en_US.UTF-8` on macOS), and the job's own variables are dropped
   (`XPC_SERVICE_NAME`, `INVOCATION_ID`, `JOURNAL_STREAM`, `SYSTEMD_EXEC_PID`).
 - Follow-up: start the default shell (no argv given) as a login shell, so the user's profile
   builds `PATH` again instead of the `PATH` frozen at install.

@@ -30,8 +30,8 @@ func defaultLocale(goos string) string {
 }
 
 // basePaneEnv is the environment every pane starts from, before the request's own entries: gff-
-// hab's environment without the init system's job variables, with TERM and COLORTERM when it
-// has none, and a UTF-8 LANG when no locale variable is set. Under an init system gff-hab's
+// hab's environment without the init system's job variables, with TERM and COLORTERM always set
+// to the emulator's, and a UTF-8 LANG when no locale variable is set. Under an init system gff-hab's
 // environment is bare: PATH and the locale come from install (internal/service), TERM from here.
 func basePaneEnv(environ []string, goos string) []string {
 	out := make([]string, 0, len(environ)+3)
@@ -46,16 +46,13 @@ func basePaneEnv(environ []string, goos string) []string {
 			set[k] = true
 		}
 	}
-	add := func(k, v string) {
-		if !set[k] {
-			out = dropKey(out, k)
-			out = append(out, k+"="+v)
-		}
-	}
-	add("TERM", baseTERM)
-	add("COLORTERM", baseCOLORTERM)
+	// The pane's terminal is gff-hab's own emulator, never the one gff-hab was started from, so
+	// TERM and COLORTERM are always replaced. A request's env still wins (mergeEnv).
+	out = dropKey(dropKey(out, "TERM"), "COLORTERM")
+	out = append(out, "TERM="+baseTERM, "COLORTERM="+baseCOLORTERM)
 	if !set["LANG"] && !set["LC_ALL"] && !set["LC_CTYPE"] {
-		add("LANG", defaultLocale(goos))
+		out = dropKey(out, "LANG")
+		out = append(out, "LANG="+defaultLocale(goos))
 	}
 	return out
 }

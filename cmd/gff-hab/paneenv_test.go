@@ -7,7 +7,8 @@ import (
 
 // TestBasePaneEnv: under an init system gff-hab's environment has no TERM and no locale, and
 // carries the job's own variables. A pane gets TERM, COLORTERM and a UTF-8 locale, and none of
-// the job's variables. What the user's environment already sets stays.
+// the job's variables. The locale the user's environment sets stays; TERM and COLORTERM are
+// always the emulator's, even when gff-hab runs inside another terminal (-init none).
 func TestBasePaneEnv(t *testing.T) {
 	job := []string{"PATH=/usr/bin:/bin", "HOME=/srv/user", "XPC_SERVICE_NAME=x.gff-hab",
 		"INVOCATION_ID=abc", "JOURNAL_STREAM=8:9", "SYSTEMD_EXEC_PID=7", "TERM="}
@@ -20,8 +21,9 @@ func TestBasePaneEnv(t *testing.T) {
 	}
 
 	user := []string{"TERM=screen-256color", "COLORTERM=24bit", "LC_ALL=xx_YY.UTF-8", "LC_TIME=zz_ZZ.UTF-8"}
-	if got := basePaneEnv(slices.Clone(user), "linux"); !slices.Equal(got, user) {
-		t.Errorf("a set environment changed: %q", got)
+	want := []string{"LC_ALL=xx_YY.UTF-8", "LC_TIME=zz_ZZ.UTF-8", "TERM=xterm-256color", "COLORTERM=truecolor"}
+	if got := basePaneEnv(slices.Clone(user), "linux"); !slices.Equal(got, want) {
+		t.Errorf("outer terminal's environment: got %q\nwant %q", got, want)
 	}
 	if got := basePaneEnv([]string{"LANG=xx_YY.UTF-8"}, "darwin"); slices.Contains(got, "LANG=en_US.UTF-8") ||
 		!slices.Contains(got, "LANG=xx_YY.UTF-8") {
