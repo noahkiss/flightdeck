@@ -188,6 +188,8 @@ const FromNow = ^uint64(0)
 type pane struct {
 	uuid hp.UUID
 	ckMu sync.Mutex // one checkpoint write at a time
+	// resizeMu runs one Resize at a time, from the parser's size to the holder's answer.
+	resizeMu sync.Mutex
 
 	mu        sync.Mutex
 	holder    *holderclient.Holder

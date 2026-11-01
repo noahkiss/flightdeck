@@ -358,7 +358,7 @@ request, and a debounce timer the test fires.
 | Entering pass-through redraws from the local snapshot without scrollback | The host's own scrollback keeps what scrolled while passing through |
 | A pane that starts passing through inside a long control string or a UTF-8 character may show a stray byte | Needs a frame cut there and a layout change at that moment; the next redraw clears it |
 | One hab, one row or column of panes, no tabs, no saved workspace | Later stages (5.1, 6) |
-| gff-hab may parse a program's redraw after a resize at the old size: the link resizes its parser only after the holder answers the resize, and a program like vim redraws at once on SIGWINCH. Every client then shows that pane wrong until the next redraw | A gff-hab issue, reported from this stage (the holder's resize answer would need the output offset at the resize). The nudge key works around it; `TestSplitsRedrawAfterResize` makes vim redraw with Ctrl+L once the hab has the sizes, so it tests the client alone |
+| Output gff-hab has not parsed yet when it sends a resize is parsed at the new size (`hab-logic-api.md` 2.3) | Only bytes the program printed in the moment before the PTY resized; its redraw on SIGWINCH comes after them and is right. Terminal multiplexers do the same. `TestSplitsRedrawAfterResize` needs no nudge |
 
 ---
 

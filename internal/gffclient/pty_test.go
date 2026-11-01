@@ -75,22 +75,9 @@ while :; do sleep 0.1; done
 	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: 100, Rows: 40}); err != nil {
 		t.Fatal(err)
 	}
-	// 100 columns: vim gets 50x39, the other program 49x39. vim redraws on SIGWINCH at once,
-	// and gff-hab may parse that redraw before it resizes its own parser (the link resizes the
-	// parser after the holder answers the resize), which leaves every client's copy of vim's
-	// screen at the old size. That is a gff-hab race, not the client's; Ctrl+L makes vim draw
-	// again once the hab has the new sizes, so this test checks the client alone.
-	waitUntil(t, "the hab to apply both new sizes", func() bool {
-		var res api.StructureResult
-		call(t, other, "structure.get", api.StructureGetParams{}, &res)
-		sizes := map[[2]int]bool{}
-		for _, p := range res.Structure.Panes {
-			sizes[[2]int{p.Cols, p.Rows}] = true
-		}
-		return len(sizes) == 2 && sizes[[2]int{50, 39}] && sizes[[2]int{49, 39}]
-	})
-	ptmx.Write([]byte("\x0c")) // vim is the focused pane
-	// A tilde on row 38 is past the old bottom: vim drew at its new size and gff composed it.
+	// 100 columns: vim gets 50x39, the other program 49x39. vim redraws on SIGWINCH at once;
+	// gff-hab's parser takes each size before the resize reaches the PTY, so that redraw is
+	// parsed at the new size with no nudge. A tilde on row 38 is past the old bottom: vim drew at its new size and gff composed it.
 	hst.waitScreen("both panes at the new size", func(s string) bool {
 		return strings.Contains(s, "tui 39 49") && rowStarts(s, 38, "~")
 	})

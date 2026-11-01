@@ -269,6 +269,22 @@ Decisions taken in stage 4 (`internal/link`):
   printing; only when the screen changed. Both are configurable.
 - One event loop applies every holder frame in the order the holder sent it, replay data and
   live output alike, so a pane's parser always sees its bytes in offset order.
+- **A resize sizes the parser first.** The link resizes a pane's parser on the event loop, sends
+  every subscriber a resize at the offset the parser has reached, and only then sends the resize
+  to the holder. The holder has no frame that answers a resize with its output offset, so the
+  link cannot place the resize exactly in the stream. Resizing the parser first, as terminal
+  multiplexers do, means a program that redraws at once on SIGWINCH (vim) always has its redraw
+  parsed at the new size. Resizing it on the holder's answer let that redraw be parsed at the old
+  size, which left every client's screen wrong until the next redraw.
+- **Limit:** output the program printed before the PTY resized, which the link had not yet
+  parsed when it sent the resize, is parsed at the new size. Those are the few bytes in flight at
+  that moment, and the program's redraw follows them.
+- One resize of a pane runs at a time, from the parser's resize to the holder's answer, so the
+  parser and the PTY end at the same size. When the holder refuses a resize (an error frame), the
+  link puts the parser back to its old size and sends every subscriber a resize to it, unless the
+  pane moved to another holder connection or took another size meanwhile. When the connection
+  ends instead, the pane is lost, and its return resizes the parser to the size the holder
+  reports. A resize whose caller gives up after it was sent stays: the holder still applies it.
 - A checkpoint the ring no longer reaches, one past the pane's byte count, or one in an encoding
   this parser lacks is ignored: the screen is rebuilt from the ring alone. It is suspect only when
   the ring has lost bytes (its oldest offset is above 0). A pane resized after its checkpoint is
@@ -1099,8 +1115,8 @@ Data streams (`internal/datastream`), query answering (`internal/termq`, `intern
   is lost or gone, or a resubscribe after falling behind fails), gff-hab sends a reject frame
   (`not_found` for a pane that is gone, else `unavailable`) and closes. After an exited frame no
   reject follows.
-- **Resize frames.** The link resizes the PTY and then the parser, and every stream gets a resize
-  frame at the offset the parser had reached. When the stream's scanner holds back the start of
+- **Resize frames.** The link resizes the parser and then the PTY (2.3), and every stream gets a
+  resize frame at the offset the parser had reached. When the stream's scanner holds back the start of
   a possible query from before that offset, the resize frame waits until those bytes go out, so
   it always follows every byte before its offset. Each resize frame names the owner and a reason
   (6.8).

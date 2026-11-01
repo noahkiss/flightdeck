@@ -973,8 +973,13 @@ func (l *Link) QueueInputs(ctx context.Context, u hp.UUID, data ...[]byte) []fun
 	return waits
 }
 
-// Resize sets pane u's size: the holder resizes the PTY, then the parser takes the size and every
-// subscriber gets a ChunkResize at the offset the parser has reached.
+// Resize sets pane u's size. The parser takes the size, and every subscriber gets a ChunkResize
+// at the offset the parser has reached, before the resize goes to the holder: a program that
+// redraws at once on SIGWINCH has its redraw parsed at the new size, whenever the holder's
+// answer arrives. Output the holder had read before its resize, and the link had not yet
+// parsed, is parsed at the new size too (spec 2.3). When the holder refuses the resize, the
+// parser goes back to the size it had and the subscribers get a ChunkResize to it. Resizes of
+// one pane run one at a time, so the parser and the PTY end at the same size.
 func (l *Link) Resize(ctx context.Context, u hp.UUID, cols, rows int) error {
 	p := l.pane(u)
 	if p == nil {
@@ -983,32 +988,65 @@ func (l *Link) Resize(ctx context.Context, u hp.UUID, cols, rows int) error {
 	if cols <= 0 || rows <= 0 || cols > 0xffff || rows > 0xffff {
 		return fmt.Errorf("link: bad size %dx%d", cols, rows)
 	}
-	p.mu.Lock()
-	h, hd, lost := p.holder, p.handle, p.lost
-	p.mu.Unlock()
+	p.resizeMu.Lock()
+	defer p.resizeMu.Unlock()
+	var (
+		h          *holderclient.Holder
+		hd         hp.Handle
+		lost       error
+		changed    bool
+		oldC, oldR int
+	)
+	// On the event loop, so the size falls between two holder frames: every byte parsed before
+	// it is at the old size, every byte after at the new one.
+	if !l.run(func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		h, hd, lost = p.holder, p.handle, p.lost
+		if lost != nil || h == nil {
+			return
+		}
+		if p.term != nil {
+			oldC, oldR = p.term.Size()
+		}
+		changed = p.resizeLocked(cols, rows)
+	}) {
+		return ErrClosed
+	}
 	if lost != nil {
 		return lost
 	}
 	if h == nil {
 		return ErrNoPane
 	}
-	if err := h.Resize(ctx, hd, uint16(cols), uint16(rows)); err != nil {
-		return err
-	}
-	changed := false
-	if !l.run(func() {
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		if p.holder == h && p.handle == hd {
-			changed = p.resizeLocked(cols, rows)
-		}
-	}) {
-		return ErrClosed
-	}
 	if changed {
 		l.notify([]Notice{{Kind: PaneResized, Pane: p.status()}})
 	}
-	return nil
+	err := h.Resize(ctx, hd, uint16(cols), uint16(rows))
+	var re *holderclient.RequestError
+	if !changed || !errors.As(err, &re) {
+		// Only a refusal leaves the PTY at its old size. A lost connection marks the pane lost,
+		// and its return resizes the parser to the size the holder reports (prepare); a
+		// context that ended after the send leaves a resize the holder still applies.
+		return err
+	}
+	back := false
+	if !l.run(func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.holder != h || p.handle != hd || p.term == nil {
+			return
+		}
+		if c, r := p.term.Size(); c == cols && r == rows {
+			back = p.resizeLocked(oldC, oldR)
+		}
+	}) {
+		return err
+	}
+	if back {
+		l.notify([]Notice{{Kind: PaneResized, Pane: p.status()}})
+	}
+	return err
 }
 
 // SetOwner records pane u's size owner and why (spec 6.5); owner is empty for none. Every
