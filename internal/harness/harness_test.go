@@ -110,10 +110,10 @@ func TestFixtures(t *testing.T) {
 func TestUnknownHarnessDropped(t *testing.T) {
 	var events []structure.Event
 	s := newTestStore(&events)
-	if s.Hook("p", Envelope{Harness: "nonesuch", Event: "Stop", T: 1, Payload: json.RawMessage(`{}`)}) || len(events) > 0 {
+	if changed, _ := s.Hook("p", Envelope{Harness: "nonesuch", Event: "Stop", T: 1, Payload: json.RawMessage(`{}`)}); changed || len(events) > 0 {
 		t.Fatal("unknown harness changed state")
 	}
-	if s.Hook("p", Envelope{Harness: "claude", Event: "Stop", T: 1, Payload: json.RawMessage(`not json`)}) {
+	if changed, _ := s.Hook("p", Envelope{Harness: "claude", Event: "Stop", T: 1, Payload: json.RawMessage(`not json`)}); changed {
 		t.Fatal("bad payload changed state")
 	}
 }

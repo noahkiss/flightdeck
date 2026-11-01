@@ -68,6 +68,11 @@ func (f *filter) seed(st api.Structure) api.Structure {
 	return out
 }
 
+// hasPane reports whether the pane's events pass the filter.
+func (f *filter) hasPane(id string) bool {
+	return f.kind == api.ScopeKindHost || f.panes[id]
+}
+
 func (f *filter) sessionIn(s api.Session) bool {
 	if f.named {
 		return f.sessions[s.ID]

@@ -41,6 +41,7 @@ const (
 	OSCPalette                 // OSC 4 with ?: palette entries
 	DECRQSS                    // DCS $ q ... ST: setting query
 	XTGETTCAP                  // DCS + q ... ST: termcap query
+	ProgStatus                 // OSC 7501 ; ?: program status protocol support
 )
 
 // Query is one query found in the output.
@@ -230,12 +231,12 @@ func (s *Scanner) step(b byte) (q *Query, done, isText bool) {
 		}
 		// Give up at once on an OSC number that is never a query, so a long title passes.
 		body := s.pend[2:]
-		if i := bytes.IndexByte(body, ';'); i >= 0 || len(body) > 3 {
+		if i := bytes.IndexByte(body, ';'); i >= 0 || len(body) > 4 {
 			if i < 0 {
 				return nil, false, true
 			}
 			switch string(body[:i]) {
-			case "4", "10", "11", "12":
+			case "4", "10", "11", "12", "7501":
 			default:
 				return nil, false, true
 			}
@@ -352,6 +353,12 @@ func classifyOSC(body []byte, st bool) *Query {
 			cs = append(cs, n+i)
 		}
 		return &Query{Kind: OSCColor, Colors: cs, ST: st}
+	case 7501:
+		// Only the bare query: a report (state=...) is the program's status, passed on.
+		if len(rest) != 1 || string(rest[0]) != "?" {
+			return nil
+		}
+		return &Query{Kind: ProgStatus, ST: st}
 	case 4:
 		if len(rest)%2 != 0 {
 			return nil
@@ -480,6 +487,12 @@ func Answer(q Query, f Facts) []byte {
 			out = fmt.Appendf(out, "\x1b]%d;%s%s", n, c.xparse(), end)
 		}
 		return out
+	case ProgStatus:
+		end := "\x07"
+		if q.ST {
+			end = "\x1b\\"
+		}
+		return []byte("\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth" + end)
 	case DECRQSS:
 		return []byte("\x1bP0$r\x1b\\") // not a setting this terminal reports
 	case XTGETTCAP:

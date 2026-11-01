@@ -63,11 +63,12 @@ type recorder struct {
 	pane []string
 }
 
-func (r *recorder) sink(pane string, env harness.Envelope) {
+func (r *recorder) sink(pane string, env harness.Envelope) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.got = append(r.got, env)
 	r.pane = append(r.pane, pane)
+	return ""
 }
 
 func startHooks(t *testing.T, reg Resolver, sink Sink) string {
@@ -229,8 +230,12 @@ func TestConfig(t *testing.T) {
 		}
 		for _, ev := range h.events {
 			g := cfg.Hooks[ev]
+			want := "gff-hab hook " + h.name + " " + ev
+			if h.name == "claude" && ev == "PermissionRequest" {
+				want = "gff-hab hook -wait claude PermissionRequest"
+			}
 			if len(g) != 1 || len(g[0].Hooks) != 1 || g[0].Hooks[0].Type != "command" ||
-				g[0].Hooks[0].Command != "gff-hab hook "+h.name+" "+ev || g[0].Hooks[0].Timeout <= 0 {
+				g[0].Hooks[0].Command != want || g[0].Hooks[0].Timeout <= 0 {
 				t.Errorf("%s %s: %+v", h.name, ev, g)
 			}
 		}
@@ -273,7 +278,7 @@ func TestHookToEventStream(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	reg := newTestPanes()
-	sock := startHooks(t, reg, func(p string, e harness.Envelope) { agents.Hook(p, e) })
+	sock := startHooks(t, reg, func(p string, e harness.Envelope) string { _, opened := agents.Hook(p, e); return opened })
 	tok := reg.mint("pane-1")
 
 	c, err := control.Dial(filepath.Join(dir, "hab.sock"))

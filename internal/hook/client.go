@@ -18,40 +18,66 @@ import (
 // at once; a hung one costs at most this. Codex caps its end hooks at one second.
 const Budget = 900 * time.Millisecond
 
+// WaitBudget caps a hook run with -wait: the hab's longest wait plus a margin. The header of
+// the answer must still come within Budget.
+const WaitBudget = harness.MaxPermissionWait + 5*time.Second
+
 // Post sends one envelope to the address in a GFF_HAB value and waits for the answer, within
 // ctx.
 func Post(ctx context.Context, addr string, env harness.Envelope) error {
+	_, err := post(ctx, addr, env, false)
+	return err
+}
+
+// PostWait sends one envelope and asks the hab to hold the answer until the app decides
+// (harness-adapters.md, blocking PermissionRequest hook). The hab answers 204 at once when it
+// does not hold this hook; then the answer is nil. Else it answers 200 at once and sends the body
+// when it has a decision or gives up; the body is the decision as a JSON object, or {} for none.
+func PostWait(ctx context.Context, addr string, env harness.Envelope) ([]byte, error) {
+	return post(ctx, addr, env, true)
+}
+
+func post(ctx context.Context, addr string, env harness.Envelope, wait bool) ([]byte, error) {
 	sock, token, err := ParseAddr(addr)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	body, err := json.Marshal(env)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	tr := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			var d net.Dialer
 			return d.DialContext(ctx, "unix", sock)
 		},
-		DisableKeepAlives: true,
+		DisableKeepAlives:     true,
+		ResponseHeaderTimeout: Budget,
 	}
 	defer tr.CloseIdleConnections()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://hab/hooks/"+token, bytes.NewReader(body))
+	url := "http://hab/hooks/" + token
+	if wait {
+		url += "?wait=1"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := (&http.Client{Transport: tr}).Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("hab answered %s", resp.Status)
+	switch {
+	case resp.StatusCode == http.StatusNoContent:
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return nil, nil
+	case resp.StatusCode == http.StatusOK && wait:
+		return io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	}
-	return nil
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	return nil, fmt.Errorf("hab answered %s", resp.Status)
 }
 
 // Invocation is one run of `gff-hab hook <harness> [event]`.
@@ -62,6 +88,11 @@ type Invocation struct {
 	Getenv  func(string) string
 	Now     func() time.Time
 	T       int64 // the event's time in ms, stamped by the caller (the opencode plugin); 0 means now
+	// Wait asks the hab to hold a permission request until the app answers (PostWait). Only
+	// Claude Code's PermissionRequest waits; any other event posts as usual.
+	Wait bool
+	// Stdout receives the harness's hook output when a wait ends with a decision.
+	Stdout io.Writer
 }
 
 // Run reads the payload, wraps it and posts it. It returns why nothing was sent, or the post
@@ -110,5 +141,53 @@ func Run(ctx context.Context, in Invocation) error {
 		t = now().UnixMilli()
 	}
 	env := harness.Envelope{Harness: in.Harness, Event: event, T: t, N: 1, Payload: payload}
-	return Post(ctx, addr, env)
+	if !in.Wait || in.Harness != detect.KindClaude || event != "PermissionRequest" || in.Stdout == nil {
+		return Post(ctx, addr, env)
+	}
+	answer, err := PostWait(ctx, addr, env)
+	if err != nil || answer == nil {
+		return err
+	}
+	out, err := ClaudeDecision(answer)
+	if err != nil || out == nil {
+		return err
+	}
+	_, err = in.Stdout.Write(out)
+	return err
+}
+
+// ClaudeDecision turns the hab's answer body into Claude Code's PermissionRequest hook output.
+// It returns nil for an answer with no decision: the hook then prints nothing, and Claude shows
+// its own dialog.
+func ClaudeDecision(answer []byte) ([]byte, error) {
+	var a struct {
+		Behavior string `json:"behavior"`
+		Message  string `json:"message,omitempty"`
+	}
+	if err := json.Unmarshal(answer, &a); err != nil {
+		return nil, fmt.Errorf("hab answer: %w", err)
+	}
+	if a.Behavior != "allow" && a.Behavior != "deny" {
+		return nil, nil
+	}
+	type decision struct {
+		Behavior string `json:"behavior"`
+		Message  string `json:"message,omitempty"`
+	}
+	out := struct {
+		HookSpecificOutput struct {
+			HookEventName string   `json:"hookEventName"`
+			Decision      decision `json:"decision"`
+		} `json:"hookSpecificOutput"`
+	}{}
+	out.HookSpecificOutput.HookEventName = "PermissionRequest"
+	out.HookSpecificOutput.Decision = decision{Behavior: a.Behavior}
+	if a.Behavior == "deny" {
+		out.HookSpecificOutput.Decision.Message = a.Message
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return nil, err
+	}
+	return append(b, '\n'), nil
 }

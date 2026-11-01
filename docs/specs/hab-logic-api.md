@@ -729,8 +729,8 @@ names the stage, and an event is defined but never sent.
 | `pane.close` | Release a pane; a running program gets a hang-up first | Yes (this stage) |
 | `session.resume` | Start an exited session's harness again in a new pane, with its resume id | Part 4 stage 4 |
 | `session.interrupt` | Stop the current turn through the adapter (the chat view's Stop) | Part 4 stage 4 |
-| `session.send` | Send a message through the adapter, under the input rules | Part 4 stage 4 |
-| `approval.answer` | Answer a pending request by id; a closed or expired id is refused with `conflict` | Part 4 stage 4 |
+| `session.send` | Send a message through the adapter, under the input rules | Yes, Claude Code (Part 4 stage 4) |
+| `approval.answer` | Answer a pending request by id; a closed or expired id is refused with `conflict` | Yes, Claude Code permissions (Part 4 stage 4) |
 | `chat.page` | Read a page of chat messages from the transcript reader (capability `transcripts`) | Yes, Claude Code (Part 4 stage 5) |
 | `attachment.put` | Start an upload of a file for a session | Part 6 stage 5 |
 | `attachment.get` | Fetch an attachment or its thumbnail | Part 6 stage 5 |
@@ -778,11 +778,17 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   proposed `command`; `argv` is that command, unparsed.
 - **`session.resume`** takes `{session}` and returns the same ids as `session.create`.
 - **`pane.close`** takes `{pane}` (the `PaneRef` of the size methods) and returns the seq only.
-- **`session.send`** returns the seq only. Whether the message waits for the turn follows from
-  the pane's agent state, which the client already holds. A "not delivered" report is added as
-  an event when Part 4 builds delivery.
+- **`session.send`** returns the seq only, once the writes reached the program. Whether the
+  message may go follows from the pane's agent state, which the client already holds: a busy
+  agent, an open permission request, or another message still starting its turn refuses it
+  with `conflict`, a pane with no agent with `unavailable` (`harness-adapters.md`, Input
+  delivery). A "not delivered" report is added as an event later.
 - **`approval.answer`** `choice` is a closed set: `allow`, `deny`, or `answer` with the option or
-  free text in `text`. `via` is `app`, `banner`, `watch`, `voice` or `terminal`.
+  free text in `text`. `via` is `app`, `banner`, `watch`, `voice` or `terminal`. A request that
+  is not the pane's open one is refused with `conflict`. The call returns once the request is
+  resolved; an answer the hook could not take, an exit, or a request still open past the
+  read-back answers `unavailable` (`harness-adapters.md`, Permission answers).
+- Both run off the connection's read loop, so a slow pane holds up no other call.
 - **`chat.page`** pages backwards by message id (`before`); `limit` defaults to 50, at most 200.
   The result holds `messages`, oldest first, and `more`. A message has `id`, `session`, `kind`
   (`user`, `agent`, `tool`, `event`, `plan`; open), `at`, and the optional `text`, `sender`,
@@ -1113,8 +1119,10 @@ Terminal queries (5.6):
 - **Answered and removed:** DSR (`CSI 5 n`), cursor position (`CSI 6 n`, `CSI ? 6 n`), primary,
   secondary and tertiary device attributes, XTVERSION (`CSI > q`), mode queries (`CSI ? Ps $ p`,
   `CSI Ps $ p`), the text area size in cells (`CSI 18 t`), the keyboard protocol flags
-  (`CSI ? u`), colour queries (OSC 10, 11 and 12 with `?`, and OSC 4 when every entry asks), and
-  DECRQSS and XTGETTCAP (answered "not supported").
+  (`CSI ? u`), colour queries (OSC 10, 11 and 12 with `?`, and OSC 4 when every entry asks),
+  DECRQSS and XTGETTCAP (answered "not supported"), and the program status query
+  (`OSC 7501 ; ?`, answered with the supported states and kinds; `harness-adapters.md`, Claude
+  Code). Status reports (`OSC 7501 ; state=...`) are not queries: they pass on to clients.
 - **From the parser:** the cursor, the size, mode states and keyboard flags. `vt.Terminal` has
   `Cursor`, `Mode` and `KeyboardFlags` for this; libghostty supplies all three, the fake knows the
   alternate screen modes only. The link writes the parser up to the end of each query before it

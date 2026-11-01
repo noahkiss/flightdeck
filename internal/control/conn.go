@@ -44,9 +44,10 @@ type conn struct {
 	closing  bool // nothing more is queued; the writer drains, then closes
 	seq      uint64
 	revision int
-	sub      *filter    // nil until events.subscribe
-	seeding  bool       // a subscribe is taking its snapshot; events wait in pending
-	pending  []pubEvent // events that arrived while seeding, in order
+	kind     api.ClientKind // from hello
+	sub      *filter        // nil until events.subscribe
+	seeding  bool           // a subscribe is taking its snapshot; events wait in pending
+	pending  []pubEvent     // events that arrived while seeding, in order
 	// lanes run pane.input calls off the read loop, one goroutine per pane while it has calls,
 	// so calls to one pane keep their order and a stuck pane holds up nothing else.
 	lanes   map[string]*lane
@@ -425,6 +426,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleCommandOutput(m)
 		return
 	}
+	if m.Method == "session.send" || m.Method == "approval.answer" {
+		c.handleAgent(m)
+		return
+	}
 	seq := c.currentSeq()
 	result, e := c.dispatch(m, seq)
 	c.reply(m, seq, result, e)
@@ -637,6 +642,53 @@ func (c *conn) runLane(pane string, ln *lane) {
 	}
 }
 
+// handleAgent runs session.send or approval.answer off the read loop: each waits for its writes
+// to reach the program, and an answer by keys then waits to see the request close.
+func (c *conn) handleAgent(m message) {
+	seq := c.currentSeq()
+	var send api.SessionSendParams
+	var answer api.ApprovalAnswerParams
+	var e *Error
+	if m.Method == "session.send" {
+		if e = c.decodeUp(m, &send); e == nil && (send.Session == "" || send.Text == "") {
+			e = appErr(api.ErrorKindInvalid, "session.send needs a session and text")
+		}
+		if e == nil && !isWord("SendOrigin", string(send.Origin)) && send.Origin != "" {
+			e = appErr(api.ErrorKindInvalid, "origin %q is not one of %v", send.Origin, api.Enums["SendOrigin"])
+		}
+	} else {
+		if e = c.decodeUp(m, &answer); e == nil && (answer.Pane == "" || answer.Request == "") {
+			e = appErr(api.ErrorKindInvalid, "approval.answer needs a pane and a request")
+		}
+		if e == nil && !isWord("ApprovalChoice", string(answer.Choice)) {
+			e = appErr(api.ErrorKindInvalid, "choice %q is not one of %v", answer.Choice, api.Enums["ApprovalChoice"])
+		}
+	}
+	if e == nil && c.s.cfg.Agents == nil {
+		e = appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
+	}
+	if e != nil {
+		c.reply(m, seq, nil, e)
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
+		defer cancel()
+		var err error
+		if m.Method == "session.send" {
+			err = c.s.cfg.Agents.Send(ctx, c.clientID, send)
+		} else {
+			err = c.s.cfg.Agents.Answer(ctx, c.clientID, answer)
+		}
+		seq := c.currentSeq()
+		if err != nil {
+			c.reply(m, seq, nil, actionErr(m.Method, err))
+			return
+		}
+		c.reply(m, seq, api.Empty{Seq: api.Seq{Seq: seq}}, nil)
+	}()
+}
+
 func (c *conn) withSeq(e *Error) *Error {
 	e.Data.Seq = c.currentSeq()
 	return e
@@ -729,6 +781,7 @@ func (c *conn) handleHello(m message) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.revision = chosen
+	c.kind = p.Client.Kind
 	c.enqueueLocked(c.encodeReply(m, 0, w, nil))
 }
 
@@ -805,8 +858,6 @@ const (
 var later = map[string]string{
 	"session.resume":         "Part 4 stage 4 (harness adapters: state and input)",
 	"session.interrupt":      "Part 4 stage 4 (harness adapters: state and input)",
-	"session.send":           "Part 4 stage 4 (harness adapters: state and input)",
-	"approval.answer":        "Part 4 stage 4 (harness adapters: permission answers)",
 	"attachment.put":         "Part 6 stage 5 (the app's chat view, images and files)",
 	"attachment.get":         "Part 6 stage 5 (the app's chat view, images and files)",
 	"session.focus":          "Part 6 stage 7 (approvals, push and Live Activity)",

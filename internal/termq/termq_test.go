@@ -52,6 +52,8 @@ func TestQueries(t *testing.T) {
 		{"\x1b]4;1;?\x07", OSCPalette, "\x1b]4;1;rgb:cdcd/0000/0000\x07"},
 		{"\x1bP$qm\x1b\\", DECRQSS, "\x1bP0$r\x1b\\"},
 		{"\x1bP+q544e\x1b\\", XTGETTCAP, "\x1bP0+r\x1b\\"},
+		{"\x1b]7501;?\x1b\\", ProgStatus, "\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth\x1b\\"},
+		{"\x1b]7501;?\x07", ProgStatus, "\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth\x07"},
 	}
 	facts := Facts{
 		Col: 4, Row: 2, Cols: 80, Rows: 24, KeyboardFlags: 1, Colors: DefaultColors(), Version: "test",
@@ -89,7 +91,10 @@ func TestNotQueries(t *testing.T) {
 		"\x1b]2;title\x1b\\",
 		"\x1b]11;#000000\x07", // sets, does not ask
 		"\x1b]4;1;?;2;red\x07",
-		"\x1b]52;c;?\x07", // clipboard read: left to the clients
+		"\x1b]52;c;?\x07",                          // clipboard read: left to the clients
+		"\x1b]7501;state=working:app=claude\x1b\\", // a status report, not the query
+		"\x1b]7501;?:states=idle\x07",              // a terminal's reply, not the query
+		"\x1b]75011;?\x07",
 		"\x1b[14t",
 		"\x1b[>4;1m",
 		"\x1b(B\x1b7\x1b8",

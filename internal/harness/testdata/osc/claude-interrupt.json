@@ -1,0 +1,31 @@
+{
+  "note": "Written by hand. OSC 7501 bytes from a Claude Code pane mixed with its hooks, in the shapes of version 2.1.3xx. The query, then an OSC idle before any hook; a session start; a turn whose OSC reports agree with its hooks; a PermissionRequest with no tool_use_id, so gff-hab names the request; a stale OSC idle inside the grace, then the owner's interrupt, which fires no hook and only OSC idle reports; a second turn that ends done, which a later OSC idle, a subagent record and another program's report leave alone; the exit.",
+  "harness_version": "2.1.3xx",
+  "steps": [
+    {"t": 1000, "osc": "\u001b[2J\u001b]7501;?\u001b\\\u001b[c\u001b]7501;state=idle:app=claude\u001b\\welcome"},
+    {"hook": {"harness": "claude", "event": "SessionStart", "t": 1100, "n": 1, "payload": {"session_id": "sess-1", "cwd": "/work/app", "hook_event_name": "SessionStart", "source": "startup"}}},
+    {"hook": {"harness": "claude", "event": "UserPromptSubmit", "t": 1200, "n": 1, "payload": {"session_id": "sess-1", "cwd": "/work/app", "hook_event_name": "UserPromptSubmit", "prompt_id": "prompt-1", "prompt": "run the tests"}}},
+    {"t": 1250, "osc": "\u001b]7501;state=working:app=claude:title=UnVuIHRoZSB0ZXN0cw==\u001b\\"},
+    {"hook": {"harness": "claude", "event": "PermissionRequest", "t": 1300, "n": 1, "payload": {"session_id": "sess-1", "cwd": "/work/app", "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": {"command": "make test"}, "permission_suggestions": []}}},
+    {"t": 1310, "osc": "\u001b]7501;state=blocked:kind=permission:app=claude\u0007"},
+    {"hook": {"harness": "claude", "event": "PostToolUse", "t": 1400, "n": 1, "payload": {"session_id": "sess-1", "cwd": "/work/app", "hook_event_name": "PostToolUse", "prompt_id": "prompt-1", "tool_name": "Bash", "tool_input": {"command": "make test"}, "tool_response": {"stdout": "ok"}, "tool_use_id": "toolu_01"}}},
+    {"t": 1500, "osc": "\u001b]7501;state=idle:app=claude\u001b\\"},
+    {"t": 2600, "osc": "\u001b]7501;state=idle:app=claude\u001b\\"},
+    {"hook": {"harness": "claude", "event": "UserPromptSubmit", "t": 3000, "n": 1, "payload": {"session_id": "sess-1", "cwd": "/work/app", "hook_event_name": "UserPromptSubmit", "prompt_id": "prompt-2", "prompt": "try again"}}},
+    {"hook": {"harness": "claude", "event": "Stop", "t": 3500, "n": 1, "payload": {"session_id": "sess-1", "cwd": "/work/app", "hook_event_name": "Stop", "stop_hook_active": false}}},
+    {"t": 4600, "osc": "\u001b]7501;state=done:app=claude\u001b\\\u001b]7501;state=idle:app=claude\u001b\\"},
+    {"t": 4700, "osc": "\u001b]7501;state=working:id=agent-1:app=claude\u001b\\\u001b]7501;state=working:app=brew\u001b\\"},
+    {"hook": {"harness": "claude", "event": "SessionEnd", "t": 5000, "n": 1, "payload": {"session_id": "sess-1", "cwd": "/work/app", "hook_event_name": "SessionEnd", "reason": "prompt_input_exit"}}}
+  ],
+  "expect": [
+    {"harness": "claude", "state": "idle", "source": "osc"},
+    {"harness": "claude", "session": "sess-1", "state": "idle", "source": "hook"},
+    {"harness": "claude", "session": "sess-1", "state": "working", "turn": "prompt-1", "source": "hook"},
+    {"harness": "claude", "session": "sess-1", "state": "blocked", "kind": "permission", "turn": "prompt-1", "request": {"id": "*", "tool": "Bash", "command": "make test", "cwd": "/work/app"}, "source": "hook"},
+    {"harness": "claude", "session": "sess-1", "state": "working", "turn": "prompt-1", "source": "hook"},
+    {"harness": "claude", "session": "sess-1", "state": "idle", "turn": "prompt-1", "source": "osc"},
+    {"harness": "claude", "session": "sess-1", "state": "working", "turn": "prompt-2", "source": "hook"},
+    {"harness": "claude", "session": "sess-1", "state": "done", "turn": "prompt-2", "source": "hook"},
+    {"harness": "claude", "session": "sess-1", "state": "exited", "last": "done", "turn": "prompt-2", "source": "hook"}
+  ]
+}

@@ -35,17 +35,23 @@ func Config(harness, command string) (string, error) {
 	}
 	switch harness {
 	case detect.KindClaude:
-		return hooksJSON(command, harness, ClaudeEvents, nil)
+		// PermissionRequest runs with -wait: it returns at once unless the owner turned the
+		// blocking permission hook on in gff-hab, and its timeout covers the longest wait.
+		return hooksJSON(command, harness, ClaudeEvents, map[string]int{"PermissionRequest": PermissionTimeout}, map[string]string{"PermissionRequest": "-wait "})
 	case detect.KindCodex:
 		// Codex caps its end hooks at three seconds.
-		return hooksJSON(command, harness, CodexEvents, map[string]int{"SessionEnd": 2, "Interrupt": 2})
+		return hooksJSON(command, harness, CodexEvents, map[string]int{"SessionEnd": 2, "Interrupt": 2}, nil)
 	case detect.KindOpencode:
 		return opencodePlugin(command), nil
 	}
 	return "", fmt.Errorf("no hook config for harness %q; known: claude, codex, opencode", harness)
 }
 
-func hooksJSON(command, harness string, events []string, timeouts map[string]int) (string, error) {
+// PermissionTimeout is the hook timeout, in seconds, of Claude's PermissionRequest hook: above
+// the longest wait the hab holds a hook (harness.MaxPermissionWait plus a margin).
+const PermissionTimeout = 130
+
+func hooksJSON(command, harness string, events []string, timeouts map[string]int, flags map[string]string) (string, error) {
 	// Build the object by hand to keep the events in a stable, readable order.
 	var b strings.Builder
 	b.WriteString("{\n  \"hooks\": {\n")
@@ -54,7 +60,7 @@ func hooksJSON(command, harness string, events []string, timeouts map[string]int
 		if v, ok := timeouts[ev]; ok {
 			t = v
 		}
-		g, err := json.Marshal([]hookGroup{{Hooks: []hookCmd{{Type: "command", Command: shellQuote(command) + " hook " + harness + " " + ev, Timeout: t}}}})
+		g, err := json.Marshal([]hookGroup{{Hooks: []hookCmd{{Type: "command", Command: shellQuote(command) + " hook " + flags[ev] + harness + " " + ev, Timeout: t}}}})
 		if err != nil {
 			return "", err
 		}

@@ -14,6 +14,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/cmdmarks"
 	"github.com/noahkiss/flightdeck/internal/holderclient"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
+	"github.com/noahkiss/flightdeck/internal/progstatus"
 	"github.com/noahkiss/flightdeck/internal/termq"
 	"github.com/noahkiss/flightdeck/internal/vt"
 )
@@ -79,12 +80,18 @@ const (
 	PaneGone                           // the pane is lost or released
 	PaneResized                        // Resize changed the pane's size
 	PaneCommands                       // commands started or ended; read them with CommandChanges
+	// PaneReport: the program sent a status report (OSC 7501). Only Pane.UUID is set.
+	PaneReport
 )
 
 // Notice is one pane change.
 type Notice struct {
 	Kind NoticeKind
 	Pane PaneStatus
+	// Report and Live are set for PaneReport. Live is false for a report in replayed bytes,
+	// which the program sent before this gff-hab followed the pane.
+	Report progstatus.Report
+	Live   bool
 }
 
 // ChunkKind says what a Chunk carries.
@@ -211,6 +218,14 @@ type pane struct {
 	// queries follows the stream for terminal queries; the link answers those in live bytes
 	// (spec 5.6). Its offset is off whenever it holds nothing back.
 	queries *termq.Scanner
+	// progs follows the stream for program status reports (OSC 7501); reports holds the live
+	// ones found by the feed in progress, for the caller to hand to the watchers. A replay keeps
+	// only its last report, in replayLast; at the replay's end it moves to replayed and goes to
+	// the watchers (harness-adapters.md, Edge cases: gff-hab restarts).
+	progs      progstatus.Scanner
+	reports    []Notice
+	replayLast *progstatus.Report
+	replayed   *progstatus.Report
 	// inq holds writes to the program's input in order: client input and query answers.
 	// inBusy is true while a writer goroutine drains it.
 	inq    []*inputReq
@@ -381,22 +396,24 @@ func (p *pane) spawned(l *Link, h *holderclient.Holder, pi hp.PaneInfo) {
 	}
 	p.holder, p.handle, p.pid, p.term = h, pi.Handle, pi.Pid, t
 	p.queries.Reset(0)
+	p.progs.Reset()
 	now := time.Now()
 	p.ckAt, p.lastOut = now, now
 	p.markReady()
 }
 
 // feed applies output at offset off. Bytes the parser already holds are dropped; a jump forward
-// is a gap and marks the screen suspect. It runs on the event loop.
-func (p *pane) feed(l *Link, off uint64, data []byte, live bool) {
+// is a gap and marks the screen suspect. It returns a PaneReport notice for each status report
+// in the new bytes. It runs on the event loop.
+func (p *pane) feed(l *Link, off uint64, data []byte, live bool) []Notice {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.term == nil || p.lost != nil || len(data) == 0 {
-		return
+		return nil
 	}
 	end := off + uint64(len(data))
 	if end <= p.off {
-		return
+		return nil
 	}
 	if off < p.off {
 		data = data[p.off-off:]
@@ -423,12 +440,22 @@ func (p *pane) feed(l *Link, off uint64, data []byte, live bool) {
 			delete(p.subs, s)
 		}
 	}
+	reports := p.reports
+	p.reports = nil
+	return reports
 }
 
 // parse writes data to the parser and follows it for terminal queries. In live bytes it answers
 // each query once, from the parser's state just after the query, and queues the answer to the
 // program's input (spec 5.6). Replayed bytes get no answer. The caller holds p.mu.
 func (p *pane) parse(l *Link, data []byte, live bool) {
+	p.progs.Feed(data, func(r progstatus.Report) {
+		if !live {
+			p.replayLast = &r
+			return
+		}
+		p.reports = append(p.reports, Notice{Kind: PaneReport, Pane: PaneStatus{UUID: p.uuid}, Report: r, Live: true})
+	})
 	if !live {
 		p.queries.Feed(data, func(termq.Segment) {})
 		p.term.Write(data)
@@ -745,11 +772,18 @@ func (p *pane) ownerReason() api.OwnerReason {
 	return p.reason
 }
 
-func (p *pane) replayEnd(l *Link, e *hp.ReplayEnd) {
+// replayEnd ends the pane's replay. It returns a PaneReport notice, not live, for the last
+// status report in the replayed bytes, if there was one.
+func (p *pane) replayEnd(l *Link, e *hp.ReplayEnd) []Notice {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if e.Token != p.replayTok || p.isReady {
-		return
+		return nil
+	}
+	var notices []Notice
+	if p.replayLast != nil {
+		p.replayed, p.replayLast = p.replayLast, nil
+		notices = append(notices, Notice{Kind: PaneReport, Pane: PaneStatus{UUID: p.uuid}, Report: *p.replayed})
 	}
 	if e.Gap {
 		l.cfg.Logf("link: pane %s: replay lost bytes to the ring (sent %d to %d): screen is suspect", p.uuid, e.Start, e.End)
@@ -759,6 +793,7 @@ func (p *pane) replayEnd(l *Link, e *hp.ReplayEnd) {
 		p.jump(e.End)
 	}
 	p.markReady()
+	return notices
 }
 
 // jump moves the pane past bytes that never arrived: the screen is suspect, and every subscriber
@@ -768,6 +803,7 @@ func (p *pane) jump(to uint64) {
 	p.buf, p.bufStart, p.off = nil, to, to
 	p.seq.reset()
 	p.queries.Reset(to)
+	p.progs.Reset()
 	if len(p.subs) == 0 {
 		return
 	}

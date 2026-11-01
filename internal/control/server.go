@@ -6,9 +6,10 @@
 //
 // session.create and pane.close run through Config.Actions, data.ticket and data connections
 // through Config.Data, pane.input through Config.Input, chat.page through Config.Chat, the size
-// ownership and redraw methods through Config.Size, and command.list and command.output through
-// Config.Commands. The devices methods and the calls later stages
-// build answer "unavailable", with a hint that names the stage.
+// ownership and redraw methods through Config.Size, command.list and command.output through
+// Config.Commands, and session.send and approval.answer through Config.Agents. The devices
+// methods and the calls later stages build answer "unavailable", with a hint that names the
+// stage.
 package control
 
 import (
@@ -112,6 +113,16 @@ type Commands interface {
 	CommandOutput(ctx context.Context, p api.CommandOutputParams) (api.CommandOutput, error)
 }
 
+// Agents drives a pane's agent through its harness adapter (harness-adapters.md, Input delivery
+// and Permission answers). gff-hab implements it over the agent state store and the holder link.
+// An error that is an *Error keeps its kind.
+type Agents interface {
+	// Send delivers one message to the session's agent, only when the agent may take it.
+	Send(ctx context.Context, client string, p api.SessionSendParams) error
+	// Answer answers the pane's open permission request, only when the request id matches.
+	Answer(ctx context.Context, client string, p api.ApprovalAnswerParams) error
+}
+
 // Config is what New needs. Source is required.
 type Config struct {
 	Build        string
@@ -125,6 +136,7 @@ type Config struct {
 	Size         Size     // nil: the size ownership and redraw methods answer unavailable
 	Chat         Chat     // nil: chat.page answers unavailable
 	Commands     Commands // nil: command.list and command.output answer unavailable
+	Agents       Agents   // nil: session.send and approval.answer answer unavailable
 	// ActionTimeout bounds one Actions call. Default 30 s.
 	ActionTimeout time.Duration
 
@@ -277,6 +289,28 @@ func (s *Server) ServeConn(nc net.Conn) {
 		t.expires = s.cfg.Now().Add(s.cfg.ReconnectGrace)
 	}
 	s.mu.Unlock()
+}
+
+// Approvers returns the number of open connections that can answer a permission request on
+// pane: an app or terminal client (a cli or script client cannot) that subscribed to events
+// whose scope holds the pane, so it sees the request. Only these make a blocking permission
+// hook wait (harness-adapters.md, Claude: blocking PermissionRequest hook).
+func (s *Server) Approvers(pane string) int {
+	s.mu.Lock()
+	conns := make([]*conn, 0, len(s.conns))
+	for c := range s.conns {
+		conns = append(conns, c)
+	}
+	s.mu.Unlock()
+	n := 0
+	for _, c := range conns {
+		c.mu.Lock()
+		if c.revision > 0 && !c.closing && c.sub != nil && (c.kind == api.ClientKindApp || c.kind == api.ClientKindTerminal) && c.sub.hasPane(pane) {
+			n++
+		}
+		c.mu.Unlock()
+	}
+	return n
 }
 
 // Publish hands one structure change to every subscribed connection. It never blocks on a

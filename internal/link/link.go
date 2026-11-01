@@ -616,13 +616,13 @@ func (l *Link) apply(p *pane, f hp.Frame) {
 	var notices []Notice
 	switch f := f.(type) {
 	case *hp.Output:
-		p.feed(l, f.Offset, f.Data, true)
+		notices = p.feed(l, f.Offset, f.Data, true)
 		notices = p.commandNotice(notices)
 	case *hp.ReplayData:
-		p.feed(l, f.Offset, f.Data, false)
+		notices = p.feed(l, f.Offset, f.Data, false)
 		notices = p.commandNotice(notices)
 	case *hp.ReplayEnd:
-		p.replayEnd(l, f)
+		notices = p.replayEnd(l, f)
 		defer l.releaseEnded(p)
 	case *hp.Exited:
 		if n, ok := p.reaped(f.Status, f.Final); ok {
@@ -882,6 +882,27 @@ func (l *Link) ClosePane(ctx context.Context, u hp.UUID) error {
 	return nil
 }
 
+// ReplayedReports returns, for each pane whose replay held a status report, a PaneReport notice
+// (not live) with the last one. A watcher added after the replays ended reads them here; one
+// added before also got each as a notice.
+func (l *Link) ReplayedReports() []Notice {
+	l.mu.Lock()
+	ps := make([]*pane, 0, len(l.panes))
+	for _, p := range l.panes {
+		ps = append(ps, p)
+	}
+	l.mu.Unlock()
+	var out []Notice
+	for _, p := range ps {
+		p.mu.Lock()
+		if p.replayed != nil {
+			out = append(out, Notice{Kind: PaneReport, Pane: PaneStatus{UUID: p.uuid}, Report: *p.replayed})
+		}
+		p.mu.Unlock()
+	}
+	return out
+}
+
 // Input writes data to pane u's program as one write (spec 3.8) and returns its result. It is
 // QueueInput followed by its wait.
 func (l *Link) Input(ctx context.Context, u hp.UUID, data []byte) error {
@@ -897,35 +918,54 @@ func (l *Link) Input(ctx context.Context, u hp.UUID, data []byte) error {
 // error; when it is already being written, wait returns that write's result, within
 // inputTimeout of its first send.
 func (l *Link) QueueInput(ctx context.Context, u hp.UUID, data []byte) (wait func() error) {
+	return l.QueueInputs(ctx, u, data)[0]
+}
+
+// QueueInputs queues several writes for pane u's program as QueueInput does, back to back: no
+// other client's write is queued between them. It returns one wait per write.
+func (l *Link) QueueInputs(ctx context.Context, u hp.UUID, data ...[]byte) []func() error {
+	waits := make([]func() error, len(data))
 	p := l.pane(u)
 	if p == nil {
-		return func() error { return ErrNoPane }
+		for i := range waits {
+			waits[i] = func() error { return ErrNoPane }
+		}
+		return waits
 	}
-	r := &inputReq{data: data, done: make(chan error, 1)}
+	reqs := make([]*inputReq, len(data))
 	p.mu.Lock()
 	if p.lost != nil {
 		err := p.lost
 		p.mu.Unlock()
-		return func() error { return err }
+		for i := range waits {
+			waits[i] = func() error { return err }
+		}
+		return waits
 	}
-	p.queueInputLocked(l, r)
+	for i, d := range data {
+		reqs[i] = &inputReq{data: d, done: make(chan error, 1)}
+		p.queueInputLocked(l, reqs[i])
+	}
 	p.mu.Unlock()
-	return func() error {
-		select {
-		case err := <-r.done:
-			return err
-		case <-ctx.Done():
-		}
-		p.mu.Lock()
-		if !r.taken {
-			// Still queued: it is never written, so a client that tries again types it once.
-			r.cancelled = true
+	for i, r := range reqs {
+		waits[i] = func() error {
+			select {
+			case err := <-r.done:
+				return err
+			case <-ctx.Done():
+			}
+			p.mu.Lock()
+			if !r.taken {
+				// Still queued: it is never written, so a client that tries again types it once.
+				r.cancelled = true
+				p.mu.Unlock()
+				return ctx.Err()
+			}
 			p.mu.Unlock()
-			return ctx.Err()
+			return <-r.done // being written: its result, within inputTimeout
 		}
-		p.mu.Unlock()
-		return <-r.done // being written: its result, within inputTimeout
 	}
+	return waits
 }
 
 // Resize sets pane u's size: the holder resizes the PTY, then the parser takes the size and every

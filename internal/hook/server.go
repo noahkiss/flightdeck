@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -17,8 +18,17 @@ import (
 // MaxBody bounds one posted envelope. Tool inputs (a file being written) can be large.
 const MaxBody = 8 << 20
 
-// Sink receives each valid envelope for a known pane. *harness.Store's Hook method fits.
-type Sink func(pane string, env harness.Envelope)
+// Sink receives each valid envelope for a known pane. It returns the id of the permission
+// request the envelope opened, or "" when it opened none (*harness.Store's Hook gives it).
+type Sink func(pane string, env harness.Envelope) (opened string)
+
+// Holder decides whether a hook posted with ?wait=1 waits for an answer, after the sink took its
+// envelope; opened is what the sink returned. It returns nil to answer at once; else a Wait.
+type Holder func(pane string, env harness.Envelope, opened string) Wait
+
+// Wait waits, within ctx, and returns the answer body (a JSON object), or nil for no answer.
+// With a body, the server calls written once with the result of sending it to the hook.
+type Wait func(ctx context.Context) (answer []byte, written func(error))
 
 // Resolver names the pane a token belongs to. *Tokens is one.
 type Resolver interface {
@@ -36,7 +46,15 @@ type Server struct {
 
 	mu      sync.Mutex
 	unknown map[string]bool // tokens already logged as unknown
+	holder  Holder
 	http    *http.Server
+}
+
+// SetHolder sets the holder for posts with ?wait=1. With none, they answer at once like any post.
+func (s *Server) SetHolder(h Holder) {
+	s.mu.Lock()
+	s.holder = h
+	s.mu.Unlock()
 }
 
 // NewServer returns a server. logf may be nil.
@@ -102,8 +120,37 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if env.T <= 0 {
 		env.T = s.now().UnixMilli()
 	}
-	s.sink(pane, env)
-	w.WriteHeader(http.StatusNoContent)
+	opened := s.sink(pane, env)
+	s.mu.Lock()
+	holder := s.holder
+	s.mu.Unlock()
+	if r.URL.Query().Get("wait") != "1" || holder == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	wait := holder(pane, env, opened)
+	if wait == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// 200 at once tells the hook to wait for the body; its header timeout stays short, so a
+	// hung hab still costs a hook no more than Budget.
+	rc := http.NewResponseController(w)
+	rc.SetWriteDeadline(time.Now().Add(harness.MaxPermissionWait + 10*time.Second))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	rc.Flush()
+	answer, written := wait(r.Context())
+	if answer == nil {
+		answer = []byte("{}")
+	}
+	_, err = w.Write(answer)
+	if err == nil {
+		err = rc.Flush()
+	}
+	if written != nil {
+		written(err)
+	}
 }
 
 // peerListener refuses Unix connections from other users.

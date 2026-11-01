@@ -200,8 +200,13 @@ func serve(args []string) error {
 		state:   state, holders: holders, socket: sock,
 		build: fs.String("build", "", "launchd: the build directory under <state>/builds this gff-hab runs from (gff-hab install sets it)"),
 	}
+	permWait := fs.Duration("permission-wait", 0, "hold Claude's PermissionRequest hook up to this long for the app's answer; 0 is off (default: $GFF_HAB_PERMISSION_WAIT, else off)")
 	fs.Parse(args)
 	logger := log.New(os.Stderr, "gff-hab: ", log.LstdFlags)
+	// Catch SIGTERM and SIGINT before any socket is up: a stop that arrives while gff-hab starts
+	// waits for the shutdown below instead of killing it with no checkpoint.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
 
 	path, err := socketPath(*sock)
 	if err != nil {
@@ -238,6 +243,10 @@ func serve(args []string) error {
 		return err
 	}
 	ckEvery, ckIdle, err := checkpointTimes(os.Getenv)
+	if err != nil {
+		return err
+	}
+	pwait, err := permissionWait(*permWait, os.Getenv)
 	if err != nil {
 		return err
 	}
@@ -311,6 +320,8 @@ func serve(args []string) error {
 	var chat control.Chat
 	var commands control.Commands
 	var chats *chatService
+	var agentCalls control.Agents
+	var agentSvc *agentService
 	var ds *datastream.Server
 	var mgr *panesize.Manager
 	if lk != nil {
@@ -368,6 +379,8 @@ func serve(args []string) error {
 		defer stopCmds()
 		commands = commandService{lk}
 		caps = append(caps, "commands")
+		agentSvc = &agentService{store: store, agents: agents, gate: harness.NewGate(pwait), input: linkQueuer{lk}, logf: logger.Printf}
+		agentCalls = agentSvc
 	}
 	s := control.New(control.Config{
 		Build:        build,
@@ -381,6 +394,7 @@ func serve(args []string) error {
 		Size:         sizes,
 		Chat:         chat,
 		Commands:     commands,
+		Agents:       agentCalls,
 		Logf:         logger.Printf,
 	})
 	srv.Store(s)
@@ -395,19 +409,35 @@ func serve(args []string) error {
 	}
 	if lk != nil {
 		stopWatch := lk.Watch(func(n link.Notice) {
-			if n.Kind == link.PaneGone {
+			switch n.Kind {
+			case link.PaneGone:
 				agents.Forget(n.Pane.UUID.String())
 				mgr.Forget(n.Pane.UUID.String())
+			case link.PaneExited:
+				agents.Exited(n.Pane.UUID.String())
+			case link.PaneReport: // OSC 7501 from the program; a replayed one applies as screen
+				agents.Report(n.Pane.UUID.String(), n.Report, time.Now().UnixMilli(), n.Live)
 			}
 		})
 		defer stopWatch()
+		// Replays that ended before the watcher was added: the last report of each.
+		for _, n := range lk.ReplayedReports() {
+			agents.Report(n.Pane.UUID.String(), n.Report, time.Now().UnixMilli(), false)
+		}
 	}
-	hooks := hook.NewServer(tokens, func(pane string, env harness.Envelope) {
-		agents.Hook(pane, env)
+	hooks := hook.NewServer(tokens, func(pane string, env harness.Envelope) string {
+		_, opened := agents.Hook(pane, env)
 		// A hook from a pane in a project may follow a commit or a checkout: read the project's
 		// repository again, debounced.
 		repos.Refresh(store.ProjectOfPane(pane))
+		return opened
 	}, logger.Printf)
+	if agentSvc != nil {
+		hooks.SetHolder(agentSvc.holdPermission(s.Approvers))
+		if pwait > 0 {
+			logger.Printf("blocking permission hook on: Claude's PermissionRequest waits up to %v for the app's answer", pwait)
+		}
+	}
 	go func() {
 		if err := hooks.Serve(hl); err != nil {
 			logger.Printf("%v: %v", errHookServe, err)
@@ -416,8 +446,6 @@ func serve(args []string) error {
 	defer hooks.Close()
 	logger.Printf("epoch %s build %s device %s listening on %s, hooks on %s", s.Epoch(), build, key.Fingerprint(), path, hpath)
 
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
 	stopped := make(chan struct{})
 	go func() {
 		sig := <-sigs

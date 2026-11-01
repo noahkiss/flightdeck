@@ -247,7 +247,9 @@ Built choices (`internal/hook`, `internal/harness`, `gff-hab hook`):
   `gff-hab hook -t <ms> opencode <event type>` with the event JSON on stdin. The plugin stamps
   `Date.now()` itself, because each event spawns its own process and those may run out of
   order. `-t` sets the envelope's `t`; without it the command stamps its own clock. `-command`
-  sets how the harness runs gff-hab.
+  sets how the harness runs gff-hab. Claude's `PermissionRequest` entry runs
+  `gff-hab hook -wait claude PermissionRequest` with a 130 second timeout; see the blocking
+  permission hook under [Open decisions](#claude-blocking-permissionrequest-hook).
 - **Permission input.** A permission request copies the tool input only up to 64 KiB. A larger
   input (a whole file being written) is left out and `input_truncated` is set; `command` and
   `files` stay exact. This keeps one request from filling a client's 8 MiB event backlog.
@@ -338,6 +340,17 @@ When sources disagree inside one turn, the stronger one wins:
 - A weaker source may not overwrite a state a stronger source set in the same turn.
 - A new turn (a new `turn` id, or a prompt submit event) resets precedence.
 - `screen` may only fill a gap: it applies when no other source spoke for the current turn.
+- Built exception, for an interrupt: an `osc` `idle` ends a `working` or `blocked` state that
+  a stronger source set, once 1 second has passed since that source last spoke. Claude Code
+  fires no hook when the owner interrupts a turn (its `Stop` hook does not run then), so its
+  OSC 7501 `idle` is the only signal. Inside the second, the `idle` is taken as a stale report
+  from before the turn began and is dropped.
+- The exception never ends a `blocked:permission` whose request a hook or server reported
+  while that request is open, unless an OSC `blocked` arrived after the request opened, in the
+  same turn: Claude drew its dialog, and the owner left it with Esc. Any program in the pane
+  can write OSC 7501, and a lone forged `idle` must not end a live dialog, or a
+  `session.send` would press Enter on it. Otherwise the block ends only on a hook, a server
+  event or the program's exit.
 
 ### Ordering
 
@@ -384,6 +397,40 @@ Notes:
 - A nested `claude -p` inherits the pane's variables but runs with a different entrypoint value
   (`CLAUDE_CODE_ENTRYPOINT` is `cli` only for the interactive TUI). The hook command sends
   nothing unless the entrypoint is `cli`.
+- `PermissionRequest` payloads carry no `tool_use_id` (hooks reference). gff-hab names such a
+  request itself (see below); `PostToolUse` then resolves it by leaving `blocked`.
+
+Built choices (`internal/progstatus`, `internal/termq`, `internal/link`, `internal/harness`):
+
+- **The `?` query.** `ESC ] 7501 ; ? ST` is a terminal query in `internal/termq`. The holder
+  link answers it once, in live bytes, with
+  `ESC ] 7501 ; ?:states=idle,working,done,blocked,error:kinds=permission,question,auth`
+  and the query's own terminator (BEL or `ESC \`). Data streams leave the query out of the bytes
+  clients get, like every other query (rule 7).
+- **Reports.** `internal/progstatus` follows each pane's output for `ESC ] 7501 ; <pairs> ST`
+  reports, cut at any chunk boundary. It applies the protocol's grammar and limits: a malformed
+  pair is skipped, a report with no known `state`, bad base64, a control character in decoded
+  text, invalid UTF-8 in decoded text, a bad `id` or more than 4096 bytes is discarded whole.
+  Reports stay in the bytes clients get; a terminal ignores an OSC it does not know. The link
+  hands each live one to its watchers as a `PaneReport` notice. From replayed bytes (after a
+  gff-hab restart) it keeps only the last report and hands it on, marked not live, when the
+  replay ends; gff-hab applies it with source `screen` (see Edge cases).
+- **Mapping.** A report applies with source `osc`. Only the root record counts: a report with
+  an `id` never moves the pane. `app` must name a detection manifest (or alias), so another
+  program that reports status, such as a package manager, does not become an agent; a report
+  with no `app` counts for the harness the pane already has. `clear` from the pane's own
+  harness means it exited: the pane becomes `exited` and the session no longer holds it, as on
+  the process exit, so a lost `SessionEnd` never leaves a shell that looks like an idle agent.
+  `kind` rides along with `blocked`; `title`, `msg` and `progress` are parsed but not yet
+  shown.
+- **One state.** Hooks and reports go through the same store, under the precedence and ordering
+  rules above, so the hook's `session_id` stays the resume id and its request stays the open
+  one. A report's `t` is gff-hab's clock when it parsed the bytes.
+- **Request ids.** A permission request with no id from the payload gets one from gff-hab:
+  a random prefix per gff-hab run plus a counter, so an id from an earlier run never names a
+  new request.
+- **Exit.** When the holder reports the pane's program reaped, the pane's agent state becomes
+  `exited`: `last` keeps a `done` or `error`, and the session no longer holds the pane.
 
 Built choices for the transcript reader (`internal/transcript`, `cmd/gff-hab/chat.go`):
 
@@ -527,6 +574,28 @@ Further rules:
   the conversation within a few seconds. If neither comes, it shows "not delivered" and does
   not retry on its own.
 
+Built choices (`session.send`, `internal/harness`, `cmd/gff-hab`):
+
+- `idle`, `done` and `error` deliver now; `error` means the turn stopped and the harness is at
+  its prompt again.
+- `working` and `blocked` refuse with `conflict` and a hint that names the state. The hab does
+  not queue yet; the client keeps the text and sends again on `idle` or `done`.
+- An open permission request refuses with `conflict` whatever the state says, because Enter
+  on a live dialog approves it.
+- One send at a time per pane. A delivered message holds the pane until the agent leaves
+  `idle`, `done` and `error`, or 3 seconds pass; a second `session.send` meanwhile is refused
+  with `conflict`, never queued, so two messages never land in one turn.
+- No agent state, `none` or `exited` refuse with `unavailable`. An exited session refuses with
+  `conflict`.
+- Claude Code: `ESC [200~` + text + `ESC [201~` as one write, then CR as its own write, queued
+  back to back behind the pane's other input: no other client's `pane.input` lands between the
+  paste and its Enter. The text loses every control character except
+  newline and tab, so it can neither end the paste early nor press keys; CR LF and CR become
+  LF. Other harnesses answer `unavailable` until their stage.
+- After delivery, `done` becomes `idle` (`Store.Seen`).
+- Not built yet: the two-second typing pause, agent envelopes, the read back and its "not
+  delivered" event, and attachments (`unavailable`).
+
 ## Permission answers
 
 - **Preconditions.** All must hold: the pane is `blocked:permission` from a `server` or `hook`
@@ -541,6 +610,25 @@ Further rules:
 - **Screen text never decides.** A manifest that says "looks blocked" may surface a hint. It can
   never enable an answer button.
 
+Built choices (`approval.answer`, Claude Code):
+
+- The checks run in the state store: `blocked:permission`, last set by a `hook` or `server`
+  source, a request with an id that is still open, and the same id in the answer. Any miss is
+  `conflict`; an OSC 7501 `blocked` alone never enables an answer.
+- `allow` and `deny` only; `answer` (a question) is `unavailable` for now.
+- A blocking permission hook that waits on this request takes the answer as Claude's decision.
+  If the hook could not write it (the hook went away at that instant), the call answers
+  `unavailable`; Claude then shows its own dialog, and the owner answers again. It never
+  retries as keys on its own.
+- Otherwise the dialog gets keys: `1` for allow (the dialog's first option, Yes), Esc for deny.
+  When a blocking hook for the request gave up with no decision less than 1 second ago, the
+  keys wait out that second, so they do not land in the prompt before the dialog is drawn.
+- Either way the call then reads back for up to 3 seconds and succeeds only on a real
+  resolution: a hook or server closes the request (`PostToolUse`, a new prompt, the turn's end),
+  Claude reports `working` over OSC 7501 (the tool runs), or, for a deny, an OSC `idle` ends
+  the turn (Esc interrupts it). An exit or a session change answers `unavailable`, and so does
+  a request still open after 3 seconds, with a hint to answer in the terminal.
+
 ## Edge cases
 
 | Case | Behaviour |
@@ -552,7 +640,9 @@ Further rules:
 | Subagents | Claude hooks with `agent_id` never rebind the pane. |
 | Transcript format drift | Each reader pins the harness versions it was tested on. An unknown version reads in a tolerant mode that shows unknown records as placeholders and flags the adapter as degraded. gff-hab reports the degraded adapter as drift (built so far: a log line once per version; the status board shows it once it exists). A CI job runs new harness versions against our fixtures. |
 | Transcript not yet written | Claude may create the file after the first hook. The reader waits for the file; it does not fail the pane. |
-| `gff-hab` restarts | Hook posts during the gap are lost. On start, the adapter rebuilds state from the transcript tail, the last OSC 7501 report in the holder's byte ring, and the process table. It marks state as `source: screen` until the next hook. |
+| `gff-hab` restarts | Hook posts during the gap are lost. On start, the adapter rebuilds state from the transcript tail, the last OSC 7501 report in the holder's byte ring, and the process table. It marks state as `source: screen` until the next hook. Built: the last ring report only, as `screen`; the transcript tail and process table are not read yet. |
+| A Claude starts while `gff-hab` is down | Nobody answers its OSC 7501 `?` query, and replayed bytes are never answered, so this Claude sends no reports for its whole run. Its state comes from hooks only. |
+| A program in the pane forges OSC 7501 | Reports never enable an answer, and a lone `idle` never ends a hook-reported permission block. Known limit: once Claude has drawn its dialog (its own OSC `blocked`), a forged `idle` reads as the owner's Esc and ends the block, so a `session.send` could then press Enter on the dialog. Only a structured channel closes this. |
 | Harness upgrade mid-session | The running process keeps its version; only new panes see the new one. The reader picks its parser per session from the version in the transcript, not from the installed binary. |
 | Out-of-order hooks | See [Ordering](#ordering). |
 | Codex daemon update | With the shared daemon, `codex app-server daemon update` may interrupt running work in every pane. This is one reason the hab starts Codex with `--no-daemon` (decision below). |
@@ -607,6 +697,7 @@ inform the choice.
 
 Decision: B, keep the blocking hook as a per-host setting, off by default, with about a 30-second
 wait (owner, 2026-11-01).
+Built: option B, off by default.
 
 | | A. Fire-and-forget (today) | B. Blocking hook with timeout |
 |---|---|---|
@@ -618,6 +709,28 @@ Recommendation: B, with a short timeout (about 30 seconds, well under Claude's 6
 default), a per-host switch that is off by default, and an immediate no-decision exit when no
 client is connected. Codex's `PermissionRequest` hook supports the same allow and deny shape
 and can share the code.
+
+Built (option B, off until the owner turns it on):
+
+- **Switch.** `gff-hab serve -permission-wait <duration>`, else `$GFF_HAB_PERMISSION_WAIT` (a Go
+  duration or whole seconds). 0, the default, is off. 1 second to 120 seconds when on.
+- **Hook.** The printed Claude config runs `gff-hab hook -wait claude PermissionRequest` with a
+  130 second timeout. The command posts to `/hooks/<token>?wait=1`. gff-hab applies the event as
+  usual, then answers 204 at once unless the switch is on, a client that can answer is
+  connected, and this very envelope opened the pane's open request. A client can answer when it
+  said hello as `app` or `terminal` and subscribed to events whose scope holds the pane; a
+  `cli` or `script` client, such as `gff-hab events`, does not count. A `PermissionRequest`
+  that binding dropped (a nested session) opened nothing, so its hook never waits and can never
+  take another request's answer. Then it answers 200
+  at once and sends the body later: `{"behavior":"allow"}`, `{"behavior":"deny","message":...}`
+  or `{}` when the wait ends with no decision. The answer's header must come within the hook's
+  900 ms budget, so a hung gff-hab still costs a turn no more than that.
+- **Output.** With a decision, the command prints Claude's hook output,
+  `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{...}}}`. With none it
+  prints nothing, and Claude shows its own dialog. The command never prints for any other event.
+- **Answer.** `approval.answer` hands the decision to the waiting hook when one waits on that
+  request; otherwise it falls back to keys.
+- Codex's hook does not use `-wait` yet.
 
 ### Who writes hook config into harness settings
 
