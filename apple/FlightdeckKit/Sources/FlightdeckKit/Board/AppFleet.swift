@@ -11,11 +11,7 @@ public enum AppFleet {
         let fleet = Fleet()
         let log = Logger(subsystem: "com.flightdeck.app", category: "config")
         let demo = DemoFleet.isRequested(defaults)
-        fleet.usage = UsageCenter(notifier: SystemUsageNotifier())
-        if !demo {
-            // Demo readings never outlive demo mode.
-            fleet.usage?.book.forget(habIDPrefix: DemoFleet.habPrefix)
-        }
+        fleet.usage = usageCenter(demo: demo)
         if demo {
             log.info("demo mode")
             Task { await DemoFleet.populate(fleet) }
@@ -40,6 +36,22 @@ public enum AppFleet {
         addPush(to: fleet, environment: env)
         return fleet
     }
+
+    /// Usage readings and alerts. Demo mode posts no notification and keeps
+    /// its readings and alert marks in a defaults suite of its own, cleared
+    /// at each start, so the widget and the real alert state never see them.
+    @MainActor
+    static func usageCenter(demo: Bool) -> UsageCenter {
+        guard demo, let d = UserDefaults(suiteName: demoUsageSuite) else {
+            return UsageCenter(notifier: SystemUsageNotifier())
+        }
+        d.removePersistentDomain(forName: demoUsageSuite)
+        let c = UsageCenter(notifier: NoopUsageNotifier(), defaults: d)
+        c.reloadWidgets = {}
+        return c
+    }
+
+    static let demoUsageSuite = "flightdeck.demo.usage"
 
     /// The in-app SSH carrier's habs. iPhone and iPad make the device key on
     /// first start. The Mac keeps the system ssh as its default; it loads its

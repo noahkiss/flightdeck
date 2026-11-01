@@ -10,9 +10,6 @@ public enum DemoFleet {
     /// The launch argument that turns demo mode on.
     public static let argument = "FlightdeckDemo"
 
-    /// Every demo hab's connection id starts with this.
-    public static let habPrefix = "demo-"
-
     public static func isRequested(_ defaults: UserDefaults = .standard) -> Bool {
         defaults.bool(forKey: argument)
     }
