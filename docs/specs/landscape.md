@@ -257,9 +257,9 @@ match it.
 | Paseo | The app keeps a replica cache, shows cached rows offline, and reconciles on reconnect. A creation journal with idempotency keys stops a reconnecting client from sending the first prompt twice |
 | herdr | Dimmed cached state; input off until a fresh screen arrives |
 | Rex | Host-list changes made offline wait and are sent later |
-| Ours | Reconnect tokens, epoch and seq, resume by offset (`app.md` 10.2; `hab-logic-api.md` 3.5, 3.7). A write that timed out is never sent (`hab-logic-api.md` 3.8) |
+| Ours | Reconnect tokens, epoch and seq, resume by offset (`app.md` 10.2; `hab-logic-api.md` 3.5, 3.7). A write that timed out is never sent (`hab-logic-api.md` 3.8). Idempotency keys on `session.create` and `session.send` (`hab-logic-api.md` 3.9) |
 | Bar | Match herdr and Paseo |
-| Flag | **Even**. Add idempotency keys (idea 4.2) |
+| Flag | **Even**. Idempotency keys (idea 4.2) are built in the hab; the clients do not send them yet |
 
 ---
 
@@ -302,7 +302,7 @@ accepted ideas into tasks.
 | # | Idea | Source | What it does | Why it helps | Proposed home |
 |---|---|---|---|---|---|
 | 4.1 | Presence tiers for push | Paseo | A client focused on the agent gets nothing. A client active in the last 180 s gets an in-app notice. Otherwise, a push | Fewer pushes while the owner is at the Mac, with no lost approvals. We have only the first tier | task-oe7ioczy |
-| 4.2 | Idempotency keys on create and send | Paseo | Each session start and chat send carries a client key; the hab drops a repeat | A phone that reconnects mid-send never sends a prompt twice or starts two sessions | new task: "hab API: idempotency keys on session.create and chat send" (Part 2) |
+| 4.2 | Idempotency keys on create and send | Paseo | Each session start and chat send carries a client key; the hab drops a repeat | A phone that reconnects mid-send never sends a prompt twice or starts two sessions | task-uu40arhs; built in the hab (`hab-logic-api.md` 3.9, Idempotency keys) |
 | 4.3 | State resets from the owner's interrupt and prompt marks | Paseo, Rex spec | Esc or Ctrl-C typed into a working Claude pane clears `working`. An OSC 133 `A` mark (a shell prompt is back) drops OSC 7501 `working` and `blocked` | Claude sends no Stop on interrupt, so a pane can stick in `working`. A harness that exits leaves stale OSC 7501 state | new task: "Adapters: clear working on owner interrupt and on a prompt mark" (Part 4) |
 | 4.4 | Plan approval and questions as structured answers | Paseo | The app shows a plan and answers plan-mode exit; AskUserQuestion shows real choices | The phone answers the common "approve this plan?" stop, not only tool permissions | task-oe7ioczy, with the hook side in the Claude stage of plan-9icxnz2m |
 | 4.5 | Worktrees per project | Paseo, herdr | Create, open and remove a worktree for a project. A project file names setup and teardown; an include list copies ignored files. Setup from a foreign PR waits for a yes | Parallel agents on one repo is the common pattern; both tools ship it | new task: "Projects: worktree create, open and remove, with setup scripts" |

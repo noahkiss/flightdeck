@@ -196,6 +196,8 @@ type Server struct {
 	listeners []net.Listener
 	closed    bool
 	wg        sync.WaitGroup
+
+	idemKeys idemTable // session.create and session.send keys (spec 3.9)
 }
 
 type token struct {

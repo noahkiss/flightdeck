@@ -311,6 +311,11 @@ func TestSessionCreateAndClose(t *testing.T) {
 		Env:        []string{"PIDF=" + pidFile, noRaceExitSleep},
 	})
 	ended := createSession(t, sock, api.SessionCreateParams{Argv: []string{"/bin/sh", "-c", "exit 0"}, Env: []string{noRaceExitSleep}})
+	// A create retried with its idempotency key, here over a second connection, starts nothing.
+	keyed := api.SessionCreateParams{Argv: []string{"/bin/sh", "-c", "exit 0"}, Env: []string{noRaceExitSleep}, IdempotencyKey: "retry-1"}
+	if first, again := createSession(t, sock, keyed), createSession(t, sock, keyed); first.Session != again.Session || first.Pane != again.Pane {
+		t.Errorf("a retried create: %+v, then %+v", first, again)
+	}
 	if kind := callErr(t, sock, "session.create", api.SessionCreateParams{Name: "loop", Argv: []string{"/bin/true"}}); kind != "conflict" {
 		t.Errorf("a taken name: %s, want conflict", kind)
 	}
@@ -348,6 +353,9 @@ func TestSessionCreateAndClose(t *testing.T) {
 		ps := structureNow().Projects
 		return len(ps) == 1 && ps[0].Branch != "" && ps[0].Head == "" && ps[0].Ahead == nil
 	})
+	if len(st.Sessions) != 3 {
+		t.Errorf("%d sessions, want 3: %+v", len(st.Sessions), st.Sessions)
+	}
 	if s := session(st, ended.Session); s.Name != "sh" || s.Project != "" {
 		t.Errorf("the default-named session: %+v", s)
 	}

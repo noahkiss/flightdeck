@@ -805,14 +805,16 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   the adapter: `codex` is built (`harness-adapters.md`, Codex, built choices); any other value
   answers `unavailable`. Every input is checked before the
   spawn; if filing the session fails after it, the new pane is closed again. `gff-client.md`
-  proposed `command`; `argv` is that command, unparsed.
+  proposed `command`; `argv` is that command, unparsed. The optional `idempotency_key` makes a
+  retried create start one session (Idempotency keys, below).
 - **`session.resume`** takes `{session}` and returns the same ids as `session.create`.
 - **`pane.close`** takes `{pane}` (the `PaneRef` of the size methods) and returns the seq only.
 - **`session.send`** returns the seq only, once the writes reached the program. Whether the
   message may go follows from the pane's agent state, which the client already holds: a busy
   agent, an open permission request, or another message still starting its turn refuses it
   with `conflict`, a pane with no agent with `unavailable` (`harness-adapters.md`, Input
-  delivery). A "not delivered" report is added as an event later.
+  delivery). A "not delivered" report is added as an event later. The optional
+  `idempotency_key` makes a retried send deliver the message once (Idempotency keys, below).
 - **`approval.answer`** `choice` is a closed set: `allow`, `deny`, or `answer` with the option or
   free text in `text`. `via` is `app`, `banner`, `watch`, `voice` or `terminal`. A request that
   is not the pane's open one, or a second answer to one request, is refused with `conflict`.
@@ -903,6 +905,40 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   The approval request is `PermissionRequest`, which `AgentState.request` carries. The other
   `app.md` 17 rows were already in place: chat kind `plan`, `approval.answer` field `via`, and
   push kind `usage`.
+
+**Idempotency keys** (task-uu40arhs; `internal/control/idem.go`; `landscape.md` idea 4.2,
+after Paseo). A phone that loses its connection mid-call cannot tell whether the call ran. With
+a key it sends the same call again, and the hab runs it at most once. Built choices:
+
+- **Field.** `session.create` and `session.send` take an optional `idempotency_key`, a string
+  of at most 128 bytes the client makes per request (a random UUID will do). A longer key
+  answers `invalid`. No key: the call runs every time, as before. The field is additive
+  (3.3); the results are unchanged, so no golden file changes.
+- **Scope.** One table per hab, shared by every connection, because a client that reconnects
+  after the grace period gets a new `client_id` (3.7). Keys are per method: the same string on
+  `session.create` and `session.send` is two keys.
+- **A repeat after success** runs nothing and answers the first call's result: the same
+  `session` and `pane` ids for a create, success for a send. Its `seq` is the repeat's own
+  (3.5). A create's size ownership (6.5) stays with the first caller.
+- **A repeat while the first call runs** waits for it and gets its answer, result or error.
+  It waits at most the action timeout (30 s), then answers `unavailable`; the first call goes
+  on.
+- **A failed call is forgotten.** An error answer stores nothing, so a retry with the same
+  key runs again. A send refused because the agent is busy (`conflict`) is the common case:
+  the app sends the message again at the next `idle` (`app.md` 4.2). A send whose paste
+  reached the program but whose Enter failed would paste twice on a retry; this needs a write
+  to fail between two queued writes, and the agent state check still refuses a busy agent.
+- **Same key, other request.** The hab keeps a SHA-256 hash of the params without the key. A
+  repeat whose params differ answers `conflict` and runs nothing.
+- **How long.** A key is kept 24 hours after its call succeeded, at most 4096 keys; past that
+  the oldest goes first. The app's queued "sends after this turn" go out within that time.
+- **In memory only.** A gff-hab restart forgets every key. A restart lands between a call and
+  its answer only rarely, and the client sees a new epoch and takes a fresh snapshot (3.5), so
+  it can see a session its create made. A repeated send after a restart reaches an agent that
+  is already working and is refused with `conflict`. Paseo's creation journal is the bar;
+  persisting the table costs a write per send and buys little more.
+- **Not built here.** The app and `gff` do not send keys yet; each client adds them with its
+  retry path.
 
 **Push** (task-oe7ioczy; `internal/push`, `cmd/gff-hab/push.go`). Built choices:
 

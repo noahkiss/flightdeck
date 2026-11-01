@@ -1928,6 +1928,8 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
     public var env: [String]?
     /// Detection manifest id of a harness to start, such as claude. Needs that harness's adapter.
     public var harness: String?
+    /// A key the client makes for this create, at most 128 bytes. A repeat with the same key gets the first create's ids and starts nothing.
+    public var idempotencyKey: String?
     /// Session name, unique on the host. Default: the program's base name, with -2, -3 and so on when taken.
     public var name: String?
     /// Project id to file the session in. Give project or project_dir, or neither for an unfiled session.
@@ -1943,18 +1945,20 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
         case cwd = "cwd"
         case env = "env"
         case harness = "harness"
+        case idempotencyKey = "idempotency_key"
         case name = "name"
         case project = "project"
         case projectDir = "project_dir"
         case rows = "rows"
     }
 
-    public init(argv: [String]? = nil, cols: Int? = nil, cwd: String? = nil, env: [String]? = nil, harness: String? = nil, name: String? = nil, project: String? = nil, projectDir: String? = nil, rows: Int? = nil) {
+    public init(argv: [String]? = nil, cols: Int? = nil, cwd: String? = nil, env: [String]? = nil, harness: String? = nil, idempotencyKey: String? = nil, name: String? = nil, project: String? = nil, projectDir: String? = nil, rows: Int? = nil) {
         self.argv = argv
         self.cols = cols
         self.cwd = cwd
         self.env = env
         self.harness = harness
+        self.idempotencyKey = idempotencyKey
         self.name = name
         self.project = project
         self.projectDir = projectDir
@@ -2030,19 +2034,23 @@ public struct SessionRenameParams: Codable, Sendable, Hashable {
 public struct SessionSendParams: Codable, Sendable, Hashable {
     /// Attachment ids from attachment.put.
     public var attachments: [String]?
+    /// A key the client makes for this message, at most 128 bytes. A repeat with the same key gets the first send's answer and writes nothing.
+    public var idempotencyKey: String?
     public var origin: SendOrigin
     public var session: String
     public var text: String
 
     enum CodingKeys: String, CodingKey {
         case attachments = "attachments"
+        case idempotencyKey = "idempotency_key"
         case origin = "origin"
         case session = "session"
         case text = "text"
     }
 
-    public init(attachments: [String]? = nil, origin: SendOrigin, session: String, text: String) {
+    public init(attachments: [String]? = nil, idempotencyKey: String? = nil, origin: SendOrigin, session: String, text: String) {
         self.attachments = attachments
+        self.idempotencyKey = idempotencyKey
         self.origin = origin
         self.session = session
         self.text = text

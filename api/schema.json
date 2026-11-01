@@ -469,6 +469,13 @@
           }
         },
         {
+          "name": "idempotency_key",
+          "description": "A key the client makes for this create, at most 128 bytes. A repeat with the same key gets the first create's ids and starts nothing.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
           "name": "name",
           "description": "Session name, unique on the host. Default: the program's base name, with -2, -3 and so on when taken.",
           "schema": {
@@ -675,6 +682,13 @@
             "items": {
               "type": "string"
             }
+          }
+        },
+        {
+          "name": "idempotency_key",
+          "description": "A key the client makes for this message, at most 128 bytes. A repeat with the same key gets the first send's answer and writes nothing.",
+          "schema": {
+            "type": "string"
           }
         },
         {
@@ -3496,6 +3510,10 @@
             "type": "string",
             "description": "Detection manifest id of a harness to start, such as claude. Needs that harness's adapter."
           },
+          "idempotency_key": {
+            "type": "string",
+            "description": "A key the client makes for this create, at most 128 bytes. A repeat with the same key gets the first create's ids and starts nothing."
+          },
           "name": {
             "type": "string",
             "description": "Session name, unique on the host. Default: the program's base name, with -2, -3 and so on when taken."
@@ -3590,6 +3608,10 @@
             "items": {
               "type": "string"
             }
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "A key the client makes for this message, at most 128 bytes. A repeat with the same key gets the first send's answer and writes nothing."
           },
           "origin": {
             "$ref": "#/components/schemas/SendOrigin"

@@ -16,6 +16,8 @@ type SessionCreateParams struct {
 	Env        []string `json:"env,omitempty" doc:"KEY=value entries added to the hab's own environment; an entry replaces the hab's value for its key."`
 	Cols       int      `json:"cols,omitempty" doc:"Initial width. Default 80."`
 	Rows       int      `json:"rows,omitempty" doc:"Initial height. Default 24."`
+	// IdempotencyKey makes a retried create start one session (spec 3.9, Idempotency keys).
+	IdempotencyKey string `json:"idempotency_key,omitempty" doc:"A key the client makes for this create, at most 128 bytes. A repeat with the same key gets the first create's ids and starts nothing."`
 }
 
 // SessionCreated names the session and pane a create or resume made.
@@ -51,6 +53,8 @@ type SessionSendParams struct {
 	Text        string     `json:"text"`
 	Attachments []string   `json:"attachments,omitempty" doc:"Attachment ids from attachment.put."`
 	Origin      SendOrigin `json:"origin"`
+	// IdempotencyKey makes a retried send deliver the message once (spec 3.9, Idempotency keys).
+	IdempotencyKey string `json:"idempotency_key,omitempty" doc:"A key the client makes for this message, at most 128 bytes. A repeat with the same key gets the first send's answer and writes nothing."`
 }
 
 // --- Approvals ---

@@ -696,6 +696,9 @@ func (c *conn) handleAgent(m message) {
 		if e == nil && !isWord("SendOrigin", string(send.Origin)) && send.Origin != "" {
 			e = appErr(api.ErrorKindInvalid, "origin %q is not one of %v", send.Origin, api.Enums["SendOrigin"])
 		}
+		if e == nil {
+			e = checkKey(m.Method, send.IdempotencyKey)
+		}
 	} else {
 		if e = c.decodeUp(m, &answer); e == nil && (answer.Pane == "" || answer.Request == "") {
 			e = appErr(api.ErrorKindInvalid, "approval.answer needs a pane and a request")
@@ -716,7 +719,17 @@ func (c *conn) handleAgent(m message) {
 		defer cancel()
 		var err error
 		if m.Method == "session.send" {
-			err = c.s.cfg.Agents.Send(ctx, c.clientID, send)
+			key, bare := send.IdempotencyKey, send
+			bare.IdempotencyKey = ""
+			_, e := c.s.idem(ctx, m.Method, key, bare, func() (any, *Error) {
+				if err := c.s.cfg.Agents.Send(ctx, c.clientID, send); err != nil {
+					return nil, actionErr(m.Method, err)
+				}
+				return nil, nil
+			})
+			if e != nil {
+				err = e
+			}
 		} else {
 			err = c.s.cfg.Agents.Answer(ctx, c.clientID, answer)
 		}
@@ -1053,19 +1066,32 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		if e := c.decodeUp(m, &p); e != nil {
 			return nil, e
 		}
+		if e := checkKey(m.Method, p.IdempotencyKey); e != nil {
+			return nil, e
+		}
 		if c.s.cfg.Actions == nil {
 			return nil, appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
 		defer cancel()
-		session, pane, err := c.s.cfg.Actions.CreateSession(ctx, p)
-		if err != nil {
-			return nil, actionErr(m.Method, err)
+		key, bare := p.IdempotencyKey, p
+		bare.IdempotencyKey = ""
+		res, e := c.s.idem(ctx, m.Method, key, bare, func() (any, *Error) {
+			session, pane, err := c.s.cfg.Actions.CreateSession(ctx, p)
+			if err != nil {
+				return nil, actionErr(m.Method, err)
+			}
+			if c.s.cfg.Size != nil {
+				c.s.cfg.Size.Created(c.clientID, pane) // the creator owns the new pane (spec 6.5)
+			}
+			return api.SessionCreated{Session: session, Pane: pane}, nil
+		})
+		if e != nil {
+			return nil, e
 		}
-		if c.s.cfg.Size != nil {
-			c.s.cfg.Size.Created(c.clientID, pane) // the creator owns the new pane (spec 6.5)
-		}
-		return api.SessionCreated{Seq: s, Session: session, Pane: pane}, nil
+		made := res.(api.SessionCreated)
+		made.Seq = s
+		return made, nil
 	case "command.list":
 		var p api.CommandListParams
 		if e := c.decodeUp(m, &p); e != nil {
