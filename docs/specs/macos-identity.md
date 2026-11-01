@@ -377,6 +377,8 @@ answers "will the grants still match".
   when the Mac app is installed.
 - A build directory is removed only when no job names it and no process runs from it
   (`hab-holder.md` 4.3 step 7).
+- Built so far: one copy of each binary in `<state>/bin` (`hab-holder.md` 4.4). That is an
+  interim only. It must become this layout before Mac proof P3 and before any grant work.
 
 ### 6.2 Drain keeps grants
 

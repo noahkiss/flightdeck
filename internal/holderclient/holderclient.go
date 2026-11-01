@@ -420,6 +420,12 @@ func (c *Client) Upgrade(ctx context.Context) (*Holder, error) {
 		if h == cur || h.Draining() || h.Closed() {
 			continue
 		}
+		if h.Build() == cur.Build() {
+			// A holder that registered after Upgrade gave up waiting for it, so a later scan
+			// started another. Drain heals it; the line shows how often it happens.
+			c.cfg.Logf("holderclient: draining %s, a second holder of this build (%s); %s takes new panes",
+				h.Instance(), h.Build(), cur.Instance())
+		}
 		if err := h.Drain(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("drain %s: %w", h.Instance(), err))
 		}

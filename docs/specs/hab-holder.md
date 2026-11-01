@@ -397,6 +397,10 @@ unreachable and keeps H1 alone. The compatibility rule in 3.2 exists to prevent 
   names that one path, so a holder that restarts after a crash runs the newest build. Separate
   directories per build are not built yet; they matter for a re-exec (option C) and for macOS
   grants (Q2).
+- The one `<state>/bin` copy is an interim only. It must change to per-build copies
+  (`macos-identity.md` 6.1) before Mac proof P3 and before any grant work: a replaced binary at
+  one path may lose its grants at each install, and a crash-restarted older holder runs the new
+  build.
 
 ---
 
@@ -429,6 +433,14 @@ end its children. gff-hab therefore asks the init system to start each holder as
 - A unit gets a bare environment. gff-hab passes each pane's full environment in spawn (2.2), so
   the holder unit needs only `PATH` for itself. Install writes the installing user's `PATH` into
   both units.
+- Built (stage 6): install also writes the installing user's locale (`LANG` and every `LC_*`)
+  into both units and both plists. gff-hab builds each pane's environment from its own, then the
+  request's entries on top. Its own is changed first: `TERM=xterm-256color` and
+  `COLORTERM=truecolor` when unset, a UTF-8 `LANG` when no `LANG`, `LC_ALL` or `LC_CTYPE` is set
+  (`C.UTF-8` on Linux, `en_US.UTF-8` on macOS), and the job's own variables are dropped
+  (`XPC_SERVICE_NAME`, `INVOCATION_ID`, `JOURNAL_STREAM`, `SYSTEMD_EXEC_PID`).
+- Follow-up: start the default shell (no argv given) as a login shell, so the user's profile
+  builds `PATH` again instead of the `PATH` frozen at install.
 
 ### 5.3 macOS: launchd agents in the GUI domain
 
@@ -500,10 +512,15 @@ Built (stage 6):
   own build is connected: at start, at each registry scan, and before a spawn. A failed start is
   retried by scans after 30 s, and at once by a spawn. A new build therefore starts its holder
   and drains the older ones as soon as it runs (4.3).
-- When a holder says bye, gff-hab waits until its pid is gone, then boots out its launchd job and
-  deletes its plist. A holder still running after a minute keeps its job. On systemd there is
-  nothing to remove.
-- A holder that exits cleanly while gff-hab is down keeps its plist until the next uninstall.
+- When a holder says bye, gff-hab waits until its pid is gone or launchd runs no process for its
+  job (a live pid launchd does not run for the job is another process that reused the pid), then
+  boots out its launchd job and deletes its plist and its log. A holder still running after a
+  minute keeps its job. On systemd there is nothing to remove.
+- A holder can still leave its plist: it exits while gff-hab is down, or gff-hab restarts during
+  that minute. launchd would start a holder from each such plist at every login. So at start, with
+  `-init launchd`, gff-hab sweeps: it removes each holder plist (and log) whose instance has no
+  live registry entry and whose job launchd runs no process for, and each holder log with no
+  plist.
 - Running with no init system stays possible: `gff-hab serve -init none` (the default) starts no
   holders; they are started by hand or by a test.
 
@@ -525,6 +542,17 @@ Built (stage 6):
   `systemctl --user enable` makes in `default.target.wants`, the binary copies in `<state>/bin`,
   and on macOS the log directory. A second install replaces the binaries and job files and
   restarts the logic job only. `gff-hab install -dry-run` prints the job files.
+- Install records each file and each directory it creates in `<state>/install.json` before it
+  writes it. A binary whose source is already the installed copy is not written, so not recorded.
+  Uninstall removes what the record lists, the holder plists and holder logs by their names, the
+  record, then each directory install created, only when it is empty. So `-state ~` never costs
+  the user `~/logs` or a `~/bin/gff-hab` install did not write. With no record it removes the
+  job files by name only, and says so.
+- Install and uninstall refuse a state directory whose record names another prefix, init system
+  or unit directory, and change nothing: two logic jobs on one state directory would fight for
+  its lock, and one would restart forever. The message names the uninstall to run first.
+- On Linux, when `systemctl --user disable --now` fails, uninstall checks `is-active` and stops
+  if the logic unit still runs, before it stops any holder.
 - On Linux, install checks `loginctl show-user <uid> --property=Linger` and prints
   `loginctl enable-linger` when it is off. It never runs sudo.
 - On macOS, install and each holder start refuse when `launchctl print gui/<uid>` fails (Q5).

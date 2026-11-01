@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/noahkiss/flightdeck/internal/holderreg"
 	"github.com/noahkiss/flightdeck/internal/service"
@@ -59,7 +60,9 @@ func osInit() (service.Init, error) {
 
 // config resolves the flags into an install for init system in. Every path is made absolute.
 func (f *serviceFlags) config(in service.Init) (service.Config, error) {
-	c := service.Config{Init: in, Prefix: *f.prefix, Path: os.Getenv("PATH"), UID: os.Getuid()}
+	c := service.Config{
+		Init: in, Prefix: *f.prefix, Path: os.Getenv("PATH"), Locale: service.LocaleEnv(os.Environ()), UID: os.Getuid(),
+	}
 	if c.Prefix == "" {
 		c.Prefix = os.Getenv("GFF_SERVICE_PREFIX")
 	}
@@ -112,7 +115,7 @@ func defaultUnitDir(in service.Init, getenv func(string) string, home func() (st
 }
 
 // serveStarter returns the holder starter serve uses, or nil with -init none (or unset): then
-// gff-hab starts no holders.
+// gff-hab starts no holders. It first sweeps the jobs of holders that are gone (spec 5.4).
 func serveStarter(f *serviceFlags, logf func(string, ...any)) (service.Starter, error) {
 	in, err := initFor(*f.init, service.None)
 	if err != nil || in == service.None {
@@ -122,7 +125,14 @@ func serveStarter(f *serviceFlags, logf func(string, ...any)) (service.Starter, 
 	if err != nil {
 		return nil, err
 	}
-	return service.NewStarter(c, nil, newInstanceID, logf)
+	st, err := service.NewStarter(c, nil, newInstanceID, logf)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	st.Sweep(ctx)
+	return st, nil
 }
 
 // install writes and loads the jobs.

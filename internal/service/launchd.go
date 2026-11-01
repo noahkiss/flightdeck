@@ -82,14 +82,26 @@ func (p *plist) args(k string, argv []string) {
 	p.b.WriteString("\t</array>\n")
 }
 
-func (p *plist) env(path string) {
-	if path == "" {
+// env writes PATH and the locale settings (spec 5.2: a job gets a bare environment).
+func (p *plist) env(c Config) {
+	vars := c.Locale
+	if c.Path != "" {
+		vars = append([]string{"PATH=" + c.Path}, vars...)
+	}
+	if len(vars) == 0 {
 		return
 	}
 	p.key("EnvironmentVariables")
-	p.b.WriteString("\t<dict>\n\t\t<key>PATH</key>\n\t\t")
-	p.str(path)
-	p.b.WriteString("\n\t</dict>\n")
+	p.b.WriteString("\t<dict>\n")
+	for _, kv := range vars {
+		k, v, _ := strings.Cut(kv, "=")
+		p.b.WriteString("\t\t<key>")
+		xml.EscapeText(&p.b, []byte(k))
+		p.b.WriteString("</key>\n\t\t")
+		p.str(v)
+		p.b.WriteString("\n")
+	}
+	p.b.WriteString("\t</dict>\n")
 }
 
 func (p *plist) begin() {
@@ -105,13 +117,13 @@ func (p *plist) end() []byte {
 }
 
 // common writes the keys both jobs share: the GUI session only (spec 5.3), a working directory,
-// log files under the state directory, and PATH.
+// a log file under the state directory, PATH and the locale.
 func (p *plist) common(c Config, log string) {
 	p.kv("LimitLoadToSessionType", "Aqua")
 	p.kv("WorkingDirectory", c.StateDir)
-	p.kv("StandardOutPath", filepath.Join(c.LogDir(), log))
-	p.kv("StandardErrorPath", filepath.Join(c.LogDir(), log))
-	p.env(c.Path)
+	p.kv("StandardOutPath", log)
+	p.kv("StandardErrorPath", log)
+	p.env(c)
 }
 
 // logicPlist renders <prefix>.gff-hab.plist: kept alive always, restarted after a short delay
@@ -124,7 +136,7 @@ func logicPlist(c Config) []byte {
 	p.kb("RunAtLoad", true)
 	p.kb("KeepAlive", true)
 	p.ki("ThrottleInterval", 1)
-	p.common(c, "gff-hab.log")
+	p.common(c, c.logicLog())
 	return p.end()
 }
 
@@ -143,7 +155,7 @@ func holderPlist(c Config, instance string) []byte {
 	p.kb("AbandonProcessGroup", true)
 	p.ki("ExitTimeOut", 30)
 	p.ki("ThrottleInterval", 1)
-	p.common(c, "gff-hab-holder."+instance+".log")
+	p.common(c, c.holderLog(instance))
 	return p.end()
 }
 
@@ -221,7 +233,7 @@ func runningLaunchdHolders(ctx context.Context, c Config, run Runner) ([]string,
 	return out, nil
 }
 
-func uninstallLaunchd(ctx context.Context, c Config, o Options) error {
+func uninstallLaunchd(ctx context.Context, c Config, o Options, m *manifest) error {
 	if err := bootout(ctx, c, o.Run, c.LogicJob()); err != nil {
 		return err
 	}
@@ -235,7 +247,7 @@ func uninstallLaunchd(ctx context.Context, c Config, o Options) error {
 			return err
 		}
 	}
-	if err := removeFiles(c); err != nil {
+	if err := removeFiles(c, m); err != nil {
 		return err
 	}
 	fmt.Fprintf(o.Out, "removed %s and %d holder job(s) from %s\n", c.LogicJob(), len(plists), c.UnitDir)
@@ -269,32 +281,91 @@ func (s *launchdStarter) Start(ctx context.Context) error {
 	return nil
 }
 
-// Retire waits for the holder's process to end, then unloads its job and deletes its plist.
-// Unloading a running holder would end it, so a holder still alive after a minute keeps its job.
+// Retire waits for the holder's process to end, then unloads its job and deletes its plist and
+// its log. Unloading a running holder would end it, so a holder still alive after a minute keeps
+// its job. The wait ends when the pid is gone or when launchd runs no process for the job: a
+// live pid that launchd does not run for the job is another process that reused the pid.
 func (s *launchdStarter) Retire(instance string, pid int) {
 	if !holderreg.ValidInstance(instance) {
 		return
 	}
+	label := s.c.HolderJob(instance)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
+	defer cancel()
 	deadline := time.Now().Add(time.Minute)
-	for pid > 0 && holderreg.Alive(pid) {
+	for pid > 0 && holderreg.Alive(pid) && running(ctx, s.c, s.run, label) {
 		if time.Now().After(deadline) {
 			s.logf("service: holder %s (pid %d) still runs after it said bye; its job stays loaded", instance, pid)
 			return
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(250 * time.Millisecond)
 	}
-	label := s.c.HolderJob(instance)
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
 	if running(ctx, s.c, s.run, label) {
 		s.logf("service: %s runs again; its job stays loaded", label)
 		return
 	}
+	s.remove(ctx, instance)
+}
+
+// remove unloads the job of a holder with no process, then deletes its plist and its log.
+func (s *launchdStarter) remove(ctx context.Context, instance string) bool {
+	label := s.c.HolderJob(instance)
 	if err := bootout(ctx, s.c, s.run, label); err != nil {
-		s.logf("service: retire %s: %v", label, err)
+		s.logf("service: remove %s: %v", label, err)
+		return false
+	}
+	ok := true
+	for _, p := range []string{s.c.holderPlist(instance), s.c.holderLog(instance)} {
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			s.logf("service: remove %s: %v", label, err)
+			ok = false
+		}
+	}
+	return ok
+}
+
+// Sweep removes the jobs of holders that are gone (spec 5.4): each holder plist whose instance
+// has no live registry entry and whose job launchd runs no process for. Such a plist is left by a
+// holder that exited while gff-hab was down, or by a gff-hab restart during Retire's wait, and
+// launchd would start a holder from it at every login. Holder logs with no plist go too.
+func (s *launchdStarter) Sweep(ctx context.Context) {
+	live := map[string]bool{}
+	entries, _ := holderreg.List(s.c.HolderDir) // a missing directory lists nothing
+	for _, e := range entries {
+		if holderreg.Alive(e.Pid) {
+			live[e.Instance] = true
+		}
+	}
+	plists, err := holderPlists(s.c)
+	if err != nil {
+		s.logf("service: sweep: %v", err)
 		return
 	}
-	if err := os.Remove(s.c.holderPlist(instance)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		s.logf("service: retire %s: %v", label, err)
+	jobs := map[string]bool{}
+	for _, p := range plists {
+		inst := strings.TrimPrefix(strings.TrimSuffix(filepath.Base(p), ".plist"), s.c.Prefix+".gff-hab-holder.")
+		if !holderreg.ValidInstance(inst) {
+			continue
+		}
+		jobs[inst] = true
+		if live[inst] || running(ctx, s.c, s.run, s.c.HolderJob(inst)) {
+			continue
+		}
+		if s.remove(ctx, inst) {
+			s.logf("service: removed the job of holder %s, which is gone", inst)
+		}
+	}
+	logs, err := holderLogs(s.c)
+	if err != nil {
+		s.logf("service: sweep: %v", err)
+		return
+	}
+	for _, l := range logs {
+		inst := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(l), "gff-hab-holder."), ".log")
+		if !jobs[inst] && !live[inst] {
+			if err := os.Remove(l); err != nil && !errors.Is(err, os.ErrNotExist) {
+				s.logf("service: sweep: %v", err)
+			}
+		}
 	}
 }

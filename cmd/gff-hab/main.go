@@ -320,7 +320,7 @@ func serve(args []string) error {
 			sp:      &spawner{lk: lk, tokens: tokens, hookSock: hpath},
 			store:   store,
 			getenv:  os.Getenv,
-			environ: os.Environ,
+			environ: func() []string { return basePaneEnv(os.Environ(), runtime.GOOS) },
 			home:    home,
 			refresh: repos.Refresh,
 		}

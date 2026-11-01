@@ -119,11 +119,17 @@ on a real disk to time the fsync there).
 Core tests 2 and 13 are `scripts/service-check.sh`. It installs with its own job prefix and a
 temporary state directory, starts a child in a pane, restarts the logic job 20 times through the
 init system, reinstalls a newer build once, then uninstalls. After each restart it waits for a new
-gff-hab epoch, then checks that the child has the same pid, that its own counter still rises and
-that its pane's output offset still grows. After the uninstall it checks that the child ended,
-that no job is loaded, and that no installed file and no process of the test is left. A failure
-uninstalls and removes everything too. It runs on Linux (systemd) and macOS (launchd);
-`internal/service` holds the unit-level check of test 13 with a fake init system.
+gff-hab epoch, then checks that the child has the same pid, that its own counter still rises, that
+its pane's output offset still grows, and that exactly one holder is registered. The child also
+checks its environment: TERM, COLORTERM and a locale are set, and no variable of the init
+system's job is. After the reinstall it ends the child and waits until the drained holder exits
+and its job is gone (on macOS: booted out, plist deleted). After the uninstall it checks that the
+second pane's program ended, that no job is loaded (on macOS `launchctl print gui/<uid>/<label>`
+for the logic job and every holder seen, which works over SSH too), and that no process of the
+test is left. It lists every path under the unit directory and the work directory before the
+install and again after the uninstall: nothing may be gone, and only gff-hab's own state may be
+new. A failure uninstalls and removes everything too. It runs on Linux (systemd) and macOS
+(launchd); `internal/service` holds the unit-level check of test 13 with a fake init system.
 
 Core test 4 lives in `cmd/gff-hab/data_test.go`, with the real holder and gff-hab binaries and a
 test client that speaks the data frames. Each resume test compares the client's bytes with the

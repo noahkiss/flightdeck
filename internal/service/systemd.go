@@ -18,9 +18,7 @@ func logicUnit(c Config) []byte {
 	fmt.Fprintf(&b, "[Unit]\nDescription=Flightdeck logic process (gff-hab)\nStartLimitIntervalSec=0\n\n")
 	fmt.Fprintf(&b, "[Service]\nType=simple\n")
 	fmt.Fprintf(&b, "ExecStart=%s\n", execLine(c.HabPath(), c.ServeArgs()...))
-	if c.Path != "" {
-		fmt.Fprintf(&b, "Environment=%s\n", systemdQuote("PATH="+c.Path, false))
-	}
+	writeEnv(&b, c)
 	fmt.Fprintf(&b, "Restart=always\nRestartSec=1\n\n")
 	fmt.Fprintf(&b, "[Install]\nWantedBy=default.target\n")
 	return b.Bytes()
@@ -44,11 +42,19 @@ func holderUnit(c Config) []byte {
 		args = append(args, systemdQuote(a, true))
 	}
 	fmt.Fprintf(&b, "ExecStart=%s\n", strings.Join(args, " "))
-	if c.Path != "" {
-		fmt.Fprintf(&b, "Environment=%s\n", systemdQuote("PATH="+c.Path, false))
-	}
+	writeEnv(&b, c)
 	fmt.Fprintf(&b, "Restart=on-failure\nRestartSec=1\nKillMode=process\nTimeoutStopSec=30\n")
 	return b.Bytes()
+}
+
+// writeEnv writes PATH and the locale settings: a unit gets a bare environment (spec 5.2).
+func writeEnv(b *bytes.Buffer, c Config) {
+	if c.Path != "" {
+		fmt.Fprintf(b, "Environment=%s\n", systemdQuote("PATH="+c.Path, false))
+	}
+	for _, kv := range c.Locale {
+		fmt.Fprintf(b, "Environment=%s\n", systemdQuote(kv, false))
+	}
 }
 
 // execLine quotes a command line for ExecStart.
@@ -119,14 +125,21 @@ func runningSystemdHolders(ctx context.Context, c Config, run Runner) ([]string,
 	return units, nil
 }
 
-func uninstallSystemd(ctx context.Context, c Config, o Options) error {
-	// A unit that is not loaded makes stop and disable fail; that is fine here.
-	systemctl(ctx, o.Run, "disable", "--now", c.LogicJob())
+func uninstallSystemd(ctx context.Context, c Config, o Options, m *manifest) error {
+	// A unit that is not loaded makes disable fail; that is fine here. A logic job that still
+	// runs is not: it would start a holder after the holders stop.
+	if _, err := systemctl(ctx, o.Run, "disable", "--now", c.LogicJob()); err != nil {
+		out, _ := systemctl(ctx, o.Run, "is-active", c.LogicJob())
+		switch state := strings.TrimSpace(string(out)); state {
+		case "active", "activating", "deactivating", "reloading", "refreshing":
+			return fmt.Errorf("service: %s is %s after disable --now: %w", c.LogicJob(), state, err)
+		}
+	}
 	// SIGTERM to each holder: its shutdown ends its programs, then it exits (spec 2.8).
 	if _, err := systemctl(ctx, o.Run, "stop", c.holderPattern()); err != nil {
 		return err
 	}
-	if err := removeFiles(c); err != nil {
+	if err := removeFiles(c, m); err != nil {
 		return err
 	}
 	if _, err := systemctl(ctx, o.Run, "daemon-reload"); err != nil {
@@ -151,3 +164,6 @@ func (s *systemdStarter) Start(ctx context.Context) error {
 
 // Retire has nothing to do: a stopped instance of a template unit leaves no file behind.
 func (s *systemdStarter) Retire(string, int) {}
+
+// Sweep has nothing to do, for the same reason.
+func (s *systemdStarter) Sweep(context.Context) {}

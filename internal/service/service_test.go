@@ -14,6 +14,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/noahkiss/flightdeck/internal/holderreg"
 )
 
 // testConfig is an install whose every path is under root, with names no machine has.
@@ -26,6 +29,7 @@ func testConfig(in Init, root string) Config {
 		Socket:    filepath.Join(root, "run", "hab.sock"),
 		UnitDir:   filepath.Join(root, "units"),
 		Path:      "/opt/tools/bin:/usr/bin:/bin",
+		Locale:    []string{"LANG=xx_YY.UTF-8", "LC_TIME=zz_ZZ.UTF-8"},
 		UID:       4242,
 	}
 }
@@ -92,6 +96,8 @@ func TestValidate(t *testing.T) {
 		"no init":          func(c *Config) { c.Init = None },
 		"newline PATH":     func(c *Config) { c.Path = "/bin\n/usr/bin" },
 		"dot-first prefix": func(c *Config) { c.Prefix = ".x" },
+		"other variable":   func(c *Config) { c.Locale = []string{"HOME=/x"} },
+		"newline locale":   func(c *Config) { c.Locale = []string{"LANG=a\nb"} },
 	} {
 		c := good
 		mut(&c)
@@ -124,6 +130,33 @@ func TestSystemdQuoting(t *testing.T) {
 	}
 	if l := string(logicUnit(testConfig(Systemd, "/srv/fdtest"))); !strings.Contains(l, "Restart=always") {
 		t.Errorf("logic unit:\n%s", l)
+	}
+}
+
+// TestJobsCarryLocale: both units and both plists carry the locale captured at install, so the
+// programs in panes get it (a job's environment is bare otherwise).
+func TestJobsCarryLocale(t *testing.T) {
+	sd := testConfig(Systemd, "/srv/fdtest")
+	ld := testConfig(Launchd, "/srv/fdtest")
+	for name, doc := range map[string][]byte{
+		"logic unit": logicUnit(sd), "holder unit": holderUnit(sd),
+		"logic plist": logicPlist(ld), "holder plist": holderPlist(ld, "0123abcd"),
+	} {
+		for _, want := range []string{"LANG", "xx_YY.UTF-8", "LC_TIME", "zz_ZZ.UTF-8", "PATH"} {
+			if !strings.Contains(string(doc), want) {
+				t.Errorf("%s lacks %s:\n%s", name, want, doc)
+			}
+		}
+	}
+	if u := string(logicUnit(sd)); !strings.Contains(u, `Environment="LANG=xx_YY.UTF-8"`) {
+		t.Errorf("logic unit:\n%s", u)
+	}
+	if p := string(logicPlist(ld)); !strings.Contains(p, "<key>LC_TIME</key>\n\t\t<string>zz_ZZ.UTF-8</string>") {
+		t.Errorf("logic plist:\n%s", p)
+	}
+	got := LocaleEnv([]string{"LC_ALL=a", "HOME=/x", "LANG=b", "LANGUAGE=c", "LC_=d", "XLC_CTYPE=e"})
+	if !slices.Equal(got, []string{"LANG=b", "LC_ALL=a"}) {
+		t.Errorf("LocaleEnv = %v", got)
 	}
 }
 
@@ -168,13 +201,16 @@ type fakeInit struct {
 	c       Config
 	mu      sync.Mutex
 	loaded  map[string]bool // launchd labels, or systemd units that run
+	idle    map[string]bool // launchd labels loaded with no process
 	noGUI   bool
 	cmds    []string
 	stopped []string
+	// disableFails makes systemctl disable fail and leaves the unit running.
+	disableFails bool
 }
 
 func newFakeInit(t *testing.T, c Config) *fakeInit {
-	return &fakeInit{t: t, c: c, loaded: map[string]bool{}}
+	return &fakeInit{t: t, c: c, loaded: map[string]bool{}, idle: map[string]bool{}}
 }
 
 func (f *fakeInit) run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -212,7 +248,15 @@ func (f *fakeInit) run(_ context.Context, name string, args ...string) ([]byte, 
 					f.stopped = append(f.stopped, u)
 				}
 			}
+		case "is-active":
+			if f.loaded[args[2]] {
+				return []byte("active\n"), nil
+			}
+			return []byte("inactive\n"), fail
 		case "disable":
+			if f.disableFails {
+				return nil, fail
+			}
 			delete(f.loaded, args[len(args)-1])
 			os.Remove(filepath.Join(f.c.UnitDir, "default.target.wants", args[len(args)-1]))
 		}
@@ -227,6 +271,9 @@ func (f *fakeInit) run(_ context.Context, name string, args ...string) ([]byte, 
 				return nil, nil
 			}
 			label := strings.TrimPrefix(args[1], f.c.domain()+"/")
+			if f.idle[label] {
+				return []byte("\tstate = not running\n"), nil
+			}
 			if !f.loaded[label] {
 				return nil, fail
 			}
@@ -238,10 +285,11 @@ func (f *fakeInit) run(_ context.Context, name string, args ...string) ([]byte, 
 			f.loaded[strings.TrimSuffix(filepath.Base(args[2]), ".plist")] = true
 		case "bootout":
 			label := strings.TrimPrefix(args[1], f.c.domain()+"/")
-			if !f.loaded[label] {
+			if !f.loaded[label] && !f.idle[label] {
 				return nil, fail
 			}
 			delete(f.loaded, label)
+			delete(f.idle, label)
 			f.stopped = append(f.stopped, label)
 		}
 		return nil, nil
@@ -286,8 +334,8 @@ func TestUninstallRemovesWhatInstallWrote(t *testing.T) {
 			root := t.TempDir()
 			c := testConfig(in, root)
 			hab, holder := writeBinaries(t, filepath.Join(root, "src"))
+			// The unit directory is not there yet: install makes it, and uninstall removes it.
 			os.MkdirAll(c.StateDir, 0o700)
-			os.MkdirAll(c.UnitDir, 0o755)
 			os.WriteFile(filepath.Join(c.StateDir, "state.json"), []byte("{}"), 0o600) // gff-hab's own
 			before := tree(t, root)
 
@@ -309,8 +357,10 @@ func TestUninstallRemovesWhatInstallWrote(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if in == Launchd {
-				os.WriteFile(filepath.Join(c.LogDir(), "gff-hab.log"), []byte("log"), 0o600) // launchd writes it
+			if in == Launchd { // launchd writes the logs
+				for _, l := range []string{c.logicLog(), c.holderLog("aaaa0001"), c.holderLog("aaaa0002")} {
+					os.WriteFile(l, []byte("log"), 0o600)
+				}
 			}
 			after := tree(t, root)
 			var added []string
@@ -324,8 +374,7 @@ func TestUninstallRemovesWhatInstallWrote(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, p := range added {
-				covered := slices.Contains(listed, p) || (in == Launchd && strings.HasPrefix(p, c.LogDir()+"/"))
-				if !covered && p != filepath.Join(c.UnitDir, "default.target.wants") {
+				if !slices.Contains(listed, p) {
 					t.Errorf("install wrote %s, which Files does not list", p)
 				}
 			}
@@ -354,7 +403,7 @@ func TestUninstallRemovesWhatInstallWrote(t *testing.T) {
 			}
 			left := tree(t, root)
 			for _, p := range left {
-				if !slices.Contains(before, p) && p != filepath.Join(c.UnitDir, "default.target.wants") {
+				if !slices.Contains(before, p) {
 					t.Errorf("uninstall left %s", p)
 				}
 			}
@@ -419,5 +468,227 @@ func TestLaunchdRetire(t *testing.T) {
 	st.Retire("aaaa0001", cmd.Process.Pid)
 	if _, err := os.Stat(c.holderPlist("aaaa0001")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("plist after retire: %v", err)
+	}
+}
+
+// TestUninstallKeepsWhatInstallDidNotWrite: a state directory the user already had (here the
+// "home" of a user who passed -state ~) keeps every file install did not write: a logs directory
+// with the user's own files, and a gff-hab in <state>/bin that install was pointed at and so
+// never wrote. The holder binary install did write goes, and so does each directory install
+// made, but only once it is empty.
+func TestUninstallKeepsWhatInstallDidNotWrite(t *testing.T) {
+	for _, in := range []Init{Systemd, Launchd} {
+		t.Run(string(in), func(t *testing.T) {
+			root := t.TempDir()
+			c := testConfig(in, root)
+			c.StateDir = filepath.Join(root, "home")
+			c.UnitDir = filepath.Join(root, "home", "units", "user")
+			userBin := filepath.Join(c.StateDir, "bin")
+			hab, _ := writeBinaries(t, userBin) // the user's own gff-hab, in what is <state>/bin
+			_, holder := writeBinaries(t, filepath.Join(root, "src"))
+			os.Remove(filepath.Join(userBin, HolderBinary))
+			os.MkdirAll(c.LogDir(), 0o755)
+			os.WriteFile(filepath.Join(c.LogDir(), "notes.txt"), []byte("mine"), 0o600)
+			before := tree(t, root)
+
+			f := newFakeInit(t, c)
+			if err := Install(context.Background(), c, Options{HabSource: hab, HolderSource: holder, Run: f.run}); err != nil {
+				t.Fatal(err)
+			}
+			if in == Launchd {
+				os.WriteFile(c.logicLog(), []byte("log"), 0o600)
+			}
+			if err := Uninstall(context.Background(), c, Options{Run: f.run}); err != nil {
+				t.Fatal(err)
+			}
+			left := tree(t, root)
+			if !slices.Equal(left, before) {
+				t.Errorf("before install:\n%s\nafter uninstall:\n%s", strings.Join(before, "\n"), strings.Join(left, "\n"))
+			}
+		})
+	}
+}
+
+// TestUninstallNoRecord: an install with no record (written before records existed) loses its
+// job files by name, and nothing else: <state>/bin and <state>/logs stay.
+func TestUninstallNoRecord(t *testing.T) {
+	root := t.TempDir()
+	c := testConfig(Systemd, root)
+	hab, holder := writeBinaries(t, filepath.Join(root, "src"))
+	f := newFakeInit(t, c)
+	if err := Install(context.Background(), c, Options{HabSource: hab, HolderSource: holder, Run: f.run}); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(c.manifestPath())
+	var out strings.Builder
+	if err := Uninstall(context.Background(), c, Options{Run: f.run, Out: &out}); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{c.logicFile(), filepath.Join(c.UnitDir, c.holderTemplate()), c.enableLink()} {
+		if _, err := os.Lstat(p); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s: %v", p, err)
+		}
+	}
+	if _, err := os.Stat(c.HabPath()); err != nil {
+		t.Errorf("a binary went with no record of writing it: %v", err)
+	}
+	if !strings.Contains(out.String(), "no install record") {
+		t.Errorf("output: %q", out.String())
+	}
+}
+
+// TestReinstallOtherPrefix: an install over a state directory that another prefix installed into
+// is refused, and so is an uninstall with the wrong prefix; neither changes a file or a job.
+func TestReinstallOtherPrefix(t *testing.T) {
+	root := t.TempDir()
+	c := testConfig(Systemd, root)
+	hab, holder := writeBinaries(t, filepath.Join(root, "src"))
+	f := newFakeInit(t, c)
+	if err := Install(context.Background(), c, Options{HabSource: hab, HolderSource: holder, Run: f.run}); err != nil {
+		t.Fatal(err)
+	}
+	before := tree(t, root)
+	f.cmds = nil
+	other := c
+	other.Prefix = "svcother"
+	err := Install(context.Background(), other, Options{HabSource: hab, HolderSource: holder, Run: f.run})
+	if !errors.Is(err, ErrOtherInstall) || !strings.Contains(err.Error(), "-prefix svctest") {
+		t.Fatalf("install with another prefix: %v", err)
+	}
+	if err := Uninstall(context.Background(), other, Options{Run: f.run}); !errors.Is(err, ErrOtherInstall) {
+		t.Fatalf("uninstall with another prefix: %v", err)
+	}
+	if !slices.Equal(tree(t, root), before) || len(f.cmds) != 0 {
+		t.Fatalf("a refused install changed something; ran %v", f.cmds)
+	}
+}
+
+// TestSystemdDisableFails: when disable --now fails and the logic unit still runs, uninstall
+// stops there: it stops no holder, which the logic job would start again, and removes no file.
+func TestSystemdDisableFails(t *testing.T) {
+	root := t.TempDir()
+	c := testConfig(Systemd, root)
+	hab, holder := writeBinaries(t, filepath.Join(root, "src"))
+	f := newFakeInit(t, c)
+	if err := Install(context.Background(), c, Options{HabSource: hab, HolderSource: holder, Run: f.run}); err != nil {
+		t.Fatal(err)
+	}
+	before := tree(t, root)
+	f.disableFails = true
+	if err := Uninstall(context.Background(), c, Options{Run: f.run}); err == nil || !strings.Contains(err.Error(), "is active") {
+		t.Fatalf("uninstall with a logic job that will not stop: %v", err)
+	}
+	if !slices.Equal(tree(t, root), before) || len(f.stopped) != 0 {
+		t.Fatalf("uninstall went on; stopped %v", f.stopped)
+	}
+	// Not loaded at all: disable fails, and that is fine.
+	f.mu.Lock()
+	delete(f.loaded, c.LogicJob())
+	f.mu.Unlock()
+	if err := Uninstall(context.Background(), c, Options{Run: f.run}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestLaunchdRetireReusedPid: a holder whose pid now belongs to another process is retired at
+// once, because launchd runs no process for its job; its plist and log go.
+func TestLaunchdRetireReusedPid(t *testing.T) {
+	root := t.TempDir()
+	c := testConfig(Launchd, root)
+	os.MkdirAll(c.UnitDir, 0o755)
+	f := newFakeInit(t, c)
+	st, _ := NewStarter(c, f.run, func() string { return "aaaa0001" }, t.Logf)
+	if err := st.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(c.holderLog("aaaa0001"), []byte("log"), 0o600)
+	f.mu.Lock()
+	delete(f.loaded, c.HolderJob("aaaa0001"))
+	f.idle[c.HolderJob("aaaa0001")] = true // loaded, exited
+	f.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		st.Retire("aaaa0001", os.Getpid()) // a live pid: this test's own
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second): // Retire's own wait is a minute
+		t.Fatal("Retire waits on a reused pid")
+	}
+	for _, p := range []string{c.holderPlist("aaaa0001"), c.holderLog("aaaa0001")} {
+		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s after retire: %v", p, err)
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.loaded[c.HolderJob("aaaa0001")] || f.idle[c.HolderJob("aaaa0001")] {
+		t.Error("the job is still loaded")
+	}
+}
+
+// TestLaunchdSweep: at start gff-hab removes the plist and log of each holder that is gone, and
+// keeps every holder that runs: one with a live registry entry, and one launchd runs.
+func TestLaunchdSweep(t *testing.T) {
+	root := t.TempDir()
+	c := testConfig(Launchd, root)
+	os.MkdirAll(c.UnitDir, 0o755)
+	os.MkdirAll(c.LogDir(), 0o700)
+	os.MkdirAll(c.HolderDir, 0o700)
+	f := newFakeInit(t, c)
+	insts := []string{"aaaa0001", "aaaa0002", "aaaa0003", "aaaa0004"}
+	next := slices.Clone(insts)
+	st, _ := NewStarter(c, f.run, func() string { id := next[0]; next = next[1:]; return id }, t.Logf)
+	for range insts {
+		if err := st.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, i := range insts {
+		os.WriteFile(c.holderLog(i), []byte("log"), 0o600)
+	}
+	os.WriteFile(c.holderLog("aaaa0009"), []byte("log"), 0o600) // a log left with no plist
+	f.mu.Lock()
+	// 0001: a live registry entry, launchd reports no process: kept. 0002: loaded, exited
+	// cleanly, its registry entry stale: removed. 0003: not loaded: removed. 0004: launchd runs
+	// it: kept.
+	delete(f.loaded, c.HolderJob("aaaa0001"))
+	f.idle[c.HolderJob("aaaa0001")] = true
+	delete(f.loaded, c.HolderJob("aaaa0002"))
+	f.idle[c.HolderJob("aaaa0002")] = true
+	delete(f.loaded, c.HolderJob("aaaa0003"))
+	f.mu.Unlock()
+	writeEntry(t, c.HolderDir, "aaaa0001", os.Getpid())
+	writeEntry(t, c.HolderDir, "aaaa0002", 0x7ffffff0) // a pid that does not run
+
+	st.Sweep(context.Background())
+	for i, keep := range map[string]bool{"aaaa0001": true, "aaaa0002": false, "aaaa0003": false, "aaaa0004": true} {
+		for _, p := range []string{c.holderPlist(i), c.holderLog(i)} {
+			_, err := os.Stat(p)
+			if keep && err != nil {
+				t.Errorf("%s: %v", p, err)
+			}
+			if !keep && !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("%s survived the sweep: %v", p, err)
+			}
+		}
+	}
+	if _, err := os.Stat(c.holderLog("aaaa0009")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("an orphan log survived the sweep: %v", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.idle[c.HolderJob("aaaa0002")] || !f.loaded[c.HolderJob("aaaa0004")] {
+		t.Errorf("jobs after the sweep: loaded %v, idle %v", f.loaded, f.idle)
+	}
+}
+
+// writeEntry writes a registry file for instance with pid.
+func writeEntry(t *testing.T, dir, instance string, pid int) {
+	t.Helper()
+	e := holderreg.Entry{Instance: instance, Build: "b", Pid: pid, Socket: holderreg.SocketPath(dir, instance), Started: time.Now()}
+	if err := holderreg.Write(dir, e); err != nil {
+		t.Fatal(err)
 	}
 }

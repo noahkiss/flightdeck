@@ -2,9 +2,13 @@ package holderclient
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -117,13 +121,20 @@ func TestScanPrunesJunk(t *testing.T) {
 }
 
 // TestUpgradeDrainsOlderOwnBuild: two holders of this build run (a slow start was retried).
-// The newer takes new panes; the older is drained, and with no panes it exits.
+// The newer takes new panes; the older is drained, and with no panes it exits. The log says a
+// second holder of this build was drained.
 func TestUpgradeDrainsOlderOwnBuild(t *testing.T) {
 	dir := regDir(t)
 	older := inproc(t, dir, "B", "hb1", hp.V1())
 	time.Sleep(time.Millisecond) // distinct start times
 	inproc(t, dir, "B", "hb2", hp.V1())
-	c := New(Config{Dir: dir, Build: "B"})
+	var mu sync.Mutex
+	var logs []string
+	c := New(Config{Dir: dir, Build: "B", Logf: func(f string, a ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		logs = append(logs, fmt.Sprintf(f, a...))
+	}})
 	collect(t, c)
 	cur, err := c.Upgrade(ctx(t))
 	if err != nil {
@@ -131,6 +142,14 @@ func TestUpgradeDrainsOlderOwnBuild(t *testing.T) {
 	}
 	if cur.Instance() != "hb2" {
 		t.Fatalf("current %s, want the newer hb2", cur.Instance())
+	}
+	mu.Lock()
+	logged := slices.ContainsFunc(logs, func(l string) bool {
+		return strings.Contains(l, "hb1") && strings.Contains(l, "second holder of this build")
+	})
+	mu.Unlock()
+	if !logged {
+		t.Errorf("no log line for the second holder of this build: %q", logs)
 	}
 	select {
 	case <-older.Done():
