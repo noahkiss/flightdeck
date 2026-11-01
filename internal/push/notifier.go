@@ -29,6 +29,10 @@ const activityLinger = 10 * time.Minute
 // sendTimeout bounds one APNs request.
 const sendTimeout = 15 * time.Second
 
+// alertKeep is how long APNs stores an alert for a device that is offline. A permission banner
+// is kept until its request expires instead.
+const alertKeep = time.Hour
+
 // Sender sends one message; *Client is one.
 type Sender interface {
 	Send(ctx context.Context, m Message) error
@@ -104,6 +108,7 @@ type sent struct {
 	request  string
 	collapse string
 	req      *api.PermissionRequest
+	expires  time.Time // the banner's apns-expiration; the withdrawal uses the same
 	to       []target
 }
 
@@ -346,7 +351,7 @@ func (n *Notifier) Raise(no Notice) int {
 		b := NoticeBanner(w, no.Title, no.Body, no.Level)
 		payload := AlertPayload(b, Meta{Hab: n.cfg.Hab, Session: no.Session, Notice: no.ID}, no.Session)
 		for _, t := range to {
-			n.send(Message{Token: t.token, Environment: t.env, Type: TypeAlert, Priority: priority(b.Level), CollapseID: "n-" + no.ID, Payload: payload}, true)
+			n.send(Message{Token: t.token, Environment: t.env, Type: TypeAlert, Priority: priority(b.Level), CollapseID: "n-" + no.ID, Expiration: n.cfg.Now().Add(alertKeep), Payload: payload}, true)
 		}
 	})
 	n.mu.Unlock()
@@ -448,7 +453,7 @@ func (n *Notifier) process(st api.AgentState) {
 		for _, t := range ob.to {
 			b := AnsweredBanner(w, by, allow, ob.req, t.hide)
 			payload := AlertPayload(b, Meta{Hab: n.cfg.Hab, Session: w.Session, Pane: st.Pane, State: string(st.State), Request: ob.request}, w.Session)
-			n.send(Message{Token: t.token, Environment: t.env, Type: TypeAlert, Priority: 5, CollapseID: ob.collapse, Payload: payload}, true)
+			n.send(Message{Token: t.token, Environment: t.env, Type: TypeAlert, Priority: 5, CollapseID: ob.collapse, Expiration: ob.expires, Payload: payload}, true)
 		}
 	}
 	// A pane first seen through a replayed screen report is old state: after a gff-hab restart
@@ -492,12 +497,18 @@ func (n *Notifier) banner(st api.AgentState, w Where) {
 		return
 	}
 	meta := Meta{Hab: n.cfg.Hab, Session: w.Session, Pane: st.Pane, State: string(st.State), Request: requestID(st)}
+	// APNs keeps an alert for an offline device until it expires: a permission request until
+	// its own expiry, the rest for alertKeep.
+	expires := n.cfg.Now().Add(alertKeep)
 	if st.Request != nil {
 		meta.ExpiresAt = st.Request.ExpiresAt
+		if t, err := time.Parse(time.RFC3339, st.Request.ExpiresAt); err == nil && kind == KindPermission {
+			expires = t
+		}
 	}
 	var out *sent
 	if kind == KindPermission || kind == KindQuestion {
-		out = &sent{kind: string(st.Kind), request: requestID(st), collapse: collapse, req: st.Request}
+		out = &sent{kind: string(st.Kind), request: requestID(st), collapse: collapse, req: st.Request, expires: expires}
 	}
 	for _, d := range n.cfg.Store.Devices() {
 		if d.Token == "" || !d.Wants(kind) {
@@ -524,7 +535,7 @@ func (n *Notifier) banner(st api.AgentState, w Where) {
 			b = DoneBanner(w)
 		}
 		payload := AlertPayload(b, meta, w.Session)
-		if n.send(Message{Token: d.Token, Environment: d.Environment, Type: TypeAlert, Priority: priority(b.Level), CollapseID: collapse, Payload: payload}, true) && out != nil {
+		if n.send(Message{Token: d.Token, Environment: d.Environment, Type: TypeAlert, Priority: priority(b.Level), CollapseID: collapse, Expiration: expires, Payload: payload}, true) && out != nil {
 			out.to = append(out.to, target{device: d.ID, token: d.Token, env: d.Environment, hide: d.HideCommands})
 		}
 	}

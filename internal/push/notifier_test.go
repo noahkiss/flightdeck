@@ -2,6 +2,7 @@ package push
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -420,5 +421,41 @@ func TestNotifierReplayNoBanner(t *testing.T) {
 	r.n.Sync()
 	if n := len(alerts(r.prod.requests(), phone)); n != 1 {
 		t.Fatalf("a live change after the replay pushed %d banners, want 1", n)
+	}
+}
+
+// TestNotifierExpiration: APNs stores an alert for an offline device until apns-expiration. A
+// permission banner keeps until its request expires and its withdrawal uses the same value;
+// other alerts and notices keep one hour; Live Activity updates are not stored (0).
+func TestNotifierExpiration(t *testing.T) {
+	r := newNotifierRig(t)
+	r.store.Register("dev-phone", phone, Production, allKinds, false)
+	r.store.RegisterActivity("dev-phone", "s1", phoneLA)
+	exp := func(q fakeReq) string { return q.Header.Get("apns-expiration") }
+	hour := strconv.FormatInt(r.clock.Now().Add(time.Hour).Unix(), 10)
+	reqExp := strconv.FormatInt(time.Date(2026, 11, 1, 12, 5, 0, 0, time.UTC).Unix(), 10)
+
+	r.n.State(blocked("r1", "make"))
+	r.n.Sync()
+	r.n.State(state(api.AgentStatusWorking))
+	r.n.Sync()
+	r.n.State(state(api.AgentStatusError))
+	r.n.Sync()
+	r.n.Raise(Notice{ID: "n1", Title: "Backup finished"})
+	r.n.Sync()
+	pa := alerts(r.prod.requests(), phone)
+	if len(pa) != 4 {
+		t.Fatalf("alerts %d, want 4", len(pa))
+	}
+	if exp(pa[0]) != reqExp || exp(pa[1]) != reqExp {
+		t.Errorf("permission banner and withdrawal: %s, %s, want %s", exp(pa[0]), exp(pa[1]), reqExp)
+	}
+	if exp(pa[2]) != hour || exp(pa[3]) != hour {
+		t.Errorf("error and notice: %s, %s, want %s", exp(pa[2]), exp(pa[3]), hour)
+	}
+	for _, q := range r.prod.requests() {
+		if q.Token == phoneLA && exp(q) != "0" {
+			t.Errorf("Live Activity update expiration %s, want 0", exp(q))
+		}
 	}
 }
