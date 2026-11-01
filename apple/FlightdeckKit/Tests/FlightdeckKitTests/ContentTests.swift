@@ -183,7 +183,7 @@ final class ContentTests: XCTestCase {
         await hab.setContentChunk(4)
         let doc = content.items.first { $0.id == "doc" }!
         // Every second read sees a new version: the first pass and the retry both break.
-        let counter = Counter()
+        let counter = ReadCounter()
         await hab.setContentReadHook { [weak hab] _ in
             let n = await counter.next()
             if n % 2 == 0 {
@@ -205,7 +205,7 @@ final class ContentTests: XCTestCase {
     }
 }
 
-actor Counter {
+actor ReadCounter {
     private var n = 0
     func next() -> Int {
         n += 1
