@@ -967,7 +967,8 @@ the context bar, the title, then the command on one line in the accent colour, t
 - When the countdown reaches zero, Allow and Deny turn off on every surface. The card says
   "Expired: answer in the terminal" and opens the terminal view on tap. The hab refuses a late
   answer with `conflict`.
-- When neither time applies (a keystroke answer path with no hab limit set), no countdown shows.
+- When neither time applies (a keystroke answer path, and no hab limit: `approval.max_age` 0),
+  no countdown shows.
 - The countdown runs on the device from `expires_at`. The hab's clock decides; the app corrects for
   the offset it measured on connect (3.2).
 
@@ -1992,7 +1993,8 @@ The owner sees each harness account's usage limits before hitting them.
 ### 14.3 Warnings
 
 - At set thresholds per window (default 80 and 95 per cent), the app shows a banner while open.
-- With push set up, the hab whose reading crossed a threshold sends a passive push. The collapse id
+- With push set up, the hab whose reading crossed a threshold sends a passive push, at the
+  thresholds each device sent on `push.register` (`usage_thresholds`; not built). The collapse id
   is the account key, the window and its reset time, so two habs that see the same account
   collapse into one notification on the device.
 - A per-device setting turns usage warnings off, or changes the thresholds.
@@ -2280,11 +2282,12 @@ stage that fills it.
 | chat message kind `plan` | Steps with text and status, one live plan per session (4.5) |
 | project fields `branch`, `ahead`, `behind`, `head` | The sidebar's project header (3.5) |
 | `usage.list {}` and event `usage.updated` | Usage readings per account: key, label, harness, windows with used percentage, reset time and read time (14.1) |
-| `push.register` kind `usage` | Opt in to usage warnings by push (14.3) |
+| `push.register` kind `usage` and field `usage_thresholds` | Opt in to usage warnings by push, at this device's thresholds (14.3, 20.4; the field is not built) |
+| `push.register` kind `command` | Opt in to a push when a long command finishes (6.1, 20.4; not built) |
 | `approval.answer` field `via` | Where the answer came from (app, banner, Watch banner, voice), for the hab's log |
 | `content.show`, `content.list`, `content.read`, `content.diff` and event `content.updated` | Rich content: shown files, images from tool calls, modified files with diffs (4.7). Capability `content` |
 | `chat.search {query, limit}` (later) | Full-text search over chat messages on this hab (3.6) |
-| `settings.get`, `settings.set` and event `settings.updated` (not in the schema yet) | Read and write hab-side settings with a revision check (20.5). Capability `settings` |
+| `settings.get {ids?}`, `settings.set {values}`, event `settings.updated`, snapshot field `settings`, error kind `locked` (not in the schema yet) | Read and write hab-side settings, all or nothing per call, with a revision check (20.5). Capability `settings` |
 
 Nothing new is needed for the Watch: it answers through the phone's notification actions (16).
 Voice mode needs no voice call: speech becomes text on the device and goes through
@@ -2476,6 +2479,11 @@ section is the registry; the sections it links hold each setting's behaviour. Bu
 this section yet (task-yfmrj6yc). Today each built setting has its own switch where its section
 says.
 
+`ssh.require_face_id` depends on the Face ID branch (not yet on main):
+it makes Face ID one app-level check before each dial, over every key, so a change never makes
+a new key. Until it lands, 10.6 and 10.7 on main still describe per-key switches and an enclave
+flag on the generated key.
+
 ### 20.1 What becomes a setting
 
 - **No extra confirmation by default.** Flightdeck adds a confirmation only where an action
@@ -2483,10 +2491,12 @@ says.
 - **The harness already asks: no confirmation.** Flightdeck never repeats a question the
   harness's own permission prompt asks. Harness permissions belong to the harness.
 - **A setting only where people really differ.** A choice with one right answer for nearly
-  everyone is a fixed behaviour (20.6).
+  everyone is a fixed behaviour (20.6). A limit that only an operator tunes stays in the hab's
+  config file with no app row (20.6).
 - **A guard against someone else's code is never a setting.** The foreign worktree setup yes
   (`hab-logic-api.md` 3.10) stays on at every level. Paseo asks there too (`landscape.md`).
-- **Each setting has a default.** Balanced holds the defaults.
+- **Each setting has a default.** Balanced holds the defaults. A hab's built-in defaults are the
+  Balanced column, so a change to that column changes the hab's defaults with it.
 
 ### 20.2 Levels
 
@@ -2499,21 +2509,35 @@ says.
 
 - **The picker** sits at the top of Settings. It shows the level whose column matches every
   levelled setting (20.3), else Custom.
-- **Custom is derived, not stored.** The app compares the current values with each column. It
-  reads app-side values on this device and hab-side values on every hab it reaches. Changing one
-  levelled setting by hand shows Custom at once. Setting it back shows the level again.
-- **Picking a level** writes that column's values at once, with no confirmation. A short notice
-  lists what changed ("Safe: 3 settings changed"). App-side values apply on this device.
-  Hab-side values go to every hab the app reaches (20.5). Preferences (20.4) never change.
+- **Custom is derived, not stored.** One rule decides a match:
+  - An app-side setting matches a column when this device holds that column's value. A setting
+    this device does not show (`ssh.require_face_id` on the Mac) is left out.
+  - A hab-side setting matches a column when every online hab with `settings` holds that value.
+    A locked row (20.5) and an offline hab do not break the match; such a row shows "Set in the
+    hab's config" or "Differs on <hab>". A hab without `settings` is left out too.
+  - Changing one levelled setting by hand shows Custom at once; setting it back shows the level
+    again. A write from another device to a hab-side setting can also flip this device's picker
+    to Custom, since levels are per device and hab-side values are shared.
+- **Picking a level** writes that column's values at once, with no confirmation. App-side values
+  apply on this device. Hab-side values go to every hab: at once to each online hab, and through
+  the queue (20.5) to each offline one. Preferences (20.4) never change.
+- **The level notice** says what changed and what did not: "Safe: 3 settings changed", or "Safe:
+  2 of 3 changed. Require approval for memories on <hab> was changed from another device." A
+  refused Face ID check, a locked row, a stale revision and a dropped queued write each name
+  their row. A row that did not take keeps the picker at Custom.
 - **Turning a check off can ask for authentication.** "Require Face ID for SSH keys" asks for
   Face ID or the passcode before it turns off (10.7), also when a level turns it off. A refusal
-  keeps it on, and the picker shows Custom.
+  keeps it on. Turning it on asks nothing and makes no new key.
+- **The cost of Safe.** With `ssh.require_face_id` on, every dial asks for Face ID. A banner,
+  Watch or Live Activity answer to an SSH hab then fails at once with "Open Flightdeck to answer"
+  (10.6 on the Face ID branch), since a background action cannot ask.
 - **Levels are per device.** The app keeps the last picked level in its defaults. A phone at Safe
-  and a Mac at Balanced is fine for app-side settings. Hab-side settings are shared, so the last
+  and a Mac at Balanced is fine for app-side settings. Hab-side settings are shared: the last
   write wins (20.5).
-- **A new hab** reports its defaults (Balanced). When every levelled value on it is still a
-  default that no client wrote, the app writes its picked level there on connect. Otherwise the
-  row shows "Differs on <hab>", as `logbook.md` 9.1 does.
+- **A new hab.** On the first `settings.get` after hello, the app checks each levelled hab-side
+  setting. One whose `source` is `default` (no client wrote it, no config set it) takes the
+  picked level's value; a locked one is skipped. Any other value stands, and the row shows
+  "Differs on <hab>" when it does not match, as `logbook.md` 9.1 does.
 - **What Bypass never touches.**
   - Harness permissions: permission modes, allow and deny rules, the harness's own prompts.
   - The harness's own bypass flag, such as `--dangerously-skip-permissions`. A level never sets
@@ -2526,83 +2550,119 @@ says.
 
 ### 20.3 Registry: levelled settings
 
-| Id | Title | Area | Safe | Balanced | Bypass | Stored | Source |
-|---|---|---|---|---|---|---|---|
-| `confirm.start_elsewhere` | Confirm before an agent starts work on another host | Agents | On | On (owner to confirm) | Off | Hab, every hab | `capcom.md` 6.1, `mesh.md` 11 Q1 |
-| `approval.max_age` | Remote answers expire after | Approvals | 60 min | 60 min | Never | Hab, every hab | 7.4 |
-| `logbook.approval` | Require approval for memories | Agents | `agents` | `off` | `off` | Hab, every hab | `logbook.md` 9.1, `instructions-mcp-flight-rules.md` 12 |
-| `voice.yes_allows` | "Yes" counts as Allow | Voice | Off | On | On | App, this device | 13.3, 13.7 |
-| `ssh.require_face_id` | Require Face ID for SSH keys | Security | On | Off | Off | App, Keychain item | 10.7 |
+| Id | Title | Area | Type | Safe | Balanced | Bypass | Stored | Source |
+|---|---|---|---|---|---|---|---|---|
+| `confirm.start_elsewhere` | Confirm before an agent starts work on another host | Agents | bool | `true` | `true` (owner to confirm) | `false` | Hab, every hab | `capcom.md` 6.1, `mesh.md` 11 Q1 |
+| `approval.max_age` | Remote answers expire after | Approvals | integer minutes, 0 = never, else 1 to 1440 | 60 | 60 | 0 | Hab, every hab | 7.4 |
+| `logbook.approval` | Require approval for memories | Agents | `"off"` or `"agents"` | `"agents"` | `"off"` | `"off"` | Hab, every hab | `logbook.md` 9.1, `instructions-mcp-flight-rules.md` 12 |
+| `voice.yes_allows` | "Yes" counts as Allow | Voice | bool | Off | On | On | App, this device | 13.3, 13.7 |
+| `ssh.require_face_id` | Require Face ID for SSH keys | Security | bool | On | Off | Off | App, Keychain item; iOS only | 10.7 (Face ID branch) |
 
 - **`confirm.start_elsewhere`** stays on in Balanced. Capcom's tools are allowed in its own
   folder (`capcom.md` 7.1), so no harness prompt stands before a start on another host. Off: the
   action runs at once and the card shows as a record. The owner's first ruling (default on)
   stands. Owner to confirm: the later power-user rule (default to no extra confirmation) could
   make it off in Balanced.
-- **`approval.max_age`** bounds a remote Allow on an old request (7.4). Never: a request takes a
-  remote answer until the harness gives up. The answer path's own deadline still applies. Not
-  built: the hab sends no limit yet.
+- **`approval.max_age`** bounds a remote Allow on an old request (7.4). At 0 the hab sets no
+  limit: a request takes a remote answer until the answer path's own deadline, and with no such
+  deadline no countdown shows (7.4). Not built: the hab sends no limit yet.
 - **`logbook.approval`** is one setting for both kinds of memory: Logbook writes by agents and
   each harness's native memory. It replaces the per-harness switches
-  (`instructions-mcp-flight-rules.md` 12). The user's own writes always land at once.
+  (`instructions-mcp-flight-rules.md` 12). The user's own writes always land at once. The word
+  set is client-sent, so it is closed (`hab-logic-api.md` 3.3).
 - **`voice.yes_allows`** off: only "allow", "approve", "allow it" and "approve it" answer Allow,
   and "yes" makes the app ask again. The deny words are the same at every level.
-- **`ssh.require_face_id`** is one setting over the generated key and every imported key. It
-  replaces the Face ID setting that 7.6 named for approvals and app open (20.6).
+- **`ssh.require_face_id`** is one app-level check over the generated key and every imported key
+  (10.7 on the Face ID branch). It keeps its level: a change keeps every key and its public
+  line, and starts no reconnect. It replaces the Face ID setting that 7.6 named for approvals
+  and app open (20.6). The Mac app shows no row (the branch puts it on iOS only), so a level
+  pick on the Mac leaves it alone.
 
 ### 20.4 Preferences: settings with no level
 
 These differ by taste or by device. They show on the Settings page and in its search, but the
 picker never changes them.
 
-| Id | Title | Area | Default | Stored | Source |
-|---|---|---|---|---|---|
-| `notify.done` | Notify when a turn finishes | Notifications | Off | App; push kind `done` on each hab | 8.2, 18.5 |
-| `notify.show_commands` | Show commands in notifications | Notifications | On | App; `hide_commands` on `push.register` | 8.3 |
-| `notify.command_done` | Notify when a long command finishes | Notifications | Off | App | 6.1, 8.2 |
-| `notify.tap` | Open a notification in | Notifications | Smart | App | 9.1 |
-| `usage.warnings` | Usage warnings, with thresholds | Usage | On, 80 and 95 % | App | 14.3 |
-| `widget.hide_titles` | Hide titles on the Lock Screen | Widgets | Off | App Group | 15.2 |
-| `mac.keep_connected` | Stay connected in the background | Connection | Off | App (Mac) | 12.1 |
-| `hab.permission_wait` | Answer permissions from the app (blocking hook) | Approvals | Off; 30 s when on | Hab, this hab only | 7.4, `harness-adapters.md` (blocking hook) |
-| `voice.*` | Engines, summary request, spoken commands, confirm before send, barge-in, noisy room, pause | Voice | As 13.7 | App | 13.7 |
+| Id | Title | Area | Type | Default | Stored | Source |
+|---|---|---|---|---|---|---|
+| `notify.done` | Notify when a turn finishes | Notifications | bool | Off | App; push kind `done` on each hab | 8.2, 18.5 |
+| `notify.show_commands` | Show commands in notifications | Notifications | bool | On | App; `hide_commands` on `push.register` | 8.3 |
+| `notify.command_done` | Notify when a long command finishes | Notifications | bool | Off | App; push kind `command` on each hab (not built) | 6.1, 8.2 |
+| `notify.tap` | Open a notification in | Notifications | chat, terminal or smart | Smart | App | 9.1 |
+| `usage.warnings` | Usage warnings, with thresholds | Usage | off, or a list of percentages from 50 to 100 | On, 80 and 95 | App; push kind `usage` with `usage_thresholds` on `push.register` (not built) | 14.3 |
+| `widget.hide_titles` | Hide titles on the Lock Screen | Widgets | bool | Off | App Group | 15.2 |
+| `mac.keep_connected` | Stay connected in the background | Connection | bool | Off | App (Mac) | 12.1 |
+| `hab.permission_wait` | Answer permissions from the app (blocking hook) | Approvals | integer seconds, 0 = off, else 1 to 120 | 0; the switch sets 30 | Hab, this hab only | 7.4, `harness-adapters.md` (blocking hook) |
+| `voice.*` | Engines (hab, Parakeet, Apple), summary request, spoken commands, confirm before send, barge-in, noisy room, pause | Voice | As 13.7 | As 13.7 | App | 13.7 |
+| `voice.language` | Dictation language | Voice | a language tag, or system | System | App (not built) | 13.4 |
 
 - The Capcom host picker (`capcom.md` 7.3) and each hab's push status are controls, not
   settings. They sit in Settings with no id.
-- **`hab.permission_wait`** is per host: the app writes it to one hab. Off is 0; on is the wait
-  in seconds, at most 120 (`MaxPermissionWait`). A change applies to the next hook; a hook
-  already waiting keeps its wait. The `-permission-wait` flag or `$GFF_HAB_PERMISSION_WAIT`
-  locks the value (20.5).
+- **`hab.permission_wait`** is per host: the app writes it to one hab. The row is a switch (0 or
+  30) with a stepper for 1 to 120 s once on. A change applies to the next hook; a hook already
+  waiting keeps its wait. The hook config always passes `-wait`, so turning it on needs no hook
+  change. A `-permission-wait` flag given on the command line, or a non-empty
+  `$GFF_HAB_PERMISSION_WAIT`, locks the value (20.5).
+- **Pushed preferences reach the hab.** A preference that changes what a hab pushes while the
+  app is closed goes to each hab on `push.register`: the kinds (`done`, `command`, `usage`),
+  `hide_commands`, and the usage thresholds. The hab pushes a usage warning only at a threshold
+  the device sent.
 
 ### 20.5 Hab-side settings and the API
 
 A hab-side setting lives on the hab that enforces it. The app writes it through the hab API.
 
-- **Where the hab keeps them.** Client writes go to `<state>/settings.json`. A key in the
-  `[settings]` table of the hab's config file (`hab.toml`), or a flag or environment variable
-  for it, locks the value: the hab enforces that value and refuses writes. The app shows a
-  locked row read-only, with "Set in the hab's config".
+- **Where the hab keeps them.** Client writes go to `<state>/settings.json`, synced before its
+  rename, with each setting's revision. A value set in the hab's config file, or by a flag given
+  on the command line or a non-empty environment variable, locks the setting: the hab enforces
+  that value and refuses writes. The app shows a locked row read-only, with "Set in the hab's
+  config".
+- **The config form.** The hab's config file (`hab.toml`) takes a `[settings]` table with quoted
+  keys, since a bare dotted key would make nested tables:
+  `"confirm.start_elsewhere" = false`. No existing key moves.
+- **When the config is read.** At start, and again after a change to the file has held for one
+  check, as the peer file is (`mesh.md` 4). A lock that appears, changes or goes raises the
+  setting's revision and sends `settings.updated`.
 - **One value everywhere.** For a setting stored on every hab, the app writes the same value to
-  each hab it reaches. The app and `gff lb status` show a hab whose value differs.
-- **Offline habs.** The app queues the write and sends it when the hab connects, with the
-  revision it last saw there. When the hab's revision moved since (another device wrote), the
-  hab's value stands, the app drops its write, and the row shows the hab's value.
+  each hab. The app and `gff lb status` show a hab whose value differs.
+- **The queue.** A write to an offline hab waits in a queue the app saves, so it survives a
+  relaunch. It holds the value, the revision the app last saw and that hab's epoch. A later
+  write to the same id on the same hab replaces the queued one. When the hab connects:
+  - Same epoch: the app sends the write with its revision. A `conflict` (another device wrote
+    since) drops it; the hab's value stands, and the level notice names the row.
+  - New epoch: revisions are not compared across epochs (`hab-logic-api.md` 3.5), and a lost
+    `settings.json` can restart them. The app reads the snapshot first. When the value there is
+    not the one the app last saw, another write won and the queued write drops. Otherwise the app
+    sends it with the snapshot's revision.
 
-The API addition, by name and shape; the schema comes with the build stage:
+The API addition, by name and shape. It follows `hab-logic-api.md` 3.3 to 3.6; the schema comes
+with the build stage:
 
-| Call or event | Shape | Purpose |
+| Call, event or field | Shape | Purpose |
 |---|---|---|
-| capability `settings` | — | The hab serves the calls below |
-| `settings.get {ids?}` | → `{settings: [{id, value, default, rev, locked}]}` | Read every hab-side setting, or the named ones |
-| `settings.set {id, value, rev}` | → `{id, value, rev}` | Write one value. A stale `rev` is `conflict`; a locked id is `conflict` with the reason; an unknown id or a bad value is `invalid` |
-| event `settings.updated` | `{id, value, rev}` | A value changed: by a client, or by a config reload |
+| capability `settings` | — | The hab serves everything below |
+| snapshot field `settings` | optional array of `{id, value, default, revision, source}` in a `host` scope snapshot, as `agents` is | The current hab-side settings, so the app needs no read after a (re)subscribe |
+| `settings.get {ids?}` | → `{settings: [{id, value, default, revision, source}], seq}` | Read every hab-side setting, or the named ones, outside a subscription |
+| `settings.set {values: [{id, value, revision}]}` | → `{settings: [{id, value, default, revision, source}], seq}` | Write one or more values, all or nothing on this hab. A level pick is one call per hab |
+| event `settings.updated` | `type` `settings.updated`, `id` the setting id, `revision` the new revision, `data {value, source}` | A value changed: by a client, or by a config read. Sent to `host` scope subscribers only |
+| error kind `locked` | `data.kind` `locked`, `data.id` the setting | The setting is set in the hab's config; the client shows it read-only |
 
-- Values are small JSON values. `rev` counts writes per id, like herdr-core's version-checked
-  documents (`hab-logic-api.md` 1.2).
-- The hab applies a change at once: to the next start elsewhere, the next request's expiry, the
-  next memory write, the next permission hook.
-- The rows join `hab-logic-api.md` 3.9 with the build stage. Until then, a hab without
-  `settings` keeps the values from its config, and the app shows its rows read-only.
+- **`source`** is a server-sent word set, so it is open: `default` (no client wrote it, no config
+  set it), `client` (a client wrote it), `config` (locked by the config, a flag or the
+  environment). An unknown word reads as `config`: read-only.
+- **`revision`** is the setting's object revision (`hab-logic-api.md` 3.5): stored with it, raised
+  by one on each change, compared only within an epoch. It starts at 1 when the hab first lists
+  the setting.
+- **Errors, by `kind`.** A `revision` that is not the current one is `conflict`. A locked id is
+  `locked`. An unknown id is `not_found`, so a newer app can show "not on this hab" for a
+  setting an older hab lacks. A value outside the setting's type is `invalid`. Any error refuses
+  the whole call.
+- **`settings.updated` is not ephemeral:** the settings are in the `host` snapshot, so the event
+  carries a revision and a client orders it against the snapshot like any other object.
+- **The hab applies a change at once:** to the next start elsewhere, the next request's expiry,
+  the next memory write, the next permission hook.
+- **Until it is built**, a hab without `settings` keeps the values from its config and flags, and
+  the app shows its rows read-only. `hab-logic-api.md` 3.4, 3.6 and 3.9 point here as planned.
 
 ### 20.6 Dropped, not settings
 
@@ -2611,7 +2671,7 @@ Each candidate below is a fixed behaviour now.
 | Candidate | Fixed behaviour | Why |
 |---|---|---|
 | Approve from the lock screen without unlocking | An answer from a banner or a Live Activity needs the device unlocked | The device key signs only while unlocked (`transport.md` 7.2), so the switch changed nothing (8.7) |
-| Face ID before in-app approvals, app open and a voice Allow (7.6) | No Face ID gate of our own beyond the SSH keys | `ssh.require_face_id` covers each dial, and the passcode guards the device. Moshi puts Face ID on keys only |
+| Face ID before in-app approvals, app open and a voice Allow (7.6) | No Face ID gate of our own beyond the SSH keys | `ssh.require_face_id` covers each dial, and the passcode guards the device. iOS 18 and later can require Face ID for any app from the Home Screen *(gk)*, which covers a shared phone. Moshi puts Face ID on keys only |
 | Worktree setup trust for rebased and cherry-picked commits | They count as own when their source does (`hab-logic-api.md` 3.10) | A false alarm costs one yes, and nobody wants more of them. Not levelled: it guards against someone else's code |
 | Alert when free fires at once | A fresh reading with room fires the alert now (14.4) | The user asked to know when it is free |
 | Offline cached images | Content the app already holds shows while its hab is offline (4.7) | Showing what is in hand costs nothing; Paseo shows cached rows offline |
@@ -2621,6 +2681,9 @@ Each candidate below is a fixed behaviour now.
 | Keep photo location and camera data | Always stripped before upload (4.4) | No agent needs where a photo was taken |
 | Send the original photo | Downscaled to what the harness accepts (4.4) | The harness takes no more; a larger file only costs time |
 | Per-harness memory approval switches | One `logbook.approval` (20.3) | One rule for memory is easier to trust |
+| Attachment retention (30 days) and size limit (25 MB) | Hab config only, no app row (4.4) | An operator limit for the host's disk, not a per-person choice |
+| The long-command threshold (30 s) | Fixed, no app row (6.1) | Nobody tunes when a badge appears; the push for it is `notify.command_done` |
+| The hab speech engine (`[speech] enabled`) | Hab config only, no app row (`voice.md`) | Whether a host serves speech is an install choice; it changes the hab's capabilities, which only a new hello reports. A device that does not want it turns off its hab engine (`voice.*`) |
 
 ### 20.7 The Settings page
 
