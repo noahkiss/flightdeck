@@ -1708,7 +1708,7 @@ no wake word, no system assistant in the path.
   the command in a speakable form ("wrangler deploy, dash dash env prod"). It then asks "Allow or
   deny?" and shows the approval sheet in large type.
 - It listens for the answer only after it has finished asking, so its own voice cannot answer. The
-  answer must be a clear match: allow, approve or yes; deny or no. Anything else, or a low-confidence
+  answer must be a clear match: allow or approve; deny or no (13.7: "yes" is not an Allow). Anything else, or a low-confidence
   result, makes it ask once more, then wait for a tap.
 - It says what it did: "Allowed" or "Denied".
 - Voice Allow follows the same limits as a banner Allow (7.8): a command longer than the limit, or
@@ -1770,28 +1770,41 @@ Code in `apple/FlightdeckKit` (`Voice/`, `Views/VoiceViews.swift`) and the
   footer names the engine with the error, and the next turn asks the hab again.
 - **One engine interface.** `SpeechEngine` has `prepare`, `transcribe(clip, live:)` and
   `close`. `SpeechEngines` holds the enabled engines in the fixed order: hab, Parakeet on the
-  device, Apple. Every failure moves the turn to the next engine. A sticky refusal skips an
-  engine until voice mode or dictation closes: no `speech` capability, `unavailable` from
-  `speech.prepare`, no model on the device, an older system. A model still downloading on the
-  hab, an `unavailable` from `speech.transcribe`, a clip over 120 s or a network error moves
-  only this turn; the next turn asks the hab again.
+  device, Apple, and prepares them at once. Every failure moves the turn to the next engine;
+  a cancellation (voice mode closing) stops the turn instead. A sticky refusal skips an engine
+  until voice mode or dictation closes: no `speech` capability, `unavailable` from
+  `speech.prepare`, no model on the device, an older system. A hab not connected yet (no
+  welcome), a model still downloading on the hab, an `unavailable` from `speech.transcribe` or
+  a network error moves only this turn; the next turn asks the hab again. A prepare that
+  finishes after close is closed at once, so a late Parakeet load is released.
 - **Audio to the hab.** Ogg Opus (RFC 7845), mono, 16 kHz input, 20 ms packets at 24 kbit/s,
-  from the system encoder. When the hab does not list `opus` in `formats`, or the encoder
+  from the system encoder. Granules come from each packet's TOC byte, not a fixed 20 ms. When the hab does not list `opus` in `formats`, or the encoder
   fails, the app sends 16-bit PCM at 16 kHz. A clip over 1 MiB as PCM goes to the next engine.
 - **Apple's engine is the live words.** SpeechAnalyzer runs for the whole of voice mode and
   shows words as heard (iOS and macOS 26 and later). As the last engine, its text for the turn
-  is those live words, so it costs no second pass. On an older system the Apple engine is
-  skipped and no live words show; the hab and Parakeet still write the text.
+  is those live words, so it costs no second pass. A turn's live words are the results that
+  finished since it began, plus the result in progress; a result that finished up to 0.6 s
+  before the turn began is part of it, since its words started the turn. A revision of the
+  result in progress never brings back earlier speech. The microphone starts first; live words
+  follow once the speech asset is installed, and the footer says "Downloading speech for live
+  words" meanwhile, or why live words are off. On an older system the Apple engine is skipped
+  and no live words show; the hab and Parakeet still write the text.
 - **Parakeet on the device.** `ParakeetHost` loads the model while voice mode or dictation holds
   it, and unloads it when the last one lets go, on a memory warning, and when the app leaves
   the foreground. Voice mode keeps running in the background (13.1) without it: those turns go
   to the next engine, and the model loads again on return. After a memory warning it stays
-  unloaded until every holder has let go. The option shows on devices with at least 6 GB of
+  unloaded until every holder has let go. Each voice mode and dictation holds it with its own
+  token, so two iPad windows do not unload each other's model. An unload waits for a running
+  transcribe. A turn that ends before the engine's prepare held the model takes it then. The
+  model folder is kept out of the device backup. The option shows on devices with at least 6 GB of
   memory (the iPhone 15 Pro, 8 GB, ran it well). The model downloads from Settings with
   progress, with its CC-BY-4.0 attribution line.
 - **Turn end.** The audio level and new live words mark speech. A turn starts after 0.15 s of
   speech and ends after the pause setting (default 1.2 s) or a tap. The turn keeps 0.5 s of
-  audio from before speech started, so the first word is not cut.
+  audio from before speech started, so the first word is not cut. A turn ends at 120 s, the
+  hab's limit, with "The turn reached 120 s and ended there."; its start is kept. A route
+  change while the owner speaks ends the turn with the audio so far, and rebuilds the live
+  recognizer for the new input.
 - **Echo and barge-in.** Speech plays through the same audio engine as the microphone, with
   voice processing on, so the echo canceller removes the app's own voice. While the app speaks,
   a barge-in needs 10 dB more level, and live words alone do not start a turn. "Noisy room"
@@ -1801,19 +1814,33 @@ Code in `apple/FlightdeckKit` (`Voice/`, `Views/VoiceViews.swift`) and the
   what follows is read. The trimmer (`SpokenText`) turns a code block into "A code block, shown
   on screen.", a diff (fenced or bare) into "A diff, shown on screen.", a table into "A table.",
   a link into its text, a bare link into its site, a path into its file name, and drops Markdown
-  marks. It caps at 110 words (about 45 s) and says "The rest is in the chat." A turn end waits
-  up to 3 s for the reply to reach the chat. A reply that arrives while the owner speaks is not
-  read.
+  marks. Tables with or without outer pipes, indented code after a blank line, and fences of
+  four or more marks count. It caps at 110 words (about 45 s) and says "The rest is in the
+  chat." A turn end waits up to 3 s for the reply: a new agent text after the turn's last tool
+  call, with the chat still for 300 ms. A reply that arrives while the owner speaks is not read.
+  A turn that ends in `error` reads "The turn stopped." and the first sentence of the agent's
+  last text: the hab sends no error text.
 - **The summary request.** Each spoken prompt ends with a request for a "Spoken summary:" line
   of two sentences. The chat shows the request on the owner's message. A setting turns it off.
 - **Send path.** A spoken turn goes through `ChatModel.send` with origin `dictated`, so the send
   gate, "sends after this turn" and the read-back are the composer's.
-- **Approvals.** The app reads the title and the command, muted, then listens. It takes
-  "allow", "approve", "deny" and "no", alone. "yes" is not an Allow: a stray yes must not run a
-  command. An unclear answer asks once more, then waits for a tap. Voice may Allow only a
-  command of at most 100 characters and 16 words (the banner's body budget, 16.2) or an edit of
-  at most three files; anything else can be denied by voice and allowed by tap. The large
+- **Approvals.** The app reads the title and the command, muted, then listens. The read-back
+  says paths whole ("home slash work slash build") and names `&&`, `||`, `;` and `|`. It takes
+  "allow", "approve", "deny" and "no" alone, and "allow it", "approve it" and "deny it". "yes"
+  is not an Allow: a stray yes must not run a command. An answer counts only for the request
+  whose read-back finished before the owner spoke: if the request changes while the answer is
+  transcribed, the answer is dropped and the new request is read. A lone "allow" or "deny" in
+  an ordinary turn never answers. An unclear answer asks once more, then waits for a tap. Voice
+  may Allow only a command of at most 100 characters and 16 words (the banner's body budget,
+  16.2), with no command substitution (`$(` or a backtick), or an edit of at most three files;
+  anything else can be denied by voice and allowed by tap. The large
   approval card's Allow and Deny always work by tap. The answer carries `via: voice`.
+- **Confirm before send.** The waiting text stays until "send" (said alone) or a tap sends it;
+  other words replace it.
+- **End.** End and Keyboard stop everything at once: a turn being transcribed sends nothing, and
+  no step reopens an ended voice mode. When voice mode ends with a reason (microphone off, no
+  engine on, the idle limit), the view stays with the reason, Close, and Open Settings for the
+  microphone.
 - **Questions** are not read with their options yet: voice mode says "The agent asks a question.
   Answer it on screen."
 - **Background.** While voice mode is open, the fleet keeps that hab's connection when the app
@@ -1822,8 +1849,11 @@ Code in `apple/FlightdeckKit` (`Voice/`, `Views/VoiceViews.swift`) and the
 - **Dictation.** The composer's microphone writes heard words into the draft and replaces them
   with the engine's text on stop. A long press opens voice mode. In the terminal view a
   microphone in the toolbar sends the text as one `pane.input` write on stop, with control
-  characters turned into spaces and no Enter. There is no keyboard bar yet (5.1). Bracketed
-  paste needs the pane's paste mode, which the app does not track yet.
+  characters turned into spaces and no Enter, with a space before each one after the first. It
+  passes the pane's session, so the hab applies its vocabulary. Closing the terminal view stops
+  it. A dictation that did not start or wrote nothing says why. Dictation ducks other audio
+  instead of stopping it. There is no keyboard bar yet (5.1). Bracketed paste needs the pane's
+  paste mode, which the app does not track yet.
 - **Settings › Voice.** The three engines in order, each a switch (defaults: hab and Apple on,
   Parakeet off). The Parakeet row shows only where offered, with its download. Switches for the
   summary request, spoken commands, confirm before send, barge-in, a noisy room, and the pause
@@ -1831,6 +1861,17 @@ Code in `apple/FlightdeckKit` (`Voice/`, `Views/VoiceViews.swift`) and the
 - **Not built yet.** The chime and banner for another session (13.1), a reply voice per language
   (13.6), the Face ID check before a voice Allow (7.6), the vocabulary hints to the on-device
   engines (`voice.md`, Recommendation 2), and the language setting for dictation (13.4).
+- **Known limits.**
+  - No shared golden file yet checks that the hab's Ogg reader takes the app's files; the
+    framing was checked by hand against the hab's reader.
+  - The Opus encode, the PCM conversion and the turn's sample copy run on the main actor: a
+    short hitch after a long turn.
+  - SpeechAnalyzer and the 100 ms tick run for all of voice mode, in the background too. Battery
+    over a 10-minute idle session is an owner device measurement.
+  - The app never asks for speech recognition permission; SpeechTranscriber is expected to need
+    none. A device run confirms it, and the footer says when live words are off.
+  - A speech that never ends (no voice installed, an engine restart) stops after its expected
+    length plus 5 s.
 
 ---
 

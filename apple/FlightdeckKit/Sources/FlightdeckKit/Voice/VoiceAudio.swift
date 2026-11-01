@@ -189,6 +189,15 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         let id = speakID
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = Self.voice()
+        // A watchdog: if the synthesizer never ends (no voice, an engine
+        // restart), give up after the expected time plus a margin.
+        let words = text.split(separator: " ").count
+        let limit = Duration.seconds(Double(words) / 2.0 + 5)
+        Task { [weak self] in
+            try? await Task.sleep(for: limit)
+            guard let self, self.speakID == id, self.speakDone != nil else { return }
+            self.stopSpeaking()
+        }
         return await withCheckedContinuation { c in
             speakDone = c
             var converter: AVAudioConverter?
