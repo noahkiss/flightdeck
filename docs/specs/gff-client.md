@@ -850,7 +850,7 @@ The owner's current setup mirrors one workspace into every terminal window: same
 Recommendation: **B.** Tabs follow the owner; each window keeps its own focus. A "follow" key makes
 one window mirror another's focus while held.
 
-Decision: open (owner, user-visible). The owner's own setup today is C; the recommendation is B.
+Decision: B (owner, 2026-11-01). Windows share tabs and splits; each keeps its own focus, and a follow key mirrors another window.
 
 ### 15.5 Default keymap
 
