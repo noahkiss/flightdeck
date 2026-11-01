@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"net"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -53,5 +54,52 @@ func TestClientLineCap(t *testing.T) {
 	}
 	if err := c.Err(); err == nil || !strings.Contains(err.Error(), "longer than") {
 		t.Fatalf("err %v", err)
+	}
+}
+
+// pumps counts the goroutines running Client.pump.
+func pumps() int {
+	buf := make([]byte, 1<<20)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return strings.Count(string(buf[:n]), "control.(*Client).pump(")
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+}
+
+// TestClientCloseStopsPump: a client closed while notifications wait unread leaves no
+// delivery goroutine behind, across many dropped connections.
+func TestClientCloseStopsPump(t *testing.T) {
+	before := pumps()
+	note := []byte(`{"jsonrpc":"2.0","method":"heartbeat","params":{"seq":0}}` + "\n")
+	for range 50 {
+		a, b := net.Pipe()
+		c := NewClient(a)
+		// net.Pipe has no buffer: the second write returns only after the client read the
+		// first line whole, so at least one notification waits in the client unread.
+		for range 2 {
+			if _, err := b.Write(note); err != nil {
+				t.Fatal(err)
+			}
+		}
+		c.Close()
+		b.Close()
+		<-c.Done()
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for pumps() > before {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d delivery goroutines left after Close", pumps()-before)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// Notifications still close after Close, so a range over them ends.
+	a, b := net.Pipe()
+	defer b.Close()
+	c := NewClient(a)
+	c.Close()
+	for range c.Notifications() {
 	}
 }

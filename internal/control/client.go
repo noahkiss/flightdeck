@@ -39,7 +39,7 @@ type Client struct {
 	qmu      sync.Mutex
 	qwake    chan struct{}
 	done     chan struct{}
-	stopPing chan struct{}
+	stop     chan struct{} // closed by Close
 	stopOnce sync.Once
 }
 
@@ -55,13 +55,13 @@ func Dial(path string) (*Client, error) {
 // NewClient starts a client on rw. The client owns rw and closes it.
 func NewClient(rw io.ReadWriteCloser) *Client {
 	c := &Client{
-		rw:       rw,
-		w:        bufio.NewWriter(rw),
-		pending:  map[string]chan message{},
-		notes:    make(chan Notification),
-		qwake:    make(chan struct{}, 1),
-		done:     make(chan struct{}),
-		stopPing: make(chan struct{}),
+		rw:      rw,
+		w:       bufio.NewWriter(rw),
+		pending: map[string]chan message{},
+		notes:   make(chan Notification),
+		qwake:   make(chan struct{}, 1),
+		done:    make(chan struct{}),
+		stop:    make(chan struct{}),
 	}
 	go c.readLoop()
 	go c.pump()
@@ -69,7 +69,8 @@ func NewClient(rw io.ReadWriteCloser) *Client {
 }
 
 // Notifications delivers every notification in the order the server sent it, without loss. The
-// channel closes after the connection ends and every notification was delivered.
+// channel closes after the connection ends and every notification was delivered. After Close,
+// notifications not yet received are dropped and the channel closes at once.
 func (c *Client) Notifications() <-chan Notification { return c.notes }
 
 // Done is closed when the connection ends.
@@ -89,9 +90,10 @@ func (c *Client) ClosingReason() api.ClosingReason {
 	return c.reason
 }
 
-// Close ends the connection.
+// Close ends the connection. It also stops delivering notifications, so a reader that stopped
+// reading never leaves the delivery goroutine behind.
 func (c *Client) Close() error {
-	c.stopOnce.Do(func() { close(c.stopPing) })
+	c.stopOnce.Do(func() { close(c.stop) })
 	return c.rw.Close()
 }
 
@@ -105,7 +107,7 @@ func (c *Client) KeepAlive(interval time.Duration) {
 			select {
 			case <-c.done:
 				return
-			case <-c.stopPing:
+			case <-c.stop:
 				return
 			case <-t.C:
 				c.wmu.Lock()
@@ -309,30 +311,40 @@ func (c *Client) signalPump() {
 }
 
 // pump moves notifications from the unbounded queue to the channel, so a slow reader of
-// Notifications never stalls responses.
+// Notifications never stalls responses. It stops at Close even when nobody reads.
 func (c *Client) pump() {
 	defer close(c.notes)
+	send := func(q []Notification) bool {
+		for _, n := range q {
+			select {
+			case c.notes <- n:
+			case <-c.stop:
+				return false
+			}
+		}
+		return true
+	}
 	for {
 		c.qmu.Lock()
 		q := c.queue
 		c.queue = nil
 		c.qmu.Unlock()
-		for _, n := range q {
-			c.notes <- n
+		if !send(q) {
+			return
 		}
 		if len(q) > 0 {
 			continue
 		}
 		select {
 		case <-c.qwake:
+		case <-c.stop:
+			return
 		case <-c.done:
 			c.qmu.Lock()
 			q := c.queue
 			c.queue = nil
 			c.qmu.Unlock()
-			for _, n := range q {
-				c.notes <- n
-			}
+			send(q)
 			return
 		}
 	}
