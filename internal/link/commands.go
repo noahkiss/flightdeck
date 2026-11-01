@@ -103,6 +103,24 @@ type CommandBytes struct {
 	Command cmdmarks.Command
 }
 
+// place fills out from the holder's answer to a replay of [lo, to) of a command whose output
+// ends at hi (for this call), or says the answer cannot be placed: the ring moved on while the
+// holder sent it. When the ring has lost bytes, the answer starts later and says gap. When it
+// has lost the command's whole range, the holder answers at its oldest byte, past hi; the run is
+// then the empty one at hi, still with gap, so it never falls outside the command.
+func place(out CommandBytes, lo, hi uint64, data []byte, end *hp.ReplayEnd) (CommandBytes, bool) {
+	if uint64(len(data)) != end.End-end.Start {
+		return CommandBytes{}, false
+	}
+	out.Data, out.Start, out.End = data, end.Start, end.End
+	if end.Start > hi {
+		out.Data, out.Start, out.End = nil, hi, hi
+	}
+	out.Gap = end.Gap || end.Start > lo
+	out.More = out.End < hi || out.Command.End == nil
+	return out, true
+}
+
 // CommandOutput reads up to limit bytes of command id's output on pane u, from offset from
 // (the output's start, with from nil), with a bounded replay from the pane's holder. A running
 // command's output ends, for this call, at the bytes the link holds now. limit is capped at
@@ -147,11 +165,8 @@ func (l *Link) CommandOutput(ctx context.Context, u hp.UUID, id uint64, from *ui
 		if err != nil {
 			return CommandBytes{}, err
 		}
-		if uint64(len(data)) == end.End-end.Start {
-			out.Data, out.Start, out.End = data, end.Start, end.End
-			out.Gap = end.Gap || end.Start > lo
-			out.More = end.End < hi || c.End == nil
-			return out, nil
+		if placed, ok := place(out, lo, hi, data, end); ok {
+			return placed, nil
 		}
 		if try == 2 {
 			return CommandBytes{}, errors.New("link: the ring moved on while reading a command's output")

@@ -4,16 +4,22 @@ package main
 // gff-hab and a real interactive shell that emits the marks (testdata/marks).
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/cmdmarks"
 	"github.com/noahkiss/flightdeck/internal/control"
+	hp "github.com/noahkiss/flightdeck/internal/holderproto"
+	"github.com/noahkiss/flightdeck/internal/link"
+	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
 // markedShell starts an interactive shell with the test mark snippet and returns the pane id. It
@@ -94,8 +100,8 @@ func deref[T any](p *T) any {
 // TestCommandMarks is the stage's end-to-end acceptance test: a marked shell runs three
 // commands, typed one at a time once the one before has ended. command.list shows three commands
 // with their exit statuses, and command.output gives each command's output and nothing else. The
-// list survives a planned restart and a SIGKILL of gff-hab with the same ids, and each command's
-// start and end reach a subscriber as command.updated events.
+// list survives a planned restart, a SIGKILL of gff-hab and the loss of the checkpoint with the
+// same ids, and each command's start and end reach a subscriber as command.updated events.
 func TestCommandMarks(t *testing.T) {
 	for _, shell := range []string{"bash", "zsh"} {
 		t.Run(shell, func(t *testing.T) { testCommandMarks(t, shell) })
@@ -178,32 +184,138 @@ func testCommandMarks(t *testing.T, shell string) {
 		return true
 	})
 
-	// The list outlives gff-hab: a planned restart restores it from the checkpoint, a SIGKILL
-	// from the checkpoint and the ring. The ids and offsets stay the same.
-	for _, kill := range []bool{false, true} {
-		e.restart(kill)
-		c2 := e.control()
-		waitUntil(t, fmt.Sprintf("the list after a restart (kill %v)", kill), func() bool {
-			got := listCommands(t, c2, pane)
-			if len(got) != len(cs) {
+	// The list outlives gff-hab with the same ids and offsets. A planned restart restores it from
+	// the checkpoint written at the stop, times included. The new gff-hab writes no checkpoint
+	// for an hour, so the fourth command is found only in bytes replayed after a SIGKILL, and it
+	// has no times there. With the checkpoint deleted, the whole list is rebuilt from the ring,
+	// with no times at all.
+	e.env = []string{"GFF_HAB_CHECKPOINT_EVERY=1h", "GFF_HAB_CHECKPOINT_IDLE=1h"}
+	e.restart(false)
+	c2 := e.control()
+	waitForList(t, c2, pane, "the list after a planned restart", cs)
+	call(t, c2, "pane.input", api.InputParams{Pane: pane, Text: "echo four\r"}, nil)
+	waitUntil(t, "command 4 to end", func() bool {
+		got := listCommands(t, c2, pane)
+		return len(got) == 4 && got[3].End != nil
+	})
+	cs = listCommands(t, c2, pane)
+	if ck := e.checkpointOffset(); ck >= *cs[3].End {
+		t.Fatalf("a checkpoint at %d already holds command 4 (ends at %d)", ck, *cs[3].End)
+	}
+	four := cs[3]
+	if four.State != api.CommandStateDone || deref(four.Exit) != 0 || four.StartedAt == "" {
+		t.Fatalf("command 4 as live output: %+v", four)
+	}
+	four.StartedAt, four.EndedAt = "", ""
+	e.restart(true)
+	c3 := e.control()
+	waitForList(t, c3, pane, "the list after a SIGKILL", append(cs[:3:3], four))
+
+	e.stopHab(true)
+	ckpts, _ := filepath.Glob(filepath.Join(e.state, "checkpoints", "*.ckpt"))
+	if len(ckpts) != 1 {
+		t.Fatalf("checkpoints: %v", ckpts)
+	}
+	if err := os.Remove(ckpts[0]); err != nil {
+		t.Fatal(err)
+	}
+	e.serve()
+	c4 := e.control()
+	bare := make([]api.Command, len(cs))
+	for i, c := range cs {
+		c.StartedAt, c.EndedAt = "", ""
+		bare[i] = c
+	}
+	waitForList(t, c4, pane, "the list rebuilt from the ring", bare)
+	var out api.CommandOutput
+	call(t, c4, "command.output", api.CommandOutputParams{Pane: pane, Command: cs[0].ID}, &out)
+	if string(out.Data) != steps[0].output {
+		t.Errorf("after the rebuild from the ring: output %q", out.Data)
+	}
+}
+
+// waitForList waits until pane's command list is want: the same commands with the same
+// started_at and ended_at.
+func waitForList(t *testing.T, c *control.Client, pane, what string, want []api.Command) {
+	t.Helper()
+	same := func(got []api.Command) bool {
+		if len(got) != len(want) {
+			return false
+		}
+		for i := range got {
+			if !sameCommand(got[i], want[i]) || got[i].StartedAt != want[i].StartedAt || got[i].EndedAt != want[i].EndedAt {
 				return false
 			}
-			for i := range got {
-				if !sameCommand(got[i], cs[i]) {
-					return false
-				}
+		}
+		return true
+	}
+	deadline := time.Now().Add(scaleTimeout(15 * time.Second))
+	for got := listCommands(t, c, pane); !same(got); got = listCommands(t, c, pane) {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s:\n got %+v\nwant %+v", what, got, want)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// checkpointOffset returns the offset in the header of the one pane checkpoint in the state
+// directory.
+func (e *habEnv) checkpointOffset() uint64 {
+	e.t.Helper()
+	ckpts, _ := filepath.Glob(filepath.Join(e.state, "checkpoints", "*.ckpt"))
+	if len(ckpts) != 1 {
+		e.t.Fatalf("checkpoints: %v", ckpts)
+	}
+	b, err := os.ReadFile(ckpts[0])
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	hdr, _, _ := bytes.Cut(b, []byte{'\n'})
+	var h struct {
+		Offset uint64 `json:"offset"`
+	}
+	if err := json.Unmarshal(hdr, &h); err != nil {
+		e.t.Fatal(err)
+	}
+	return h.Offset
+}
+
+// TestCommandEventsDropped: a flush sends a pane's newest maxCommandEvents changes, and the first
+// event it sends says how many older ones it left out. A flush that left none out says nothing.
+func TestCommandEventsDropped(t *testing.T) {
+	u := hp.UUID{1}
+	var pending []cmdmarks.Command
+	var sent []api.Command
+	e := &commandEvents{dirty: map[string]bool{}, wake: make(chan struct{}, 1),
+		changes: func(got hp.UUID) []cmdmarks.Command {
+			if got != u {
+				t.Errorf("changes for pane %s", got)
 			}
-			return true
-		})
-		var out api.CommandOutput
-		call(t, c2, "command.output", api.CommandOutputParams{Pane: pane, Command: cs[0].ID}, &out)
-		if string(out.Data) != steps[0].output {
-			t.Errorf("after a restart (kill %v): output %q", kill, out.Data)
+			cs := pending
+			pending = nil
+			return cs
+		},
+		publish: func(ev structure.Event) { sent = append(sent, ev.Data.(api.Command)) }}
+	for _, n := range []int{maxCommandEvents + 8, 3} {
+		pending, sent = nil, nil
+		for i := range n {
+			pending = append(pending, cmdmarks.Command{ID: uint64(i), State: cmdmarks.Done})
+		}
+		e.notice(link.Notice{Kind: link.PaneCommands, Pane: link.PaneStatus{UUID: u}})
+		e.flush()
+		want := min(n, maxCommandEvents)
+		if len(sent) != want || sent[0].ID != uint64(n-want) || sent[0].Dropped != n-want {
+			t.Fatalf("%d changes: sent %d, the first is %d with dropped %d", n, len(sent), sent[0].ID, sent[0].Dropped)
+		}
+		for _, c := range sent[1:] {
+			if c.Dropped != 0 {
+				t.Fatalf("%d changes: event %d says dropped %d", n, c.ID, c.Dropped)
+			}
 		}
 	}
 }
 
-// TestCommandMarksRing: a command whose output has left the holder's ring is dropped from the
+// TestCommandMarksRing:a command whose output has left the holder's ring is dropped from the
 // list, and a read of a command whose first bytes left the ring says gap and starts later.
 func TestCommandMarksRing(t *testing.T) {
 	e := newHabEnv(t, 64<<10)

@@ -347,6 +347,7 @@ func (p *pane) prepare(l *Link, h *holderclient.Holder, pi hp.PaneInfo) (from ui
 			p.seq.reset()
 			p.queries.Reset(p.off) // a checkpoint is taken in the ground state only
 			p.cmds = restoreCommands(ck)
+			p.cmds.Trim(pi.Oldest) // the ring may have moved on while no gff-hab followed it
 			return p.off, back
 		}
 	}
@@ -899,9 +900,10 @@ func (p *pane) checkpoint(l *Link, force bool) error {
 		p.mu.Unlock()
 		return nil
 	}
-	if !p.seq.ground() {
+	if !p.seq.ground() || !p.cmds.Idle() {
 		// The stream ends inside an escape sequence or a UTF-8 character, which a snapshot
-		// cannot carry. Keep the older checkpoint; the next tick tries again.
+		// cannot carry, or inside a mark, which the saved command list cannot. Keep the older
+		// checkpoint; the next tick tries again.
 		if force {
 			l.cfg.Logf("link: pane %s: output ends mid-sequence at %d: keeping the checkpoint at %d", p.uuid, p.off, p.ckOff)
 		}

@@ -2,11 +2,11 @@ package link
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,15 +107,33 @@ func syncDir(dir string) error {
 	return err
 }
 
-// readCheckpoint reads pane u's checkpoint. It returns os.ErrNotExist when there is none.
+// maxCheckpointHeader is the longest checkpoint header line readCheckpoint reads. The largest
+// header gff-hab writes is about cmdmarks.MaxCommands commands, each with cmdmarks.MaxText bytes
+// of text that JSON may escape to 6 bytes a byte: under 7 MiB. A longer line is corrupt or
+// hostile, and is not read.
+const maxCheckpointHeader = 8 << 20
+
+// readCheckpoint reads pane u's checkpoint. It returns os.ErrNotExist when there is none. It
+// reads at most maxCheckpointHeader bytes of header, and a snapshot only of the length the
+// header gives when the file is exactly that long.
 func readCheckpoint(dir string, u hp.UUID) (*checkpoint, error) {
-	b, err := os.ReadFile(checkpointPath(dir, u))
+	f, err := os.Open(checkpointPath(dir, u))
 	if err != nil {
 		return nil, err
 	}
-	hdr, snap, ok := bytes.Cut(b, []byte{'\n'})
-	if !ok {
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	hdr, err := bufio.NewReader(io.LimitReader(f, maxCheckpointHeader+1)).ReadBytes('\n')
+	switch {
+	case err == io.EOF && len(hdr) > maxCheckpointHeader:
+		return nil, fmt.Errorf("checkpoint header is over %d bytes", maxCheckpointHeader)
+	case err == io.EOF:
 		return nil, errors.New("checkpoint has no header line")
+	case err != nil:
+		return nil, err
 	}
 	var c checkpoint
 	if err := json.Unmarshal(hdr, &c); err != nil {
@@ -130,8 +148,12 @@ func readCheckpoint(dir string, u hp.UUID) (*checkpoint, error) {
 	if c.Cols <= 0 || c.Rows <= 0 {
 		return nil, fmt.Errorf("checkpoint size %dx%d", c.Cols, c.Rows)
 	}
-	if len(snap) != c.Len {
-		return nil, fmt.Errorf("checkpoint snapshot is %d bytes, header says %d", len(snap), c.Len)
+	if n := st.Size() - int64(len(hdr)); c.Len < 0 || n != int64(c.Len) {
+		return nil, fmt.Errorf("checkpoint snapshot is %d bytes, header says %d", n, c.Len)
+	}
+	snap := make([]byte, c.Len)
+	if _, err := f.ReadAt(snap, int64(len(hdr))); err != nil && !(err == io.EOF && c.Len == 0) {
+		return nil, fmt.Errorf("checkpoint snapshot: %w", err)
 	}
 	if sum := crc32.ChecksumIEEE(snap); sum != c.CRC {
 		return nil, fmt.Errorf("checkpoint snapshot CRC %08x, header says %08x", sum, c.CRC)

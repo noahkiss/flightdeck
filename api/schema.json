@@ -1702,6 +1702,11 @@
       "Command": {
         "type": "object",
         "properties": {
+          "dropped": {
+            "type": "integer",
+            "format": "int64",
+            "description": "In a command.updated event only: how many changes of this pane, older than this one, the hab left out to bound its events. Read command.list to catch up."
+          },
           "end": {
             "type": "integer",
             "format": "uint64",
@@ -1745,7 +1750,11 @@
           },
           "text": {
             "type": "string",
-            "description": "The command line, when the shell sent it in the C mark (cmdline_url)."
+            "description": "The command line, when the shell sent it in the C mark (cmdline_url). At most 1 KiB."
+          },
+          "text_truncated": {
+            "type": "boolean",
+            "description": "True when text was cut: at 1 KiB, or by the mark's 4 KiB payload cap."
           }
         },
         "required": [

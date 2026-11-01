@@ -356,12 +356,18 @@ mark split across any number of reads is found once, at the same offsets.
 - It follows OSC strings as a terminal does: BEL or ST ends one; CAN or SUB aborts it; an ESC
   that is not followed by `\` aborts it and starts a new escape sequence. An OSC that is not
   OSC 133 is followed to its end and dropped.
-- A mark's payload is held up to 4 KiB. A longer OSC 133 is malformed: it is followed to its end
-  and dropped. So any output, however hostile, costs the scanner at most 4 KiB.
+- A mark's payload is held up to 4 KiB. Once a payload starts `133;`, a longer one is cut there:
+  the rest is followed to its end and not held, and the mark is kept, with its last param cut. A
+  long command line therefore still makes a command, and its `D` still ends it. A byte below 0x20
+  (or 0x7f) past the cut still makes the mark malformed. So any output, however hostile, costs
+  the scanner at most 4 KiB.
 - A payload with a byte below 0x20 or the byte 0x7f, a letter other than A to D, or a letter
   followed by something other than `;` or the end, is malformed and dropped.
 - A gap in the stream (bytes that never arrived) resets the scanner, and a held candidate is
   dropped.
+- Inside DCS, SOS, PM or APC, only an ESC can start an OSC, and that ESC (not followed by `\`)
+  aborts the string first, as in a terminal's parser and the link's ground-state scanner. So
+  tmux passthrough, which doubles the ESC, carries a mark to gff-hab as it would to a terminal.
 
 **The command list.** A pane has a list of commands, oldest first. A command starts at a `C`
 mark. Its fields:
@@ -375,7 +381,9 @@ mark. Its fields:
   command's bytes, from output to end, hold its output only, without any mark.
 - **state**: `running` until it ends; `done` after a `D`; `unknown` when something other than
   a `D` closed it (see below). **exit** is the `D` mark's status, when it had one.
-- **text**: the command line from `cmdline_url`, decoded, at most 4 KiB, when the shell sent it.
+- **text**: the command line from `cmdline_url`, decoded, when the shell sent it. It is at most
+  1 KiB, cut at a UTF-8 character boundary; **text_truncated** says it was cut, at 1 KiB or by
+  the payload cap. A percent escape that the payload cap cut in two is dropped.
 - **started_at**, **ended_at**: when gff-hab read the `C` and the closing mark as live output.
   Marks found in replayed bytes (after a restart) carry no time: it is unknown, never guessed.
 
@@ -403,13 +411,19 @@ mark. Its fields:
   real: there is no nonce. The rules keep the list sound whatever arrives: commands never
   overlap, their offsets only grow, and a stray `D` or `B` changes nothing. A fake `A` closes
   the running command as `unknown`, and the shell's real `D` that follows is then ignored.
+- **A nonce is a hard gate.** Without one, a `cat`ted file can forge a command's text and exit
+  status. Display may use them. No feature may act on a mark's `text` or `exit` (a rerun that
+  types `text` into the pane, approvals keyed on an exit status) until marks carry a nonce that
+  the console snippet sets and gff-hab checks.
 - **A gap.** When bytes never arrived, a running command closes as `unknown` at the gap's start,
   and the state goes to idle.
 
 **Bounds.** A pane keeps at most 1000 commands; past that the oldest is dropped. A command whose
 end has left the holder's ring is dropped too: its bytes are gone. A running command is never
 dropped by the ring, only by the count. A program that prints marks in a loop therefore costs at
-most 1000 small records per pane.
+most 1000 records of at most about 1.2 KiB each per pane. Dropping the oldest is O(1) over time,
+so such a loop costs a small multiple of plain text to follow (27x to 41x, against about 200x
+when each drop moved the whole list), not a stall of the link's event loop.
 
 **Restarts.** The list is saved with the pane's checkpoint, so a restart that replays from the
 checkpoint keeps it and goes on from the saved state. A screen rebuilt from the ring alone
@@ -436,18 +450,34 @@ Decision: proposed (this stage). Calls and the event: 3.9.
   before `start`, and `more` when output goes on past `end` (the limit cut it, or the command
   runs). A `from` outside the command's range is clamped to it. An unknown command answers
   `not_found`; a lost pane `unavailable`. `command.output` runs off the read loop, at most 4 at a
-  time per connection.
+  time per connection. Field set 2 of `Command` adds the optional `text_truncated` and
+  `dropped` (events only).
 - **Times** are RFC 3339 with nanoseconds, in UTC, from gff-hab's clock when it read the mark as
   live output.
 - **Events.** `command.updated` carries one `Command`; its id is the pane id, so a scope that
   holds the pane gets it. The link notes which commands changed; `gff-hab` reads the changes and
   sends them at most every 200 ms, at most 32 per pane per flush (the newest). The last event of
-  a command is its final state; a client that missed some reads `command.list`.
+  a command is its final state; a client that missed some reads `command.list`. When a flush
+  leaves a pane's older changes out, its first event for the pane carries `dropped`, the count
+  left out, so the client knows to read `command.list`.
 - **Saved.** The checkpoint header gains an optional `commands` field: the list and the
   tracker's state (`phase`, the pending `prompt` and `input`). A checkpoint without it (an older
-  build) starts an empty list at its offset.
+  build) starts an empty list at its offset. A checkpoint is written only where the mark scanner
+  holds no partial mark. With the 1 KiB text cap the largest header is under 7 MiB (1000 commands
+  of text that JSON escapes up to 6 bytes a byte); gff-hab reads at most 8 MiB of header and
+  refuses a longer one, and allocates the snapshot only when the file is exactly as long as the
+  header says.
+- **Checkpoint times.** `GFF_HAB_CHECKPOINT_IDLE` (default 1s) and `GFF_HAB_CHECKPOINT_EVERY`
+  (default 10s), Go durations from 100ms to 24h, set when a pane's checkpoint is written. The
+  end-to-end tests use them to SIGKILL gff-hab with output past the last checkpoint.
 - **The ring.** The link drops a command once its end is at or before the pane's offset minus
-  the holder's ring size (the welcome's ring size).
+  the holder's ring size (the welcome's ring size), and, after restoring a checkpoint, once its
+  end is at or before the ring's oldest byte.
+- **A range the ring lost completely.** The holder answers such a replay at its oldest byte,
+  which can be past the command's end. `command.output` then returns the empty run at the
+  command's end (`start` = `end` = the end), with `gap`, and `more` only while the command runs.
+  It does not answer `not_found`: the command is still listed, and `gap` already means bytes
+  before `start` are lost.
 - **A read the ring overtakes.** When the holder skips bytes in the middle of a bounded replay
   (the ring moved on while it sent), the bytes cannot be placed, so gff-hab asks again, up to
   three times; the next replay starts after the lost bytes and says gap.
@@ -455,8 +485,11 @@ Decision: proposed (this stage). Calls and the event: 3.9.
   the marks; they are test fixtures, not the console's snippet. zsh prints its partial-line mark
   (`PROMPT_SP`, `PROMPT_CR`) before `precmd`, so that mark would land inside a command's output
   range before `D`; the fixture turns both off. The shipped snippet has to deal with it.
-- **Not built here:** the working directory of a command (OSC 7), text from bash (bash sends no
-  command line in its marks without more setup), and a nonce against fake marks.
+- **Not built here:** the working directory of a command (OSC 7, later: an additive field that
+  nothing depends on), text from bash (bash sends no command line in its marks without more
+  setup), and a nonce against fake marks (see the hard gate above). zsh's `PROMPT_SP` mark
+  landing inside an output range before `D` is fixed later in the console snippet (for example,
+  send `D` first thing in `precmd`), not in the tracker.
 
 ---
 

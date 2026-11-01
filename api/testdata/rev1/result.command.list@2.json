@@ -1,0 +1,30 @@
+{
+  "commands": [
+    {
+      "dropped": 13,
+      "end": 8,
+      "ended_at": "ended_at-12",
+      "exit": 9,
+      "id": 4,
+      "input": 6,
+      "output": 7,
+      "prompt": 5,
+      "started_at": "started_at-11",
+      "state": "unknown",
+      "text": "text-10",
+      "text_truncated": true,
+      "x_unknown_field": "later"
+    }
+  ],
+  "more": true,
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

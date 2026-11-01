@@ -30,6 +30,7 @@ type habEnv struct {
 	t                 *testing.T
 	hdir, state, sock string
 	work              string
+	env               []string // extra environment for each gff-hab started
 	srv               *served
 	holder            *exec.Cmd
 	holderDone        chan struct{}
@@ -75,11 +76,11 @@ func newHabEnv(t *testing.T, ring int) *habEnv {
 }
 
 func (e *habEnv) serve() {
-	e.srv = startServeWith(e.t, e.sock, e.state, nil, "-holders", e.hdir)
+	e.srv = startServeWith(e.t, e.sock, e.state, e.env, "-holders", e.hdir)
 }
 
-// restart stops gff-hab by plan (SIGTERM) or by SIGKILL and starts a new one.
-func (e *habEnv) restart(kill bool) {
+// stopHab stops gff-hab by plan (SIGTERM) or by SIGKILL.
+func (e *habEnv) stopHab(kill bool) {
 	e.t.Helper()
 	if kill {
 		e.srv.cmd.Process.Kill()
@@ -88,6 +89,12 @@ func (e *habEnv) restart(kill bool) {
 	} else {
 		e.srv.stop(e.t)
 	}
+}
+
+// restart stops gff-hab by plan (SIGTERM) or by SIGKILL and starts a new one.
+func (e *habEnv) restart(kill bool) {
+	e.t.Helper()
+	e.stopHab(kill)
 	e.serve()
 }
 

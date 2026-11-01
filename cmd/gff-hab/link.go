@@ -113,12 +113,36 @@ func gitInterval(flagValue time.Duration, getenv func(string) string) (time.Dura
 	return d, nil
 }
 
+// checkpointTimes reads $GFF_HAB_CHECKPOINT_EVERY and $GFF_HAB_CHECKPOINT_IDLE (Go durations):
+// the longest a printing pane goes without a checkpoint, and how long a pane must print nothing
+// before its idle checkpoint. Unset means the link's defaults (zero here).
+func checkpointTimes(getenv func(string) string) (every, idle time.Duration, err error) {
+	read := func(name string) (time.Duration, error) {
+		v := getenv(name)
+		if v == "" {
+			return 0, nil
+		}
+		d, err := time.ParseDuration(v)
+		if err != nil || d < 100*time.Millisecond || d > 24*time.Hour {
+			return 0, fmt.Errorf("%s=%q: want a duration from 100ms to 24h", name, v)
+		}
+		return d, nil
+	}
+	if every, err = read("GFF_HAB_CHECKPOINT_EVERY"); err != nil {
+		return 0, 0, err
+	}
+	idle, err = read("GFF_HAB_CHECKPOINT_IDLE")
+	return every, idle, err
+}
+
 // linkOptions are the holder link settings that come from flags or the environment.
 type linkOptions struct {
-	scrollback int             // scrollback cap per pane, bytes
-	budget     int             // scrollback cap for all panes, bytes
-	retiredTTL time.Duration   // how long a retired pane uuid stays refused
-	starter    service.Starter // starts holders as init system jobs; nil starts none
+	scrollback      int             // scrollback cap per pane, bytes
+	budget          int             // scrollback cap for all panes, bytes
+	retiredTTL      time.Duration   // how long a retired pane uuid stays refused
+	starter         service.Starter // starts holders as init system jobs; nil starts none
+	checkpointEvery time.Duration   // the longest a printing pane goes without a checkpoint; 0: default
+	checkpointIdle  time.Duration   // quiet time before a pane's idle checkpoint; 0: default
 }
 
 // openLink starts the holder link (spec 2.3). The holder directory comes from -holders, else
@@ -151,6 +175,8 @@ func openLink(holders, state string, opt linkOptions, logger *log.Logger) (*link
 		ScrollbackBytes:  opt.scrollback,
 		ScrollbackBudget: opt.budget,
 		RetiredTTL:       opt.retiredTTL,
+		CheckpointEvery:  opt.checkpointEvery,
+		IdleAfter:        opt.checkpointIdle,
 		Start:            start,
 		Retired:          retired,
 		Logf:             logger.Printf,

@@ -266,9 +266,13 @@ type Command struct {
 	Output    uint64       `json:"output" doc:"Offset just after the C mark: the first byte of output."`
 	End       *uint64      `json:"end,omitempty" doc:"Offset where the output ends: the command-end mark (D), or what closed the command. Absent while it runs."`
 	Exit      *int         `json:"exit,omitempty" doc:"Exit status from the D mark. Absent when the mark had none, or no D came."`
-	Text      string       `json:"text,omitempty" doc:"The command line, when the shell sent it in the C mark (cmdline_url)."`
+	Text      string       `json:"text,omitempty" doc:"The command line, when the shell sent it in the C mark (cmdline_url). At most 1 KiB."`
 	StartedAt string       `json:"started_at,omitempty" doc:"RFC 3339 time the C mark arrived. Absent when the hab found the mark in replayed output."`
 	EndedAt   string       `json:"ended_at,omitempty" doc:"RFC 3339 time the command ended. Absent while it runs, or when unknown."`
+	// TextTruncated and Dropped keep a hostile stream of marks from growing the list, the
+	// checkpoint and the events; a client still learns that something was left out.
+	TextTruncated bool `json:"text_truncated,omitempty" doc:"True when text was cut: at 1 KiB, or by the mark's 4 KiB payload cap."`
+	Dropped       int  `json:"dropped,omitempty" doc:"In a command.updated event only: how many changes of this pane, older than this one, the hab left out to bound its events. Read command.list to catch up."`
 }
 
 // CommandListParams reads a page of a pane's commands.

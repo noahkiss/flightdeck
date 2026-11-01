@@ -30,6 +30,8 @@
 // spawns, across restarts, for -retired-days, else $GFF_HAB_RETIRED_DAYS, else 30 days. Each
 // project's repository state (branch, head, ahead, behind) is read again every -git-interval,
 // else $GFF_HAB_GIT_INTERVAL, else 60s, besides the reads that hooks and ref changes trigger.
+// A pane's screen checkpoint is written once it has printed nothing for $GFF_HAB_CHECKPOINT_IDLE,
+// else 1s, and at least every $GFF_HAB_CHECKPOINT_EVERY, else 10s, while it prints.
 //
 // With -init systemd or launchd (as the jobs that `gff-hab install` writes run it), gff-hab asks
 // the init system for each holder as its own job (internal/service, holder spec 5.4) and removes
@@ -234,11 +236,16 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	ckEvery, ckIdle, err := checkpointTimes(os.Getenv)
+	if err != nil {
+		return err
+	}
 	starter, err := serveStarter(sf, logger.Printf)
 	if err != nil {
 		return err
 	}
-	lk, err := openLink(*holders, dir, linkOptions{scrollback, budget, ttl, starter}, logger)
+	lk, err := openLink(*holders, dir, linkOptions{scrollback: scrollback, budget: budget, retiredTTL: ttl, starter: starter,
+		checkpointEvery: ckEvery, checkpointIdle: ckIdle}, logger)
 	if err != nil {
 		return err
 	}
@@ -350,7 +357,7 @@ func serve(args []string) error {
 		caps = append(caps, "transcripts")
 		// Commands from OSC 133 marks (hab-logic-api.md 2.5): command.updated events are read
 		// from the link and sent at a bounded rate.
-		cmdEvents := newCommandEvents(lk, func(e structure.Event) {
+		cmdEvents := newCommandEvents(lk.CommandChanges, func(e structure.Event) {
 			if s := srv.Load(); s != nil {
 				s.Publish(e)
 			}

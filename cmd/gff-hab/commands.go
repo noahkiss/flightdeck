@@ -9,6 +9,7 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/cmdmarks"
 	"github.com/noahkiss/flightdeck/internal/control"
+	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/link"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
@@ -59,7 +60,7 @@ func commandErr(pane string, err error) error {
 
 func apiCommand(c cmdmarks.Command) api.Command {
 	a := api.Command{ID: c.ID, State: api.CommandState(c.State), Prompt: c.Prompt, Input: c.Input,
-		Output: c.Output, End: c.End, Exit: c.Exit, Text: c.Text}
+		Output: c.Output, End: c.End, Exit: c.Exit, Text: c.Text, TextTruncated: c.TextTruncated}
 	if !c.Started.IsZero() {
 		a.StartedAt = c.Started.UTC().Format(time.RFC3339Nano)
 	}
@@ -78,8 +79,9 @@ const maxCommandEvents = 32
 // commandEvents sends command.updated events. The link says when a pane's commands changed;
 // the changes are read and sent at most every commandFlush, at most maxCommandEvents per pane
 // per flush (the newest), so a program that prints marks in a loop cannot flood the clients.
+// When a flush leaves changes out, its first event for the pane says how many in dropped.
 type commandEvents struct {
-	lk      *link.Link
+	changes func(hp.UUID) []cmdmarks.Command // a pane's changes since the last call
 	publish func(structure.Event)
 
 	mu    sync.Mutex
@@ -89,8 +91,8 @@ type commandEvents struct {
 	done  chan struct{}
 }
 
-func newCommandEvents(lk *link.Link, publish func(structure.Event)) *commandEvents {
-	e := &commandEvents{lk: lk, publish: publish, dirty: map[string]bool{}, wake: make(chan struct{}, 1),
+func newCommandEvents(changes func(hp.UUID) []cmdmarks.Command, publish func(structure.Event)) *commandEvents {
+	e := &commandEvents{changes: changes, publish: publish, dirty: map[string]bool{}, wake: make(chan struct{}, 1),
 		stop: make(chan struct{}), done: make(chan struct{})}
 	go e.run()
 	return e
@@ -137,10 +139,14 @@ func (e *commandEvents) flush() {
 		if !ok {
 			continue
 		}
-		cs := e.lk.CommandChanges(u)
-		cs = cs[max(len(cs)-maxCommandEvents, 0):]
-		for _, c := range cs {
-			e.publish(structure.Event{Type: control.EventCommandUpdated, ID: pane, Data: api.NonNil(apiCommand(c))})
+		cs := e.changes(u)
+		dropped := max(len(cs)-maxCommandEvents, 0)
+		for i, c := range cs[dropped:] {
+			a := apiCommand(c)
+			if i == 0 {
+				a.Dropped = dropped
+			}
+			e.publish(structure.Event{Type: control.EventCommandUpdated, ID: pane, Data: api.NonNil(a)})
 		}
 	}
 }

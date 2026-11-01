@@ -10,8 +10,8 @@ package cmdmarks
 
 import "bytes"
 
-// MaxPayload is the most payload bytes of one OSC 133 the scanner holds. A longer one is
-// malformed: it is followed to its end and dropped.
+// MaxPayload is the most payload bytes of one OSC 133 the scanner holds. A longer mark is cut
+// there: the rest is followed to its end and not held, and the mark says Truncated.
 const MaxPayload = 4 << 10
 
 // Mark is one well-formed OSC 133 mark.
@@ -22,6 +22,8 @@ type Mark struct {
 	Start, End uint64
 	// Params are the ;-separated fields after the letter.
 	Params []string
+	// Truncated is true when the payload was longer than MaxPayload: the last param is cut.
+	Truncated bool
 }
 
 type scanState uint8
@@ -42,6 +44,7 @@ type Scanner struct {
 	start uint64 // offset of the ESC that began the current sequence
 	buf   []byte // the OSC payload held so far; at most MaxPayload bytes
 	drop  bool   // the current OSC is not a mark (another OSC, or malformed)
+	cut   bool   // the current OSC went past MaxPayload; the rest is not held
 }
 
 // NewScanner returns a scanner for a stream whose next byte is at offset off.
@@ -49,7 +52,7 @@ func NewScanner(off uint64) *Scanner { return &Scanner{off: off} }
 
 // Reset drops any held candidate and restarts at offset off, as after a gap.
 func (s *Scanner) Reset(off uint64) {
-	s.off, s.st, s.drop = off, stGround, false
+	s.off, s.st, s.drop, s.cut = off, stGround, false, false
 	s.buf = s.buf[:0]
 }
 
@@ -100,7 +103,7 @@ func (s *Scanner) Feed(p []byte, emit func(Mark)) {
 func (s *Scanner) esc(b byte, at uint64) {
 	switch {
 	case b == ']':
-		s.st, s.drop = stOSC, false
+		s.st, s.drop, s.cut = stOSC, false, false
 		s.buf = s.buf[:0]
 	case b == 0x1b:
 		s.start = at // a new escape
@@ -117,8 +120,13 @@ func (s *Scanner) hold(b byte) {
 		return
 	}
 	if len(s.buf) >= MaxPayload {
-		s.drop = true
-		s.buf = s.buf[:0]
+		// The held bytes start "133;": keep them and cut the rest. A byte that makes the
+		// payload malformed still drops the mark.
+		s.cut = true
+		if b < 0x20 || b == 0x7f {
+			s.drop = true
+			s.buf = s.buf[:0]
+		}
 		return
 	}
 	s.buf = append(s.buf, b)
@@ -135,7 +143,7 @@ func (s *Scanner) finish(end uint64, emit func(Mark)) {
 		return
 	}
 	if m, ok := parse(s.buf); ok {
-		m.Start, m.End = s.start, end
+		m.Start, m.End, m.Truncated = s.start, end, s.cut
 		emit(m)
 	}
 	s.buf = s.buf[:0]

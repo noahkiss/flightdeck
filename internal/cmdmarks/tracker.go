@@ -5,10 +5,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // MaxCommands is the most commands a Tracker keeps; past it the oldest is dropped.
 const MaxCommands = 1000
+
+// MaxText is the most bytes of a command line a Command keeps; a longer one is cut at a UTF-8
+// character boundary and says TextTruncated.
+const MaxText = 1 << 10
 
 // State says how far a command got.
 type State string
@@ -35,8 +40,10 @@ type Command struct {
 	State State   `json:"state"`
 	// Exit is the D mark's exit status, when it had one.
 	Exit *int `json:"exit,omitempty"`
-	// Text is the command line from the C mark's cmdline_url, when the shell sent it.
-	Text string `json:"text,omitempty"`
+	// Text is the command line from the C mark's cmdline_url, when the shell sent it, at most
+	// MaxText bytes. TextTruncated says it was cut, at MaxText or by the mark's payload cap.
+	Text          string `json:"text,omitempty"`
+	TextTruncated bool   `json:"text_truncated,omitempty"`
 	// Started and Ended are when the C mark and the closing mark arrived as live output. Zero
 	// for marks found in replayed bytes: the time is unknown.
 	Started time.Time `json:"started,omitzero"`
@@ -104,6 +111,9 @@ func (t *Tracker) Save() Saved {
 // Offset returns the offset after the last byte fed.
 func (t *Tracker) Offset() uint64 { return t.sc.Offset() }
 
+// Idle reports whether the scanner holds no partial sequence: Save may be taken here.
+func (t *Tracker) Idle() bool { return t.sc.Idle() }
+
 // Feed applies the bytes data at offset off. now is when they arrived as live output, or zero
 // for replayed bytes. An offset after the last byte fed is a gap: a running command closes as
 // unknown where the gap starts, and the scanner starts afresh. An offset before it restarts the
@@ -141,7 +151,8 @@ func (t *Tracker) apply(m Mark) {
 			return
 		}
 		c := Command{ID: m.Start, Prompt: t.prompt, Input: t.input, Output: m.End, State: Running,
-			Text: cmdline(m.Params), Started: t.now}
+			Started: t.now}
+		c.Text, c.TextTruncated = cmdline(m)
 		t.phase, t.prompt, t.input = phRunning, nil, nil
 		t.add(c)
 	case 'D':
@@ -177,24 +188,41 @@ func (t *Tracker) closeRunning(at uint64) {
 
 func (t *Tracker) add(c Command) {
 	if len(t.cmds) >= MaxCommands {
-		delete(t.changed, t.cmds[0].ID)
-		t.cmds = append(t.cmds[:0], t.cmds[1:]...)
+		t.drop(1)
 	}
 	t.cmds = append(t.cmds, c)
 	t.changed[c.ID] = true
 }
 
-// cmdline decodes the cmdline_url param of a C mark.
-func cmdline(params []string) string {
-	for _, p := range params {
-		if v, ok := strings.CutPrefix(p, "cmdline_url="); ok {
-			if s, err := url.PathUnescape(v); err == nil {
-				return s
-			}
-			return ""
+// cmdline decodes the cmdline_url param of a C mark, at most MaxText bytes of it, and says
+// whether it was cut.
+func cmdline(m Mark) (string, bool) {
+	for i, p := range m.Params {
+		v, ok := strings.CutPrefix(p, "cmdline_url=")
+		if !ok {
+			continue
 		}
+		cut := m.Truncated && i == len(m.Params)-1
+		if cut {
+			// The payload cap may have cut an escape in two: drop its first half.
+			if j := strings.LastIndexByte(v, '%'); j >= 0 && j >= len(v)-2 {
+				v = v[:j]
+			}
+		}
+		s, err := url.PathUnescape(v)
+		if err != nil {
+			return "", false
+		}
+		if len(s) > MaxText {
+			n := MaxText
+			for n > 0 && !utf8.RuneStart(s[n]) {
+				n--
+			}
+			s, cut = s[:n], true
+		}
+		return s, cut
 	}
-	return ""
+	return "", false
 }
 
 // Trim drops the ended commands whose output ends at or before oldest: the holder's ring no
@@ -202,12 +230,21 @@ func cmdline(params []string) string {
 func (t *Tracker) Trim(oldest uint64) {
 	n := 0
 	for n < len(t.cmds) && t.cmds[n].End != nil && *t.cmds[n].End <= oldest {
-		delete(t.changed, t.cmds[n].ID)
 		n++
 	}
-	if n > 0 {
-		t.cmds = append(t.cmds[:0], t.cmds[n:]...)
+	t.drop(n)
+}
+
+// drop forgets the oldest n commands. It moves the slice's start rather than its elements, so a
+// drop costs O(n); append copies the kept ones to a new array once the old one runs out, which
+// is O(1) per command over time. A flood of marks at the cap would otherwise move the whole
+// list for each new command.
+func (t *Tracker) drop(n int) {
+	for i := range n {
+		delete(t.changed, t.cmds[i].ID)
+		t.cmds[i] = Command{} // let the dropped text go
 	}
+	t.cmds = t.cmds[n:]
 }
 
 // Changed reports whether any command changed since the last Changes.

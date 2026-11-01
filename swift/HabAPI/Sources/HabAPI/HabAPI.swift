@@ -434,6 +434,8 @@ public struct ClosingReason: RawRepresentable, Codable, Sendable, Hashable {
 }
 
 public struct Command: Codable, Sendable, Hashable {
+    /// In a command.updated event only: how many changes of this pane, older than this one, the hab left out to bound its events. Read command.list to catch up.
+    public var dropped: Int?
     /// Offset where the output ends: the command-end mark (D), or what closed the command. Absent while it runs.
     public var end: UInt64?
     /// RFC 3339 time the command ended. Absent while it runs, or when unknown.
@@ -451,10 +453,13 @@ public struct Command: Codable, Sendable, Hashable {
     /// RFC 3339 time the C mark arrived. Absent when the hab found the mark in replayed output.
     public var startedAt: String?
     public var state: CommandState
-    /// The command line, when the shell sent it in the C mark (cmdline_url).
+    /// The command line, when the shell sent it in the C mark (cmdline_url). At most 1 KiB.
     public var text: String?
+    /// True when text was cut: at 1 KiB, or by the mark's 4 KiB payload cap.
+    public var textTruncated: Bool?
 
     enum CodingKeys: String, CodingKey {
+        case dropped = "dropped"
         case end = "end"
         case endedAt = "ended_at"
         case exit = "exit"
@@ -465,9 +470,11 @@ public struct Command: Codable, Sendable, Hashable {
         case startedAt = "started_at"
         case state = "state"
         case text = "text"
+        case textTruncated = "text_truncated"
     }
 
-    public init(end: UInt64? = nil, endedAt: String? = nil, exit: Int? = nil, id: UInt64, input: UInt64? = nil, output: UInt64, prompt: UInt64? = nil, startedAt: String? = nil, state: CommandState, text: String? = nil) {
+    public init(dropped: Int? = nil, end: UInt64? = nil, endedAt: String? = nil, exit: Int? = nil, id: UInt64, input: UInt64? = nil, output: UInt64, prompt: UInt64? = nil, startedAt: String? = nil, state: CommandState, text: String? = nil, textTruncated: Bool? = nil) {
+        self.dropped = dropped
         self.end = end
         self.endedAt = endedAt
         self.exit = exit
@@ -478,6 +485,7 @@ public struct Command: Codable, Sendable, Hashable {
         self.startedAt = startedAt
         self.state = state
         self.text = text
+        self.textTruncated = textTruncated
     }
 }
 

@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/rand/v2"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // base is the offset every test stream starts at, so offsets are never confused with indexes.
@@ -69,6 +72,12 @@ func TestScannerForms(t *testing.T) {
 		{"ESC ESC ]", "\x1b\x1b]133;C\x07", []Mark{{Kind: 'C', Start: 1, End: 9}}},
 		{"C0 inside ESC", "\x1b\x07]133;A\x07", []Mark{{Kind: 'A', Start: 0, End: 9}}},
 		{"CSI is not OSC", "\x1b[133;A\x07", nil},
+		// Inside DCS, SOS, PM or APC only an ESC can start an OSC, and that ESC (not followed
+		// by a backslash) aborts the string first, as in a terminal's parser and in the link's
+		// seqScanner. So tmux passthrough, with its doubled ESC, carries a mark there too.
+		{"DCS body", "\x1bP]133;A\x07\x1b\\", nil},
+		{"tmux passthrough", "\x1bPtmux;\x1b\x1b]133;A\x07\x1b\\", []Mark{{Kind: 'A', Start: 8, End: 16}}},
+		{"APC aborted", "\x1b_x\x1b]133;B\x07", []Mark{{Kind: 'B', Start: 3, End: 11}}},
 	}
 	for _, c := range cases {
 		for _, split := range []string{"whole", "bytes"} {
@@ -90,11 +99,11 @@ func TestScannerForms(t *testing.T) {
 	}
 }
 
-// TestScannerBounded: an OSC 133 longer than MaxPayload is dropped, and neither it nor a huge
-// OSC of another kind makes the scanner hold more than MaxPayload bytes. The scanner follows
-// both to their ends and finds the mark after them.
+// TestScannerBounded: an OSC 133 longer than MaxPayload is kept, cut at MaxPayload, and neither
+// it nor a huge OSC of another kind makes the scanner hold more than MaxPayload bytes. The
+// scanner follows both to their ends and finds the mark after them.
 func TestScannerBounded(t *testing.T) {
-	long := "\x1b]133;C;cmdline_url=" + strings.Repeat("a", MaxPayload) + "\x07"
+	long := "\x1b]133;C;cmdline_url=" + strings.Repeat("a", 64<<10) + "\x07"
 	huge := "\x1b]52;c;" + strings.Repeat("QUJD", 1<<18) + "\x07"
 	in := []byte(long + huge + "\x1b]133;A\x07")
 	s := NewScanner(base)
@@ -105,13 +114,57 @@ func TestScannerBounded(t *testing.T) {
 			t.Fatalf("scanner holds %d bytes", cap(s.buf))
 		}
 	}
-	if len(got) != 1 || got[0].Kind != 'A' || got[0].Start != base+uint64(len(long)+len(huge)) {
-		t.Fatalf("got %v, want one A after the long OSCs", got)
+	if len(got) != 2 || got[0].Kind != 'C' || !got[0].Truncated || got[0].End != base+uint64(len(long)) ||
+		len(got[0].Params[0]) != MaxPayload-len("133;C;") ||
+		got[1].Kind != 'A' || got[1].Truncated || got[1].Start != base+uint64(len(long)+len(huge)) {
+		t.Fatalf("got %d marks, want a cut C then an A after the long OSCs", len(got))
 	}
-	// Exactly MaxPayload bytes is still a mark.
+	// Exactly MaxPayload bytes is a whole mark.
 	edge := "\x1b]133;C;" + strings.Repeat("b", MaxPayload-len("133;C;")) + "\x07"
-	if got := marks([]byte(edge), nil); len(got) != 1 {
-		t.Fatalf("a payload of exactly MaxPayload bytes: got %d marks", len(got))
+	if got := marks([]byte(edge), nil); len(got) != 1 || got[0].Truncated {
+		t.Fatalf("a payload of exactly MaxPayload bytes: got %v", got)
+	}
+	// A control byte past the cut still makes the mark malformed.
+	bad := "\x1b]133;C;" + strings.Repeat("b", MaxPayload) + "\n\x07"
+	if got := marks([]byte(bad), nil); len(got) != 0 {
+		t.Fatalf("a control byte past the cut: got %d marks", len(got))
+	}
+}
+
+// TestLongCommandLine: a command line longer than the payload cap keeps its command, which its
+// D then ends. The text is cut at MaxText on a character boundary and says so; a short one
+// is whole.
+func TestLongCommandLine(t *testing.T) {
+	line := strings.Repeat("é", 3<<10) // 6 KiB of text, 18 KiB as cmdline_url
+	var s session
+	s.mark("A", false)
+	s.mark("B", false)
+	s.mark("C;cmdline_url="+url.PathEscape(line), false)
+	s.b.WriteString("out")
+	s.mark("D;4", true)
+	s.command("echo short", "short\r\n", 0, false)
+	cs, _ := track(s.b.Bytes(), nil).List(nil, 10)
+	if len(cs) != 2 {
+		t.Fatalf("got %d commands, want 2: %s", len(cs), dump(cs))
+	}
+	c := cs[0]
+	if c.State != Done || deref(c.Exit) != 4 || !c.TextTruncated || len(c.Text) != MaxText ||
+		c.Text != line[:MaxText] || !utf8.ValidString(c.Text) {
+		t.Fatalf("the long command: state %s exit %v truncated %v, %d bytes of text", c.State, deref(c.Exit),
+			c.TextTruncated, len(c.Text))
+	}
+	if cs[1].Text != "echo short" || cs[1].TextTruncated {
+		t.Fatalf("the short command: %q truncated %v", cs[1].Text, cs[1].TextTruncated)
+	}
+	// A cut that splits a percent escape, with a decoded line under MaxText: still truncated.
+	m := Mark{Kind: 'C', Params: []string{"cmdline_url=ab%2"}, Truncated: true}
+	if txt, cut := cmdline(m); txt != "ab" || !cut {
+		t.Fatalf("a cut escape: %q, %v", txt, cut)
+	}
+	// An odd number of bytes, so MaxText falls inside a two-byte character.
+	odd := "x" + line
+	if txt, cut := cmdline(Mark{Params: []string{"cmdline_url=" + url.PathEscape(odd)}}); len(txt) != MaxText-1 || !cut || !utf8.ValidString(txt) {
+		t.Fatalf("a cut inside a character: %d bytes, cut %v", len(txt), cut)
 	}
 }
 
@@ -450,5 +503,35 @@ func TestChanges(t *testing.T) {
 	ch = tr.Changes()
 	if len(ch) != 1 || ch[0].State != Done || deref(ch[0].Exit) != 2 {
 		t.Fatalf("after D: %s", dump(ch))
+	}
+}
+
+// feedTime returns the shortest of five times to feed stream to a new tracker in 32 KiB reads.
+func feedTime(stream []byte) time.Duration {
+	best := time.Duration(math.MaxInt64)
+	for range 5 {
+		tr := New(base)
+		start := time.Now()
+		for off := 0; off < len(stream); off += 32 << 10 {
+			tr.Feed(uint64(base+off), stream[off:min(off+32<<10, len(stream))], at)
+		}
+		best = min(best, time.Since(start))
+	}
+	return best
+}
+
+// TestMarkFloodCost: a stream of nothing but marks costs a small multiple of plain text to
+// follow, at the command cap too: dropping the oldest command must not move the whole list.
+func TestMarkFloodCost(t *testing.T) {
+	const size = 4 << 20
+	flood := bytes.Repeat([]byte("\x1b]133;C\x07\x1b]133;D\x07"), size/16)
+	plain := bytes.Repeat([]byte("plain text without any mark\r\n"), size/29)
+	tf, tp := feedTime(flood), feedTime(plain)
+	// Measured on the dev box: 27x to 41x (14x with -race). Moving the list for each new
+	// command at the cap measured about 200x. The bound sits between, clear of both.
+	ratio := float64(tf) / float64(tp)
+	t.Logf("marks %v, plain text %v: %.1fx", tf, tp, ratio)
+	if ratio > 100 {
+		t.Fatalf("a flood of marks costs %.0fx plain text, want at most 100x", ratio)
 	}
 }
