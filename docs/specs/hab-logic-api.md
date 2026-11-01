@@ -1325,7 +1325,8 @@ reconnects and reads state. Data streams are not affected, because they have the
 ### 7.9 Several hosts
 
 Each hab has its own seq and epoch. A client merges hosts by host id and never compares seq across
-hosts. No hab relays another hab's events in this part.
+hosts. No hab relays another hab's events in this part. Hab-to-hab links carry only catalog, channel
+messages and control items (`mesh.md` 4.2).
 
 ---
 

@@ -355,7 +355,7 @@ key this way is safe: it came over a pinned, authenticated channel.
 3. It sends a revocation tombstone to every peer over the hab-to-hab path. Each peer revokes and
    closes too.
 4. A peer that is offline gets the tombstone from its peers' outbox when it comes back (the outbox
-   from Part 3 stage 5).
+   from Part 3 stage 5, `mesh.md` 6.3).
 5. Revocation always wins. A hab accepts a revocation from any pinned peer. It never accepts an
    admission that way without the owner (see 6.2).
 6. A revoked key that reconnects fails authentication, and the hab logs it as revoked.

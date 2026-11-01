@@ -430,7 +430,7 @@ Sources: zellij tabs, stacks and modes (1.1); the owner's setup (1.6); `hab-logi
   same name; rows always show the host.
 - **Hosts.** The first build reads hosts from `gff`'s config file: a label and one or more
   endpoints (the local socket, or an SSH destination). Part 3 adds the mesh peer list, so one
-  configured hab can name the rest. Nothing reads another tool's machine list.
+  configured hab can name the rest (`mesh.md` 3, 5). Nothing reads another tool's machine list.
 - **Starting work.** "New session" asks for a host and a project directory, then has that hab start
   the harness or a shell (14).
 - **A running agent stays on its host.** `gff` never moves a session between hosts (owner
