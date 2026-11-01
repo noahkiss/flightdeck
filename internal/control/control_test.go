@@ -825,3 +825,22 @@ func TestInputLanePipelined(t *testing.T) {
 		}
 	}
 }
+
+// TestCallExpiredContext: a call whose context is already over fails with the context's error
+// and writes nothing. A write with a deadline in the past would fail as an i/o timeout and end
+// the connection, so the next call would fail too.
+func TestCallExpiredContext(t *testing.T) {
+	srv := New(testConfig(&fakeSource{}))
+	t.Cleanup(srv.Close)
+	c := NewClient(pipeServe(t, srv))
+	hello(t, c, "")
+
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	if err := c.Call(expired, "hab.ping", nil, nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("call with an expired context: %v; want %v", err, context.DeadlineExceeded)
+	}
+	if err := c.Call(ctx(t), "hab.ping", nil, nil); err != nil {
+		t.Fatalf("the next call: %v", err)
+	}
+}

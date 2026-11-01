@@ -196,6 +196,11 @@ type writeDeadliner interface{ SetWriteDeadline(time.Time) error }
 // write sends one request line. A write that outlasts the context's deadline (or WriteTimeout)
 // ends the connection: a half-written line would corrupt the stream anyway.
 func (c *Client) write(ctx context.Context, b []byte) error {
+	// A context already over must not reach the socket: a deadline in the past fails the
+	// write at once as an i/o timeout, and that would end the connection for every call.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	deadline := time.Now().Add(WriteTimeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d

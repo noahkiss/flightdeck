@@ -26,10 +26,10 @@ func (w *writeSignal) Write(b []byte) (int, error) {
 }
 
 // TestTypingDuringQueryFlood: "ls" and Enter typed as three pane.input calls, each sent without
-// waiting for the reply to the one before, land together while the program floods device
-// status queries. The holder answers each write behind the pane's heavy output, so the line
-// lands before the reply to its first key; a key that waited for the reply to the key before
-// would land only after it.
+// waiting for the reply to the one before, land in order while the program floods device status
+// queries, and every call gets its reply. Whether the hab forwards a key before the holder has
+// answered the key before it depends on load here, so that is proven without timing at the link
+// (TestInputPipelined) and the control connection (TestInputLanePipelined).
 func TestTypingDuringQueryFlood(t *testing.T) {
 	e := newHabEnv(t, 0)
 	pane := e.spawn(e.control(), `stty -icanon -echo
@@ -57,36 +57,18 @@ sleep 30`)
 	}
 	<-ws.wrote
 
-	// Wait until the holder's answers lag behind the output: probe with a key the program
-	// ignores until one reply takes 200 ms.
-	for {
-		t0 := time.Now()
-		if err := c.Call(ctx, "pane.input", api.InputParams{Pane: pane, Text: "x"}, nil); err != nil {
-			t.Fatal(err)
-		}
-		<-ws.wrote
-		if lag := time.Since(t0); lag >= 200*time.Millisecond {
-			t.Logf("a reply lags %v", lag)
-			break
-		}
-	}
-
 	start := time.Now()
-	type result struct {
-		at  time.Time
-		err error
-	}
-	results := make([]chan result, 3)
+	results := make([]chan error, 3)
 	for i, k := range []string{"l", "s", "\r"} {
-		results[i] = make(chan result, 1)
+		results[i] = make(chan error, 1)
 		go func() {
 			err := c.Call(ctx, "pane.input", api.InputParams{Pane: pane, Text: k}, nil)
-			results[i] <- result{time.Now(), err}
+			results[i] <- err
 		}()
 		<-ws.wrote // the next key goes out after this one, not after its reply
 	}
 	// The terminal turns Enter into a newline, which ends grep's line. The line holds answers
-	// to queries and the probes too, maybe between the keys; tr keeps the keys.
+	// to queries too, maybe between the keys; tr keeps the keys.
 	for {
 		if b, _ := os.ReadFile(filepath.Join(e.work, "seen")); string(b) == "ls\n" {
 			break
@@ -96,18 +78,10 @@ sleep 30`)
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
-	landed := time.Now()
-	t.Logf("typed line landed after %v", landed.Sub(start))
+	t.Logf("typed line landed after %v", time.Since(start))
 	for i := range results {
-		r := <-results[i]
-		if r.err != nil {
-			t.Error(r.err)
-		}
-		if i == 0 {
-			t.Logf("first reply after %v", r.at.Sub(start))
-			if !landed.Before(r.at) {
-				t.Errorf("the typed line landed %v after the reply to its first key; want before", landed.Sub(r.at))
-			}
+		if err := <-results[i]; err != nil {
+			t.Error(err)
 		}
 	}
 	t.Logf("all replies after %v", time.Since(start))
