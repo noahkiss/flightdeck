@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -327,6 +328,67 @@ func TestReloadChangedSpec(t *testing.T) {
 	if s.Hosts()[0].Conn != c {
 		t.Fatal("an unchanged spec got a new connection")
 	}
+}
+
+// TestConcurrentReload: Reloads that run at once, as the peer file's watch, a first pin and
+// peers accept can, start a new host once. Each round adds a host and removes it again; a host
+// started twice shows twice in the order and, once removed, panics the next Reload.
+func TestConcurrentReload(t *testing.T) {
+	d := shortDir(t)
+	base := hosts.Spec{Label: "base", Transport: habconn.UnixTransport{Path: filepath.Join(d, "none.sock")}}
+	src := &lockedSource{specs: []hosts.Spec{base}}
+	s, err := hosts.Open(hosts.Config{Source: src, Client: api.ClientInfo{Name: "test", Kind: api.ClientKindTerminal},
+		Conn: func(c *habconn.Config) { c.MinBackoff, c.MaxBackoff = time.Second, time.Second }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	go func() {
+		for range s.Updates() {
+		}
+	}()
+	for round := range 200 {
+		added := hosts.Spec{Label: fmt.Sprintf("new-%d", round), Transport: base.Transport}
+		src.set([]hosts.Spec{base, added})
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for range 4 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				if err := s.Reload(); err != nil {
+					t.Error(err)
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+		var labels []string
+		for _, h := range s.Hosts() {
+			labels = append(labels, h.Label)
+		}
+		if !slices.Equal(labels, []string{"base", added.Label}) {
+			t.Fatalf("round %d: hosts %v", round, labels)
+		}
+		src.set([]hosts.Spec{base})
+		if err := s.Reload(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+type lockedSource struct {
+	mu    sync.Mutex
+	specs []hosts.Spec
+}
+
+func (l *lockedSource) set(specs []hosts.Spec) { l.mu.Lock(); l.specs = specs; l.mu.Unlock() }
+
+func (l *lockedSource) Hosts() ([]hosts.Spec, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.specs), nil
 }
 
 // TestEndpointsInTurn: a host's endpoints are tried in order, one per attempt; the one that

@@ -157,6 +157,8 @@ type Set struct {
 	cfg     Config
 	updates *queue[Update]
 
+	reloading sync.Mutex // held by Reload for its whole run
+
 	mu     sync.Mutex
 	order  []string // host names in the Source's order
 	hosts  map[string]*entry
@@ -249,7 +251,8 @@ func check(specs []Spec) error {
 	return nil
 }
 
-// add starts the Conn of one host and appends it to the order. The caller holds no lock.
+// add starts the Conn of one host and appends it to the order. It refuses a label the Set
+// already holds. The caller holds no lock.
 func (s *Set) add(sp Spec) error {
 	e, err := s.start(sp)
 	if err != nil {
@@ -260,6 +263,11 @@ func (s *Set) add(sp Spec) error {
 		s.mu.Unlock()
 		e.conn.Close()
 		return errors.New("hosts: closed")
+	}
+	if _, ok := s.hosts[sp.Label]; ok {
+		s.mu.Unlock()
+		e.conn.Close()
+		return fmt.Errorf("hosts: host %q is already started", sp.Label)
 	}
 	s.order = append(s.order, sp.Label)
 	s.hosts[sp.Label] = e
@@ -370,8 +378,11 @@ func (s *Set) Retry() {
 // Removed. A host whose spec is unchanged keeps its connection. A host listed under the same
 // label with other endpoints, another pin or another transport is replaced in place: its old
 // Conn closes, a new one starts Connecting, and one update with Kind UpdateOffline and Err
-// ErrSpecChanged reports it.
+// ErrSpecChanged reports it. Reloads run one at a time: two at once would both see a new host
+// and start it twice.
 func (s *Set) Reload() error {
+	s.reloading.Lock()
+	defer s.reloading.Unlock()
 	specs, err := s.cfg.Source.Hosts()
 	if err != nil {
 		return fmt.Errorf("hosts: %w", err)
