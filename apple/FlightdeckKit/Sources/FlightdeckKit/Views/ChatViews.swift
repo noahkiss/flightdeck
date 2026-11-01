@@ -11,6 +11,8 @@ public struct ChatView: View {
     /// A change focuses the composer (voice mode's Keyboard control).
     var focusComposer = 0
     @State private var draft = ""
+    @State private var attachments: [DraftAttachment] = []
+    @Environment(\.sendFiles) private var sendFiles
 
     public init(model: ChatModel, openTerminal: (() -> Void)? = nil, openVoice: (() -> Void)? = nil, focusComposer: Int = 0) {
         self.model = model
@@ -24,9 +26,16 @@ public struct ChatView: View {
             ChatBanners(context: model.context, load: model.load, openTerminal: openTerminal)
             ChatTranscript(model: model)
             Divider()
-            ComposerView(model: model, draft: $draft, openTerminal: openTerminal, openVoice: openVoice, focusRequest: focusComposer)
+            ComposerView(model: model, draft: $draft, attachments: $attachments, openTerminal: openTerminal, openVoice: openVoice, focusRequest: focusComposer)
         }
-        .onAppear { model.start() }
+        .onAppear {
+            model.start()
+            // A file sent here from another app waits in the composer (app.md 4.4).
+            attachments += sendFiles?.take(for: model.target) ?? []
+        }
+        .onChange(of: sendFiles?.handed) { _, _ in
+            attachments += sendFiles?.take(for: model.target) ?? []
+        }
         .onDisappear { model.stop() }
     }
 }
@@ -178,7 +187,7 @@ struct ChatTranscript: View {
                         .onAppear { Task { await model.loadOlder() } }
                     }
                     ForEach(items) { item in
-                        ChatItemView(item: item)
+                        ChatItemView(item: item, images: model.images)
                             .id(item.id)
                         ForEach(placed.byRow[item.id] ?? [], id: \.id) { c in
                             InlineContentView(model: model.content, item: c)
@@ -238,9 +247,16 @@ struct ChatTranscript: View {
 /// One chat row.
 public struct ChatItemView: View {
     let item: ChatItem
+    /// Loads attachment thumbnails; nil shows them as file chips.
+    var images: AttachmentImages?
 
     public init(item: ChatItem) {
         self.item = item
+    }
+
+    init(item: ChatItem, images: AttachmentImages?) {
+        self.item = item
+        self.images = images
     }
 
     public var body: some View {
@@ -254,15 +270,15 @@ public struct ChatItemView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
-                    Text(text)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(sender == nil ? Color.accentColor.opacity(0.18) : Color.purple.opacity(0.15), in: RoundedRectangle(cornerRadius: 14))
-                    if att > 0 {
-                        Label("\(att) attachment\(att == 1 ? "" : "s")", systemImage: "paperclip")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                    if !att.isEmpty {
+                        AttachmentThumbRow(ids: att, images: images)
+                    }
+                    if !text.isEmpty || att.isEmpty {
+                        Text(text)
+                            .textSelection(.enabled)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(sender == nil ? Color.accentColor.opacity(0.18) : Color.purple.opacity(0.15), in: RoundedRectangle(cornerRadius: 14))
                     }
                 }
             }
@@ -531,11 +547,27 @@ struct OutgoingView: View {
         HStack {
             Spacer(minLength: 40)
             VStack(alignment: .trailing, spacing: 3) {
-                Text(SpokenText.hidingSummaryRequest(outgoing.text))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 14))
-                    .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.accentColor.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                if !outgoing.attachments.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(outgoing.attachments) { a in
+                            if a.isImage, let img = ImageDecode.thumbnail(a.data, maxPixel: 192) {
+                                Image(decorative: img, scale: 1).resizable().scaledToFill()
+                                    .frame(width: 64, height: 64)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                            } else {
+                                Label(a.name, systemImage: "doc").font(.caption)
+                            }
+                        }
+                    }
+                    .opacity(0.8)
+                }
+                if !outgoing.text.isEmpty {
+                    Text(SpokenText.hidingSummaryRequest(outgoing.text))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 14))
+                        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.accentColor.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                }
                 HStack(spacing: 8) {
                     Text(statusText)
                         .foregroundStyle(statusColor)
@@ -558,12 +590,21 @@ struct OutgoingView: View {
     private var statusText: String {
         switch outgoing.status {
         case .queued: return "Sends after this turn"
-        case .sending: return "Sending"
+        case .sending: return Self.uploadText(outgoing) ?? "Sending"
         case .sent: return "Sent"
         case .delivered: return "Delivered"
         case .notDelivered: return "Not delivered"
         case .failed(let e): return "Not sent: \(e)"
         }
+    }
+
+    /// "Uploading 2 of 3" while files go up; nil once they are all on the hab.
+    static func uploadText(_ o: Outgoing) -> String? {
+        guard o.uploaded.count < o.attachments.count else { return nil }
+        let n = o.attachments.count
+        let a = o.attachments[o.uploaded.count]
+        let pct = a.data.isEmpty ? 0 : min(100, o.uploadedBytes * 100 / a.data.count)
+        return n == 1 ? "Uploading \(pct)%" : "Uploading \(o.uploaded.count + 1) of \(n), \(pct)%"
     }
 
     private var statusColor: Color {
@@ -578,6 +619,7 @@ struct OutgoingView: View {
 struct ComposerView: View {
     let model: ChatModel
     @Binding var draft: String
+    @Binding var attachments: [DraftAttachment]
     let openTerminal: (() -> Void)?
     var openVoice: (() -> Void)?
     var focusRequest = 0
@@ -590,6 +632,8 @@ struct ComposerView: View {
     @State private var micDenied = false
     /// Why dictation did not start or wrote nothing.
     @State private var dictationNotice: String?
+    /// Why a file was not attached.
+    @State private var attachNotice: String?
 
     var body: some View {
         let gate = model.gate
@@ -613,12 +657,17 @@ struct ComposerView: View {
                     .font(.caption)
                     .foregroundStyle(.red)
             }
-            if let n = dictationNotice ?? dictation?.notice {
+            if let n = dictationNotice ?? dictation?.notice ?? attachNotice {
                 Text(n)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if !attachments.isEmpty {
+                DraftStrip(attachments: $attachments)
+            }
             HStack(alignment: .bottom, spacing: 8) {
+                AttachButton(attachments: $attachments) { attachNotice = $0 }
+                    .disabled(!gate.allowsSend)
                 if let openTerminal {
                     Button(action: openTerminal) {
                         Image(systemName: "terminal")
@@ -662,7 +711,7 @@ struct ComposerView: View {
                     Image(systemName: "arrow.up.circle.fill").font(.title2)
                 }
                 .buttonStyle(.borderless)
-                .disabled(!gate.allowsSend || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!gate.allowsSend || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty))
                 .keyboardShortcut(.return, modifiers: .command)
                 .accessibilityLabel("Send")
             }
@@ -680,8 +729,12 @@ struct ComposerView: View {
 
     private func send() {
         guard model.gate.allowsSend else { return }
-        model.send(draft)
+        model.send(draft, attachments: attachments)
+        // A refusal (a file over the limit) keeps the draft as it was.
+        guard model.notice == nil else { return }
         draft = ""
+        attachments = []
+        attachNotice = nil
     }
 
     /// Dictation writes into the draft as words are heard; they stay editable (app.md 13.4).

@@ -79,6 +79,24 @@ public actor FakeHab {
     private var contentListHook: (@Sendable (Int) async -> Void)?
     private var contentLists = 0
 
+    /// Attachments (app.md 4.4), with the capability `attachments`: uploads by id, and the
+    /// stored files. A put names the path the real hab would.
+    private var uploads: [String: (put: AttachmentPutParams, data: Data)] = [:]
+    public private(set) var storedFiles: [String: (put: AttachmentPutParams, data: Data)] = [:]
+    public private(set) var attachmentWrites = 0
+    /// The run size a put names; tests make it small to see several writes.
+    private var attachmentChunk = 1 << 20
+    /// Writes to refuse with `unavailable` before taking them again.
+    private var attachmentWriteFailures = 0
+    private var nextAttachment = 1
+
+    public func setAttachmentChunk(_ n: Int) { attachmentChunk = n }
+    public func failNextAttachmentWrites(_ n: Int) { attachmentWriteFailures = n }
+    /// Stores a file as an upload would, for the chat view's thumbnails.
+    public func storeAttachment(id: String, name: String, data: Data) {
+        storedFiles[id] = (AttachmentPutParams(name: name, session: "", sha256: "", size: UInt64(data.count), type: "image/png"), data)
+    }
+
     public func setContentDelay(_ d: Duration?) { contentDelay = d }
     public func failNextContentReads(_ n: Int) { contentUnavailable = n }
     public func setContentListHook(_ hook: (@Sendable (Int) async -> Void)?) { contentListHook = hook }
@@ -569,6 +587,8 @@ public actor FakeHab {
                 await self.contentCall(method, params, c, id: id)
                 self.contentDone(c)
             }
+        case HabMethods.attachmentPut.name, HabMethods.attachmentWrite.name, HabMethods.attachmentGet.name:
+            await attachmentCall(method, params, c, id: id)
         case HabMethods.sessionSend.name:
             guard sendWorks else {
                 await fail(c, id: id, kind: .unavailable, hint: "session.send is not built (fake hab)")
@@ -580,6 +600,10 @@ public actor FakeHab {
             }
             if let refusal = sendRefusal(p) {
                 await fail(c, id: id, kind: refusal.kind, hint: refusal.hint)
+                break
+            }
+            if let ids = p.attachments, let missing = ids.first(where: { storedFiles[$0] == nil }) {
+                await fail(c, id: id, kind: .notFound, hint: "no attachment \(missing) for session \(p.session)")
                 break
             }
             sends.append(p)
@@ -691,6 +715,73 @@ public actor FakeHab {
             await fail(c, id: id, kind: .unavailable, hint: "the fake hab does not serve \(method)")
         }
         return true
+    }
+
+    /// The attachment methods, by the real hab's rules: runs in order, the hash checked at the end.
+    private func attachmentCall(_ method: String, _ params: JSONValue, _ c: Conn, id: Int) async {
+        guard capabilities.contains("attachments") else {
+            return await fail(c, id: id, kind: .unavailable, hint: "the attachments capability is absent")
+        }
+        switch method {
+        case HabMethods.attachmentPut.name:
+            guard let p = try? params.decode(AttachmentPutParams.self) else {
+                return await fail(c, id: id, kind: .invalid, hint: "bad attachment.put params")
+            }
+            guard sessions[p.session] != nil else { return await fail(c, id: id, kind: .notFound, hint: "no session \(p.session)") }
+            guard p.size <= 25_000_000 else { return await fail(c, id: id, kind: .invalid, hint: "the limit is 25 MB") }
+            let aid = String(format: "%012x", nextAttachment)
+            nextAttachment += 1
+            let path = "/work/proj/.flightdeck/attachments/\(aid)-\(p.name)"
+            if p.size == 0 {
+                storedFiles[aid] = (p, Data())
+                return await reply(c, id: id, result: AttachmentStored(chunk: attachmentChunk, done: true, id: aid, path: path, seq: c.seq))
+            }
+            uploads[aid] = (p, Data())
+            await reply(c, id: id, result: AttachmentStored(chunk: attachmentChunk, id: aid, path: path, seq: c.seq))
+        case HabMethods.attachmentWrite.name:
+            guard let p = try? params.decode(AttachmentWriteParams.self) else {
+                return await fail(c, id: id, kind: .invalid, hint: "bad attachment.write params")
+            }
+            attachmentWrites += 1
+            if attachmentWriteFailures > 0 {
+                attachmentWriteFailures -= 1
+                return await fail(c, id: id, kind: .unavailable, hint: "the write broke off")
+            }
+            if let done = storedFiles[p.id] {
+                return await reply(c, id: id, result: AttachmentWritten(done: true, id: p.id, received: done.data.count, seq: c.seq))
+            }
+            guard var u = uploads[p.id] else { return await fail(c, id: id, kind: .notFound, hint: "no upload \(p.id)") }
+            guard p.offset == u.data.count else {
+                return await fail(c, id: id, kind: .conflict, hint: "upload \(p.id) has \(u.data.count) bytes")
+            }
+            guard !p.data.isEmpty, p.data.count <= attachmentChunk, u.data.count + p.data.count <= Int(u.put.size) else {
+                return await fail(c, id: id, kind: .invalid, hint: "bad run")
+            }
+            u.data.append(p.data)
+            if u.data.count < Int(u.put.size) {
+                uploads[p.id] = u
+                return await reply(c, id: id, result: AttachmentWritten(done: false, id: p.id, received: u.data.count, seq: c.seq))
+            }
+            uploads[p.id] = nil
+            guard AttachmentUpload.sha256(u.data) == u.put.sha256 else {
+                return await fail(c, id: id, kind: .invalid, hint: "the hash does not match")
+            }
+            storedFiles[p.id] = u
+            await reply(c, id: id, result: AttachmentWritten(done: true, id: p.id, received: u.data.count, seq: c.seq))
+        default:
+            guard let p = try? params.decode(AttachmentGetParams.self) else {
+                return await fail(c, id: id, kind: .invalid, hint: "bad attachment.get params")
+            }
+            guard let f = storedFiles[p.id] else { return await fail(c, id: id, kind: .notFound, hint: "no attachment \(p.id)") }
+            if p.thumbnail == true {
+                // The fake's thumbnail is the file itself.
+                return await reply(c, id: id, result: AttachmentData(data: f.data, eof: true, id: p.id, name: f.put.name, seq: c.seq, size: f.data.count, type: "image/jpeg"))
+            }
+            let off = min(p.offset ?? 0, f.data.count)
+            let end = min(off + min(p.limit ?? 256 << 10, 1 << 20), f.data.count)
+            await reply(c, id: id, result: AttachmentData(data: f.data.subdata(in: off..<end), eof: end == f.data.count, id: p.id,
+                                                         name: f.put.name, offset: off, seq: c.seq, size: f.data.count, type: f.put.type))
+        }
     }
 
     /// The content methods, from `setContent`. Like the real hab, only listed ids are read.

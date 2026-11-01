@@ -144,7 +144,7 @@ public struct ToolCard: Hashable, Sendable {
 
 /// One row of the chat view, built from the hab's chat messages.
 public indirect enum ChatItem: Hashable, Sendable, Identifiable {
-    case user(id: String, text: String, sender: String?, attachments: Int)
+    case user(id: String, text: String, sender: String?, attachments: [String])
     case agent(id: String, blocks: [MarkdownBlock], sender: String?)
     case tool(id: String, card: ToolCard)
     case event(id: String, event: ChatEvent, text: String)
@@ -207,7 +207,7 @@ public enum ChatRender {
             let item: ChatItem
             switch m.kind {
             case .user:
-                item = .user(id: m.id, text: SpokenText.hidingSummaryRequest(m.text ?? ""), sender: m.sender, attachments: m.attachments?.count ?? 0)
+                item = .user(id: m.id, text: SpokenText.hidingSummaryRequest(m.text ?? ""), sender: m.sender, attachments: m.attachments ?? [])
             case .agent:
                 item = .agent(id: m.id, blocks: MarkdownBlock.parse(m.text ?? ""), sender: m.sender)
             case .tool:
@@ -319,7 +319,7 @@ public enum ChatRender {
         }
         switch item {
         case .user(_, let text, let sender, let att):
-            add("USER" + (sender.map { " from \($0)" } ?? "") + (att > 0 ? " [\(att) attachments]" : ""))
+            add("USER" + (sender.map { " from \($0)" } ?? "") + (att.isEmpty ? "" : " [\(att.count) attachments]"))
             body(text)
         case .agent(_, let blocks, let sender):
             add("AGENT" + (sender.map { " from \($0)" } ?? ""))

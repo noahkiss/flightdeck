@@ -1,0 +1,190 @@
+import CoreGraphics
+import CryptoKit
+import Foundation
+import HabAPI
+import ImageIO
+import UniformTypeIdentifiers
+
+/// A file the owner attached in the composer and has not sent yet (app.md 4.4).
+public struct DraftAttachment: Identifiable, Equatable, Sendable {
+    public var id = UUID()
+    /// The file name as the owner sees it.
+    public var name: String
+    /// Media type, such as image/png.
+    public var type: String
+    public var data: Data
+
+    public init(name: String, type: String, data: Data) {
+        self.name = name
+        self.type = type
+        self.data = data
+    }
+
+    public var isImage: Bool { type.hasPrefix("image/") }
+}
+
+/// The attachment limits (app.md 4.4).
+public enum AttachmentLimits {
+    /// The largest file the app sends: the hab's limit.
+    public static let maxBytes = 25_000_000
+    /// A photo's longest side after downscaling, in pixels.
+    public static let maxSide = 2048
+    /// The hab capability that says `attachment.*` works.
+    public static let capability = "attachments"
+
+    /// Why a file cannot be sent, or nil when it can.
+    public static func refusal(_ a: DraftAttachment) -> String? {
+        a.data.count > maxBytes ? "\(a.name) is over the 25 MB limit" : nil
+    }
+}
+
+/// A stored attachment on the hab.
+public struct UploadedAttachment: Equatable, Sendable {
+    public var id: String
+    public var path: String
+}
+
+/// Uploads one file: `attachment.put`, then `attachment.write` runs of the size the hab names,
+/// in order (`hab-logic-api.md`, `attachment.*`).
+public enum AttachmentUpload {
+    /// A run when the hab names none.
+    static let defaultChunk = 1 << 20
+
+    public static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Uploads `a` for `session`. `progress` hears the bytes the hab holds.
+    public static func run(_ a: DraftAttachment, session: String, connection: HabConnection,
+                           progress: (@MainActor (Int) -> Void)? = nil) async throws -> UploadedAttachment {
+        let put = try await connection.call(HabMethods.attachmentPut, AttachmentPutParams(
+            name: a.name, session: session, sha256: sha256(a.data), size: UInt64(a.data.count), type: a.type))
+        if put.done == true || a.data.isEmpty {
+            return UploadedAttachment(id: put.id, path: put.path)
+        }
+        let chunk = max(1, min(put.chunk ?? defaultChunk, defaultChunk))
+        var offset = 0
+        while offset < a.data.count {
+            let end = min(offset + chunk, a.data.count)
+            let w = try await connection.call(HabMethods.attachmentWrite, AttachmentWriteParams(
+                data: a.data.subdata(in: offset..<end), id: put.id, offset: offset))
+            offset = w.received
+            await progress?(offset)
+            if w.done { break }
+        }
+        return UploadedAttachment(id: put.id, path: put.path)
+    }
+
+    /// The whole of a stored file, read in runs.
+    public static func fetch(_ id: String, connection: HabConnection) async throws -> AttachmentData {
+        var first = try await connection.call(HabMethods.attachmentGet, AttachmentGetParams(id: id, limit: defaultChunk))
+        var data = first.data
+        while first.eof != true, !first.data.isEmpty, data.count < AttachmentLimits.maxBytes {
+            let next = try await connection.call(HabMethods.attachmentGet, AttachmentGetParams(id: id, limit: defaultChunk, offset: data.count))
+            data.append(next.data)
+            first.eof = next.eof
+            if next.data.isEmpty { break }
+        }
+        first.data = data
+        return first
+    }
+}
+
+/// The text the hab delivers for a message with attachments: the text, a blank line, then each
+/// path (`harness-adapters.md`, Input delivery). The app types it this way only where the hab
+/// has no adapter for the harness.
+public enum AttachmentText {
+    public static func message(_ text: String, paths: [String]) -> String {
+        guard !paths.isEmpty else { return text }
+        let list = paths.joined(separator: "\n")
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? list : t + "\n\n" + list
+    }
+}
+
+/// Prepares a picked or pasted image for upload (app.md 4.4): scaled to `maxSide` on its long
+/// side, its orientation applied, and written again with no metadata, so no location or camera
+/// data leaves the phone. A screenshot (a PNG source) stays PNG; a photo becomes JPEG.
+public enum AttachmentPrep {
+    /// The prepared image, or nil when the data is no image this device can read.
+    public static func image(_ data: Data, name: String, maxSide: Int = AttachmentLimits.maxSide) -> DraftAttachment? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] else { return nil }
+        let w = props[kCGImagePropertyPixelWidth] as? Int ?? 0
+        let h = props[kCGImagePropertyPixelHeight] as? Int ?? 0
+        guard w > 0, h > 0 else { return nil }
+        let srcType = CGImageSourceGetType(src) as String? ?? ""
+        let png = srcType == UTType.png.identifier || (props[kCGImagePropertyHasAlpha] as? Bool ?? false)
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: min(max(w, h), maxSide),
+        ]
+        guard let img = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else { return nil }
+        guard let out = encode(img, png: png) else { return nil }
+        let stem = (name as NSString).deletingPathExtension
+        return DraftAttachment(name: (stem.isEmpty ? "image" : stem) + (png ? ".png" : ".jpg"), type: png ? "image/png" : "image/jpeg", data: out)
+    }
+
+    /// Writes an image as PNG or JPEG with no metadata.
+    public static func encode(_ img: CGImage, png: Bool) -> Data? {
+        let out = NSMutableData()
+        let type = (png ? UTType.png : UTType.jpeg).identifier as CFString
+        guard let dst = CGImageDestinationCreateWithData(out, type, 1, nil) else { return nil }
+        let props: [CFString: Any] = png ? [:] : [kCGImageDestinationLossyCompressionQuality: 0.85]
+        CGImageDestinationAddImage(dst, img, props as CFDictionary)
+        guard CGImageDestinationFinalize(dst) else { return nil }
+        return out as Data
+    }
+
+    /// A file as an attachment: images are prepared as above; other files go as they are, with
+    /// their media type from the name.
+    public static func file(_ data: Data, name: String) -> DraftAttachment {
+        let type = UTType(filenameExtension: (name as NSString).pathExtension)
+        if type?.conforms(to: .image) == true, let img = image(data, name: name) { return img }
+        return DraftAttachment(name: name.isEmpty ? "file" : name, type: type?.preferredMIMEType ?? "application/octet-stream", data: data)
+    }
+}
+
+/// Thumbnails and full images of the attachments on chat messages, from the hab's copies
+/// (`attachment.get`), so every device shows them.
+@MainActor
+@Observable
+public final class AttachmentImages {
+    @ObservationIgnored private let connection: HabConnection?
+    private(set) var thumbs: [String: CGImage] = [:]
+    @ObservationIgnored private var failed: Set<String> = []
+    @ObservationIgnored private var loading: Set<String> = []
+
+    init(connection: HabConnection?) {
+        self.connection = connection
+    }
+
+    func thumbnail(_ id: String) -> CGImage? { thumbs[id] }
+    func didFail(_ id: String) -> Bool { failed.contains(id) }
+
+    /// Loads a thumbnail once. A file that is not an image, or is gone, fails quietly: the row
+    /// shows a file chip.
+    func load(_ id: String) async {
+        guard thumbs[id] == nil, !failed.contains(id), !loading.contains(id), let c = connection else { return }
+        loading.insert(id)
+        defer { loading.remove(id) }
+        do {
+            let d = try await c.call(HabMethods.attachmentGet, AttachmentGetParams(id: id, thumbnail: true))
+            if let img = ImageDecode.thumbnail(d.data, maxPixel: 640) {
+                thumbs[id] = img
+            } else {
+                failed.insert(id)
+            }
+        } catch {
+            failed.insert(id)
+        }
+    }
+
+    /// The full image, for the zoomed view.
+    func full(_ id: String) async -> CGImage? {
+        guard let c = connection, let d = try? await AttachmentUpload.fetch(id, connection: c) else { return nil }
+        return ImageDecode.thumbnail(d.data, maxPixel: 4096)
+    }
+}

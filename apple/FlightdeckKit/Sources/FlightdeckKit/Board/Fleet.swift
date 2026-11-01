@@ -28,6 +28,8 @@ public final class Fleet {
     public var activities: LiveActivityTracker?
     /// Usage readings, alerts and the widget snapshot (app.md 14, 15).
     public var usage: UsageCenter?
+    /// Files opened from another app on their way to a session (app.md 4.4).
+    public let files = SendFileCenter()
     /// `session.focus` reports for the session views on screen (app.md 8.6).
     public private(set) lazy var focus = FocusReporter { [weak self] habID, params in
         guard let conn = self?.connections.first(where: { $0.id == habID }) else { return }

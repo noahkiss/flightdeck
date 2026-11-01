@@ -19,6 +19,7 @@ public struct FlightdeckRoot: View {
             .openPaneOnLaunch(fleet)
             .environment(\.sshSetup, fleet.ssh)
             .environment(\.voiceKit, fleet.voice)
+            .environment(\.sendFiles, fleet.files)
             .sshSheets(fleet.ssh)
             .onAppear { fleet.windowOpened() }
             .onDisappear { fleet.windowClosed() }
@@ -29,6 +30,7 @@ public struct FlightdeckRoot: View {
             .openPaneOnLaunch(fleet)
             .environment(\.sshSetup, fleet.ssh)
             .environment(\.voiceKit, fleet.voice)
+            .environment(\.sendFiles, fleet.files)
             .sshSheets(fleet.ssh)
         #endif
     }
@@ -182,6 +184,13 @@ public struct BoardScreen: View {
             SessionPlaceholder(row: row) { opened = nil }
         }
         .modifier(ApprovalSheetHost(center: fleet?.approvals, openChat: openChat))
+        .modifier(SendFileSheetHost(center: fleet?.files, board: board))
+        // A file sent to a session from the send sheet opens that session (app.md 4.4).
+        .onChange(of: fleet?.files.openRequest) { _, t in
+            guard let t else { return }
+            fleet?.files.openRequest = nil
+            if let row = board.rows.first(where: { $0.target == t }) { opened = row }
+        }
         .usageSheet(fleet?.usage)
         // A usage notification or widget tap while the Connections sheet is
         // up: close it first, since a second sheet cannot present over it.

@@ -14,8 +14,9 @@ struct FlightdeckApp: App {
             FlightdeckRoot(fleet: fleet)
                 .onOpenURL { url in
                     if url.isFileURL {
-                        // A key file from the share sheet or Files (app.md 10.4).
-                        fleet.ssh?.openKeyFile(url)
+                        // Any file from the share sheet or Files goes to the send sheet
+                        // (app.md 4.4); a key file goes to key import (app.md 10.4).
+                        if !fleet.files.open(url) { fleet.ssh?.openKeyFile(url) }
                         return
                     }
                     if fleet.usage?.open(url: url) == true { return }

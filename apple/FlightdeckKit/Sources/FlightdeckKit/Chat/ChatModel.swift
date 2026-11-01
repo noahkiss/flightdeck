@@ -83,6 +83,15 @@ public struct Outgoing: Identifiable, Equatable, Sendable {
     public var sentAt: Date?
     /// Typed in the composer, or spoken (voice mode, dictation).
     public var origin: SendOrigin = .typed
+    /// Files sent with the text (app.md 4.4).
+    public var attachments: [DraftAttachment] = []
+    /// The attachments the hab already stored, in order: a retry uploads only the rest.
+    public var uploaded: [UploadedAttachment] = []
+    /// Bytes of the attachment uploading now that the hab holds.
+    public var uploadedBytes = 0
+
+    /// Bytes of every attachment.
+    public var attachmentBytes: Int { attachments.reduce(0) { $0 + $1.data.count } }
 }
 
 /// How the chat view loads (app.md 4.3).
@@ -127,6 +136,8 @@ public final class ChatModel {
 
     /// The session's rich content (app.md 4.7): shown files, images, modified files.
     public let content: ContentModel
+    /// Thumbnails of the attachments on chat messages (app.md 4.4).
+    public let images: AttachmentImages
 
     @ObservationIgnored private let connection: HabConnection?
     @ObservationIgnored private var index: [String: Int] = [:]
@@ -149,6 +160,7 @@ public final class ChatModel {
         self.target = target
         self.connection = connection
         self.content = ContentModel(target: target, connection: connection)
+        self.images = AttachmentImages(connection: connection)
     }
 
     /// A model over fixed messages, for previews and snapshots.
@@ -157,6 +169,7 @@ public final class ChatModel {
         self.connection = nil
         self.context = context
         self.content = ContentModel(target: target, items: content, context: context)
+        self.images = AttachmentImages(connection: nil)
         self.load = .ready
         replaceAll(messages)
     }
@@ -399,13 +412,19 @@ public final class ChatModel {
 
     public var gate: SendGate { SendGate.of(context) }
 
-    /// Sends the owner's text under the send gate. Empty text does nothing.
-    /// Voice mode sends with origin `dictated`.
-    public func send(_ text: String, origin: SendOrigin = .typed) {
+    /// Sends the owner's text and attachments under the send gate. Empty text with no
+    /// attachments does nothing. Voice mode sends with origin `dictated`. A file over the limit
+    /// is refused here, before any upload, with the limit named.
+    public func send(_ text: String, attachments: [DraftAttachment] = [], origin: SendOrigin = .typed) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty, gate.allowsSend else { return }
+        guard !t.isEmpty || !attachments.isEmpty, gate.allowsSend else { return }
+        if let r = attachments.lazy.compactMap(AttachmentLimits.refusal).first {
+            notice = r
+            return
+        }
         notice = nil
-        let o = Outgoing(id: nextOutgoing, text: t, status: gate == .now ? .sending : .queued, origin: origin)
+        var o = Outgoing(id: nextOutgoing, text: t, status: gate == .now ? .sending : .queued, origin: origin)
+        o.attachments = attachments
         nextOutgoing += 1
         outgoing.append(o)
         if o.status == .sending {
@@ -465,12 +484,14 @@ public final class ChatModel {
         let origin = outgoing[i].origin
         outgoing[i].status = .sending
         do {
+            let stored = try await upload(id, session: session, connection: conn)
             do {
-                _ = try await conn.call(HabMethods.sessionSend, SessionSendParams(origin: origin, session: session, text: text))
+                _ = try await conn.call(HabMethods.sessionSend, SessionSendParams(
+                    attachments: stored.isEmpty ? nil : stored.map(\.id), origin: origin, session: session, text: text))
             } catch let e as RPCError where e.kind == .unavailable && typesWithoutAdapter {
                 // The harness has no adapter on this hab yet: type it as the adapter would.
                 guard let pane = context.pane else { throw e }
-                for chunk in Self.typedInput(text) {
+                for chunk in Self.typedInput(AttachmentText.message(text, paths: stored.map(\.path))) {
                     _ = try await conn.call(HabMethods.paneInput, InputParams(data: chunk, pane: pane))
                 }
             }
@@ -493,6 +514,28 @@ public final class ChatModel {
         }
     }
 
+    /// Uploads the attachments of an outgoing message the hab does not hold yet, in order, and
+    /// returns all of them. A hab without the attachments capability refuses before any upload.
+    private func upload(_ id: Int, session: String, connection conn: HabConnection) async throws -> [UploadedAttachment] {
+        guard let i = outgoing.firstIndex(where: { $0.id == id }) else { return [] }
+        let all = outgoing[i].attachments
+        guard !all.isEmpty else { return [] }
+        if outgoing[i].uploaded.count < all.count, !(await conn.has(capability: AttachmentLimits.capability)) {
+            throw AttachmentRefused(hint: "this hab cannot take files; update gff-hab")
+        }
+        while let j = outgoing.firstIndex(where: { $0.id == id }), outgoing[j].uploaded.count < all.count {
+            let a = all[outgoing[j].uploaded.count]
+            outgoing[j].uploadedBytes = 0
+            let up = try await AttachmentUpload.run(a, session: session, connection: conn) { [weak self] n in
+                guard let self, let k = self.outgoing.firstIndex(where: { $0.id == id }) else { return }
+                self.outgoing[k].uploadedBytes = n
+            }
+            guard let k = outgoing.firstIndex(where: { $0.id == id }) else { return [] }
+            outgoing[k].uploaded.append(up)
+        }
+        return outgoing.first(where: { $0.id == id })?.uploaded ?? []
+    }
+
     /// Whether `pane.input` may stand in for `session.send`: only for a pane
     /// whose harness has no adapter on the hab yet (Claude Code has one), with
     /// a known agent at its prompt. Never for a pane with no agent state.
@@ -503,6 +546,7 @@ public final class ChatModel {
 
     /// The hab's reason for refusing, with its error kind.
     static func refusal(_ error: Error) -> String {
+        if let e = error as? AttachmentRefused { return e.hint }
         if let e = error as? RPCError, let d = e.data { return "\(d.kind.rawValue): \(d.hint)" }
         return describe(error)
     }
@@ -564,6 +608,11 @@ public final class ChatModel {
         if let e = error as? RPCError { return e.data?.hint ?? e.message }
         return String(describing: error)
     }
+}
+
+/// The app refused to upload: the hab lacks the capability.
+struct AttachmentRefused: Error {
+    var hint: String
 }
 
 extension ChatContext {
