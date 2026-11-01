@@ -423,7 +423,10 @@ func serve(args []string) error {
 	if msg := newHookKeyWarning(created, livePanes(lk)); msg != "" {
 		logger.Print(msg)
 	}
-	tokens := hook.NewTokens(secret, livePane(lk))
+	// A spawn in flight counts as live: its program may call back before the link has the
+	// holder's answer (spawner.spawn).
+	spawning := newSpawning()
+	tokens := hook.NewTokens(secret, livePane(lk, spawning))
 	// opencode panes gff-hab starts run a private server; gff-hab follows each one
 	// (harness-adapters.md, opencode).
 	ocs := newOpencodeServers(dir, secret, agents, logger.Printf)
@@ -464,7 +467,7 @@ func serve(args []string) error {
 			home = "/"
 		}
 		sessionActs := &actions{
-			sp:       &spawner{lk: lk, tokens: tokens, hookSock: hpath},
+			sp:       &spawner{lk: lk, tokens: tokens, hookSock: hpath, spawning: spawning},
 			store:    store,
 			getenv:   os.Getenv,
 			environ:  func() []string { return basePaneEnv(os.Environ(), runtime.GOOS) },
@@ -747,7 +750,7 @@ func serve(args []string) error {
 			if !ok {
 				return u, false
 			}
-			_, live := livePane(lk)(u)
+			_, live := livePane(lk, nil)(u)
 			return u, live
 		})
 		// Replays that ended before the watcher was added: the last report of each.

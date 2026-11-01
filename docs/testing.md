@@ -17,6 +17,11 @@ Every stage's acceptance checks follow it.
 - Every wait has an upper bound, `waitLong` in the holder test helpers. On a slow machine or CI
   runner, set `GFF_TEST_TIMEOUT_SCALE` (a positive number, such as `3`) to multiply it. Raise the
   bound; never add a sleep.
+- A race between our own steps gets a test seam that widens its window, so the test fails every
+  time without the fix. Seams compile only with the `testseam` build tag, and the e2e tests in
+  `cmd/gff-hab` build their gff-hab with it. Each seam is off until its variable is set:
+  `GFF_TEST_SPAWN_DELAY` (a duration) holds a spawn between the holder's answer and the link
+  following the pane.
 - No coverage targets and no benchmarks until a user-visible budget depends on one. Spec edge
   cases and review findings decide what gets a test.
 - Core functionality also gets a fresh-eyes review before its stage closes.

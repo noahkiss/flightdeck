@@ -214,6 +214,77 @@ func TestSessionLifecycle(t *testing.T) {
 	}
 }
 
+// TestSessionForNewPane: session.create files the session before it spawns (NewPane), so the
+// record names a pane the holder has not reported yet. No pane event goes with the record; the
+// pane's first pane.updated already names the session. A failed spawn closes the record:
+// session.deleted follows, and the name is free again.
+func TestSessionForNewPane(t *testing.T) {
+	h := NewFakeHolder(pane("live"))
+	s, rec := open(t, t.TempDir(), h)
+	p, _ := s.CreateProject("app", "r", "")
+	rec.take()
+
+	a, err := s.CreateSession(SessionSpec{Name: "a", Project: p.ID, Pane: "new-a", Index: -1, NewPane: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.State != "running" || a.Pane != "new-a" {
+		t.Fatalf("new session %+v", a)
+	}
+	mustEvents(t, rec.take(), "session.updated:"+a.ID, "project.updated:"+p.ID)
+	if got, ok := s.SessionOfPane("new-a"); !ok || got.ID != a.ID {
+		t.Fatalf("session of the new pane before the holder reports it: %+v %v", got, ok)
+	}
+	h.Add(pane("new-a"))
+	evs := rec.take()
+	mustEvents(t, evs, "pane.updated:new-a")
+	if pa := evs[0].Data.(api.Pane); pa.Session != a.ID || pa.Revision != 1 {
+		t.Fatalf("the new pane's first event %+v", pa)
+	}
+	if got := s.Unfiled(); !reflect.DeepEqual(got, []string{"live"}) {
+		t.Fatalf("unfiled %v", got)
+	}
+
+	for _, bad := range []struct {
+		spec SessionSpec
+		want error
+	}{
+		{SessionSpec{Name: "z", Pane: "", NewPane: true}, ErrInvalid},
+		{SessionSpec{Name: "z", Pane: "live", NewPane: true}, ErrConflict},  // live already
+		{SessionSpec{Name: "z", Pane: "new-a", NewPane: true}, ErrConflict}, // live and filed
+		{SessionSpec{Name: "a", Pane: "new-z", NewPane: true}, ErrConflict}, // name taken
+		{SessionSpec{Name: "z", Project: "nope", Pane: "new-z", NewPane: true}, ErrNotFound},
+	} {
+		if _, err := s.CreateSession(bad.spec); !errors.Is(err, bad.want) {
+			t.Errorf("%+v: %v, want %v", bad.spec, err, bad.want)
+		}
+	}
+	h.Remove("live")
+	rec.take()
+	if _, err := s.CreateSession(SessionSpec{Name: "z", Pane: "live", NewPane: true}); !errors.Is(err, ErrConflict) {
+		t.Errorf("a gone pane as a new one: %v", err)
+	}
+	if evs := rec.take(); len(evs) != 0 {
+		t.Fatalf("refused creates sent %v", types(evs))
+	}
+
+	// The spawn failed: the caller closes the record, and its removal follows its creation.
+	b, err := s.CreateSession(SessionSpec{Name: "b", Project: p.ID, Pane: "new-b", Index: -1, NewPane: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CloseSession(b.ID); err != nil {
+		t.Fatal(err)
+	}
+	mustEvents(t, rec.take(), "session.updated:"+b.ID, "project.updated:"+p.ID, "session.deleted:"+b.ID, "project.updated:"+p.ID)
+	if _, ok := s.SessionOfPane("new-b"); ok {
+		t.Fatal("the failed spawn's pane still names a session")
+	}
+	if _, err := s.CreateSession(SessionSpec{Name: "b", Pane: "new-c", NewPane: true}); err != nil {
+		t.Fatalf("the name after a failed spawn: %v", err)
+	}
+}
+
 func TestPaneExitAndGone(t *testing.T) {
 	h := NewFakeHolder(pane("pa"), pane("pb"))
 	s, rec := open(t, t.TempDir(), h)

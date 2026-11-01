@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"strings"
+	"sync"
 
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/hook"
@@ -18,17 +19,56 @@ import (
 type spawner struct {
 	lk       *link.Link
 	tokens   *hook.Tokens
-	hookSock string // absolute
+	hookSock string    // absolute
+	spawning *spawning // the tokens' known set includes it (livePane)
 }
 
 // spawn starts sp.Argv in a new pane on the current holder. A zero sp.UUID gets a random one.
-// Any GFF_HAB in sp.Env is replaced.
+// Any GFF_HAB in sp.Env is replaced. While the spawn runs, the pane's token is known, so a
+// program that calls back before the link has the holder's answer is not refused.
 func (s *spawner) spawn(ctx context.Context, sp hp.Spawn) (link.PaneStatus, error) {
 	if sp.UUID == (hp.UUID{}) {
 		sp.UUID = newUUID()
 	}
 	sp.Env = paneEnv(sp.Env, hook.Addr(s.hookSock, s.tokens.Token(sp.UUID)))
+	if s.spawning != nil {
+		s.spawning.add(sp.UUID)
+		defer s.spawning.done(sp.UUID)
+	}
 	return s.lk.Spawn(ctx, sp)
+}
+
+// spawning holds the uuids of panes whose spawn is in flight. The holder starts the program
+// before it answers the spawn, and the link follows the pane only once it has that answer; in
+// between the program may already call back with its token.
+type spawning struct {
+	mu sync.Mutex
+	m  map[hp.UUID]int
+}
+
+func newSpawning() *spawning { return &spawning{m: map[hp.UUID]int{}} }
+
+func (s *spawning) add(u hp.UUID) {
+	s.mu.Lock()
+	s.m[u]++
+	s.mu.Unlock()
+}
+
+func (s *spawning) done(u hp.UUID) {
+	s.mu.Lock()
+	if s.m[u]--; s.m[u] <= 0 {
+		delete(s.m, u)
+	}
+	s.mu.Unlock()
+}
+
+func (s *spawning) has(u hp.UUID) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.m[u] > 0
 }
 
 // paneEnv returns env without any GFF_HAB entry, plus GFF_HAB=addr.
@@ -52,17 +92,24 @@ func newUUID() hp.UUID {
 }
 
 // livePane resolves a token's uuid to a pane id while the link follows the pane: not lost with
-// its holder, and not released. With no link it knows no pane.
-func livePane(lk *link.Link) func([16]byte) (string, bool) {
+// its holder, and not released. A pane the link does not know yet is live while its spawn is in
+// flight (st, which may be nil). With no link it knows no pane.
+func livePane(lk *link.Link, st *spawning) func([16]byte) (string, bool) {
 	return func(u [16]byte) (string, bool) {
 		if lk == nil {
 			return "", false
 		}
-		st, ok := lk.Pane(hp.UUID(u))
-		if !ok || st.Lost || st.Gone {
+		ps, ok := lk.Pane(hp.UUID(u))
+		if !ok {
+			if st.has(hp.UUID(u)) {
+				return hp.UUID(u).String(), true
+			}
 			return "", false
 		}
-		return st.UUID.String(), true
+		if ps.Lost || ps.Gone {
+			return "", false
+		}
+		return ps.UUID.String(), true
 	}
 }
 

@@ -766,6 +766,9 @@ func (l *Link) Spawn(ctx context.Context, s hp.Spawn) (PaneStatus, error) {
 	if err != nil {
 		return PaneStatus{}, err
 	}
+	if spawnedSeam != nil {
+		spawnedSeam() // the program runs; the link does not follow the pane yet
+	}
 	pi := hp.PaneInfo{UUID: pn.UUID, Handle: pn.Handle, Cols: s.Cols, Rows: s.Rows}
 	for _, st := range l.client.Panes() {
 		if st.UUID == pn.UUID {

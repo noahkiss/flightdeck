@@ -309,7 +309,11 @@ Built choices (`internal/hook`, `internal/harness`, `gff-hab hook`):
   agent state until respawned. gff-hab logs one warning line with the live pane count when it
   makes a key while the link already follows panes.
 - **Checks.** gff-hab accepts a token only when its hash matches (a constant-time compare) and
-  the holder link follows the pane: listed, not lost with its holder, and not released. A forged
+  the holder link follows the pane: listed, not lost with its holder, and not released. A pane
+  whose spawn is in flight counts as followed: the holder starts the program before it answers,
+  and the link follows the pane only once it has that answer, so a program that posts at once
+  is not refused. session.create files the session before the spawn, so that post also finds
+  its session (`hab-logic-api.md` 3.9). A forged
   token, one spliced from two panes, one made under another secret, and the token of a pane that
   is gone are all unknown. When the link reports a pane gone, gff-hab also drops its agent state.
 - The welcome lists the `agent-state` capability whenever the holder link is on.

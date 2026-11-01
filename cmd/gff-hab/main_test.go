@@ -24,9 +24,11 @@ import (
 )
 
 var (
-	bin        string
-	holderBin  string
-	buildFlags []string // race_test.go adds -race under the race detector
+	bin       string
+	holderBin string
+	// race_test.go adds -race under the race detector. testseam compiles in the test seams,
+	// which stay off unless a test sets their variable ($GFF_TEST_SPAWN_DELAY).
+	buildFlags = []string{"-tags", "testseam"}
 )
 
 func TestMain(m *testing.M) {

@@ -843,8 +843,17 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   else the first), else its root commit, and creates the project, named after the repository
   folder, when it is new. `project` and `project_dir` together are `invalid`. `harness` needs
   the adapter: `codex` is built (`harness-adapters.md`, Codex, built choices); any other value
-  answers `unavailable`. Every input is checked before the
-  spawn; if filing the session fails after it, the new pane is closed again. `gff-client.md`
+  answers `unavailable`. Every input is checked first, the name
+  rules and clashes (local and peer) among them. Then the hab files the session, and only then
+  spawns, so the pane's `GFF_HAB` token names the session from the program's first byte: a
+  program that runs `gff-hab show`, `send` or `wait` at once finds its session. The token
+  counts as live while the spawn is in flight, before the holder link follows the pane
+  (`harness-adapters.md`, Hook endpoint, Checks). Events: `session.updated` (and the project's
+  `project.updated`) come first, naming a pane that is not in the structure yet; the pane's
+  first `pane.updated` follows, with `session` already set, so a new session's pane is never
+  seen unfiled. If the spawn fails, the hab closes the session again: `session.deleted` (and
+  `project.updated`) follow its `session.updated`, the call answers the error, and the name is
+  free. `gff-client.md`
   proposed `command`; `argv` is that command, unparsed. The optional `idempotency_key` makes a
   retried create start one session (Idempotency keys, below).
 - **`session.resume`** takes `{session}` and returns the same ids as `session.create`.

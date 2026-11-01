@@ -56,9 +56,11 @@ func (a *actions) onPeer(name string) string {
 
 var _ control.Actions = (*actions)(nil)
 
-// CreateSession starts a program in a new pane through the spawner, then files the pane as a
-// session. It checks every input before it spawns. If filing fails after the spawn, it closes
-// the pane again, so no unfiled pane is left behind.
+// CreateSession files a session for a new pane, then starts the program in that pane through
+// the spawner. It checks every input before it files. The record comes first so the pane's
+// GFF_HAB token names the session from the program's first byte: a program that calls back at
+// once (gff-hab show, send, wait) finds its session. If the spawn fails, it closes the session
+// again, so no session is left that never ran.
 func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) (string, string, error) {
 	if p.Harness != "" {
 		var err error
@@ -146,26 +148,29 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 		return "", "", control.Errorf(api.ErrorKindConflict, "name %q in use on %s", name, label)
 	}
 
+	if paneID == (hp.UUID{}) {
+		paneID = newUUID()
+	}
+	pane := paneID.String()
+	ss, err := a.store.CreateSession(structure.SessionSpec{Name: name, Project: project, Pane: pane, Index: -1, NewPane: true})
+	if err != nil {
+		return "", "", storeErr(err)
+	}
 	st, err := a.sp.spawn(ctx, hp.Spawn{UUID: paneID, Cols: uint16(cols), Rows: uint16(rows), Cwd: cwd, Argv: argv, Env: env})
 	if err != nil {
+		// The program never ran: session.deleted follows the record's session.updated. Its
+		// only error is not_found, when a client closed the session meanwhile.
+		_ = a.store.CloseSession(ss.ID)
 		if errors.Is(err, holderclient.ErrNoHolder) {
 			return "", "", control.Errorf(api.ErrorKindUnavailable, "no holder is running on this host")
 		}
 		return "", "", control.Errorf(api.ErrorKindUnavailable, "spawn: %v", err)
 	}
-	pane := st.UUID.String()
 	if ocStarted {
 		if err := a.opencode.register(pane, st.UUID); err != nil {
 			// The pane runs; only the server path is missing: state, sends and answers wait.
 			a.opencode.logf("opencode: pane %s: %v", pane, err)
 		}
-	}
-	ss, err := a.store.CreateSession(structure.SessionSpec{Name: name, Project: project, Pane: pane, Index: -1})
-	if err != nil {
-		if cerr := a.sp.lk.ClosePane(ctx, st.UUID); cerr != nil {
-			err = fmt.Errorf("%w; closing the new pane %s also failed: %v", err, pane, cerr)
-		}
-		return "", "", storeErr(err)
 	}
 	a.noteDir(ctx, project, projectTop, p.Project != "" && p.Cwd != "", cwd)
 	return ss.ID, pane, nil

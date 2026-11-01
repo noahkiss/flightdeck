@@ -321,6 +321,12 @@ func (s *Store) firstRevision(id string) uint64 {
 	return rev + 1
 }
 
+// buried reports whether pane id has a tombstone.
+func (s *Store) buried(id string) bool {
+	_, ok := s.gone[id]
+	return ok
+}
+
 // bury records a gone pane's final revision, so the pane keeps rising revisions if it comes
 // back. Tombstones of panes no session links are bounded by maxTombstones, oldest dropped first.
 func (s *Store) bury(id string, final uint64) {
@@ -480,9 +486,16 @@ type SessionSpec struct {
 	Project string // project id; empty for none
 	Pane    string // a live pane no other session links
 	Index   int    // position in the project's order; -1 or past the end appends
+	// NewPane says the caller spawns Pane right after this call, so the record names the pane
+	// from its program's first byte (hab-logic-api.md 3.9, session.create). The pane must not
+	// be live or gone yet. No pane.updated goes with the record; the pane's first one, with the
+	// session set, follows when the holder reports it. A caller whose spawn fails closes the
+	// session again.
+	NewPane bool
 }
 
-// CreateSession adds a session record for a live pane. Filing an unfiled pane is the same call.
+// CreateSession adds a session record for a live pane, or for a pane about to be spawned
+// (spec.NewPane). Filing an unfiled pane is the same call.
 func (s *Store) CreateSession(spec SessionSpec) (api.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -499,14 +512,21 @@ func (s *Store) CreateSession(spec SessionSpec) (api.Session, error) {
 		}
 	}
 	ps := s.panes[spec.Pane]
-	if ps == nil {
+	switch {
+	case spec.NewPane && spec.Pane == "":
+		return api.Session{}, fmt.Errorf("%w: a new pane needs its id", ErrInvalid)
+	case spec.NewPane && ps != nil:
+		return api.Session{}, fmt.Errorf("%w: pane %s is live already", ErrConflict, spec.Pane)
+	case spec.NewPane && s.buried(spec.Pane):
+		return api.Session{}, fmt.Errorf("%w: pane %s is gone already", ErrConflict, spec.Pane)
+	case !spec.NewPane && ps == nil:
 		return api.Session{}, fmt.Errorf("%w: pane %q", ErrNotFound, spec.Pane)
 	}
 	if other := s.sessionByPane(spec.Pane); other != nil {
 		return api.Session{}, fmt.Errorf("%w: pane %s belongs to session %s", ErrConflict, spec.Pane, other.ID)
 	}
 	ss := &sessionRecord{ID: newID("s"), Revision: 1, Name: spec.Name, Project: spec.Project, Pane: spec.Pane, State: stateRunning}
-	if ps.exit != nil {
+	if ps != nil && ps.exit != nil {
 		ss.State = stateExited
 		ss.Exit = copyExit(ps.exit)
 	}
@@ -517,8 +537,10 @@ func (s *Store) CreateSession(spec SessionSpec) (api.Session, error) {
 		p.Revision++
 		events = append(events, s.projectEvent(p))
 	}
-	ps.rec.Revision++
-	events = append(events, s.paneEvent(spec.Pane))
+	if ps != nil {
+		ps.rec.Revision++
+		events = append(events, s.paneEvent(spec.Pane))
+	}
 	s.commit(events)
 	return sessionAPI(ss), nil
 }
