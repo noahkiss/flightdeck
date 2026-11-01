@@ -7,9 +7,9 @@
 // session.create and pane.close run through Config.Actions, data.ticket and data connections
 // through Config.Data, pane.input through Config.Input, chat.page through Config.Chat, the size
 // ownership and redraw methods through Config.Size, command.list and command.output through
-// Config.Commands, and session.send and approval.answer through Config.Agents. The devices
-// methods and the calls later stages build answer "unavailable", with a hint that names the
-// stage.
+// Config.Commands, session.send and approval.answer through Config.Agents, and
+// hab.permissions through Config.Permissions. The devices methods and the calls later
+// stages build answer "unavailable", with a hint that names the stage.
 package control
 
 import (
@@ -123,6 +123,13 @@ type Agents interface {
 	Answer(ctx context.Context, client string, p api.ApprovalAnswerParams) error
 }
 
+// Permissions serves hab.permissions (macos-identity.md 7.2). A check may take tens of seconds,
+// so it runs off the connection's read loop. An error that is an *Error keeps its kind.
+type Permissions interface {
+	// Permissions runs the check. It honours ctx and bounds its own time.
+	Permissions(ctx context.Context, p api.PermissionsParams) (api.Permissions, error)
+}
+
 // Config is what New needs. Source is required.
 type Config struct {
 	Build        string
@@ -130,13 +137,14 @@ type Config struct {
 	DeviceID     string   // the hab's host-key fingerprint; sent in every welcome
 	Capabilities []string // strings for the features this hab offers (spec 3.4)
 	Source       Source
-	Actions      Actions  // nil: session.create and pane.close answer unavailable
-	Data         Data     // nil: data.ticket answers unavailable and a data hello is rejected
-	Input        Input    // nil: pane.input answers unavailable
-	Size         Size     // nil: the size ownership and redraw methods answer unavailable
-	Chat         Chat     // nil: chat.page answers unavailable
-	Commands     Commands // nil: command.list and command.output answer unavailable
-	Agents       Agents   // nil: session.send and approval.answer answer unavailable
+	Actions      Actions     // nil: session.create and pane.close answer unavailable
+	Data         Data        // nil: data.ticket answers unavailable and a data hello is rejected
+	Input        Input       // nil: pane.input answers unavailable
+	Size         Size        // nil: the size ownership and redraw methods answer unavailable
+	Chat         Chat        // nil: chat.page answers unavailable
+	Commands     Commands    // nil: command.list and command.output answer unavailable
+	Agents       Agents      // nil: session.send and approval.answer answer unavailable
+	Permissions  Permissions // nil: hab.permissions answers unavailable
 	// ApproversChanged, if set, is called with no lock held after a connection closes or
 	// changes its subscription, so Approvers may have dropped.
 	ApproversChanged func()

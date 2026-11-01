@@ -307,3 +307,39 @@ type CommandOutput struct {
 	Gap     bool    `json:"gap" doc:"True when the ring no longer held bytes before start."`
 	More    bool    `json:"more" doc:"True when output goes on past end: the limit cut it, or the command still runs."`
 }
+
+// --- Permissions (macos-identity.md 7) ---
+
+// PermissionsParams asks for the permission check of the processes that are responsible for
+// programs: the holders, from a probe pane, and gff-hab itself (macos-identity.md 7.2).
+type PermissionsParams struct {
+	Grants  []string `json:"grants,omitempty" doc:"Check only these grants (macos-identity.md 7.1 names, plus domain, background-item, signature, files-and-folders and pasteboard). Absent checks every grant."`
+	Request string   `json:"request,omitempty" doc:"Ask macOS for this one grant before the check, where an API can: accessibility, screen-recording, local-network, files-and-folders or pasteboard. It may show a dialog; only the setup walk sends it."`
+}
+
+// PermissionProcess names the process a permission row is about. An open set the server sends.
+type PermissionProcess string
+
+// PermissionState is one check's answer (macos-identity.md 7.3). An open set the server sends.
+type PermissionState string
+
+// Permissions is one permission check: a row per grant and process.
+type Permissions struct {
+	Seq
+	OS        string          `json:"os" doc:"The hab's operating system as Go names it: darwin or linux."`
+	OSVersion string          `json:"os_version,omitempty" doc:"The operating system's version, such as 27.2."`
+	Rows      []PermissionRow `json:"rows"`
+}
+
+// PermissionRow is one grant of one process.
+type PermissionRow struct {
+	Process  PermissionProcess `json:"process"`
+	Instance string            `json:"instance,omitempty" doc:"The holder instance a holder row is about."`
+	Draining bool              `json:"draining,omitempty" doc:"The holder is draining: it takes no new panes, so no probe runs in it."`
+	Grant    string            `json:"grant" doc:"The grant's name, such as full-disk-access or automation:<bundle-id>."`
+	State    PermissionState   `json:"state"`
+	Required bool              `json:"required,omitempty" doc:"The check fails unless the state is granted."`
+	Detail   string            `json:"detail,omitempty" doc:"One line for the user: what was found, or what to do."`
+	Settings string            `json:"settings,omitempty" doc:"The System Settings URL that changes this grant."`
+	Reveal   string            `json:"reveal,omitempty" doc:"A path to show in Finder, so the user can drag it into the Settings list."`
+}

@@ -430,6 +430,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleAgent(m)
 		return
 	}
+	if m.Method == "hab.permissions" {
+		c.handlePermissions(m)
+		return
+	}
 	seq := c.currentSeq()
 	result, e := c.dispatch(m, seq)
 	c.reply(m, seq, result, e)
@@ -584,6 +588,39 @@ func (c *conn) handleCommandOutput(m message) {
 		}
 		out.Seq = api.Seq{Seq: seq}
 		c.reply(m, seq, out, nil)
+	}()
+}
+
+// maxPermissionsTime bounds one hab.permissions call. A walk's request keeps a probe alive for
+// up to two minutes while the user answers a dialog.
+const maxPermissionsTime = 3 * time.Minute
+
+// handlePermissions runs a hab.permissions call on its own goroutine: a probe pane takes seconds,
+// and the read loop goes on meanwhile. Permissions serialises the checks itself.
+func (c *conn) handlePermissions(m message) {
+	seq := c.currentSeq()
+	var p api.PermissionsParams
+	if e := c.decodeUp(m, &p); e != nil {
+		c.reply(m, seq, nil, e)
+		return
+	}
+	if c.s.cfg.Permissions == nil {
+		c.reply(m, seq, nil, appErr(api.ErrorKindUnavailable, "hab.permissions needs gff-hab serve with its holder link"))
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(c.ctx, maxPermissionsTime)
+		defer cancel()
+		res, err := c.s.cfg.Permissions.Permissions(ctx, p)
+		if err != nil {
+			c.reply(m, seq, nil, actionErr(m.Method, err))
+			return
+		}
+		if res.Rows == nil {
+			res.Rows = []api.PermissionRow{}
+		}
+		res.Seq = api.Seq{Seq: seq}
+		c.reply(m, seq, res, nil)
 	}()
 }
 

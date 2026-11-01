@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -1209,6 +1209,14 @@ public struct PaneRef: Codable, Sendable, Hashable {
     }
 }
 
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct PermissionProcess: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let holder = PermissionProcess(rawValue: "holder")
+    public static let hab = PermissionProcess(rawValue: "hab")
+}
+
 public struct PermissionRequest: Codable, Sendable, Hashable {
     /// The exact command, for a shell tool.
     public var command: String?
@@ -1257,6 +1265,103 @@ public struct PermissionRequest: Codable, Sendable, Hashable {
         self.inputTruncated = inputTruncated
         self.title = title
         self.tool = tool
+    }
+}
+
+public struct PermissionRow: Codable, Sendable, Hashable {
+    /// One line for the user: what was found, or what to do.
+    public var detail: String?
+    /// The holder is draining: it takes no new panes, so no probe runs in it.
+    public var draining: Bool?
+    /// The grant's name, such as full-disk-access or automation:<bundle-id>.
+    public var grant: String
+    /// The holder instance a holder row is about.
+    public var instance: String?
+    public var process: PermissionProcess
+    /// The check fails unless the state is granted.
+    public var required: Bool?
+    /// A path to show in Finder, so the user can drag it into the Settings list.
+    public var reveal: String?
+    /// The System Settings URL that changes this grant.
+    public var settings: String?
+    public var state: PermissionState
+
+    enum CodingKeys: String, CodingKey {
+        case detail = "detail"
+        case draining = "draining"
+        case grant = "grant"
+        case instance = "instance"
+        case process = "process"
+        case required = "required"
+        case reveal = "reveal"
+        case settings = "settings"
+        case state = "state"
+    }
+
+    public init(detail: String? = nil, draining: Bool? = nil, grant: String, instance: String? = nil, process: PermissionProcess, required: Bool? = nil, reveal: String? = nil, settings: String? = nil, state: PermissionState) {
+        self.detail = detail
+        self.draining = draining
+        self.grant = grant
+        self.instance = instance
+        self.process = process
+        self.required = required
+        self.reveal = reveal
+        self.settings = settings
+        self.state = state
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct PermissionState: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let granted = PermissionState(rawValue: "granted")
+    public static let denied = PermissionState(rawValue: "denied")
+    public static let unknown = PermissionState(rawValue: "unknown")
+    public static let unanswered = PermissionState(rawValue: "unanswered")
+    public static let off = PermissionState(rawValue: "off")
+    public static let note = PermissionState(rawValue: "note")
+    public static let error = PermissionState(rawValue: "error")
+}
+
+public struct Permissions: Codable, Sendable, Hashable {
+    /// The hab's operating system as Go names it: darwin or linux.
+    public var os: String
+    /// The operating system's version, such as 27.2.
+    public var osVersion: String?
+    public var rows: [PermissionRow]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case os = "os"
+        case osVersion = "os_version"
+        case rows = "rows"
+        case seq = "seq"
+    }
+
+    public init(os: String, osVersion: String? = nil, rows: [PermissionRow], seq: UInt64) {
+        self.os = os
+        self.osVersion = osVersion
+        self.rows = rows
+        self.seq = seq
+    }
+}
+
+public struct PermissionsParams: Codable, Sendable, Hashable {
+    /// Check only these grants (macos-identity.md 7.1 names, plus domain, background-item, signature, files-and-folders and pasteboard). Absent checks every grant.
+    public var grants: [String]?
+    /// Ask macOS for this one grant before the check, where an API can: accessibility, screen-recording, local-network, files-and-folders or pasteboard. It may show a dialog; only the setup walk sends it.
+    public var request: String?
+
+    enum CodingKeys: String, CodingKey {
+        case grants = "grants"
+        case request = "request"
+    }
+
+    public init(grants: [String]? = nil, request: String? = nil) {
+        self.grants = grants
+        self.request = request
     }
 }
 
@@ -1995,6 +2100,8 @@ public enum HabMethods {
     public static let commandList = HabMethod<CommandListParams, CommandList>(name: "command.list")
     /// Read a run of one command's output from the holder's ring (spec 2.5). Needs the commands capability.
     public static let commandOutput = HabMethod<CommandOutputParams, CommandOutput>(name: "command.output")
+    /// Check the permission grants of the holders, from a probe pane, and of gff-hab (macos-identity.md 7.2). Needs the permissions capability.
+    public static let habPermissions = HabMethod<PermissionsParams, Permissions>(name: "hab.permissions")
 }
 
 public enum HabNotification {

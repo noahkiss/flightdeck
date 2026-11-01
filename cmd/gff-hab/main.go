@@ -12,6 +12,7 @@
 //	gff-hab manifests list    [-state dir]
 //	gff-hab hook [-t ms] <harness> [event] < payload
 //	gff-hab hook -print <harness> [-command name]
+//	gff-hab probe -nonce n -checks grant,... [-request grant]
 //	gff-hab install   [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
 //	                  [-unit-dir dir] [-hab-bin path] [-holder-bin path] [-dry-run]
 //	gff-hab uninstall [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
@@ -93,6 +94,7 @@ const usage = `usage:
   gff-hab manifests list    [-state dir]
   gff-hab hook [-t ms] <harness> [event] < payload
   gff-hab hook -print <harness> [-command name]
+  gff-hab probe -nonce n -checks grant,... [-request grant]
   gff-hab install   [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
                     [-unit-dir dir] [-hab-bin path] [-holder-bin path] [-dry-run]
   gff-hab uninstall [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
@@ -106,6 +108,9 @@ func main() {
 	}
 	if os.Args[1] == "hook" {
 		os.Exit(hookCmd(os.Args[2:], os.Stdin, os.Stdout))
+	}
+	if os.Args[1] == "probe" {
+		os.Exit(probeCmd(os.Args[2:]))
 	}
 	var err error
 	switch os.Args[1] {
@@ -260,8 +265,9 @@ func serve(args []string) error {
 		return err
 	}
 	var hs structure.Holders = emptyHolders{}
+	hidden := newHiddenPanes()
 	if lk != nil {
-		hs = lk.Structure()
+		hs = hidingHolders{inner: lk.Structure(), hide: hidden}
 	}
 	var srv atomic.Pointer[control.Server]
 	store, err := structure.Open(structure.Config{
@@ -382,6 +388,22 @@ func serve(args []string) error {
 		agentSvc = &agentService{store: store, agents: agents, gate: harness.NewGate(pwait), input: linkQueuer{lk}, logf: logger.Printf}
 		agentCalls = agentSvc
 	}
+	// The permission check (macos-identity.md 7.2): the holder's checks run in a hidden probe
+	// pane on the current holder; gff-hab's own checks run here.
+	pc := permissionsConfig{sf: sf, store: store, state: dir}
+	if lk != nil {
+		if exe, err := os.Executable(); err == nil {
+			pr := &prober{lk: lk, hide: hidden, argv: []string{exe},
+				env: func() []string { return basePaneEnv(os.Environ(), runtime.GOOS) }, logf: logger.Printf}
+			pc.probe = pr.run
+		}
+		pc.holderDir = holderDirOf(*holders)
+	}
+	perms, err := newPermissions(pc)
+	if err != nil {
+		return err
+	}
+	caps = append(caps, "permissions")
 	s := control.New(control.Config{
 		Build:        build,
 		Host:         api.HostInfo{ID: *hostID},
@@ -400,7 +422,8 @@ func serve(args []string) error {
 				agentSvc.releaseUnwatched(s.Approvers)
 			}
 		},
-		Logf: logger.Printf,
+		Logf:        logger.Printf,
+		Permissions: permissionService{perms},
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)

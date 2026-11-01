@@ -10,3 +10,5 @@ require (
 	go.mitchellh.com/libghostty v0.0.0-20261021212106-df1957cbff56
 	golang.org/x/sys v0.49.0
 )
+
+require github.com/ebitengine/purego v0.11.2 // indirect

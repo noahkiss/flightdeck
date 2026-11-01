@@ -20,7 +20,8 @@
     "devices",
     "push",
     "host-stats",
-    "commands"
+    "commands",
+    "permissions"
   ],
   "methods": [
     {
@@ -1062,6 +1063,39 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/CommandOutputParams"
+      }
+    },
+    {
+      "name": "hab.permissions",
+      "summary": "Check the permission grants of the holders, from a probe pane, and of gff-hab (macos-identity.md 7.2). Needs the permissions capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "grants",
+          "description": "Check only these grants (macos-identity.md 7.1 names, plus domain, background-item, signature, files-and-folders and pasteboard). Absent checks every grant.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "name": "request",
+          "description": "Ask macOS for this one grant before the check, where an API can: accessibility, screen-recording, local-network, files-and-folders or pasteboard. It may show a dialog; only the setup walk sends it.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Permissions"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PermissionsParams"
       }
     }
   ],
@@ -2528,6 +2562,13 @@
           "pane"
         ]
       },
+      "PermissionProcess": {
+        "type": "string",
+        "x-known-values": [
+          "holder",
+          "hab"
+        ]
+      },
       "PermissionRequest": {
         "type": "object",
         "properties": {
@@ -2574,6 +2615,107 @@
           },
           "tool": {
             "type": "string"
+          }
+        }
+      },
+      "PermissionRow": {
+        "type": "object",
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "One line for the user: what was found, or what to do."
+          },
+          "draining": {
+            "type": "boolean",
+            "description": "The holder is draining: it takes no new panes, so no probe runs in it."
+          },
+          "grant": {
+            "type": "string",
+            "description": "The grant's name, such as full-disk-access or automation:\u003cbundle-id\u003e."
+          },
+          "instance": {
+            "type": "string",
+            "description": "The holder instance a holder row is about."
+          },
+          "process": {
+            "$ref": "#/components/schemas/PermissionProcess"
+          },
+          "required": {
+            "type": "boolean",
+            "description": "The check fails unless the state is granted."
+          },
+          "reveal": {
+            "type": "string",
+            "description": "A path to show in Finder, so the user can drag it into the Settings list."
+          },
+          "settings": {
+            "type": "string",
+            "description": "The System Settings URL that changes this grant."
+          },
+          "state": {
+            "$ref": "#/components/schemas/PermissionState"
+          }
+        },
+        "required": [
+          "process",
+          "grant",
+          "state"
+        ]
+      },
+      "PermissionState": {
+        "type": "string",
+        "x-known-values": [
+          "granted",
+          "denied",
+          "unknown",
+          "unanswered",
+          "off",
+          "note",
+          "error"
+        ]
+      },
+      "Permissions": {
+        "type": "object",
+        "properties": {
+          "os": {
+            "type": "string",
+            "description": "The hab's operating system as Go names it: darwin or linux."
+          },
+          "os_version": {
+            "type": "string",
+            "description": "The operating system's version, such as 27.2."
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PermissionRow"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "os",
+          "rows"
+        ]
+      },
+      "PermissionsParams": {
+        "type": "object",
+        "properties": {
+          "grants": {
+            "type": "array",
+            "description": "Check only these grants (macos-identity.md 7.1 names, plus domain, background-item, signature, files-and-folders and pasteboard). Absent checks every grant.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "request": {
+            "type": "string",
+            "description": "Ask macOS for this one grant before the check, where an API can: accessibility, screen-recording, local-network, files-and-folders or pasteboard. It may show a dialog; only the setup walk sends it."
           }
         }
       },

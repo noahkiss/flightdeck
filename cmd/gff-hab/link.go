@@ -159,6 +159,20 @@ func openLink(holders, state string, opt linkOptions, logger *log.Logger) (*link
 			return nil, nil
 		}
 	}
+	return openLinkIn(dir, state, opt, logger)
+}
+
+// holderDirOf is the holder registry directory openLink uses, or "" when none can be found.
+func holderDirOf(holders string) string {
+	if holders != "" {
+		return holders
+	}
+	dir, _ := holderreg.DefaultDir(runtime.GOOS, os.Getenv, os.UserConfigDir)
+	return dir
+}
+
+// openLinkIn opens the holder link on registry directory dir.
+func openLinkIn(dir, state string, opt linkOptions, logger *log.Logger) (*link.Link, error) {
 	p, name := parser()
 	var start func(context.Context) error
 	var retired func(string, int)

@@ -107,6 +107,21 @@ const (
 )
 
 const (
+	PermissionProcessHolder PermissionProcess = "holder"
+	PermissionProcessHab    PermissionProcess = "hab"
+)
+
+const (
+	PermissionStateGranted    PermissionState = "granted"
+	PermissionStateDenied     PermissionState = "denied"
+	PermissionStateUnknown    PermissionState = "unknown"
+	PermissionStateUnanswered PermissionState = "unanswered"
+	PermissionStateOff        PermissionState = "off"
+	PermissionStateNote       PermissionState = "note"
+	PermissionStateError      PermissionState = "error"
+)
+
+const (
 	PlanStepStatusPending    PlanStepStatus = "pending"
 	PlanStepStatusInProgress PlanStepStatus = "in_progress"
 	PlanStepStatusDone       PlanStepStatus = "done"
@@ -481,5 +496,12 @@ func (c Client) CommandList(ctx context.Context, params CommandListParams) (Comm
 func (c Client) CommandOutput(ctx context.Context, params CommandOutputParams) (CommandOutput, error) {
 	var result CommandOutput
 	err := c.Caller.Call(ctx, "command.output", params, &result)
+	return result, err
+}
+
+// HabPermissions calls hab.permissions. Check the permission grants of the holders, from a probe pane, and of gff-hab (macos-identity.md 7.2). Needs the permissions capability.
+func (c Client) HabPermissions(ctx context.Context, params PermissionsParams) (Permissions, error) {
+	var result Permissions
+	err := c.Caller.Call(ctx, "hab.permissions", params, &result)
 	return result, err
 }

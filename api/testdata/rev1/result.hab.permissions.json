@@ -1,0 +1,28 @@
+{
+  "os": "os-4",
+  "os_version": "os_version-5",
+  "rows": [
+    {
+      "detail": "detail-8",
+      "draining": true,
+      "grant": "grant-7",
+      "instance": "instance-6",
+      "process": "hab",
+      "required": true,
+      "reveal": "reveal-10",
+      "settings": "settings-9",
+      "state": "error",
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

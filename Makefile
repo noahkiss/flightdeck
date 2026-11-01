@@ -56,7 +56,7 @@ RACE_PKGS := ./internal/holder/... ./internal/holderproto/... ./internal/holderc
 	./internal/control/... ./internal/datastream/... ./internal/habconn/... ./internal/gffclient/... ./internal/panesize/... ./internal/termq/... \
 	./internal/cmdmarks/... \
 	./internal/harness/... ./internal/hook/... ./internal/gitstatus/... ./internal/transcript/... \
-	./internal/service/... \
+	./internal/service/... ./internal/grants/... \
 	./cmd/...
 race:
 	$(GO) test -race -count=3 $(RACE_PKGS)

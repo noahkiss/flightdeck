@@ -23,6 +23,9 @@
 //	f         fit: make the pane this window's size (pane.take)
 //	d         detach: quit gff; the programs keep running
 //	the prefix again sends it to the pane; Esc cancels
+//
+// `gff setup` checks and walks the permission grants of the hab's processes (setup.go,
+// docs/specs/macos-identity.md 7).
 package main
 
 import (
@@ -54,6 +57,9 @@ func (m *multi) Set(v string) error { *m = append(*m, v); return nil }
 func main() {
 	if os.Getenv(guardEnv) == "1" {
 		os.Exit(runGuard())
+	}
+	if len(os.Args) > 1 && os.Args[1] == "setup" {
+		os.Exit(setupMain(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	err := run(os.Args[1:])
 	switch {

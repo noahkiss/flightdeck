@@ -59,7 +59,7 @@ The repo layout and the libghostty build are in `docs/layout.md`.
 | `make test` | Build libghostty, then run every Go test with `-tags ghostty` |
 | `make build`, `make vet` | Build or vet every package with `-tags ghostty` |
 | `make test-pure` | Run the Go tests without cgo or libghostty |
-| `make race` | Run the holder, holderproto, holderclient, holderreg, structure, link, control, datastream, habconn, gffclient, panesize, termq, cmdmarks, harness, hook, gitstatus, transcript, service and `cmd` tests with `-race -count=3` |
+| `make race` | Run the holder, holderproto, holderclient, holderreg, structure, link, control, datastream, habconn, gffclient, panesize, termq, cmdmarks, harness, hook, gitstatus, transcript, service, grants and `cmd` tests with `-race -count=3` |
 | `make fuzz [FUZZTIME=30s]` | Run each holderproto fuzz target for `FUZZTIME` in turn (nightly) |
 | `make check-pure` | Fail when a package other than `internal/vt/ghostty` needs cgo |
 | `make check-gen` | Fail when a generated file is stale |
@@ -91,6 +91,8 @@ The repo layout and the libghostty build are in `docs/layout.md`.
 | `go test -race ./internal/habconn/` | Connection library suite over the Unix socket, an in-process pipe, `SSHTransport` with a stand-in `ssh`, and the real `ssh` to localhost (`$GFF_TEST_SSH_HOST` overrides; skips without key-based `BatchMode` ssh): data drops resume from the held offset with no gap or repeat, a new epoch replaces the structure, a dead link reconnects after a transport reset, the ssh control directory checks |
 | `gff [-socket path \| -via command \| -ssh host] [-new command]... [-split columns\|rows] [-observe] [-prefix ctrl-<key>] [pane...]` | The terminal client: show the named panes and one new pane per `-new` (with neither, the hab's shell) in this terminal. One pane that fits passes through; several share the screen. Prefix Ctrl+\ then `o` focus, `z` zoom, `s` split, `r` redraw, `n` nudge, `f` fit, `d` detach. Build with `-tags ghostty` for libghostty |
 | `go test -race ./internal/gffclient/` | Client core against the real holder and gff-hab: an observer never sends a size, typing moves ownership, one debounced size after a burst of host resizes, no query reaches the host or gets an answer, detach; then the `gff` binary in a pty with vim and a full-screen script side by side across a resize (skips without vim) |
+| `gff setup [--check [--json]] [--host h] [--grant g]... [--timeout 5m] [--no-open]` | Check the permission grants of the hab's processes through `hab.permissions`, or walk the missing ones: open each Settings pane, wait, verify. `--check` exits 0 when all are granted, 1 when one is missing, 2 when the check could not run, 64 on a usage error. Opt-in grants come from `$GFF_MACOS_GRANTS` on gff-hab |
+| `go test -race ./internal/grants/ ./cmd/gff/ ./cmd/gff-hab/` | Permission check: probe protocol, checks with a fake system, signature rows, kept walk answers, exit codes and output, the walk; a real probe pane on a real holder |
 | `cd swift/HabAPI && swift test` | Build and test the generated Swift package (Mac) |
 | `apple/scripts/generate.sh` | Generate `apple/Flightdeck.xcodeproj` from `apple/project.yml` with XcodeGen (the pinned release is downloaded when `xcodegen` is not on PATH). The project is not committed |
 | `xcodebuild -project apple/Flightdeck.xcodeproj -scheme FlightdeckiOS -destination 'generic/platform=iOS Simulator' build` | Build the iOS app for the simulator (no signing setup needed) |
