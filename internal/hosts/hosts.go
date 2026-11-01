@@ -311,8 +311,10 @@ func (s *Set) pump(name string, e *entry) {
 		}
 		m := &e.model
 		now := s.cfg.Now()
-		if e.eps != nil {
-			m.Endpoint = e.eps.current().String()
+		if u.Endpoint != "" {
+			// The update names the endpoint it is about: by now the Conn may have moved on
+			// to the next one.
+			m.Endpoint = u.Endpoint
 		}
 		switch u.Kind {
 		case habconn.UpdateOnline:

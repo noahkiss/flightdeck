@@ -48,11 +48,13 @@ type Manager struct {
 	problems  []string
 	specs     []hosts.Spec         // the list as last read, this hab's own entries left out
 	pins      map[string]string    // label -> device id pinned in the file, as last read
-	self      map[string]bool      // labels whose endpoint answered with this hab's device id
+	self      map[string]string    // label -> endpoints (endpointsKey) that answered with this hab's id
+	pinFailed map[string]string    // label -> why its first pin could not be written
 	seen      map[string]time.Time // label -> when last online
 	inbound   map[uint64]api.PeerHello
 	published map[string]api.Peer
-	stamp     fileStamp
+	stamp     fileStamp // the file as last read
+	pending   fileStamp // a changed stamp seen at one poll; the next poll reloads if it holds
 }
 
 type fileStamp struct {
@@ -88,7 +90,8 @@ func Open(cfg Config) (*Manager, error) {
 		cfg:       cfg,
 		done:      make(chan struct{}),
 		pins:      map[string]string{},
-		self:      map[string]bool{},
+		self:      map[string]string{},
+		pinFailed: map[string]string{},
 		seen:      map[string]time.Time{},
 		inbound:   map[uint64]api.PeerHello{},
 		published: map[string]api.Peer{},
@@ -101,6 +104,7 @@ func Open(cfg Config) (*Manager, error) {
 		Conn: func(c *habconn.Config) {
 			c.Peer = &api.PeerHello{DeviceID: cfg.Self, Host: cfg.Host}
 			c.NoSubscribe = true
+			c.RetryRefused = true
 			if cfg.Conn != nil {
 				cfg.Conn(c)
 			}
@@ -140,8 +144,16 @@ func (s source) Hosts() ([]hosts.Spec, error) {
 	out := specs[:0]
 	pins := map[string]string{}
 	for _, sp := range specs {
-		if sp.DeviceID == m.cfg.Self || m.self[sp.Label] {
+		if sp.DeviceID == m.cfg.Self {
 			continue
+		}
+		if eps, ok := m.self[sp.Label]; ok {
+			if eps == endpointsKey(sp) {
+				m.problems = append(m.problems, fmt.Sprintf("peer %q: %s answers as this hab; skipped", sp.Label, eps))
+				continue
+			}
+			// The endpoints changed since they reached this hab: try the entry again.
+			delete(m.self, sp.Label)
 		}
 		pins[sp.Label] = sp.DeviceID
 		out = append(out, sp)
@@ -149,6 +161,18 @@ func (s source) Hosts() ([]hosts.Spec, error) {
 	m.pins = pins
 	m.specs = slices.Clone(out)
 	return out, nil
+}
+
+// endpointsKey is a spec's endpoints as one string, to tell when they change.
+func endpointsKey(sp hosts.Spec) string {
+	var b strings.Builder
+	for i, ep := range sp.Endpoints {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(ep.String())
+	}
+	return b.String()
 }
 
 // reload reads the peer file again and applies it.
@@ -162,7 +186,7 @@ func (m *Manager) reload() {
 	m.publishAll()
 }
 
-// watch reloads the peer file when its size or modification time changes.
+// watch checks the peer file every poll.
 func (m *Manager) watch() {
 	defer m.wg.Done()
 	t := time.NewTicker(m.cfg.Poll)
@@ -173,13 +197,24 @@ func (m *Manager) watch() {
 			return
 		case <-t.C:
 		}
-		st := stampOf(m.cfg.Path)
-		m.mu.Lock()
-		changed := st != m.stamp
-		m.mu.Unlock()
-		if changed {
-			m.reload()
-		}
+		m.check()
+	}
+}
+
+// check reloads the peer file once its size and modification time changed and then held for
+// one poll, so a file in the middle of a write is not read (mesh.md 4.4).
+func (m *Manager) check() {
+	st := stampOf(m.cfg.Path)
+	m.mu.Lock()
+	settled := st != m.stamp && st == m.pending
+	if st == m.stamp {
+		m.pending = fileStamp{}
+	} else {
+		m.pending = st
+	}
+	m.mu.Unlock()
+	if settled {
+		m.reload()
 	}
 }
 
@@ -208,7 +243,11 @@ func (m *Manager) online(label string, w api.Welcome) bool {
 	if w.DeviceID == m.cfg.Self {
 		m.cfg.Logf("peers: %s is this hab; skipped", label)
 		m.mu.Lock()
-		m.self[label] = true
+		for _, sp := range m.specs {
+			if sp.Label == label {
+				m.self[label] = endpointsKey(sp)
+			}
+		}
 		m.mu.Unlock()
 		m.reload()
 		return true
@@ -221,8 +260,14 @@ func (m *Manager) online(label string, w api.Welcome) bool {
 		// First contact: pin the peer's device id in the file (mesh.md 3.2).
 		if err := SetPin(m.cfg.Path, label, w.DeviceID); err != nil {
 			m.cfg.Logf("peers: pin %s: %v", label, err)
+			m.mu.Lock()
+			m.pinFailed[label] = fmt.Sprintf("peer %q: could not pin it: %v; set device_id = %q by hand", label, err, w.DeviceID)
+			m.mu.Unlock()
 		} else {
 			m.cfg.Logf("peers: pinned %s as %s", label, w.DeviceID)
+			m.mu.Lock()
+			delete(m.pinFailed, label)
+			m.mu.Unlock()
 			m.reload()
 		}
 	}
@@ -289,8 +334,11 @@ func (m *Manager) List() api.PeerList {
 	for _, h := range hs {
 		p := m.peerLocked(h)
 		out.Peers = append(out.Peers, p)
-		if p.DeviceID != "" {
-			listed[p.DeviceID] = true
+		if id := m.idLocked(h); id != "" {
+			listed[id] = true
+		}
+		if why, ok := m.pinFailed[h.Label]; ok && m.pins[h.Label] == "" {
+			out.Problems = append(out.Problems, why)
 		}
 	}
 	shown := map[string]bool{}
@@ -311,8 +359,12 @@ func (m *Manager) Accept(label string) (api.PeerAccepted, error) {
 		return api.PeerAccepted{}, control.Errorf(api.ErrorKindNotFound, "no peer %q in %s", label, m.cfg.Path)
 	}
 	var dc *habconn.DeviceChangedError
-	if !errors.As(h.Err, &dc) {
+	if h.Status != hosts.Failed || !errors.As(h.Err, &dc) {
 		return api.PeerAccepted{}, control.Errorf(api.ErrorKindConflict, "peer %q presents no other device id; nothing to accept", label)
+	}
+	if dc.Got == "" {
+		// Pinning an empty id would turn the check off for this entry.
+		return api.PeerAccepted{}, control.Errorf(api.ErrorKindInvalid, "peer %q presents no device id; nothing to accept", label)
 	}
 	if err := SetPin(m.cfg.Path, label, dc.Got); err != nil {
 		return api.PeerAccepted{}, control.Errorf(api.ErrorKindUnavailable, "%v", err)
@@ -350,15 +402,25 @@ func samePeer(a, b api.Peer) bool {
 	return a == b
 }
 
+// idLocked is the device id a peer is known by: its pin, else the id its welcome gave. The
+// caller holds m.mu.
+func (m *Manager) idLocked(h hosts.Host) string {
+	if id := m.pins[h.Label]; id != "" {
+		return id
+	}
+	return h.Welcome.DeviceID
+}
+
 // peerLocked makes the row of one peer (mesh.md 4.3). The caller holds m.mu.
 func (m *Manager) peerLocked(h hosts.Host) api.Peer {
-	p := api.Peer{Label: h.Label, Endpoint: h.Endpoint, DeviceID: m.pins[h.Label], Host: h.Welcome.Host.ID}
-	if p.DeviceID == "" {
-		p.DeviceID = h.Welcome.DeviceID
+	id := m.idLocked(h)
+	p := api.Peer{Label: h.Label, Endpoint: h.Endpoint, DeviceID: id, Host: h.Welcome.Host.ID}
+	if _, failed := m.pinFailed[h.Label]; failed && m.pins[h.Label] == "" {
+		p.DeviceID = "" // not pinned: the file could not take the pin, so no id is shown as pinned
 	}
-	if p.DeviceID != "" {
+	if id != "" {
 		for _, in := range m.inbound {
-			if in.DeviceID == p.DeviceID {
+			if in.DeviceID == id {
 				p.Inbound = true
 				if p.Host == "" {
 					p.Host = in.Host
@@ -373,8 +435,12 @@ func (m *Manager) peerLocked(h hosts.Host) api.Peer {
 		p.State, p.OfferedID = api.PeerStateRefused, dc.Got
 		p.Reason = fmt.Sprintf("different hab at %s: pinned %s, it presents %s; run gff-hab peers accept %s", h.Endpoint, dc.Pinned, dc.Got, h.Label)
 		p.Inbound = false
-	case h.Status == hosts.Failed && errors.As(h.Err, &ce) && ce.Data.Kind == api.ErrorKindRevisionUnsupported:
-		p.State, p.Reason = api.PeerStateUpdateNeeded, "no API revision fits; update gff-hab on one side"
+	case h.Status != hosts.Online && errors.Is(h.Err, habconn.ErrHelloRefused):
+		// An older build refuses the peer link's hello; the link keeps trying (mesh.md 4.4).
+		p.State, p.Reason = api.PeerStateUpdateNeeded, "the peer's gff-hab refused the peer link; update it"
+		if errors.As(h.Err, &ce) && ce.Data.Kind == api.ErrorKindRevisionUnsupported {
+			p.Reason = "no API revision fits; update gff-hab on one side"
+		}
 	case h.Status == hosts.Online && !slices.Contains(h.Welcome.Capabilities, Capability):
 		p.State, p.Reason = api.PeerStateUpdateNeeded, "the peer's gff-hab has no peer links; update it"
 	case h.Status == hosts.Online || p.Inbound:
@@ -383,7 +449,11 @@ func (m *Manager) peerLocked(h hosts.Host) api.Peer {
 		p.State = api.PeerStateConnecting
 	default:
 		p.State = api.PeerStateOffline
-		if h.Err != nil {
+		switch {
+		case errors.As(h.Err, &dc):
+			// Not refused yet: another endpoint may still present the pin.
+			p.Reason = fmt.Sprintf("different hab at %s: pinned %s, it presents %s; trying the other endpoints", h.Endpoint, dc.Pinned, dc.Got)
+		case h.Err != nil:
 			p.Reason = reason(h.Err)
 		}
 	}

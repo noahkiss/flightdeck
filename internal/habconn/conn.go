@@ -40,6 +40,11 @@ type Config struct {
 	// NoSubscribe skips events.subscribe: the Conn goes online after the hello, with an empty
 	// structure, and makes calls only. A peer link subscribes to nothing (mesh.md 4.2).
 	NoSubscribe bool
+	// RetryRefused keeps the Conn going after a refused hello (ErrHelloRefused): each attempt
+	// reports UpdateRetrying, and the next waits MaxBackoff, or a Retry. A peer link sets it,
+	// since the far hab may be updated while this one runs (mesh.md 4.4). Otherwise a refused
+	// hello stops the Conn.
+	RetryRefused bool
 
 	PingInterval time.Duration // hab.ping after this long with nothing sent
 	DeadAfter    time.Duration // a connection that delivers nothing for this long is dead
@@ -79,6 +84,9 @@ type Update struct {
 	Event     api.Event
 	Changed   bool
 	Err       error
+	// Endpoint names the endpoint of the attempt or connection the update is about, when the
+	// Transport is a Failover (UpdateOnline, UpdateOffline, UpdateRetrying, UpdateFailed).
+	Endpoint string
 }
 
 // Conn is one hab: a control connection kept up across drops, the structure copy, and the
@@ -281,6 +289,7 @@ type session struct {
 	notes    []control.Notification
 	floor    uint64 // the subscribe response's seq: events at or below it are in the snapshot
 	lastSeq  uint64 // the last event seq seen on this connection
+	endpoint string // the Failover endpoint it was dialed at
 }
 
 // errPermanent marks errors after which reconnecting cannot help.
@@ -288,16 +297,26 @@ type errPermanent struct{ error }
 
 func (e errPermanent) Unwrap() error { return e.error }
 
+// unwrapPermanent returns the error inside an errPermanent, or err itself.
+func unwrapPermanent(err error) error {
+	var p errPermanent
+	if errors.As(err, &p) {
+		return p.error
+	}
+	return err
+}
+
 // open dials, says hello and subscribes. Notifications that arrive before the subscribe
 // response are kept for serve, which applies those above the response's seq.
 func (c *Conn) open(ctx context.Context) (*session, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.cfg.OpenTimeout)
 	defer cancel()
+	endpoint := c.endpoint()
 	rw, err := c.cfg.Transport.Dial(ctx, KindControl)
 	if err != nil {
 		return nil, fmt.Errorf("habconn: dial: %w", err)
 	}
-	s := &session{lastRead: &atomic.Int64{}}
+	s := &session{lastRead: &atomic.Int64{}, endpoint: endpoint}
 	s.lastRead.Store(time.Now().UnixNano())
 	cl := control.NewClient(&stampRW{ReadWriteCloser: rw, last: s.lastRead})
 	s.cl = cl
@@ -320,7 +339,7 @@ func (c *Conn) open(ctx context.Context) (*session, error) {
 		cl.Close()
 		var ce *control.Error
 		if errors.As(err, &ce) && (ce.Data.Kind == api.ErrorKindRevisionUnsupported || ce.Data.Kind == api.ErrorKindInvalid) {
-			return nil, errPermanent{fmt.Errorf("habconn: hello refused: %w", err)}
+			return nil, errPermanent{fmt.Errorf("%w: %w", ErrHelloRefused, err)}
 		}
 		if se, ok := rw.(stderrer); ok {
 			if msg := se.Stderr(); msg != "" {
@@ -401,7 +420,7 @@ func (c *Conn) goOnline(s *session, w api.Welcome, st api.Structure) {
 	for p := range c.panes {
 		panes = append(panes, p)
 	}
-	c.updates.push(Update{Kind: UpdateOnline, Welcome: w, NewEpoch: newEpoch, Structure: snap})
+	c.updates.push(Update{Kind: UpdateOnline, Welcome: w, NewEpoch: newEpoch, Structure: snap, Endpoint: s.endpoint})
 	c.mu.Unlock()
 	if again {
 		// The link that dropped the control connection likely took the data streams with
@@ -427,7 +446,7 @@ func (c *Conn) run(s *session) {
 		default:
 		}
 		c.cfg.Logf("habconn: control connection ended: %v", err)
-		c.updates.push(Update{Kind: UpdateOffline, Err: err})
+		c.updates.push(Update{Kind: UpdateOffline, Err: err, Endpoint: s.endpoint})
 		s, err = c.reconnect(errors.Is(err, errDead))
 		if err != nil {
 			c.stop(err)
@@ -452,7 +471,7 @@ func (c *Conn) stop(err error) {
 		p.kick()
 	}
 	if !errors.Is(err, ErrClosed) {
-		c.updates.push(Update{Kind: UpdateFailed, Err: err})
+		c.updates.push(Update{Kind: UpdateFailed, Err: err, Endpoint: c.endpoint()})
 	}
 	c.updates.close()
 }
@@ -460,11 +479,22 @@ func (c *Conn) stop(err error) {
 // reconnect retries at once, then with backoff and jitter, until it is online, closed, or
 // refused for good. Every attempt after a failed one, and the first when reset is set, resets
 // the transport first.
+//
+// A device id other than the pinned one ends it only when every endpoint presented the same
+// other id, in that many attempts in a row: an endpoint that reaches the wrong machine, such
+// as an address another host now holds, must not hide the right one (mesh.md 4.4). With
+// RetryRefused, a refused hello is one more failed attempt, followed by the longest wait.
 func (c *Conn) reconnect(reset bool) (*session, error) {
+	var presented []string // the ids that the last attempts in a row presented instead of the pin
+	slow := false          // the last attempt's hello was refused: wait MaxBackoff
 	for attempt := 0; ; attempt++ {
 		if attempt > 0 {
 			reset = true
-			t := time.NewTimer(backoff(c.cfg.MinBackoff, c.cfg.MaxBackoff, attempt))
+			wait := backoff(c.cfg.MinBackoff, c.cfg.MaxBackoff, attempt)
+			if slow {
+				wait = backoff(c.cfg.MaxBackoff, c.cfg.MaxBackoff, 1)
+			}
+			t := time.NewTimer(wait)
 			select {
 			case <-c.closed:
 				t.Stop()
@@ -482,13 +512,28 @@ func (c *Conn) reconnect(reset bool) (*session, error) {
 		if reset {
 			c.reset()
 		}
+		endpoint := c.endpoint()
 		s, err := c.open(context.Background())
 		if err == nil {
 			return s, nil
 		}
+		slow = false
 		var p errPermanent
-		if errors.As(err, &p) {
+		var dc *DeviceChangedError
+		switch {
+		case errors.As(err, &dc):
+			presented = append(presented, dc.Got)
+			if c.allPresented(presented) {
+				return nil, unwrapPermanent(err)
+			}
+			err = unwrapPermanent(err)
+		case c.cfg.RetryRefused && errors.Is(err, ErrHelloRefused):
+			presented, slow = nil, true
+			err = unwrapPermanent(err)
+		case errors.As(err, &p):
 			return nil, p.error
+		default:
+			presented = nil
 		}
 		c.cfg.Logf("habconn: reconnect: %v", err)
 		if f, ok := c.cfg.Transport.(Failover); ok {
@@ -499,8 +544,35 @@ func (c *Conn) reconnect(reset bool) (*session, error) {
 			return nil, ErrClosed
 		default:
 		}
-		c.updates.push(Update{Kind: UpdateRetrying, Err: err})
+		c.updates.push(Update{Kind: UpdateRetrying, Err: err, Endpoint: endpoint})
 	}
+}
+
+// allPresented reports whether the last attempts, one per endpoint, all presented the same
+// device id instead of the pinned one.
+func (c *Conn) allPresented(ids []string) bool {
+	n := 1
+	if f, ok := c.cfg.Transport.(Failover); ok {
+		n = max(f.Endpoints(), 1)
+	}
+	if len(ids) < n {
+		return false
+	}
+	last := ids[len(ids)-n:]
+	for _, id := range last {
+		if id != last[0] {
+			return false
+		}
+	}
+	return true
+}
+
+// endpoint names the endpoint the next Dial uses: empty unless the Transport is a Failover.
+func (c *Conn) endpoint() string {
+	if f, ok := c.cfg.Transport.(Failover); ok {
+		return f.Current()
+	}
+	return ""
 }
 
 // reset drops the transport's shared connection, if it has one.

@@ -970,7 +970,10 @@ transport, if process count or sleep handling demands it.
   is closed as dead.
 - Reconnect: at once, then backoff from 0.5 s doubling to 30 s, each wait a random point in its
   upper half. A hello refused with `revision_unsupported` or `invalid`, or a changed device id,
-  stops the `Conn` for good.
+  stops the `Conn` for good. Two exceptions: with `RetryRefused` (a peer link, `mesh.md` 4.4) a
+  refused hello is retried at the longest backoff; with several endpoints (`Failover`) a changed
+  device id stops the `Conn` only when every endpoint, in that many attempts in a row, presented
+  the same other id. Each update names the endpoint it is about.
 - A stale shared connection: a master whose link died during sleep still takes new sessions,
   and `ConnectTimeout` does not apply to them, so each attempt would wait the 20 s open timeout
   until ssh's keepalive gave up (about 45 s). When the transport is a `Resetter`, the `Conn`

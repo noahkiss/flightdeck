@@ -247,7 +247,7 @@ send and receive, and a pull model needs no inbound path to it.
 | connecting | The hab is trying endpoints |
 | offline | No link; last seen at a time. Normal for a laptop that sleeps |
 | refused | The endpoint answered with a different device id, or with no hab |
-| update needed | The peer has no `mesh` capability, or no revision fits |
+| update needed | The peer has no `mesh` capability, refuses the peer link's hello, or no revision fits |
 
 `gff-hab peers` lists label, state, the endpoint in use, the short device id and last seen.
 
@@ -264,27 +264,43 @@ Package `internal/peers`, wired into `gff-hab serve`. Commands: `gff-hab peers` 
 - **Bad lines by line.** The TOML library gives no key positions, so each problem names the line
   of its entry's `[[peers]]` header. A file that does not parse keeps the last good list and
   shows the parse error, with its line, in `peers.list`.
-- **Reload on change.** gff-hab checks the file's size and modification time every 2 s. No file
-  watcher library.
+- **Reload on change.** gff-hab checks the file's size and modification time every 2 s, and reads
+  the file once a changed size and time held for one more check (2 to 4 s). A writer that edits
+  in place is not read half way. No file watcher library.
 - **The pin is a line edit.** It replaces the entry's `device_id` line, or adds one after its
   `label` line, at the same indent. Every other line stays, comments included. The edited text
   must parse with the new pin before it replaces the file, in one rename that keeps the mode. An
-  entry whose label is not on a line of its own is not edited; the log says to set the pin by
-  hand. The edit reads the file once more after its fsync, just before the rename: when the
-  user saved it in between, nothing is renamed and the edit starts again from the saved file.
+  entry whose label is not on a line of its own is not edited. When the pin cannot be written,
+  `peers.list` shows a problem with the id to set by hand, and the row shows no device id:
+  habconn pins for a connection's life only, so after a restart any id would be taken. The edit
+  reads the file once more after its fsync, just before the rename: when the user saved it in
+  between, nothing is renamed and the edit starts again from the saved file.
 - **The first pin reconnects once.** Writing the pin changes the entry, and `hosts.Reload` gives
   a changed entry a new connection. The peer shows `connecting` for a moment after first contact,
   or `online` with no endpoint in use while its own link to this hab is open.
 - **Endpoints in turn.** Each attempt uses one endpoint. After a failed attempt the next one is
   tried, wrapping round (`habconn.Failover`), spaced by the reconnect backoff. There is no
   parallel stagger: an `ssh` process always starts, and fails only at the hello. A working
-  endpoint stays in use until an attempt on it fails.
+  endpoint stays in use until an attempt on it fails. Each update names the endpoint it is
+  about, so a row shows an error with the endpoint that gave it.
+- **A different hab at one endpoint is one failed attempt.** An address can move to another
+  machine (DHCP). The peer is `refused` only when every endpoint, in that many attempts in a
+  row, presented the same other device id; then `peers accept` pins that id. A different id at
+  one endpoint while another fails or presents a third id keeps the peer `offline`, with the
+  different hab named in the reason, and there is nothing to accept. Accept also refuses an
+  empty id, which would turn pinning off for the entry.
+- **A refused hello is `update needed`.** A gff-hab from before peer links refuses the client
+  kind `hab` with `invalid`; one with no shared revision answers `revision_unsupported`. Either
+  shows `update needed`. The peer link keeps trying at the longest backoff (30 s), or at once on
+  `Retry`, so the peer comes online once it is updated, with no restart here
+  (`habconn.Config.RetryRefused`). gff's own host connections still stop on a refused hello.
 - **The peer link.** Client kind `hab`, the hello's `peer` field, and no `events.subscribe`
   (`habconn.Config.NoSubscribe`). Liveness is habconn's: a ping every 15 s, dead after 45 s.
 - **Online.** A peer is online while this hab's link to it is up, or while a link from it is
   open: a hello whose `peer.device_id` matches the pin. `refused` wins over an inbound link.
 - **Self.** An entry pinned to this hab's own device id is skipped at load. An entry whose
-  endpoint answers with this hab's id is dropped for the life of the process and not written to
+  endpoint answers with this hab's id is dropped while its endpoints stay as they were, with a
+  problem line in `peers.list`; an edit of its endpoints tries it again. Nothing is written to
   the file, so a shared file stays the same on every host.
 - **Unlisted links.** A hab that links in and is not in the list shows in `peers.list` as
   `unlisted`, with its claimed device id and host id. The add action waits for `peers add`.
@@ -293,6 +309,19 @@ Package `internal/peers`, wired into `gff-hab serve`. Commands: `gff-hab peers` 
 - **Accept goes through the running hab.** Only it holds the id the peer presented. The command
   prints both ids and asks no question: running it is the owner's deliberate act.
 - **Last seen** is kept in memory. A gff-hab restart forgets it until the peer is seen again.
+- **The installed service and ssh-agent.** Install does not write `SSH_AUTH_SOCK` into the units
+  or the plist. Decision: document, not pass through. Reason: the installing shell's agent
+  socket belongs to its login session. An agent started per login uses a new path each time and
+  goes at logout, while the lingering unit runs on, so a written path would go stale with no
+  message. gff-hab also passes its own environment to every pane, so a stale path would spread
+  to agents and shells. On macOS, launchd gives jobs in the GUI domain the system agent's socket.
+  On Linux, a systemd user unit has an agent socket only when the user manager has one: a
+  desktop session that imports `SSH_AUTH_SOCK` into it, an `environment.d` file naming a fixed
+  socket (such as an agent run as a user unit under `$XDG_RUNTIME_DIR`), or `systemctl --user
+  import-environment SSH_AUTH_SOCK`, followed by a restart of the logic job. Without one, peers
+  whose key needs an agent show `offline` with ssh's "Permission denied (publickey)". A key with
+  no passphrase for the peer links also works. The references (1.1 to 1.4) record nothing on
+  how a background process reaches an agent, so saying what works is at their bar.
 - **Not built in this stage:** `peers add`, `rm` and `rename`; "known to <label>"; the
   `mesh.changed` wake-up; a retry on wake or network change; the "network blocks SSH" and "no hab
   at <endpoint>" hints (the row shows ssh's own last error line); the two-hosts-one-device-id
@@ -304,6 +333,11 @@ Limits, at the bar of herdr, Rex and Paseo:
   (3.2), so an inbound link from a claimed id can mark that peer online. Nothing else trusts it.
 - The pin protects the dialer only. A hab that dials a refused peer sends it nothing beyond the
   hello and closes.
+- A peer link has full API access. The control server gates no method by client kind, so a link
+  with kind `hab` may call `pane.input`, `session.create`, `approval.answer` and
+  `peers.accept`. This is the 3.2 decision: over the system sshd the caller already passed as
+  the owner, as in herdr, hc and Rex. When the embedded SSH server admits paired hab keys that
+  are not the owner's (4.1), client kind `hab` needs an allowlist of methods first.
 
 ### 4.5 Built choices: the client merge (task-kbvoirca)
 

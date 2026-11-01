@@ -58,6 +58,11 @@ type Resetter interface {
 // on its own: an ssh process starts fine and fails only at the hello.
 type Failover interface {
 	Failed()
+	// Endpoints is how many endpoints there are. A device id other than the pinned one ends
+	// the Conn only once that many attempts in a row, one per endpoint, presented it.
+	Endpoints() int
+	// Current names the endpoint the next Dial uses. Updates carry it as Update.Endpoint.
+	Current() string
 }
 
 // Errors the package returns.
@@ -69,6 +74,10 @@ var (
 	ErrOffline = errors.New("habconn: hab is offline")
 	// ErrPaneGone: the hab says the pane does not exist (reject not_found).
 	ErrPaneGone = errors.New("habconn: pane is gone")
+	// ErrHelloRefused: the hab answered the hello with revision_unsupported or invalid, as
+	// an older build does to a client kind or a field it does not know. The error that wraps
+	// it also wraps the hab's *control.Error.
+	ErrHelloRefused = errors.New("habconn: hello refused")
 )
 
 // DeviceChangedError: the hab presented a device id other than the pinned one. The Conn stops;

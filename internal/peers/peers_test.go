@@ -1,7 +1,10 @@
 package peers
 
 import (
+	"bufio"
+	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -381,4 +384,217 @@ endpoints = ["`+a.sock+`"]
 		l := a.m.List()
 		return len(l.Problems) == 1 && len(l.Peers) == 1
 	})
+}
+
+// oldHab listens on sock and answers every hello as a gff-hab from before peer links does: it
+// refuses the client kind hab with kind invalid.
+func oldHab(t *testing.T, sock string) net.Listener {
+	t.Helper()
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				line, err := bufio.NewReader(c).ReadBytes('\n')
+				if err != nil {
+					return
+				}
+				var req struct {
+					ID json.RawMessage `json:"id"`
+				}
+				json.Unmarshal(line, &req)
+				hint := `client.kind "hab" is not one of [terminal app]`
+				resp, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": req.ID, "error": map[string]any{
+					"code": api.ErrorCode, "message": hint, "data": map[string]any{"kind": "invalid", "hint": hint}}})
+				c.Write(append(resp, '\n'))
+			}()
+		}
+	}()
+	return l
+}
+
+// TestRefusedHelloRetried: a peer whose older gff-hab refuses the peer link's hello shows update
+// needed, not offline, and its link keeps trying: once the peer runs a build with peer links it
+// comes online with no restart of this hab (review M3).
+func TestRefusedHelloRetried(t *testing.T) {
+	d := shortDir(t)
+	sock := filepath.Join(d, "b.sock")
+	l := oldHab(t, sock)
+	a := startHab(t, d, "a", "SHA256:aaaaaaaaaaaa", `[[peers]]
+label = "b"
+endpoints = ["`+sock+`"]
+`)
+	wait(t, "b update needed", func() bool {
+		p, _ := peer(a.m.List(), "b")
+		return p.State == api.PeerStateUpdateNeeded && strings.Contains(p.Reason, "refused the peer link")
+	})
+	l.Close() // the update: the old build stops, the new one starts on the same socket
+	b := startHab(t, d, "b", "SHA256:bbbbbbbbbbbb", "")
+	wait(t, "b online after its update", func() bool {
+		p, _ := peer(a.m.List(), "b")
+		return p.State == api.PeerStateOnline && p.DeviceID == b.id
+	})
+}
+
+// TestPinMismatchTriesOtherEndpoints: an endpoint that reaches another hab does not end the
+// peer while a later endpoint may present the pin (review S1). The peer is refused only when
+// every endpoint presented the same other id; one other id and one dead endpoint is offline,
+// and nothing can be accepted.
+func TestPinMismatchTriesOtherEndpoints(t *testing.T) {
+	d := shortDir(t)
+	b := startHab(t, d, "b", "SHA256:bbbbbbbbbbbb", "")
+	c := startHab(t, d, "c", "SHA256:cccccccccccc", "")
+	c2 := filepath.Join(d, "c2.sock") // a second path to c
+	if err := os.Symlink(c.sock, c2); err != nil {
+		t.Fatal(err)
+	}
+	a := startHab(t, d, "a", "SHA256:aaaaaaaaaaaa", `[[peers]]
+label = "b"
+device_id = "`+b.id+`"
+endpoints = ["`+c.sock+`", "`+b.sock+`"]
+
+[[peers]]
+label = "c-twice"
+device_id = "SHA256:gone"
+endpoints = ["`+c.sock+`", "`+c2+`"]
+
+[[peers]]
+label = "half"
+device_id = "SHA256:gone"
+endpoints = ["`+c.sock+`", "`+filepath.Join(d, "none.sock")+`"]
+`)
+	wait(t, "b online at its second endpoint", func() bool {
+		p, _ := peer(a.m.List(), "b")
+		return p.State == api.PeerStateOnline && p.DeviceID == b.id && p.Endpoint == b.sock
+	})
+	wait(t, "c-twice refused", func() bool {
+		p, _ := peer(a.m.List(), "c-twice")
+		return p.State == api.PeerStateRefused && p.OfferedID == c.id
+	})
+	wait(t, "half offline, naming the other hab", func() bool {
+		p, _ := peer(a.m.List(), "half")
+		return p.State == api.PeerStateOffline && strings.Contains(p.Reason, "trying the other endpoints")
+	})
+	if _, err := a.m.Accept("half"); err == nil {
+		t.Fatal("accepted the other hab of a peer that is not refused")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, e := range a.evs {
+		if e.Label == "b" && e.State == api.PeerStateRefused {
+			t.Fatalf("b was refused on its way online: %+v", e)
+		}
+	}
+}
+
+// TestPinNotWritten: when the file cannot take the first pin, the row shows no pinned id and
+// the list says why (review S2).
+func TestPinNotWritten(t *testing.T) {
+	d := shortDir(t)
+	b := startHab(t, d, "b", "SHA256:bbbbbbbbbbbb", "")
+	// The label shares its line, so the pin is not edited in.
+	a := startHab(t, d, "a", "SHA256:aaaaaaaaaaaa", `peers = [{label = "b", endpoints = ["`+b.sock+`"]}]
+`)
+	wait(t, "b online, unpinned, with a problem", func() bool {
+		l := a.m.List()
+		p, _ := peer(l, "b")
+		return p.State == api.PeerStateOnline && p.DeviceID == "" && len(l.Problems) == 1 &&
+			strings.Contains(l.Problems[0], "could not pin") && strings.Contains(l.Problems[0], b.id)
+	})
+}
+
+// TestSelfEntryEndpointsChange: an entry hidden because its endpoint reached this hab shows a
+// problem, and comes back once its endpoints change (review S3).
+func TestSelfEntryEndpointsChange(t *testing.T) {
+	d := shortDir(t)
+	a := startHab(t, d, "a", "SHA256:aaaaaaaaaaaa", `[[peers]]
+label = "x"
+endpoints = ["`+filepath.Join(d, "a.sock")+`"]
+`)
+	wait(t, "x hidden with a problem", func() bool {
+		l := a.m.List()
+		_, ok := peer(l, "x")
+		return !ok && len(l.Problems) == 1 && strings.Contains(l.Problems[0], "answers as this hab")
+	})
+	b := startHab(t, d, "b", "SHA256:bbbbbbbbbbbb", "")
+	write(t, a.file, `[[peers]]
+label = "x"
+endpoints = ["`+b.sock+`"]
+`)
+	wait(t, "x online at its new endpoint", func() bool {
+		l := a.m.List()
+		p, _ := peer(l, "x")
+		return p.State == api.PeerStateOnline && p.DeviceID == b.id && len(l.Problems) == 0
+	})
+}
+
+// TestReloadWaitsForStableFile: a changed file is read only once its size and modification
+// time held for one poll, so a file in the middle of a write is not read (review N3).
+func TestReloadWaitsForStableFile(t *testing.T) {
+	d := shortDir(t)
+	file := filepath.Join(d, "a.toml")
+	write(t, file, "")
+	m, err := Open(Config{Path: file, Self: "SHA256:aaaaaaaaaaaa", Host: "a", Poll: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(m.Close)
+	entry := func(label string) string {
+		return "[[peers]]\nlabel = \"" + label + "\"\nendpoints = [\"" + filepath.Join(d, "none.sock") + "\"]\n"
+	}
+	write(t, file, entry("x"))
+	m.check()
+	if n := len(m.List().Peers); n != 0 {
+		t.Fatalf("read at the first poll that saw the change: %d peers", n)
+	}
+	write(t, file, entry("x")+entry("y"))
+	m.check()
+	if n := len(m.List().Peers); n != 0 {
+		t.Fatalf("read while the file still changed: %d peers", n)
+	}
+	m.check()
+	if n := len(m.List().Peers); n != 2 {
+		t.Fatalf("not read once the file held: %d peers", n)
+	}
+	m.check()
+	if n := len(m.List().Peers); n != 2 {
+		t.Fatalf("after a quiet poll: %d peers", n)
+	}
+}
+
+// TestAcceptEmptyID: a refused peer that presents no device id cannot be accepted: pinning an
+// empty id would turn the check off (review N4).
+func TestAcceptEmptyID(t *testing.T) {
+	d := shortDir(t)
+	sock := filepath.Join(d, "anon.sock")
+	srv := control.New(control.Config{Build: "test", Host: api.HostInfo{ID: "anon"}, Capabilities: []string{Capability}, Source: emptySource{}})
+	l, err := control.Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(l)
+	t.Cleanup(srv.Close)
+	a := startHab(t, d, "a", "SHA256:aaaaaaaaaaaa", `[[peers]]
+label = "anon"
+device_id = "SHA256:old"
+endpoints = ["`+sock+`"]
+`)
+	wait(t, "anon refused", func() bool {
+		p, _ := peer(a.m.List(), "anon")
+		return p.State == api.PeerStateRefused
+	})
+	if _, err := a.m.Accept("anon"); err == nil {
+		t.Fatal("accepted an empty device id")
+	}
+	if !strings.Contains(read(t, a.file), `device_id = "SHA256:old"`) {
+		t.Fatalf("the pin changed:\n%s", read(t, a.file))
+	}
 }

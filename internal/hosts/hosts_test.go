@@ -1,11 +1,13 @@
 package hosts_test
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -311,6 +313,7 @@ func TestReloadChangedSpec(t *testing.T) {
 	waitHosts(t, s, "one online under the new pin", func(hs []hosts.Host) bool {
 		return len(hs) == 1 && hs[0].Online() && hs[0].Welcome.Host.ID == "a"
 	})
+	replaced := s.Hosts()[0].Conn
 
 	src.specs = []hosts.Spec{{Label: "one", Transport: habconn.UnixTransport{Path: b.Sock}}}
 	if err := s.Reload(); err != nil {
@@ -319,6 +322,10 @@ func TestReloadChangedSpec(t *testing.T) {
 	waitHosts(t, s, "one online at the new endpoint", func(hs []hosts.Host) bool {
 		return len(hs) == 1 && hs[0].Online() && hs[0].Welcome.Host.ID == "b"
 	})
+	// The replaced Conn is closed, not left dialing (review S5).
+	if err := replaced.Err(); !errors.Is(err, habconn.ErrClosed) {
+		t.Fatalf("the replaced connection: Err %v, want ErrClosed", err)
+	}
 
 	// An unchanged spec keeps its connection.
 	c := s.Hosts()[0].Conn
@@ -402,6 +409,29 @@ func TestEndpointsInTurn(t *testing.T) {
 	}})
 	waitHosts(t, s, "one online at its second endpoint", func(hs []hosts.Host) bool {
 		return hs[0].Online() && hs[0].Endpoint == a.Sock
+	})
+}
+
+// TestEndpointWithItsError: an offline host's row names the endpoint whose attempt failed,
+// with that attempt's error, not the next endpoint the Conn moved on to (review S4).
+func TestEndpointWithItsError(t *testing.T) {
+	d := shortDir(t)
+	eps := []hosts.Endpoint{
+		{Kind: hosts.EndpointSocket, Value: filepath.Join(d, "first.sock")},
+		{Kind: hosts.EndpointSocket, Value: filepath.Join(d, "second.sock")},
+	}
+	s := open(t, hosts.Spec{Label: "one", Endpoints: eps})
+	seen := map[string]bool{}
+	waitHosts(t, s, "a failed attempt at each endpoint", func(hs []hosts.Host) bool {
+		h := hs[0]
+		if h.Err == nil {
+			return false
+		}
+		if !strings.Contains(h.Err.Error(), h.Endpoint) {
+			t.Fatalf("endpoint %q shown with the error %q", h.Endpoint, h.Err)
+		}
+		seen[h.Endpoint] = true
+		return len(seen) == 2
 	})
 }
 

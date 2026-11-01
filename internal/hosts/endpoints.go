@@ -42,10 +42,14 @@ func (t *endpoints) at() (Endpoint, habconn.Transport) {
 	return t.eps[t.cur], t.trs[t.cur]
 }
 
-func (t *endpoints) current() Endpoint {
+// Current names the endpoint the next Dial uses.
+func (t *endpoints) Current() string {
 	ep, _ := t.at()
-	return ep
+	return ep.String()
 }
+
+// Endpoints is how many endpoints the host has.
+func (t *endpoints) Endpoints() int { return len(t.eps) }
 
 // Dial opens a stream to the current endpoint.
 func (t *endpoints) Dial(ctx context.Context, kind habconn.Kind) (io.ReadWriteCloser, error) {
