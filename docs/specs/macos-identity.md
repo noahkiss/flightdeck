@@ -38,6 +38,7 @@ Contents:
 8. [Proof steps on a Mac](#8-proof-steps-on-a-mac)
 9. [Open questions](#9-open-questions)
 10. [Proposed change to hab-holder.md](#10-proposed-change-to-hab-holdermd)
+11. [Study: an optional Accessibility grant for setup](#11-study-an-optional-accessibility-grant-for-setup)
 
 ---
 
@@ -931,3 +932,144 @@ Applied: `hab-holder.md` 5.3 and Q2 now carry this decision. The text below is k
 
 And change the Q2 heading to: `### Q2. TCC identity for holder builds on macOS. **Decision:
 option 1 (spec), pending Mac proof P3**`.
+
+---
+
+## 11. Study: an optional Accessibility grant for setup
+
+Status: paper study, read-only. Nothing on a Mac was granted, pressed or changed for it. Claims
+marked **needs Mac proof** were not tried.
+
+The question: could one opt-in Accessibility grant let Flightdeck click through its own Mac setup
+for the user? Scope is our own setup only. The design never reads or presses another app's dialog.
+
+### 11.1 The reference: dontallow
+
+dontallow (<https://github.com/johncassil/dontallow>, MIT, version 0.1.1) is a small Swift tool
+that answers macOS's Local Network alert with "Don't Allow". Read for behaviour, not copied:
+
+- A per-user launch agent in `gui/<uid>`, kept alive. It needs only Accessibility.
+- It finds the process that hosts privacy alerts (`com.apple.UserNotificationCenter`) and
+  registers an `AXObserver` on it for "window created". It re-attaches when that process
+  restarts. Idle, it uses no CPU.
+- On a new window it waits 0.25 s, so the user can click first. It then walks the window's
+  Accessibility tree (eight levels deep) and collects the text and the buttons.
+- It acts only when the text contains "local network" and a button reads "Don't Allow". The
+  match is on English text; it normalizes the curly apostrophe macOS uses.
+- It sends the Accessibility press action. If macOS refuses the press, it posts a synthetic mouse
+  click at the button's centre. Its source calls these "hardened dialogs that refuse AXPress".
+- It never presses Allow. It has a pause command, an allowlist and a dry-run mode.
+- Its README says it was tested on one Intel Mac on macOS 26.6. Every Homebrew upgrade drops the
+  Accessibility grant, because the build is not Developer ID signed.
+
+The Show HN thread (item 50294506) adds three points. TCC keys grants on the designated
+requirement, not the path (as 1.1 found). MDM cannot preset Local Network. The trust cost is real:
+one reply calls it "an unsandboxed unverified app that requests Accessibility". No comment shows
+whether Apple refuses a synthetic press of Allow.
+
+### 11.2 What Apple documents
+
+| Fact | Source |
+|---|---|
+| `AXIsProcessTrustedWithOptions` with the prompt option prompts asynchronously and does not change the return value. Only the user can switch the grant on | Apple, `AXIsProcessTrustedWithOptions` |
+| Local Network has no API to request or check it. Connecting a UDP socket to a LAN address raises the alert and sends no traffic | TN3179, "Trigger the local network alert", "Check for local network access" |
+| macOS auto-allows Local Network for launchd daemons, for root, and for command-line tools run from Terminal or SSH, with their children. Launch agents are not exempt | TN3179, "macOS considerations" |
+| A short-lived process gets no Local Network alert | TN3179 (FB16131937) |
+| macOS 27.2 adds + and - buttons to the Local Network list, so a user can reset a decision | TN3179, revision 2026-10-06 |
+| MDM cannot configure Local Network | TN3179 |
+| A PPPC profile can allow Accessibility and Full Disk Access, through the device channel with user-approved MDM. On macOS 27.0 an Accessibility profile shows a notification, and the user can change the setting. A profile can only deny Screen Recording, camera and microphone | Apple, Device Management, `PrivacyPreferencesPolicyControl.Services` |
+
+Not from Apple:
+
+- macOS blocks synthetic input per UI component, not everywhere. High Sierra blocks synthetic
+  clicks on the keychain prompt and on kernel extension approval (Jamf, "Synthetic Reality"). A
+  2018 bypass that clicked Mojave's privacy alerts was reported as a vulnerability. A process that
+  presses Allow on its own privacy alert is the class of behaviour Apple patches.
+- macOS 26.1 had a bug where binaries did not appear in the Accessibility list. An Apple engineer
+  called it serious; 26.3 betas seem to fix it (Apple Developer Forums thread 808897).
+  `AXIsProcessTrusted` can return true while event taps fail, until the user removes and re-adds
+  the row (MiddleClick issue 162).
+- No source describes a macOS 27 change to Accessibility or synthetic input.
+
+### 11.3 What Accessibility could automate in our setup
+
+| Step | What AX would do | What still needs the user | Verdict |
+|---|---|---|---|
+| A. Our own Local Network alert (holder, gff-hab) | Watch the alert host, match our bundle name, press Allow | Nothing, if the press works | Pressing Allow for ourselves is self-consent. Apple fixes such paths when found; dontallow presses only Don't Allow. Fragile, and against the purpose of the alert. Whether it works at all **needs Mac proof**. Not proposed |
+| B. Walk System Settings panes in `gff setup` | Find our row in Full Disk Access and press its switch, or press + and fill in the file picker | The admin password or Touch ID that each privacy switch asks for. A process cannot type into that sheet, and must never hold the password | Saves a scroll and a drag at most. System Settings is SwiftUI with no stable identifiers, and its tree changes each release (it has no Local Network anchor, 8.1) |
+| C. Verify a switch is on | Read the switch's value in System Settings | Nothing | Worse than today. The probe in a pane (7.2, 7.3) tests the grant itself. A switch can read "on" while the grant does not match (1.1, and the stale-trust bug above) |
+| D. Login Items | Press the switch for our job | The same authentication | On by default. Needed only after the user switched it off on purpose |
+
+Accessibility is itself a manual grant. The user switches it on, with authentication, before AX can
+do anything. Today the required walk has two manual grants: Full Disk Access and Local Network for
+the holder. Local Network for gff-hab joins them only with a peer hab. An AX grant adds one switch
+to save, at best, one alert click and one drag. The number of manual steps does not go down.
+
+### 11.4 Privacy and trust cost
+
+- Accessibility lets its holder read the text of every window and press anything in every app.
+  The prompt and the Settings row say so in Apple's words. Users and reviewers read it as the
+  most sensitive grant; the dontallow thread shows the reaction.
+- The holder already has an opt-in Accessibility row (4.1) for agents that drive the UI. If setup
+  used the holder's grant, every program in every pane would get it too. That widens the grant for
+  a one-time convenience.
+- Matching dialogs by text means English only, or a translation table per macOS language.
+- A process that presses privacy buttons behaves like malware. Security tools may flag it, and a
+  later macOS may refuse it without notice.
+
+### 11.5 Which process would hold it
+
+| Holder | For | Against |
+|---|---|---|
+| gff-hab-holder | Already has an opt-in AX row | Every pane program inherits it (11.4). Not acceptable for setup |
+| gff | It runs the walk | It is not a TCC client. Its terminal is responsible (4.1), so the grant would land on the terminal app |
+| gff-hab | Serves `hab.permissions` | A long-running agent would gain power over every app, all the time |
+| A new helper bundle (`GFF Setup.app`) | Narrowest: runs only during the walk, then exits | A fifth signed identity, another Settings row, and another bundle in every release |
+| The Flightdeck Mac app | A GUI the user already chose to trust; it owns the first-run screen (7.8) | The app does not exist yet. The hab must also set up without it (3.2) |
+
+If it is ever built, the Mac app holds the grant. It uses the grant only while the first-run or
+Permissions screen is open.
+
+### 11.6 Opt-in and the setting
+
+If built, it follows the owner rule for friction-adding things (a setting turns them off) and the
+hardening bar (no stricter than herdr, Paseo and Rex):
+
+- Off by default. The walk offers it once. Declining leaves today's walk unchanged.
+- A setting in the Mac app turns it off at any time. Turning it off tells the user that the
+  Accessibility row stays until they remove it.
+- It acts only on our own bundle names, and only while a setup screen is open. It never presses
+  Allow on any alert (11.3 A) and never reads another app's window.
+- `gff setup --check` reports it as one opt-in row: `off` by default, never required.
+
+### 11.7 What herdr, Paseo and Rex do
+
+None of them automates setup with Accessibility (`landscape.md` 2.16). Paseo gives no TCC
+guidance. herdr fixed updates that reset grants. Rex names Full Disk Access and Screen Recording in
+a `tcc` package and leaves the switches to the user. Our walk (7) already meets that bar.
+
+### 11.8 Recommendation: no, not now
+
+Do not build it. Revisit only if one of these happens:
+
+- A reference tool ships it and its users accept it.
+- Apple documents an API to request Local Network or Full Disk Access, or a stable way to open a
+  privacy pane with our row selected.
+- The Mac app's first-run screen exists, and testers report the Full Disk Access drag as the main
+  place they give up.
+
+Cost if built later, in the Mac app: about 3 to 4 days for B and C on one macOS version (observer,
+row finder, file-picker fill, the setting, the opt-in row). Add 1 to 2 days of Mac proof per macOS
+release, because the System Settings tree changes. A is excluded at any cost.
+
+Cheap gains that need no Accessibility, worth adding to the walk now:
+
+- Raise the Local Network alert with a UDP connect to a LAN address, as TN3179 suggests, instead
+  of a TCP connection to the gateway (7.9). It sends no traffic. The probe already stays alive 30 s.
+- On macOS 27.2 and later, a user can remove a denied Local Network row with the new - button. The
+  walk can say so.
+- Keep `open -R` and the printed path for the Full Disk Access drag (7.4).
+
+If this is revisited, three points **need Mac proof**: whether `UserNotificationCenter` refuses an
+AX press of Allow on macOS 27; whether a System Settings privacy switch accepts an AX press before
+authentication; and whether the + button's file picker accepts a path set through AX.
