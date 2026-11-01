@@ -369,8 +369,9 @@ struct DocumentBody: View {
         .textSelection(.enabled)
     }
 
-    private static func size(_ n: Int) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .file)
+    /// Binary units, so the 256 KiB preview limit reads "256 KB", not "262 KB".
+    static func size(_ n: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .memory)
     }
 
     private func limitLines(_ s: String, _ n: Int?) -> String {

@@ -166,7 +166,14 @@ enum ContentText {
     static func preview(_ data: Data, limit: Int = previewLimit) -> (text: String, truncated: Bool) {
         guard data.count > limit else { return (String(decoding: data, as: UTF8.self), false) }
         var cut = data.prefix(limit)
-        if let nl = cut.lastIndex(of: 0x0A) { cut = cut[..<nl] }
+        if let nl = cut.lastIndex(of: 0x0A) {
+            cut = cut[..<nl]
+        } else {
+            // One long line: cut before a character's continuation bytes, never inside it.
+            var end = cut.endIndex
+            while end > cut.startIndex, data[end] & 0xC0 == 0x80 { end -= 1 }
+            cut = cut[..<end]
+        }
         return (String(decoding: cut, as: UTF8.self), true)
     }
 

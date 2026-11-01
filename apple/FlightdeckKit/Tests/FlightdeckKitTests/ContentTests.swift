@@ -450,6 +450,15 @@ final class ContentLimitTests: XCTestCase {
         XCTAssertFalse(ContentModel.markdownCut(Data(count: ContentText.previewLimit)), "exactly the limit renders whole")
         let blocks = m.markdown(for: it, data: big)
         XCTAssertLessThan(blocks.count, 3000, "only the first part is parsed")
+        XCTAssertTrue(DocumentBody.size(ContentText.previewLimit).hasPrefix("256"), "the cut line reads 256, not 262: \(DocumentBody.size(ContentText.previewLimit))")
+        // One long line with no newline: the cut never splits a character.
+        let long = Data(("ab" + String(repeating: "é", count: 10)).utf8) // é is 2 bytes
+        for limit in 3...12 {
+            let p = ContentText.preview(long, limit: limit)
+            XCTAssertTrue(p.truncated)
+            XCTAssertFalse(p.text.contains("\u{FFFD}"), "limit \(limit) split a character")
+            XCTAssertLessThanOrEqual(p.text.utf8.count, limit)
+        }
         XCTAssertEqual(m.textChunks(for: it, data: big).joined(separator: "\n").utf8.count, big.count, "the runs hold the whole file")
     }
 
