@@ -80,7 +80,11 @@ func (g *guard) stop() {
 // and fd 4 the ready pipe.
 func runGuard() int {
 	// The terminal's keys and a signal to gff's process group must not end the guard first.
-	signal.Ignore(syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGTSTP)
+	// SIGTTOU too: once gff dies the shell takes the foreground back, and a background
+	// tcsetattr (or a write with tostop set) would stop the guard before it restores.
+	// With SIGTTOU ignored the kernel lets both go through.
+	signal.Ignore(syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGTSTP,
+		syscall.SIGTTOU)
 	saved, err := unix.IoctlGetTermios(3, ioctlGetTermios)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gff: terminal guard:", err)
