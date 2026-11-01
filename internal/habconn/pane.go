@@ -83,8 +83,11 @@ func (c *Conn) OpenPane(ctx context.Context, pane string, opts PaneOptions) (*Pa
 	ctx, cancel := p.bind(ctx)
 	defer cancel()
 	if err := p.open(ctx); err != nil {
+		// Judge the error before Close: Close cancels ctx (bind), and ended would then
+		// report ErrClosed for a pane the hab does not have.
+		err = p.ended(ctx, err)
 		p.Close()
-		return nil, p.ended(ctx, err)
+		return nil, err
 	}
 	return p, nil
 }
