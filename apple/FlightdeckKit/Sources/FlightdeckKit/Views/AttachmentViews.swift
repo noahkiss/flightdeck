@@ -48,6 +48,17 @@ struct AttachmentThumbRow: View {
             .accessibilityHint("Opens it full size")
         } else if images == nil || images?.didFail(id) == true {
             FileChipLabel(info: images?.file(id))
+        } else if images?.isStalled(id) == true {
+            Button {
+                Task { await images?.retry(id) }
+            } label: {
+                Label("Retry", systemImage: "arrow.clockwise")
+                    .font(.caption)
+                    .frame(width: 96, height: 96)
+                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Load the attached image again")
         } else {
             ProgressView()
                 .frame(width: 96, height: 96)
@@ -387,6 +398,7 @@ enum Markup {
         guard let data = compose(img, marks: marks, png: png) else { return a }
         var out = a
         out.data = data
+        out.version += 1
         return out
     }
     #endif

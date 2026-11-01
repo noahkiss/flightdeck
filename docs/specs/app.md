@@ -458,8 +458,9 @@ Built choices (task-mthck7r4):
     `[Image #N]` marker instead of the paths.
   - Codex (inferred from the installed 0.166 binary: its TUI logs `attach_image path=` and
     `pasted image size=`, and the open-source TUI attaches a paste that is one image path and
-    nothing else): each image goes as its own paste, then the text, then Enter. Not run
-    against a live Codex.
+    nothing else): each image goes as its own paste, then the text, then Enter. A space,
+    typed outside the pastes, follows each image, so a path Codex keeps as text stays apart
+    from what follows. Not run against a live Codex.
   - opencode: one prompt through its server, the paths in the text; its read tool takes
     images. Its server takes file parts, but this build does not use them (not installed
     here to verify the shape).
@@ -471,7 +472,7 @@ Built choices (task-mthck7r4):
   shows 96 pt thumbnails from `attachment.get` with `thumbnail` (a JPEG of at most 320 px from
   the hab). Tap opens the hab's copy full screen. A file with no thumbnail shows as a chip
   with its name and size; a file the hab no longer has says so. A thumbnail that failed for a
-  dropped connection loads again the next time the row appears.
+  dropped connection is tried again after 1, 3 and 8 seconds, then shows a Retry control.
 - **Prepared on the phone.** An image is written again through ImageIO with no metadata, so
   location and camera data never leave the phone. The longest side is at most 2048 px. A PNG
   source (a screenshot) stays PNG; any other image becomes JPEG at quality 0.85, so a RAW or

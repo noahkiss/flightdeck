@@ -1076,7 +1076,9 @@ Built choices (`session.send`, `internal/harness`, `cmd/gff-hab`):
   - Claude Code: one paste of the text, a blank line, then one image path per line. Its paste
     handler (verified in the 2.1.316 bundle) turns each line that is one absolute image path
     into an image and keeps the rest as text.
-  - Codex: each image path as its own paste, then the text as one more, then Enter. Codex
+  - Codex: each image path as its own paste followed by a typed space, then the text as one
+    more paste, then Enter. The space keeps a path Codex did not attach apart from the next
+    paste. Codex
     attaches a paste that is one image path and nothing else (inferred from the 0.166 binary
     and its open-source TUI; not run live).
   - opencode: one prompt through its server with every path in the text; its read tool takes

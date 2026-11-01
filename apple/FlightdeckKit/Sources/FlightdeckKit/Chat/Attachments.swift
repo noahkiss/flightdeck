@@ -13,6 +13,8 @@ public struct DraftAttachment: Identifiable, Equatable, Sendable {
     /// Media type, such as image/png.
     public var type: String
     public var data: Data
+    /// Counts changes to `data` (markup), so a preview made from it is made again.
+    public var version = 0
 
     public init(name: String, type: String, data: Data) {
         self.name = name
@@ -112,7 +114,7 @@ enum DraftThumbs {
     /// The preview of `a`, or nil when it is no image this device can read.
     static func image(_ a: DraftAttachment) -> CGImage? {
         guard a.isImage else { return nil }
-        let key = "\(a.id.uuidString)-\(a.data.count)-\(a.data.hashValue)" as NSString
+        let key = "\(a.id.uuidString)-\(a.version)" as NSString
         if let img = cache.object(forKey: key) { return img }
         guard let img = ImageDecode.thumbnail(a.data, maxPixel: 192) else { return nil }
         cache.setObject(img, forKey: key)
@@ -187,7 +189,12 @@ public final class AttachmentImages {
     /// Name and size of a file with no thumbnail, for its chip.
     private(set) var files: [String: FileInfo] = [:]
     private(set) var failed: Set<String> = []
+    /// Thumbnails that kept failing for a passing reason (a dropped connection): the row offers
+    /// a retry instead of a spinner.
+    private(set) var stalled: Set<String> = []
     @ObservationIgnored private var loading: Set<String> = []
+    /// The waits between tries after a passing failure.
+    @ObservationIgnored var retryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(8)]
 
     struct FileInfo: Equatable {
         var name: String
@@ -203,14 +210,34 @@ public final class AttachmentImages {
     func thumbnail(_ id: String) -> CGImage? { thumbs[id] }
     func didFail(_ id: String) -> Bool { failed.contains(id) }
     func file(_ id: String) -> FileInfo? { files[id] }
+    func isStalled(_ id: String) -> Bool { stalled.contains(id) }
+
+    /// Tries a stalled thumbnail again, from the row's retry.
+    func retry(_ id: String) async {
+        stalled.remove(id)
+        await load(id)
+    }
 
     /// Loads a thumbnail once. A file with no thumbnail (not an image) gets its name and size
     /// for a chip; a file the hab no longer has says so. Any other error (a dropped connection)
-    /// is not remembered: the next appearance tries again.
+    /// is tried again after each of `retryDelays`, then the row offers a retry.
     func load(_ id: String) async {
-        guard thumbs[id] == nil, !failed.contains(id), !loading.contains(id), let c = connection else { return }
+        guard thumbs[id] == nil, !failed.contains(id), !stalled.contains(id), !loading.contains(id), connection != nil else { return }
         loading.insert(id)
         defer { loading.remove(id) }
+        var waits = retryDelays[...]
+        while await !tryLoad(id) {
+            guard let w = waits.popFirst() else {
+                stalled.insert(id)
+                return
+            }
+            do { try await Task.sleep(for: w) } catch { return } // the row went away
+        }
+    }
+
+    /// One try. True when it settled the id: a thumbnail, a chip, or gone.
+    private func tryLoad(_ id: String) async -> Bool {
+        guard let c = connection else { return true }
         do {
             let d = try await c.call(HabMethods.attachmentGet, AttachmentGetParams(id: id, thumbnail: true))
             if let img = ImageDecode.thumbnail(d.data, maxPixel: 640) {
@@ -229,8 +256,9 @@ public final class AttachmentImages {
             files[id] = FileInfo(name: "File", size: nil, gone: true)
             failed.insert(id)
         } catch {
-            // Transient: try again on the next appearance.
+            return false // passing: the caller waits and tries again
         }
+        return true
     }
 
     /// The full image, for the zoomed view.

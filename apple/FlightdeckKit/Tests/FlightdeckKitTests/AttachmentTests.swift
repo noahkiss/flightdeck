@@ -132,19 +132,44 @@ final class AttachmentTests: XCTestCase {
         await fleet.setActive(false)
     }
 
-    /// A thumbnail that failed for a dropped connection loads on the next try.
+    /// A thumbnail that keeps failing for a dropped connection is tried after each wait, then
+    /// offers a retry (no endless spinner); the retry loads it once the hab is back. A failure
+    /// that ends within the waits loads with no retry.
     func testTransientThumbnailFailureRetries() async {
         let (fleet, hab, model) = await setup()
         await hab.storeAttachment(id: "0123456789ab", name: "shot.png", data: png(width: 8, height: 8))
+        await hab.storeAttachment(id: "ba9876543210", name: "two.png", data: png(width: 8, height: 8))
+        model.images.retryDelays = [.milliseconds(10), .milliseconds(10)]
         await fleet.setActive(false)
         await eventually("offline") { fleet.board.habs.first?.state.status != .online }
         await model.images.load("0123456789ab")
         XCTAssertFalse(model.images.didFail("0123456789ab"))
+        XCTAssertTrue(model.images.isStalled("0123456789ab"), "the row offers a retry")
         await fleet.setActive(true)
         await eventually("online") { fleet.board.habs.first?.state.status == .online }
-        await model.images.load("0123456789ab")
+        await model.images.retry("0123456789ab")
         XCTAssertNotNil(model.images.thumbnail("0123456789ab"))
+        XCTAssertFalse(model.images.isStalled("0123456789ab"))
+
+        // Offline at the first try, back before the waits run out: it loads by itself.
         await fleet.setActive(false)
+        await eventually("offline again") { fleet.board.habs.first?.state.status != .online }
+        model.images.retryDelays = [.milliseconds(50), .seconds(2), .seconds(2)]
+        let loading = Task { await model.images.load("ba9876543210") }
+        try? await Task.sleep(for: .milliseconds(20))
+        await fleet.setActive(true)
+        await loading.value
+        XCTAssertNotNil(model.images.thumbnail("ba9876543210"))
+        await fleet.setActive(false)
+    }
+
+    /// Markup bumps the version, so the composer's preview is made again from the new bytes.
+    func testDraftPreviewFollowsMarkup() {
+        var a = AttachmentPrep.image(png(width: 40, height: 20), name: "a.png")!
+        XCTAssertEqual(DraftThumbs.image(a)?.width, 40)
+        a.data = AttachmentPrep.image(png(width: 10, height: 30), name: "a.png")!.data
+        a.version += 1
+        XCTAssertEqual(DraftThumbs.image(a)?.height, 30)
     }
 
     /// A file over 25 MB is refused before upload and the limit is named.
