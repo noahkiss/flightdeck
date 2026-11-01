@@ -55,12 +55,13 @@ type conn struct {
 	pending  []pubEvent     // events that arrived while seeding, in order
 	// lanes run pane.input calls off the read loop, one goroutine per pane while it has calls,
 	// so calls to one pane keep their order and a stuck pane holds up nothing else.
-	lanes    map[string]*lane
-	waiting  int // pane.input calls in lanes, until their reply
-	chats    int // chat.page calls running, until their reply
-	outputs  int // command.output calls running, until their reply
-	contents int // content.* calls running, until their reply
-	speeches int // speech calls running or waiting for the decoder, until their reply
+	lanes       map[string]*lane
+	waiting     int // pane.input calls in lanes, until their reply
+	chats       int // chat.page calls running, until their reply
+	outputs     int // command.output calls running, until their reply
+	contents    int // content.* calls running, until their reply
+	attachments int // attachment.* calls running, until their reply
+	speeches    int // speech calls running or waiting for the decoder, until their reply
 
 	// ctx ends when the connection's read loop ends: calls running off the loop stop with it.
 	ctx    context.Context
@@ -455,6 +456,9 @@ func (c *conn) handleLine(line []byte) {
 		return
 	case "speech.prepare", "speech.transcribe":
 		c.handleSpeech(m)
+		return
+	case "attachment.put", "attachment.write", "attachment.get":
+		c.handleAttachment(m)
 		return
 	}
 	if isChannelMethod(m.Method) {
@@ -871,8 +875,8 @@ func (c *conn) handleAgent(m message) {
 	var answer api.ApprovalAnswerParams
 	var e *Error
 	if m.Method == "session.send" {
-		if e = c.decodeUp(m, &send); e == nil && (send.Session == "" || send.Text == "") {
-			e = appErr(api.ErrorKindInvalid, "session.send needs a session and text")
+		if e = c.decodeUp(m, &send); e == nil && (send.Session == "" || (send.Text == "" && len(send.Attachments) == 0)) {
+			e = appErr(api.ErrorKindInvalid, "session.send needs a session, and text or attachments")
 		}
 		if e == nil && !isWord("SendOrigin", string(send.Origin)) && send.Origin != "" {
 			e = appErr(api.ErrorKindInvalid, "origin %q is not one of %v", send.Origin, api.Enums["SendOrigin"])
@@ -1112,8 +1116,6 @@ const (
 var later = map[string]string{
 	"session.resume":    "Part 4 stage 4 (harness adapters: state and input)",
 	"session.interrupt": "Part 4 stage 4 (harness adapters: state and input)",
-	"attachment.put":    "Part 6 stage 5 (the app's chat view, images and files)",
-	"attachment.get":    "Part 6 stage 5 (the app's chat view, images and files)",
 	"hab.stats":         "Part 5 stage 5 (system info)",
 }
 
