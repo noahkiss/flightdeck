@@ -58,6 +58,12 @@ Paseo's design (`landscape.md` 2.10): its daemon host runs Parakeet TDT 0.6B thr
 with Silero voice detection, and Kokoro for speech. We take the same engine in the same place and
 write our own code.
 
+### On-device result (2026-11-01)
+
+The owner ran `swift/Spikes/ParakeetSpike` (Release, Parakeet TDT 0.6B v2 through Core ML) on an
+iPhone 15 Pro. It worked well with a low footprint. On-device Parakeet stays a supported option on
+recent iPhones; the hab engine stays the default. No iPad run yet.
+
 ### Spike result (2026-11-01)
 
 `spikes/hab-parakeet` ran the sherpa-onnx 2.0.1 CLI with the int8 v2 model on an Apple M1 Pro
