@@ -317,9 +317,11 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 	return true, opened
 }
 
-// turnEnd reports whether a state ends a turn: done, idle (an interrupt) or error.
+// turnEnd reports whether a state ends a turn: done or error. Not idle: Codex 0.166 reports
+// working, then idle, while it starts, before its first hook (SessionStart fires with the first
+// prompt), so idle would mark a pane whose hooks work.
 func turnEnd(s api.AgentStatus) bool {
-	return s == api.AgentStatusDone || s == api.AgentStatusIdle || s == api.AgentStatusError
+	return s == api.AgentStatusDone || s == api.AgentStatusError
 }
 
 // paneLocked returns the pane's record, made on first use. The caller holds s.mu.

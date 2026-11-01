@@ -522,3 +522,16 @@ func TestHooksMissing(t *testing.T) {
 		t.Fatalf("replayed reports marked the pane: %+v", st)
 	}
 }
+
+// TestHooksStartupNotMissing: Codex reports working, then idle, while it starts and before its
+// first hook (seen live on 0.166); that is no finished turn and marks nothing.
+func TestHooksStartupNotMissing(t *testing.T) {
+	var events []structure.Event
+	s := newTestStore(&events)
+	for i, st := range []string{"idle", "working", "idle"} {
+		s.Report("p", progstatus.Report{State: st, App: "codex"}, int64(1000*(i+1)), true)
+	}
+	if st, _ := s.Get("p"); st.Hooks != "" {
+		t.Fatalf("startup marked hooks missing: %+v", st)
+	}
+}
