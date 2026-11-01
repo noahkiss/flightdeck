@@ -796,7 +796,8 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   always the pane's own. `project_dir` finds the project by the repository's remote (`origin`,
   else the first), else its root commit, and creates the project, named after the repository
   folder, when it is new. `project` and `project_dir` together are `invalid`. `harness` needs
-  the adapter and answers `unavailable` until Part 4 stage 4. Every input is checked before the
+  the adapter: `codex` is built (`harness-adapters.md`, Codex, built choices); any other value
+  answers `unavailable`. Every input is checked before the
   spawn; if filing the session fails after it, the new pane is closed again. `gff-client.md`
   proposed `command`; `argv` is that command, unparsed.
 - **`session.resume`** takes `{session}` and returns the same ids as `session.create`.

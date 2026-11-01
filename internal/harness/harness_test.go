@@ -62,7 +62,7 @@ func newTestStore(events *[]structure.Event) *Store {
 }
 
 // TestFixtures feeds each hand-written hook sequence to one pane and asserts the exact
-// agent.state stream (testing.md #11).
+// agent.state stream (testing.md #11). A request id of "*" stands for one gff-hab made.
 func TestFixtures(t *testing.T) {
 	files, _ := filepath.Glob("testdata/*.json")
 	if len(files) == 0 {
@@ -92,7 +92,11 @@ func TestFixtures(t *testing.T) {
 				if e.Type != EventAgentState || e.ID != "pane-1" || e.Revision != uint64(i+1) || st.Revision != e.Revision || st.Source != api.StateSourceHook || st.At == "" {
 					t.Errorf("event %d envelope: %+v", i, e)
 				}
-				got = append(got, project(st))
+				g := project(st)
+				if g.Request != nil && strings.HasPrefix(g.Request.ID, s.reqPrefix+"-") {
+					g.Request.ID = "*" // an id gff-hab made: the payload carried none
+				}
+				got = append(got, g)
 			}
 			if !reflect.DeepEqual(got, fx.Expect) {
 				g, _ := json.MarshalIndent(got, "", "  ")

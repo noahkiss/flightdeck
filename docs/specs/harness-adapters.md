@@ -305,6 +305,7 @@ Each `agent.state` event carries (built as `api.AgentState`; the event's id is t
 | `last` | enum, optional | With `exited`: the last `done` or `error` before the exit. |
 | `version` | string, optional | The harness version, once reported (envelope `version`, or a `version` or `cli_version` field in the payload). |
 | `warning` | object, optional | Set while `version` is above the adapter's tested range, or unreadable (see Detection). |
+| `hooks` | enum, optional | `missing`: the harness finished a turn and none of its hooks reached `gff-hab` (see [Codex](#codex), built choices). Absent once a hook arrives. |
 
 Built choices:
 
@@ -537,22 +538,98 @@ Built choices for the transcript reader (`internal/transcript`, `cmd/gff-hab/cha
 | Channel | Behaviour |
 |---|---|
 | Detection | Process name `codex` (manifest id `codex`). The manifest also marks Codex's own startup dialogs (trust this folder, update available) as `blocked`. |
-| State | Hooks. Codex does not emit OSC 7501 itself. `SessionStart` binds; `UserPromptSubmit`, `PreToolUse`, `PostToolUse` → `working`; `PermissionRequest` → `blocked:permission`; `Stop` → `done`; `Interrupt` → `idle`; `SessionEnd` unbinds. With the app-server path (option B or C below), server notifications replace hooks as the state source. |
-| Conversation | With `--no-daemon` (decided), there is no app-server: tail the rollout JSONL named by `transcript_path` (under the Codex home, `sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl`). Each line has `timestamp`, `type` and `payload`; use `session_meta`, `turn_context`, `response_item` and `event_msg`, and skip the rest. With the app-server (the later option C spike): `thread/resume` with `excludeTurns`, then `item/*` notifications. |
+| State | Two sources, as for Claude Code. (1) Native OSC 7501 reports: Codex 0.166 sends `state=<state>:app=codex`, with `kind=permission` on `blocked`, and `state=clear` on exit. (2) Hooks: `SessionStart` binds; `UserPromptSubmit`, `PreToolUse`, `PostToolUse` → `working`; `PermissionRequest` → `blocked:permission`; `Stop` → `done`; `Interrupt` → `idle`; `SessionEnd` unbinds. With the app-server path (option B or C below), server notifications replace hooks as the state source. |
+| Conversation | With `--no-daemon` (decided), there is no app-server: tail the rollout JSONL under the Codex home, `sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl`. Each line has `timestamp`, `type` and `payload`. The chat view reads `session_meta` (for the version), `compacted`, and the `event_msg` lines, chiefly `item_completed`; it skips `response_item`. With the app-server (the later option C spike): `thread/resume` with `excludeTurns`, then `item/*` notifications. |
 | Input | PTY: bracketed paste, then Enter. With the app-server: `turn/start` when idle, `turn/steer` with `expectedTurnId` when working. |
-| Permission answer | Without the app-server: TUI dialog or PTY keys, after the checks below; or a blocking `PermissionRequest` hook. With the app-server: answer the server request (`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, `item/permissions/requestApproval`) with `accept`, `acceptForSession`, `decline` or `cancel`; `serverRequest/resolved` confirms. |
+| Permission answer | Without the app-server: TUI dialog or PTY keys (`1` allows, Esc denies), after the checks below; or the blocking `PermissionRequest` hook, which Codex shares with Claude Code. With the app-server: answer the server request (`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, `item/permissions/requestApproval`) with `accept`, `acceptForSession`, `decline` or `cancel`; `serverRequest/resolved` confirms. |
 | Resume id | `session_id` in hook payloads, `thread.sessionId` on the app-server; `codex resume <id>`. |
 
 Notes:
 
 - **Hook trust.** Codex runs a non-managed hook only after the owner trusts it, keyed by the
-  hook's hash. A new or changed hook is skipped with no message. Health checks must prove
-  delivery (a `SessionStart` event arrived for this pane), not config presence.
+  hook's hash. A new or changed hook needs review: Codex 0.166 says "Hooks need review" at
+  start, and "continue without trusting" runs no hook for the whole session. Health checks must
+  prove delivery, not config presence (built: the `hooks` field, below).
+- **`SessionStart` comes late.** Codex 0.166 fires `SessionStart` with the first prompt, not
+  when the TUI opens. Before it, OSC 7501 reports `working`, then `idle`, while Codex starts.
+- **No request id.** `PermissionRequest` payloads carry no `tool_use_id` (hooks reference; seen
+  live). gff-hab names the request itself, as for Claude Code.
+- **No version in hooks.** Hook payloads carry no version field, so `version` stays empty for a
+  Codex pane. The rollout's `session_meta` has `cli_version`; the transcript reader checks it.
 - **Short end hooks.** `SessionEnd` and `Interrupt` hooks default to one second and cap at three.
   The hook command must post within that budget; `gff-hab` also infers end from process exit.
 - `AGENT_SESSION_ID` cannot reach Codex tool commands (see the environment contract).
-- The rollout format is undocumented and changes between versions. `session_meta` carries
-  `cli_version`; the reader keys on it.
+- The rollout format is undocumented and changes between versions.
+
+Built choices (`cmd/gff-hab/actions.go`, `internal/harness`, `internal/hook`):
+
+- **Start.** `session.create` with `harness: codex` runs `argv`, else `codex`, with
+  `--no-daemon` inserted after the program name when `argv` lacks it, and adds
+  `AGENT_KIND=codex` to the pane's environment. Any other `harness` answers `unavailable`.
+- **State.** Codex's OSC 7501 reports and hooks go through the same store and rules as Claude
+  Code's (see Claude Code, built choices). gff-hab answers the `?` query for every pane; whether
+  Codex waits for that answer before it reports was not checked.
+- **Hook health.** A pane's `hooks` becomes `missing` when an OSC 7501 report from its harness
+  moves it from `working` to `done` or `error`, and no hook from that harness reached this
+  gff-hab run for the pane. gff-hab logs one error line with the fix: install the hook config
+  (`gff-hab hook -print <harness>`), and for Codex, trust it with `/hooks`. Any hook clears the
+  field. `idle` does not count as a turn end, because Codex reports `idle` at start, before its
+  first hook. The field is for display and health only: it never gates `session.send` or an
+  answer. A gff-hab restart forgets which hooks arrived, so the field can show again after a
+  restart until the next hook.
+- **Input.** `session.send` writes the same bytes as for Claude Code: bracketed paste, then CR
+  as its own write, under the same send rules (see [Input delivery](#input-delivery)).
+- **Permission keys.** Codex's dialog lists "1. Yes, proceed" first: `1` allows. Esc chooses
+  "No, and tell Codex what to do differently", which stops the turn as Claude's Esc does. Allow
+  by `1` was checked live on 0.166; deny by Esc was not.
+- **Blocking hook.** The printed Codex config runs `gff-hab hook -wait codex PermissionRequest`
+  with a 130 second timeout. Codex's hook output has Claude's shape, so the wait, the switch
+  and the output are the ones in [Open decisions](#open-decisions), Claude: blocking
+  `PermissionRequest` hook. One switch covers both harnesses; it is off by default.
+
+Built choices for the rollout reader (`internal/transcript/codex.go`, `cmd/gff-hab/chat.go`):
+
+- **Finding the file.** As for Claude Code, `chat.page` takes the session's pane, then the
+  pane's agent state: harness `codex` and the native `session`. The file is
+  `sessions/*/*/*/rollout-*-<session id>.jsonl` under `$CODEX_HOME`, else `~/.codex`; when
+  several match, the most recently written wins. A session id that could name another path is
+  refused. Known limit: gff-hab reads its own `$CODEX_HOME`, not the pane's, so a pane started
+  with another `CODEX_HOME` finds no file. Tailing, replacement, cursors, events and closing
+  follow the Claude Code reader.
+- **Items, not response items.** The chat view reads `item_completed` events, which match the
+  app-server's thread items, and skips `response_item` lines (what the model saw, with context
+  and tool plumbing). So a call shows only once it has completed; there is no `running` state
+  for Codex tools.
+- **Pinned versions.** The parser follows Codex 0.159.0 to 0.166.0, the range that writes
+  `item_completed`. A `session_meta` whose `cli_version` is outside it still reads; the reader
+  logs the drift once per version, as for Claude Code.
+- **Lines and events to messages.**
+
+  | Rollout | Chat message |
+  |---|---|
+  | `session_meta` | none; `cli_version` sets drift |
+  | `compacted` | kind `event`, event `compaction` |
+  | `turn_context`, `response_item`, `world_state`, `token_usage_record`, `inter_agent_communication_metadata` | left out |
+  | `event_msg` `turn_aborted` | kind `event`, event `interrupt`; with a reason other than `interrupted`, event `notice`, "Turn aborted: <reason>" |
+  | `event_msg` `error`, `warning`, `stream_error` | kind `event`, event `notice`, the message |
+  | `event_msg` bookkeeping and second copies (`token_count`, `task_started`, `agent_message`, `exec_command_end` and the rest of the list in `codex.go`) | left out |
+  | `item_completed` `UserMessage`, `AgentMessage` | kind `user` or `agent`; text blocks joined, images as `[image]`; an empty one left out |
+  | `item_completed` `CommandExecution` | kind `tool`, name `exec`; target the command's first line (`sh -lc <script>` shows the script); status `error` on a non-zero exit; the first 4 KiB of the output |
+  | `item_completed` `FileChange` | kind `tool`, name `apply_patch`; target the first path, "and N more" |
+  | `item_completed` `McpToolCall` | kind `tool`, name `mcp__<server>__<tool>`; text and `[image]` output; status `error` on `isError` |
+  | `item_completed` `Extension` | kind `tool`, name `web_search`, `image_gen` or the kind; target the query or saved path; image bytes never read |
+  | `item_completed` `ImageView` | kind `tool`, name `view_image`, target the path |
+  | `item_completed` `SubAgentActivity` `started`, `completed` | kind `event`, event `notice`; `interacted` left out |
+  | `item_completed` `CollabAgentToolCall` | kind `tool`, name `agent_<tool>` |
+  | `item_completed` `Reasoning`, `ContextCompaction` | left out (the `compacted` line marks a compaction) |
+  | Item status `declined`, `failed`, `inProgress` | tool status `denied`, `error`, `running` |
+  | any other line type or item type; a line that is not JSON; an item with no type | kind `event`, event `unknown`, plus one warning per kind |
+  | any other `event_msg` type | left out, plus one log line per type |
+
+- **Unknown events are logged, not shown.** An unknown `event_msg` type gets a log line, not a
+  placeholder. Codex has many UI events, and a placeholder for each new one would bury the
+  conversation. An unknown line or item type still gets a placeholder.
+- **Ids.** A message id is the item's `id`; a line with none uses `line-<byte offset>`.
 
 ## opencode
 
@@ -621,7 +698,7 @@ Built choices (`session.send`, `internal/harness`, `cmd/gff-hab`):
   queued after it with it, so the Enter never goes out without its paste. The text loses every
   control character except
   newline and tab, so it can neither end the paste early nor press keys; CR LF and CR become
-  LF. Other harnesses answer `unavailable` until their stage.
+  LF. Codex gets the same bytes. Other harnesses answer `unavailable` until their stage.
 - After delivery, `done` becomes `idle` (`Store.Seen`).
 - Not built yet: the two-second typing pause, agent envelopes, the read back and its "not
   delivered" event, and attachments (`unavailable`).
@@ -640,7 +717,7 @@ Built choices (`session.send`, `internal/harness`, `cmd/gff-hab`):
 - **Screen text never decides.** A manifest that says "looks blocked" may surface a hint. It can
   never enable an answer button.
 
-Built choices (`approval.answer`, Claude Code):
+Built choices (`approval.answer`, Claude Code and Codex):
 
 - The checks run in the state store: `blocked:permission`, last set by a `hook` or `server`
   source, a request with an id that is still open, and the same id in the answer. Any miss is
@@ -670,7 +747,7 @@ Built choices (`approval.answer`, Claude Code):
 
 | Case | Behaviour |
 |---|---|
-| Untrusted Codex hooks are skipped silently | The status board shows "no hook seen" for a Codex pane that has run a turn with no `SessionStart` event. It links to the trust step. |
+| Untrusted Codex hooks are skipped silently | Built: when the pane's OSC 7501 reports end a turn (`done` or `error`) and no Codex hook arrived, `agent.state` gets `hooks: missing` and gff-hab logs an error that names the trust step. The status board will show it as "no hook seen". |
 | A hook fires with no pane | `GFF_HAB` is absent or its token is unknown. The hook command exits 0 and sends nothing; `gff-hab` logs an unknown token once per token. |
 | A hook fires with no terminal | Claude may start hooks without a controlling terminal. Our hooks never need one: they post to `GFF_HAB` and never write escape codes to a TTY. |
 | Nested agent in a pane | Claude: entrypoint guard. Codex and opencode: the adapter binds the pane to the first session per process and ignores hooks whose session id differs while that session lives, unless the foreground process changed. Built: a session start from another session is dropped only while a permission request is open. Known limit until the foreground-process check: an interactive nested session (entrypoint `cli`, such as one a background job starts) that starts at any other time takes the pane. |
@@ -695,6 +772,13 @@ Built: the Claude Code transcript fixtures are `internal/transcript/testdata/cla
 with the expected chat messages beside each as `.chat.json`. `claude-2.1.310.jsonl` covers each
 record type above, unknown ones included; `claude-drift.jsonl` covers a newer version and an
 unreadable line.
+
+Built: the Codex rollout fixtures are `internal/transcript/testdata/codex-0.166.0.jsonl` and
+`codex-drift.jsonl`, with `.chat.json` beside each. The hook fixtures are
+`internal/harness/testdata/<harness>-*.json`: `codex-turn.json` covers a turn, a late duplicate
+request, a nested agent, an interrupt and the end; `codex-permission-no-id.json` covers
+`PermissionRequest` with no `tool_use_id`, as Codex sends it. In a hook fixture, a request id of
+`*` stands for one gff-hab made.
 
 ## Open decisions
 
@@ -773,7 +857,8 @@ Built (option B, off until the owner turns it on):
 - **No approver, no wait.** When the last client that can answer the pane closes or narrows its
   subscription, the pane's waiting hooks end with no decision at once, and Claude shows its own
   dialog.
-- Codex's hook does not use `-wait` yet.
+- **Codex.** Codex's printed config runs the same `-wait` hook; the switch covers both
+  harnesses.
 
 ### Who writes hook config into harness settings
 
