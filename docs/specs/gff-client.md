@@ -238,13 +238,14 @@ the view is composed.
 - Leaving pass-through sets back the modes the pane may have set on the host, then enters the
   alternate screen. The main screen is not cleared. gff tracks those modes apart from
   pass-through itself, so a new snapshot that ends pass-through (a data connection opened
-  again at another size) still sets them back. The set: a synchronized update (2026) first,
+  again at another size), a hidden tab or a closed view still sets them back. The set: a synchronized update (2026) first,
   so the host draws again; attributes; every mouse mode; focus events; bracketed paste;
   cursor keys and keypad; the kitty keyboard flags; modifyOtherKeys (`CSI > 4 m`); insert
   mode; origin mode; the scroll region; autowrap; the cursor style and visibility; the G0
   charset (`ESC ( B`, then SI). This is what tmux sets back.
-- When the last pane ends while passing through, gff composes nothing: the screen keeps what
-  the pane drew, as after `ssh`.
+- In the single-hab view, when the last pane ends while passing through, gff composes
+  nothing: the screen keeps what the pane drew, as after `ssh`. The workspace stays open and
+  composes the tab with the pane marked exited.
 - On exit gff sets back every mode it or a pane set, and leaves the alternate screen the way
   the pane entered it (1049, 1047 or 47). After pass-through the screen keeps what the pane
   drew.
@@ -283,8 +284,9 @@ modifyOtherKeys 2). Caps Lock and Num Lock in the modifiers do not matter. When 
 key event types, the prefix's release never reaches the pane, and after the prefix a key
 release or a modifier key alone does not count as the command. A lone Esc is never held back.
 
-gff opens its panes while it already reads keys. Opening waits while the hab is offline, and
-the terminal is raw, so Ctrl+C is no signal: the prefix and `d` end a start that hangs.
+gff opens its panes while it already reads keys: each view opens its stream off the main loop.
+Opening waits while the hab is offline, and the terminal is raw, so Ctrl+C is no signal: the
+prefix and `d` end a start that hangs, and gff does not wait for an open that has not returned.
 
 After the prefix:
 
