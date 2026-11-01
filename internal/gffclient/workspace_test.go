@@ -161,7 +161,8 @@ func TestSidebarStartRenameClose(t *testing.T) {
 		ss := a.Sessions()
 		return len(ss) == 1 && ss[0].Name == "renamed"
 	})
-	hst.waitScreen("the new name", func(s string) bool { return line(s, "renamed") > 0 })
+	// The row, not the prompt line that still holds the typed name: x takes the name from it.
+	hst.waitScreen("the new name", func(s string) bool { return line(s, "renamed") > 0 && !strings.Contains(s, "rename sh") })
 
 	hst.typ("x")
 	hst.waitScreen("the end question", func(s string) bool { return strings.Contains(s, "end renamed on one?") })
