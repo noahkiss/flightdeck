@@ -80,13 +80,35 @@ final class LiveActivityFixTests: XCTestCase {
         await fleet.setActive(false)
     }
 
-    /// The scene can turn inactive while a new connection registers again:
-    /// the hab already holds the device, so the activity still starts.
-    func testStartsWhileRegisteringAgain() async {
-        let (_, fleet, tracker, host) = await rig()
-        let reg = fleet.push!
-        reg.setDeviceToken(Data([2]))
-        XCTAssertEqual(reg.status["h"], .registering)
+    /// The scene can turn inactive while a new connection's repeat
+    /// `push.register` is still open: the hab already holds the device, so
+    /// the activity starts before that call answers.
+    func testStartsWhileANewConnectionRegistersAgain() async {
+        let (hab, fleet, _, host) = await rig()
+        let gate = Gate()
+        await hab.setPushRegisterHook { _ in await gate.wait() }
+        await fleet.setActive(false)
+        await fleet.setActive(true)
+        await eventually("repeat register held") { await hab.pushRegisters.count == 2 }
+        XCTAssertEqual(fleet.push?.status["h"], .registering)
+        fleet.scene(active: nil)
+        await eventually("started") { host.started.count == 1 }
+        XCTAssertEqual(fleet.push?.status["h"], .registering, "started before the hab answered")
+        await gate.open()
+        await fleet.setActive(false)
+    }
+
+    /// A new device token no hab holds yet does not count as registered.
+    func testNoStartWhileANewTokenRegisters() async {
+        let (hab, fleet, tracker, host) = await rig()
+        let gate = Gate()
+        await hab.setPushRegisterHook { _ in await gate.wait() }
+        fleet.push!.setDeviceToken(Data([2]))
+        XCTAssertEqual(fleet.push?.status["h"], .registering)
+        await tracker.start()
+        XCTAssertTrue(host.started.isEmpty)
+        await gate.open()
+        await eventually("registered") { fleet.push?.status["h"] == .registered }
         await tracker.start()
         XCTAssertEqual(host.started.count, 1)
         await fleet.setActive(false)
@@ -272,5 +294,22 @@ final class ApprovalFixTests: XCTestCase {
         XCTAssertEqual(o.caseName, "unreachable")
         XCTAssertFalse(o.caseName.contains("example"))
         XCTAssertEqual(o.detail, "dial build-box.example:22 failed")
+    }
+}
+
+/// Holds callers until opened.
+actor Gate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        for w in waiters { w.resume() }
+        waiters = []
     }
 }

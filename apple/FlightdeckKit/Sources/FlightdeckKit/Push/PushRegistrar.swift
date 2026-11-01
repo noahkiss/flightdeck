@@ -136,6 +136,9 @@ public final class PushRegistrar {
         tokenError = nil
         guard hex != token else { return }
         token = hex
+        // No hab holds the new token yet: until each takes it, none counts
+        // as able to push (review N7).
+        accepted.removeAll()
         log.notice("push token received (\(self.environment.rawValue, privacy: .public))")
         registerAll()
     }

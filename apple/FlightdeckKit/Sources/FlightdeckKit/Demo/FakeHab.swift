@@ -133,6 +133,9 @@ public actor FakeHab {
 
     /// Every `push.register` received, oldest first.
     public private(set) var pushRegisters: [PushRegisterParams] = []
+    /// Runs before a `push.register` is answered: a test holds it open.
+    private var pushRegisterHook: (@Sendable (PushRegisterParams) async -> Void)?
+    public func setPushRegisterHook(_ hook: (@Sendable (PushRegisterParams) async -> Void)?) { pushRegisterHook = hook }
     /// Every `push.register_activity` received, oldest first.
     public private(set) var activityRegisters: [PushActivityParams] = []
     /// Every `push.unregister` received, oldest first.
@@ -589,6 +592,7 @@ public actor FakeHab {
             }
             if method == HabMethods.pushRegister.name, let p = try? params.decode(PushRegisterParams.self) {
                 pushRegisters.append(p)
+                if let hook = pushRegisterHook { await hook(p) }
             } else if let p = try? params.decode(PushActivityParams.self) {
                 activityRegisters.append(p)
             } else {
