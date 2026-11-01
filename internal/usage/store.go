@@ -33,6 +33,8 @@ type account struct {
 	acct api.UsageAccount
 	sent api.UsageAccount // as last published
 	at   time.Time        // when last published
+	// markAt is the report time of the reading that last set or cleared the degraded mark.
+	markAt time.Time
 }
 
 // NewStore returns an empty store. publish receives each usage.updated event, under the store
@@ -50,11 +52,13 @@ func NewStore(publish func(structure.Event), now func() time.Time) *Store {
 // Put merges a reading into its account. Windows merge by name: a window replaces the stored
 // one of the same name unless it was read earlier, so a reading from an older file never undoes
 // a newer one. A window the reading lacks stays, with its reset time: a client shows it as reset
-// with no reading since (app.md 14.5). A reading with no windows and no drift creates no
-// account: a harness with no usage source reports none, never zero. A reading with drift marks
-// its account degraded, and creates it if need be, so a client says "usage unavailable" rather
-// than "no limits". The next reading with windows and no drift clears the mark; one with neither
-// (no token_count yet, no rate_limits) leaves it. It reports whether it published an event.
+// with no reading since (app.md 14.5). A reading with no windows and nothing in Degrade creates
+// no account: a harness with no usage source reports none, never zero. A reading with Degrade
+// marks its account degraded, and creates it if need be, so a client says "usage unavailable"
+// rather than "no limits". A reading with windows and an empty Degrade clears the mark; one
+// with neither (no token_count yet, no rate_limits) leaves it. Like a window, the mark follows
+// report time: a reading older (by At) than the one that last set or cleared it leaves it; a
+// reading with no At counts as new. It reports whether it published an event.
 func (s *Store) Put(r Reading) bool {
 	if r.Key == "" {
 		return false
@@ -63,7 +67,7 @@ func (s *Store) Put(r Reading) bool {
 	defer s.mu.Unlock()
 	a := s.accounts[r.Key]
 	if a == nil {
-		if (len(r.Windows) == 0 && len(r.Drift) == 0) || len(s.accounts) >= maxAccounts {
+		if (len(r.Windows) == 0 && len(r.Degrade) == 0) || len(s.accounts) >= maxAccounts {
 			return false
 		}
 		a = &account{acct: api.UsageAccount{Key: r.Key, Harness: r.Harness, Windows: []api.UsageWindow{}}}
@@ -84,8 +88,12 @@ func (s *Store) Put(r Reading) bool {
 	if newest && r.Label != "" {
 		a.acct.Label = r.Label
 	}
-	if len(r.Drift) > 0 || len(r.Windows) > 0 { // an empty clean read says nothing either way
-		a.acct.Degraded = degraded(r.Drift)
+	// An empty clean read says nothing either way; an older report never moves the mark.
+	if (len(r.Degrade) > 0 || len(r.Windows) > 0) && (r.At.IsZero() || !r.At.Before(a.markAt)) {
+		a.acct.Degraded = degraded(r.Degrade)
+		if r.At.After(a.markAt) {
+			a.markAt = r.At
+		}
 	}
 	now := s.now()
 	if same(a.acct, a.sent) && now.Sub(a.at) < Refresh {

@@ -1829,7 +1829,7 @@ The owner sees each harness account's usage limits before hitting them.
 | The same account on two habs with no account id | Two cards, each labelled by hab |
 | A reading above 100 per cent | Shown as 100 per cent and "limit reached" |
 | The phone's clock is wrong | Reset times come from the hab as absolute times; the app applies the offset measured on connect |
-| The harness changes its format | The adapter marks usage degraded; the card says "usage unavailable", never a wrong number |
+| The harness changes its format | The adapter marks usage degraded when no window reads, or a window it knows fails to parse; the card says "usage unavailable", never a wrong number. Drift in a key the adapter does not know is logged only while the known windows read (`harness-adapters.md`, Usage) |
 
 ### 14.6 Built choices (task-dj1wa3dx)
 

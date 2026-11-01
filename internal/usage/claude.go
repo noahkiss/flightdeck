@@ -53,7 +53,17 @@ var (
 var claudePeriods = map[string]func(reset time.Time) time.Time{
 	"daily":   func(r time.Time) time.Time { return r.AddDate(0, 0, -1) },
 	"weekly":  func(r time.Time) time.Time { return r.AddDate(0, 0, -7) },
-	"monthly": func(r time.Time) time.Time { return r.AddDate(0, -1, 0) },
+	"monthly": monthBefore,
+}
+
+// monthBefore is the same day and time one calendar month before r, in UTC, with the day
+// clamped to the length of that month: 31 March gives 28 (or 29) February, not 3 March as
+// AddDate would.
+func monthBefore(r time.Time) time.Time {
+	r = r.UTC()
+	y, m, d := r.Date()
+	last := time.Date(y, m, 0, 0, 0, 0, 0, time.UTC).Day() // the last day of the month before
+	return time.Date(y, m-1, min(d, last), r.Hour(), r.Minute(), r.Second(), r.Nanosecond(), time.UTC)
 }
 
 // claudeWindowName names the window of a rate_limits key: a known key by claudeWindows, any
@@ -77,7 +87,7 @@ func claudeWindowName(k string) (string, time.Duration, bool) {
 		}
 		if u, ok := claudeUnits[words[1]]; ok && n > 0 {
 			words = append([]string{strconv.Itoa(n) + u.short}, words[2:]...)
-			if n <= 3660 { // ten years of days; a larger number states no usable length
+			if n <= 3660 { // in any unit; a larger n states no usable length
 				length = time.Duration(n) * u.d
 			}
 		}
@@ -114,7 +124,7 @@ type ClaudeStatus struct {
 // each window's read_at. host names the hab, for the account key. With no rate_limits (an
 // API-key account, a version before rate_limits, or before the first answer) the reading has no
 // windows: the account reports none.
-func ParseClaudeStatus(payload []byte, at time.Time, host string) (ClaudeStatus, error) {
+func ParseClaudeStatus(payload []byte, at time.Time, host string) (st ClaudeStatus, err error) {
 	var in struct {
 		TranscriptPath string          `json:"transcript_path"`
 		Version        string          `json:"version"`
@@ -123,9 +133,29 @@ func ParseClaudeStatus(payload []byte, at time.Time, host string) (ClaudeStatus,
 	if err := json.Unmarshal(payload, &in); err != nil {
 		return ClaudeStatus{}, fmt.Errorf("status-line input: %w", err)
 	}
-	st := ClaudeStatus{Version: in.Version}
+	st = ClaudeStatus{Version: in.Version}
 	st.Harness = detect.KindClaude
-	st.Key = Key(host, detect.KindClaude, claudeDataDir(in.TranscriptPath))
+	dataDir := claudeDataDir(in.TranscriptPath)
+	st.Key = Key(host, detect.KindClaude, dataDir)
+	st.At = at
+	var known []string // drift in a known window: it marks the account degraded
+	defer func() {
+		switch {
+		case len(st.Windows) == 0 && dataDir == "":
+			// No data directory names no real account: the drift is logged only, so it makes
+			// no account of its own.
+		case len(st.Windows) == 0:
+			st.Degrade = st.Drift
+		default:
+			st.Degrade = known
+		}
+	}()
+	drift := func(k, s string) {
+		st.Drift = append(st.Drift, s)
+		if _, ok := claudeWindows[k]; ok {
+			known = append(known, s)
+		}
+	}
 	var limits map[string]json.RawMessage
 	if len(in.RateLimits) > 0 && json.Unmarshal(in.RateLimits, &limits) != nil {
 		// The input names the account, so a rate_limits of another shape marks it degraded.
@@ -145,7 +175,7 @@ func ParseClaudeStatus(payload []byte, at time.Time, host string) (ClaudeStatus,
 		}
 		name, length, ok := claudeWindowName(k)
 		if !ok {
-			st.Drift = append(st.Drift, "a rate_limits key is not a window name")
+			drift(k, "a rate_limits key is not a window name")
 			continue
 		}
 		var w struct {
@@ -154,19 +184,19 @@ func ParseClaudeStatus(payload []byte, at time.Time, host string) (ClaudeStatus,
 			Period string   `json:"period"`
 		}
 		if err := json.Unmarshal(raw, &w); err != nil || w.Used == nil {
-			st.Drift = append(st.Drift, "rate_limits."+k+" has no used_percentage number")
+			drift(k, "rate_limits."+k+" has no used_percentage number")
 			continue
 		}
 		used, ok := pct(*w.Used)
 		if !ok {
-			st.Drift = append(st.Drift, "rate_limits."+k+".used_percentage is out of range")
+			drift(k, "rate_limits."+k+".used_percentage is out of range")
 			continue
 		}
 		uw := api.UsageWindow{Name: name, UsedPct: used, ReadAt: readAt}
 		if w.Resets != nil {
 			r, ok := epoch(*w.Resets)
 			if !ok {
-				st.Drift = append(st.Drift, "rate_limits."+k+".resets_at is not Unix seconds")
+				drift(k, "rate_limits."+k+".resets_at is not Unix seconds")
 				continue
 			}
 			uw.ResetsAt = r

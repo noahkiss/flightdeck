@@ -384,7 +384,7 @@ type UsageAccount struct {
 	Harness string        `json:"harness"`
 	Windows []UsageWindow `json:"windows"`
 	// Degraded is optional, so a newer client reads an account from an older revision 1 hab.
-	Degraded string `json:"degraded,omitempty" doc:"Set when the latest report from the account's source drifted from the format the adapter knows: what it could not read, as one line. The client says usage unavailable (app.md 14.5); windows still listed are the last good ones. Absent once a report reads cleanly."`
+	Degraded string `json:"degraded,omitempty" doc:"Set when the newest report from the account's source drifted from the format the adapter knows so that no window read, or a window the adapter knows failed: what it could not read, as one line. The client says usage unavailable (app.md 14.5); windows still listed are the last good ones. Absent once a newer report's windows read (harness-adapters.md, Usage)."`
 }
 
 type UsageListParams struct{}

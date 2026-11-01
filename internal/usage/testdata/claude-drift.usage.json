@@ -29,5 +29,9 @@
     "a rate_limits key is not a window name",
     "rate_limits.five_hour has no used_percentage number",
     "rate_limits.seven_day.resets_at is not Unix seconds"
+  ],
+  "degrade": [
+    "rate_limits.five_hour has no used_percentage number",
+    "rate_limits.seven_day.resets_at is not Unix seconds"
   ]
 }

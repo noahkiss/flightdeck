@@ -814,7 +814,9 @@ Built choices (`internal/usage`, `cmd/gff-hab/usage.go`, `cmd/gff-hab/statusline
   `seven_day` 7 days, and a key that starts with a number and a unit (`seven_day_opus` 7 days,
   `ten_minutes`); minute, hour, day and week units. A spend limit's `period` of `daily`, `weekly`
   or `monthly` gives the calendar period that ends at `resets_at` (UTC): a monthly limit that
-  resets on 1 March started on 1 February and is 28 days long. Any other key or period gives no
+  resets on 1 March started on 1 February and is 28 days long. A monthly reset on day 29 to 31
+  starts on the same day of the month before, clamped to that month's last day: a reset on
+  31 March started on 28 February (29 in a leap year). Any other key or period gives no
   length; a name is never parsed for one. `starts_at` is `resets_at` less the length, and absent
   with no reset time. A client computes pace from these two, so pace works for a model window
   or a spend window as for `5h`.
@@ -839,19 +841,34 @@ Built choices (`internal/usage`, `cmd/gff-hab/usage.go`, `cmd/gff-hab/statusline
   length) is left out and logged once, up to 256 distinct lines per gff-hab run. A harness version outside the tested range is logged once. A wrong number is never
   shown; the last good reading ages instead. A Claude Code `rate_limits` that is not an object
   is drift too, on the account the input names.
-- **Degraded.** A reading with drift sets the account's `degraded` field: its first drift line,
-  plus "(and N more)". A drifted reading with no windows still creates the account, so the
-  client shows "usage unavailable" (`app.md` 14.5), not "No limits reported". The next reading
-  with windows and no drift clears the mark. A reading with neither (a rollout with no
-  `token_count` yet, a status line before the first answer) leaves it: it says nothing about the
-  format. A change of the mark is sent as `usage.updated`. The mark is per account, not per
-  window: 14.5 puts "usage unavailable" on the card, some drift (a key that is not a window name,
-  `rate_limits` of another shape) names no window, and each account has one source (the status
-  line of one data directory, or the rollouts of one `$CODEX_HOME`), so per account is per
-  source. Two Codex sessions of one account read one after another, one drifted and one clean,
-  move the mark with each read: the newest report wins, as for the windows. A harness version
-  outside the tested range alone does not set it. A status-line input that is not JSON names no
-  account, so it is logged only.
+- **Degraded.** Some drift sets the account's `degraded` field: the first such drift line, plus
+  "(and N more)". Drift sets it when:
+  - the reading has no windows: all its drift counts;
+  - a window the adapter knows fails to parse: Claude Code's `five_hour`, `seven_day` or
+    `spend_limit`, or a Codex `primary` or `secondary` window;
+  - for Codex, a `token_count` line at or after the newest line that gave a window is bad. An
+    older bad line still in the 256 KiB tail is logged only, so it cannot hold the mark.
+
+  Drift in a key the adapter does not know (a future `overage_enabled`, a misnamed key) is logged
+  only while the known windows read: their numbers are right, so the card keeps them. A drifted
+  reading with no windows still creates the account, so the client shows "usage unavailable"
+  (`app.md` 14.5), not "No limits reported". The exception is a Claude Code input with no
+  `transcript_path`: it names no data directory and so no real account, and its drift is logged
+  only. A reading with windows and no such drift clears the mark. A reading with neither (a
+  rollout with no `token_count` yet, a status line before the first answer) leaves it: it says
+  nothing about the format.
+- **The mark follows report time, as windows do.** The store keeps the time of the report that
+  last set or cleared the mark: the status line's time, or the newest `token_count` timestamp.
+  An older report neither sets nor clears it, so a re-read of an old rollout cannot move it. A
+  report with no time (every `token_count` line lacked one) counts as new. Two Codex sessions of
+  one account, one drifted and one clean, leave the mark as the newer report says. A change of
+  the mark is sent as `usage.updated`.
+- **Why per account.** The mark is per account, not per window: 14.5 puts "usage unavailable" on
+  the card, some drift (a key that is not a window name, `rate_limits` of another shape) names no
+  window, and each account has one source (the status line of one data directory, or the
+  rollouts of one `$CODEX_HOME`), so per account is per source. A harness version outside the
+  tested range alone does not set it. A status-line input that is not JSON names no account, so
+  it is logged only.
 
 opencode 2 changed the ground under the notes above (seen live on 2.2.5, 2026-11-01):
 

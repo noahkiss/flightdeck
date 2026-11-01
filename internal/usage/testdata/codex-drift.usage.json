@@ -20,5 +20,11 @@
     "rate_limits is not an object",
     "a rate-limit window has no used_percent",
     "a rate-limit window has no window_minutes"
+  ],
+  "degrade": [
+    "token_count line has no RFC 3339 timestamp",
+    "rate_limits is not an object",
+    "a rate-limit window has no used_percent",
+    "a rate-limit window has no window_minutes"
   ]
 }

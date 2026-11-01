@@ -3526,7 +3526,7 @@ public struct TurnEnd: Codable, Sendable, Hashable {
 }
 
 public struct UsageAccount: Codable, Sendable, Hashable {
-    /// Set when the latest report from the account's source drifted from the format the adapter knows: what it could not read, as one line. The client says usage unavailable (app.md 14.5); windows still listed are the last good ones. Absent once a report reads cleanly.
+    /// Set when the newest report from the account's source drifted from the format the adapter knows so that no window read, or a window the adapter knows failed: what it could not read, as one line. The client says usage unavailable (app.md 14.5); windows still listed are the last good ones. Absent once a newer report's windows read (harness-adapters.md, Usage).
     public var degraded: String?
     public var harness: String
     /// Stable, not secret: the adapter's hash of an account id, else the host and harness.

@@ -47,6 +47,7 @@ type result struct {
 	Account api.UsageAccount `json:"account"`
 	Version string           `json:"version,omitempty"`
 	Drift   []string         `json:"drift,omitempty"`
+	Degrade []string         `json:"degrade,omitempty"`
 }
 
 // asAccount is the reading as the expected file holds it. The key is checked against Key, not
@@ -90,7 +91,7 @@ func TestClaudeFixtures(t *testing.T) {
 			if name == "claude-spend" {
 				dir = "/srv/agent/claude-work"
 			}
-			golden(t, name, result{Account: asAccount(t, st.Reading, dir), Version: st.Version, Drift: st.Drift})
+			golden(t, name, result{Account: asAccount(t, st.Reading, dir), Version: st.Version, Drift: st.Drift, Degrade: st.Degrade})
 		})
 	}
 	if n < 4 {
@@ -113,7 +114,7 @@ func TestCodexFixtures(t *testing.T) {
 				t.Fatal(err)
 			}
 			u := ParseCodexRollout(b, "hab-a", "/srv/agent/.codex")
-			golden(t, name, result{Account: asAccount(t, u.Reading, "/srv/agent/.codex"), Version: u.Version, Drift: u.Drift})
+			golden(t, name, result{Account: asAccount(t, u.Reading, "/srv/agent/.codex"), Version: u.Version, Drift: u.Drift, Degrade: u.Degrade})
 		})
 	}
 }
@@ -307,7 +308,7 @@ func TestClaudeWindowName(t *testing.T) {
 	}{
 		"five_hour": {"5h", 5 * time.Hour}, "seven_day": {"7d", 7 * day}, "spend_limit": {"spend", 0},
 		"seven_day_opus": {"7d opus", 7 * day}, "five_hour_sonnet": {"5h sonnet", 5 * time.Hour},
-		"30_day": {"30d", 30 * day}, "two_weeks": {"2w", 14 * day}, "ten_minutes": {"10m", 10 * time.Minute},
+		"30_day": {"30d", 30 * day}, "two_weeks": {"2w", 14 * day}, "one_week_opus": {"1w opus", 7 * day}, "ten_minutes": {"10m", 10 * time.Minute},
 		"monthly": {"monthly", 0}, "opus_weekly": {"opus weekly", 0}, "day_opus": {"day opus", 0},
 		"99999_day": {"99999d", 0}, "Opus": {}, "seven__day": {}, "_x": {}, "x_": {}, "seven-day": {}, "": {},
 		strings.Repeat("a", 41): {}, "été": {},
@@ -353,6 +354,9 @@ func TestPlanLabel(t *testing.T) {
 	}
 }
 
+// unix is midnight UTC on a date, in Unix seconds.
+func unix(y int, m time.Month, d int) int64 { return time.Date(y, m, d, 0, 0, 0, 0, time.UTC).Unix() }
+
 // TestWindowSpan: a window's length and start come only from what the harness's data defines.
 // A Claude spend limit's period gives the calendar period that ends at the reset time; a period
 // with no fixed length, or no reset time, gives none. A Codex window with no reset time has a
@@ -372,6 +376,13 @@ func TestWindowSpan(t *testing.T) {
 		{"per day", reset, 0, ""},
 		{"", reset, 0, ""},
 		{"monthly", nil, 0, ""},
+		// A reset on day 29 to 31 starts on the same day of the month before, clamped to its end.
+		{"monthly", unix(2026, 3, 31), 31 * 86400, "2026-02-28T00:00:00Z"},
+		{"monthly", unix(2026, 3, 30), 30 * 86400, "2026-02-28T00:00:00Z"},
+		{"monthly", unix(2026, 5, 31), 31 * 86400, "2026-04-30T00:00:00Z"},
+		{"monthly", unix(2028, 3, 31), 31 * 86400, "2028-02-29T00:00:00Z"},
+		{"monthly", unix(2027, 3, 29), 29 * 86400, "2027-02-28T00:00:00Z"},
+		{"monthly", unix(2027, 1, 31), 31 * 86400, "2026-12-31T00:00:00Z"},
 	} {
 		lim := map[string]any{"used_percentage": 1, "period": c.period}
 		if c.resets != nil {
@@ -386,7 +397,15 @@ func TestWindowSpan(t *testing.T) {
 			t.Errorf("period %q, resets %v: length %d start %q, want %d %q", c.period, c.resets, w.LengthS, w.StartsAt, c.length, c.start)
 		}
 	}
-	b, _ := json.Marshal(map[string]any{"rate_limits": map[string]any{"five_hour": map[string]any{"used_percentage": 1}}})
+	// A period on a key other than spend_limit gives no calendar period: the key's length stays.
+	b, _ := json.Marshal(map[string]any{"rate_limits": map[string]any{
+		"five_hour":   map[string]any{"used_percentage": 1, "period": "monthly", "resets_at": reset},
+		"weekly_opus": map[string]any{"used_percentage": 1, "period": "monthly", "resets_at": reset}}})
+	if st, _ := ParseClaudeStatus(b, at, "hab-a"); len(st.Windows) != 2 || st.Windows[0].LengthS != 18000 ||
+		st.Windows[0].StartsAt != "2026-02-28T19:00:00Z" || st.Windows[1].LengthS != 0 || st.Windows[1].StartsAt != "" {
+		t.Errorf("a period on another key: %+v", st.Windows)
+	}
+	b, _ = json.Marshal(map[string]any{"rate_limits": map[string]any{"five_hour": map[string]any{"used_percentage": 1}}})
 	if st, _ := ParseClaudeStatus(b, at, "hab-a"); len(st.Windows) != 1 || st.Windows[0].LengthS != 18000 || st.Windows[0].StartsAt != "" {
 		t.Errorf("5h with no reset: %+v", st.Windows)
 	}
@@ -409,41 +428,105 @@ func TestClaudeRateLimitsShape(t *testing.T) {
 	}
 }
 
-// TestStoreDegraded: a reading with drift marks its account degraded, creating it when it has no
-// windows, and publishes the change; a reading with no windows and no drift leaves the mark; the
-// next reading with windows and no drift clears it and publishes that.
+// TestStoreDegraded: a reading with Degrade marks its account degraded, creating it when it has
+// no windows, and publishes the change; a reading with no windows and no Degrade leaves the
+// mark; a reading with windows and no Degrade clears it. Drift alone does nothing. The mark
+// follows report time: an older reading neither clears nor sets it, and one with no time counts.
 func TestStoreDegraded(t *testing.T) {
 	var rec recorder
 	s := NewStore(rec.publish, nil)
 	const k = "claude-1"
-	if !s.Put(Reading{Key: k, Harness: "claude", Drift: []string{"rate_limits is not an object"}}) {
-		t.Fatal("a drifted reading with no windows was not sent")
+	t0 := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	mark := func() string { return s.List().Accounts[0].Degraded }
+	if s.Put(Reading{Key: "claude-2", Harness: "claude", Drift: []string{"logged only"}, At: t0}) || len(s.List().Accounts) != 0 {
+		t.Fatal("drift that does not degrade made an account")
+	}
+	if !s.Put(Reading{Key: k, Harness: "claude", Drift: []string{"x"}, Degrade: []string{"rate_limits is not an object"}, At: t0}) {
+		t.Fatal("a degraded reading with no windows was not sent")
 	}
 	l := s.List()
 	if len(l.Accounts) != 1 || l.Accounts[0].Degraded != "rate_limits is not an object" || len(l.Accounts[0].Windows) != 0 {
 		t.Fatalf("after drift: %+v", l)
 	}
-	good := Reading{Key: k, Harness: "claude", Windows: []api.UsageWindow{win("5h", 1, "", "2026-01-01T10:00:00Z")}}
-	bad := good
-	bad.Windows = []api.UsageWindow{win("5h", 1, "", "2026-01-01T10:01:00Z")}
-	bad.Drift = []string{"a", "b", "c"}
-	if !s.Put(good) || s.List().Accounts[0].Degraded != "" {
+	good := func(at time.Time) Reading {
+		return Reading{Key: k, Harness: "claude", At: at, Drift: []string{"an unknown key"},
+			Windows: []api.UsageWindow{win("5h", 1, "", at.Format(time.RFC3339))}}
+	}
+	bad := func(at time.Time) Reading {
+		r := good(at)
+		r.Degrade = []string{"a", "b", "c"}
+		return r
+	}
+	if !s.Put(good(t0.Add(time.Minute))) || mark() != "" {
 		t.Fatalf("a good reading did not clear the mark: %+v", s.List())
 	}
-	if !s.Put(bad) || s.List().Accounts[0].Degraded != "a (and 2 more)" {
+	if !s.Put(bad(t0.Add(2*time.Minute))) || mark() != "a (and 2 more)" {
 		t.Fatalf("drift with windows: %+v", s.List())
 	}
-	if s.Put(Reading{Key: k, Harness: "claude"}) || s.List().Accounts[0].Degraded == "" {
+	if s.Put(Reading{Key: k, Harness: "claude", At: t0.Add(3 * time.Minute)}) || mark() == "" {
 		t.Fatalf("an empty clean reading changed the mark: %+v", s.List())
 	}
-	good.Windows = []api.UsageWindow{win("5h", 1, "", "2026-01-01T10:02:00Z")}
-	if !s.Put(good) || s.List().Accounts[0].Degraded != "" {
-		t.Fatalf("a good reading did not clear the mark: %+v", s.List())
+	if s.Put(good(t0.Add(time.Minute+30*time.Second))) || mark() == "" {
+		t.Fatalf("an older good reading cleared the mark: %+v", s.List())
 	}
-	if rec.count() != 4 {
-		t.Fatalf("%d events, want 4", rec.count())
+	if !s.Put(good(t0.Add(4*time.Minute))) || mark() != "" {
+		t.Fatalf("a newer good reading did not clear the mark: %+v", s.List())
+	}
+	if s.Put(bad(t0.Add(3*time.Minute))) || mark() != "" {
+		t.Fatalf("an older degraded reading set the mark: %+v", s.List())
+	}
+	if r := bad(t0.Add(5 * time.Minute)); !s.Put(Reading{Key: k, Harness: "claude", Degrade: r.Degrade}) || mark() == "" {
+		t.Fatalf("a degraded reading with no time did not set the mark: %+v", s.List())
+	}
+	if rec.count() != 5 {
+		t.Fatalf("%d events, want 5", rec.count())
 	}
 	if e := rec.ev[2].Data.(api.UsageAccount); e.Degraded != "a (and 2 more)" {
 		t.Fatalf("the degraded event carries %+v", e)
+	}
+}
+
+// TestDegradeRules: which drift marks an account degraded. Claude Code: drift in a known key
+// does, drift in an unknown key does not while a window reads, and all drift does when no window
+// reads, unless the input names no data directory. Codex: drift in a line older than the newest
+// line that gave a window does not; drift in or after it does, and so does a bad window.
+func TestDegradeRules(t *testing.T) {
+	at := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	const tp = `"transcript_path":"/srv/agent/.claude/projects/-w/s.jsonl",`
+	const good = `"five_hour":{"used_percentage":5}`
+	for name, c := range map[string]struct {
+		in      string
+		degrade int
+	}{
+		"unknown key, a window reads": {`{` + tp + `"rate_limits":{` + good + `,"overage_enabled":false}}`, 0},
+		"unknown key, no window":      {`{` + tp + `"rate_limits":{"overage_enabled":false}}`, 1},
+		"known key":                   {`{` + tp + `"rate_limits":{` + good + `,"seven_day":{"used_percentage":"x"}}}`, 1},
+		"no data directory":           {`{"rate_limits":[1]}`, 0},
+		"no data directory, a window": {`{"rate_limits":{` + good + `,"seven_day":false}}`, 1},
+	} {
+		st, err := ParseClaudeStatus([]byte(c.in), at, "hab-a")
+		if err != nil || len(st.Degrade) != c.degrade || len(st.Drift) == 0 {
+			t.Errorf("%s: degrade %q, drift %q, %v", name, st.Degrade, st.Drift, err)
+		}
+		if !st.At.Equal(at) {
+			t.Errorf("%s: at %v", name, st.At)
+		}
+	}
+	line := func(sec int, limits string) string {
+		return fmt.Sprintf(`{"timestamp":"2026-01-01T10:00:%02d.000Z","type":"event_msg","payload":{"type":"token_count","rate_limits":%s}}`+"\n", sec, limits)
+	}
+	ok := `{"limit_id":"codex","primary":{"used_percent":1,"window_minutes":300,"resets_at":1767268800}}`
+	oldBad := ParseCodexRollout([]byte(line(1, "[1]")+line(2, ok)), "hab-a", "/c")
+	if len(oldBad.Windows) != 1 || len(oldBad.Drift) != 1 || len(oldBad.Degrade) != 0 || !oldBad.At.Equal(at.Add(2*time.Second)) {
+		t.Errorf("an old bad line: %+v", oldBad)
+	}
+	newBad := ParseCodexRollout([]byte(line(1, ok)+line(2, "[1]")), "hab-a", "/c")
+	if len(newBad.Windows) != 1 || len(newBad.Degrade) != 1 {
+		t.Errorf("a new bad line: %+v", newBad)
+	}
+	badWin := `{"limit_id":"model_y","primary":{"used_percent":1}}`
+	oldWin := ParseCodexRollout([]byte(line(1, badWin)+line(2, ok)), "hab-a", "/c")
+	if len(oldWin.Windows) != 1 || len(oldWin.Degrade) != 1 || oldWin.Degrade[0] != "a rate-limit window has no window_minutes" {
+		t.Errorf("a bad window of another limit: %+v", oldWin)
 	}
 }

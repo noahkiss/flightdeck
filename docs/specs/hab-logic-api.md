@@ -910,8 +910,9 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   `used_pct` in whole percent, `resets_at`, `read_at`, `length_s`, `starts_at`) and `degraded`.
   `length_s` is the window's length in seconds and `starts_at` is `resets_at` less that length;
   each is absent when the harness's data does not define it, so a client never takes a length
-  from a name it does not know. `degraded` is one line naming what the account's latest report
-  could not read; absent when it read cleanly. The three fields came after the first `usage`
+  from a name it does not know. `degraded` is one line naming what the account's newest report
+  could not read so that no window read, or a known window failed (`harness-adapters.md`, Usage);
+  absent once a newer report's windows read. The three fields came after the first `usage`
   field set, so they are optional (`<message>@2.json`). `usage.updated` carries one account. Every
   subscription gets `usage.updated`, scoped or not: an account belongs to no session. Sources, key,
   names and the send rate are in `harness-adapters.md`, Usage.

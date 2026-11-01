@@ -73,7 +73,15 @@ type Reading struct {
 	Harness string
 	Label   string // plan name; empty when the source gives none
 	Windows []api.UsageWindow
-	// Drift is what the parser could not read, one line each; never a window. A reading with
-	// drift marks its account degraded (app.md 14.5); one without clears the mark.
+	// Drift is what the parser could not read, one line each; never a window. Every line is
+	// logged.
 	Drift []string
+	// Degrade is the part of Drift that marks the account degraded (app.md 14.5): all of it when
+	// the reading has no windows, else only drift in a window the adapter knows (Claude Code's
+	// five_hour, seven_day and spend_limit; a Codex primary or secondary window) and, for Codex,
+	// drift at or after the newest line that gave a window. Drift in an unknown key is logged only.
+	Degrade []string
+	// At is when the harness made the report: the status line's time, or the newest token_count
+	// line's timestamp. Zero when unknown. An older report never changes the degraded mark.
+	At time.Time
 }

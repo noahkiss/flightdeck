@@ -3,6 +3,7 @@ package usage
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"sort"
 	"time"
 	"unicode"
@@ -62,17 +63,22 @@ func ParseCodexRollout(data []byte, host, codexHome string) CodexUsage {
 	type latest struct {
 		snap codexSnapshot
 		at   time.Time
+		n    int // the token_count line it came from, counted from 1
 	}
 	limits := map[string]latest{}
 	var plan string
 	var planAt time.Time
-	drift := map[string]bool{}
-	note := func(s string) {
-		if !drift[s] {
-			drift[s] = true
+	// drift holds the last token_count line each drift line came from: only drift at or after
+	// the newest line that gave a window marks the account degraded, so an old bad line still
+	// in the tail does not.
+	drift := map[string]int{}
+	note := func(s string, n int) {
+		if _, ok := drift[s]; !ok {
 			u.Drift = append(u.Drift, s)
 		}
+		drift[s] = max(drift[s], n)
 	}
+	n := 0
 	for len(data) > 0 {
 		line := data
 		if i := bytes.IndexByte(data, '\n'); i >= 0 {
@@ -109,21 +115,25 @@ func ParseCodexRollout(data []byte, host, codexHome string) CodexUsage {
 		if len(l.Payload.RateLimits) == 0 || string(l.Payload.RateLimits) == "null" {
 			continue // an API-key login, or a version before rate limits
 		}
+		n++
 		at, err := time.Parse(time.RFC3339Nano, l.Timestamp)
 		if err != nil {
-			note("token_count line has no RFC 3339 timestamp")
+			note("token_count line has no RFC 3339 timestamp", n)
 			continue
+		}
+		if at.After(u.At) {
+			u.At = at
 		}
 		var s codexSnapshot
 		if err := json.Unmarshal(l.Payload.RateLimits, &s); err != nil {
-			note("rate_limits is not an object")
+			note("rate_limits is not an object", n)
 			continue
 		}
 		if s.LimitID == "" {
 			s.LimitID = codexMainLimit // versions before limit ids had one limit
 		}
 		if prev, ok := limits[s.LimitID]; !ok || !at.Before(prev.at) {
-			limits[s.LimitID] = latest{s, at}
+			limits[s.LimitID] = latest{s, at, n}
 		}
 		if s.PlanType != nil && *s.PlanType != "" && !at.Before(planAt) {
 			plan, planAt = *s.PlanType, at
@@ -139,6 +149,7 @@ func ParseCodexRollout(data []byte, host, codexHome string) CodexUsage {
 		}
 		return ids[i] < ids[j]
 	})
+	good := 0 // the newest token_count line that gave a window
 	for _, id := range ids {
 		l := limits[id]
 		prefix := ""
@@ -155,11 +166,17 @@ func ParseCodexRollout(data []byte, host, codexHome string) CodexUsage {
 			}
 			uw, problem := codexUsageWindow(w, l.at)
 			if problem != "" {
-				note(problem)
+				note(problem, math.MaxInt) // the limit's latest report: it always counts
 				continue
 			}
 			uw.Name = prefix + uw.Name
 			u.Windows = append(u.Windows, uw)
+			good = max(good, l.n)
+		}
+	}
+	for _, d := range u.Drift {
+		if drift[d] >= good {
+			u.Degrade = append(u.Degrade, d)
 		}
 	}
 	u.Label = planLabel(plan)
