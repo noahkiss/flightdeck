@@ -265,8 +265,8 @@ func (a *agentService) Answer(ctx context.Context, client string, p api.Approval
 	return err
 }
 
-// opencodeTimeout bounds one call to an opencode server.
-const opencodeTimeout = 5 * time.Second
+// opencodeTimeout bounds one call to an opencode server. Tests shorten it.
+var opencodeTimeout = 5 * time.Second
 
 // promptOpencode sends a message to the pane's opencode session through its server's prompt
 // API (harness-adapters.md, opencode, built choices). The TUI is a client of the same server
@@ -281,10 +281,10 @@ func (a *agentService) promptOpencode(ctx context.Context, c *opencode.Client, s
 	ctx, cancel := context.WithTimeout(ctx, opencodeTimeout)
 	defer cancel()
 	if err := c.Prompt(ctx, st.Session, text); err != nil {
-		if opencode.NotFound(err) {
+		if opencode.NotFound(err, opencode.TagSessionNotFound) {
 			return control.Errorf(api.ErrorKindConflict, "opencode session %s is gone: %v", st.Session, err)
 		}
-		return control.Errorf(api.ErrorKindUnavailable, "%v", err)
+		return opencodeUnavailable(err)
 	}
 	return nil
 }
@@ -301,12 +301,21 @@ func (a *agentService) replyOpencode(ctx context.Context, c *opencode.Client, p 
 	ctx, cancel := context.WithTimeout(ctx, opencodeTimeout)
 	defer cancel()
 	if err := c.Reply(ctx, session, p.Request, decision, message); err != nil {
-		if opencode.NotFound(err) {
+		if opencode.NotFound(err, opencode.TagPermissionNotFound, opencode.TagSessionNotFound) {
 			return control.Errorf(api.ErrorKindConflict, "opencode has no open request %s: it was answered in the terminal, or it ended", p.Request)
 		}
-		return control.Errorf(api.ErrorKindUnavailable, "%v", err)
+		return opencodeUnavailable(err)
 	}
 	return nil
+}
+
+// opencodeUnavailable maps a failed opencode call to unavailable. A 404 without a known tag is
+// a route the server lacks: the API moved under the adapter.
+func opencodeUnavailable(err error) error {
+	if opencode.Drift(err) {
+		return control.Errorf(api.ErrorKindUnavailable, "the opencode server lacks this API route; its version differs from the tested %s (API drift): %v", opencode.TestedVersion, err)
+	}
+	return control.Errorf(api.ErrorKindUnavailable, "%v", err)
 }
 
 // readBack waits for the request to resolve after an answer. Success needs a resolution by a

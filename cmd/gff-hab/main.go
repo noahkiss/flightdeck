@@ -18,7 +18,7 @@
 //	gff-hab hook [-t ms] <harness> [event] < payload
 //	gff-hab hook -print <harness> [-command name]
 //	gff-hab probe -nonce n -checks grant,... [-request grant]
-//	gff-hab opencode-pane -port n [--] [opencode argv]
+//	gff-hab opencode-pane -report path [--] [opencode argv]
 //	gff-hab install   [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
 //	                  [-unit-dir dir] [-hab-bin path] [-holder-bin path] [-dry-run]
 //	gff-hab uninstall [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
@@ -116,7 +116,7 @@ const usage = `usage:
   gff-hab statusline claude [-timeout d] [-- command...] < status-line input
   gff-hab statusline -print claude [-command name] [-wrap command]
   gff-hab probe -nonce n -checks grant,... [-request grant]
-  gff-hab opencode-pane -port n [--] [opencode argv]
+  gff-hab opencode-pane -report path [--] [opencode argv]
   gff-hab install   [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
                     [-unit-dir dir] [-hab-bin path] [-holder-bin path] [-dry-run]
   gff-hab uninstall [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
@@ -616,12 +616,15 @@ func serve(args []string) error {
 	if lk != nil {
 		stopWatch := lk.Watch(func(n link.Notice) {
 			switch n.Kind {
+			case link.PaneAdded: // a holder reached late: its opencode panes are followed now
+				ocs.added(n.Pane.UUID.String())
 			case link.PaneGone:
 				ocs.forget(n.Pane.UUID.String())
 				agents.Forget(n.Pane.UUID.String())
 				pushes.forget(n.Pane.UUID.String())
 				mgr.Forget(n.Pane.UUID.String())
 			case link.PaneExited:
+				ocs.forget(n.Pane.UUID.String()) // the wrapper is gone, and its server with it
 				agents.Exited(n.Pane.UUID.String())
 			case link.PaneReport: // OSC 7501 from the program; a replayed one applies as screen
 				agents.Report(n.Pane.UUID.String(), n.Report, time.Now().UnixMilli(), n.Live)
@@ -630,7 +633,8 @@ func serve(args []string) error {
 			}
 		})
 		defer stopWatch()
-		// The opencode servers of panes that outlived the last gff-hab.
+		// The opencode servers of panes that outlived the last gff-hab. A pane of a holder the
+		// link has not reached yet is followed on its PaneAdded.
 		ocs.load(func(pane string) (hp.UUID, bool) {
 			u, ok := parseUUID(pane)
 			if !ok {

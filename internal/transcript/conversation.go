@@ -51,6 +51,28 @@ func (c *conversation) put(msg api.ChatMessage, end int64) *item {
 	return it
 }
 
+// prepend puts older messages, oldest first, before every message held, skipping ids already
+// held. They count as made and changed at offset 0: history a client reads with page, never a
+// change since a cursor.
+func (c *conversation) prepend(msgs []api.ChatMessage) {
+	var add []*item
+	seen := map[string]bool{}
+	for _, m := range msgs {
+		if _, ok := c.index[m.ID]; ok || seen[m.ID] {
+			continue
+		}
+		seen[m.ID] = true
+		add = append(add, &item{msg: m})
+	}
+	if len(add) == 0 {
+		return
+	}
+	c.items = append(add, c.items...)
+	for i, it := range c.items {
+		c.index[it.msg.ID] = i
+	}
+}
+
 // get returns the message with id.
 func (c *conversation) get(id string) *item {
 	if i, ok := c.index[id]; ok {

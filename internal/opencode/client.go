@@ -98,10 +98,34 @@ func (e *APIError) Error() string {
 	return s
 }
 
-// NotFound reports whether err is a 404 from the server.
-func NotFound(err error) bool {
+// Error tags the server answers with when what a request names does not exist.
+const (
+	TagSessionNotFound    = "SessionNotFoundError"
+	TagPermissionNotFound = "PermissionNotFoundError"
+)
+
+// NotFound reports whether err is a 404 from the server with one of tags as its error tag. A
+// 404 with another tag, or with none, is a route the server does not have (API drift), not a
+// missing session or request.
+func NotFound(err error, tags ...string) bool {
 	var e *APIError
-	return errors.As(err, &e) && e.Status == http.StatusNotFound
+	if !errors.As(err, &e) || e.Status != http.StatusNotFound {
+		return false
+	}
+	for _, t := range tags {
+		if e.Tag == t {
+			return true
+		}
+	}
+	return false
+}
+
+// Drift reports whether err is a 404 that names no known missing thing: the route itself is
+// missing, so the server's API moved.
+func Drift(err error) bool {
+	var e *APIError
+	return errors.As(err, &e) && e.Status == http.StatusNotFound &&
+		e.Tag != TagSessionNotFound && e.Tag != TagPermissionNotFound
 }
 
 // idPattern is the shape of a session, request or message id the client puts in a path.
@@ -179,9 +203,11 @@ func (c *Client) call(ctx context.Context, op, method, path string, q url.Values
 	return nil
 }
 
-// Info is what server.info returns.
+// Info is what server.info returns. PID is the server's process id: opencode 2.2.5 reports
+// it, and another version may not (0).
 type Info struct {
 	Version string `json:"version"`
+	PID     int    `json:"pid"`
 }
 
 // Info returns the server's identity.

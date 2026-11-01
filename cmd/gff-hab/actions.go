@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -56,12 +55,13 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 		}
 	}
 	var paneID hp.UUID
-	ocURL := ""
+	ocStarted := false
 	if p.Harness == detect.KindOpencode {
 		var err error
-		if paneID, ocURL, p, err = a.opencodeStart(p); err != nil {
+		if paneID, p, err = a.opencodeStart(p); err != nil {
 			return "", "", err
 		}
+		ocStarted = true
 	}
 	cols, rows := p.Cols, p.Rows
 	if cols == 0 {
@@ -138,8 +138,8 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 		return "", "", control.Errorf(api.ErrorKindUnavailable, "spawn: %v", err)
 	}
 	pane := st.UUID.String()
-	if ocURL != "" {
-		if err := a.opencode.register(pane, st.UUID, ocURL); err != nil {
+	if ocStarted {
+		if err := a.opencode.register(pane, st.UUID); err != nil {
 			// The pane runs; only the server path is missing: state, sends and answers wait.
 			a.opencode.logf("opencode: pane %s: %v", pane, err)
 		}
@@ -201,25 +201,28 @@ func harnessStart(p api.SessionCreateParams) (api.SessionCreateParams, error) {
 
 // opencodeStart wraps an opencode argv in `gff-hab opencode-pane`, which runs a private
 // opencode server for the pane and the TUI attached to it (harness-adapters.md, opencode,
-// built choices). It picks the pane's uuid and a free loopback port, and passes the pane's
-// server password in the environment for the wrapper to hand on. It returns the uuid to spawn
-// under and the server's URL.
-func (a *actions) opencodeStart(p api.SessionCreateParams) (hp.UUID, string, api.SessionCreateParams, error) {
+// built choices). It picks the pane's uuid, names the server file the wrapper reports the
+// server's URL in, and passes the pane's server password in the environment for the wrapper to
+// hand on. It returns the uuid to spawn under.
+func (a *actions) opencodeStart(p api.SessionCreateParams) (hp.UUID, api.SessionCreateParams, error) {
 	if a.opencode == nil || a.exe == "" {
-		return hp.UUID{}, "", p, control.Errorf(api.ErrorKindUnavailable, "this gff-hab cannot start opencode: it does not know its own executable")
+		return hp.UUID{}, p, control.Errorf(api.ErrorKindUnavailable, "this gff-hab cannot start opencode: it does not know its own executable")
 	}
-	if slices.Contains(p.Argv[1:], "--server") {
-		return hp.UUID{}, "", p, control.Errorf(api.ErrorKindInvalid, "argv names --server; gff-hab starts opencode's server itself")
+	if p.Argv[0] == "" {
+		return hp.UUID{}, p, control.Errorf(api.ErrorKindInvalid, "argv[0] is empty")
 	}
-	port, err := freePort()
-	if err != nil {
-		return hp.UUID{}, "", p, control.Errorf(api.ErrorKindUnavailable, "no free loopback port for the opencode server: %v", err)
+	for _, arg := range p.Argv[1:] {
+		if arg == "--server" || strings.HasPrefix(arg, "--server=") {
+			return hp.UUID{}, p, control.Errorf(api.ErrorKindInvalid, "argv names --server; gff-hab starts opencode's server itself")
+		}
+	}
+	if err := os.MkdirAll(a.opencode.dir, 0o700); err != nil {
+		return hp.UUID{}, p, control.Errorf(api.ErrorKindUnavailable, "the opencode state folder: %v", err)
 	}
 	u := newUUID()
-	url := fmt.Sprintf("http://127.0.0.1:%d", port)
-	p.Argv = append([]string{a.exe, "opencode-pane", "-port", strconv.Itoa(port), "--"}, p.Argv...)
+	p.Argv = append([]string{a.exe, "opencode-pane", "-report", a.opencode.serverPath(u.String()), "--"}, p.Argv...)
 	p.Env = append(slices.Clone(p.Env), opencodePasswordEnv+"="+a.opencode.password(u))
-	return u, url, p, nil
+	return u, p, nil
 }
 
 // noteDir records the repository folder a new session works in as its project's most recently

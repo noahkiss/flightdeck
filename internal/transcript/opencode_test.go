@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strconv"
@@ -248,5 +249,113 @@ func TestOpencodeDriftAndErrors(t *testing.T) {
 	r.MarkDirty()
 	if _, _, _, err := r.Page(context.Background(), "", 10); err == nil {
 		t.Fatal("a failed fetch read as success")
+	}
+}
+
+// TestOpencodeUnreadableOnce (review S5): a message the parser cannot read is one placeholder,
+// however many reads list it again.
+func TestOpencodeUnreadableOnce(t *testing.T) {
+	// The unreadable message is the newest, so every read lists it again.
+	f := &fakeMessages{page: 10, msgs: []json.RawMessage{json.RawMessage(`{"id":"m1","type":"user","text":"hi","time":{"created":1}}`),
+		json.RawMessage(`{"type":"user","text":"no id"}`)}}
+	var changes int
+	r := NewOpencode(OpencodeConfig{Session: "s1", Fetch: f.fetch, OnChange: func(m []api.ChatMessage) { changes += len(m) }})
+	for range 6 {
+		r.MarkDirty()
+		if err := r.Refresh(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	msgs := readAllOpencode(t, r, 50)
+	if len(msgs) != 2 || msgs[1].Event != api.ChatEventUnknown || changes != 0 || f.count() < 6 {
+		t.Fatalf("after 6 reads: %d messages, %d changes: %+v", len(msgs), changes, msgs)
+	}
+}
+
+// TestOpencodeRemoved (review S6): when the server stops listing a message (undo, revert), the
+// reader starts over: one reset event, the message is gone, old cursors are stale. A relist
+// finds it after a revert event, and on its own every opencodeRelistEvery.
+func TestOpencodeRemoved(t *testing.T) {
+	for _, how := range []string{"event", "timer"} {
+		t.Run(how, func(t *testing.T) {
+			f, _ := loadOpencodeFixture(t)
+			clock := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+			var changes []api.ChatMessage
+			r := NewOpencode(OpencodeConfig{Session: "s1", Fetch: f.fetch, Now: func() time.Time { return clock },
+				OnChange: func(m []api.ChatMessage) { changes = append(changes, m...) }})
+			before := readAllOpencode(t, r, 200)
+			_, _, cursor, _ := r.Page(context.Background(), "", 10)
+			f.mu.Lock()
+			f.msgs = f.msgs[:len(f.msgs)-2] // the last two messages are undone
+			f.mu.Unlock()
+			if how == "event" {
+				r.MarkRelist()
+			} else {
+				clock = clock.Add(opencodeRelistEvery)
+			}
+			after := readAllOpencode(t, r, 200)
+			if len(changes) != 1 || changes[0].Event != api.ChatEventReset {
+				t.Fatalf("changes %+v, want one reset", changes)
+			}
+			if len(after) >= len(before) {
+				t.Fatalf("%d messages before, %d after the undo", len(before), len(after))
+			}
+			for _, m := range after {
+				if m.ID == before[len(before)-1].ID {
+					t.Fatalf("the undone message %s is still there", m.ID)
+				}
+			}
+			if _, _, _, err := r.Since(context.Background(), cursor, 10); !errors.Is(err, ErrStaleCursor) {
+				t.Fatalf("a cursor from before the reset: %v", err)
+			}
+		})
+	}
+}
+
+// TestOpencodeWindow (review S9): the first read loads the newest opencodeFirstLoad messages;
+// pages reaching past them load older ones on demand, in order; new messages still arrive.
+func TestOpencodeWindow(t *testing.T) {
+	f := &fakeMessages{page: OpencodePage}
+	n := 2*opencodeFirstLoad + 50
+	for i := range n {
+		f.msgs = append(f.msgs, json.RawMessage(fmt.Sprintf(`{"id":"m%04d","type":"user","text":"t%d","time":{"created":%d}}`, i, i, i+1)))
+	}
+	r := NewOpencode(OpencodeConfig{Session: "s1", Fetch: f.fetch})
+	tail, more, _, err := r.Page(context.Background(), "", 50)
+	if err != nil || !more || len(tail) != 50 || tail[49].ID != fmt.Sprintf("m%04d", n-1) {
+		t.Fatalf("tail: %d messages, more %v, %v", len(tail), more, err)
+	}
+	if c := f.count(); c != opencodeFirstLoad/OpencodePage {
+		t.Fatalf("the first read fetched %d pages, want %d", c, opencodeFirstLoad/OpencodePage)
+	}
+	all := readAllOpencode(t, r, 200)
+	if len(all) != n {
+		t.Fatalf("paged back to %d messages, want %d", len(all), n)
+	}
+	for i, m := range all {
+		if m.ID != fmt.Sprintf("m%04d", i) {
+			t.Fatalf("message %d is %s", i, m.ID)
+		}
+	}
+	f.add(`{"id":"m9999","type":"user","text":"new","time":{"created":99999}}`)
+	r.MarkDirty()
+	if tail, _, _, err := r.Page(context.Background(), "", 1); err != nil || tail[0].ID != "m9999" {
+		t.Fatalf("a new message after paging back: %+v %v", tail, err)
+	}
+}
+
+// TestOpencodeDeadline (review S9): a read of a server that does not answer ends at
+// opencodeRefreshLimit.
+func TestOpencodeDeadline(t *testing.T) {
+	old := opencodeRefreshLimit
+	opencodeRefreshLimit = 100 * time.Millisecond
+	t.Cleanup(func() { opencodeRefreshLimit = old })
+	r := NewOpencode(OpencodeConfig{Session: "s1", Fetch: func(ctx context.Context, cursor string) ([]json.RawMessage, string, error) {
+		<-ctx.Done()
+		return nil, "", ctx.Err()
+	}})
+	start := time.Now()
+	if err := r.Refresh(); !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 5*time.Second {
+		t.Fatalf("refresh of a silent server: %v after %v", err, time.Since(start))
 	}
 }

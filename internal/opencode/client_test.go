@@ -88,7 +88,7 @@ func TestCalls(t *testing.T) {
 		}
 	})
 	ctx := context.Background()
-	if info, err := c.Info(ctx); err != nil || info.Version != "2.2.5" {
+	if info, err := c.Info(ctx); err != nil || info.Version != "2.2.5" || info.PID != 1 {
 		t.Fatalf("info %+v %v", info, err)
 	}
 	if ids, err := c.Active(ctx); err != nil || len(ids) != 1 || ids[0] != "ses_a" {
@@ -115,8 +115,16 @@ func TestCalls(t *testing.T) {
 	}
 	err = c.Reply(ctx, "ses_a", "per_2", ReplyReject, "no")
 	var ae *APIError
-	if !NotFound(err) || !errors.As(err, &ae) || ae.Tag != "PermissionNotFoundError" {
+	if !NotFound(err, TagPermissionNotFound) || Drift(err) || !errors.As(err, &ae) || ae.Tag != "PermissionNotFoundError" {
 		t.Fatalf("reply to a gone request: %v", err)
+	}
+	if NotFound(err, TagSessionNotFound) {
+		t.Fatalf("a missing request taken as a missing session: %v", err)
+	}
+	// A route the server lacks is a 404 with no tag: API drift, never a missing request.
+	err = c.Reply(ctx, "ses_b", "per_1", ReplyOnce, "")
+	if NotFound(err, TagSessionNotFound, TagPermissionNotFound) || !Drift(err) {
+		t.Fatalf("an unknown route taken as a missing request: %v", err)
 	}
 	for _, bad := range []string{"", "../x", "a/b", "ses a", strings.Repeat("a", 129)} {
 		if err := c.Prompt(ctx, bad, "x"); err == nil {
@@ -136,6 +144,7 @@ func TestCalls(t *testing.T) {
 		`POST /api/session/ses_a/prompt {"text":"line one\nline \"two\""}`,
 		`POST /api/session/ses_a/permission/per_1/reply {"decision":"once"}`,
 		`POST /api/session/ses_a/permission/per_2/reply {"decision":"reject","message":"no"}`,
+		`POST /api/session/ses_b/permission/per_1/reply {"decision":"once"}`,
 	}
 	if got := f.requests(); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("requests:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

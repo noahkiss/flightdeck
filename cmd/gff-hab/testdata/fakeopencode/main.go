@@ -1,9 +1,10 @@
 // Command fakeopencode stands in for opencode 2.2.5 in gff-hab's tests. `fakeopencode serve
 // --stdio --hostname h --port p` serves the few API operations the adapter uses, with the
-// password from OPENCODE_PASSWORD, and ends when its stdin closes or on SIGTERM. Any other
-// argv is the TUI: it records its argv and waits for $DIR/end. Everything it does is driven by
-// files in $DIR: each line the test appends to $DIR/emit is sent as an event, prompts go to
-// $DIR/prompts, and permission replies to $DIR/replies.
+// password from OPENCODE_PASSWORD, prints {"url": ...} once it listens, and ends when its stdin
+// closes, on SIGTERM, or when $DIR/die appears. Any other argv is the TUI: it records its argv
+// and waits for $DIR/end. Everything it does is driven by files in $DIR: each line the test
+// appends to $DIR/emit is sent as an event, $DIR/active lists the sessions that run, prompts go
+// to $DIR/prompts, and permission replies to $DIR/replies.
 package main
 
 import (
@@ -106,15 +107,23 @@ func serve() {
 	}
 	password := os.Getenv(opencode.PasswordEnv)
 	appendLine("server.env", envState())
+	appendLine("server.args", strings.Join(os.Args[1:], " "))
 	s := &server{subs: map[chan string]bool{}, pending: map[string]string{}}
 	l, err := net.Listen("tcp", "127.0.0.1:"+port)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	// What opencode prints once it listens. $DIR/url, when it exists, names another URL: a
+	// server that reports what it does not hold.
+	url := "http://" + l.Addr().String()
+	if b, err := os.ReadFile(filepath.Join(dir, "url")); err == nil {
+		url = strings.TrimSpace(string(b))
+	}
+	fmt.Printf("{\"url\":%q}\n", url)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/info", func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `{"version":"2.2.5"}`)
+		fmt.Fprintf(w, `{"version":"2.2.5","pid":%d}`, os.Getpid())
 	})
 	mux.HandleFunc("GET /openapi.json", func(w http.ResponseWriter, r *http.Request) {
 		paths := map[string]map[string]map[string]string{}
@@ -127,7 +136,13 @@ func serve() {
 		json.NewEncoder(w).Encode(map[string]any{"paths": paths})
 	})
 	mux.HandleFunc("GET /api/session/active", func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `{"data":{}}`)
+		// The sessions in $DIR/active, one per line, run.
+		active := map[string]any{}
+		b, _ := os.ReadFile(filepath.Join(dir, "active"))
+		for _, id := range strings.Fields(string(b)) {
+			active[id] = map[string]string{"type": "running"}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"data": active})
 	})
 	mux.HandleFunc("GET /api/session/{id}", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"data":{"id":%q}}`, r.PathValue("id"))
@@ -221,6 +236,15 @@ func serve() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM)
 	go func() { <-sigs; ended <- "SIGTERM" }()
+	go func() { // $DIR/die: the server crashes while the TUI lives
+		for {
+			time.Sleep(20 * time.Millisecond)
+			if _, err := os.Stat(filepath.Join(dir, "die")); err == nil {
+				ended <- "died"
+				return
+			}
+		}
+	}()
 	appendLine("server.exit", <-ended)
 }
 

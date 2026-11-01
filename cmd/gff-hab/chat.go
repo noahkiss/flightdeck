@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -264,10 +265,11 @@ func (c *chatService) opencodeReader(id, pane, native string) (chatSource, error
 	if c.opencode == nil {
 		return nil, control.Errorf(api.ErrorKindUnavailable, "session %s runs opencode, and this gff-hab reads no opencode server", id)
 	}
-	client, version, ok := c.opencode(pane)
+	_, version, ok := c.opencode(pane)
 	if !ok {
-		return nil, control.Errorf(api.ErrorKindUnavailable, "session %s runs an opencode gff-hab did not start, so its server is unknown; start it with session.create harness opencode", id)
+		return nil, control.Errorf(api.ErrorKindUnavailable, "session %s runs an opencode gff-hab did not start, or its server ended, so it has no server to read; start it with session.create harness opencode", id)
 	}
+	get := c.opencode
 	now := c.now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -278,6 +280,11 @@ func (c *chatService) opencodeReader(id, pane, native string) (chatSource, error
 	r := transcript.NewOpencode(transcript.OpencodeConfig{
 		Session: id, Logf: c.logf, OnChange: c.changed,
 		Fetch: func(ctx context.Context, cursor string) ([]json.RawMessage, string, error) {
+			// The server is looked up on every fetch: a server that ended is never asked.
+			client, _, ok := get(pane)
+			if !ok {
+				return nil, "", fmt.Errorf("the opencode server of pane %s ended", pane)
+			}
 			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
 			page, err := client.Messages(ctx, native, cursor, transcript.OpencodePage)
@@ -289,14 +296,19 @@ func (c *chatService) opencodeReader(id, pane, native string) (chatSource, error
 	return r, nil
 }
 
-// dirty tells the opencode readers of a pane that its server reported a change.
-func (c *chatService) dirty(pane string) {
+// dirty tells the opencode readers of a pane that its server reported a change; relist: that
+// messages may have left the conversation (an undo or revert).
+func (c *chatService) dirty(pane string, relist bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, cr := range c.readers {
 		if cr.pane == pane {
 			if r, ok := cr.r.(*transcript.OpencodeReader); ok {
-				r.MarkDirty()
+				if relist {
+					r.MarkRelist()
+				} else {
+					r.MarkDirty()
+				}
 			}
 		}
 	}

@@ -810,34 +810,66 @@ Built choices (`internal/opencode`, `internal/harness/opencode.go`,
 `internal/transcript/opencode.go`, `cmd/gff-hab/opencode.go`, `cmd/gff-hab/opencodepane.go`):
 
 - **Start.** `session.create` with `harness: opencode` runs `argv`, else `opencode`, through
-  `gff-hab opencode-pane -port <p> -- <argv>`. The wrapper starts a private
-  `opencode serve --stdio --hostname 127.0.0.1 --port <p>` in its own process group, with a pipe
-  as its stdin, waits until the port takes a connection (30 s at most), then runs the TUI as
-  `opencode --server http://127.0.0.1:<p> <argv[1:]>` in the foreground. Both stay under the
-  holder, so tools see the pane's environment. When the TUI exits, the wrapper closes the pipe,
-  sends SIGTERM to the server's group, and SIGKILL after 3 s; it exits with the TUI's status.
-  When the wrapper dies, the closed pipe ends the server. `argv` with `--server` is refused.
-- **Port and password.** gff-hab picks a free loopback port. The password is
-  HMAC-SHA256(hook secret, `"gff-hab opencode password v1\0"` + pane uuid) in hex, so it
-  needs no storage and survives a gff-hab restart. It reaches the wrapper as
-  `GFF_OPENCODE_PASSWORD`; the wrapper removes that variable and gives opencode
-  `OPENCODE_PASSWORD`, which opencode strips from its tools' environment. Known limit: another
-  program may take the port between the pick and the server's bind; the wrapper then fails in
-  the pane with the server's last output.
-- **Record.** `<state>/opencode/<pane uuid>.json` holds the server URL and the session last
-  bound (mode 0600 directory, written by rename). At start gff-hab follows the server of every
-  recorded pane the link still follows and removes the other records; a pane that goes away
-  loses its record.
+  `gff-hab opencode-pane -report <state>/opencode/<pane uuid>.server.json -- <argv>`. The
+  wrapper starts a private `opencode serve --stdio --hostname 127.0.0.1 --port 0` in its own
+  process group, with a pipe as its stdin. The server binds a port the system picks and prints
+  `{"url": ...}` on stdout; the wrapper reads that line (30 s at most), so no other program can
+  take the port between a pick and a bind. It then asks `/api/info` at that URL and goes on
+  only when the `pid` there is its child, or a process in the child's group (a launcher may run
+  the real server as its child); a server that reports no pid is taken on the URL alone. It
+  writes the server file (below), then runs the TUI as `opencode --server <url> <argv[1:]>` in
+  the foreground. Both stay under the holder, so tools see the pane's environment. When the TUI
+  exits, the wrapper closes the pipe, sends SIGTERM to the server's group, and SIGKILL after
+  3 s; it removes the server file and exits with the TUI's status. When the wrapper dies, the
+  closed pipe ends the server (live, 2.2.5 exits about 1.5 s after stdin closes). `argv` that
+  names `--server` or `--server=...`, or has an empty `argv[0]`, is refused.
+- **Password.** HMAC-SHA256(hook secret, `"gff-hab opencode password v1\0"` + pane uuid) in
+  hex, so it needs no storage and survives a gff-hab restart. It reaches the wrapper as
+  `GFF_OPENCODE_PASSWORD`; the wrapper removes that variable from its own environment for its
+  children and gives opencode `OPENCODE_PASSWORD`. It never appears in argv, logs or the state
+  files. It is not secret from the same user: the wrapper's initial environment block
+  (`/proc/<pid>/environ` on Linux) still holds `GFF_OPENCODE_PASSWORD`, since Go does not
+  rewrite it, and the TUI and server hold `OPENCODE_PASSWORD`. Whether opencode strips it from
+  its tools' environment was not checked. Any process of the same user can read it, as it can
+  read the hook secret; the password keeps out other users only.
+- **Server file and record.** Two files per pane in `<state>/opencode` (directory mode 0700,
+  files 0600, each written through a temporary file and a rename; `MkdirAll` does not tighten
+  a directory that already exists). `<pane uuid>.server.json` is the wrapper's: the server's
+  URL and pid, and `ended: true` once the server exited. `<pane uuid>.json` is gff-hab's: the
+  session last bound. gff-hab reads the server file before each stream connection, each send,
+  answer and chat fetch, and talks to the URL only while the file names a server that has not
+  ended and whose pid exists. After connecting it checks that `/api/info` names the same pid;
+  another pid stops following for good, with an error in the log. Known limit: between the
+  server's death and the wrapper reaping it and writing `ended` (microseconds; the pid of an
+  unreaped child still exists), a reconnect can still reach the old port. gff-hab stops
+  following a pane on its exit or removal, and removes both files. At start it removes the
+  records of servers that ended (or whose pid is gone, or whose wrapper never wrote a server
+  file within a minute), follows the panes the link follows, and keeps the rest pending: a
+  holder the link reaches late reports them with `PaneAdded`, and they are followed then.
 - **Client.** Typed by hand for the eight operations in `opencode.Operations`, pinned to 2.2.5.
   A generator buys little, since the document does not type events. On its first connection to
   a server gff-hab checks the document has each operation under the same method and path, and
-  logs an error naming each missing one. A server version other than the tested one is logged;
-  the adapter goes on. `detect.Tested` has opencode 2.2.
+  logs an error naming each missing one; a document it cannot fetch is logged as an error once.
+  A server version other than the tested one is logged; the adapter goes on. `detect.Tested`
+  has opencode 2.2. A 404 counts as a missing session or request only with the tag
+  `SessionNotFoundError` or `PermissionNotFoundError`; a 404 with another tag or none (2.2.5
+  answers an unknown route with an empty 404) is a moved route: `unavailable`, named as API
+  drift.
 - **State.** One event stream per pane (`GET /api/event`, filtered by `types`), source
   `server`, stamped with the event's `created`. It reconnects after 250 ms, doubling to 10 s.
-  On each connect it reads `/api/session/active` and `/api/permission/request`: a running
-  top-level session binds the pane as `working`, else the recorded session binds as `idle`, and
-  each pending request opens as `blocked:permission`.
+  On each connect it reads `/api/permission/request`, then `/api/session/active`, and stamps
+  what it applies with the time taken before the subscription was sent, so every event the
+  stream then delivers is newer and wins (a turn that ends during the reads still shows `done`).
+  A running top-level session binds the pane as `working`, else the recorded session binds as
+  `idle`. `working` is not applied while a request is pending, since it would end the request;
+  each pending request the pane does not already show opens as `blocked:permission`, and a
+  request the pane shows that the server no longer lists ends. When the bound session stopped
+  running while the stream was down, its newest message gives the end: an `idle` message with
+  outcome `succeeded` is `done`, `failed` is `error`, anything else `idle`. A session lookup
+  (`GET /api/session/:id`) is bounded to 5 s; when it fails, a session other than the bound one
+  is taken as a child, so a failed lookup never moves the pane. The adapter remembers the
+  session of at most 256 open requests, drops one on `permission.replied`, and drops the
+  oldest first past the bound.
 
   | Server event | Agent state |
   |---|---|
@@ -855,18 +887,27 @@ Built choices (`internal/opencode`, `internal/harness/opencode.go`,
   else from `GET /api/session/:id`.
 - **Input.** `session.send` posts the text to `/api/session/:id/prompt` under the same gates
   as the other harnesses (idle, done or error; no open request; one send at a time). No session
-  yet (a fresh TUI) answers `unavailable`: type the first message in the terminal. 404 is
-  `conflict`.
+  yet (a fresh TUI) answers `unavailable`: type the first message in the terminal. A
+  `SessionNotFoundError` 404 is `conflict`.
 - **Permission answers.** `approval.answer` posts `once` (allow) or `reject` (deny, with a
   message) to `/api/session/:id/permission/:request/reply`, under the request's own session for
-  a child's request. 404 means it was answered in the terminal or ended: `conflict`. The usual
-  read-back then waits for `permission.replied`.
+  a child's request. A `PermissionNotFoundError` or `SessionNotFoundError` 404 means it was
+  answered in the terminal or ended: `conflict`. The usual read-back then waits for
+  `permission.replied`. A deny differs from Claude's: a Claude deny by keys interrupts the turn,
+  while opencode's `reject` with a message likely hands the message to the agent, which goes
+  on with the turn (not checked live).
 - **Chat view.** `chat.page` reads `GET /api/session/:id/message` through the pane's server;
-  gff-hab never opens opencode's database. A read fetches pages of 100, newest first, back to
-  the first message already held in a form that no longer changes. It fetches only after a
-  message event marked the session changed, or 15 s after the last fetch. Cursors count the
-  changes this reader saw under a name random per reader, so a cursor from before a gff-hab
-  restart is stale. Version range 2.2.0 to 2.2.5.
+  gff-hab never opens opencode's database. The first read loads the newest 200 messages, in
+  pages of 100; a page that reaches past the oldest one held fetches older pages then. A later
+  read fetches newest first, back to the first message held in a form that no longer changes,
+  once every message that may still change was listed again. It fetches only after a message
+  event marked the session changed, or 15 s after the last fetch. After a revert event
+  (`session.revert.staged`, `.committed`, `.cleared`), and at most once a minute anyway, a read
+  lists every loaded message again; when the server no longer lists a message the reader holds
+  (undo, revert), it starts over: one `reset` event, a new cursor name, and the conversation as
+  listed now. One read, every page included, ends after 30 s. The reader keeps a hash of each
+  message, not its JSON. Cursors count the changes this reader saw under a name random per
+  reader, so a cursor from before a gff-hab restart is stale. Version range 2.2.0 to 2.2.5.
 
   | Message | Chat message |
   |---|---|
@@ -880,7 +921,10 @@ Built choices (`internal/opencode`, `internal/harness/opencode.go`,
   | `shell` (the owner's `!` command) | kind `tool`, name `shell` |
   | `skill`, `agent-switched`, `model-switched` | event `notice` |
   | `synthetic`, `system`, `location-switched` | left out |
-  | any other type or block, an unreadable message | event `unknown`, one warning per kind |
+  | any other type or block, an unreadable message | event `unknown`, one warning per kind; an unreadable message's id comes from a hash of its JSON, so a read that lists it again adds nothing |
+- **Not checked.** Whether the server's own children (persistent PTYs, LSP and MCP servers)
+  end with it: a child that calls `setsid` leaves the server's process group, so the wrapper's
+  group signals miss it. If only the wrapper dies, the TUI is left talking to a dead server.
 
 - **Panes opencode was not started in by gff-hab** have no server gff-hab knows: chat, sends
   and answers are `unavailable`. The plugin hook path (above) still gives state where the

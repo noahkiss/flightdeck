@@ -3,6 +3,7 @@ package transcript
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -31,9 +32,20 @@ const OpencodePage = 100
 // read forever.
 const opencodeMaxPages = 1000
 
+// opencodeFirstLoad is how many of the newest messages the first read loads. Older ones are
+// fetched when a page reaches past them.
+const opencodeFirstLoad = 2 * OpencodePage
+
+// opencodeRefreshLimit bounds one read of the server, every page included. Tests shorten it.
+var opencodeRefreshLimit = 30 * time.Second
+
 // opencodeStale is how long a loaded conversation goes without a fetch when nothing marked it
 // dirty: a missed event costs at most this long.
 const opencodeStale = 15 * time.Second
+
+// opencodeRelistEvery is how often a read lists every loaded message again, to find messages
+// the server removed when no event said so.
+const opencodeRelistEvery = time.Minute
 
 // FetchFunc reads one page of a session's messages from the opencode server, newest first.
 // An empty cursor starts at the newest; next is empty on the last page.
@@ -54,6 +66,10 @@ type OpencodeConfig struct {
 // (harness-adapters.md, opencode). It never opens opencode's database. Cursors count the
 // changes this reader saw, under a name random per reader: a cursor from before a gff-hab
 // restart is stale, and the client takes the tail again. It is safe for concurrent use.
+//
+// It loads the newest opencodeFirstLoad messages first, and older pages when a page reaches
+// past them. When the server stops listing a message (opencode's undo and revert), the reader
+// starts over: it sends one reset event and serves the conversation as listed now.
 type OpencodeReader struct {
 	session  string
 	fetch    FetchFunc
@@ -61,29 +77,35 @@ type OpencodeReader struct {
 	onChange func([]api.ChatMessage)
 	now      func() time.Time
 
-	mu      sync.Mutex
-	c       *conversation
-	gen     string
-	seq     int64             // changes seen; the cursor offset
-	raw     map[string]string // message id to the JSON last parsed
-	final   map[string]bool   // messages that no longer change
-	dirty   bool
-	fetched time.Time
-	loaded  bool
-	version string
-	drift   string
-	warned  map[string]bool
-	pending []*item
+	mu       sync.Mutex
+	c        *conversation
+	gen      string
+	seq      int64               // changes seen; the cursor offset
+	sums     map[string][32]byte // message id (or placeholder id) to a hash of the JSON last parsed
+	final    map[string]bool     // messages that no longer change
+	ids      map[string]bool     // server message ids held
+	oldest   string              // the server id of the oldest message held
+	older    string              // the cursor of the messages older than those held, or ""
+	dirty    bool
+	relist   bool
+	fetched  time.Time
+	relisted time.Time
+	loaded   bool
+	started  bool // a read reached the server once
+	resets   int
+	version  string
+	drift    string
+	warned   map[string]bool
+	pending  []*item
+	collect  *[]api.ChatMessage // set while older history loads: parsed messages go here
 }
 
 // NewOpencode returns a reader of one opencode session. It fetches nothing until the first
 // call.
 func NewOpencode(cfg OpencodeConfig) *OpencodeReader {
-	var b [6]byte
-	rand.Read(b[:])
 	r := &OpencodeReader{session: cfg.Session, fetch: cfg.Fetch, logf: cfg.Logf, onChange: cfg.OnChange, now: cfg.Now,
-		c: newConversation(), gen: "oc" + hex.EncodeToString(b[:]), raw: map[string]string{}, final: map[string]bool{},
 		dirty: true, loaded: cfg.FromEmpty, warned: map[string]bool{}}
+	r.clear()
 	if r.logf == nil {
 		r.logf = func(string, ...any) {}
 	}
@@ -93,10 +115,27 @@ func NewOpencode(cfg OpencodeConfig) *OpencodeReader {
 	return r
 }
 
+// clear empties the conversation and names a new generation, so every cursor goes stale.
+func (r *OpencodeReader) clear() {
+	var b [6]byte
+	rand.Read(b[:])
+	r.c, r.gen = newConversation(), "oc"+hex.EncodeToString(b[:])
+	r.sums, r.final, r.ids = map[string][32]byte{}, map[string]bool{}, map[string]bool{}
+	r.oldest, r.older, r.started = "", "", false
+}
+
 // MarkDirty says the session's messages changed: the next read fetches them.
 func (r *OpencodeReader) MarkDirty() {
 	r.mu.Lock()
 	r.dirty = true
+	r.mu.Unlock()
+}
+
+// MarkRelist says messages may have left the session: the next read lists every loaded
+// message again.
+func (r *OpencodeReader) MarkRelist() {
+	r.mu.Lock()
+	r.dirty, r.relist = true, true
 	r.mu.Unlock()
 }
 
@@ -152,46 +191,132 @@ func (r *OpencodeReader) Size() int64 {
 	return r.seq
 }
 
-// refresh fetches pages from the newest back to the first message it already holds in its
-// final form, then parses the changed ones, oldest first.
+// messageID returns the id of a raw message, or "".
+func messageID(raw json.RawMessage) string {
+	var head struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal(raw, &head) != nil {
+		return ""
+	}
+	return head.ID
+}
+
+// refresh fetches pages from the newest back, then parses the changed messages, oldest first.
+// The first read loads the newest opencodeFirstLoad messages. A later read stops at the first
+// message held in its final form once every message that may still change was listed again,
+// or, when it lists everything again (MarkRelist, or every opencodeRelistEvery), at the oldest
+// message held. A read that reached the oldest message held and did not list every message it
+// holds starts the conversation over.
 func (r *OpencodeReader) refresh(ctx context.Context) error {
-	if !r.dirty && r.now().Sub(r.fetched) < opencodeStale {
+	now := r.now()
+	full := r.started && (r.relist || now.Sub(r.relisted) >= opencodeRelistEvery)
+	if !r.dirty && !full && now.Sub(r.fetched) < opencodeStale {
 		return nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, opencodeRefreshLimit)
+	defer cancel()
 	// Every message held in a form that may still change must be fetched again.
 	open := map[string]bool{}
-	for id := range r.raw {
+	for id := range r.ids {
 		if !r.final[id] {
 			open[id] = true
 		}
 	}
+	listed := map[string]bool{}
 	var got []json.RawMessage
-	cursor := ""
-	reachedFinal := false
+	cursor, next := "", ""
+	reachedFinal, reachedOldest := false, false
+pages:
 	for pages := 1; ; pages++ {
 		if pages > opencodeMaxPages {
 			return fmt.Errorf("opencode session %s: more than %d pages of messages", r.session, opencodeMaxPages)
 		}
-		page, next, err := r.fetch(ctx, cursor)
+		page, n, err := r.fetch(ctx, cursor)
 		if err != nil {
 			return err
 		}
-		got = append(got, page...)
+		next = n
 		for _, m := range page {
-			var head struct {
-				ID string `json:"id"`
+			id := messageID(m)
+			if r.started && id != "" && id == r.oldest {
+				got = append(got, m)
+				listed[id], reachedOldest = true, true
+				break // what is older than the window held waits for a page that reaches it
 			}
-			if json.Unmarshal(m, &head) == nil {
-				reachedFinal = reachedFinal || r.final[head.ID]
-				delete(open, head.ID)
+			got = append(got, m)
+			if id != "" {
+				listed[id] = true
+				reachedFinal = reachedFinal || r.final[id]
+				delete(open, id)
 			}
 		}
-		if next == "" || next == cursor || (reachedFinal && len(open) == 0) {
-			break
+		switch {
+		case next == "" || next == cursor:
+			next = ""
+			break pages
+		case reachedOldest:
+			break pages
+		case !r.started:
+			if len(got) >= opencodeFirstLoad {
+				break pages
+			}
+		case !full && reachedFinal && len(open) == 0:
+			break pages
 		}
 		cursor = next
 	}
-	r.dirty, r.fetched = false, r.now()
+	r.dirty, r.fetched = false, now
+	if full {
+		r.relist, r.relisted = false, now
+	}
+	if !r.started {
+		r.relisted, r.older = now, next
+	} else if next == "" && !reachedOldest {
+		r.older = "" // the list ended: nothing older is left on the server
+	}
+	if r.started && (reachedOldest || next == "") {
+		for id := range r.ids {
+			if !listed[id] {
+				r.restart(got, id)
+				return nil
+			}
+		}
+	}
+	r.parse(got)
+	return nil
+}
+
+// restart serves the conversation as the server lists it now, after a message it held (gone)
+// left: a client holding the old one gets one reset event and takes the tail again.
+func (r *OpencodeReader) restart(got []json.RawMessage, gone string) {
+	r.resets++
+	r.logf("opencode session %s: message %s left the conversation (undo or revert); reading it again (%d times so far)", r.session, gone, r.resets)
+	older, seen := r.older, r.loaded
+	r.clear()
+	r.older = older
+	r.loaded = false
+	r.parse(got)
+	if seen && r.onChange != nil {
+		r.onChange([]api.ChatMessage{{ID: "reset-" + strconv.Itoa(r.resets), Session: r.session,
+			Kind: api.ChatKindEvent, Event: api.ChatEventReset, At: r.now().UTC().Format(time.RFC3339),
+			Text: "Messages left the opencode session; the conversation was read again"}})
+	}
+	r.loaded = true
+}
+
+// parse parses fetched messages, newest first as the server lists them, and reports the ones
+// that changed to OnChange once the conversation was loaded.
+func (r *OpencodeReader) parse(got []json.RawMessage) {
+	if !r.started {
+		for i := len(got) - 1; i >= 0; i-- {
+			if id := messageID(got[i]); id != "" {
+				r.oldest = id
+				break
+			}
+		}
+	}
+	r.started = true
 	r.pending = r.pending[:0]
 	for i := len(got) - 1; i >= 0; i-- { // oldest first
 		r.message(got[i])
@@ -207,6 +332,34 @@ func (r *OpencodeReader) refresh(ctx context.Context) error {
 	}
 	r.pending = r.pending[:0]
 	r.loaded = true
+}
+
+// loadOlder fetches one page of the messages older than those held and puts them before them.
+// They are history, not changes: OnChange and Since never see them.
+func (r *OpencodeReader) loadOlder(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, opencodeRefreshLimit)
+	defer cancel()
+	page, next, err := r.fetch(ctx, r.older)
+	if err != nil {
+		return err
+	}
+	if next == r.older {
+		next = ""
+	}
+	var msgs []api.ChatMessage
+	r.collect = &msgs
+	for i := len(page) - 1; i >= 0; i-- { // oldest first
+		r.message(page[i])
+	}
+	r.collect = nil
+	r.c.prepend(msgs)
+	for i := len(page) - 1; i >= 0; i-- {
+		if id := messageID(page[i]); id != "" {
+			r.oldest = id
+			break
+		}
+	}
+	r.older = next
 	return nil
 }
 
@@ -220,6 +373,13 @@ func (r *OpencodeReader) Page(ctx context.Context, before string, limit int) (ms
 		return nil, false, "", err
 	}
 	msgs, more, err = r.c.page(before, limit)
+	// The page reached the oldest message held: fetch older ones while the server has them.
+	for err == nil && !more && r.older != "" {
+		if err := r.loadOlder(ctx); err != nil {
+			return nil, false, "", err
+		}
+		msgs, more, err = r.c.page(before, limit)
+	}
 	if err != nil {
 		return nil, false, "", err
 	}
@@ -322,19 +482,27 @@ func msTime(ms float64) string {
 
 // message parses one message when its JSON changed since the last fetch.
 func (r *OpencodeReader) message(raw json.RawMessage) {
+	sum := sha256.Sum256(raw)
 	var m ocMessage
 	if err := json.Unmarshal(raw, &m); err != nil || m.ID == "" {
-		r.seq++
-		id := "unreadable-" + strconv.FormatInt(r.seq, 10)
+		// No id: the placeholder is named by the message's contents, so a read that lists it
+		// again finds it held.
+		id := "unreadable-" + hex.EncodeToString(sum[:8])
+		if _, ok := r.sums[id]; ok {
+			return
+		}
+		r.sums[id] = sum
+		r.change()
 		r.warn("unreadable", "an opencode message in an unknown shape: %v", err)
 		r.emit(api.ChatMessage{ID: id, Kind: api.ChatKindEvent, Event: api.ChatEventUnknown, Text: "An unreadable opencode message"})
 		return
 	}
-	if r.raw[m.ID] == string(raw) {
+	r.ids[m.ID] = true
+	if old, ok := r.sums[m.ID]; ok && old == sum {
 		return
 	}
-	r.raw[m.ID] = string(raw)
-	r.seq++
+	r.sums[m.ID] = sum
+	r.change()
 	at := msTime(m.Time.Created)
 	emit := func(msg api.ChatMessage) {
 		if msg.At == "" {
@@ -435,7 +603,19 @@ func (r *OpencodeReader) message(raw json.RawMessage) {
 	}
 }
 
+// change counts a change, except while older history loads (collect).
+func (r *OpencodeReader) change() {
+	if r.collect == nil {
+		r.seq++
+	}
+}
+
+// emit stores a parsed message, or collects it while older history loads.
 func (r *OpencodeReader) emit(msg api.ChatMessage) {
+	if r.collect != nil {
+		*r.collect = append(*r.collect, msg)
+		return
+	}
 	r.pending = append(r.pending, r.c.put(msg, r.seq))
 }
 

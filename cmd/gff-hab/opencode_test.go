@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,10 +19,7 @@ import (
 // from its record; closing the pane ends the server and removes the record.
 func TestOpencodeAdapter(t *testing.T) {
 	e := newHabEnv(t, 0)
-	fake := filepath.Join(e.work, "opencode")
-	if out, err := exec.Command("go", "build", "-o", fake, "./testdata/fakeopencode").CombinedOutput(); err != nil {
-		t.Fatalf("build the fake opencode: %v\n%s", err, out)
-	}
+	fake := buildFakeOpencode(t)
 	c := e.control()
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(60*time.Second))
 	defer cancel()
@@ -41,9 +37,17 @@ func TestOpencodeAdapter(t *testing.T) {
 	if s := read("server.env"); !strings.Contains(s, "password=set gff=absent") {
 		t.Fatalf("server env: %q", s)
 	}
+	if a := read("server.args"); !strings.Contains(a, "--port 0") {
+		t.Fatalf("server argv %q: the server must pick its own port", a)
+	}
 	record := filepath.Join(e.state, opencodeDir, pane+".json")
 	if _, err := os.Stat(record); err != nil {
 		t.Fatalf("no record: %v", err)
+	}
+	srvFile := filepath.Join(e.state, opencodeDir, pane+".server.json")
+	sf, err := readServerFile(srvFile)
+	if err != nil || sf.PID <= 0 || sf.Ended || !strings.HasPrefix(read("tui.args"), "--server "+sf.URL+" ") {
+		t.Fatalf("server file %+v %v; TUI %q", sf, err, read("tui.args"))
 	}
 	emit := func(line string) {
 		f, err := os.OpenFile(filepath.Join(e.work, "emit"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
@@ -114,4 +118,5 @@ func TestOpencodeAdapter(t *testing.T) {
 	}
 	waitUntil(t, "the server's end", func() bool { return read("server.exit") != "" })
 	waitUntil(t, "the record's removal", func() bool { _, err := os.Stat(record); return os.IsNotExist(err) })
+	waitUntil(t, "the server file's removal", func() bool { _, err := os.Stat(srvFile); return os.IsNotExist(err) })
 }

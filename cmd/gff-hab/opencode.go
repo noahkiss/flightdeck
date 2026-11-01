@@ -8,11 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -38,58 +39,85 @@ var opencodeChatEvents = []string{
 	"session.model.selected",
 }
 
+// opencodeRelistEvents are the server events after which messages may have left a session
+// (opencode's undo and revert): the chat view reads the whole loaded window again.
+var opencodeRelistEvents = []string{"session.revert.staged", "session.revert.committed", "session.revert.cleared"}
+
 // opencodeRetry bounds the wait between two attempts to reach a pane's server.
 const (
 	opencodeRetryMin = 250 * time.Millisecond
 	opencodeRetryMax = 10 * time.Second
 )
 
+// opencodeMaxRequests bounds the permission requests a pane remembers the session of.
+const opencodeMaxRequests = 256
+
 // opencodeServers follows the private opencode server of each opencode pane gff-hab started
 // (harness-adapters.md, opencode, built choices). For each it keeps one event stream open and
 // applies its state events to the agent store with source server; it serves the client that
-// session.send, approval.answer and the chat view use. A pane's record, <state>/opencode/<pane
-// uuid>.json, holds the server's URL and the session last bound, so a restarted gff-hab finds
-// the server again; the password is derived from the hook secret, never stored.
+// session.send, approval.answer and the chat view use.
+//
+// Two files per pane live in <state>/opencode. <pane uuid>.server.json is the pane's: its
+// wrapper writes the URL its server listens on, the server's pid, and that the server ended
+// (ocServer). <pane uuid>.json is gff-hab's: the session last bound, so a restarted gff-hab
+// binds it again. The password is derived from the hook secret, never stored.
 type opencodeServers struct {
 	dir    string
 	secret []byte
 	agents *harness.Store
 	logf   func(string, ...any)
-	// dirty, if set, hears that a pane's conversation changed (the chat view).
-	dirty func(pane string)
+	// dirty, if set, hears that a pane's conversation changed (the chat view); relist says
+	// messages may have been removed.
+	dirty func(pane string, relist bool)
 
-	mu    sync.Mutex
-	panes map[string]*ocPane
+	mu      sync.Mutex
+	panes   map[string]*ocPane
+	pending map[string]pendingPane // recorded panes the link does not follow yet
+}
+
+// pendingPane is a recorded pane load found before the link reported it.
+type pendingPane struct {
+	uuid hp.UUID
+	rec  ocRecord
 }
 
 // ocPane is one pane's server and what the adapter learned from it.
 type ocPane struct {
-	url     string
-	client  *opencode.Client
-	cancel  context.CancelFunc
-	done    chan struct{}
-	version string
+	password   string
+	serverPath string
+	cancel     context.CancelFunc
+	done       chan struct{}
 
 	mu       sync.Mutex
+	client   *opencode.Client // the client of the server the server file names; nil before
+	srvPID   int              // that server's pid
+	version  string
 	session  string            // the session last bound, as recorded
 	children map[string]bool   // session id: has a parent
 	running  map[string]bool   // sessions whose agent loop runs
 	requests map[string]string // permission request id: its session
+	reqOrder []string          // request ids, oldest first
 	docOK    bool              // the OpenAPI document was checked
+	docErr   string            // the last document fetch error logged
 }
 
 // ocRecord is a pane's record file.
 type ocRecord struct {
-	URL     string `json:"url"`
 	Session string `json:"session,omitempty"`
 }
+
+// errServerGone: the server file says the pane's server ended, or names a process that is gone.
+var errServerGone = errors.New("the pane's opencode server ended")
+
+// errNotOurServer: the server answering at the URL is not the process the server file names.
+var errNotOurServer = errors.New("another process answers at the pane's opencode server URL")
 
 func newOpencodeServers(state string, secret []byte, agents *harness.Store, logf func(string, ...any)) *opencodeServers {
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
 	return &opencodeServers{dir: filepath.Join(state, opencodeDir), secret: append([]byte(nil), secret...), agents: agents,
-		logf: logf, panes: map[string]*ocPane{}}
+		logf: logf, panes: map[string]*ocPane{}, pending: map[string]pendingPane{}}
 }
 
 // password is the opencode server password of the pane with this uuid.
@@ -100,19 +128,13 @@ func (o *opencodeServers) password(u hp.UUID) string {
 	return hex.EncodeToString(m.Sum(nil))
 }
 
-// freePort asks the system for a free loopback port. Another program may take it before the
-// pane's server binds it; the wrapper then fails visibly in the pane.
-func freePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port, nil
-}
-
 func (o *opencodeServers) recordPath(pane string) string {
 	return filepath.Join(o.dir, pane+".json")
+}
+
+// serverPath is the server file the pane's wrapper writes.
+func (o *opencodeServers) serverPath(pane string) string {
+	return filepath.Join(o.dir, pane+".server.json")
 }
 
 func (o *opencodeServers) writeRecord(pane string, r ocRecord) error {
@@ -140,16 +162,20 @@ func (o *opencodeServers) writeRecord(pane string, r ocRecord) error {
 	return nil
 }
 
-// register records a new pane's server and starts following it.
-func (o *opencodeServers) register(pane string, u hp.UUID, url string) error {
-	if err := o.writeRecord(pane, ocRecord{URL: url}); err != nil {
+// register records a new pane and starts following its server, once the wrapper reports it.
+func (o *opencodeServers) register(pane string, u hp.UUID) error {
+	if err := o.writeRecord(pane, ocRecord{}); err != nil {
 		return fmt.Errorf("record the opencode server of pane %s: %w", pane, err)
 	}
-	return o.follow(pane, u, ocRecord{URL: url})
+	o.follow(pane, u, ocRecord{})
+	return nil
 }
 
-// load follows the server of every recorded pane that live says the link still follows, and
-// removes the record of every other one.
+// load reads the records a previous gff-hab left. It removes the records of panes whose server
+// ended, follows the server of every pane live says the link follows, and keeps the others
+// pending: a holder the link has not reached yet may still list them, and added follows them
+// when it does. A record with no server file is removed once it is older than the time a
+// wrapper takes to report.
 func (o *opencodeServers) load(live func(pane string) (hp.UUID, bool)) {
 	entries, err := os.ReadDir(o.dir)
 	if err != nil {
@@ -157,12 +183,16 @@ func (o *opencodeServers) load(live func(pane string) (hp.UUID, bool)) {
 	}
 	for _, e := range entries {
 		pane, ok := strings.CutSuffix(e.Name(), ".json")
-		if !ok || strings.HasPrefix(pane, ".") {
+		if !ok || strings.HasPrefix(pane, ".") || strings.HasSuffix(pane, ".server") {
 			continue
 		}
-		u, ok := live(pane)
+		u, ok := parseUUID(pane)
 		if !ok {
-			os.Remove(filepath.Join(o.dir, e.Name()))
+			continue
+		}
+		if o.serverEnded(pane, e) {
+			os.Remove(o.recordPath(pane))
+			os.Remove(o.serverPath(pane))
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(o.dir, e.Name()))
@@ -174,20 +204,44 @@ func (o *opencodeServers) load(live func(pane string) (hp.UUID, bool)) {
 			o.logf("opencode: pane %s: unreadable record: %v", pane, err)
 			continue
 		}
-		if err := o.follow(pane, u, r); err != nil {
-			o.logf("opencode: pane %s: %v", pane, err)
+		o.mu.Lock()
+		o.pending[pane] = pendingPane{uuid: u, rec: r}
+		o.mu.Unlock()
+		if _, ok := live(pane); ok {
+			o.added(pane)
 		}
 	}
 }
 
-func (o *opencodeServers) follow(pane string, u hp.UUID, r ocRecord) error {
-	c, err := opencode.New(r.URL, o.password(u))
-	if err != nil {
-		return err
+// serverEnded reports whether a recorded pane's server is gone for good: its server file says
+// it ended or names a process that is gone, or there is no server file long after the record.
+func (o *opencodeServers) serverEnded(pane string, rec fs.DirEntry) bool {
+	s, err := readServerFile(o.serverPath(pane))
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		info, err := rec.Info()
+		return err == nil && time.Since(info.ModTime()) > 2*opencodeReady
+	case err != nil:
+		return false
 	}
+	return s.Ended || !processAlive(s.PID)
+}
+
+// added follows a recorded pane once the link follows it.
+func (o *opencodeServers) added(pane string) {
+	o.mu.Lock()
+	pp, ok := o.pending[pane]
+	delete(o.pending, pane)
+	o.mu.Unlock()
+	if ok {
+		o.follow(pane, pp.uuid, pp.rec)
+	}
+}
+
+func (o *opencodeServers) follow(pane string, u hp.UUID, r ocRecord) {
 	ctx, cancel := context.WithCancel(context.Background())
-	p := &ocPane{url: r.URL, client: c, cancel: cancel, done: make(chan struct{}), session: r.Session,
-		children: map[string]bool{}, running: map[string]bool{}, requests: map[string]string{}}
+	p := &ocPane{password: o.password(u), serverPath: o.serverPath(pane), cancel: cancel, done: make(chan struct{}),
+		session: r.Session, children: map[string]bool{}, running: map[string]bool{}, requests: map[string]string{}}
 	o.mu.Lock()
 	if old := o.panes[pane]; old != nil {
 		old.cancel()
@@ -195,19 +249,20 @@ func (o *opencodeServers) follow(pane string, u hp.UUID, r ocRecord) error {
 	o.panes[pane] = p
 	o.mu.Unlock()
 	go o.watch(ctx, pane, p)
-	return nil
 }
 
-// forget stops following a pane that is gone and removes its record.
+// forget stops following a pane that is gone or whose program exited, and removes its files.
 func (o *opencodeServers) forget(pane string) {
 	o.mu.Lock()
 	p := o.panes[pane]
 	delete(o.panes, pane)
+	delete(o.pending, pane)
 	o.mu.Unlock()
 	if p != nil {
 		p.cancel()
 	}
 	os.Remove(o.recordPath(pane))
+	os.Remove(o.serverPath(pane))
 }
 
 // Close stops every stream and waits for them.
@@ -230,7 +285,9 @@ func (o *opencodeServers) pane(pane string) *ocPane {
 	return o.panes[pane]
 }
 
-// Client returns the client of a pane's server, if gff-hab started the pane's opencode.
+// Client returns the client of a pane's server, if gff-hab started the pane's opencode and the
+// pane's server file still names a live server. It reads the server file on every call, so a
+// send, an answer or a chat read never goes to a port the server gave up.
 func (o *opencodeServers) Client(pane string) (*opencode.Client, bool) {
 	if o == nil {
 		return nil, false
@@ -239,7 +296,44 @@ func (o *opencodeServers) Client(pane string) (*opencode.Client, bool) {
 	if p == nil {
 		return nil, false
 	}
-	return p.client, true
+	c, err := p.server()
+	return c, err == nil && c != nil
+}
+
+// processAlive reports whether a process with this pid exists.
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// server reads the pane's server file and returns the client of the server it names. Nil with
+// no error: the wrapper has not reported yet. errServerGone: the server ended, or its process
+// is gone, so its port may belong to anyone now.
+func (p *ocPane) server() (*opencode.Client, error) {
+	s, err := readServerFile(p.serverPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("the pane's server file: %w", err)
+	}
+	if s.Ended || !processAlive(s.PID) {
+		return nil, errServerGone
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.client != nil && p.client.Base() == strings.TrimSuffix(s.URL, "/") && p.srvPID == s.PID {
+		return p.client, nil
+	}
+	c, err := opencode.New(s.URL, p.password)
+	if err != nil {
+		return nil, err
+	}
+	p.client, p.srvPID = c, s.PID
+	return c, nil
 }
 
 // requestSession returns the session a permission request of the pane belongs to: a child
@@ -266,15 +360,45 @@ func (o *opencodeServers) version(pane string) string {
 }
 
 // watch keeps the pane's event stream open until ctx ends, reconnecting with a growing wait.
+// Before each attempt it reads the server file; it stops for good when the server ended or
+// another process answers at its URL.
 func (o *opencodeServers) watch(ctx context.Context, pane string, p *ocPane) {
 	defer close(p.done)
-	types := append(append([]string(nil), harness.OpencodeStateEvents...), opencodeChatEvents...)
+	types := append(append(append([]string(nil), harness.OpencodeStateEvents...), opencodeChatEvents...), opencodeRelistEvents...)
 	wait := opencodeRetryMin
 	var lastErr string
 	for {
+		c, err := p.server()
+		if errors.Is(err, errServerGone) {
+			o.logf("opencode: pane %s: %v; no longer followed", pane, err)
+			return
+		}
+		if c == nil {
+			if err != nil && err.Error() != lastErr {
+				o.logf("opencode: pane %s: %v; trying again", pane, err)
+				lastErr = err.Error()
+			}
+			// The wrapper has not reported its server yet: look again soon.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(opencodeRetryMin):
+			}
+			continue
+		}
 		start := time.Now()
-		err := p.client.Events(ctx, types, func() { o.resync(ctx, pane, p) }, func(e opencode.Event) { o.event(ctx, pane, p, e) })
+		actx, acancel := context.WithCancelCause(ctx)
+		err = c.Events(actx, types, func() {
+			if err := o.resync(actx, pane, p, c, start.UnixMilli()); err != nil {
+				acancel(err)
+			}
+		}, func(e opencode.Event) { o.event(actx, pane, p, e) })
+		acancel(nil)
 		if ctx.Err() != nil {
+			return
+		}
+		if errors.Is(err, errNotOurServer) {
+			o.logf("opencode: pane %s: error: %v; no longer followed", pane, err)
 			return
 		}
 		if time.Since(start) > time.Minute {
@@ -293,39 +417,55 @@ func (o *opencodeServers) watch(ctx context.Context, pane string, p *ocPane) {
 	}
 }
 
-// resync reads the server's state when the stream (re)connects: the version, the document's
-// operations (once), the sessions that run, and the open permission requests. Events from now
-// on arrive on the stream, so nothing between the read and the stream is lost.
-func (o *opencodeServers) resync(ctx context.Context, pane string, p *ocPane) {
+// resync reads the server's state when the stream (re)connects: who the server is, the
+// version, the document's operations (once), the open permission requests and the sessions that
+// run. Every update it applies is stamped at, a time taken before the subscription was sent, so
+// every event the stream then delivers is newer and wins. It returns errNotOurServer when the
+// process answering is not the one the server file names.
+func (o *opencodeServers) resync(ctx context.Context, pane string, p *ocPane, c *opencode.Client, at int64) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if info, err := p.client.Info(ctx); err == nil {
-		p.mu.Lock()
-		changed := p.version != info.Version
-		p.version = info.Version
-		p.mu.Unlock()
-		if changed && detect.CheckVersion(detect.KindOpencode, info.Version) != nil {
-			o.logf("opencode: pane %s: server version %s is outside the tested %s; the adapter goes on", pane, info.Version, opencode.TestedVersion)
-		}
+	info, err := c.Info(ctx)
+	if err != nil {
+		return err
 	}
 	p.mu.Lock()
+	pid := p.srvPID
+	p.mu.Unlock()
+	if info.PID != 0 && info.PID != pid {
+		return fmt.Errorf("%w: it is process %d, the server file names %d", errNotOurServer, info.PID, pid)
+	}
+	p.mu.Lock()
+	changed := p.version != info.Version
+	p.version = info.Version
 	docOK := p.docOK
 	p.mu.Unlock()
-	if !docOK {
-		if doc, err := p.client.Doc(ctx); err == nil {
-			if err := opencode.CheckDoc(doc); err != nil {
-				o.logf("opencode: pane %s: error: %v; sends, answers or the chat view may fail", pane, err)
-			}
-			p.mu.Lock()
-			p.docOK = true
-			p.mu.Unlock()
-		}
+	if changed && detect.CheckVersion(detect.KindOpencode, info.Version) != nil {
+		o.logf("opencode: pane %s: server version %s is outside the tested %s; the adapter goes on", pane, info.Version, opencode.TestedVersion)
 	}
-	now := time.Now().UnixMilli()
-	active, err := p.client.Active(ctx)
+	if !docOK {
+		o.checkDoc(ctx, pane, p, c)
+	}
+	// Requests first: a running session with one open stays blocked.
+	perms, err := c.Permissions(ctx)
 	if err != nil {
 		o.logf("opencode: pane %s: %v", pane, err)
-		return
+		return nil
+	}
+	active, err := c.Active(ctx)
+	if err != nil {
+		o.logf("opencode: pane %s: %v", pane, err)
+		return nil
+	}
+	var pending []json.RawMessage
+	open := map[string]bool{}
+	for _, raw := range perms {
+		var d opencode.Permission
+		if json.Unmarshal(raw, &d) != nil || d.ID == "" {
+			continue
+		}
+		pending = append(pending, raw)
+		open[d.ID] = true
 	}
 	p.mu.Lock()
 	clear(p.running)
@@ -333,15 +473,20 @@ func (o *opencodeServers) resync(ctx context.Context, pane string, p *ocPane) {
 		p.running[id] = true
 	}
 	recorded := p.session
+	version := p.version
 	p.mu.Unlock()
-	bound := ""
-	if st, ok := o.agents.Get(pane); ok && st.Harness == detect.KindOpencode {
+	st, _ := o.agents.Get(pane)
+	bound, blockedOn := "", ""
+	if st.Harness == detect.KindOpencode {
 		bound = st.Session
+		if st.State == api.AgentStatusBlocked && st.Request != nil {
+			blockedOn = st.Request.ID
+		}
 	}
 	// A running top-level session is the pane's; else the one recorded before a restart.
 	target := ""
 	for _, id := range active {
-		if !o.child(ctx, p, id) {
+		if !o.child(ctx, pane, p, id) {
 			target = id
 			break
 		}
@@ -350,42 +495,92 @@ func (o *opencodeServers) resync(ctx context.Context, pane string, p *ocPane) {
 	if target == "" {
 		target, state = firstNonEmpty(bound, recorded), api.AgentStatusIdle
 	}
-	p.mu.Lock()
-	version := p.version
-	p.mu.Unlock()
-	if target != "" && (target != bound || state == api.AgentStatusWorking) {
-		o.apply(pane, p, now, harness.Update{Session: target, Bind: target != bound, State: state, Version: version})
-	} else if target != "" && bound == target {
-		// The stream was down: a turn may have ended meanwhile.
-		if st, _ := o.agents.Get(pane); st.State == api.AgentStatusWorking {
-			o.apply(pane, p, now, harness.Update{Session: target, State: api.AgentStatusIdle, Version: version})
+	switch {
+	case target == "":
+	case target != bound:
+		o.apply(pane, p, at, harness.Update{Session: target, Bind: true, State: state, Version: version})
+	case state == api.AgentStatusWorking:
+		// Working would end the open request: leave it to the requests below.
+		if len(pending) == 0 {
+			o.apply(pane, p, at, harness.Update{Session: target, State: state, Version: version})
 		}
+	case st.State == api.AgentStatusWorking || st.State == api.AgentStatusBlocked:
+		// The stream was down while the turn ended: its last message says how.
+		o.apply(pane, p, at, harness.Update{Session: target, State: o.turnEnd(ctx, c, target), Version: version})
 	}
-	perms, err := p.client.Permissions(ctx)
-	if err != nil {
-		o.logf("opencode: pane %s: %v", pane, err)
-		return
-	}
-	for _, raw := range perms {
+	for _, raw := range pending {
 		var d opencode.Permission
-		if json.Unmarshal(raw, &d) != nil || d.ID == "" {
-			continue
+		json.Unmarshal(raw, &d)
+		if d.ID == blockedOn && open[blockedOn] {
+			continue // still open, and shown
 		}
-		o.event(ctx, pane, p, opencode.Event{Type: "permission.asked", Created: now, Data: raw})
+		o.event(ctx, pane, p, opencode.Event{Type: "permission.asked", Created: at, Data: raw})
 	}
+	return nil
 }
 
-// child reports whether a session has a parent session, asking the server on first sight.
-func (o *opencodeServers) child(ctx context.Context, p *ocPane, id string) bool {
+// checkDoc checks the server's OpenAPI document once, and logs a fetch error once per kind.
+func (o *opencodeServers) checkDoc(ctx context.Context, pane string, p *ocPane, c *opencode.Client) {
+	doc, err := c.Doc(ctx)
+	if err != nil {
+		p.mu.Lock()
+		repeat := p.docErr == err.Error()
+		p.docErr = err.Error()
+		p.mu.Unlock()
+		if !repeat {
+			o.logf("opencode: pane %s: error: the OpenAPI document could not be read, so the API was not checked: %v", pane, err)
+		}
+		return
+	}
+	if err := opencode.CheckDoc(doc); err != nil {
+		o.logf("opencode: pane %s: error: %v; sends, answers or the chat view may fail", pane, err)
+	}
+	p.mu.Lock()
+	p.docOK = true
+	p.mu.Unlock()
+}
+
+// turnEnd reads how the session's last turn ended from its newest message: done, error, or
+// idle when it was interrupted or the message says nothing.
+func (o *opencodeServers) turnEnd(ctx context.Context, c *opencode.Client, session string) api.AgentStatus {
+	page, err := c.Messages(ctx, session, "", 1)
+	if err != nil || len(page.Data) == 0 {
+		return api.AgentStatusIdle
+	}
+	var m struct {
+		Type    string `json:"type"`
+		Outcome string `json:"outcome"`
+	}
+	json.Unmarshal(page.Data[0], &m)
+	if m.Type != "idle" {
+		return api.AgentStatusIdle
+	}
+	switch m.Outcome {
+	case "succeeded":
+		return api.AgentStatusDone
+	case "failed":
+		return api.AgentStatusError
+	}
+	return api.AgentStatusIdle
+}
+
+// child reports whether a session has a parent session, asking the server on first sight. When
+// the server cannot say, a session other than the one the pane is bound to is taken as a child,
+// so a failed lookup never moves the pane off its session.
+func (o *opencodeServers) child(ctx context.Context, pane string, p *ocPane, id string) bool {
 	p.mu.Lock()
 	c, ok := p.children[id]
+	client := p.client
 	p.mu.Unlock()
 	if ok {
 		return c
 	}
-	s, err := p.client.Session(ctx, id)
+	ctx, cancel := context.WithTimeout(ctx, opencodeTimeout)
+	defer cancel()
+	s, err := client.Session(ctx, id)
 	if err != nil {
-		return false // unknown: taken as top-level, as the TUI's own sessions are
+		st, ok := o.agents.Get(pane)
+		return ok && st.Harness == detect.KindOpencode && st.Session != "" && st.Session != id
 	}
 	p.mu.Lock()
 	p.children[id] = s.ParentID != ""
@@ -396,7 +591,7 @@ func (o *opencodeServers) child(ctx context.Context, p *ocPane, id string) bool 
 // event applies one server event.
 func (o *opencodeServers) event(ctx context.Context, pane string, p *ocPane, e opencode.Event) {
 	if o.dirty != nil {
-		o.dirty(pane)
+		o.dirty(pane, isRelistEvent(e.Type))
 	}
 	if !isStateEvent(e.Type) {
 		return
@@ -413,7 +608,7 @@ func (o *opencodeServers) event(ctx context.Context, pane string, p *ocPane, e o
 	}
 	s := harness.OpencodeSession{}
 	if sid != "" {
-		s.Child = o.child(ctx, p, sid)
+		s.Child = o.child(ctx, pane, p, sid)
 	}
 	p.mu.Lock()
 	switch e.Type {
@@ -424,10 +619,14 @@ func (o *opencodeServers) event(ctx context.Context, pane string, p *ocPane, e o
 	case "permission.asked":
 		var d opencode.Permission
 		if json.Unmarshal(e.Data, &d) == nil && d.ID != "" {
-			if len(p.requests) >= 256 {
-				clear(p.requests)
-			}
-			p.requests[d.ID] = d.SessionID
+			p.remember(d.ID, d.SessionID)
+		}
+	case "permission.replied":
+		var d struct {
+			RequestID string `json:"requestID"`
+		}
+		if json.Unmarshal(e.Data, &d) == nil {
+			p.forgetRequest(d.RequestID)
 		}
 	}
 	s.Running = p.running[sid]
@@ -447,6 +646,33 @@ func (o *opencodeServers) event(ctx context.Context, pane string, p *ocPane, e o
 	o.apply(pane, p, t, u)
 }
 
+// remember records the session of a permission request, dropping the oldest past the bound.
+// It runs under p.mu.
+func (p *ocPane) remember(id, session string) {
+	if _, ok := p.requests[id]; !ok {
+		p.reqOrder = append(p.reqOrder, id)
+	}
+	p.requests[id] = session
+	for len(p.reqOrder) > opencodeMaxRequests {
+		delete(p.requests, p.reqOrder[0])
+		p.reqOrder = p.reqOrder[1:]
+	}
+}
+
+// forgetRequest drops an answered request. It runs under p.mu.
+func (p *ocPane) forgetRequest(id string) {
+	if _, ok := p.requests[id]; !ok {
+		return
+	}
+	delete(p.requests, id)
+	for i, r := range p.reqOrder {
+		if r == id {
+			p.reqOrder = append(p.reqOrder[:i:i], p.reqOrder[i+1:]...)
+			break
+		}
+	}
+}
+
 // apply applies an update with source server and records the bound session when it changed.
 func (o *opencodeServers) apply(pane string, p *ocPane, t int64, u harness.Update) {
 	o.agents.Apply(pane, detect.KindOpencode, api.StateSourceServer, t, u)
@@ -457,14 +683,13 @@ func (o *opencodeServers) apply(pane string, p *ocPane, t int64, u harness.Updat
 	p.mu.Lock()
 	changed := st.Session != p.session
 	p.session = st.Session
-	url := p.url
 	p.mu.Unlock()
 	if changed {
 		o.mu.Lock()
 		live := o.panes[pane] == p
 		o.mu.Unlock()
 		if live {
-			if err := o.writeRecord(pane, ocRecord{URL: url, Session: st.Session}); err != nil {
+			if err := o.writeRecord(pane, ocRecord{Session: st.Session}); err != nil {
 				o.logf("opencode: pane %s: %v", pane, err)
 			}
 		}
@@ -473,6 +698,15 @@ func (o *opencodeServers) apply(pane string, p *ocPane, t int64, u harness.Updat
 
 func isStateEvent(t string) bool {
 	for _, s := range harness.OpencodeStateEvents {
+		if s == t {
+			return true
+		}
+	}
+	return false
+}
+
+func isRelistEvent(t string) bool {
+	for _, s := range opencodeRelistEvents {
 		if s == t {
 			return true
 		}
