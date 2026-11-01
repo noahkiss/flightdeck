@@ -12,12 +12,12 @@ Rules this spec works within (owner decisions in the master plan):
 - No hub, no relay, no leader election. One machine alone is a mesh of one.
 - Peers come from Flightdeck's own config, written by the user. No default names a real machine.
 - SSH first. Trust follows `transport.md`. A VPN or tailnet is only a network underneath.
-- No session router. Agents read the catalog and suggest where work runs; the user confirms. A
-  running agent stays on its host.
+- No session router. Agents read the catalog and suggest where work runs; the user confirms on a
+  card, which a setting can turn off (owner, 2026-11-01). A running agent stays on its host.
 - The bar is herdr, Paseo and Rex (`landscape.md`). We match them and add only cheap guards.
 
 Sections that settle a question end with a **Decision** line and its reason. The owner decides
-only user-visible questions; those are in [section 11](#11-open-questions).
+only user-visible questions; those are in [section 11](#11-owner-decisions).
 
 ## Contents
 
@@ -31,7 +31,7 @@ only user-visible questions; those are in [section 11](#11-open-questions).
 8. [Optional always-on host](#8-optional-always-on-host)
 9. [Transcripts](#9-transcripts)
 10. [Edge cases](#10-edge-cases)
-11. [Open questions](#11-open-questions)
+11. [Owner decisions](#11-owner-decisions)
 12. [API additions](#12-api-additions)
 13. [Sources](#13-sources)
 
@@ -102,7 +102,8 @@ to each hab, `hab-logic-api.md` 7.9).
   was found beyond the harness's own tool permission.
 
 What we take: agents can see other hosts and start work there through a tool (`landscape.md`
-idea 4.14). What we leave: forwarding calls through a daemon.
+idea 4.14). What we leave: forwarding calls through a daemon. What we add: a confirmation card
+before a start on another host, which the user can turn off (section 11).
 
 ### 1.5 QR pairing
 
@@ -418,9 +419,12 @@ only in a way the plan already asked for.
   (Xcode on a Linux box, a GPU, a project not checked out here), name the hosts that fit, say why
   in one line each, and ask the user before acting.
 - **Acting needs the user's yes.** Setting up a project on another host (task-j600w23a) and
-  starting a session there (`session.create` on that hab) are separate commands the agent runs
-  only after the user agrees. The agent kit does not add a second confirmation of its own: the
-  harness's own tool-permission prompt applies to the command, as in Paseo. See open question 1.
+  starting a session there (`session.create` on that hab) are separate agent kit actions. Each
+  raises a Flightdeck confirmation card before it runs: the same card, expiry and
+  first-answer-wins rules as Capcom's (`capcom.md` 6.1). The harness's own tool-permission prompt
+  still applies to the command. The setting `confirm.start_elsewhere` (default on) turns the card
+  off; the action then runs at once and its card shows as a record (owner, 2026-11-01;
+  section 11).
 - **No scoring, no automatic choice.** Flightdeck ranks nothing. `gff hosts --has <capability>`
   filters; the agent reasons.
 - **A running agent stays on its host.** Nothing moves a session.
@@ -509,25 +513,31 @@ with the least code; a peer target needs the link to carry bulk data, which it d
 | The same message pushed twice after a lost answer | The receiver's dedup drops the repeat |
 | A peer with an older hab | No `mesh` capability: "update needed"; clients can still connect to it for sessions |
 | A peer removed from the list | Its link closes, its catalog copy is dropped, its outbox items expire as `refused` |
+| An agent starts a session on another host | With `confirm.start_elsewhere` on, a card waits for the user; nothing runs until confirm, and an expired card never runs. With it off, the start runs at once and the card shows as a record |
+| An agent messages an agent already on a project | Sent at once through channels, no card (owner, 2026-11-01). Only starts and set-ups take a confirmation |
 | Clocks differ between hosts | The mesh orders by generations and message ids, never by wall time. Times shown come from the hab that made them |
 | A one-way network (laptop reaches the dev box, not back) | The laptop holds the only link and drives both directions (4.2) |
 | A hab restarts | Outboxes, the dedup list and the catalog generation are on disk. Links reconnect with the new epoch |
 
 ---
 
-## 11. Open questions
+## 11. Owner decisions
 
-Only user-visible questions are listed. Every internal call above is decided.
+Only user-visible questions came to the owner. Every internal call above is decided.
 
 ### Q1. Should an agent need a confirmation in Flightdeck before it starts work on another host?
 
-| Option | For | Against |
-|---|---|---|
-| A. No extra gate. The agent asks in conversation; the harness's own tool-permission prompt covers the command | Matches Paseo; no new friction | An agent with broad tool permissions can start a session elsewhere without asking |
-| B. A Flightdeck approval card (like a permission request) before `session.create` or set-up on another host, from an agent | The user always sees it | Stricter than all three tools; one more tap per action |
+The study recommended no extra gate (the harness's own tool prompt only, as in Paseo).
 
-Recommendation: **A**, per the owner's bar. B fits if "the user confirms" is meant as a hard
-gate, not a habit the skill teaches.
+**Decision: yes, a confirmation card, with a setting to turn it off (owner, 2026-11-01).**
+
+- Before `session.create` or a project set-up on a host other than the agent's own, the hab
+  raises a confirmation card. It uses Capcom's mechanism (`capcom.md` 6.1, 6.3).
+- `confirm.start_elsewhere` in Flightdeck's config, default on, also in the app's settings,
+  turns the card off. Off, the action runs at once and the card shows as a record.
+- The owner's general rule: a confirmation that adds friction gets a setting to turn it off
+  (`app.md`, owner rules).
+- Handing work to an agent already on a project needs no card (owner, 2026-11-01).
 
 ---
 

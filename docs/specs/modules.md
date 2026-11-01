@@ -14,7 +14,9 @@ source.
 Owner rules this spec works within:
 
 - Modules come after the first release. Native views keep a building-block shape so modules slot
-  in later (owner decision, 2026-10-31).
+  in later (owner decision, 2026-10-31; confirmed by the owner, 2026-11-01). The block vocabulary
+  may come earlier.
+- Modules declare their powers (`exec`, `fetch`, `act`), shown at install (owner, 2026-11-01).
 - The index of a module source is a **catalog**. The file inside each module is its **manifest**.
 - iPhone and iPad ship through internal TestFlight. The Mac app ships with Developer ID.
 - The bar is herdr, Paseo and Rex. Flightdeck matches them and adds only cheap guards.
@@ -57,7 +59,7 @@ Internal calls, made by this study. Each has its reason in the section named.
 | File names | `manifest.toml` in each module, `catalog.toml` at a source's root (TOML, as the detection manifests are) | 5, 10 |
 | Colours | Blocks name colours by meaning (`working`, `blocked`, `accent`); a raw colour is allowed but discouraged, so the terminal can map meanings to its own palette | 6 |
 
-The owner questions are in section 14.
+The owner's decisions on this study are in section 14.
 
 ---
 
@@ -372,8 +374,8 @@ simple to write and avoids depending on goja's promise support (stage 3 checks i
 
 The guard is cheap and visible:
 
-- The manifest lists powers. The install and every update show them, and show a change in them
-  clearly ("now runs programs").
+- The manifest lists powers: any of `exec`, `fetch` and `act` (owner, 2026-11-01). The install
+  and every update show them, and show a change in them clearly ("now runs programs").
 - A call that needs an undeclared power throws an error the module can catch.
 - There is no sandbox beyond that. A module with `exec` can do anything the hab's user can do.
   The install text says so in one line, as herdr and Paseo do.
@@ -617,17 +619,14 @@ Evidence:
 - **Cheap preparation now.** Feature views in the app and in `gff` keep a building-block shape
   (owner decision 3). Concretely: where a first-party card is mostly rows, metrics, badges and
   progress, the hab sends it as data the client draws generically. Stage 2 (the vocabulary
-  schema) could then run early, from those real views, at a cost of one session.
+  schema) may run early, from those real views, at a cost of one session (owner, 2026-11-01).
 
-### Owner questions
+### Owner decisions
 
-1. **Build later, as decided?** Recommended: yes, after the first release, with no drop. The
-   alternative is to pull stage 2 forward now so that first-party cards use the vocabulary from
-   the start (one session, no JavaScript, no sources).
-2. **What may a module do on its host?** Recommended: declared `exec`, `fetch` and `act`, shown at
-   install, as herdr and Paseo allow. The alternative is hab data and state only: safer, but a
-   module could not run a program or reach a web service, so most useful modules could not be
-   written.
+| # | Question | Decision |
+|---|---|---|
+| O1 | Build later, as decided? | Yes: modules after the first release, with no drop. The block vocabulary (stage 2) may come earlier, so first-party cards can use it from the start (owner, 2026-11-01) |
+| O2 | What may a module do on its host? | Declared powers `exec`, `fetch` and `act`, shown at install and on every update that changes them, as herdr and Paseo allow (owner, 2026-11-01; section 7.2) |
 
 ### For the coordinator (plan changes this spec implies)
 

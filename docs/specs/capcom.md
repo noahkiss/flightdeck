@@ -5,7 +5,8 @@ Status: draft for review. Part 9, study stage.
 Capcom is the conversation that needs no project folder. A user opens it from any client and
 asks anything: a question about any project, "where should this run?", "tell the agent on the
 API repo to rebase", "write that down as a task". Capcom answers, hands off, suggests or files.
-It never acts outside its own conversation without the user's yes.
+It hands work to a running agent at once and shows what it sent. It starts work on a host only
+after the user's yes, unless the user turns that confirmation off.
 
 This spec says what Capcom does, what it may read, what limits it, and how the user approves
 its writes. Later Part 9 stages build from it. It describes behaviour in our own words and copies
@@ -35,7 +36,7 @@ Capcom builds on other parts. This spec names their pieces and does not define t
 8. [Attached context and the entry API](#8-attached-context-and-the-entry-api)
 9. [Edge cases](#9-edge-cases)
 10. [Decisions](#10-decisions)
-11. [Open questions for the owner](#11-open-questions-for-the-owner)
+11. [Owner decisions](#11-owner-decisions)
 12. [Later stages](#12-later-stages)
 13. [Sources](#13-sources)
 
@@ -81,7 +82,7 @@ herdr and Rex have no such feature. None of the three has a folder-free conversa
 
 | From | We take | We change |
 |---|---|---|
-| Paseo | Agents see hosts and start sessions on them through tools; one hop; inspect before retry | The user confirms every start (owner decision: agents suggest, the user confirms) |
+| Paseo | Agents see hosts and start sessions on them through tools; one hop; inspect before retry | The user confirms every start on another host, with a setting to turn that off (owner, 2026-11-01) |
 | Paseo idea 4.2 | An idempotency key on each start | The confirmation id is the key |
 | The front door session | One standing conversation, open beside the project sessions | It reads the catalog, Logbook and past transcripts on every host, and its writes wait for review |
 | The design doc | Answer, hand off, start seeded, file; approval at the end | "Off the record" mode stays deferred: nothing is written without approval anyway |
@@ -114,8 +115,8 @@ talks to it, and a running agent stays where it is.
 | Capcom | The folder-free session and its conversation |
 | home host | The host whose hab runs the Capcom session |
 | read tools | Agent kit tools that read the catalog, transcripts, Logbook and notifications. They never write |
-| action | Something that changes the world outside the conversation now: a hand-off or a session start |
-| confirmation | The user's yes or no to one action, asked when Capcom proposes it |
+| action | Something that changes the world outside the conversation now: a hand-off, a session start or a project set-up |
+| confirmation | The user's yes or no to a session start or a project set-up, asked when Capcom proposes it (6.1) |
 | proposal | A pending Logbook record, memory rule or flight rules change |
 | review | The step where the user approves, edits or drops proposals |
 | seed | The summary a new session starts with, written by Capcom and shown to the user first |
@@ -128,7 +129,8 @@ see the connected machines and suggest where work runs best. Capcom is the sessi
 says to use them first.
 
 The same read scope (5) and the same confirmation rule (6) apply to every agent that calls
-them.
+them. The mesh spec (Part 3) uses this confirmation for any agent that starts work on another
+host.
 
 ---
 
@@ -154,12 +156,12 @@ The user wants work done in a project where an agent already runs.
    most recently active one. With two or more equal candidates it lists them and asks.
 3. It drafts the message. The draft holds the request in the user's words plus any context
    Capcom gathered, and names Capcom as the sender.
-4. It asks for a confirmation (6.1). The card shows the target agent, its host and state, and
-   the message text. The user may edit the text.
-5. On yes, `gff-hab` sends through channels, wrapped in the agent envelope (the mesh spec,
-   `harness-adapters.md` Input delivery). Delivery follows the normal rules: now when the target
-   is idle or done; queued until then when it is working or blocked; held in the outbox when its
-   host is offline.
+4. It sends at once, with no confirmation (owner, 2026-11-01). `gff-hab` sends through
+   channels, wrapped in the agent envelope (the mesh spec, `harness-adapters.md` Input
+   delivery). Delivery follows the normal rules: now when the target is idle or done; queued
+   until then when it is working or blocked; held in the outbox when its host is offline.
+5. The conversation shows a hand-off card: the target agent, its host and state, how delivery
+   went, and the full message text. The card records what was sent; it asks nothing.
 6. Capcom tells the user what happened: delivered, queued (and why), or held for an offline
    host. The target may reply by name; the reply arrives in Capcom as an agent message.
 
@@ -174,15 +176,18 @@ The user wants new work started, and no agent is on the project, or the user wan
    ready on the right branch, and then a host the user named or used last for that project.
 2. It shows the top suggestion with its reasons, and the next candidates. When no host fits, it
    says why (missing capability, project not set up, every fitting host offline) and offers the
-   set-up action (the mesh spec, set up a project on another machine), which needs its own
-   confirmation.
+   set-up action (the mesh spec, set up a project on another machine), which takes its own
+   confirmation under the same setting.
 3. It writes the seed: the goal, decisions so far, open questions, and links back to the Capcom
    messages it came from. At most 8,000 characters.
 4. It asks for a confirmation (6.1). The card shows the host, project, folder, harness, model if
-   set, and the full seed. The user may edit the seed or change the host or harness.
-5. On yes, the target hab runs `session.create` in the project folder with the harness, then
-   sends the seed as the first message, marked as from Capcom on the user's behalf. The
-   confirmation id is the idempotency key: a repeated create with the same id starts nothing new.
+   set, and the full seed. The user may edit the seed or change the host or harness. When the
+   user has turned the confirmation off, Capcom starts at once and shows the same card as a
+   record.
+5. On yes (or at once), the target hab runs `session.create` in the project folder with the
+   harness, then sends the seed as the first message, marked as from Capcom on the user's
+   behalf. The confirmation id is the idempotency key: a repeated create with the same id starts
+   nothing new. With the confirmation off, the hab still issues the id, for the record card.
 6. Capcom reports the new session's name and host. Clients show it like any session.
 
 The new session follows its project's rules from then on: the harness loads the project's
@@ -229,8 +234,10 @@ Rules:
 - **Limits.** A search returns at most 50 hits. Each hab gets 5 s; hits from a hab that ran out
   of time are marked partial. An offline peer is listed as offline, not skipped in silence.
 - **Content read is data.** Text from a transcript, a notification or a file is never treated as
-  an instruction to Capcom. The manual says so. Any action it might prompt still needs the
-  user's confirmation, so a planted instruction cannot act by itself.
+  an instruction to Capcom. The manual says so, and says Capcom hands off only what the user
+  asked for in this conversation. A start or set-up still needs the user's confirmation while
+  that setting is on. A hand-off sends without one, but it carries the agent envelope, so the
+  target sees it came from Capcom and its own permission prompts still apply.
 - **No copy.** Transcript search runs over the native files. No transcript text is stored in a
   format of ours. A derived search index may come later, as a cache a hab can drop.
 
@@ -276,8 +283,9 @@ harness rules are a cheap guard on top.
 
 Capcom on one host reads another host's data only through that host's hab, under that host's
 scope. The home host never applies its own scope to a peer's data, and never keeps a peer's
-content past the conversation. Whether Capcom reads every peer by default is an owner question
-(11.2).
+content past the conversation. Capcom reads every connected peer, within each peer's own scope,
+with the default deny list in 5.1 (owner, 2026-11-01; 11, O2). Logbook is readable everywhere,
+since every hab holds a replica.
 
 ---
 
@@ -287,17 +295,27 @@ Capcom has two kinds of writes, with two timings.
 
 | Kind | Examples | When the user decides |
 |---|---|---|
-| Action | A hand-off, a session start, a project set-up | Now, before anything happens (6.1) |
+| Hand-off | A message to an agent already on a project | Never asked. It sends at once; its card records what went (3.2) |
+| Start | A session start, a project set-up | Now, before anything happens (6.1), unless the user turned the confirmation off |
 | Proposal | A Logbook record, a memory rule, a flight rules change | At review, at the end or on demand (6.2) |
 
-Actions are confirmed now because they are about the present: a hand-off later is often useless.
-Records are reviewed together because a conversation produces several, and a list is faster to
-judge than a string of interruptions.
+Starts are confirmed now because they are about the present: a start approved later is often
+useless. Hand-offs need no tap because the target already works on the project and keeps its
+own context and rules (owner, 2026-11-01). Records are reviewed together because a conversation
+produces several, and a list is faster to judge than a string of interruptions.
 
 ### 6.1 Confirmations
 
-- An action tool does not act. It asks the hab for a confirmation and returns its id.
-- The hab raises a confirmation card in the Capcom view on every client. The card shows exactly
+- **The setting.** `confirm.start_elsewhere` in Flightdeck's config, default on, also shown in
+  the app's settings. It covers every session start and project set-up an agent asks for on a
+  host other than its own, and every start Capcom asks for, since Capcom never works in a
+  project folder. Off: the hab runs the action at once and shows the card as a record. This
+  follows the general rule that a confirmation that adds friction gets a setting to turn it off
+  (owner, 2026-11-01; `app.md`, owner rules).
+- With the setting on, a start or set-up tool does not act. It asks the hab for a confirmation
+  and returns its id.
+- The hab raises a confirmation card in the Capcom view on every client (for another agent, in
+  that agent's session view and the approvals area). The card shows exactly
   what will happen (6.3). Buttons: confirm, edit, cancel.
 - The tool waits up to 120 s for the answer. If none comes, it returns "still waiting"; the
   answer reaches Capcom later as a message marked as from Flightdeck.
@@ -328,7 +346,7 @@ judge than a string of interruptions.
 
 | Card | Shows |
 |---|---|
-| Hand-off | Target agent, host, harness, state, how delivery will go (now, queued, outbox), the message |
+| Hand-off (a record, not a question) | Target agent, host, harness, state, how delivery went (now, queued, outbox), the message |
 | Session start | Host, project, folder, branch, harness, model if set, the seed |
 | Project set-up | Host, repository, branch, the bootstrap command the project declares |
 | Proposal | Kind, project, title, body, source quote |
@@ -365,9 +383,17 @@ nothing on top beyond the manual.
 - Any supported harness can run Capcom: it needs MCP tools, a resume command and our hooks.
   Claude Code, Codex and opencode all qualify. Which one is the default is a `/consensus` item
   in the Part 9 plan; this spec does not depend on the answer.
-- The user turns Capcom on per hab in Flightdeck's config. The default host is an owner question
-  (11.1).
-- Clients find Capcom through the catalog: it lists each Capcom session with its host.
+- **The user assigns the home host** and may re-assign it at any time (owner, 2026-11-01). Two
+  ways, same effect: `gff-hab capcom assign <peer label>` (or `self`), and a host picker in the
+  app's Capcom settings. At first run the app asks, and suggests a host marked always on, else
+  the hab it paired with first.
+- The assignment is a mark in the chosen hab's catalog, with a counter one higher than the last
+  assignment it has seen. The highest counter wins, so a host that was offline during a
+  re-assignment drops its old mark when it next links.
+- **Re-assigning moves no conversation** (3.3). The old standing conversation stays on its host,
+  in the list and resumable. The next open starts a fresh standing conversation on the new host.
+- Clients find Capcom through the catalog: it lists the home host and each Capcom session with
+  its host.
 
 ### 7.4 Survival and resume
 
@@ -401,11 +427,19 @@ Files go through `attachment.put` into the Capcom folder, as for any session.
 
 ### 8.2 "Ask an agent" from a notification
 
-A Flightdeck notification's "ask an agent" action opens Capcom with that notification attached.
+A Flightdeck notification's "ask an agent" action opens the standing Capcom conversation with
+that notification attached (owner, 2026-11-01). The aim is no friction and no lost context:
+
+- One tap from the notification lands in the standing conversation, with the event attached to
+  the composer (8.1). Earlier context in that conversation stays available to Capcom.
+- A "New conversation" action sits beside the attached event. One tap moves the event, and any
+  text typed so far, into a fresh Capcom conversation (`capcom.open {new: true, context}`).
+- When the standing conversation is busy, the message queues as for any session. The view says
+  so, and the "New conversation" action stays one tap away.
+
 The app calls the entry API with the notification id; the hab resolves it. Without a reachable
 home hab, the action fails with a clear message. Anything that posts through the hab's
-notification API gets the action. Whether it lands in the standing conversation or a new one is
-an owner question (11.3).
+notification API gets the action.
 
 ### 8.3 Calls
 
@@ -415,6 +449,7 @@ until its stage.
 | Call or event | Purpose |
 |---|---|
 | `capcom.open {new?, context?}` | Return the standing Capcom session, starting it if needed; `new` starts a fresh one. Optional context to attach |
+| `capcom.assign {host}` | Make `host` the home host (7.3); the CLI's `capcom assign` |
 | `capcom.attach {session, kind, ref}` | Attach context (8.1) to the next message |
 | `session.send` | Send the user's message, as for any session |
 | `confirm.answer {id, choice, edits?}` | Answer a confirmation: `confirm` or `cancel`, with the user's edits |
@@ -428,12 +463,13 @@ until its stage.
 
 | Case | Behaviour |
 |---|---|
-| The home host sleeps or is offline | Clients show Capcom offline. The app offers a fresh Capcom on an online host where Capcom is on. Logbook is there (every hab has a replica); the old transcript is not, until its host wakes |
+| The home host sleeps or is offline | Clients show Capcom offline. The app offers to re-assign Capcom to an online host (7.3). Logbook is there (every hab has a replica); the old transcript is not, until its host wakes |
+| Two hosts carry the Capcom mark after a network split | The higher assignment counter wins; the other drops its mark and keeps its conversations resumable |
 | A peer is offline during a search | Its hits are missing; the result lists it as offline |
 | A read is denied | The tool returns the denial; Capcom tells the user and stops that line (5.2) |
 | No agent on the project | Capcom offers to start one (3.3) |
 | Two agents on the project | Capcom picks by 3.2's rules, or lists them and asks |
-| The target agent is blocked on a permission | The hand-off queues; the card says so; Capcom points the user to the open approval |
+| The target agent is blocked on a permission | The hand-off queues; its card says so; Capcom points the user to the open approval |
 | The target agent exited | Capcom offers to resume it, or to start a new seeded session |
 | The project is on no online host | Capcom says so and offers set-up on a host that fits |
 | No host has a needed capability | Capcom names the capability and suggests nothing |
@@ -441,7 +477,8 @@ until its stage.
 | A start's response is lost | The outcome is unknown; Capcom checks the target for a session with that confirmation id before it offers a retry |
 | The user answers a card on two devices | First wins; the second gets `conflict` |
 | The user ends the conversation with a card open | The card stays until answered or expired |
-| A transcript or notification contains instructions | Treated as data; any action still needs a confirmation |
+| A transcript or notification contains instructions | Treated as data. Capcom hands off only what the user asked for; a start still needs a confirmation while the setting is on (4) |
+| The user turned `confirm.start_elsewhere` off | Starts and set-ups run at once; each shows its card as a record in the conversation |
 | The Capcom harness fills its context | The harness compacts natively; Capcom's records are in Logbook and its proposals in the hab, so nothing pending is lost |
 | The user edits Capcom's folder by hand | The hab rewrites the manual and settings at the next start; it leaves attachments alone |
 | A proposal names a project that later disappears | Review still shows it; approval files it with no project and says so |
@@ -456,9 +493,9 @@ Internal calls, taken here, each with its reason.
 |---|---|---|
 | D1 | Capcom is an ordinary session in a hab-owned folder, kind `capcom` | It reuses holder, adapters, chat view and resume. No new process to keep alive |
 | D2 | The read and action tools are agent kit tools for every agent | The owner asked that all agents see the catalog and suggest hosts. One set of tools, one scope check |
-| D3 | Actions are confirmed now; proposals are reviewed at the end | A hand-off is time-bound; records batch well. Both keep "agents propose, the user approves" |
+| D3 | Starts are confirmed now; proposals are reviewed at the end; hand-offs send at once | A start is time-bound; records batch well; a hand-off reaches an agent already at work (owner, 2026-11-01) |
 | D4 | A hab-side confirmation card, not the harness's permission prompt | Works the same in every harness, cannot be pre-allowed by a harness setting, and carries the user's edits |
-| D5 | The hab runs the confirmed action from the card's values | The agent cannot change the action after the user saw it |
+| D5 | The hab runs the confirmed start from the card's values | The agent cannot change the action after the user saw it |
 | D6 | The confirmation id is the idempotency key for starts | Paseo idea 4.2: a reconnect never starts two sessions |
 | D7 | Confirmations expire after 60 minutes; proposals never expire | Matches approvals. A stale action is risky; a stale record is only stale |
 | D8 | Read tools are the hard boundary; harness deny rules are best effort | Matches Paseo and hc, plus a cheap guard. A real sandbox is stricter than the bar |
@@ -472,51 +509,17 @@ Internal calls, taken here, each with its reason.
 
 ---
 
-## 11. Open questions for the owner
+## 11. Owner decisions
 
-Only questions a user sees.
+The owner settled the study's questions on 2026-11-01. Each row cites "owner, 2026-11-01".
 
-### 11.1 Where Capcom runs by default
-
-| Option | For | Against |
-|---|---|---|
-| A. The user picks at first run; the app suggests a host marked always on, else this machine | Works for one machine and many; no surprise | One more question at setup |
-| B. Always this machine (where the app was paired first) | No question | A laptop that sleeps takes Capcom with it |
-
-Recommendation: **A.**
-
-### 11.2 Reading every peer
-
-| Option | For | Against |
-|---|---|---|
-| A. Capcom reads transcripts and files on every peer, within each hab's own scope | "Ask anything" works across machines | Each hab's scope must be right |
-| B. Only peers the user lists for Capcom | Tighter | One more list to keep |
-
-Recommendation: **A**, with the default deny list in 5.1. Logbook is readable everywhere in both
-options, since every hab holds a replica.
-
-### 11.3 "Ask an agent" from a notification
-
-| Option | For | Against |
-|---|---|---|
-| A. A new Capcom conversation each time | A focused thread per event; the standing one stays clean | Conversations pile up; old ones need closing |
-| B. The standing conversation, with the notification attached | One place; context from earlier helps | A busy standing conversation queues the question |
-
-Recommendation: **A**, and conversations with no message for 7 days leave the list (still
-resumable).
-
-### 11.4 Confirming hand-offs
-
-The owner settled that starting a session elsewhere needs a yes. A hand-off to an agent that
-already runs is less clear.
-
-| Option | For | Against |
-|---|---|---|
-| A. Every hand-off needs a tap on its card | The user sees exactly what reaches another agent | One tap each time |
-| B. A hand-off the user asked for in the same message sends at once; one Capcom thought of needs a tap | Less friction | Capcom decides what "asked for" means |
-
-Recommendation: **A.** The card is one tap and shows the edited text, and a wrong message steers
-another agent's work.
+| # | Question | Decision | Where |
+|---|---|---|---|
+| O1 | Where Capcom runs | The user assigns the home host and re-assigns it at any time, through `gff-hab capcom assign` and an app setting. First run suggests a host marked always on, else the first paired hab (owner, 2026-11-01) | 7.3 |
+| O2 | Reading every peer | Capcom reads every connected host, within each host's own read scope. No separate list of peers for Capcom (owner, 2026-11-01) | 5.4 |
+| O3 | "Ask an agent" from a notification | It continues the standing conversation with the event attached. A "New conversation" action is one tap away. The aim: no friction, and context kept where it matters (owner, 2026-11-01) | 8.2 |
+| O4 | Confirming hand-offs | A hand-off to an agent already on a project needs no tap. Its card records what was sent (owner, 2026-11-01) | 3.2, 6 |
+| O5 | Starting work on another host | A confirmation card, with a setting (`confirm.start_elsewhere`) to turn it off. General rule: a confirmation that adds friction gets a setting to turn it off (owner, 2026-11-01) | 6.1 |
 
 ---
 
@@ -527,17 +530,19 @@ The Part 9 stages, with what this spec adds to each.
 | Stage | Builds | Acceptance checks |
 |---|---|---|
 | Tools (task-m31qyr6v) | Read tools in the agent kit (4), the read scope (5), the action and proposal tools that create confirmations and proposals | Tests on fake catalog, index and Logbook; a write through a read tool is refused; a read outside scope is denied without the pattern; a search with an offline and a slow peer returns partial results marked |
-| Session host (task-aqw4iowl) | The Capcom folder, manual and settings (7.1), kind `capcom`, standing and new conversations | A `gff-hab` restart keeps Capcom running; a plain-terminal resume works from the folder; the manual and settings are rewritten at start |
-| Hand off and file (task-9n47i6l8) | 3.2 and 3.4, the confirmation card for hand-offs | Hand-off to an idle fake agent delivers after confirm; to a working one queues; without confirm nothing is sent; a record lands as a proposal |
-| Suggest and start (task-ph00sdci) | 3.3, ranking, seed, start by confirmation id | A host without a needed capability is not suggested and the reason names it; no session starts without a confirm; a repeated confirm id starts one session |
+| Session host (task-aqw4iowl) | The Capcom folder, manual and settings (7.1), kind `capcom`, standing and new conversations, home host assignment (7.3) | A `gff-hab` restart keeps Capcom running; a plain-terminal resume works from the folder; the manual and settings are rewritten at start; `gff-hab capcom assign` moves the mark, the old conversation stays resumable, and a host offline during the change drops its mark on its next link |
+| Hand off and file (task-9n47i6l8) | 3.2 and 3.4, the hand-off card as a record | Hand-off to an idle fake agent delivers at once with no confirmation; to a working one queues; the card shows the exact text sent; a record lands as a proposal |
+| Suggest and start (task-ph00sdci) | 3.3, ranking, seed, start by confirmation id, `confirm.start_elsewhere` | A host without a needed capability is not suggested and the reason names it; with the setting on, no session starts without a confirm; with it off, the start runs at once and its card shows as a record; a repeated confirm id starts one session |
 | Approval (task-3387vxca) | Review (6.2), confirmations' expiry and first-answer-wins (6.1), CLI fallback | Three proposals, one approved: only it applies; closing without review leaves all pending; an expired confirmation never runs; a second answer gets `conflict` |
 | Entry API (task-ilse43i7) | 8.3 calls and events, attached context blocks (8.1) | Open, send, attach and confirm against a stub Capcom; the schema compat test passes |
-| "Ask an agent" (task-3687ti3z) | 8.2 | The action payload carries the notification id and the hab resolves it; no reachable hab gives a clear message |
+| "Ask an agent" (task-3687ti3z) | 8.2 | The action payload carries the notification id and the hab resolves it; it lands in the standing conversation with the event attached; "New conversation" moves the event and draft to a fresh one; no reachable hab gives a clear message |
 
 Notes for those stages:
 
-- The confirmation mechanism (6.1) is shared by hand-off, start and set-up. Build it once, in the
-  tools stage, and let later stages add card kinds.
+- The confirmation mechanism (6.1) is shared by start and set-up, for Capcom and for any agent
+  that starts work on another host (the mesh spec). Build it once, with
+  `confirm.start_elsewhere`, in the tools stage, and let later stages add card kinds. Hand-off
+  cards use the same card shape as a record, with no buttons.
 - The tools stage depends on the transcript index (Part 3) and Logbook (Part 12). Until Logbook
   exists, the Logbook tools answer `unavailable`.
 - The set-up card belongs to the mesh's set-up stage; Capcom only calls it.

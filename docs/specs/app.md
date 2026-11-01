@@ -22,6 +22,13 @@ Owner rules this spec works within:
   notarized.
 - No hub. The app connects to each hab itself.
 - Transcripts stay native. The app stores no agent data beyond a cache it can drop.
+- A confirmation that adds friction gets a setting to turn it off (owner, 2026-11-01). Today
+  that is "Confirm before an agent starts work on another host" (`confirm.start_elsewhere`,
+  default on; `capcom.md` 6.1). Memory approval runs the other way: off by default, and "Require
+  approval for memories" turns it on (`instructions-mcp-flight-rules.md` 12). A new
+  confirmation added later comes with its own setting.
+- Settings also hold the Capcom host picker, which assigns and re-assigns the host that runs
+  Capcom (`capcom.md` 7.3; owner, 2026-11-01).
 
 Each section ends with edge cases and its sources. Facts marked *(gk)* come from general knowledge
 of Apple platforms, not from a page opened for this spec. A device test must confirm them.

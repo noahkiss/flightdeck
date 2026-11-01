@@ -32,7 +32,7 @@ Codex 0.166.0, pi 1.4.0, opencode V2 as documented on 2026-11-01. Every claim na
 12. [Memory writes as proposals](#12-memory-writes-as-proposals)
 13. [Stale sessions and pick-up](#13-stale-sessions-and-pick-up)
 14. [Decisions made in this study](#14-decisions-made-in-this-study)
-15. [Open questions for the owner](#15-open-questions-for-the-owner)
+15. [Owner decisions](#15-owner-decisions)
 16. [Sources](#16-sources)
 
 ---
@@ -402,7 +402,8 @@ harness version in the file and fails visibly on an unknown shape, as `harness-a
 
 The ledger stores digests and sizes, not text. The app fetches a file's text on demand from the
 hab, which reads it from the transcript or the file in place. Text never leaves the hab unless a
-client asks for it.
+client asks for it. Every client may ask, the phone included: a tap on a row shows the full text
+(owner, 2026-11-01; section 15).
 
 ### 11.2 Per harness
 
@@ -423,7 +424,8 @@ client asks for it.
 
 ### 11.3 What the user sees
 
-Per session, a list grouped by scope. Each row: source, scope, size, first seen, attribution. A
+Per session, a list grouped by scope, on every client. Each row: source, scope, size, first
+seen, attribution. A tap opens the full text of a file or hook injection. A
 hook injection row names the hook and its event. A changed digest between two loads of the same
 source shows as a new row, not an overwrite. "Unknown" rows say why ("Codex does not record which
 file this came from").
@@ -432,8 +434,9 @@ file this came from").
 
 ## 12. Memory writes as proposals
 
-Off by default (coordinator call, 2026-10-31; the owner confirms, section 15). When the user
-turns it on for a harness:
+Memories are auto-added by default: the harness writes them the native way. A setting, "Require
+approval for memories", turns proposals on per harness (owner, 2026-11-01; section 15). When the
+user turns it on for a harness:
 
 ### 12.1 Claude Code
 
@@ -503,21 +506,19 @@ Internal calls, recorded with the reason. Each can be revisited in its stage.
 | D9 | MCP: Flightdeck changes only entries it owns, tracked by name and digest | Several files mix config with state; users also add servers by hand |
 | D10 | HTTP secrets go through each harness's header helper; opencode without one gets `{env:NAME}` or no entry | Keeps values out of files without a proxy |
 | D11 | Ledger stores digests and sizes; text is fetched on demand | Keeps private text on the hab by default |
-| D12 | Claude memory proposals use a `PreToolUse` deny hook, not `autoMemoryDirectory` | Reads stay native; nothing lands before approval |
+| D12 | Claude memory proposals use a `PreToolUse` deny hook, not `autoMemoryDirectory` | Reads stay native; nothing lands before approval. Used only when the user turns on "Require approval for memories" (section 15) |
 | D13 | Codex memories are not intercepted; listed in the ledger only | No hook on a background write; matches the bar (nobody intercepts) |
 | D14 | opencode stale instructions need no restart; pi uses `/reload` | Both harnesses reload by themselves; a restart would cost the user for nothing |
 | D15 | Recommend the CLI over a direct patch for `~/.claude.json`, as input to the planned `/consensus` | Claude's own writer handles a running Claude |
 
-## 15. Open questions for the owner
+## 15. Owner decisions
 
-Only user-visible behaviour is listed.
+The owner settled both user-visible questions on 2026-11-01.
 
-1. **Memory proposals default.** Proposals ship off; a user turns them on per harness. When on,
-   Claude's memory writes are held, and the agent is told "waiting for your approval". Confirm
-   off by default, or choose on for new installs.
-2. **Ledger text on the phone.** The ledger shows sources, sizes and digests by default; the full
-   text of a file or hook injection opens on tap. Confirm that tapping may send instruction text
-   to the phone, or keep text on desktop clients only.
+| # | Question | Decision |
+|---|---|---|
+| O1 | Memory proposals default | Memories are auto-added by default, the native way. A setting, "Require approval for memories", turns proposals on per harness (section 12). The setting follows the general rule that a confirmation that adds friction can be turned off (owner, 2026-11-01) |
+| O2 | Ledger text on the phone | The phone may show instruction and hook text on tap, like any client. The list itself still shows sources, sizes and digests; text loads only on a tap (owner, 2026-11-01) |
 
 ## 16. Sources
 
