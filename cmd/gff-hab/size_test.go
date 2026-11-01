@@ -165,13 +165,18 @@ func TestTypingTakesOwnership(t *testing.T) {
 	if o := nextOwner(t, evs, "the disown"); o != (api.PaneOwner{Reason: api.OwnerReasonDisown, Cols: 80, Rows: 24}) {
 		t.Fatalf("owner event %+v, want no owner, disown", o)
 	}
-	var st api.StructureResult
-	call(t, a, "structure.get", nil, &st)
-	for _, p := range st.Panes {
-		if p.ID == pane && (p.Owner != "" || p.Cols != 80 || p.Rows != 24) {
-			t.Fatalf("pane in the structure: %+v", p)
+	// The pane record takes its size from the link's resize notice, which comes just after the
+	// data streams got the resize frame: wait for it rather than read it once.
+	waitUntil(t, "the structure to show the pane at 80x24 with no owner", func() bool {
+		var st api.StructureResult
+		call(t, a, "structure.get", nil, &st)
+		for _, p := range st.Panes {
+			if p.ID == pane {
+				return p.Owner == "" && p.Cols == 80 && p.Rows == 24
+			}
 		}
-	}
+		return false
+	})
 }
 
 // TestObserverNeverResizes is the stage's second acceptance test: a client that follows a pane
