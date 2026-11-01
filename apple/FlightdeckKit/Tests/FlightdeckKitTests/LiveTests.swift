@@ -22,6 +22,40 @@ final class LiveTests: XCTestCase {
         try await check(UnixSocketTransport(path: path))
     }
 
+    /// Push registration against a real gff-hab with push config (any APNs key
+    /// works: nothing is sent until an agent blocks). The welcome carries
+    /// `push`, `push.register` stores the token, and a second registration
+    /// from the same device replaces it. Set `FLIGHTDECK_LIVE_PUSH=1`.
+    @MainActor
+    func testLivePushRegister() async throws {
+        guard let path = env["FLIGHTDECK_LIVE_SOCKET"], !path.isEmpty, env["FLIGHTDECK_LIVE_PUSH"] == "1" else {
+            throw XCTSkip("FLIGHTDECK_LIVE_SOCKET and FLIGHTDECK_LIVE_PUSH=1 not set")
+        }
+        let suite = "flightdeck.live.push"
+        let d = UserDefaults(suiteName: suite)!
+        d.removePersistentDomain(forName: suite)
+        let fleet = Fleet()
+        let reg = PushRegistrar(defaults: d, environment: .development)
+        fleet.push = reg
+        fleet.add(HabConnection(id: "live", transport: UnixSocketTransport(path: path), clientLabel: "live-test"), label: "live")
+        reg.setDeviceToken(Data((0..<32).map { UInt8($0) }))
+        await fleet.setActive(true)
+        await eventually("registered", timeout: 15) { reg.status["live"] == .registered }
+        reg.setDeviceToken(Data((0..<32).map { UInt8(255 - $0) }))
+        await eventually("registered again", timeout: 15) { reg.status["live"] == .registered }
+        await reg.settle()
+        await fleet.setActive(false)
+        // A banner answer on its own connection reaches the hab, which refuses
+        // a request that is not open: the app reads it as a hab answer, not
+        // as "could not reach".
+        let answerer = ApprovalAnswerer(live: { _ in nil }, oneShot: { _ in UnixSocketTransport(path: path) }, clientLabel: "live-test")
+        let o = await answerer.answer(host: "live", ApprovalAnswerParams(choice: .allow, pane: "00000000-0000-0000-0000-000000000000", request: "none", via: .banner))
+        switch o {
+        case .refused, .failed: break
+        default: XCTFail("answer to a closed request: \(o)")
+        }
+    }
+
     func testLiveSSH() async throws {
         guard let host = env["FLIGHTDECK_LIVE_SSH_HOST"], !host.isEmpty else {
             throw XCTSkip("FLIGHTDECK_LIVE_SSH_HOST not set")

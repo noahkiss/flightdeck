@@ -14,6 +14,9 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
     func start(_ push: PushRegistrar?) {
         guard let push else { return }
         self.push = push
+        // The token needs no permission, and Live Activity pushes work with
+        // alerts off, so ask for it first rather than after the prompt.
+        UIApplication.shared.registerForRemoteNotifications()
         Task { @MainActor in
             let center = UNUserNotificationCenter.current()
             do {
@@ -22,9 +25,6 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
             } catch {
                 push.setPermission(.denied)
             }
-            // A token works for Live Activity pushes and silent updates even
-            // when alerts are off, so ask for it either way.
-            UIApplication.shared.registerForRemoteNotifications()
         }
     }
 
