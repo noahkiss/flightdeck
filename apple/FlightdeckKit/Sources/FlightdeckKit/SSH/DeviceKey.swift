@@ -10,10 +10,12 @@ public enum SSHKeyKind: String, Codable, Sendable {
     case secureEnclave = "secure-enclave"
     /// A P-256 key in software: the simulator, unit tests, a Mac with no enclave.
     case software
+    /// An OpenSSH key the user imported (app.md 10.4), kept in the Keychain.
+    case imported
 }
 
-/// One SSH key this device signs with. The key source is pluggable: the
-/// generated key today, an imported OpenSSH key later (task-1csglxtc).
+/// One SSH key this device signs with: the generated key (`GeneratedKey`)
+/// or an imported OpenSSH key (`ImportedKey`).
 public protocol SSHKeySource: Sendable {
     /// A stable id that hab entries name.
     var id: String { get }
@@ -99,6 +101,8 @@ public struct GeneratedKey: SSHKeySource {
             publicKey = NIOSSHPrivateKey(secureEnclaveP256Key: k).publicKey
         case .software:
             publicKey = NIOSSHPrivateKey(p256Key: try P256.Signing.PrivateKey(rawRepresentation: stored.data)).publicKey
+        case .imported:
+            throw TransportError("an imported key is not a generated key")
         }
     }
 
@@ -116,7 +120,7 @@ public struct GeneratedKey: SSHKeySource {
         switch kind {
         case .secureEnclave:
             return NIOSSHPrivateKey(secureEnclaveP256Key: try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: data))
-        case .software:
+        case .software, .imported:
             return NIOSSHPrivateKey(p256Key: try P256.Signing.PrivateKey(rawRepresentation: data))
         }
     }
@@ -127,9 +131,9 @@ public final class DeviceKeys: @unchecked Sendable {
     /// The id of the key made on first start.
     public static let defaultID = "device"
 
-    private let store: SecretStore
+    let store: SecretStore
     private let lock = NSLock()
-    private var cache: [String: GeneratedKey] = [:]
+    private var cache: [String: any SSHKeySource] = [:]
     /// Whether new keys go to the Secure Enclave when it exists.
     private let preferEnclave: Bool
 
@@ -141,18 +145,27 @@ public final class DeviceKeys: @unchecked Sendable {
     /// Whether this device has a Secure Enclave (false in the simulator).
     public static var enclaveAvailable: Bool { SecureEnclave.isAvailable }
 
-    /// The key with this id, or nil when there is none.
-    public func key(_ id: String) throws -> GeneratedKey? {
+    /// The key with this id, generated or imported, or nil when there is none.
+    public func key(_ id: String) throws -> (any SSHKeySource)? {
         if let k = lock.withLock({ cache[id] }) { return k }
         guard let data = try store.read(account: id) else { return nil }
-        let k = try GeneratedKey(id: id, stored: JSONDecoder().decode(StoredKey.self, from: data))
-        lock.withLock { cache[id] = k }
+        let k: any SSHKeySource
+        if id.hasPrefix(Self.importedPrefix) {
+            k = try loadImported(id: id, data: data)
+        } else {
+            k = try GeneratedKey(id: id, stored: JSONDecoder().decode(StoredKey.self, from: data))
+        }
+        cacheKey(k)
         return k
+    }
+
+    func cacheKey(_ k: any SSHKeySource) {
+        lock.withLock { cache[k.id] = k }
     }
 
     /// The default key, made on first use.
     public func defaultKey() throws -> GeneratedKey {
-        if let k = try key(Self.defaultID) { return k }
+        if let k = try key(Self.defaultID) as? GeneratedKey { return k }
         return try create(id: Self.defaultID, biometry: false)
     }
 
