@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -200,7 +201,13 @@ func TestBoardOrdersBlockedFirst(t *testing.T) {
 	// A second working session's later state change does not move the first.
 	_, work2, _ := b.AddSession("working2")
 	b.SetAgent(work2, api.AgentStatusWorking, "")
-	waitHosts(t, s, "the second working row", func([]hosts.Host) bool { return len(names()) == 4 })
+	// The fake files the pane a moment after it appears, so wait for the filed row.
+	waitHosts(t, s, "the second working row", func(hs []hosts.Host) bool {
+		names() // the order sees every step the rows take
+		return slices.ContainsFunc(board.Rows(hs, nil), func(r board.Row) bool {
+			return r.Name == "working2" && r.Rank == board.RankWorking
+		})
+	})
 	got := names()
 	if got[0] != "waiting" || got[1] != "finished" {
 		t.Fatalf("order %v", got)
