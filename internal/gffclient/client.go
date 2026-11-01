@@ -69,6 +69,10 @@ type Config struct {
 	Logf     func(format string, args ...any)
 }
 
+// errInputEnded is open's result when the host input ends; Run then returns nil, as it does
+// when the input ends later.
+var errInputEnded = errors.New("gffclient: the terminal input ended")
+
 // ErrDetached is Run's result when the owner detaches with the prefix and d.
 var ErrDetached = errors.New("gff: detached; the programs keep running")
 
@@ -111,9 +115,13 @@ type client struct {
 	offline bool
 	me      string // this client's id on the hab
 
-	w, h     int
-	canvas   canvas
-	pass     int // the view passing bytes through, or -1
+	w, h   int
+	canvas canvas
+	pass   int // the view passing bytes through, or -1
+	// carry is the view whose modes the host may still have from passing through, or -1: from
+	// entering pass-through until the modes are set back. A new snapshot ends pass-through but
+	// not this.
+	carry    int
 	composed bool
 	modes    map[int]bool // modes mirrored on the host while composed
 	out      bytes.Buffer
@@ -149,7 +157,7 @@ func Run(ctx context.Context, cfg Config) (err error) {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
-	c := &client{cfg: cfg, split: cfg.Split, pass: -1, modes: map[int]bool{}, keys: newKeyReader(cfg.Prefix),
+	c := &client{cfg: cfg, split: cfg.Split, pass: -1, carry: -1, modes: map[int]bool{}, keys: newKeyReader(cfg.Prefix),
 		notes: make(chan paneNote, 64), debounce: cfg.NewTimer()}
 	defer func() {
 		cancel()
@@ -171,15 +179,40 @@ func Run(ctx context.Context, cfg Config) (err error) {
 	wg.Add(1)
 	go func() { defer wg.Done(); c.ops.run(ctx) }()
 
+	// The input reader starts before the panes open: the host is already raw, so the prefix and
+	// d must end a start that hangs, and keys typed meanwhile go to the focused pane.
+	input := make(chan []byte)
+	inputErr := make(chan error, 1)
+	go func() { // not waited for: a terminal read cannot be interrupted
+		buf := make([]byte, 32<<10)
+		for {
+			n, err := cfg.In.Read(buf)
+			if n > 0 {
+				select {
+				case input <- append([]byte(nil), buf[:n]...):
+				case <-ctx.Done():
+					return
+				}
+			}
+			if err != nil {
+				inputErr <- err
+				return
+			}
+		}
+	}()
+
+	streams, typeahead, err := c.open(ctx, input, inputErr)
+	if err == errInputEnded {
+		return nil
+	} else if err != nil {
+		return err
+	}
 	frames := make(chan paneFrame)
-	for _, spec := range cfg.Panes {
+	for i, spec := range cfg.Panes {
 		if spec.Label == "" {
 			spec.Label = spec.ID
 		}
-		s, err := cfg.Conn.OpenPane(ctx, spec.ID, habconn.PaneOptions{Observe: spec.Observe})
-		if err != nil {
-			return fmt.Errorf("open pane %s: %w", spec.ID, err)
-		}
+		s := streams[i]
 		w := s.Welcome()
 		v := &view{spec: spec, stream: s, cols: w.Cols, rows: w.Rows, owner: w.Owner}
 		c.views = append(c.views, v)
@@ -202,26 +235,9 @@ func Run(ctx context.Context, cfg Config) (err error) {
 			}
 		}()
 	}
-
-	input := make(chan []byte)
-	inputErr := make(chan error, 1)
-	go func() { // not waited for: a terminal read cannot be interrupted
-		buf := make([]byte, 32<<10)
-		for {
-			n, err := cfg.In.Read(buf)
-			if n > 0 {
-				select {
-				case input <- append([]byte(nil), buf[:n]...):
-				case <-ctx.Done():
-					return
-				}
-			}
-			if err != nil {
-				inputErr <- err
-				return
-			}
-		}
-	}()
+	for _, p := range typeahead {
+		c.typeKeys(p)
+	}
 
 	c.w, c.h = c.hostSize()
 	c.canvas.resize(c.w, c.h)
@@ -291,6 +307,67 @@ func Run(ctx context.Context, cfg Config) (err error) {
 					v.dirty = true
 				}
 			}
+		}
+	}
+}
+
+// open opens every pane's stream while it reads host input. Input that comes meanwhile is
+// returned as typeahead; the prefix and d end the start with ErrDetached. Opening waits while
+// the hab is offline (habconn), and the host is raw, so Ctrl+C is no signal: without this a
+// hab that never comes back would leave the owner no way out.
+func (c *client) open(ctx context.Context, input <-chan []byte, inputErr <-chan error) ([]*habconn.PaneStream, [][]byte, error) {
+	type result struct {
+		streams []*habconn.PaneStream
+		err     error
+	}
+	opened := make(chan result)
+	go func() { // not waited for: it ends with ctx
+		var r result
+		for _, spec := range c.cfg.Panes {
+			s, err := c.cfg.Conn.OpenPane(ctx, spec.ID, habconn.PaneOptions{Observe: spec.Observe})
+			if err != nil {
+				r.err = fmt.Errorf("open pane %s: %w", spec.ID, err)
+				break
+			}
+			r.streams = append(r.streams, s)
+		}
+		if r.err == nil {
+			select {
+			case opened <- r:
+				return
+			case <-ctx.Done():
+			}
+		} else {
+			select {
+			case opened <- result{err: r.err}:
+			case <-ctx.Done():
+			}
+		}
+		for _, s := range r.streams {
+			s.Close()
+		}
+	}()
+	var typeahead [][]byte
+	for {
+		select {
+		case r := <-opened:
+			return r.streams, typeahead, r.err
+		case p := <-input:
+			for _, ev := range c.keys.feed(p) {
+				switch {
+				case ev.cmd == 0:
+					typeahead = append(typeahead, ev.data)
+				case ev.cmd == cmdDetach:
+					return nil, nil, ErrDetached
+				}
+			}
+		case err := <-inputErr:
+			if err == io.EOF {
+				return nil, nil, errInputEnded
+			}
+			return nil, nil, fmt.Errorf("read the terminal: %w", err)
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
 		}
 	}
 }
@@ -408,13 +485,14 @@ func (c *client) input(p []byte) error {
 	return nil
 }
 
-// typeKeys sends bytes to the focused pane.
+// typeKeys sends bytes to the focused pane. Before the pane's first snapshot the keys still
+// go, so typeahead as gff starts is kept, as ssh keeps it.
 func (c *client) typeKeys(p []byte) {
 	v := c.focused()
 	switch {
 	case v.spec.Observe:
 		v.note, v.dirty = "observer: input off", true
-	case !v.live():
+	case v.exited != nil || v.ended != nil:
 	case c.offline:
 		v.note, v.dirty = "offline: input dropped", true
 	default:
@@ -520,12 +598,20 @@ func (c *client) update(u habconn.Update) error {
 
 // Host terminal sequences.
 const (
-	// Modes a pane may have set on the host while passing through, set back to the defaults.
-	resetPaneModes = "\x1b[0m\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1016l" +
-		"\x1b[?1004l\x1b[?2004l\x1b[?1l\x1b>\x1b[=0;1u\x1b[4l\x1b[?6l\x1b[r\x1b[?7h\x1b[ q\x1b[?25h"
+	// Modes a pane may have set on the host while passing through, set back to the defaults:
+	// a synchronized update first, so the host draws again, then the rest, with
+	// modifyOtherKeys and the G0 charset (ESC ( B, then SI to use G0).
+	resetPaneModes = "\x1b[?2026l\x1b[0m\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1016l" +
+		"\x1b[?1004l\x1b[?2004l\x1b[?1l\x1b>\x1b[=0;1u\x1b[4l\x1b[?6l\x1b[r\x1b[?7h\x1b[ q\x1b[?25h" +
+		"\x1b[>4m\x1b(B\x0f"
 	enterCompose = "\x1b[?1049h\x1b[?7l\x1b[?25l"
 	leaveCompose = "\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l"
 )
+
+// HostReset sets the host terminal back from anything gff or a pane can leave on it: the pane
+// modes, the composed view's modes, and the alternate screen. gff writes it when it ended
+// without setting the terminal back itself, such as after a panic.
+const HostReset = resetPaneModes + "\x1b[?1049l"
 
 // mirrored are the focused pane's input modes that the composed view sets on the host, so
 // the host encodes keys and pastes the way the program asked (gff-client.md 8.2): cursor keys,
@@ -542,6 +628,11 @@ var mirrored = []struct {
 // render brings the host terminal up to date: pass-through when one pane fits it, else a
 // composed screen.
 func (c *client) render() {
+	if c.pass >= 0 {
+		if done, _ := c.allEnded(); done {
+			return // the last pane ended: the host keeps what it drew, as after ssh
+		}
+	}
 	a := arrange(len(c.views), c.focus, c.split, c.zoom, c.w, c.h)
 	if len(a.slots) == 1 {
 		i := a.slots[0].view
@@ -557,12 +648,11 @@ func (c *client) render() {
 		}
 	}
 	if c.pass >= 0 || !c.composed {
-		if c.pass >= 0 {
+		if c.carry >= 0 {
 			c.out.WriteString(resetPaneModes)
-			if !c.composed {
-				c.out.WriteString("\x1b[H\x1b[2J")
-			}
+			c.carry = -1
 		}
+		// The alternate screen comes clear; the main screen keeps what the pane drew.
 		c.out.WriteString(enterCompose)
 		c.pass, c.composed = -1, true
 		c.canvas.valid = false
@@ -590,7 +680,7 @@ func (c *client) enterPass(i int) {
 	// A snapshot holds no query (hab-logic-api.md 5.5); the filter is a cheap guard all the same.
 	var f passFilter
 	f.write(&c.out, snap)
-	c.pass = i
+	c.pass, c.carry = i, i
 }
 
 func resetMirrored(modes map[int]bool) string {
@@ -610,20 +700,26 @@ func (c *client) restoreHost() {
 	case c.composed:
 		c.out.WriteString(resetMirrored(c.modes))
 		c.out.WriteString(leaveCompose)
-	case c.pass >= 0:
-		v := c.views[c.pass]
-		alt := false
+	case c.carry >= 0:
+		v := c.views[c.carry]
+		leave := ""
 		if v.term != nil {
-			alt, _ = v.term.Mode(1049, false)
+			// Each way onto the alternate screen has its own way off.
+			for _, m := range []int{1049, 1047, 47} {
+				if on, _ := v.term.Mode(m, false); on {
+					leave = "\x1b[?" + strconv.Itoa(m) + "l"
+					break
+				}
+			}
 		}
 		c.out.WriteString(resetPaneModes)
-		if alt {
-			c.out.WriteString("\x1b[?1049l")
+		if leave != "" {
+			c.out.WriteString(leave)
 		} else {
 			c.out.WriteString("\x1b[" + strconv.Itoa(c.h) + ";1H\r\n")
 		}
 	}
-	c.composed, c.pass = false, -1
+	c.composed, c.pass, c.carry = false, -1, -1
 }
 
 // compose draws every shown pane, its frame row and the separators, and writes the changes.

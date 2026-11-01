@@ -1,17 +1,20 @@
 package gffclient
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/creack/pty"
 	"github.com/noahkiss/flightdeck/api"
+	"golang.org/x/sys/unix"
 )
 
 // The manual check, automated: the gff binary in a real terminal (a pty) starts vim and a
@@ -100,6 +103,62 @@ while :; do sleep 0.1; done
 		}
 	case <-time.After(waitLong()):
 		t.Fatal("gff did not exit after detach")
+	}
+}
+
+// When gff dies without setting the terminal back (SIGQUIT ends a Go program the way a panic
+// on any goroutine does: no deferred call runs), its guard puts back the terminal's settings
+// and leaves the alternate screen.
+func TestCrashRestoresTerminal(t *testing.T) {
+	h := startHab(t)
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ptmx.Close()
+	defer tty.Close()
+	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: 80, Rows: 24}); err != nil {
+		t.Fatal(err)
+	}
+	cooked, err := unix.IoctlGetTermios(int(tty.Fd()), ioctlGetTermios)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two panes: the composed view, on the host's alternate screen.
+	cmd := exec.Command(gffBin, "-socket", h.sock, "-new", "echo left; exec sleep 600", "-new", "echo right; exec sleep 600")
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = tty, tty, tty
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	t.Cleanup(func() {
+		cmd.Process.Kill()
+		<-done
+	})
+	hst := newHost(t, 80, 24, false)
+	go io.Copy(hst, ptmx)
+	hst.waitScreen("both panes", func(s string) bool { return strings.Contains(s, "left") && strings.Contains(s, "right") })
+	if raw, _ := unix.IoctlGetTermios(int(tty.Fd()), ioctlGetTermios); raw.Lflag&unix.ECHO != 0 {
+		t.Fatal("gff did not put the terminal in raw mode")
+	}
+
+	cmd.Process.Signal(syscall.SIGQUIT)
+	select {
+	case <-done:
+		done <- nil
+	case <-time.After(waitLong()):
+		t.Fatal("gff did not end on SIGQUIT")
+	}
+	waitUntil(t, "the terminal's settings put back", func() bool {
+		now, err := unix.IoctlGetTermios(int(tty.Fd()), ioctlGetTermios)
+		return err == nil && now.Lflag == cooked.Lflag && now.Iflag == cooked.Iflag && now.Oflag == cooked.Oflag
+	})
+	waitUntil(t, "the alternate screen left", func() bool { return bytes.Contains(hst.output(), []byte(HostReset)) })
+	if s := hst.screen(); strings.Contains(s, "left") {
+		t.Errorf("the host is still on the composed screen:\n%s", s)
 	}
 }
 

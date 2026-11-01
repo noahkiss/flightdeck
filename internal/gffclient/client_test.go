@@ -187,8 +187,11 @@ func TestHostResizeDebounced(t *testing.T) {
 // would answer it into the program's input. The host here answers every query it sees. The
 // queries are the ones gff-hab leaves to clients: pixel size reports, a clipboard read, and a
 // size report with a control byte inside. Both views are checked: pass-through and composed.
+// The program prints its queries only after gff has shown it and a key came, so they arrive
+// as live output, not inside the snapshot (which holds no query).
 func TestQueriesNeverAnswered(t *testing.T) {
-	script := `stty raw -echo; printf 'start\033[14t\033[16t\033]52;c;?\007\033[1\0108tready\r\n'; ` +
+	script := `stty raw -echo; printf 'attached\r\n'; dd bs=1 count=1 >/dev/null 2>&1; ` +
+		`printf 'start\033[14t\033[16t\033]52;c;?\007\033[1\0108tready\r\n'; ` +
 		`l=$(dd bs=1 count=2 2>/dev/null | od -An -c | tr -d ' \n'); printf 'got[%s]\r\n' "$l"; exec sleep 600`
 	for _, tc := range []struct {
 		name  string
@@ -210,7 +213,18 @@ func TestQueriesNeverAnswered(t *testing.T) {
 				specs = append(specs, PaneSpec{ID: spawn(t, other, "exec sleep 600", 40, 10)})
 			}
 			startGFF(t, h, hst, SplitColumns, specs...)
+			hst.waitScreen("attached", func(s string) bool { return strings.Contains(s, "attached") })
+			mark := len(hst.output())
+			hst.typ("K")
 			hst.waitScreen("ready", func(s string) bool { return strings.Contains(s, "ready") })
+			if !tc.split {
+				// The queries came live while passing through: the host got the pane's own
+				// bytes after the mark, and gff never composed.
+				out := hst.output()
+				if !bytes.Contains(out[mark:], []byte("start")) || bytes.Contains(out, []byte(enterCompose)) {
+					t.Fatalf("the queries did not pass through live: %q", out[mark:])
+				}
+			}
 			hst.typ("XY")
 			hst.waitScreen("what the program read", func(s string) bool { return strings.Contains(s, "got[") })
 			if s := hst.screen(); !strings.Contains(s, "got[XY]") {
@@ -247,5 +261,84 @@ func TestDetach(t *testing.T) {
 	}
 	if out := hst.output(); !bytes.HasSuffix(out, []byte(leaveCompose)) {
 		t.Errorf("the host was not left on its own screen: ends %q", out[max(len(out)-40, 0):])
+	}
+}
+
+// Keys typed while gff opens its panes, and before the first snapshot, reach the program, as
+// ssh keeps typeahead. The data dial hangs until both keys are in.
+func TestTypeaheadKept(t *testing.T) {
+	h := startHab(t)
+	other := h.other()
+	pane := spawn(t, other, `stty raw -echo; l=$(dd bs=1 count=3 2>/dev/null); printf 'got[%s]\r\n' "$l"; exec sleep 600`, 80, 24)
+	call(t, other, "pane.disown", api.PaneRef{Pane: pane}, nil)
+	hst := newHost(t, 80, 24, false)
+	g := startGFFHeld(t, h, hst, SplitColumns, PaneSpec{ID: pane})
+	waitUntil(t, "the data dial", func() bool { return g.rec.dials() == 1 })
+	typed := make(chan struct{})
+	go func() {
+		// A pipe write returns once gff read it; the second one returns only after gff took
+		// the first from its reader.
+		hst.inW.Write([]byte("ab"))
+		hst.inW.Write([]byte("c"))
+		close(typed)
+	}()
+	select {
+	case <-typed:
+	case <-time.After(waitLong()):
+		t.Fatal("gff read no input while its pane was opening")
+	}
+	g.rec.releaseData()
+	hst.waitScreen("the typeahead in the program", func(s string) bool { return strings.Contains(s, "got[abc]") })
+}
+
+// A start that hangs (the hab never answers the data dial) still ends with the prefix and d,
+// with nothing sent to the pane.
+func TestDetachWhileOpening(t *testing.T) {
+	h := startHab(t)
+	other := h.other()
+	pane := spawn(t, other, "exec sleep 600", 80, 24)
+	hst := newHost(t, 80, 24, false)
+	g := startGFFHeld(t, h, hst, SplitColumns, PaneSpec{ID: pane})
+	waitUntil(t, "the data dial", func() bool { return g.rec.dials() == 1 })
+	go hst.inW.Write([]byte("\x1cd"))
+	select {
+	case err := <-g.done:
+		g.done <- err // for the cleanup
+		if err != ErrDetached {
+			t.Fatalf("Run = %v, want ErrDetached", err)
+		}
+	case <-time.After(waitLong()):
+		t.Fatal("Run did not return after detach while the pane was opening")
+	}
+	if n := len(g.rec.calls("pane.input", pane)); n != 0 {
+		t.Errorf("gff sent %d pane.input calls", n)
+	}
+}
+
+// When the last pane exits while passing through, the host keeps what the pane drew, as after
+// ssh: gff neither clears the screen nor composes.
+func TestLastPaneExitKeepsScreen(t *testing.T) {
+	h := startHab(t)
+	other := h.other()
+	pane := spawn(t, other, `stty raw -echo; printf 'hello-exit\r\n'; dd bs=1 count=1 >/dev/null 2>&1`, 80, 24)
+	call(t, other, "pane.disown", api.PaneRef{Pane: pane}, nil)
+	hst := newHost(t, 80, 24, false)
+	g := startGFF(t, h, hst, SplitColumns, PaneSpec{ID: pane})
+	hst.waitScreen("the pane", func(s string) bool { return strings.Contains(s, "hello-exit") })
+	hst.typ("q")
+	select {
+	case err := <-g.done:
+		g.done <- err
+		if err != nil {
+			t.Fatalf("Run = %v, want nil", err)
+		}
+	case <-time.After(waitLong()):
+		t.Fatal("Run did not return after the pane exited")
+	}
+	if s := hst.screen(); !strings.Contains(s, "hello-exit") {
+		t.Errorf("the host screen lost what the pane drew:\n%s", s)
+	}
+	if bytes.Contains(hst.output(), []byte(enterCompose)) {
+		t.Error("gff composed after the last pane exited")
 	}
 }

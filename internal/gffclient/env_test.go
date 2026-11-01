@@ -227,14 +227,50 @@ func (r request) pane() string {
 	return p.Pane
 }
 
-// recorder is a Unix socket transport that records every request on control connections.
+// recorder is a Unix socket transport that records every request on control connections. While
+// it holds data dials, each one waits, past its context, until the test releases them: a hab
+// that hangs.
 type recorder struct {
 	habconn.UnixTransport
-	mu   sync.Mutex
-	reqs []request
+	mu        sync.Mutex
+	reqs      []request
+	gate      chan struct{} // non-nil: data dials wait until it closes
+	dataDials int
+}
+
+// holdData makes data dials wait until releaseData.
+func (r *recorder) holdData() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.gate = make(chan struct{})
+}
+
+func (r *recorder) releaseData() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.gate != nil {
+		close(r.gate)
+		r.gate = nil
+	}
+}
+
+// dials counts the data dials begun.
+func (r *recorder) dials() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.dataDials
 }
 
 func (r *recorder) Dial(ctx context.Context, kind habconn.Kind) (io.ReadWriteCloser, error) {
+	if kind == habconn.KindData {
+		r.mu.Lock()
+		r.dataDials++
+		g := r.gate
+		r.mu.Unlock()
+		if g != nil {
+			<-g
+		}
+	}
 	s, err := r.UnixTransport.Dial(ctx, kind)
 	if err != nil || kind != habconn.KindControl {
 		return s, err
@@ -430,7 +466,22 @@ type gff struct {
 
 func startGFF(t *testing.T, h *hab, hst *host, split Split, panes ...PaneSpec) *gff {
 	t.Helper()
+	return startGFFRec(t, h, hst, &recorder{UnixTransport: habconn.UnixTransport{Path: h.sock}}, split, panes...)
+}
+
+// startGFFHeld starts gff with its data dials held: opening its panes hangs until the test
+// calls releaseData. The cleanup releases them first.
+func startGFFHeld(t *testing.T, h *hab, hst *host, split Split, panes ...PaneSpec) *gff {
+	t.Helper()
 	rec := &recorder{UnixTransport: habconn.UnixTransport{Path: h.sock}}
+	rec.holdData()
+	g := startGFFRec(t, h, hst, rec, split, panes...)
+	t.Cleanup(rec.releaseData) // runs before startGFFRec's cleanup
+	return g
+}
+
+func startGFFRec(t *testing.T, h *hab, hst *host, rec *recorder, split Split, panes ...PaneSpec) *gff {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	conn, err := habconn.Connect(ctx, habconn.Config{Transport: rec,
 		Client: api.ClientInfo{Name: "gff", Version: "test", Kind: api.ClientKindTerminal}})

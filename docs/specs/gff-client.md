@@ -234,8 +234,19 @@ the view is composed.
   paste modes are set on the host, so the host encodes keys and pastes as the program asked.
 - A host resize, a split or a zoom repaints at once from the parsers. The pane's new size comes
   back as a resize frame; when it fits the host again, pass-through starts again (3.3).
-- On exit gff sets back every mode it or a pane set, and leaves the alternate screen. After
-  pass-through the screen keeps what the pane drew, as after `ssh`.
+- Leaving pass-through sets back the modes the pane may have set on the host, then enters the
+  alternate screen. The main screen is not cleared. gff tracks those modes apart from
+  pass-through itself, so a new snapshot that ends pass-through (a data connection opened
+  again at another size) still sets them back. The set: a synchronized update (2026) first,
+  so the host draws again; attributes; every mouse mode; focus events; bracketed paste;
+  cursor keys and keypad; the kitty keyboard flags; modifyOtherKeys (`CSI > 4 m`); insert
+  mode; origin mode; the scroll region; autowrap; the cursor style and visibility; the G0
+  charset (`ESC ( B`, then SI). This is what tmux sets back.
+- When the last pane ends while passing through, gff composes nothing: the screen keeps what
+  the pane drew, as after `ssh`.
+- On exit gff sets back every mode it or a pane set, and leaves the alternate screen the way
+  the pane entered it (1049, 1047 or 47). After pass-through the screen keeps what the pane
+  drew.
 
 **Terminal queries.** gff sends no query of its own to the host terminal, and its parsers never
 answer one: the `vt` wrapper gives libghostty no reply callback. In pass-through, a filter runs
@@ -259,9 +270,22 @@ dropped (a long OSC 52 clipboard write passes).
 
 **Input and keys.** Host input goes to the focused pane as `pane.input`. Each pane has one
 sender: keys typed while a call is out go in the next call, in order. Offline, input is refused
-with a frame note, never queued (11.6); an observer view sends none. The prefix key is Ctrl+(`-prefix ctrl-<key>` changes it; the keys that are Backspace, Tab, Enter and Esc are refused).
-The key reader knows the prefix in legacy form and in kitty form (`CSI 92;5u`), which a host
-sends while a pane in pass-through has the kitty keyboard protocol on. After the prefix:
+with a frame note, never queued (11.6); an observer view sends none. Keys typed while gff
+starts, before a pane's first snapshot, still go to the pane, as `ssh` keeps typeahead. The
+prefix key is Ctrl+\ (`-prefix ctrl-<key>` changes it; the keys that are Backspace, Tab, Enter
+and Esc are refused).
+
+The key reader knows the prefix in three forms: legacy (one control byte), kitty
+(`CSI 92;5u`) and modifyOtherKeys (`CSI 27;5;92~`). A host sends the last two while a pane in
+pass-through has the kitty keyboard protocol or modifyOtherKeys on (vim turns on
+modifyOtherKeys 2). Caps Lock and Num Lock in the modifiers do not matter. When a pane asked for
+key event types, the prefix's release never reaches the pane, and after the prefix a key
+release or a modifier key alone does not count as the command. A lone Esc is never held back.
+
+gff opens its panes while it already reads keys. Opening waits while the hab is offline, and
+the terminal is raw, so Ctrl+C is no signal: the prefix and `d` end a start that hangs.
+
+After the prefix:
 
 | Key | Action |
 |---|---|
@@ -294,6 +318,13 @@ working directory). Each new pane starts at its view's size, so its program gets
 it starts. With neither, it starts the hab's shell. It needs a terminal on stdin and
 stdout, puts it in raw mode, and puts it back on exit and on SIGTERM, SIGHUP and SIGINT.
 
+Like herdr's panic hook, a guard sets the terminal back when gff dies without doing it: a
+panic on any goroutine, SIGQUIT or SIGKILL. Go has no process-wide panic hook, so the guard is
+a small child process (`gff` itself, run with `GFF_TERMINAL_GUARD=1`). It saves the terminal's
+settings before raw mode, then waits on a pipe. gff writes one byte on it once it has set the
+terminal back. When the pipe ends without that byte, the guard puts back the saved settings,
+writes the mode reset and leaves the alternate screen.
+
 **Tests.** The suite runs the real holder and gff-hab binaries, and gff in process with a fake
 host terminal (pipes, its output parsed by `vt.Fake`), a transport that records every control
 request, and a debounce timer the test fires.
@@ -303,10 +334,16 @@ request, and a debounce timer the test fires.
 | `TestObserverNeverResizes` | An observer view sends no size, take, redraw or input, through opening, a host resize, typing and the fit key; its tickets ask for `observe`; the pane keeps its size and owner |
 | `TestTypingTakesOwnership` | With another client owning the pane, gff shows it composed with the owner note; typing makes gff the owner (reason `typed`) with no `pane.take`; the program gets gff's size and gff passes its bytes through |
 | `TestHostResizeDebounced` | Five host resizes send no size until the debounce fires, then one, for the last size; the program sees only that size |
-| `TestQueriesNeverAnswered` | A host that answers every query it sees gets none, in pass-through and composed: the program reads only the keys typed after its queries (pixel size reports, a clipboard read, a size report with a control byte inside) |
+| `TestQueriesNeverAnswered` | A host that answers every query it sees gets none, in pass-through and composed: the program reads only the keys typed after its queries (pixel size reports, a clipboard read, a size report with a control byte inside). The program prints them only after gff shows it and a key comes, so in pass-through they arrive as live bytes; the test fails with the filter off |
 | `TestDetach` | The prefix and `d` end `Run` and leave the host's own screen |
+| `TestTypeaheadKept` | Keys typed while the data dial hangs reach the program once the pane opens, before its first snapshot |
+| `TestDetachWhileOpening` | With the data dial hung, the prefix and `d` end `Run` with `ErrDetached` |
+| `TestLastPaneExitKeepsScreen` | The only pane exits while passing through: `Run` returns nil, the host still shows what the pane drew, and gff never composed |
+| `TestCrashRestoresTerminal` | The `gff` binary in a pty, composed, killed with SIGQUIT (no deferred call runs, as in a panic): the guard puts back the terminal's settings and leaves the alternate screen |
+| `TestNewSnapshotResetsModes` | A new snapshot at a size that no longer fits ends pass-through; the mode reset comes before the composed view |
+| `TestRestoreLeavesAltScreen`, `TestResetPaneModes` | Exit leaves the alternate screen by 1049, 1047 or 47, as the pane entered it; the reset holds 2026, modifyOtherKeys and the G0 charset |
 | `TestSplitsRedrawAfterResize` | The `gff` binary in a pty starts vim and a full-screen script side by side, each at its view's size; after the terminal resizes, both draw at their new sizes and gff composes them; detach exits 0. Skips without vim |
-| Unit tests | The filter from any read split, a long string streams, the key reader (legacy and kitty prefix, split reads), the layout, the canvas writes only changed cells and clips a wide cell |
+| Unit tests | The filter from any read split, a long string streams, the key reader (legacy, kitty and modifyOtherKeys prefix, key releases and modifier keys after the prefix, split reads), the layout, the canvas writes only changed cells and clips a wide cell |
 
 **Limits (not built).** The bar is the popular tools in this space; these stay documented:
 
@@ -317,6 +354,7 @@ request, and a debounce timer the test fires.
 | Kitty graphics and other APC strings are dropped in pass-through | The host would answer them; images are a later stage |
 | Window titles (OSC 0, 2) pass through in pass-through and are ignored when composed; no host title of gff's own (3.2) | The tab bar stage owns titles |
 | The cursor style (DECSCUSR) is not mirrored in the composed view | Cosmetic |
+| With kitty key event types on, the release of the command key after the prefix reaches the pane | A release with no press before it; programs act on presses |
 | Entering pass-through redraws from the local snapshot without scrollback | The host's own scrollback keeps what scrolled while passing through |
 | A pane that starts passing through inside a long control string or a UTF-8 character may show a stray byte | Needs a frame cut there and a layout change at that moment; the next redraw clears it |
 | One hab, one row or column of panes, no tabs, no saved workspace | Later stages (5.1, 6) |

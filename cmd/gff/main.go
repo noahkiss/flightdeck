@@ -52,6 +52,9 @@ func (m *multi) String() string     { return strings.Join(*m, ", ") }
 func (m *multi) Set(v string) error { *m = append(*m, v); return nil }
 
 func main() {
+	if os.Getenv(guardEnv) == "1" {
+		os.Exit(runGuard())
+	}
 	err := run(os.Args[1:])
 	switch {
 	case err == nil:
@@ -151,6 +154,12 @@ func run(args []string) error {
 	if !strings.HasPrefix(name, "libghostty") {
 		fmt.Fprintln(os.Stderr, "gff: parser", name)
 	}
+	// The guard sets the terminal back if gff dies with it raw (a panic on any goroutine).
+	g, err := startGuard()
+	if err != nil {
+		return err
+	}
+	defer g.stop() // runs after restore
 	restore, err := rawMode(in)
 	if err != nil {
 		return fmt.Errorf("raw mode: %w", err)
