@@ -338,9 +338,10 @@ func SafeName(name string) string {
 		if len(ext) > 16 {
 			ext = ""
 		}
-		stem := out[:len(out)-len(filepath.Ext(out))]
-		cut := MaxName - len(ext)
-		for cut > 0 && !utf8.RuneStart(stem[cut]) {
+		// A dropped extension stays in the stem, which is then cut like any other text.
+		stem := out[:len(out)-len(ext)]
+		cut := min(MaxName-len(ext), len(stem))
+		for cut > 0 && cut < len(stem) && !utf8.RuneStart(stem[cut]) {
 			cut--
 		}
 		out = strings.TrimRight(stem[:cut], ".-") + ext

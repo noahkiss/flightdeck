@@ -11,6 +11,9 @@ import (
 type fakeAttachments struct{}
 
 func (fakeAttachments) Put(_ context.Context, p api.AttachmentPutParams) (api.AttachmentStored, error) {
+	if p.Session == "panic" {
+		panic("a bug in the store")
+	}
 	if p.Session == "gone" {
 		return api.AttachmentStored{}, Errorf(api.ErrorKindNotFound, "no session")
 	}
@@ -48,6 +51,12 @@ func TestAttachmentCalls(t *testing.T) {
 	var ce *Error
 	if _, err := cl.AttachmentPut(ctx(t), api.AttachmentPutParams{Session: "gone", Name: "x"}); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindNotFound {
 		t.Errorf("not found: %v", err)
+	}
+	if _, err := cl.AttachmentPut(ctx(t), api.AttachmentPutParams{Session: "panic", Name: "x"}); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindUnavailable {
+		t.Errorf("a panic in the store: %v", err)
+	}
+	if _, err := cl.AttachmentGet(ctx(t), api.AttachmentGetParams{ID: "a1"}); err != nil {
+		t.Errorf("the connection did not survive a panic: %v", err)
 	}
 	for name, call := range map[string]func() error{
 		"put no session": func() error {

@@ -16,6 +16,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
@@ -387,6 +388,50 @@ func TestMessageText(t *testing.T) {
 	if rest, ids := SplitMessage("relative\n.flightdeck/attachments/0123456789ab-a.png", nil); ids != nil || !strings.HasPrefix(rest, "relative") {
 		t.Errorf("a relative path was taken: %q %v", rest, ids)
 	}
+}
+
+// TestSafeNameLong: long names with a long last "extension", multibyte runes at the cut and
+// names of every length up to 400 bytes never panic, stay within MaxName bytes and stay valid
+// UTF-8.
+func TestSafeNameLong(t *testing.T) {
+	names := []string{
+		"Meeting notes v2.final draft for the quarterly planning review with all the teams and stakeholders here",
+		"a." + strings.Repeat("b", 200),
+		strings.Repeat("é", 120) + ".png",
+		strings.Repeat("日本", 60) + ".jpeg",
+		strings.Repeat("x", 99) + "é.txt",
+		"a." + strings.Repeat("é", 200),
+		strings.Repeat("x", 90) + "." + strings.Repeat("ü", 20),
+	}
+	for n := 0; n <= 400; n++ {
+		names = append(names, strings.Repeat("a", n), "x."+strings.Repeat("é", n), strings.Repeat("ß", n)+".pdf")
+	}
+	for _, in := range names {
+		checkSafeName(t, in)
+	}
+	if got := SafeName(strings.Repeat("a", 150) + ".png"); !strings.HasSuffix(got, ".png") || len(got) != MaxName {
+		t.Errorf("a short extension is kept: %q", got)
+	}
+}
+
+func checkSafeName(t *testing.T, in string) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("SafeName(%q) panicked: %v", in, r)
+		}
+	}()
+	got := SafeName(in)
+	if len(got) > MaxName || got == "" || !utf8.ValidString(got) || strings.ContainsAny(got, "/ \n") {
+		t.Errorf("SafeName(%q) = %q (%d bytes)", in, got, len(got))
+	}
+}
+
+func FuzzSafeName(f *testing.F) {
+	for _, s := range []string{"a.png", "Meeting notes v2.final draft", "a." + strings.Repeat("é", 80), "../x", ""} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, in string) { checkSafeName(t, in) })
 }
 
 func TestSafeName(t *testing.T) {

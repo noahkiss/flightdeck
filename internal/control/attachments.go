@@ -95,7 +95,7 @@ func (c *conn) handleAttachment(m message) {
 		// next run from a new connection, or is dropped when idle.
 		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
 		defer cancel()
-		res, err := run(ctx)
+		res, err := c.runAttachment(ctx, m.Method, run)
 		c.mu.Lock()
 		c.attachments--
 		c.mu.Unlock()
@@ -105,4 +105,16 @@ func (c *conn) handleAttachment(m message) {
 		}
 		c.reply(m, seq, res, nil)
 	}()
+}
+
+// runAttachment runs one call and turns a panic into an error: a bug in the store fails that
+// call, never the hab and every session's connection with it.
+func (c *conn) runAttachment(ctx context.Context, method string, run func(context.Context) (any, error)) (res any, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.s.cfg.Logf("control: %s panicked: %v", method, r)
+			res, err = nil, appErr(api.ErrorKindUnavailable, "%s failed inside the hab: %v", method, r)
+		}
+	}()
+	return run(ctx)
 }
