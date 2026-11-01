@@ -1337,8 +1337,8 @@ Settings › Keys offers two kinds of key per device.
   and the file's bytes. The ciphers to accept are the AES-CTR ones `ssh-keygen` writes by default
   *(gk)*. The passphrase is never stored.
 - **Stored** as a Keychain item marked usable only when unlocked, this device only, and not
-  synchronisable, so neither iCloud Keychain nor a backup carries it to another device. With the
-  Face ID setting on (7.6), using the key also asks for Face ID.
+  synchronisable, so neither iCloud Keychain nor a backup carries it to another device. With
+  "Require Face ID for SSH keys" on (10.7), using the key also asks for Face ID.
 - **Never sent anywhere.** The private key goes to no hab, no log, no crash report, and no export.
   The app has no "export key" control. Only signatures leave the device, as with any SSH key.
 - **Shown** in Settings: type, fingerprint, the key's comment, and which habs use it.
@@ -1475,9 +1475,9 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH`.
   user to trust it.
 - **Device key.** `DeviceKeys` makes a P-256 key in the Secure Enclave when the device has one
   (iPhone, iPad, Apple silicon Mac), else in software (the simulator, unit tests). It has no
-  biometric flag unless the user turns on "Require Face ID for the key", which makes a new key
-  with `.biometryCurrentSet` (every host must get the new public key). Such a key asks for Face ID before
-  each dial, off the network thread, and signs with that authentication. The key blob is a Keychain
+  biometric flag. "Require Face ID for SSH keys" (10.7), one setting for this key and every
+  imported key, makes the app ask for Face ID before each dial, off the network thread; an
+  enclave key then signs with that authentication. The key blob is a Keychain
   item, usable only when unlocked, this device only, not synchronisable. On iOS it is in the data
   protection Keychain; the unsandboxed, possibly ad hoc signed Mac app uses the login keychain.
   There "this device only" is not enforced, so a software key on a Mac with no enclave can reach
@@ -1487,7 +1487,7 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH`.
   it is unlocked". The key source is the `SSHKeySource` protocol; an imported OpenSSH key
   (10.7) is the second source.
 - **Settings › SSH.** Opened from the connections list. It shows the key's type, fingerprint and
-  OpenSSH line with Copy and Share, the Face ID option (Secure Enclave keys), the SSH habs, and a
+  OpenSSH line with Copy and Share, "Require Face ID for SSH keys" (iOS), the SSH habs, and a
   test notification per hab.
 - **Hab entries.** `Flightdeck/ssh-habs.json` under Application Support (or `$FLIGHTDECK_SSH_HABS`),
   mode 0600: id, label, user, endpoints in order, the pinned host key fingerprint and line, the key
@@ -1553,8 +1553,8 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH/KeyImport` and `Views/Key
   Ed25519) import through a small DER reader: `ssh-keygen -m PEM` writes explicit curve
   parameters, which CryptoKit's PEM reader refuses. The curve follows from the private value's
   length, and the embedded public key must match.
-- **Storage.** The decrypted raw key (the Ed25519 seed or the ECDSA scalar), its type, comment,
-  Face ID flag and date go to the same Keychain service as the generated key, account
+- **Storage.** The decrypted raw key (the Ed25519 seed or the ECDSA scalar), its type, comment
+  and date go to the same Keychain service as the generated key, account
   `imported-` plus the first 12 bytes of the public key's SHA-256 in hex. The same key imported
   twice lands on the same item, and the app says it kept one. The passphrase and the file never
   reach the store or a log; the log gets the type and fingerprint. The passphrase buffer, the
@@ -1564,12 +1564,23 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH/KeyImport` and `Views/Key
 - **Storage class.** Every write sets `WhenUnlockedThisDeviceOnly` and not synchronisable. A test
   checks the query and, on the real Keychain, the stored item. On the Mac the login keychain
   keeps no accessibility class (10.6), so there the test checks only the sync flag.
-- **Face ID.** A per-key "Require Face ID for this key" switch (iOS), off by default. When on, the
-  app asks for Face ID before each dial, like the generated key. It is an app check, not a
-  Keychain access rule: the item stays readable whenever the device is unlocked. Turning the
-  switch off asks for the owner's authentication (Face ID or the passcode) first, so whoever
-  holds the unlocked device cannot drop the check; turning it on asks nothing. Background
-  actions refuse such a key at once, as with the generated key.
+- **Face ID.** One device-wide setting, "Require Face ID for SSH keys" (Settings › SSH, iOS), off
+  by default, covers the generated key and every imported key, including keys imported later.
+  When on, the app asks for Face ID before each dial. It is an app check, not a Keychain access
+  rule: items stay readable whenever the device is unlocked, and changing the setting keeps
+  every key and its public line. Turning it off asks for the owner's authentication (Face ID or
+  the passcode) first, so whoever holds the unlocked device cannot drop the check; turning it on
+  asks nothing. A change restarts every SSH connection with the keys read anew. Background
+  actions refuse a key that needs Face ID at once. The setting is its own item in the keys'
+  Keychain service (account `setting-face-id`; no item means off), so it shares their storage
+  class and never outlives them in a backup. A key's detail shows the setting, read-only.
+- **Migration from per-key switches.** Earlier builds kept a Face ID flag in each stored key. On
+  first use `DeviceKeys` folds them: any key with the flag on turns the setting on, then every
+  key is written again without the flag (setting first, so a stop halfway leaves it on and the
+  next start finishes). A generated enclave key made with the old switch has `.biometryCurrentSet`
+  in the enclave, which cannot be removed. The app tells by signing once with no interaction
+  allowed, so no flag is kept: such a key still asks for Face ID with the setting off, and
+  Settings › SSH says so with "Make a new key".
 - **Choosing a key.** Each hab entry names its key (`keyID`). "Add a hab by address" shows a key
   picker once an imported key exists; the generated key is preselected. Each row in Habs over
   SSH has a key menu. An entry whose key is gone (deleted, or a restore from a backup) says "No
@@ -1588,7 +1599,7 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH/KeyImport` and `Views/Key
   type and fingerprint, asks for the passphrase when needed (a wrong one clears the field; no
   limit on tries), then shows the public line with Copy and Share. The trade-off line sits under
   the paste field.
-- **Detail.** Type, comment, fingerprint, the public line, the habs that use it, Face ID, Delete
+- **Detail.** Type, comment, fingerprint, the public line, the habs that use it, the Face ID setting, Delete
   (with a confirmation that its habs stop connecting).
 - **Not built.** The warning when an imported key is used for pairing with the embedded server
   (pairing is not built). Open in on the Mac (it imports through paste and the file picker).
@@ -1597,7 +1608,9 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH/KeyImport` and `Views/Key
   scanners pass them) for every type, plain and encrypted, each cipher family, one round, SEC1
   and PKCS#8; wrong passphrase, padding and check words corrupted, a changed public key,
   truncation, RSA, chacha20, encrypted PEM, a public key, text around the key; the store; the
-  storage class; an imported key on the in-process SSH server. `SSHLiveTests.testLiveImportedKey`
+  storage class; an imported key on the in-process SSH server; the Face ID setting over both
+  kinds of key (off needs authentication, a refusal keeps it on) and the migration of per-key
+  flags. `SSHLiveTests.testLiveImportedKey`
   pings a real sshd with an imported passphrase-protected Ed25519 key made by `ssh-keygen`.
 
 ---

@@ -16,7 +16,7 @@ public struct SSHSettingsView: View {
     @Bindable var setup: SSHSetup
     @State private var adding = false
     @State private var pairing = false
-    @State private var confirmBiometry: Bool?
+    @State private var confirmNewKey = false
     @State private var message: String?
 
     public init(setup: SSHSetup) {
@@ -93,14 +93,11 @@ public struct SSHSettingsView: View {
                 PairingView(setup: setup, offer: nil) { pairing = false }
             }
         }
-        .confirmationDialog("Make a new key?", isPresented: Binding(get: { confirmBiometry != nil }, set: { if !$0 { confirmBiometry = nil } }), titleVisibility: .visible) {
+        .confirmationDialog("Make a new key?", isPresented: $confirmNewKey, titleVisibility: .visible) {
             Button("Make a new key") {
-                if let b = confirmBiometry {
-                    do { try setup.replaceKey(biometry: b) } catch { message = "\(error)" }
-                }
-                confirmBiometry = nil
+                do { try setup.replaceKey() } catch { message = "\(error)" }
             }
-            Button("Cancel", role: .cancel) { confirmBiometry = nil }
+            Button("Cancel", role: .cancel) {}
         } message: {
             Text("Every host must get the new public key.")
         }
@@ -117,11 +114,18 @@ public struct SSHSettingsView: View {
                 }
                 PublicKeyLine(line: line)
                 #if os(iOS)
-                if k.kind == .secureEnclave {
-                    Toggle("Require Face ID for the key", isOn: Binding(
-                        get: { k.requiresBiometry },
-                        set: { confirmBiometry = $0 }
-                    ))
+                Toggle("Require Face ID for SSH keys", isOn: Binding(
+                    get: { setup.faceID },
+                    set: { on in
+                        Task {
+                            do { try await setup.setFaceID(on) } catch { message = "\(error)" }
+                        }
+                    }
+                ))
+                if !setup.faceID && k.requiresBiometry {
+                    // A key made by an earlier build with Face ID in the Secure Enclave.
+                    Text("This key asks for Face ID until you make a new one.").foregroundStyle(.secondary)
+                    Button("Make a new key") { confirmNewKey = true }
                 }
                 #endif
             } else if let e = setup.keyError {

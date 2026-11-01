@@ -11,7 +11,9 @@ struct StoredImportedKey: Codable {
     /// The Ed25519 seed or the ECDSA private scalar.
     var raw: Data
     var comment: String
-    var biometry: Bool
+    /// The per-key Face ID flag of earlier builds; read once by the
+    /// migration into the device-wide setting (app.md 10.7), never written.
+    var biometry: Bool?
     var created: Date
 }
 
@@ -26,11 +28,11 @@ public struct ImportedKey: SSHKeySource {
     public let created: Date
     private let material: ImportedKeyMaterial
 
-    init(id: String, stored: StoredImportedKey) throws {
+    init(id: String, stored: StoredImportedKey, faceID: Bool) throws {
         self.id = id
         self.type = stored.type
         self.comment = stored.comment
-        self.requiresBiometry = stored.biometry
+        self.requiresBiometry = faceID
         self.created = stored.created
         material = try ImportedKeyMaterial(type: stored.type, raw: stored.raw, comment: stored.comment)
         publicKey = material.publicKey
@@ -40,7 +42,7 @@ public struct ImportedKey: SSHKeySource {
         try material.privateKey()
     }
 
-    /// With "Require Face ID" on, asks for it before handing out the key.
+    /// With "Require Face ID for SSH keys" on, asks for it before handing out the key.
     /// The Keychain item itself is guarded by the device lock only.
     public func signingKey() async throws -> NIOSSHPrivateKey {
         if requiresBiometry {
@@ -70,26 +72,15 @@ extension DeviceKeys {
     /// Stores a decrypted key. Returns the key and whether it was there
     /// already (same public key), in which case the stored one is replaced.
     @discardableResult
-    public func importKey(_ m: ImportedKeyMaterial, biometry: Bool = false) throws -> (key: ImportedKey, replaced: Bool) {
+    public func importKey(_ m: ImportedKeyMaterial) throws -> (key: ImportedKey, replaced: Bool) {
+        let on = try faceID()
         let id = Self.importedID(for: m.publicKey)
         let replaced = try store.read(account: id) != nil
-        let stored = StoredImportedKey(type: m.type, raw: m.raw, comment: m.comment, biometry: biometry, created: Date())
+        let stored = StoredImportedKey(type: m.type, raw: m.raw, comment: m.comment, created: Date())
         try store.write(account: id, data: JSONEncoder().encode(stored))
-        let k = try ImportedKey(id: id, stored: stored)
+        let k = try ImportedKey(id: id, stored: stored, faceID: on)
         cacheKey(k)
         return (k, replaced)
-    }
-
-    /// Turns the Face ID check on or off for an imported key.
-    @discardableResult
-    public func setBiometry(_ on: Bool, forImported id: String) throws -> ImportedKey {
-        guard let data = try store.read(account: id) else { throw TransportError("that key is gone") }
-        var stored = try JSONDecoder().decode(StoredImportedKey.self, from: data)
-        stored.biometry = on
-        try store.write(account: id, data: JSONEncoder().encode(stored))
-        let k = try ImportedKey(id: id, stored: stored)
-        cacheKey(k)
-        return k
     }
 
     /// Every imported key in the store, oldest first. An item that does not
@@ -111,7 +102,7 @@ extension DeviceKeys {
 
     static let log = Logger(subsystem: "com.flightdeck.app", category: "ssh")
 
-    func loadImported(id: String, data: Data) throws -> ImportedKey {
-        try ImportedKey(id: id, stored: JSONDecoder().decode(StoredImportedKey.self, from: data))
+    func loadImported(id: String, data: Data, faceID: Bool) throws -> ImportedKey {
+        try ImportedKey(id: id, stored: JSONDecoder().decode(StoredImportedKey.self, from: data), faceID: faceID)
     }
 }

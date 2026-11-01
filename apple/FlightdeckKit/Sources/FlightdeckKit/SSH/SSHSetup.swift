@@ -26,6 +26,9 @@ public final class SSHSetup {
     public private(set) var importedKeysError: String?
     /// A key file opened from the share sheet or Files, waiting for the import sheet.
     public var pendingKeyFile: PendingKeyFile?
+    /// "Require Face ID for SSH keys": one setting for the generated key and
+    /// every imported key (app.md 10.7).
+    public private(set) var faceID = false
 
     @ObservationIgnored private let listURL: URL?
     @ObservationIgnored private weak var fleet: Fleet?
@@ -61,6 +64,7 @@ public final class SSHSetup {
         do {
             let k = try keys.defaultKey()
             deviceKey = k
+            faceID = try keys.faceID()
             keyError = nil
             // The public key only, so a host can be set up from the log too.
             let line = k.authorizedKeysLine(comment: DeviceKeys.comment)
@@ -138,8 +142,8 @@ public final class SSHSetup {
     }
 
     /// Makes a new default key. Every host must get the new public key.
-    public func replaceKey(biometry: Bool) throws {
-        let k = try keys.create(id: DeviceKeys.defaultID, biometry: biometry)
+    public func replaceKey() throws {
+        let k = try keys.create(id: DeviceKeys.defaultID)
         deviceKey = k
         keyError = nil
         // Running connections hold the old key; rebuild them.
@@ -156,6 +160,7 @@ public final class SSHSetup {
     public func loadImportedKeys() {
         do {
             importedKeys = try keys.importedKeys()
+            faceID = try keys.faceID()
             importedKeysError = nil
         } catch {
             importedKeysError = DeviceKeys.explain(error).description
@@ -184,17 +189,22 @@ public final class SSHSetup {
         return r
     }
 
-    /// Turns "Require Face ID" on or off for an imported key. Turning it off
-    /// asks the owner to authenticate first, so whoever holds the unlocked
-    /// device cannot drop the check.
-    public func setBiometry(_ on: Bool, forImported id: String) async throws {
-        let current = importedKeys.first { $0.id == id }?.requiresBiometry ?? ((try? keys.key(id))?.requiresBiometry ?? false)
-        if current && !on {
-            try await authenticate("Turn off Face ID for this SSH key")
+    /// Turns "Require Face ID for SSH keys" on or off. Turning it off asks
+    /// the owner to authenticate first, so whoever holds the unlocked device
+    /// cannot drop the check; turning it on asks nothing. Every connection
+    /// starts again with the keys read anew.
+    public func setFaceID(_ on: Bool) async throws {
+        let current = (try? keys.faceID()) ?? faceID
+        guard on != current else { return }
+        if !on {
+            try await authenticate("Turn off Face ID for SSH keys")
         }
-        try keys.setBiometry(on, forImported: id)
+        try keys.setFaceID(on)
+        faceID = on
+        deviceKey = nil
+        loadKey()
         loadImportedKeys()
-        reconnect { $0.keyID == id }
+        reconnect { _ in true }
     }
 
     /// Removes an imported key. Entries that used it say "no key" until one

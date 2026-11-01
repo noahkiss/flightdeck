@@ -21,7 +21,8 @@ public protocol SSHKeySource: Sendable {
     var id: String { get }
     var kind: SSHKeyKind { get }
     var publicKey: NIOSSHPublicKey { get }
-    /// Whether using the key asks for Face ID.
+    /// Whether using the key asks for Face ID: the device-wide setting, or
+    /// a Secure Enclave key made with Face ID built in (app.md 10.7).
     var requiresBiometry: Bool { get }
     /// The private key for one signing session. Throws when the device is
     /// locked or the key is gone.
@@ -75,7 +76,9 @@ struct StoredKey: Codable {
     var kind: SSHKeyKind
     /// The Secure Enclave blob or the raw software key.
     var data: Data
-    var biometry: Bool
+    /// The per-key Face ID flag of earlier builds. Read once by the
+    /// migration into the device-wide setting, then dropped; never written.
+    var biometry: Bool?
     var created: Date
 }
 
@@ -88,11 +91,10 @@ public struct GeneratedKey: SSHKeySource {
     public let created: Date
     private let data: Data
 
-    init(id: String, stored: StoredKey) throws {
+    init(id: String, stored: StoredKey, faceID: Bool) throws {
         self.id = id
         self.kind = stored.kind
         self.data = stored.data
-        self.requiresBiometry = stored.biometry
         self.created = stored.created
         switch stored.kind {
         case .secureEnclave:
@@ -104,15 +106,32 @@ public struct GeneratedKey: SSHKeySource {
         case .imported:
             throw TransportError("an imported key is not a generated key")
         }
+        requiresBiometry = faceID || (stored.kind == .secureEnclave && Self.enclaveNeedsUser(stored.data))
     }
 
-    /// With Face ID on, asks for it first and signs with that authentication,
-    /// so signing during the handshake does not prompt.
+    /// Whether a Secure Enclave key needs the user to sign: earlier builds
+    /// made the key with `.biometryCurrentSet` when its Face ID switch was
+    /// on. A signature with no interaction allowed tells, so no flag is kept.
+    static func enclaveNeedsUser(_ data: Data) -> Bool {
+        let ctx = LAContext()
+        ctx.interactionNotAllowed = true
+        do {
+            let k = try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: data, authenticationContext: ctx)
+            _ = try k.signature(for: Data("flightdeck".utf8))
+            return false
+        } catch {
+            return true
+        }
+    }
+
+    /// With Face ID required, asks for it first and signs with that
+    /// authentication, so signing during the handshake does not prompt.
     public func signingKey() async throws -> NIOSSHPrivateKey {
-        guard requiresBiometry, kind == .secureEnclave else { return try privateKey() }
+        guard requiresBiometry else { return try privateKey() }
         let ctx = LAContext()
         ctx.localizedReason = "Use the SSH key"
         _ = try await ctx.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "Use the SSH key")
+        guard kind == .secureEnclave else { return try privateKey() }
         return NIOSSHPrivateKey(secureEnclaveP256Key: try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: data, authenticationContext: ctx))
     }
 
@@ -130,12 +149,17 @@ public struct GeneratedKey: SSHKeySource {
 public final class DeviceKeys: @unchecked Sendable {
     /// The id of the key made on first start.
     public static let defaultID = "device"
+    /// The store account of the device-wide "Require Face ID for SSH keys"
+    /// setting. No item means off.
+    static let faceIDAccount = "setting-face-id"
 
     let store: SecretStore
     private let lock = NSLock()
     private var cache: [String: any SSHKeySource] = [:]
     /// Whether new keys go to the Secure Enclave when it exists.
     private let preferEnclave: Bool
+    /// Whether the per-key flags of earlier builds were folded into the setting.
+    private var migrated = false
 
     public init(store: SecretStore, preferEnclave: Bool = true) {
         self.store = store
@@ -148,15 +172,73 @@ public final class DeviceKeys: @unchecked Sendable {
     /// The key with this id, generated or imported, or nil when there is none.
     public func key(_ id: String) throws -> (any SSHKeySource)? {
         if let k = lock.withLock({ cache[id] }) { return k }
-        guard let data = try store.read(account: id) else { return nil }
+        // The item first: a missing key reads as missing even when the
+        // setting cannot be read yet.
+        guard id != Self.faceIDAccount, let data = try store.read(account: id) else { return nil }
+        let on = try faceID()
         let k: any SSHKeySource
         if id.hasPrefix(Self.importedPrefix) {
-            k = try loadImported(id: id, data: data)
+            k = try loadImported(id: id, data: data, faceID: on)
         } else {
-            k = try GeneratedKey(id: id, stored: JSONDecoder().decode(StoredKey.self, from: data))
+            k = try GeneratedKey(id: id, stored: JSONDecoder().decode(StoredKey.self, from: data), faceID: on)
         }
         cacheKey(k)
         return k
+    }
+
+    // MARK: - Face ID (app.md 10.7)
+
+    /// The device-wide "Require Face ID for SSH keys" setting: every key,
+    /// generated or imported, asks for Face ID before each dial when it is on.
+    public func faceID() throws -> Bool {
+        try migrate()
+        return try store.read(account: Self.faceIDAccount) != nil
+    }
+
+    /// Changes the setting. The caller asks for authentication before
+    /// turning it off. Loaded keys are dropped so the next use reads it.
+    public func setFaceID(_ on: Bool) throws {
+        try migrate()
+        if on {
+            try store.write(account: Self.faceIDAccount, data: Data("on".utf8))
+        } else {
+            try store.delete(account: Self.faceIDAccount)
+        }
+        lock.withLock { cache.removeAll() }
+    }
+
+    /// Folds the per-key Face ID flags of earlier builds into the setting:
+    /// any key that had it on turns the setting on, then every stored key is
+    /// written again without its flag. The setting is written first, so a
+    /// stop halfway leaves it on and the next run finishes the rest.
+    private func migrate() throws {
+        if lock.withLock({ migrated }) { return }
+        var anyOn = false
+        var rewrites: [(String, Data)] = []
+        for account in try store.accounts() where account != Self.faceIDAccount {
+            guard let data = try store.read(account: account) else { continue }
+            if account.hasPrefix(Self.importedPrefix) {
+                guard var k = try? JSONDecoder().decode(StoredImportedKey.self, from: data), let b = k.biometry else { continue }
+                anyOn = anyOn || b
+                k.biometry = nil
+                rewrites.append((account, try JSONEncoder().encode(k)))
+            } else {
+                guard var k = try? JSONDecoder().decode(StoredKey.self, from: data), let b = k.biometry else { continue }
+                anyOn = anyOn || b
+                k.biometry = nil
+                rewrites.append((account, try JSONEncoder().encode(k)))
+            }
+        }
+        if anyOn {
+            try store.write(account: Self.faceIDAccount, data: Data("on".utf8))
+        }
+        for (account, data) in rewrites {
+            try store.write(account: account, data: data)
+        }
+        if !rewrites.isEmpty {
+            Self.log.notice("moved \(rewrites.count, privacy: .public) per-key Face ID flags into the setting (on: \(anyOn, privacy: .public))")
+        }
+        lock.withLock { migrated = true }
     }
 
     func cacheKey(_ k: any SSHKeySource) {
@@ -166,30 +248,29 @@ public final class DeviceKeys: @unchecked Sendable {
     /// The default key, made on first use.
     public func defaultKey() throws -> GeneratedKey {
         if let k = try key(Self.defaultID) as? GeneratedKey { return k }
-        return try create(id: Self.defaultID, biometry: false)
+        return try create(id: Self.defaultID)
     }
 
-    /// Makes a new key under `id`, replacing any key there. With `biometry`,
-    /// every use asks for Face ID (owner decision: off by default).
+    /// Makes a new key under `id`, replacing any key there. Face ID is the
+    /// device-wide setting, an app check: the key itself has no biometric
+    /// rule, so turning the setting on or off keeps the key.
     @discardableResult
-    public func create(id: String, biometry: Bool) throws -> GeneratedKey {
+    public func create(id: String) throws -> GeneratedKey {
+        let on = try faceID()
         let stored: StoredKey
         if preferEnclave && SecureEnclave.isAvailable {
-            var access: SecAccessControl?
             var error: Unmanaged<CFError>?
-            var flags: SecAccessControlCreateFlags = [.privateKeyUsage]
-            if biometry { flags.insert(.biometryCurrentSet) }
-            access = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, flags, &error)
+            let access = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, [.privateKeyUsage], &error)
             guard let access else {
                 throw TransportError("cannot make the key's access rule: \(error?.takeRetainedValue().localizedDescription ?? "unknown")")
             }
             let k = try SecureEnclave.P256.Signing.PrivateKey(accessControl: access)
-            stored = StoredKey(kind: .secureEnclave, data: k.dataRepresentation, biometry: biometry, created: Date())
+            stored = StoredKey(kind: .secureEnclave, data: k.dataRepresentation, created: Date())
         } else {
-            stored = StoredKey(kind: .software, data: P256.Signing.PrivateKey().rawRepresentation, biometry: false, created: Date())
+            stored = StoredKey(kind: .software, data: P256.Signing.PrivateKey().rawRepresentation, created: Date())
         }
         try store.write(account: id, data: JSONEncoder().encode(stored))
-        let k = try GeneratedKey(id: id, stored: stored)
+        let k = try GeneratedKey(id: id, stored: stored, faceID: on)
         lock.withLock { cache[id] = k }
         return k
     }

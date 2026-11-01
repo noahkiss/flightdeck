@@ -45,7 +45,7 @@ final class SSHPairingTests: XCTestCase {
     func testReplacingTheKeyChangesTheFingerprint() throws {
         let keys = DeviceKeys(store: MemorySecretStore(), preferEnclave: false)
         let a = try keys.defaultKey()
-        let b = try keys.create(id: DeviceKeys.defaultID, biometry: false)
+        let b = try keys.create(id: DeviceKeys.defaultID)
         XCTAssertNotEqual(a.fingerprint, b.fingerprint)
         XCTAssertEqual(try keys.defaultKey().fingerprint, b.fingerprint)
         try keys.delete(DeviceKeys.defaultID)

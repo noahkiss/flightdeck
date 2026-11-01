@@ -317,9 +317,10 @@ took about 3 ms. The cold-start time on an iPhone over a real network is still t
 - Store the Secure Enclave key's `dataRepresentation` in the Keychain with
   `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, not synchronizable. The blob is wrapped by this
   device's enclave and useless elsewhere, but it stays out of backups.
-- Create the key with no access-control flags by default. When the user turns on Face ID, create
-  it with `SecAccessControl` flags (`.privateKeyUsage` plus `.biometryCurrentSet` or
-  `.userPresence`). The CryptoKit call is the same.
+- Create the key with `.privateKeyUsage` only. Face ID is one app setting for every SSH key,
+  generated or imported (`app.md` 10.7): the app asks for Face ID before it signs, so turning the
+  setting on or off keeps the key. A biometric `SecAccessControl` flag would tie the key to the
+  setting and force a new key on each change.
 - `SecureEnclave.isAvailable` is false in the simulator. The simulator and unit tests use a
   software P-256 key behind the same key protocol.
 - CryptoKit Secure Enclave keys need no entitlement. A Keychain access group is needed only if a

@@ -78,14 +78,7 @@ struct ImportedKeyDetailView: View {
                 }
                 PublicKeyLine(line: key.authorizedKeysLine)
                 #if os(iOS)
-                Toggle("Require Face ID for this key", isOn: Binding(
-                    get: { setup.importedKeys.first { $0.id == key.id }?.requiresBiometry ?? key.requiresBiometry },
-                    set: { on in
-                        Task {
-                            do { try await setup.setBiometry(on, forImported: key.id) } catch { message = "\(error)" }
-                        }
-                    }
-                ))
+                LabeledContent("Face ID", value: setup.faceID ? "Required" : "Off")
                 #endif
             }
             Section("Used by") {

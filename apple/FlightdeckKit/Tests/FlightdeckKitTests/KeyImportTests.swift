@@ -286,8 +286,9 @@ final class KeyImportTests: XCTestCase {
         XCTAssertTrue(replaced2)
         XCTAssertEqual(try again.importedKeys().count, 1)
 
-        let p = try again.setBiometry(true, forImported: k.id)
-        XCTAssertTrue(p.requiresBiometry)
+        try again.setFaceID(true)
+        XCTAssertTrue(try XCTUnwrap(try again.key(k.id)).requiresBiometry)
+        try again.setFaceID(false)
 
         try again.delete(k.id)
         XCTAssertNil(try again.key(k.id))
@@ -477,33 +478,82 @@ final class KeyImportTests: XCTestCase {
 
     /// Turning Face ID off for an imported key asks for authentication;
     /// a refusal leaves it on (fix round 2).
+    /// One setting covers the generated key and every imported key.
     @MainActor
     func testFaceIDOffNeedsAuthentication() async throws {
         let keys = DeviceKeys(store: MemorySecretStore(), preferEnclave: false)
         let setup = SSHSetup(keys: keys, listURL: nil, fleet: nil)
+        setup.loadKey()
         let k = try keys.importKey(try OpenSSHKeyFile.parse(KeyFixtures.ed25519).decrypt(passphrase: nil)).key
         setup.loadImportedKeys()
+        XCTAssertFalse(setup.faceID, "off by default")
+        XCTAssertFalse(k.requiresBiometry)
         let asked = Counter()
         setup.authenticate = { _ in
             asked.add()
             throw CancellationError()
         }
-        // On needs nothing.
-        try await setup.setBiometry(true, forImported: k.id)
+        // On needs nothing, and covers both keys.
+        try await setup.setFaceID(true)
         XCTAssertEqual(asked.n, 0)
+        XCTAssertTrue(setup.faceID)
         XCTAssertTrue(try XCTUnwrap(setup.importedKeys.first).requiresBiometry)
+        XCTAssertTrue(try XCTUnwrap(setup.deviceKey).requiresBiometry)
+        XCTAssertTrue(try XCTUnwrap(try keys.key(DeviceKeys.defaultID)).requiresBiometry)
+        // A key imported while it is on needs it too.
+        let k2 = try keys.importKey(try OpenSSHKeyFile.parse(KeyFixtures.ecdsa256).decrypt(passphrase: nil)).key
+        XCTAssertTrue(k2.requiresBiometry)
         // Off with a refused authentication stays on.
         do {
-            try await setup.setBiometry(false, forImported: k.id)
+            try await setup.setFaceID(false)
             XCTFail("Face ID was turned off without authentication")
         } catch {}
         XCTAssertEqual(asked.n, 1)
+        XCTAssertTrue(setup.faceID)
+        XCTAssertTrue(try keys.faceID())
         XCTAssertTrue(try XCTUnwrap(try keys.key(k.id)).requiresBiometry)
-        // Off with authentication works.
+        // Off with authentication works for every key.
         setup.authenticate = { _ in asked.add() }
-        try await setup.setBiometry(false, forImported: k.id)
+        try await setup.setFaceID(false)
         XCTAssertEqual(asked.n, 2)
+        XCTAssertFalse(setup.faceID)
         XCTAssertFalse(try XCTUnwrap(setup.importedKeys.first).requiresBiometry)
+        XCTAssertFalse(try XCTUnwrap(setup.deviceKey).requiresBiometry)
+        // Off again asks nothing.
+        try await setup.setFaceID(false)
+        XCTAssertEqual(asked.n, 2)
+    }
+
+    /// The per-key flags of earlier builds become the one setting, and no
+    /// stored key keeps its flag.
+    func testPerKeyFaceIDMigrates() throws {
+        let m = try OpenSSHKeyFile.parse(KeyFixtures.ed25519).decrypt(passphrase: nil)
+        let raw = P256.Signing.PrivateKey().rawRepresentation
+        func legacy(imported: Bool, device: Bool) throws -> MemorySecretStore {
+            let store = MemorySecretStore()
+            let id = DeviceKeys.importedID(for: m.publicKey)
+            try store.write(account: id, data: JSONEncoder().encode(StoredImportedKey(type: m.type, raw: m.raw, comment: m.comment, biometry: imported, created: Date())))
+            try store.write(account: DeviceKeys.defaultID, data: JSONEncoder().encode(StoredKey(kind: .software, data: raw, biometry: device, created: Date())))
+            return store
+        }
+        func flags(_ store: MemorySecretStore) throws -> [String] {
+            try store.accounts().filter { a in
+                guard let d = try store.read(account: a), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return false }
+                return o["biometry"] != nil
+            }
+        }
+        for (imported, device, want) in [(true, false, true), (false, true, true), (false, false, false)] {
+            let store = try legacy(imported: imported, device: device)
+            XCTAssertEqual(try flags(store).count, 2)
+            let keys = DeviceKeys(store: store, preferEnclave: false)
+            XCTAssertEqual(try keys.faceID(), want, "imported \(imported), device \(device)")
+            XCTAssertEqual(try flags(store), [], "no per-key flag left")
+            XCTAssertEqual(try keys.defaultKey().requiresBiometry, want)
+            XCTAssertEqual(try keys.importedKeys().first?.requiresBiometry, want)
+            // A second start reads the same and writes nothing new.
+            XCTAssertEqual(try DeviceKeys(store: store, preferEnclave: false).faceID(), want)
+            XCTAssertEqual(try store.accounts().count, want ? 3 : 2)
+        }
     }
 
     /// The Inbox copy is found when the file URL and the home folder spell
