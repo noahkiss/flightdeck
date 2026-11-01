@@ -79,8 +79,9 @@ func TestChatMessageScope(t *testing.T) {
 }
 
 // TestChatMessageNoRevision: over a real subscription, a chat.message notification has no
-// revision key, while a stored object's event keeps its revision. Watching sees the
-// subscription.
+// revision key, while a stored object's event keeps its revision, and so does pane.owner: the
+// owner is in the snapshot, so a client orders an owner change by the pane's revision (spec 3.5).
+// Watching sees the subscription.
 func TestChatMessageNoRevision(t *testing.T) {
 	srv := New(testConfig(&fakeSource{}))
 	t.Cleanup(srv.Close)
@@ -97,10 +98,11 @@ func TestChatMessageNoRevision(t *testing.T) {
 	}
 	srv.Publish(structure.Event{Type: EventChatMessage, ID: "m1", Revision: 0, Data: api.ChatMessage{ID: "m1", Session: "s1"}})
 	srv.Publish(structure.Event{Type: structure.ProjectUpdated, ID: "p1", Revision: 3, Data: api.Project{ID: "p1"}})
+	srv.Publish(structure.Event{Type: structure.PaneOwner, ID: "pa", Revision: 4, Data: api.PaneOwner{Owner: "c1", Reason: api.OwnerReasonTake, Cols: 80, Rows: 24}})
 	for _, want := range []struct {
 		typ string
 		rev bool
-	}{{"chat.message", false}, {"project.updated", true}} {
+	}{{"chat.message", false}, {"project.updated", true}, {"pane.owner", true}} {
 		select {
 		case n := <-c.Notifications():
 			var params map[string]json.RawMessage

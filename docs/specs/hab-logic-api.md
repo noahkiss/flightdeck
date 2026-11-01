@@ -456,12 +456,14 @@ Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `sn
   with the object, so it survives restarts. Within one epoch, a client ignores an event whose
   revision is not higher than the one it holds. Deleting an object emits a final event with a final
   revision. Revisions order events only within an epoch; they are not compared across epochs.
-- **Ephemeral events carry no revision.** `pane.owner` and `pane.activity` describe state that is
-  not stored (owners are dropped on a new epoch); so do the activity, chat, turn and usage events
-  of 3.9. Their `revision` is absent, and the "ignore a revision not higher" rule does not apply:
+- **Ephemeral events carry no revision.** `pane.activity` describes state that is not stored; so
+  do the activity, chat, turn and usage events of 3.9. Ephemeral means never in the snapshot.
+  `pane.owner` is not ephemeral: the owner is part of the pane in the snapshot, so its event
+  carries the pane's revision, and a client orders it against the snapshot it holds like any
+  other pane change. Owners are still not saved; a new epoch starts with none (6.8). Their `revision` is absent, and the "ignore a revision not higher" rule does not apply:
   a client applies them in seq order.
 - **Epoch.** A random id chosen at each gff-hab start, sent in the welcome. A client that reconnects
-  and sees a new epoch drops everything ephemeral (owners, tickets, desired sizes) and takes a fresh
+  and sees a new epoch drops everything not saved (owners, tickets, desired sizes) and takes a fresh
   snapshot. It replaces all its objects with the snapshot's, whatever revisions it held: a lost or
   unreadable state file can restart revisions lower than before.
 - **Heartbeat.** A `heartbeat` notification with the current seq every 15 s when no other event was
