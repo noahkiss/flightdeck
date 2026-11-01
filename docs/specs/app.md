@@ -1972,7 +1972,9 @@ widget snapshot), `FlightdeckKit/Usage/` (book, alerts, center, views), `apple/W
   reading. A read time that does not parse keeps the time held for the same values, so the same
   reading again is no change. The same reading again from the same hab keeps its arrival time, so
   an account with no windows ages. A degraded account with no windows (the hab read nothing)
-  never replaces another hab's reading that has windows, is not degraded and is not stale. A hab that stops reporting an account leaves its
+  never replaces another hab's reading that has windows, is not degraded and is not stale. Such
+  a reading from another hab replaces a held degraded account with no windows, whatever its
+  read time: a hab that read nothing has no read time to compare. A hab that stops reporting an account leaves its
   last reading. Removing a hab removes its accounts.
 - **Last known values.** The book starts from the widget snapshot, so cards, footer and widget show
   the last readings with their age before any hab connects. An account whose hab is not online
@@ -2003,7 +2005,9 @@ widget snapshot), `FlightdeckKit/Usage/` (book, alerts, center, views), `apple/W
   connection measures against the round trip's end instead: the hab writes the welcome once the
   transport is up. A welcome with no `time` clears the offset. Each account the connection
   receives keeps the offset in force when it arrived, so a reading held across a reconnect
-  (to another hab, an older hab, or a hab whose clock stepped) keeps its own shift. The book
+  (to another hab, an older hab, or a hab whose clock stepped) keeps its own shift. A reading
+  that comes back unchanged keeps it too: after a hab is upgraded to send `time`, its first
+  readings stay unshifted until they next change, within minutes. The book
   moves every hab time (`resets_at`, `read_at`, `starts_at`) onto this device's clock by that
   offset as it reads the account, so reset countdowns, pace, staleness, warnings, "alert me
   when free" and the widget all run on local time. An offset under 1 s is measurement noise and

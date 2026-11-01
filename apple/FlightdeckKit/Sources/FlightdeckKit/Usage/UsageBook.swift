@@ -116,9 +116,12 @@ public final class UsageBook {
             if Self.sameContent(old, new) {
                 // A tie moves only from an offline hab to an online one.
                 guard old.habID != new.habID, !onlineHabs.contains(old.habID), onlineHabs.contains(new.habID) else { return false }
+            } else if old.habID != new.habID, Self.emptyDegraded(old), Self.fresh(new, now: now()) {
+                // A hab that read nothing has no read time to compare: another
+                // hab's fresh numbers replace it, however long ago they were read.
             } else if new.readAt < old.readAt {
                 return false
-            } else if Self.emptyDegraded(new), old.habID != new.habID, !old.windows.isEmpty, !old.unavailable, !UsageMath.isStale(old, now: now()) {
+            } else if old.habID != new.habID, Self.emptyDegraded(new), Self.fresh(old, now: now()) {
                 // A hab that read nothing never hides another hab's fresh numbers.
                 return false
             }
@@ -130,6 +133,11 @@ public final class UsageBook {
     /// Degraded with no window: the hab could read nothing for the account.
     private static func emptyDegraded(_ a: UsageAccountReading) -> Bool {
         a.unavailable && a.windows.isEmpty
+    }
+
+    /// Numbers worth showing: windows, not degraded, not stale.
+    private static func fresh(_ a: UsageAccountReading, now: Date) -> Bool {
+        !a.windows.isEmpty && !a.unavailable && !UsageMath.isStale(a, now: now)
     }
 
     /// The same reading, from any hab: nothing to show, nothing to alert.

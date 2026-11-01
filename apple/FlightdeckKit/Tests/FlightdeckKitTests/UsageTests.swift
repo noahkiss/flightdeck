@@ -661,6 +661,32 @@ final class UsageDegradedMergeTests: XCTestCase {
         XCTAssertEqual(changes, 3, "h2's reading, h1 online, h2's newer reading")
     }
 
+    func testFreshNumbersReplaceHeldEmptyDegraded() {
+        // The degraded hab connects first; the healthy hab's reading was read earlier.
+        let clock = Clock(t0)
+        let book = UsageBook(now: { clock.now })
+        let broken = habAccount("k", degraded: "rate_limits: unknown shape", [])
+        book.update(habID: "h1", habLabel: "h1", online: true, readings: [broken])
+        XCTAssertTrue(book.accounts["k"]?.unavailable == true)
+        clock.now = t0.addingTimeInterval(30)
+        let healthy = habAccount("k", [habWindow("5h", 40, resets: t0.addingTimeInterval(3600), read: t0.addingTimeInterval(-300))])
+        book.update(habID: "h2", habLabel: "h2", online: true, readings: [healthy])
+        XCTAssertEqual(book.accounts["k"]?.habID, "h2")
+        XCTAssertNil(book.accounts["k"]?.degraded)
+        // And it holds while the degraded hab keeps updating.
+        clock.now = t0.addingTimeInterval(60)
+        book.update(habID: "h1", habLabel: "h1", online: true, readings: [broken])
+        XCTAssertEqual(book.accounts["k"]?.habID, "h2")
+    }
+
+    func testStaleNumbersDoNotReplaceHeldEmptyDegraded() {
+        let clock = Clock(t0)
+        let book = UsageBook(now: { clock.now })
+        book.update(habID: "h1", habLabel: "h1", online: true, readings: [habAccount("k", degraded: "drift", [])])
+        book.update(habID: "h2", habLabel: "h2", online: true, readings: [habAccount("k", [habWindow("5h", 40, resets: t0.addingTimeInterval(3600), read: t0.addingTimeInterval(-4000))])])
+        XCTAssertEqual(book.accounts["k"]?.habID, "h1", "an old reading is no better than none")
+    }
+
     func testEmptyDegradedShowsOnceTheOtherIsStale() {
         let clock = Clock(t0)
         let book = UsageBook(now: { clock.now })
