@@ -375,4 +375,23 @@ func TestSessionCreateAndClose(t *testing.T) {
 			t.Errorf("session %s after pane.close: %+v", c.Session, s)
 		}
 	}
+
+	// session.rename and session.close work on the records; a taken name is a conflict.
+	if kind := callErr(t, sock, "session.rename", api.SessionRenameParams{Session: ended.Session, Name: "loop"}); kind != "conflict" {
+		t.Errorf("rename to a taken name: %s, want conflict", kind)
+	}
+	if kind := callErr(t, sock, "session.rename", api.SessionRenameParams{Session: "nope", Name: "x"}); kind != "not_found" {
+		t.Errorf("rename an unknown session: %s, want not_found", kind)
+	}
+	run(t, "api", "call", "-socket", sock, "session.rename", `{"session":"`+ended.Session+`","name":"renamed"}`)
+	if s := session(structureNow(), ended.Session); s.Name != "renamed" {
+		t.Errorf("after rename: %+v", s)
+	}
+	run(t, "api", "call", "-socket", sock, "session.close", `{"session":"`+ended.Session+`"}`)
+	if slices.ContainsFunc(structureNow().Sessions, func(s api.Session) bool { return s.ID == ended.Session }) {
+		t.Error("session still listed after session.close")
+	}
+	if kind := callErr(t, sock, "session.close", api.SessionRef{Session: ended.Session}); kind != "not_found" {
+		t.Errorf("close a closed session: %s, want not_found", kind)
+	}
 }

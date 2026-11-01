@@ -1750,6 +1750,22 @@ public struct SessionRef: Codable, Sendable, Hashable {
     }
 }
 
+public struct SessionRenameParams: Codable, Sendable, Hashable {
+    /// The new name; unique among the host's sessions, exited ones included.
+    public var name: String
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case name = "name"
+        case session = "session"
+    }
+
+    public init(name: String, session: String) {
+        self.name = name
+        self.session = session
+    }
+}
+
 public struct SessionSendParams: Codable, Sendable, Hashable {
     /// Attachment ids from attachment.put.
     public var attachments: [String]?
@@ -2072,6 +2088,10 @@ public enum HabMethods {
     public static let sessionResume = HabMethod<SessionRef, SessionCreated>(name: "session.resume")
     /// Release a pane: a running program gets a hang-up first (spec 3.9).
     public static let paneClose = HabMethod<PaneRef, Empty>(name: "pane.close")
+    /// Give a session a new name. A name another session holds is refused with conflict.
+    public static let sessionRename = HabMethod<SessionRenameParams, Empty>(name: "session.rename")
+    /// Remove a session record. A live pane keeps running, unfiled; pane.close ends a program.
+    public static let sessionClose = HabMethod<SessionRef, Empty>(name: "session.close")
     /// Report whether the session is in focus on this client: marks done seen, and holds pushes while watched.
     public static let sessionFocus = HabMethod<SessionFocusParams, Empty>(name: "session.focus")
     /// Stop the agent's current turn through its adapter.

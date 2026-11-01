@@ -30,6 +30,12 @@ type SessionRef struct {
 	Session string `json:"session"`
 }
 
+// SessionRenameParams gives a session a new name.
+type SessionRenameParams struct {
+	Session string `json:"session"`
+	Name    string `json:"name" doc:"The new name; unique among the host's sessions, exited ones included."`
+}
+
 // SessionFocusParams reports whether a session is in focus on this client.
 type SessionFocusParams struct {
 	Session string `json:"session"`

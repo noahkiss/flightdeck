@@ -1051,6 +1051,35 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		}
 		res.Seq = s
 		return res, nil
+	case "session.rename", "session.close":
+		rec, ok := c.s.cfg.Actions.(SessionRecords)
+		if !ok {
+			return nil, appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
+		}
+		var err error
+		if m.Method == "session.rename" {
+			var p api.SessionRenameParams
+			if e := c.decodeUp(m, &p); e != nil {
+				return nil, e
+			}
+			if p.Session == "" || p.Name == "" {
+				return nil, appErr(api.ErrorKindInvalid, "session.rename needs a session and a name")
+			}
+			err = rec.RenameSession(p.Session, p.Name)
+		} else {
+			var p api.SessionRef
+			if e := c.decodeUp(m, &p); e != nil {
+				return nil, e
+			}
+			if p.Session == "" {
+				return nil, appErr(api.ErrorKindInvalid, "session.close needs a session")
+			}
+			err = rec.CloseSession(p.Session)
+		}
+		if err != nil {
+			return nil, actionErr(m.Method, err)
+		}
+		return api.Empty{Seq: s}, nil
 	case "pane.close":
 		var p api.PaneRef
 		if e := c.decodeUp(m, &p); e != nil {

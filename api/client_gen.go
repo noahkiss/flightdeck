@@ -401,6 +401,20 @@ func (c Client) PaneClose(ctx context.Context, params PaneRef) (Empty, error) {
 	return result, err
 }
 
+// SessionRename calls session.rename. Give a session a new name. A name another session holds is refused with conflict.
+func (c Client) SessionRename(ctx context.Context, params SessionRenameParams) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "session.rename", params, &result)
+	return result, err
+}
+
+// SessionClose calls session.close. Remove a session record. A live pane keeps running, unfiled; pane.close ends a program.
+func (c Client) SessionClose(ctx context.Context, params SessionRef) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "session.close", params, &result)
+	return result, err
+}
+
 // SessionFocus calls session.focus. Report whether the session is in focus on this client: marks done seen, and holds pushes while watched.
 func (c Client) SessionFocus(ctx context.Context, params SessionFocusParams) (Empty, error) {
 	var result Empty

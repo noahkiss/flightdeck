@@ -547,6 +547,60 @@
       }
     },
     {
+      "name": "session.rename",
+      "summary": "Give a session a new name. A name another session holds is refused with conflict.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "name",
+          "description": "The new name; unique among the host's sessions, exited ones included.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/SessionRenameParams"
+      }
+    },
+    {
+      "name": "session.close",
+      "summary": "Remove a session record. A live pane keeps running, unfiled; pane.close ends a program.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/SessionRef"
+      }
+    },
+    {
       "name": "session.focus",
       "summary": "Report whether the session is in focus on this client: marks done seen, and holds pushes while watched.",
       "paramStructure": "by-name",
@@ -3123,6 +3177,22 @@
         },
         "required": [
           "session"
+        ]
+      },
+      "SessionRenameParams": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The new name; unique among the host's sessions, exited ones included."
+          },
+          "session": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session",
+          "name"
         ]
       },
       "SessionSendParams": {

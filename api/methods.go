@@ -81,6 +81,8 @@ var Methods = []Method{
 	{"session.create", "Start a program in a new pane and file it as a session (spec 3.9).", SessionCreateParams{}, SessionCreated{}},
 	{"session.resume", "Start an exited session's harness again in a new pane, with its resume id.", SessionRef{}, SessionCreated{}},
 	{"pane.close", "Release a pane: a running program gets a hang-up first (spec 3.9).", PaneRef{}, Empty{}},
+	{"session.rename", "Give a session a new name. A name another session holds is refused with conflict.", SessionRenameParams{}, Empty{}},
+	{"session.close", "Remove a session record. A live pane keeps running, unfiled; pane.close ends a program.", SessionRef{}, Empty{}},
 	{"session.focus", "Report whether the session is in focus on this client: marks done seen, and holds pushes while watched.", SessionFocusParams{}, Empty{}},
 	{"session.interrupt", "Stop the agent's current turn through its adapter.", SessionRef{}, Empty{}},
 	{"session.send", "Send a message to the session's agent through its adapter, under the input rules.", SessionSendParams{}, Empty{}},

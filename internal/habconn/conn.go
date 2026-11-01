@@ -60,6 +60,9 @@ const (
 	UpdateOffline
 	// UpdateFailed: the Conn stopped for good; Err says why. The channel closes after it.
 	UpdateFailed
+	// UpdateRetrying: an attempt to connect failed; Err says why (for ssh, with its own
+	// message). The Conn tries again after a backoff. A client shows it on the offline host.
+	UpdateRetrying
 )
 
 // Update is one change a Conn reports, in order.
@@ -99,6 +102,42 @@ type Conn struct {
 // snapshot. It fails when that does not work; after it returns, the Conn reconnects on its
 // own until Close or a permanent failure.
 func Connect(ctx context.Context, cfg Config) (*Conn, error) {
+	c, err := newConn(cfg)
+	if err != nil {
+		return nil, err
+	}
+	s, err := c.open(ctx)
+	if err != nil {
+		c.updates.close()
+		return nil, err
+	}
+	go c.run(s)
+	return c, nil
+}
+
+// Start is Connect for a hab that may be down: it returns at once with the Conn offline, and
+// the first connection is tried at once, then with the reconnect backoff, as after a drop.
+// Each failed attempt reports UpdateRetrying; the first success reports UpdateOnline. A
+// client that shows many hosts uses it, since an offline host is normal, not an error
+// (gff-client.md 6.1).
+func Start(cfg Config) (*Conn, error) {
+	c, err := newConn(cfg)
+	if err != nil {
+		return nil, err
+	}
+	go func() {
+		s, err := c.reconnect(false)
+		if err != nil {
+			c.stop(err)
+			return
+		}
+		c.run(s)
+	}()
+	return c, nil
+}
+
+// newConn checks cfg, fills its defaults and makes an offline Conn.
+func newConn(cfg Config) (*Conn, error) {
 	if cfg.Transport == nil {
 		return nil, errors.New("habconn: no transport")
 	}
@@ -123,7 +162,7 @@ func Connect(ctx context.Context, cfg Config) (*Conn, error) {
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
 	}
-	c := &Conn{
+	return &Conn{
 		cfg:      cfg,
 		updates:  newQueue[Update](),
 		closed:   make(chan struct{}),
@@ -132,14 +171,7 @@ func Connect(ctx context.Context, cfg Config) (*Conn, error) {
 		deviceID: cfg.DeviceID,
 		state:    newState(),
 		panes:    map[*PaneStream]struct{}{},
-	}
-	s, err := c.open(ctx)
-	if err != nil {
-		c.updates.close()
-		return nil, err
-	}
-	go c.run(s)
-	return c, nil
+	}, nil
 }
 
 // Updates delivers every update in order, without loss. It closes after UpdateFailed or
@@ -389,25 +421,31 @@ func (c *Conn) run(s *session) {
 		c.updates.push(Update{Kind: UpdateOffline, Err: err})
 		s, err = c.reconnect(errors.Is(err, errDead))
 		if err != nil {
-			c.mu.Lock()
-			if c.err == nil {
-				c.err = err
-			}
-			panes := make([]*PaneStream, 0, len(c.panes))
-			for p := range c.panes {
-				panes = append(panes, p)
-			}
-			c.mu.Unlock()
-			for _, p := range panes {
-				p.kick()
-			}
-			if !errors.Is(err, ErrClosed) {
-				c.updates.push(Update{Kind: UpdateFailed, Err: err})
-			}
-			c.updates.close()
+			c.stop(err)
 			return
 		}
 	}
+}
+
+// stop ends the Conn for good after err: waiting data streams wake, UpdateFailed reports it
+// unless the owner closed the Conn, and the updates channel closes.
+func (c *Conn) stop(err error) {
+	c.mu.Lock()
+	if c.err == nil {
+		c.err = err
+	}
+	panes := make([]*PaneStream, 0, len(c.panes))
+	for p := range c.panes {
+		panes = append(panes, p)
+	}
+	c.mu.Unlock()
+	for _, p := range panes {
+		p.kick()
+	}
+	if !errors.Is(err, ErrClosed) {
+		c.updates.push(Update{Kind: UpdateFailed, Err: err})
+	}
+	c.updates.close()
 }
 
 // reconnect retries at once, then with backoff and jitter, until it is online, closed, or
@@ -444,6 +482,12 @@ func (c *Conn) reconnect(reset bool) (*session, error) {
 			return nil, p.error
 		}
 		c.cfg.Logf("habconn: reconnect: %v", err)
+		select {
+		case <-c.closed:
+			return nil, ErrClosed
+		default:
+		}
+		c.updates.push(Update{Kind: UpdateRetrying, Err: err})
 	}
 }
 

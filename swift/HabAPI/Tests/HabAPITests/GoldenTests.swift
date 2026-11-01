@@ -74,6 +74,8 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.sessionCreate)
         result(HabMethods.sessionResume)
         result(HabMethods.paneClose)
+        result(HabMethods.sessionRename)
+        result(HabMethods.sessionClose)
         result(HabMethods.sessionFocus)
         result(HabMethods.sessionInterrupt)
         result(HabMethods.sessionSend)

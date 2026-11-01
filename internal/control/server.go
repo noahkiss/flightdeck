@@ -53,6 +53,14 @@ type Actions interface {
 	ClosePane(ctx context.Context, pane string) error
 }
 
+// SessionRecords renames and removes session records (session.rename, session.close). Actions
+// may implement it; without it, those methods answer unavailable. An error that is an *Error
+// keeps its kind.
+type SessionRecords interface {
+	RenameSession(session, name string) error
+	CloseSession(session string) error
+}
+
 // Data serves data connections and issues their tickets (spec 5). gff-hab implements it with
 // internal/datastream. An error that is an *Error keeps its kind.
 type Data interface {

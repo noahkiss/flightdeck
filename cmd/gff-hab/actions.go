@@ -154,6 +154,26 @@ func (a *actions) noteDir(ctx context.Context, project, top string, checkCwd boo
 	}
 }
 
+var _ control.SessionRecords = (*actions)(nil)
+
+// RenameSession renames a session record (session.rename). A name another session holds is a
+// conflict.
+func (a *actions) RenameSession(session, name string) error {
+	if _, err := a.store.RenameSession(session, name); err != nil {
+		return storeErr(err)
+	}
+	return nil
+}
+
+// CloseSession removes a session record (session.close). A live pane keeps running, unfiled
+// (hab-logic-api.md 2.2).
+func (a *actions) CloseSession(session string) error {
+	if err := a.store.CloseSession(session); err != nil {
+		return storeErr(err)
+	}
+	return nil
+}
+
 // ClosePane releases a pane through the link (hab-logic-api.md 3.9).
 func (a *actions) ClosePane(ctx context.Context, pane string) error {
 	u, ok := parseUUID(pane)

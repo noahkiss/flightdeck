@@ -853,3 +853,48 @@ func TestPinAcrossReconnect(t *testing.T) {
 		t.Fatalf("Err %v", c.Err())
 	}
 }
+
+// TestStartWhileDown: Start returns with the hab down, reports each failed attempt, and comes
+// online once the hab starts, with no restart of the client. Close while down ends it with no
+// failure.
+func TestStartWhileDown(t *testing.T) {
+	h := startFakeHab(t)
+	h.stop()
+	cfg := Config{Transport: UnixTransport{Path: h.sock}, Client: testClient,
+		MinBackoff: 10 * time.Millisecond, MaxBackoff: 50 * time.Millisecond}
+	c, err := Start(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(c.Close)
+	u := waitUpdate(t, c, "a failed attempt", func(u Update) bool { return u.Kind == UpdateRetrying })
+	if u.Err == nil {
+		t.Fatal("retrying update without its error")
+	}
+	if err := c.Call(testCtx(t), "hab.ping", api.PingParams{}, nil); !errors.Is(err, ErrOffline) {
+		t.Fatalf("call while down: %v, want ErrOffline", err)
+	}
+	h.start()
+	u = waitUpdate(t, c, "online", func(u Update) bool { return u.Kind == UpdateOnline })
+	if u.NewEpoch {
+		t.Fatal("the first connection reported a new epoch")
+	}
+	h.createSession("s1")
+	waitUpdate(t, c, "the session", func(Update) bool { return len(c.Structure().Sessions) == 1 })
+
+	cfg.Transport = UnixTransport{Path: h.sock + "x"}
+	d, err := Start(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitUpdate(t, d, "a failed attempt", func(u Update) bool { return u.Kind == UpdateRetrying })
+	d.Close()
+	for u := range d.Updates() {
+		if u.Kind == UpdateFailed {
+			t.Fatalf("close reported a failure: %v", u.Err)
+		}
+	}
+	if !errors.Is(d.Err(), ErrClosed) {
+		t.Fatalf("err after close: %v", d.Err())
+	}
+}
