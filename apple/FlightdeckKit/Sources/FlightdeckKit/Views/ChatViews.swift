@@ -588,6 +588,8 @@ struct ComposerView: View {
     /// The draft before dictation started; heard words follow it.
     @State private var dictationBase = ""
     @State private var micDenied = false
+    /// Why dictation did not start or wrote nothing.
+    @State private var dictationNotice: String?
 
     var body: some View {
         let gate = model.gate
@@ -610,6 +612,11 @@ struct ComposerView: View {
                 Text(n)
                     .font(.caption)
                     .foregroundStyle(.red)
+            }
+            if let n = dictationNotice ?? dictation?.notice {
+                Text(n)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             HStack(alignment: .bottom, spacing: 8) {
                 if let openTerminal {
@@ -687,7 +694,15 @@ struct ComposerView: View {
         let d = kit.dictation(connection: habs.find(model.target.habID), session: model.target.session)
         dictation = d
         dictationBase = draft
-        Task { await d.start() }
+        dictationNotice = nil
+        Task {
+            await d.start()
+            // A refused microphone or no engine: the button works again.
+            if d.phase == .idle {
+                dictationNotice = d.notice
+                dictation = nil
+            }
+        }
     }
 
     /// Stops; the engine's text replaces the heard words.
@@ -696,6 +711,8 @@ struct ComposerView: View {
         Task {
             if let text = await d.stop() {
                 draft = Self.join(dictationBase, text)
+            } else {
+                dictationNotice = d.notice
             }
             dictation = nil
             focused = true

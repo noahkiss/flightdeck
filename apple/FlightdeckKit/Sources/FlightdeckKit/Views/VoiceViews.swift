@@ -11,29 +11,41 @@ import AppKit
 /// Voice mode over one session (app.md 13.1): opens a `VoiceModel`, holds
 /// the hab's connection while open, and closes on End or when the model ends.
 struct VoiceModeScreen: View {
-    @State private var model: VoiceModel
+    /// Made once in `.task`, not on every evaluation of the parent: it owns
+    /// the audio engine and the speech engines.
+    @State private var model: VoiceModel?
+    private let chat: ChatModel
+    private let connection: HabConnection?
     private let kit: VoiceKit
-    private let habID: String
     private let close: (_ keyboard: Bool) -> Void
 
     init(chat: ChatModel, connection: HabConnection?, kit: VoiceKit, close: @escaping (_ keyboard: Bool) -> Void) {
-        _model = State(initialValue: kit.voiceModel(chat: chat, connection: connection))
+        self.chat = chat
+        self.connection = connection
         self.kit = kit
-        self.habID = chat.target.habID
         self.close = close
     }
 
     var body: some View {
-        VoiceModeView(model: model, close: close)
-            .task {
-                kit.hold(habID, true)
-                model.onEnd = { _ in }
-                await model.start()
+        Group {
+            if let model {
+                VoiceModeView(model: model, close: close)
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .onDisappear {
-                kit.hold(habID, false)
-                Task { await model.end() }
-            }
+        }
+        .task {
+            guard model == nil else { return }
+            let m = kit.voiceModel(chat: chat, connection: connection)
+            model = m
+            kit.hold(chat.target.habID, true)
+            await m.start()
+        }
+        .onDisappear {
+            kit.hold(chat.target.habID, false)
+            if let m = model { Task { await m.end() } }
+        }
     }
 }
 
@@ -97,8 +109,34 @@ public struct VoiceModeView: View {
         .contentShape(Rectangle())
         .onTapGesture { Task { await model.tap() } }
         .onChange(of: model.isEnded) { _, ended in
-            if ended { close(false) }
+            // End and Keyboard close it themselves; a reason stays on screen.
+            if ended, endReason == nil { close(false) }
         }
+        .overlay {
+            if let why = endReason {
+                VStack(spacing: 14) {
+                    Text(why)
+                        .font(.title3)
+                        .multilineTextAlignment(.center)
+                    HStack(spacing: 12) {
+                        if why.localizedCaseInsensitiveContains("microphone") {
+                            Button("Open Settings") { openPrivacySettings() }
+                                .buttonStyle(.bordered)
+                        }
+                        Button("Close") { close(false) }
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.background)
+            }
+        }
+    }
+
+    private var endReason: String? {
+        if case .ended(let why) = model.phase { return why }
+        return nil
     }
 
     private var header: some View {
@@ -158,6 +196,9 @@ public struct VoiceModeView: View {
 
     @ViewBuilder private var footer: some View {
         VStack(spacing: 2) {
+            if let note = model.liveWordsNote {
+                Text(note)
+            }
             if let e = model.engineLabel {
                 Text("Text by \(e)")
             } else if let first = model.engines.first {
@@ -386,6 +427,9 @@ struct PaneDictationButton: View {
     @Environment(\.voiceKit) private var kit
     @State private var dictation: DictationModel?
     @State private var denied = false
+    /// A dictation already went into this pane: the next one starts with a space.
+    @State private var pasted = false
+    @State private var notice: String?
 
     var body: some View {
         if let kit {
@@ -394,31 +438,56 @@ struct PaneDictationButton: View {
                     denied = true
                     return
                 }
-                let d = kit.dictation(connection: connection, session: nil)
-                dictation = d
-                Task { await d.start() }
+                Task {
+                    // The pane's session gives the hab's vocabulary.
+                    let session = await connection.state.store.panes[pane]?.session
+                    let d = kit.dictation(connection: connection, session: session)
+                    dictation = d
+                    notice = nil
+                    await d.start()
+                    if d.phase == .idle {
+                        notice = d.notice
+                        dictation = nil
+                    }
+                }
             } stop: {
                 guard let d = dictation else { return }
                 Task {
                     if let text = await d.stop(), !text.isEmpty {
-                        _ = try? await connection.call(HabMethods.paneInput, InputParams(data: Self.paneText(text), pane: pane))
+                        do {
+                            _ = try await connection.call(HabMethods.paneInput, InputParams(data: Self.paneText(text, after: pasted), pane: pane))
+                            pasted = true
+                        } catch {
+                            notice = "Not typed: \(SpeechEngines.describe(error))"
+                        }
+                    } else {
+                        notice = d.notice
                     }
                     dictation = nil
                 }
             }
-            .help("Dictate into the pane")
+            .help(notice ?? "Dictate into the pane")
+            .onDisappear {
+                if let d = dictation { Task { await d.cancel() } }
+                dictation = nil
+            }
             .alert("Microphone access is off", isPresented: $denied) {
                 Button("Open Settings") { openPrivacySettings() }
                 Button("Cancel", role: .cancel) {}
+            }
+            .alert("Dictation", isPresented: Binding(get: { notice != nil && dictation == nil }, set: { if !$0 { notice = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(notice ?? "")
             }
         }
     }
 
     /// The text as typed into the pane: control characters (ESC, newlines)
     /// become spaces, so dictation never runs a command or a key sequence.
-    static func paneText(_ text: String) -> Data {
+    static func paneText(_ text: String, after: Bool = false) -> Data {
         let clean = String(text.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : Character($0) })
-        return Data(clean.utf8)
+        return Data(((after ? " " : "") + clean).utf8)
     }
 }
 

@@ -19,11 +19,22 @@ public final class FluidParakeetRuntime: ParakeetRuntime, @unchecked Sendable {
     private var directory: URL { AsrModels.defaultCacheDirectory(for: .v2) }
 
     public func isDownloaded() async -> Bool {
-        AsrModels.modelsExist(at: directory, version: .v2)
+        let here = AsrModels.modelsExist(at: directory, version: .v2)
+        if here { excludeFromBackup() }
+        return here
     }
 
     public func download(progress: @escaping @Sendable (Double) -> Void) async throws {
         _ = try await AsrModels.download(version: .v2) { p in progress(p.fractionCompleted) }
+        excludeFromBackup()
+    }
+
+    /// The model (about 450 MB) downloads again on demand: keep it out of the device backup.
+    private func excludeFromBackup() {
+        var url = directory
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? url.setResourceValues(values)
     }
 
     public func removeDownload() async throws {

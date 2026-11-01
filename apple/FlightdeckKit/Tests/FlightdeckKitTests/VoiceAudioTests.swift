@@ -48,7 +48,11 @@ final class VoiceAudioTests: XCTestCase {
     }
 
     func testFileStructure() {
-        let packets = (0..<300).map { Data(repeating: UInt8($0 % 256), count: $0 % 7 == 0 ? 300 : 60) }
+        let packets = (0..<300).map { i -> Data in
+            var d = Data(repeating: UInt8(i % 256), count: i % 7 == 0 ? 300 : 60)
+            d[0] = 9 << 3 // SILK, 20 ms
+            return d
+        }
         let file = OggOpusWriter.file(packets: packets, preSkip: 312, inputSampleRate: 16_000, sampleCount: 300 * 320 - 100)
         let ps = pages(file)
         XCTAssertGreaterThanOrEqual(ps.count, 4)
@@ -70,6 +74,15 @@ final class VoiceAudioTests: XCTestCase {
         let granules = ps.dropFirst(2).map(\.granule)
         XCTAssertEqual(granules, granules.sorted())
         XCTAssertEqual(ps.last?.granule, 312 + Int64(300 * 320 - 100) * 3)
+    }
+
+    func testPacketDurationFromTheTOCByte() {
+        XCTAssertEqual(OggOpusWriter.samples48k(Data([9 << 3])), 960, "SILK 20 ms")
+        XCTAssertEqual(OggOpusWriter.samples48k(Data([31 << 3])), 960, "CELT 20 ms")
+        XCTAssertEqual(OggOpusWriter.samples48k(Data([16 << 3])), 120, "CELT 2.5 ms")
+        XCTAssertEqual(OggOpusWriter.samples48k(Data([(11 << 3) | 1])), 5760, "two SILK 60 ms frames")
+        XCTAssertEqual(OggOpusWriter.samples48k(Data([(9 << 3) | 3, 3])), 2880, "code 3, three frames")
+        XCTAssertEqual(OggOpusWriter.samples48k(Data()), 0)
     }
 
     func testPacketOfExactly255BytesGetsAZeroLacing() {

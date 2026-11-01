@@ -81,7 +81,25 @@ public enum OpusEncoder {
 /// a comment header page, then audio pages; granule positions count 48 kHz
 /// samples.
 enum OggOpusWriter {
-    static let samplesPerPacket48k: Int64 = 960
+    /// A packet's length in 48 kHz samples, from its TOC byte (RFC 6716 3.1),
+    /// so the granules stay right whatever frame size the encoder picks.
+    static func samples48k(_ packet: Data) -> Int64 {
+        guard let toc = packet.first else { return 0 }
+        let config = Int(toc >> 3)
+        let tenthsMs: Int
+        switch config {
+        case 0...11: tenthsMs = [100, 200, 400, 600][config % 4]
+        case 12...15: tenthsMs = [100, 200][config % 2]
+        default: tenthsMs = [25, 50, 100, 200][config % 4]
+        }
+        let frames: Int
+        switch toc & 3 {
+        case 0: frames = 1
+        case 1, 2: frames = 2
+        default: frames = packet.count > 1 ? Int(packet[packet.startIndex + 1] & 0x3f) : 0
+        }
+        return Int64(frames * tenthsMs * 48 / 10)
+    }
 
     static func file(packets: [Data], preSkip: UInt16, inputSampleRate: UInt32, sampleCount: Int, serial: UInt32 = 0x4644_6b31) -> Data {
         var out = Data()
@@ -108,7 +126,7 @@ enum OggOpusWriter {
             }
             batch.append(p)
             lacing += need
-            done += samplesPerPacket48k
+            done += samples48k(p)
             granule = Int64(preSkip) + done
             if i == packets.count - 1 {
                 page(batch, granule: min(granule, end), flags: 0x04)
