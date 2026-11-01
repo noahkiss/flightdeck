@@ -66,6 +66,7 @@ type Welcome struct {
 	ClientID       string   `json:"client_id"`
 	ReconnectToken string   `json:"reconnect_token"`
 	DeviceID       string   `json:"device_id,omitempty" doc:"SHA-256 fingerprint of the hab's own SSH host key, in the standard SSH form. Clients pin it (transport.md 5). Optional, so a newer client accepts a welcome from an older revision 1 hab."`
+	Time           string   `json:"time,omitempty" doc:"The hab's clock when it sent the welcome, RFC 3339 in UTC with milliseconds. Clients measure reset times and ages against it, and may compute their clock's offset. Optional, so a newer client accepts a welcome from an older revision 1 hab."`
 }
 
 // --- Structure (spec 2.2) ---

@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"fmt"
 	"slices"
 	"sort"
 	"sync"
@@ -49,8 +50,11 @@ func NewStore(publish func(structure.Event), now func() time.Time) *Store {
 // Put merges a reading into its account. Windows merge by name: a window replaces the stored
 // one of the same name unless it was read earlier, so a reading from an older file never undoes
 // a newer one. A window the reading lacks stays, with its reset time: a client shows it as reset
-// with no reading since (app.md 14.5). A reading with no windows creates no account: a harness
-// with no usage source reports none, never zero. It reports whether it published an event.
+// with no reading since (app.md 14.5). A reading with no windows and no drift creates no
+// account: a harness with no usage source reports none, never zero. A reading with drift marks
+// its account degraded, and creates it if need be, so a client says "usage unavailable" rather
+// than "no limits". The next reading with windows and no drift clears the mark; one with neither
+// (no token_count yet, no rate_limits) leaves it. It reports whether it published an event.
 func (s *Store) Put(r Reading) bool {
 	if r.Key == "" {
 		return false
@@ -59,7 +63,7 @@ func (s *Store) Put(r Reading) bool {
 	defer s.mu.Unlock()
 	a := s.accounts[r.Key]
 	if a == nil {
-		if len(r.Windows) == 0 || len(s.accounts) >= maxAccounts {
+		if (len(r.Windows) == 0 && len(r.Drift) == 0) || len(s.accounts) >= maxAccounts {
 			return false
 		}
 		a = &account{acct: api.UsageAccount{Key: r.Key, Harness: r.Harness, Windows: []api.UsageWindow{}}}
@@ -79,6 +83,9 @@ func (s *Store) Put(r Reading) bool {
 	}
 	if newest && r.Label != "" {
 		a.acct.Label = r.Label
+	}
+	if len(r.Drift) > 0 || len(r.Windows) > 0 { // an empty clean read says nothing either way
+		a.acct.Degraded = degraded(r.Drift)
 	}
 	now := s.now()
 	if same(a.acct, a.sent) && now.Sub(a.at) < Refresh {
@@ -112,16 +119,30 @@ func before(a, b string) bool {
 
 // same reports whether two readings differ only in when windows were read.
 func same(a, b api.UsageAccount) bool {
-	if a.Key != b.Key || a.Label != b.Label || a.Harness != b.Harness || len(a.Windows) != len(b.Windows) {
+	if a.Key != b.Key || a.Label != b.Label || a.Harness != b.Harness || a.Degraded != b.Degraded ||
+		len(a.Windows) != len(b.Windows) {
 		return false
 	}
 	for i := range a.Windows {
 		x, y := a.Windows[i], b.Windows[i]
-		if x.Name != y.Name || x.UsedPct != y.UsedPct || x.ResetsAt != y.ResetsAt {
+		if x.Name != y.Name || x.UsedPct != y.UsedPct || x.ResetsAt != y.ResetsAt ||
+			x.LengthS != y.LengthS || x.StartsAt != y.StartsAt {
 			return false
 		}
 	}
 	return true
+}
+
+// degraded is an account's degraded mark for a reading's drift: the first line, and how many
+// more there are. Empty with no drift.
+func degraded(drift []string) string {
+	switch len(drift) {
+	case 0:
+		return ""
+	case 1:
+		return drift[0]
+	}
+	return fmt.Sprintf("%s (and %d more)", drift[0], len(drift)-1)
 }
 
 func clone(a api.UsageAccount) api.UsageAccount {

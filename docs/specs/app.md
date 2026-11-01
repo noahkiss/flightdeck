@@ -1769,7 +1769,9 @@ The owner sees each harness account's usage limits before hitting them.
 
 - Each adapter reports usage for the account its harness uses: an account key, a label (the plan
   name, such as "Max 5x" or "Plus"), the harness, and a list of windows. A window has a name ("5h",
-  "7d", or a model name), a used percentage, a reset time, and when it was read.
+  "7d", or a model name), a used percentage, a reset time, and when it was read. It has a length
+  and a start when the harness's data defines them. An account whose source drifted carries a
+  degraded mark (14.5).
 - The account key is stable and not secret: a hash the adapter makes from an account or
   organisation id the harness exposes. With no such id, the key is a hash of the hab, the harness
   and the harness's data directory (`harness-adapters.md`, Usage). No harness gives an id today,
@@ -1855,7 +1857,8 @@ widget snapshot), `FlightdeckKit/Usage/` (book, alerts, center, views), `apple/W
 - **Demo mode** posts no notification and keeps its readings and alert marks in a defaults suite
   of its own, emptied at each start. The widget never sees demo accounts.
 - **Window length** comes from the window name (`5h`, `7d`, `30m`, `2w`, `7d opus`,
-  `spend monthly` as 30 days), since the hab sends none (task-bw97v7dk 2). A name with no length
+  `spend monthly` as 30 days). The hab now sends `length_s` and `starts_at` (task-bw97v7dk 2);
+  the app does not read them yet. A name with no length
   (`model-y`) gets no pace tick, no pace status and is stale after an hour.
 - **Stale** means older than an hour, or than the window when shorter. An account's age follows
   its newest window: a window the harness stopped sending greys only its own row. **Tightest** window: the
@@ -1887,8 +1890,9 @@ widget snapshot), `FlightdeckKit/Usage/` (book, alerts, center, views), `apple/W
   fake hab). `apple/scripts/usage-live-check.sh` runs `LiveTests.testLiveUsage` against a real
   gff-hab: a hab pane pipes hand-written status lines (full, then with room) into
   `gff-hab statusline claude` once the test creates its trigger file.
-- **Not built.** The hab clock offset (14.5): the welcome carries no hab time (task-bw97v7dk 5).
-  "Usage unavailable" (14.5): no degraded mark in the API (task-bw97v7dk 3).
+- **Not built.** The hab clock offset (14.5): the welcome now carries the hab's `time`
+  (task-bw97v7dk 5), but the app does not measure the offset yet. "Usage unavailable" (14.5): the
+  account now carries `degraded` (task-bw97v7dk 3), but the app does not show it yet.
 
 Sources: Moshi App Store screens (usage sheet with 5h, 7d and per-model windows, reset times, a pace
 marker, "alert me when free"; usage bars in the footer; Home Screen widgets; Watch usage, not

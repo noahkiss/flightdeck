@@ -1,0 +1,33 @@
+{
+  "data": {
+    "degraded": "degraded-12",
+    "harness": "harness-5",
+    "key": "key-3",
+    "label": "label-4",
+    "windows": [
+      {
+        "length_s": 10,
+        "name": "name-6",
+        "read_at": "read_at-9",
+        "resets_at": "resets_at-8",
+        "starts_at": "starts_at-11",
+        "used_pct": 7,
+        "x_unknown_field": "later"
+      }
+    ],
+    "x_unknown_field": "later"
+  },
+  "id": "id-15",
+  "revision": 13,
+  "seq": 14,
+  "type": "usage.updated",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

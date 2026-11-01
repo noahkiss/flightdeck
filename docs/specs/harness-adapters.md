@@ -758,8 +758,8 @@ Notes:
 
 ## Usage
 
-Each adapter reports its account's rate-limit windows: name, used percentage, reset time and
-when it was read (`app.md` 14.1). gff-hab keeps the latest reading per account and serves it as
+Each adapter reports its account's rate-limit windows: name, used percentage, reset time, when it
+was read, and the window's length and start when its data defines them (`app.md` 14.1). gff-hab keeps the latest reading per account and serves it as
 `usage.list` and `usage.updated` (`hab-logic-api.md` 3.9). The adapter reads only what the
 harness already hands over. It never reads a credential file and never calls a usage endpoint.
 
@@ -809,6 +809,15 @@ Built choices (`internal/usage`, `cmd/gff-hab/usage.go`, `cmd/gff-hab/statusline
   Codex: the length from `window_minutes` (`5h`, `7d`). A Codex limit id other than `codex` (a
   model with its own limit) puts its `limit_name`, else its id, first: `model-y 7d`. A limit id
   with no windows adds none.
+- **Window length and start.** `length_s` comes only from what the harness's data states.
+  Codex: `window_minutes` (up to ten years). Claude Code: the key, `five_hour` 5 hours,
+  `seven_day` 7 days, and a key that starts with a number and a unit (`seven_day_opus` 7 days,
+  `ten_minutes`); minute, hour, day and week units. A spend limit's `period` of `daily`, `weekly`
+  or `monthly` gives the calendar period that ends at `resets_at` (UTC): a monthly limit that
+  resets on 1 March started on 1 February and is 28 days long. Any other key or period gives no
+  length; a name is never parsed for one. `starts_at` is `resets_at` less the length, and absent
+  with no reset time. A client computes pace from these two, so pace works for a model window
+  or a spend window as for `5h`.
 - **Numbers.** `used_pct` is whole percent, rounded down: 99.6 is not yet full. A value above 100
   stays (a spend limit can pass its limit); the client caps it. Reset times are RFC 3339 in UTC.
 - **Account key.** No source gives an account id. The key is the harness plus 12 hex digits of a
@@ -828,7 +837,21 @@ Built choices (`internal/usage`, `cmd/gff-hab/usage.go`, `cmd/gff-hab/statusline
 - **Drift.** A window whose numbers do not parse (a percentage that is not a number, a reset time
   that is not Unix seconds, a window key that is not lower-case words, a Codex window with no
   length) is left out and logged once, up to 256 distinct lines per gff-hab run. A harness version outside the tested range is logged once. A wrong number is never
-  shown; the last good reading ages instead. The API has no degraded flag for usage yet.
+  shown; the last good reading ages instead. A Claude Code `rate_limits` that is not an object
+  is drift too, on the account the input names.
+- **Degraded.** A reading with drift sets the account's `degraded` field: its first drift line,
+  plus "(and N more)". A drifted reading with no windows still creates the account, so the
+  client shows "usage unavailable" (`app.md` 14.5), not "No limits reported". The next reading
+  with windows and no drift clears the mark. A reading with neither (a rollout with no
+  `token_count` yet, a status line before the first answer) leaves it: it says nothing about the
+  format. A change of the mark is sent as `usage.updated`. The mark is per account, not per
+  window: 14.5 puts "usage unavailable" on the card, some drift (a key that is not a window name,
+  `rate_limits` of another shape) names no window, and each account has one source (the status
+  line of one data directory, or the rollouts of one `$CODEX_HOME`), so per account is per
+  source. Two Codex sessions of one account read one after another, one drifted and one clean,
+  move the mark with each read: the newest report wins, as for the windows. A harness version
+  outside the tested range alone does not set it. A status-line input that is not JSON names no
+  account, so it is logged only.
 
 opencode 2 changed the ground under the notes above (seen live on 2.2.5, 2026-11-01):
 

@@ -24,11 +24,14 @@ const (
 // model family with its own limit) are named with that id first.
 const codexMainLimit = "codex"
 
+// codexMaxMinutes bounds the window_minutes that give a length: ten years. A longer window keeps
+// its name but gets no length or start.
+const codexMaxMinutes = 10 * 366 * 1440
+
 // CodexUsage is the result of reading the end of one rollout.
 type CodexUsage struct {
 	Reading
-	Version string   // session_meta cli_version, when the part read holds it
-	Drift   []string // what the parser could not read, one line each; never a reading
+	Version string // session_meta cli_version, when the part read holds it
 }
 
 // codexSnapshot is a token_count event's rate_limits.
@@ -191,6 +194,9 @@ func codexUsageWindow(w *codexWindow, at time.Time) (api.UsageWindow, string) {
 		uw.ResetsAt = r
 	case w.ResetsIn != nil && *w.ResetsIn >= 0:
 		uw.ResetsAt = at.Add(time.Duration(*w.ResetsIn) * time.Second).UTC().Format(time.RFC3339)
+	}
+	if minutes <= codexMaxMinutes { // window_minutes is the window's length
+		span(&uw, time.Duration(minutes)*time.Minute)
 	}
 	return uw, ""
 }

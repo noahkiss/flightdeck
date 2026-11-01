@@ -154,14 +154,16 @@ func TestUsageAdapters(t *testing.T) {
 	}
 	cl, cx := byHarness["claude"], byHarness["codex"]
 	if cl.Key != habusage.Key(w.Host.ID, "claude", "/srv/agent/.claude") || len(cl.Windows) != 2 ||
-		cl.Windows[0] != (api.UsageWindow{Name: "5h", UsedPct: 42, ResetsAt: "2026-01-01T12:00:00Z", ReadAt: cl.Windows[0].ReadAt}) {
+		cl.Windows[0] != (api.UsageWindow{Name: "5h", UsedPct: 42, ResetsAt: "2026-01-01T12:00:00Z", ReadAt: cl.Windows[0].ReadAt,
+			LengthS: 18000, StartsAt: "2026-01-01T07:00:00Z"}) {
 		t.Errorf("claude account %+v", cl)
 	}
 	if at, err := time.Parse(time.RFC3339, cl.Windows[0].ReadAt); err != nil || time.Since(at) > time.Minute {
 		t.Errorf("claude read_at %q is not the status line's time", cl.Windows[0].ReadAt)
 	}
 	if cx.Label != "Plus" || cx.Key != habusage.Key(w.Host.ID, "codex", codexHome) || len(cx.Windows) != 3 ||
-		cx.Windows[0] != (api.UsageWindow{Name: "5h", UsedPct: 12, ResetsAt: "2026-01-01T12:00:00Z", ReadAt: "2026-01-01T10:00:20Z"}) {
+		cx.Windows[0] != (api.UsageWindow{Name: "5h", UsedPct: 12, ResetsAt: "2026-01-01T12:00:00Z", ReadAt: "2026-01-01T10:00:20Z",
+			LengthS: 18000, StartsAt: "2026-01-01T07:00:00Z"}) {
 		t.Errorf("codex account %+v", cx)
 	}
 	for name, g := range map[string]*got{"host": host, "session-scoped": scoped} {

@@ -561,6 +561,7 @@ The first request on a control connection must be `hab.hello`.
 | `client_id` | This client's id |
 | `reconnect_token` | Token to resume this client within the grace period |
 | `device_id` | The hab's host-key fingerprint, `SHA256:` plus base64 (`transport.md` 5). Optional in the schema, so a newer client accepts an older hab's welcome; this build always sends it |
+| `time` | The hab's clock as it answers the hello: RFC 3339 in UTC with milliseconds (`2026-03-01T08:30:00.007Z`). Clients measure reset times and ages against it, and may compute their clock's offset (`app.md` 14.5). Optional in the schema, like `device_id`; this build always sends it |
 | `seq` | Always 0: no event has been queued yet |
 
 If no revision fits, gff-hab answers with an error of kind `revision_unsupported` that carries both
@@ -905,8 +906,13 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
 - **`hab.stats`** is a method, not an event: a client asks while it shows the numbers. Sizes are
   bytes; `cpu_pct` is over all cores and absent where the host cannot measure it; `battery_pct`
   is absent with no battery.
-- **`usage.list`** returns `accounts`, each with `key`, `label`, `harness` and `windows` (`name`,
-  `used_pct` in whole percent, `resets_at`, `read_at`). `usage.updated` carries one account. Every
+- **`usage.list`** returns `accounts`, each with `key`, `label`, `harness`, `windows` (`name`,
+  `used_pct` in whole percent, `resets_at`, `read_at`, `length_s`, `starts_at`) and `degraded`.
+  `length_s` is the window's length in seconds and `starts_at` is `resets_at` less that length;
+  each is absent when the harness's data does not define it, so a client never takes a length
+  from a name it does not know. `degraded` is one line naming what the account's latest report
+  could not read; absent when it read cleanly. The three fields came after the first `usage`
+  field set, so they are optional (`<message>@2.json`). `usage.updated` carries one account. Every
   subscription gets `usage.updated`, scoped or not: an account belongs to no session. Sources, key,
   names and the send rate are in `harness-adapters.md`, Usage.
 - The session, request and project fields that `app.md` 17 lists are in the schema as optional

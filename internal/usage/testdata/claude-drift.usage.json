@@ -6,13 +6,16 @@
       {
         "name": "14d sonnet 4",
         "used_pct": 1,
-        "read_at": "2026-01-01T10:00:00Z"
+        "read_at": "2026-01-01T10:00:00Z",
+        "length_s": 1209600
       },
       {
         "name": "7d opus",
         "used_pct": 5,
         "resets_at": "2026-01-07T00:00:00Z",
-        "read_at": "2026-01-01T10:00:00Z"
+        "read_at": "2026-01-01T10:00:00Z",
+        "length_s": 604800,
+        "starts_at": "2025-12-31T00:00:00Z"
       },
       {
         "name": "spend",

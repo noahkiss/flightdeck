@@ -1,0 +1,32 @@
+{
+  "accounts": [
+    {
+      "degraded": "degraded-13",
+      "harness": "harness-6",
+      "key": "key-4",
+      "label": "label-5",
+      "windows": [
+        {
+          "length_s": 11,
+          "name": "name-7",
+          "read_at": "read_at-10",
+          "resets_at": "resets_at-9",
+          "starts_at": "starts_at-12",
+          "used_pct": 8,
+          "x_unknown_field": "later"
+        }
+      ],
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

@@ -417,6 +417,24 @@ func TestNoNullsAndWelcomeFields(t *testing.T) {
 	}
 }
 
+// TestWelcomeTime: the welcome carries the hab's clock, RFC 3339 in UTC with milliseconds,
+// taken while the hello is answered.
+func TestWelcomeTime(t *testing.T) {
+	h := startHab(t, "", socketPath(t), nil)
+	before := time.Now().Truncate(time.Millisecond)
+	w := hello(t, dial(t, h.path), "")
+	after := time.Now()
+	got, err := time.Parse(time.RFC3339Nano, w.Time)
+	if err != nil || got.Before(before) || got.After(after) {
+		t.Fatalf("welcome time %q (%v), want between %v and %v", w.Time, err, before, after)
+	}
+	fixed := time.Date(2026, 3, 1, 9, 30, 0, 7_000_000, time.FixedZone("x", 3600))
+	h2 := startHab(t, "", socketPath(t), func(c *Config) { c.Now = func() time.Time { return fixed } })
+	if w := hello(t, dial(t, h2.path), ""); w.Time != "2026-03-01T08:30:00.007Z" {
+		t.Fatalf("welcome time %q, want 2026-03-01T08:30:00.007Z", w.Time)
+	}
+}
+
 func TestHelloRules(t *testing.T) {
 	srv := New(testConfig(&fakeSource{}))
 	t.Cleanup(srv.Close)

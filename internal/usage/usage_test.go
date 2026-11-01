@@ -300,16 +300,21 @@ func TestStoreConcurrent(t *testing.T) {
 // named by its words with a leading length shortened; any other key is refused. A spend period
 // that is not short lower-case words is left off the name.
 func TestClaudeWindowName(t *testing.T) {
-	for k, want := range map[string]string{
-		"five_hour": "5h", "seven_day": "7d", "spend_limit": "spend",
-		"seven_day_opus": "7d opus", "five_hour_sonnet": "5h sonnet", "30_day": "30d",
-		"two_weeks": "2w", "monthly": "monthly", "opus_weekly": "opus weekly", "day_opus": "day opus",
-		"Opus": "", "seven__day": "", "_x": "", "x_": "", "seven-day": "", "": "",
-		strings.Repeat("a", 41): "", "été": "",
+	const day = 24 * time.Hour
+	for k, want := range map[string]struct {
+		name   string
+		length time.Duration
+	}{
+		"five_hour": {"5h", 5 * time.Hour}, "seven_day": {"7d", 7 * day}, "spend_limit": {"spend", 0},
+		"seven_day_opus": {"7d opus", 7 * day}, "five_hour_sonnet": {"5h sonnet", 5 * time.Hour},
+		"30_day": {"30d", 30 * day}, "two_weeks": {"2w", 14 * day}, "ten_minutes": {"10m", 10 * time.Minute},
+		"monthly": {"monthly", 0}, "opus_weekly": {"opus weekly", 0}, "day_opus": {"day opus", 0},
+		"99999_day": {"99999d", 0}, "Opus": {}, "seven__day": {}, "_x": {}, "x_": {}, "seven-day": {}, "": {},
+		strings.Repeat("a", 41): {}, "été": {},
 	} {
-		got, ok := claudeWindowName(k)
-		if got != want || ok != (want != "") {
-			t.Errorf("%q: %q, %v; want %q", k, got, ok, want)
+		got, length, ok := claudeWindowName(k)
+		if got != want.name || length != want.length || ok != (want.name != "") {
+			t.Errorf("%q: %q, %v, %v; want %q, %v", k, got, length, ok, want.name, want.length)
 		}
 	}
 	at := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
@@ -345,5 +350,100 @@ func TestPlanLabel(t *testing.T) {
 		if got := planLabel(p); got != want {
 			t.Errorf("planLabel(%q) = %q, want %q", p, got, want)
 		}
+	}
+}
+
+// TestWindowSpan: a window's length and start come only from what the harness's data defines.
+// A Claude spend limit's period gives the calendar period that ends at the reset time; a period
+// with no fixed length, or no reset time, gives none. A Codex window with no reset time has a
+// length and no start, and an absurd window_minutes gives neither.
+func TestWindowSpan(t *testing.T) {
+	at := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	const reset = 1772323200 // 2026-03-01T00:00:00Z
+	for _, c := range []struct {
+		period string
+		resets any
+		length int64
+		start  string
+	}{
+		{"monthly", reset, 28 * 86400, "2026-02-01T00:00:00Z"},
+		{"weekly", reset, 7 * 86400, "2026-02-22T00:00:00Z"},
+		{"daily", reset, 86400, "2026-02-28T00:00:00Z"},
+		{"per day", reset, 0, ""},
+		{"", reset, 0, ""},
+		{"monthly", nil, 0, ""},
+	} {
+		lim := map[string]any{"used_percentage": 1, "period": c.period}
+		if c.resets != nil {
+			lim["resets_at"] = c.resets
+		}
+		b, _ := json.Marshal(map[string]any{"rate_limits": map[string]any{"spend_limit": lim}})
+		st, err := ParseClaudeStatus(b, at, "hab-a")
+		if err != nil || len(st.Windows) != 1 {
+			t.Fatalf("period %q: %+v %v", c.period, st.Windows, err)
+		}
+		if w := st.Windows[0]; w.LengthS != c.length || w.StartsAt != c.start {
+			t.Errorf("period %q, resets %v: length %d start %q, want %d %q", c.period, c.resets, w.LengthS, w.StartsAt, c.length, c.start)
+		}
+	}
+	b, _ := json.Marshal(map[string]any{"rate_limits": map[string]any{"five_hour": map[string]any{"used_percentage": 1}}})
+	if st, _ := ParseClaudeStatus(b, at, "hab-a"); len(st.Windows) != 1 || st.Windows[0].LengthS != 18000 || st.Windows[0].StartsAt != "" {
+		t.Errorf("5h with no reset: %+v", st.Windows)
+	}
+	for minutes, want := range map[int64]int64{300: 18000, codexMaxMinutes: codexMaxMinutes * 60, codexMaxMinutes + 1: 0, 1 << 60: 0} {
+		w, problem := codexUsageWindow(&codexWindow{Used: new(1.0), Minutes: &minutes}, at)
+		if problem != "" || w.LengthS != want || w.StartsAt != "" {
+			t.Errorf("window_minutes %d: %+v %q, want length %d and no start", minutes, w, problem, want)
+		}
+	}
+}
+
+// TestClaudeRateLimitsShape: a rate_limits that is not an object is drift on the account the
+// input names, not an error, so the store can mark that account degraded.
+func TestClaudeRateLimitsShape(t *testing.T) {
+	in := `{"transcript_path":"/srv/agent/.claude/projects/-w/s.jsonl","rate_limits":[{"used_percentage":5}]}`
+	st, err := ParseClaudeStatus([]byte(in), time.Now(), "hab-a")
+	if err != nil || st.Key != Key("hab-a", "claude", "/srv/agent/.claude") || len(st.Windows) != 0 ||
+		len(st.Drift) != 1 || st.Drift[0] != "rate_limits is not an object" {
+		t.Fatalf("%+v %v", st, err)
+	}
+}
+
+// TestStoreDegraded: a reading with drift marks its account degraded, creating it when it has no
+// windows, and publishes the change; a reading with no windows and no drift leaves the mark; the
+// next reading with windows and no drift clears it and publishes that.
+func TestStoreDegraded(t *testing.T) {
+	var rec recorder
+	s := NewStore(rec.publish, nil)
+	const k = "claude-1"
+	if !s.Put(Reading{Key: k, Harness: "claude", Drift: []string{"rate_limits is not an object"}}) {
+		t.Fatal("a drifted reading with no windows was not sent")
+	}
+	l := s.List()
+	if len(l.Accounts) != 1 || l.Accounts[0].Degraded != "rate_limits is not an object" || len(l.Accounts[0].Windows) != 0 {
+		t.Fatalf("after drift: %+v", l)
+	}
+	good := Reading{Key: k, Harness: "claude", Windows: []api.UsageWindow{win("5h", 1, "", "2026-01-01T10:00:00Z")}}
+	bad := good
+	bad.Windows = []api.UsageWindow{win("5h", 1, "", "2026-01-01T10:01:00Z")}
+	bad.Drift = []string{"a", "b", "c"}
+	if !s.Put(good) || s.List().Accounts[0].Degraded != "" {
+		t.Fatalf("a good reading did not clear the mark: %+v", s.List())
+	}
+	if !s.Put(bad) || s.List().Accounts[0].Degraded != "a (and 2 more)" {
+		t.Fatalf("drift with windows: %+v", s.List())
+	}
+	if s.Put(Reading{Key: k, Harness: "claude"}) || s.List().Accounts[0].Degraded == "" {
+		t.Fatalf("an empty clean reading changed the mark: %+v", s.List())
+	}
+	good.Windows = []api.UsageWindow{win("5h", 1, "", "2026-01-01T10:02:00Z")}
+	if !s.Put(good) || s.List().Accounts[0].Degraded != "" {
+		t.Fatalf("a good reading did not clear the mark: %+v", s.List())
+	}
+	if rec.count() != 4 {
+		t.Fatalf("%d events, want 4", rec.count())
+	}
+	if e := rec.ev[2].Data.(api.UsageAccount); e.Degraded != "a (and 2 more)" {
+		t.Fatalf("the degraded event carries %+v", e)
 	}
 }

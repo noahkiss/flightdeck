@@ -206,8 +206,33 @@ func TestUsageHookEnvelopes(t *testing.T) {
 		t.Errorf("logs %q, want one line for 9.0.0", tu.logs)
 	}
 	tu.mu.Unlock()
-	if l := tu.store.List(); len(l.Accounts) != 1 || l.Accounts[0].Windows[0] != (api.UsageWindow{Name: "5h", UsedPct: 5, ResetsAt: "2026-01-01T12:00:00Z", ReadAt: "2026-01-01T10:00:00Z"}) {
+	if l := tu.store.List(); len(l.Accounts) != 1 || l.Accounts[0].Windows[0] != (api.UsageWindow{Name: "5h", UsedPct: 5, ResetsAt: "2026-01-01T12:00:00Z", ReadAt: "2026-01-01T10:00:00Z",
+		LengthS: 18000, StartsAt: "2026-01-01T07:00:00Z"}) {
 		t.Errorf("store %+v", l)
+	}
+}
+
+// TestUsageDegraded: a status line whose rate_limits drifted marks its account degraded, with
+// no windows and a log line; the next good status line clears the mark and brings the window.
+func TestUsageDegraded(t *testing.T) {
+	tu := newTestUsage(t, time.Hour, time.Hour)
+	status := func(limits string) harness.Envelope {
+		return harness.Envelope{Harness: detect.KindClaude, Event: hook.StatusLineEvent, T: 1767261600000,
+			Payload: []byte(`{"transcript_path":"/srv/agent/.claude/projects/p/s.jsonl","rate_limits":` + limits + `}`)}
+	}
+	tu.Hook(status(`[{"used_percentage":5}]`))
+	l := tu.store.List()
+	if len(l.Accounts) != 1 || l.Accounts[0].Degraded != "rate_limits is not an object" || len(l.Accounts[0].Windows) != 0 {
+		t.Fatalf("after drift: %+v", l)
+	}
+	tu.mu.Lock()
+	if len(tu.logs) != 1 || !strings.Contains(tu.logs[0], "rate_limits is not an object") {
+		t.Errorf("logs %q", tu.logs)
+	}
+	tu.mu.Unlock()
+	tu.Hook(status(`{"five_hour":{"used_percentage":5,"resets_at":1767268800}}`))
+	if l := tu.store.List(); l.Accounts[0].Degraded != "" || len(l.Accounts[0].Windows) != 1 {
+		t.Fatalf("after a good reading: %+v", l)
 	}
 }
 

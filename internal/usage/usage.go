@@ -55,10 +55,25 @@ func windowName(minutes int64) string {
 	return fmt.Sprintf("%dm", minutes)
 }
 
+// span sets a window's length and, when its reset time is known, its start: the reset time less
+// the length. Callers pass only a length the harness's own data defines.
+func span(w *api.UsageWindow, length time.Duration) {
+	if length <= 0 {
+		return
+	}
+	w.LengthS = int64(length / time.Second)
+	if r, err := time.Parse(time.RFC3339, w.ResetsAt); err == nil {
+		w.StartsAt = r.Add(-length).UTC().Format(time.RFC3339)
+	}
+}
+
 // Reading is what one report from a harness says about its account.
 type Reading struct {
 	Key     string
 	Harness string
 	Label   string // plan name; empty when the source gives none
 	Windows []api.UsageWindow
+	// Drift is what the parser could not read, one line each; never a window. A reading with
+	// drift marks its account degraded (app.md 14.5); one without clears the mark.
+	Drift []string
 }

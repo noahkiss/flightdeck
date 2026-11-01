@@ -3526,6 +3526,8 @@ public struct TurnEnd: Codable, Sendable, Hashable {
 }
 
 public struct UsageAccount: Codable, Sendable, Hashable {
+    /// Set when the latest report from the account's source drifted from the format the adapter knows: what it could not read, as one line. The client says usage unavailable (app.md 14.5); windows still listed are the last good ones. Absent once a report reads cleanly.
+    public var degraded: String?
     public var harness: String
     /// Stable, not secret: the adapter's hash of an account id, else the host and harness.
     public var key: String
@@ -3534,13 +3536,15 @@ public struct UsageAccount: Codable, Sendable, Hashable {
     public var windows: [UsageWindow]
 
     enum CodingKeys: String, CodingKey {
+        case degraded = "degraded"
         case harness = "harness"
         case key = "key"
         case label = "label"
         case windows = "windows"
     }
 
-    public init(harness: String, key: String, label: String? = nil, windows: [UsageWindow]) {
+    public init(degraded: String? = nil, harness: String, key: String, label: String? = nil, windows: [UsageWindow]) {
+        self.degraded = degraded
         self.harness = harness
         self.key = key
         self.label = label
@@ -3570,26 +3574,34 @@ public struct UsageReadings: Codable, Sendable, Hashable {
 }
 
 public struct UsageWindow: Codable, Sendable, Hashable {
+    /// The window's length in seconds, as the harness's data defines it. Absent when the data defines none (a model name with no length, a spend period with no fixed length).
+    public var lengthS: Int?
     /// 5h, 7d, or a model name.
     public var name: String
     /// RFC 3339 time of the reading.
     public var readAt: String
     /// RFC 3339 time the window resets.
     public var resetsAt: String?
+    /// RFC 3339 time the window started: resets_at less the length. Absent with no length or no reset time.
+    public var startsAt: String?
     /// Used, in whole percent.
     public var usedPct: Int
 
     enum CodingKeys: String, CodingKey {
+        case lengthS = "length_s"
         case name = "name"
         case readAt = "read_at"
         case resetsAt = "resets_at"
+        case startsAt = "starts_at"
         case usedPct = "used_pct"
     }
 
-    public init(name: String, readAt: String, resetsAt: String? = nil, usedPct: Int) {
+    public init(lengthS: Int? = nil, name: String, readAt: String, resetsAt: String? = nil, startsAt: String? = nil, usedPct: Int) {
+        self.lengthS = lengthS
         self.name = name
         self.readAt = readAt
         self.resetsAt = resetsAt
+        self.startsAt = startsAt
         self.usedPct = usedPct
     }
 }
@@ -3630,6 +3642,8 @@ public struct Welcome: Codable, Sendable, Hashable {
     public var revision: Int
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
+    /// The hab's clock when it sent the welcome, RFC 3339 in UTC with milliseconds. Clients measure reset times and ages against it, and may compute their clock's offset. Optional, so a newer client accepts a welcome from an older revision 1 hab.
+    public var time: String?
 
     enum CodingKeys: String, CodingKey {
         case build = "build"
@@ -3641,9 +3655,10 @@ public struct Welcome: Codable, Sendable, Hashable {
         case reconnectToken = "reconnect_token"
         case revision = "revision"
         case seq = "seq"
+        case time = "time"
     }
 
-    public init(build: String, capabilities: [String], clientId: String, deviceId: String? = nil, epoch: String, host: HostInfo, reconnectToken: String, revision: Int, seq: UInt64) {
+    public init(build: String, capabilities: [String], clientId: String, deviceId: String? = nil, epoch: String, host: HostInfo, reconnectToken: String, revision: Int, seq: UInt64, time: String? = nil) {
         self.build = build
         self.capabilities = capabilities
         self.clientId = clientId
@@ -3653,6 +3668,7 @@ public struct Welcome: Codable, Sendable, Hashable {
         self.reconnectToken = reconnectToken
         self.revision = revision
         self.seq = seq
+        self.time = time
     }
 }
 

@@ -371,6 +371,10 @@ type UsageWindow struct {
 	UsedPct  int    `json:"used_pct" doc:"Used, in whole percent."`
 	ResetsAt string `json:"resets_at,omitempty" doc:"RFC 3339 time the window resets."`
 	ReadAt   string `json:"read_at" doc:"RFC 3339 time of the reading."`
+	// Length and start let a client compute pace for any window, not only one named like 5h.
+	// Optional, so a newer client reads a window from an older revision 1 hab.
+	LengthS  int64  `json:"length_s,omitempty" doc:"The window's length in seconds, as the harness's data defines it. Absent when the data defines none (a model name with no length, a spend period with no fixed length)."`
+	StartsAt string `json:"starts_at,omitempty" doc:"RFC 3339 time the window started: resets_at less the length. Absent with no length or no reset time."`
 }
 
 // UsageAccount is the latest usage reading of one harness account.
@@ -379,6 +383,8 @@ type UsageAccount struct {
 	Label   string        `json:"label,omitempty" doc:"Plan name, such as Max 5x."`
 	Harness string        `json:"harness"`
 	Windows []UsageWindow `json:"windows"`
+	// Degraded is optional, so a newer client reads an account from an older revision 1 hab.
+	Degraded string `json:"degraded,omitempty" doc:"Set when the latest report from the account's source drifted from the format the adapter knows: what it could not read, as one line. The client says usage unavailable (app.md 14.5); windows still listed are the last good ones. Absent once a report reads cleanly."`
 }
 
 type UsageListParams struct{}

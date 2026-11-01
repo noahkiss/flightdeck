@@ -5855,6 +5855,10 @@
       "UsageAccount": {
         "type": "object",
         "properties": {
+          "degraded": {
+            "type": "string",
+            "description": "Set when the latest report from the account's source drifted from the format the adapter knows: what it could not read, as one line. The client says usage unavailable (app.md 14.5); windows still listed are the last good ones. Absent once a report reads cleanly."
+          },
           "harness": {
             "type": "string"
           },
@@ -5905,6 +5909,11 @@
       "UsageWindow": {
         "type": "object",
         "properties": {
+          "length_s": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The window's length in seconds, as the harness's data defines it. Absent when the data defines none (a model name with no length, a spend period with no fixed length)."
+          },
           "name": {
             "type": "string",
             "description": "5h, 7d, or a model name."
@@ -5916,6 +5925,10 @@
           "resets_at": {
             "type": "string",
             "description": "RFC 3339 time the window resets."
+          },
+          "starts_at": {
+            "type": "string",
+            "description": "RFC 3339 time the window started: resets_at less the length. Absent with no length or no reset time."
           },
           "used_pct": {
             "type": "integer",
@@ -5990,6 +6003,10 @@
             "type": "integer",
             "format": "uint64",
             "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "time": {
+            "type": "string",
+            "description": "The hab's clock when it sent the welcome, RFC 3339 in UTC with milliseconds. Clients measure reset times and ages against it, and may compute their clock's offset. Optional, so a newer client accepts a welcome from an older revision 1 hab."
           }
         },
         "required": [

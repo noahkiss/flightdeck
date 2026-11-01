@@ -81,6 +81,10 @@ type inputCall struct {
 	cancel context.CancelFunc
 }
 
+// welcomeTime is the layout of the welcome's time: RFC 3339 with milliseconds, so a client can
+// measure its clock's offset finer than a second.
+const welcomeTime = "2006-01-02T15:04:05.000Z07:00"
+
 // maxWaitingInput bounds the pane.input calls one connection may have waiting.
 const maxWaitingInput = 256
 
@@ -1003,6 +1007,7 @@ func (c *conn) handleHello(m message) {
 		ClientID:       c.clientID,
 		ReconnectToken: c.token,
 		DeviceID:       c.s.cfg.DeviceID,
+		Time:           c.s.cfg.Now().UTC().Format(welcomeTime),
 	}
 	c.mu.Lock()
 	c.revision = chosen

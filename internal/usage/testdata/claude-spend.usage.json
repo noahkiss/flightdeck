@@ -7,7 +7,9 @@
         "name": "spend monthly",
         "used_pct": 104,
         "resets_at": "2026-02-01T00:00:00Z",
-        "read_at": "2026-01-01T10:00:00Z"
+        "read_at": "2026-01-01T10:00:00Z",
+        "length_s": 2678400,
+        "starts_at": "2026-01-01T00:00:00Z"
       }
     ]
   },
