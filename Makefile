@@ -48,11 +48,11 @@ test: libghostty
 test-pure:
 	CGO_ENABLED=0 $(GO) test ./...
 
-# Run the holder, structure, link, control, data stream, harness, hook and git status tests three
-# times under the race detector. No libghostty needed.
+# Run the holder, structure, link, control, data stream, pane size, harness, hook and git status
+# tests three times under the race detector. No libghostty needed.
 RACE_PKGS := ./internal/holder/... ./internal/holderproto/... ./internal/holderclient/... \
 	./internal/holderreg/... ./internal/structure/... ./internal/link/... \
-	./internal/control/... ./internal/datastream/... ./internal/termq/... \
+	./internal/control/... ./internal/datastream/... ./internal/panesize/... ./internal/termq/... \
 	./internal/harness/... ./internal/hook/... ./internal/gitstatus/... ./cmd/...
 race:
 	$(GO) test -race -count=3 $(RACE_PKGS)

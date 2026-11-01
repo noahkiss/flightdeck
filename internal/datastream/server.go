@@ -40,6 +40,8 @@ type Source interface {
 	Subscribe(ctx context.Context, pane string, from uint64) (Sub, error)
 	// Size returns the pane's size; ok is false for a pane the link does not follow.
 	Size(pane string) (cols, rows int, ok bool)
+	// Owner returns the client id of the pane's size owner, empty for none (spec 6.1).
+	Owner(pane string) string
 }
 
 // Config sets up a Server. Source is required.
@@ -63,10 +65,11 @@ type Server struct {
 	ctx     context.Context // ends at Close, so no stream waits on a pane's replay past it
 	cancel  context.CancelFunc
 
-	mu     sync.Mutex
-	conns  map[net.Conn]struct{}
-	closed bool
-	wg     sync.WaitGroup
+	mu      sync.Mutex
+	conns   map[net.Conn]struct{}
+	streams map[*stream]struct{} // streams past their welcome, for Observer and Redraw
+	closed  bool
+	wg      sync.WaitGroup
 }
 
 // New returns a server.
@@ -83,7 +86,7 @@ func New(cfg Config) *Server {
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
 	}
-	s := &Server{cfg: cfg, tickets: NewTickets(nil), conns: map[net.Conn]struct{}{}}
+	s := &Server{cfg: cfg, tickets: NewTickets(nil), conns: map[net.Conn]struct{}{}, streams: map[*stream]struct{}{}}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	return s
 }
@@ -104,6 +107,45 @@ func (s *Server) Ticket(client, pane string, observe bool) (string, time.Duratio
 	}
 	tok, ttl := s.tickets.Issue(client, pane, observe)
 	return tok, ttl, nil
+}
+
+// Observer reports whether client follows pane only through observer streams: it has at least
+// one open observer stream on the pane and no other (spec 6.4). Such a client's size never
+// reaches the PTY.
+func (s *Server) Observer(client, pane string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	observer := false
+	for st := range s.streams {
+		if st.t.Client != client || st.t.Pane != pane {
+			continue
+		}
+		if !st.t.Observe {
+			return false
+		}
+		observer = true
+	}
+	return observer
+}
+
+// Redraw sends a fresh snapshot on every open stream client has on pane, and on no other
+// (spec 6.7). Frames still waiting for credit on those streams are dropped: the snapshot covers
+// them. It returns how many streams it asked.
+func (s *Server) Redraw(client, pane string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for st := range s.streams {
+		if st.t.Client != client || st.t.Pane != pane {
+			continue
+		}
+		st.mu.Lock()
+		st.redraw = true
+		st.mu.Unlock()
+		st.signal()
+		n++
+	}
+	return n
 }
 
 // Close ends every data connection and waits for them.
@@ -150,6 +192,14 @@ func (s *Server) ServeConn(nc net.Conn, br *bufio.Reader) {
 		nc.Write(AppendFrame(nil, api.FrameReject, payload))
 		return
 	}
+	s.mu.Lock()
+	s.streams[st] = struct{}{}
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.streams, st)
+		s.mu.Unlock()
+	}()
 	st.run(br)
 }
 
@@ -189,7 +239,7 @@ func (s *Server) open(nc net.Conn, br *bufio.Reader) (*stream, error) {
 	cols, rows, _ := s.cfg.Source.Size(t.Pane)
 	id := make([]byte, 8)
 	rand.Read(id)
-	w := api.DataWelcome{Stream: hex.EncodeToString(id), Cols: cols, Rows: rows}
+	w := api.DataWelcome{Stream: hex.EncodeToString(id), Cols: cols, Rows: rows, Owner: s.cfg.Source.Owner(t.Pane)}
 	payload, _ := json.Marshal(w)
 	st := &stream{
 		s: s, nc: nc, t: t, sub: sub,
@@ -236,6 +286,9 @@ type stream struct {
 	held   []item
 	resync bool // the backlog was dropped: resubscribe for a snapshot once there is credit
 	ended  bool // the subscription ended; finish once pending is sent
+	// snapped is set by the first snapshot. A later one (a resync or a redraw) is followed by a
+	// resize frame, since a resize frame may have been dropped with the backlog.
+	snapped bool
 
 	wake chan struct{} // the reader or the writer has news
 	done chan struct{} // the reader or the writer stopped
@@ -245,6 +298,7 @@ type stream struct {
 	out     [][]byte // frames for the writer
 	outWake chan struct{}
 	closed  bool
+	redraw  bool // Redraw asked for a fresh snapshot
 }
 
 func (st *stream) signal() {
@@ -287,6 +341,13 @@ func (st *stream) run(br *bufio.Reader) {
 				st.chunk(ch)
 			}
 		case <-st.wake:
+			st.mu.Lock()
+			redraw := st.redraw
+			st.redraw = false
+			st.mu.Unlock()
+			if redraw && !st.ended && !st.resync && !st.finishing() {
+				st.dropBacklog() // the next flush subscribes again from a snapshot
+			}
 		case <-st.done:
 			return
 		}
@@ -373,6 +434,10 @@ func (st *stream) chunk(ch link.Chunk) {
 		st.scan = termq.NewScanner(ch.Offset)
 		p := SnapshotPayload(ch.Offset, string(ch.Encoding), ch.Data)
 		st.add(item{kind: api.FrameSnapshot, data: p, cost: len(ch.Data)})
+		if st.snapped && ch.Cols > 0 && !st.resync {
+			st.add(resizeItem(ch))
+		}
+		st.snapped = true
 	case link.ChunkBytes:
 		if st.scan == nil || st.scan.Offset() != ch.Offset {
 			st.scan = termq.NewScanner(ch.Offset)
@@ -380,9 +445,7 @@ func (st *stream) chunk(ch link.Chunk) {
 		st.scan.Feed(ch.Data, st.text)
 		st.release()
 	case link.ChunkResize:
-		// Owners are stage 8 (spec 6): until then a resize names no owner, reason disown.
-		p, _ := json.Marshal(api.ResizeFrame{Cols: ch.Cols, Rows: ch.Rows, Reason: api.OwnerReasonDisown})
-		it := item{kind: api.FrameResize, off: ch.Offset, data: p}
+		it := resizeItem(ch)
 		if st.scan != nil && st.scan.Held() > 0 {
 			// The scanner holds back bytes from before the resize: it goes out after them.
 			st.held = append(st.held, it)
@@ -397,6 +460,27 @@ func (st *stream) chunk(ch link.Chunk) {
 		p, _ := json.Marshal(api.ExitedFrame{ExitStatus: link.APIExit(ch.Exit)})
 		st.add(item{kind: api.FrameExited, data: p, final: true})
 	}
+}
+
+// finishing reports whether a frame that ends the stream (exited) waits in pending.
+func (st *stream) finishing() bool {
+	for _, it := range st.pending {
+		if it.final {
+			return true
+		}
+	}
+	return false
+}
+
+// resizeItem is a resize frame with the chunk's size and owner (spec 6.5). A chunk with no reason
+// comes from a pane that never had an owner: reason disown.
+func resizeItem(ch link.Chunk) item {
+	reason := ch.Reason
+	if reason == "" {
+		reason = api.OwnerReasonDisown
+	}
+	p, _ := json.Marshal(api.ResizeFrame{Cols: ch.Cols, Rows: ch.Rows, Owner: ch.Owner, Reason: reason})
+	return item{kind: api.FrameResize, off: ch.Offset, data: p}
 }
 
 // text queues program output, joining it to the last bytes frame when the offsets touch.

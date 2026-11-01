@@ -5,9 +5,9 @@
 // that the CLI and tests use.
 //
 // session.create and pane.close run through Config.Actions, data.ticket and data connections
-// through Config.Data, pane.input through Config.Input. The size ownership and redraw methods, the
-// devices methods and the calls later stages build answer "unavailable", with a hint that names
-// the stage.
+// through Config.Data, pane.input through Config.Input, and the size ownership and redraw
+// methods through Config.Size. The devices methods and the calls later stages build answer
+// "unavailable", with a hint that names the stage.
 package control
 
 import (
@@ -69,6 +69,25 @@ type Input interface {
 	QueueInput(ctx context.Context, client, pane string, data []byte) (wait func() error)
 }
 
+// Size keeps each pane's size owner (spec 6). gff-hab implements it with internal/panesize. An
+// error that is an *Error keeps its kind.
+type Size interface {
+	// Connected and Disconnected count a client's open control connections; a client whose
+	// last one closes leaves ownership (disconnect), and gets it back when it reconnects within
+	// the grace period (restore).
+	Connected(client string)
+	Disconnected(client string)
+	// Typed records a pane.input call from client (spec 6.2).
+	Typed(client, pane string)
+	// Created makes client, which created pane, its owner.
+	Created(client, pane string)
+	Take(client, pane string) (owner string, err error)
+	Request(client, pane string) (owner string, err error)
+	Disown(client, pane string) (owner string, err error)
+	SetDesired(client, pane string, cols, rows int) (applied bool, err error)
+	Redraw(client, pane string, mode api.RedrawMode) error
+}
+
 // Config is what New needs. Source is required.
 type Config struct {
 	Build        string
@@ -79,6 +98,7 @@ type Config struct {
 	Actions      Actions // nil: session.create and pane.close answer unavailable
 	Data         Data    // nil: data.ticket answers unavailable and a data hello is rejected
 	Input        Input   // nil: pane.input answers unavailable
+	Size         Size    // nil: the size ownership and redraw methods answer unavailable
 	// ActionTimeout bounds one Actions call. Default 30 s.
 	ActionTimeout time.Duration
 
@@ -219,6 +239,9 @@ func (s *Server) ServeConn(nc net.Conn) {
 	c.readLoop()
 	c.finish(nil)
 	<-c.done
+	if c.hello && s.cfg.Size != nil {
+		s.cfg.Size.Disconnected(c.clientID)
+	}
 
 	s.mu.Lock()
 	delete(s.conns, c)

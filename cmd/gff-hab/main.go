@@ -60,6 +60,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/link"
+	"github.com/noahkiss/flightdeck/internal/panesize"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
@@ -266,12 +267,17 @@ func serve(args []string) error {
 	var acts control.Actions
 	var data control.Data
 	var input control.Input
+	var sizes control.Size
 	var ds *datastream.Server
+	var mgr *panesize.Manager
 	if lk != nil {
 		caps = append(caps, "agent-state") // panes gff-hab spawns post hooks
 		caps = append(caps, "data-streams", "snapshot-vt")
 		ds = datastream.New(datastream.Config{Source: linkSource{lk}, Logf: debugf})
 		data, input = dataService{ds}, inputService{lk}
+		mgr = newSizes(lk, store, ds, logger.Printf)
+		defer mgr.Close()
+		sizes = sizeService{mgr}
 		home, err := os.UserHomeDir()
 		if err != nil {
 			home = "/"
@@ -294,6 +300,7 @@ func serve(args []string) error {
 		Actions:      acts,
 		Data:         data,
 		Input:        input,
+		Size:         sizes,
 		Logf:         logger.Printf,
 	})
 	srv.Store(s)
@@ -310,6 +317,7 @@ func serve(args []string) error {
 		stopWatch := lk.Watch(func(n link.Notice) {
 			if n.Kind == link.PaneGone {
 				agents.Forget(n.Pane.UUID.String())
+				mgr.Forget(n.Pane.UUID.String())
 			}
 		})
 		defer stopWatch()

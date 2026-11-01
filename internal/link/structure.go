@@ -31,6 +31,8 @@ func (s structureHolders) Subscribe(fn func(structure.Notice)) func() {
 		switch n.Kind {
 		case PaneAdded:
 			fn(structure.Notice{Kind: structure.PaneAdded, Pane: pn})
+		case PaneResized:
+			fn(structure.Notice{Kind: structure.PaneResized, Pane: pn})
 		case PaneExited:
 			fn(structure.Notice{Kind: structure.PaneExited, Pane: pn, Exit: pn.Exit})
 		case PaneGone:

@@ -440,6 +440,9 @@ func (c *conn) handleInput(m message) {
 	ln.calls = append(ln.calls, call)
 	c.waiting++
 	c.mu.Unlock()
+	if c.s.cfg.Size != nil {
+		c.s.cfg.Size.Typed(c.clientID, p.Pane) // input counts for size ownership (spec 3.8, 6.2)
+	}
 	if !running {
 		go c.runLane(p.Pane, ln)
 		return
@@ -580,6 +583,9 @@ func (c *conn) handleHello(m message) {
 	}
 	c.clientID, c.token = c.s.claimToken(c, p.ReconnectToken)
 	c.hello = true
+	if c.s.cfg.Size != nil {
+		c.s.cfg.Size.Connected(c.clientID)
+	}
 	caps := c.s.cfg.Capabilities
 	if caps == nil {
 		caps = []string{}
@@ -663,7 +669,6 @@ func (c *conn) decodeUp(m message, v any) *Error {
 }
 
 const (
-	hintNoHolder  = "%s is not built yet; Part 2 stage 8 (pane size) builds it"
 	hintNoDevices = "%s needs pairing, which this build does not have yet; the devices capability is absent"
 	hintNoActions = "%s needs the holder link, which this hab is running without"
 )
@@ -693,6 +698,17 @@ func actionErr(method string, err error) *Error {
 		return e
 	}
 	return appErr(api.ErrorKindUnavailable, "%s: %v", method, err)
+}
+
+// sizeCheck answers a size method that cannot run: no size service, or no pane.
+func (c *conn) sizeCheck(method, pane string) *Error {
+	if c.s.cfg.Size == nil {
+		return appErr(api.ErrorKindUnavailable, hintNoActions, method)
+	}
+	if pane == "" {
+		return appErr(api.ErrorKindInvalid, "%s needs a pane", method)
+	}
+	return nil
 }
 
 func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
@@ -726,9 +742,53 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 			return nil, actionErr(m.Method, err)
 		}
 		return api.Ticket{Seq: s, Ticket: tok, ExpiresInMS: int(ttl / time.Millisecond)}, nil
-	case "pane.take", "pane.request", "pane.disown",
-		"pane.set_desired_size", "pane.redraw":
-		return nil, appErr(api.ErrorKindUnavailable, hintNoHolder, m.Method)
+	case "pane.take", "pane.request", "pane.disown":
+		var p api.PaneRef
+		if e := c.decodeUp(m, &p); e != nil {
+			return nil, e
+		}
+		if e := c.sizeCheck(m.Method, p.Pane); e != nil {
+			return nil, e
+		}
+		var owner string
+		var err error
+		switch m.Method {
+		case "pane.take":
+			owner, err = c.s.cfg.Size.Take(c.clientID, p.Pane)
+		case "pane.request":
+			owner, err = c.s.cfg.Size.Request(c.clientID, p.Pane)
+		default:
+			owner, err = c.s.cfg.Size.Disown(c.clientID, p.Pane)
+		}
+		if err != nil {
+			return nil, actionErr(m.Method, err)
+		}
+		return api.OwnerResult{Seq: s, Owner: owner}, nil
+	case "pane.set_desired_size":
+		var p api.DesiredSizeParams
+		if e := c.decodeUp(m, &p); e != nil {
+			return nil, e
+		}
+		if e := c.sizeCheck(m.Method, p.Pane); e != nil {
+			return nil, e
+		}
+		applied, err := c.s.cfg.Size.SetDesired(c.clientID, p.Pane, p.Cols, p.Rows)
+		if err != nil {
+			return nil, actionErr(m.Method, err)
+		}
+		return api.DesiredSizeResult{Seq: s, Applied: applied}, nil
+	case "pane.redraw":
+		var p api.RedrawParams
+		if e := c.decodeUp(m, &p); e != nil {
+			return nil, e
+		}
+		if e := c.sizeCheck(m.Method, p.Pane); e != nil {
+			return nil, e
+		}
+		if err := c.s.cfg.Size.Redraw(c.clientID, p.Pane, p.Mode); err != nil {
+			return nil, actionErr(m.Method, err)
+		}
+		return api.Empty{Seq: s}, nil
 	case "devices.pair", "devices.list", "devices.revoke":
 		return nil, appErr(api.ErrorKindUnavailable, hintNoDevices, m.Method)
 	case "session.create":
@@ -744,6 +804,9 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		session, pane, err := c.s.cfg.Actions.CreateSession(ctx, p)
 		if err != nil {
 			return nil, actionErr(m.Method, err)
+		}
+		if c.s.cfg.Size != nil {
+			c.s.cfg.Size.Created(c.clientID, pane) // the creator owns the new pane (spec 6.5)
 		}
 		return api.SessionCreated{Seq: s, Session: session, Pane: pane}, nil
 	case "pane.close":

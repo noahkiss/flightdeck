@@ -538,8 +538,8 @@ offset; gff-hab sends those again, in order, at the offset the holder expects. T
 instead. A later write was taken (its offset happened to match the holder's count after other
 input moved it), so a resend would land out of order. Or the write's deadline passed: 10 s from
 when it was first sent. A write therefore lands within 10 s of first going out, or fails. A pane
-that is gone or unknown answers `not_found`; a lost pane answers `unavailable`. Input as activity
-for size ownership (6.2) is stage 8.
+that is gone or unknown answers `not_found`; a lost pane answers `unavailable`. Each call counts
+as activity for size ownership (6.2) when the connection reads it (stage 8, 6.8).
 
 - The control connection runs `pane.input` off its read loop, in one lane per pane: calls to one
   pane keep their order, and a pane that takes its input slowly holds up neither `hab.ping`, other
@@ -893,7 +893,7 @@ Data streams (`internal/datastream`), query answering (`internal/termq`, `intern
 - **Each bytes frame covers one contiguous run of holder offsets.** A removed terminal query is a
   skip between two frames, never inside one. So the client's offset, the frame's offset plus its
   length, is always exact, and a resume from it neither repeats nor skips a byte.
-- **Order.** Welcome (stream id, size; no owner until stage 8), then a snapshot unless the resume
+- **Order.** Welcome (stream id, size, owner), then a snapshot unless the resume
   is served from bytes, then bytes, resize and exited frames in stream order. An `exited` frame
   comes after the program's last bytes, then gff-hab closes the connection (7.7).
 - **Resume.** From the link's buffer, else a bounded replay from the holder's ring, else a
@@ -919,10 +919,10 @@ Data streams (`internal/datastream`), query answering (`internal/termq`, `intern
 - **Resize frames.** The link resizes the PTY and then the parser, and every stream gets a resize
   frame at the offset the parser had reached. When the stream's scanner holds back the start of
   a possible query from before that offset, the resize frame waits until those bytes go out, so
-  it always follows every byte before its offset. Until stage 8 tracks owners, a resize frame names
-  no owner and gives reason `disown`.
+  it always follows every byte before its offset. Each resize frame names the owner and a reason
+  (6.8).
 - **Observers** (6.4) are recorded on the ticket. A data connection carries no input and no size,
-  so an observer can do neither by construction; stage 8 keeps an observer's size out of
+  so an observer can do neither by construction; 6.8 keeps an observer's size out of
   ownership.
 - **On a planned stop** gff-hab closes every data connection after the control connections, then
   checkpoints; clients resume by offset (7.4).
@@ -1018,6 +1018,54 @@ A window drag sends many sizes. gff-hab applies the owner's latest desired size 
   (2.3), and only if the pane has an owner connected.
 
 Decision: proposed.
+
+### 6.8 Built choices (stage 8)
+
+Pane size ownership (`internal/panesize`), wired to the holder link, the structure store and the
+data streams in `cmd/gff-hab/data.go`:
+
+- **One event per change.** Every owner change emits one `pane.owner` event and raises the
+  pane's revision; `Pane.owner` carries the owner in the structure. The event's `reason` names
+  how the change came about (`create`, `take`, `request`, `typed`, `disown`, `disconnect`,
+  `restore`); its size is the size the pane gets. A takeover is one event with the new owner,
+  so `lost` stays in the word set and is never sent: the client that lost the pane sees another
+  owner in the event. The owner is not saved; a new gff-hab starts a new epoch with no owners.
+- **Creator.** The client whose `session.create` made the pane owns it (`create`), with the
+  pane's size as its desired size.
+- **Debounce.** The 300 ms starts at the first input from a client that is not the owner;
+  further input from that client does not restart it. Input from the owner stops it. Input
+  from a third client starts that client's own debounce. Input counts when the connection reads
+  the `pane.input` call.
+- **Explicit control.** `pane.take` and `pane.request` return the owner after the call; a take
+  by the owner and a request while another client owns change nothing and emit nothing.
+  `pane.disown` from a client that is not the owner answers `not_owner`.
+- **Desired size.** `pane.set_desired_size` stores the size (1 to 65535) and answers
+  `applied: true` when this client owns the pane or the pane has none: the PTY gets this size,
+  or a newer one, within the throttle. Sizes go to the holder at most once per 50 ms, trailing.
+- **Observers.** A client whose open data streams on a pane are all observers (at least one)
+  is an observer of that pane. Its input does not count, `pane.set_desired_size` stores
+  nothing and answers `applied: false`, and `pane.take`, `pane.request` and a nudge answer
+  `invalid`. A client with a full stream on the pane, or with no stream, is not an observer.
+- **Disconnect and restore.** A client's connections are counted, so an old connection closed
+  by a reconnect token (3.7) does not end its ownership. When its last connection closes, each
+  pane it owns keeps its size and has no owner (`disconnect`). A client that says hello again
+  with its token within the grace period (60 s, the reconnect grace) gets each such pane back
+  (`restore`), unless any owner change happened on the pane meanwhile. After the grace period
+  its desired sizes are dropped.
+- **Resize frames.** Every resize frame carries the owner and the reason of the last owner
+  change (`disown` for a pane that never had an owner). An owner change also sends a resize
+  frame at the current size, so every stream learns the owner in band even when the size
+  stays; when the new owner's size differs, a second frame follows with that size. The welcome
+  carries the owner. A snapshot that is not the stream's first (a redraw, or a client that fell
+  too far behind) is followed by a resize frame, since the frames it replaces may have held a
+  size change. A size change also sends `pane.updated` with the new size.
+- **Redraw.** `snapshot` drops the frames waiting for credit on that client's streams of the
+  pane and sends a fresh snapshot on each; other clients' streams get nothing. `nudge` does
+  the same, then resizes the PTY one column narrower (one wider at 1 column) and back after
+  100 ms; a size wanted meanwhile is applied in place of the way back. A nudge goes through the
+  same throttle as the owner's sizes. Neither writes to the program's input.
+- **Not built here:** `pane.activity` (7.1), focus reports from the owner only (5.6), the
+  owner's display facts for colour answers (5.8), and the nudge after a crash rebuild (6.7).
 
 ---
 
@@ -1193,6 +1241,10 @@ Decision: open.
 
 Proposed 60 s. Longer keeps ownership through a short tunnel or a lift; shorter frees panes from a
 phone that will not return. Recommendation: **60 s**, configurable.
+
+Built (stage 8): size ownership uses the reconnect grace (`control.DefaultReconnectGrace`, 60 s),
+so a client keeps its sizes and its claim to restore exactly as long as its token. Not yet a
+flag.
 
 Decision: open.
 

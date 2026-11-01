@@ -34,6 +34,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/holderclient"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/holderreg"
@@ -905,14 +906,41 @@ func (l *Link) Resize(ctx context.Context, u hp.UUID, cols, rows int) error {
 	if err := h.Resize(ctx, hd, uint16(cols), uint16(rows)); err != nil {
 		return err
 	}
+	changed := false
 	if !l.run(func() {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		if p.holder == h && p.handle == hd {
-			p.resizeLocked(cols, rows)
+			changed = p.resizeLocked(cols, rows)
 		}
 	}) {
 		return ErrClosed
+	}
+	if changed {
+		l.notify([]Notice{{Kind: PaneResized, Pane: p.status()}})
+	}
+	return nil
+}
+
+// SetOwner records pane u's size owner and why (spec 6.5); owner is empty for none. Every
+// subscriber gets a ChunkResize at the current size that names the new owner, and every later
+// ChunkResize and snapshot carries it. It never resizes.
+func (l *Link) SetOwner(u hp.UUID, owner string, reason api.OwnerReason) error {
+	p := l.pane(u)
+	if p == nil {
+		return ErrNoPane
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.lost != nil {
+		return p.lost
+	}
+	if p.owner == owner && p.reason == reason {
+		return nil
+	}
+	p.owner, p.reason = owner, reason
+	if p.term != nil {
+		p.sendSizeLocked()
 	}
 	return nil
 }

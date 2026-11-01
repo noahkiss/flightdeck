@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/holderclient"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/termq"
@@ -46,6 +47,10 @@ type PaneStatus struct {
 	Gone   bool
 	Exited bool
 	Exit   hp.ExitStatus
+	// Owner is the client id of the pane's size owner, empty for none, and Reason why it is
+	// (SetOwner).
+	Owner  string
+	Reason api.OwnerReason
 }
 
 func sortStatus(s []PaneStatus) {
@@ -68,9 +73,10 @@ type Screen struct {
 type NoticeKind int
 
 const (
-	PaneAdded  NoticeKind = iota + 1 // the link started following a pane, or one came back
-	PaneExited                       // the pane's child was reaped
-	PaneGone                         // the pane is lost or released
+	PaneAdded   NoticeKind = iota + 1 // the link started following a pane, or one came back
+	PaneExited                        // the pane's child was reaped
+	PaneGone                          // the pane is lost or released
+	PaneResized                       // Resize changed the pane's size
 )
 
 // Notice is one pane change.
@@ -103,8 +109,13 @@ type Chunk struct {
 	// (spec 5.6).
 	Live bool
 	Exit hp.ExitStatus
-	// Cols and Rows are the new size, for ChunkResize.
+	// Cols and Rows are the new size, for ChunkResize, and the size the snapshot was taken at,
+	// for ChunkSnapshot.
 	Cols, Rows int
+	// Owner and Reason are the size owner and why it is the owner (SetOwner), for ChunkResize
+	// and ChunkSnapshot.
+	Owner  string
+	Reason api.OwnerReason
 }
 
 // Subscription delivers one pane's output in offset order with no gap and no repeat.
@@ -211,6 +222,9 @@ type pane struct {
 	ansRefused     bool
 	ansDropped     int
 	resent         int // writes sent again after an abort or a wrong offset
+	// owner and reason tag every size change for the subscribers (SetOwner, spec 6.5).
+	owner  string
+	reason api.OwnerReason
 }
 
 // Bounds on a pane's answers to terminal queries waiting to be written. A program that floods
@@ -689,21 +703,38 @@ func (p *pane) inputWriter(l *Link) {
 // inputTimeout bounds one write to a pane's input.
 const inputTimeout = 10 * time.Second
 
-// resizeLocked resizes the parser and tells every subscriber, at the current offset. The caller
-// holds p.mu.
-func (p *pane) resizeLocked(cols, rows int) {
+// resizeLocked resizes the parser and tells every subscriber, at the current offset. It reports
+// whether the size changed. The caller holds p.mu.
+func (p *pane) resizeLocked(cols, rows int) bool {
 	if p.term == nil {
-		return
+		return false
 	}
 	if c, r := p.term.Size(); c == cols && r == rows {
-		return
+		return false
 	}
 	p.term.Resize(cols, rows)
+	p.sendSizeLocked()
+	return true
+}
+
+// sendSizeLocked sends every subscriber a ChunkResize with the parser's size and the owner, at
+// the current offset. The caller holds p.mu.
+func (p *pane) sendSizeLocked() {
+	cols, rows := p.term.Size()
+	ch := Chunk{Kind: ChunkResize, Offset: p.off, Cols: cols, Rows: rows, Owner: p.owner, Reason: p.ownerReason()}
 	for s := range p.subs {
-		if !s.send(Chunk{Kind: ChunkResize, Offset: p.off, Cols: cols, Rows: rows}) {
+		if !s.send(ch) {
 			delete(p.subs, s)
 		}
 	}
+}
+
+// ownerReason is the reason of the last owner change, or disown when no owner was ever set.
+func (p *pane) ownerReason() api.OwnerReason {
+	if p.reason == "" {
+		return api.OwnerReasonDisown
+	}
+	return p.reason
 }
 
 func (p *pane) replayEnd(l *Link, e *hp.ReplayEnd) {
@@ -819,7 +850,7 @@ func (p *pane) status() PaneStatus {
 	st := PaneStatus{
 		UUID: p.uuid, Handle: p.handle, Pid: p.pid, Offset: p.off, Ready: p.isReady,
 		Suspect: p.suspect, Restored: p.restored, Lost: errors.Is(p.lost, ErrLost), Gone: errors.Is(p.lost, ErrGone),
-		Exited: p.exited, Exit: p.exit,
+		Exited: p.exited, Exit: p.exit, Owner: p.owner, Reason: p.ownerReason(),
 	}
 	if p.holder != nil {
 		st.Instance, st.Build = p.holder.Instance(), p.holder.Build()
@@ -965,7 +996,9 @@ func (p *pane) subscribe(l *Link, from uint64, pre []byte) (*Subscription, error
 		if err != nil {
 			return nil, err
 		}
-		s.send(Chunk{Kind: ChunkSnapshot, Offset: p.off, Data: snap, Encoding: vt.EncodingVT})
+		cols, rows := p.term.Size()
+		s.send(Chunk{Kind: ChunkSnapshot, Offset: p.off, Data: snap, Encoding: vt.EncodingVT,
+			Cols: cols, Rows: rows, Owner: p.owner, Reason: p.ownerReason()})
 	} else {
 		off := from
 		var rest []byte

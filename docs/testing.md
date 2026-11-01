@@ -121,3 +121,7 @@ test client that speaks the data frames. Each resume test compares the client's 
 pane's ring, read from the holder after gff-hab stops, with the terminal queries left out: same
 bytes at the same offsets. The file also holds the first two checks of test 9 (two clients, one
 answer to a query) and the stalled-client and fake-frame checks of spec 5.
+`cmd/gff-hab/size_test.go` holds the third check of test 9 (an observer's size leaves the PTY
+alone), typing moving ownership between two clients with one event per change, and a redraw
+that writes nothing to the program's input. `internal/panesize` proves the same ownership rules
+with a fake clock: debounce, throttle, nudge gap and grace period without sleeping.

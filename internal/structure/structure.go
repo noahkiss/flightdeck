@@ -36,6 +36,7 @@ const (
 	SessionDeleted api.EventType = "session.deleted"
 	PaneUpdated    api.EventType = "pane.updated"
 	PaneDeleted    api.EventType = "pane.deleted"
+	PaneOwner      api.EventType = "pane.owner"
 )
 
 // Errors returned by Store methods. Each maps to an api.ErrorKind of the same name.
@@ -91,6 +92,7 @@ type paneState struct {
 	holderID string
 	offset   uint64
 	exit     *api.ExitStatus
+	owner    string // the size owner's client id; runtime only, never saved (SetOwner)
 }
 
 // maxTombstones bounds the final revisions kept for gone panes no session links. A gone pane a
@@ -849,7 +851,7 @@ func (s *Store) paneAPI(id string) api.Pane {
 	ps := s.panes[id]
 	pa := api.Pane{
 		ID: id, Revision: ps.rec.Revision, HolderBuild: ps.rec.HolderBuild,
-		Cols: ps.rec.Cols, Rows: ps.rec.Rows, Offset: ps.offset,
+		Cols: ps.rec.Cols, Rows: ps.rec.Rows, Offset: ps.offset, Owner: ps.owner,
 	}
 	if ss := s.sessionByPane(id); ss != nil {
 		pa.Session = ss.ID

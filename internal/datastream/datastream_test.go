@@ -90,6 +90,7 @@ func (f *fakeSource) Subscribe(_ context.Context, pane string, from uint64) (Sub
 }
 
 func (f *fakeSource) Size(pane string) (int, int, bool) { return 80, 24, pane == "p" }
+func (f *fakeSource) Owner(string) string               { return "" }
 
 // out sends program output to sub at the source's offset.
 func (f *fakeSource) out(s *fakeSub, data string) {
