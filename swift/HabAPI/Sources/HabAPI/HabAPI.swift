@@ -368,26 +368,26 @@ public struct CatalogEntry: Codable, Sendable, Hashable {
     public var catalog: Catalog
     /// This hab's label for the peer. Absent for this hab and for a hab not in the peer list.
     public var label: String?
+    /// This hab's own catalog.
+    public var own: Bool?
     /// RFC 3339 time this hab last confirmed the copy with the peer.
     public var seenAt: String
-    /// This hab's own catalog.
-    public var `self`: Bool?
     /// The peer is offline; the copy is its last.
     public var stale: Bool?
 
     enum CodingKeys: String, CodingKey {
         case catalog = "catalog"
         case label = "label"
+        case own = "own"
         case seenAt = "seen_at"
-        case `self` = "self"
         case stale = "stale"
     }
 
-    public init(catalog: Catalog, label: String? = nil, seenAt: String, `self`: Bool? = nil, stale: Bool? = nil) {
+    public init(catalog: Catalog, label: String? = nil, own: Bool? = nil, seenAt: String, stale: Bool? = nil) {
         self.catalog = catalog
         self.label = label
+        self.own = own
         self.seenAt = seenAt
-        self.`self` = `self`
         self.stale = stale
     }
 }

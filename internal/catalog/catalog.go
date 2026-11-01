@@ -310,7 +310,7 @@ func (s *Service) List() api.CatalogList {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.cfg.Now()
-	out := api.CatalogList{Hosts: []api.CatalogEntry{{Self: true, SeenAt: now.UTC().Format(time.RFC3339), Catalog: cloneCatalog(s.own)}}}
+	out := api.CatalogList{Hosts: []api.CatalogEntry{{Own: true, SeenAt: now.UTC().Format(time.RFC3339), Catalog: cloneCatalog(s.own)}}}
 	shown := map[string]bool{s.cfg.Self: true}
 	add := func(id, label string, online bool) {
 		c, ok := s.copies[id]

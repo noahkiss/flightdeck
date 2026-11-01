@@ -90,8 +90,8 @@
         "x_unknown_field": "later"
       },
       "label": "label-4",
+      "own": true,
       "seen_at": "seen_at-5",
-      "self": true,
       "stale": true,
       "x_unknown_field": "later"
     }

@@ -92,7 +92,7 @@ func TestCatalogOverSSH(t *testing.T) {
 		}
 		return false
 	})
-	if !l.Hosts[0].Self || l.Hosts[0].Catalog.Host != "host-a" || l.Hosts[0].Catalog.System.OS == "" {
+	if !l.Hosts[0].Own || l.Hosts[0].Catalog.Host != "host-a" || l.Hosts[0].Catalog.System.OS == "" {
 		t.Fatalf("own entry %+v", l.Hosts[0])
 	}
 	eb := l.Hosts[1]

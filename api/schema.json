@@ -1992,13 +1992,13 @@
             "type": "string",
             "description": "This hab's label for the peer. Absent for this hab and for a hab not in the peer list."
           },
+          "own": {
+            "type": "boolean",
+            "description": "This hab's own catalog."
+          },
           "seen_at": {
             "type": "string",
             "description": "RFC 3339 time this hab last confirmed the copy with the peer."
-          },
-          "self": {
-            "type": "boolean",
-            "description": "This hab's own catalog."
           },
           "stale": {
             "type": "boolean",

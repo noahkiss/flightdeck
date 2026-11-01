@@ -112,7 +112,7 @@ type CatalogList struct {
 // CatalogEntry is one host's catalog as this hab holds it.
 type CatalogEntry struct {
 	Label   string  `json:"label,omitempty" doc:"This hab's label for the peer. Absent for this hab and for a hab not in the peer list."`
-	Self    bool    `json:"self,omitempty" doc:"This hab's own catalog."`
+	Own     bool    `json:"own,omitempty" doc:"This hab's own catalog."`
 	Stale   bool    `json:"stale,omitempty" doc:"The peer is offline; the copy is its last."`
 	SeenAt  string  `json:"seen_at" doc:"RFC 3339 time this hab last confirmed the copy with the peer."`
 	Catalog Catalog `json:"catalog"`

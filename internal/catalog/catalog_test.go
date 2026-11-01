@@ -231,7 +231,7 @@ func TestSharedProject(t *testing.T) {
 		return slices.Equal(e.Catalog.Peers, []string{a.id})
 	})
 	l := a.cat.List()
-	if !l.Hosts[0].Self || l.Hosts[0].Catalog.DeviceID != a.id || l.Hosts[1].Label != "b" || l.Hosts[1].Stale {
+	if !l.Hosts[0].Own || l.Hosts[0].Catalog.DeviceID != a.id || l.Hosts[1].Label != "b" || l.Hosts[1].Stale {
 		t.Fatalf("hosts %+v", l.Hosts)
 	}
 	g, _ := group(l, "remote:example.com/o/app")

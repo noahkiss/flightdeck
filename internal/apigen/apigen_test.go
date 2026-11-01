@@ -465,3 +465,17 @@ func validate(d *Document, s *Schema, v any, path string, errs *[]string) {
 		*errs = append(*errs, fmt.Sprintf("%s: schema type %q unknown to the validator", path, s.Type))
 	}
 }
+
+// TestCheckSwiftNames refuses a field that Swift cannot name.
+func TestCheckSwiftNames(t *testing.T) {
+	d := &Document{Components: Components{Schemas: map[string]*Schema{
+		"Entry": {Properties: map[string]*Schema{"label": {}, "self": {}}},
+	}}}
+	if err := checkSwiftNames(d); err == nil || !strings.Contains(err.Error(), "Entry.self") {
+		t.Fatalf("checkSwiftNames = %v, want a refusal naming Entry.self", err)
+	}
+	d.Components.Schemas["Entry"].Properties = map[string]*Schema{"own": {}, "default": {}}
+	if err := checkSwiftNames(d); err != nil {
+		t.Fatalf("checkSwiftNames(own, default) = %v", err)
+	}
+}
