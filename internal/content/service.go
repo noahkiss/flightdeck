@@ -232,7 +232,16 @@ func (s *Service) build(ctx context.Context, session string) (built, error) {
 			s.cfg.Logf("content: session %s: transcript: %v", session, err)
 		}
 	}
+	// The folder: the transcript's, else the one it recorded last (the agent state is gone after
+	// a hab restart until the next hook), else the project's.
 	folder := cwd
+	if folder != "" {
+		if err := s.cfg.Store.SetFolder(session, folder); err != nil {
+			s.cfg.Logf("content: %v", err)
+		}
+	} else {
+		folder = s.cfg.Store.Folder(session)
+	}
 	if folder == "" && s.cfg.ProjectDir != nil {
 		folder = s.cfg.ProjectDir(session)
 	}

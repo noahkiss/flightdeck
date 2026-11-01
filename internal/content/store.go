@@ -19,18 +19,26 @@ type Shown struct {
 	At    string          `json:"at"`
 }
 
-// Store keeps each session's shown references in one file in the state directory. A nil path
-// keeps them in memory only. It is safe for concurrent use.
+// Store keeps each session's shown references, and the last folder its transcript recorded, in
+// one file in the state directory. An empty path keeps them in memory only. It is safe for
+// concurrent use.
 type Store struct {
-	path string
-	mu   sync.Mutex
-	m    map[string][]Shown // by session id
+	path    string
+	mu      sync.Mutex
+	m       map[string][]Shown // by session id
+	folders map[string]string  // by session id
+}
+
+// file is the store's file shape.
+type file struct {
+	Shown   map[string][]Shown `json:"shown"`
+	Folders map[string]string  `json:"folders,omitempty"`
 }
 
 // OpenStore loads the store at path. A missing file is an empty store; an unreadable one is
 // an error.
 func OpenStore(path string) (*Store, error) {
-	s := &Store{path: path, m: map[string][]Shown{}}
+	s := &Store{path: path, m: map[string][]Shown{}, folders: map[string]string{}}
 	if path == "" {
 		return s, nil
 	}
@@ -41,11 +49,15 @@ func OpenStore(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := json.Unmarshal(b, &s.m); err != nil {
+	var f file
+	if err := json.Unmarshal(b, &f); err != nil {
 		return nil, err
 	}
-	if s.m == nil {
-		s.m = map[string][]Shown{}
+	if f.Shown != nil {
+		s.m = f.Shown
+	}
+	if f.Folders != nil {
+		s.folders = f.Folders
 	}
 	return s, nil
 }
@@ -70,6 +82,24 @@ func (s *Store) Add(session string, r Shown) error {
 	return s.save()
 }
 
+// SetFolder records the folder a session's transcript last recorded. It writes only on a change.
+func (s *Store) SetFolder(session, folder string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if folder == "" || s.folders[session] == folder {
+		return nil
+	}
+	s.folders[session] = folder
+	return s.save()
+}
+
+// Folder returns the folder recorded for session, or "".
+func (s *Store) Folder(session string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.folders[session]
+}
+
 // List returns session's references, oldest first.
 func (s *Store) List(session string) []Shown {
 	s.mu.Lock()
@@ -88,6 +118,12 @@ func (s *Store) Prune(keep func(session string) bool) error {
 			changed = true
 		}
 	}
+	for id := range s.folders {
+		if !keep(id) {
+			delete(s.folders, id)
+			changed = true
+		}
+	}
 	if !changed {
 		return nil
 	}
@@ -99,7 +135,7 @@ func (s *Store) save() error {
 	if s.path == "" {
 		return nil
 	}
-	b, err := json.Marshal(s.m)
+	b, err := json.Marshal(file{Shown: s.m, Folders: s.folders})
 	if err != nil {
 		return err
 	}

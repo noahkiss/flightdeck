@@ -71,6 +71,8 @@ public final class ContentModel {
     public private(set) var problem: String?
     /// The list was loaded at least once from the hab.
     public private(set) var loaded = false
+    /// The session's folder on the hab, from the last list.
+    public private(set) var folder: String?
 
     /// The largest file the hab serves (`hab-logic-api.md` 3.9).
     public static let maxFile = 32 << 20
@@ -199,6 +201,7 @@ public final class ContentModel {
         do {
             let list = try await conn.call(HabMethods.contentList, ContentListParams(session: session))
             items = Self.replace(list.items, keeping: racing ?? [])
+            folder = list.folder
             problem = nil
             loaded = true
         } catch let e as RPCError {

@@ -186,6 +186,20 @@ public struct BoardScreen: View {
         .onChange(of: fleet?.usage?.book.presented) { _, p in
             if let p, showConnections { showUsage(p.account) }
         }
+        #if DEBUG
+        // Debug builds only: `-FlightdeckOpenSession <session>` opens that session at launch,
+        // so a build can be checked with no clicks.
+        .task {
+            guard fleet != nil, let id = UserDefaults.standard.string(forKey: "FlightdeckOpenSession"), !id.isEmpty else { return }
+            for _ in 0..<100 {
+                if let row = board.rows.first(where: { $0.target.session == id }) {
+                    opened = row
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+        #endif
         #if os(macOS)
         .frame(minWidth: fleet != nil && opened != nil ? 960 : 680, minHeight: 420)
         #endif

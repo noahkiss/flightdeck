@@ -125,9 +125,14 @@ func TestStore(t *testing.T) {
 	if err != nil || len(s2.List("s1")) != 2 {
 		t.Fatalf("reopen: %v %+v", err, s2.List("s1"))
 	}
+	s2.SetFolder("s1", "/w/one")
+	s2.SetFolder("s2", "/w/two")
+	if s4, _ := OpenStore(p); s4.Folder("s1") != "/w/one" {
+		t.Fatalf("folder after reopen %q", s4.Folder("s1"))
+	}
 	s2.Prune(func(id string) bool { return id == "s2" })
 	s3, _ := OpenStore(p)
-	if len(s3.List("s1")) != 0 || len(s3.List("s2")) != MaxShown {
+	if len(s3.List("s1")) != 0 || len(s3.List("s2")) != MaxShown || s3.Folder("s1") != "" || s3.Folder("s2") != "/w/two" {
 		t.Fatal("prune")
 	}
 }
@@ -419,6 +424,12 @@ func TestDerivedAndDiffs(t *testing.T) {
 	}
 	if _, err := w.svc.Read(ctx, api.ContentReadParams{Session: "s1", ID: ID("s1", filepath.Join(w.dir, "elsewhere", "secret.txt"))}); kindOf(err) != api.ErrorKindNotFound {
 		t.Errorf("read of the symlink target: %v", err)
+	}
+	// After a hab restart the transcript is out of reach until the next hook: git status
+	// still comes from the folder the store recorded.
+	w.msgs, w.cwd = nil, ""
+	if it := w.list(t, "s1")[untracked]; it.Change != api.ContentChangeUntracked {
+		t.Errorf("with no transcript the recorded folder should still list git status: %+v", it)
 	}
 }
 

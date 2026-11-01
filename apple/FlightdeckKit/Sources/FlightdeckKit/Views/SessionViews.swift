@@ -72,13 +72,22 @@ public struct SessionView: View {
     @State private var mode: Mode
     @State private var consoleShown = false
     /// The content side panel (Mac, iPad) or sheet (iPhone), app.md 4.7.
-    @State private var showFiles = false
+    @State private var showFiles = Self.filesAtLaunch
     @Environment(\.terminalSlot) private var terminal
 
     enum Mode: String, CaseIterable, Identifiable {
         case chat = "Chat"
         case terminal = "Terminal"
         var id: String { rawValue }
+    }
+
+    /// Debug builds only: `-FlightdeckShowFiles YES` opens the files panel or sheet at once.
+    private static var filesAtLaunch: Bool {
+        #if DEBUG
+        return UserDefaults.standard.bool(forKey: "FlightdeckShowFiles")
+        #else
+        return false
+        #endif
     }
 
     public init(model: ChatModel, compact: Bool, close: (() -> Void)? = nil) {

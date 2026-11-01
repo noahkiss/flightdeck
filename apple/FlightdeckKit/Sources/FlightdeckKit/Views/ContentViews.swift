@@ -222,9 +222,11 @@ struct DocumentCard: View {
                             .foregroundStyle(.secondary)
                             .frame(width: 10)
                         Image(systemName: kindSymbol(item.kind))
-                        Text(item.title ?? item.name).font(.callout.weight(.medium)).lineLimit(1)
-                        Text(kindWord(item.kind)).font(.caption).foregroundStyle(.secondary)
-                        Spacer(minLength: 0)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.title ?? item.name).font(.callout.weight(.medium)).lineLimit(1)
+                            Text(kindWord(item.kind)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .contentShape(Rectangle())
                 }
@@ -268,6 +270,7 @@ struct DocumentBody: View {
     let model: ContentModel
 
     static let foldedLines = 8
+    static let foldedBlocks = 4
 
     var body: some View {
         switch item.kind {
@@ -275,7 +278,14 @@ struct DocumentBody: View {
             PDFDocumentView(data: data)
                 .frame(height: folded ? 180 : 560)
         case .markdown:
-            MarkdownView(blocks: MarkdownBlock.parse(text(limit: folded ? Self.foldedLines : nil)))
+            // Folded keeps whole blocks, so a code fence is never cut open.
+            let blocks = MarkdownBlock.parse(text(limit: nil))
+            VStack(alignment: .leading, spacing: 4) {
+                MarkdownView(blocks: folded ? Array(blocks.prefix(Self.foldedBlocks)) : blocks)
+                if folded && blocks.count > Self.foldedBlocks {
+                    Text("…").foregroundStyle(.secondary)
+                }
+            }
         case .diff:
             DiffBody(diff: DiffParser.parse(String(decoding: data, as: UTF8.self)), maxLines: folded ? Self.foldedLines : nil)
         case .image:
@@ -501,7 +511,7 @@ struct ModifiedFilesCard: View {
                 .buttonStyle(.plain)
                 if open {
                     ForEach(files, id: \.id) { f in
-                        Button { selected = f } label: { ModifiedFileRow(item: f, folder: nil) }
+                        Button { selected = f } label: { ModifiedFileRow(item: f, folder: model.folder) }
                             .buttonStyle(.plain)
                     }
                 }
@@ -549,6 +559,13 @@ struct ModifiedFileRow: View {
     }
 }
 
+/// A list row's identity: the section and the item.
+struct Keyed: Identifiable {
+    var section: String
+    var item: ContentItem
+    var id: String { section + "/" + item.id }
+}
+
 /// The session's content: documents, images and modified files. The side
 /// panel on Mac and iPad, a sheet on iPhone.
 public struct ContentPanel: View {
@@ -571,8 +588,9 @@ public struct ContentPanel: View {
                 section("Images", model.images)
                 if !model.modified.isEmpty {
                     Section("Modified files") {
-                        ForEach(model.modified, id: \.id) { f in
-                            NavigationLink(value: f) { ModifiedFileRow(item: f, folder: nil) }
+                        // One item may sit in two sections: each section keys its rows apart.
+                        ForEach(model.modified.map { Keyed(section: "modified", item: $0) }) { k in
+                            NavigationLink(value: k.item) { ModifiedFileRow(item: k.item, folder: model.folder) }
                         }
                     }
                 }
@@ -592,9 +610,9 @@ public struct ContentPanel: View {
     @ViewBuilder private func section(_ title: String, _ items: [ContentItem]) -> some View {
         if !items.isEmpty {
             Section(title) {
-                ForEach(items, id: \.id) { it in
-                    NavigationLink(value: it) {
-                        Label(it.title ?? it.name, systemImage: kindSymbol(it.kind)).lineLimit(1)
+                ForEach(items.map { Keyed(section: title, item: $0) }) { k in
+                    NavigationLink(value: k.item) {
+                        Label(k.item.title ?? k.item.name, systemImage: kindSymbol(k.item.kind)).lineLimit(1)
                     }
                 }
             }

@@ -211,7 +211,8 @@ struct ChatTranscript: View {
     static let bottom = "chat-bottom"
 
     @ViewBuilder private var placeholder: some View {
-        if model.messages.isEmpty && model.outgoing.isEmpty {
+        // Shown content and the modified-files card fill the list too: no placeholder over them.
+        if model.messages.isEmpty && model.outgoing.isEmpty && model.content.items.isEmpty {
             switch model.load {
             case .loading:
                 ProgressView()

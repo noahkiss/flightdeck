@@ -594,7 +594,9 @@ What carries over:
   pane's `GFF_HAB`, which the hab maps to the pane and then to its session. `gff-hab show` sends
   the token when `-session` is absent, so an agent needs no id.
 - **The folder.** The session's folder is the `cwd` its transcript records (Claude Code's
-  records, Codex's session meta), else the most recently used folder of its project.
+  records, Codex's session meta), else the last one it recorded (kept in `content.json`, since
+  a restarted hab has no agent state until the next hook), else the most recently used folder
+  of its project.
 - **Reads are bounded.** `content.read` serves only ids `content.list` would return for that
   session; any other id is `not_found`. Chunks are at most 1 MiB (default 256 KiB), files at most
   32 MiB. The hab opens the path again on each chunk and refuses a path that is not a regular
