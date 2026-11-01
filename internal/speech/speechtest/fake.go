@@ -19,7 +19,8 @@ import (
 // Env is the variable that turns a test binary into the fake helper; its value is the mode.
 //
 //	GFF_SPEECH_FAKE          a mode: ok, load-fail, crash (exit on a clip), invalid (refuse each
-//	                         clip), bad-proto (a hello of another protocol), mute (no hello)
+//	                         clip), bad-proto (a hello of another protocol), mute (no hello),
+//	                         hang (take a clip and never answer)
 //	GFF_SPEECH_FAKE_FORMATS  comma-separated formats (default pcm16,opus)
 //	GFF_SPEECH_FAKE_LOAD     load time in ms
 //	GFF_SPEECH_FAKE_DECODE   decode time in ms
@@ -111,6 +112,9 @@ func FakeHelper(mode string, args []string) int {
 		switch mode {
 		case "crash":
 			return 3
+		case "hang": // take the clip, never answer, exit only when stdin ends
+			io.Copy(io.Discard, in)
+			return 0
 		case "invalid":
 			speechproto.WriteJSON(out, speechproto.KindError, speechproto.Error{ID: req.ID, Kind: speechproto.ErrInvalid, Message: "not audio"})
 			flush()

@@ -23,6 +23,8 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/oggopus"
+	"github.com/noahkiss/flightdeck/internal/speech/speechtest"
+	"github.com/noahkiss/flightdeck/internal/speechproto"
 )
 
 // clip is the hand-made fixture: ms milliseconds of a 440 Hz tone at 16 kHz, pcm16, with the
@@ -278,10 +280,11 @@ func TestCancelKeepsOrder(t *testing.T) {
 	if _, err := h.e.Prepare(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	waitFor(t, "ready", func() bool { st, _ := h.e.Prepare(context.Background()); return st.State == api.SpeechStateReady })
+	// The context starts only once the helper is loaded, so it ends during the decode.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	waitFor(t, "ready", func() bool { st, _ := h.e.Prepare(context.Background()); return st.State == api.SpeechStateReady })
-	if _, err := h.e.Transcribe(ctx, pcm(1)); kindOf(err) != api.ErrorKindUnavailable {
+	if _, err := h.e.Transcribe(ctx, pcm(1)); kindOf(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "while the clip decodes") {
 		t.Fatalf("cancelled clip: %v", err)
 	}
 	res, err := h.e.Transcribe(context.Background(), pcm(2))
@@ -291,6 +294,40 @@ func TestCancelKeepsOrder(t *testing.T) {
 	if got, want := h.events(), []string{"start", "begin_1", "end_1", "begin_2", "end_2"}; !slices.Equal(got, want) {
 		t.Fatalf("events %v, want %v", got, want)
 	}
+}
+
+// TestHang: a helper that takes a clip and never answers is killed by the watchdog, the caller
+// gets unavailable, and the next clip starts a fresh helper. A caller that gave up first does
+// not keep the decoder past the watchdog either.
+func TestHang(t *testing.T) {
+	h := newHarness(t, "hang", testModel, true, func(c *Config) { c.AnswerGrace = 300 * time.Millisecond })
+	_, err := h.e.Transcribe(context.Background(), pcm(1))
+	if kindOf(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "did not answer") {
+		t.Fatalf("hung clip: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	waitFor(t, "helper gone", func() bool { h.e.mu.Lock(); defer h.e.mu.Unlock(); return h.e.proc == nil })
+	h.e.Transcribe(ctx, pcm(2)) // gives up; the watchdog still ends the hung helper
+	t.Setenv(speechtest.Env, "ok")
+	res, err := h.e.Transcribe(context.Background(), pcm(3))
+	if err != nil || res.Text != "clip 3" {
+		t.Fatalf("after the hang: %v %+v", err, res)
+	}
+}
+
+// TestLoadTimeout: a helper that never finishes its load is killed after the load timeout.
+func TestLoadTimeout(t *testing.T) {
+	h := newHarness(t, "mute", testModel, true, func(c *Config) { c.LoadTimeout = 300 * time.Millisecond })
+	h.e.mu.Lock()
+	h.e.info = &speechproto.Hello{Protocol: speechproto.Version, Formats: []string{"pcm16"}} // mute has no -info either
+	h.e.mu.Unlock()
+	start := time.Now()
+	_, err := h.e.Transcribe(context.Background(), pcm(1))
+	if kindOf(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "did not load within") || time.Since(start) > 5*time.Second {
+		t.Fatalf("load timeout: %v after %v", err, time.Since(start))
+	}
+	waitFor(t, "helper gone", func() bool { h.e.mu.Lock(); defer h.e.mu.Unlock(); return h.e.proc == nil })
 }
 
 // TestIdleExit: the helper exits after the idle time with no request, and the next clip starts
@@ -573,6 +610,19 @@ func TestDownloadFails(t *testing.T) {
 	short := modelFor(srv.URL+"/model.tar", archive)
 	short.Size++
 	missing := modelFor(srv.URL+"/nothing.tar", archive)
+	long := modelFor(srv.URL+"/model.tar", archive)
+	long.Size -= 100 // the server sends more than the model's size
+	// A small gzip archive whose encoder file expands to 1 MiB, past the archive's size.
+	var tb bytes.Buffer
+	tw := tar.NewWriter(&tb)
+	tw.WriteHeader(&tar.Header{Name: "m/encoder.int8.onnx", Mode: 0o644, Size: 1 << 20, Typeflag: tar.TypeReg})
+	tw.Write(make([]byte, 1<<20))
+	tw.Close()
+	bomb := gz(tb.Bytes())
+	bombSrv := serve(t, bomb, nil)
+	expands := modelFor(bombSrv.URL+"/model.tar", bomb)
+	gated := serve(t, archive, make(chan struct{})) // the gate never opens
+	stalls := modelFor(gated.URL+"/model.tar", archive)
 	for _, tc := range []struct {
 		name string
 		m    Model
@@ -581,8 +631,11 @@ func TestDownloadFails(t *testing.T) {
 		{"checksum", bad, "checksum"},
 		{"size", short, "bytes, want"},
 		{"missing", missing, "404"},
+		{"too long", long, "more than"},
+		{"expands", expands, "larger than"},
+		{"stalls", stalls, "download stalled"},
 	} {
-		h := newHarness(t, "ok", tc.m, false, nil)
+		h := newHarness(t, "ok", tc.m, false, func(c *Config) { c.StallTimeout = 300 * time.Millisecond })
 		h.e.Prepare(context.Background())
 		var st api.SpeechStatus
 		waitFor(t, tc.name+" failure", func() bool {
@@ -601,6 +654,24 @@ func TestDownloadFails(t *testing.T) {
 	}
 }
 
+// TestDownloadClearsLeftovers: a download removes the temporary folders an earlier one, cut off
+// by a restart, left behind.
+func TestDownloadClearsLeftovers(t *testing.T) {
+	archive := gz(fakeArchive(t))
+	srv := serve(t, archive, nil)
+	m := modelFor(srv.URL+"/model.tar", archive)
+	parent := filepath.Join(t.TempDir(), "speech")
+	old := filepath.Join(parent, ".fake-model.download-123")
+	os.MkdirAll(old, 0o700)
+	os.WriteFile(filepath.Join(old, "encoder.int8.onnx"), []byte("half"), 0o600)
+	if err := fetch(context.Background(), http.DefaultClient, m, filepath.Join(parent, m.Name), time.Minute, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatalf("leftover still there: %v", err)
+	}
+}
+
 // TestDownloadBzip2: the real model is a bzip2 tar; the extractor reads one made by bzip2(1).
 func TestDownloadBzip2(t *testing.T) {
 	bz, err := exec.LookPath("bzip2")
@@ -616,7 +687,7 @@ func TestDownloadBzip2(t *testing.T) {
 	srv := serve(t, archive, nil)
 	m := modelFor(srv.URL+"/model.tar", archive)
 	dir := filepath.Join(t.TempDir(), "speech", m.Name)
-	if err := fetch(context.Background(), http.DefaultClient, m, dir, nil); err != nil {
+	if err := fetch(context.Background(), http.DefaultClient, m, dir, time.Minute, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !present(dir, m) {
@@ -654,6 +725,16 @@ func TestSettings(t *testing.T) {
 	os.WriteFile(p, []byte("[speech\n"), 0o600)
 	if _, err := LoadSettings(p); err == nil {
 		t.Fatal("broken file passed")
+	}
+}
+
+// TestLogLines: a helper log line over 4 KiB is cut, and the lines after it still arrive.
+func TestLogLines(t *testing.T) {
+	in := "first\n" + strings.Repeat("x", 10000) + "\n\nlast"
+	var got []string
+	logLines(strings.NewReader(in), func(l string) { got = append(got, l) })
+	if len(got) != 4 || got[0] != "first" || len(got[1]) != maxLogLine || got[2] != "" || got[3] != "last" {
+		t.Fatalf("got %d lines: %q", len(got), got[0])
 	}
 }
 

@@ -81,12 +81,7 @@ func startHelper(bin, dir string, threads int, logf func(string, ...any)) (*help
 	readers.Add(2)
 	go func() { // the helper's own log lines; it never writes audio or text there
 		defer readers.Done()
-		sc := bufio.NewScanner(stderr)
-		sc.Buffer(make([]byte, 4096), 4096)
-		for sc.Scan() {
-			logf("speech helper: %s", sc.Text())
-		}
-		io.Copy(io.Discard, stderr)
+		logLines(stderr, func(line string) { logf("speech helper: %s", line) })
 	}()
 	go func() {
 		defer readers.Done()
@@ -107,6 +102,27 @@ func startHelper(bin, dir string, threads int, logf func(string, ...any)) (*help
 		close(h.done)
 	}()
 	return h, nil
+}
+
+// maxLogLine is where a helper log line is cut.
+const maxLogLine = 4096
+
+// logLines passes each line of r to logf, cut at maxLogLine; the rest of a long line is dropped
+// and the next line is read as usual.
+func logLines(r io.Reader, logf func(string)) {
+	br := bufio.NewReaderSize(r, maxLogLine)
+	for {
+		line, more, err := br.ReadLine()
+		if len(line) > 0 || (err == nil && !more) {
+			logf(string(line))
+		}
+		for more && err == nil { // the rest of a long line
+			_, more, err = br.ReadLine()
+		}
+		if err != nil {
+			return
+		}
+	}
 }
 
 // read reads the helper's frames until its stdout ends. It returns why it stopped.

@@ -11,6 +11,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -48,7 +49,20 @@ type Config struct {
 	Vocabulary func(ctx context.Context, session string) (terms []string, ok bool)
 	HTTP       *http.Client // the model download; http.DefaultClient when nil
 	Logf       func(format string, args ...any)
+
+	// Watchdogs; the defaults when zero. A helper that misses one is killed, so a hang frees
+	// the decoder and the next clip starts a fresh helper.
+	LoadTimeout  time.Duration // a model load; DefaultLoadTimeout
+	AnswerGrace  time.Duration // a clip's answer may take this plus twice its length; DefaultAnswerGrace
+	StallTimeout time.Duration // a download with no bytes for this long fails; DefaultStallTimeout
 }
+
+// Watchdog defaults. A load measured 1.3 s and a decode about a tenth of the clip's length.
+const (
+	DefaultLoadTimeout  = time.Minute
+	DefaultAnswerGrace  = 30 * time.Second
+	DefaultStallTimeout = time.Minute
+)
 
 // Engine is the hab speech engine. Its methods are safe for concurrent use.
 type Engine struct {
@@ -84,6 +98,15 @@ func New(cfg Config) *Engine {
 	}
 	if cfg.HTTP == nil {
 		cfg.HTTP = http.DefaultClient
+	}
+	if cfg.LoadTimeout <= 0 {
+		cfg.LoadTimeout = DefaultLoadTimeout
+	}
+	if cfg.AnswerGrace <= 0 {
+		cfg.AnswerGrace = DefaultAnswerGrace
+	}
+	if cfg.StallTimeout <= 0 {
+		cfg.StallTimeout = DefaultStallTimeout
 	}
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
@@ -144,7 +167,9 @@ func (e *Engine) statusLocked() api.SpeechStatus {
 	case !e.present:
 		st.State = api.SpeechStateAbsent
 	case e.proc == nil:
-		st.State = api.SpeechStateLoading // the load starts with the next request
+		// No helper runs (after an idle exit or a failed start). Prepare starts one in the same
+		// call, so loading is what the client sees next; any other request starts it too.
+		st.State = api.SpeechStateLoading
 	default:
 		select {
 		case <-e.proc.ready:
@@ -196,7 +221,7 @@ func (e *Engine) fetchLocked() {
 	m := e.cfg.Model
 	e.cfg.Logf("speech: downloading the model %s from %s into %s. %s", m.Name, m.URL, e.dir, m.Attribution)
 	go func() {
-		err := fetch(e.ctx, e.cfg.HTTP, m, e.dir, func(n int64) {
+		err := fetch(e.ctx, e.cfg.HTTP, m, e.dir, e.cfg.StallTimeout, func(n int64) {
 			e.mu.Lock()
 			e.read = n
 			e.mu.Unlock()
@@ -318,11 +343,18 @@ func (e *Engine) Transcribe(ctx context.Context, p api.SpeechTranscribeParams) (
 	if err != nil {
 		return res, control.Errorf(api.ErrorKindUnavailable, "the speech helper did not start: %v", err)
 	}
+	loadWait := time.NewTimer(e.cfg.LoadTimeout)
 	select {
 	case <-h.ready:
+		loadWait.Stop()
 	case <-h.done:
+		loadWait.Stop()
 		return res, control.Errorf(api.ErrorKindUnavailable, "the speech engine did not load: %v", h.failure())
+	case <-loadWait.C:
+		h.fail(fmt.Errorf("the model did not load within %v", e.cfg.LoadTimeout))
+		return res, control.Errorf(api.ErrorKindUnavailable, "the speech engine did not load within %v", e.cfg.LoadTimeout)
 	case <-ctx.Done():
+		loadWait.Stop()
 		return res, control.Errorf(api.ErrorKindUnavailable, "speech.transcribe: %v while the model loads", ctx.Err())
 	}
 	format := p.Format
@@ -330,27 +362,38 @@ func (e *Engine) Transcribe(ctx context.Context, p api.SpeechTranscribeParams) (
 	if format == api.SpeechFormatPcm16 {
 		req.SampleRate = rate(p)
 	}
+	// The watchdog: a helper that does not answer in time is killed, which ends a blocked send
+	// and frees the decoder. It runs whether the caller still waits or not.
+	bound := e.cfg.AnswerGrace + 2*time.Duration(audioMS)*time.Millisecond
+	watchdog := time.AfterFunc(bound, func() {
+		h.fail(fmt.Errorf("the helper did not answer a clip within %v", bound))
+	})
 	if err := h.send(req, p.Audio); err != nil {
+		watchdog.Stop()
 		h.fail(err)
-		return res, control.Errorf(api.ErrorKindUnavailable, "the speech helper stopped: %v", err)
+		<-h.done
+		return res, control.Errorf(api.ErrorKindUnavailable, "the speech helper stopped: %v", h.failure())
 	}
 	var f speechproto.Frame
 	select {
 	case f = <-h.replies:
+		watchdog.Stop()
 	case <-h.done:
+		watchdog.Stop()
 		return res, control.Errorf(api.ErrorKindUnavailable, "the speech helper stopped: %v", h.failure())
 	case <-ctx.Done():
-		// The decoder is still busy with this clip: keep the slot until the helper answers, so
-		// the next clip never runs beside it.
+		// The decoder is still busy with this clip: keep the slot until the helper answers (or
+		// the watchdog ends it), so the next clip never runs beside it.
 		held = false
 		go func() {
 			select {
 			case <-h.replies:
 			case <-h.done:
 			}
+			watchdog.Stop()
 			e.release()
 		}()
-		return res, control.Errorf(api.ErrorKindUnavailable, "speech.transcribe: %v", ctx.Err())
+		return res, control.Errorf(api.ErrorKindUnavailable, "speech.transcribe: %v while the clip decodes", ctx.Err())
 	}
 	if f.Kind == speechproto.KindError {
 		var pe speechproto.Error

@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Model describes a speech model archive: where it comes from, its checksum and the files the
@@ -66,21 +67,44 @@ func present(dir string, m Model) bool {
 // progressFunc gets the bytes of the archive read so far.
 type progressFunc func(read int64)
 
+// errStalled ends a download that received no bytes for the stall time.
+var errStalled = errors.New("stalled")
+
+// maxModelFile caps one extracted file when the model gives no archive size.
+const maxModelFile = 4 << 30
+
 // fetch downloads m into dir. It streams the archive once: the bytes go through the checksum
 // and the extractor together, into a temporary folder beside dir that is renamed into place
-// only when the checksum matches. A failed fetch leaves no partial model.
-func fetch(ctx context.Context, client *http.Client, m Model, dir string, progress progressFunc) (err error) {
+// only when the checksum matches. A failed fetch leaves no partial model, and a fetch first
+// removes what an earlier one cut off by a restart left behind. The download fails when no
+// bytes arrive for stall, when the archive runs past m.Size, or when one file does.
+func fetch(ctx context.Context, client *http.Client, m Model, dir string, stall time.Duration, progress progressFunc) (err error) {
 	parent := filepath.Dir(dir)
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.MkdirTemp(parent, "."+filepath.Base(dir)+".download-")
+	prefix := "." + filepath.Base(dir) + ".download-"
+	if old, _ := filepath.Glob(filepath.Join(parent, prefix+"*")); len(old) > 0 {
+		for _, o := range old { // one gff-hab owns a state folder: these are no one's
+			os.RemoveAll(o)
+		}
+	}
+	tmp, err := os.MkdirTemp(parent, prefix)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err != nil {
 			os.RemoveAll(tmp)
+		}
+	}()
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	watchdog := time.AfterFunc(stall, func() { cancel(errStalled) })
+	defer watchdog.Stop()
+	defer func() {
+		if err != nil && errors.Is(context.Cause(ctx), errStalled) {
+			err = fmt.Errorf("download stalled: no bytes for %v", stall)
 		}
 	}()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, m.URL, nil)
@@ -96,9 +120,18 @@ func fetch(ctx context.Context, client *http.Client, m Model, dir string, progre
 		return fmt.Errorf("download: %s", resp.Status)
 	}
 	h := sha256.New()
-	cr := &countReader{r: resp.Body, progress: progress}
+	cr := &countReader{r: resp.Body, limit: m.Size, progress: func(n int64) {
+		watchdog.Reset(stall)
+		if progress != nil {
+			progress(n)
+		}
+	}}
 	src := io.TeeReader(cr, h)
-	if err := extract(src, tmp, m.Files); err != nil {
+	maxFile := int64(maxModelFile)
+	if m.Size > 0 {
+		maxFile = m.Size
+	}
+	if err := extract(src, tmp, m.Files, maxFile); err != nil {
 		return err
 	}
 	if _, err := io.Copy(io.Discard, src); err != nil { // the rest of the archive, for the checksum
@@ -127,15 +160,23 @@ func fetch(ctx context.Context, client *http.Client, m Model, dir string, progre
 	return os.Rename(tmp, dir)
 }
 
+// countReader counts the archive's bytes, and fails once they pass limit (when limit > 0).
 type countReader struct {
 	r        io.Reader
 	n        int64
+	limit    int64
 	progress progressFunc
 }
 
 func (c *countReader) Read(p []byte) (int, error) {
+	if c.limit > 0 && int64(len(p)) > c.limit+1-c.n {
+		p = p[:c.limit+1-c.n] // read at most one byte past the limit
+	}
 	n, err := c.r.Read(p)
 	c.n += int64(n)
+	if c.limit > 0 && c.n > c.limit {
+		return n, fmt.Errorf("download: more than %d bytes", c.limit)
+	}
 	if n > 0 && c.progress != nil {
 		c.progress(c.n)
 	}
@@ -146,7 +187,7 @@ func (c *countReader) Read(p []byte) (int, error) {
 // magic bytes), and writes the regular files whose base names are in keep into dir. Paths in
 // the archive never choose where a file lands: only the base name counts, so an entry such as
 // ../x cannot leave dir.
-func extract(r io.Reader, dir string, keep []string) error {
+func extract(r io.Reader, dir string, keep []string, maxFile int64) error {
 	br := bufio.NewReaderSize(r, 64<<10)
 	magic, _ := br.Peek(3)
 	var tr *tar.Reader
@@ -181,7 +222,11 @@ func extract(r io.Reader, dir string, keep []string) error {
 		if err != nil {
 			return err
 		}
-		_, err = io.Copy(f, tr)
+		var n int64
+		n, err = io.Copy(f, io.LimitReader(tr, maxFile+1)) // compressed bytes can expand without bound
+		if err == nil && n > maxFile {
+			err = fmt.Errorf("larger than %d bytes", maxFile)
+		}
 		if cerr := f.Close(); err == nil {
 			err = cerr
 		}
