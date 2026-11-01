@@ -137,9 +137,16 @@ func (l *channelLocal) Agent(session string) (api.AgentStatus, bool, <-chan stru
 	return st.State, true, ch
 }
 
+// channelService is what the pane route calls; *channels.Service is the one gff-hab runs.
+type channelService interface {
+	Send(context.Context, api.ChannelSendParams) (api.ChannelSent, error)
+	Status(context.Context, api.ChannelStatusParams) (api.ChannelStatusResult, error)
+	WaitTake(context.Context, api.ChannelWaitParams, time.Duration) (api.ChannelWaitResult, func(bool), error)
+}
+
 // channelHook answers channel calls from a pane (mesh.md 6.5): the pane's session sends and
 // waits.
-func channelHook(store *structure.Store, svc *channels.Service) hook.ChannelHandler {
+func channelHook(store *structure.Store, svc channelService) hook.ChannelHandler {
 	return func(ctx context.Context, pane, method string, params json.RawMessage) (any, func(error), error) {
 		ss, ok := store.SessionByPane(pane)
 		if !ok {

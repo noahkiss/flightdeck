@@ -780,12 +780,14 @@ the rest of client kind `hab`.
   answers an error, so the sender keeps its items and tries again.
 - **Bounded.** At most 1000 messages per target outbox (status items do not count), 1000 per
   session in the inbox, 16 MiB of message text in all outboxes and the inbox together, 10 000
-  records (the oldest finished ones go first, then the oldest) and 10 000 received ids (the
-  oldest go first). So one save writes at most about 16 MiB plus a few MiB of records and ids.
+  records (the oldest finished ones go first, then the oldest) and 10 000 received ids (refused
+  ones go first, then the oldest). A message between two sessions of this hab keeps no received
+  id: it is never sent again, so local traffic cannot push out a remote id still retried. So one save writes at most about 16 MiB plus a few MiB of records and ids.
   A send past a bound is refused with `conflict` "outbox full"; a received message past one is
   `refused` "inbox full".
 - A file that does not parse is set aside as `state.json.bad` and the hab starts empty. A file
-  that cannot be read stops the start, so no mail is lost to a passing error.
+  that cannot be read stops the start, so no mail is lost to a passing error. So does a file
+  that does not parse and cannot be set aside (the rename to `.bad` fails).
 
 **Outbox, handover and retry.**
 
@@ -830,9 +832,17 @@ the rest of client kind `hab`.
   `session.send` does: the turn stopped and the harness is at its prompt again.
 - **Write once.** The hab first checks, writing nothing, that the agent may take the message.
   Then it saves an `attempting` mark on the message, then writes to the PTY (or posts the
-  prompt to opencode's server), then saves the final state. A message found marked with no write in flight (the hab stopped between the
-  write and the save) finishes `not_delivered` "the hab stopped while writing it to the agent;
-  not retried". So a message is never pasted twice.
+  prompt to opencode's server), then saves the final state. A busy answer to the write clears
+  the mark and holds the message.
+  - A message found marked when the hab starts (it stopped between the write and the save)
+    finishes `not_delivered` "the hab stopped while writing it to the agent; not retried".
+  - Only those, and messages whose write really started in this run, end without a write. A mark
+    that outlived a failed save with no write behind it (the save that clears it after a busy
+    answer failed) holds the message, and a later round tries it again.
+  - When the save of a final state fails after a write, the hab keeps that state in memory and a
+    later round saves it: a written message still ends `delivered`, never written again. A hab
+    that stops before that save finishes it `not_delivered`, as above.
+  - So a message is never pasted twice.
 - **Refused:** the session is gone or exited, the pane shows `none` or `exited`, or the harness
   takes no messages: opencode in a pane whose server gff-hab does not follow (one it did not
   start), or a harness with no input path yet. A pane with no agent state at all is held for 30 s after the
@@ -848,8 +858,11 @@ the rest of client kind `hab`.
   within a few seconds) is Part 4's and is not built yet.
 - **`channel.wait` also delivers.** An agent that runs `gff-hab wait` is `working`, so the PTY
   path would hold its messages until the wait ends. So a wait takes the oldest held message for
-  its session, if it is not being written to the PTY. From a pane, the message counts as
-  `delivered` only once the answer was written to the command; a failed write puts it back.
+  its session, if it is not being written to the PTY. The wait saves the `attempting` mark
+  before it returns the message (a failed save answers `unavailable` and keeps the message). From
+  a pane, the message counts as `delivered` only once the answer was written to the command; a
+  failed write puts it back and clears the mark. A hab that stops before the final state is
+  saved finishes the message `not_delivered`, so it never reaches the PTY after a wait took it.
   Over the control connection the hab cannot tell whether its answer reached the client, so
   the message counts as `delivered` when the answer is queued.
 - **Status back to the sender.** Each final state goes into the outbox for the sender's device
@@ -868,9 +881,11 @@ the rest of client kind `hab`.
 - `<address>` is the sender as the receiving hab would address it: `label/name` with the label of
   the sender's device in the receiving hab's peer list, else `<host id>/name`. A message from the
   same hab gives the bare name. It is quoted for the shell.
-- The markers carry the message id. A line in the text that starts like a marker
-  (`[begin agent message`, `[end agent message`, in any case) has its `[` made `(`, so the text
-  cannot close the envelope early or open a second one.
+- The markers carry the message id. The text is first cleaned as a message write cleans it:
+  CR LF and CR become LF, and C0 (but tab and LF), DEL and C1 characters go. So a control
+  character the write would drop cannot hide a marker. Then a line in the text that starts like
+  a marker (`[begin agent message`, `[end agent message`, in any case) has its `[` made `(`, so
+  the text cannot close the envelope early or open a second one.
 - It is one paste, so a multi-line message stays one message.
 
 **`channel.wait`** (6.4):
@@ -897,7 +912,7 @@ Limits, at the bar of herdr, Rex and Paseo (hc has no outbox and no dedup):
 
 - A hab that lost its state directory has lost its ledger: a message pushed again after that is
   delivered twice (10). So has a hab that dropped an id past the 10 000 cap while the sender
-  still retries it.
+  still retries it; only remote messages count toward that cap.
 - Clocks: expiry counts from the sender hab's own clock; the dedup window from the receiver's.
 - A name clash made while a peer was offline is not shown on the status board yet.
 - Each save writes the whole state. The bounds above keep it to a few MiB in normal use and

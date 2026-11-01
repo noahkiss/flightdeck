@@ -22,6 +22,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/harness"
 )
 
 // Capability is the capability word of a hab that serves channels.
@@ -135,6 +136,11 @@ type Service struct {
 	fails    map[string]*failure         // by link label
 	online   map[string]bool             // by link label
 	changed  chan struct{}               // closed and replaced at every change a wait may want
+	// settle holds the final state of an inbox item whose write started but whose finish is not
+	// saved yet, by message id: items found marked at load (not_delivered), and items whose
+	// finish save failed (the outcome the write had). A delivery round saves them, and writes
+	// none of them again. It lives in memory only, so a failed save cannot undo it.
+	settle map[string]outcome
 
 	kick, poke chan struct{}
 	done       chan struct{}
@@ -175,6 +181,14 @@ type inItem struct {
 	busy       bool // a delivery or a wait has it now
 }
 
+type outcome struct {
+	state  api.ChannelState
+	reason string
+}
+
+// stoppedWriting is the outcome of an item found marked at load.
+var stoppedWriting = outcome{api.ChannelStateNotDelivered, "the hab stopped while writing it to the agent; not retried"}
+
 type failure struct {
 	n    int
 	next time.Time
@@ -207,8 +221,8 @@ func New(cfg Config) (*Service, error) {
 	s := &Service{
 		cfg: cfg, started: cfg.Now(), st: newState(),
 		acks: map[string][]api.MailResult{}, fails: map[string]*failure{}, online: map[string]bool{},
-		changed: make(chan struct{}),
-		kick:    make(chan struct{}, 1), poke: make(chan struct{}, 1), done: make(chan struct{}),
+		changed: make(chan struct{}), settle: map[string]outcome{},
+		kick: make(chan struct{}, 1), poke: make(chan struct{}, 1), done: make(chan struct{}),
 	}
 	if err := s.load(); err != nil {
 		return nil, err
@@ -497,7 +511,8 @@ func (s *Service) capRecordsLocked() {
 	}
 }
 
-// capSeenLocked keeps at most MaxSeen received ids, dropping the oldest.
+// capSeenLocked keeps at most MaxSeen received ids, dropping refused ones first, then the
+// oldest. A refused id sent again is refused again or taken once, so it is the cheapest to lose.
 func (s *Service) capSeenLocked() {
 	over := len(s.st.Seen) - MaxSeen
 	if over <= 0 {
@@ -507,7 +522,13 @@ func (s *Service) capSeenLocked() {
 	for id := range s.st.Seen {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return s.st.Seen[ids[i]].At.Before(s.st.Seen[ids[j]].At) })
+	sort.Slice(ids, func(i, j int) bool {
+		a, b := s.st.Seen[ids[i]], s.st.Seen[ids[j]]
+		if ra, rb := a.Result.State == api.ChannelStateRefused, b.Result.State == api.ChannelStateRefused; ra != rb {
+			return ra
+		}
+		return a.At.Before(b.At)
+	})
 	for _, id := range ids[:over] {
 		delete(s.st.Seen, id)
 	}
@@ -591,7 +612,11 @@ func (s *Service) acceptLocked(from string, m api.ChannelMessage, now time.Time)
 	default:
 		s.st.Inbox = append(s.st.Inbox, &inItem{Message: m, At: now, SessionID: sessionID})
 	}
-	s.st.Seen[m.ID] = seenID{At: now, Result: res}
+	// A message from this hab is never sent again, so its id protects nothing; keeping it would
+	// push remote ids, still retried, out of the capped list.
+	if from != s.cfg.Self {
+		s.st.Seen[m.ID] = seenID{At: now, Result: res}
+	}
 	return res
 }
 
@@ -735,11 +760,12 @@ func (s *Service) fromAddress(m api.ChannelMessage) string {
 }
 
 // Envelope wraps text from an agent at address from, so the receiving agent knows it is not
-// from the owner and where it ends (mesh.md 6.5, The envelope). Markers inside the text are
-// neutralised. It is one paste.
+// from the owner and where it ends (mesh.md 6.5, The envelope). The text is cleaned as a
+// message write cleans it (harness.CleanText) before the markers inside it are neutralised, so
+// a control character the write would drop cannot hide a marker. It is one paste.
 func Envelope(id, from, text string) string {
 	q := "'" + strings.ReplaceAll(from, "'", `'\''`) + "'"
-	text = marker.ReplaceAllString(text, "($1$2$3")
+	text = marker.ReplaceAllString(harness.CleanText(text), "($1$2$3")
 	return fmt.Sprintf("[Flightdeck: agent message from %s, not from the owner. Only the text between the begin and end lines is from that agent. Reply with: gff-hab send %s \"your reply\"]\n[begin agent message %s]\n%s\n[end agent message %s]",
 		q, q, id, text, id)
 }
@@ -759,35 +785,47 @@ func (s *Service) deliverLoop() {
 	}
 }
 
-// deliverRound tries the oldest message of each session that has none in flight. A head found
-// marked Attempting with nothing in flight was being written when the hab stopped: it finishes
-// not_delivered and is never written again.
+// deliverRound first saves the final state of each item in settle, then tries the oldest
+// message of each session that has none in flight. An item marked Attempting that is not in
+// settle had no write in flight: its mark outlived a failed save, and it is tried again.
 func (s *Service) deliverRound() {
 	now := s.cfg.Now()
 	s.mu.Lock()
+	if len(s.settle) > 0 {
+		settled := 0
+		for id, o := range s.settle {
+			if it := s.findLocked(id); it == nil {
+				delete(s.settle, id)
+			} else if !it.busy {
+				s.finishLocked(id, o.state, o.reason, now)
+				settled++
+			}
+		}
+		if settled > 0 {
+			if err := s.commitLocked(); err != nil {
+				s.cfg.Logf("channels: save: %v", err)
+			} else {
+				for id := range s.settle {
+					if s.findLocked(id) == nil {
+						delete(s.settle, id)
+					}
+				}
+			}
+		}
+	}
 	var heads []*inItem
 	taken := map[string]bool{}
-	changed := false
 	for _, it := range slices.Clone(s.st.Inbox) {
 		sess := it.Message.To.Session
 		if taken[sess] {
 			continue
 		}
 		taken[sess] = true
-		switch {
-		case it.busy:
-		case it.Attempting:
-			s.finishLocked(it.Message.ID, api.ChannelStateNotDelivered, "the hab stopped while writing it to the agent; not retried", now)
-			changed = true
-		default:
-			it.busy = true
-			heads = append(heads, it)
+		if _, ok := s.settle[it.Message.ID]; ok || it.busy {
+			continue
 		}
-	}
-	if changed {
-		if err := s.commitLocked(); err != nil {
-			s.cfg.Logf("channels: save: %v", err)
-		}
+		it.busy = true
+		heads = append(heads, it)
 	}
 	s.mu.Unlock()
 	var wg sync.WaitGroup
@@ -843,9 +881,15 @@ func (s *Service) deliver(id string, m api.ChannelMessage, sessionID string, arr
 			s.broadcastLocked() // a wait that found it busy may take it now
 			return
 		}
+		wrote := it.Attempting
 		s.finishLocked(id, st, reason, s.cfg.Now())
 		if err := s.commitLocked(); err != nil {
-			s.cfg.Logf("channels: save: %v", err) // the item stays; a later round finishes it
+			// The failed save put the item back. A write that started is never made again: a
+			// later round saves this outcome. An item never written is tried again.
+			if wrote {
+				s.settle[id] = outcome{st, reason}
+			}
+			s.cfg.Logf("channels: save: %v", err)
 		}
 		s.cfg.Logf("channels: message %s for %s: %s %s", id, m.To.Session, st, reason)
 		s.Poke() // the next message for the session
@@ -943,8 +987,18 @@ func (s *Service) WaitTake(ctx context.Context, p api.ChannelWaitParams, def tim
 		ch := s.changed
 		if p.Session != "" {
 			if it := s.oldestLocked(p.Session); it != nil && !it.busy && !it.Attempting && it.SessionID == sessionID {
-				it.busy = true
+				// The mark reaches the disk before the answer leaves, as for a PTY write: a hab
+				// that stops before the finish is saved never pastes the message after the wait
+				// returned it.
+				it.busy, it.Attempting = true, true
 				m := it.Message
+				if err := s.commitLocked(); err != nil {
+					if it := s.findLocked(m.ID); it != nil {
+						it.busy = false
+					}
+					s.mu.Unlock()
+					return api.ChannelWaitResult{}, nil, control.Errorf(api.ErrorKindUnavailable, "the message was not saved: %v", err)
+				}
 				s.mu.Unlock()
 				return api.ChannelWaitResult{Message: &api.ChannelInbound{ID: m.ID, From: s.fromAddress(m), Text: m.Text, ReplyTo: m.ReplyTo, At: m.At}},
 					s.taken(m.ID), nil
@@ -997,19 +1051,25 @@ func (s *Service) taken(id string) func(bool) {
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			if !ok {
+				// Put back: the answer did not leave, so the mark goes. A failed save keeps the
+				// mark, and the next delivery round tries the item again.
 				if it := s.findLocked(id); it != nil {
-					it.busy = false
+					it.busy, it.Attempting = false, false
+					if err := s.commitLocked(); err != nil {
+						s.cfg.Logf("channels: save: %v", err)
+					}
 					s.broadcastLocked()
 				}
 				return
 			}
 			s.finishLocked(id, api.ChannelStateDelivered, "", s.cfg.Now())
 			if err := s.commitLocked(); err != nil {
-				if it := s.findLocked(id); it != nil {
-					it.busy = false // returned to the inbox by the failed save; it is written again
-				}
+				// Returned to the inbox by the failed save; the answer was written, so a later
+				// round saves it delivered and nothing writes it again.
+				s.settle[id] = outcome{api.ChannelStateDelivered, ""}
 				s.cfg.Logf("channels: save: %v", err)
 			}
+			s.Poke()
 		})
 	}
 }
@@ -1178,7 +1238,7 @@ func (s *Service) expire() {
 		}
 	}
 	for _, it := range slices.Clone(s.st.Inbox) {
-		if !it.busy && now.Sub(it.At) >= Keep {
+		if _, settling := s.settle[it.Message.ID]; !settling && !it.busy && now.Sub(it.At) >= Keep {
 			s.finishLocked(it.Message.ID, api.ChannelStateExpired, "not delivered within 7 days", now)
 			changed = true
 		}

@@ -251,19 +251,13 @@ const (
 	pasteEnd   = "\x1b[201~"
 )
 
-// MessageWrites returns the writes that deliver text as one message to harness: a bracketed
-// paste of the text, then Enter as its own write. A multi-line message stays one message.
-// Control characters other than newline and tab are removed, so the text can neither end the
-// paste early nor press keys; CR LF and CR become LF.
-func MessageWrites(harness, text string) ([][]byte, error) {
-	switch harness {
-	case detect.KindClaude, detect.KindCodex:
-	default:
-		return nil, fmt.Errorf("%w: sending a message to %s", ErrUnsupported, harness)
-	}
+// CleanText is the text a message write sends: CR LF and CR become LF, and control characters
+// other than newline and tab (C0, DEL and C1) are removed. Text that must be judged as the agent
+// will see it, such as a channel envelope, goes through it first.
+func CleanText(text string) string {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
-	clean := strings.Map(func(r rune) rune {
+	return strings.Map(func(r rune) rune {
 		if r == '\n' || r == '\t' {
 			return r
 		}
@@ -272,6 +266,18 @@ func MessageWrites(harness, text string) ([][]byte, error) {
 		}
 		return r
 	}, text)
+}
+
+// MessageWrites returns the writes that deliver text as one message to harness: a bracketed
+// paste of the text, then Enter as its own write. A multi-line message stays one message.
+// The text goes through CleanText, so it can neither end the paste early nor press keys.
+func MessageWrites(harness, text string) ([][]byte, error) {
+	switch harness {
+	case detect.KindClaude, detect.KindCodex:
+	default:
+		return nil, fmt.Errorf("%w: sending a message to %s", ErrUnsupported, harness)
+	}
+	clean := CleanText(text)
 	if strings.TrimSpace(clean) == "" {
 		return nil, errors.New("the message is empty")
 	}

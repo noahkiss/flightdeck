@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"path/filepath"
 	"testing"
 	"time"
@@ -63,5 +65,40 @@ func TestChannelRoute(t *testing.T) {
 	}
 	if err := Call(ctx, Addr(sock, "forged"), "channel.wait", api.ChannelWaitParams{}, nil); err == nil {
 		t.Fatal("an unknown token was served")
+	}
+}
+
+// TestChannelRouteWriteFails: when the caller is gone before the answer, written hears the
+// failed write, so a message the wait took goes back rather than counting as delivered.
+func TestChannelRouteWriteFails(t *testing.T) {
+	reg := newTestPanes()
+	sock := filepath.Join(shortDir(t), "hook.sock")
+	l, err := control.Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewServer(reg, func(string, harness.Envelope) string { return "" }, t.Logf)
+	wrote := make(chan error, 1)
+	s.SetChannels(func(ctx context.Context, _, _ string, _ json.RawMessage) (any, func(error), error) {
+		<-ctx.Done() // the caller hung up
+		return api.ChannelWaitResult{Message: &api.ChannelInbound{ID: "m", Text: "lost"}}, func(err error) { wrote <- err }, nil
+	})
+	go s.Serve(l)
+	t.Cleanup(func() { s.Close() })
+	c, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"method":"channel.wait","params":{}}`
+	fmt.Fprintf(c, "POST %s%s HTTP/1.1\r\nHost: hab\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", ChannelPath, reg.mint("pane-1"), len(body), body)
+	time.Sleep(50 * time.Millisecond) // the request is read and the handler waits
+	c.Close()
+	select {
+	case err := <-wrote:
+		if err == nil {
+			t.Fatal("written heard success, though the caller was gone")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("written was not called")
 	}
 }

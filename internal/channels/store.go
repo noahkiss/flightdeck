@@ -45,6 +45,13 @@ func (s *Service) load() error {
 			}
 		} else {
 			s.st = st
+			// An item marked here was being written, or returned by a wait, when the hab
+			// stopped: it finishes not_delivered and is never written again.
+			for _, it := range st.Inbox {
+				if it.Attempting {
+					s.settle[it.Message.ID] = stoppedWriting
+				}
+			}
 		}
 	}
 	b, err = json.Marshal(s.st)

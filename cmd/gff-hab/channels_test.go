@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/channels"
 	"github.com/noahkiss/flightdeck/internal/hook"
+	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
 // fakeReceiver stands in for Claude Code taking channel messages. It reports $START over OSC
@@ -372,5 +374,51 @@ func TestWaitTimeoutDefault(t *testing.T) {
 		if got := waitTimeout(time.Second, c.set, c.control, c.inPane); got != c.want {
 			t.Errorf("%+v: %v", c, got)
 		}
+	}
+}
+
+// fakeChannels records what the pane route asks of the channels service.
+type fakeChannels struct {
+	def  time.Duration
+	p    api.ChannelWaitParams
+	took chan bool
+}
+
+func (f *fakeChannels) Send(context.Context, api.ChannelSendParams) (api.ChannelSent, error) {
+	return api.ChannelSent{}, nil
+}
+
+func (f *fakeChannels) Status(context.Context, api.ChannelStatusParams) (api.ChannelStatusResult, error) {
+	return api.ChannelStatusResult{}, nil
+}
+
+func (f *fakeChannels) WaitTake(_ context.Context, p api.ChannelWaitParams, def time.Duration) (api.ChannelWaitResult, func(bool), error) {
+	f.def, f.p = def, p
+	return api.ChannelWaitResult{Message: &api.ChannelInbound{ID: "m"}}, func(ok bool) { f.took <- ok }, nil
+}
+
+// TestChannelHookWait (N-R6): a wait from a pane with no timeout uses the pane default (110 s,
+// under a harness's 2 minute tool limit), as the pane's own session; the route's write result
+// reaches the service.
+func TestChannelHookWait(t *testing.T) {
+	st, err := structure.Open(structure.Config{Dir: filepath.Join(t.TempDir(), "structure"), Holders: structure.NewFakeHolder(structure.HolderPane{ID: "p"})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.CreateSession(structure.SessionSpec{Name: "bob", Pane: "p", Index: -1}); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeChannels{took: make(chan bool, 1)}
+	_, written, err := channelHook(st, f)(context.Background(), "p", "channel.wait", json.RawMessage(`{"session":"alice"}`))
+	if err != nil || written == nil {
+		t.Fatalf("wait: %v", err)
+	}
+	if f.def != channels.PaneWait || f.p.Session != "bob" {
+		t.Fatalf("waited %v as %q, want %v as bob", f.def, f.p.Session, channels.PaneWait)
+	}
+	written(errors.New("broken pipe"))
+	if ok := <-f.took; ok {
+		t.Fatal("a failed write counted as taken")
 	}
 }
