@@ -18,6 +18,10 @@ public actor FakeHab {
     private var agents: [String: AgentState] = [:]
     private var serverRevisions: ClosedRange<Int>
     private var capabilities: [String]
+    /// Usage readings by account key, for `usage.list` and `usage.updated`.
+    private var usage: [String: UsageAccount] = [:]
+    /// How many `usage.list` calls were answered.
+    public private(set) var usageLists = 0
 
     private final class Conn {
         let stream: ByteStream
@@ -310,6 +314,20 @@ public actor FakeHab {
         }
     }
 
+    // MARK: - Usage
+
+    /// Loads usage readings without events and adds the usage capability.
+    public func setUsage(_ accounts: [UsageAccount]) {
+        if !capabilities.contains("usage") { capabilities.append("usage") }
+        for a in accounts { usage[a.key] = a }
+    }
+
+    /// Stores one account's reading and sends `usage.updated`.
+    public func putUsage(_ a: UsageAccount) async {
+        usage[a.key] = a
+        await emit(type: "usage.updated", id: a.key, revision: nil, data: a)
+    }
+
     /// Sends a raw event to every subscribed connection, without storing it.
     public func emit<T: Encodable>(type: String, id: String, revision: UInt64?, data: T) async {
         guard let value = try? JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(data)) else { return }
@@ -408,6 +426,9 @@ public actor FakeHab {
         case HabMethods.dataTicket.name, HabMethods.paneInput.name, HabMethods.paneSetDesiredSize.name,
              HabMethods.paneTake.name, HabMethods.paneRedraw.name:
             await terminalCall(method, params, c, id: id)
+        case HabMethods.usageList.name where capabilities.contains("usage"):
+            usageLists += 1
+            await reply(c, id: id, result: UsageReadings(accounts: usage.values.sorted { $0.key < $1.key }, seq: c.seq))
         case HabMethods.chatPage.name:
             do {
                 let p = try params.decode(ChatPageParams.self)

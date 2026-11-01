@@ -55,6 +55,10 @@ public struct HabState: Sendable, Equatable {
     public var resumed = false
     /// How many snapshots were applied, over all connections.
     public var snapshots = 0
+    /// The latest usage reading of each harness account on this hab, by
+    /// account key (app.md 14.1): `usage.list` after each snapshot, then
+    /// `usage.updated`. Kept across reconnects.
+    public var usage: [String: UsageAccount] = [:]
 }
 
 /// Timings of the control connection. The defaults follow hab-logic-api.md 3.5
@@ -125,6 +129,9 @@ public actor HabConnection {
     private var nextTap = 1
     /// Counts live connections, so a chat listener can tell its seq apart.
     private var generation = 0
+    /// The seq of the last `usage.updated` per account on this connection, so
+    /// an older `usage.list` answer does not undo a newer event.
+    private var usageSeqs: [String: UInt64] = [:]
 
     public init(id: String, transport: Transport, timing: HabTiming = HabTiming(), clientLabel: String? = nil, clientVersion: String = "0") {
         self.id = id
@@ -277,6 +284,7 @@ public actor HabConnection {
         let r = RPCClient(stream: stream)
         rpc = r
         generation += 1
+        usageSeqs = [:]
         lastSeq = 0
         snapshotApplied = false
         buffered = []
@@ -317,6 +325,9 @@ public actor HabConnection {
         reachedOnline = true
         onlineSince = .now
         publish()
+        if welcome.capabilities.contains(Self.usageCapability) {
+            Task { await self.loadUsage(r) }
+        }
 
         try await waitSessionEnd()
     }
@@ -415,7 +426,33 @@ public actor HabConnection {
             let u = CommandUpdate(pane: e.id, command: c, generation: generation)
             for (_, t) in commandTaps { t.yield(u) }
         }
+        if e.type == "usage.updated", let a = try? e.data.decode(UsageAccount.self) {
+            usageSeqs[a.key] = e.seq
+            if state.usage[a.key] != a {
+                state.usage[a.key] = a
+                publish()
+            }
+            return
+        }
         if state.store.apply(e) { publish() }
+    }
+
+    // MARK: - Usage
+
+    /// The welcome capability that says the hab serves `usage.list`.
+    static let usageCapability = "usage"
+
+    /// Asks for every account's reading. A `usage.updated` with a higher seq
+    /// that arrived first stays. A failure leaves the readings held.
+    private func loadUsage(_ r: RPCClient) async {
+        guard let res = try? await r.call(HabMethods.usageList, UsageListParams(), timeout: timing.callTimeout) else { return }
+        guard rpc === r else { return }
+        var changed = false
+        for a in res.accounts where (usageSeqs[a.key] ?? 0) <= res.seq && state.usage[a.key] != a {
+            state.usage[a.key] = a
+            changed = true
+        }
+        if changed { publish() }
     }
 
     private func livenessLoop(_ r: RPCClient) async {

@@ -10,7 +10,13 @@ public enum AppFleet {
     public static func make(defaults: UserDefaults = .standard, environment env: [String: String] = ProcessInfo.processInfo.environment) -> Fleet {
         let fleet = Fleet()
         let log = Logger(subsystem: "com.flightdeck.app", category: "config")
-        if DemoFleet.isRequested(defaults) {
+        let demo = DemoFleet.isRequested(defaults)
+        fleet.usage = UsageCenter(notifier: SystemUsageNotifier())
+        if !demo {
+            // Demo readings never outlive demo mode.
+            fleet.usage?.book.forget(habIDPrefix: DemoFleet.habPrefix)
+        }
+        if demo {
             log.info("demo mode")
             Task { await DemoFleet.populate(fleet) }
             return fleet
@@ -75,6 +81,7 @@ public enum AppFleet {
         fleet.approvals = center
         let actions = HabActions(keys: keys, listURL: listURL)
         actions.approvals = center
+        actions.usage = fleet.usage?.book
         actions.install()
         fleet.keepAlive.append(actions)
         #if os(iOS)

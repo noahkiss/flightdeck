@@ -26,6 +26,8 @@ public final class Fleet {
     public var book: HabBook?
     /// The session's Live Activity (app.md 9); iPhone and iPad only.
     public var activities: LiveActivityTracker?
+    /// Usage readings, alerts and the widget snapshot (app.md 14, 15).
+    public var usage: UsageCenter?
     /// `session.focus` reports for the session views on screen (app.md 8.6).
     public private(set) lazy var focus = FocusReporter { [weak self] habID, params in
         guard let conn = self?.connections.first(where: { $0.id == habID }) else { return }
@@ -62,6 +64,9 @@ public final class Fleet {
             for await s in conn.updates {
                 b.update(conn.id, s)
                 self?.refreshChats(habID: conn.id)
+                if let u = self?.usage {
+                    u.update(habID: conn.id, label: b.habs.first { $0.id == conn.id }?.label ?? conn.id, state: s)
+                }
                 // Each connection applies one snapshot first: a new count while
                 // online is a new connection, with a client that knows nothing.
                 if s.status == .online, s.snapshots != lastSnapshot {
@@ -88,6 +93,7 @@ public final class Fleet {
         board.unregister(id: id)
         push?.forget(id: id)
         book?.forget(connection: id)
+        usage?.book.forget(habID: id)
     }
 
     /// A connection reached online: note its host id for background answers,

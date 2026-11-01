@@ -23,6 +23,8 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
     private let log = Logger(subsystem: "com.flightdeck.app", category: "actions")
     /// Answers and the foreground prompt; set once the fleet is built.
     @MainActor public weak var approvals: ApprovalCenter?
+    /// Opens the usage sheet from a usage notification (app.md 14.4).
+    @MainActor public weak var usage: UsageBook?
 
     public init(keys: DeviceKeys?, listURL: URL?) {
         self.keys = keys
@@ -87,6 +89,10 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
         let content = response.notification.request.content
         if response.actionIdentifier == Self.pingAction {
             await ping(content)
+            return
+        }
+        if let account = content.userInfo[SystemUsageNotifier.accountKey] as? String {
+            await usage?.present(account: account)
             return
         }
         let text = (response as? UNTextInputNotificationResponse)?.userText

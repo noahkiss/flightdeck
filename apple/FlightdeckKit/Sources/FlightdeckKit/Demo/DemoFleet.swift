@@ -10,6 +10,9 @@ public enum DemoFleet {
     /// The launch argument that turns demo mode on.
     public static let argument = "FlightdeckDemo"
 
+    /// Every demo hab's connection id starts with this.
+    public static let habPrefix = "demo-"
+
     public static func isRequested(_ defaults: UserDefaults = .standard) -> Bool {
         defaults.bool(forKey: argument)
     }
@@ -65,6 +68,7 @@ public enum DemoFleet {
                 Fixture.agent(pane: "%4", harness: "opencode", state: .working, at: ago(4)),
             ]
         )
+        await hab.setUsage(demoUsage(Date()))
         return hab
     }
 
@@ -95,6 +99,24 @@ public enum DemoFleet {
             ]
         )
         return hab
+    }
+
+    /// Invented usage: a Claude account near its 5-hour limit and a Codex
+    /// account over pace on its week (app.md 14).
+    static func demoUsage(_ now: Date) -> [UsageAccount] {
+        let t = Fixture.stamp(now.addingTimeInterval(-90))
+        let at = { (s: TimeInterval) in Fixture.stamp(now.addingTimeInterval(s)) }
+        return [
+            UsageAccount(harness: "claude", key: "claude-demo01", label: "Max 5x", windows: [
+                UsageWindow(name: "5h", readAt: t, resetsAt: at(1 * 3600 + 58 * 60), usedPct: 86),
+                UsageWindow(name: "7d", readAt: t, resetsAt: at(4 * 86400 + 23 * 3600), usedPct: 31),
+                UsageWindow(name: "7d opus", readAt: t, resetsAt: at(4 * 86400 + 23 * 3600), usedPct: 12),
+            ]),
+            UsageAccount(harness: "codex", key: "codex-demo02", label: "Plus", windows: [
+                UsageWindow(name: "5h", readAt: t, resetsAt: at(3 * 3600 + 10 * 60), usedPct: 22),
+                UsageWindow(name: "7d", readAt: t, resetsAt: at(5 * 86400 + 2 * 3600), usedPct: 47),
+            ]),
+        ]
     }
 
     /// Loops: a working session finishes, another asks for permission, both go back to work.
