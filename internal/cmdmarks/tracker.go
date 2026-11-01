@@ -236,19 +236,64 @@ func cmdline(m Mark) (string, bool) {
 	return "", false
 }
 
-// cwdPath reads the path of an OSC 7 report: file://host/path, percent-encoded. The host is
-// not checked: the path is the one the shell reported, as a terminal shows it. A cut,
-// malformed, relative, non-UTF-8 or over-long report is not used.
+// cwdPath reads the path of an OSC 7 report: file://host/path. The host is not checked: the
+// path is the one the shell reported, as a terminal shows it. The path is not parsed as a URL,
+// so '?' and '#' are part of it: valid %XX escapes are decoded and any other '%' stays as it
+// is, since shells encode little. A cut, relative, non-UTF-8 or over-long report, or one that
+// decodes to a control byte, is not used.
 func cwdPath(m Mark) (string, bool) {
 	if m.Truncated || len(m.Params) != 1 {
 		return "", false
 	}
-	u, err := url.Parse(m.Params[0])
-	if err != nil || u.Scheme != "file" || !strings.HasPrefix(u.Path, "/") || len(u.Path) > MaxText ||
-		!utf8.ValidString(u.Path) {
+	rest, ok := strings.CutPrefix(m.Params[0], "file://")
+	if !ok {
 		return "", false
 	}
-	return u.Path, true
+	i := strings.IndexByte(rest, '/')
+	if i < 0 {
+		return "", false
+	}
+	p := unescapeLoose(rest[i:])
+	if len(p) > MaxText || !utf8.ValidString(p) {
+		return "", false
+	}
+	for j := 0; j < len(p); j++ {
+		if p[j] < 0x20 || p[j] == 0x7f {
+			return "", false
+		}
+	}
+	return p, true
+}
+
+// unescapeLoose decodes each %XX with two hex digits and keeps every other byte as it is.
+func unescapeLoose(s string) string {
+	if !strings.Contains(s, "%") {
+		return s
+	}
+	b := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' && i+2 < len(s) && ishex(s[i+1]) && ishex(s[i+2]) {
+			b = append(b, unhex(s[i+1])<<4|unhex(s[i+2]))
+			i += 2
+			continue
+		}
+		b = append(b, s[i])
+	}
+	return string(b)
+}
+
+func ishex(c byte) bool {
+	return '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F'
+}
+
+func unhex(c byte) byte {
+	switch {
+	case c >= 'a':
+		return c - 'a' + 10
+	case c >= 'A':
+		return c - 'A' + 10
+	}
+	return c - '0'
 }
 
 // Trim drops the ended commands whose output ends at or before oldest: the holder's ring no

@@ -509,9 +509,11 @@ Decision: proposed (this stage). Calls and the event: 3.9.
 
 - **OSC 7.** The scanner also keeps `ESC ] 7 ; <url>` reports, under the same payload cap and
   rules as a mark. The tracker keeps the last good report's path; a command takes it at its `C`
-  mark, as the optional `cwd` (field set 3 of `Command`). Only an absolute `file:` URL with a
-  valid UTF-8 path of at most 1 KiB counts; a cut, malformed or other report leaves the last
-  path in place. The host part is not checked: the field shows where the shell said it was,
+  mark, as the optional `cwd` (field set 3 of `Command`). A report counts when it is
+  `file://<host>/<path>`. The path is not parsed as a URL, so `?` and `#` belong to it: each
+  `%XX` with two hex digits is decoded and any other `%` is kept, since shells encode little.
+  A cut report, one with no path, or a path that is not UTF-8, is over 1 KiB or decodes to a
+  control byte leaves the last path in place. The host part is not checked: the field shows where the shell said it was,
   as a terminal's title does. The path is saved with the tracker's state in the checkpoint.
   Display only, under the nonce gate above.
 - The test snippets send OSC 7 after `D` in their prompt hook.
