@@ -126,6 +126,8 @@ type BlockedKind string
 
 type StateSource string
 
+type HookHealth string
+
 // PermissionRequest is what a harness asks permission for, copied from its structured payload,
 // never summarised.
 type PermissionRequest struct {
@@ -168,6 +170,8 @@ type AgentState struct {
 	At       string             `json:"at" doc:"RFC 3339 time gff-hab accepted the change."`
 	Version  string             `json:"version,omitempty" doc:"Harness version, once reported."`
 	Warning  *VersionWarning    `json:"warning,omitempty" doc:"Set while the harness version is outside the adapter's tested range."`
+	// Hooks is added by the Codex adapter. Optional, so a newer client reads an older hab.
+	Hooks HookHealth `json:"hooks,omitempty" doc:"missing: the harness finished a turn and none of its hooks reached gff-hab. Its hook config is not installed, or (Codex) not trusted. Absent once a hook arrives."`
 }
 
 type StructureGetParams struct{}

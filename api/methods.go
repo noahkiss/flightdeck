@@ -153,6 +153,7 @@ var Enums = map[string][]string{
 	"AgentStatus":   {"idle", "working", "blocked", "done", "error", "none", "exited"},
 	"BlockedKind":   {"permission", "question", "auth"},
 	"StateSource":   {"server", "hook", "osc", "screen", "spawn"},
+	"HookHealth":    {"missing"},
 	"ErrorKind":     {"not_found", "conflict", "unavailable", "revision_unsupported", "not_owner", "ticket_invalid", "invalid"},
 	// Sets added for the clients' calls (spec 3.9).
 	"SendOrigin":      {"typed", "dictated", "voice"},

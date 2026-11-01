@@ -479,3 +479,46 @@ func TestReplayedReportIsScreen(t *testing.T) {
 		t.Fatalf("live report after it: %+v", st)
 	}
 }
+
+// TestHooksMissing: a turn that OSC 7501 shows starting and finishing, with no hook from the
+// harness, marks the pane's hooks missing (Codex skips an untrusted hook silently). Any hook
+// clears it, and a pane whose hooks arrive is never marked.
+func TestHooksMissing(t *testing.T) {
+	var events []structure.Event
+	s := newTestStore(&events)
+	rep := func(state string, t0 int64) { s.Report("p", progstatus.Report{State: state, App: "codex"}, t0, true) }
+	rep("idle", 1000)
+	rep("working", 2000)
+	if st, _ := s.Get("p"); st.Hooks != "" {
+		t.Fatalf("marked before the turn ended: %+v", st)
+	}
+	rep("done", 3000)
+	if st, _ := s.Get("p"); st.Hooks != api.HookHealthMissing || st.State != api.AgentStatusDone {
+		t.Fatalf("after a hookless turn: %+v", st)
+	}
+	n := len(events)
+	rep("working", 4000)
+	rep("done", 5000)
+	if st, _ := s.Get("p"); st.Hooks != api.HookHealthMissing {
+		t.Fatalf("a second hookless turn: %+v", st)
+	}
+	if len(events) != n+2 {
+		t.Errorf("%d events for a second turn, want 2", len(events)-n)
+	}
+	s.Hook("p", Envelope{Harness: "codex", Event: "SessionStart", T: 6000, Payload: []byte(`{"session_id":"x1"}`)})
+	if st, _ := s.Get("p"); st.Hooks != "" || st.Session != "x1" {
+		t.Fatalf("after a hook: %+v", st)
+	}
+	rep("working", 7000)
+	rep("done", 8000)
+	if st, _ := s.Get("p"); st.Hooks != "" {
+		t.Fatalf("marked although a hook arrived: %+v", st)
+	}
+	// Replayed reports (screen) never mark a pane.
+	s2 := newTestStore(&events)
+	s2.Report("q", progstatus.Report{State: "working", App: "codex"}, 1, false)
+	s2.Report("q", progstatus.Report{State: "done", App: "codex"}, 2, false)
+	if st, _ := s2.Get("q"); st.Hooks != "" {
+		t.Fatalf("replayed reports marked the pane: %+v", st)
+	}
+}

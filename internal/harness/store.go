@@ -77,6 +77,10 @@ type pane struct {
 	// but sends stay refused until the harness itself reports, which shows it still runs and is
 	// at its prompt. Any accepted report or hook clears it.
 	ownerStop bool
+
+	// hooked is the harness whose hook last reached gff-hab for this pane, in this gff-hab run.
+	// A turn its OSC 7501 reports show finishing with no such hook marks the hooks missing.
+	hooked string
 }
 
 // gateSource reports whether src may open or close a permission request: a hook or a server,
@@ -174,6 +178,10 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 			return false, ""
 		}
 	}
+	prevOSC := p.oscLast
+	if src == api.StateSourceHook {
+		p.hooked = harness
+	}
 	if src == api.StateSourceOsc && harness == p.st.Harness {
 		p.oscN, p.oscLast = p.oscN+1, u.State
 		s.wakeLocked(p) // the permission read-back watches for the turn to go on
@@ -232,6 +240,19 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 	}
 	if u.Turn != "" {
 		next.Turn = u.Turn
+	}
+	// Hook health (harness-adapters.md, Edge cases: untrusted Codex hooks). Codex skips a hook
+	// it does not trust with no message, so config presence proves nothing: only delivery does.
+	switch {
+	case src == api.StateSourceHook:
+		next.Hooks = ""
+	case src == api.StateSourceOsc && p.hooked != harness && prevOSC == api.AgentStatusWorking && turnEnd(u.State) && next.Hooks == "":
+		next.Hooks = api.HookHealthMissing
+		hint := "install its hook config (gff-hab hook -print " + harness + ")"
+		if harness == detect.KindCodex {
+			hint += ", then trust it in Codex with /hooks"
+		}
+		s.logf("pane %s: error: %s finished a turn and none of its hooks reached gff-hab; %s", paneID, harness, hint)
 	}
 	if u.Version != "" {
 		next.Version = u.Version
@@ -294,6 +315,11 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 	next.Source = src
 	s.commitLocked(p, next)
 	return true, opened
+}
+
+// turnEnd reports whether a state ends a turn: done, idle (an interrupt) or error.
+func turnEnd(s api.AgentStatus) bool {
+	return s == api.AgentStatusDone || s == api.AgentStatusIdle || s == api.AgentStatusError
 }
 
 // paneLocked returns the pane's record, made on first use. The caller holds s.mu.
@@ -509,7 +535,7 @@ func (s *Store) Snapshot() []api.AgentState {
 // same compares the visible fields, ignoring source, revision and time.
 func same(a, b api.AgentState) bool {
 	if a.Harness != b.Harness || a.Session != b.Session || a.State != b.State || a.Last != b.Last ||
-		a.Kind != b.Kind || a.Turn != b.Turn || a.Version != b.Version {
+		a.Kind != b.Kind || a.Turn != b.Turn || a.Version != b.Version || a.Hooks != b.Hooks {
 		return false
 	}
 	if (a.Warning == nil) != (b.Warning == nil) || (a.Warning != nil && *a.Warning != *b.Warning) {

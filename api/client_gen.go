@@ -96,6 +96,10 @@ const (
 )
 
 const (
+	HookHealthMissing HookHealth = "missing"
+)
+
+const (
 	OwnerReasonCreate     OwnerReason = "create"
 	OwnerReasonTake       OwnerReason = "take"
 	OwnerReasonRequest    OwnerReason = "request"

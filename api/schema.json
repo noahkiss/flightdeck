@@ -1358,6 +1358,10 @@
             "type": "string",
             "description": "claude, codex, opencode, or another detection manifest id."
           },
+          "hooks": {
+            "$ref": "#/components/schemas/HookHealth",
+            "description": "missing: the harness finished a turn and none of its hooks reached gff-hab. Its hook config is not installed, or (Codex) not trusted. Absent once a hook arrives."
+          },
           "kind": {
             "$ref": "#/components/schemas/BlockedKind",
             "description": "Only with state blocked."
@@ -2339,6 +2343,12 @@
           "revision",
           "min_revision",
           "client"
+        ]
+      },
+      "HookHealth": {
+        "type": "string",
+        "x-known-values": [
+          "missing"
         ]
       },
       "HostInfo": {

@@ -18,6 +18,8 @@ public struct AgentState: Codable, Sendable, Hashable {
     public var at: String
     /// claude, codex, opencode, or another detection manifest id.
     public var harness: String
+    /// missing: the harness finished a turn and none of its hooks reached gff-hab. Its hook config is not installed, or (Codex) not trusted. Absent once a hook arrives.
+    public var hooks: HookHealth?
     /// Only with state blocked.
     public var kind: BlockedKind?
     /// With state exited: the last done or error before the harness ended.
@@ -42,6 +44,7 @@ public struct AgentState: Codable, Sendable, Hashable {
     enum CodingKeys: String, CodingKey {
         case at = "at"
         case harness = "harness"
+        case hooks = "hooks"
         case kind = "kind"
         case last = "last"
         case pane = "pane"
@@ -55,9 +58,10 @@ public struct AgentState: Codable, Sendable, Hashable {
         case warning = "warning"
     }
 
-    public init(at: String, harness: String, kind: BlockedKind? = nil, last: AgentStatus? = nil, pane: String, request: PermissionRequest? = nil, revision: UInt64, session: String? = nil, source: StateSource, state: AgentStatus, turn: String? = nil, version: String? = nil, warning: VersionWarning? = nil) {
+    public init(at: String, harness: String, hooks: HookHealth? = nil, kind: BlockedKind? = nil, last: AgentStatus? = nil, pane: String, request: PermissionRequest? = nil, revision: UInt64, session: String? = nil, source: StateSource, state: AgentStatus, turn: String? = nil, version: String? = nil, warning: VersionWarning? = nil) {
         self.at = at
         self.harness = harness
+        self.hooks = hooks
         self.kind = kind
         self.last = last
         self.pane = pane
@@ -961,6 +965,13 @@ public struct HelloParams: Codable, Sendable, Hashable {
         self.reconnectToken = reconnectToken
         self.revision = revision
     }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct HookHealth: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let missing = HookHealth(rawValue: "missing")
 }
 
 public struct HostInfo: Codable, Sendable, Hashable {
