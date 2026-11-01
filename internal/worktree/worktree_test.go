@@ -484,7 +484,7 @@ func TestR3Cycle(t *testing.T) {
 		f.git(f.repo, "commit", "-q", "--amend", "--no-edit")
 	}
 	tip := f.git(f.repo, "rev-parse", "HEAD")
-	if idx := f.g.readReflogs(context.Background(), f.repo); slices.Contains(idx.amendOf[tip], tip) {
+	if idx := f.g.readReflogs(context.Background(), f.repo); slices.Contains(idx.from[tip], tip) {
 		t.Fatal("an amend lists itself as the commit it replaced")
 	}
 	check("a pull request amended with --no-edit", tip, false)
@@ -506,6 +506,55 @@ func TestR3Cycle(t *testing.T) {
 	}
 	check("an own commit amended with --no-edit", f.git(f.repo, "rev-parse", "HEAD"), true)
 	f.git(f.repo, "checkout", "-q", "main")
+}
+
+// TestRebaseAndCherryPick: own commits rebased onto a newer origin/main, or cherry-picked, stay
+// own; a cherry-picked or rebased pull request commit stays foreign.
+func TestRebaseAndCherryPick(t *testing.T) {
+	f, identity, pr := prFixture(t)
+	f.git(f.repo, "fetch", "-q", "origin", "refs/pull/7/head")
+	commit := func(file string) {
+		f.write(f.repo, file, file+"\n")
+		f.git(f.repo, "add", file)
+		f.git(f.repo, "commit", "-q", "-m", file)
+	}
+	// Two own commits, then origin/main moves on, then a rebase onto it. The steps a second
+	// apart, so the rebase makes new commits rather than the same ones again.
+	f.gitAt(4, f.repo, "checkout", "-q", "-b", "mine", "origin/main")
+	commit("a.txt")
+	commit("b.txt")
+	f.git(f.repo, "checkout", "-q", "-b", "up", "origin/main")
+	commit("up.txt")
+	f.git(f.repo, "push", "-q", "origin", "up:main")
+	f.git(f.repo, "fetch", "-q", "origin")
+	f.git(f.repo, "checkout", "-q", "mine")
+	before := f.git(f.repo, "rev-parse", "HEAD")
+	f.gitAt(1, f.repo, "rebase", "-q", "origin/main")
+	if f.git(f.repo, "rev-parse", "HEAD") == before {
+		t.Fatal("the rebase made no new commits")
+	}
+	f.git(f.repo, "checkout", "-q", "main")
+	if c, err := f.create(CreateOptions{Branch: "mine", Remote: identity}); err != nil || c.Foreign != "" {
+		t.Errorf("own commits rebased onto origin/main: %+v %v", c, err)
+	}
+	// An own commit cherry-picked onto another branch.
+	f.gitAt(1, f.repo, "checkout", "-q", "-b", "picked", "origin/main")
+	f.gitAt(1, f.repo, "cherry-pick", "mine~1")
+	f.git(f.repo, "checkout", "-q", "main")
+	if c, err := f.create(CreateOptions{Branch: "picked", Remote: identity}); err != nil || c.Foreign != "" {
+		t.Errorf("an own commit cherry-picked: %+v %v", c, err)
+	}
+	// The pull request commit cherry-picked, and rebased, onto origin/main.
+	f.git(f.repo, "checkout", "-q", "-b", "cp", "origin/main")
+	f.git(f.repo, "cherry-pick", pr)
+	f.git(f.repo, "checkout", "-q", "-b", "rb", pr)
+	f.git(f.repo, "rebase", "-q", "origin/main")
+	f.git(f.repo, "checkout", "-q", "main")
+	for _, b := range []string{"cp", "rb"} {
+		if c, err := f.create(CreateOptions{Branch: b, Remote: identity}); err != nil || c.Foreign == "" {
+			t.Errorf("a pull request commit on %s: %+v %v", b, c, err)
+		}
+	}
 }
 
 func TestForeignPullRequestPaths(t *testing.T) {

@@ -1212,28 +1212,42 @@ project's identity, so the session files into the same project. No method of its
   only when both commits have the same parents and the same author name, email and date, which
   `git commit --amend` keeps. The reason is gc: its expiry (30 days for an unreachable commit)
   can drop the entry before an amend, so that the next older entry is a different commit.
-  `--reset-author` amends then give a false alarm only. The chain is followed back at most 8
-  amends, and a set of commits already visited (each marked foreign while its own check runs)
-  ends a cycle at once: `--no-edit` amends in one second make the same commit again. So
-  amending a fetched pull request (`gh pr checkout 7 && git commit --amend`) stays foreign.
-  gff-hab reads
-  the reflogs `git commit` writes: each worktree's HEAD (`HEAD`, `main-worktree/HEAD`,
+  `--reset-author` amends then give a false alarm only. One residual (H1): after gc's expiry, a
+  pull request built to copy the parents and author of the commit the user had checked out
+  just before it can pass as own. It needs the user to keep that pull request checked out for
+  weeks around a gc, and the attacker to know that commit's parents and author date to the
+  second.
+
+  Rebased and cherry-picked commits count as own when their source does (owner decision
+  2026-11-01). A `rebase (pick):`, `rebase (reword):`, `rebase (edit):` or `cherry-pick:` entry
+  names only the copy, so gff-hab pairs it with a source: a commit some reflog entry names that
+  has the same author name, email and date (which both keep, and which bounds the work) and
+  the same `git patch-id --stable`, the same changes. The copy then brings in nothing its
+  source did not, and the source must itself be own by this rule. `squash` and `fixup` steps,
+  and a rebase that resolved a conflict, change the changes: they wait for a yes, a false
+  alarm. So does a rebase of commits made on another machine, which no local entry names.
+
+  The chain of amends, rebases and cherry-picks is followed back at most 8 steps, and a set of
+  commits already visited (each marked foreign while its own check runs) ends a cycle at once:
+  `--no-edit` amends in one second make the same commit again. A commit marked foreign that way
+  can only cause a false alarm. So amending, rebasing or cherry-picking a fetched pull request
+  (`gh pr checkout 7 && git commit --amend`) stays foreign. gff-hab reads the reflogs that
+  `git commit` writes: each worktree's HEAD (`HEAD`, `main-worktree/HEAD`,
   `worktrees/<id>/HEAD`) and the local branches (`--branches`), never the remote-tracking
-  reflogs, which can hold thousands of fetch entries.
+  reflogs, which can hold thousands of fetch entries. Commit ids go to git on stdin, so a long
+  reflog never runs into the argument size limit.
 
   Only local git writes the reflog, so a fetched pull request commit has no such entry: only
   `fetch` and `checkout`. A local commit stacked on a pull request still fails, through its
   fetched parent. A start point with no reflog entry gives foreign, the safe side: for example
   a repository that never wrote logs, or an entry past `gc.reflogExpire`. (Setting
   `core.logAllRefUpdates=false` later changes nothing: git still appends to log files that
-  exist.) Entries from `rebase`, `cherry-pick` and `am` do not count.
+  exist.) Entries from `am` do not count.
 
   The reflog shows who made a commit, not whose changes it holds. A local `git commit` that
   takes in a pull request's changes counts as own: `git merge --squash` then `git commit`,
   `git cherry-pick -n` then `git commit`, and a conflicted cherry-pick finished with
-  `git commit`. Code cannot see these. **Owner question:** should commits from a local rebase
-  or cherry-pick count as own? It is the same question as these limits. Until the owner
-  answers, rebased and cherry-picked commits wait for a yes.
+  `git commit`. Code cannot see these.
 
   A known false alarm: a local `git merge` or `git pull` that makes a merge commit (reflog
   subjects `merge <x>:` and `pull:`) waits for a yes until it is pushed.
@@ -1281,7 +1295,13 @@ project's identity, so the session files into the same project. No method of its
   refspec closes this, whatever the name.
 - A local `git commit` that takes in a pull request's changes counts as own:
   `merge --squash` or `cherry-pick -n` followed by `git commit`, and a conflicted cherry-pick
-  finished with `git commit`. The reflog cannot tell these apart (owner question above).
+  finished with `git commit`. The reflog cannot tell these apart.
+- H1: after gc's reflog expiry, a pull request built to copy the parents and author of the
+  commit the user had checked out just before it can pass as own, once amended. Closing it
+  fully means reading the files backend's log files, which keep each entry's true old id
+  through expiry; reftable repositories would still need the metadata check.
+- A rebase with a resolved conflict, a squash or fixup step, and a rebase of commits made on
+  another machine wait for a yes.
 - A local merge commit (`git merge`, `git pull`) waits for a yes until it is pushed.
 - No scripts, services, ports or terminals from the project file yet (Paseo has them).
 - A session whose program runs in a removed worktree keeps running in a folder that is gone.

@@ -371,20 +371,64 @@ func (g Git) trustedRefs(ctx context.Context, dir string, own []string) []string
 // maxLocalCommits bounds the commits not on the project's remote that committedHere checks.
 const maxLocalCommits = 200
 
-// maxAmendDepth bounds how far committedHere follows a chain of amends back.
+// maxAmendDepth bounds how far committedHere follows a chain of amends, rebases and
+// cherry-picks back.
 const maxAmendDepth = 8
 
 // reflogIndex is what the reflogs say about commits made here.
 type reflogIndex struct {
-	made    map[string]bool     // commits a "commit:", "commit (initial):" or "commit (merge):" entry made
-	amendOf map[string][]string // a "commit (amend):" entry's commit -> the commits it replaced
+	made map[string]bool // commits a "commit:", "commit (initial):" or "commit (merge):" entry made
+	// from maps a commit an amend, rebase or cherry-pick entry made to the commits it was made
+	// from: for an amend the commit it replaced, for a rebase or cherry-pick its source.
+	from map[string][]string
+}
+
+// pickSubjects start the reflog entries that copy a commit: a rebase step that keeps its changes,
+// and a cherry-pick. Squash and fixup steps change the changes, so they are not here.
+var pickSubjects = []string{"rebase (pick):", "rebase (reword):", "rebase (edit):", "rebase -i (pick):", "cherry-pick:"}
+
+// commitFields reads parents, author name, email and raw date of each commit, keyed by commit.
+func (g Git) commitFields(ctx context.Context, dir string, commits []string) map[string][]string {
+	out, err := g.runIn(ctx, dir, []byte(strings.Join(commits, "\n")+"\n"),
+		"log", "--no-walk=unsorted", "--stdin", "--date=raw", "--format=%H%x00%P%x00%an%x00%ae%x00%ad")
+	fields := map[string][]string{}
+	if err != nil {
+		return fields // false alarms only: no pair is kept
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if f := strings.Split(line, "\x00"); len(f) == 5 {
+			fields[f[0]] = f[1:]
+		}
+	}
+	return fields
+}
+
+// patchIDs reads git patch-id --stable of each commit: the same id means the same changes.
+// A merge commit has none.
+func (g Git) patchIDs(ctx context.Context, dir string, commits []string) map[string]string {
+	ids := map[string]string{}
+	diffs, err := g.runIn(ctx, dir, []byte(strings.Join(commits, "\n")+"\n"),
+		"log", "--no-walk=unsorted", "--stdin", "-p", "--no-color", "--format=commit %H")
+	if err != nil {
+		return ids
+	}
+	out, err := g.runIn(ctx, dir, diffs, "patch-id", "--stable")
+	if err != nil {
+		return ids
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if id, commit, ok := strings.Cut(line, " "); ok {
+			ids[commit] = id
+		}
+	}
+	return ids
 }
 
 // readReflogs reads the reflogs that git commit writes: each worktree's HEAD and the local
 // branches. Remote-tracking reflogs, which can be large, are not read. Within one ref's log
 // (newest first) an entry's old value is the next entry's commit.
 func (g Git) readReflogs(ctx context.Context, dir string) reflogIndex {
-	idx := reflogIndex{made: map[string]bool{}, amendOf: map[string][]string{}}
+	idx := reflogIndex{made: map[string]bool{}, from: map[string][]string{}}
 	refs := []string{"--branches", "HEAD", "main-worktree/HEAD"}
 	if common, err := g.run(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil {
 		if entries, err := os.ReadDir(filepath.Join(common, "worktrees")); err == nil {
@@ -421,8 +465,15 @@ func (g Git) readReflogs(ctx context.Context, dir string) reflogIndex {
 	}
 	type pair struct{ amended, replaced string }
 	var pairs []pair
+	var picks []string
+	seenHash := map[string]bool{}
+	var all []string // every commit the reflogs name: the sources a pick may come from
 	for _, log := range logs {
 		for n, e := range log {
+			if !seenHash[e.hash] {
+				seenHash[e.hash] = true
+				all = append(all, e.hash)
+			}
 			switch {
 			case strings.HasPrefix(e.subject, "commit (amend):"):
 				if old, ok := log[n+1]; ok && old.hash != e.hash {
@@ -431,33 +482,57 @@ func (g Git) readReflogs(ctx context.Context, dir string) reflogIndex {
 			case strings.HasPrefix(e.subject, "commit:"), strings.HasPrefix(e.subject, "commit (initial):"),
 				strings.HasPrefix(e.subject, "commit (merge):"):
 				idx.made[e.hash] = true
+			case slices.ContainsFunc(pickSubjects, func(p string) bool { return strings.HasPrefix(e.subject, p) }):
+				picks = append(picks, e.hash)
 			}
+		}
+	}
+	if len(pairs) == 0 && len(picks) == 0 {
+		return idx
+	}
+	add := func(c, src string) {
+		if c != src && !slices.Contains(idx.from[c], src) {
+			idx.from[c] = append(idx.from[c], src)
 		}
 	}
 	// gc expires an entry whose commit became unreachable (30 days by default), so the entry
 	// before an amend may be gone, and the next one older a different commit. Keep a pair only
 	// when the two commits agree on what git commit --amend keeps: parents and author.
-	if len(pairs) == 0 {
-		return idx
-	}
-	args := []string{"log", "--no-walk=unsorted", "--date=raw", "--format=%H%x00%P%x00%an%x00%ae%x00%ad"}
+	fields := g.commitFields(ctx, dir, all)
 	for _, p := range pairs {
-		args = append(args, p.amended, p.replaced)
-	}
-	out, err := g.run(ctx, dir, args...)
-	if err != nil {
-		return idx
-	}
-	kept := map[string]string{} // commit -> parents and author
-	for _, line := range strings.Split(out, "\n") {
-		if h, rest, ok := strings.Cut(line, "\x00"); ok {
-			kept[h] = rest
+		a, ok := fields[p.amended]
+		if ok && slices.Equal(a, fields[p.replaced]) {
+			add(p.amended, p.replaced)
 		}
 	}
-	for _, p := range pairs {
-		a, ok := kept[p.amended]
-		if ok && a == kept[p.replaced] && !slices.Contains(idx.amendOf[p.amended], p.replaced) {
-			idx.amendOf[p.amended] = append(idx.amendOf[p.amended], p.replaced)
+	// A rebase or cherry-pick entry names only the copy. Its source is a commit the reflogs name
+	// with the same author name, email and date (which both keep) and the same patch id: the
+	// same changes, so the copy brings in nothing its source did not.
+	if len(picks) == 0 {
+		return idx
+	}
+	author := func(c string) string {
+		if f, ok := fields[c]; ok {
+			return strings.Join(f[1:], "\x00")
+		}
+		return ""
+	}
+	cand := map[string][]string{} // pick -> sources with its author
+	need := slices.Clone(picks)
+	for _, p := range picks {
+		for _, c := range all {
+			if c != p && author(p) != "" && author(c) == author(p) {
+				cand[p] = append(cand[p], c)
+				need = append(need, c)
+			}
+		}
+	}
+	ids := g.patchIDs(ctx, dir, need)
+	for _, p := range picks {
+		for _, c := range cand[p] {
+			if ids[p] != "" && ids[c] == ids[p] {
+				add(p, c)
+			}
 		}
 	}
 	return idx
@@ -465,11 +540,12 @@ func (g Git) readReflogs(ctx context.Context, dir string) reflogIndex {
 
 // committedHere reports whether every commit in commit's history that no ref in base holds was
 // made in this repository by git commit: each has a "commit:", "commit (initial):" or
-// "commit (merge):" entry in a reflog, or a "commit (amend):" entry whose replaced commit is
-// itself own by this same rule (followed back at most maxAmendDepth amends). So amending a
-// fetched pull request does not make it own. Only local git writes the reflog, so a fetched
-// pull request cannot claim an entry. Entries from rebase, cherry-pick and am do not count. No
-// reflog entry, an entry past its expiry, or more than maxLocalCommits commits: false.
+// "commit (merge):" entry in a reflog, or an amend, rebase or cherry-pick entry whose replaced
+// commit or source is itself own by this same rule (followed back at most maxAmendDepth
+// steps). So amending, rebasing or cherry-picking a fetched pull request does not make it own.
+// Only local git writes the reflog, so a fetched pull request cannot claim an entry. Entries
+// from am, squash and fixup do not count. No reflog entry, an entry past its expiry, or more
+// than maxLocalCommits commits: false.
 func (g Git) committedHere(ctx context.Context, dir, commit string, base []string) bool {
 	return g.ownHistory(ctx, dir, commit, base, g.readReflogs(ctx, dir), map[string]bool{}, maxAmendDepth)
 }
@@ -506,7 +582,7 @@ func (g Git) ownHistoryOnce(ctx context.Context, dir, commit string, base []stri
 		}
 		replacedOwn := false
 		if depth > 0 {
-			for _, old := range idx.amendOf[c] {
+			for _, old := range idx.from[c] {
 				if g.ownHistory(ctx, dir, old, base, idx, seen, depth-1) {
 					replacedOwn = true
 					break
