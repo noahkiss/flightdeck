@@ -437,7 +437,8 @@ server is on and the `devices.*` methods work. `push` means the hab has working 
 feature. The zellij backend omits `data-streams`. Capabilities are for features that a host may
 lack. They are not a second versioning scheme.
 
-Built: with the holder link on, gff-hab sends `agent-state`, `data-streams` and `snapshot-vt`.
+Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt` and
+`transcripts`.
 
 ### 3.5 Events, seq and epoch
 
@@ -574,7 +575,7 @@ names the stage, and an event is defined but never sent.
 | `session.interrupt` | Stop the current turn through the adapter (the chat view's Stop) | Part 4 stage 4 |
 | `session.send` | Send a message through the adapter, under the input rules | Part 4 stage 4 |
 | `approval.answer` | Answer a pending request by id; a closed or expired id is refused with `conflict` | Part 4 stage 4 |
-| `chat.page` | Read a page of chat messages from the transcript reader (capability `transcripts`) | Part 4 stage 5 |
+| `chat.page` | Read a page of chat messages from the transcript reader (capability `transcripts`) | Yes, Claude Code (Part 4 stage 5) |
 | `attachment.put` | Start an upload of a file for a session | Part 6 stage 5 |
 | `attachment.get` | Fetch an attachment or its thumbnail | Part 6 stage 5 |
 | `session.focus` | Report focus: marks `done` seen, and holds pushes while watched | Part 6 stage 7 |
@@ -588,13 +589,14 @@ names the stage, and an event is defined but never sent.
 |---|---|---|---|
 | `pane.bell` | A pane rang the bell; at most once per second per pane, with the count | Pane | Part 2 stage 7 |
 | `pane.output` | A pane printed; at most once per second per pane, with its offset | Pane | Part 2 stage 7 |
-| `chat.message` | A chat message was appended or changed in place | Message | Part 4 stage 5 |
+| `chat.message` | A chat message was appended or changed in place | Message | Part 4 stage 5 (built for Claude Code) |
 | `session.turn_end` | The agent's turn ended; names the final message | Session | Part 4 stage 4 |
 | `usage.updated` | An account's usage reading changed | Account key | Part 4 (usage readings) |
 
 All five events are ephemeral (3.5): they carry no revision, and a client applies them in seq
 order. A chat message lives in the transcript, not in gff-hab, so it has no stored revision
-either; an update repeats the message id and replaces the message.
+either; an update repeats the message id and replaces the message. A scoped subscription gets a
+`chat.message` when the message's `session` is in its scope.
 
 New capabilities: `push` (the hab has working push config, `app.md` 8.4) and `host-stats`.
 
@@ -623,6 +625,14 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   (`user`, `agent`, `tool`, `event`, `plan`; open), `at`, and the optional `text`, `sender`,
   `parent` (the subagent call), `tool` (name, target, status, input, the first part of the
   output) and `plan` (steps with `pending`, `in_progress` or `done`).
+  Added by the transcript reader (Part 4 stage 5), all optional: the param `after` (a cursor;
+  not with `before`) returns what was added or changed since the cursor, oldest first, with
+  `more` set when further changes wait; the result's `cursor` is the value to pass next; a
+  message's `event` says what a kind `event` line marks (`compaction`, `permission`,
+  `interrupt`, `command`, `notice`, `unknown`; open). A stale cursor answers `conflict`, an
+  unknown `before` answers `not_found`. The rules are in `harness-adapters.md`, Claude Code,
+  built choices for the transcript reader. Golden files: `result.chat.page@2.json` and
+  `event.chat.message@2.json`.
 - **`attachment.put`** returns `id` and `path`. The channel the bytes take is designed in its
   stage; it may add an optional field to the result. **`attachment.get`** returns the bytes in
   `data`, with `name` and `type`.

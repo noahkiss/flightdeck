@@ -5,9 +5,9 @@
 // that the CLI and tests use.
 //
 // session.create and pane.close run through Config.Actions, data.ticket and data connections
-// through Config.Data, pane.input through Config.Input, and the size ownership and redraw
-// methods through Config.Size. The devices methods and the calls later stages build answer
-// "unavailable", with a hint that names the stage.
+// through Config.Data, pane.input through Config.Input, chat.page through Config.Chat, and the size
+// ownership and redraw methods through Config.Size. The devices methods and the calls later stages
+// build answer "unavailable", with a hint that names the stage.
 package control
 
 import (
@@ -88,6 +88,16 @@ type Size interface {
 	Redraw(client, pane string, mode api.RedrawMode) error
 }
 
+// EventChatMessage is the event type of a chat message that was added or changed.
+const EventChatMessage api.EventType = "chat.message"
+
+// Chat serves chat.page from the transcript reader (harness-adapters.md, Claude Code:
+// conversation). An error that is an *Error keeps its kind.
+type Chat interface {
+	// ChatPage reads one page of a session's chat messages. Before and After are never both set.
+	ChatPage(ctx context.Context, p api.ChatPageParams) (api.ChatMessages, error)
+}
+
 // Config is what New needs. Source is required.
 type Config struct {
 	Build        string
@@ -99,6 +109,7 @@ type Config struct {
 	Data         Data    // nil: data.ticket answers unavailable and a data hello is rejected
 	Input        Input   // nil: pane.input answers unavailable
 	Size         Size    // nil: the size ownership and redraw methods answer unavailable
+	Chat         Chat    // nil: chat.page answers unavailable
 	// ActionTimeout bounds one Actions call. Default 30 s.
 	ActionTimeout time.Duration
 

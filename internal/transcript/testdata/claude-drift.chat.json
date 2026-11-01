@@ -1,0 +1,24 @@
+[
+  {
+    "id": "00000000-0000-4000-8000-000000000031",
+    "session": "s1",
+    "kind": "user",
+    "at": "2026-01-01T10:00:31.000Z",
+    "text": "Hello from a newer build."
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000032",
+    "session": "s1",
+    "kind": "agent",
+    "at": "2026-01-01T10:00:32.000Z",
+    "text": "Hello."
+  },
+  {
+    "id": "line-810",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-01-01T10:00:32.000Z",
+    "text": "An unreadable transcript record",
+    "event": "unknown"
+  }
+]

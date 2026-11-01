@@ -38,6 +38,15 @@ const (
 )
 
 const (
+	ChatEventCompaction ChatEvent = "compaction"
+	ChatEventPermission ChatEvent = "permission"
+	ChatEventInterrupt  ChatEvent = "interrupt"
+	ChatEventCommand    ChatEvent = "command"
+	ChatEventNotice     ChatEvent = "notice"
+	ChatEventUnknown    ChatEvent = "unknown"
+)
+
+const (
 	ChatKindUser  ChatKind = "user"
 	ChatKindAgent ChatKind = "agent"
 	ChatKindTool  ChatKind = "tool"

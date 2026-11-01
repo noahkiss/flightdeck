@@ -671,6 +671,7 @@ func (c *conn) decodeUp(m message, v any) *Error {
 const (
 	hintNoDevices = "%s needs pairing, which this build does not have yet; the devices capability is absent"
 	hintNoActions = "%s needs the holder link, which this hab is running without"
+	hintNoChat    = "%s needs the transcript reader, which this hab is running without"
 )
 
 // later names the stage that builds each method this build defines but does not serve yet
@@ -680,7 +681,6 @@ var later = map[string]string{
 	"session.interrupt":      "Part 4 stage 4 (harness adapters: state and input)",
 	"session.send":           "Part 4 stage 4 (harness adapters: state and input)",
 	"approval.answer":        "Part 4 stage 4 (harness adapters: permission answers)",
-	"chat.page":              "Part 4 stage 5 (the transcript reader for the chat view)",
 	"attachment.put":         "Part 6 stage 5 (the app's chat view, images and files)",
 	"attachment.get":         "Part 6 stage 5 (the app's chat view, images and files)",
 	"session.focus":          "Part 6 stage 7 (approvals, push and Live Activity)",
@@ -826,6 +826,31 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 			return nil, actionErr(m.Method, err)
 		}
 		return api.Empty{Seq: s}, nil
+	case "chat.page":
+		var p api.ChatPageParams
+		if e := c.decodeUp(m, &p); e != nil {
+			return nil, e
+		}
+		if p.Session == "" {
+			return nil, appErr(api.ErrorKindInvalid, "chat.page needs a session")
+		}
+		if p.Before != "" && p.After != "" {
+			return nil, appErr(api.ErrorKindInvalid, "chat.page takes before or after, not both")
+		}
+		if c.s.cfg.Chat == nil {
+			return nil, appErr(api.ErrorKindUnavailable, hintNoChat, m.Method)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
+		defer cancel()
+		page, err := c.s.cfg.Chat.ChatPage(ctx, p)
+		if err != nil {
+			return nil, actionErr(m.Method, err)
+		}
+		if page.Messages == nil {
+			page.Messages = []api.ChatMessage{}
+		}
+		page.Seq = s
+		return page, nil
 	}
 	if stage, ok := later[m.Method]; ok {
 		return nil, appErr(api.ErrorKindUnavailable, "%s is not built yet; %s builds it", m.Method, stage)

@@ -58,14 +58,26 @@ type Event struct {
 	Data     any
 }
 
-// API turns the event into the wire form with the given seq.
+// ephemeral lists the event types that carry no revision (spec 3.5, 3.9): what they describe is
+// not stored by gff-hab.
+var ephemeral = map[api.EventType]bool{
+	"chat.message": true, "session.turn_end": true, "pane.bell": true, "pane.output": true,
+	"usage.updated": true,
+}
+
+// API turns the event into the wire form with the given seq. An ephemeral event type gets no
+// revision.
 func (e Event) API(seq uint64) (api.Event, error) {
 	data, err := json.Marshal(e.Data)
 	if err != nil {
 		return api.Event{}, err
 	}
-	rev := e.Revision
-	return api.Event{Seq: seq, Type: e.Type, ID: e.ID, Revision: &rev, Data: data}, nil
+	ev := api.Event{Seq: seq, Type: e.Type, ID: e.ID, Data: data}
+	if !ephemeral[e.Type] {
+		rev := e.Revision
+		ev.Revision = &rev
+	}
+	return ev, nil
 }
 
 // Health reports problems with the state file. The zero value means all is well.
@@ -512,6 +524,17 @@ func (s *Store) SessionByName(name string) (api.Session, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ss := s.sessionByName(name)
+	if ss == nil {
+		return api.Session{}, false
+	}
+	return sessionAPI(ss), true
+}
+
+// Session returns the session record with id, exited ones included.
+func (s *Store) Session(id string) (api.Session, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ss := s.session(id)
 	if ss == nil {
 		return api.Session{}, false
 	}

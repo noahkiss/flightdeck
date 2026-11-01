@@ -703,6 +703,13 @@
       "paramStructure": "by-name",
       "params": [
         {
+          "name": "after",
+          "description": "A cursor from an earlier page: return the messages added or changed since it, oldest first. Not with before.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
           "name": "before",
           "description": "Message id: return the messages before it. Absent means the tail.",
           "schema": {
@@ -1387,6 +1394,17 @@
           "auth"
         ]
       },
+      "ChatEvent": {
+        "type": "string",
+        "x-known-values": [
+          "compaction",
+          "permission",
+          "interrupt",
+          "command",
+          "notice",
+          "unknown"
+        ]
+      },
       "ChatKind": {
         "type": "string",
         "x-known-values": [
@@ -1410,6 +1428,10 @@
             "items": {
               "type": "string"
             }
+          },
+          "event": {
+            "$ref": "#/components/schemas/ChatEvent",
+            "description": "With kind event: what the line marks. unknown marks a transcript record the reader does not know; text names it."
           },
           "id": {
             "type": "string",
@@ -1455,6 +1477,10 @@
       "ChatMessages": {
         "type": "object",
         "properties": {
+          "cursor": {
+            "type": "string",
+            "description": "Opaque. Pass it as after to read only what was added or changed since this page."
+          },
           "messages": {
             "type": "array",
             "items": {
@@ -1463,7 +1489,7 @@
           },
           "more": {
             "type": "boolean",
-            "description": "True when older messages exist."
+            "description": "True when older messages exist. With after: true when more changes wait after cursor."
           },
           "seq": {
             "type": "integer",
@@ -1480,6 +1506,10 @@
       "ChatPageParams": {
         "type": "object",
         "properties": {
+          "after": {
+            "type": "string",
+            "description": "A cursor from an earlier page: return the messages added or changed since it, oldest first. Not with before."
+          },
           "before": {
             "type": "string",
             "description": "Message id: return the messages before it. Absent means the tail."

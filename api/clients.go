@@ -69,6 +69,10 @@ type ApprovalAnswerParams struct {
 // ChatKind is the kind of a chat message. Clients show an unknown kind as unsupported.
 type ChatKind string
 
+// ChatEvent says what a chat message of kind event marks. Clients show an unknown word as a
+// plain event line.
+type ChatEvent string
+
 // ToolStatus is a tool call's status.
 type ToolStatus string
 
@@ -104,6 +108,9 @@ type ChatMessage struct {
 	Tool        *ChatTool  `json:"tool,omitempty" doc:"With kind tool."`
 	Plan        []PlanStep `json:"plan,omitempty" doc:"With kind plan: the steps in order."`
 	Attachments []string   `json:"attachments,omitempty" doc:"Attachment ids shown on the message."`
+	// Event is added by the transcript reader (Part 4 stage 5). Optional, so a newer client
+	// reads a message from an older revision 1 hab.
+	Event ChatEvent `json:"event,omitempty" doc:"With kind event: what the line marks. unknown marks a transcript record the reader does not know; text names it."`
 }
 
 // ChatPageParams reads one page of a session's conversation.
@@ -111,13 +118,15 @@ type ChatPageParams struct {
 	Session string `json:"session"`
 	Before  string `json:"before,omitempty" doc:"Message id: return the messages before it. Absent means the tail."`
 	Limit   int    `json:"limit,omitempty" doc:"Most messages to return. Default 50, at most 200."`
+	After   string `json:"after,omitempty" doc:"A cursor from an earlier page: return the messages added or changed since it, oldest first. Not with before."`
 }
 
 // ChatMessages is one page of a conversation, oldest first.
 type ChatMessages struct {
 	Seq
 	Messages []ChatMessage `json:"messages"`
-	More     bool          `json:"more" doc:"True when older messages exist."`
+	More     bool          `json:"more" doc:"True when older messages exist. With after: true when more changes wait after cursor."`
+	Cursor   string        `json:"cursor,omitempty" doc:"Opaque. Pass it as after to read only what was added or changed since this page."`
 }
 
 // TurnEnd is the data of a session.turn_end event.

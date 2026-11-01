@@ -232,6 +232,18 @@ public struct BlockedKind: RawRepresentable, Codable, Sendable, Hashable {
 }
 
 /// An open word set: values outside the known list decode and round-trip unchanged.
+public struct ChatEvent: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let compaction = ChatEvent(rawValue: "compaction")
+    public static let permission = ChatEvent(rawValue: "permission")
+    public static let interrupt = ChatEvent(rawValue: "interrupt")
+    public static let command = ChatEvent(rawValue: "command")
+    public static let notice = ChatEvent(rawValue: "notice")
+    public static let unknown = ChatEvent(rawValue: "unknown")
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
 public struct ChatKind: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
@@ -247,6 +259,8 @@ public struct ChatMessage: Codable, Sendable, Hashable {
     public var at: String
     /// Attachment ids shown on the message.
     public var attachments: [String]?
+    /// With kind event: what the line marks. unknown marks a transcript record the reader does not know; text names it.
+    public var event: ChatEvent?
     /// Stable within the session; an update carries the same id.
     public var id: String
     public var kind: ChatKind
@@ -265,6 +279,7 @@ public struct ChatMessage: Codable, Sendable, Hashable {
     enum CodingKeys: String, CodingKey {
         case at = "at"
         case attachments = "attachments"
+        case event = "event"
         case id = "id"
         case kind = "kind"
         case parent = "parent"
@@ -275,9 +290,10 @@ public struct ChatMessage: Codable, Sendable, Hashable {
         case tool = "tool"
     }
 
-    public init(at: String, attachments: [String]? = nil, id: String, kind: ChatKind, parent: String? = nil, plan: [PlanStep]? = nil, sender: String? = nil, session: String, text: String? = nil, tool: ChatTool? = nil) {
+    public init(at: String, attachments: [String]? = nil, event: ChatEvent? = nil, id: String, kind: ChatKind, parent: String? = nil, plan: [PlanStep]? = nil, sender: String? = nil, session: String, text: String? = nil, tool: ChatTool? = nil) {
         self.at = at
         self.attachments = attachments
+        self.event = event
         self.id = id
         self.kind = kind
         self.parent = parent
@@ -290,19 +306,23 @@ public struct ChatMessage: Codable, Sendable, Hashable {
 }
 
 public struct ChatMessages: Codable, Sendable, Hashable {
+    /// Opaque. Pass it as after to read only what was added or changed since this page.
+    public var cursor: String?
     public var messages: [ChatMessage]
-    /// True when older messages exist.
+    /// True when older messages exist. With after: true when more changes wait after cursor.
     public var more: Bool
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
 
     enum CodingKeys: String, CodingKey {
+        case cursor = "cursor"
         case messages = "messages"
         case more = "more"
         case seq = "seq"
     }
 
-    public init(messages: [ChatMessage], more: Bool, seq: UInt64) {
+    public init(cursor: String? = nil, messages: [ChatMessage], more: Bool, seq: UInt64) {
+        self.cursor = cursor
         self.messages = messages
         self.more = more
         self.seq = seq
@@ -310,6 +330,8 @@ public struct ChatMessages: Codable, Sendable, Hashable {
 }
 
 public struct ChatPageParams: Codable, Sendable, Hashable {
+    /// A cursor from an earlier page: return the messages added or changed since it, oldest first. Not with before.
+    public var after: String?
     /// Message id: return the messages before it. Absent means the tail.
     public var before: String?
     /// Most messages to return. Default 50, at most 200.
@@ -317,12 +339,14 @@ public struct ChatPageParams: Codable, Sendable, Hashable {
     public var session: String
 
     enum CodingKeys: String, CodingKey {
+        case after = "after"
         case before = "before"
         case limit = "limit"
         case session = "session"
     }
 
-    public init(before: String? = nil, limit: Int? = nil, session: String) {
+    public init(after: String? = nil, before: String? = nil, limit: Int? = nil, session: String) {
+        self.after = after
         self.before = before
         self.limit = limit
         self.session = session

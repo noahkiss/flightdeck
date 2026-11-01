@@ -128,6 +128,10 @@ func (f *filter) pass(e structure.Event) bool {
 			return true
 		}
 		return false
+	case EventChatMessage:
+		// A chat message names its session; its id is the message id.
+		m, ok := e.Data.(api.ChatMessage)
+		return ok && f.sessions[m.Session]
 	}
 	// Other event types (pane.owner, pane.activity, agent.state) are about a pane: the id is the pane.
 	return f.panes[e.ID]

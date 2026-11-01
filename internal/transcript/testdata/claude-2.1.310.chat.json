@@ -1,0 +1,187 @@
+[
+  {
+    "id": "00000000-0000-4000-8000-000000000003",
+    "session": "s1",
+    "kind": "user",
+    "at": "2026-01-01T10:00:02.000Z",
+    "text": "Add a greeting to the demo script."
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000005",
+    "session": "s1",
+    "kind": "agent",
+    "at": "2026-01-01T10:00:04.000Z",
+    "text": "I will read the script, then edit it."
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000006",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-01-01T10:00:05.000Z",
+    "tool": {
+      "name": "Read",
+      "target": "/work/demo/hello.sh",
+      "status": "done",
+      "input": {
+        "file_path": "/work/demo/hello.sh"
+      },
+      "output": "1\t#!/bin/sh\n2\techo start\n"
+    }
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000008",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-01-01T10:00:07.000Z",
+    "tool": {
+      "name": "Edit",
+      "target": "/work/demo/hello.sh",
+      "status": "done",
+      "input": {
+        "file_path": "/work/demo/hello.sh",
+        "old_string": "echo start",
+        "new_string": "echo hello"
+      },
+      "output": "The file was updated."
+    }
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000009-permission-toolu_edit1",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-01-01T10:00:08.000Z",
+    "text": "Allowed Edit (once)",
+    "event": "permission"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000010",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-01-01T10:00:09.000Z",
+    "tool": {
+      "name": "Bash",
+      "target": "rm -rf build",
+      "status": "denied",
+      "input": {
+        "command": "rm -rf build\nls",
+        "description": "Clean the build folder"
+      },
+      "output": "The user doesn't want to proceed with this tool use."
+    }
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000011-permission-toolu_bash1",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-01-01T10:00:10.000Z",
+    "text": "Denied Bash",
+    "event": "permission"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000012",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-01-01T10:00:11.000Z",
+    "tool": {
+      "name": "Grep",
+      "target": "greeting",
+      "status": "error",
+      "input": {
+        "pattern": "greeting"
+      },
+      "output": "grep: bad pattern"
+    }
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000016",
+    "session": "s1",
+    "kind": "user",
+    "at": "2026-01-01T10:00:15.000Z",
+    "text": "Here is a screenshot of the output.\n\n[image]"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000018",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-01-01T10:00:17.000Z",
+    "text": "/model fast",
+    "event": "command"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000019",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-01-01T10:00:18.000Z",
+    "text": "Set model to fast",
+    "event": "command"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000021",
+    "session": "s1",
+    "kind": "agent",
+    "at": "2026-01-01T10:00:20.000Z",
+    "text": "Working on the next step"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000022",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-01-01T10:00:21.000Z",
+    "text": "Interrupted by the owner",
+    "event": "interrupt"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000023",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-01-01T10:00:22.000Z",
+    "text": "A background task finished.",
+    "event": "notice"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000024",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-01-01T10:00:24.000Z",
+    "text": "Conversation compacted (manual)",
+    "event": "compaction"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000026",
+    "session": "s1",
+    "kind": "user",
+    "at": "2026-01-01T10:00:26.000Z",
+    "text": "Now run the tests."
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000027",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-01-01T10:00:27.000Z",
+    "text": "Unsupported content block: server_tool_use",
+    "event": "unknown"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000028",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-01-01T10:00:28.000Z",
+    "text": "Unsupported Claude Code record: future-record",
+    "event": "unknown"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000029",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-01-01T10:00:29.000Z",
+    "text": "Unsupported Claude Code system record: future_subtype",
+    "event": "unknown"
+  },
+  {
+    "id": "00000000-0000-4000-8000-000000000030",
+    "session": "s1",
+    "kind": "agent",
+    "at": "2026-01-01T10:00:30.000Z",
+    "text": "The tests pass."
+  }
+]

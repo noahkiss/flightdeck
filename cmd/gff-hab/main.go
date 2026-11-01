@@ -62,6 +62,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/link"
 	"github.com/noahkiss/flightdeck/internal/panesize"
 	"github.com/noahkiss/flightdeck/internal/structure"
+	"github.com/noahkiss/flightdeck/internal/transcript"
 )
 
 // build is set at link time: -ldflags "-X main.build=<id>".
@@ -268,6 +269,8 @@ func serve(args []string) error {
 	var data control.Data
 	var input control.Input
 	var sizes control.Size
+	var chat control.Chat
+	var chats *chatService
 	var ds *datastream.Server
 	var mgr *panesize.Manager
 	if lk != nil {
@@ -290,6 +293,25 @@ func serve(args []string) error {
 			home:    home,
 			refresh: repos.Refresh,
 		}
+		// The chat view reads each session's harness transcript where the harness writes it.
+		claudeDir, err := transcript.ClaudeConfigDir(os.Getenv)
+		if err != nil {
+			return err
+		}
+		chats = newChatService(chatConfig{
+			session: store.Session,
+			agent:   agents.Get,
+			find:    func(native string) (string, error) { return transcript.FindClaude(claudeDir, native) },
+			publish: func(e structure.Event) {
+				if s := srv.Load(); s != nil {
+					s.Publish(e)
+				}
+			},
+			logf: logger.Printf,
+		})
+		defer chats.Close()
+		chat = chats
+		caps = append(caps, "transcripts")
 	}
 	s := control.New(control.Config{
 		Build:        build,
@@ -301,6 +323,7 @@ func serve(args []string) error {
 		Data:         data,
 		Input:        input,
 		Size:         sizes,
+		Chat:         chat,
 		Logf:         logger.Printf,
 	})
 	srv.Store(s)

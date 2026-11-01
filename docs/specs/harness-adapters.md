@@ -368,7 +368,7 @@ When sources disagree inside one turn, the stronger one wins:
 |---|---|
 | Detection | Process name `claude` (manifest id `claude`, alias `claude-code`). `--session-id` when hab spawns it. |
 | State | Two sources. (1) Native OSC 7501 reports, sent only after the terminal answers the `?` query; hab answers it. (2) Hooks: `UserPromptSubmit` → `working`; `PreToolUse`/`PostToolUse` → `working`; `PermissionRequest` → `blocked:permission`; `Notification` with `permission_prompt` → `blocked:permission`, `elicitation_dialog` → `blocked:question`, `idle_prompt` → `idle`; `Stop` → `done`; `StopFailure` → `error`; `SessionStart`/`SessionEnd` bind and unbind the session. |
-| Conversation | Tail the session JSONL named by `transcript_path` in every hook payload (under the Claude config dir, `projects/<encoded cwd>/<session id>.jsonl`). Read records of type `user` and `assistant` for the chat view, linked by `uuid` and `parentUuid`. Use `attachment` records for the context ledger. Skip every other record type. |
+| Conversation | Tail the session JSONL named by `transcript_path` in every hook payload (under the Claude config dir, `projects/<encoded cwd>/<session id>.jsonl`). Read records of type `user` and `assistant` for the chat view, linked by `uuid` and `parentUuid`. Use `attachment` records for the context ledger. Skip the other known record types; an unknown type becomes a placeholder message. |
 | Input | PTY: bracketed paste of the text, then Enter. |
 | Permission answer | Default: the TUI dialog, answered by the owner in the terminal, or by PTY keys from the app after the checks in [Permission answers](#permission-answers). Opt-in: a blocking `PermissionRequest` hook (see open decisions). |
 | Resume id | `session_id` in every hook payload; `claude --resume <id>`. |
@@ -384,6 +384,56 @@ Notes:
 - A nested `claude -p` inherits the pane's variables but runs with a different entrypoint value
   (`CLAUDE_CODE_ENTRYPOINT` is `cli` only for the interactive TUI). The hook command sends
   nothing unless the entrypoint is `cli`.
+
+Built choices for the transcript reader (`internal/transcript`, `cmd/gff-hab/chat.go`):
+
+- **Finding the file.** `chat.page` names a gff-hab session. gff-hab takes the session's pane,
+  then the pane's agent state: harness `claude` and the native `session` the hooks reported (the
+  resume id). The file is `projects/*/<session id>.jsonl` under `$CLAUDE_CONFIG_DIR`, else
+  `~/.claude`; when several project folders hold one, the most recently written wins. A
+  session id that could name another path is refused. A file not written yet reads as an empty
+  page. When the agent leaves the pane, the last conversation stays readable while gff-hab runs.
+- **Tailing.** The reader opens the file, reads only the bytes appended since its last read,
+  and closes it. It hands out complete lines only: a last line with no newline (the writer is
+  mid-append) waits for its newline, so it never makes a broken message. A line over 32 MiB is
+  skipped as a placeholder. A file that shrinks or is replaced is read again from the start,
+  with one warning.
+- **Pinned versions.** The parser follows Claude Code 2.1.296 to 2.1.316. A record whose
+  `version` is outside that range still reads; the reader logs the drift once per version.
+- **Records to messages.**
+
+  | Record | Chat message |
+  |---|---|
+  | `user`, text (string or text blocks; images as `[image]`) | kind `user` |
+  | `user`, `<command-name>` or `<local-command-stdout>` text | kind `event`, event `command` |
+  | `user`, `[Request interrupted by user…` | kind `event`, event `interrupt` |
+  | `user` with `isMeta` or `isCompactSummary`, `<local-command-caveat>` | left out: context for the model |
+  | `user`, `tool_result` block | changes its call in place: status `done`, `error` (`is_error`) or `denied` (`permissionDecision.decision` is `reject`); the first 4 KiB of the output |
+  | `user`, `tool_result` whose `permissionDecision.source` starts with `user` | also kind `event`, event `permission`: the owner answered a permission prompt ("Allowed Edit (once)", "Denied Bash") |
+  | `assistant`, `text` block | kind `agent` |
+  | `assistant`, `tool_use` block | kind `tool`, status `running`; target from `file_path`, `path`, `command`, `pattern`, `url`, `query` or `description`; input when at most 64 KiB |
+  | `assistant`, `thinking` and `redacted_thinking` | left out |
+  | `system` `compact_boundary` | kind `event`, event `compaction` |
+  | `system` `informational`, `api_error` | kind `event`, event `notice` |
+  | `system` `local_command` | kind `event`, event `command` |
+  | `system` `turn_duration`, `stop_hook_summary`, `scheduled_task_fire` | left out |
+  | `attachment`, titles, modes, request and file-history records (the list in `claude.go`) | left out |
+  | records with `isSidechain` | left out (subagent transcripts are a later feature) |
+  | any other type, system subtype or content block; a line that is not JSON | kind `event`, event `unknown`, text naming it, plus one warning per kind in the log |
+
+- **Ids.** A message id is the record's `uuid`; a later content block of the same record adds
+  `-<index>`. A permission line is `<uuid>-permission-<tool use id>`. A record with no uuid uses
+  `line-<byte offset>`. Ids are stable across gff-hab restarts.
+- **Cursor.** `chat.page` returns `cursor`: a hash of the file's first line and a byte offset.
+  `after: <cursor>` returns the messages added or changed since, oldest first, a new cursor, and
+  `more` when further changes wait. A message made before the cursor and changed after it (a
+  call that got its result) comes again with its new content; a client replaces by id and
+  appends new ids. A cursor from other file contents, or past the end, answers `conflict`: the
+  client takes the tail again. Byte offsets do not change when gff-hab restarts, so a cursor
+  survives a restart.
+- **Events.** gff-hab reads each open transcript once a second and sends one `chat.message`
+  event per added or changed message. The first read of a file sends none: the client takes a
+  page. A reader stays open until its session record is removed.
 
 ## Codex
 
@@ -478,7 +528,7 @@ Further rules:
 | A hook fires with no terminal | Claude may start hooks without a controlling terminal. Our hooks never need one: they post to `GFF_HAB` and never write escape codes to a TTY. |
 | Nested agent in a pane | Claude: entrypoint guard. Codex and opencode: the adapter binds the pane to the first session per process and ignores hooks whose session id differs while that session lives, unless the foreground process changed. |
 | Subagents | Claude hooks with `agent_id` never rebind the pane. |
-| Transcript format drift | Each reader pins the harness versions it was tested on. An unknown version reads in a tolerant mode that skips unknown records and flags the adapter as degraded. gff-hab reports the degraded adapter as drift. A CI job runs new harness versions against our fixtures. |
+| Transcript format drift | Each reader pins the harness versions it was tested on. An unknown version reads in a tolerant mode that shows unknown records as placeholders and flags the adapter as degraded. gff-hab reports the degraded adapter as drift (built so far: a log line once per version; the status board shows it once it exists). A CI job runs new harness versions against our fixtures. |
 | Transcript not yet written | Claude may create the file after the first hook. The reader waits for the file; it does not fail the pane. |
 | `gff-hab` restarts | Hook posts during the gap are lost. On start, the adapter rebuilds state from the transcript tail, the last OSC 7501 report in the holder's byte ring, and the process table. It marks state as `source: screen` until the next hook. |
 | Harness upgrade mid-session | The running process keeps its version; only new panes see the new one. The reader picks its parser per session from the version in the transcript, not from the installed binary. |
@@ -490,6 +540,11 @@ Further rules:
 Each adapter ships fixtures written by hand. A fixture is a hook event sequence plus the
 matching transcript lines or server events, and the expected `agent.state` stream. No fixture
 comes from a real session. Every fixture states the harness version its shape follows.
+
+Built: the Claude Code transcript fixtures are `internal/transcript/testdata/claude-<version>.jsonl`,
+with the expected chat messages beside each as `.chat.json`. `claude-2.1.310.jsonl` covers each
+record type above, unknown ones included; `claude-drift.jsonl` covers a newer version and an
+unreadable line.
 
 ## Open decisions
 
