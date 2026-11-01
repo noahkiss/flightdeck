@@ -38,11 +38,12 @@ public enum VoiceGrammar {
     }
 
     /// The answer to "Allow or deny?", or nil when it is not a clear match.
-    /// "yes" is not an Allow: a stray yes must never run a command. "no" is a
-    /// Deny, which is safe.
+    /// It is asked only after a read-back, and counts only for that request,
+    /// so "yes" is an Allow (owner, 2026-11-01). A lone yes in an ordinary
+    /// turn is a message, never an answer.
     public static func answer(_ utterance: String) -> Answer? {
         switch normalize(utterance) {
-        case "allow", "approve", "allow it", "approve it": return .allow
+        case "allow", "approve", "allow it", "approve it", "yes": return .allow
         case "deny", "no", "deny it": return .deny
         default: return nil
         }
@@ -105,8 +106,17 @@ public enum VoiceGrammar {
         var out: [String] = []
         for token in c.split(whereSeparator: { $0.isWhitespace }) {
             var t = String(token)
-            if t.hasPrefix("--") {
-                t = "dash dash " + t.dropFirst(2)
+            if t == "~" {
+                t = "home"
+            } else if t == "*" {
+                t = "star"
+            } else if t.hasPrefix("$"), t.count > 1 {
+                t = "dollar " + t.dropFirst()
+            } else if t.hasPrefix("--") {
+                // "--out=/tmp/x": the value after "=" is read like any token.
+                let parts = t.dropFirst(2).split(separator: "=", maxSplits: 1).map(String.init)
+                t = "dash dash " + (parts.first ?? "")
+                if parts.count == 2 { t += " equals " + (parts[1].contains("/") ? speakPath(parts[1]) : parts[1]) }
                 out.append(",")
             } else if t.hasPrefix("-"), t.count > 1 {
                 t = "dash " + t.dropFirst()

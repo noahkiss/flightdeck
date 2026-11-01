@@ -121,6 +121,15 @@ final class VoiceTextTests: XCTestCase {
         XCTAssertEqual(SpokenText.reply([msg("1", .user, "go"), msg("2", .agent, "All *good*")], stopped: false), "All good.")
     }
 
+    func testTheChatHidesTheSummaryRequest() {
+        let sent = SpokenText.prompt("run the tests", askSummary: true)
+        XCTAssertEqual(SpokenText.hidingSummaryRequest(sent), "run the tests")
+        XCTAssertEqual(SpokenText.hidingSummaryRequest("typed text"), "typed text")
+        let items = ChatRender.items([msg("1", .user, sent)])
+        guard case .user(_, let text, _, _)? = items.first else { return XCTFail("no user row") }
+        XCTAssertEqual(text, "run the tests")
+    }
+
     func testPromptCarriesTheSummaryRequest() {
         XCTAssertEqual(SpokenText.prompt("run the tests", askSummary: false), "run the tests")
         let p = SpokenText.prompt("run the tests", askSummary: true)
@@ -156,7 +165,9 @@ final class VoiceTextTests: XCTestCase {
         XCTAssertEqual(VoiceGrammar.answer("approve"), .allow)
         XCTAssertEqual(VoiceGrammar.answer("Deny"), .deny)
         XCTAssertEqual(VoiceGrammar.answer("no"), .deny)
-        XCTAssertNil(VoiceGrammar.answer("yes"))
+        XCTAssertEqual(VoiceGrammar.answer("Yes."), .allow, "after a read-back, yes is an Allow")
+        XCTAssertNil(VoiceGrammar.command("yes"), "a lone yes in an ordinary turn is a message")
+        XCTAssertNil(VoiceGrammar.answer("yes please run it"))
         XCTAssertNil(VoiceGrammar.answer("allow and then deploy"))
         XCTAssertNil(VoiceGrammar.answer("I think allow"))
         XCTAssertNil(VoiceGrammar.answer(""))
@@ -169,6 +180,10 @@ final class VoiceTextTests: XCTestCase {
         XCTAssertEqual(VoiceGrammar.speakCommand("cd /srv/app && rm -rf build"), "cd slash srv slash app and then rm, dash rf build")
         XCTAssertEqual(VoiceGrammar.speakCommand("rm -rf ~/work/app/build"), "rm, dash rf home slash work slash app slash build")
         XCTAssertEqual(VoiceGrammar.speakCommand("make || echo failed; ls | wc"), "make or else echo failed then ls pipe wc")
+        XCTAssertEqual(VoiceGrammar.speakCommand("rm -rf ~"), "rm, dash rf home")
+        XCTAssertEqual(VoiceGrammar.speakCommand("rm *"), "rm star")
+        XCTAssertEqual(VoiceGrammar.speakCommand("echo $HOME"), "echo dollar HOME")
+        XCTAssertEqual(VoiceGrammar.speakCommand("tar --file=/tmp/a.tar"), "tar, dash dash file equals slash tmp slash a.tar")
         let untitled = PermissionRequest(command: "ls", id: "r2", tool: "Bash")
         XCTAssertTrue(VoiceGrammar.readBack(untitled, mayAllow: false).hasPrefix("Allow Bash? ls. This one can be allowed only on screen."))
     }

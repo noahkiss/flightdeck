@@ -12,6 +12,12 @@ public enum SpokenText {
     /// Appended to each prompt sent from voice mode (voice.md Decisions).
     public static let summaryRequest = "(Voice mode: end your reply with one line that starts with \"\(summaryMarker)\" and gives a two-sentence summary to read aloud, with no code, paths or Markdown.)"
 
+    /// A sent prompt as the chat view shows it: the summary request is hidden.
+    public static func hidingSummaryRequest(_ text: String) -> String {
+        guard text.hasSuffix(summaryRequest) else { return text }
+        return String(text.dropLast(summaryRequest.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// The prompt as voice mode sends it.
     public static func prompt(_ spoken: String, askSummary: Bool) -> String {
         askSummary ? spoken + "\n\n" + summaryRequest : spoken

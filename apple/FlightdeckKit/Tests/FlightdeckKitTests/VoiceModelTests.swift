@@ -271,8 +271,8 @@ final class VoiceModelTests: XCTestCase {
         XCTAssertTrue(b.io.spoken.first?.hasSuffix("Allow or deny?") == true)
         XCTAssertTrue(b.model.requestMayAllow)
         XCTAssertFalse(b.io.mutedNow, "listening again after asking")
-        // "yes" is not an answer: it asks once more.
-        await say(b, live: "yes")
+        // Not a clear answer: it asks once more.
+        await say(b, live: "maybe later")
         XCTAssertEqual(b.io.spoken.last, "Allow or deny?")
         let none = await b.hab.answers
         XCTAssertTrue(none.isEmpty)

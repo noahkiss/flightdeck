@@ -531,7 +531,7 @@ struct OutgoingView: View {
         HStack {
             Spacer(minLength: 40)
             VStack(alignment: .trailing, spacing: 3) {
-                Text(outgoing.text)
+                Text(SpokenText.hidingSummaryRequest(outgoing.text))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 14))

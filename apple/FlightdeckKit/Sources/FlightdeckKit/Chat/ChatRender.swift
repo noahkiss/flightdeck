@@ -207,7 +207,7 @@ public enum ChatRender {
             let item: ChatItem
             switch m.kind {
             case .user:
-                item = .user(id: m.id, text: m.text ?? "", sender: m.sender, attachments: m.attachments?.count ?? 0)
+                item = .user(id: m.id, text: SpokenText.hidingSummaryRequest(m.text ?? ""), sender: m.sender, attachments: m.attachments?.count ?? 0)
             case .agent:
                 item = .agent(id: m.id, blocks: MarkdownBlock.parse(m.text ?? ""), sender: m.sender)
             case .tool:

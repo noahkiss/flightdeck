@@ -1708,7 +1708,7 @@ no wake word, no system assistant in the path.
   the command in a speakable form ("wrangler deploy, dash dash env prod"). It then asks "Allow or
   deny?" and shows the approval sheet in large type.
 - It listens for the answer only after it has finished asking, so its own voice cannot answer. The
-  answer must be a clear match: allow or approve; deny or no (13.7: "yes" is not an Allow). Anything else, or a low-confidence
+  answer must be a clear match: allow, approve or yes; deny or no. Anything else, or a low-confidence
   result, makes it ask once more, then wait for a tap.
 - It says what it did: "Allowed" or "Denied".
 - Voice Allow follows the same limits as a banner Allow (7.8): a command longer than the limit, or
@@ -1785,7 +1785,10 @@ Code in `apple/FlightdeckKit` (`Voice/`, `Views/VoiceViews.swift`) and the
   is those live words, so it costs no second pass. A turn's live words are the results that
   finished since it began, plus the result in progress; a result that finished up to 0.6 s
   before the turn began is part of it, since its words started the turn. A revision of the
-  result in progress never brings back earlier speech. The microphone starts first; live words
+  result in progress never brings back earlier speech. A phrase still in progress when a turn
+  ends belongs to that turn: its later revisions and its final result start no new turn and
+  are not carried into the next one. Words the owner starts before that phrase finishes are
+  read by the hab or Parakeet, but may be missing from the Apple text. The microphone starts first; live words
   follow once the speech asset is installed, and the footer says "Downloading speech for live
   words" meanwhile, or why live words are off. On an older system the Apple engine is skipped
   and no live words show; the hab and Parakeet still write the text.
@@ -1796,7 +1799,8 @@ Code in `apple/FlightdeckKit` (`Voice/`, `Views/VoiceViews.swift`) and the
   unloaded until every holder has let go. Each voice mode and dictation holds it with its own
   token, so two iPad windows do not unload each other's model. An unload waits for a running
   transcribe. A turn that ends before the engine's prepare held the model takes it then. The
-  model folder is kept out of the device backup. The option shows on devices with at least 6 GB of
+  model folder is kept out of the device backup. A deferred unload after the last release is
+  dropped when a new holder arrives first. The option shows on devices with at least 6 GB of
   memory (the iPhone 15 Pro, 8 GB, ran it well). The model downloads from Settings with
   progress, with its CC-BY-4.0 attribution line.
 - **Turn end.** The audio level and new live words mark speech. A turn starts after 0.15 s of
@@ -1821,19 +1825,23 @@ Code in `apple/FlightdeckKit` (`Voice/`, `Views/VoiceViews.swift`) and the
   A turn that ends in `error` reads "The turn stopped." and the first sentence of the agent's
   last text: the hab sends no error text.
 - **The summary request.** Each spoken prompt ends with a request for a "Spoken summary:" line
-  of two sentences. The chat shows the request on the owner's message. A setting turns it off.
+  of two sentences. The chat view hides it on the owner's message, also while the message is
+  still outgoing. The transcript keeps it, so the TUI shows it. A setting turns the request
+  off.
 - **Send path.** A spoken turn goes through `ChatModel.send` with origin `dictated`, so the send
   gate, "sends after this turn" and the read-back are the composer's.
 - **Approvals.** The app reads the title and the command, muted, then listens. The read-back
-  says paths whole ("home slash work slash build") and names `&&`, `||`, `;` and `|`. It takes
-  "allow", "approve", "deny" and "no" alone, and "allow it", "approve it" and "deny it". "yes"
-  is not an Allow: a stray yes must not run a command. An answer counts only for the request
-  whose read-back finished before the owner spoke: if the request changes while the answer is
+  says paths whole ("home slash work slash build"), names `&&`, `||`, `;` and `|`, reads `~`
+  as "home", `*` as "star" and `$VAR` as "dollar VAR", and reads the value after `=` in an
+  option. It takes "allow", "approve", "yes", "deny" and "no" alone, and "allow it", "approve
+  it" and "deny it". "yes" is an Allow (owner, 2026-11-01), because the answer counts only for
+  the request whose read-back finished before the owner spoke: if the request changes while the answer is
   transcribed, the answer is dropped and the new request is read. A lone "allow" or "deny" in
   an ordinary turn never answers. An unclear answer asks once more, then waits for a tap. Voice
   may Allow only a command of at most 100 characters and 16 words (the banner's body budget,
   16.2), with no command substitution (`$(` or a backtick), or an edit of at most three files;
-  anything else can be denied by voice and allowed by tap. The large
+  anything else can be denied by voice and allowed by tap. Requiring the exact word "allow"
+  will be part of a future Safe level, not a setting now. The large
   approval card's Allow and Deny always work by tap. The answer carries `via: voice`.
 - **Confirm before send.** The waiting text stays until "send" (said alone) or a tap sends it;
   other words replace it.
@@ -1872,6 +1880,8 @@ Code in `apple/FlightdeckKit` (`Voice/`, `Views/VoiceViews.swift`) and the
     none. A device run confirms it, and the footer says when live words are off.
   - A speech that never ends (no voice installed, an engine restart) stops after its expected
     length plus 5 s.
+  - A second window's dictation leaves the audio session as the first window set it (voice
+    mode's echo cancellation stays on).
 
 ---
 
