@@ -83,7 +83,8 @@ func startServe(t *testing.T, sock, state string) *served {
 func startServeWith(t *testing.T, sock, state string, env []string, args ...string) *served {
 	t.Helper()
 	cmd := exec.Command(bin, append([]string{"serve", "-socket", sock, "-state", state, "-host-id", "test-host"}, args...)...)
-	cmd.Env = append(os.Environ(), env...)
+	// The user's own hab config (project roots, the always-on mark) stays out of the test.
+	cmd.Env = append(append(os.Environ(), "GFF_HAB_CONFIG="+filepath.Join(state, "no-hab.toml")), env...)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)

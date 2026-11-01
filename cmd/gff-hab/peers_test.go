@@ -49,14 +49,14 @@ exec ` + bin + ` "$@" -socket "$sock"
 }
 
 // peerHab is a gff-hab serve with its own peer file, reaching its peers through the stand-in.
-func peerHab(t *testing.T, sock, state, peersFile, standIn, hostID string) *served {
+func peerHab(t *testing.T, sock, state, peersFile, standIn, hostID string, args ...string) *served {
 	t.Helper()
 	rt := shortDir(t)
 	return startServeWith(t, sock, state, []string{
 		"PATH=" + standIn + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"GFF_HAB_PEERS=" + peersFile,
 		"XDG_RUNTIME_DIR=" + rt, // the ssh control directory goes here, not the user's
-	}, "-host-id", hostID, "-hook-socket", strings.TrimSuffix(sock, ".sock")+".hook")
+	}, append([]string{"-host-id", hostID, "-hook-socket", strings.TrimSuffix(sock, ".sock") + ".hook"}, args...)...)
 }
 
 func peerList(t *testing.T, sock string) api.PeerList {

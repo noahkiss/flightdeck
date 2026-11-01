@@ -475,6 +475,89 @@ need for a handful of machines.
 - **Agents** read it through the agent kit (Part 4, task-6ho9972u): `gff hosts`, `gff hosts
   <label>`, `gff projects`, the same as MCP tools, and the printed skill (7).
 
+### 5.4 Built choices (task-dyagzrw0)
+
+Package `internal/catalog`, wired into `gff-hab serve`. Capability `catalog`. Methods
+`catalog.get`, `catalog.put` and `catalog.list`; event `catalog.updated`. Example config:
+`docs/examples/hab.toml`. Until the agent kit exists, `gff-hab api call catalog.list` reads the
+merged view.
+
+- **The hab's own config file.** `-config`, else `$GFF_HAB_CONFIG`, else `gff/hab.toml` beside
+  the peer file. Its `[catalog]` section holds `capabilities`, `project_roots` (absolute, or
+  under `~/`), `always_on`, `always_on_alert` (a duration, default 30m), and `[[catalog.services]]`
+  (`name`, `url`, optional `health`) and `[[catalog.actions]]` (`name`, `command`). gff-hab reads
+  it at start and with every project scan (5 minutes). An entry it cannot use is left out and
+  logged; a file that does not parse keeps the last good section.
+- **The whole catalog per generation.** `catalog.get {since}` returns the whole catalog when the
+  generation differs from `since`, and no catalog when it is equal. A catalog is a few KB, so
+  per-section answers would add a second shape for no real saving. A `since` above the
+  generation (a hab that lost its state) gets the whole catalog too, so the puller replaces its
+  copy.
+- **The generation.** It rises on every change of the built catalog, compared field by field
+  with the last one, not counting the generation and time. It is saved in `<state>/catalog.json`
+  and rises once at each start, so a peer always pulls after a restart.
+- **What is detected.** OS (`os-release` on Linux, `sw_vers` on macOS), arch, cores, memory;
+  `git`, `go`, `node`, `python3`, `rustc`, `docker`, `podman`, and `xcodebuild` on a Mac, each by
+  its own version flag with a 10 s limit; the harnesses `claude`, `codex` and `opencode` the same
+  way. Detected words: `linux` or `macos`, `xcode`, `docker` (Docker or Podman), and `gpu` when
+  `nvidia-smi` is on PATH. Read at start and every hour.
+- **Projects.** The scan walks each project root to depth 3, follows no symbolic link, skips
+  hidden folders, stops at a folder with `.git`, and reads at most 500 folders. It also reads
+  every folder of the structure's projects. Identity is gff-hab's own (`gitIdentity`): the
+  normalized remote of origin, else of the first remote, else the root commit; a folder with
+  neither is left out. Each folder carries branch, head, dirty (`git status --porcelain` with
+  untracked files) and the commit time of HEAD, read with `internal/gitstatus`'s clean
+  environment. Folders of one identity are one project; a structure project of that identity
+  names it. A new project folder from the structure is read on the next change; the rest every
+  5 minutes.
+- **Agents.** Every pane whose agent state is not `exited`, named by its session (an unfiled
+  pane by its pane id), with the project's name and the time its state began.
+- **Peers in the catalog.** The catalog lists the device ids of this hab's peer list
+  (`peers`). The always-on check reads them to find which habs list the marked one.
+- **Exchange.** Every 15 s, and at once when a peer's row changes or the own catalog changes,
+  this hab works each online link it dialed to a peer with `catalog`: it puts its own catalog
+  when that link has not had this generation, then pulls with `since` the generation it holds.
+  A link seen down puts again when it is back, and so does a link whose peer's catalog changed,
+  since a restarted peer may have lost its copy. A pulled catalog must carry the link's device
+  id. `catalog.put` is taken only from a peer link (client kind `hab` with the hello's `peer`)
+  and only for that peer's own device id.
+- **Copies.** One per device id, with the time this hab last confirmed it with the peer
+  (`seen_at`), saved in `catalog.json`. A copy is stale while its peer is not online in
+  `peers.list`. It is dropped when its device id is in neither the peer list nor an open link.
+  A hab that links in without being listed has its copy shown, with no label, while it is linked.
+- **The merged view.** `catalog.list` gives this hab's catalog first, then each listed peer's
+  copy in file order, then those of unlisted linked habs; and the projects grouped by
+  `merge.ProjectKey`, one location per host, each with its folders and the stale mark.
+- **One hop by construction.** `catalog.get` serves only the hab's own catalog, and
+  `catalog.put` refuses another hab's, so no copy travels on.
+- **The always-on alert.** Each round, for each copy marked always on: online clears the alert;
+  otherwise the hab counts from the later of the peer's last seen and the moment this hab's own
+  watch began, which is its start or the end of a sleep (two rounds further apart than three
+  poll periods and than 30 s). Past `always_on_alert`, and when no online peer copy with a lower device
+  id lists the marked hab, it raises one notice through `notice.raise` (level active, "<label>
+  is offline"). One per outage.
+- **`catalog.updated`.** Ephemeral, host scope only, id the device id. Sent when the own
+  catalog or a copy changes, and when a copy is dropped (generation 0).
+
+Not built in this stage:
+
+- The `mesh.changed` wake-up (4.2). The dialer pulls every 15 s instead of 60 s, so a change on
+  the dialed hab reaches it in at most 15 s; a change on the dialer goes out at once.
+- The agent kit (`gff hosts`, `gff projects`, MCP tools; task-6ho9972u, Part 4).
+- GPU models, battery state, Xcode simulators, attached devices, whether hooks are set up, and
+  the embedded server's endpoints.
+- A dirty read on a hook event in that project: dirty state is up to 5 minutes old.
+
+Limits, at the bar of herdr, Rex and Paseo (none of them has a catalog):
+
+- The alert's "online the whole time" is this hab's own process time and sleep gap. A restart of
+  this hab starts the count again, so a host that stays down alerts once more 30 minutes after
+  that restart.
+- The lowest-id rule reads the copies this hab holds, which can be up to one round old. Two habs
+  that each see the other offline (a network split) both alert, as section 8 accepts.
+- Paths and the summary line go to every peer as they are. The peers are the same owner's
+  machines (3.2).
+
 ---
 
 ## 6. Channels

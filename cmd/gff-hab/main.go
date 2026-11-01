@@ -4,7 +4,7 @@
 //
 //	gff-hab serve   [-socket path] [-hook-socket path] [-state dir] [-host-id id] [-holders dir]
 //	                [-scrollback-mib n] [-scrollback-budget-mib n] [-retired-days n] [-peers file]
-//	                [-git-interval d] [-init none|systemd|launchd] [-prefix p] [-unit-dir dir]
+//	                [-git-interval d] [-init none|systemd|launchd] [-prefix p] [-unit-dir dir] [-config file]
 //	gff-hab connect [-socket path]
 //	gff-hab api call [-socket path | -via command] <method> [params-json]
 //	gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
@@ -74,6 +74,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/catalog"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/datastream"
 	"github.com/noahkiss/flightdeck/internal/detect"
@@ -95,7 +96,7 @@ var build = "dev"
 
 const usage = `usage:
   gff-hab serve   [-socket path] [-hook-socket path] [-state dir] [-host-id id] [-holders dir]
-                  [-scrollback-mib n] [-scrollback-budget-mib n] [-retired-days n] [-peers file]
+                  [-scrollback-mib n] [-scrollback-budget-mib n] [-retired-days n] [-peers file] [-config file]
                   [-init none|systemd|launchd] [-prefix p] [-unit-dir dir]
   gff-hab connect [-socket path]
   gff-hab api call [-socket path | -via command] <method> [params-json]
@@ -234,6 +235,7 @@ func serve(args []string) error {
 		build: fs.String("build", "", "launchd: the build directory under <state>/builds this gff-hab runs from (gff-hab install sets it)"),
 	}
 	peersFile := fs.String("peers", "", "peer list file (default: $GFF_HAB_PEERS, else gff/peers.toml in the user config directory)")
+	habConfig := fs.String("config", "", "the hab's config file, with its [catalog] section (default: $GFF_HAB_CONFIG, else gff/hab.toml beside the peer file)")
 	pushConfig := fs.String("push-config", "", "push config file (default: <state>/push.json); $GFF_HAB_PUSH_* override its fields")
 	permWait := fs.Duration("permission-wait", 0, "hold Claude's PermissionRequest hook up to this long for the app's answer; 0 is off (default: $GFF_HAB_PERMISSION_WAIT, else off)")
 	fs.Parse(args)
@@ -301,6 +303,12 @@ func serve(args []string) error {
 		hs = hidingHolders{inner: lk.Structure(), hide: hidden}
 	}
 	var srv atomic.Pointer[control.Server]
+	var cat atomic.Pointer[catalog.Service] // set once the catalog runs; a change pokes it
+	pokeCatalog := func() {
+		if c := cat.Load(); c != nil {
+			c.Poke()
+		}
+	}
 	store, err := structure.Open(structure.Config{
 		Dir:     dir,
 		Holders: hs,
@@ -308,6 +316,7 @@ func serve(args []string) error {
 			if s := srv.Load(); s != nil {
 				s.Publish(e)
 			}
+			pokeCatalog()
 		},
 	})
 	if err != nil {
@@ -334,6 +343,9 @@ func serve(args []string) error {
 			}
 			if st, ok := e.Data.(api.AgentState); ok && pushes != nil && pushes.notifier != nil {
 				pushes.notifier.State(st) // never blocks
+			}
+			if e.Type == api.EventAgentState {
+				pokeCatalog()
 			}
 		},
 		Logf: debugf,
@@ -497,6 +509,10 @@ func serve(args []string) error {
 			if s := srv.Load(); s != nil {
 				s.Publish(structure.Event{Type: api.EventPeerUpdated, ID: p.Label, Data: p})
 			}
+			if c := cat.Load(); c != nil {
+				c.Poke() // the peer ids in the catalog
+				c.Kick() // a link that came up pulls and puts now
+			}
 		},
 		Logf: logger.Printf,
 	})
@@ -505,6 +521,35 @@ func serve(args []string) error {
 	}
 	defer pm.Close()
 	caps = append(caps, peers.Capability)
+	// The catalog (mesh.md 5): this host's facts, projects and agents, and the peers' copies.
+	cpath, err := habConfigPath(*habConfig)
+	if err != nil {
+		return err
+	}
+	host := api.HostInfo{ID: *hostID}
+	cs, err := catalog.New(catalog.Config{
+		Self: key.Fingerprint(), Host: *hostID, State: dir, ConfigPath: cpath,
+		Structure:   func() api.Structure { return agentSource{store: store, agents: agents}.Snapshot(host) },
+		ProjectDirs: store.ProjectDirs,
+		Peers:       catalogPeers{pm},
+		Notify: func(p api.NoticeRaiseParams) {
+			if _, err := pushes.Raise("", p); err != nil {
+				logger.Printf("catalog: notice: %v", err)
+			}
+		},
+		Publish: func(u api.CatalogUpdated) {
+			if s := srv.Load(); s != nil {
+				s.Publish(structure.Event{Type: control.EventCatalogUpdated, ID: u.DeviceID, Data: u})
+			}
+		},
+		Logf: logger.Printf,
+	})
+	if err != nil {
+		return err
+	}
+	defer cs.Close()
+	cat.Store(cs)
+	caps = append(caps, catalog.Capability)
 	if pushes.Enabled() {
 		caps = append(caps, "push")
 	}
@@ -530,6 +575,7 @@ func serve(args []string) error {
 		Permissions: permissionService{perms},
 		Detect:      explain,
 		Peers:       pm,
+		Catalog:     cs,
 		Push:        pushes,
 		Usage:       usageStore,
 	})

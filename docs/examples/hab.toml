@@ -1,0 +1,29 @@
+# Example config for one gff-hab (docs/specs/mesh.md 5.4). Unlike the peer list, it is per host.
+#
+# Pass it with `gff-hab serve -config <file>`, set $GFF_HAB_CONFIG, or copy it to gff/hab.toml
+# in your config directory:
+#   macOS:  ~/Library/Application Support/gff/hab.toml
+#   others: $XDG_CONFIG_HOME/gff/hab.toml, else ~/.config/gff/hab.toml
+#
+# gff-hab reads it at start and every 5 minutes. Every name below is a placeholder.
+
+# The [catalog] section: what this hab adds to its catalog, besides what it detects.
+[catalog]
+# Extra capability words. Detected words (linux, macos, xcode, docker, gpu) need no entry.
+capabilities = ["signing", "printer"]
+# Folders to scan for git projects, to a depth of 3. With none, the catalog lists only the
+# projects gff-hab already has sessions in.
+project_roots = ["~/code"]
+# Mark this host always on. Its peers raise one notification when it stays offline.
+always_on = false
+# How long a peer marked always on stays offline before this hab raises that notification.
+always_on_alert = "30m"
+
+[[catalog.services]]
+name = "docs"
+url = "http://localhost:2799"
+health = "http://localhost:2799/health"
+
+[[catalog.actions]]
+name = "update"
+command = "make update"
