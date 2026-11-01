@@ -23,6 +23,11 @@ func instructionsCmd(args []string, stdout io.Writer) error {
 	fs.Bool("dry-run", true, "print a diff per target and write nothing (the default)")
 	write := fs.String("write", "", "write this one target (claude, codex, opencode or pi); it must be in the config's write list")
 	fs.Parse(args[1:])
+	dryRunGiven := false
+	fs.Visit(func(f *flag.Flag) { dryRunGiven = dryRunGiven || f.Name == "dry-run" })
+	if dryRunGiven && *write != "" {
+		return errors.New("instructions render: -dry-run and -write together; drop one")
+	}
 	if *config == "" {
 		return errors.New("instructions render: no config file; pass -config or set $GFF_CONFIG")
 	}

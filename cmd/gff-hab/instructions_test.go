@@ -58,6 +58,7 @@ func TestInstructionsRenderCLI(t *testing.T) {
 		"--- /dev/null\n+++ " + codex + " (rendered)\n",
 		"+# My rules\n+Keep it short.\n",
 		"skipped missing: " + filepath.Join(dir, "src", "gone.md"),
+		"note: the directory " + filepath.Join(home, ".codex") + " will be created\n",
 		"dry run, nothing written",
 	} {
 		if !strings.Contains(out, want) {
@@ -71,6 +72,14 @@ func TestInstructionsRenderCLI(t *testing.T) {
 		t.Fatalf("the dry run made the state directory: %v", err)
 	}
 
+	for _, args := range [][]string{{"-dry-run", "-write", "codex"}, {"-write", "codex", "-dry-run=false"}} {
+		if out, err := gff(args...); err == nil || !strings.Contains(out, "-dry-run and -write together") {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex")); !os.IsNotExist(err) {
+		t.Fatal("-dry-run with -write wrote the target")
+	}
 	if out, err := gff("-write", "pi"); err == nil || !strings.Contains(out, "not listed in the instructions write list") {
 		t.Fatalf("write of a target not opted in: %v\n%s", err, out)
 	}

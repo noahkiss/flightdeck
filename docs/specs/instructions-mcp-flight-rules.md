@@ -263,7 +263,16 @@ Built (`internal/instructions`, `gff-hab instructions render`):
   file's directory. An unknown key in the table is an error. Project sources are accepted and
   never rendered (D3).
 - **Opt-in is two steps.** `-write <target>` writes only when the `write` list names that
-  target. The default run is the dry run.
+  target. The default run is the dry run. `-dry-run` given with `-write` is an error, so a
+  user who adds `-dry-run` to be safe never gets a write.
+- **Target paths.** A target whose path is not absolute is refused: a relative or `~` value in
+  `CODEX_HOME`, `PI_CODING_AGENT_DIR` or `CLAUDE_CONFIG_DIR` is not expanded, and would
+  otherwise land under the working directory. A relative `XDG_CONFIG_HOME` is ignored, as the
+  XDG spec says. The dry run notes when a write would create the target's directory.
+- **Stale renders.** When a plan offers no write (the user's setup loads the sources, or no
+  source applies) but a file Flightdeck rendered earlier still sits at the target, the dry run
+  warns that the harness still loads it and the user should remove it. For pi it names the
+  user's `CLAUDE.md`, which our `AGENTS.md` hides. There is no remove command yet.
 - **Imports.** Section 5 as written. A link is resolved before the cycle and duplicate checks,
   so a loop through a link is a cycle. One render shares its seen set across its sources: a file
   two sources import is included once. The imports-only mode (5.9) exists in the expander; no
@@ -272,8 +281,11 @@ Built (`internal/instructions`, `gff-hab instructions render`):
 - **Digest.** Each field is length-prefixed before hashing, so two different file lists cannot
   run together into one byte stream.
 - **Claude.** A source that is Claude's global `CLAUDE.md`, or a file in its user rules
-  directory, is left out of the Claude render: Claude loads it and its imports itself. Other
-  harnesses still get it flattened. The Claude directory is `$CLAUDE_CONFIG_DIR`, else
+  directory, is left out of the Claude render: Claude loads it and its imports itself. Before
+  the sources, the Claude render expands those native files (`CLAUDE.md`, then every `.md`
+  under `rules/` except our own target) without output, so a source they import counts as a
+  duplicate and never arrives twice. When nothing is left, the plan is "nothing to render". Other
+  harnesses still get every source flattened. The Claude directory is `$CLAUDE_CONFIG_DIR`, else
   `~/.claude`.
 - **Loader check.** A native file Flightdeck did not write blocks the target (Codex:
   `AGENTS.override.md` or `AGENTS.md`; opencode: its global `AGENTS.md`; pi: any of its three
@@ -283,7 +295,7 @@ Built (`internal/instructions`, `gff-hab instructions render`):
   Directories are read one level deep, files up to 1 MiB.
 - **opencode.** The renderer writes only the state file `<state>/instructions/opencode.md`. It
   does not patch the `instructions` array or probe the installed version yet. The dry run warns
-  until the global config lists the file. The fallback to `~/.config/opencode/AGENTS.md` is not
+  until the global config lists the file (absolute, real or `~/` form). The fallback to `~/.config/opencode/AGENTS.md` is not
   built.
 - **Write.** A symbolic link at the target is refused, so a dotfiles link is never replaced by
   a plain file. The temporary file is owner-only (0600) and synced before the rename. The state

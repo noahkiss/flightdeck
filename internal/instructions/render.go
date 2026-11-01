@@ -51,7 +51,8 @@ func EnvFrom(getenv func(string) string, home, state string) Env {
 		return def
 	}
 	cfg := filepath.Join(home, ".config")
-	if x := getenv("XDG_CONFIG_HOME"); x != "" {
+	if x := getenv("XDG_CONFIG_HOME"); filepath.IsAbs(x) {
+		// The XDG spec says a relative value is ignored.
 		cfg = x
 	}
 	return Env{
@@ -106,6 +107,7 @@ type Plan struct {
 	Digest   string // hex
 	Text     string // the full rendered file, header included
 	Old      string // the file on disk, when there is one
+	NewDir   string // the target's directory, when a write would create it
 	Visits   []Visit
 	Warnings []string
 }
@@ -142,7 +144,25 @@ func (r *Renderer) PlanAll() []Plan {
 
 // Plan renders one harness's target and decides what a write would do.
 func (r *Renderer) Plan(h Harness) Plan {
+	p := r.plan(h)
+	if p.Status != Ready && p.Status != UpToDate && p.Path != "" && staleRendered(p.Path) {
+		// Our earlier render keeps loading even though no write is offered now (review fix 1).
+		w := fmt.Sprintf("%s was rendered by Flightdeck earlier and the harness still loads it; remove it", p.Path)
+		if hidden := r.hiddenBy(h); hidden != "" {
+			w += fmt.Sprintf(": it hides %s", hidden)
+		}
+		p.Warnings = append(p.Warnings, w)
+	}
+	return p
+}
+
+func (r *Renderer) plan(h Harness) Plan {
 	p := Plan{Harness: h, Path: r.Env.TargetPath(h), Enabled: r.Config.writeEnabled(h)}
+	if !filepath.IsAbs(p.Path) {
+		p.Status = Refused
+		p.Reason = "the target path is not absolute; check the harness's directory variable (a relative or ~ value is not expanded)"
+		return p
+	}
 	sources := r.Config.globalSources(h, r.Host)
 	var kept []Source
 	for _, s := range sources {
@@ -163,6 +183,14 @@ func (r *Renderer) Plan(h Harness) Plan {
 	}
 
 	ex := newExpander(r.Env.Home, importHops[h])
+	if h == Claude {
+		// Claude's own files and their imports already reach Claude. Expanding them first
+		// marks every file they reach as seen, so a source they import becomes a duplicate
+		// here instead of arriving twice (review fix 3). Their text is not rendered.
+		for _, f := range r.claudeNativeFiles() {
+			ex.expand(f, false)
+		}
+	}
 	var body strings.Builder
 	for _, s := range kept {
 		text := ex.expand(s.Path, false)
@@ -178,11 +206,18 @@ func (r *Renderer) Plan(h Harness) Plan {
 		}
 	}
 	p.Visits = ex.visits
+	if h == Claude && body.Len() == 0 {
+		p.Status, p.Reason = Nothing, "Claude Code loads these sources itself, through its own files' imports"
+		return p
+	}
 	p.Digest = digest(h, ex.visits)
 	p.Text = header(p.Digest, r.now(), ex.visits) + "\n" + body.String()
 
 	if old, err := os.ReadFile(p.Path); err == nil {
 		p.Old = string(old)
+	}
+	if _, err := os.Stat(filepath.Dir(p.Path)); errors.Is(err, fs.ErrNotExist) {
+		p.NewDir = filepath.Dir(p.Path)
 	}
 	if repo := gitWorkTree(filepath.Dir(p.Path)); repo != "" {
 		p.Warnings = append(p.Warnings, fmt.Sprintf("the target sits inside the git work tree at %s; a rendered file may hold private text", repo))
@@ -396,8 +431,13 @@ func scanFiles(paths []string) []string {
 func (r *Renderer) opencodeListed(target string) string {
 	for _, name := range []string{"opencode.json", "opencode.jsonc"} {
 		data, err := os.ReadFile(filepath.Join(r.Env.OpencodeDir, name))
-		if err == nil && strings.Contains(string(data), target) {
-			return ""
+		if err != nil {
+			continue
+		}
+		for _, n := range pathForms(target, r.Env.Home) {
+			if strings.Contains(string(data), n) {
+				return ""
+			}
 		}
 	}
 	return fmt.Sprintf("opencode loads this file only when its global config lists it in instructions; add %s there", target)
@@ -539,6 +579,9 @@ func (p Plan) Report(w io.Writer) {
 	}
 	fmt.Fprintf(w, "status: %s\n", status)
 	if p.Status == Nothing {
+		for _, warn := range p.Warnings {
+			fmt.Fprintf(w, "warning: %s\n", warn)
+		}
 		return
 	}
 	if p.Enabled {
@@ -559,6 +602,9 @@ func (p Plan) Report(w io.Writer) {
 	if p.Status != Ready {
 		return
 	}
+	if p.NewDir != "" {
+		fmt.Fprintf(w, "note: the directory %s will be created\n", p.NewDir)
+	}
 	old := "/dev/null"
 	if p.Old != "" {
 		old = p.Path
@@ -571,3 +617,66 @@ func (p Plan) Report(w io.Writer) {
 }
 
 func lines(s string) int { return strings.Count(s, "\n") + 1 }
+
+// pathForms is a path as a config file might spell it: absolute, real, and in ~/ form.
+func pathForms(p, home string) []string {
+	out := []string{p}
+	if r := realPath(p); r != p {
+		out = append(out, r)
+	}
+	if home != "" {
+		if rel, err := filepath.Rel(home, p); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+			out = append(out, "~/"+filepath.ToSlash(rel))
+		}
+	}
+	return out
+}
+
+// staleRendered reports whether a plain file Flightdeck rendered sits at path.
+func staleRendered(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	return err == nil && hasHeader(string(data))
+}
+
+// hiddenBy names the user's own file that a rendered target hides from the harness, or "".
+// Only pi has one: its AGENTS.md wins over a CLAUDE.md in the same directory.
+func (r *Renderer) hiddenBy(h Harness) string {
+	if h != Pi {
+		return ""
+	}
+	f := filepath.Join(r.Env.PiDir, "CLAUDE.md")
+	if data, err := os.ReadFile(f); err == nil && len(strings.TrimSpace(string(data))) > 0 && !hasHeader(string(data)) {
+		return f
+	}
+	return ""
+}
+
+// claudeNativeFiles lists the files Claude Code loads by itself at user scope: its CLAUDE.md,
+// then every .md under its rules directory, by name, leaving out Flightdeck's own target.
+func (r *Renderer) claudeNativeFiles() []string {
+	var out []string
+	if f := filepath.Join(r.Env.ClaudeDir, "CLAUDE.md"); fileExists(f) {
+		out = append(out, f)
+	}
+	target := r.Env.TargetPath(Claude)
+	var rules []string
+	filepath.WalkDir(filepath.Join(r.Env.ClaudeDir, "rules"), func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !d.IsDir() && strings.HasSuffix(p, ".md") && p != target {
+			rules = append(rules, p)
+		}
+		return nil
+	})
+	return append(out, rules...)
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
