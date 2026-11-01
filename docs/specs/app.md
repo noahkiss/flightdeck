@@ -507,21 +507,37 @@ The terminal view and its data-stream client. Code in `apple/FlightdeckKit/Sourc
   Proof: a scripted byte stream with four drops ends with the exact output, one snapshot and
   nothing trimmed (`PaneStreamTests`), and the same over a real hab (`LiveTerminalTests`).
 - **Snapshot.** The view resets libghostty (RIS, then the scrollback cleared) and feeds the
-  `snapshot-vt` bytes. One surface lives as long as the view.
+  `snapshot-vt` bytes. One surface lives as long as the view. The hab sends a resync's snapshot
+  before its resize frame; when a resize frame changes the size before any bytes follow, the view
+  draws the snapshot again at the new size.
+- **Hidden and shown again.** A view that disappears (a push on top, a tab switch) closes its
+  stream. When it comes back it opens a new one from the offset it applied: its screen is kept,
+  so the hab sends only what was missed, or a snapshot.
+- **Background.** The fleet keeps the open terminal views (`TerminalRegistry`). When the app goes
+  to the background it closes their data connections before the control connections, and no
+  stream retries; in the foreground the streams that were open resume by offset.
 - **Grid equals the PTY.** The surface is laid out at the pane's size in cells, plus half a cell
   so rounding never loses a column, then scaled to fit the view. Output waits until libghostty
   reports that grid and it has held still for 100 ms: libghostty reports a new grid before its
   parser has resized. More than 4 MiB of held output is dropped and a `pane.redraw` snapshot asked
   for instead.
 - **Size rule.** The view's space only gives the size this client wants. It goes out with
-  `pane.set_desired_size` only while this client owns the pane, 120 ms after the last change.
+  `pane.set_desired_size` only while this client owns the pane, 120 ms after the last change. The
+  view reads its client id again on every welcome and resize frame, since a control reconnect
+  without the token gives it a new one.
   Typing takes ownership through the hab's 300 ms debounce, so the app sends nothing extra
   before it. Viewing, rotating and window resizes never send a size. "Fit to this screen" sends
   `pane.take`. Pinch zoom with horizontal pan is not built yet.
-- **Input.** Everything libghostty writes goes to `pane.input` through one pump: one call in
-  flight, keys typed meanwhile sent together in the next call, in order. libghostty's replies to
-  queries the hab leaves in the stream (OSC 52 clipboard, `CSI 14 t`, `CSI 16 t`) are dropped,
-  and focus reports pass only while this client owns the pane.
+- **Input.** What libghostty writes goes to `pane.input` through one pump: one call in flight,
+  keys typed meanwhile sent together in the next call, in order, at most 1 MiB per call.
+  libghostty's replies to queries the hab leaves in the stream are dropped: OSC 52, colour and DCS
+  replies, device attributes, mode, keyboard flag, device status and size reports. A cursor
+  position report looks like a modified F3, so it passes only from the owner.
+- **Viewing never takes the size.** Any input from a client that does not own the pane takes the
+  size after the debounce (`hab-logic-api.md` 6.2). So while this client does not own the pane,
+  mouse motion, the mouse wheel and focus reports are dropped. Clicks and keys pass: they are meant
+  as input. A wheel in a viewed mouse-mode program therefore does nothing until this client types or
+  presses "Fit to this screen".
 - **Keyboard.** Hardware keys reach libghostty's view directly on iPad and Mac; the app adds no
   key shortcuts in the terminal. The phone uses libghostty-spm's keyboard bar: Esc, Tab, Ctrl and
   Alt (one tap for one key, a double tap locks), arrows, a few symbols and Paste. Owner-added keys,

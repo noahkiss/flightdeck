@@ -10,6 +10,7 @@ public struct TerminalScreen: View {
     @State private var model: TerminalModel
     @Environment(\.displayScale) private var displayScale
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.terminals) private var terminals
 
     public init(pane: String, connection: HabConnection) {
         _model = State(initialValue: TerminalModel(pane: pane, connection: connection))
@@ -39,13 +40,17 @@ public struct TerminalScreen: View {
             model.surfaceChanged(m, displayScale: displayScale)
         }
         .onAppear {
+            terminals?.add(model)
             model.start()
             #if os(macOS)
             // Focus only routes keys here; it sends nothing until a key is typed.
             model.view.requestFocus()
             #endif
         }
-        .onDisappear { model.stop() }
+        .onDisappear {
+            terminals?.remove(model)
+            model.stop()
+        }
         .toolbar {
             ToolbarItemGroup {
                 Button {

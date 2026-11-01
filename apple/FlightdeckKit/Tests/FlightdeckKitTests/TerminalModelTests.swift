@@ -195,6 +195,47 @@ final class TerminalModelTests: XCTestCase {
         m.stop()
     }
 
+    /// In the background the fleet closes every terminal's data connection
+    /// with the control connections; the foreground resumes it by offset.
+    func testBackgroundClosesDataConnections() async throws {
+        let hab = FakeHab(hostID: "box")
+        await hab.terminals.add("%1")
+        let fleet = Fleet()
+        let conn = HabConnection(id: "h", transport: hab.transport(), timing: fastTiming(), clientLabel: "phone")
+        fleet.add(conn, label: nil)
+        await fleet.setActive(true)
+        await eventually("online") { await conn.state.status == .online }
+        let m = model("%1", conn)
+        fleet.terminals.add(m)
+        m.start()
+        await eventually("live") { m.status == .live }
+        await hab.terminals.write("%1", Data("before".utf8))
+        let first = await hab.terminals.end("%1")
+        try await Task.sleep(for: .milliseconds(100))
+
+        await fleet.setActive(false)
+        await eventually("data closed") { await hab.terminals.dataConnectionCount == 0 }
+        await eventually("nothing open") { fleet.openStreams() == 0 }
+        try await Task.sleep(for: .milliseconds(300))
+        let tickets = await hab.terminals.hellos.count
+        XCTAssertEqual(tickets, 1, "no retries while in the background")
+
+        await fleet.setActive(true)
+        await eventually("data open", timeout: 5) { await hab.terminals.dataConnectionCount == 1 }
+        await eventually("live again") { m.status == .live }
+        let hellos = await hab.terminals.hellos
+        XCTAssertEqual(hellos.last ?? nil, first)
+
+        // A view that disappeared is not reopened by the foreground.
+        fleet.terminals.remove(m)
+        m.stop()
+        await fleet.setActive(false)
+        await fleet.setActive(true)
+        try await Task.sleep(for: .milliseconds(200))
+        let open = await hab.terminals.dataConnectionCount
+        XCTAssertEqual(open, 0)
+    }
+
     func testExitShowsStatus() async throws {
         let hab = FakeHab(hostID: "box")
         await hab.terminals.add("%1")

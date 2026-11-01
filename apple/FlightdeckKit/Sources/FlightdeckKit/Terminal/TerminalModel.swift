@@ -45,6 +45,7 @@ public final class TerminalModel {
     @ObservationIgnored private let flags = Flags()
     @ObservationIgnored private var sizeTask: Task<Void, Never>?
     @ObservationIgnored private var started = false
+    @ObservationIgnored private var suspended = false
     /// libghostty's grid as it last reported it.
     @ObservationIgnored private var grid: (cols: Int, rows: Int)?
     @ObservationIgnored private var gridSettled = false
@@ -144,6 +145,7 @@ public final class TerminalModel {
     /// from the last applied offset: the screen is still here, so the hab sends
     /// only what was missed, or a snapshot.
     public func start() {
+        suspended = false
         guard !started else { return }
         started = true
         generation += 1
@@ -155,9 +157,24 @@ public final class TerminalModel {
         Task { await s.start(from: from, apply: apply) }
     }
 
+    /// Background: closes the stream of a visible view, to open it again on
+    /// `resume`.
+    public func suspend() {
+        guard started else { return }
+        stop()
+        suspended = true
+    }
+
+    /// Foreground: opens the stream that `suspend` closed.
+    public func resume() {
+        guard suspended else { return }
+        start()
+    }
+
     /// Closes the data stream: the view is hidden, or the app went to the
     /// background. `start` resumes it.
     public func stop() {
+        suspended = false
         guard started else { return }
         started = false
         sizeTask?.cancel()

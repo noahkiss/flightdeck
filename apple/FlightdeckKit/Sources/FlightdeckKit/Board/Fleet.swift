@@ -13,6 +13,8 @@ public final class Fleet {
     /// Demo or test habs kept alive with the fleet.
     public var keepAlive: [AnyObject] = []
     public private(set) var isActive = false
+    /// Open terminal views; their data connections follow the lifecycle too.
+    public let terminals = TerminalRegistry()
 
     private var consumers: [Task<Void, Never>] = []
     private var windows = 0
@@ -74,7 +76,9 @@ public final class Fleet {
                 log.info("foreground: connecting \(self.connections.count) habs")
                 for c in connections { await c.start() }
                 for c in connections { await c.retryNow() }
+                terminals.setActive(true)
             } else {
+                terminals.setActive(false)
                 for c in connections { await c.stop() }
                 // iOS may suspend the app before the delayed check runs, so log the count now too.
                 log.notice("background: closed \(self.connections.count) habs, \(self.openStreams()) open streams")
