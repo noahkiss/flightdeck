@@ -1599,7 +1599,7 @@ stage that fills it.
 | `session.interrupt {session}` | Stop the current turn through the adapter (the chat view's Stop button) |
 | `chat.page {session, before?, limit}` | Read a page of chat messages from the transcript reader |
 | events for chat | Chat messages appended or updated while subscribed |
-| `session.send {session, text, attachments?, origin, idempotency_key?}` | Send a message through the adapter under the input rules of 4.2. A retry with the same `idempotency_key` delivers once (`hab-logic-api.md` 3.9). `attachments` lists ids from `attachment.put`. `origin` is typed, dictated or voice, for the hab's log only |
+| `session.send {session, text, attachments?, origin, idempotency_key?}` | Send a message through the adapter under the input rules of 4.2. A retry with the same `idempotency_key` delivers once; the app sends a key only to a hab whose welcome lists `idempotency-keys` (`hab-logic-api.md` 3.9). `attachments` lists ids from `attachment.put`. `origin` is typed, dictated or voice, for the hab's log only |
 | `attachment.put {session, name, type, size, sha256}` | Start an upload (4.4). The bytes follow on their own channel of the same SSH connection. Returns `{id, path}` once the hash matches; refuses a file over the hab's limit |
 | `attachment.get {id, thumbnail?}` | Fetch an attachment or its thumbnail, for the chat view on any device |
 | event `session.turn_end {session, final_message?}` | The turn ended; names the final agent message. Voice mode reads it aloud (13.2) |

@@ -199,4 +199,6 @@ var Translators = map[int]Translator{}
 // command.* methods and the command.updated event work (spec 2.5). "permissions" means
 // hab.permissions works (macos-identity.md 7.2). "mesh" means the hab keeps a peer list and
 // serves peer links, the peers.* methods and the peer.updated event (mesh.md 4.2).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh"}
+// "idempotency-keys" means the hab honours idempotency_key on session.create and session.send
+// (spec 3.9); a client sends keys only to a hab that lists it.
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys"}

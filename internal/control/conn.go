@@ -720,7 +720,7 @@ func (c *conn) handleAgent(m message) {
 		var err error
 		if m.Method == "session.send" {
 			key, bare := send.IdempotencyKey, send
-			bare.IdempotencyKey = ""
+			bare.IdempotencyKey, bare.Origin = "", "" // a retry may be typed where the first was dictated
 			_, e := c.s.idem(ctx, m.Method, key, bare, func() (any, *Error) {
 				if err := c.s.cfg.Agents.Send(ctx, c.clientID, send); err != nil {
 					return nil, actionErr(m.Method, err)
@@ -1075,7 +1075,7 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
 		defer cancel()
 		key, bare := p.IdempotencyKey, p
-		bare.IdempotencyKey = ""
+		bare.IdempotencyKey, bare.Cols, bare.Rows = "", 0, 0 // a retry may come from a rotated screen
 		res, e := c.s.idem(ctx, m.Method, key, bare, func() (any, *Error) {
 			session, pane, err := c.s.cfg.Actions.CreateSession(ctx, p)
 			if err != nil {

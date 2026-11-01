@@ -22,7 +22,8 @@
     "host-stats",
     "commands",
     "permissions",
-    "mesh"
+    "mesh",
+    "idempotency-keys"
   ],
   "methods": [
     {

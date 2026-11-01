@@ -607,7 +607,9 @@ The schema lives in `api/` (layout and commands: `docs/layout.md`). Built choice
 ### 3.4 Capabilities
 
 Capability strings name optional features: `data-streams`, `snapshot-vt`, `snapshot-ghostty`,
-`agent-state`, `transcripts`, `devices`, `push`, `host-stats`, `mesh`. `mesh` means the hab keeps
+`agent-state`, `transcripts`, `devices`, `push`, `host-stats`, `mesh`, `idempotency-keys`.
+`idempotency-keys` means the hab honours `idempotency_key` on `session.create` and
+`session.send` (3.9). `mesh` means the hab keeps
 a peer list and serves peer links, `peers.list`, `peers.accept` and `peer.updated` (`mesh.md` 4).
 `devices` means the embedded SSH
 server is on and the `devices.*` methods work. `push` means the hab has working push config;
@@ -616,7 +618,7 @@ feature. Capabilities are for features that a host may
 lack. They are not a second versioning scheme.
 
 Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt` and
-`transcripts`. It always sends `mesh`. It sends `push` only when its push config loads and validates
+`transcripts`. It always sends `mesh` and `idempotency-keys`. It sends `push` only when its push config loads and validates
 (3.9, Push).
 
 ### 3.5 Events, seq and epoch
@@ -911,9 +913,13 @@ after Paseo). A phone that loses its connection mid-call cannot tell whether the
 a key it sends the same call again, and the hab runs it at most once. Built choices:
 
 - **Field.** `session.create` and `session.send` take an optional `idempotency_key`, a string
-  of at most 128 bytes the client makes per request (a random UUID will do). A longer key
-  answers `invalid`. No key: the call runs every time, as before. The field is additive
-  (3.3); the results are unchanged, so no golden file changes.
+  of at most 128 bytes. A key must be unique on the hab, such as a random UUID made per
+  request: two clients with counter-style keys would collide. A longer key answers `invalid`.
+  No key: the call runs every time, as before. The field is additive (3.3); the results are
+  unchanged, so no golden file changes.
+- **Capability.** Every welcome lists `idempotency-keys` (3.4). A hab built before keys ignores
+  the field as an unknown optional one (3.3), so a client sends keys, and retries on the
+  strength of them, only to a hab that lists the capability.
 - **Scope.** One table per hab, shared by every connection, because a client that reconnects
   after the grace period gets a new `client_id` (3.7). Keys are per method: the same string on
   `session.create` and `session.send` is two keys.
@@ -921,22 +927,29 @@ a key it sends the same call again, and the hab runs it at most once. Built choi
   `session` and `pane` ids for a create, success for a send. Its `seq` is the repeat's own
   (3.5). A create's size ownership (6.5) stays with the first caller.
 - **A repeat while the first call runs** waits for it and gets its answer, result or error.
-  It waits at most the action timeout (30 s), then answers `unavailable`; the first call goes
-  on.
+  Each caller gets its own copy of an error, since each reply carries its own `seq`. It waits
+  at most the action timeout (30 s), then answers `unavailable`; the first call goes on.
 - **A failed call is forgotten.** An error answer stores nothing, so a retry with the same
   key runs again. A send refused because the agent is busy (`conflict`) is the common case:
-  the app sends the message again at the next `idle` (`app.md` 4.2). A send whose paste
-  reached the program but whose Enter failed would paste twice on a retry; this needs a write
-  to fail between two queued writes, and the agent state check still refuses a busy agent.
-- **Same key, other request.** The hab keeps a SHA-256 hash of the params without the key. A
-  repeat whose params differ answers `conflict` and runs nothing.
+  the app sends the message again at the next `idle` (`app.md` 4.2).
+- **Delivered in part.** A send whose paste was taken but whose Enter failed answers
+  `unavailable` with a hint: the text is in the prompt, press Enter in the terminal or clear
+  the prompt. The hab keeps this answer like a success, so a retry with the same key gets the
+  same error and pastes nothing. To send the text anyway the client makes a new key. A paste
+  write that fails after it reached the program is not told apart from one that never did;
+  its error is forgotten like any other.
+- **Same key, other request.** The hab keeps a SHA-256 hash of the params without the key and
+  without the fields a retry may change: `cols` and `rows` on a create (the phone rotated)
+  and `origin` on a send (typed after it was dictated). A repeat whose other params differ
+  answers `conflict` and runs nothing.
 - **How long.** A key is kept 24 hours after its call succeeded, at most 4096 keys; past that
   the oldest goes first. The app's queued "sends after this turn" go out within that time.
 - **In memory only.** A gff-hab restart forgets every key. A restart lands between a call and
   its answer only rarely, and the client sees a new epoch and takes a fresh snapshot (3.5), so
-  it can see a session its create made. A repeated send after a restart reaches an agent that
-  is already working and is refused with `conflict`. Paseo's creation journal is the bar;
-  persisting the table costs a write per send and buys little more.
+  it can see a session its create made. A repeated send after a restart is refused with
+  `conflict` while the agent still works on the first; once that turn has ended it is
+  delivered again. Paseo's creation journal is the bar; persisting the table costs a write per
+  send, and the window is the few seconds of a restart.
 - **Not built here.** The app and `gff` do not send keys yet; each client adds them with its
   retry path.
 

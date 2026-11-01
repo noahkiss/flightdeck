@@ -370,7 +370,7 @@ func TestNoNullsAndWelcomeFields(t *testing.T) {
 	if res["revision"].(float64) != 1 || res["seq"].(float64) != 0 || res["device_id"] != "SHA256:test" || w["id"] != "a" {
 		t.Fatalf("welcome %v", w)
 	}
-	if caps, ok := res["capabilities"].([]any); !ok || len(caps) != 0 {
+	if caps, ok := res["capabilities"].([]any); !ok || len(caps) != 1 || caps[0] != IdempotencyCapability { // always offered (idem.go)
 		t.Fatalf("capabilities %v", res["capabilities"])
 	}
 	st := send(`{"jsonrpc":"2.0","id":2,"method":"structure.get"}`)

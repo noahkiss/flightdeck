@@ -37,7 +37,22 @@ type Error struct {
 	Code    int
 	Message string
 	Data    api.ErrorData
+
+	partial bool // the call may have taken effect in part; see Partial
 }
+
+// Partial marks an error after which the call may have taken effect in part, such as a
+// session.send whose paste reached the program but whose Enter did not. A call with an
+// idempotency key keeps such an error as it keeps a success: a retry gets the same error and
+// runs nothing (spec 3.9, Idempotency keys).
+func Partial(e *Error) *Error {
+	c := *e
+	c.partial = true
+	return &c
+}
+
+// IsPartial reports whether Partial marked e.
+func (e *Error) IsPartial() bool { return e.partial }
 
 func (e *Error) Error() string {
 	if e.Data.Hint != "" && e.Data.Hint != e.Message {

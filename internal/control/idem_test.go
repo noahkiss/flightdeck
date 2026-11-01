@@ -37,7 +37,7 @@ func (f *countingActions) CreateSession(ctx context.Context, p api.SessionCreate
 		}
 	}
 	if err != nil {
-		return "", "", err
+		return "", "", fresh(err)
 	}
 	return "s-" + string(rune('0'+n)), "p-" + string(rune('0'+n)), nil
 }
@@ -50,21 +50,45 @@ func (f *countingActions) count() int {
 	return f.n
 }
 
-// countingAgents counts sends and answers with err when set.
+// countingAgents counts sends and answers with err when set. While gate is set, each send
+// waits for it to close.
 type countingAgents struct {
-	mu   sync.Mutex
-	sent []string
-	err  error
+	mu      sync.Mutex
+	sent    []string
+	calls   int
+	err     error
+	gate    chan struct{}
+	started chan struct{}
 }
 
-func (f *countingAgents) Send(_ context.Context, _ string, p api.SessionSendParams) error {
+func (f *countingAgents) Send(ctx context.Context, _ string, p api.SessionSendParams) error {
+	f.mu.Lock()
+	f.calls++
+	gate, started := f.gate, f.started
+	f.mu.Unlock()
+	if started != nil {
+		started <- struct{}{}
+	}
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
-		return f.err
+		return fresh(f.err)
 	}
 	f.sent = append(f.sent, p.Text)
 	return nil
+}
+
+func (f *countingAgents) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
 }
 
 func (f *countingAgents) Answer(context.Context, string, api.ApprovalAnswerParams) error { return nil }
@@ -73,6 +97,15 @@ func (f *countingAgents) count() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.sent)
+}
+
+// fresh copies an *Error, as a real service makes a new error per call.
+func fresh(err error) error {
+	if e, ok := err.(*Error); ok {
+		c := *e
+		return &c
+	}
+	return err
 }
 
 func errKind(err error) api.ErrorKind {
@@ -283,5 +316,135 @@ func TestIdempotentKeysExpire(t *testing.T) {
 	}
 	if n := len(s.idemKeys.calls); n > idemMax {
 		t.Errorf("%d keys held, want at most %d", n, idemMax)
+	}
+}
+
+// TestIdempotentInFlightFails: a first call that fails while repeats wait on other connections
+// hands each caller the error. Each connection writes its own seq into the error it encodes,
+// so they must not share one (run with -race). Create and send both.
+func TestIdempotentInFlightFails(t *testing.T) {
+	fa := &countingActions{err: Errorf(api.ErrorKindUnavailable, "no holder"), gate: make(chan struct{}), started: make(chan struct{}, 8)}
+	fg := &countingAgents{err: Errorf(api.ErrorKindConflict, "busy"), gate: make(chan struct{}), started: make(chan struct{}, 8)}
+	h := startHab(t, "", socketPath(t), func(c *Config) { c.Actions = fa; c.Agents = fg })
+	const callers = 4
+	client := func() api.Client {
+		c := dial(t, h.path)
+		hello(t, c, "")
+		return api.Client{Caller: c}
+	}
+	errs := make(chan error, 2*callers)
+	for i := range callers {
+		creator, sender := client(), client() // a create holds its connection's read loop
+		go func() {
+			_, err := creator.SessionCreate(ctx(t), api.SessionCreateParams{IdempotencyKey: "k"})
+			errs <- err
+		}()
+		go func() {
+			_, err := sender.SessionSend(ctx(t), api.SessionSendParams{Session: "s", Text: "t", IdempotencyKey: "k"})
+			errs <- err
+		}()
+		if i == 0 {
+			<-fa.started
+			<-fg.started
+		}
+	}
+	waitFor(t, "the repeats to wait", func() bool {
+		h.srv.idemKeys.mu.Lock()
+		defer h.srv.idemKeys.mu.Unlock()
+		return h.srv.idemKeys.waits == 2*(callers-1)
+	})
+	close(fa.gate)
+	close(fg.gate)
+	kinds := map[api.ErrorKind]int{}
+	for range 2 * callers {
+		kinds[errKind(<-errs)]++
+	}
+	if kinds[api.ErrorKindUnavailable] != callers || kinds[api.ErrorKindConflict] != callers {
+		t.Errorf("error kinds %v, want %d unavailable and %d conflict", kinds, callers, callers)
+	}
+	if n := fa.count(); n != 1 {
+		t.Errorf("%d creates ran, want 1", n)
+	}
+	if n := fg.callCount(); n != 1 {
+		t.Errorf("%d sends ran, want 1", n)
+	}
+}
+
+// TestIdempotentPartial: a send that failed with a Partial error is kept like a success: a
+// retry with the same key gets the same error and runs nothing. Another key runs.
+func TestIdempotentPartial(t *testing.T) {
+	fg := &countingAgents{err: Partial(Errorf(api.ErrorKindUnavailable, "Enter was not sent"))}
+	h := startHab(t, "", socketPath(t), func(c *Config) { c.Agents = fg })
+	c := dial(t, h.path)
+	hello(t, c, "")
+	cl := api.Client{Caller: c}
+	p := api.SessionSendParams{Session: "s", Text: "t", IdempotencyKey: "k"}
+	for i := range 2 {
+		var ce *Error
+		if _, err := cl.SessionSend(ctx(t), p); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindUnavailable || ce.Data.Hint != "Enter was not sent" {
+			t.Fatalf("send %d: %v", i, err)
+		}
+	}
+	p.IdempotencyKey = "k2"
+	if _, err := cl.SessionSend(ctx(t), p); err == nil {
+		t.Error("send with another key succeeded, want the fake's error")
+	}
+	if n := fg.callCount(); n != 2 {
+		t.Errorf("%d sends ran, want 2", n)
+	}
+}
+
+// TestIdempotentRetryMayChange: a retry from a rotated screen (other cols and rows) or typed
+// where the first was dictated (another origin) still matches its key.
+func TestIdempotentRetryMayChange(t *testing.T) {
+	fa := &countingActions{}
+	fg := &countingAgents{}
+	h := startHab(t, "", socketPath(t), func(c *Config) { c.Actions = fa; c.Agents = fg })
+	c := dial(t, h.path)
+	hello(t, c, "")
+	cl := api.Client{Caller: c}
+	first, err := cl.SessionCreate(ctx(t), api.SessionCreateParams{Name: "n", Cols: 40, Rows: 80, IdempotencyKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := cl.SessionCreate(ctx(t), api.SessionCreateParams{Name: "n", Cols: 80, Rows: 40, IdempotencyKey: "k"})
+	if err != nil || again.Session != first.Session || fa.count() != 1 {
+		t.Errorf("rotated retry: %+v, %v; %d creates", again, err, fa.count())
+	}
+	for _, o := range []api.SendOrigin{api.SendOriginDictated, api.SendOriginTyped} {
+		if _, err := cl.SessionSend(ctx(t), api.SessionSendParams{Session: "s", Text: "t", Origin: o, IdempotencyKey: "k"}); err != nil {
+			t.Errorf("send with origin %s: %v", o, err)
+		}
+	}
+	if n := fg.count(); n != 1 {
+		t.Errorf("%d sends ran, want 1", n)
+	}
+}
+
+// TestIdempotencyCapability: every welcome lists idempotency-keys once, whatever the hab's own
+// capabilities.
+func TestIdempotencyCapability(t *testing.T) {
+	for _, caps := range [][]string{nil, {"mesh"}, {IdempotencyCapability}} {
+		h := startHab(t, "", socketPath(t), func(c *Config) { c.Capabilities = caps })
+		w := hello(t, dial(t, h.path), "")
+		n := 0
+		for _, s := range w.Capabilities {
+			if s == IdempotencyCapability {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("hab with %v: welcome capabilities %v", caps, w.Capabilities)
+		}
+	}
+}
+
+// waitFor polls cond for up to 10 s.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); !cond(); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
 	}
 }

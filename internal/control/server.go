@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -234,6 +235,9 @@ func New(cfg Config) *Server {
 	}
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
+	}
+	if !slices.Contains(cfg.Capabilities, IdempotencyCapability) {
+		cfg.Capabilities = append(slices.Clip(cfg.Capabilities), IdempotencyCapability) // idem.go always runs
 	}
 	return &Server{
 		cfg:    cfg,

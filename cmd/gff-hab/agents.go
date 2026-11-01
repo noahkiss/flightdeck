@@ -123,8 +123,13 @@ func (a *agentService) Send(ctx context.Context, client string, p api.SessionSen
 	if err != nil {
 		return agentErr(err)
 	}
-	if err := a.write(ctx, ss.Pane, writes...); err != nil {
-		return err
+	if taken, err := a.writeAll(ctx, ss.Pane, writes...); err != nil {
+		if taken == 0 {
+			return err
+		}
+		// The paste is in the prompt but Enter was not sent: a retry must not paste it again.
+		e := control.Errorf(api.ErrorKindUnavailable, "the message reached the prompt of session %s but Enter was not sent (%v); press Enter in the terminal, or clear the prompt and send again with a new key", p.Session, err)
+		return control.Partial(e)
 	}
 	a.agents.Seen(ss.Pane)
 	a.logf("session %s: message sent (%s, client %s)", p.Session, p.Origin, client)
@@ -271,13 +276,22 @@ func (a *agentService) readBack(ctx context.Context, p api.ApprovalAnswerParams,
 
 // write queues the writes to the pane back to back, then waits for all of them.
 func (a *agentService) write(ctx context.Context, pane string, writes ...[]byte) error {
-	var first error
+	_, err := a.writeAll(ctx, pane, writes...)
+	return err
+}
+
+// writeAll is write, and also reports how many writes in a row, from the first, were taken.
+func (a *agentService) writeAll(ctx context.Context, pane string, writes ...[]byte) (taken int, err error) {
 	for _, wait := range a.input.QueueInputs(ctx, pane, writes...) {
-		if err := wait(); err != nil && first == nil {
-			first = err
+		werr := wait()
+		if werr == nil && err == nil {
+			taken++
+		}
+		if werr != nil && err == nil {
+			err = werr
 		}
 	}
-	return first
+	return taken, err
 }
 
 // holdPermission is the hook server's Holder: it holds a Claude Code or Codex PermissionRequest hook posted
