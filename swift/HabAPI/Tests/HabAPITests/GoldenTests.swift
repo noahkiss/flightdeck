@@ -88,6 +88,7 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.pushRegister)
         result(HabMethods.pushRegisterActivity)
         result(HabMethods.pushUnregister)
+        result(HabMethods.noticeRaise)
         result(HabMethods.usageList)
         result(HabMethods.habStats)
         result(HabMethods.peersList)

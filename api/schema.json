@@ -913,6 +913,13 @@
           }
         },
         {
+          "name": "hide_commands",
+          "description": "True: banners say \"Approval needed\" with no command, and offer no Approve (app.md 16.1).",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
           "name": "kinds",
           "description": "The kinds of push this device wants.",
           "required": true,
@@ -1008,6 +1015,51 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/PushUnregisterParams"
+      }
+    },
+    {
+      "name": "notice.raise",
+      "summary": "Raise a Flightdeck notification: a notice.raised event to subscribers, and a push where push is set up.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "body",
+          "description": "Up to 16 words and 100 characters; shortened the same way.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "level",
+          "description": "Default active.",
+          "schema": {
+            "$ref": "#/components/schemas/NoticeLevel"
+          }
+        },
+        {
+          "name": "session",
+          "description": "The session the notice is about: its project names the banner, and a client watching it gets no push.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "title",
+          "description": "Up to 8 words and 50 characters; a longer title is shortened with an ellipsis.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/NoticeRaised"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/NoticeRaiseParams"
       }
     },
     {
@@ -1334,6 +1386,13 @@
       "summary": "A peer's link state changed; the id is the peer's label (mesh.md 4.3). Host scope only. Ephemeral.",
       "data": {
         "$ref": "#/components/schemas/Peer"
+      }
+    },
+    {
+      "type": "notice.raised",
+      "summary": "A notice was raised (notice.raise); the id is the notice id. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/Notice"
       }
     }
   ],
@@ -2516,6 +2575,92 @@
           "host"
         ]
       },
+      "Notice": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time gff-hab raised it."
+          },
+          "body": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "level": {
+            "$ref": "#/components/schemas/NoticeLevel"
+          },
+          "session": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "level",
+          "at"
+        ]
+      },
+      "NoticeLevel": {
+        "type": "string",
+        "x-known-values": [
+          "passive",
+          "active",
+          "time-sensitive"
+        ]
+      },
+      "NoticeRaiseParams": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "Up to 16 words and 100 characters; shortened the same way."
+          },
+          "level": {
+            "$ref": "#/components/schemas/NoticeLevel",
+            "description": "Default active."
+          },
+          "session": {
+            "type": "string",
+            "description": "The session the notice is about: its project names the banner, and a client watching it gets no push."
+          },
+          "title": {
+            "type": "string",
+            "description": "Up to 8 words and 50 characters; a longer title is shortened with an ellipsis."
+          }
+        },
+        "required": [
+          "title"
+        ]
+      },
+      "NoticeRaised": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The notice id; also the notice.raised event's id."
+          },
+          "pushed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Devices the push goes to. 0 when push is not set up or every device is held by presence."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "id",
+          "pushed"
+        ]
+      },
       "OwnerReason": {
         "type": "string",
         "x-known-values": [
@@ -3137,6 +3282,10 @@
           },
           "environment": {
             "$ref": "#/components/schemas/PushEnvironment"
+          },
+          "hide_commands": {
+            "type": "boolean",
+            "description": "True: banners say \"Approval needed\" with no command, and offer no Approve (app.md 16.1)."
           },
           "kinds": {
             "type": "array",

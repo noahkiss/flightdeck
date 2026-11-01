@@ -93,6 +93,7 @@ var Methods = []Method{
 	{"push.register", "Store an APNs device token for this device. Needs the push capability.", PushRegisterParams{}, Empty{}},
 	{"push.register_activity", "Store a Live Activity token for the session this device tracks. Needs the push capability.", PushActivityParams{}, Empty{}},
 	{"push.unregister", "Drop a push token. Needs the push capability.", PushUnregisterParams{}, Empty{}},
+	{"notice.raise", "Raise a Flightdeck notification: a notice.raised event to subscribers, and a push where push is set up.", NoticeRaiseParams{}, NoticeRaised{}},
 	{"usage.list", "The latest usage reading of each harness account on this hab.", UsageListParams{}, UsageReadings{}},
 	{"hab.stats", "CPU, memory, disk, battery and uptime of the host. Needs the host-stats capability.", HabStatsParams{}, HostStats{}},
 	{"command.list", "Read a page of a pane's shell commands, found by OSC 133 marks (spec 2.5). Needs the commands capability.", CommandListParams{}, CommandList{}},
@@ -127,6 +128,7 @@ var Events = []EventDef{
 	{"usage.updated", "An account's usage reading changed; the id is the account key. Ephemeral.", UsageAccount{}},
 	{"command.updated", "A pane's command started or ended; the id is the pane id (spec 2.5). Ephemeral.", Command{}},
 	{"peer.updated", "A peer's link state changed; the id is the peer's label (mesh.md 4.3). Host scope only. Ephemeral.", Peer{}},
+	{"notice.raised", "A notice was raised (notice.raise); the id is the notice id. Ephemeral.", Notice{}},
 }
 
 // Frames is every data connection frame kind. A frame is the kind byte, a 4-byte big-endian
@@ -168,6 +170,7 @@ var Enums = map[string][]string{
 	"PlanStepStatus":  {"pending", "in_progress", "done"},
 	"PushEnvironment": {"development", "production"},
 	"PushKind":        {"permission", "question", "auth", "error", "done", "usage"},
+	"NoticeLevel":     {"passive", "active", "time-sensitive"},
 	"CommandState":    {"running", "done", "unknown"},
 	// Sets added for the permission check (macos-identity.md 7).
 	"PermissionProcess": {"holder", "hab"},

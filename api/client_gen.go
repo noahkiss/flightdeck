@@ -101,6 +101,12 @@ const (
 )
 
 const (
+	NoticeLevelPassive       NoticeLevel = "passive"
+	NoticeLevelActive        NoticeLevel = "active"
+	NoticeLevelTimeSensitive NoticeLevel = "time-sensitive"
+)
+
+const (
 	OwnerReasonCreate     OwnerReason = "create"
 	OwnerReasonTake       OwnerReason = "take"
 	OwnerReasonRequest    OwnerReason = "request"
@@ -209,6 +215,7 @@ const (
 	EventUsageUpdated   EventType = "usage.updated"
 	EventCommandUpdated EventType = "command.updated"
 	EventPeerUpdated    EventType = "peer.updated"
+	EventNoticeRaised   EventType = "notice.raised"
 )
 
 // DecodeData decodes e.Data into the type its event type names. It returns
@@ -277,6 +284,10 @@ func (e Event) DecodeData() (any, error) {
 		return v, err
 	case EventPeerUpdated:
 		var v Peer
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventNoticeRaised:
+		var v Notice
 		err := json.Unmarshal(e.Data, &v)
 		return v, err
 	}
@@ -500,6 +511,13 @@ func (c Client) PushRegisterActivity(ctx context.Context, params PushActivityPar
 func (c Client) PushUnregister(ctx context.Context, params PushUnregisterParams) (Empty, error) {
 	var result Empty
 	err := c.Caller.Call(ctx, "push.unregister", params, &result)
+	return result, err
+}
+
+// NoticeRaise calls notice.raise. Raise a Flightdeck notification: a notice.raised event to subscribers, and a push where push is set up.
+func (c Client) NoticeRaise(ctx context.Context, params NoticeRaiseParams) (NoticeRaised, error) {
+	var result NoticeRaised
+	err := c.Caller.Call(ctx, "notice.raise", params, &result)
 	return result, err
 }
 

@@ -133,6 +133,10 @@ func (f *filter) pass(e structure.Event) bool {
 			return true
 		}
 		return false
+	case EventNoticeRaised:
+		// A notice about a session goes where the session goes; any other goes to everyone.
+		n, ok := e.Data.(api.Notice)
+		return ok && (n.Session == "" || f.sessions[n.Session])
 	case EventChatMessage:
 		// A chat message names its session; its id is the message id.
 		m, ok := e.Data.(api.ChatMessage)

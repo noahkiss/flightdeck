@@ -1072,6 +1072,89 @@ public struct LinkedPeer: Codable, Sendable, Hashable {
     }
 }
 
+public struct Notice: Codable, Sendable, Hashable {
+    /// RFC 3339 time gff-hab raised it.
+    public var at: String
+    public var body: String?
+    public var id: String
+    public var level: NoticeLevel
+    public var session: String?
+    public var title: String
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case body = "body"
+        case id = "id"
+        case level = "level"
+        case session = "session"
+        case title = "title"
+    }
+
+    public init(at: String, body: String? = nil, id: String, level: NoticeLevel, session: String? = nil, title: String) {
+        self.at = at
+        self.body = body
+        self.id = id
+        self.level = level
+        self.session = session
+        self.title = title
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct NoticeLevel: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let passive = NoticeLevel(rawValue: "passive")
+    public static let active = NoticeLevel(rawValue: "active")
+    public static let timeSensitive = NoticeLevel(rawValue: "time-sensitive")
+}
+
+public struct NoticeRaiseParams: Codable, Sendable, Hashable {
+    /// Up to 16 words and 100 characters; shortened the same way.
+    public var body: String?
+    /// Default active.
+    public var level: NoticeLevel?
+    /// The session the notice is about: its project names the banner, and a client watching it gets no push.
+    public var session: String?
+    /// Up to 8 words and 50 characters; a longer title is shortened with an ellipsis.
+    public var title: String
+
+    enum CodingKeys: String, CodingKey {
+        case body = "body"
+        case level = "level"
+        case session = "session"
+        case title = "title"
+    }
+
+    public init(body: String? = nil, level: NoticeLevel? = nil, session: String? = nil, title: String) {
+        self.body = body
+        self.level = level
+        self.session = session
+        self.title = title
+    }
+}
+
+public struct NoticeRaised: Codable, Sendable, Hashable {
+    /// The notice id; also the notice.raised event's id.
+    public var id: String
+    /// Devices the push goes to. 0 when push is not set up or every device is held by presence.
+    public var pushed: Int
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case pushed = "pushed"
+        case seq = "seq"
+    }
+
+    public init(id: String, pushed: Int, seq: UInt64) {
+        self.id = id
+        self.pushed = pushed
+        self.seq = seq
+    }
+}
+
 /// An open word set: values outside the known list decode and round-trip unchanged.
 public struct OwnerReason: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
@@ -1657,6 +1740,8 @@ public struct PushRegisterParams: Codable, Sendable, Hashable {
     /// The device's key fingerprint (transport.md 5).
     public var deviceId: String
     public var environment: PushEnvironment
+    /// True: banners say "Approval needed" with no command, and offer no Approve (app.md 16.1).
+    public var hideCommands: Bool?
     /// The kinds of push this device wants.
     public var kinds: [PushKind]
     /// APNs device token, hex.
@@ -1665,13 +1750,15 @@ public struct PushRegisterParams: Codable, Sendable, Hashable {
     enum CodingKeys: String, CodingKey {
         case deviceId = "device_id"
         case environment = "environment"
+        case hideCommands = "hide_commands"
         case kinds = "kinds"
         case token = "token"
     }
 
-    public init(deviceId: String, environment: PushEnvironment, kinds: [PushKind], token: String) {
+    public init(deviceId: String, environment: PushEnvironment, hideCommands: Bool? = nil, kinds: [PushKind], token: String) {
         self.deviceId = deviceId
         self.environment = environment
+        self.hideCommands = hideCommands
         self.kinds = kinds
         self.token = token
     }
@@ -2286,6 +2373,8 @@ public enum HabMethods {
     public static let pushRegisterActivity = HabMethod<PushActivityParams, Empty>(name: "push.register_activity")
     /// Drop a push token. Needs the push capability.
     public static let pushUnregister = HabMethod<PushUnregisterParams, Empty>(name: "push.unregister")
+    /// Raise a Flightdeck notification: a notice.raised event to subscribers, and a push where push is set up.
+    public static let noticeRaise = HabMethod<NoticeRaiseParams, NoticeRaised>(name: "notice.raise")
     /// The latest usage reading of each harness account on this hab.
     public static let usageList = HabMethod<UsageListParams, UsageReadings>(name: "usage.list")
     /// CPU, memory, disk, battery and uptime of the host. Needs the host-stats capability.
@@ -2342,6 +2431,8 @@ public enum HabEvent: Sendable, Hashable {
     case commandUpdated(Command)
     /// A peer's link state changed; the id is the peer's label (mesh.md 4.3). Host scope only. Ephemeral.
     case peerUpdated(Peer)
+    /// A notice was raised (notice.raise); the id is the notice id. Ephemeral.
+    case noticeRaised(Notice)
     case unknown(type: String, data: JSONValue)
 
     public init(_ event: Event) throws {
@@ -2362,6 +2453,7 @@ public enum HabEvent: Sendable, Hashable {
         case "usage.updated": self = .usageUpdated(try event.data.decode(UsageAccount.self))
         case "command.updated": self = .commandUpdated(try event.data.decode(Command.self))
         case "peer.updated": self = .peerUpdated(try event.data.decode(Peer.self))
+        case "notice.raised": self = .noticeRaised(try event.data.decode(Notice.self))
         default: self = .unknown(type: event.type, data: event.data)
         }
     }

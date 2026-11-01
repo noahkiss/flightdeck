@@ -47,6 +47,7 @@ type conn struct {
 	seq      uint64
 	revision int
 	kind     api.ClientKind // from hello
+	label    string         // from hello: the label, else the client name
 	sub      *filter        // nil until events.subscribe
 	seeding  bool           // a subscribe is taking its snapshot; events wait in pending
 	pending  []pubEvent     // events that arrived while seeding, in order
@@ -820,6 +821,10 @@ func (c *conn) handleHello(m message) {
 	c.mu.Lock()
 	c.revision = chosen
 	c.kind = p.Client.Kind
+	c.label = p.Label
+	if c.label == "" {
+		c.label = p.Client.Name
+	}
 	c.enqueueLocked(c.encodeReply(m, 0, w, nil))
 	c.mu.Unlock()
 	// A hab that dials this one says who it is (mesh.md 3.2). It counts as a link from that
@@ -905,16 +910,12 @@ const (
 // later names the stage that builds each method this build defines but does not serve yet
 // (spec 3.9). Each answers unavailable with a hint that names it.
 var later = map[string]string{
-	"session.resume":         "Part 4 stage 4 (harness adapters: state and input)",
-	"session.interrupt":      "Part 4 stage 4 (harness adapters: state and input)",
-	"attachment.put":         "Part 6 stage 5 (the app's chat view, images and files)",
-	"attachment.get":         "Part 6 stage 5 (the app's chat view, images and files)",
-	"session.focus":          "Part 6 stage 7 (approvals, push and Live Activity)",
-	"push.register":          "Part 6 stage 7 (approvals, push and Live Activity)",
-	"push.register_activity": "Part 6 stage 7 (approvals, push and Live Activity)",
-	"push.unregister":        "Part 6 stage 7 (approvals, push and Live Activity)",
-	"usage.list":             "Part 4 (adapters that report harness usage)",
-	"hab.stats":              "Part 5 stage 5 (system info)",
+	"session.resume":    "Part 4 stage 4 (harness adapters: state and input)",
+	"session.interrupt": "Part 4 stage 4 (harness adapters: state and input)",
+	"attachment.put":    "Part 6 stage 5 (the app's chat view, images and files)",
+	"attachment.get":    "Part 6 stage 5 (the app's chat view, images and files)",
+	"usage.list":        "Part 4 (adapters that report harness usage)",
+	"hab.stats":         "Part 5 stage 5 (system info)",
 }
 
 // actionErr turns an Actions error into an application error.
@@ -1015,6 +1016,8 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 			return nil, actionErr(m.Method, err)
 		}
 		return api.Empty{Seq: s}, nil
+	case "push.register", "push.register_activity", "push.unregister", "session.focus", "notice.raise":
+		return c.dispatchPush(m, s)
 	case "devices.pair", "devices.list", "devices.revoke":
 		return nil, appErr(api.ErrorKindUnavailable, hintNoDevices, m.Method)
 	case "peers.list":

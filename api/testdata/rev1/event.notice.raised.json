@@ -1,0 +1,24 @@
+{
+  "data": {
+    "at": "at-7",
+    "body": "body-5",
+    "id": "id-3",
+    "level": "time-sensitive",
+    "session": "session-6",
+    "title": "title-4",
+    "x_unknown_field": "later"
+  },
+  "id": "id-10",
+  "revision": 8,
+  "seq": 9,
+  "type": "notice.raised",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

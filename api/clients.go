@@ -188,6 +188,9 @@ type PushRegisterParams struct {
 	Token       string          `json:"token" doc:"APNs device token, hex."`
 	Environment PushEnvironment `json:"environment"`
 	Kinds       []PushKind      `json:"kinds" doc:"The kinds of push this device wants."`
+	// HideCommands is the app's "show commands in notifications" setting turned off (app.md 8.3).
+	// Optional, so an older client registers as before.
+	HideCommands bool `json:"hide_commands,omitempty" doc:"True: banners say \"Approval needed\" with no command, and offer no Approve (app.md 16.1)."`
 }
 
 // PushActivityParams stores a Live Activity token for the session a device tracks.
@@ -201,6 +204,36 @@ type PushActivityParams struct {
 type PushUnregisterParams struct {
 	DeviceID string `json:"device_id"`
 	Token    string `json:"token"`
+}
+
+// --- Notices ---
+
+// NoticeLevel is how strongly a notice interrupts: the push's interruption level.
+type NoticeLevel string
+
+// NoticeRaiseParams raises a Flightdeck notification from a hab event or a local script.
+type NoticeRaiseParams struct {
+	Title   string      `json:"title" doc:"Up to 8 words and 50 characters; a longer title is shortened with an ellipsis."`
+	Body    string      `json:"body,omitempty" doc:"Up to 16 words and 100 characters; shortened the same way."`
+	Level   NoticeLevel `json:"level,omitempty" doc:"Default active."`
+	Session string      `json:"session,omitempty" doc:"The session the notice is about: its project names the banner, and a client watching it gets no push."`
+}
+
+// NoticeRaised answers notice.raise.
+type NoticeRaised struct {
+	Seq
+	ID     string `json:"id" doc:"The notice id; also the notice.raised event's id."`
+	Pushed int    `json:"pushed" doc:"Devices the push goes to. 0 when push is not set up or every device is held by presence."`
+}
+
+// Notice is the data of a notice.raised event.
+type Notice struct {
+	ID      string      `json:"id"`
+	Title   string      `json:"title"`
+	Body    string      `json:"body,omitempty"`
+	Level   NoticeLevel `json:"level"`
+	Session string      `json:"session,omitempty"`
+	At      string      `json:"at" doc:"RFC 3339 time gff-hab raised it."`
 }
 
 // --- Pane activity ---

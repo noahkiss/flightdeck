@@ -8,7 +8,8 @@
 // through Config.Data, pane.input through Config.Input, chat.page through Config.Chat, the size
 // ownership and redraw methods through Config.Size, command.list and command.output through
 // Config.Commands, session.send and approval.answer through Config.Agents, and
-// hab.permissions through Config.Permissions. The devices methods and the calls later
+// hab.permissions through Config.Permissions, and the push methods, session.focus and
+// notice.raise through Config.Push. The devices methods and the calls later
 // stages build answer "unavailable", with a hint that names the stage.
 package control
 
@@ -168,6 +169,7 @@ type Config struct {
 	Agents       Agents      // nil: session.send and approval.answer answer unavailable
 	Permissions  Permissions // nil: hab.permissions answers unavailable
 	Peers        Peers       // nil: peers.list and peers.accept answer unavailable
+	Push         Push        // nil: the push methods, session.focus and notice.raise answer unavailable
 	// ApproversChanged, if set, is called with no lock held after a connection closes or
 	// changes its subscription, so Approvers may have dropped.
 	ApproversChanged func()
