@@ -577,3 +577,34 @@ func TestNotifierFocusSwitch(t *testing.T) {
 		t.Fatalf("after the last session left the screen: %d banners, want 1", n)
 	}
 }
+
+// TestNotifierBackoff: after a rate limit, non-urgent Live Activity updates are skipped until
+// the back-off ends; then they go out again.
+func TestNotifierBackoff(t *testing.T) {
+	r := newNotifierRig(t)
+	r.store.Register("dev-phone", phone, Production, nil, false)
+	r.store.RegisterActivity("dev-phone", "s1", phoneLA)
+	acts := func() int {
+		c := 0
+		for _, q := range r.prod.requests() {
+			if q.Token == phoneLA {
+				c++
+			}
+		}
+		return c
+	}
+	r.prod.replyOnce(phoneLA, 429, "TooManyRequests")
+	r.n.State(state(api.AgentStatusWorking))
+	r.n.Sync()
+	r.n.State(state(api.AgentStatusIdle))
+	r.n.Sync()
+	if n := acts(); n != 1 {
+		t.Fatalf("during the back-off: %d updates, want 1 (the limited one)", n)
+	}
+	r.clock.Add(2 * time.Second)
+	r.n.State(state(api.AgentStatusWorking))
+	r.n.Sync()
+	if n := acts(); n != 2 {
+		t.Fatalf("after the back-off: %d updates, want 2", n)
+	}
+}

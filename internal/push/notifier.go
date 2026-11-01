@@ -89,14 +89,16 @@ type Notifier struct {
 	answers map[string]answer // pane -> answer
 
 	// Owned by the worker goroutine.
-	last     map[string]api.AgentState
-	open     map[string]*sent     // pane -> the approval banner to withdraw
-	laLast   map[string]time.Time // device -> last Live Activity update sent
-	laKey    map[string]string    // device -> the state key of that update
-	settled  map[string]answer    // pane -> the request an answer resolved, seen as resolved now
-	backoff  time.Duration
-	brokenMu sync.Mutex
-	broken   string
+	last    map[string]api.AgentState
+	open    map[string]*sent     // pane -> the approval banner to withdraw
+	laLast  map[string]time.Time // device -> last Live Activity update sent
+	laKey   map[string]string    // device -> the state key of that update
+	settled map[string]answer    // pane -> the request an answer resolved, seen as resolved now
+	backoff time.Duration
+	// backoffUntil: after a rate limit, non-urgent sends are skipped until then.
+	backoffUntil time.Time
+	brokenMu     sync.Mutex
+	broken       string
 }
 
 type answer struct {
@@ -680,11 +682,15 @@ func (n *Notifier) othersBlocked(pane string) int {
 
 // send posts one message and handles APNs's answer: a bad token is dropped from the store, a
 // refused key marks push broken, and a rate limit backs off; urgent messages wait out the
-// back-off and try once more, others are dropped. It reports whether APNs took the message.
+// back-off and try once more, others are dropped, as is every non-urgent message until the
+// back-off ends. It reports whether APNs took the message.
 func (n *Notifier) send(m Message, urgent bool) bool {
 	for attempt := 0; attempt < 2; attempt++ {
 		if n.ctx.Err() != nil {
 			return false // closing: drop it
+		}
+		if !urgent && n.cfg.Now().Before(n.backoffUntil) {
+			return false
 		}
 		ctx, cancel := context.WithTimeout(n.ctx, sendTimeout)
 		err := n.cfg.Sender.Send(ctx, m)
@@ -693,7 +699,7 @@ func (n *Notifier) send(m Message, urgent bool) bool {
 			return false
 		}
 		if err == nil {
-			n.backoff = 0
+			n.backoff, n.backoffUntil = 0, time.Time{}
 			n.setBroken("")
 			return true
 		}
@@ -713,6 +719,7 @@ func (n *Notifier) send(m Message, urgent bool) bool {
 			return false
 		case e.RateLimited():
 			n.backoff = min(max(2*n.backoff, time.Second), time.Minute)
+			n.backoffUntil = n.cfg.Now().Add(n.backoff)
 			if !urgent || attempt > 0 {
 				return false
 			}
