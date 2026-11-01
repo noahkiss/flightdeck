@@ -284,6 +284,24 @@ func (s *Store) reconcile(st *stateFile, live []HolderPane) {
 			events = append(events, Event{PaneDeleted, id, final, api.Deleted{}})
 		}
 	}
+	// A session whose pane was never live here (not live, never saved, no tombstone) was filed
+	// for a spawn that never ran: gff-hab stopped between the record and the spawn
+	// (SessionSpec.NewPane). It goes, and its name is free again.
+	for _, ss := range slices.Clone(s.sessions) {
+		if ss.Pane == "" || s.panes[ss.Pane] != nil || s.buried(ss.Pane) {
+			continue
+		}
+		if _, ok := stored[ss.Pane]; ok {
+			continue
+		}
+		s.sessions = slices.DeleteFunc(s.sessions, func(x *sessionRecord) bool { return x == ss })
+		events = append(events, Event{SessionDeleted, ss.ID, ss.Revision + 1, api.Deleted{}})
+		if p := s.project(ss.Project); p != nil {
+			p.Sessions = slices.DeleteFunc(p.Sessions, func(x string) bool { return x == ss.ID })
+			p.Revision++
+			events = append(events, s.projectEvent(p))
+		}
+	}
 	for _, ss := range s.sessions {
 		if ss.Pane == "" {
 			continue

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -282,6 +283,46 @@ func TestSessionForNewPane(t *testing.T) {
 	}
 	if _, err := s.CreateSession(SessionSpec{Name: "b", Pane: "new-c", NewPane: true}); err != nil {
 		t.Fatalf("the name after a failed spawn: %v", err)
+	}
+}
+
+// TestRestartDropsNeverSpawned: gff-hab stopped between filing a session (NewPane) and its
+// spawn. At the next start the pane is not live, was never saved and has no tombstone, so the
+// session goes and its name is free. A session whose pane was live once and is gone now stays,
+// exited.
+func TestRestartDropsNeverSpawned(t *testing.T) {
+	dir := t.TempDir()
+	h := NewFakeHolder(pane("pa"))
+	s, _ := open(t, dir, h)
+	p, _ := s.CreateProject("app", "r", "")
+	kept, _ := s.CreateSession(SessionSpec{Name: "kept", Project: p.ID, Pane: "pa", Index: -1})
+	ghost, err := s.CreateSession(SessionSpec{Name: "ghost", Project: p.ID, Pane: "never", Index: -1, NewPane: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	h.RemoveQuietly("pa")
+	s2, rec := open(t, dir, h)
+	evs := rec.take()
+	want := []string{"session.deleted:" + ghost.ID, "project.updated:" + p.ID, "session.updated:" + kept.ID, "pane.deleted:pa"}
+	got := types(evs)
+	for _, w := range want {
+		if !slices.Contains(got, w) {
+			t.Fatalf("events %v lack %s", got, w)
+		}
+	}
+	if _, ok := s2.Session(ghost.ID); ok {
+		t.Fatal("the never-spawned session is still there")
+	}
+	if k, ok := s2.Session(kept.ID); !ok || k.State != "exited" {
+		t.Fatalf("the session of a gone pane: %+v %v", k, ok)
+	}
+	if pr, _ := s2.Project(p.ID); !reflect.DeepEqual(pr.Sessions, []string{kept.ID}) {
+		t.Fatalf("project sessions %v", pr.Sessions)
+	}
+	if _, err := s2.CreateSession(SessionSpec{Name: "ghost", Pane: "new", NewPane: true}); err != nil {
+		t.Fatalf("the name after the restart: %v", err)
 	}
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/hook"
+	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
 // spawnDelay widens the window between the holder starting a pane's program and gff-hab
@@ -134,7 +137,7 @@ func TestFailedSpawnLeavesNoSession(t *testing.T) {
 		t.Fatalf("second create with no holder: %s, want unavailable", kind)
 	}
 
-	var seen []string
+	var seen, panes []string
 	var id string
 	for len(seen) < 4 {
 		line := next()
@@ -155,6 +158,7 @@ func TestFailedSpawnLeavesNoSession(t *testing.T) {
 			}
 			if id == "" || seen[len(seen)-1] == "session.deleted" {
 				id = e.ID
+				panes = append(panes, s.Pane)
 			}
 		}
 		if e.ID != id {
@@ -173,4 +177,51 @@ func TestFailedSpawnLeavesNoSession(t *testing.T) {
 	if len(st.Sessions) != 0 || len(st.Panes) != 0 {
 		t.Fatalf("after failed spawns: sessions %+v, panes %+v", st.Sessions, st.Panes)
 	}
+
+	// The attempted panes' tokens were live only while their spawns ran: now they are unknown.
+	secret, _, err := hook.LoadOrCreateKey(filepath.Join(d, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := hook.NewTokens(secret, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(10*time.Second))
+	defer cancel()
+	for _, pane := range panes {
+		u, ok := parseUUID(pane)
+		if !ok {
+			t.Fatalf("pane id %q", pane)
+		}
+		addr := hook.Addr(filepath.Join(d, "run", "hook.sock"), tokens.Token(u))
+		var sent api.ChannelSent
+		err := hook.Call(ctx, addr, "channel.send", api.ChannelSendParams{To: "x", Text: "hi"}, &sent)
+		if err == nil || !strings.Contains(err.Error(), "unknown token") {
+			t.Fatalf("the failed spawn's token: %v, want unknown token", err)
+		}
+	}
+}
+
+// TestNeverSpawnedSessionDropped: gff-hab stopped between filing a session and its spawn, so the
+// state file holds a session whose pane never ran. The next gff-hab drops it at start, and the
+// name is free.
+func TestNeverSpawnedSessionDropped(t *testing.T) {
+	e := newHolderEnv(t, 0)
+	st, err := structure.Open(structure.Config{Dir: e.state, Holders: structure.NewFakeHolder()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateSession(structure.SessionSpec{Name: "ghost", Pane: newUUID().String(), Index: -1, NewPane: true}); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	e.serve()
+	var got api.StructureResult
+	if err := json.Unmarshal([]byte(run(t, "api", "call", "-socket", e.sock, "structure.get")), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Sessions) != 0 {
+		t.Fatalf("sessions after start: %+v", got.Sessions)
+	}
+	t.Cleanup(func() { writeFile(t, filepath.Join(e.work, "end"), "") })
+	createSession(t, e.sock, api.SessionCreateParams{Name: "ghost", Argv: []string{"/bin/sh", "-c", `while [ ! -e "$DIR/end" ]; do sleep 0.05; done`},
+		Env: []string{"PATH=/usr/bin:/bin", "DIR=" + e.work, noRaceExitSleep}})
 }

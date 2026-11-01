@@ -853,7 +853,16 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   first `pane.updated` follows, with `session` already set, so a new session's pane is never
   seen unfiled. If the spawn fails, the hab closes the session again: `session.deleted` (and
   `project.updated`) follow its `session.updated`, the call answers the error, and the name is
-  free. `gff-client.md`
+  free. Only a definite refusal counts as a failed spawn: the holder's spawn-failed, no holder,
+  or a uuid in use. When the answer is lost instead (a timeout, a closed link), the hab looks for
+  the pane in the link and on the holders: if it exists, the program runs, so the session stays
+  and the create succeeds; if not, the session closes as above. A picked name (no `name`) that
+  another create filed first is picked again, at most twice, before the call answers `conflict`.
+  A `session.close` that lands during the spawn closes the record as usual: the create still
+  answers success with the closed session's id, and the new pane is unfiled. A gff-hab that
+  stops between the record and the spawn leaves a session whose pane was never live, never
+  saved and has no tombstone; the next start drops it (`session.deleted`, and the project's
+  `project.updated`), so its name is free. `gff-client.md`
   proposed `command`; `argv` is that command, unparsed. The optional `idempotency_key` makes a
   retried create start one session (Idempotency keys, below).
 - **`session.resume`** takes `{session}` and returns the same ids as `session.create`.

@@ -1161,6 +1161,16 @@ func (l *Link) Pane(u hp.UUID) (PaneStatus, bool) {
 	return p.status(), true
 }
 
+// HolderHas reports whether a connected holder lists pane u, whether or not the link follows it.
+func (l *Link) HolderHas(u hp.UUID) bool {
+	for _, st := range l.client.Panes() {
+		if st.UUID == u {
+			return true
+		}
+	}
+	return false
+}
+
 func (l *Link) pane(u hp.UUID) *pane {
 	l.mu.Lock()
 	defer l.mu.Unlock()

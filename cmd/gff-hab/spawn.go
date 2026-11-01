@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 
+	"github.com/noahkiss/flightdeck/internal/holderclient"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/link"
@@ -21,6 +23,10 @@ type spawner struct {
 	tokens   *hook.Tokens
 	hookSock string    // absolute
 	spawning *spawning // the tokens' known set includes it (livePane)
+	// run starts the pane; nil is lk.Spawn. has reports whether a pane with the uuid exists;
+	// nil asks the link and its holders (paneExists). Unit tests replace both.
+	run func(context.Context, hp.Spawn) (link.PaneStatus, error)
+	has func(hp.UUID) bool
 }
 
 // spawn starts sp.Argv in a new pane on the current holder. A zero sp.UUID gets a random one.
@@ -35,7 +41,33 @@ func (s *spawner) spawn(ctx context.Context, sp hp.Spawn) (link.PaneStatus, erro
 		s.spawning.add(sp.UUID)
 		defer s.spawning.done(sp.UUID)
 	}
+	if s.run != nil {
+		return s.run(ctx, sp)
+	}
 	return s.lk.Spawn(ctx, sp)
+}
+
+// exists reports whether a pane with uuid u exists after a spawn error: the link follows it,
+// or a holder lists it.
+func (s *spawner) exists(u hp.UUID) bool {
+	if s.has != nil {
+		return s.has(u)
+	}
+	if s.lk == nil {
+		return false
+	}
+	if _, ok := s.lk.Pane(u); ok {
+		return true
+	}
+	return s.lk.HolderHas(u)
+}
+
+// spawnRefused reports whether a spawn error is a definite refusal, after which no pane runs: the
+// holder answered spawn-failed, no holder runs, or the uuid is taken. Any other error (a
+// timeout, a closed link or connection) leaves open whether the holder started the program.
+func spawnRefused(err error) bool {
+	var re *holderclient.RequestError
+	return errors.As(err, &re) || errors.Is(err, holderclient.ErrNoHolder) || errors.Is(err, link.ErrUUIDUsed)
 }
 
 // spawning holds the uuids of panes whose spawn is in flight. The holder starts the program
@@ -95,11 +127,17 @@ func newUUID() hp.UUID {
 // its holder, and not released. A pane the link does not know yet is live while its spawn is in
 // flight (st, which may be nil). With no link it knows no pane.
 func livePane(lk *link.Link, st *spawning) func([16]byte) (string, bool) {
+	if lk == nil {
+		return func([16]byte) (string, bool) { return "", false }
+	}
+	return paneLive(lk.Pane, st)
+}
+
+// paneLive is livePane over a pane lookup. The link's answer wins: a pane it reports lost or
+// gone is refused even while its uuid is in st.
+func paneLive(pane func(hp.UUID) (link.PaneStatus, bool), st *spawning) func([16]byte) (string, bool) {
 	return func(u [16]byte) (string, bool) {
-		if lk == nil {
-			return "", false
-		}
-		ps, ok := lk.Pane(hp.UUID(u))
+		ps, ok := pane(hp.UUID(u))
 		if !ok {
 			if st.has(hp.UUID(u)) {
 				return hp.UUID(u).String(), true

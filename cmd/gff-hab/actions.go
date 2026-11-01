@@ -26,6 +26,9 @@ import (
 const (
 	defaultCols = 80
 	defaultRows = 24
+	// freeNameRetries bounds how often an unnamed create picks its name again when another
+	// create took the picked one first.
+	freeNameRetries = 2
 )
 
 // actions serves session.create and pane.close over the holder link and the structure store.
@@ -152,22 +155,31 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 		paneID = newUUID()
 	}
 	pane := paneID.String()
-	ss, err := a.store.CreateSession(structure.SessionSpec{Name: name, Project: project, Pane: pane, Index: -1, NewPane: true})
+	spec := structure.SessionSpec{Name: name, Project: project, Pane: pane, Index: -1, NewPane: true}
+	ss, err := a.store.CreateSession(spec)
+	// A picked name another create took between freeName and the record: pick again.
+	for try := 0; try < freeNameRetries && p.Name == "" && errors.Is(err, structure.ErrConflict); try++ {
+		spec.Name = a.freeName(filepath.Base(argv[0]))
+		ss, err = a.store.CreateSession(spec)
+	}
 	if err != nil {
 		return "", "", storeErr(err)
 	}
-	st, err := a.sp.spawn(ctx, hp.Spawn{UUID: paneID, Cols: uint16(cols), Rows: uint16(rows), Cwd: cwd, Argv: argv, Env: env})
-	if err != nil {
-		// The program never ran: session.deleted follows the record's session.updated. Its
-		// only error is not_found, when a client closed the session meanwhile.
-		_ = a.store.CloseSession(ss.ID)
-		if errors.Is(err, holderclient.ErrNoHolder) {
-			return "", "", control.Errorf(api.ErrorKindUnavailable, "no holder is running on this host")
+	if _, err := a.sp.spawn(ctx, hp.Spawn{UUID: paneID, Cols: uint16(cols), Rows: uint16(rows), Cwd: cwd, Argv: argv, Env: env}); err != nil {
+		if spawnRefused(err) || !a.sp.exists(paneID) {
+			// The program never ran: session.deleted follows the record's session.updated. Its
+			// only error is not_found, when a client closed the session meanwhile.
+			_ = a.store.CloseSession(ss.ID)
+			if errors.Is(err, holderclient.ErrNoHolder) {
+				return "", "", control.Errorf(api.ErrorKindUnavailable, "no holder is running on this host")
+			}
+			return "", "", control.Errorf(api.ErrorKindUnavailable, "spawn: %v", err)
 		}
-		return "", "", control.Errorf(api.ErrorKindUnavailable, "spawn: %v", err)
+		// The answer was lost (a timeout, a closed link), but the holder started the pane:
+		// the program runs, so its session stays and the create succeeds.
 	}
 	if ocStarted {
-		if err := a.opencode.register(pane, st.UUID); err != nil {
+		if err := a.opencode.register(pane, paneID); err != nil {
 			// The pane runs; only the server path is missing: state, sends and answers wait.
 			a.opencode.logf("opencode: pane %s: %v", pane, err)
 		}
