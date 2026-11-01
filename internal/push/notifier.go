@@ -231,6 +231,16 @@ func (n *Notifier) Focus(client, session string, active bool) {
 	defer n.mu.Unlock()
 	if !active {
 		delete(n.focus[session], client)
+		if len(n.focus[session]) == 0 {
+			delete(n.focus, session)
+		}
+		// The client still shows another session (it switched from this one): it stays in
+		// the foreground. Otherwise the app left the foreground or closed the session.
+		for _, cs := range n.focus {
+			if at, ok := cs[client]; ok && now.Sub(at) < FocusHold {
+				return
+			}
+		}
 		delete(n.active, client)
 		return
 	}

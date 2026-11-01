@@ -185,3 +185,23 @@ func TestServePush(t *testing.T) {
 		t.Fatalf("token file: %v %v", fi, err)
 	}
 }
+
+// TestFocusGoneSession: session.focus with active false for a session that no longer exists
+// is accepted, so the client can clear its focus after a delete; active true still answers
+// not_found.
+func TestFocusGoneSession(t *testing.T) {
+	state := t.TempDir()
+	st, err := structure.Open(structure.Config{Dir: filepath.Join(state, "structure"), Holders: structure.NewFakeHolder()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := newPushService(pushSetup{state: state, getenv: func(string) string { return "" }, logf: t.Logf, publish: func(structure.Event) {}}, st, nil)
+	defer s.Close()
+	if err := s.Focus("c1", api.SessionFocusParams{Session: "gone", Active: false}); err != nil {
+		t.Fatalf("active false for a gone session: %v", err)
+	}
+	if err := s.Focus("c1", api.SessionFocusParams{Session: "gone", Active: true}); errKind(err) != api.ErrorKindNotFound {
+		t.Fatalf("active true for a gone session: %v", err)
+	}
+}

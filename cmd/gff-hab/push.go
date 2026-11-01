@@ -167,9 +167,10 @@ func (s *pushService) Unregister(client string, p api.PushUnregisterParams) erro
 // Focus records the report for the presence tiers, and marks a done session seen.
 func (s *pushService) Focus(client string, p api.SessionFocusParams) error {
 	ss, ok := s.store.Session(p.Session)
-	if !ok {
+	if !ok && p.Active {
 		return control.Errorf(api.ErrorKindNotFound, "session %s does not exist", p.Session)
 	}
+	// active false for a session that is gone still clears the client's focus on it.
 	if p.Active && ss.Pane != "" && s.agents != nil {
 		s.agents.Seen(ss.Pane)
 	}

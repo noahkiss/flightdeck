@@ -553,3 +553,27 @@ func TestNotifierCloseCancels(t *testing.T) {
 		}
 	}
 }
+
+// TestNotifierFocusSwitch: a client that moves from one session to another (true for the new
+// one, then false for the old one) stays in the foreground; false for its last session ends
+// it.
+func TestNotifierFocusSwitch(t *testing.T) {
+	r := newNotifierRig(t)
+	r.store.Register("dev-mac", mac, Production, allKinds, false)
+	r.n.Bind("client-mac", "dev-mac")
+	r.connect("client-mac", true)
+	r.n.Focus("client-mac", "s1", true)
+	r.n.Focus("client-mac", "s2", true)
+	r.n.Focus("client-mac", "s1", false)
+	r.n.State(blocked("r1", "make")) // pane p1 is in session s1, not on screen
+	r.n.Sync()
+	if n := len(asks(r.prod.requests(), mac)); n != 0 {
+		t.Fatalf("the app in the foreground on another session got %d banners", n)
+	}
+	r.n.Focus("client-mac", "s2", false)
+	r.n.State(blocked("r2", "make"))
+	r.n.Sync()
+	if n := len(asks(r.prod.requests(), mac)); n != 1 {
+		t.Fatalf("after the last session left the screen: %d banners, want 1", n)
+	}
+}
