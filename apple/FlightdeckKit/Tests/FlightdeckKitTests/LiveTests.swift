@@ -1,3 +1,4 @@
+import FlightdeckShared
 import Foundation
 import HabAPI
 import XCTest
@@ -54,6 +55,42 @@ final class LiveTests: XCTestCase {
         case .refused, .failed: break
         default: XCTFail("answer to a closed request: \(o)")
         }
+    }
+
+    /// Usage from a real gff-hab (app.md 14). Set `FLIGHTDECK_LIVE_USAGE` to a
+    /// file path: the test creates it, and a script in a hab pane answers by
+    /// posting a Claude status line with the 5h window full, then one with room
+    /// (`gff-hab statusline claude`). The test sees the full window, asks to be
+    /// alerted when free, and gets the alert from the `usage.updated` with room.
+    @MainActor
+    func testLiveUsage() async throws {
+        guard let path = env["FLIGHTDECK_LIVE_SOCKET"], !path.isEmpty,
+              let trigger = env["FLIGHTDECK_LIVE_USAGE"], !trigger.isEmpty else {
+            throw XCTSkip("FLIGHTDECK_LIVE_SOCKET and FLIGHTDECK_LIVE_USAGE not set")
+        }
+        let suite = "flightdeck.live.usage"
+        let d = UserDefaults(suiteName: suite)!
+        d.removePersistentDomain(forName: suite)
+        let n = RecordingNotifier()
+        let fleet = Fleet()
+        let usage = UsageCenter(notifier: n, defaults: d)
+        fleet.usage = usage
+        fleet.add(HabConnection(id: "live", transport: UnixSocketTransport(path: path), clientLabel: "live-test"), label: "live")
+        await fleet.setActive(true)
+        await eventually("online", timeout: 20) { fleet.board.habs.first?.state.status == .online }
+        FileManager.default.createFile(atPath: trigger, contents: Data())
+        let full = { usage.book.accounts.values.first { a in a.windows.contains { $0.name == "5h" && UsageMath.isFull($0) } } }
+        await eventually("a full 5h window", timeout: 20) { full() != nil }
+        let a = try XCTUnwrap(full())
+        let w = try XCTUnwrap(a.windows.first { $0.name == "5h" })
+        XCTAssertTrue(n.posts.contains { $0.id == UsageAlerts.warnID(a.key, "5h") }, "a warning at the limit")
+        XCTAssertTrue(usage.alerts.canAlertWhenFree(w))
+        usage.alerts.alertWhenFree(a, w)
+        XCTAssertEqual(n.posts.last?.at, w.resetsAt)
+        await eventually("room again", timeout: 30) { n.posts.last.map { $0.id == UsageAlerts.freeID(a.key, "5h") && $0.at == nil } ?? false }
+        XCTAssertFalse(usage.alerts.isWaiting(account: a.key, window: "5h"))
+        XCTAssertNotNil(UsageSnapshot.load(d)?.accounts.first { $0.key == a.key })
+        await fleet.setActive(false)
     }
 
     func testLiveSSH() async throws {

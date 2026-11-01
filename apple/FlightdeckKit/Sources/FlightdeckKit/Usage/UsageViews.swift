@@ -312,7 +312,18 @@ struct UsageSheetHost: ViewModifier {
 
     func body(content: Content) -> some View {
         if let center {
-            content.sheet(item: Binding(get: { center.book.presented }, set: { center.book.presented = $0 })) { p in
+            content
+                .task {
+                    // Debug builds only: `-FlightdeckOpenUsage <account key or "all">`
+                    // opens the usage sheet at launch, so a build can be checked with no clicks.
+                    #if DEBUG
+                    if let key = UserDefaults.standard.string(forKey: "FlightdeckOpenUsage"), !key.isEmpty {
+                        try? await Task.sleep(for: .seconds(1))
+                        center.book.present(account: key == "all" ? nil : key)
+                    }
+                    #endif
+                }
+                .sheet(item: Binding(get: { center.book.presented }, set: { center.book.presented = $0 })) { p in
                 UsageSheet(center: center, focus: p.account) { center.book.presented = nil }
             }
         } else {
