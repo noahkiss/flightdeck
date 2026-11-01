@@ -162,6 +162,12 @@ enum ContentText {
     /// The most text one view renders at once.
     static let previewLimit = 256 << 10
 
+    /// A file size as every content label shows it: binary units, so the 256 KiB preview
+    /// limit reads "256 KB", and a chip and a cut line agree.
+    static func size(_ n: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .memory)
+    }
+
     /// The first `limit` bytes as text, cut at a line end, and whether more follows.
     static func preview(_ data: Data, limit: Int = previewLimit) -> (text: String, truncated: Bool) {
         guard data.count > limit else { return (String(decoding: data, as: UTF8.self), false) }

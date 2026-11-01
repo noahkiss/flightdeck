@@ -47,7 +47,7 @@ struct ContentLoader<Content: View>: View {
             case .gone?:
                 ContentPlaceholder(text: "File no longer on the host", symbol: "doc.questionmark")
             case .tooLarge(let n)?:
-                ContentPlaceholder(text: "\(ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .file)): too large to show", symbol: "doc")
+                ContentPlaceholder(text: "\(ContentText.size(n)): too large to show", symbol: "doc")
             case .failed(let e)?:
                 ContentPlaceholder(text: e, symbol: "exclamationmark.triangle")
             }
@@ -199,7 +199,7 @@ struct FileChip: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.title ?? item.name).lineLimit(1)
                 if let s = item.size {
-                    Text(ByteCountFormatter.string(fromByteCount: Int64(s), countStyle: .file))
+                    Text(ContentText.size(s))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -369,10 +369,7 @@ struct DocumentBody: View {
         .textSelection(.enabled)
     }
 
-    /// Binary units, so the 256 KiB preview limit reads "256 KB", not "262 KB".
-    static func size(_ n: Int) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .memory)
-    }
+    static func size(_ n: Int) -> String { ContentText.size(n) }
 
     private func limitLines(_ s: String, _ n: Int?) -> String {
         guard let n else { return s }

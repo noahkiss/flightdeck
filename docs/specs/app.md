@@ -652,7 +652,8 @@ What carries over:
   Text shows its first 256 KiB, cut at a line end, with "Show all", which renders the file as a
   lazy list of 200-line runs. Markdown renders its first 256 KiB; past that a line under it says
   "Showing the first 256 KB of <size>" with "Show all as text", the same lazy list (a whole
-  large file as Markdown would stall the view). Markdown, a diff file's parse and a text file's runs are made
+  large file as Markdown would stall the view). Every content size label (chip, too large, cut
+  line, "Show all") uses binary units, so one file reads the same size everywhere. Markdown, a diff file's parse and a text file's runs are made
   once per file version (the list's version and the byte count); a redraw reuses them. The
   version is the one the shown bytes were loaded for, not the list's newest: while a new version
   loads, the old bytes stay on screen under the old key. Bytes that changed while loading get a
