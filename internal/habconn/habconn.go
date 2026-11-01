@@ -46,6 +46,13 @@ type Transport interface {
 	Dial(ctx context.Context, kind Kind) (io.ReadWriteCloser, error)
 }
 
+// Resetter is a Transport whose streams share a connection that can go stale, such as
+// SSHTransport with connection sharing. Before a reconnect attempt that follows a failed open
+// or a dead link, the Conn calls Reset so the attempt starts a fresh connection.
+type Resetter interface {
+	Reset(ctx context.Context) error
+}
+
 // Errors the package returns.
 var (
 	// ErrClosed: the Conn or PaneStream was closed by its owner.

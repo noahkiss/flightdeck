@@ -14,10 +14,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/control"
 )
 
 // fakeSSHEnv makes the test binary act as ssh: it checks the options the transport must pass,
@@ -136,24 +138,45 @@ var transports = []struct {
 	{"unix", func(t *testing.T, h *fakeHab) Transport { return UnixTransport{Path: h.sock} }},
 	{"pipe", func(t *testing.T, h *fakeHab) Transport { return pipeTransport{h} }},
 	{"ssh-shim", func(t *testing.T, h *fakeHab) Transport {
-		self, err := os.Executable()
-		if err != nil {
-			t.Fatal(err)
-		}
-		return SSHTransport{
-			SSH:    self,
-			Host:   "hab-test",
-			Remote: []string{gffHab(t), "connect", "-socket", h.sock},
-			Env:    append(os.Environ(), fakeSSHEnv+"=1"),
-		}
+		return shimSSH(t, h)
 	}},
 	{"ssh", func(t *testing.T, h *fakeHab) Transport {
 		host := sshHost()
 		if err := exec.Command("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, "true").Run(); err != nil {
 			t.Skipf("key-based ssh to %s is not set up: %v", host, err)
 		}
-		return SSHTransport{Host: host, Remote: []string{gffHab(t), "connect", "-socket", h.sock}}
+		tr := SSHTransport{Host: host, Remote: []string{gffHab(t), "connect", "-socket", h.sock}, ControlDir: sockDir(t)}
+		t.Cleanup(func() { tr.Reset(context.Background()) }) // runs before sockDir's cleanup
+		return tr
 	}},
+}
+
+// shimSSH is SSHTransport with the test binary standing in for ssh, sharing on, its control
+// directory a fresh one.
+func shimSSH(t *testing.T, h *fakeHab) SSHTransport {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return SSHTransport{
+		SSH:        self,
+		Host:       "hab-test",
+		Remote:     []string{gffHab(t), "connect", "-socket", h.sock},
+		ControlDir: sockDir(t),
+		Env:        append(os.Environ(), fakeSSHEnv+"=1"),
+	}
+}
+
+// sockDir returns a fresh control directory short enough for socket paths on macOS, where the
+// temporary directory is too long.
+func sockDir(t *testing.T) string {
+	t.Helper()
+	d, err := os.MkdirTemp("/tmp", "gffc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(d) })
+	return d
 }
 
 var testClient = api.ClientInfo{Name: "habconn-test", Version: "0", Kind: api.ClientKindScript}
@@ -483,13 +506,23 @@ func TestDeadLink(t *testing.T) {
 		t.Fatalf("offline because %v, want a dead link", u.Err)
 	}
 	waitUpdate(t, c, "online", func(u Update) bool { return u.Kind == UpdateOnline })
+	// A dead link may be a shared connection that died: the reconnect resets it first.
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if want := []string{"dial", "reset", "dial"}; !slices.Equal(ft.log, want) {
+		t.Fatalf("transport calls %q, want %q", ft.log, want)
+	}
 }
 
 // freezeTransport wraps streams so that, once frozen, their reads deliver nothing until Close.
+// It is a Resetter and logs each Dial and Reset.
 type freezeTransport struct {
 	inner   Transport
 	mu      sync.Mutex
 	streams []*freezeStream
+	log     []string
+	// onWrite, when set, sees every write before it is sent; it may freeze the transport.
+	onWrite func(p []byte)
 }
 
 func (f *freezeTransport) Dial(ctx context.Context, k Kind) (io.ReadWriteCloser, error) {
@@ -497,11 +530,19 @@ func (f *freezeTransport) Dial(ctx context.Context, k Kind) (io.ReadWriteCloser,
 	if err != nil {
 		return nil, err
 	}
-	s := &freezeStream{ReadWriteCloser: rw, frozen: make(chan struct{}), closed: make(chan struct{})}
+	s := &freezeStream{ReadWriteCloser: rw, f: f, frozen: make(chan struct{}), closed: make(chan struct{})}
 	f.mu.Lock()
 	f.streams = append(f.streams, s)
+	f.log = append(f.log, "dial")
 	f.mu.Unlock()
 	return s, nil
+}
+
+func (f *freezeTransport) Reset(context.Context) error {
+	f.mu.Lock()
+	f.log = append(f.log, "reset")
+	f.mu.Unlock()
+	return nil
 }
 
 func (f *freezeTransport) freeze() {
@@ -515,20 +556,36 @@ func (f *freezeTransport) freeze() {
 
 type freezeStream struct {
 	io.ReadWriteCloser
+	f         *freezeTransport
 	once      sync.Once
 	frozen    chan struct{}
 	closeOnce sync.Once
 	closed    chan struct{}
 }
 
+// Read delivers nothing once frozen, also when the freeze came during a read: what arrives
+// after it is lost, as on a dead link.
 func (s *freezeStream) Read(p []byte) (int, error) {
+	n, err := 0, error(nil)
+	select {
+	case <-s.frozen:
+	default:
+		n, err = s.ReadWriteCloser.Read(p)
+	}
 	select {
 	case <-s.frozen:
 		<-s.closed
 		return 0, net.ErrClosed
 	default:
 	}
-	return s.ReadWriteCloser.Read(p)
+	return n, err
+}
+
+func (s *freezeStream) Write(p []byte) (int, error) {
+	if s.f.onWrite != nil {
+		s.f.onWrite(p)
+	}
+	return s.ReadWriteCloser.Write(p)
 }
 
 func (s *freezeStream) Close() error {
@@ -666,9 +723,133 @@ func TestSSHErrorShown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr := SSHTransport{SSH: self, Host: "hab-test", Env: append(os.Environ(), fakeSSHEnv+"=1", fakeSSHNoKeyEnv+"=1")}
+	tr := SSHTransport{SSH: self, Host: "hab-test", NoSharing: true, Env: append(os.Environ(), fakeSSHEnv+"=1", fakeSSHNoKeyEnv+"=1")}
 	_, err = Connect(testCtx(t), Config{Transport: tr, Client: testClient})
 	if err == nil || !strings.Contains(err.Error(), noKeyMessage) {
 		t.Fatalf("connect error %v, want ssh's message %q", err, noKeyMessage)
+	}
+}
+
+// TestResetBeforeRetry: with sharing on, the attempt after a failed open first tells the
+// shared connection's master to exit, so a master that died in sleep cannot hold the
+// reconnect. Retry starts that attempt at once.
+func TestResetBeforeRetry(t *testing.T) {
+	h := startFakeHab(t)
+	tr := shimSSH(t, h)
+	log := filepath.Join(sockDir(t), "ssh.log")
+	tr.Env = append(tr.Env, fakeSSHLogEnv+"="+log)
+	failed := make(chan struct{}, 1)
+	c := connect(t, tr, func(cfg *Config) {
+		cfg.MinBackoff, cfg.MaxBackoff = time.Hour, time.Hour // only Retry ends the wait
+		cfg.Logf = func(format string, _ ...any) {
+			if strings.HasPrefix(format, "habconn: reconnect:") {
+				select {
+				case failed <- struct{}{}:
+				default:
+				}
+			}
+		}
+	})
+	h.stop()
+	waitUpdate(t, c, "offline", func(u Update) bool { return u.Kind == UpdateOffline })
+	select {
+	case <-failed:
+	case <-time.After(waitLong()):
+		t.Fatal("no failed reconnect")
+	}
+	h.start()
+	c.Retry()
+	waitUpdate(t, c, "online", func(u Update) bool { return u.Kind == UpdateOnline })
+
+	b, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	exit := "-O exit -- hab-test"
+	var kinds []string
+	for _, l := range lines {
+		switch {
+		case strings.HasSuffix(l, exit):
+			if !strings.Contains(l, "ControlPath="+filepath.Join(tr.ControlDir, "%C")) {
+				t.Fatalf("reset without the control path: %s", l)
+			}
+			kinds = append(kinds, "exit")
+		case strings.Contains(l, " connect "):
+			kinds = append(kinds, "connect")
+		default:
+			t.Fatalf("unexpected ssh run: %s", l)
+		}
+	}
+	// The first connect came online, the second failed with the hab down, the third came
+	// online after Retry; only that one follows a failure, so only it is reset first.
+	if want := []string{"connect", "connect", "exit", "connect"}; !slices.Equal(kinds, want) {
+		t.Fatalf("ssh runs %q, want %q", kinds, want)
+	}
+}
+
+// TestRetryWhileOnline: a Retry sent while online is forgotten when a reconnect completes, so
+// it cannot cut the first backoff of a later outage short.
+func TestRetryWhileOnline(t *testing.T) {
+	h := startFakeHab(t)
+	c := connect(t, pipeTransport{h}, nil)
+	c.Retry()
+	h.dropControl()
+	waitUpdate(t, c, "online", func(u Update) bool { return u.Kind == UpdateOnline })
+	if n := len(c.retry); n != 0 {
+		t.Fatalf("%d stale Retry left after the reconnect", n)
+	}
+}
+
+// TestDropDuringCall: the link dies while a call waits for its answer. The call fails with
+// the closed connection instead of hanging, is never sent again, and a call after the
+// reconnect works.
+func TestDropDuringCall(t *testing.T) {
+	h := startFakeHab(t)
+	ft := &freezeTransport{inner: pipeTransport{h}}
+	var sent atomic.Int32
+	ft.onWrite = func(p []byte) {
+		if bytes.Contains(p, []byte(`"method":"structure.get"`)) && sent.Add(1) == 1 {
+			ft.freeze() // the answer to the first call never arrives
+		}
+	}
+	c := connect(t, ft, func(cfg *Config) {
+		cfg.DeadAfter = 300 * time.Millisecond
+		cfg.PingInterval = 100 * time.Millisecond
+	})
+	var r api.StructureResult
+	if err := c.Call(testCtx(t), "structure.get", api.StructureGetParams{}, &r); !errors.Is(err, control.ErrClosed) {
+		t.Fatalf("call across a dead link: %v", err)
+	}
+	waitUpdate(t, c, "online", func(u Update) bool { return u.Kind == UpdateOnline })
+	if err := c.Call(testCtx(t), "structure.get", api.StructureGetParams{}, &r); err != nil {
+		t.Fatalf("call after the reconnect: %v", err)
+	}
+	if n := sent.Load(); n != 2 {
+		t.Fatalf("structure.get sent %d times, want 2: a call was replayed", n)
+	}
+}
+
+// TestPinAcrossReconnect: the first welcome's device id stays pinned across reconnects; a hab
+// that comes back with another id stops the Conn.
+func TestPinAcrossReconnect(t *testing.T) {
+	h := startFakeHab(t)
+	c := connect(t, pipeTransport{h}, nil)
+	h.restart(false) // same id: the reconnect is fine
+	waitUpdate(t, c, "online", func(u Update) bool { return u.Kind == UpdateOnline })
+	h.mu.Lock()
+	h.deviceID = "SHA256:other"
+	h.mu.Unlock()
+	h.restart(false)
+	u := waitUpdate(t, c, "failed", func(u Update) bool { return u.Kind == UpdateFailed })
+	var dc *DeviceChangedError
+	if !errors.As(u.Err, &dc) || dc.Pinned != "SHA256:test" || dc.Got != "SHA256:other" {
+		t.Fatalf("failed with %v, want a device change from SHA256:test to SHA256:other", u.Err)
+	}
+	if _, open := <-c.Updates(); open {
+		t.Fatal("updates still open after the failure")
+	}
+	if !errors.As(c.Err(), &dc) {
+		t.Fatalf("Err %v", c.Err())
 	}
 }

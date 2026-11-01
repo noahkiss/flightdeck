@@ -66,25 +66,27 @@ type fakeHab struct {
 	holder *structure.FakeHolder
 	src    *paneSource
 
-	mu     sync.Mutex
-	dir    string
-	store  *structure.Store
-	srv    *control.Server
-	data   *datastream.Server
-	served chan struct{}
-	conns  map[*trackConn]struct{}
+	mu       sync.Mutex
+	dir      string
+	deviceID string // the next start's device id
+	store    *structure.Store
+	srv      *control.Server
+	data     *datastream.Server
+	served   chan struct{}
+	conns    map[*trackConn]struct{}
 }
 
 func startFakeHab(t *testing.T) *fakeHab {
 	t.Helper()
 	d := shortDir(t)
 	h := &fakeHab{
-		t:      t,
-		sock:   filepath.Join(d, "run", "hab.sock"),
-		holder: structure.NewFakeHolder(structure.HolderPane{ID: testPane, HolderID: "h1", HolderBuild: "test", Cols: 80, Rows: 24}),
-		src:    newPaneSource(),
-		dir:    filepath.Join(d, "state"),
-		conns:  map[*trackConn]struct{}{},
+		t:        t,
+		sock:     filepath.Join(d, "run", "hab.sock"),
+		holder:   structure.NewFakeHolder(structure.HolderPane{ID: testPane, HolderID: "h1", HolderBuild: "test", Cols: 80, Rows: 24}),
+		src:      newPaneSource(),
+		dir:      filepath.Join(d, "state"),
+		conns:    map[*trackConn]struct{}{},
+		deviceID: "SHA256:test",
 	}
 	h.start()
 	t.Cleanup(h.stop)
@@ -107,10 +109,13 @@ func (h *fakeHab) start() {
 		t.Fatal(err)
 	}
 	data := datastream.New(datastream.Config{Source: h.src})
+	h.mu.Lock()
+	deviceID := h.deviceID
+	h.mu.Unlock()
 	srv := control.New(control.Config{
 		Build:        "test",
 		Host:         api.HostInfo{ID: "host-a"},
-		DeviceID:     "SHA256:test",
+		DeviceID:     deviceID,
 		Capabilities: []string{"data-streams", "snapshot-vt"},
 		Source:       st,
 		Data:         dataService{data},

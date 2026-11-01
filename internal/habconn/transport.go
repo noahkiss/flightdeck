@@ -3,11 +3,16 @@ package habconn
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -148,6 +153,10 @@ func (t *tail) String() string {
 // side (docs/specs/hab-logic-api.md 4.2). The user's OpenSSH config, known-hosts files, agent
 // and keys apply unchanged. Why the system ssh and not an in-process client:
 // docs/specs/gff-client.md 11.7.
+//
+// Connection sharing is on unless NoSharing is set: the first stream starts an OpenSSH master
+// with its control socket in ControlDir, and every later stream is a session on that one SSH
+// connection.
 type SSHTransport struct {
 	// Host is the ssh destination: a host alias from the user's config, a name, or user@name.
 	Host string
@@ -159,21 +168,93 @@ type SSHTransport struct {
 	// Remote is the command run on the host. Default `gff-hab connect`. Its words are sent as
 	// they are: the remote shell parses them.
 	Remote []string
-	// ControlDir, when set, turns on OpenSSH connection sharing with control sockets in this
-	// directory, so every stream after the first is a session on one SSH connection. The
-	// directory must exist and be private to the user. Empty: one SSH connection per stream.
+	// ControlDir holds the control sockets. Empty: DefaultControlDir(). Dial creates it with
+	// mode 0700 when it is missing, and refuses one that another user owns, that others may
+	// enter, or whose socket paths would not fit (MaxControlDir).
 	ControlDir string
+	// NoSharing turns connection sharing off: one SSH connection per stream.
+	NoSharing bool
 	// Env, when set, replaces ssh's environment.
 	Env []string
 }
 
-// Args returns the ssh command line for one stream, without the program name.
-func (t SSHTransport) Args() ([]string, error) {
+// MaxControlDir is the longest control directory, in bytes, whose socket paths fit in macOS's
+// 104-byte sun_path with its closing NUL: the directory, a slash, OpenSSH's %C (40 hex
+// characters) and the 17-character suffix of the master's temporary socket. The check applies
+// on every platform, so a setup that works on Linux also works on a Mac.
+const MaxControlDir = 104 - 1 - 1 - 40 - 17
+
+// DefaultControlDir is where the control sockets go when ControlDir is empty: gff/ssh under
+// $XDG_RUNTIME_DIR when that is set and short enough, else gff-ssh-<uid> under /tmp. macOS's
+// own temporary directory is too long for socket paths, so /tmp serves there.
+func DefaultControlDir() string {
+	if rt := os.Getenv("XDG_RUNTIME_DIR"); filepath.IsAbs(rt) {
+		if d := filepath.Join(rt, "gff", "ssh"); len(d) <= MaxControlDir {
+			return d
+		}
+	}
+	return "/tmp/gff-ssh-" + strconv.Itoa(os.Getuid())
+}
+
+// controlDir returns the directory for the control sockets, checked for length only.
+func (t SSHTransport) controlDir() (string, error) {
+	d := t.ControlDir
+	if d == "" {
+		d = DefaultControlDir()
+	}
+	if d != "/" {
+		d = strings.TrimRight(d, "/")
+	}
+	if !filepath.IsAbs(d) {
+		return "", fmt.Errorf("habconn: ssh control directory %q is not an absolute path", d)
+	}
+	if len(d) > MaxControlDir {
+		return "", fmt.Errorf("habconn: ssh control directory %s is %d bytes long; its socket paths would pass the 104-byte limit (at most %d bytes)", d, len(d), MaxControlDir)
+	}
+	return d, nil
+}
+
+// prepareControlDir creates the control directory when it is missing and checks that only
+// this user can reach it: the sockets in it open the SSH connection without a key.
+func (t SSHTransport) prepareControlDir() (string, error) {
+	d, err := t.controlDir()
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(d, 0o700); err != nil {
+		return "", fmt.Errorf("habconn: ssh control directory: %w", err)
+	}
+	fi, err := os.Lstat(d)
+	if err != nil {
+		return "", fmt.Errorf("habconn: ssh control directory: %w", err)
+	}
+	if !fi.IsDir() {
+		return "", fmt.Errorf("habconn: ssh control directory %s is not a directory", d)
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
+		return "", fmt.Errorf("habconn: ssh control directory %s belongs to another user (uid %d)", d, st.Uid)
+	}
+	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
+		return "", fmt.Errorf("habconn: ssh control directory %s has mode %04o; want 0700", d, perm)
+	}
+	return d, nil
+}
+
+// checkHost refuses a destination ssh would read as an option or that holds a space.
+func (t SSHTransport) checkHost() error {
 	if t.Host == "" {
-		return nil, errors.New("habconn: ssh transport has no host")
+		return errors.New("habconn: ssh transport has no host")
 	}
 	if strings.HasPrefix(t.Host, "-") || strings.ContainsAny(t.Host, " \t\r\n") {
-		return nil, errors.New("habconn: ssh host " + t.Host + " is not a destination")
+		return errors.New("habconn: ssh host " + t.Host + " is not a destination")
+	}
+	return nil
+}
+
+// Args returns the ssh command line for one stream, without the program name.
+func (t SSHTransport) Args() ([]string, error) {
+	if err := t.checkHost(); err != nil {
+		return nil, err
 	}
 	args := append([]string{}, t.Options...)
 	args = append(args,
@@ -183,10 +264,14 @@ func (t SSHTransport) Args() ([]string, error) {
 		"-o", "ServerAliveInterval=15", // ssh notices a dead link on idle data streams
 		"-o", "ServerAliveCountMax=3",
 	)
-	if t.ControlDir != "" {
+	if !t.NoSharing {
+		d, err := t.controlDir()
+		if err != nil {
+			return nil, err
+		}
 		args = append(args,
 			"-o", "ControlMaster=auto",
-			"-o", "ControlPath="+strings.TrimRight(t.ControlDir, "/")+"/%C",
+			"-o", "ControlPath="+filepath.Join(d, "%C"),
 			"-o", "ControlPersist=60",
 		)
 	}
@@ -198,15 +283,54 @@ func (t SSHTransport) Args() ([]string, error) {
 	return append(args, remote...), nil
 }
 
+func (t SSHTransport) prog() string {
+	if t.SSH == "" {
+		return "ssh"
+	}
+	return t.SSH
+}
+
 // Dial starts one ssh process.
 func (t SSHTransport) Dial(ctx context.Context, kind Kind) (io.ReadWriteCloser, error) {
 	args, err := t.Args()
 	if err != nil {
 		return nil, err
 	}
-	prog := t.SSH
-	if prog == "" {
-		prog = "ssh"
+	if !t.NoSharing {
+		if _, err := t.prepareControlDir(); err != nil {
+			return nil, err
+		}
 	}
-	return CommandTransport{Argv: append([]string{prog}, args...), Env: t.Env}.Dial(ctx, kind)
+	return CommandTransport{Argv: append([]string{t.prog()}, args...), Env: t.Env}.Dial(ctx, kind)
+}
+
+// Reset tells the shared connection's master to exit (`ssh -O exit`), so the next stream
+// starts a fresh SSH connection. A master whose link died while the machine slept still takes
+// new sessions, and ConnectTimeout does not apply to them; without a reset each reconnect
+// would wait until ssh's own keepalive gave up. With sharing off, Reset does nothing. An error
+// means no master was running, or it did not answer within ctx.
+func (t SSHTransport) Reset(ctx context.Context) error {
+	if t.NoSharing {
+		return nil
+	}
+	if err := t.checkHost(); err != nil {
+		return err
+	}
+	d, err := t.controlDir()
+	if err != nil {
+		return err
+	}
+	args := append([]string{}, t.Options...)
+	args = append(args, "-o", "BatchMode=yes", "-o", "ControlPath="+filepath.Join(d, "%C"), "-O", "exit", "--", t.Host)
+	cmd := exec.CommandContext(ctx, t.prog(), args...)
+	cmd.Env = t.Env
+	var stderr tail
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("habconn: ssh -O exit: %w (%s)", err, msg)
+		}
+		return fmt.Errorf("habconn: ssh -O exit: %w", err)
+	}
+	return nil
 }

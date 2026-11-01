@@ -22,6 +22,7 @@ const (
 	DefaultMinBackoff   = 500 * time.Millisecond
 	DefaultMaxBackoff   = 30 * time.Second
 	DefaultOpenTimeout  = 20 * time.Second
+	resetTimeout        = 5 * time.Second
 )
 
 // Config is what Connect needs. Transport and Client are required.
@@ -167,7 +168,8 @@ func (c *Conn) Err() error {
 }
 
 // Retry cuts a reconnect's backoff short, for a wake from sleep or a network change
-// (gff-client.md 11.5).
+// (gff-client.md 11.5). The attempt it starts resets the transport first (Resetter). A Retry
+// while online is forgotten once a reconnect completes.
 func (c *Conn) Retry() {
 	select {
 	case c.retry <- struct{}{}:
@@ -348,6 +350,10 @@ func (c *Conn) goOnline(s *session, w api.Welcome, st api.Structure) {
 	snap := c.state.structure()
 	c.cur = s.cl
 	close(c.online)
+	select {
+	case <-c.retry: // a Retry from before this connection must not cut the next outage short
+	default:
+	}
 	c.sessions++
 	again := c.sessions > 1
 	panes := make([]*PaneStream, 0, len(c.panes))
@@ -381,7 +387,7 @@ func (c *Conn) run(s *session) {
 		}
 		c.cfg.Logf("habconn: control connection ended: %v", err)
 		c.updates.push(Update{Kind: UpdateOffline, Err: err})
-		s, err = c.reconnect()
+		s, err = c.reconnect(errors.Is(err, errDead))
 		if err != nil {
 			c.mu.Lock()
 			if c.err == nil {
@@ -405,10 +411,12 @@ func (c *Conn) run(s *session) {
 }
 
 // reconnect retries at once, then with backoff and jitter, until it is online, closed, or
-// refused for good.
-func (c *Conn) reconnect() (*session, error) {
+// refused for good. Every attempt after a failed one, and the first when reset is set, resets
+// the transport first.
+func (c *Conn) reconnect(reset bool) (*session, error) {
 	for attempt := 0; ; attempt++ {
 		if attempt > 0 {
+			reset = true
 			t := time.NewTimer(backoff(c.cfg.MinBackoff, c.cfg.MaxBackoff, attempt))
 			select {
 			case <-c.closed:
@@ -424,6 +432,9 @@ func (c *Conn) reconnect() (*session, error) {
 			return nil, ErrClosed
 		default:
 		}
+		if reset {
+			c.reset()
+		}
 		s, err := c.open(context.Background())
 		if err == nil {
 			return s, nil
@@ -433,6 +444,19 @@ func (c *Conn) reconnect() (*session, error) {
 			return nil, p.error
 		}
 		c.cfg.Logf("habconn: reconnect: %v", err)
+	}
+}
+
+// reset drops the transport's shared connection, if it has one.
+func (c *Conn) reset() {
+	r, ok := c.cfg.Transport.(Resetter)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), resetTimeout)
+	defer cancel()
+	if err := r.Reset(ctx); err != nil {
+		c.cfg.Logf("habconn: reset: %v", err)
 	}
 }
 
