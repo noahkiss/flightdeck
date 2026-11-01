@@ -116,6 +116,12 @@ func (p *plist) end() []byte {
 	return p.b.Bytes()
 }
 
+// assoc writes AssociatedBundleIdentifiers: the bundle the job runs from, so macOS attributes the
+// job to it in Login Items and in privacy prompts (TN3179; macos-identity.md 6.1).
+func (p *plist) assoc(id string) {
+	p.args("AssociatedBundleIdentifiers", []string{id})
+}
+
 // common writes the keys both jobs share: the GUI session only (spec 5.3), a working directory,
 // a log file under the state directory, PATH and the locale.
 func (p *plist) common(c Config, log string) {
@@ -136,6 +142,7 @@ func logicPlist(c Config) []byte {
 	p.kb("RunAtLoad", true)
 	p.kb("KeepAlive", true)
 	p.ki("ThrottleInterval", 1)
+	p.assoc(c.HabBundleID)
 	p.common(c, c.logicLog())
 	return p.end()
 }
@@ -155,6 +162,7 @@ func holderPlist(c Config, instance string) []byte {
 	p.kb("AbandonProcessGroup", true)
 	p.ki("ExitTimeOut", 30)
 	p.ki("ThrottleInterval", 1)
+	p.assoc(c.HolderBundleID)
 	p.common(c, c.holderLog(instance))
 	return p.end()
 }
@@ -304,7 +312,20 @@ func (s *launchdStarter) Retire(instance string, pid int) {
 		s.logf("service: %s runs again; its job stays loaded", label)
 		return
 	}
-	s.remove(ctx, instance)
+	if s.remove(ctx, instance) {
+		s.prune()
+	}
+}
+
+// prune removes the build directories no job names any more (spec 4.3 step 7).
+func (s *launchdStarter) prune() {
+	removed, err := pruneBuilds(s.c)
+	if err != nil {
+		s.logf("service: remove unused builds: %v", err)
+	}
+	for _, b := range removed {
+		s.logf("service: removed build %s, which no job names", b)
+	}
 }
 
 // remove unloads the job of a holder with no process, then deletes its plist and its log.
@@ -368,4 +389,5 @@ func (s *launchdStarter) Sweep(ctx context.Context) {
 			}
 		}
 	}
+	s.prune()
 }

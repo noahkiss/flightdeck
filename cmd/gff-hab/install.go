@@ -22,6 +22,8 @@ import (
 // the jobs that install writes find what serve uses.
 type serviceFlags struct {
 	init, prefix, state, holders, socket, unitDir *string
+	// build is serve's -build: the launchd build directory it runs from. Nil elsewhere.
+	build *string
 }
 
 func addServiceFlags(fs *flag.FlagSet, initHelp string) *serviceFlags {
@@ -93,6 +95,9 @@ func (f *serviceFlags) config(in service.Init) (service.Config, error) {
 			return c, err
 		}
 	}
+	if f.build != nil {
+		c.Build = *f.build
+	}
 	return c, nil
 }
 
@@ -125,6 +130,15 @@ func serveStarter(f *serviceFlags, logf func(string, ...any)) (service.Starter, 
 	if err != nil {
 		return nil, err
 	}
+	if in == service.Launchd {
+		// The holder of this build runs from the GFF Holder.app beside this gff-hab's bundle.
+		if c.Build == "" {
+			return nil, errors.New("-init launchd needs -build: the build directory gff-hab install chose (the plist it writes passes it)")
+		}
+		if err := c.LoadBundleIDs(); err != nil {
+			return nil, err
+		}
+	}
 	st, err := service.NewStarter(c, nil, newInstanceID, logf)
 	if err != nil {
 		return nil, err
@@ -139,15 +153,25 @@ func serveStarter(f *serviceFlags, logf func(string, ...any)) (service.Starter, 
 func install(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("install", flag.ExitOnError)
 	sf := addServiceFlags(fs, "init system: systemd or launchd (default: this system's)")
-	habBin := fs.String("hab-bin", "", "gff-hab binary to install (default: this one)")
-	holderBin := fs.String("holder-bin", "", "gff-hab-holder binary to install (default: beside gff-hab, else on PATH)")
+	habBin := fs.String("hab-bin", "", "gff-hab to install; on macOS its GFF Hab.app or the executable in it (default: this one)")
+	holderBin := fs.String("holder-bin", "", "gff-hab-holder to install; on macOS its GFF Holder.app (default: beside gff-hab or its bundle, else on PATH)")
 	dry := fs.Bool("dry-run", false, "print the job files and change nothing")
 	fs.Parse(args)
 	c, err := installConfig(sf)
 	if err != nil {
 		return err
 	}
+	hab, holderSrc, err := sources(*habBin, *holderBin, c.Init)
+	if err != nil && !(*dry && c.Init == service.Systemd) {
+		return err
+	}
 	if *dry {
+		if c.Init == service.Launchd {
+			// The plists name the build directory and bundle ids, which come from the bundles.
+			if _, _, err := service.ResolveBundles(&c, hab, holderSrc); err != nil {
+				return err
+			}
+		}
 		files, err := service.Render(c)
 		if err != nil {
 			return err
@@ -156,10 +180,6 @@ func install(args []string, stdout io.Writer) error {
 			fmt.Fprintf(stdout, "# %s\n%s\n", f.Path, f.Content)
 		}
 		return nil
-	}
-	hab, holderSrc, err := sources(*habBin, *holderBin)
-	if err != nil {
-		return err
 	}
 	return service.Install(context.Background(), c, service.Options{
 		HabSource: hab, HolderSource: holderSrc, Out: stdout,
@@ -212,8 +232,9 @@ func installConfig(sf *serviceFlags) (service.Config, error) {
 }
 
 // sources finds the binaries to install: the flags, else this executable and the holder beside
-// it, else the holder on PATH.
-func sources(hab, holderBin string) (string, string, error) {
+// it, else the holder on PATH. On launchd the holder's default is the GFF Holder.app beside the
+// GFF Hab.app that gff-hab is in.
+func sources(hab, holderBin string, in service.Init) (string, string, error) {
 	if hab == "" {
 		exe, err := os.Executable()
 		if err != nil {
@@ -222,6 +243,13 @@ func sources(hab, holderBin string) (string, string, error) {
 		if hab, err = filepath.EvalSymlinks(exe); err != nil {
 			return "", "", err
 		}
+	}
+	if holderBin == "" && in == service.Launchd {
+		root, err := service.BundleRoot(hab)
+		if err != nil {
+			return "", "", err
+		}
+		holderBin = filepath.Join(filepath.Dir(root), service.HolderBundle)
 	}
 	if holderBin == "" {
 		beside := filepath.Join(filepath.Dir(hab), service.HolderBinary)

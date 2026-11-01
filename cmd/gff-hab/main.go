@@ -198,6 +198,7 @@ func serve(args []string) error {
 		prefix:  fs.String("prefix", "", "job name prefix (default: $GFF_SERVICE_PREFIX, else "+service.DefaultPrefix+")"),
 		unitDir: fs.String("unit-dir", "", "systemd user unit or LaunchAgents directory (default: the user's)"),
 		state:   state, holders: holders, socket: sock,
+		build: fs.String("build", "", "launchd: the build directory under <state>/builds this gff-hab runs from (gff-hab install sets it)"),
 	}
 	fs.Parse(args)
 	logger := log.New(os.Stderr, "gff-hab: ", log.LstdFlags)

@@ -2,9 +2,10 @@
 # Core tests 2 and 13 (docs/testing.md): the init system restarts the logic job, and no program
 # in a pane notices; uninstall removes every file install wrote.
 #
-#   1. Build gff-hab and gff-hab-holder (build A), list every path under the unit directory and
-#      the work directory, and run `gff-hab install` with its own job prefix, a temporary state
-#      directory, holder directory and socket.
+#   1. Build gff-hab and gff-hab-holder (build A; on macOS wrapped into dev helper bundles by
+#      scripts/macos-bundle.sh -dev), list every path under the unit directory and the work
+#      directory, and run `gff-hab install` with its own job prefix, a temporary state directory,
+#      holder directory and socket.
 #   2. Start a long-running child in a pane through session.create. The child writes its pid, its
 #      environment and a rising count, and prints a line every 0.1 s. Its environment has TERM,
 #      COLORTERM and a locale, and none of the init system's job variables.
@@ -13,9 +14,10 @@
 #      child has the same pid, its count still rises, its pane's output offset still grows, and
 #      exactly one holder is registered.
 #   4. Build B, install it over A, and check again: the child stays on A's holder, B's gff-hab
-#      starts a holder of its own build, and a new pane lands there.
+#      starts a holder of its own build, and a new pane lands there. On macOS each build runs
+#      from its own bundle copy in <state>/builds, and A's stays while its holder runs.
 #   5. End the child. A's holder, drained and empty, exits; its job goes (on macOS gff-hab boots
-#      it out and deletes its plist), and one holder is left.
+#      it out, deletes its plist and removes build A's bundle copies), and one holder is left.
 #   6. Uninstall, and check that the second pane's program is gone, no job is loaded (on macOS
 #      `launchctl print gui/<uid>/<label>` for the logic job and every holder seen), no process
 #      from the test runs, and the path list matches the one from step 1: nothing install wrote
@@ -30,6 +32,7 @@
 #   GFF_SVC_PREFIX           job name prefix (default gffsvctest-<pid>)
 #   GFF_SVC_TMP              where the temporary directory goes (default /tmp; keep it short,
 #                            macOS caps a socket path at 104 bytes)
+#   GFF_SVC_BUNDLE_PREFIX    macOS: bundle id prefix of the dev bundles (default test.gffsvc)
 #   GFF_TEST_TIMEOUT_SCALE   whole number that multiplies every wait bound (default 1)
 #   GO                       the go command (default go)
 set -euo pipefail
@@ -88,7 +91,14 @@ wait_until() {
 	done
 }
 
-hab_install() { "$1/gff-hab" install -prefix "$prefix" -state "$state" -holders "$holders" -socket "$sock"; }
+# hab_install <build dir>: on macOS the sources are the build's dev helper bundles.
+hab_install() {
+	local src=()
+	if [ "$init" = launchd ]; then
+		src=(-hab-bin "$1/gff-macos/GFF Hab.app" -holder-bin "$1/gff-macos/GFF Holder.app")
+	fi
+	"$1/gff-hab" install -prefix "$prefix" -state "$state" -holders "$holders" -socket "$sock" ${src[@]+"${src[@]}"}
+}
 hab_uninstall() { "$1/gff-hab" uninstall -yes -prefix "$prefix" -state "$state" -holders "$holders" -socket "$sock"; }
 api() { "$work/a/gff-hab" api call -socket "$sock" -timeout 5s "$@"; }
 
@@ -244,6 +254,10 @@ for b in a b; do
 	mkdir -p "$work/$b"
 	(cd "$repo" && CGO_ENABLED=0 "$gocmd" build -ldflags "-X main.build=svc-$b-$$" -o "$work/$b/" \
 		./cmd/gff-hab ./cmd/gff-hab-holder)
+	if [ "$init" = launchd ]; then
+		GFF_BUNDLE_PREFIX=${GFF_SVC_BUNDLE_PREFIX:-test.gffsvc} GFF_DEV_SIGN_IDENTITY='' \
+			"$repo/scripts/macos-bundle.sh" -dev -bin-dir "$work/$b" -o "$work/$b" >/dev/null
+	fi
 done
 mkdir -p "$scratch"
 mkdir -m 700 "$holders" # gff-hab makes it at its first holder; made here, it is in the path list
@@ -313,6 +327,11 @@ wait_until "the child to end" 10 gone "$child"
 wait_until "holder $inst_a to unregister" 30 holder_count_is 1
 holder_of_build "svc-a-$$" >/dev/null 2>&1 && fail "holder $inst_a is still registered"
 wait_until "holder $inst_a's job to go" 90 holder_job_gone "$inst_a"
+if [ "$init" = launchd ]; then
+	n=$(find "$state/builds" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')
+	[ "$n" = 1 ] || fail "$n build directories after build A's holder retired, want 1: $(ls "$state/builds")"
+	[ -x "$state/current/GFF Hab.app/Contents/MacOS/gff-hab" ] || fail "current does not name build B's bundles"
+fi
 say "retire: holder $inst_a exited after its last program, and its job is gone"
 
 hab_uninstall "$work/b"
@@ -333,7 +352,8 @@ $removed"
 added=$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))
 # gff-hab's own state (structure, keys, checkpoints) stays by design (spec 5.5); nothing else may.
 stray=$(printf '%s\n' "$added" | grep -v -x -e "$state" -e "$state/.*" || true)
-installed=$(printf '%s\n' "$added" | grep -x -e "$state/bin.*" -e "$state/logs.*" -e "$state/install.json" || true)
+installed=$(printf '%s\n' "$added" | grep -x -e "$state/bin.*" -e "$state/logs.*" -e "$state/builds.*" \
+	-e "$state/current" -e "$state/install.json" || true)
 [ -z "$stray$installed" ] || fail "uninstall left:
 $stray$installed"
 holder_count_is 0 || fail "holder registry files left: $(ls "$holders")"

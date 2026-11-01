@@ -21,7 +21,7 @@ import (
 
 // testConfig is an install whose every path is under root, with names no machine has.
 func testConfig(in Init, root string) Config {
-	return Config{
+	c := Config{
 		Init:      in,
 		Prefix:    "svctest",
 		StateDir:  filepath.Join(root, "state & <dir>"),
@@ -32,6 +32,12 @@ func testConfig(in Init, root string) Config {
 		Locale:    []string{"LANG=xx_YY.UTF-8", "LC_TIME=zz_ZZ.UTF-8"},
 		UID:       4242,
 	}
+	if in == Launchd {
+		c.Build = "0123456789abcdef"
+		c.HabBundleID = "test.example.hab"
+		c.HolderBundleID = "test.example.hab-holder"
+	}
+	return c
 }
 
 // TestRenderNoLeaks: the job files carry only what Config gives them. No user name, host name or
@@ -178,8 +184,7 @@ func TestPlistsAreXML(t *testing.T) {
 				strs = append(strs, string(cd))
 			}
 		}
-		if !slices.Contains(strs, filepath.Join(c.StateDir, "bin")+"/"+HabBinary) &&
-			!slices.Contains(strs, filepath.Join(c.StateDir, "bin")+"/"+HolderBinary) {
+		if !slices.Contains(strs, c.HabPath()) && !slices.Contains(strs, c.HolderPath()) {
 			t.Errorf("no binary path with its XML specials intact in:\n%s", doc)
 		}
 		for _, k := range []string{"<string>Aqua</string>", "StandardOutPath", "WorkingDirectory"} {
@@ -207,6 +212,9 @@ type fakeInit struct {
 	stopped []string
 	// disableFails makes systemctl disable fail and leaves the unit running.
 	disableFails bool
+	// badSig makes codesign --verify fail for every path that contains it.
+	badSig string
+	dittos int
 }
 
 func newFakeInit(t *testing.T, c Config) *fakeInit {
@@ -219,6 +227,21 @@ func (f *fakeInit) run(_ context.Context, name string, args ...string) ([]byte, 
 	f.cmds = append(f.cmds, name+" "+strings.Join(args, " "))
 	fail := errors.New("exit status 1")
 	switch name {
+	case "ditto":
+		f.dittos++
+		return nil, copyTree(args[0], args[1])
+	case "codesign":
+		item := args[len(args)-1]
+		if args[0] == "-d" {
+			return []byte("Executable=" + item + "\ndesignated => identifier \"test.example\" and anchor apple generic\n"), nil
+		}
+		if f.badSig != "" && strings.Contains(item, f.badSig) {
+			return []byte(item + ": a sealed resource is missing or invalid"), fail
+		}
+		if _, err := os.Stat(filepath.Join(item, "Contents", "Info.plist")); err != nil {
+			return nil, fail
+		}
+		return nil, nil
 	case "loginctl":
 		return []byte("no\n"), nil
 	case "systemctl":
@@ -316,6 +339,74 @@ func tree(t *testing.T, root string) []string {
 	return out
 }
 
+// copyTree copies a directory tree, as ditto does for a bundle.
+func copyTree(src, dst string) error {
+	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		out := filepath.Join(dst, rel)
+		fi, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return os.MkdirAll(out, fi.Mode().Perm())
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(out, b, fi.Mode().Perm())
+	})
+}
+
+// writeBundle writes a helper bundle as scripts/macos-bundle.sh lays it out: an Info.plist and
+// the executable. tag goes into the executable, so two tags are two builds.
+func writeBundle(t *testing.T, dir string, spec bundleSpec, id, tag string) string {
+	t.Helper()
+	b := filepath.Join(dir, spec.name)
+	os.MkdirAll(filepath.Join(b, "Contents", "MacOS"), 0o755)
+	info := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>` + spec.exe + `</string>
+	<key>CFBundleIdentifier</key>
+	<string>` + id + `</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>A program running in a Flightdeck pane wants to connect to devices on your local network.</string>
+</dict>
+</plist>
+`
+	if err := os.WriteFile(filepath.Join(b, "Contents", "Info.plist"), []byte(info), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(b, "Contents", "MacOS", spec.exe), []byte("#!/bin/sh\necho "+tag+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// writeBundles writes both helper bundles of one build into dir.
+func writeBundles(t *testing.T, dir, tag string) (hab, holder string) {
+	t.Helper()
+	return writeBundle(t, dir, habSpec, "test.example.hab", tag), writeBundle(t, dir, holderSpec, "test.example.hab-holder", tag)
+}
+
+// writeSources writes what install takes for init system in: bare binaries, or bundles.
+func writeSources(t *testing.T, in Init, dir string) (hab, holder string) {
+	t.Helper()
+	if in == Launchd {
+		return writeBundles(t, dir, "a")
+	}
+	return writeBinaries(t, dir)
+}
+
 func writeBinaries(t *testing.T, dir string) (hab, holder string) {
 	t.Helper()
 	os.MkdirAll(dir, 0o755)
@@ -333,7 +424,12 @@ func TestUninstallRemovesWhatInstallWrote(t *testing.T) {
 		t.Run(string(in), func(t *testing.T) {
 			root := t.TempDir()
 			c := testConfig(in, root)
-			hab, holder := writeBinaries(t, filepath.Join(root, "src"))
+			hab, holder := writeSources(t, in, filepath.Join(root, "src"))
+			if in == Launchd {
+				if _, _, err := ResolveBundles(&c, hab, holder); err != nil {
+					t.Fatal(err)
+				}
+			}
 			// The unit directory is not there yet: install makes it, and uninstall removes it.
 			os.MkdirAll(c.StateDir, 0o700)
 			os.WriteFile(filepath.Join(c.StateDir, "state.json"), []byte("{}"), 0o600) // gff-hab's own
@@ -373,8 +469,17 @@ func TestUninstallRemovesWhatInstallWrote(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// A build directory is listed as one path: uninstall removes it with its bundles.
+			underBuild := func(p string) bool {
+				for _, l := range listed {
+					if filepath.Dir(l) == c.BuildsDir() && strings.HasPrefix(p, l+"/") {
+						return true
+					}
+				}
+				return false
+			}
 			for _, p := range added {
-				if !slices.Contains(listed, p) {
+				if !slices.Contains(listed, p) && !underBuild(p) {
 					t.Errorf("install wrote %s, which Files does not list", p)
 				}
 			}
@@ -424,7 +529,7 @@ func TestUninstallRemovesWhatInstallWrote(t *testing.T) {
 func TestLaunchdNoGUI(t *testing.T) {
 	root := t.TempDir()
 	c := testConfig(Launchd, root)
-	hab, holder := writeBinaries(t, filepath.Join(root, "src"))
+	hab, holder := writeBundles(t, filepath.Join(root, "src"), "a")
 	before := tree(t, root)
 	f := newFakeInit(t, c)
 	f.noGUI = true
@@ -487,6 +592,9 @@ func TestUninstallKeepsWhatInstallDidNotWrite(t *testing.T) {
 			hab, _ := writeBinaries(t, userBin) // the user's own gff-hab, in what is <state>/bin
 			_, holder := writeBinaries(t, filepath.Join(root, "src"))
 			os.Remove(filepath.Join(userBin, HolderBinary))
+			if in == Launchd { // launchd installs bundles and leaves <state>/bin alone
+				hab, holder = writeBundles(t, filepath.Join(root, "src"), "a")
+			}
 			os.MkdirAll(c.LogDir(), 0o755)
 			os.WriteFile(filepath.Join(c.LogDir(), "notes.txt"), []byte("mine"), 0o600)
 			before := tree(t, root)

@@ -10,14 +10,16 @@
 //   - systemd: <units>/<prefix>-gff-hab.service, <units>/<prefix>-gff-hab-holder@.service, the
 //     enable link <units>/default.target.wants/<prefix>-gff-hab.service (written by systemctl),
 //     and the binary copies in <state>/bin.
-//   - launchd: <agents>/<prefix>.gff-hab.plist, the job logs in <state>/logs, and the binary
-//     copies in <state>/bin. The starter adds one <agents>/<prefix>.gff-hab-holder.<instance>.plist
-//     per holder, and launchd its log <state>/logs/gff-hab-holder.<instance>.log.
+//   - launchd: <agents>/<prefix>.gff-hab.plist, the job logs in <state>/logs, one directory per
+//     build in <state>/builds holding the two helper bundles (bundle.go), and the link
+//     <state>/current. The starter adds one <agents>/<prefix>.gff-hab-holder.<instance>.plist per
+//     holder, and launchd its log <state>/logs/gff-hab-holder.<instance>.log.
 //
 // Install records what it writes, and each directory it creates, in <state>/install.json before
 // it writes it (manifest.go). Uninstall removes what that record lists, the holder plists and
 // holder logs by their names, then each directory install created, when it is empty. It never
-// removes a file by name alone that install did not write (Files).
+// removes a file by name alone that install did not write (Files). Build directories are found
+// by their names too: only install and the starter write in <state>/builds.
 //
 // Commands run through an injected Runner, so tests need no init system. The package is pure Go.
 package service
@@ -93,6 +95,12 @@ type Config struct {
 	Locale []string
 	// UID is the user's id, for the launchd domain gui/<uid>.
 	UID int
+	// Build is the launchd build directory, <state>/builds/<build>, that the jobs run from.
+	// Install sets it from the bundles it installs; serve gets it as -build.
+	Build string
+	// HabBundleID and HolderBundleID are the bundle ids of the build's helper bundles. Each
+	// launchd plist names its own in AssociatedBundleIdentifiers (macos-identity.md 6.1).
+	HabBundleID, HolderBundleID string
 }
 
 var prefixRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -137,6 +145,25 @@ func (c Config) Validate() error {
 			return fmt.Errorf("service: locale setting %q: want LANG or LC_* and a value with no control character", kv)
 		}
 	}
+	if c.Build != "" && !ValidBuild(c.Build) {
+		return fmt.Errorf("service: build %q: want 16 hex digits", c.Build)
+	}
+	for _, id := range []string{c.HabBundleID, c.HolderBundleID} {
+		if id != "" && !bundleIDRE.MatchString(id) {
+			return fmt.Errorf("service: bundle id %q is not reverse-DNS", id)
+		}
+	}
+	return nil
+}
+
+// checkBundled fails unless a launchd config names its build and the bundle ids its plists need.
+func (c Config) checkBundled() error {
+	if c.Init != Launchd {
+		return nil
+	}
+	if c.Build == "" || c.HabBundleID == "" || c.HolderBundleID == "" {
+		return errors.New("service: launchd jobs run from a build's helper bundles, and no build or bundle id is given (gff-hab install sets them)")
+	}
 	return nil
 }
 
@@ -154,17 +181,29 @@ func checkPath(name, p string) error {
 	return nil
 }
 
-// BinDir is where Install copies the binaries.
+// BinDir is where Install copies the binaries on systemd.
 func (c Config) BinDir() string { return filepath.Join(c.StateDir, "bin") }
 
 // LogDir is where launchd jobs write their output.
 func (c Config) LogDir() string { return filepath.Join(c.StateDir, "logs") }
 
-// HabPath is the installed gff-hab.
-func (c Config) HabPath() string { return filepath.Join(c.BinDir(), HabBinary) }
+// HabPath is the installed gff-hab: in <state>/bin on systemd, inside the build's GFF Hab.app on
+// launchd.
+func (c Config) HabPath() string {
+	if c.Init == Launchd {
+		return bundleExe(c.BuildDir(), HabBundle, HabBinary)
+	}
+	return filepath.Join(c.BinDir(), HabBinary)
+}
 
-// HolderPath is the installed gff-hab-holder.
-func (c Config) HolderPath() string { return filepath.Join(c.BinDir(), HolderBinary) }
+// HolderPath is the installed gff-hab-holder: in <state>/bin on systemd, inside the build's
+// GFF Holder.app on launchd.
+func (c Config) HolderPath() string {
+	if c.Init == Launchd {
+		return bundleExe(c.BuildDir(), HolderBundle, HolderBinary)
+	}
+	return filepath.Join(c.BinDir(), HolderBinary)
+}
 
 // LogicJob is the logic job's systemd unit or launchd label.
 func (c Config) LogicJob() string {
@@ -213,7 +252,7 @@ func (c Config) enableLink() string {
 
 // ServeArgs are the arguments of `gff-hab serve` in the logic job.
 func (c Config) ServeArgs() []string {
-	return []string{
+	args := []string{
 		"serve",
 		"-socket", c.Socket,
 		"-state", c.StateDir,
@@ -222,6 +261,10 @@ func (c Config) ServeArgs() []string {
 		"-prefix", c.Prefix,
 		"-unit-dir", c.UnitDir,
 	}
+	if c.Init == Launchd {
+		args = append(args, "-build", c.Build)
+	}
+	return args
 }
 
 // HolderArgs are the arguments of a holder job for instance.
@@ -236,10 +279,13 @@ type File struct {
 	Mode    os.FileMode
 }
 
-// Render returns the job files Install writes for c, with their content. Binary copies, the
-// systemd enable link and the per-instance holder plists are not among them.
+// Render returns the job files Install writes for c, with their content. Binary copies, build
+// directories, the systemd enable link and the per-instance holder plists are not among them.
 func Render(c Config) ([]File, error) {
 	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	if err := c.checkBundled(); err != nil {
 		return nil, err
 	}
 	if c.Init == Launchd {
@@ -270,6 +316,8 @@ func filesFor(c Config, m *manifest) ([]string, error) {
 	var out []string
 	if m != nil {
 		out = append(out, m.Files...)
+	} else if c.Init == Launchd {
+		out = append(out, c.logicFile())
 	} else {
 		rendered, err := Render(c)
 		if err != nil {
@@ -278,9 +326,7 @@ func filesFor(c Config, m *manifest) ([]string, error) {
 		for _, f := range rendered {
 			out = append(out, f.Path)
 		}
-		if c.Init == Systemd {
-			out = append(out, c.enableLink())
-		}
+		out = append(out, c.enableLink())
 	}
 	if c.Init == Launchd {
 		plists, err := holderPlists(c)
@@ -294,6 +340,12 @@ func filesFor(c Config, m *manifest) ([]string, error) {
 				return nil, err
 			}
 			out = append(out, logs...)
+			// Every build directory goes, with its bundles; uninstall has stopped every job.
+			builds, err := buildDirs(c)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, builds...)
 		}
 	}
 	if m != nil {
@@ -378,8 +430,22 @@ func (o *Options) defaults() {
 // way still leaves a record that names all it wrote. A state directory that holds the record of
 // another install (another prefix, init system or unit directory) is refused: both logic jobs
 // would run, and one would lose the state lock and restart forever.
+//
+// On launchd the sources are the two helper bundles (or the executables inside them). Each build
+// gets its own directory, <state>/builds/<build>, so a drained holder keeps running from its own
+// bundle copy, and the jobs name the executables inside the bundles (spec macos-identity.md 6.1).
 func Install(ctx context.Context, c Config, o Options) error {
 	o.defaults()
+	var habBundle, holderBundle string
+	if c.Init == Launchd {
+		if err := c.Validate(); err != nil {
+			return err
+		}
+		var err error
+		if habBundle, holderBundle, err = ResolveBundles(&c, o.HabSource, o.HolderSource); err != nil {
+			return err
+		}
+	}
 	files, err := Render(c)
 	if err != nil {
 		return err
@@ -407,23 +473,20 @@ func Install(ctx context.Context, c Config, o Options) error {
 	if err := m.save(c); err != nil {
 		return err
 	}
-	if err := m.mkdirAll(c, c.BinDir(), 0o700); err != nil {
-		return err
-	}
-	for _, b := range []struct{ src, dst string }{{o.HabSource, c.HabPath()}, {o.HolderSource, c.HolderPath()}} {
-		if b.src == "" {
-			return fmt.Errorf("service: no source for %s", filepath.Base(b.dst))
-		}
-		if !sameFile(b.src, b.dst) {
-			// A source that is the installed copy itself is not written, so not recorded: it
-			// may be a binary the user put there.
-			if err := m.willWrite(c, b.dst); err != nil {
-				return err
-			}
-		}
-		if err := copyBinary(b.src, b.dst); err != nil {
+	if c.Init == Launchd {
+		if err := installBuild(ctx, c, o.Run, m, habBundle, holderBundle); err != nil {
 			return err
 		}
+		// current names the new build before any plist does, so a prune by a running gff-hab
+		// of an older build never removes it.
+		if err := m.willWrite(c, c.CurrentLink()); err != nil {
+			return err
+		}
+		if err := setCurrent(c); err != nil {
+			return err
+		}
+	} else if err := installBinaries(c, o, m); err != nil {
+		return err
 	}
 	if c.Init == Launchd {
 		// launchd discards a job's output unless it names files; the directory must exist first.
@@ -446,7 +509,16 @@ func Install(ctx context.Context, c Config, o Options) error {
 		}
 	}
 	if c.Init == Launchd {
-		return installLaunchd(ctx, c, o)
+		if err := installLaunchd(ctx, c, o); err != nil {
+			return err
+		}
+		// Older builds no job names any more go now; a drained holder's build stays until
+		// gff-hab retires it.
+		removed, err := pruneBuilds(c)
+		if len(removed) > 0 {
+			fmt.Fprintf(o.Out, "removed %d unused build(s) from %s\n", len(removed), c.BuildsDir())
+		}
+		return err
 	}
 	// systemctl enable writes the link, and its directory when there is none.
 	m.addDirs(missingDirs(filepath.Dir(c.enableLink()))...)
@@ -454,6 +526,29 @@ func Install(ctx context.Context, c Config, o Options) error {
 		return err
 	}
 	return installSystemd(ctx, c, o)
+}
+
+// installBinaries copies both binaries into <state>/bin (systemd).
+func installBinaries(c Config, o Options, m *manifest) error {
+	if err := m.mkdirAll(c, c.BinDir(), 0o700); err != nil {
+		return err
+	}
+	for _, b := range []struct{ src, dst string }{{o.HabSource, c.HabPath()}, {o.HolderSource, c.HolderPath()}} {
+		if b.src == "" {
+			return fmt.Errorf("service: no source for %s", filepath.Base(b.dst))
+		}
+		if !sameFile(b.src, b.dst) {
+			// A source that is the installed copy itself is not written, so not recorded: it
+			// may be a binary the user put there.
+			if err := m.willWrite(c, b.dst); err != nil {
+				return err
+			}
+		}
+		if err := copyBinary(b.src, b.dst); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Uninstall asks before it ends programs, stops the logic job, stops every holder job (each
@@ -517,8 +612,24 @@ func removeFiles(c Config, m *manifest) error {
 			dirs[d] = true
 		}
 	}
+	builds := map[string]bool{}
+	if c.Init == Launchd && m != nil {
+		bs, err := buildDirs(c)
+		if err != nil {
+			return err
+		}
+		for _, b := range bs {
+			builds[b] = true
+		}
+	}
 	var errs []error
 	for _, p := range paths {
+		if builds[p] {
+			if err := os.RemoveAll(p); err != nil {
+				errs = append(errs, err)
+			}
+			continue
+		}
 		err := os.Remove(p)
 		if err == nil || errors.Is(err, os.ErrNotExist) {
 			continue
@@ -634,6 +745,9 @@ func NewStarter(c Config, run Runner, newInstance func() string, logf func(strin
 		logf = func(string, ...any) {}
 	}
 	if c.Init == Launchd {
+		if err := c.checkBundled(); err != nil {
+			return nil, err
+		}
 		return &launchdStarter{c: c, run: run, newInstance: newInstance, logf: logf}, nil
 	}
 	return &systemdStarter{c: c, run: run, newInstance: newInstance}, nil
