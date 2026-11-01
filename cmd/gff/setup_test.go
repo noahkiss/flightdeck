@@ -320,6 +320,41 @@ func TestWalkStops(t *testing.T) {
 	}
 }
 
+// TestWalkStopDoesNotHang: Ctrl-C while a request waits for the user. The hab still runs that
+// probe, so the final check queues behind it; the walk must not wait minutes for it.
+func TestWalkStopDoesNotHang(t *testing.T) {
+	f := &fakeHab{os: "darwin", rows: []api.PermissionRow{r(H, grants.LocalNetwork, api.PermissionStateUnknown, true, "")}}
+	ctx, cancel := context.WithCancel(context.Background())
+	busy := make(chan struct{}) // closed when the abandoned probe would end: never, here
+	w, out := newWalker(f, setupOptions{}, nil)
+	w.stopWait = 50 * time.Millisecond
+	w.call = func(cctx context.Context, p api.PermissionsParams) (api.Permissions, error) {
+		if p.Request != "" {
+			cancel() // Ctrl-C during the request
+			<-cctx.Done()
+			return api.Permissions{}, cctx.Err()
+		}
+		if ctx.Err() != nil { // queued behind the abandoned probe on the hab
+			select {
+			case <-busy:
+			case <-cctx.Done():
+				return api.Permissions{}, cctx.Err()
+			}
+		}
+		return f.call(cctx, p)
+	}
+	done := make(chan int, 1)
+	go func() { done <- w.run(ctx) }()
+	select {
+	case code := <-done:
+		if code != exitCannot || !strings.Contains(out.String(), "Stopped.") || !strings.Contains(out.String(), "gff setup --check") {
+			t.Errorf("exit %d\n%s", code, out)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the walk hung after Ctrl-C, waiting for the final check")
+	}
+}
+
 func TestWalkElsewhere(t *testing.T) {
 	f := &fakeHab{os: "darwin", rows: []api.PermissionRow{r(H, grants.FullDiskAccess, api.PermissionStateDenied, true, "")}}
 	w, out := newWalker(f, setupOptions{}, nil)

@@ -683,6 +683,10 @@ beyond the paper spec:
   first and pass at once if the request answers granted; then it opens the row's URL (`open`,
   and `open -R <bundle>` for Full Disk Access), prints the menu path, and re-checks that one grant
   every 2 s. Enter re-checks, `s` then Enter skips, Ctrl-C stops and still prints the final check.
+  After a stop, the hab may still run the probe the walk left (up to 2 minutes for a request),
+  and the final check would queue behind it. So that check waits 5 s at most; past that, gff
+  setup says to run `gff setup --check` and exits 2. Exiting closes the connection, which ends
+  the probe. A second Ctrl-C ends gff setup at once.
   Local Network and Files and Folders re-send the request on each re-check. Developer Tools has
   no check: the walk opens its pane and goes on. A signature failure or a re-grant record cannot
   be fixed by the walk; it says what to do. Over `--host` or `--via` it prints the check and says

@@ -40,6 +40,9 @@ const (
 // callTimeout bounds one hab.permissions call; a request waits for the user up to two minutes.
 const callTimeout = 4 * time.Minute
 
+// stopWait bounds the final check after Ctrl-C stops the walk.
+const stopWait = 5 * time.Second
+
 type setupOptions struct {
 	check, json, noOpen bool
 	host, socket, via   string
@@ -106,6 +109,10 @@ func setupMain(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop() // the first Ctrl-C stops the walk; a second one ends the process at once
+	}()
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	conn, err := habconn.Connect(cctx, habconn.Config{
 		Transport: tr,
@@ -170,6 +177,8 @@ type walker struct {
 	open  func(args ...string) error
 	lines <-chan string
 	tick  time.Duration
+	// stopWait bounds the final check after a stop; 0 means the stopWait constant.
+	stopWait time.Duration
 }
 
 func (w *walker) check(ctx context.Context, p api.PermissionsParams) (api.Permissions, int, string) {
@@ -206,15 +215,31 @@ func (w *walker) run(ctx context.Context) int {
 		return code
 	}
 	fmt.Fprintln(w.out)
+	stopped := false
 	for _, r := range todo {
 		if err := w.walkOne(ctx, r); err != nil {
 			fmt.Fprintln(w.out, "\nStopped.")
+			stopped = true
 			break
 		}
 	}
-	// The walk ends with the full check (7.5).
-	cctx := context.WithoutCancel(ctx)
+	// The walk ends with the full check (7.5). After a stop the hab may still run the probe the
+	// walk left, for up to 2 minutes, and the final check would queue behind it. So it waits a
+	// few seconds at most; leaving closes the connection, which ends that probe.
+	cctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	if stopped {
+		wait := w.stopWait
+		if wait <= 0 {
+			wait = stopWait
+		}
+		cctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), wait)
+	}
+	defer cancel()
 	res, code, why = w.check(cctx, api.PermissionsParams{})
+	if stopped && code == exitCannot && cctx.Err() != nil {
+		fmt.Fprintln(w.out, "The final check did not finish. Run `gff setup --check` to see where things stand.")
+		return exitCannot
+	}
 	fmt.Fprintln(w.out)
 	printCheck(w.out, w.where, res, code, why)
 	return code
