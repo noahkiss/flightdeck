@@ -105,7 +105,8 @@ public final class UsageAlerts {
     public func check(_ accounts: [UsageAccountReading]) {
         let t = now()
         if warningsOn {
-            for a in accounts {
+            // An unavailable account has no number to trust: it warns about nothing.
+            for a in accounts where !a.unavailable {
                 for w in a.windows { warn(a, w, now: t) }
             }
         }
@@ -189,7 +190,8 @@ public final class UsageAlerts {
                 // The scheduled notification has fired.
                 continue
             }
-            guard let a = accounts.first(where: { $0.key == req.account }) else {
+            // An unavailable account says nothing about room either.
+            guard let a = accounts.first(where: { $0.key == req.account }), !a.unavailable else {
                 keep.append(req)
                 continue
             }

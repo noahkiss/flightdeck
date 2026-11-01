@@ -393,3 +393,210 @@ final class UsageFeedTests: XCTestCase {
         await conn.stop()
     }
 }
+
+// MARK: - Hab fields: window length and start, degraded, clock offset (app.md 14.5, 14.6)
+
+/// A hand-written hab window with the newer fields.
+private func habWindow(_ name: String, _ pct: Int, resets: Date?, read: Date, lengthS: Int? = nil, starts: Date? = nil) -> UsageWindow {
+    UsageWindow(lengthS: lengthS, name: name, readAt: Fixture.stamp(read), resetsAt: resets.map(Fixture.stamp), startsAt: starts.map(Fixture.stamp), usedPct: pct)
+}
+
+private func habAccount(_ key: String, degraded: String? = nil, _ windows: [UsageWindow]) -> UsageAccount {
+    UsageAccount(degraded: degraded, harness: "claude", key: key, label: "Max 5x", windows: windows)
+}
+
+final class UsageWindowLengthTests: XCTestCase {
+    func testLengthFromHabBeatsName() {
+        // The hab's length wins over a name that reads otherwise.
+        var w = win("5h", 10, resetsIn: 3600)
+        w.length = 2 * 3600
+        XCTAssertEqual(UsageMath.length(of: w), 2 * 3600)
+        // Start and reset with no length.
+        var s = win("model-y", 10, resetsIn: 1800)
+        s.startsAt = t0.addingTimeInterval(-1800)
+        XCTAssertEqual(UsageMath.length(of: s), 3600)
+        // Neither: the name is the fallback.
+        XCTAssertEqual(UsageMath.length(of: win("7d", 10, resetsIn: 3600)), 7 * 86400)
+        XCTAssertNil(UsageMath.length(of: win("model-y", 10, resetsIn: 3600)))
+        // A start at or after the reset is no length.
+        var bad = win("model-y", 10, resetsIn: 60)
+        bad.startsAt = t0.addingTimeInterval(120)
+        XCTAssertNil(UsageMath.length(of: bad))
+    }
+
+    func testPaceAndStaleUseHabLength() {
+        // A model-name window gets a pace once the hab sends its length.
+        var w = win("model-y", 50, resetsIn: 900)
+        XCTAssertNil(UsageMath.pace(w, now: t0))
+        w.length = 3600
+        XCTAssertEqual(try XCTUnwrap(UsageMath.pace(w, now: t0)), 0.75, accuracy: 0.0001)
+        XCTAssertFalse(UsageMath.overPace(w, now: t0))
+        XCTAssertEqual(UsageText.status(acct("a", [w]), now: t0), "On pace")
+        // Stale after the hab's length when shorter than an hour.
+        var short = win("model-y", 10, resetsIn: 600, readAgo: 1900)
+        XCTAssertFalse(UsageMath.isStale(short, now: t0))
+        short.length = 1800
+        XCTAssertTrue(UsageMath.isStale(short, now: t0))
+        XCTAssertEqual(UsageMath.staleAt(short), t0.addingTimeInterval(-100))
+    }
+
+    @MainActor
+    func testReadingTakesLengthStartAndDegraded() {
+        let a = habAccount("k", degraded: "rate_limits: unknown shape", [
+            habWindow("5h", 40, resets: t0.addingTimeInterval(3600), read: t0, lengthS: 18000, starts: t0.addingTimeInterval(-14400)),
+            habWindow("model-y", 5, resets: nil, read: t0, lengthS: 0),
+        ])
+        let r = UsageBook.reading(a, habID: "h1", habLabel: "workbench", receivedAt: t0)
+        XCTAssertEqual(r.windows[0].length, 18000)
+        XCTAssertEqual(r.windows[0].startsAt, t0.addingTimeInterval(-14400))
+        XCTAssertNil(r.windows[1].length, "a zero length is none")
+        XCTAssertNil(r.windows[1].startsAt)
+        XCTAssertEqual(r.degraded, "rate_limits: unknown shape")
+        XCTAssertTrue(r.unavailable)
+    }
+
+    func testSnapshotWithoutNewFieldsStillReads() throws {
+        // A snapshot an earlier build wrote: no length, start or degraded.
+        let json = """
+        {"accounts":[{"habID":"h1","habLabel":"h1","harness":"claude","key":"a","label":"Max","receivedAt":"2027-01-15T08:00:00Z",
+        "windows":[{"name":"5h","readAt":"2027-01-15T08:00:00Z","resetsAt":"2027-01-15T09:00:00Z","usedPct":42}]}],
+        "version":1,"writtenAt":"2027-01-15T08:00:00Z"}
+        """
+        let s = try XCTUnwrap(UsageSnapshot.decode(Data(json.utf8)))
+        XCTAssertNil(s.accounts[0].degraded)
+        XCTAssertNil(s.accounts[0].windows[0].length)
+        XCTAssertNil(s.accounts[0].windows[0].startsAt)
+        // And the new fields survive a round trip.
+        var a = acct("a", [win("5h", 42, resetsIn: 3600)])
+        a.degraded = "drift"
+        a.windows[0].length = 18000
+        a.windows[0].startsAt = t0
+        let round = UsageSnapshot(writtenAt: t0, accounts: [a])
+        XCTAssertEqual(UsageSnapshot.decode(try round.encoded()), round)
+    }
+}
+
+@MainActor
+final class UsageUnavailableTests: XCTestCase {
+    func testStatusAndOrder() {
+        var bad = acct("a", [win("5h", 99, resetsIn: 3600)])
+        bad.degraded = "drift"
+        XCTAssertEqual(UsageText.status(bad, now: t0), "Usage unavailable")
+        let fine = acct("b", [win("5h", 10, resetsIn: 3600)])
+        XCTAssertEqual(UsageMath.byTightest([bad, fine], now: t0).map(\.key), ["b", "a"], "no number to rank by")
+    }
+
+    func testNoWarningsFromUnavailableAccount() {
+        let n = RecordingNotifier()
+        let alerts = UsageAlerts(notifier: n, defaults: freshDefaults(), now: { t0 })
+        var a = acct("a", [win("5h", 97, resetsIn: 3600)])
+        a.degraded = "drift"
+        alerts.check([a])
+        XCTAssertTrue(n.posts.isEmpty)
+        // Readable again: the warning fires then.
+        a.degraded = nil
+        alerts.check([a])
+        XCTAssertEqual(n.posts.count, 1)
+    }
+
+    func testFreeRequestWaitsThroughUnavailable() {
+        let n = RecordingNotifier()
+        let alerts = UsageAlerts(notifier: n, defaults: freshDefaults(), now: { t0 })
+        let full = win("5h", 100, resetsIn: 3600)
+        alerts.alertWhenFree(acct("a", [full]), full)
+        var a = acct("a", [win("5h", 20, resetsIn: 3600)])
+        a.degraded = "drift"
+        alerts.check([a])
+        XCTAssertEqual(alerts.freeRequests.count, 1, "an unavailable reading says nothing about room")
+        XCTAssertEqual(n.posts.count, 1, "only the scheduled notification")
+    }
+
+    func testDegradedMarkIsAChange() {
+        let book = UsageBook(now: { t0 })
+        var changes = 0
+        book.onChange = { _ in changes += 1 }
+        let w = habWindow("5h", 40, resets: t0.addingTimeInterval(3600), read: t0)
+        book.update(habID: "h1", habLabel: "h1", online: true, readings: [habAccount("k", [w])])
+        book.update(habID: "h1", habLabel: "h1", online: true, readings: [habAccount("k", degraded: "drift", [w])])
+        XCTAssertEqual(book.accounts["k"]?.degraded, "drift")
+        book.update(habID: "h1", habLabel: "h1", online: true, readings: [habAccount("k", [w])])
+        XCTAssertNil(book.accounts["k"]?.degraded)
+        XCTAssertEqual(changes, 3)
+    }
+}
+
+@MainActor
+final class UsageClockOffsetTests: XCTestCase {
+    func testOffsetAgainstRoundTripMiddle() throws {
+        let sent = t0
+        let received = t0.addingTimeInterval(0.4)
+        let o = HabConnection.clockOffset(habTime: Fixture.stamp(t0.addingTimeInterval(120.2)), sent: sent, received: received)
+        XCTAssertEqual(try XCTUnwrap(o), 120, accuracy: 0.001)
+        XCTAssertNil(HabConnection.clockOffset(habTime: nil, sent: sent, received: received))
+        XCTAssertNil(HabConnection.clockOffset(habTime: "yesterday", sent: sent, received: received))
+        // Whole seconds parse too.
+        let ten = try XCTUnwrap(UsageBook.parseTime("2027-01-15T08:00:10Z"))
+        XCTAssertEqual(try XCTUnwrap(HabConnection.clockOffset(habTime: "2027-01-15T08:00:00Z", sent: ten, received: ten)), -10, accuracy: 0.001)
+    }
+
+    func testHabTimesMoveOntoDeviceClock() throws {
+        // The hab runs an hour ahead: its reset an hour and a half out is half an hour out here.
+        let habNow = t0.addingTimeInterval(3600)
+        let a = habAccount("k", [habWindow("5h", 50, resets: habNow.addingTimeInterval(1800), read: habNow, lengthS: 18000, starts: habNow.addingTimeInterval(-16200))])
+        let r = UsageBook.reading(a, habID: "h1", habLabel: "h1", receivedAt: t0, clockOffset: 3600)
+        let w = r.windows[0]
+        XCTAssertEqual(w.resetsAt, t0.addingTimeInterval(1800))
+        XCTAssertEqual(w.readAt, t0)
+        XCTAssertEqual(w.startsAt, t0.addingTimeInterval(-16200))
+        XCTAssertEqual(UsageText.resetsIn(w, now: t0), "30m")
+        XCTAssertEqual(try XCTUnwrap(UsageMath.pace(w, now: t0)), 0.9, accuracy: 0.0001)
+        XCTAssertFalse(UsageMath.isStale(w, now: t0), "read now, not an hour away")
+        // With no offset, the same reading looks an hour later.
+        XCTAssertEqual(UsageBook.reading(a, habID: "h1", habLabel: "h1", receivedAt: t0).windows[0].resetsAt, t0.addingTimeInterval(5400))
+    }
+
+    func testSmallOffsetIgnored() {
+        let a = habAccount("k", [habWindow("5h", 50, resets: t0.addingTimeInterval(1800), read: t0)])
+        XCTAssertEqual(UsageBook.reading(a, habID: "h1", habLabel: "h1", receivedAt: t0, clockOffset: 0.6).windows[0].resetsAt, t0.addingTimeInterval(1800))
+        XCTAssertEqual(UsageBook.reading(a, habID: "h1", habLabel: "h1", receivedAt: t0, clockOffset: -1.5).windows[0].resetsAt, t0.addingTimeInterval(1801.5))
+    }
+
+    func testOffsetJitterIsNoChange() {
+        // One hab reached two ways, its clock 10 s ahead, measured 10.0 and 10.6.
+        let book = UsageBook(now: { t0 })
+        var changes = 0
+        book.onChange = { _ in changes += 1 }
+        let a = habAccount("k", [habWindow("5h", 50, resets: t0.addingTimeInterval(1810), read: t0.addingTimeInterval(10))])
+        book.update(habID: "h1", habLabel: "h1", online: true, readings: [a], clockOffset: 10)
+        book.update(habID: "h2", habLabel: "h2", online: true, readings: [a], clockOffset: 10.6)
+        XCTAssertEqual(book.accounts["k"]?.habID, "h1", "the same reading stays with the hab that has it")
+        // A reconnect measures 11.2: the held times stay.
+        book.update(habID: "h1", habLabel: "h1", online: true, readings: [a], clockOffset: 11.2)
+        XCTAssertEqual(book.accounts["k"]?.windows[0].resetsAt, t0.addingTimeInterval(1800))
+        // h1 goes offline: the tie moves to h2 at once.
+        book.update(habID: "h1", habLabel: "h1", online: false, readings: [])
+        XCTAssertEqual(book.accounts["k"]?.habID, "h2")
+        XCTAssertEqual(changes, 3, "first reading, h2 online, h1 offline")
+    }
+
+    func testFeedAppliesHabClock() async throws {
+        let hab = await sampleHab()
+        await hab.setClockSkew(-7200)
+        let now = Date()
+        // The hab's clock is two hours behind: its times are two hours early.
+        await hab.setUsage([habAccount("k", [habWindow("5h", 30, resets: now.addingTimeInterval(-7200 + 3600), read: now.addingTimeInterval(-7200), lengthS: 18000)])])
+        let conn = HabConnection(id: "h1", transport: hab.transport(), timing: fastTiming())
+        let fleet = Fleet()
+        fleet.usage = UsageCenter(notifier: RecordingNotifier(), defaults: freshDefaults())
+        fleet.add(conn, label: "workbench")
+        await fleet.setActive(true)
+        await eventually("list") { fleet.usage?.book.accounts["k"] != nil }
+        let state = await conn.state
+        let offset = try XCTUnwrap(state.clockOffset)
+        XCTAssertEqual(offset, -7200, accuracy: 2)
+        let w = try XCTUnwrap(fleet.usage?.book.accounts["k"]?.windows.first)
+        XCTAssertEqual(try XCTUnwrap(w.resetsAt).timeIntervalSince(now), 3600, accuracy: 2)
+        XCTAssertFalse(UsageMath.isStale(w, now: Date()), "read now on this device's clock")
+        await fleet.setActive(false)
+    }
+}

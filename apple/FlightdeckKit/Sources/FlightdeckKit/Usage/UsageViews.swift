@@ -58,7 +58,7 @@ struct UsageFooterBar: View {
     let now: Date
 
     var body: some View {
-        let w = UsageMath.tightest(account, now: now)
+        let w = account.unavailable ? nil : UsageMath.tightest(account, now: now)
         let stale = UsageMath.isStale(account, now: now) || !online
         HStack(spacing: 6) {
             Image(systemName: account.harnessSymbol)
@@ -66,7 +66,9 @@ struct UsageFooterBar: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 4) {
                     Text(account.harnessName).font(.caption.weight(.medium))
-                    if let w {
+                    if account.unavailable {
+                        Text(UsageMath.unavailableText).font(.caption).foregroundStyle(.secondary)
+                    } else if let w {
                         Text("\(w.name) \(UsageMath.effectivePct(w, now: now))%")
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
@@ -189,18 +191,35 @@ struct UsageCard: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            if account.windows.isEmpty {
-                Text("No limits reported")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(account.windows, id: \.name) { w in
-                UsageWindowRow(account: account, window: w, alerts: alerts, now: now, stale: stale || !online || UsageMath.isStale(w, now: now))
-            }
-            if let s = UsageText.status(account, now: now) {
-                Text(s)
+            if let why = account.degraded {
+                // No numbers: the windows are the last good ones, and may be wrong now.
+                Text(UsageMath.unavailableText)
                     .font(.callout.weight(.medium))
-                    .foregroundStyle(s.contains("reached") ? Color.red : s.hasPrefix("Over") ? Color.orange : Color.secondary)
+                    .foregroundStyle(.secondary)
+                Text(why)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                ForEach(account.windows.filter { alerts.isWaiting(account: account.key, window: $0.name) }, id: \.name) { w in
+                    Button("Cancel alert for \(w.name)") {
+                        alerts.cancelFree(account: account.key, window: w.name)
+                    }
+                    .font(.caption)
+                }
+            } else {
+                if account.windows.isEmpty {
+                    Text("No limits reported")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(account.windows, id: \.name) { w in
+                    UsageWindowRow(account: account, window: w, alerts: alerts, now: now, stale: stale || !online || UsageMath.isStale(w, now: now))
+                }
+                if let s = UsageText.status(account, now: now) {
+                    Text(s)
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(s.contains("reached") ? Color.red : s.hasPrefix("Over") ? Color.orange : Color.secondary)
+                }
             }
         }
         .padding(.vertical, 4)

@@ -89,7 +89,7 @@ struct UsageProvider: AppIntentTimelineProvider {
         for a in snap?.accounts ?? [] {
             for w in a.windows {
                 if let r = w.resetsAt, r > now { moments.insert(r) }
-                let stale = w.readAt.addingTimeInterval(min(UsageMath.staleAfter, UsageMath.length(of: w.name) ?? UsageMath.staleAfter))
+                let stale = UsageMath.staleAt(w)
                 if stale > now { moments.insert(stale) }
             }
         }
@@ -153,7 +153,11 @@ struct UsageAccountTile: View {
             Text([account.harnessName, account.label].compactMap { $0 }.joined(separator: " "))
                 .font(.caption.weight(.semibold))
                 .lineLimit(1)
-            if let w {
+            if account.unavailable {
+                Text(UsageMath.unavailableText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else if let w {
                 HStack(alignment: .center, spacing: 8) {
                     UsageRing(pct: UsageMath.effectivePct(w, now: now), stale: stale || UsageMath.isStale(w, now: now))
                         .frame(width: 52, height: 52)
@@ -214,7 +218,7 @@ struct UsageGauge: View {
     let now: Date
 
     var body: some View {
-        if let a = accounts.first, let w = UsageMath.tightest(a, now: now) {
+        if let a = accounts.first, !a.unavailable, let w = UsageMath.tightest(a, now: now) {
             let pct = UsageMath.effectivePct(w, now: now)
             Gauge(value: Double(pct), in: 0...100) {
                 Text(w.name)
