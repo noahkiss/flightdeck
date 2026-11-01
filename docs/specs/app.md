@@ -1618,8 +1618,9 @@ The owner sees each harness account's usage limits before hitting them.
 
 - The app schedules a local notification at the window's reset time. It needs no hab, no
   connection and no push.
-- When a newer reading moves the reset time, the app moves the notification. When a reading shows
-  the window is no longer full, it cancels it.
+- When a newer reading moves the reset time, the app moves the notification. When a fresh reading
+  shows room before the reset time, the app replaces the scheduled notification with one now
+  ("Claude 5h has room again") and ends the request: the owner asked to know when it is free.
 - The notification says "Claude 5h window has reset" and opens the usage sheet.
 
 ### 14.5 Edge cases
@@ -1635,6 +1636,49 @@ The owner sees each harness account's usage limits before hitting them.
 | A reading above 100 per cent | Shown as 100 per cent and "limit reached" |
 | The phone's clock is wrong | Reset times come from the hab as absolute times; the app applies the offset measured on connect |
 | The harness changes its format | The adapter marks usage degraded; the card says "usage unavailable", never a wrong number |
+
+### 14.6 Built choices (task-dj1wa3dx)
+
+Code: `apple/FlightdeckKit/Sources/FlightdeckShared/Usage.swift` (readings, window math, the
+widget snapshot), `FlightdeckKit/Usage/` (book, alerts, center, views), `apple/Widgets/UsageWidget.swift`.
+
+- **Feed.** Usage is not in the snapshot. After each snapshot, a connection whose welcome lists the
+  `usage` capability calls `usage.list`; `usage.updated` events follow. An answer older (by seq)
+  than an event already applied for the same account does not undo it. A hab without the
+  capability gets no call. Readings stay across reconnects.
+- **Merge.** The book keys accounts by account key. The newer reading wins, by its newest
+  `read_at`; an account with no windows counts as read when it arrived. A hab that stops
+  reporting an account leaves its last reading. Removing a hab removes its accounts.
+- **Last known values.** The book starts from the widget snapshot, so cards, footer and widget show
+  the last readings with their age before any hab connects. An account whose hab is not online
+  shows "<hab> offline · as of <time>" and grey bars. A start outside demo mode drops readings from
+  demo habs.
+- **Window length** comes from the window name (`5h`, `7d`, `30m`, `2w`, `7d opus`,
+  `spend monthly` as 30 days), since the hab sends none (task-bw97v7dk 2). A name with no length
+  (`model-y`) gets no pace tick, no pace status and is stale after an hour.
+- **Stale** means older than an hour, or than the window when shorter. **Tightest** window: the
+  highest percentage that counts now (a window whose reset passed counts as 0), ties to the later
+  reset. The footer orders accounts tightest first.
+- **Over pace** means used above the share of the window gone. The status line names the first
+  full window, else the first window over pace, else says "On pace" when any window has a pace.
+- **Warnings** are local notifications, posted by the app when a reading arrives (the hab sends no
+  usage push yet). Thresholds default to 80 and 95, kept per device; the sheet holds the switch
+  and the thresholds (50 to 100 in steps of 5). One warning per account, window, reset time and
+  threshold: reset times within ten minutes are one window (Codex derives them). A jump past two
+  thresholds posts the higher one. A stale reading, or one whose reset passed, warns about
+  nothing. The marks persist, so a restart does not warn again. The notification id is the
+  account and window, so 95 replaces 80 in Notification Center.
+- **Alert me when free** uses a calendar trigger at the reset time (it holds across sleep). A
+  request whose reset time passed ends quietly; the scheduled notification already fired.
+- **Taps.** A usage notification, a widget and the footer open the sheet at the account
+  (`flightdeck://usage?account=<key>`). Settings (Connections) opens it too.
+- **Debug.** `-FlightdeckOpenUsage <key|all>` opens the sheet at launch (Debug builds).
+- **Tests.** `UsageTests.swift` (math, merge, warnings, alert when free, snapshot, the feed from a
+  fake hab). `LiveTests.testLiveUsage` runs against a real gff-hab (`FLIGHTDECK_LIVE_SOCKET`, and
+  `FLIGHTDECK_LIVE_USAGE`: a file the test creates so a script in a hab pane posts a full reading,
+  then one with room through `gff-hab statusline claude`).
+- **Not built.** The hab clock offset (14.5): the welcome carries no hab time (task-bw97v7dk 5).
+  "Usage unavailable" (14.5): no degraded mark in the API (task-bw97v7dk 3).
 
 Sources: Moshi App Store screens (usage sheet with 5h, 7d and per-model windows, reset times, a pace
 marker, "alert me when free"; usage bars in the footer; Home Screen widgets; Watch usage, not
@@ -1676,6 +1720,21 @@ never from private files).
 | A Lock Screen widget on a locked phone | It shows counts and titles only, never a command. A setting hides titles too |
 | The widget's account no longer reports | It shows the last reading greyed and "no recent reading" |
 | The system throttles reloads | The widget may lag. Countdown text still ticks |
+
+### 15.3 Built choices (task-dj1wa3dx)
+
+- **Usage widget only.** The Needs-you widgets and the rectangular Lock Screen widget are not
+  built yet. The usage widget lives in the iOS widget extension beside the Live Activity: small,
+  medium and the circular Lock Screen gauge.
+- **Snapshot.** JSON in the App Group defaults (`flightdeck.usage.snapshot`, versioned). The app
+  writes it, and asks WidgetKit to reload, only when the readings change.
+- **Configuration** picks the account from the snapshot's accounts; with none chosen, the widget
+  shows the tightest. Medium shows the chosen account and the next tightest.
+- **Timeline.** One entry now, plus one at each future reset time and each moment a reading turns
+  stale, so "Reset" and "as of" appear with no app run. The countdown is relative timer text.
+- **Age.** "as of <time>" and "No recent reading" follow the reading's age, not the snapshot's.
+- **Mac.** No Mac widget: the Mac app has no App Group or widget extension yet. Adding one means a
+  sandboxed macOS widget extension and the group entitlement on the Mac app.
 
 Sources: Moshi App Store screens (Home Screen usage widgets with ring, percentage, reset countdown,
 "Limit reached" and "On pace"); WidgetKit, app groups and notification service extensions as
