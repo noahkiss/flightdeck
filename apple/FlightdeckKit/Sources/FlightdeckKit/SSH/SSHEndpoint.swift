@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// One address a hab answers SSH on.
@@ -24,17 +25,28 @@ public struct SSHEndpoint: Codable, Sendable, Hashable, CustomStringConvertible 
             guard let close = t.firstIndex(of: "]") else { return nil }
             let host = String(t[t.index(after: t.startIndex)..<close])
             let rest = t[t.index(after: close)...]
-            guard !host.isEmpty else { return nil }
+            guard isIPv6(host) else { return nil }
             if rest.isEmpty { return SSHEndpoint(host: host, port: defaultPort) }
             guard rest.hasPrefix(":"), let p = port(rest.dropFirst()) else { return nil }
             return SSHEndpoint(host: host, port: p)
         }
         let colons = t.filter { $0 == ":" }.count
         if colons == 0 { return SSHEndpoint(host: t, port: defaultPort) }
-        if colons > 1 { return SSHEndpoint(host: t, port: defaultPort) } // a bare IPv6 address
+        if colons > 1 {
+            // Only a real IPv6 address; "a:b:c" is not a host.
+            return isIPv6(t) ? SSHEndpoint(host: t, port: defaultPort) : nil
+        }
         let parts = t.split(separator: ":", omittingEmptySubsequences: false)
         guard !parts[0].isEmpty, let p = port(parts[1]) else { return nil }
         return SSHEndpoint(host: String(parts[0]), port: p)
+    }
+
+    /// An IPv6 address, with an optional `%zone`.
+    static func isIPv6(_ s: String) -> Bool {
+        let addr = s.split(separator: "%", maxSplits: 1, omittingEmptySubsequences: false)[0]
+        guard !addr.isEmpty else { return false }
+        var buf = in6_addr()
+        return String(addr).withCString { inet_pton(AF_INET6, $0, &buf) } == 1
     }
 
     private static func port(_ s: Substring) -> Int? {

@@ -171,7 +171,13 @@ actor SSHPool {
         defer {
             if dialing?.task == task { dialing = nil }
         }
-        let c = try await task.value
+        // The dial is its own task so a data stream can share it; the caller
+        // that started it cancels it when the caller is cancelled.
+        let c = try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
         c.generation = gen
         if resets != resetsAtStart {
             // closeAll ran meanwhile.
@@ -211,6 +217,7 @@ enum SSHDial {
                 Task {
                     for (i, ep) in endpoints.enumerated() {
                         if race.isDone { break }
+                        let seen = race.failureCount
                         let t = Task {
                             do {
                                 let conn = try await attempt(ep)
@@ -221,7 +228,7 @@ enum SSHDial {
                         }
                         race.track(t)
                         if i < endpoints.count - 1 {
-                            await race.waitFailure(orFor: stagger)
+                            await race.waitFailure(after: seen, orFor: stagger)
                         }
                     }
                 }
@@ -240,10 +247,15 @@ final class DialRace: @unchecked Sendable {
     private var done = false
     private var tasks: [Task<Void, Never>] = []
     private var failureWaiter: CheckedContinuation<Void, Never>?
+    private var failures = 0
+    private var waitGen = 0
 
     init(count: Int) { left = count }
 
     var isDone: Bool { lock.withLock { done } }
+
+    /// Attempts that failed so far.
+    var failureCount: Int { lock.withLock { failures } }
 
     func begin(_ c: CheckedContinuation<SSHConnection, Error>) {
         lock.withLock { cont = c }
@@ -275,6 +287,7 @@ final class DialRace: @unchecked Sendable {
         let (c, w, err): (CheckedContinuation<SSHConnection, Error>?, CheckedContinuation<Void, Never>?, Error?) = lock.withLock {
             errors[i] = error
             left -= 1
+            failures += 1
             let w = failureWaiter
             failureWaiter = nil
             if left == 0 && !done {
@@ -304,21 +317,25 @@ final class DialRace: @unchecked Sendable {
         c?.resume(throwing: CancellationError())
     }
 
-    /// Returns when an attempt fails or after `d`, whichever comes first.
-    func waitFailure(orFor d: Duration) async {
+    /// Returns when more than `seen` attempts have failed, or after `d`,
+    /// whichever comes first.
+    func waitFailure(after seen: Int, orFor d: Duration) async {
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-            let resumeNow: Bool = lock.withLock {
-                if done { return true }
+            let gen: Int? = lock.withLock {
+                if done || failures > seen { return nil }
+                waitGen += 1
                 failureWaiter = c
-                return false
+                return waitGen
             }
-            if resumeNow {
+            guard let gen else {
                 c.resume()
                 return
             }
             Task {
                 try? await Task.sleep(for: d)
+                // A sleep from an earlier wait must not end a later one.
                 let w: CheckedContinuation<Void, Never>? = self.lock.withLock {
+                    guard self.waitGen == gen else { return nil }
                     let w = self.failureWaiter
                     self.failureWaiter = nil
                     return w
@@ -356,7 +373,9 @@ public enum ColdStart {
         if let d {
             let ms = d.components.seconds * 1000 + d.components.attoseconds / 1_000_000_000_000_000
             Logger(subsystem: "com.flightdeck.app", category: "ssh").notice("cold start to first hab reply: \(ms) ms")
+            #if DEBUG
             print("flightdeck: cold start to first hab reply: \(ms) ms")
+            #endif
         }
     }
 

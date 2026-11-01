@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import LocalAuthentication
 import NIOSSH
 
 /// Where a device key's private part lives.
@@ -23,9 +24,16 @@ public protocol SSHKeySource: Sendable {
     /// The private key for one signing session. Throws when the device is
     /// locked or the key is gone.
     func privateKey() throws -> NIOSSHPrivateKey
+    /// The private key for one connection, unlocked before the SSH handshake
+    /// needs it, so no prompt runs on the network thread.
+    func signingKey() async throws -> NIOSSHPrivateKey
 }
 
 extension SSHKeySource {
+    public func signingKey() async throws -> NIOSSHPrivateKey {
+        try privateKey()
+    }
+
     /// The SHA-256 fingerprint, as `ssh-keygen -l` prints it.
     public var fingerprint: String { SSHFingerprint.of(publicKey) }
 
@@ -92,6 +100,16 @@ public struct GeneratedKey: SSHKeySource {
         case .software:
             publicKey = NIOSSHPrivateKey(p256Key: try P256.Signing.PrivateKey(rawRepresentation: stored.data)).publicKey
         }
+    }
+
+    /// With Face ID on, asks for it first and signs with that authentication,
+    /// so signing during the handshake does not prompt.
+    public func signingKey() async throws -> NIOSSHPrivateKey {
+        guard requiresBiometry, kind == .secureEnclave else { return try privateKey() }
+        let ctx = LAContext()
+        ctx.localizedReason = "Use the SSH key"
+        _ = try await ctx.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "Use the SSH key")
+        return NIOSSHPrivateKey(secureEnclaveP256Key: try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: data, authenticationContext: ctx))
     }
 
     public func privateKey() throws -> NIOSSHPrivateKey {
@@ -171,6 +189,10 @@ public final class DeviceKeys: @unchecked Sendable {
 
     /// A key error in words: the locked device is the common one.
     public static func explain(_ error: Error) -> TransportError {
+        if let t = error as? TransportError { return t }
+        if let la = error as? LAError {
+            return TransportError("Face ID did not unlock the SSH key: \(la.localizedDescription)")
+        }
         if (error as NSError).code == Int(errSecInteractionNotAllowed) {
             return TransportError("the device is locked: its SSH key works only while it is unlocked")
         }

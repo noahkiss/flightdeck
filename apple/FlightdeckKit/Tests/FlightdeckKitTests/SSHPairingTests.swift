@@ -74,6 +74,11 @@ final class SSHPairingTests: XCTestCase {
         XCTAssertEqual(SSHEndpoint.parse("[2001:db8::1]:2200"), SSHEndpoint(host: "2001:db8::1", port: 2200))
         XCTAssertEqual(SSHEndpoint.parse("[2001:db8::1]"), SSHEndpoint(host: "2001:db8::1", port: 22))
         XCTAssertEqual(SSHEndpoint.parse("2001:db8::1"), SSHEndpoint(host: "2001:db8::1", port: 22))
+        XCTAssertEqual(SSHEndpoint.parse("[fe80::1%en0]:22"), SSHEndpoint(host: "fe80::1%en0", port: 22))
+        XCTAssertNil(SSHEndpoint.parse("a:b:c"))
+        XCTAssertNil(SSHEndpoint.parse("host:22:33"))
+        XCTAssertNil(SSHEndpoint.parse("[box]:22"))
+        XCTAssertNil(SSHEndpoint.parse("[2001:db8::zz]"))
         XCTAssertNil(SSHEndpoint.parse(""))
         XCTAssertNil(SSHEndpoint.parse("box:0"))
         XCTAssertNil(SSHEndpoint.parse("box:99999"))
@@ -145,6 +150,33 @@ final class SSHPairingTests: XCTestCase {
         XCTAssertEqual(err("flightdeck://pair?v=1&id=\(ecdsaFP)&ep=a&t=AAAA"), .badToken)
         XCTAssertEqual(err("flightdeck://pair?v=1&id=\(ecdsaFP)&ep=a&t=\(tokenText)!"), .badToken)
         XCTAssertFalse(PairingCodeError.badToken.description.isEmpty)
+    }
+
+    func testOfferWithARepeatedKeyIsRefused() {
+        func err(_ s: String) -> PairingCodeError? {
+            do { _ = try PairingCode.parse(s); return nil } catch { return error as? PairingCodeError }
+        }
+        let other = PairingCode.base64url(Data(repeating: 7, count: 16))
+        XCTAssertEqual(err("flightdeck://pair?v=1&v=1&id=\(ecdsaFP)&ep=a&t=\(tokenText)"), .repeated("v"))
+        XCTAssertEqual(err("flightdeck://pair?v=1&id=\(ecdsaFP)&id=\(ecdsaFP)&ep=a&t=\(tokenText)"), .repeated("id"))
+        XCTAssertEqual(err("flightdeck://pair?v=1&id=\(ecdsaFP)&ep=a&t=\(tokenText)&t=\(other)"), .repeated("t"))
+        XCTAssertEqual(err("flightdeck://pair?v=1&id=\(ecdsaFP)&ep=a&t=\(tokenText)&l=a&l=b"), .repeated("l"))
+    }
+
+    func testLabelLosesControlAndFormatCharacters() throws {
+        let o = try PairingCode.parse("flightdeck://pair?v=1&id=\(ecdsaFP)&ep=a&t=\(tokenText)&l=de%E2%80%AEsk%07")
+        XCTAssertEqual(o.label, "desk")
+    }
+
+    func testOfferEndpointCap() throws {
+        func link(_ n: Int) -> String {
+            let eps = (1...n).map { "ep=192.0.2.\($0):22" }.joined(separator: "&")
+            return "flightdeck://pair?v=1&id=\(ecdsaFP)&\(eps)&t=\(tokenText)"
+        }
+        XCTAssertEqual(try PairingCode.parse(link(8)).endpoints.count, 8)
+        XCTAssertThrowsError(try PairingCode.parse(link(9))) { e in
+            XCTAssertEqual(e as? PairingCodeError, .tooManyEndpoints(9))
+        }
     }
 
     // MARK: Hab entries

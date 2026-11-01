@@ -182,6 +182,25 @@ final class SSHTransportTests: XCTestCase {
         await eventually("stream closed") { OpenStreams.live == before }
     }
 
+    func testOneShotKeepsItsDeadlineWhileTheHandshakeHangs() async throws {
+        // A listener that never speaks SSH; the dial's own handshake limit is 15 s.
+        let mute = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+            .childChannelInitializer { $0.eventLoop.makeSucceededFuture(()) }
+            .bind(host: "127.0.0.1", port: 0).get()
+        defer { mute.close(promise: nil) }
+        let t = NIOSSHTransport(user: "tester", endpoints: [SSHEndpoint(host: "127.0.0.1", port: mute.localAddress!.port!)], hostKeyFingerprint: server.hostKeyFingerprint, key: key)
+        let clock = ContinuousClock()
+        let start = clock.now
+        do {
+            _ = try await HabOneShot.call(t, HabMethods.habPing, PingParams(), deadline: .milliseconds(500))
+            XCTFail("expected the deadline")
+        } catch {
+            XCTAssertTrue("\(error)".contains("no answer"), "\(error)")
+        }
+        XCTAssertLessThan(clock.now - start, .seconds(2))
+        await eventually("no connection left") { await t.connectionCount() == 0 }
+    }
+
     func testOneShotFailsFastOnAChangedKey() async throws {
         let other = SSHFingerprint.of(NIOSSHPrivateKey(ed25519Key: .init()).publicKey)
         do {

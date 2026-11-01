@@ -16,7 +16,8 @@ import HabAPI
 /// - `l`: the hab's label, optional.
 ///
 /// Values are percent-encoded as in any URL query. Unknown keys are ignored,
-/// so a later hab can add some.
+/// so a later hab can add some. A code that repeats `v`, `id`, `t` or `l`
+/// is refused: it is malformed or spliced from two offers.
 public struct PairingCode: Sendable, Equatable {
     public var version: Int
     public var deviceID: String
@@ -25,6 +26,10 @@ public struct PairingCode: Sendable, Equatable {
     public var label: String?
 
     public static let scheme = "flightdeck"
+
+    /// The most endpoints a code may list, so a crafted code cannot fan out
+    /// dozens of dials.
+    public static let maxEndpoints = 8
 
     public init(version: Int = 1, deviceID: String, endpoints: [SSHEndpoint], token: Data, label: String? = nil) {
         self.version = version
@@ -75,6 +80,10 @@ public struct PairingCode: Sendable, Equatable {
         }
         let items = c.queryItems ?? []
         func one(_ k: String) -> String? { items.first { $0.name == k }?.value }
+        // A key that must appear once and appears twice is a spliced or broken code.
+        for k in ["v", "id", "t", "l"] where items.filter({ $0.name == k }).count > 1 {
+            throw PairingCodeError.repeated(k)
+        }
 
         guard let v = one("v") else { throw PairingCodeError.missing("v") }
         guard let version = Int(v) else { throw PairingCodeError.unsupportedVersion(v) }
@@ -85,6 +94,7 @@ public struct PairingCode: Sendable, Equatable {
 
         let eps = items.filter { $0.name == "ep" }.compactMap(\.value)
         guard !eps.isEmpty else { throw PairingCodeError.missing("ep") }
+        guard eps.count <= maxEndpoints else { throw PairingCodeError.tooManyEndpoints(eps.count) }
         var endpoints: [SSHEndpoint] = []
         for e in eps {
             guard let ep = SSHEndpoint.parse(e) else { throw PairingCodeError.badEndpoint(e) }
@@ -94,7 +104,9 @@ public struct PairingCode: Sendable, Equatable {
         guard let t = one("t"), !t.isEmpty else { throw PairingCodeError.missing("t") }
         guard let token = decodeBase64url(t), token.count == 16 else { throw PairingCodeError.badToken }
 
-        var label = one("l")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        // No control or format characters (bidi overrides) in a label shown to the user.
+        let shown = one("l").map { String(String.UnicodeScalarView($0.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) && $0.properties.generalCategory != .format })) }
+        var label = shown?.trimmingCharacters(in: .whitespacesAndNewlines)
         if label?.isEmpty ?? true { label = nil }
         if let l = label, l.count > 64 { label = String(l.prefix(64)) }
 
@@ -131,6 +143,8 @@ public enum PairingCodeError: Error, Equatable, CustomStringConvertible {
     case badDeviceID(String)
     case badEndpoint(String)
     case badToken
+    case repeated(String)
+    case tooManyEndpoints(Int)
 
     public var description: String {
         switch self {
@@ -140,6 +154,8 @@ public enum PairingCodeError: Error, Equatable, CustomStringConvertible {
         case .badDeviceID(let s): return "The hab id \"\(s)\" is not a SHA-256 fingerprint."
         case .badEndpoint(let s): return "The address \"\(s)\" is not host or host:port."
         case .badToken: return "The pairing token is not 128 bits of base64url."
+        case .repeated(let k): return "The pairing code gives its \(Self.name(k)) more than once."
+        case .tooManyEndpoints(let n): return "The pairing code lists \(n) addresses; at most \(PairingCode.maxEndpoints) are allowed."
         }
     }
 
@@ -149,6 +165,7 @@ public enum PairingCodeError: Error, Equatable, CustomStringConvertible {
         case "id": return "hab id"
         case "ep": return "address"
         case "t": return "token"
+        case "l": return "label"
         default: return k
         }
     }

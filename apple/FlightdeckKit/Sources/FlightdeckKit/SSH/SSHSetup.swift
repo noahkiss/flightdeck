@@ -52,8 +52,9 @@ public final class SSHSetup {
             keyError = nil
             // The public key only, so a host can be set up from the log too.
             let line = k.authorizedKeysLine(comment: DeviceKeys.comment)
-            log.notice("device key \(k.kind.rawValue, privacy: .public): \(line, privacy: .public)")
+            log.notice("device key \(k.kind.rawValue, privacy: .public) \(k.fingerprint, privacy: .public)")
             #if DEBUG
+            log.debug("device key line: \(line, privacy: .public)")
             print("flightdeck: device key: \(line)")
             #endif
             return k

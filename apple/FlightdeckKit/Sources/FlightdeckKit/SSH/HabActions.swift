@@ -64,13 +64,18 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
             return
         }
         let name = entry.label ?? entry.destination
+        if (try? keys.key(entry.keyID))?.requiresBiometry == true {
+            // No Face ID prompt in the background: fail fast, never hang.
+            await notify(name, "Open Flightdeck to retry: the SSH key needs Face ID.")
+            return
+        }
         do {
             let r = try await SSHSetup.perform(entry: entry, keys: keys, HabMethods.habPing, PingParams(), clientLabel: "action")
             let ms = r.elapsed.components.seconds * 1000 + r.elapsed.components.attoseconds / 1_000_000_000_000_000
-            log.notice("ping action: \(name, privacy: .public) answered in \(ms) ms")
+            log.notice("ping action: \(name, privacy: .private) answered in \(ms) ms")
             await notify(name, "The hab answered in \(ms) ms.")
         } catch {
-            log.notice("ping action: \(name, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+            log.notice("ping action: \(name, privacy: .private) failed: \(String(describing: error), privacy: .private)")
             await notify(name, "Could not reach the hab: \(error)")
         }
     }

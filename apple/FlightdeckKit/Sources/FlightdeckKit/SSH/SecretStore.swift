@@ -43,7 +43,14 @@ public struct KeychainStore: SecretStore {
     }
 
     public func write(account: String, data: Data) throws {
-        SecItemDelete(base(account) as CFDictionary)
+        // Update in place, so a failed write never loses the old key.
+        let update: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        ]
+        let rc0 = SecItemUpdate(base(account) as CFDictionary, update as CFDictionary)
+        if rc0 == errSecSuccess { return }
+        guard rc0 == errSecItemNotFound else { throw Self.error("write", rc0) }
         var q = base(account)
         q[kSecValueData as String] = data
         q[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly

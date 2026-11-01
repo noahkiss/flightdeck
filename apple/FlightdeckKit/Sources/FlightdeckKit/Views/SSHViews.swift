@@ -183,6 +183,8 @@ struct AddHabView: View {
     @State private var command = ""
     @State private var step: Step = .form
     @State private var error: String?
+    /// The destination the shown host key came from.
+    @State private var probed: SSHDestination?
 
     enum Step: Equatable {
         case form
@@ -203,6 +205,10 @@ struct AddHabView: View {
                 TextField("Label (optional)", text: $label)
             } header: {
                 Text("Host")
+            } footer: {
+                if prefill != nil && destination.isEmpty {
+                    Text("Type the user name and @ before the host.")
+                }
             }
             Section {
                 if let line = setup.authorizedKeysLine {
@@ -257,11 +263,21 @@ struct AddHabView: View {
                 }
             }
         }
+        .onChange(of: destination) { _, _ in resetConfirm() }
+        .onChange(of: command) { _, _ in resetConfirm() }
         .onAppear {
             setup.loadKey()
             if let p = prefill, label.isEmpty {
                 label = p.label ?? ""
             }
+        }
+    }
+
+    /// An edit after the probe drops the shown host key: it belongs to the old address.
+    private func resetConfirm() {
+        if case .confirm = step {
+            step = .form
+            probed = nil
         }
     }
 
@@ -271,6 +287,7 @@ struct AddHabView: View {
         step = .probing
         do {
             let key = try await setup.probe(d)
+            probed = d
             step = .confirm(SSHFingerprint.of(key), String(openSSHPublicKey: key))
         } catch {
             self.error = "\(error)"
@@ -279,7 +296,7 @@ struct AddHabView: View {
     }
 
     private func trust() async {
-        guard case .confirm(let fp, let line) = step, let d = SSHDestination.parse(destination) else { return }
+        guard case .confirm(let fp, let line) = step, let d = probed else { return }
         let cmd = command.trimmingCharacters(in: .whitespaces)
         let entry = SSHHabEntry(
             label: label.trimmingCharacters(in: .whitespaces).isEmpty ? nil : label.trimmingCharacters(in: .whitespaces),
