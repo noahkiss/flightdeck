@@ -49,8 +49,14 @@ type conn struct {
 	pending  []pubEvent // events that arrived while seeding, in order
 	// lanes run pane.input calls off the read loop, one goroutine per pane while it has calls,
 	// so calls to one pane keep their order and a stuck pane holds up nothing else.
-	lanes   map[string][]inputCall
-	waiting int // pane.input calls in lanes
+	lanes   map[string]*lane
+	waiting int // pane.input calls in lanes, until their reply
+}
+
+// lane holds one pane's pane.input calls that are read and not yet queued to Input.
+type lane struct {
+	calls []inputCall
+	wake  chan struct{} // a call was added
 }
 
 // inputCall is one pane.input call waiting in its pane's lane.
@@ -424,42 +430,75 @@ func (c *conn) handleInput(m message) {
 		return
 	}
 	if c.lanes == nil {
-		c.lanes = map[string][]inputCall{}
+		c.lanes = map[string]*lane{}
 	}
-	q, running := c.lanes[p.Pane]
-	c.lanes[p.Pane] = append(q, call)
+	ln, running := c.lanes[p.Pane]
+	if !running {
+		ln = &lane{wake: make(chan struct{}, 1)}
+		c.lanes[p.Pane] = ln
+	}
+	ln.calls = append(ln.calls, call)
 	c.waiting++
 	c.mu.Unlock()
 	if !running {
-		go c.runLane(p.Pane)
+		go c.runLane(p.Pane, ln)
+		return
+	}
+	select {
+	case ln.wake <- struct{}{}:
+	default:
 	}
 }
 
-// runLane writes one pane's queued pane.input calls in order, then ends.
-func (c *conn) runLane(pane string) {
+// runLane queues one pane's pane.input calls to Input in order, each as soon as it is read, and
+// replies to them in the same order as their results come; it ends when none is left. It never
+// waits for one call's result before queueing the next: each keystroke is its own call, and
+// under heavy output a result comes seconds after the write reached the program.
+func (c *conn) runLane(pane string, ln *lane) {
+	type queued struct {
+		call inputCall
+		res  chan error
+	}
+	var pending []queued
 	for {
 		c.mu.Lock()
-		q := c.lanes[pane]
-		if len(q) == 0 {
+		calls := ln.calls
+		ln.calls = nil
+		if len(calls) == 0 && len(pending) == 0 {
 			delete(c.lanes, pane)
 			c.mu.Unlock()
 			return
 		}
-		call := q[0]
-		c.lanes[pane] = q[1:]
 		c.mu.Unlock()
-		var e *Error
-		if err := call.ctx.Err(); err != nil {
-			e = actionErr(call.m.Method, err) // timed out while it waited: never written
-		} else if err := c.s.cfg.Input.Input(call.ctx, c.clientID, pane, call.data); err != nil {
-			e = actionErr(call.m.Method, err)
+		for _, call := range calls {
+			q := queued{call: call, res: make(chan error, 1)}
+			if err := call.ctx.Err(); err != nil {
+				q.res <- err // timed out while it waited: never written
+			} else {
+				wait := c.s.cfg.Input.QueueInput(call.ctx, c.clientID, pane, call.data)
+				go func() { q.res <- wait() }()
+			}
+			pending = append(pending, q)
 		}
+		if len(calls) > 0 {
+			continue
+		}
+
+		// Wait for the oldest call's result, or for a new call to queue.
+		var err error
+		select {
+		case err = <-pending[0].res:
+		case <-ln.wake:
+			continue
+		}
+		call := pending[0].call
+		pending = pending[1:]
 		call.cancel()
 		c.mu.Lock()
 		c.waiting--
 		c.mu.Unlock()
-		if e != nil {
-			c.reply(call.m, call.seq, nil, e)
+		if err != nil {
+			c.reply(call.m, call.seq, nil, actionErr(call.m.Method, err))
 		} else {
 			c.reply(call.m, call.seq, api.Empty{Seq: api.Seq{Seq: call.seq}}, nil)
 		}

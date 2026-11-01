@@ -63,12 +63,17 @@ func (d dataService) ServeConn(nc net.Conn, br *bufio.Reader) { d.ds.ServeConn(n
 // inputService writes pane.input to a pane through the link (spec 3.8).
 type inputService struct{ lk *link.Link }
 
-func (i inputService) Input(ctx context.Context, _ string, pane string, data []byte) error {
+func (i inputService) QueueInput(ctx context.Context, _ string, pane string, data []byte) func() error {
 	u, ok := parseUUID(pane)
 	if !ok {
-		return control.Errorf(api.ErrorKindInvalid, "pane %q is not a pane id", pane)
+		return func() error { return control.Errorf(api.ErrorKindInvalid, "pane %q is not a pane id", pane) }
 	}
-	err := i.lk.Input(ctx, u, data)
+	wait := i.lk.QueueInput(ctx, u, data)
+	return func() error { return inputErr(pane, wait()) }
+}
+
+// inputErr gives a link input error its kind.
+func inputErr(pane string, err error) error {
 	switch {
 	case err == nil:
 		return nil

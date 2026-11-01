@@ -607,9 +607,9 @@ func (d *fakeData) ServeConn(nc net.Conn, br *bufio.Reader) {
 
 type fakeInput struct{ got chan string }
 
-func (f *fakeInput) Input(_ context.Context, client, pane string, data []byte) error {
+func (f *fakeInput) QueueInput(_ context.Context, client, pane string, data []byte) func() error {
 	f.got <- client + "/" + pane + "/" + string(data)
-	return nil
+	return func() error { return nil }
 }
 
 // TestDataAndInput: data.ticket and pane.input reach their services with the client id, and a
@@ -676,23 +676,32 @@ func TestCallAfterCloseFails(t *testing.T) {
 	}
 }
 
-// stuckInput records each call. Input to pane "stuck" returns only 200 ms after its context
-// ends, as a write already in flight does.
+// stuckInput records each write as the program would see it. A write to pane "stuck" is taken
+// and returns only 200 ms after its context ends, as a write already in flight does; a write
+// queued behind it waits, and is never written when its context ends first.
 type stuckInput struct {
-	mu  sync.Mutex
-	got []string
+	mu   sync.Mutex
+	got  []string
+	busy bool // a write to "stuck" is in flight
 }
 
-func (f *stuckInput) Input(ctx context.Context, _, pane string, data []byte) error {
+func (f *stuckInput) QueueInput(ctx context.Context, _, pane string, data []byte) func() error {
 	f.mu.Lock()
-	f.got = append(f.got, pane+"/"+string(data))
-	f.mu.Unlock()
+	defer f.mu.Unlock()
 	if pane != "stuck" {
-		return nil
+		f.got = append(f.got, pane+"/"+string(data))
+		return func() error { return nil }
 	}
-	<-ctx.Done()
-	time.Sleep(200 * time.Millisecond)
-	return ctx.Err()
+	if f.busy {
+		return func() error { <-ctx.Done(); return ctx.Err() }
+	}
+	f.busy = true
+	f.got = append(f.got, pane+"/"+string(data))
+	return func() error {
+		<-ctx.Done()
+		time.Sleep(200 * time.Millisecond)
+		return ctx.Err()
+	}
 }
 
 func (f *stuckInput) calls() []string {
@@ -737,5 +746,82 @@ func TestInputOffReadLoop(t *testing.T) {
 	}
 	if got := in.calls(); !slices.Equal(got, []string{"stuck/a", "other/c"}) {
 		t.Errorf("Input calls %v; the timed-out b must never be written", got)
+	}
+}
+
+// writeSignal wraps a client's connection and reports each write, so a test can send calls in
+// a known order without waiting for their replies.
+type writeSignal struct {
+	net.Conn
+	wrote chan struct{}
+}
+
+func (w *writeSignal) Write(b []byte) (int, error) {
+	n, err := w.Conn.Write(b)
+	w.wrote <- struct{}{}
+	return n, err
+}
+
+// heldInput queues each write at once and holds its result until release is closed.
+type heldInput struct {
+	mu      sync.Mutex
+	got     []string
+	release chan struct{}
+}
+
+func (f *heldInput) QueueInput(ctx context.Context, _, pane string, data []byte) func() error {
+	f.mu.Lock()
+	f.got = append(f.got, pane+"/"+string(data))
+	f.mu.Unlock()
+	return func() error { <-f.release; return nil }
+}
+
+func (f *heldInput) calls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.got...)
+}
+
+// TestInputLanePipelined: a lane queues each pane.input call as soon as it is read, without
+// waiting for the result of the call before it, and replies in order once results come.
+func TestInputLanePipelined(t *testing.T) {
+	cfg := testConfig(&fakeSource{})
+	in := &heldInput{release: make(chan struct{})}
+	cfg.Input = in
+	srv := New(cfg)
+	t.Cleanup(srv.Close)
+	ws := &writeSignal{Conn: pipeServe(t, srv), wrote: make(chan struct{}, 16)}
+	c := NewClient(ws)
+	hello(t, c, "")
+	<-ws.wrote
+
+	type result struct {
+		key string
+		err error
+	}
+	results := make(chan result, 3)
+	keys := []string{"l", "s", "\r"}
+	for _, k := range keys {
+		go func() { results <- result{k, c.Call(ctx(t), "pane.input", api.InputParams{Pane: "p", Text: k}, nil)} }()
+		<-ws.wrote // in order: the next call goes out after this one
+	}
+	want := []string{"p/l", "p/s", "p/\r"}
+	deadline := time.Now().Add(5 * time.Second)
+	for !slices.Equal(in.calls(), want) {
+		if time.Now().After(deadline) {
+			t.Fatalf("queued %q while no result came; want %q", in.calls(), want)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case r := <-results:
+		t.Fatalf("a reply before any result: %+v", r)
+	default:
+	}
+	close(in.release)
+	for range keys {
+		if r := <-results; r.err != nil {
+			t.Errorf("%q: %v", r.key, r.err)
+		}
 	}
 }

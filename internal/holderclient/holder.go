@@ -30,7 +30,7 @@ type Holder struct {
 	closed   bool
 	token    uint32
 	waits    map[uint32]chan hp.Frame
-	inputs   map[uint32]*InputCall // input frames in flight, by token
+	inputs   map[uint32]*InputCall // input frames in flight, by the token of the frame and of its ping
 	panes    map[hp.Handle]*pane
 
 	sendMu sync.Mutex // input frames go out in the order of their offsets
@@ -162,10 +162,14 @@ func (h *Holder) track(f hp.Frame) {
 		// input frame sent after it fails on its offset. The first failure of a gen moves the
 		// next offset back to the holder's count; the later ones are aborted. The reader sees
 		// the errors in the order the holder sent them, so the first one is always the cause.
+		// A call that Wait gave up on is forgotten, so its answer moves nothing here; the
+		// client's offset may then drift from the holder's, and the next refusal for a wrong
+		// offset moves it back.
 		ic := h.inputs[f.Token]
-		if ic == nil || f.Ref != hp.KindInput {
+		if ic == nil || f.Ref != hp.KindInput || ic.tok != f.Token {
 			break
 		}
+		ic.failed = true
 		p := h.panes[ic.hd]
 		if p == nil || p.gen != ic.gen {
 			ic.aborted = f.Code == hp.CodeInputOffset
@@ -174,6 +178,17 @@ func (h *Holder) track(f hp.Frame) {
 		if f.Code == hp.CodeInputOffset || f.Code == hp.CodeQueueFull {
 			p.input = f.Offset
 			p.gen++
+		}
+	case *hp.Pong:
+		// The pong behind an input frame with no error before it: the holder took the frame. A
+		// frame of an older gen that was taken still moved the holder's count, which the
+		// resync did not include: its offset happened to match after another writer's input.
+		ic := h.inputs[f.Token]
+		if ic == nil || ic.ping != f.Token || ic.failed {
+			break
+		}
+		if p := h.panes[ic.hd]; p != nil && p.gen != ic.gen {
+			p.input += uint64(ic.n)
 		}
 	case *hp.Bye:
 		if !h.bye {
@@ -422,22 +437,28 @@ type InputCall struct {
 	hd        hp.Handle
 	tok, ping uint32
 	gen       uint64
+	n         int // bytes of input
 	w         chan hp.Frame
-	aborted   bool // set by the reader, under h.mu: an earlier input frame of the gen failed
+	// Set by the reader, under h.mu: aborted when an earlier input frame of the gen failed;
+	// failed when the holder refused this one.
+	aborted, failed bool
 }
 
 // SendInput writes data to the pane's PTY without waiting for the holder's answer, so a caller
 // may send the next input at once. Input frames reach the program in the order SendInput is
 // called. A frame refused for a full queue or a wrong offset makes every frame sent after it, up
 // to the next SendInput after the refusal is read, fail with ErrInputAborted; none of those
-// reached the program.
+// reached the program. The one exception follows a refusal for a wrong offset: a later frame
+// whose offset happens to match the holder's count, moved by another writer, is taken. A
+// caller that would send a refused frame again must not do so once a later one was taken, or
+// the two reach the program out of order.
 //
 // The holder answers in order with its output, so under heavy output Wait returns well after
 // the input reached the program.
 func (h *Holder) SendInput(hd hp.Handle, data []byte) (*InputCall, error) {
 	h.sendMu.Lock()
 	defer h.sendMu.Unlock()
-	ic := &InputCall{h: h, hd: hd, tok: h.nextToken(), ping: h.nextToken(), w: make(chan hp.Frame, 4)}
+	ic := &InputCall{h: h, hd: hd, tok: h.nextToken(), ping: h.nextToken(), n: len(data), w: make(chan hp.Frame, 4)}
 	h.mu.Lock()
 	if h.closed || h.bye {
 		h.mu.Unlock()
@@ -452,7 +473,7 @@ func (h *Holder) SendInput(hd hp.Handle, data []byte) (*InputCall, error) {
 	ic.gen = p.gen
 	p.input += uint64(len(data))
 	h.waits[ic.tok], h.waits[ic.ping] = ic.w, ic.w
-	h.inputs[ic.tok] = ic
+	h.inputs[ic.tok], h.inputs[ic.ping] = ic, ic
 	h.mu.Unlock()
 	err := h.pc.WriteFrame(&hp.Input{Handle: hd, Token: ic.tok, Offset: off, Data: data})
 	if err == nil {
@@ -471,6 +492,7 @@ func (ic *InputCall) forget() {
 	delete(h.waits, ic.tok)
 	delete(h.waits, ic.ping)
 	delete(h.inputs, ic.tok)
+	delete(h.inputs, ic.ping)
 	h.mu.Unlock()
 }
 

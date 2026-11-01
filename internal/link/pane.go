@@ -3,6 +3,7 @@ package link
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -209,6 +210,7 @@ type pane struct {
 	ansN, ansBytes int
 	ansRefused     bool
 	ansDropped     int
+	resent         int // writes sent again after an abort or a wrong offset
 }
 
 // Bounds on a pane's answers to terminal queries waiting to be written. A program that floods
@@ -228,6 +230,9 @@ type inputReq struct {
 	n      int // answers in data; 0 for client input
 	// retried is set once the write was sent again after a wrong offset.
 	retried bool
+	// deadline is set when the write is first sent: it is never sent again after it, so a
+	// write lands within inputTimeout of first going out or fails.
+	deadline time.Time
 	// taken is set when the writer takes the request; cancelled when its caller gave up
 	// first, so the writer skips it and it is never written.
 	taken, cancelled bool
@@ -510,17 +515,36 @@ func (p *pane) inputReady(l *Link) {
 //
 // A failed write makes the writes sent after it fail as aborted, unwritten. The writer then
 // sends nothing new until every sent write is answered, and sends the aborted ones again, in
-// order, before anything queued after them.
+// order, before anything queued after them. Two cases fail them instead. A write sent after
+// them was taken (its offset matched once another writer moved the holder's count), so a
+// resend would land out of order. Or the write's deadline passed.
 func (p *pane) inputWriter(l *Link) {
 	type sentWrite struct {
 		r   *inputReq
 		res chan error // the holder's answer
 	}
+	type redoWrite struct {
+		r   *inputReq
+		err error // why it was not written
+	}
 	var (
 		sent    []sentWrite
-		redo    []*inputReq // aborted writes, oldest first
+		redo    []redoWrite // aborted writes, oldest first
 		stalled bool        // a write failed: send nothing new until sent is empty
 	)
+	// fail ends a write that is not sent again. The caller holds p.mu; fail unlocks it.
+	fail := func(r *inputReq, err error) {
+		if r.answer {
+			p.ansN, p.ansBytes = p.ansN-r.n, p.ansBytes-len(r.data)
+		}
+		p.endBurstLocked(l)
+		p.mu.Unlock()
+		if r.done != nil {
+			r.done <- err
+		} else {
+			l.cfg.Logf("link: pane %s: answer to a terminal query: %v", p.uuid, err)
+		}
+	}
 	for {
 		p.mu.Lock()
 		if !stalled {
@@ -541,6 +565,10 @@ func (p *pane) inputWriter(l *Link) {
 				}
 				r = c
 			}
+			if r.deadline.IsZero() {
+				r.deadline = time.Now().Add(inputTimeout)
+			}
+			deadline := r.deadline
 			h, hd, lost := p.holder, p.handle, p.lost
 			p.mu.Unlock()
 			w := sentWrite{r: r, res: make(chan error, 1)}
@@ -554,7 +582,7 @@ func (p *pane) inputWriter(l *Link) {
 					w.res <- err
 				} else {
 					go func() {
-						ctx, cancel := context.WithTimeout(l.ctx, inputTimeout)
+						ctx, cancel := context.WithDeadline(l.ctx, deadline)
 						defer cancel()
 						w.res <- ic.Wait(ctx)
 					}()
@@ -566,14 +594,21 @@ func (p *pane) inputWriter(l *Link) {
 		if len(sent) == 0 {
 			stalled = false
 			if len(redo) > 0 {
-				keep := redo[:0]
-				for _, r := range redo {
-					if r.answer && p.ansRefused {
+				var keep []*inputReq
+				now := time.Now()
+				for _, w := range redo {
+					r := w.r
+					switch {
+					case r.answer && p.ansRefused:
 						p.ansN, p.ansBytes = p.ansN-r.n, p.ansBytes-len(r.data)
 						p.ansDropped += r.n
-						continue
+					case !now.Before(r.deadline):
+						fail(r, fmt.Errorf("input not written within %v: %w", inputTimeout, w.err))
+						p.mu.Lock()
+					default:
+						p.resent++
+						keep = append(keep, r)
 					}
-					keep = append(keep, r)
 				}
 				p.inq = append(keep, p.inq...)
 				redo = nil
@@ -605,7 +640,7 @@ func (p *pane) inputWriter(l *Link) {
 		var re *holderclient.RequestError
 		refused := errors.As(err, &re) && re.Code == hp.CodeQueueFull
 		// Aborted writes never reached the program; send them again. So is a write refused for
-		// its offset, which another gff-hab moved, once.
+		// its offset, which other input moved, once.
 		again := errors.Is(err, holderclient.ErrInputAborted) ||
 			errors.As(err, &re) && re.Code == hp.CodeInputOffset && !r.retried
 		p.mu.Lock()
@@ -614,9 +649,18 @@ func (p *pane) inputWriter(l *Link) {
 		}
 		if again {
 			r.retried = r.retried || !errors.Is(err, holderclient.ErrInputAborted)
-			redo = append(redo, r)
+			redo = append(redo, redoWrite{r, err})
 			p.mu.Unlock()
 			continue
+		}
+		if err == nil && len(redo) > 0 {
+			// This write was taken after the ones in redo were not: sending them now would
+			// reorder them, so they fail.
+			for _, w := range redo {
+				fail(w.r, fmt.Errorf("a later input was written first: %w", w.err))
+				p.mu.Lock()
+			}
+			redo = nil
 		}
 		if r.answer {
 			p.ansN, p.ansBytes = p.ansN-r.n, p.ansBytes-len(r.data)

@@ -63,7 +63,10 @@ type Data interface {
 // Input writes a client's bytes to a pane's program (spec 3.8). An error that is an *Error keeps
 // its kind.
 type Input interface {
-	Input(ctx context.Context, client, pane string, data []byte) error
+	// QueueInput queues data for pane's program behind every write queued to that pane before
+	// it, and returns without waiting for the write; wait returns its result. When ctx ends
+	// while the write still waits in the queue, it is never written.
+	QueueInput(ctx context.Context, client, pane string, data []byte) (wait func() error)
 }
 
 // Config is what New needs. Source is required.

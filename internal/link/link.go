@@ -837,39 +837,50 @@ func (l *Link) ClosePane(ctx context.Context, u hp.UUID) error {
 	return nil
 }
 
-// Input writes data to pane u's program as one write (spec 3.8). Writes to one pane, client input
-// and the link's own answers to terminal queries alike, reach the holder in the order they were
-// queued; none waits for the holder's answer to the one before (see inputWriter). When ctx ends
-// while the write still waits in the queue, it is never written; when it is already being
-// written, Input returns that write's result.
+// Input writes data to pane u's program as one write (spec 3.8) and returns its result. It is
+// QueueInput followed by its wait.
 func (l *Link) Input(ctx context.Context, u hp.UUID, data []byte) error {
+	return l.QueueInput(ctx, u, data)()
+}
+
+// QueueInput queues data for pane u's program as one write (spec 3.8) and returns without
+// waiting for it; wait returns the write's result. Writes to one pane, client input and the
+// link's own answers to terminal queries alike, reach the holder in the order they were queued,
+// and none waits for the holder's answer to the one before (see inputWriter). So a caller that
+// queues writes one after another, without waiting, gets them written in that order. When ctx
+// ends while the write still waits in the queue, it is never written and wait returns ctx's
+// error; when it is already being written, wait returns that write's result, within
+// inputTimeout of its first send.
+func (l *Link) QueueInput(ctx context.Context, u hp.UUID, data []byte) (wait func() error) {
 	p := l.pane(u)
 	if p == nil {
-		return ErrNoPane
+		return func() error { return ErrNoPane }
 	}
 	r := &inputReq{data: data, done: make(chan error, 1)}
 	p.mu.Lock()
 	if p.lost != nil {
 		err := p.lost
 		p.mu.Unlock()
-		return err
+		return func() error { return err }
 	}
 	p.queueInputLocked(l, r)
 	p.mu.Unlock()
-	select {
-	case err := <-r.done:
-		return err
-	case <-ctx.Done():
-	}
-	p.mu.Lock()
-	if !r.taken {
-		// Still queued: it is never written, so a client that tries again types it once.
-		r.cancelled = true
+	return func() error {
+		select {
+		case err := <-r.done:
+			return err
+		case <-ctx.Done():
+		}
+		p.mu.Lock()
+		if !r.taken {
+			// Still queued: it is never written, so a client that tries again types it once.
+			r.cancelled = true
+			p.mu.Unlock()
+			return ctx.Err()
+		}
 		p.mu.Unlock()
-		return ctx.Err()
+		return <-r.done // being written: its result, within inputTimeout
 	}
-	p.mu.Unlock()
-	return <-r.done // being written: its result, within inputTimeout
 }
 
 // Resize sets pane u's size: the holder resizes the PTY, then the parser takes the size and every

@@ -534,13 +534,20 @@ input queue: client input and gff-hab's answers to terminal queries reach the ho
 they were queued. gff-hab sends each write without waiting for the holder's answer to the one
 before: the holder answers behind the pane's output, so under heavy output an answer comes seconds
 after its write reached the program. A refused write makes the writes sent behind it fail on their
-offset; gff-hab sends those again, in order, at the offset the holder expects. A pane that is gone or unknown answers `not_found`; a lost
-pane answers `unavailable`. Input as activity for size ownership (6.2) is stage 8.
+offset; gff-hab sends those again, in order, at the offset the holder expects. Two cases fail them
+instead. A later write was taken (its offset happened to match the holder's count after other
+input moved it), so a resend would land out of order. Or the write's deadline passed: 10 s from
+when it was first sent. A write therefore lands within 10 s of first going out, or fails. A pane
+that is gone or unknown answers `not_found`; a lost pane answers `unavailable`. Input as activity
+for size ownership (6.2) is stage 8.
 
 - The control connection runs `pane.input` off its read loop, in one lane per pane: calls to one
   pane keep their order, and a pane that takes its input slowly holds up neither `hab.ping`, other
   calls, nor input to other panes. One connection may have 256 calls waiting; past that a call
   answers `unavailable`.
+- A lane queues each call to the pane's input queue as soon as it reads it, and answers the calls
+  in order as their results come. It never waits for one call's result before it queues the next:
+  each keystroke is its own call, and a result comes behind the pane's output.
 - A call's 30 s timeout runs from when gff-hab read it. A call that times out while it still waits
   is never written, so a client that tries again types it once. A call already being written
   answers with that write's result.

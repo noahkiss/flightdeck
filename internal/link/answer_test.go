@@ -3,13 +3,17 @@ package link
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/holderclient"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 )
@@ -323,6 +327,12 @@ func TestInputAbortedResent(t *testing.T) {
 		t.Errorf("third write, sent again: %v", err)
 	}
 	t.Logf("all answered after %v", time.Since(start))
+	p.mu.Lock()
+	resent := p.resent
+	p.mu.Unlock()
+	if resent != 1 {
+		t.Errorf("%d writes sent again; want the aborted third one", resent)
+	}
 	// The client's input offset follows the holder's: the next write lands at once.
 	ctx, cancel := context.WithTimeout(context.Background(), waitLong)
 	defer cancel()
@@ -330,3 +340,211 @@ func TestInputAbortedResent(t *testing.T) {
 		t.Errorf("a later write: %v", err)
 	}
 }
+
+// TestInputDeadline: an aborted write whose deadline passed before it could be sent again fails
+// instead, so input never lands long after its caller gave up. Same writes as
+// TestInputAbortedResent.
+func TestInputDeadline(t *testing.T) {
+	hdir := shortDir(t)
+	startHolder(t, hdir, "one", 0)
+	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond})
+	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
+	u := uuidN(87)
+	spawn(t, l, u, "stty raw -echo; "+floodScript)
+	waitFor(t, "output", func() bool { return screenHas(t, l, u, "x") })
+	release := stallEventLoop(t, l)
+
+	p := l.pane(u)
+	reqs := []*inputReq{
+		{data: make([]byte, 900<<10), done: make(chan error, 1)},
+		{data: make([]byte, 200<<10), done: make(chan error, 1)},
+		{data: []byte("x"), done: make(chan error, 1)},
+	}
+	p.mu.Lock()
+	for _, r := range reqs {
+		p.queueInputLocked(l, r)
+	}
+	p.mu.Unlock()
+	waitFor(t, "all three sent", func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return len(p.inq) == 0
+	})
+	// The third write's time runs out while it waits for the answers.
+	p.mu.Lock()
+	reqs[2].deadline = time.Now()
+	p.mu.Unlock()
+	release()
+
+	if err := <-reqs[0].done; err != nil {
+		t.Errorf("first write: %v", err)
+	}
+	var re *holderclient.RequestError
+	if err := <-reqs[1].done; !errors.As(err, &re) || re.Code != hp.CodeQueueFull {
+		t.Errorf("second write: %v, want queue full", err)
+	}
+	if err := <-reqs[2].done; !errors.Is(err, holderclient.ErrInputAborted) || !strings.Contains(err.Error(), "not written within") {
+		t.Errorf("third write, past its deadline: %v; want it failed, not sent again", err)
+	}
+	p.mu.Lock()
+	resent := p.resent
+	p.mu.Unlock()
+	if resent != 0 {
+		t.Errorf("%d writes sent again", resent)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), waitLong)
+	defer cancel()
+	if err := l.Input(ctx, u, []byte("y")); err != nil {
+		t.Errorf("a later write: %v", err)
+	}
+}
+
+// TestInputOtherWriter: another writer moves the holder's input count while this link has writes
+// in flight.
+// The first is refused for its offset and moves the client's offset to the holder's count; the
+// second, sent in the same gen, is aborted; the third's offset happens to match the holder's
+// count, so the holder takes it. The link must not send the first two again after the third,
+// and the client's offset must count the third, so the next write needs no retry.
+func TestInputOtherWriter(t *testing.T) {
+	hdir := shortDir(t)
+	out := filepath.Join(shortDir(t), "seen")
+	startHolder(t, hdir, "one", 0)
+	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond})
+	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
+	u := uuidN(88)
+	spawn(t, l, u, `stty raw -echo
+`+floodScript+` &
+exec cat > `+out)
+	waitFor(t, "output", func() bool { return screenHas(t, l, u, "x") })
+	seen := func(s string) func() bool {
+		return func() bool { b, _ := os.ReadFile(out); return string(b) == s }
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), waitLong)
+	defer cancel()
+	release := stallEventLoop(t, l)
+	// The other writer: an input frame sent with Send on the same holder connection, which the
+	// client's offset does not count. The holder takes one connection at a time, so a second
+	// connection cannot write while this one is open.
+	hpane := l.client.Pane(u)
+	if err := hpane.Holder.Send(&hp.Input{Handle: hpane.Handle, Token: hpane.Holder.Token(), Offset: 0, Data: []byte("ZZ")}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the other writer's input", seen("ZZ"))
+
+	p := l.pane(u)
+	reqs := []*inputReq{
+		{data: []byte("a"), done: make(chan error, 1)},
+		{data: []byte("b"), done: make(chan error, 1)},
+		{data: []byte("c"), done: make(chan error, 1)},
+	}
+	p.mu.Lock()
+	for _, r := range reqs {
+		p.queueInputLocked(l, r)
+	}
+	p.mu.Unlock()
+	waitFor(t, "the third write, at the holder's count", seen("ZZc"))
+	release()
+
+	var re *holderclient.RequestError
+	if err := <-reqs[0].done; !errors.As(err, &re) || re.Code != hp.CodeInputOffset {
+		t.Errorf("first write: %v, want a wrong offset", err)
+	}
+	if err := <-reqs[1].done; !errors.Is(err, holderclient.ErrInputAborted) {
+		t.Errorf("second write: %v, want aborted", err)
+	}
+	if err := <-reqs[2].done; err != nil {
+		t.Errorf("third write: %v", err)
+	}
+	if err := l.Input(ctx, u, []byte("d")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the next write", func() bool { b, _ := os.ReadFile(out); return strings.HasSuffix(string(b), "d") })
+	if b, _ := os.ReadFile(out); string(b) != "ZZcd" {
+		t.Errorf("the program read %q, want %q", b, "ZZcd")
+	}
+	p.mu.Lock()
+	resent := p.resent
+	p.mu.Unlock()
+	if resent != 0 {
+		t.Errorf("%d writes sent again; want none", resent)
+	}
+}
+
+// writeSignal wraps a control client's connection and reports each write, so a test can send
+// calls in a known order without waiting for their replies.
+type writeSignal struct {
+	net.Conn
+	wrote chan struct{}
+}
+
+func (w *writeSignal) Write(b []byte) (int, error) {
+	n, err := w.Conn.Write(b)
+	w.wrote <- struct{}{}
+	return n, err
+}
+
+// linkInput serves pane.input for one pane from a link, as gff-hab does.
+type linkInput struct {
+	l *Link
+	u hp.UUID
+}
+
+func (i linkInput) QueueInput(ctx context.Context, _, _ string, data []byte) func() error {
+	return i.l.QueueInput(ctx, i.u, data)
+}
+
+// TestInputLaneStalled: keystrokes sent as separate pane.input calls, without waiting for
+// replies, all reach the program in order while no holder answer is read. A control lane that
+// waited for each call's result before queueing the next would write only the first.
+func TestInputLaneStalled(t *testing.T) {
+	hdir := shortDir(t)
+	out := filepath.Join(shortDir(t), "seen")
+	startHolder(t, hdir, "one", 0)
+	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond})
+	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
+	u := uuidN(89)
+	spawn(t, l, u, `stty raw -echo
+`+floodScript+` &
+exec cat > `+out)
+	waitFor(t, "output", func() bool { return screenHas(t, l, u, "x") })
+
+	srv := control.New(control.Config{Build: "test", Host: api.HostInfo{ID: "h"}, DeviceID: "SHA256:test",
+		Source: emptySource{}, Input: linkInput{l, u}})
+	t.Cleanup(srv.Close)
+	a, b := net.Pipe()
+	go srv.ServeConn(a)
+	ws := &writeSignal{Conn: b, wrote: make(chan struct{}, 16)}
+	c := control.NewClient(ws)
+	t.Cleanup(func() { c.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), waitLong)
+	defer cancel()
+	if _, err := c.Hello(ctx, api.ClientInfo{Name: "test", Version: "0", Kind: api.ClientKindApp}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	<-ws.wrote
+
+	release := stallEventLoop(t, l)
+	start := time.Now()
+	results := make(chan error, 3)
+	for _, k := range []string{"l", "s", "\r"} {
+		go func() { results <- c.Call(ctx, "pane.input", api.InputParams{Pane: "p", Text: k}, nil) }()
+		<-ws.wrote
+	}
+	waitFor(t, "all three keys, while no answer is read", func() bool {
+		b, _ := os.ReadFile(out)
+		return string(b) == "ls\r"
+	})
+	t.Logf("landed after %v", time.Since(start))
+	release()
+	for range 3 {
+		if err := <-results; err != nil {
+			t.Error(err)
+		}
+	}
+}
+
+// emptySource is a control.Source with nothing in it.
+type emptySource struct{}
+
+func (emptySource) Snapshot(api.HostInfo) api.Structure { return api.Structure{} }
