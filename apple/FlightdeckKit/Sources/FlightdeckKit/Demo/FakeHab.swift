@@ -147,6 +147,40 @@ public actor FakeHab {
         nextAnswerFailure = Failure(kind: kind, hint: hint)
     }
 
+    // MARK: Speech (voice.md, "API addition")
+
+    /// What `speech.prepare` answers while the hab has the `speech` capability.
+    private var speechPrepare = SpeechPrepareResult(state: .ready, model: "parakeet-tdt-0.6b-v2", formats: [.opus, .pcm16])
+    /// What `speech.transcribe` answers: the text for each clip, in order; the
+    /// last one repeats. Empty: the clip's byte count as words, for demo mode.
+    private var speechTexts: [String] = []
+    private var nextSpeechFailure: Failure?
+    /// Every `speech.prepare` received.
+    public private(set) var speechPrepares = 0
+    /// Every `speech.transcribe` received, oldest first.
+    public private(set) var transcribes: [SpeechTranscribeParams] = []
+
+    /// Sets what `speech.prepare` answers.
+    public func setSpeechPrepare(_ r: SpeechPrepareResult) {
+        speechPrepare = r
+    }
+
+    /// Sets the texts `speech.transcribe` returns, one per clip; the last repeats.
+    public func setTranscripts(_ texts: [String]) {
+        speechTexts = texts
+    }
+
+    /// Makes the next `speech.transcribe` fail with this error.
+    public func failNextTranscribe(kind: ErrorKind, hint: String) {
+        nextSpeechFailure = Failure(kind: kind, hint: hint)
+    }
+
+    /// Adds or drops a capability; the next hello carries the new list.
+    public func setCapability(_ name: String, _ on: Bool) {
+        capabilities.removeAll { $0 == name }
+        if on { capabilities.append(name) }
+    }
+
     /// Every hello received, oldest first.
     public private(set) var hellos: [HelloParams] = []
     /// How many `events.subscribe` calls were answered.
@@ -604,6 +638,40 @@ public actor FakeHab {
             a.request = nil
             a.at = Fixture.stamp(Date())
             await put(a)
+        case SpeechAPI.prepareMethod:
+            guard capabilities.contains(speechCapability) else {
+                await fail(c, id: id, kind: .unavailable, hint: "this hab has no speech engine")
+                break
+            }
+            speechPrepares += 1
+            await reply(c, id: id, result: speechPrepare)
+        case SpeechAPI.transcribeMethod:
+            guard capabilities.contains(speechCapability) else {
+                await fail(c, id: id, kind: .unavailable, hint: "this hab has no speech engine")
+                break
+            }
+            guard let p = try? params.decode(SpeechTranscribeParams.self), let bytes = Data(base64Encoded: p.audio) else {
+                await fail(c, id: id, kind: .invalid, hint: "bad speech.transcribe params")
+                break
+            }
+            transcribes.append(p)
+            if let f = nextSpeechFailure {
+                nextSpeechFailure = nil
+                await fail(c, id: id, kind: f.kind, hint: f.hint)
+                break
+            }
+            if speechPrepare.state != .ready && speechPrepare.state != .loading {
+                let hint = speechPrepare.progress.map { "downloading \($0)%" } ?? "the model is not downloaded"
+                await fail(c, id: id, kind: .unavailable, hint: hint)
+                break
+            }
+            if bytes.count > SpeechLimits.maxClipBytes {
+                await fail(c, id: id, kind: .invalid, hint: "the clip is over 1 MiB")
+                break
+            }
+            let n = transcribes.count - 1
+            let text = speechTexts.isEmpty ? "a clip of \(bytes.count) bytes" : speechTexts[min(n, speechTexts.count - 1)]
+            await reply(c, id: id, result: SpeechTranscribeResult(text: text, audioMs: 0, decodeMs: 0))
         default:
             await fail(c, id: id, kind: .unavailable, hint: "the fake hab does not serve \(method)")
         }

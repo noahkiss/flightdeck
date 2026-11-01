@@ -210,6 +210,20 @@ public actor HabConnection {
         return try await r.call(method, params, timeout: timing.callTimeout)
     }
 
+    /// Sends a request by method name on the live connection, for a method
+    /// the generated package does not have yet (`Voice/SpeechAPI.swift`).
+    public func call<P: Encodable & Sendable, R: Decodable & Sendable>(named name: String, _ params: P, timeout: Duration? = nil) async throws -> R {
+        guard let r = rpc, state.status == .online else {
+            throw ConnectionClosed(detail: "hab \(id) is not online")
+        }
+        return try await r.call(named: name, params, timeout: timeout ?? timing.callTimeout)
+    }
+
+    /// Whether the hab's welcome on the live connection names `capability`.
+    public func has(capability: String) -> Bool {
+        state.welcome?.capabilities.contains(capability) ?? false
+    }
+
     /// `chat.message` events of this hab, in seq order, from now until the
     /// stream is dropped. Every hab session's messages come; the listener filters.
     public func chatUpdates() -> AsyncStream<ChatUpdate> {
