@@ -101,6 +101,7 @@ if [ "$MODE" = serve ]; then
 fi
 
 echo "== SSHLiveTests"
+rc=0
 cd "$REPO/apple/FlightdeckKit"
 FLIGHTDECK_LIVE_NIO_HOST=$ADDR \
 FLIGHTDECK_LIVE_NIO_PORT=$PORT \
@@ -108,7 +109,12 @@ FLIGHTDECK_LIVE_NIO_HOSTKEY=$DIR/host_ed25519.pub \
 FLIGHTDECK_LIVE_NIO_AUTHKEYS=$DIR/authorized_keys \
 FLIGHTDECK_LIVE_NIO_COMMAND=$CMD \
 FLIGHTDECK_LIVE_NIO_PANE='echo flightdeck-nio-live; sleep 30' \
-	swift test --filter SSHLiveTests 2>&1 | grep -E 'live-nio:|error|passed|failed|skipped'
+	swift test --filter SSHLiveTests >"$DIR/test.log" 2>&1 || rc=$?
+grep -E 'live-nio:|error|passed|failed|skipped' "$DIR/test.log" || true
 
 echo "== sshd log (auth lines)"
-grep -E 'Accepted|Failed|refused' "$DIR/sshd.log" | sed "s|$DIR|<tmp>|g" | head -10
+grep -E 'Accepted|Failed|refused' "$DIR/sshd.log" | sed "s|$DIR|<tmp>|g" | head -10 || true
+if [ "$rc" -ne 0 ]; then
+	echo "FAIL: swift test exited $rc" >&2
+	exit "$rc"
+fi

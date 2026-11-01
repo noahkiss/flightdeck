@@ -340,7 +340,7 @@ app's `NIOSSHTransport` (`app.md` 10.6). What the spike left open:
 |---|---|
 | Keychain storage | The key blob is a Keychain item, usable only when unlocked, this device only, not synchronisable. A locked screen refuses to make or use a Secure Enclave key (`errSecInteractionNotAllowed`), as designed |
 | `Transport` protocol and fake | The carrier implements `Transport`. Its tests run against an in-process `swift-nio-ssh` server on loopback bridged to the fake hab, so pinning, refusal and the session limit are unit-tested |
-| Live check on a Mac | `apple/scripts/ssh-live-check.sh`: a throwaway loopback sshd running a fresh `gff-hab connect` with a holder. Host key probe, changed key refused, one-shot ping 213 ms, connect to online (hello and subscribe) 271 ms, a live pane's output over a second channel on the same connection 120 ms. M1 Pro under load; software key, because the screen was locked |
+| Live check on a Mac | `apple/scripts/ssh-live-check.sh`: a throwaway loopback sshd running a fresh `gff-hab connect` with a holder. Host key probe, changed key refused, one-shot ping 213 ms, connect to online (hello and subscribe) 271 ms, a live pane's output over a second channel on the same connection 120 ms. an Apple silicon laptop under load; software key, because the screen was locked |
 | iOS build | The same path runs in the iOS simulator (software key, NIOPosix sockets) against the same sshd: process start to the first hab reply 552 to 625 ms over four cold starts, load average near 25 |
 | iPhone device run | Not run yet. The phone was locked and the Mac had no iOS development signing (no Xcode account, no development profile for the bundle id). Cold start on a real network is still to measure |
 | QR pairing | The code format is fixed (6.1) and parsed; the hab side (`devices.pair`, task-99pfhjlg) is not built, so the app stops after reading the code and offers the by-hand path |
@@ -398,12 +398,13 @@ flightdeck://pair?v=1&id=SHA256:<43 chars>&ep=<host:port>&ep=...&t=<token>&l=<la
 |---|---|
 | `v` | Format version, 1. A higher version tells the user to update the app |
 | `id` | The hab's device id: the SHA-256 fingerprint of its host key, as `ssh-keygen -l` prints it |
-| `ep` | One per endpoint, in the order to try: `host`, `host:port` or `[v6]:port`; the port defaults to 22. At least one |
+| `ep` | One per endpoint, in the order to try: `host`, `host:port` or `[v6]:port`; the port defaults to 22. One to eight |
 | `t` | The one-time token: 128 bits as unpadded base64url (22 characters) |
 | `l` | The hab's label, optional |
 
 Values are percent-encoded as in any URL query. Unknown keys are ignored, so a later hab can add
-some. The app finds the link inside pasted text. The iOS app opens `flightdeck:` links.
+some. The app refuses a code that repeats `v`, `id`, `t` or `l`. It finds the link inside pasted
+text. The iOS app opens `flightdeck:` links.
 
 Built: the app's parser (`PairingCode`, task-iv89iwd8). The hab side follows it when
 `devices.pair` is built (task-99pfhjlg).

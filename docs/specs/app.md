@@ -1139,9 +1139,12 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH`.
 - **Device key.** `DeviceKeys` makes a P-256 key in the Secure Enclave when the device has one
   (iPhone, iPad, Apple silicon Mac), else in software (the simulator, unit tests). It has no
   biometric flag unless the user turns on "Require Face ID for the key", which makes a new key
-  with `.biometryCurrentSet` (every host must get the new public key). The key blob is a Keychain
+  with `.biometryCurrentSet` (every host must get the new public key). Such a key asks for Face ID before
+  each dial, off the network thread, and signs with that authentication. The key blob is a Keychain
   item, usable only when unlocked, this device only, not synchronisable. On iOS it is in the data
   protection Keychain; the unsandboxed, possibly ad hoc signed Mac app uses the login keychain.
+  There "this device only" is not enforced, so a software key on a Mac with no enclave can reach
+  an (encrypted) Time Machine backup, as with other SSH tools.
   iPhone and iPad make the key on first start; the Mac makes it when Settings › SSH first opens,
   so a Mac that never uses the carrier never touches the keychain. A locked device gives "the device is locked: its SSH key works only while
   it is unlocked". The key source is the `SSHKeySource` protocol, so an imported OpenSSH key
@@ -1167,7 +1170,9 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH`.
 - **Background action.** `HabActions` registers a notification category with a "Ping hab" action
   that needs unlock, and is the notification delegate from launch. The action loads the entry and
   key, runs one `hab.ping` on its own connection (`HabOneShot`: open, hello, call, close, 20 s
-  deadline, no retry) and posts the result or "could not reach" (18.7). `SSHSetup.perform` is the
+  deadline that holds even during a stuck TCP connect, no retry) and posts the result or "could
+  not reach" (18.7). With a Face ID key it fails at once with "Open Flightdeck to retry", since a
+  background action cannot prompt. `SSHSetup.perform` is the
   call site `approval.answer` reuses. Push replaces the local notification later (task-oe7ioczy).
 - **Cold start.** `ColdStart` logs the time from process start (from the kernel) to the first byte
   any hab sent, once per process; Settings › SSH shows it.
