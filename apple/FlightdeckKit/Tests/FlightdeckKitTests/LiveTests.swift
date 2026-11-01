@@ -62,6 +62,7 @@ final class LiveTests: XCTestCase {
     /// posting a Claude status line with the 5h window full, then one with room
     /// (`gff-hab statusline claude`). The test sees the full window, asks to be
     /// alerted when free, and gets the alert from the `usage.updated` with room.
+    /// `apple/scripts/usage-live-check.sh` sets all of this up and runs the test.
     @MainActor
     func testLiveUsage() async throws {
         guard let path = env["FLIGHTDECK_LIVE_SOCKET"], !path.isEmpty,
@@ -71,6 +72,7 @@ final class LiveTests: XCTestCase {
         let suite = "flightdeck.live.usage"
         let d = UserDefaults(suiteName: suite)!
         d.removePersistentDomain(forName: suite)
+        defer { d.removePersistentDomain(forName: suite) }
         let n = RecordingNotifier()
         let fleet = Fleet()
         let usage = UsageCenter(notifier: n, defaults: d)
