@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,12 +14,12 @@ import (
 
 // fakePush records the calls the push methods make.
 type fakePush struct {
-	enabled bool
+	enabled atomic.Bool
 	mu      sync.Mutex
 	calls   []string
 }
 
-func (f *fakePush) Enabled() bool { return f.enabled }
+func (f *fakePush) Enabled() bool { return f.enabled.Load() }
 func (f *fakePush) record(s string) error {
 	f.mu.Lock()
 	f.calls = append(f.calls, s)
@@ -79,7 +80,7 @@ func TestPushMethods(t *testing.T) {
 		t.Fatalf("notice.raise: %+v %v", res, err)
 	}
 
-	fp.enabled = true
+	fp.enabled.Store(true)
 	if _, err := cl.PushRegister(ctx(t), reg); err != nil {
 		t.Fatalf("push.register: %v", err)
 	}
