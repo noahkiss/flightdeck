@@ -95,7 +95,9 @@ func open(t *testing.T, src hosts.Source) *merge.Merger {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	return merge.New(s)
+	m := merge.New(s)
+	t.Cleanup(m.Close)
+	return m
 }
 
 // log reads the merged stream and checks its seq has no gaps.
@@ -475,5 +477,65 @@ func TestReplaceKeepsCache(t *testing.T) {
 	l.wait("two fresh", func(m merge.Model) bool { return m.Input("two") })
 	if h, _ := m.Model().Host("two"); h.Epoch != b.Epoch() || h.Stale() || h.Epoch == epoch {
 		t.Fatalf("two after it came back: %+v", h)
+	}
+}
+
+// TestCloseUndrained: a Merger whose events nobody reads stops at Close: Events closes, the
+// backlog is dropped, and Done closes, so no goroutine or queued event stays (merge review S3).
+func TestCloseUndrained(t *testing.T) {
+	d := shortDir(t)
+	a := startHab(t, d, "a")
+	m := open(t, hosts.Static{spec("one", a)})
+	// Let events pile up unread: the resync, then one or more per new session.
+	deadline := time.Now().Add(waitLong())
+	for !m.Model().Input("one") {
+		if time.Now().After(deadline) {
+			t.Fatal("one never came online")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	for i := range 5 {
+		if _, _, err := a.AddSession(fmt.Sprintf("pile-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.Close()
+	select {
+	case <-m.Done():
+	case <-time.After(waitLong()):
+		t.Fatal("Done did not close after Close with events unread")
+	}
+	if _, ok := <-m.Events(); ok {
+		t.Fatal("Events still open after Done")
+	}
+	if _, ok := <-m.Set().Updates(); ok {
+		t.Fatal("the Set's updates still open after Done")
+	}
+}
+
+// TestDoneAfterDrain: with no Close, Done closes once the Set has closed and Events was read
+// to its end.
+func TestDoneAfterDrain(t *testing.T) {
+	d := shortDir(t)
+	a := startHab(t, d, "a")
+	s, err := hosts.Open(hosts.Config{Source: hosts.Static{spec("one", a)}, Client: api.ClientInfo{Name: "test", Kind: api.ClientKindTerminal}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := merge.New(s)
+	s.Close()
+	timer := time.NewTimer(waitLong())
+	defer timer.Stop()
+	for open := true; open; {
+		select {
+		case _, open = <-m.Events():
+		case <-timer.C:
+			t.Fatal("Events did not close after the Set closed")
+		}
+	}
+	select {
+	case <-m.Done():
+	case <-timer.C:
+		t.Fatal("Done did not close after Events was read to its end")
 	}
 }

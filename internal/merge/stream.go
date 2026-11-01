@@ -1,6 +1,7 @@
 package merge
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -61,34 +62,46 @@ type Event struct {
 	Changed bool
 	// NewEpoch is set on KindResync when the hab restarted since the client last saw it.
 	NewEpoch bool
-	// Status is the host's status after the event; Err why it is not online.
+	// Status is the host's status after the event, from the stream itself: Model may already
+	// hold a later one. Err is the update's error: why the host is not online. Both are zero
+	// on KindRemoved.
 	Status hosts.Status
 	Err    error
 }
 
 // Merger reads every update of a hosts.Set and hands them on as one ordered stream, and keeps
 // the merged model in step with it. It takes over the Set's Updates channel: nothing else may
-// read it. Its Events channel closes after the Set's Updates channel does.
+// read it. Its Events channel closes after the Set's Updates channel does, or at Close.
 type Merger struct {
 	set    *hosts.Set
 	events *queue[Event]
 
-	mu    sync.Mutex
-	seq   uint64
-	model Model
-	done  chan struct{}
+	mu        sync.Mutex
+	seq       uint64
+	model     Model
+	connected map[string]bool // per host: an update since its start said it had connected
+	closed    bool
+	pumped    chan struct{} // closes when pump has read the Set's updates to their end
+	done      chan struct{}
 }
 
-// New starts a Merger over s.
+// New starts a Merger over s. Call Close when done with it, or read Events to its end.
 func New(s *hosts.Set) *Merger {
-	m := &Merger{set: s, events: newQueue[Event](), done: make(chan struct{})}
+	m := &Merger{set: s, events: newQueue[Event](), connected: map[string]bool{},
+		pumped: make(chan struct{}), done: make(chan struct{})}
 	m.model = Build(s.Hosts())
 	go m.pump()
+	go func() {
+		<-m.pumped
+		<-m.events.ended
+		close(m.done)
+	}()
 	return m
 }
 
-// Events delivers every merged event in seq order, without loss. When the client reads one,
-// Model already reflects it (and may reflect later ones).
+// Events delivers every merged event in seq order, without loss until Close. When the client
+// reads one, Model already reflects it (and may reflect later ones). Read it to its end, or
+// call Close: events nobody reads are held until then.
 func (m *Merger) Events() <-chan Event { return m.events.out }
 
 // Model returns the merged view as of the last event applied. Model.Seq says which.
@@ -101,42 +114,89 @@ func (m *Merger) Model() Model {
 // Set returns the hosts.Set the Merger reads: calls, data streams, Reload and Retry go there.
 func (m *Merger) Set() *hosts.Set { return m.set }
 
-// Done closes once the Set's updates have ended and every event is queued.
+// Close ends the Merger and closes its Set. Events closes at once; events not yet read are
+// dropped. It returns at once; Done says when everything has stopped.
+func (m *Merger) Close() {
+	m.mu.Lock()
+	m.closed = true
+	m.mu.Unlock()
+	m.events.stop()
+	m.set.Close()
+}
+
+// Done closes once the Merger has stopped: after Close, or after the Set's updates ended and
+// Events was read to its end.
 func (m *Merger) Done() <-chan struct{} { return m.done }
 
 func (m *Merger) pump() {
-	defer close(m.done)
+	defer close(m.pumped)
 	defer m.events.close()
+	// After Close the Set's updates are still read to their end, so the Set can finish.
 	for u := range m.set.Updates() {
-		ev, ok := convert(u)
-		if !ok {
-			continue
-		}
-		// An event that changed no copy (pane.output, chat.message, an old revision) keeps the
-		// model; anything else rebuilds it from the Set's models: a handful of hosts, each a
-		// copy the Set already holds. A Set ahead of this event is harmless; the next event
-		// says so.
-		rebuild := ev.Kind != KindObject || ev.Changed
-		var hs []hosts.Host
-		if rebuild {
-			hs = m.set.Hosts()
-		}
-		m.mu.Lock()
-		m.seq++
-		ev.Seq = m.seq
-		if rebuild {
-			m.model = Build(hs)
-		}
-		m.model.Seq = m.seq
-		if h, ok := m.model.Host(u.Host); ok {
-			ev.Status = h.Status
-			if ev.Err == nil {
-				ev.Err = h.Err
-			}
-		}
-		m.events.push(ev)
-		m.mu.Unlock()
+		m.apply(u, m.set.Hosts)
 	}
+}
+
+// apply turns one update into an event, rebuilds the model from current when the update
+// changed a copy, and queues the event.
+func (m *Merger) apply(u hosts.Update, current func() []hosts.Host) {
+	ev, ok := convert(u)
+	if !ok {
+		return
+	}
+	// An event that changed no copy (pane.output, chat.message, an old revision) keeps the
+	// model; anything else rebuilds it from the Set's models: a handful of hosts, each a copy
+	// the Set already holds. A Set ahead of this event is harmless; the next event says so.
+	rebuild := ev.Kind != KindObject || ev.Changed
+	var hs []hosts.Host
+	if rebuild {
+		hs = current()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return
+	}
+	// Status comes from the updates alone, never from the model, which may already hold a
+	// later status: an offline event read after a fast reconnect still says offline.
+	ev.Status = m.status(u)
+	m.seq++
+	ev.Seq = m.seq
+	if rebuild {
+		m.model = Build(hs)
+	}
+	m.model.Seq = m.seq
+	m.events.push(ev)
+}
+
+// status is the host's status after u, by the rules of the Set's own model: a host is
+// Connecting from its start (or its replacement by Reload) until it first connects, and
+// Offline after that while it is not online.
+func (m *Merger) status(u hosts.Update) hosts.Status {
+	if u.Removed {
+		delete(m.connected, u.Host)
+		return 0
+	}
+	switch u.Kind {
+	case habconn.UpdateOnline, habconn.UpdateEvent:
+		m.connected[u.Host] = true
+		return hosts.Online
+	case habconn.UpdateOffline:
+		if errors.Is(u.Err, hosts.ErrSpecChanged) {
+			delete(m.connected, u.Host)
+			return hosts.Connecting
+		}
+		m.connected[u.Host] = true
+		return hosts.Offline
+	case habconn.UpdateRetrying:
+		if m.connected[u.Host] {
+			return hosts.Offline
+		}
+		return hosts.Connecting
+	case habconn.UpdateFailed:
+		return hosts.Failed
+	}
+	return 0
 }
 
 // convert maps one host update to a merged event. Every update is kept: a retry while already
@@ -178,15 +238,18 @@ func objectOf(t api.EventType) string {
 
 // queue hands values to a channel in order without ever blocking the sender.
 type queue[T any] struct {
-	out  chan T
-	mu   sync.Mutex
-	q    []T
-	wake chan struct{}
-	done bool
+	out   chan T
+	ended chan struct{} // closes when the queue's goroutine has returned
+	quit  chan struct{} // closed by stop
+	mu    sync.Mutex
+	q     []T
+	wake  chan struct{}
+	done  bool
+	once  sync.Once
 }
 
 func newQueue[T any]() *queue[T] {
-	q := &queue[T]{out: make(chan T), wake: make(chan struct{}, 1)}
+	q := &queue[T]{out: make(chan T), ended: make(chan struct{}), quit: make(chan struct{}), wake: make(chan struct{}, 1)}
 	go q.pump()
 	return q
 }
@@ -200,11 +263,21 @@ func (q *queue[T]) push(v T) {
 	q.signal()
 }
 
+// close closes out once every value pushed has been read.
 func (q *queue[T]) close() {
 	q.mu.Lock()
 	q.done = true
 	q.mu.Unlock()
 	q.signal()
+}
+
+// stop closes out at once and drops every value not yet read, even when nobody reads.
+func (q *queue[T]) stop() {
+	q.mu.Lock()
+	q.done = true
+	q.q = nil
+	q.mu.Unlock()
+	q.once.Do(func() { close(q.quit) })
 }
 
 func (q *queue[T]) signal() {
@@ -215,6 +288,7 @@ func (q *queue[T]) signal() {
 }
 
 func (q *queue[T]) pump() {
+	defer close(q.ended)
 	defer close(q.out)
 	for {
 		q.mu.Lock()
@@ -222,7 +296,11 @@ func (q *queue[T]) pump() {
 		q.q = nil
 		q.mu.Unlock()
 		for _, v := range batch {
-			q.out <- v
+			select {
+			case q.out <- v:
+			case <-q.quit:
+				return
+			}
 		}
 		if done {
 			if len(batch) == 0 {
@@ -230,6 +308,10 @@ func (q *queue[T]) pump() {
 			}
 			continue
 		}
-		<-q.wake
+		select {
+		case <-q.wake:
+		case <-q.quit:
+			return
+		}
 	}
 }
