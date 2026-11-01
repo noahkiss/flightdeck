@@ -102,6 +102,13 @@ public final class UsageAlerts {
     }
 
     private func warn(_ a: UsageAccountReading, _ w: UsageWindowReading, now t: Date) {
+        if w.resetsAt == nil {
+            // A window with no reset time is one window forever: its marks
+            // clear when usage falls below them, so the next climb warns again.
+            let before = fired.count
+            fired.removeAll { $0.account == a.key && $0.window == w.name && $0.resetsAt == nil && w.usedPct < $0.threshold }
+            if fired.count != before { save() }
+        }
         guard !UsageMath.isStale(w, now: t), !UsageMath.resetPassed(w, now: t) else { return }
         let crossed = thresholds.filter { w.usedPct >= $0 }
         guard let top = crossed.last else { return }
@@ -135,7 +142,8 @@ public final class UsageAlerts {
     }
 
     public func isWaiting(account: String, window: String) -> Bool {
-        freeRequests.contains { $0.account == account && $0.window == window }
+        let t = now()
+        return freeRequests.contains { $0.account == account && $0.window == window && $0.resetsAt > t }
     }
 
     /// Schedules the notification at the window's reset time.
@@ -170,9 +178,16 @@ public final class UsageAlerts {
                 keep.append(req)
                 continue
             }
-            let w = a.windows.first { $0.name == req.window }
-            if let w, UsageMath.isFull(w), let r = w.resetsAt {
-                if abs(r.timeIntervalSince(req.resetsAt)) >= 1 {
+            // A window missing from the reading says nothing about room: the
+            // request stays and ends at its reset time.
+            guard let w = a.windows.first(where: { $0.name == req.window }) else {
+                keep.append(req)
+                continue
+            }
+            if UsageMath.isFull(w) {
+                // Still full. A newer reset time moves the notification; a
+                // reading with no reset time leaves it where it is.
+                if let r = w.resetsAt, abs(r.timeIntervalSince(req.resetsAt)) >= 1 {
                     req.resetsAt = r
                     scheduleFree(a.harnessName, account: a.key, window: req.window, at: r)
                 }
@@ -180,7 +195,7 @@ public final class UsageAlerts {
                 continue
             }
             // A fresh reading with room before the reset time: free now.
-            guard w.map({ !UsageMath.isStale($0, now: t) }) ?? !UsageMath.isStale(a, now: t) else {
+            guard !UsageMath.isStale(w, now: t) else {
                 keep.append(req)
                 continue
             }
