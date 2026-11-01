@@ -349,13 +349,18 @@ public final class ContentModel {
 
     /// An image decoded once, off the main actor, no larger than `maxPixel` on its long side.
     public func image(for it: ContentItem, data: Data, maxPixel: Int) async -> CGImage? {
-        // Item ids are per hab, and the cache is shared by every chat.
-        let k = "\(target.habID)|\(target.session ?? "")|\(it.id)|\(it.size ?? -1)|\(it.modified ?? "")|\(data.count)|\(maxPixel)"
+        let k = imageKey(for: it, data: data, maxPixel: maxPixel)
         if let img = decoded.get(k) { return img }
         let img = await Task.detached(priority: .userInitiated) { ImageDecode.thumbnail(data, maxPixel: maxPixel) }.value
         guard let img else { return nil }
         decoded.put(k, img)
         return img
+    }
+
+    /// An image's key in the shared cache. Item ids are per hab, and every chat shares the
+    /// cache, so the key names the hab and the session.
+    func imageKey(for it: ContentItem, data: Data, maxPixel: Int) -> String {
+        "\(target.habID)|\(target.session ?? "")|\(it.id)|\(it.size ?? -1)|\(it.modified ?? "")|\(data.count)|\(maxPixel)"
     }
 
     /// An item's Markdown, parsed once per version.

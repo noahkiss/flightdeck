@@ -390,12 +390,17 @@ final class ContentLimitTests: XCTestCase {
         XCTAssertTrue(a.decoded === b.decoded, "one cache for the device")
         let it = ContentItem(at: "2026-01-01T10:00:05Z", id: "img", kind: .image, modified: "v1", name: "c.png", path: "/w/c.png",
                              session: "s1", shown: true, size: png.count, type: "image/png")
-        let before = a.decoded.count
+        let ka = a.imageKey(for: it, data: png, maxPixel: 64)
+        let kb = b.imageKey(for: it, data: png, maxPixel: 64)
+        XCTAssertNotEqual(ka, kb, "the same id on two habs is kept apart")
+        // Each entry is checked right after its own put, not by a count on the process-wide
+        // cache, which a memory-pressure purge may empty at any time.
         let ia = await a.image(for: it, data: png, maxPixel: 64)
-        let ib = await b.image(for: it, data: png, maxPixel: 64)
         XCTAssertNotNil(ia)
+        XCTAssertNotNil(a.decoded.get(ka))
+        let ib = await b.image(for: it, data: png, maxPixel: 64)
         XCTAssertNotNil(ib)
-        XCTAssertEqual(a.decoded.count, min(before + 2, a.decoded.countLimit), "the same id on two habs is kept apart")
+        XCTAssertNotNil(b.decoded.get(kb))
     }
 
     /// R6: a diff file is parsed, and a text file split into runs, once per version: redraws
