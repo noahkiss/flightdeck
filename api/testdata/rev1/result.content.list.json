@@ -1,0 +1,31 @@
+{
+  "folder": "folder-13",
+  "items": [
+    {
+      "at": "at-11",
+      "change": "untracked",
+      "id": "id-4",
+      "kind": "file",
+      "message": "message-12",
+      "name": "name-7",
+      "path": "path-6",
+      "session": "session-5",
+      "shown": true,
+      "size": 10,
+      "title": "title-8",
+      "type": "type-9",
+      "x_unknown_field": "later"
+    }
+  ],
+  "more": true,
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

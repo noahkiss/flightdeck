@@ -1,0 +1,17 @@
+{
+  "diff": "diff-6",
+  "id": "id-4",
+  "path": "path-5",
+  "seq": 3,
+  "source": "none",
+  "truncated": true,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

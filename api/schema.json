@@ -26,7 +26,8 @@
     "idempotency-keys",
     "detect-explain",
     "catalog",
-    "usage"
+    "usage",
+    "content"
   ],
   "methods": [
     {
@@ -911,6 +912,157 @@
       }
     },
     {
+      "name": "content.show",
+      "summary": "Store a reference to a file on the hab's host for a session to show (app.md 4.7). Needs the content capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "kind",
+          "description": "How to render it. Absent: from the file name.",
+          "schema": {
+            "$ref": "#/components/schemas/ContentKind"
+          }
+        },
+        {
+          "name": "pane_token",
+          "description": "The token in the calling pane's GFF_HAB, instead of session: the hab finds the pane, then its session.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "path",
+          "description": "Absolute path of a regular file on the hab's host.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "session",
+          "description": "The session. Absent: pane_token names it.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "title",
+          "description": "Shown instead of the file name. At most 200 characters.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ContentShown"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/ContentShowParams"
+      }
+    },
+    {
+      "name": "content.list",
+      "summary": "The files a session showed or touched: shown files, images from tool calls and files it changed (app.md 4.7). Needs the content capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ContentList"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/ContentListParams"
+      }
+    },
+    {
+      "name": "content.read",
+      "summary": "Read a run of one listed file's bytes, in bounded chunks (app.md 4.7). Needs the content capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "id",
+          "description": "An item id from content.list for this session.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "description": "Most bytes to return. Default 256 KiB, at most 1 MiB.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "offset",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ContentData"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/ContentReadParams"
+      }
+    },
+    {
+      "name": "content.diff",
+      "summary": "A listed file's diff in unified format (app.md 4.7). Needs the content capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "session",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ContentDiff"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/ContentDiffParams"
+      }
+    },
+    {
       "name": "push.register",
       "summary": "Store an APNs device token for this device. Needs the push capability.",
       "paramStructure": "by-name",
@@ -1511,6 +1663,13 @@
       "summary": "A notice was raised (notice.raise); the id is the notice id. Ephemeral.",
       "data": {
         "$ref": "#/components/schemas/Notice"
+      }
+    },
+    {
+      "type": "content.updated",
+      "summary": "A session showed a file (content.show); the id is the item id. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/ContentItem"
       }
     }
   ],
@@ -2682,6 +2841,311 @@
           "running",
           "done",
           "unknown"
+        ]
+      },
+      "ContentChange": {
+        "type": "string",
+        "x-known-values": [
+          "added",
+          "modified",
+          "deleted",
+          "renamed",
+          "untracked"
+        ]
+      },
+      "ContentData": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "string",
+            "contentEncoding": "base64"
+          },
+          "eof": {
+            "type": "boolean",
+            "description": "True when data reaches the end of the file."
+          },
+          "id": {
+            "type": "string"
+          },
+          "modified": {
+            "type": "string",
+            "description": "RFC 3339 time with nanoseconds the file last changed. A change between runs means the file changed: read it again."
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The file's size when this run was read."
+          },
+          "type": {
+            "type": "string",
+            "description": "Media type."
+          }
+        },
+        "required": [
+          "seq",
+          "id",
+          "type",
+          "size",
+          "modified",
+          "offset",
+          "data",
+          "eof"
+        ]
+      },
+      "ContentDiff": {
+        "type": "object",
+        "properties": {
+          "diff": {
+            "type": "string",
+            "description": "Unified diff text. Empty with source none."
+          },
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "source": {
+            "$ref": "#/components/schemas/ContentDiffSource",
+            "description": "git: against HEAD; untracked: every line added; transcript: the session's edit calls; none: no diff is known."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when the diff was cut at 512 KiB."
+          }
+        },
+        "required": [
+          "seq",
+          "id",
+          "path",
+          "source",
+          "diff"
+        ]
+      },
+      "ContentDiffParams": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session",
+          "id"
+        ]
+      },
+      "ContentDiffSource": {
+        "type": "string",
+        "x-known-values": [
+          "git",
+          "untracked",
+          "transcript",
+          "none"
+        ]
+      },
+      "ContentItem": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time it was shown, or of the tool call that touched it last. Absent for a file only git status lists."
+          },
+          "change": {
+            "$ref": "#/components/schemas/ContentChange",
+            "description": "Set when the session changed the file: added, modified, deleted, renamed or untracked."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable for the session and path."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ContentKind"
+          },
+          "message": {
+            "type": "string",
+            "description": "The chat message id of the tool call that touched it last."
+          },
+          "name": {
+            "type": "string",
+            "description": "The file name."
+          },
+          "path": {
+            "type": "string",
+            "description": "Absolute path on the hab's host."
+          },
+          "session": {
+            "type": "string"
+          },
+          "shown": {
+            "type": "boolean",
+            "description": "True when the agent showed it with content.show."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes, when the file exists. Absent: the file is gone or unreadable."
+          },
+          "title": {
+            "type": "string",
+            "description": "From content.show."
+          },
+          "type": {
+            "type": "string",
+            "description": "Media type, from the file name."
+          }
+        },
+        "required": [
+          "id",
+          "session",
+          "kind",
+          "path",
+          "name",
+          "type",
+          "at"
+        ]
+      },
+      "ContentKind": {
+        "type": "string",
+        "x-known-values": [
+          "image",
+          "markdown",
+          "pdf",
+          "html",
+          "text",
+          "diff",
+          "file"
+        ]
+      },
+      "ContentList": {
+        "type": "object",
+        "properties": {
+          "folder": {
+            "type": "string",
+            "description": "The session's folder, where git status was read. Absent when unknown."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentItem"
+            }
+          },
+          "more": {
+            "type": "boolean",
+            "description": "True when the hab left items out at its limit (500)."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "items",
+          "more"
+        ]
+      },
+      "ContentListParams": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session"
+        ]
+      },
+      "ContentReadParams": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "An item id from content.list for this session."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Most bytes to return. Default 256 KiB, at most 1 MiB."
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session",
+          "id"
+        ]
+      },
+      "ContentShowParams": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ContentKind",
+            "description": "How to render it. Absent: from the file name."
+          },
+          "pane_token": {
+            "type": "string",
+            "description": "The token in the calling pane's GFF_HAB, instead of session: the hab finds the pane, then its session."
+          },
+          "path": {
+            "type": "string",
+            "description": "Absolute path of a regular file on the hab's host."
+          },
+          "session": {
+            "type": "string",
+            "description": "The session. Absent: pane_token names it."
+          },
+          "title": {
+            "type": "string",
+            "description": "Shown instead of the file name. At most 200 characters."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "ContentShown": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The item id; also the content.updated event's id."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "id",
+          "session"
         ]
       },
       "CreditFrame": {

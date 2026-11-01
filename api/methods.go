@@ -90,6 +90,10 @@ var Methods = []Method{
 	{"chat.page", "Read a page of the session's chat messages from the transcript reader. Needs the transcripts capability.", ChatPageParams{}, ChatMessages{}},
 	{"attachment.put", "Start an upload of a file for a session; the bytes follow on their own channel.", AttachmentPutParams{}, AttachmentStored{}},
 	{"attachment.get", "Fetch an attachment or its thumbnail.", AttachmentGetParams{}, AttachmentData{}},
+	{"content.show", "Store a reference to a file on the hab's host for a session to show (app.md 4.7). Needs the content capability.", ContentShowParams{}, ContentShown{}},
+	{"content.list", "The files a session showed or touched: shown files, images from tool calls and files it changed (app.md 4.7). Needs the content capability.", ContentListParams{}, ContentList{}},
+	{"content.read", "Read a run of one listed file's bytes, in bounded chunks (app.md 4.7). Needs the content capability.", ContentReadParams{}, ContentData{}},
+	{"content.diff", "A listed file's diff in unified format (app.md 4.7). Needs the content capability.", ContentDiffParams{}, ContentDiff{}},
 	{"push.register", "Store an APNs device token for this device. Needs the push capability.", PushRegisterParams{}, Empty{}},
 	{"push.register_activity", "Store a Live Activity token for the session this device tracks. Needs the push capability.", PushActivityParams{}, Empty{}},
 	{"push.unregister", "Drop a push token. Needs the push capability.", PushUnregisterParams{}, Empty{}},
@@ -134,6 +138,7 @@ var Events = []EventDef{
 	{"peer.updated", "A peer's link state changed; the id is the peer's label (mesh.md 4.3). Host scope only. Ephemeral.", Peer{}},
 	{"catalog.updated", "A catalog this hab holds changed: its own or a peer's copy; the id is the device id (mesh.md 5.2). Host scope only. Ephemeral.", CatalogUpdated{}},
 	{"notice.raised", "A notice was raised (notice.raise); the id is the notice id. Ephemeral.", Notice{}},
+	{"content.updated", "A session showed a file (content.show); the id is the item id. Ephemeral.", ContentItem{}},
 }
 
 // Frames is every data connection frame kind. A frame is the kind byte, a 4-byte big-endian
@@ -177,6 +182,10 @@ var Enums = map[string][]string{
 	"PushKind":        {"permission", "question", "auth", "error", "done", "usage"},
 	"NoticeLevel":     {"passive", "active", "time-sensitive"},
 	"CommandState":    {"running", "done", "unknown"},
+	// Sets added for rich content (app.md 4.7).
+	"ContentKind":       {"image", "markdown", "pdf", "html", "text", "diff", "file"},
+	"ContentChange":     {"added", "modified", "deleted", "renamed", "untracked"},
+	"ContentDiffSource": {"git", "untracked", "transcript", "none"},
 	// Sets added for the permission check (macos-identity.md 7).
 	"PermissionProcess": {"holder", "hab"},
 	"PermissionState":   {"granted", "denied", "unknown", "unanswered", "off", "note", "error"},
@@ -208,5 +217,6 @@ var Translators = map[int]Translator{}
 // (spec 3.9); a client sends keys only to a hab that lists it. "detect-explain" means
 // detect.explain works (harness-adapters.md, Detection).
 // "catalog" means the catalog.* methods and the catalog.updated event work (mesh.md 5). "usage"
-// means usage.list and the usage.updated event work (harness-adapters.md, Usage).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage"}
+// means usage.list and the usage.updated event work (harness-adapters.md, Usage). "content"
+// means the content.* methods and the content.updated event work (app.md 4.7).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content"}

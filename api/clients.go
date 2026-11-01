@@ -178,6 +178,98 @@ type AttachmentData struct {
 	Data []byte `json:"data"`
 }
 
+// --- Rich content (app.md 4.7) ---
+
+// ContentKind says how a client renders a content item. A client shows an unknown kind as a file.
+type ContentKind string
+
+// ContentChange says how the session changed a file. An open set the server sends.
+type ContentChange string
+
+// ContentDiffSource says where a diff came from. An open set the server sends.
+type ContentDiffSource string
+
+// ContentShowParams stores a reference to a file on the hab's host for a session to show.
+type ContentShowParams struct {
+	Session   string      `json:"session,omitempty" doc:"The session. Absent: pane_token names it."`
+	PaneToken string      `json:"pane_token,omitempty" doc:"The token in the calling pane's GFF_HAB, instead of session: the hab finds the pane, then its session."`
+	Path      string      `json:"path" doc:"Absolute path of a regular file on the hab's host."`
+	Kind      ContentKind `json:"kind,omitempty" doc:"How to render it. Absent: from the file name."`
+	Title     string      `json:"title,omitempty" doc:"Shown instead of the file name. At most 200 characters."`
+}
+
+// ContentShown answers content.show.
+type ContentShown struct {
+	Seq
+	ID      string `json:"id" doc:"The item id; also the content.updated event's id."`
+	Session string `json:"session"`
+}
+
+// ContentItem is one file a session showed or touched. The hab stores a reference, never a copy.
+type ContentItem struct {
+	ID      string        `json:"id" doc:"Stable for the session and path."`
+	Session string        `json:"session"`
+	Kind    ContentKind   `json:"kind"`
+	Path    string        `json:"path" doc:"Absolute path on the hab's host."`
+	Name    string        `json:"name" doc:"The file name."`
+	Title   string        `json:"title,omitempty" doc:"From content.show."`
+	Type    string        `json:"type" doc:"Media type, from the file name."`
+	Size    *int64        `json:"size,omitempty" doc:"Bytes, when the file exists. Absent: the file is gone or unreadable."`
+	At      string        `json:"at" doc:"RFC 3339 time it was shown, or of the tool call that touched it last. Absent for a file only git status lists."`
+	Shown   bool          `json:"shown,omitempty" doc:"True when the agent showed it with content.show."`
+	Change  ContentChange `json:"change,omitempty" doc:"Set when the session changed the file: added, modified, deleted, renamed or untracked."`
+	Message string        `json:"message,omitempty" doc:"The chat message id of the tool call that touched it last."`
+}
+
+// ContentListParams lists a session's content.
+type ContentListParams struct {
+	Session string `json:"session"`
+}
+
+// ContentList is a session's content, oldest first.
+type ContentList struct {
+	Seq
+	Items  []ContentItem `json:"items"`
+	Folder string        `json:"folder,omitempty" doc:"The session's folder, where git status was read. Absent when unknown."`
+	More   bool          `json:"more" doc:"True when the hab left items out at its limit (500)."`
+}
+
+// ContentReadParams reads a run of a content item's bytes.
+type ContentReadParams struct {
+	Session string `json:"session"`
+	ID      string `json:"id" doc:"An item id from content.list for this session."`
+	Offset  int64  `json:"offset,omitempty"`
+	Limit   int    `json:"limit,omitempty" doc:"Most bytes to return. Default 256 KiB, at most 1 MiB."`
+}
+
+// ContentData is a run of a file's bytes.
+type ContentData struct {
+	Seq
+	ID       string `json:"id"`
+	Type     string `json:"type" doc:"Media type."`
+	Size     int64  `json:"size" doc:"The file's size when this run was read."`
+	Modified string `json:"modified" doc:"RFC 3339 time with nanoseconds the file last changed. A change between runs means the file changed: read it again."`
+	Offset   int64  `json:"offset"`
+	Data     []byte `json:"data"`
+	EOF      bool   `json:"eof" doc:"True when data reaches the end of the file."`
+}
+
+// ContentDiffParams asks for a content item's diff.
+type ContentDiffParams struct {
+	Session string `json:"session"`
+	ID      string `json:"id"`
+}
+
+// ContentDiff is a file's diff in unified format.
+type ContentDiff struct {
+	Seq
+	ID        string            `json:"id"`
+	Path      string            `json:"path"`
+	Source    ContentDiffSource `json:"source" doc:"git: against HEAD; untracked: every line added; transcript: the session's edit calls; none: no diff is known."`
+	Diff      string            `json:"diff" doc:"Unified diff text. Empty with source none."`
+	Truncated bool              `json:"truncated,omitempty" doc:"True when the diff was cut at 512 KiB."`
+}
+
 // --- Push (app.md 8, 9) ---
 
 // PushEnvironment is the APNs environment a token belongs to.

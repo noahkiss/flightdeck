@@ -75,6 +75,31 @@ const (
 )
 
 const (
+	ContentChangeAdded     ContentChange = "added"
+	ContentChangeModified  ContentChange = "modified"
+	ContentChangeDeleted   ContentChange = "deleted"
+	ContentChangeRenamed   ContentChange = "renamed"
+	ContentChangeUntracked ContentChange = "untracked"
+)
+
+const (
+	ContentDiffSourceGit        ContentDiffSource = "git"
+	ContentDiffSourceUntracked  ContentDiffSource = "untracked"
+	ContentDiffSourceTranscript ContentDiffSource = "transcript"
+	ContentDiffSourceNone       ContentDiffSource = "none"
+)
+
+const (
+	ContentKindImage    ContentKind = "image"
+	ContentKindMarkdown ContentKind = "markdown"
+	ContentKindPdf      ContentKind = "pdf"
+	ContentKindHtml     ContentKind = "html"
+	ContentKindText     ContentKind = "text"
+	ContentKindDiff     ContentKind = "diff"
+	ContentKindFile     ContentKind = "file"
+)
+
+const (
 	DeviceKindHab     DeviceKind = "hab"
 	DeviceKindPhone   DeviceKind = "phone"
 	DeviceKindDesktop DeviceKind = "desktop"
@@ -217,6 +242,7 @@ const (
 	EventPeerUpdated    EventType = "peer.updated"
 	EventCatalogUpdated EventType = "catalog.updated"
 	EventNoticeRaised   EventType = "notice.raised"
+	EventContentUpdated EventType = "content.updated"
 )
 
 // DecodeData decodes e.Data into the type its event type names. It returns
@@ -293,6 +319,10 @@ func (e Event) DecodeData() (any, error) {
 		return v, err
 	case EventNoticeRaised:
 		var v Notice
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventContentUpdated:
+		var v ContentItem
 		err := json.Unmarshal(e.Data, &v)
 		return v, err
 	}
@@ -495,6 +525,34 @@ func (c Client) AttachmentPut(ctx context.Context, params AttachmentPutParams) (
 func (c Client) AttachmentGet(ctx context.Context, params AttachmentGetParams) (AttachmentData, error) {
 	var result AttachmentData
 	err := c.Caller.Call(ctx, "attachment.get", params, &result)
+	return result, err
+}
+
+// ContentShow calls content.show. Store a reference to a file on the hab's host for a session to show (app.md 4.7). Needs the content capability.
+func (c Client) ContentShow(ctx context.Context, params ContentShowParams) (ContentShown, error) {
+	var result ContentShown
+	err := c.Caller.Call(ctx, "content.show", params, &result)
+	return result, err
+}
+
+// ContentList calls content.list. The files a session showed or touched: shown files, images from tool calls and files it changed (app.md 4.7). Needs the content capability.
+func (c Client) ContentList(ctx context.Context, params ContentListParams) (ContentList, error) {
+	var result ContentList
+	err := c.Caller.Call(ctx, "content.list", params, &result)
+	return result, err
+}
+
+// ContentRead calls content.read. Read a run of one listed file's bytes, in bounded chunks (app.md 4.7). Needs the content capability.
+func (c Client) ContentRead(ctx context.Context, params ContentReadParams) (ContentData, error) {
+	var result ContentData
+	err := c.Caller.Call(ctx, "content.read", params, &result)
+	return result, err
+}
+
+// ContentDiff calls content.diff. A listed file's diff in unified format (app.md 4.7). Needs the content capability.
+func (c Client) ContentDiff(ctx context.Context, params ContentDiffParams) (ContentDiff, error) {
+	var result ContentDiff
+	err := c.Caller.Call(ctx, "content.diff", params, &result)
 	return result, err
 }
 

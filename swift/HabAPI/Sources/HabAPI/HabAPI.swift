@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -1015,6 +1015,287 @@ public struct CommandState: RawRepresentable, Codable, Sendable, Hashable {
     public static let running = CommandState(rawValue: "running")
     public static let done = CommandState(rawValue: "done")
     public static let unknown = CommandState(rawValue: "unknown")
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct ContentChange: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let added = ContentChange(rawValue: "added")
+    public static let modified = ContentChange(rawValue: "modified")
+    public static let deleted = ContentChange(rawValue: "deleted")
+    public static let renamed = ContentChange(rawValue: "renamed")
+    public static let untracked = ContentChange(rawValue: "untracked")
+}
+
+public struct ContentData: Codable, Sendable, Hashable {
+    public var data: Data
+    /// True when data reaches the end of the file.
+    public var eof: Bool
+    public var id: String
+    /// RFC 3339 time with nanoseconds the file last changed. A change between runs means the file changed: read it again.
+    public var modified: String
+    public var offset: Int
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// The file's size when this run was read.
+    public var size: Int
+    /// Media type.
+    public var type: String
+
+    enum CodingKeys: String, CodingKey {
+        case data = "data"
+        case eof = "eof"
+        case id = "id"
+        case modified = "modified"
+        case offset = "offset"
+        case seq = "seq"
+        case size = "size"
+        case type = "type"
+    }
+
+    public init(data: Data, eof: Bool, id: String, modified: String, offset: Int, seq: UInt64, size: Int, type: String) {
+        self.data = data
+        self.eof = eof
+        self.id = id
+        self.modified = modified
+        self.offset = offset
+        self.seq = seq
+        self.size = size
+        self.type = type
+    }
+}
+
+public struct ContentDiff: Codable, Sendable, Hashable {
+    /// Unified diff text. Empty with source none.
+    public var diff: String
+    public var id: String
+    public var path: String
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// git: against HEAD; untracked: every line added; transcript: the session's edit calls; none: no diff is known.
+    public var source: ContentDiffSource
+    /// True when the diff was cut at 512 KiB.
+    public var truncated: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case diff = "diff"
+        case id = "id"
+        case path = "path"
+        case seq = "seq"
+        case source = "source"
+        case truncated = "truncated"
+    }
+
+    public init(diff: String, id: String, path: String, seq: UInt64, source: ContentDiffSource, truncated: Bool? = nil) {
+        self.diff = diff
+        self.id = id
+        self.path = path
+        self.seq = seq
+        self.source = source
+        self.truncated = truncated
+    }
+}
+
+public struct ContentDiffParams: Codable, Sendable, Hashable {
+    public var id: String
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case session = "session"
+    }
+
+    public init(id: String, session: String) {
+        self.id = id
+        self.session = session
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct ContentDiffSource: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let git = ContentDiffSource(rawValue: "git")
+    public static let untracked = ContentDiffSource(rawValue: "untracked")
+    public static let transcript = ContentDiffSource(rawValue: "transcript")
+    public static let none = ContentDiffSource(rawValue: "none")
+}
+
+public struct ContentItem: Codable, Sendable, Hashable {
+    /// RFC 3339 time it was shown, or of the tool call that touched it last. Absent for a file only git status lists.
+    public var at: String
+    /// Set when the session changed the file: added, modified, deleted, renamed or untracked.
+    public var change: ContentChange?
+    /// Stable for the session and path.
+    public var id: String
+    public var kind: ContentKind
+    /// The chat message id of the tool call that touched it last.
+    public var message: String?
+    /// The file name.
+    public var name: String
+    /// Absolute path on the hab's host.
+    public var path: String
+    public var session: String
+    /// True when the agent showed it with content.show.
+    public var shown: Bool?
+    /// Bytes, when the file exists. Absent: the file is gone or unreadable.
+    public var size: Int?
+    /// From content.show.
+    public var title: String?
+    /// Media type, from the file name.
+    public var type: String
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case change = "change"
+        case id = "id"
+        case kind = "kind"
+        case message = "message"
+        case name = "name"
+        case path = "path"
+        case session = "session"
+        case shown = "shown"
+        case size = "size"
+        case title = "title"
+        case type = "type"
+    }
+
+    public init(at: String, change: ContentChange? = nil, id: String, kind: ContentKind, message: String? = nil, name: String, path: String, session: String, shown: Bool? = nil, size: Int? = nil, title: String? = nil, type: String) {
+        self.at = at
+        self.change = change
+        self.id = id
+        self.kind = kind
+        self.message = message
+        self.name = name
+        self.path = path
+        self.session = session
+        self.shown = shown
+        self.size = size
+        self.title = title
+        self.type = type
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct ContentKind: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let image = ContentKind(rawValue: "image")
+    public static let markdown = ContentKind(rawValue: "markdown")
+    public static let pdf = ContentKind(rawValue: "pdf")
+    public static let html = ContentKind(rawValue: "html")
+    public static let text = ContentKind(rawValue: "text")
+    public static let diff = ContentKind(rawValue: "diff")
+    public static let file = ContentKind(rawValue: "file")
+}
+
+public struct ContentList: Codable, Sendable, Hashable {
+    /// The session's folder, where git status was read. Absent when unknown.
+    public var folder: String?
+    public var items: [ContentItem]
+    /// True when the hab left items out at its limit (500).
+    public var more: Bool
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case folder = "folder"
+        case items = "items"
+        case more = "more"
+        case seq = "seq"
+    }
+
+    public init(folder: String? = nil, items: [ContentItem], more: Bool, seq: UInt64) {
+        self.folder = folder
+        self.items = items
+        self.more = more
+        self.seq = seq
+    }
+}
+
+public struct ContentListParams: Codable, Sendable, Hashable {
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case session = "session"
+    }
+
+    public init(session: String) {
+        self.session = session
+    }
+}
+
+public struct ContentReadParams: Codable, Sendable, Hashable {
+    /// An item id from content.list for this session.
+    public var id: String
+    /// Most bytes to return. Default 256 KiB, at most 1 MiB.
+    public var limit: Int?
+    public var offset: Int?
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case limit = "limit"
+        case offset = "offset"
+        case session = "session"
+    }
+
+    public init(id: String, limit: Int? = nil, offset: Int? = nil, session: String) {
+        self.id = id
+        self.limit = limit
+        self.offset = offset
+        self.session = session
+    }
+}
+
+public struct ContentShowParams: Codable, Sendable, Hashable {
+    /// How to render it. Absent: from the file name.
+    public var kind: ContentKind?
+    /// The token in the calling pane's GFF_HAB, instead of session: the hab finds the pane, then its session.
+    public var paneToken: String?
+    /// Absolute path of a regular file on the hab's host.
+    public var path: String
+    /// The session. Absent: pane_token names it.
+    public var session: String?
+    /// Shown instead of the file name. At most 200 characters.
+    public var title: String?
+
+    enum CodingKeys: String, CodingKey {
+        case kind = "kind"
+        case paneToken = "pane_token"
+        case path = "path"
+        case session = "session"
+        case title = "title"
+    }
+
+    public init(kind: ContentKind? = nil, paneToken: String? = nil, path: String, session: String? = nil, title: String? = nil) {
+        self.kind = kind
+        self.paneToken = paneToken
+        self.path = path
+        self.session = session
+        self.title = title
+    }
+}
+
+public struct ContentShown: Codable, Sendable, Hashable {
+    /// The item id; also the content.updated event's id.
+    public var id: String
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case seq = "seq"
+        case session = "session"
+    }
+
+    public init(id: String, seq: UInt64, session: String) {
+        self.id = id
+        self.seq = seq
+        self.session = session
+    }
 }
 
 public struct CreditFrame: Codable, Sendable, Hashable {
@@ -3002,6 +3283,14 @@ public enum HabMethods {
     public static let attachmentPut = HabMethod<AttachmentPutParams, AttachmentStored>(name: "attachment.put")
     /// Fetch an attachment or its thumbnail.
     public static let attachmentGet = HabMethod<AttachmentGetParams, AttachmentData>(name: "attachment.get")
+    /// Store a reference to a file on the hab's host for a session to show (app.md 4.7). Needs the content capability.
+    public static let contentShow = HabMethod<ContentShowParams, ContentShown>(name: "content.show")
+    /// The files a session showed or touched: shown files, images from tool calls and files it changed (app.md 4.7). Needs the content capability.
+    public static let contentList = HabMethod<ContentListParams, ContentList>(name: "content.list")
+    /// Read a run of one listed file's bytes, in bounded chunks (app.md 4.7). Needs the content capability.
+    public static let contentRead = HabMethod<ContentReadParams, ContentData>(name: "content.read")
+    /// A listed file's diff in unified format (app.md 4.7). Needs the content capability.
+    public static let contentDiff = HabMethod<ContentDiffParams, ContentDiff>(name: "content.diff")
     /// Store an APNs device token for this device. Needs the push capability.
     public static let pushRegister = HabMethod<PushRegisterParams, Empty>(name: "push.register")
     /// Store a Live Activity token for the session this device tracks. Needs the push capability.
@@ -3078,6 +3367,8 @@ public enum HabEvent: Sendable, Hashable {
     case catalogUpdated(CatalogUpdated)
     /// A notice was raised (notice.raise); the id is the notice id. Ephemeral.
     case noticeRaised(Notice)
+    /// A session showed a file (content.show); the id is the item id. Ephemeral.
+    case contentUpdated(ContentItem)
     case unknown(type: String, data: JSONValue)
 
     public init(_ event: Event) throws {
@@ -3100,6 +3391,7 @@ public enum HabEvent: Sendable, Hashable {
         case "peer.updated": self = .peerUpdated(try event.data.decode(Peer.self))
         case "catalog.updated": self = .catalogUpdated(try event.data.decode(CatalogUpdated.self))
         case "notice.raised": self = .noticeRaised(try event.data.decode(Notice.self))
+        case "content.updated": self = .contentUpdated(try event.data.decode(ContentItem.self))
         default: self = .unknown(type: event.type, data: event.data)
         }
     }
