@@ -123,9 +123,13 @@ public enum UsageMath {
         return now.timeIntervalSince(w.readAt) > limit
     }
 
+    /// An account's age follows its newest window: a window the harness
+    /// stopped sending greys only its own row, not the account.
     public static func isStale(_ a: UsageAccountReading, now: Date) -> Bool {
-        if a.windows.isEmpty { return now.timeIntervalSince(a.receivedAt) > staleAfter }
-        return a.windows.contains { isStale($0, now: now) }
+        guard let newest = a.windows.max(by: { $0.readAt < $1.readAt }) else {
+            return now.timeIntervalSince(a.receivedAt) > staleAfter
+        }
+        return isStale(newest, now: now)
     }
 
     /// The window nearest its limit, for the footer bar and the widget.

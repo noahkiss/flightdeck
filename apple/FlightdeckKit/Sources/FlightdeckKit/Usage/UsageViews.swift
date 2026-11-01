@@ -75,7 +75,7 @@ struct UsageFooterBar: View {
                     }
                 }
                 if let w {
-                    UsageBar(window: w, now: now, stale: stale)
+                    UsageBar(window: w, now: now, stale: stale || UsageMath.isStale(w, now: now))
                         .frame(width: 110, height: 5)
                 }
             }
@@ -195,7 +195,7 @@ struct UsageCard: View {
                     .foregroundStyle(.secondary)
             }
             ForEach(account.windows, id: \.name) { w in
-                UsageWindowRow(account: account, window: w, alerts: alerts, now: now, stale: stale || !online)
+                UsageWindowRow(account: account, window: w, alerts: alerts, now: now, stale: stale || !online || UsageMath.isStale(w, now: now))
             }
             if let s = UsageText.status(account, now: now) {
                 Text(s)

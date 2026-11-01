@@ -98,7 +98,8 @@ struct UsageProvider: AppIntentTimelineProvider {
             }
         }
         let later = moments.sorted().prefix(12).map { UsageEntry(date: $0.addingTimeInterval(1), snapshot: snap, selected: configuration.account?.id) }
-        return Timeline(entries: [UsageEntry(date: now, snapshot: snap, selected: configuration.account?.id)] + later, policy: .atEnd)
+        // With no moment ahead, nothing changes on its own: the app reloads on new readings.
+        return Timeline(entries: [UsageEntry(date: now, snapshot: snap, selected: configuration.account?.id)] + later, policy: later.isEmpty ? .never : .atEnd)
     }
 }
 
@@ -154,7 +155,7 @@ struct UsageAccountTile: View {
                 .lineLimit(1)
             if let w {
                 HStack(alignment: .center, spacing: 8) {
-                    UsageRing(pct: UsageMath.effectivePct(w, now: now), stale: stale)
+                    UsageRing(pct: UsageMath.effectivePct(w, now: now), stale: stale || UsageMath.isStale(w, now: now))
                         .frame(width: 52, height: 52)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(w.name).font(.caption.weight(.medium))
@@ -206,7 +207,8 @@ struct UsageRing: View {
     private var tint: Color { pct >= 95 ? .red : pct >= 80 ? .orange : .accentColor }
 }
 
-/// The Lock Screen gauge: the tightest window of every account.
+/// The Lock Screen gauge: the tightest window of the first account, which is
+/// the chosen one, else the account nearest its limit (app.md 15.3).
 struct UsageGauge: View {
     let accounts: [UsageAccountReading]
     let now: Date
