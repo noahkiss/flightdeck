@@ -79,6 +79,50 @@ func TestContentCalls(t *testing.T) {
 	}
 }
 
+// blockedContent holds every Read until release closes.
+type blockedContent struct {
+	fakeContent
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b blockedContent) Read(ctx context.Context, p api.ContentReadParams) (api.ContentData, error) {
+	b.started <- struct{}{}
+	<-b.release
+	return b.fakeContent.Read(ctx, p)
+}
+
+// TestContentBusyHint: the call past the limit answers unavailable with the hint the app reads
+// as busy.
+func TestContentBusyHint(t *testing.T) {
+	bc := blockedContent{started: make(chan struct{}, maxRunningContent), release: make(chan struct{})}
+	h := startHab(t, "", socketPath(t), func(c *Config) { c.Content = bc })
+	c := dial(t, h.path)
+	hello(t, c, "")
+	cl := api.Client{Caller: c}
+	errs := make(chan error, maxRunningContent)
+	for i := 0; i < maxRunningContent; i++ {
+		go func() {
+			_, err := cl.ContentRead(ctx(t), api.ContentReadParams{Session: "s1", ID: "c1"})
+			errs <- err
+		}()
+	}
+	for i := 0; i < maxRunningContent; i++ {
+		<-bc.started
+	}
+	_, err := cl.ContentRead(ctx(t), api.ContentReadParams{Session: "s1", ID: "c1"})
+	var ce *Error
+	if !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindUnavailable || !strings.Contains(ce.Data.Hint, busyPhrase) {
+		t.Errorf("call past the limit: %v", err)
+	}
+	close(bc.release)
+	for i := 0; i < maxRunningContent; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("held read: %v", err)
+		}
+	}
+}
+
 // busyPhrase is what the app looks for to tell a busy answer from another unavailable one.
 const busyPhrase = "already run on this connection"
 
