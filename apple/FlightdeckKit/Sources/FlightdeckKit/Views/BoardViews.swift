@@ -105,6 +105,7 @@ public struct BoardScreen: View {
             if compact {
                 NavigationStack {
                     BoardList(board: board, opened: $opened, openRequest: openRequest)
+                        .usageFooter(fleet?.usage)
                         .navigationTitle("Flightdeck")
                         .navigationDestination(item: fleet == nil ? .constant(nil) : $opened) { row in
                             session(row, compact: true)
@@ -121,7 +122,7 @@ public struct BoardScreen: View {
                 }
                 .sheet(isPresented: $showConnections) {
                     NavigationStack {
-                        ConnectionsList(board: board, push: fleet?.push)
+                        ConnectionsList(board: board, push: fleet?.push, usage: fleet?.usage)
                             .navigationTitle("Connections")
                             .toolbar {
                                 ToolbarItem(placement: .confirmationAction) {
@@ -134,6 +135,7 @@ public struct BoardScreen: View {
                 HStack(spacing: 0) {
                     NavigationStack {
                         BoardList(board: board, opened: $opened, openRequest: openRequest)
+                        .usageFooter(fleet?.usage)
                             .navigationTitle("Flightdeck")
                     }
                     .frame(minWidth: 300, idealWidth: 340, maxWidth: 380)
@@ -145,6 +147,7 @@ public struct BoardScreen: View {
                 HStack(spacing: 0) {
                     NavigationStack {
                         BoardList(board: board, opened: $opened, openRequest: openRequest)
+                        .usageFooter(fleet?.usage)
                             .navigationTitle("Flightdeck")
                     }
                     .frame(minWidth: 360)
@@ -152,7 +155,7 @@ public struct BoardScreen: View {
                     VStack(spacing: 0) {
                         SessionCardsPlaceholder()
                         Divider()
-                        ConnectionsList(board: board, push: fleet?.push)
+                        ConnectionsList(board: board, push: fleet?.push, usage: fleet?.usage)
                     }
                     .frame(minWidth: 260, idealWidth: 300, maxWidth: 360)
                 }
@@ -162,6 +165,7 @@ public struct BoardScreen: View {
             SessionPlaceholder(row: row) { opened = nil }
         }
         .modifier(ApprovalSheetHost(center: fleet?.approvals, openChat: openChat))
+        .usageSheet(fleet?.usage)
         #if os(macOS)
         .frame(minWidth: fleet != nil && opened != nil ? 960 : 680, minHeight: 420)
         #endif
@@ -261,8 +265,10 @@ struct BoardRowView: View {
 struct ConnectionsList: View {
     let board: Board
     var push: PushRegistrar?
+    var usage: UsageCenter?
     @Environment(\.sshSetup) private var ssh
     @State private var showSSH = false
+    @State private var showUsage = false
     @State private var showNotifications = false
 
     var body: some View {
@@ -300,6 +306,14 @@ struct ConnectionsList: View {
                 if push != nil {
                     Button("Notifications") { showNotifications = true }
                 }
+                if usage != nil {
+                    Button("Usage") { showUsage = true }
+                }
+            }
+        }
+        .sheet(isPresented: $showUsage) {
+            if let usage {
+                UsageSheet(center: usage, focus: nil) { showUsage = false }
             }
         }
         .sheet(isPresented: $showNotifications) {
