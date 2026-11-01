@@ -207,5 +207,6 @@ var Translators = map[int]Translator{}
 // "idempotency-keys" means the hab honours idempotency_key on session.create and session.send
 // (spec 3.9); a client sends keys only to a hab that lists it. "detect-explain" means
 // detect.explain works (harness-adapters.md, Detection).
-// "catalog" means the catalog.* methods and the catalog.updated event work (mesh.md 5).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog"}
+// "catalog" means the catalog.* methods and the catalog.updated event work (mesh.md 5). "usage"
+// means usage.list and the usage.updated event work (harness-adapters.md, Usage).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage"}

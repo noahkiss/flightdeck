@@ -25,7 +25,8 @@
     "mesh",
     "idempotency-keys",
     "detect-explain",
-    "catalog"
+    "catalog",
+    "usage"
   ],
   "methods": [
     {
