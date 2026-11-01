@@ -39,6 +39,7 @@ type Reader struct {
 	warned  map[string]bool
 	drift   string
 	resets  int     // replacements seen
+	cwd     string  // the working directory the transcript last recorded
 	pending []*item // changed during the current refresh
 }
 
@@ -143,6 +144,29 @@ func (r *Reader) Refresh() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.refresh(context.Background())
+}
+
+// Cwd is the working directory the transcript last recorded (Claude Code records, Codex session
+// meta), or "" when it recorded none. It reflects the last refresh.
+func (r *Reader) Cwd() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cwd
+}
+
+// All reads the file's new lines, then returns every message of the conversation, oldest first.
+// Rich content (app.md 4.7) derives the files a session touched from its tool calls.
+func (r *Reader) All(ctx context.Context) ([]api.ChatMessage, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.refresh(ctx); err != nil {
+		return nil, err
+	}
+	out := make([]api.ChatMessage, 0, len(r.c.items))
+	for _, it := range r.c.items {
+		out = append(out, it.msg)
+	}
+	return r.withSession(out), nil
 }
 
 // Size is how many bytes of the file the reader has read.

@@ -581,3 +581,28 @@ func TestNoSilentDrops(t *testing.T) {
 		t.Errorf("drift %q after a record in the tested range", r.Drift())
 	}
 }
+
+// TestCwdAndAll: the reader keeps the folder each format records and returns the whole
+// conversation, which rich content derives touched files from.
+func TestCwdAndAll(t *testing.T) {
+	for path, open := range map[string]func(Config) *Reader{
+		"testdata/claude-2.1.310.jsonl": NewClaude,
+		"testdata/codex-0.166.0.jsonl":  NewCodex,
+	} {
+		r := open(Config{Path: path, Session: "s1"})
+		if r.Cwd() != "" {
+			t.Errorf("%s: cwd before a read", path)
+		}
+		all, err := r.All(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		page, _, _, _ := r.Page(context.Background(), "", 200)
+		if len(all) == 0 || len(all) != len(page) || all[0].Session != "s1" {
+			t.Errorf("%s: all %d, page %d", path, len(all), len(page))
+		}
+		if r.Cwd() != "/work/demo" {
+			t.Errorf("%s: cwd %q", path, r.Cwd())
+		}
+	}
+}

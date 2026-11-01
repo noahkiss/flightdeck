@@ -2028,6 +2028,7 @@ stage that fills it.
 | `usage.list {}` and event `usage.updated` | Usage readings per account: key, label, harness, windows with used percentage, reset time and read time (14.1) |
 | `push.register` kind `usage` | Opt in to usage warnings by push (14.3) |
 | `approval.answer` field `via` | Where the answer came from (app, banner, Watch banner, voice), for the hab's log |
+| `content.show`, `content.list`, `content.read`, `content.diff` and event `content.updated` | Rich content: shown files, images from tool calls, modified files with diffs (4.7). Capability `content` |
 | `chat.search {query, limit}` (later) | Full-text search over chat messages on this hab (3.6) |
 
 Nothing new is needed for the Watch: it answers through the phone's notification actions (16).

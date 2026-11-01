@@ -781,6 +781,10 @@ names the stage, and an event is defined but never sent.
 | `chat.page` | Read a page of chat messages from the transcript reader (capability `transcripts`) | Yes, Claude Code (Part 4 stage 5) |
 | `attachment.put` | Start an upload of a file for a session | Part 6 stage 5 |
 | `attachment.get` | Fetch an attachment or its thumbnail | Part 6 stage 5 |
+| `content.show` | Store a reference to a file on the hab's host for a session to show (capability `content`; `app.md` 4.7) | Yes (task-btkd1ekc) |
+| `content.list` | A session's shown files, images from tool calls and changed files (capability `content`) | Yes (task-btkd1ekc) |
+| `content.read` | A run of one listed file's bytes, in bounded chunks (capability `content`) | Yes (task-btkd1ekc) |
+| `content.diff` | A listed file's diff in unified format (capability `content`) | Yes (task-btkd1ekc) |
 | `session.focus` | Report focus: marks `done` seen, and holds pushes while watched | Yes (task-oe7ioczy) |
 | `push.register` | Store an APNs device token with the kinds the device wants (capability `push`) | Yes (task-oe7ioczy) |
 | `push.register_activity` | Store a Live Activity token for the tracked session (capability `push`) | Yes (task-oe7ioczy) |
@@ -801,17 +805,19 @@ names the stage, and an event is defined but never sent.
 | `usage.updated` | An account's usage reading changed | Account key | Yes (task-6189lsjb) |
 | `command.updated` | A pane's command started or ended (2.5) | Pane | Yes (task-m845kpi9) |
 | `notice.raised` | A notice was raised (`notice.raise`) | Notice | Yes (task-oe7ioczy) |
+| `content.updated` | A session showed a file (`content.show`) | Content item | Yes (task-btkd1ekc) |
 
-All seven events are ephemeral (3.5): they carry no revision, and a client applies them in seq
+All eight events are ephemeral (3.5): they carry no revision, and a client applies them in seq
 order. A chat message lives in the transcript, not in gff-hab, so it has no stored revision
 either; an update repeats the message id and replaces the message. A scoped subscription gets a
 `chat.message` when the message's `session` is in its scope.
 
 Built: gff-hab sends no `revision` key on these events.
 
-New capabilities: `push` (the hab has working push config, `app.md` 8.4), `host-stats`, and
+New capabilities: `push` (the hab has working push config, `app.md` 8.4), `host-stats`,
 `commands` (the `command.*` methods and the `command.updated` event work; a hab with the holder
-link sends it).
+link sends it), and `content` (the `content.*` methods and the `content.updated` event work; a
+hab with the transcript reader sends it).
 
 Shapes the specs left open, and the choice taken (the smallest that serves both clients):
 
@@ -864,6 +870,24 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
 - **`attachment.put`** returns `id` and `path`. The channel the bytes take is designed in its
   stage; it may add an optional field to the result. **`attachment.get`** returns the bytes in
   `data`, with `name` and `type`.
+- **`content.*`** (`app.md` 4.7). `content.show` takes `path` (absolute, a regular file) and
+  `session` or `pane_token` (the token in the calling pane's `GFF_HAB`), with the optional `kind`
+  (`image`, `markdown`, `pdf`, `html`, `text`, `diff`, `file`; else from the file name) and
+  `title` (at most 200 characters); it returns the item `id` and the `session`. The hab stores
+  the path, never a copy, in `content.json` in its state directory, at most 200 per session.
+  `content.list {session}` returns `items` oldest first (shown files; images a tool call read,
+  wrote or viewed; files the session wrote or edited; git status of the session's folder),
+  `folder` and `more` (at most 500). An item has `id` (a hash of session and path), `session`,
+  `kind`, `path`, `name`, `type`, `at`, and the optional `title`, `size` (absent when the file
+  is gone), `shown`, `change` (`added`, `modified`, `deleted`, `renamed`, `untracked`; open) and
+  `message` (the tool call). `content.read {session, id, offset?, limit?}` serves only ids the
+  list holds for that session (else `not_found`), in runs of at most 1 MiB (default 256 KiB),
+  of regular files up to 32 MiB; each run carries `size` and `modified`. `content.diff
+  {session, id}` returns `diff` with `source` `git` (against HEAD), `untracked`, `transcript`
+  (the session's edit calls) or `none`, cut at 512 KiB with `truncated`. A git status path that
+  leads out of the repository through a symlink is left out. The calls run off the read loop,
+  at most 4 per connection. `content.updated` carries one item; a scoped subscription gets it
+  when its session is in scope. `gff-hab show` is the command line of `content.show`.
 - **`push.register`** `environment` is `development` or `production`; `kinds` are `permission`,
   `question`, `auth`, `error`, `done` and `usage`. Added by the push stage, optional:
   `hide_commands`, the app's "show commands in notifications" turned off (`app.md` 8.3).

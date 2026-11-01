@@ -52,6 +52,7 @@ type claudeRecord struct {
 	UUID             string          `json:"uuid"`
 	Timestamp        string          `json:"timestamp"`
 	Version          string          `json:"version"`
+	Cwd              string          `json:"cwd"`
 	IsMeta           bool            `json:"isMeta"`
 	IsSidechain      bool            `json:"isSidechain"`
 	IsCompactSummary bool            `json:"isCompactSummary"`
@@ -129,6 +130,9 @@ func (p *claudeParser) line(data []byte, end int64) {
 	}
 	if rec.Version != "" {
 		p.r.checkVersion(rec.Version)
+	}
+	if rec.Cwd != "" {
+		p.r.cwd = rec.Cwd
 	}
 	id := rec.UUID
 	if id == "" {

@@ -2,6 +2,8 @@ package structure
 
 import (
 	"fmt"
+
+	"github.com/noahkiss/flightdeck/api"
 	"path/filepath"
 	"slices"
 )
@@ -80,6 +82,16 @@ func (s *Store) ProjectOfPane(pane string) string {
 		return ss.Project
 	}
 	return ""
+}
+
+// SessionOfPane returns the session that links pane.
+func (s *Store) SessionOfPane(pane string) (api.Session, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ss := s.sessionByPane(pane); ss != nil {
+		return sessionAPI(ss), true
+	}
+	return api.Session{}, false
 }
 
 // SetProjectRepo stores a project's repository state. It raises the revision and emits

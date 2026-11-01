@@ -54,10 +54,11 @@ type conn struct {
 	pending  []pubEvent     // events that arrived while seeding, in order
 	// lanes run pane.input calls off the read loop, one goroutine per pane while it has calls,
 	// so calls to one pane keep their order and a stuck pane holds up nothing else.
-	lanes   map[string]*lane
-	waiting int // pane.input calls in lanes, until their reply
-	chats   int // chat.page calls running, until their reply
-	outputs int // command.output calls running, until their reply
+	lanes    map[string]*lane
+	waiting  int // pane.input calls in lanes, until their reply
+	chats    int // chat.page calls running, until their reply
+	outputs  int // command.output calls running, until their reply
+	contents int // content.* calls running, until their reply
 
 	// ctx ends when the connection's read loop ends: calls running off the loop stop with it.
 	ctx    context.Context
@@ -440,6 +441,11 @@ func (c *conn) handleLine(line []byte) {
 	}
 	if m.Method == "detect.explain" {
 		c.handleExplain(m)
+		return
+	}
+	switch m.Method {
+	case "content.show", "content.list", "content.read", "content.diff":
+		c.handleContent(m)
 		return
 	}
 	seq := c.currentSeq()

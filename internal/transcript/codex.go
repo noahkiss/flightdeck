@@ -141,9 +141,13 @@ func (p *codexParser) line(data []byte, end int64) {
 	case l.Type == "session_meta":
 		var m struct {
 			CliVersion string `json:"cli_version"`
+			Cwd        string `json:"cwd"`
 		}
 		if json.Unmarshal(l.Payload, &m) == nil && m.CliVersion != "" {
 			p.r.checkVersion(m.CliVersion)
+		}
+		if m.Cwd != "" {
+			p.r.cwd = m.Cwd
 		}
 	case l.Type == "event_msg":
 		p.event(l.Payload, lineID, end)

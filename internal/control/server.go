@@ -188,6 +188,7 @@ type Config struct {
 	Catalog      Catalog     // nil: the catalog methods answer unavailable
 	Push         Push        // nil: the push methods, session.focus and notice.raise answer unavailable
 	Usage        Usage       // nil: usage.list answers unavailable
+	Content      Content     // nil: the content.* methods answer unavailable
 	// ApproversChanged, if set, is called with no lock held after a connection closes or
 	// changes its subscription, so Approvers may have dropped.
 	ApproversChanged func()

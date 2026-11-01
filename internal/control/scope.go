@@ -140,6 +140,10 @@ func (f *filter) pass(e structure.Event) bool {
 	case api.EventUsageUpdated:
 		// An account's reading is about no session: every subscription gets it.
 		return true
+	case EventContentUpdated:
+		// A content item names its session; its id is the item id.
+		it, ok := e.Data.(api.ContentItem)
+		return ok && f.sessions[it.Session]
 	case EventChatMessage:
 		// A chat message names its session; its id is the message id.
 		m, ok := e.Data.(api.ChatMessage)

@@ -76,6 +76,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/catalog"
+	"github.com/noahkiss/flightdeck/internal/content"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/datastream"
 	"github.com/noahkiss/flightdeck/internal/detect"
@@ -107,6 +108,7 @@ const usage = `usage:
   gff-hab peers    [-socket path] [-json]
   gff-hab peers accept [-socket path] <label>
   gff-hab notify   [-socket path | -via command] [-level passive|active|time-sensitive] [-session id] <title> [body]
+  gff-hab show     [-socket path | -via command] [-session id] [-kind k] [-title t] <path>
   gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
   gff-hab manifests list    [-state dir]
   gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
@@ -158,6 +160,8 @@ func main() {
 		err = peersCmd(os.Args[2:], os.Stdout)
 	case "notify":
 		err = notifyCmd(os.Args[2:])
+	case "show":
+		err = showCmd(os.Args[2:])
 	case "manifests":
 		err = manifests(os.Args[2:], os.Stdout)
 	case "detect":
@@ -412,6 +416,7 @@ func serve(args []string) error {
 	var agentCalls control.Agents
 	var agentSvc *agentService
 	var explain control.Detect
+	var contents control.Content
 	var ds *datastream.Server
 	var mgr *panesize.Manager
 	if lk != nil {
@@ -473,6 +478,24 @@ func serve(args []string) error {
 		ocs.dirty = chats.dirty
 		chat = chats
 		caps = append(caps, "transcripts")
+		// Rich content (app.md 4.7): references to files a session showed or touched.
+		cs, err := newContent(dir, content.Config{
+			Session:      store.Session,
+			PaneSession:  paneSessionOf(tokens, store),
+			Conversation: chats.conversation,
+			ProjectDir:   projectDirOf(store),
+			Publish: func(it api.ContentItem) {
+				if s := srv.Load(); s != nil {
+					s.Publish(structure.Event{Type: control.EventContentUpdated, ID: it.ID, Data: it})
+				}
+			},
+			Logf: logger.Printf,
+		})
+		if err != nil {
+			return err
+		}
+		contents = cs
+		caps = append(caps, "content")
 		// Commands from OSC 133 marks (hab-logic-api.md 2.5): command.updated events are read
 		// from the link and sent at a bounded rate.
 		cmdEvents := newCommandEvents(lk.CommandChanges, func(e structure.Event) {
@@ -605,6 +628,7 @@ func serve(args []string) error {
 		Catalog:     cs,
 		Push:        pushes,
 		Usage:       usageStore,
+		Content:     contents,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)
