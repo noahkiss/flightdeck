@@ -180,14 +180,16 @@ helper.
   calls at once; each call has 5 minutes.
 - **Watchdogs.** A model load has 60 s (measured: 1.3 s). A clip's answer has 30 s plus twice
   the clip's length. A helper that misses either is killed: the caller gets `unavailable`, the
-  decoder is free, and the next clip starts a fresh helper. The watchdog runs even after the
+  decoder is free, and the next clip starts a fresh helper (a helper whose process ended is never
+  handed to a clip, even before its monitor clears it). The watchdog runs even after the
   caller gave up, so a hang never holds the decoder until gff-hab restarts.
 - **Limits.** gff-hab checks the clip before the helper sees it: 1 MiB, 120 s, `sample_rate` 8000
   to 48000, `language` absent or `en`. A pcm16 clip's length comes from its byte count; a pcm16
   clip of 1 MiB lasts at most 65 s, so only Opus can reach the 120 s limit. An Opus clip's length
   comes from the last granule position, and its packets' own lengths (from each packet's TOC
   byte, RFC 6716 3.1) bound it too: a granule that understates the clip by more than one packet
-  is refused, and a last page with no granule position is `invalid`. The helper also stops
+  is refused, and so is a granule more than one packet past them (it would also overflow the
+  length arithmetic). A last page with no granule position is `invalid`. The helper also stops
   decoding past 120 s plus the pre-skip, whatever gff-hab let through.
 - **Vocabulary.** With `session`, gff-hab lists the files git knows in the session's project
   folder (the newest one that exists): tracked, plus untracked files that are not ignored. Each path
@@ -201,7 +203,9 @@ helper.
   - A name in all capitals (`NOTICE`, `LICENSE`, `README`) is never a term: it is also a plain word.
   - A leading dot is dropped (`.github` is the term `github`).
   - A plain term that is also an English compound or phrasal verb (setup, login, backup, update,
-    checkout and about 40 more) never joins two words: "set up" stays "set up".
+    checkout, timeout, backend, filename and about 50 more) never joins two words: "set up"
+    stays "set up". The list is finite: a repository term that is a compound not on it ("lock
+    file" with `lockfile.go`) still joins. That change is usually what the speaker meant.
   - A capitalized first word ("Back up", "Fetch user") keeps the words, since a lowercase term
     would lose the capital of a sentence start or a name.
   - Two terms with the same spelling leave the words alone.
