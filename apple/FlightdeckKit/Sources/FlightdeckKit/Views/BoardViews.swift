@@ -70,6 +70,22 @@ public struct BoardScreen: View {
     private func session(_ row: BoardRow, compact: Bool) -> some View {
         SessionView(model: fleet!.chat(for: row.target), compact: compact, close: { opened = nil })
             .id(row.target)
+            // session.focus while the session is on screen (app.md 8.6).
+            .onAppear { fleet?.focus.show(row.target) }
+            .onDisappear { fleet?.focus.hide(row.target) }
+    }
+
+    /// A rank 1 row with a request opens the approval sheet (app.md 7.2).
+    private func openRequest(_ row: BoardRow) -> Bool {
+        guard row.rank == .blocked, !row.offline, let a = fleet?.approvals else { return false }
+        a.open(row)
+        return a.presenting
+    }
+
+    /// The sheet's chat button: open the session at the request.
+    private func openChat(_ t: SessionTarget) {
+        fleet?.approvals?.presenting = false
+        if let row = board.rows.first(where: { $0.target == t }) { opened = row }
     }
 
     private var compact: Bool {
@@ -84,7 +100,7 @@ public struct BoardScreen: View {
         Group {
             if compact {
                 NavigationStack {
-                    BoardList(board: board, opened: $opened)
+                    BoardList(board: board, opened: $opened, openRequest: openRequest)
                         .navigationTitle("Flightdeck")
                         .navigationDestination(item: fleet == nil ? .constant(nil) : $opened) { row in
                             session(row, compact: true)
@@ -101,7 +117,7 @@ public struct BoardScreen: View {
                 }
                 .sheet(isPresented: $showConnections) {
                     NavigationStack {
-                        ConnectionsList(board: board)
+                        ConnectionsList(board: board, push: fleet?.push)
                             .navigationTitle("Connections")
                             .toolbar {
                                 ToolbarItem(placement: .confirmationAction) {
@@ -113,7 +129,7 @@ public struct BoardScreen: View {
             } else if fleet != nil, let row = opened {
                 HStack(spacing: 0) {
                     NavigationStack {
-                        BoardList(board: board, opened: $opened)
+                        BoardList(board: board, opened: $opened, openRequest: openRequest)
                             .navigationTitle("Flightdeck")
                     }
                     .frame(minWidth: 300, idealWidth: 340, maxWidth: 380)
@@ -124,7 +140,7 @@ public struct BoardScreen: View {
             } else {
                 HStack(spacing: 0) {
                     NavigationStack {
-                        BoardList(board: board, opened: $opened)
+                        BoardList(board: board, opened: $opened, openRequest: openRequest)
                             .navigationTitle("Flightdeck")
                     }
                     .frame(minWidth: 360)
@@ -132,7 +148,7 @@ public struct BoardScreen: View {
                     VStack(spacing: 0) {
                         SessionCardsPlaceholder()
                         Divider()
-                        ConnectionsList(board: board)
+                        ConnectionsList(board: board, push: fleet?.push)
                     }
                     .frame(minWidth: 260, idealWidth: 300, maxWidth: 360)
                 }
@@ -141,6 +157,7 @@ public struct BoardScreen: View {
         .sheet(item: fleet == nil ? $opened : .constant(nil)) { row in
             SessionPlaceholder(row: row) { opened = nil }
         }
+        .modifier(ApprovalSheetHost(center: fleet?.approvals, openChat: openChat))
         #if os(macOS)
         .frame(minWidth: fleet != nil && opened != nil ? 960 : 680, minHeight: 420)
         #endif
@@ -150,6 +167,8 @@ public struct BoardScreen: View {
 struct BoardList: View {
     let board: Board
     @Binding var opened: BoardRow?
+    /// Returns true when the row opened the approval sheet instead.
+    var openRequest: (BoardRow) -> Bool = { _ in false }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { ctx in
@@ -162,6 +181,7 @@ struct BoardList: View {
                     Section(section.kind.rawValue) {
                         ForEach(section.rows) { row in
                             Button {
+                                if openRequest(row) { return }
                                 board.open(row)
                                 opened = row
                             } label: {
@@ -236,8 +256,10 @@ struct BoardRowView: View {
 
 struct ConnectionsList: View {
     let board: Board
+    var push: PushRegistrar?
     @Environment(\.sshSetup) private var ssh
     @State private var showSSH = false
+    @State private var showNotifications = false
 
     var body: some View {
         List {
@@ -267,10 +289,29 @@ struct ConnectionsList: View {
                     }
                 }
             }
-            if ssh != nil {
-                Section {
+            Section {
+                if ssh != nil {
                     Button("SSH keys and habs") { showSSH = true }
                 }
+                if push != nil {
+                    Button("Notifications") { showNotifications = true }
+                }
+            }
+        }
+        .sheet(isPresented: $showNotifications) {
+            if let push {
+                NavigationStack {
+                    NotificationSettingsView(push: push, board: board)
+                        .navigationTitle("Notifications")
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Done") { showNotifications = false }
+                            }
+                        }
+                }
+                #if os(macOS)
+                .frame(minWidth: 440, minHeight: 420)
+                #endif
             }
         }
         .sheet(isPresented: $showSSH) {
@@ -420,5 +461,21 @@ extension BoardRow {
         if s < 3600 { return "\(s / 60) min" }
         if s < 86400 { return "\(s / 3600) h" }
         return "\(s / 86400) d"
+    }
+}
+
+/// Shows the approval sheet while the center asks for it.
+struct ApprovalSheetHost: ViewModifier {
+    let center: ApprovalCenter?
+    let openChat: (SessionTarget) -> Void
+
+    func body(content: Content) -> some View {
+        if let center {
+            content.sheet(isPresented: Binding(get: { center.presenting }, set: { center.presenting = $0 })) {
+                ApprovalSheet(model: center.sheet, openChat: openChat) { center.presenting = false }
+            }
+        } else {
+            content
+        }
     }
 }

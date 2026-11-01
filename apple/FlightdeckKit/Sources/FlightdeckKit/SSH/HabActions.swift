@@ -1,36 +1,64 @@
 import Foundation
+import FlightdeckShared
 import HabAPI
 import os
 import UserNotifications
 
 /// Notification actions that reach a hab from the background: iOS wakes the
-/// app, the action connects over the SSH carrier, sends one call and
-/// disconnects (task-iv89iwd8). A local notification carries the action for
-/// now; push replaces it later (task-oe7ioczy). `approval.answer` will use the
-/// same path through `SSHSetup.perform`.
+/// app, the action connects over the app's transport, sends one call and
+/// disconnects (task-iv89iwd8). It answers approvals from push banners
+/// (Approve, Deny, Reply; task-oe7ioczy) and keeps the "Ping hab" test action.
 ///
-/// The action asks for unlock: the device key works only while the device is
-/// unlocked (transport.md 7.2). A failure posts a "could not reach" notice and
-/// never retries (app.md 18.7).
+/// Approve and Deny ask for unlock: an Allow can run a command (app.md 7.6),
+/// and the device key works only while the device is unlocked (transport.md
+/// 7.2). A failure posts a notice and raises the request again in the
+/// foreground; nothing retries on its own (app.md 18.7).
 public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
     public static let pingCategory = "flightdeck.hab-ping"
     public static let pingAction = "flightdeck.hab-ping.send"
     static let entryKey = "hab-entry"
 
-    private let keys: DeviceKeys
+    private let keys: DeviceKeys?
     private let listURL: URL?
     private let log = Logger(subsystem: "com.flightdeck.app", category: "actions")
+    /// Answers and the foreground prompt; set once the fleet is built.
+    @MainActor public weak var approvals: ApprovalCenter?
 
-    public init(keys: DeviceKeys, listURL: URL?) {
+    public init(keys: DeviceKeys?, listURL: URL?) {
         self.keys = keys
         self.listURL = listURL
+    }
+
+    /// Every category the app registers: the ping test and the approval set
+    /// the hab names in its pushes (app.md 8.6, 16.2).
+    public static func categories() -> Set<UNNotificationCategory> {
+        let ping = UNNotificationAction(identifier: pingAction, title: "Ping hab", options: [.authenticationRequired])
+        let approve = UNNotificationAction(identifier: PushCategory.approveAction, title: "Approve", options: [.authenticationRequired])
+        let deny = UNNotificationAction(identifier: PushCategory.denyAction, title: "Deny", options: [.authenticationRequired, .destructive])
+        let open = UNNotificationAction(identifier: PushCategory.openAction, title: openTitle, options: [.foreground])
+        let reply = UNTextInputNotificationAction(identifier: PushCategory.replyAction, title: "Reply", options: [.authenticationRequired], textInputButtonTitle: "Send", textInputPlaceholder: "Answer")
+        return [
+            UNNotificationCategory(identifier: pingCategory, actions: [ping], intentIdentifiers: []),
+            UNNotificationCategory(identifier: PushCategory.approval, actions: [deny, approve], intentIdentifiers: []),
+            UNNotificationCategory(identifier: PushCategory.approvalDeny, actions: [deny, open], intentIdentifiers: []),
+            UNNotificationCategory(identifier: PushCategory.open, actions: [open], intentIdentifiers: []),
+            UNNotificationCategory(identifier: PushCategory.question, actions: [reply, open], intentIdentifiers: []),
+        ]
+    }
+
+    /// "Open on iPhone" reads right on a mirrored Watch banner (app.md 16.2).
+    static var openTitle: String {
+        #if os(iOS)
+        return "Open on iPhone"
+        #else
+        return "Open"
+        #endif
     }
 
     /// Registers the categories and becomes the notification delegate. Call
     /// at launch: iOS delivers a background action to the delegate it finds then.
     public func install(on center: UNUserNotificationCenter = .current()) {
-        let ping = UNNotificationAction(identifier: Self.pingAction, title: "Ping hab", options: [.authenticationRequired])
-        center.setNotificationCategories([UNNotificationCategory(identifier: Self.pingCategory, actions: [ping], intentIdentifiers: [])])
+        center.setNotificationCategories(Self.categories())
         center.delegate = self
     }
 
@@ -52,13 +80,58 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
     // MARK: - Delegate
 
     public func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        [.banner, .list]
+        [.banner, .list, .sound]
     }
 
     public func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        guard response.actionIdentifier == Self.pingAction,
-              let id = response.notification.request.content.userInfo[Self.entryKey] as? String
-        else { return }
+        let content = response.notification.request.content
+        if response.actionIdentifier == Self.pingAction {
+            await ping(content)
+            return
+        }
+        let text = (response as? UNTextInputNotificationResponse)?.userText
+        let meta = PushMeta(userInfo: content.userInfo)
+        switch NotificationAnswer.intent(action: response.actionIdentifier, meta: meta, text: text) {
+        case .answer(let host, let params):
+            guard let approvals = await approvals else {
+                await notify("Flightdeck", "Open Flightdeck to answer.")
+                return
+            }
+            _ = await approvals.answer(host: host, params, meta: meta)
+        case .open(let m):
+            await approvals?.open(m)
+        case .none:
+            break
+        }
+    }
+
+    /// Posts a local notification; with `meta` its tap opens the request.
+    public static func post(_ title: String, _ body: String, meta: PushMeta?) async {
+        let c = UNMutableNotificationContent()
+        c.title = title
+        c.body = body
+        if let meta {
+            c.userInfo = [PushMeta.userInfoKey: meta.userInfoValue]
+            c.categoryIdentifier = PushCategory.open
+            if let s = meta.session { c.threadIdentifier = s }
+        }
+        try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "flightdeck.result." + UUID().uuidString, content: c, trigger: nil))
+    }
+
+    /// Removes delivered banners of requests that closed (app.md 18.6, B
+    /// where iOS allows: while the app runs).
+    public static func withdraw(requests: Set<String>) async {
+        let center = UNUserNotificationCenter.current()
+        let delivered = await center.deliveredNotifications()
+        let ids = delivered.filter { n in
+            guard let m = PushMeta(userInfo: n.request.content.userInfo), let r = m.request else { return false }
+            return m.kind == "permission" && requests.contains(r)
+        }.map(\.request.identifier)
+        if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
+    }
+
+    private func ping(_ content: UNNotificationContent) async {
+        guard let id = content.userInfo[Self.entryKey] as? String, let keys else { return }
         guard let entry = (try? SSHHabList.load(from: listURL))?.habs.first(where: { $0.id == id }) else {
             await notify("Flightdeck", "That hab is no longer in the app.")
             return
@@ -81,9 +154,6 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
     }
 
     private func notify(_ title: String, _ body: String) async {
-        let c = UNMutableNotificationContent()
-        c.title = title
-        c.body = body
-        try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "flightdeck.result." + UUID().uuidString, content: c, trigger: nil))
+        await Self.post(title, body, meta: nil)
     }
 }

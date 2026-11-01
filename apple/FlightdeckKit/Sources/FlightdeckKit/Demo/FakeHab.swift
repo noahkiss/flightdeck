@@ -67,6 +67,23 @@ public actor FakeHab {
     /// How many `chat.page` calls were answered.
     public private(set) var chatPages = 0
 
+    /// Every `push.register` received, oldest first.
+    public private(set) var pushRegisters: [PushRegisterParams] = []
+    /// Every `push.register_activity` received, oldest first.
+    public private(set) var activityRegisters: [PushActivityParams] = []
+    /// Every `session.focus` received, oldest first.
+    public private(set) var focusReports: [SessionFocusParams] = []
+    /// Every `approval.answer` received, oldest first, refused or not.
+    public private(set) var answers: [ApprovalAnswerParams] = []
+    /// Every `notice.raise` received, oldest first.
+    public private(set) var notices: [NoticeRaiseParams] = []
+    private var nextAnswerFailure: Failure?
+
+    /// Makes the next `approval.answer` fail with this error.
+    public func failNextAnswer(kind: ErrorKind, hint: String) {
+        nextAnswerFailure = Failure(kind: kind, hint: hint)
+    }
+
     /// Every hello received, oldest first.
     public private(set) var hellos: [HelloParams] = []
     /// How many `events.subscribe` calls were answered.
@@ -418,6 +435,64 @@ public actor FakeHab {
             sends.append(p)
             await reply(c, id: id, result: Empty(seq: c.seq))
             if let hook = onSend { Task { await hook(p) } }
+        case HabMethods.pushRegister.name, HabMethods.pushRegisterActivity.name:
+            guard capabilities.contains("push") else {
+                await fail(c, id: id, kind: .unavailable, hint: "push is not set up on this hab; see docs/push.md")
+                break
+            }
+            if method == HabMethods.pushRegister.name, let p = try? params.decode(PushRegisterParams.self) {
+                pushRegisters.append(p)
+            } else if let p = try? params.decode(PushActivityParams.self) {
+                activityRegisters.append(p)
+            } else {
+                await fail(c, id: id, kind: .invalid, hint: "bad \(method) params")
+                break
+            }
+            await reply(c, id: id, result: Empty(seq: c.seq))
+        case HabMethods.sessionFocus.name:
+            guard let p = try? params.decode(SessionFocusParams.self) else {
+                await fail(c, id: id, kind: .invalid, hint: "bad session.focus params")
+                break
+            }
+            focusReports.append(p)
+            if p.active && sessions[p.session] == nil {
+                await fail(c, id: id, kind: .notFound, hint: "session \(p.session) does not exist")
+                break
+            }
+            await reply(c, id: id, result: Empty(seq: c.seq))
+        case HabMethods.noticeRaise.name:
+            guard let p = try? params.decode(NoticeRaiseParams.self) else {
+                await fail(c, id: id, kind: .invalid, hint: "bad notice.raise params")
+                break
+            }
+            notices.append(p)
+            await reply(c, id: id, result: NoticeRaised(id: "n\(notices.count)", pushed: 0, seq: c.seq))
+        case HabMethods.approvalAnswer.name:
+            guard let p = try? params.decode(ApprovalAnswerParams.self) else {
+                await fail(c, id: id, kind: .invalid, hint: "bad approval.answer params")
+                break
+            }
+            answers.append(p)
+            if let f = nextAnswerFailure {
+                nextAnswerFailure = nil
+                await fail(c, id: id, kind: f.kind, hint: f.hint)
+                break
+            }
+            if p.choice == .answer {
+                await fail(c, id: id, kind: .unavailable, hint: "answering a question is not built yet; answer it in the terminal")
+                break
+            }
+            // The real hab's rule: only the pane's open request, and only once.
+            guard var a = agents[p.pane], a.state == .blocked, a.kind == .permission, let r = a.request?.id, r == p.request else {
+                await fail(c, id: id, kind: .conflict, hint: "request \(p.request) is not open on pane \(p.pane)")
+                break
+            }
+            await reply(c, id: id, result: Empty(seq: c.seq))
+            a.state = p.choice == .allow ? .working : .idle
+            a.kind = nil
+            a.request = nil
+            a.at = Fixture.stamp(Date())
+            await put(a)
         default:
             await fail(c, id: id, kind: .unavailable, hint: "the fake hab does not serve \(method)")
         }

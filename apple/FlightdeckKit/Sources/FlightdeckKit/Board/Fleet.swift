@@ -1,4 +1,5 @@
 import Foundation
+import HabAPI
 import os
 
 /// Every hab connection and the board they feed, plus the lifecycle rule:
@@ -17,6 +18,17 @@ public final class Fleet {
     public let terminals = TerminalRegistry()
     /// The in-app SSH carrier's keys and hab entries; nil in demo mode.
     public var ssh: SSHSetup?
+    /// Push registration with every hab (app.md 8.1); nil in demo mode.
+    public var push: PushRegistrar?
+    /// The approval sheet and answers from outside the app (app.md 7).
+    public var approvals: ApprovalCenter?
+    /// Host id to connection, for answers from the background.
+    public var book: HabBook?
+    /// `session.focus` reports for the session views on screen (app.md 8.6).
+    public private(set) lazy var focus = FocusReporter { [weak self] habID, params in
+        guard let conn = self?.connections.first(where: { $0.id == habID }) else { return }
+        _ = try? await conn.call(HabMethods.sessionFocus, params)
+    }
 
     private var consumers: [Task<Void, Never>] = []
     private var windows = 0
@@ -44,9 +56,19 @@ public final class Fleet {
         board.register(id: conn.id, label: label, endpoint: conn.transport.endpoint)
         let b = board
         consumers.append(Task { @MainActor [weak self] in
+            var lastSnapshot = 0
             for await s in conn.updates {
                 b.update(conn.id, s)
                 self?.refreshChats(habID: conn.id)
+                // Each connection applies one snapshot first: a new count while
+                // online is a new connection, with a client that knows nothing.
+                if s.status == .online, s.snapshots != lastSnapshot {
+                    lastSnapshot = s.snapshots
+                    self?.connectionOnline(conn, s)
+                } else if s.status != .online {
+                    self?.push?.connectionOffline(id: conn.id)
+                }
+                self?.approvals?.boardChanged()
             }
         })
         if isActive {
@@ -61,6 +83,24 @@ public final class Fleet {
         consumers.remove(at: i).cancel()
         await conn.stop()
         board.unregister(id: id)
+        push?.forget(id: id)
+        book?.forget(connection: id)
+    }
+
+    /// A connection reached online: note its host id for background answers,
+    /// register for push, then repeat the focus the new client does not know.
+    /// The registration binds this client to the device id, so the focus
+    /// report after it counts for the device (hab-logic-api.md 3.9, Presence).
+    private func connectionOnline(_ conn: HabConnection, _ s: HabState) {
+        guard let w = s.welcome else { return }
+        let label = board.habs.first { $0.id == conn.id }?.label ?? w.host.id
+        book?.record(host: w.host.id, connection: conn.id, label: label)
+        push?.connectionOnline(conn, welcome: w)
+        let id = conn.id
+        Task { @MainActor [weak self] in
+            await self?.push?.settle(id: id)
+            self?.focus.connectionOnline(habID: id)
+        }
     }
 
     /// Connects every hab (visible) or closes every connection (background).
@@ -89,7 +129,13 @@ public final class Fleet {
                 for c in connections { await c.start() }
                 for c in connections { await c.retryNow() }
                 terminals.setActive(true)
+                focus.setActive(true)
             } else {
+                // Tell the habs the session left the screen before the
+                // connections close; a hab that misses it drops the focus
+                // with the connection anyway.
+                focus.setActive(false)
+                await Self.within(.seconds(1)) { await self.focus.flush() }
                 terminals.setActive(false)
                 for c in connections { await c.stop() }
                 // iOS may suspend the app before the delayed check runs, so log the count now too.
@@ -103,6 +149,16 @@ public final class Fleet {
                     self.log.notice("background check: \(n) open streams \(delay.components.seconds) s after going to the background")
                 }
             }
+        }
+    }
+
+    /// Runs `work`, giving up on it after `limit`.
+    static func within(_ limit: Duration, _ work: @escaping @MainActor () async -> Void) async {
+        await withTaskGroup(of: Void.self) { g in
+            g.addTask { await work() }
+            g.addTask { try? await Task.sleep(for: limit) }
+            await g.next()
+            g.cancelAll()
         }
     }
 

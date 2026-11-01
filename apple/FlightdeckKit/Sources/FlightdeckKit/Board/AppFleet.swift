@@ -1,4 +1,6 @@
+import FlightdeckShared
 import Foundation
+import HabAPI
 import os
 
 /// Builds the app's fleet: demo habs with `-FlightdeckDemo YES`, else the
@@ -29,12 +31,13 @@ public enum AppFleet {
             }
         }
         addSSH(to: fleet, environment: env)
+        addPush(to: fleet, environment: env)
         return fleet
     }
 
     /// The in-app SSH carrier's habs. iPhone and iPad make the device key on
-    /// first start and install the notification actions. The Mac keeps the
-    /// system ssh as its default; it loads its key only when an entry needs it.
+    /// first start. The Mac keeps the system ssh as its default; it loads its
+    /// key only when an entry needs it.
     @MainActor
     static func addSSH(to fleet: Fleet, environment env: [String: String]) {
         let listURL = SSHHabList.path(environment: env)
@@ -42,11 +45,68 @@ public enum AppFleet {
         fleet.ssh = ssh
         #if os(iOS)
         ssh.loadKey()
-        let actions = HabActions(keys: ssh.keys, listURL: listURL)
-        actions.install()
-        fleet.keepAlive.append(actions)
         #endif
         ssh.connectAll()
+    }
+
+    /// Push registration, the approval center and the notification actions
+    /// (app.md 7, 8). The actions are installed at launch, so iOS finds the
+    /// delegate when an action wakes the app in the background.
+    @MainActor
+    static func addPush(to fleet: Fleet, environment env: [String: String]) {
+        let book = HabBook(url: HabBook.path(environment: env))
+        fleet.book = book
+        fleet.push = PushRegistrar()
+        let keys = fleet.ssh?.keys
+        let listURL = SSHHabList.path(environment: env)
+        let answerer = ApprovalAnswerer(
+            live: { [weak fleet] host in
+                guard let fleet, let e = book.entry(host: host) else { return nil }
+                return fleet.connections.first { $0.id == e.connection }
+            },
+            oneShot: { host in
+                try oneShotTransport(host: host, book: book, keys: keys, listURL: listURL, environment: env)
+            },
+            clientLabel: clientLabel
+        )
+        let center = ApprovalCenter(board: fleet.board, answerer: answerer)
+        center.post = { title, body, meta in await HabActions.post(title, body, meta: meta) }
+        center.withdraw = { ids in await HabActions.withdraw(requests: ids) }
+        fleet.approvals = center
+        let actions = HabActions(keys: keys, listURL: listURL)
+        actions.approvals = center
+        actions.install()
+        fleet.keepAlive.append(actions)
+        #if os(iOS)
+        ActivityAnswerIntent.handler = { [weak center] hab, pane, request, allow in
+            let params = ApprovalAnswerParams(choice: allow ? .allow : .deny, pane: pane, request: request, via: .banner)
+            let meta = PushMeta(kind: "permission", hab: hab, pane: pane, request: request)
+            _ = await center?.answer(host: hab, params, meta: meta)
+        }
+        #endif
+    }
+
+    /// A transport for one call to the hab a push named, from the hab book.
+    static func oneShotTransport(host: String, book: HabBook, keys: DeviceKeys?, listURL: URL?, environment env: [String: String]) throws -> Transport {
+        guard let e = book.entry(host: host) else {
+            throw TransportError("\(host) is not a hab this app has connected to")
+        }
+        if e.connection.hasPrefix("nio:") {
+            let id = String(e.connection.dropFirst(4))
+            guard let keys, let entry = try SSHHabList.load(from: listURL).habs.first(where: { $0.id == id }) else {
+                throw TransportError("that hab is no longer in the app")
+            }
+            if (try? keys.key(entry.keyID))?.requiresBiometry == true {
+                // No Face ID prompt in the background: fail fast, never hang.
+                throw TransportError("the SSH key needs Face ID: open Flightdeck to answer")
+            }
+            return try entry.transport(keys: keys)
+        }
+        let config = (try? HabListConfig.load(environment: env)) ?? .localOnly
+        for (i, h) in config.habs.enumerated() where h.id(index: i) == e.connection {
+            return try h.transport(environment: env)
+        }
+        throw TransportError("that hab is no longer in the app")
     }
 
     static var clientLabel: String {

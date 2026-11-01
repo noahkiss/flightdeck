@@ -10,6 +10,10 @@ let package = Package(
     platforms: [.macOS(.v14), .iOS(.v17)],
     products: [
         .library(name: "FlightdeckKit", targets: ["FlightdeckKit"]),
+        // The small part the extensions share with the app (push payload,
+        // expiry text, Live Activity attributes and intent): Foundation,
+        // ActivityKit and AppIntents only, so an extension stays light.
+        .library(name: "FlightdeckShared", targets: ["FlightdeckShared"]),
     ],
     dependencies: [
         .package(path: "../../swift/HabAPI"),
@@ -25,8 +29,13 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "FlightdeckShared",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
             name: "FlightdeckKit",
             dependencies: [
+                "FlightdeckShared",
                 .product(name: "HabAPI", package: "HabAPI"),
                 .product(name: "GhosttyTerminal", package: "libghostty-spm"),
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
@@ -39,6 +48,7 @@ let package = Package(
             name: "FlightdeckKitTests",
             dependencies: [
                 "FlightdeckKit",
+                "FlightdeckShared",
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
