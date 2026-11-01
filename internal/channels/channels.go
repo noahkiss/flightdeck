@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"sort"
@@ -119,10 +120,14 @@ type Config struct {
 	// Publish hears every change of a record this hab sent (channel.message), in order. It is
 	// called with the service's lock held, so it must not call back into the service.
 	Publish func(api.ChannelRecord)
-	Poll    time.Duration // the mail round; default 15 s
-	Retry   time.Duration // the delivery round; default 1 s
-	Now     func() time.Time
-	Logf    func(string, ...any)
+	// Wake sends mesh.changed to every peer link that the hab with this device id dialed to
+	// this one, and reports whether any link took it (mesh.md 6.5). Nil: no wake-ups, and a
+	// peer that only pulls sees new mail at its next mail round.
+	Wake  func(device string) bool
+	Poll  time.Duration // the mail round; default 15 s
+	Retry time.Duration // the delivery round; default 1 s
+	Now   func() time.Time
+	Logf  func(string, ...any)
 	// write saves the state file; tests replace it to fail. Default writeSynced.
 	write func(path string, b []byte) error
 }
@@ -146,9 +151,19 @@ type Service struct {
 	// none of them again. It lives in memory only, so a failed save cannot undo it.
 	settle map[string]outcome
 
-	kick, poke chan struct{}
-	done       chan struct{}
-	wg         sync.WaitGroup
+	// The mesh.changed wake-up (mesh.md 6.5). Sender side, by target device id: fresh holds
+	// outboxes that gained an item not saved yet; woken holds devices told since their last
+	// pull, so a burst sends one wake-up and an idle hab sends none; toWake is what the wake
+	// loop sends next. Receiver side, by link label: wanted holds links whose peer said mail
+	// waits; running holds links with an exchange in flight, and again those whose exchange
+	// runs once more when it ends, so a link never has two pulls in flight.
+	fresh, woken, toWake    map[string]bool
+	wanted, running, again  map[string]bool
+	kick, poke, wake, pulls chan struct{}
+	done                    chan struct{}
+	ctx                     context.Context // ends at Close
+	stop                    context.CancelFunc
+	wg                      sync.WaitGroup
 }
 
 // state is everything channels keep, saved whole as one file.
@@ -227,13 +242,19 @@ func New(cfg Config) (*Service, error) {
 		acks: map[string][]api.MailResult{}, fails: map[string]*failure{}, online: map[string]bool{},
 		changed: make(chan struct{}), settle: map[string]outcome{},
 		kick: make(chan struct{}, 1), poke: make(chan struct{}, 1), done: make(chan struct{}),
+		fresh: map[string]bool{}, woken: map[string]bool{}, toWake: map[string]bool{},
+		wanted: map[string]bool{}, running: map[string]bool{}, again: map[string]bool{},
+		wake: make(chan struct{}, 1), pulls: make(chan struct{}, 1),
 	}
 	if err := s.load(); err != nil {
 		return nil, err
 	}
-	s.wg.Add(2)
+	s.ctx, s.stop = context.WithCancel(context.Background())
+	s.wg.Add(4)
 	go s.mailLoop()
 	go s.deliverLoop()
+	go s.wakeLoop()
+	go s.pullLoop()
 	return s, nil
 }
 
@@ -245,6 +266,7 @@ func (s *Service) Close() {
 	default:
 	}
 	close(s.done)
+	s.stop()
 	s.wg.Wait()
 }
 
@@ -361,6 +383,7 @@ func (s *Service) Send(ctx context.Context, p api.ChannelSendParams) (api.Channe
 		s.setStateLocked(msg.ID, t.device, res.State, res.Reason, now)
 	} else {
 		s.st.Outbox[t.device] = append(s.st.Outbox[t.device], outItem{Item: api.MailItem{Kind: api.MailKindMessage, Message: &msg}, At: now})
+		s.freshLocked(t.device)
 	}
 	s.capRecordsLocked()
 	s.capSeenLocked()
@@ -681,6 +704,8 @@ func (s *Service) Pull(from api.PeerHello, p api.MailPullParams) (api.MailPullRe
 	now := s.cfg.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// The caller pulls: an item queued for it from now on wakes it again (mesh.md 6.5).
+	delete(s.woken, from.DeviceID)
 	if s.applyResultsLocked(from.DeviceID, p.Done, now) > 0 {
 		if err := s.commitLocked(); err != nil {
 			return api.MailPullResult{}, control.Errorf(api.ErrorKindUnavailable, "the results were not saved: %v", err)
@@ -953,6 +978,7 @@ func (s *Service) finishLocked(id string, st api.ChannelState, reason string, no
 			Item: api.MailItem{Kind: api.MailKindStatus, Status: &api.ChannelStatus{ID: m.ID, State: st, Reason: reason, At: stamp(now)}},
 			At:   now,
 		})
+		s.freshLocked(dev)
 		s.Kick()
 	}
 }
@@ -1088,17 +1114,11 @@ func (s *Service) taken(id string) func(bool) {
 
 func (s *Service) mailLoop() {
 	defer s.wg.Done()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() {
-		<-s.done
-		cancel()
-	}()
 	t := time.NewTicker(s.cfg.Poll)
 	defer t.Stop()
 	for {
 		s.expire()
-		s.mailRound(ctx)
+		s.mailRound(s.ctx)
 		select {
 		case <-s.done:
 			return
@@ -1116,28 +1136,162 @@ func (s *Service) mailRound(ctx context.Context) {
 	now := s.cfg.Now()
 	var wg sync.WaitGroup
 	for _, l := range s.cfg.Peers.Links() {
-		up := l.Online && l.Caller != nil && l.DeviceID != "" && l.DeviceID != s.cfg.Self && slices.Contains(l.Caps, Capability)
+		up := s.up(l)
 		s.mu.Lock()
 		if up && !s.online[l.Label] {
 			delete(s.fails, l.Label) // back online: try at once
 		}
 		s.online[l.Label] = up
 		f := s.fails[l.Label]
+		backoff := f != nil && now.Before(f.next) // read under the lock: a wake-up's exchange may fail now
 		s.mu.Unlock()
-		if !up || (f != nil && now.Before(f.next)) {
+		if !up || backoff {
 			continue
 		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.exchange(ctx, l)
+			s.run(ctx, l)
 		}()
 	}
 	wg.Wait()
 }
 
-// exchange pushes the link's outbox, then pulls until nothing comes.
-func (s *Service) exchange(ctx context.Context, l Link) {
+// up reports whether l is a link this hab can hand mail over.
+func (s *Service) up(l Link) bool {
+	return l.Online && l.Caller != nil && l.DeviceID != "" && l.DeviceID != s.cfg.Self && slices.Contains(l.Caps, Capability)
+}
+
+// run makes one exchange over l. When one is in flight already, that one runs once more after
+// it ends instead, so a link never has two exchanges, or two pulls, in flight.
+func (s *Service) run(ctx context.Context, l Link) {
+	s.mu.Lock()
+	if s.running[l.Label] {
+		s.again[l.Label] = true
+		s.mu.Unlock()
+		return
+	}
+	s.running[l.Label] = true
+	s.mu.Unlock()
+	for {
+		ok := s.exchange(ctx, l)
+		s.mu.Lock()
+		more := s.again[l.Label] && ok && ctx.Err() == nil
+		delete(s.again, l.Label)
+		if !more {
+			delete(s.running, l.Label)
+			s.mu.Unlock()
+			return
+		}
+		s.mu.Unlock()
+	}
+}
+
+// --- The mesh.changed wake-up (mesh.md 6.5) ---
+
+// freshLocked notes that device's outbox gained an item; commitLocked wakes it once saved.
+func (s *Service) freshLocked(device string) {
+	if s.cfg.Wake != nil {
+		s.fresh[device] = true
+	}
+}
+
+// wakeFreshLocked runs after a save: each device whose outbox gained an item is told, unless
+// it was told already and has not pulled since.
+func (s *Service) wakeFreshLocked() {
+	for dev := range s.fresh {
+		if !s.woken[dev] {
+			s.woken[dev] = true
+			s.toWake[dev] = true
+			signal(s.wake)
+		}
+	}
+	clear(s.fresh)
+}
+
+func signal(ch chan struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+
+// wakeLoop sends the wake-ups, off the lock. A device this hab holds an online link to gets
+// none: the mail round pushes to it. A device with no link to this hab gets none either, and
+// is free to be told again: it pulls when its link comes up.
+func (s *Service) wakeLoop() {
+	defer s.wg.Done()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-s.wake:
+		}
+		s.mu.Lock()
+		devs := make([]string, 0, len(s.toWake))
+		for dev := range s.toWake {
+			devs = append(devs, dev)
+		}
+		clear(s.toWake)
+		s.mu.Unlock()
+		pushed := map[string]bool{}
+		if s.cfg.Peers != nil {
+			for _, l := range s.cfg.Peers.Links() {
+				if s.up(l) {
+					pushed[l.DeviceID] = true
+				}
+			}
+		}
+		for _, dev := range devs {
+			if pushed[dev] || !s.cfg.Wake(dev) {
+				s.mu.Lock()
+				delete(s.woken, dev)
+				s.mu.Unlock()
+			}
+		}
+	}
+}
+
+// Woken takes a mesh.changed from the peer at the link labelled label: mail waits there, so
+// this hab pulls it now, past any backoff, rather than at its next mail round.
+func (s *Service) Woken(label string) {
+	s.mu.Lock()
+	s.wanted[label] = true
+	s.mu.Unlock()
+	signal(s.pulls)
+}
+
+// pullLoop runs an exchange over each link whose peer said mail waits.
+func (s *Service) pullLoop() {
+	defer s.wg.Done()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-s.pulls:
+		}
+		s.mu.Lock()
+		wanted := maps.Clone(s.wanted)
+		clear(s.wanted)
+		s.mu.Unlock()
+		if s.cfg.Peers == nil {
+			continue
+		}
+		for _, l := range s.cfg.Peers.Links() {
+			if wanted[l.Label] && s.up(l) {
+				s.wg.Add(1)
+				go func() {
+					defer s.wg.Done()
+					s.run(s.ctx, l)
+				}()
+			}
+		}
+	}
+}
+
+// exchange pushes the link's outbox, then pulls until nothing comes. It reports whether it
+// ran to the end.
+func (s *Service) exchange(ctx context.Context, l Link) bool {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cl := api.Client{Caller: l.Caller}
@@ -1154,7 +1308,7 @@ func (s *Service) exchange(ctx context.Context, l Link) {
 		}
 		if err != nil {
 			s.failed(l, "push to", err)
-			return
+			return false
 		}
 		s.mu.Lock()
 		removed := s.applyResultsLocked(l.DeviceID, res.Results, s.cfg.Now())
@@ -1167,7 +1321,7 @@ func (s *Service) exchange(ctx context.Context, l Link) {
 		}
 		if err != nil {
 			s.failed(l, "push to", err)
-			return
+			return false
 		}
 		if len(items) < Batch {
 			break
@@ -1180,7 +1334,7 @@ func (s *Service) exchange(ctx context.Context, l Link) {
 		res, err := cl.MailPull(ctx, api.MailPullParams{Done: done})
 		if err != nil {
 			s.failed(l, "pull from", err)
-			return
+			return false
 		}
 		s.mu.Lock()
 		delete(s.acks, l.Label)
@@ -1191,7 +1345,7 @@ func (s *Service) exchange(ctx context.Context, l Link) {
 		results, err := s.receive(l.DeviceID, res.Items)
 		if err != nil {
 			s.failed(l, "pull from", err)
-			return
+			return false
 		}
 		s.mu.Lock()
 		s.acks[l.Label] = results
@@ -1203,6 +1357,7 @@ func (s *Service) exchange(ctx context.Context, l Link) {
 		delete(s.fails, l.Label)
 	}
 	s.mu.Unlock()
+	return true
 }
 
 // failed records a failed exchange: the link waits 1 s, doubled for each failure in a row up to

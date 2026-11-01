@@ -570,8 +570,9 @@ merged view.
 
 Not built in this stage:
 
-- The `mesh.changed` wake-up (4.2). The dialer pulls every 15 s instead of 60 s, so a change on
-  the dialed hab reaches it in at most 15 s; a change on the dialer goes out at once.
+- The `mesh.changed` wake-up for the catalog (4.2; mail has it, 6.5). The dialer pulls every
+  15 s instead of 60 s, so a catalog change on the dialed hab reaches it in at most 15 s; a
+  change on the dialer goes out at once.
 - The agent kit (`gff hosts`, `gff projects`, MCP tools; task-6ho9972u, Part 4).
 - GPU models, battery state, Xcode simulators, attached devices, whether hooks are set up, and
   the embedded server's endpoints.
@@ -691,11 +692,12 @@ only in a way the plan already asked for.
   from a pane, 6.5).
 - It is a hab call, so no client polls a screen (`gff-client.md` 15.10).
 
-### 6.5 Built choices (task-z5pysi5t)
+### 6.5 Built choices (task-z5pysi5t, wake-up task-x0m0pyc8)
 
 Package `internal/channels`, wired into `gff-hab serve`. Capability `channels`. Methods
 `channel.send`, `channel.status`, `channel.wait`, `mail.push` and `mail.pull`; event
-`channel.message`. Commands: `gff-hab send` and `gff-hab wait`. Channels own deliver-when-idle;
+`channel.message`; `mesh.changed` with reason `mail`, sent to a peer link that dialed this hab
+(the wake-up below). Commands: `gff-hab send` and `gff-hab wait`. Channels own deliver-when-idle;
 the agent kit (task-6ho9972u) calls the same service and may give the commands other names.
 Where this section and 6.1 to 6.4 differ, this section is what is built: it overrides the
 resolution order of 6.1, the expiry of control items in 6.3, and the `--for exit` word of 6.4.
@@ -804,6 +806,29 @@ the rest of client kind `hab`.
   items, and the peer then removes them; the hab pulls again at once while items come. So a hab
   that only the other side can dial (4.2) still sends and receives. Results that a lost answer
   dropped cost one repeat, which dedup absorbs.
+- **Wake-up (`mesh.changed`, 4.2).** A hab that only pulls would see new mail only at its next
+  round. So the hab that holds the mail tells it at once:
+  - When an item joins the outbox for a device and is saved, the hab sends the event
+    `mesh.changed` (id: its own device id, `reasons: ["mail"]`) to every peer link that device
+    dialed to it. The event goes to the link whether or not it subscribed, with the link's next
+    seq; a link in the middle of a subscribe gets none. No other client gets it.
+  - **One per pull.** After a wake-up the hab sends no other to that device until the device
+    calls `mail.pull`. A burst of sends wakes the peer once; mail added after its pull wakes it
+    again. A hab with no traffic sends none.
+  - **No wake-up where push works.** When this hab holds an online link to the device, its own
+    round pushes, so it sends none. A device with no link to this hab gets none, and the next
+    item tries again.
+  - **The dialer** takes `mesh.changed` with `mail` from a link it dialed and runs an exchange
+    over that link at once, past any backoff. A link has at most one exchange in flight: a
+    wake-up or a round that comes during one makes that exchange run once more when it ends.
+    So a peer never has two pulls in flight from one hab.
+  - **A missed wake-up** (the link dropped, an older dialer) costs at most one round (15 s): the
+    dialer's next pull takes the mail and lets the next item wake it again.
+
+  Decision: an event sent to the peer link outside the subscription, not a subscription scope
+  and not a new method. Reason: the dialer subscribes to nothing (4.2), and an unknown event type
+  is skipped by an older dialer, so no new revision or capability is needed. `reasons` is an open
+  word set, so the catalog and the logbook (`logbook.md` 7.1) can add theirs.
 - **No forwarding.** `mail.push` and `mail.pull` need a peer link: client kind `hab` with the
   hello's `peer` field. A message whose `from` device is not the link's, or whose `to` device is
   not this hab, is refused.
@@ -906,7 +931,6 @@ Not built in this stage:
 
 - `gff-hab wait -agent` for an agent on another host; `-for` reads this hab's agents only.
 - The read back and its `not_delivered`; the two-second typing pause (both Part 4).
-- The `mesh.changed` wake-up: a hab that only pulls sees new mail within one round (15 s).
 - An MCP tool and the printed skill (agent kit, task-6ho9972u).
 - Revocations as control items (`transport.md` 6.6): the outbox takes only messages and status
   items.
@@ -1072,7 +1096,7 @@ it.
 | `catalog.put` | Method | The dialer pushes its own catalog sections | task-dyagzrw0 |
 | `catalog.list` | Method | The merged view: own catalog plus direct peers' copies, with age and stale marks | task-dyagzrw0 |
 | `catalog.updated` | Event | A copy or the own catalog changed (generation and device id only) | task-dyagzrw0 |
-| `mesh.changed` | Event | To a peer link: catalog or mail waiting (4.2) | task-dyagzrw0 |
+| `mesh.changed` | Event | To a peer link: catalog or mail waiting (4.2); `reasons` `mail` built (6.5) | task-dyagzrw0; mail task-x0m0pyc8 |
 | `mail.push` | Method | Hand over messages and control items; returns accepted ids | task-z5pysi5t |
 | `mail.pull` | Method | Take items waiting for the caller's device id | task-z5pysi5t |
 | `channel.send` | Method | An agent's send through its own hab; returns id and state | task-z5pysi5t |

@@ -50,6 +50,7 @@ type conn struct {
 	revision int
 	kind     api.ClientKind // from hello
 	label    string         // from hello: the label, else the client name
+	linkFrom string         // from hello: the device id of a peer link's dialer, else ""
 	sub      *filter        // nil until events.subscribe
 	seeding  bool           // a subscribe is taking its snapshot; events wait in pending
 	pending  []pubEvent     // events that arrived while seeding, in order
@@ -262,6 +263,24 @@ func (c *conn) deliverLocked(pe pubEvent) {
 	if !c.sub.pass(pe.ev) {
 		return
 	}
+	c.queueEventLocked(pe)
+}
+
+// notifyLink queues pe for a peer link that device dialed, whether or not it subscribed
+// (mesh.md 4.2). It reports false for any other connection, and while a subscribe takes its
+// snapshot: the dialer's next mail round covers a notice dropped then.
+func (c *conn) notifyLink(device string, pe pubEvent) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closing || device == "" || c.linkFrom != device || c.seeding {
+		return false
+	}
+	c.queueEventLocked(pe)
+	return true
+}
+
+// queueEventLocked gives an event the next seq and queues it.
+func (c *conn) queueEventLocked(pe pubEvent) {
 	e := api.Event{Seq: c.seq + 1, Type: pe.ev.Type, ID: pe.ev.ID, Data: pe.data}
 	if !structure.Ephemeral(pe.ev.Type) { // an ephemeral event carries no revision (spec 3.9)
 		rev := pe.ev.Revision
@@ -1023,6 +1042,9 @@ func (c *conn) handleHello(m message) {
 	c.label = p.Label
 	if c.label == "" {
 		c.label = p.Client.Name
+	}
+	if p.Client.Kind == api.ClientKindHab && p.Peer != nil {
+		c.linkFrom = p.Peer.DeviceID // set with the welcome queued, so no notice goes before it
 	}
 	c.enqueueLocked(c.encodeReply(m, 0, w, nil))
 	c.mu.Unlock()

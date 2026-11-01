@@ -2455,6 +2455,26 @@ public struct MailResult: Codable, Sendable, Hashable {
     }
 }
 
+public struct MeshChanged: Codable, Sendable, Hashable {
+    /// What waits; a client skips a word it does not know.
+    public var reasons: [MeshReason]
+
+    enum CodingKeys: String, CodingKey {
+        case reasons = "reasons"
+    }
+
+    public init(reasons: [MeshReason]) {
+        self.reasons = reasons
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct MeshReason: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let mail = MeshReason(rawValue: "mail")
+}
+
 public struct Notice: Codable, Sendable, Hashable {
     /// RFC 3339 time gff-hab raised it.
     public var at: String
@@ -4286,6 +4306,8 @@ public enum HabEvent: Sendable, Hashable {
     case contentUpdated(ContentItem)
     /// A message this hab sent changed state; the id is the message id (mesh.md 6.5). Host scope only. Ephemeral.
     case channelMessage(ChannelRecord)
+    /// Sent only to a peer link that dialed this hab, subscribed or not: something waits for the dialer, so it pulls now; the id is this hab's device id (mesh.md 4.2, 6.5). Ephemeral.
+    case meshChanged(MeshChanged)
     case unknown(type: String, data: JSONValue)
 
     public init(_ event: Event) throws {
@@ -4310,6 +4332,7 @@ public enum HabEvent: Sendable, Hashable {
         case "notice.raised": self = .noticeRaised(try event.data.decode(Notice.self))
         case "content.updated": self = .contentUpdated(try event.data.decode(ContentItem.self))
         case "channel.message": self = .channelMessage(try event.data.decode(ChannelRecord.self))
+        case "mesh.changed": self = .meshChanged(try event.data.decode(MeshChanged.self))
         default: self = .unknown(type: event.type, data: event.data)
         }
     }

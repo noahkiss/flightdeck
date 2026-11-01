@@ -135,3 +135,14 @@ type ChannelWaitResult struct {
 	Agent    *ChannelAgent   `json:"agent,omitempty"`
 	TimedOut bool            `json:"timed_out,omitempty"`
 }
+
+// MeshReason says what waits for a peer link's dialer: mail (mail.pull). An open word set:
+// the catalog and the logbook will add theirs (mesh.md 4.2, logbook.md 7.1).
+type MeshReason string
+
+// MeshChanged is the data of mesh.changed: a hab tells a peer link that dialed it that
+// something waits for the dialer, so the dialer pulls now (mesh.md 4.2, 6.5). It goes to the
+// peer link whether or not the link subscribed. The id is the sending hab's device id.
+type MeshChanged struct {
+	Reasons []MeshReason `json:"reasons" doc:"What waits; a client skips a word it does not know."`
+}

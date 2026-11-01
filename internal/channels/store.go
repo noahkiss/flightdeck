@@ -111,6 +111,7 @@ func (s *Service) commitLocked() error {
 		for _, it := range s.st.Inbox {
 			it.busy = busy[it.Message.ID]
 		}
+		clear(s.fresh) // the items are gone with the rollback
 		s.pending = nil
 		s.broadcastLocked()
 		return err
@@ -121,6 +122,7 @@ func (s *Service) commitLocked() error {
 			s.cfg.Publish(r)
 		}
 	}
+	s.wakeFreshLocked()
 	s.pending = nil
 	s.broadcastLocked()
 	return nil

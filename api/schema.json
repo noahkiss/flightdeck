@@ -2155,6 +2155,13 @@
       "data": {
         "$ref": "#/components/schemas/ChannelRecord"
       }
+    },
+    {
+      "type": "mesh.changed",
+      "summary": "Sent only to a peer link that dialed this hab, subscribed or not: something waits for the dialer, so it pulls now; the id is this hab's device id (mesh.md 4.2, 6.5). Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/MeshChanged"
+      }
     }
   ],
   "x-frames": [
@@ -4858,6 +4865,27 @@
           "kind",
           "id",
           "state"
+        ]
+      },
+      "MeshChanged": {
+        "type": "object",
+        "properties": {
+          "reasons": {
+            "type": "array",
+            "description": "What waits; a client skips a word it does not know.",
+            "items": {
+              "$ref": "#/components/schemas/MeshReason"
+            }
+          }
+        },
+        "required": [
+          "reasons"
+        ]
+      },
+      "MeshReason": {
+        "type": "string",
+        "x-known-values": [
+          "mail"
         ]
       },
       "Notice": {

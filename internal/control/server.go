@@ -412,6 +412,27 @@ func (s *Server) Publish(e structure.Event) {
 	}
 }
 
+// NotifyLink sends e to every peer link that the hab with this device id dialed to this one,
+// whether or not the link subscribed: the mesh.changed wake-up (mesh.md 4.2, 6.5). It never
+// blocks on a client, and returns how many links got it.
+func (s *Server) NotifyLink(device string, e structure.Event) int {
+	data, err := json.Marshal(e.Data)
+	if err != nil {
+		s.cfg.Logf("event %s %s: %v", e.Type, e.ID, err)
+		return 0
+	}
+	pe := pubEvent{ev: e, data: data}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for c := range s.conns {
+		if c.notifyLink(device, pe) {
+			n++
+		}
+	}
+	return n
+}
+
 // Watching reports whether a subscription on some connection gets the events of session id:
 // its scope is the host, or holds the session.
 func (s *Server) Watching(session string) bool {

@@ -73,6 +73,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -642,6 +643,16 @@ func serve(args []string) error {
 				c.Kick() // a link that came up hands over mail now
 			}
 		},
+		Event: func(label string, e api.Event) {
+			if e.Type != api.EventMeshChanged {
+				return
+			}
+			v, err := e.DecodeData()
+			mc, _ := v.(api.MeshChanged)
+			if c := chs.Load(); c != nil && err == nil && slices.Contains(mc.Reasons, api.MeshReasonMail) {
+				c.Woken(label) // the peer holds mail for this hab: pull it now (mesh.md 6.5)
+			}
+		},
 		Logf: logger.Printf,
 	})
 	if err != nil {
@@ -691,6 +702,10 @@ func serve(args []string) error {
 			if s := srv.Load(); s != nil {
 				s.Publish(structure.Event{Type: control.EventChannelMessage, ID: r.ID, Data: r})
 			}
+		},
+		Wake: func(device string) bool {
+			s := srv.Load()
+			return s != nil && s.NotifyLink(device, structure.Event{Type: api.EventMeshChanged, ID: key.Fingerprint(), Data: api.MeshChanged{Reasons: []api.MeshReason{api.MeshReasonMail}}}) > 0
 		},
 		Logf: logger.Printf,
 	})

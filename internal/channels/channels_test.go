@@ -206,6 +206,7 @@ type fakePeers struct {
 	mu    sync.Mutex
 	list  api.PeerList
 	links []Link
+	reads atomic.Int32 // Links calls: one per mail round, so a count of rounds
 }
 
 func (p *fakePeers) List() api.PeerList {
@@ -221,6 +222,7 @@ func (p *fakePeers) setList(ps []api.Peer) {
 }
 
 func (p *fakePeers) Links() []Link {
+	p.reads.Add(1)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]Link(nil), p.links...)
@@ -240,6 +242,12 @@ type hab struct {
 
 func newHab(t *testing.T, self, host, state string, local *fakeLocal) *hab {
 	t.Helper()
+	return newHabWith(t, self, host, state, local, nil)
+}
+
+// newHabWith is newHab with tune applied to the config before the service starts.
+func newHabWith(t *testing.T, self, host, state string, local *fakeLocal, tune func(*Config)) *hab {
+	t.Helper()
 	h := &hab{local: local, peers: &fakePeers{}}
 	h.cfg = Config{Self: self, Host: host, State: state, Peers: h.peers, Local: local,
 		Catalog: func() api.CatalogList { return h.cat }, Poll: 20 * time.Millisecond, Retry: 10 * time.Millisecond, Logf: t.Logf,
@@ -249,6 +257,9 @@ func newHab(t *testing.T, self, host, state string, local *fakeLocal) *hab {
 			h.pubs = append(h.pubs, r)
 			h.pubMu.Unlock()
 		}}
+	if tune != nil {
+		tune(&h.cfg)
+	}
 	h.start(t)
 	return h
 }

@@ -140,6 +140,10 @@ const (
 )
 
 const (
+	MeshReasonMail MeshReason = "mail"
+)
+
+const (
 	NoticeLevelPassive       NoticeLevel = "passive"
 	NoticeLevelActive        NoticeLevel = "active"
 	NoticeLevelTimeSensitive NoticeLevel = "time-sensitive"
@@ -291,6 +295,7 @@ const (
 	EventNoticeRaised   EventType = "notice.raised"
 	EventContentUpdated EventType = "content.updated"
 	EventChannelMessage EventType = "channel.message"
+	EventMeshChanged    EventType = "mesh.changed"
 )
 
 // DecodeData decodes e.Data into the type its event type names. It returns
@@ -375,6 +380,10 @@ func (e Event) DecodeData() (any, error) {
 		return v, err
 	case EventChannelMessage:
 		var v ChannelRecord
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventMeshChanged:
+		var v MeshChanged
 		err := json.Unmarshal(e.Data, &v)
 		return v, err
 	}

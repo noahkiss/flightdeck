@@ -631,7 +631,9 @@ and `speech.transcribe` work, though the model may still need its download (`voi
 a peer list and serves peer links, `peers.list`, `peers.accept` and `peer.updated` (`mesh.md` 4).
 `catalog` means `catalog.get`, `catalog.put`, `catalog.list` and `catalog.updated` work (`mesh.md` 5).
 `channels` means `channel.send`, `channel.status`, `channel.wait`, `mail.push`, `mail.pull` and
-`channel.message` work (`mesh.md` 6.5).
+`channel.message` work, and that the hab sends `mesh.changed` to a peer link when mail waits for
+its dialer (`mesh.md` 6.5). `mesh.changed` is the one event a connection gets without
+`events.subscribe`: it goes only to a peer link, from the hab that link dialed.
 `devices` means the embedded SSH
 server is on and the `devices.*` methods work. `push` means the hab has working push config;
 `host-stats` means `hab.stats` works (3.9). Planned: `settings`, for hab-side settings

@@ -152,6 +152,7 @@ var Events = []EventDef{
 	{"notice.raised", "A notice was raised (notice.raise); the id is the notice id. Ephemeral.", Notice{}},
 	{"content.updated", "A session showed a file (content.show); the id is the item id. Ephemeral.", ContentItem{}},
 	{"channel.message", "A message this hab sent changed state; the id is the message id (mesh.md 6.5). Host scope only. Ephemeral.", ChannelRecord{}},
+	{"mesh.changed", "Sent only to a peer link that dialed this hab, subscribed or not: something waits for the dialer, so it pulls now; the id is this hab's device id (mesh.md 4.2, 6.5). Ephemeral.", MeshChanged{}},
 }
 
 // Frames is every data connection frame kind. A frame is the kind byte, a 4-byte big-endian
@@ -207,6 +208,7 @@ var Enums = map[string][]string{
 	// Sets added for channels (mesh.md 6.5).
 	"ChannelState": {"queued", "handed", "delivered", "not_delivered", "refused", "expired"},
 	"MailKind":     {"message", "status"},
+	"MeshReason":   {"mail"},
 	// Sets added for worktrees (spec 3.10).
 	"SetupMode":     {"auto", "run", "skip"},
 	"SetupState":    {"none", "started", "pending", "skipped", "error"},
@@ -242,7 +244,8 @@ var Translators = map[int]Translator{}
 // "catalog" means the catalog.* methods and the catalog.updated event work (mesh.md 5). "usage"
 // means usage.list and the usage.updated event work (harness-adapters.md, Usage). "content"
 // means the content.* methods and the content.updated event work (app.md 4.7). "channels"
-// means the channel.* and mail.* methods and the channel.message event work (mesh.md 6.5).
+// means the channel.* and mail.* methods and the channel.message event work, and that the hab
+// sends mesh.changed to a peer link when mail waits for it (mesh.md 6.5).
 // "speech" means the hab's speech engine is installed and turned on, so speech.prepare and
 // speech.transcribe work, though the model may still need its download (voice.md).
 // "attachments" means the attachment.* methods work and session.send takes attachment ids

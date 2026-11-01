@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -210,6 +211,53 @@ func TestChannelsTargetRestart(t *testing.T) {
 	}
 	id, _ = sendFromPane(t, addr, "bee/bob", "and after")
 	waitUntil(t, "the next message in bob's pane", fileIs(filepath.Join(p.b.work, "msg-2"), withID(m2, id)))
+}
+
+// TestChannelsOneWayWake: A reaches B, but B cannot reach A, so mail from B to A waits in B's
+// outbox for A to pull. B sends mesh.changed over A's link and A pulls at once: the message
+// arrives well inside A's 15 s mail round (mesh.md 6.5).
+func TestChannelsOneWayWake(t *testing.T) {
+	a, b := newHolderEnv(t, 0), newHolderEnv(t, 0)
+	d := shortDir(t)
+	standIn := sshStandIn(t, map[string]string{"hab-b": b.sock}) // nothing reaches a
+	filesA, filesB := filepath.Join(d, "a.toml"), filepath.Join(d, "b.toml")
+	writePeers(t, filesA, "bee", "hab-b")
+	for _, x := range []struct {
+		e     *habEnv
+		peers string
+	}{{a, filesA}, {b, filesB}} {
+		x.e.env = []string{
+			"PATH=" + standIn + string(os.PathListSeparator) + os.Getenv("PATH"),
+			"GFF_HAB_PEERS=" + x.peers,
+			"XDG_RUNTIME_DIR=" + shortDir(t),
+		}
+	}
+	a.serve()
+	// b lists a at an endpoint it cannot reach, pinned, so ay/bob resolves.
+	writeFile(t, filesB, fmt.Sprintf("[[peers]]\nlabel = \"ay\"\nendpoints = [\"hab-a\"]\ndevice_id = %q\n", welcome(t, a.sock).DeviceID))
+	b.serve()
+	t.Cleanup(func() {
+		writeFile(t, filepath.Join(a.work, "end"), "")
+		writeFile(t, filepath.Join(b.work, "end"), "")
+	})
+	waitPeer(t, a.sock, "bee", "a sees b online", func(p api.Peer) bool { return p.State == api.PeerStateOnline })
+	waitPeer(t, b.sock, "ay", "b sees a's link", func(p api.Peer) bool { return p.State == api.PeerStateOnline && p.Inbound })
+
+	m1 := pasted("bee/alice", "you only pull")
+	startReceiver(t, a, "idle", m1)
+	addr := startSender(t, b)
+	start := time.Now()
+	id, st := sendFromPane(t, addr, "ay/bob", "you only pull")
+	if st != api.ChannelStateQueued {
+		t.Fatalf("state %s", st)
+	}
+	waitUntil(t, "the message in bob's pane", fileIs(filepath.Join(a.work, "msg-1"), withID(m1, id)))
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("delivered after %v: a pulled at its mail round, not at the wake-up", d)
+	}
+	if r := channelStatus(t, b.sock, id, 20000); r.State != api.ChannelStateDelivered {
+		t.Fatalf("record on b: %+v", r)
+	}
 }
 
 // TestChannelsWaitForIdle: a message to a working agent is handed over but waits in B's inbox

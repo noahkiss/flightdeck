@@ -29,6 +29,10 @@ type Config struct {
 	Build string // this hab's build, sent as the client version
 	// Publish, when set, gets each peer whose state changed: the peer.updated event.
 	Publish func(api.Peer)
+	// Event, when set, gets each event a peer sent over the link this hab dialed, with the
+	// peer's label: mesh.changed (mesh.md 4.2). Links subscribe to nothing, so no other events
+	// come. It is called from the link's update loop and must not block.
+	Event func(label string, e api.Event)
 	// Poll is how often the peer file is checked for a change. Default DefaultPoll.
 	Poll time.Duration
 	// Conn adjusts each peer's habconn.Config before it starts: backoff in tests.
@@ -226,6 +230,12 @@ func (m *Manager) pump() {
 			m.mu.Lock()
 			delete(m.published, u.Host)
 			m.mu.Unlock()
+			continue
+		}
+		if u.Kind == habconn.UpdateEvent {
+			if m.cfg.Event != nil {
+				m.cfg.Event(u.Host, u.Event)
+			}
 			continue
 		}
 		if u.Kind == habconn.UpdateOnline {
