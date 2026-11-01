@@ -59,7 +59,7 @@ The repo layout and the libghostty build are in `docs/layout.md`.
 | `make test` | Build libghostty, then run every Go test with `-tags ghostty` |
 | `make build`, `make vet` | Build or vet every package with `-tags ghostty` |
 | `make test-pure` | Run the Go tests without cgo or libghostty |
-| `make race` | Run the holder, holderproto, holderclient, holderreg, structure, link, control, datastream, panesize, termq, cmdmarks, harness, hook, gitstatus, transcript, service and `cmd` tests with `-race -count=3` |
+| `make race` | Run the holder, holderproto, holderclient, holderreg, structure, link, control, datastream, habconn, panesize, termq, cmdmarks, harness, hook, gitstatus, transcript, service and `cmd` tests with `-race -count=3` |
 | `make fuzz [FUZZTIME=30s]` | Run each holderproto fuzz target for `FUZZTIME` in turn (nightly) |
 | `make check-pure` | Fail when a package other than `internal/vt/ghostty` needs cgo |
 | `make check-gen` | Fail when a generated file is stale |
@@ -85,6 +85,7 @@ The repo layout and the libghostty build are in `docs/layout.md`.
 | `go test ./internal/detect/...` | Detection tests: process and screen matching for Claude Code, Codex and opencode, refresh, version warnings |
 | `go test -race ./internal/control/... ./cmd/gff-hab/...` | Control connection tests: seq and epoch rules, backlog close, the binary over a real socket and over `connect` |
 | `go test ./internal/link/` | Holder link end-to-end tests: real holder, the link as its own process, restarted by plan and SIGKILL; `-tags ghostty` uses libghostty. `GFF_RESTART_LOOP=200` sets the restart count (nightly) |
+| `go test -race ./internal/habconn/` | Connection library suite over the Unix socket, an in-process pipe, `SSHTransport` with a stand-in `ssh`, and the real `ssh` to localhost (`$GFF_TEST_SSH_HOST` overrides; skips without key-based `BatchMode` ssh): data drops resume with no gap or repeat, a new epoch replaces the structure, a dead link reconnects |
 | `cd swift/HabAPI && swift test` | Build and test the generated Swift package (Mac) |
 | `go test ./api -run TestGoldens -update` | Rewrite the golden messages of the current API revision in `api/testdata/` |
 

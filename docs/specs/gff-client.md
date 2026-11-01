@@ -516,10 +516,10 @@ no Ctrl+L); herdr observers (`hab-logic-api.md` 1.2).
 | Another machine | SSH to the system sshd, running `gff-hab connect` (4.2) | The user's own SSH keys |
 | Another machine with the embedded server on | SSH to `gff-hab`'s own server (`transport.md` 4.2) | A key paired with that hab |
 
-- **SSH client.** `gff` uses an in-process Go SSH client, as tssh does. It reads the user's OpenSSH
-  config for the destination (host alias, host name, user, port, identity files, jump hosts) and
-  uses the SSH agent. It checks the system sshd's host key against the user's known-hosts file.
-  See 15.3 for the alternative of running the system `ssh`.
+- **SSH client.** The study recommended an in-process Go SSH client, as tssh does. The built
+  library runs the system `ssh` instead, behind the same transport seam (11.7, 15.3). Either way
+  the user's OpenSSH config (host alias, host name, user, port, identity files, jump hosts), the
+  SSH agent and the known-hosts file apply.
 - **Endpoints.** A host may list several endpoints. `gff` tries them in order, starting the next a
   short time after the previous one, and keeps the first that completes.
 - **No mosh, no UDP carrier.** A dropped link reconnects (11.5). A later carrier is a separate
@@ -582,6 +582,115 @@ no Ctrl+L); herdr observers (`hab-logic-api.md` 1.2).
 
 Sources: `hab-logic-api.md` 3, 4, 5; `transport.md` 4, 5, 7; tssh (1.4) *(gk)*; `app.md` 10.2
 (backoff, endpoints).
+
+### 11.7 Built choices (task-f6djzhu1, `internal/habconn`)
+
+The shared connection library is `internal/habconn`. It owns exactly one hab connection.
+
+**Boundary with the multi-host merge (Part 3, task-kbvoirca).**
+
+| `internal/habconn` (this stage) | The merge layer on top (task-kbvoirca) |
+|---|---|
+| One control connection to one hab: hello, revision range, epoch, capabilities, reconnect token, liveness, reconnect with backoff | Which habs to connect to, endpoints tried in order (11.1), online and offline per host in the UI |
+| The structure copy of that hab, kept by the seq and revision rules; a new epoch replaces it | Merging the copies by host id (`hab-logic-api.md` 7.9); never comparing seq across hosts |
+| Data streams to that hab's panes: ticket, snapshot, bytes, resume by offset, credit | Which panes are visible, so which streams are open; keeping offsets after a view closes (11.3) |
+| Pinning the device id for the life of one `Conn`, refusing a change | Storing pins across runs and the "accept the new id" flow (11.4) |
+| `Retry` to cut a backoff short | Detecting a wake or a network change and calling `Retry` on every hab (11.5) |
+
+**The seam.** A `Transport` opens one byte stream per connection: one for the control connection
+and one per data stream, each starting with its own hello (`hab-logic-api.md` 4.2, option A).
+The hab tells them apart by the first byte, so a transport needs no framing of its own. The app
+supplies its own transport over `swift-nio-ssh` later (15.2, option A). Built transports:
+
+- `UnixTransport`: the local socket.
+- `CommandTransport`: any command's stdin and stdout, as `gff-hab api call -via` does.
+- `SSHTransport`: the system `ssh`, one process per stream, running `gff-hab connect` on the host.
+  It passes `-T`, `BatchMode=yes`, `ConnectTimeout=10`, `ServerAliveInterval=15` and
+  `ServerAliveCountMax=3`; options the caller gives come first, so they win. A host that starts
+  with `-` or holds a space is refused. With `ControlDir` set it turns on OpenSSH connection
+  sharing (`ControlMaster=auto`, `ControlPersist=60`), so every stream after the first is a
+  session on one SSH connection. Off by default.
+
+**Why the system `ssh` and not `golang.org/x/crypto/ssh` (15.3).**
+
+| Need | System `ssh` | `x/crypto/ssh` |
+|---|---|---|
+| The user's config | All of it: `Match`, `Include`, `ProxyJump`, `ProxyCommand`, certificates | Needs a third-party config parser and our own handling of each option |
+| Known hosts | OpenSSH's own checks: hashed entries, `@cert-authority`, `@revoked`, `StrictHostKeyChecking` | `knownhosts` covers the common cases; the rest is ours |
+| Agent and keys | Agent, identity files, FIDO keys, PKCS#11, as the user set them up | Agent and plain keys; FIDO and PKCS#11 are ours to add |
+| No prompts | `BatchMode=yes` | Built in, but every failure message is ours to write |
+| Dependency | None; `make check-pure` unchanged | A new module and its updates |
+| Tests | Any command stands in for `ssh` (the test binary does) | An in-process sshd in tests |
+| Cost | One process per stream unless sharing is on; ssh's errors arrive as text on stderr | One process; typed errors |
+
+The text cost is small: the library keeps the last 4 KiB of ssh's stderr and puts it in the error
+of a failed hello or data open, so a client can show the SSH error (11.6). The seam keeps
+`x/crypto/ssh` possible later as one more transport, if process count or sleep handling demands it.
+
+**Control connection.**
+
+- `Connect` dials, says hello with `api.Revision` and `api.MinRevision`, subscribes, and applies the
+  snapshot. It fails if any step fails; after that the `Conn` reconnects on its own.
+- The subscribe response and the events reach the library on separate paths, so events read
+  before the response are held, then applied if their seq is above the response's seq.
+- Every event's seq must be the last one plus one, and a heartbeat's seq must equal the last
+  event's. A gap ends the connection, which then reconnects and reads state again.
+- Within an epoch, an event whose revision is not higher than the one held is ignored; deleted
+  objects keep their last revision, so a late update after a delete is ignored too. Events
+  without a revision (ephemeral ones) pass through in seq order.
+- Every reconnect takes a fresh snapshot and replaces every object, in the same epoch too: gap
+  events are not replayed (`hab-logic-api.md` 3.7). The update says whether the epoch is new, so
+  the client drops what is not saved (owners it assumed, desired sizes, activity).
+- Liveness: `hab.ping` after 15 s with nothing sent. A connection that delivers no byte for 45 s
+  is closed as dead.
+- Reconnect: at once, then backoff from 0.5 s doubling to 30 s, each wait a random point in its
+  upper half. A hello refused with `revision_unsupported` or `invalid`, or a changed device id,
+  stops the `Conn` for good.
+- Offline, `Call` fails at once with `ErrOffline`. Nothing is queued.
+- Updates (online, event, offline, failed) come on one channel in order, never dropped.
+
+**Data streams.**
+
+- `OpenPane` takes a ticket on the control connection, dials a data stream and reads the welcome.
+  It may start from an offset the client kept (11.3).
+- `Next` returns snapshot, bytes, resize and exited frames. Calling `Next` again means the last
+  frame was applied: its credit is returned once 16 KiB is owed. Credit starts afresh on each data
+  connection.
+- A dropped data connection, or a reject other than `not_found`, opens a new one with a fresh
+  ticket and the offset after the last frame handed out. The hab continues from there or sends a
+  snapshot. `not_found` ends the stream with `ErrPaneGone`.
+- When the control connection comes back after a drop, every data stream is closed and resumed:
+  the link that dropped one likely dropped the others, and a quiet data stream cannot tell.
+- A bytes frame that starts below the held offset is trimmed to the new bytes. The hab never sends
+  one (`hab-logic-api.md` 5.4); this is a cheap guard.
+
+**Tests.** A fake hab in the tests is built from the real control server, data stream server and
+structure store, over a fake holder and a fake pane source; it can drop any connection from its
+side and restart with a new epoch. The suite runs over four transports: the Unix socket, an
+in-process pipe (the second transport, through the interface), `SSHTransport` with the test
+binary standing in for `ssh` and the real `gff-hab connect` as the remote command, and
+`SSHTransport` through the real `ssh` to localhost (`$GFF_TEST_SSH_HOST` overrides), which skips
+when key-based ssh with `BatchMode=yes` does not work.
+
+| Test | Proves |
+|---|---|
+| `ResumeAfterDrop` | The hab drops the data connection three times while 2 MiB flows; the client's bytes equal the pane's output, every frame starts where the last ended, no snapshot |
+| `NewEpoch` | A restart with a lost state file: new epoch reported, the structure replaced although revisions went down, later events applied, the pane stream resumes across the restart with no gap |
+| `SameEpoch` | A dropped control connection: same client id, new token, state read again |
+| `SnapshotWhenTrimmed` | A resume from an offset the hab no longer has starts with a snapshot, and bytes follow from its offset |
+| `TestDeadLink` | A link that goes silent is found dead after `DeadAfter` and reconnects |
+| Unit tests | Seq floor, revision rule, gap and heartbeat checks, reset on a new epoch, ssh arguments, backoff bounds |
+
+**Limits (not built).** The bar is the popular tools in this space; these stay documented:
+
+| Limit | Why it is acceptable now |
+|---|---|
+| Without `ControlDir`, each stream is its own SSH connection and handshake | Correct, only slower to open; sharing is one option away |
+| With sharing, OpenSSH allows 10 sessions per connection by default | A client past nine panes on one host sees opens fail and retry; opening a second shared connection is the merge layer's job later (`transport.md` 7.6) |
+| A data stream has no heartbeat of its own | ssh's `ServerAliveInterval` and the reconnect after a control drop cover the common cases |
+| A stream reopened after `unavailable` retries until the pane comes back or the client closes it | A lost pane may return; the client shows the state the structure reports |
+| Pinned device ids live only for one `Conn` | Storing them is the client's job (11.4) |
+| The `Updates` channel must be read until it closes | The library never drops an update, so it holds them for the reader |
 
 ---
 
@@ -709,6 +818,10 @@ It asks its host for "a new control stream" and "a new data stream" to a hab.
 
 Recommendation: **A**, with a config option to run a given command per host instead (as
 `gff-hab api call -via` does), for setups A cannot reach.
+
+Built: **B**, the system `ssh`, behind the transport seam, with optional connection sharing
+(11.7). Reasons: every OpenSSH feature and the user's own setup with no new dependency, and tests
+that swap the command. A stays possible as one more transport. Decision: open, for the owner.
 
 ### 15.4 Several windows on one workspace
 
