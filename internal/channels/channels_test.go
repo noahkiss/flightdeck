@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,7 +29,9 @@ type fakeLocal struct {
 	calls     int                 // Deliver calls
 	inFlight  int
 	maxFlight int
-	gate      chan struct{}              // when set, Deliver waits for it
+	gate      chan struct{} // when set, Deliver waits for it
+	checkGate chan struct{} // when set, Check waits for it
+	checking  bool
 	onDeliver func(session, text string) // called first in Deliver
 	changed   chan struct{}
 }
@@ -73,7 +76,15 @@ func (l *fakeLocal) checkLocked(id string) error {
 
 func (l *fakeLocal) Check(id string) error {
 	l.mu.Lock()
+	gate := l.checkGate
+	l.checking = gate != nil
+	l.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
+	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.checking = false
 	return l.checkLocked(id)
 }
 
@@ -224,7 +235,12 @@ func newHab(t *testing.T, self, host, state string, local *fakeLocal) *hab {
 	h := &hab{local: local, peers: &fakePeers{}}
 	h.cfg = Config{Self: self, Host: host, State: state, Peers: h.peers, Local: local,
 		Catalog: func() api.CatalogList { return h.cat }, Poll: 20 * time.Millisecond, Retry: 10 * time.Millisecond, Logf: t.Logf,
-		Publish: func(r api.ChannelRecord) { h.pubMu.Lock(); h.pubs = append(h.pubs, r); h.pubMu.Unlock() }}
+		Publish: func(r api.ChannelRecord) {
+			time.Sleep(time.Duration(len(r.ID)%3) * time.Millisecond) // a slow subscriber must not reorder
+			h.pubMu.Lock()
+			h.pubs = append(h.pubs, r)
+			h.pubMu.Unlock()
+		}}
 	h.start(t)
 	return h
 }
@@ -399,6 +415,12 @@ func TestRemoteSendStatusBack(t *testing.T) {
 		sent := send(t, a.s, "alice", "bee/bob", fmt.Sprintf("line %d\nmore", i))
 		if sent.State != api.ChannelStateQueued || sent.To != "bee/bob" {
 			t.Fatalf("send %+v", sent)
+		}
+		a.pubMu.Lock()
+		published := slices.ContainsFunc(a.pubs, func(r api.ChannelRecord) bool { return r.ID == sent.ID })
+		a.pubMu.Unlock()
+		if !published {
+			t.Fatalf("send %d answered before its queued state was published", i)
 		}
 		ids = append(ids, sent.ID)
 	}
@@ -821,6 +843,21 @@ func TestWaitSkipsInFlight(t *testing.T) {
 	}
 	close(l.gate)
 	final(t, a.s, first.ID)
+
+	// Nor one the delivery is still checking, before it marks it.
+	l2 := newLocal("alice", "bob")
+	l2.checkGate = make(chan struct{})
+	b := newHab(t, "dev-b", "hostb", "", l2)
+	sent := send(t, b.s, "alice", "bob", "checked")
+	waitFor(t, "the check to start", func() bool { l2.mu.Lock(); defer l2.mu.Unlock(); return l2.checking })
+	if r, _ := b.s.Wait(context.Background(), api.ChannelWaitParams{Session: "bob", TimeoutMS: 50}); !r.TimedOut {
+		t.Fatalf("wait took %+v while it was being checked", r.Message)
+	}
+	close(l2.checkGate)
+	final(t, b.s, sent.ID)
+	if got := l2.got("bob"); len(got) != 1 {
+		t.Fatalf("delivered %d times", len(got))
+	}
 }
 
 // TestForwardOnly: a late handed never undoes delivered, and a status from another device than
@@ -842,8 +879,9 @@ func TestForwardOnly(t *testing.T) {
 	}
 	st("dev-b", api.ChannelStateDelivered)
 	st("dev-b", api.ChannelStateHanded)
+	st("dev-b", api.ChannelStateRefused)
 	if r := status(t, a.s, sent.ID); r.State != api.ChannelStateDelivered {
-		t.Fatalf("went backwards: %+v", r)
+		t.Fatalf("went backwards or sideways: %+v", r)
 	}
 }
 
@@ -960,7 +998,10 @@ func TestNoForwarding(t *testing.T) {
 // badResults answers every push with results that match nothing.
 type badResults struct{ calls *atomic.Int32 }
 
-func (b badResults) Call(_ context.Context, method string, params, result any) error {
+func (b badResults) Call(ctx context.Context, method string, params, result any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	b.calls.Add(1)
 	if method != "mail.push" {
 		return json.Unmarshal([]byte(`{"items":[]}`), result)
@@ -987,7 +1028,7 @@ func TestPushNoProgress(t *testing.T) {
 	for range Batch {
 		send(t, a.s, "alice", "bee/bob", "x")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	a.s.exchange(ctx, Link{Label: "bee", DeviceID: "dev-b", Online: true, Caps: []string{Capability}, Caller: badResults{calls}})
 	if n := calls.Load(); n != 1 {
