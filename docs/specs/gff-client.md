@@ -208,8 +208,9 @@ r1-sessions section 2 (pass-through for one pane, a parser per pane for splits).
 
 ### 3.4 Built choices (task-g1uwtlsb, `internal/gffclient`, `cmd/gff`)
 
-The client core shows one or more panes of one hab in the terminal `gff` runs in. Tabs, the
-sidebar, the bars, the keymap with modes and several habs are later stages.
+The client core shows one or more panes of one hab in the terminal `gff` runs in. This is the
+single-hab view; the workspace with several habs, tabs, the sidebar and the status board is in
+4.3. The keymap with modes is a later stage.
 
 **Parser.** libghostty through `internal/vt` (3.2, 15.1). `vt.Terminal.ReadScreen` gives the
 composed view the active screen as cells: each cell's grapheme, width and style (palette colours
@@ -357,7 +358,7 @@ request, and a debounce timer the test fires.
 | With kitty key event types on, the release of the command key after the prefix reaches the pane | A release with no press before it; programs act on presses |
 | Entering pass-through redraws from the local snapshot without scrollback | The host's own scrollback keeps what scrolled while passing through |
 | A pane that starts passing through inside a long control string or a UTF-8 character may show a stray byte | Needs a frame cut there and a layout change at that moment; the next redraw clears it |
-| One hab, one row or column of panes, no tabs, no saved workspace | Later stages (5.1, 6) |
+| One row or column of panes per tab, no saved workspace | Several habs and tabs are built (4.3); nested splits, stacks and the saved workspace are later stages (5.1, 5.2) |
 | Output gff-hab has not parsed yet when it sends a resize is parsed at the new size (`hab-logic-api.md` 2.3) | Only bytes the program printed in the moment before the PTY resized; its redraw on SIGWINCH comes after them and is right. Terminal multiplexers do the same. `TestSplitsRedrawAfterResize` needs no nudge |
 
 ---
@@ -398,6 +399,140 @@ request, and a debounce timer the test fires.
 
 Sources: herdr sidebar (1.2) *(gk)*; `app.md` 3.1 and 3.2 (ranks, offline rows, unfiled panes);
 `hab-logic-api.md` 2.2, 7.9.
+
+### 4.3 Built choices (task-98qp7he5: sidebar, tabs, hosts, status board)
+
+`gff` with no pane and no `-new` opens the workspace: every configured host at once, tabs, the
+sidebar and the status board. `gff` with panes or `-new` is the single-hab view of 3.4,
+unchanged. Packages: `internal/hosts` (the hosts), `internal/board` (rows and ranks),
+`internal/gffclient` (`workspace.go`), `cmd/gff`.
+
+**Hosts (`internal/hosts`).**
+
+- A host is a mesh peer entry (`mesh.md` 3.1): a label local to this client, one or more
+  endpoints, an optional pinned device id. The device id is the host's identity; the label is
+  only this client's name for it. Two labels that reach one hab (the same device id in the
+  welcome) show its rows once, under the first label.
+- The list comes from a `Source`. This stage reads gff's own config file and flags (`Static`).
+  The mesh peer list (Part 3, task-phkmrjaw) plugs in as another `Source`; `Set.Reload` starts
+  new hosts and closes removed ones.
+- The config file is `-config`, else `$GFF_CONFIG`, else `gff/config.toml` under the user
+  config directory on macOS and under `$XDG_CONFIG_HOME` or `~/.config` elsewhere. It holds
+  `[[hosts]]` tables with `label`, `endpoints` and `device_id`, the peer entry's fields. An
+  entry with no label, a label given twice or a bad endpoint is reported, and the good entries
+  still load. `-host label=endpoint[,endpoint...]` adds or replaces one host. With no host at
+  all, the hab of `-socket`, `-via` or `-ssh` (else the local socket) is the only host.
+- An endpoint is written as an absolute socket path, `cmd:<command>` (run under `/bin/sh -c`,
+  as `-via`), or an SSH destination (anything `ssh` takes, an alias included). Decided
+  (implementer): the peer file stage may pick another spelling; the parser is one function.
+- Each host is one `habconn.Conn` from `habconn.Start`: it returns at once, offline, and tries
+  the first connection at once, then with the reconnect backoff. A hab that is down is a host
+  that is `connecting` (never online yet) or `offline`, never an error, and it comes online
+  when its hab does, with no restart. Each failed attempt reports `UpdateRetrying` with its
+  error, so the host can show why.
+- The `Set` reads every host's updates, keeps a model per host (status, since when, the last
+  error, the welcome, the structure copy), and hands the updates on one channel, in order per
+  host and never dropped. Seq is never compared across hosts. A host that failed for good
+  shows `update needed` (no revision fits) or `host key changed` (the device id changed), and
+  its rows are hidden, not stale (4.2).
+
+**Rows and ranks (`internal/board`).** One row per session and per unfiled pane on every host
+that has not failed. Ranks are `app.md` 3.1: blocked, error, done not seen, working, idle or
+done seen, then no agent, exited and unfiled. An exited session ranks last whatever its agent
+said. A word this client does not know ranks last. Order: rank, then the time the row entered
+that rank, newest first, then host and name. The entry time is the agent state's `at` (the
+hab's clock); a row with no agent state takes the time it was first seen. Rows first seen
+together share one time and sort by name. The entry time changes only with the rank, so a row
+moves only when its rank changes. Grouping is by need (one list), by project (the remote, else
+the root commit, so a project on two hosts is one group), or by host. Rows of an offline host
+stay, dimmed, and count for nothing in the needs-you count.
+
+**Screen.** A tab bar on top: tabs as `n:name`, the current one bold, with `!` when a session
+in the tab needs you, `*` for a bell in the last second, `~` when a hidden pane printed; on the
+right the needs-you count, online hosts out of all, and the clock. The sidebar is 28 columns on
+the left; a host narrower than 80 columns shows it only while it has the keys. A shortcut row
+at the bottom shows the keys of the mode, a prompt, or the last message. Prefix `b` hides the
+bars, so one pane that fits passes through as in 3.4. A pane frame adds its host label and its
+agent state.
+
+**The sidebar.** A heading with the grouping, the filter, the groups and their rows, and at
+the bottom one line per host that is not online (`○ <label> offline 3m`, `connecting`,
+`update needed`, `host key changed`). A row is a view mark (`▸` in this tab, `·` in another),
+a state mark (`!` blocked, `x` error, `*` done, `~` working, `-` idle), the name cut in the
+middle, and the host label. Keys while it has focus: arrows or `j`/`k` move, Enter opens, `t`
+opens in a new tab, `n` starts a session, `r` renames, `x` ends or removes, `/` filters by
+session, project or host name, `p` changes the grouping, Esc returns to the panes.
+
+- **Open** focuses a view that shows the pane already, in any tab; else it adds a view to the
+  current tab. An exited session says resume is not built yet; an offline host's row says so.
+- **Start** asks for the host (Tab cycles the online hosts, the selected row's host first) and
+  a project directory, then a command (empty: the hab's shell). The hab starts it with
+  `session.create` at the size of its view in the current tab, and the new view opens there.
+- **Rename** asks for the new name and calls `session.rename`; a taken name shows the hab's
+  `conflict`. An unfiled pane has no session to rename.
+- **Close** on a running session asks "end <name> on <host>?" and calls `pane.close` (the
+  program gets a hang-up; the record stays, exited). On an exited session it asks "remove
+  <name> from <host>?" and calls `session.close`, which removes the record.
+- Every call runs off the loop; a failure shows on the bottom row. The results arrive as events.
+
+**Tabs.** Prefix `c` makes an empty tab and gives the sidebar the keys; `]` and `[` move, `1`
+to `9` go to a tab, `x` closes the focused view (the program keeps running, and stays in the
+sidebar). A hidden tab's views close their data streams and keep their parsers and offsets;
+showing the tab reopens each stream from its offset, so the hab sends only what the view
+missed, or a snapshot (11.3). A hidden pane's `pane.output` event marks its tab, unless the view
+already applied that offset. Tabs are not saved yet (5.1).
+
+**The status board.** Prefix `g`, over the panes, under the tab bar. Rows in the board's
+order under plain section labels (Needs you, Working, Done, Other); each row shows the state
+mark, name, project, host, harness, the state with its kind, the time in state (from the hab's
+`at`) or "offline 3m", and the context: the pending command, else the request's title,
+description, last agent line or tool. Enter opens, `t` opens in a new tab, Esc returns.
+
+**Seen.** Focusing a pane whose agent is `done` marks that done state seen in gff, so its row
+drops to rank 5, and sends `session.focus {active: true}` once per state. The hab answers
+`unavailable` until its stage builds focus; the mark in gff holds meanwhile.
+
+**gff-hab: `pane.output` and `pane.bell` (15.7).** `cmd/gff-hab/activity.go` follows each pane
+through its own link subscription from now on, so the byte path is untouched. It counts BEL
+bytes outside control strings (a BEL that ends an OSC title does not ring) from any read split,
+and every second sends `pane.output {offset}` for each pane that printed and `pane.bell
+{count}` for each that rang. Both are ephemeral. A subscriber the link drops for falling
+behind starts again from now, and the gap counts as output.
+
+**Tests.**
+
+| Test | Proves |
+|---|---|
+| `hosts` `TestHostOfflineAndBack` | Two habs, one down at start: the other shows at once, the down one is connecting with an error; it comes up and shows; it goes down and its rows stay with the host offline; it restarts with a new epoch and its rows and a new agent state come back, no client restart |
+| `hosts` `TestBoardOrdersBlockedFirst` | Across two habs: blocked, then done, then working; a same-rank change moves no row; needs-you counts blocked and done |
+| `hosts` `TestSameDeviceOnce`, `TestReload`, `TestConfig` | Two labels to one hab show once; reload adds and removes hosts; the config file's entries, problems and paths |
+| `board` unit tests | Ranks for every state word and an unknown one; order, offline rows, project groups across hosts, host groups, seen, the filter |
+| `gffclient` `TestSidebarRecovers` | gff's screen over two fake habs: both hosts' sessions; one goes down: its row stays, "○ two offline", 1/2 hosts; it comes back with a new epoch: its rows and a new session show, no restart |
+| `gffclient` `TestBoardBlockedAboveWorking` | The board puts a blocked session on one hab above a working one on the other, under Needs you and Working; the tab bar counts one |
+| `gffclient` `TestSidebarStartRenameClose` | From the sidebar: start a session (host, directory, command), rename it, end its program after a yes, remove its record after a yes; each reaches the hab and the screen |
+| `gffclient` `TestTabsKeepPanes` | Real holder and gff-hab: open two sessions in two tabs; the hidden tab gets `~` from `pane.output`; showing it again shows what its program printed while hidden; opening a session on screen focuses it |
+| `cmd/gff-hab` `TestActivityEvents`, `TestBellScanner` | Two bells and a burst of output give the bell count and one or a few `pane.output` events ending at the pane's offset, with no revision; BEL inside OSC, DCS and APC strings does not ring, from every split |
+| `habconn` `TestStartWhileDown` | `Start` with the hab down: retrying updates with an error, calls refused offline, online once the hab starts; Close while down ends with no failure |
+
+The fake habs (`internal/fakehab`) are the real control server and structure store over a fake
+holder, with agent states the test sets and no data streams. Every wait is on the screen or on
+the hab reaching a state.
+
+**Limits (not built).** The bar is herdr, Rex and Paseo; these stay documented:
+
+| Limit | Why it is acceptable now |
+|---|---|
+| Only a host's first endpoint is used. Trying endpoints in order with a stagger needs habconn to try the next at the hello, since ssh fails there and not at the dial | The merge layer and peer list stages own endpoints (11.7, `mesh.md` 4.1) |
+| Pinned device ids live in the config file only; a first contact is not written back, and there is no "accept the new id" flow in gff | `peers accept` and pin storage belong to the peer list stage (`mesh.md` 3.2) |
+| No wake-from-sleep detection; `Set.Retry` exists for it | 11.5; the bar is a reconnect within the 30 s backoff |
+| Tabs, splits and focus are not saved; no tab rename, move or startup tabs | The workspace file is a later stage (5.1) |
+| No live preview beside the board's selected row; no approval answer keys | Preview needs an observer stream per selection; approvals wait for `approval.answer` (Part 4) |
+| Times in state use this machine's clock against the hab's `at`; habs with skewed clocks show skewed times | The welcome carries no hab time yet (`app.md` 3.2 wants the hab's own time) |
+| Rows across hosts order by `at` stamps from different clocks | Only rows in one rank are compared, and only by when they entered it |
+| The sidebar has no mouse, no width setting, no idle folding, and does not hide rows of a hab whose revision does not fit until the hab refuses the hello | Keys cover every action; later stages (4.1) |
+| Desktop notifications (7.3) and the bell on the host terminal are not sent | Off by default anyway (15.8) |
+| `session.focus` answers `unavailable`, so "seen" is per gff process | Its stage builds it (Part 6 stage 7) |
+| A session whose pane exited cannot be resumed from the sidebar | `session.resume` is Part 4 stage 4 |
 
 ---
 
@@ -467,7 +602,8 @@ Sources: zellij tabs, stacks and modes (1.1); the owner's setup (1.6); `hab-logi
 - **Identity.** A session is named by (host id, session id). Two hosts can hold sessions with the
   same name; rows always show the host.
 - **Hosts.** The first build reads hosts from `gff`'s config file: a label and one or more
-  endpoints (the local socket, or an SSH destination). Part 3 adds the mesh peer list, so one
+  endpoints (the local socket, or an SSH destination). Built in 4.3, in the shape of a mesh
+  peer entry. Part 3 adds the mesh peer list, so one
   configured hab can name the rest (`mesh.md` 3, 5). Nothing reads another tool's machine list.
 - **Starting work.** "New session" asks for a host and a project directory, then has that hab start
   the harness or a shell (14).
@@ -756,6 +892,10 @@ The shared connection library is `internal/habconn`. It owns exactly one hab con
 | Pinning the device id for the life of one `Conn`, refusing a change | Storing pins across runs and the "accept the new id" flow (11.4) |
 | `Retry` to cut a backoff short | Detecting a wake or a network change and calling `Retry` on every hab (11.5) |
 
+Built since (task-98qp7he5, 4.3): `internal/hosts` is the connecting half of that layer: one
+`Conn` per configured host, online and offline per host, and a `Source` seam for the peer
+list. Endpoints in order, stored pins and the wake check are still open (4.3, limits).
+
 **The seam.** A `Transport` opens one byte stream per connection: one for the control connection
 and one per data stream, each starting with its own hello (`hab-logic-api.md` 4.2, option A).
 The hab tells them apart by the first byte, so a transport needs no framing of its own. The app
@@ -971,7 +1111,8 @@ alerts and widgets (15.6).
 ## 14. Calls gff needs from the hab
 
 These are in the API schema now, as `hab-logic-api.md` 3.9 lists them with their final shapes
-and owning stages. `session.create` and `pane.close` work; the rest answer `unavailable` until
+and owning stages. `session.create`, `session.rename`, `session.close` and `pane.close` work,
+and gff-hab sends `pane.bell` and `pane.output` (4.3); the rest answer `unavailable` until
 their stage. Where `app.md` 17 already proposes a call, `gff` uses the same one.
 
 | Call or event | Purpose | Also needed by |
@@ -979,6 +1120,8 @@ their stage. Where `app.md` 17 already proposes a call, `gff` uses the same one.
 | `session.create {project_dir, harness?, command?, cwd?}` | Start a harness or a shell in a new pane, filed as a session | App (start, resume) |
 | `session.resume {session}` | Start the harness again with its resume id | App |
 | `pane.close {pane}` | End a program, after the client confirms | App (close an exited session) |
+| `session.rename {session, name}` | Rename a session from the sidebar; a taken name is `conflict` | App |
+| `session.close {session}` | Remove an exited session's record; a live pane stays, unfiled | App (close an exited session) |
 | `session.focus {session, active}` | Mark `done` seen | App (`app.md` 17) |
 | `approval.answer {pane, request, choice}` | Answer a pending request by id | App (`app.md` 17) |
 | event `pane.bell` | A pane rang the bell; throttled | App (optional) |
@@ -1088,7 +1231,8 @@ Hidden panes have no data stream. Marks need events.
 Recommendation: add `pane.output` (throttled, at most once per second per pane) and `pane.bell`
 to the hab API (14). Agent state already arrives as events.
 
-Decision: add both events, as recommended (coordinator, 2026-11-01). Not built yet.
+Decision: add both events, as recommended (coordinator, 2026-11-01). Built in task-98qp7he5
+(4.3): gff-hab sends them, and gff marks hidden tabs.
 
 ### 15.8 Desktop notifications from gff
 

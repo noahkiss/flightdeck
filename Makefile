@@ -53,7 +53,7 @@ test-pure:
 # detector. No libghostty needed.
 RACE_PKGS := ./internal/holder/... ./internal/holderproto/... ./internal/holderclient/... \
 	./internal/holderreg/... ./internal/structure/... ./internal/link/... \
-	./internal/control/... ./internal/datastream/... ./internal/habconn/... ./internal/gffclient/... ./internal/panesize/... ./internal/termq/... \
+	./internal/control/... ./internal/datastream/... ./internal/habconn/... ./internal/hosts/... ./internal/board/... ./internal/gffclient/... ./internal/panesize/... ./internal/termq/... \
 	./internal/cmdmarks/... \
 	./internal/harness/... ./internal/hook/... ./internal/gitstatus/... ./internal/transcript/... \
 	./internal/service/... ./internal/grants/... \

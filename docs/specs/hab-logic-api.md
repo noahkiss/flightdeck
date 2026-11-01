@@ -743,6 +743,8 @@ names the stage, and an event is defined but never sent.
 |---|---|---|
 | `session.create` | Start a program in a new pane and file it as a session | Yes (this stage) |
 | `pane.close` | Release a pane; a running program gets a hang-up first | Yes (this stage) |
+| `session.rename` | Give a session a new name; a taken name is `conflict` | Yes (task-98qp7he5) |
+| `session.close` | Remove a session record; a live pane keeps running, unfiled (2.2) | Yes (task-98qp7he5) |
 | `session.resume` | Start an exited session's harness again in a new pane, with its resume id | Part 4 stage 4 |
 | `session.interrupt` | Stop the current turn through the adapter (the chat view's Stop) | Part 4 stage 4 |
 | `session.send` | Send a message through the adapter, under the input rules | Yes, Claude Code (Part 4 stage 4) |
@@ -761,8 +763,8 @@ names the stage, and an event is defined but never sent.
 
 | Event | Purpose | Id | Sent from |
 |---|---|---|---|
-| `pane.bell` | A pane rang the bell; at most once per second per pane, with the count | Pane | Part 2 stage 7 |
-| `pane.output` | A pane printed; at most once per second per pane, with its offset | Pane | Part 2 stage 7 |
+| `pane.bell` | A pane rang the bell; at most once per second per pane, with the count | Pane | Yes (task-98qp7he5) |
+| `pane.output` | A pane printed; at most once per second per pane, with its offset | Pane | Yes (task-98qp7he5) |
 | `chat.message` | A chat message was appended or changed in place | Message | Part 4 stage 5 (built for Claude Code) |
 | `session.turn_end` | The agent's turn ended; names the final message | Session | Part 4 stage 4 |
 | `usage.updated` | An account's usage reading changed | Account key | Part 4 (usage readings) |
