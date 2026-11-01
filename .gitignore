@@ -4,3 +4,6 @@
 .claude/worktrees/
 .build/
 .swiftpm/
+/gff
+/gff-hab
+/gff-hab-holder
