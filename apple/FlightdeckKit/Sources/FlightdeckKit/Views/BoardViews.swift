@@ -15,11 +15,13 @@ public struct FlightdeckRoot: View {
         #if os(macOS)
         BoardScreen(board: fleet.board)
             .environment(\.habConnections, fleet.lookup)
+            .openPaneOnLaunch(fleet)
             .onAppear { fleet.windowOpened() }
             .onDisappear { fleet.windowClosed() }
         #else
         BoardScreen(board: fleet.board)
             .environment(\.habConnections, fleet.lookup)
+            .openPaneOnLaunch(fleet)
         #endif
     }
 }

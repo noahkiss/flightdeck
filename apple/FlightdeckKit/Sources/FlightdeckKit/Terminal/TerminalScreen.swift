@@ -23,6 +23,8 @@ public struct TerminalScreen: View {
         GeometryReader { geo in
             let s = model.sizing
             TerminalSurfaceView(context: model.view)
+                // One dark scheme, so the space around a scaled pane matches it.
+                .environment(\.colorScheme, .dark)
                 .frame(width: s.surface.width, height: s.surface.height)
                 .scaleEffect(s.scale, anchor: .topLeading)
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
@@ -31,7 +33,7 @@ public struct TerminalScreen: View {
                     model.containerChanged(size)
                 }
         }
-        .background(Color.black)
+        .background(Color(red: 0x1e / 255, green: 0x1e / 255, blue: 0x1e / 255))
         .overlay(alignment: .center) { statusOverlay }
         .onReceive(model.view.$surfaceSize) { m in
             model.surfaceChanged(m, displayScale: displayScale)

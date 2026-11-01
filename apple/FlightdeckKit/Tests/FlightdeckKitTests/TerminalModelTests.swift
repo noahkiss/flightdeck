@@ -91,6 +91,35 @@ final class TerminalModelTests: XCTestCase {
         m.stop()
     }
 
+    /// Output waits until libghostty's grid equals the pane's size, so rows
+    /// never wrap at a wrong width. Too much held output becomes a snapshot.
+    func testOutputWaitsForTheGrid() async throws {
+        let hab = FakeHab(hostID: "box")
+        await hab.terminals.add("%1", cols: 100, rows: 30)
+        await hab.terminals.write("%1", Data("before\r\n".utf8))
+        let conn = await online(hab, "mac")
+        let m = model("%1", conn)
+        m.start()
+        await eventually("live") { m.status == .live }
+        await hab.terminals.write("%1", Data("after\r\n".utf8))
+        await eventually("held") { m.heldBytes > 8 }
+        m.gridForTests(cols: 80, rows: 24)
+        XCTAssertGreaterThan(m.heldBytes, 0, "a grid of the wrong size gets nothing")
+        m.gridForTests(cols: 100, rows: 30)
+        XCTAssertEqual(m.heldBytes, 0)
+
+        // The pane grows: output waits again for the new grid.
+        m.pendingLimit = 64
+        _ = try await conn.call(HabMethods.paneSetDesiredSize, DesiredSizeParams(cols: 120, pane: "%1", rows: 40))
+        await eventually("new size") { m.sizing.cols == 120 }
+        await hab.terminals.write("%1", Data(repeating: 0x2E, count: 200))
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(m.heldBytes, 0, "past the limit the held output is dropped")
+        m.gridForTests(cols: 120, rows: 40)
+        await eventually("snapshot asked for") { await hab.terminals.redraws == [.snapshot] }
+        m.stop()
+    }
+
     func testExitShowsStatus() async throws {
         let hab = FakeHab(hostID: "box")
         await hab.terminals.add("%1")

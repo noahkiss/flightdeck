@@ -32,6 +32,8 @@ actor Applied {
         }
     }
 
+    var text: String { String(decoding: screen, as: UTF8.self) }
+
     var resizes: [ResizeFrame] {
         events.compactMap { if case .resize(let r) = $0 { return r } else { return nil } }
     }

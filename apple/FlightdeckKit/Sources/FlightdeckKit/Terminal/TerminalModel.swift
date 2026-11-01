@@ -35,6 +35,18 @@ public final class TerminalModel {
     @ObservationIgnored private let flags = Flags()
     @ObservationIgnored private var sizeTask: Task<Void, Never>?
     @ObservationIgnored private var started = false
+    /// libghostty's grid as it last reported it.
+    @ObservationIgnored private var grid: (cols: Int, rows: Int)?
+    @ObservationIgnored private var gridSettled = false
+    @ObservationIgnored private var settleTask: Task<Void, Never>?
+    /// How long the grid must hold still before output reaches it.
+    @ObservationIgnored public var settleDelay: Duration = .milliseconds(100)
+    /// Output that waits until the grid equals the pane's size.
+    @ObservationIgnored private var pending: [Data] = []
+    @ObservationIgnored private var pendingBytes = 0
+    @ObservationIgnored private var needsSnapshot = false
+    /// Output held past this is dropped, and a fresh snapshot asked for instead.
+    @ObservationIgnored var pendingLimit = 4 << 20
     @ObservationIgnored private let log = Logger(subsystem: "com.flightdeck.app", category: "terminal")
 
     /// Wait after a size change before the size goes out; the hab throttles too (6.6).
@@ -100,9 +112,13 @@ public final class TerminalModel {
         #endif
     }
 
+    /// The terminal's background; the view fills the space around the surface with it.
+    public static let background = "#1e1e1e"
+
     /// One libghostty app for every terminal view: no padding, so the grid is
     /// exactly what the size rule lays out.
     static let controller = TerminalController { b in
+        b.withBackground(TerminalModel.background)
         b.withWindowPaddingX(0)
         b.withWindowPaddingY(0)
         #if os(iOS)
@@ -163,7 +179,23 @@ public final class TerminalModel {
 
     /// libghostty reported its grid; the cell size is what the size rule needs.
     public func surfaceChanged(_ m: TerminalGridMetrics?, displayScale: CGFloat) {
-        guard let m, m.cellWidthPixels > 0, m.cellHeightPixels > 0, displayScale > 0 else { return }
+        guard let m else { return }
+        let g = (cols: Int(m.columns), rows: Int(m.rows))
+        if grid == nil || grid! != g {
+            // libghostty reports a new grid before its parser has resized, so
+            // output waits until the grid has held still for a moment.
+            grid = g
+            gridSettled = false
+            settleTask?.cancel()
+            let wait = settleDelay
+            settleTask = Task { [weak self] in
+                try? await Task.sleep(for: wait)
+                guard !Task.isCancelled, let self else { return }
+                self.gridSettled = true
+                self.flush()
+            }
+        }
+        guard m.cellWidthPixels > 0, m.cellHeightPixels > 0, displayScale > 0 else { return }
         let cell = CGSize(width: CGFloat(m.cellWidthPixels) / displayScale, height: CGFloat(m.cellHeightPixels) / displayScale)
         guard cell != sizing.cell else { return }
         sizing.cell = cell
@@ -183,10 +215,13 @@ public final class TerminalModel {
             // scrollback, then draw.
             var d = Data("\u{1B}c\u{1B}[3J".utf8)
             d.append(data)
-            session.receive(d)
+            pending = []
+            pendingBytes = 0
+            needsSnapshot = false
+            feed(d)
             status = .live
         case .bytes(_, let data):
-            session.receive(data)
+            feed(data)
         case .resize(let r):
             if sizing.me == nil { sizing.me = await calls.clientID() }
             setPane(cols: r.cols, rows: r.rows, owner: r.owner)
@@ -204,6 +239,50 @@ public final class TerminalModel {
         }
     }
 
+    /// The terminal must parse output at the PTY's size, or rows wrap wrongly.
+    /// The surface follows the pane's size a moment later (a layout pass), so
+    /// output waits until libghostty reports the same grid.
+    private func feed(_ data: Data) {
+        if pending.isEmpty, gridMatches {
+            session.receive(data)
+            return
+        }
+        pending.append(data)
+        pendingBytes += data.count
+        if pendingBytes > pendingLimit {
+            pending = []
+            pendingBytes = 0
+            needsSnapshot = true
+        }
+    }
+
+    private var gridMatches: Bool {
+        guard let g = grid, gridSettled else { return false }
+        return g.cols == sizing.cols && g.rows == sizing.rows
+    }
+
+    private func flush() {
+        guard gridMatches else { return }
+        if needsSnapshot {
+            needsSnapshot = false
+            let c = calls
+            Task { try? await c.redraw(.snapshot) }
+        }
+        for d in pending { session.receive(d) }
+        pending = []
+        pendingBytes = 0
+    }
+
+    /// Bytes waiting for the grid; tests read it.
+    var heldBytes: Int { pendingBytes }
+
+    /// Tests stand in for libghostty's grid report.
+    func gridForTests(cols: Int, rows: Int) {
+        grid = (cols, rows)
+        gridSettled = true
+        flush()
+    }
+
     private func setPane(cols: Int, rows: Int, owner: String?) {
         var s = sizing
         s.cols = max(1, cols)
@@ -215,6 +294,7 @@ public final class TerminalModel {
         flags.owner = s.isOwner
         if s.isOwner != wasOwner { sentSize = nil }
         sizeRuleChanged()
+        flush()
     }
 
     /// While this client owns the pane, the PTY follows this view's space.
