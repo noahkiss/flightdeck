@@ -453,9 +453,21 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
   arrive while the page loads wait. After it, the model drops those with a seq at or below the
   page's seq on the same connection, and applies the rest.
 - **Older pages** load with `before` when the top row appears. An unknown `before` takes the
-  tail again.
-- **Reconnect.** A return to online asks `after: cursor` until `more` is false. A `conflict`,
-  an empty cursor or any error takes the tail again. A `reset` event takes the tail again.
+  tail again. A page that returns after a tail reload or a reset is dropped.
+- **Reconnect.** A return to online asks `after: cursor` until `more` is false, at most 20
+  pages; past that it takes the tail. Its pages follow the seq rule per message: an event
+  waits, and applies only when its seq is above the page that last carried its message. A
+  `conflict`, an empty cursor or any error takes the tail again. A `reset` event voids pages in
+  flight and takes the tail again. An event from an older connection is dropped.
+- **New native session.** The model remembers the native session id its tail came from. When
+  the agent state names another one (`/clear`, a new agent in the pane, a resume), it takes the
+  tail again: the hab opens the new transcript only on a `chat.page`.
+- **Scrolling.** New rows follow only while the owner is at the bottom. An older page keeps the
+  row that was first in place. A first load or a replaced conversation goes to the bottom; a
+  message the owner sends always shows.
+- **Shared model.** Views count on `start` and `stop`; the listener stops when the last view
+  leaves. Rows are kept in the model and rebuilt per changed message, so a long history does not
+  parse its Markdown and tool input again on each event.
 - **No reader yet.** `unavailable` from `chat.page` shows the hab's hint. The model tries again
   when the agent state names a native session or a harness. An empty page with an empty cursor
   shows "waiting for the first message".
@@ -465,12 +477,12 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
   turn send off; an exited session offers Resume (`session.resume`). Offline turns it off.
 - **Send path.** The composer calls `session.send`. While the hab answers `unavailable` (Part 4
   stage 4 is not built), it types through `pane.input` as the adapter rules say: the text in
-  bracketed paste, then Enter as its own call. The first `unavailable` switches the model to
+  bracketed paste (any ESC in the text removed), then Enter as its own call. The first `unavailable` switches the model to
   `pane.input` for the rest of its life. The app does not wait for typing to pause; the hab's
   `session.send` will.
 - **Read back.** A sent message waits 5 s for a `working` state or a user record with the same
   text. Then it shows "not delivered" with Retry and Dismiss. The app never retries on its own.
-  A matching user record removes the outgoing message; the end of the turn removes one that
+  A matching user record removes the outgoing message, from an event or a tail page; the end of the turn removes one that
   `working` confirmed.
 - **Stop** calls `session.interrupt`, else sends Escape through `pane.input`. It shows only
   while the agent works.

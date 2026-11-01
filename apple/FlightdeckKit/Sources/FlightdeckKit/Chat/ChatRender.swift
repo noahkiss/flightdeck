@@ -169,7 +169,21 @@ public enum ChatRender {
     static let oneLineTools: Set<String> = ["Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "NotebookRead",
                                             "read", "grep", "glob", "list", "webfetch", "websearch"]
 
+    /// Rows already built, by message id, with the message they came from.
+    public struct Cache {
+        var rows: [String: (message: ChatMessage, item: ChatItem)] = [:]
+        public init() {}
+    }
+
     public static func items(_ messages: [ChatMessage]) -> [ChatItem] {
+        var cache = Cache()
+        return items(messages, cache: &cache)
+    }
+
+    /// Builds rows, reusing the cached row of each unchanged message. Plans and
+    /// tool calls with nested messages are rebuilt each time: they depend on
+    /// other messages.
+    public static func items(_ messages: [ChatMessage], cache: inout Cache) -> [ChatItem] {
         let lastPlan = messages.last { $0.kind == .plan && $0.parent == nil }?.id
         var children: [String: [ChatMessage]] = [:]
         let toolIDs = Set(messages.filter { $0.kind == .tool }.map(\.id))
@@ -181,25 +195,37 @@ public enum ChatRender {
                 top.append(m)
             }
         }
+        var next = Cache()
         func build(_ m: ChatMessage, depth: Int) -> ChatItem {
+            let kids = children[m.id] ?? []
+            let cacheable = m.kind != .plan && kids.isEmpty
+            if cacheable, let hit = cache.rows[m.id], hit.message == m {
+                next.rows[m.id] = hit
+                return hit.item
+            }
+            let item: ChatItem
             switch m.kind {
             case .user:
-                return .user(id: m.id, text: m.text ?? "", sender: m.sender, attachments: m.attachments?.count ?? 0)
+                item = .user(id: m.id, text: m.text ?? "", sender: m.sender, attachments: m.attachments?.count ?? 0)
             case .agent:
-                return .agent(id: m.id, blocks: MarkdownBlock.parse(m.text ?? ""), sender: m.sender)
+                item = .agent(id: m.id, blocks: MarkdownBlock.parse(m.text ?? ""), sender: m.sender)
             case .tool:
-                let kids = depth < 4 ? (children[m.id] ?? []).map { build($0, depth: depth + 1) } : []
-                return .tool(id: m.id, card: card(m.tool, children: kids))
+                let built = depth < 4 ? kids.map { build($0, depth: depth + 1) } : []
+                item = .tool(id: m.id, card: card(m.tool, children: built))
             case .event:
                 let e = m.event ?? .unknown
-                return .event(id: m.id, event: e, text: eventText(e, m.text))
+                item = .event(id: m.id, event: e, text: eventText(e, m.text))
             case .plan:
-                return .plan(id: m.id, steps: m.plan ?? [], latest: m.parent != nil || m.id == lastPlan)
+                item = .plan(id: m.id, steps: m.plan ?? [], latest: m.parent != nil || m.id == lastPlan)
             default:
-                return .unsupported(id: m.id, kind: m.kind.rawValue)
+                item = .unsupported(id: m.id, kind: m.kind.rawValue)
             }
+            if cacheable { next.rows[m.id] = (m, item) }
+            return item
         }
-        return top.map { build($0, depth: 0) }
+        let out = top.map { build($0, depth: 0) }
+        cache = next
+        return out
     }
 
     static func card(_ t: ChatTool?, children: [ChatItem]) -> ToolCard {

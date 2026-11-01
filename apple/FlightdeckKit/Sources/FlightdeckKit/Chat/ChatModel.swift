@@ -118,8 +118,10 @@ public final class ChatModel {
     @ObservationIgnored private var index: [String: Int] = [:]
     @ObservationIgnored private var cursor: String?
     @ObservationIgnored private var listen: Task<Void, Never>?
-    @ObservationIgnored private var started = false
+    @ObservationIgnored private var viewers = 0
     @ObservationIgnored private var loadGen = 0
+    /// The native session id the tail was loaded for.
+    @ObservationIgnored private var tailNative: String?
     /// Events that arrive while the tail loads; applied after it by the seq rule.
     @ObservationIgnored private var buffer: [ChatUpdate]?
     @ObservationIgnored private var nextOutgoing = 1
@@ -142,10 +144,11 @@ public final class ChatModel {
 
     // MARK: - Lifecycle
 
-    /// Starts listening and loads the tail. Call when the view appears.
+    /// Starts listening and loads the tail. Call when a view appears. Views
+    /// share one model, so each `start` needs its own `stop`.
     public func start() {
-        guard !started, let conn = connection else { return }
-        started = true
+        viewers += 1
+        guard viewers == 1, let conn = connection else { return }
         listen = Task { [weak self] in
             let stream = await conn.chatUpdates()
             for await u in stream {
@@ -156,22 +159,28 @@ public final class ChatModel {
         Task { await self.loadTail() }
     }
 
-    /// Stops listening. The messages stay for a quick return.
+    /// Stops listening once no view shows the model. The messages stay for a quick return.
     public func stop() {
-        started = false
+        guard viewers > 0 else { return }
+        viewers -= 1
+        guard viewers == 0 else { return }
         listen?.cancel()
         listen = nil
     }
 
-    /// Takes the hab's new state. A return to online catches up.
+    private var started: Bool { viewers > 0 }
+
+    /// Takes the hab's new state. A return to online catches up; a new native
+    /// session (a cleared conversation, a new agent in the pane, a resume) takes its tail.
     public func update(_ c: ChatContext) {
         let old = context
         guard c != old else { return }
         context = c
         if started, c.online, !old.online {
             Task { await self.catchUp() }
-        } else if started, c.online, case .unavailable = load, c.agent?.session != old.agent?.session || c.harness != old.harness {
-            // The harness reported its session: the transcript can be found now.
+        } else if started, c.online, let native = c.agent?.session, native != tailNative {
+            Task { await self.loadTail() }
+        } else if started, c.online, case .unavailable = load, c.harness != old.harness {
             Task { await self.loadTail() }
         }
         settleOutgoing(old: old)
@@ -189,18 +198,16 @@ public final class ChatModel {
         loadGen += 1
         let gen = loadGen
         buffer = []
+        tailNative = context.agent?.session
         if messages.isEmpty { load = .loading }
         do {
             let (page, connGen) = try await conn.callTagged(HabMethods.chatPage, ChatPageParams(limit: pageSize, session: session))
             guard gen == loadGen else { return }
             replaceAll(page.messages)
+            for m in page.messages where m.kind == .user { matchOutgoing(m) }
             hasOlder = page.more
             cursor = page.cursor
-            let waiting = buffer ?? []
-            buffer = nil
-            for u in waiting where !(u.generation == connGen && u.seq <= page.seq) {
-                apply(u.message)
-            }
+            flushBuffer(connGen: connGen, pageSeq: page.seq, pageSeqs: [:])
             load = messages.isEmpty && (page.cursor ?? "").isEmpty ? .waiting : .ready
         } catch {
             guard gen == loadGen else { return }
@@ -212,20 +219,28 @@ public final class ChatModel {
     /// Loads the page before the oldest message held.
     public func loadOlder() async {
         guard let conn = connection, let session = target.session, hasOlder, !loadingOlder, let first = messages.first else { return }
+        let gen = loadGen
         loadingOlder = true
         defer { loadingOlder = false }
         do {
             let page = try await conn.call(HabMethods.chatPage, ChatPageParams(before: first.id, limit: pageSize, session: session))
+            // A tail reload or reset since the call: this page belongs to what was replaced.
+            guard gen == loadGen else { return }
             let fresh = page.messages.filter { index[$0.id] == nil }
             replaceAll(fresh + messages)
             hasOlder = page.more
         } catch let e as RPCError where e.kind == .notFound {
+            guard gen == loadGen else { return }
             // The oldest message is gone (the transcript changed): take the tail again.
             await loadTail()
         } catch {
+            guard gen == loadGen else { return }
             notice = "Could not load older messages: \(Self.describe(error))"
         }
     }
+
+    /// The most `after:` pages one catch-up reads before it takes the tail instead.
+    static let catchUpPages = 20
 
     /// After a reconnect: changes since the cursor, else the tail.
     func catchUp() async {
@@ -234,19 +249,58 @@ public final class ChatModel {
             await loadTail()
             return
         }
+        loadGen += 1
+        let gen = loadGen
+        buffer = []
         var next = c
+        var pageSeqs: [String: UInt64] = [:]
+        var lastGen = 0
+        var complete = false
         do {
-            for _ in 0..<20 {
-                let page = try await conn.call(HabMethods.chatPage, ChatPageParams(after: next, limit: 200, session: session))
-                for m in page.messages { apply(m) }
-                if let n = page.cursor, !n.isEmpty { next = n } else { break }
-                if !page.more { break }
+            for _ in 0..<Self.catchUpPages {
+                let (page, connGen) = try await conn.callTagged(HabMethods.chatPage, ChatPageParams(after: next, limit: 200, session: session))
+                guard gen == loadGen else { return }
+                if connGen != lastGen {
+                    pageSeqs = [:]
+                    lastGen = connGen
+                }
+                for m in page.messages {
+                    apply(m)
+                    pageSeqs[m.id] = page.seq
+                }
+                if let n = page.cursor, !n.isEmpty { next = n }
+                if !page.more || (page.cursor ?? "").isEmpty {
+                    complete = true
+                    break
+                }
             }
-            cursor = next
-            if !messages.isEmpty { load = .ready }
         } catch {
+            guard gen == loadGen else { return }
             // A stale cursor (conflict) or anything else: the tail is the record.
             await loadTail()
+            return
+        }
+        guard complete else {
+            // Changes still wait past the page budget: the tail is cheaper than a silent gap.
+            await loadTail()
+            return
+        }
+        cursor = next
+        flushBuffer(connGen: lastGen, pageSeq: nil, pageSeqs: pageSeqs)
+        if !messages.isEmpty { load = .ready }
+    }
+
+    /// Applies the events that waited for a page. An event from an older
+    /// connection predates the page and is dropped. On the page's connection an
+    /// event applies only when its seq is above the page that last carried its
+    /// message (`pageSeqs`), or above `pageSeq` for every message.
+    private func flushBuffer(connGen: Int, pageSeq: UInt64?, pageSeqs: [String: UInt64]) {
+        let waiting = buffer ?? []
+        buffer = nil
+        for u in waiting {
+            if u.generation < connGen { continue }
+            if u.generation == connGen, let floor = pageSeq ?? pageSeqs[u.message.id], u.seq <= floor { continue }
+            apply(u.message)
         }
     }
 
@@ -255,7 +309,8 @@ public final class ChatModel {
     private func receive(_ u: ChatUpdate) {
         guard u.message.session == target.session else { return }
         if u.message.kind == .event, u.message.event == .reset {
-            // The transcript was replaced: drop what is held and take the tail.
+            // The transcript was replaced: pages in flight are void; take the tail.
+            loadGen += 1
             Task { await self.loadTail() }
             return
         }
@@ -276,6 +331,7 @@ public final class ChatModel {
             messages.append(m)
         }
         if m.kind == .user { matchOutgoing(m) }
+        rebuildItems()
     }
 
     private func replaceAll(_ ms: [ChatMessage]) {
@@ -285,6 +341,16 @@ public final class ChatModel {
             index[m.id] = messages.count
             messages.append(m)
         }
+        rebuildItems()
+    }
+
+    /// The chat view's rows. Rebuilt when messages change; an unchanged
+    /// message reuses its row, so its Markdown and tool input are not parsed again.
+    public private(set) var items: [ChatItem] = []
+    @ObservationIgnored private var rowCache = ChatRender.Cache()
+
+    private func rebuildItems() {
+        items = ChatRender.items(messages, cache: &rowCache)
     }
 
     // MARK: - Composer
@@ -386,7 +452,9 @@ public final class ChatModel {
     /// bracketed paste, then Enter as its own write (`harness-adapters.md`,
     /// Input delivery). A multi-line message stays one message.
     public static func typedInput(_ text: String) -> [Data] {
-        let paste = "\u{1b}[200~" + text + "\u{1b}[201~"
+        // An ESC in the text could end the paste early; nobody types one on purpose.
+        let clean = text.replacingOccurrences(of: "\u{1b}", with: "")
+        let paste = "\u{1b}[200~" + clean + "\u{1b}[201~"
         return [Data(paste.utf8), Data("\r".utf8)]
     }
 

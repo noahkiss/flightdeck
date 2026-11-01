@@ -120,13 +120,45 @@ struct ChatBanners: View {
     }
 }
 
+/// Where the list scrolls when its rows change.
+public enum ScrollFollow: Equatable {
+    case none
+    case toBottom
+    /// Keep this row where it was: older rows went in above it.
+    case keep(String)
+
+    /// The first and last row ids before and after a change.
+    public struct Ends: Equatable {
+        public var first: String?
+        public var last: String?
+        public init(first: String?, last: String?) {
+            self.first = first
+            self.last = last
+        }
+    }
+
+    /// A prepend keeps the old first row in place. A new last row follows
+    /// only while the owner is at the bottom. A first load or a replaced
+    /// conversation goes to the bottom.
+    public static func action(from old: Ends, to new: Ends, atBottom: Bool) -> ScrollFollow {
+        if old.last == nil { return new.last == nil ? .none : .toBottom }
+        let firstChanged = old.first != new.first
+        let lastChanged = old.last != new.last
+        if firstChanged && !lastChanged, let f = old.first { return .keep(f) }
+        if firstChanged && lastChanged { return .toBottom }
+        if lastChanged && atBottom { return .toBottom }
+        return .none
+    }
+}
+
 /// The scrolling list of messages. It opens at the tail; older pages load
 /// when the top row appears.
 struct ChatTranscript: View {
     let model: ChatModel
+    @State private var atBottom = true
 
     var body: some View {
-        let items = ChatRender.items(model.messages)
+        let items = model.items
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
@@ -147,16 +179,23 @@ struct ChatTranscript: View {
                             .id("out-\(o.id)")
                     }
                     Color.clear.frame(height: 1).id(Self.bottom)
+                        .onAppear { atBottom = true }
+                        .onDisappear { atBottom = false }
                 }
                 .padding(12)
             }
             .defaultScrollAnchor(.bottom)
             .overlay { placeholder }
-            .onChange(of: model.messages.count) { _, _ in
-                withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(Self.bottom, anchor: .bottom) }
+            .onChange(of: ScrollFollow.Ends(first: items.first?.id, last: items.last?.id)) { old, new in
+                switch ScrollFollow.action(from: old, to: new, atBottom: atBottom) {
+                case .none: break
+                case .toBottom: proxy.scrollTo(Self.bottom, anchor: .bottom)
+                case .keep(let id): proxy.scrollTo(id, anchor: .top)
+                }
             }
-            .onChange(of: model.outgoing.count) { _, _ in
-                proxy.scrollTo(Self.bottom, anchor: .bottom)
+            .onChange(of: model.outgoing.count) { old, new in
+                // The owner just sent: show it.
+                if new > old { proxy.scrollTo(Self.bottom, anchor: .bottom) }
             }
         }
     }

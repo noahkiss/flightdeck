@@ -16,8 +16,8 @@ public enum Fixture {
         Pane(cols: 120, holderBuild: "fake", id: id, offset: 0, revision: 1, rows: 40, session: session)
     }
 
-    public static func agent(pane: String, harness: String, state: AgentStatus, kind: BlockedKind? = nil, request: PermissionRequest? = nil, at: Date = Date(), revision: UInt64 = 1) -> AgentState {
-        AgentState(at: Self.stamp(at), harness: harness, kind: kind, pane: pane, request: request, revision: revision, source: .hook, state: state)
+    public static func agent(pane: String, harness: String, state: AgentStatus, kind: BlockedKind? = nil, request: PermissionRequest? = nil, at: Date = Date(), revision: UInt64 = 1, session: String? = nil) -> AgentState {
+        AgentState(at: Self.stamp(at), harness: harness, kind: kind, pane: pane, request: request, revision: revision, session: session, source: .hook, state: state)
     }
 
     public static func request(title: String, tool: String, command: String? = nil) -> PermissionRequest {

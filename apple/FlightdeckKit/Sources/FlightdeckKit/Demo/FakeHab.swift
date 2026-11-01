@@ -46,6 +46,16 @@ public actor FakeHab {
     /// its adapter stage; tests and demo mode turn it on.
     private var sendWorks = false
     private var onSend: (@Sendable (SessionSendParams) async -> Void)?
+    private var chatPageHook: (@Sendable (ChatPageParams, ChatPagePhase) async -> Void)?
+
+    /// When a `chat.page` hook runs: before the page is read, or after it is
+    /// read and before the reply goes out.
+    public enum ChatPagePhase: Sendable { case before, after }
+
+    /// Runs `hook` around each `chat.page`, so a test can send events that race the page.
+    public func setChatPageHook(_ hook: (@Sendable (ChatPageParams, ChatPagePhase) async -> Void)?) {
+        chatPageHook = hook
+    }
 
     /// Every `pane.input` received, oldest first.
     public private(set) var inputs: [InputParams] = []
@@ -356,7 +366,10 @@ public actor FakeHab {
             do {
                 let p = try params.decode(ChatPageParams.self)
                 chatPages += 1
-                await reply(c, id: id, result: try chatPage(p, seq: c.seq))
+                if let h = chatPageHook { await h(p, .before) }
+                let page = try chatPage(p, seq: c.seq)
+                if let h = chatPageHook { await h(p, .after) }
+                await reply(c, id: id, result: page)
             } catch let f as Failure {
                 await fail(c, id: id, kind: f.kind, hint: f.hint)
             } catch {

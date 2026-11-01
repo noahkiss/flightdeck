@@ -183,6 +183,154 @@ final class ChatTests: XCTestCase {
         await fleet.setActive(false)
     }
 
+    // MARK: - Review fixes
+
+    /// Must-fix 1: a new native session (/clear, a new agent, a resume) takes the new tail.
+    func testNewNativeSessionLoadsNewTail() async {
+        let (fleet, hab, model) = await setup(messages: 0)
+        await hab.put(Fixture.agent(pane: "%1", harness: "claude", state: .idle, session: "native-1"))
+        await hab.setChat(session: "s1", [msg(1), msg(2)])
+        model.start()
+        await eventually("first tail") { model.messages.map(\.id) == ["m1", "m2"] }
+        // The hab now reads another file for this session; no event says so.
+        await hab.setChat(session: "s1", [msg(10)])
+        await hab.put(Fixture.agent(pane: "%1", harness: "claude", state: .idle, session: "native-2"))
+        await eventually("new tail") { model.messages.map(\.id) == ["m10"] }
+        await fleet.setActive(false)
+    }
+
+    /// Must-fix 2: the list keeps its place on a prepend, and follows new rows
+    /// only from the bottom.
+    func testScrollFollow() {
+        typealias E = ScrollFollow.Ends
+        let tail = E(first: "m16", last: "m25")
+        XCTAssertEqual(ScrollFollow.action(from: E(first: nil, last: nil), to: tail, atBottom: true), .toBottom, "first load")
+        XCTAssertEqual(ScrollFollow.action(from: tail, to: E(first: "m6", last: "m25"), atBottom: false), .keep("m16"), "older page")
+        XCTAssertEqual(ScrollFollow.action(from: tail, to: E(first: "m6", last: "m25"), atBottom: true), .keep("m16"), "older page at the bottom")
+        XCTAssertEqual(ScrollFollow.action(from: tail, to: E(first: "m16", last: "m26"), atBottom: false), .none, "reading history")
+        XCTAssertEqual(ScrollFollow.action(from: tail, to: E(first: "m16", last: "m26"), atBottom: true), .toBottom, "following")
+        XCTAssertEqual(ScrollFollow.action(from: tail, to: tail, atBottom: true), .none, "a change in place")
+        XCTAssertEqual(ScrollFollow.action(from: tail, to: E(first: "x1", last: "x9"), atBottom: false), .toBottom, "a new conversation")
+    }
+
+    /// The seq rule during a tail load: an event older than the page is dropped,
+    /// a newer one applies over it.
+    func testTailLoadSeqRule() async {
+        let (fleet, hab, model) = await setup(messages: 2)
+        var stale = msg(1)
+        stale.text = "stale"
+        var fresh = msg(2)
+        fresh.text = "newer than the page"
+        let (staleMsg, freshMsg) = (stale, fresh)
+        let current = [msg(1, text: "current"), msg(2)]
+        await hab.setChatPageHook { [weak hab] p, phase in
+            guard let hab, p.before == nil, p.after == nil else { return }
+            switch phase {
+            case .before:
+                // Sent before the page is read, then superseded without an event.
+                await hab.putChat(staleMsg)
+                await hab.setChat(session: "s1", current)
+            case .after:
+                await hab.putChat(freshMsg)
+            }
+        }
+        model.start()
+        await eventually("tail") { model.load == .ready && model.messages.count == 2 }
+        await eventually("the newer event") { model.messages[1].text == "newer than the page" }
+        XCTAssertEqual(model.messages[0].text, "current", "the event older than the page is dropped")
+        await fleet.setActive(false)
+    }
+
+    /// Should-fix 3: catch-up pages follow the seq rule too.
+    func testCatchUpSeqRule() async {
+        let (fleet, hab, model) = await setup(messages: 2)
+        model.start()
+        await eventually("tail") { model.messages.count == 2 }
+        let conn = fleet.connections[0]
+        (conn.transport as! FakeTransport).setRefusing(true)
+        await hab.dropConnections()
+        await eventually("not online") { !model.context.online }
+        var running = msg(3, .tool)
+        running.tool = ChatTool(name: "Bash", status: .running, target: "make")
+        await hab.putChat(running)
+        var done = running
+        done.tool?.status = .done
+        let doneMsg = done
+        await hab.setChatPageHook { [weak hab] p, phase in
+            guard let hab, p.after != nil, phase == .after else { return }
+            // The call finished after the page was read; its event reaches the app first.
+            await hab.putChat(doneMsg)
+        }
+        (conn.transport as! FakeTransport).setRefusing(false)
+        await conn.retryNow()
+        await eventually("caught up") { model.messages.count == 3 }
+        try? await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(model.messages[2].tool?.status, .done, "the page does not overwrite the newer event")
+        await fleet.setActive(false)
+    }
+
+    /// Should-fix 4: an older page that returns after a reset is dropped.
+    func testOlderPageAfterResetIsDropped() async {
+        let (fleet, hab, model) = await setup(messages: 25)
+        model.start()
+        await eventually("tail") { model.messages.count == 10 }
+        let replaced = [msg(100), msg(101)]
+        await hab.setChatPageHook { [weak hab] p, phase in
+            guard let hab, p.before != nil, phase == .after else { return }
+            await hab.resetChat(session: "s1", replaced)
+        }
+        await model.loadOlder()
+        await eventually("new tail") { model.messages.map(\.id) == ["m100", "m101"] }
+        try? await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(model.messages.map(\.id), ["m100", "m101"])
+        await fleet.setActive(false)
+    }
+
+    /// Should-fix 8: two views share a model; one leaving keeps it live.
+    func testViewersAreCounted() async {
+        let (fleet, hab, model) = await setup(messages: 1)
+        model.start()
+        model.start()
+        await eventually("tail") { model.messages.count == 1 }
+        model.stop()
+        await hab.putChat(msg(2))
+        await eventually("still live") { model.messages.count == 2 }
+        model.stop()
+        model.stop()
+        await fleet.setActive(false)
+    }
+
+    /// Should-fix 9: a user record that arrives through a tail reload clears its outgoing message.
+    func testTailReloadClearsOutgoing() async {
+        let (fleet, hab, model) = await setup(state: .idle, messages: 1)
+        model.readBackWindow = .seconds(5)
+        model.start()
+        await eventually("tail") { model.messages.count == 1 }
+        model.send("hello there")
+        await eventually("sent") { model.outgoing.first?.status == .sent }
+        await hab.resetChat(session: "s1", [msg(1), msg(2, .user, text: "hello there")])
+        await eventually("cleared") { model.outgoing.isEmpty }
+        await fleet.setActive(false)
+    }
+
+    func testTypedInputStripsEscape() {
+        let w = ChatModel.typedInput("a\u{1b}[201~b")
+        XCTAssertEqual(w[0], Data("\u{1b}[200~a[201~b\u{1b}[201~".utf8))
+    }
+
+    func testRowCacheReusesUnchangedRows() {
+        var cache = ChatRender.Cache()
+        let ms = [msg(1, text: "# Hi"), msg(2, .user, text: "yo")]
+        let first = ChatRender.items(ms, cache: &cache)
+        XCTAssertEqual(cache.rows.count, 2)
+        var changed = ms
+        changed[0].text = "# Bye"
+        let second = ChatRender.items(changed, cache: &cache)
+        XCTAssertNotEqual(first[0], second[0])
+        XCTAssertEqual(first[1], second[1])
+        XCTAssertEqual(ChatRender.items(changed), second)
+    }
+
     func testMarkdownBlocks() {
         let md = "# Title\n\nSome *text*\nmore.\n\n- one\n  - nested\n1. first\n- [x] done\n\n```swift\nlet x = 1\n```\n> quoted\n---"
         XCTAssertEqual(MarkdownBlock.parse(md), [

@@ -21,7 +21,6 @@ public enum HabStatus: Sendable, Equatable {
     case updateNeeded(UpdateSide)
 }
 
-/// Everything the board needs from one hab. Published whole on each change.
 /// One `chat.message` event: the message, its seq, and which connection
 /// (generation) carried it. Seqs compare only within one generation.
 public struct ChatUpdate: Sendable {
@@ -30,6 +29,7 @@ public struct ChatUpdate: Sendable {
     public var generation: Int
 }
 
+/// Everything the board needs from one hab. Published whole on each change.
 public struct HabState: Sendable, Equatable {
     public var status: HabStatus = .stopped
     public var store = HabStore()
