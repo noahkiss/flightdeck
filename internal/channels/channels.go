@@ -3,8 +3,8 @@
 // target hab, or straight in the inbox when the target is on this hab. Outboxes are handed over
 // with mail.push and mail.pull over peer links; the receiver drops a repeated id. The inbox
 // delivers each message into its agent's PTY, wrapped in an envelope, only when the agent may
-// take it. Every outbox, the inbox and the ledger of ids are on disk, so a gff-hab restart loses
-// nothing.
+// take it. Outboxes, the inbox, the sent records and the received ids are one state, saved to
+// disk as one file before any answer, so a gff-hab restart loses nothing and repeats nothing.
 package channels
 
 import (
@@ -13,7 +13,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,13 +29,17 @@ const Capability = "channels"
 
 // Limits and times (mesh.md 6.5).
 const (
-	MaxText     = 64 << 10           // bytes of text in one message
-	MaxOutbox   = 1000               // items in one target's outbox
-	MaxInbox    = 1000               // messages waiting for one session
-	Keep        = 7 * 24 * time.Hour // records, ids and outbox items
-	Batch       = 100                // items in one mail.push or mail.pull
-	DefaultWait = 180 * time.Second  // channel.wait with no timeout
-	MaxWait     = 600 * time.Second  // the longest channel.wait or channel.status wait
+	MaxText       = 64 << 10           // bytes of text in one message
+	MaxOutbox     = 1000               // messages in one target's outbox
+	MaxInbox      = 1000               // messages waiting for one session
+	MaxStoredText = 16 << 20           // bytes of text in every outbox and the inbox together
+	MaxRecords    = 10000              // sent records kept
+	MaxSeen       = 10000              // received ids kept
+	Keep          = 7 * 24 * time.Hour // records, ids, outbox and inbox items
+	Batch         = 100                // items in one mail.push or mail.pull
+	DefaultWait   = 180 * time.Second  // channel.wait with no timeout, from a client
+	PaneWait      = 110 * time.Second  // channel.wait with no timeout, from a pane: under a harness's 2 min tool limit
+	MaxWait       = 600 * time.Second  // the longest channel.wait or channel.status wait
 	// NoStateGrace is how long a message waits for a pane with no agent state at all before it
 	// is refused: a hab that just restarted learns the states again from hooks and reports.
 	NoStateGrace = 30 * time.Second
@@ -42,8 +48,22 @@ const (
 	pullRounds   = 20 // pulls in one exchange while items keep coming
 )
 
-// Why a delivery did not happen. Local.Deliver wraps one of these; any other error refuses the
-// message with the error's text.
+// NameRule is the charset of a session name that can send and receive channel mail
+// (mesh.md 6.5). gff-hab gives every new or renamed session a name that fits it.
+const NameRule = "1 to 64 of A-Z a-z 0-9 . _ -"
+
+var (
+	validName = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+	validID   = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	// marker finds envelope markers inside a message's text, to neutralise them.
+	marker = regexp.MustCompile(`(?i)\[(\s*)(begin|end)(\s+agent\s+message)`)
+)
+
+// ValidName reports whether a session or host name fits NameRule.
+func ValidName(s string) bool { return validName.MatchString(s) }
+
+// Why a delivery did not happen. Local.Check and Local.Deliver wrap one of these; any other
+// error refuses the message with the error's text.
 var (
 	// ErrBusy holds the message: the agent is working, blocked, or still starting a turn.
 	ErrBusy = errors.New("the agent is busy")
@@ -71,14 +91,16 @@ type Peers interface {
 
 // Local is this hab's own sessions and agents.
 type Local interface {
-	// HasSession reports whether a session with this name exists on this hab.
-	HasSession(name string) bool
-	// Deliver writes one message to the session's agent now, or returns why not: an error
-	// wrapping ErrBusy, ErrNoState or ErrNotDelivered, or any other error to refuse it.
-	Deliver(ctx context.Context, session, text string) error
-	// Agent returns the state of the session's agent, with ok false when the session is gone,
-	// and a channel that is closed at the agent's next change.
-	Agent(session string) (st api.AgentStatus, ok bool, changed <-chan struct{})
+	// Session returns the id of the session with this name on this hab.
+	Session(name string) (id string, ok bool)
+	// Check says whether the session's agent may take a message now, writing nothing: nil, or
+	// an error wrapping ErrBusy or ErrNoState, or any other error to refuse the message.
+	Check(sessionID string) error
+	// Deliver writes one message to the session's agent now, or returns why not, as Check.
+	Deliver(ctx context.Context, sessionID, text string) error
+	// Agent returns the state of the named session's agent, with ok false when the session is
+	// gone, and a channel that is closed at the agent's next change.
+	Agent(name string) (st api.AgentStatus, ok bool, changed <-chan struct{})
 }
 
 // Config is what New needs. Self, Host and Local are required.
@@ -89,12 +111,15 @@ type Config struct {
 	Peers   Peers  // nil: only sessions on this hab are reachable
 	Catalog func() api.CatalogList
 	Local   Local
-	// Publish hears every change of a record this hab sent (channel.message).
+	// Publish hears every change of a record this hab sent (channel.message), in order. It is
+	// called with the service's lock held, so it must not call back into the service.
 	Publish func(api.ChannelRecord)
 	Poll    time.Duration // the mail round; default 15 s
 	Retry   time.Duration // the delivery round; default 1 s
 	Now     func() time.Time
 	Logf    func(string, ...any)
+	// write saves the state file; tests replace it to fail. Default writeSynced.
+	write func(path string, b []byte) error
 }
 
 // Service is the channels of one hab.
@@ -102,19 +127,26 @@ type Service struct {
 	cfg     Config
 	started time.Time
 
-	mu      sync.Mutex
-	outbox  map[string][]outItem // by target device id
-	records map[string]*record   // messages this hab sent, by id
-	seen    map[string]seenID    // ids this hab received, by id
-	inbox   []*inItem            // in arrival order
-	acks    map[string][]api.MailResult
-	fails   map[string]*failure // by link label
-	online  map[string]bool     // by link label
-	changed chan struct{}       // closed and replaced at every change a wait may want
+	mu       sync.Mutex
+	st       state
+	lastGood []byte                      // the state as last saved; a failed save returns to it
+	pending  []api.ChannelRecord         // record changes to publish once saved
+	acks     map[string][]api.MailResult // by link label
+	fails    map[string]*failure         // by link label
+	online   map[string]bool             // by link label
+	changed  chan struct{}               // closed and replaced at every change a wait may want
 
 	kick, poke chan struct{}
 	done       chan struct{}
 	wg         sync.WaitGroup
+}
+
+// state is everything channels keep, saved whole as one file.
+type state struct {
+	Outbox  map[string][]outItem `json:"outbox"`  // by target device id
+	Records map[string]*record   `json:"records"` // messages this hab sent, by id
+	Seen    map[string]seenID    `json:"seen"`    // ids this hab received, by id
+	Inbox   []*inItem            `json:"inbox"`   // in arrival order
 }
 
 type outItem struct {
@@ -134,14 +166,22 @@ type seenID struct {
 }
 
 type inItem struct {
-	Message api.ChannelMessage `json:"message"`
-	At      time.Time          `json:"at"`
-	busy    bool               // a delivery or a wait has it now
+	Message   api.ChannelMessage `json:"message"`
+	At        time.Time          `json:"at"`
+	SessionID string             `json:"session_id"` // the target session when it arrived
+	// Attempting is saved before the PTY write: an item found with it set and no write in
+	// flight was being written when the hab stopped, and finishes not_delivered.
+	Attempting bool `json:"attempting,omitempty"`
+	busy       bool // a delivery or a wait has it now
 }
 
 type failure struct {
 	n    int
 	next time.Time
+}
+
+func newState() state {
+	return state{Outbox: map[string][]outItem{}, Records: map[string]*record{}, Seen: map[string]seenID{}}
 }
 
 // New loads the saved state and starts the mail and delivery rounds.
@@ -161,9 +201,11 @@ func New(cfg Config) (*Service, error) {
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
 	}
+	if cfg.write == nil {
+		cfg.write = writeSynced
+	}
 	s := &Service{
-		cfg: cfg, started: cfg.Now(),
-		outbox: map[string][]outItem{}, records: map[string]*record{}, seen: map[string]seenID{},
+		cfg: cfg, started: cfg.Now(), st: newState(),
 		acks: map[string][]api.MailResult{}, fails: map[string]*failure{}, online: map[string]bool{},
 		changed: make(chan struct{}),
 		kick:    make(chan struct{}, 1), poke: make(chan struct{}, 1), done: make(chan struct{}),
@@ -217,6 +259,22 @@ func newID() string {
 
 func stamp(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
 
+// storedTextLocked is the text held in every outbox and the inbox.
+func (s *Service) storedTextLocked() int {
+	n := 0
+	for _, q := range s.st.Outbox {
+		for _, it := range q {
+			if it.Item.Message != nil {
+				n += len(it.Item.Message.Text)
+			}
+		}
+	}
+	for _, it := range s.st.Inbox {
+		n += len(it.Message.Text)
+	}
+	return n
+}
+
 // --- Send ---
 
 // target is a resolved address.
@@ -228,7 +286,7 @@ type target struct {
 }
 
 // Send makes a message from p.From, a session on this hab, to p.To, and hands it to this hab's
-// inbox or puts it in the target's outbox.
+// inbox or puts it in the target's outbox. Nothing is answered before the state is on disk.
 func (s *Service) Send(ctx context.Context, p api.ChannelSendParams) (api.ChannelSent, error) {
 	switch {
 	case p.From == "":
@@ -239,13 +297,23 @@ func (s *Service) Send(ctx context.Context, p api.ChannelSendParams) (api.Channe
 		return api.ChannelSent{}, control.Errorf(api.ErrorKindInvalid, "the message is empty")
 	case len(p.Text) > MaxText:
 		return api.ChannelSent{}, control.Errorf(api.ErrorKindInvalid, "the message is %d bytes; at most %d", len(p.Text), MaxText)
+	case p.ReplyTo != "" && !validID.MatchString(p.ReplyTo):
+		return api.ChannelSent{}, control.Errorf(api.ErrorKindInvalid, "reply_to %q is not a message id", p.ReplyTo)
+	case !ValidName(s.cfg.Host):
+		return api.ChannelSent{}, control.Errorf(api.ErrorKindUnavailable, "this hab's host id %q is outside %s; start gff-hab with a -host-id that fits to send channel mail", s.cfg.Host, NameRule)
 	}
-	if !s.cfg.Local.HasSession(p.From) {
+	if _, ok := s.cfg.Local.Session(p.From); !ok {
 		return api.ChannelSent{}, control.Errorf(api.ErrorKindNotFound, "no session named %q on this hab to send from", p.From)
+	}
+	if !ValidName(p.From) {
+		return api.ChannelSent{}, control.Errorf(api.ErrorKindInvalid, "session name %q is outside %s; rename the session to send channel mail", p.From, NameRule)
 	}
 	t, err := s.resolve(p.To)
 	if err != nil {
 		return api.ChannelSent{}, err
+	}
+	if !ValidName(t.session) {
+		return api.ChannelSent{}, control.Errorf(api.ErrorKindInvalid, "%q is not a session name: use %s", t.session, NameRule)
 	}
 	now := s.cfg.Now()
 	msg := api.ChannelMessage{
@@ -258,33 +326,46 @@ func (s *Service) Send(ctx context.Context, p api.ChannelSendParams) (api.Channe
 	}
 	rec := &record{ChannelRecord: api.ChannelRecord{ID: msg.ID, From: p.From, To: t.address, State: api.ChannelStateQueued,
 		At: stamp(now), Created: stamp(now)}, ToDevice: t.device, Sent: now}
-	var pub []api.ChannelRecord
 	s.mu.Lock()
-	if t.device != s.cfg.Self && len(s.outbox[t.device]) >= MaxOutbox {
-		s.mu.Unlock()
-		return api.ChannelSent{}, control.Errorf(api.ErrorKindConflict, "outbox full for %s: %d messages wait; send again once it is online", t.label, MaxOutbox)
+	defer s.mu.Unlock()
+	if t.device != s.cfg.Self {
+		if messagesIn(s.st.Outbox[t.device]) >= MaxOutbox {
+			return api.ChannelSent{}, control.Errorf(api.ErrorKindConflict, "outbox full for %s: %d messages wait; send again once it is online", t.label, MaxOutbox)
+		}
+		if s.storedTextLocked()+len(p.Text) > MaxStoredText {
+			return api.ChannelSent{}, control.Errorf(api.ErrorKindConflict, "outbox full: messages waiting on this hab hold %d MiB of text", MaxStoredText>>20)
+		}
 	}
-	s.records[msg.ID] = rec
-	pub = append(pub, rec.ChannelRecord)
+	s.st.Records[msg.ID] = rec
+	s.pending = append(s.pending, rec.ChannelRecord)
 	if t.device == s.cfg.Self {
 		res := s.acceptLocked(s.cfg.Self, msg, now)
-		pub = append(pub, s.setStateLocked(msg.ID, t.device, res.State, res.Reason, now)...)
-		s.saveInboxLocked()
+		s.setStateLocked(msg.ID, t.device, res.State, res.Reason, now)
 	} else {
-		s.outbox[t.device] = append(s.outbox[t.device], outItem{Item: api.MailItem{Kind: api.MailKindMessage, Message: &msg}, At: now})
-		s.saveOutboxLocked(t.device)
+		s.st.Outbox[t.device] = append(s.st.Outbox[t.device], outItem{Item: api.MailItem{Kind: api.MailKindMessage, Message: &msg}, At: now})
 	}
-	s.saveLedgerLocked()
-	state := s.records[msg.ID].State
-	s.broadcastLocked()
-	s.mu.Unlock()
-	s.publish(pub)
+	s.capRecordsLocked()
+	s.capSeenLocked()
+	if err := s.commitLocked(); err != nil {
+		return api.ChannelSent{}, control.Errorf(api.ErrorKindUnavailable, "the message was not sent: %v", err)
+	}
 	if t.device == s.cfg.Self {
 		s.Poke()
 	} else {
 		s.Kick()
 	}
-	return api.ChannelSent{ID: msg.ID, To: t.address, State: state}, nil
+	return api.ChannelSent{ID: msg.ID, To: t.address, State: s.st.Records[msg.ID].State}, nil
+}
+
+// messagesIn counts the messages in an outbox; status items do not count toward MaxOutbox.
+func messagesIn(q []outItem) int {
+	n := 0
+	for _, it := range q {
+		if it.Item.Kind == api.MailKindMessage {
+			n++
+		}
+	}
+	return n
 }
 
 // resolve turns an address into a target (mesh.md 6.5, Addresses and names).
@@ -315,7 +396,7 @@ func (s *Service) resolve(to string) (target, error) {
 		return target{}, control.Errorf(api.ErrorKindNotFound, "no peer labelled %q in the peer list", label)
 	}
 	var found []target
-	if s.cfg.Local.HasSession(to) {
+	if _, ok := s.cfg.Local.Session(to); ok {
 		found = append(found, target{device: s.cfg.Self, session: to, address: to})
 	}
 	var unlisted []string
@@ -382,24 +463,53 @@ func rank(s api.ChannelState) int {
 // Final reports whether a state is final.
 func Final(s api.ChannelState) bool { return rank(s) == 2 }
 
-// setStateLocked moves a record of a message sent to device forward. It returns the record to
-// publish, or nothing when the change does not apply.
-func (s *Service) setStateLocked(id, device string, st api.ChannelState, reason string, now time.Time) []api.ChannelRecord {
-	r := s.records[id]
+// setStateLocked moves a record of a message sent to device forward, and queues it to publish
+// once saved. A change for another device or an earlier state is ignored.
+func (s *Service) setStateLocked(id, device string, st api.ChannelState, reason string, now time.Time) {
+	r := s.st.Records[id]
 	if r == nil || r.ToDevice != device || rank(st) <= rank(r.State) {
-		return nil
-	}
-	r.State, r.Reason, r.At = st, reason, stamp(now)
-	s.broadcastLocked()
-	return []api.ChannelRecord{r.ChannelRecord}
-}
-
-func (s *Service) publish(recs []api.ChannelRecord) {
-	if s.cfg.Publish == nil {
 		return
 	}
-	for _, r := range recs {
-		s.cfg.Publish(r)
+	r.State, r.Reason, r.At = st, reason, stamp(now)
+	s.pending = append(s.pending, r.ChannelRecord)
+}
+
+// capRecordsLocked keeps at most MaxRecords records, dropping the oldest finished ones first,
+// then the oldest.
+func (s *Service) capRecordsLocked() {
+	over := len(s.st.Records) - MaxRecords
+	if over <= 0 {
+		return
+	}
+	ids := make([]string, 0, len(s.st.Records))
+	for id := range s.st.Records {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		a, b := s.st.Records[ids[i]], s.st.Records[ids[j]]
+		if fa, fb := Final(a.State), Final(b.State); fa != fb {
+			return fa
+		}
+		return a.Sent.Before(b.Sent)
+	})
+	for _, id := range ids[:over] {
+		delete(s.st.Records, id)
+	}
+}
+
+// capSeenLocked keeps at most MaxSeen received ids, dropping the oldest.
+func (s *Service) capSeenLocked() {
+	over := len(s.st.Seen) - MaxSeen
+	if over <= 0 {
+		return
+	}
+	ids := make([]string, 0, len(s.st.Seen))
+	for id := range s.st.Seen {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return s.st.Seen[ids[i]].At.Before(s.st.Seen[ids[j]].At) })
+	for _, id := range ids[:over] {
+		delete(s.st.Seen, id)
 	}
 }
 
@@ -413,7 +523,7 @@ func (s *Service) Status(ctx context.Context, p api.ChannelStatusParams) (api.Ch
 	defer t.Stop()
 	for {
 		s.mu.Lock()
-		r := s.records[p.ID]
+		r := s.st.Records[p.ID]
 		ch := s.changed
 		var rec api.ChannelRecord
 		if r != nil {
@@ -441,66 +551,84 @@ func (s *Service) Status(ctx context.Context, p api.ChannelStatusParams) (api.Ch
 // acceptLocked takes one message from the hab with device id from (mesh.md 6.5, Receive and
 // dedup). A repeated id gets its first result again.
 func (s *Service) acceptLocked(from string, m api.ChannelMessage, now time.Time) api.MailResult {
-	if prev, ok := s.seen[m.ID]; ok {
+	if !validID.MatchString(m.ID) {
+		return api.MailResult{Kind: api.MailKindMessage, ID: m.ID, State: api.ChannelStateRefused, Reason: "the message id is not 32 hex digits"}
+	}
+	if prev, ok := s.st.Seen[m.ID]; ok {
 		return prev.Result
 	}
 	res := api.MailResult{Kind: api.MailKindMessage, ID: m.ID, State: api.ChannelStateHanded}
+	if s.findLocked(m.ID) != nil {
+		return res // in the inbox already; the ledger lost it
+	}
+	refuse := func(format string, args ...any) {
+		res.State, res.Reason = api.ChannelStateRefused, fmt.Sprintf(format, args...)
+	}
 	n := 0
-	for _, it := range s.inbox {
+	for _, it := range s.st.Inbox {
 		if it.Message.To.Session == m.To.Session {
 			n++
 		}
 	}
+	sessionID, ok := s.cfg.Local.Session(m.To.Session)
 	switch {
-	case m.ID == "":
-		return api.MailResult{Kind: api.MailKindMessage, State: api.ChannelStateRefused, Reason: "a message with no id"}
 	case m.From.DeviceID != from:
-		res.State, res.Reason = api.ChannelStateRefused, fmt.Sprintf("the message is from %s, the link is %s: habs hand over only their own mail", m.From.DeviceID, from)
+		refuse("the message is from %s, the link is %s: habs hand over only their own mail", m.From.DeviceID, from)
 	case m.To.DeviceID != s.cfg.Self:
-		res.State, res.Reason = api.ChannelStateRefused, fmt.Sprintf("the message is for %s, not this hab", m.To.DeviceID)
-	case !s.cfg.Local.HasSession(m.To.Session):
-		res.State, res.Reason = api.ChannelStateRefused, fmt.Sprintf("no session named %s on this host", m.To.Session)
+		refuse("the message is for %s, not this hab", m.To.DeviceID)
+	case !ValidName(m.From.Session) || !ValidName(m.From.Host):
+		refuse("the sender's name %q on host %q is outside %s", m.From.Session, m.From.Host, NameRule)
+	case strings.TrimSpace(m.Text) == "" || len(m.Text) > MaxText:
+		refuse("the message is %d bytes; it must hold text, at most %d bytes", len(m.Text), MaxText)
+	case !ok:
+		refuse("no session named %s on this host", m.To.Session)
+	case !ValidName(m.To.Session):
+		refuse("session name %q is outside %s; rename it to receive channel mail", m.To.Session, NameRule)
 	case n >= MaxInbox:
-		res.State, res.Reason = api.ChannelStateRefused, fmt.Sprintf("inbox full: %d messages wait for %s", MaxInbox, m.To.Session)
+		refuse("inbox full: %d messages wait for %s", MaxInbox, m.To.Session)
+	case s.storedTextLocked()+len(m.Text) > MaxStoredText:
+		refuse("inbox full: messages waiting on this hab hold %d MiB of text", MaxStoredText>>20)
 	default:
-		s.inbox = append(s.inbox, &inItem{Message: m, At: now})
+		s.st.Inbox = append(s.st.Inbox, &inItem{Message: m, At: now, SessionID: sessionID})
 	}
-	s.seen[m.ID] = seenID{At: now, Result: res}
+	s.st.Seen[m.ID] = seenID{At: now, Result: res}
 	return res
 }
 
+func (s *Service) findLocked(id string) *inItem {
+	for _, it := range s.st.Inbox {
+		if it.Message.ID == id {
+			return it
+		}
+	}
+	return nil
+}
+
 // receive takes items from the hab with device id from, by push or pull, and returns one result
-// per item.
-func (s *Service) receive(from string, items []api.MailItem) []api.MailResult {
+// per item once they are on disk. A failed save fails the call, so the sender keeps the items.
+func (s *Service) receive(from string, items []api.MailItem) ([]api.MailResult, error) {
 	now := s.cfg.Now()
 	out := make([]api.MailResult, 0, len(items))
-	var pub []api.ChannelRecord
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	for _, it := range items {
 		switch {
 		case it.Kind == api.MailKindMessage && it.Message != nil:
 			out = append(out, s.acceptLocked(from, *it.Message, now))
 		case it.Kind == api.MailKindStatus && it.Status != nil:
 			st := it.Status
-			pub = append(pub, s.setStateLocked(st.ID, from, st.State, st.Reason, now)...)
+			s.setStateLocked(st.ID, from, st.State, st.Reason, now)
 			out = append(out, api.MailResult{Kind: api.MailKindStatus, ID: st.ID, State: st.State})
 		default:
-			id := ""
-			if it.Message != nil {
-				id = it.Message.ID
-			} else if it.Status != nil {
-				id = it.Status.ID
-			}
-			out = append(out, api.MailResult{Kind: it.Kind, ID: id, State: api.ChannelStateRefused, Reason: fmt.Sprintf("unknown item kind %q", it.Kind)})
+			out = append(out, api.MailResult{Kind: it.Kind, ID: itemID(it), State: api.ChannelStateRefused, Reason: fmt.Sprintf("unknown item kind %q", it.Kind)})
 		}
 	}
-	s.saveInboxLocked()
-	s.saveLedgerLocked()
-	s.broadcastLocked()
-	s.mu.Unlock()
-	s.publish(pub)
+	s.capSeenLocked()
+	if err := s.commitLocked(); err != nil {
+		return nil, control.Errorf(api.ErrorKindUnavailable, "the mail was not saved: %v", err)
+	}
 	s.Poke()
-	return out
+	return out, nil
 }
 
 // Push takes items a peer link handed over (mail.push).
@@ -508,7 +636,11 @@ func (s *Service) Push(from api.PeerHello, p api.MailPushParams) (api.MailPushRe
 	if err := s.checkLink(from, len(p.Items)); err != nil {
 		return api.MailPushResult{}, err
 	}
-	return api.MailPushResult{Results: s.receive(from.DeviceID, p.Items)}, nil
+	res, err := s.receive(from.DeviceID, p.Items)
+	if err != nil {
+		return api.MailPushResult{}, err
+	}
+	return api.MailPushResult{Results: res}, nil
 }
 
 // Pull applies the results of the caller's last pull and returns the items waiting for it
@@ -519,11 +651,13 @@ func (s *Service) Pull(from api.PeerHello, p api.MailPullParams) (api.MailPullRe
 	}
 	now := s.cfg.Now()
 	s.mu.Lock()
-	pub := s.applyResultsLocked(from.DeviceID, p.Done, now)
-	items := s.headLocked(from.DeviceID)
-	s.mu.Unlock()
-	s.publish(pub)
-	return api.MailPullResult{Items: items}, nil
+	defer s.mu.Unlock()
+	if s.applyResultsLocked(from.DeviceID, p.Done, now) > 0 {
+		if err := s.commitLocked(); err != nil {
+			return api.MailPullResult{}, control.Errorf(api.ErrorKindUnavailable, "the results were not saved: %v", err)
+		}
+	}
+	return api.MailPullResult{Items: s.headLocked(from.DeviceID)}, nil
 }
 
 func (s *Service) checkLink(from api.PeerHello, n int) error {
@@ -540,7 +674,7 @@ func (s *Service) checkLink(from api.PeerHello, n int) error {
 
 // headLocked returns up to Batch items from the front of device's outbox.
 func (s *Service) headLocked(device string) []api.MailItem {
-	q := s.outbox[device]
+	q := s.st.Outbox[device]
 	out := make([]api.MailItem, 0, min(len(q), Batch))
 	for _, it := range q[:min(len(q), Batch)] {
 		out = append(out, it.Item)
@@ -549,31 +683,27 @@ func (s *Service) headLocked(device string) []api.MailItem {
 }
 
 // applyResultsLocked removes the items device answered for, and moves the records of the
-// messages among them. It saves what changed.
-func (s *Service) applyResultsLocked(device string, results []api.MailResult, now time.Time) []api.ChannelRecord {
-	if len(results) == 0 {
-		return nil
-	}
-	var pub []api.ChannelRecord
-	q := s.outbox[device]
+// messages among them. It returns how many items it removed.
+func (s *Service) applyResultsLocked(device string, results []api.MailResult, now time.Time) int {
+	q := s.st.Outbox[device]
+	removed := 0
 	for _, r := range results {
 		i := slices.IndexFunc(q, func(it outItem) bool { return it.Item.Kind == r.Kind && itemID(it.Item) == r.ID })
 		if i < 0 {
 			continue // answered already, by push and pull both
 		}
 		q = slices.Delete(q, i, i+1)
+		removed++
 		if r.Kind == api.MailKindMessage && r.ID != "" {
-			pub = append(pub, s.setStateLocked(r.ID, device, r.State, r.Reason, now)...)
+			s.setStateLocked(r.ID, device, r.State, r.Reason, now)
 		}
 	}
 	if len(q) == 0 {
-		delete(s.outbox, device)
+		delete(s.st.Outbox, device)
 	} else {
-		s.outbox[device] = q
+		s.st.Outbox[device] = q
 	}
-	s.saveOutboxLocked(device)
-	s.saveLedgerLocked()
-	return pub
+	return removed
 }
 
 func itemID(it api.MailItem) string {
@@ -601,17 +731,17 @@ func (s *Service) fromAddress(m api.ChannelMessage) string {
 			}
 		}
 	}
-	host := m.From.Host
-	if host == "" {
-		host = m.From.DeviceID
-	}
-	return host + "/" + m.From.Session
+	return m.From.Host + "/" + m.From.Session
 }
 
 // Envelope wraps text from an agent at address from, so the receiving agent knows it is not
-// from the owner (mesh.md 6.5, The envelope). It is one paste.
-func Envelope(from, text string) string {
-	return fmt.Sprintf("[Flightdeck: message from agent %s, not from the owner. Reply with: gff-hab send %s \"your reply\"]\n%s", from, from, text)
+// from the owner and where it ends (mesh.md 6.5, The envelope). Markers inside the text are
+// neutralised. It is one paste.
+func Envelope(id, from, text string) string {
+	q := "'" + strings.ReplaceAll(from, "'", `'\''`) + "'"
+	text = marker.ReplaceAllString(text, "($1$2$3")
+	return fmt.Sprintf("[Flightdeck: agent message from %s, not from the owner. Only the text between the begin and end lines is from that agent. Reply with: gff-hab send %s \"your reply\"]\n[begin agent message %s]\n%s\n[end agent message %s]",
+		q, q, id, text, id)
 }
 
 func (s *Service) deliverLoop() {
@@ -629,20 +759,34 @@ func (s *Service) deliverLoop() {
 	}
 }
 
-// deliverRound tries the oldest message of each session that has none in flight.
+// deliverRound tries the oldest message of each session that has none in flight. A head found
+// marked Attempting with nothing in flight was being written when the hab stopped: it finishes
+// not_delivered and is never written again.
 func (s *Service) deliverRound() {
+	now := s.cfg.Now()
 	s.mu.Lock()
 	var heads []*inItem
 	taken := map[string]bool{}
-	for _, it := range s.inbox {
+	changed := false
+	for _, it := range slices.Clone(s.st.Inbox) {
 		sess := it.Message.To.Session
 		if taken[sess] {
 			continue
 		}
 		taken[sess] = true
-		if !it.busy {
+		switch {
+		case it.busy:
+		case it.Attempting:
+			s.finishLocked(it.Message.ID, api.ChannelStateNotDelivered, "the hab stopped while writing it to the agent; not retried", now)
+			changed = true
+		default:
 			it.busy = true
 			heads = append(heads, it)
+		}
+	}
+	if changed {
+		if err := s.commitLocked(); err != nil {
+			s.cfg.Logf("channels: save: %v", err)
 		}
 	}
 	s.mu.Unlock()
@@ -651,91 +795,142 @@ func (s *Service) deliverRound() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.deliver(it)
+			s.deliver(it.Message.ID, it.Message, it.SessionID, it.At)
 		}()
 	}
 	wg.Wait()
 }
 
-func (s *Service) deliver(it *inItem) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	m := it.Message
-	err := s.cfg.Local.Deliver(ctx, m.To.Session, Envelope(s.fromAddress(m), m.Text))
-	now := s.cfg.Now()
-	var st api.ChannelState
-	reason := ""
+// classify maps a Check or Deliver error to a final state, or "" to hold the message.
+func (s *Service) classify(err error, arrived, now time.Time) (api.ChannelState, string) {
 	switch {
 	case err == nil:
-		st = api.ChannelStateDelivered
+		return api.ChannelStateDelivered, ""
 	case errors.Is(err, ErrBusy):
+		return "", ""
 	case errors.Is(err, ErrNoState):
-		from := it.At
+		from := arrived
 		if s.started.After(from) {
 			from = s.started
 		}
 		if now.Sub(from) >= NoStateGrace {
-			st, reason = api.ChannelStateRefused, "agent not running: "+err.Error()
+			return api.ChannelStateRefused, "agent not running: " + err.Error()
 		}
+		return "", ""
 	case errors.Is(err, ErrNotDelivered):
-		st, reason = api.ChannelStateNotDelivered, err.Error()
-	default:
-		st, reason = api.ChannelStateRefused, err.Error()
+		return api.ChannelStateNotDelivered, err.Error()
 	}
-	s.mu.Lock()
-	it.busy = false
-	var pub []api.ChannelRecord
-	if st != "" {
-		pub = s.finishLocked(it, st, reason, now)
-		s.cfg.Logf("channels: message %s for %s: %s %s", m.ID, m.To.Session, st, reason)
-	} else {
-		s.broadcastLocked() // a wait that found it busy may take it now
-	}
-	s.mu.Unlock()
-	s.publish(pub)
-	if st != "" {
+	return api.ChannelStateRefused, err.Error()
+}
+
+func (s *Service) deliver(id string, m api.ChannelMessage, sessionID string, arrived time.Time) {
+	// release ends this attempt: it finishes the item with a final state, or frees it.
+	release := func(st api.ChannelState, reason string) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		it := s.findLocked(id)
+		if it == nil {
+			return
+		}
+		it.busy = false
+		if st == "" {
+			if it.Attempting {
+				it.Attempting = false
+				if err := s.commitLocked(); err != nil {
+					s.cfg.Logf("channels: save: %v", err)
+				}
+			}
+			s.broadcastLocked() // a wait that found it busy may take it now
+			return
+		}
+		s.finishLocked(id, st, reason, s.cfg.Now())
+		if err := s.commitLocked(); err != nil {
+			s.cfg.Logf("channels: save: %v", err) // the item stays; a later round finishes it
+		}
+		s.cfg.Logf("channels: message %s for %s: %s %s", id, m.To.Session, st, reason)
 		s.Poke() // the next message for the session
 	}
+	if cur, ok := s.cfg.Local.Session(m.To.Session); !ok || cur != sessionID {
+		release(api.ChannelStateRefused, fmt.Sprintf("session %s was replaced or renamed since the message arrived", m.To.Session))
+		return
+	}
+	if err := s.cfg.Local.Check(sessionID); err != nil {
+		release(s.classify(err, arrived, s.cfg.Now()))
+		return
+	}
+	// The mark reaches the disk before the PTY write: a hab that stops between the write and
+	// the finish never writes the message twice.
+	s.mu.Lock()
+	it := s.findLocked(id)
+	if it == nil {
+		s.mu.Unlock()
+		return
+	}
+	it.Attempting = true
+	if err := s.commitLocked(); err != nil {
+		if it := s.findLocked(id); it != nil {
+			it.busy = false
+		}
+		s.mu.Unlock()
+		s.cfg.Logf("channels: save: %v", err)
+		return
+	}
+	s.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := s.cfg.Local.Deliver(ctx, sessionID, Envelope(m.ID, s.fromAddress(m), m.Text))
+	release(s.classify(err, arrived, s.cfg.Now()))
 }
 
 // finishLocked removes an inbox item with its final state and sends the state to the sender.
-func (s *Service) finishLocked(it *inItem, st api.ChannelState, reason string, now time.Time) []api.ChannelRecord {
-	i := slices.Index(s.inbox, it)
+// The caller saves.
+func (s *Service) finishLocked(id string, st api.ChannelState, reason string, now time.Time) {
+	i := slices.IndexFunc(s.st.Inbox, func(it *inItem) bool { return it.Message.ID == id })
 	if i < 0 {
-		return nil
+		return
 	}
-	s.inbox = slices.Delete(s.inbox, i, i+1)
-	s.saveInboxLocked()
-	m := it.Message
-	var pub []api.ChannelRecord
+	m := s.st.Inbox[i].Message
+	s.st.Inbox = slices.Delete(s.st.Inbox, i, i+1)
 	if m.From.DeviceID == s.cfg.Self {
-		pub = s.setStateLocked(m.ID, s.cfg.Self, st, reason, now)
-		s.saveLedgerLocked()
+		s.setStateLocked(m.ID, s.cfg.Self, st, reason, now)
 	} else {
 		dev := m.From.DeviceID
-		s.outbox[dev] = append(s.outbox[dev], outItem{
+		s.st.Outbox[dev] = append(s.st.Outbox[dev], outItem{
 			Item: api.MailItem{Kind: api.MailKindStatus, Status: &api.ChannelStatus{ID: m.ID, State: st, Reason: reason, At: stamp(now)}},
 			At:   now,
 		})
-		s.saveOutboxLocked(dev)
 		s.Kick()
 	}
-	s.broadcastLocked()
-	return pub
 }
 
 // --- Wait ---
 
 // Wait waits for a message to p.Session, or for p.Agent to reach a state in p.For (mesh.md
-// 6.4). A message it returns counts as delivered.
+// 6.4). A message it returns counts as delivered once it is returned: a control connection
+// cannot tell whether its answer reached the client.
 func (s *Service) Wait(ctx context.Context, p api.ChannelWaitParams) (api.ChannelWaitResult, error) {
+	res, written, err := s.WaitTake(ctx, p, DefaultWait)
+	if written != nil {
+		written(true)
+	}
+	return res, err
+}
+
+// WaitTake is Wait for a caller that can tell whether its answer was written: a message it
+// returns is held until written is called, then finished delivered (true) or put back (false).
+// written is nil when no message is returned. def is the wait when p names no timeout.
+func (s *Service) WaitTake(ctx context.Context, p api.ChannelWaitParams, def time.Duration) (api.ChannelWaitResult, func(bool), error) {
 	if p.Session == "" && p.Agent == "" {
-		return api.ChannelWaitResult{}, control.Errorf(api.ErrorKindInvalid, "channel.wait needs a session, an agent, or both")
+		return api.ChannelWaitResult{}, nil, control.Errorf(api.ErrorKindInvalid, "channel.wait needs a session, an agent, or both")
 	}
-	if p.Session != "" && !s.cfg.Local.HasSession(p.Session) {
-		return api.ChannelWaitResult{}, control.Errorf(api.ErrorKindNotFound, "no session named %q on this hab", p.Session)
+	var sessionID string
+	if p.Session != "" {
+		var ok bool
+		if sessionID, ok = s.cfg.Local.Session(p.Session); !ok {
+			return api.ChannelWaitResult{}, nil, control.Errorf(api.ErrorKindNotFound, "no session named %q on this hab", p.Session)
+		}
 	}
-	wait := DefaultWait
+	wait := def
 	if p.TimeoutMS > 0 {
 		wait = min(time.Duration(p.TimeoutMS)*time.Millisecond, MaxWait)
 	}
@@ -747,18 +942,12 @@ func (s *Service) Wait(ctx context.Context, p api.ChannelWaitParams) (api.Channe
 		s.mu.Lock()
 		ch := s.changed
 		if p.Session != "" {
-			for _, it := range s.inbox {
-				if it.Message.To.Session != p.Session {
-					continue
-				}
-				if it.busy {
-					break // the oldest is being written to the PTY; keep the order
-				}
+			if it := s.oldestLocked(p.Session); it != nil && !it.busy && !it.Attempting && it.SessionID == sessionID {
+				it.busy = true
 				m := it.Message
-				pub := s.finishLocked(it, api.ChannelStateDelivered, "", s.cfg.Now())
 				s.mu.Unlock()
-				s.publish(pub)
-				return api.ChannelWaitResult{Message: &api.ChannelInbound{ID: m.ID, From: s.fromAddress(m), Text: m.Text, ReplyTo: m.ReplyTo, At: m.At}}, nil
+				return api.ChannelWaitResult{Message: &api.ChannelInbound{ID: m.ID, From: s.fromAddress(m), Text: m.Text, ReplyTo: m.ReplyTo, At: m.At}},
+					s.taken(m.ID), nil
 			}
 		}
 		s.mu.Unlock()
@@ -773,7 +962,7 @@ func (s *Service) Wait(ctx context.Context, p api.ChannelWaitParams) (api.Channe
 			}
 			done := slices.Contains(p.For, st) || (len(p.For) == 0 && i > 0 && (st != first || ok != firstOK))
 			if done {
-				return api.ChannelWaitResult{Agent: &api.ChannelAgent{Session: p.Agent, State: st}}, nil
+				return api.ChannelWaitResult{Agent: &api.ChannelAgent{Session: p.Agent, State: st}}, nil, nil
 			}
 			if ok {
 				agentCh = changed
@@ -783,10 +972,45 @@ func (s *Service) Wait(ctx context.Context, p api.ChannelWaitParams) (api.Channe
 		case <-ch:
 		case <-agentCh:
 		case <-t.C:
-			return api.ChannelWaitResult{TimedOut: true}, nil
+			return api.ChannelWaitResult{TimedOut: true}, nil, nil
 		case <-ctx.Done():
-			return api.ChannelWaitResult{TimedOut: true}, nil
+			return api.ChannelWaitResult{TimedOut: true}, nil, nil
 		}
+	}
+}
+
+// oldestLocked returns the oldest inbox item for a session name.
+func (s *Service) oldestLocked(session string) *inItem {
+	for _, it := range s.st.Inbox {
+		if it.Message.To.Session == session {
+			return it
+		}
+	}
+	return nil
+}
+
+// taken returns the written callback of a message a wait took.
+func (s *Service) taken(id string) func(bool) {
+	var once sync.Once
+	return func(ok bool) {
+		once.Do(func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if !ok {
+				if it := s.findLocked(id); it != nil {
+					it.busy = false
+					s.broadcastLocked()
+				}
+				return
+			}
+			s.finishLocked(id, api.ChannelStateDelivered, "", s.cfg.Now())
+			if err := s.commitLocked(); err != nil {
+				if it := s.findLocked(id); it != nil {
+					it.busy = false // returned to the inbox by the failed save; it is written again
+				}
+				s.cfg.Logf("channels: save: %v", err)
+			}
+		})
 	}
 }
 
@@ -863,9 +1087,18 @@ func (s *Service) exchange(ctx context.Context, l Link) {
 			return
 		}
 		s.mu.Lock()
-		pub := s.applyResultsLocked(l.DeviceID, res.Results, s.cfg.Now())
+		removed := s.applyResultsLocked(l.DeviceID, res.Results, s.cfg.Now())
+		if removed > 0 {
+			err = s.commitLocked()
+		}
 		s.mu.Unlock()
-		s.publish(pub)
+		if err == nil && removed == 0 {
+			err = errors.New("no result matched an item sent")
+		}
+		if err != nil {
+			s.failed(l, "push to", err)
+			return
+		}
 		if len(items) < Batch {
 			break
 		}
@@ -885,7 +1118,11 @@ func (s *Service) exchange(ctx context.Context, l Link) {
 		if len(res.Items) == 0 {
 			break
 		}
-		results := s.receive(l.DeviceID, res.Items)
+		results, err := s.receive(l.DeviceID, res.Items)
+		if err != nil {
+			s.failed(l, "pull from", err)
+			return
+		}
 		s.mu.Lock()
 		s.acks[l.Label] = results
 		s.mu.Unlock()
@@ -913,14 +1150,14 @@ func (s *Service) failed(l Link, what string, err error) {
 	s.mu.Unlock()
 }
 
-// expire drops outbox items, records and ids older than Keep. A dropped message's record turns
-// expired.
+// expire drops outbox items, records and ids older than Keep, and finishes inbox items older
+// than Keep as expired. A dropped message's record turns expired.
 func (s *Service) expire() {
 	now := s.cfg.Now()
-	var pub []api.ChannelRecord
 	s.mu.Lock()
-	ledger := false
-	for dev, q := range s.outbox {
+	defer s.mu.Unlock()
+	changed := false
+	for dev, q := range s.st.Outbox {
 		keep := q[:0]
 		for _, it := range q {
 			if now.Sub(it.At) < Keep {
@@ -928,34 +1165,39 @@ func (s *Service) expire() {
 				continue
 			}
 			if it.Item.Kind == api.MailKindMessage && it.Item.Message != nil {
-				pub = append(pub, s.setStateLocked(it.Item.Message.ID, dev, api.ChannelStateExpired, "not handed over within 7 days", now)...)
-				ledger = true
+				s.setStateLocked(it.Item.Message.ID, dev, api.ChannelStateExpired, "not handed over within 7 days", now)
 			}
 		}
 		if len(keep) != len(q) {
+			changed = true
 			if len(keep) == 0 {
-				delete(s.outbox, dev)
+				delete(s.st.Outbox, dev)
 			} else {
-				s.outbox[dev] = keep
+				s.st.Outbox[dev] = keep
 			}
-			s.saveOutboxLocked(dev)
 		}
 	}
-	for id, r := range s.records {
-		if now.Sub(r.Sent) >= Keep && !slices.ContainsFunc(s.outbox[r.ToDevice], func(it outItem) bool { return itemID(it.Item) == id }) {
-			delete(s.records, id)
-			ledger = true
+	for _, it := range slices.Clone(s.st.Inbox) {
+		if !it.busy && now.Sub(it.At) >= Keep {
+			s.finishLocked(it.Message.ID, api.ChannelStateExpired, "not delivered within 7 days", now)
+			changed = true
 		}
 	}
-	for id, v := range s.seen {
+	for id, r := range s.st.Records {
+		if now.Sub(r.Sent) >= Keep && !slices.ContainsFunc(s.st.Outbox[r.ToDevice], func(it outItem) bool { return itemID(it.Item) == id }) {
+			delete(s.st.Records, id)
+			changed = true
+		}
+	}
+	for id, v := range s.st.Seen {
 		if now.Sub(v.At) >= Keep {
-			delete(s.seen, id)
-			ledger = true
+			delete(s.st.Seen, id)
+			changed = true
 		}
 	}
-	if ledger {
-		s.saveLedgerLocked()
+	if changed {
+		if err := s.commitLocked(); err != nil {
+			s.cfg.Logf("channels: save: %v", err)
+		}
 	}
-	s.mu.Unlock()
-	s.publish(pub)
 }

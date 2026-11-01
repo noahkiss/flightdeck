@@ -13,6 +13,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/channels"
+	"github.com/noahkiss/flightdeck/internal/hook"
 )
 
 // fakeReceiver stands in for Claude Code taking channel messages. It reports $START over OSC
@@ -79,10 +80,16 @@ func newMeshPair(t *testing.T) *meshPair {
 	return &meshPair{a: a, b: b}
 }
 
-// pasted is what a message from sender looks like in the receiving pane.
+// anyID stands for a message id not known yet; it has an id's length.
+var anyID = strings.Repeat("X", 32)
+
+// pasted is what a message from sender looks like in the receiving pane, with anyID for its id.
 func pasted(from, text string) string {
-	return "\x1b[200~" + channels.Envelope(from, text) + "\x1b[201~\r"
+	return "\x1b[200~" + channels.Envelope(anyID, from, text) + "\x1b[201~\r"
 }
+
+// withID puts the message id in a pasted message.
+func withID(p, id string) string { return strings.ReplaceAll(p, anyID, id) }
 
 // startReceiver files bob on e, running fakeReceiver for the messages wants, in order.
 func startReceiver(t *testing.T, e *habEnv, start string, wants ...string) api.SessionCreated {
@@ -149,7 +156,7 @@ func TestChannelsAcrossHabs(t *testing.T) {
 	if st != api.ChannelStateQueued && st != api.ChannelStateHanded {
 		t.Fatalf("state %s", st)
 	}
-	waitUntil(t, "the first message in bob's pane", fileIs(filepath.Join(p.b.work, "msg-1"), m1))
+	waitUntil(t, "the first message in bob's pane", fileIs(filepath.Join(p.b.work, "msg-1"), withID(m1, id)))
 	if r := channelStatus(t, p.a.sock, id, 20000); r.State != api.ChannelStateDelivered || r.From != "alice" || r.To != "bee/bob" {
 		t.Fatalf("record on a: %+v", r)
 	}
@@ -158,7 +165,7 @@ func TestChannelsAcrossHabs(t *testing.T) {
 		return channels.ClashLabel(l, welcome(t, p.a.sock).DeviceID, "bob") == "bee"
 	})
 	id, _ = sendFromPane(t, addr, "bob", "second line\nby name")
-	waitUntil(t, "the second message in bob's pane", fileIs(filepath.Join(p.b.work, "msg-2"), m2))
+	waitUntil(t, "the second message in bob's pane", fileIs(filepath.Join(p.b.work, "msg-2"), withID(m2, id)))
 	if r := channelStatus(t, p.a.sock, id, 20000); r.State != api.ChannelStateDelivered || r.To != "bee/bob" {
 		t.Fatalf("record on a: %+v", r)
 	}
@@ -195,12 +202,12 @@ func TestChannelsTargetRestart(t *testing.T) {
 		t.Fatalf("after a's restart: %+v", r)
 	}
 	p.b.serve()
-	waitUntil(t, "the queued message in bob's pane", fileIs(filepath.Join(p.b.work, "msg-1"), m1))
+	waitUntil(t, "the queued message in bob's pane", fileIs(filepath.Join(p.b.work, "msg-1"), withID(m1, id)))
 	if r := channelStatus(t, p.a.sock, id, 20000); r.State != api.ChannelStateDelivered {
 		t.Fatalf("record on a: %+v", r)
 	}
-	sendFromPane(t, addr, "bee/bob", "and after")
-	waitUntil(t, "the next message in bob's pane", fileIs(filepath.Join(p.b.work, "msg-2"), m2))
+	id, _ = sendFromPane(t, addr, "bee/bob", "and after")
+	waitUntil(t, "the next message in bob's pane", fileIs(filepath.Join(p.b.work, "msg-2"), withID(m2, id)))
 }
 
 // TestChannelsWaitForIdle: a message to a working agent is handed over but waits in B's inbox
@@ -217,7 +224,7 @@ func TestChannelsWaitForIdle(t *testing.T) {
 		t.Fatal("delivered while working")
 	}
 	writeFile(t, filepath.Join(p.b.work, "go-idle"), "")
-	waitUntil(t, "the message after idle", fileIs(filepath.Join(p.b.work, "msg-1"), m1))
+	waitUntil(t, "the message after idle", fileIs(filepath.Join(p.b.work, "msg-1"), withID(m1, id)))
 	if r := channelStatus(t, p.a.sock, id, 20000); r.State != api.ChannelStateDelivered {
 		t.Fatalf("record on a: %+v", r)
 	}
@@ -245,6 +252,60 @@ func TestChannelsNameClash(t *testing.T) {
 	err = c.Call(ctx, "session.rename", api.SessionRenameParams{Session: ss.Session, Name: "bob"}, nil)
 	if errKind(err) != api.ErrorKindConflict || !strings.Contains(err.Error(), "in use on bee") {
 		t.Fatalf("rename to bob on a: %v", err)
+	}
+	// One charset for names (mesh.md 6.5), at create and at rename.
+	err = c.Call(ctx, "session.create", api.SessionCreateParams{Name: "a b", Argv: []string{"/bin/sh", "-c", fakeSender}, Cwd: "/", Cols: 80, Rows: 24,
+		Env: []string{"PATH=/usr/bin:/bin", "DIR=" + p.a.work}}, &res)
+	if errKind(err) != api.ErrorKindInvalid {
+		t.Fatalf("create %q: %v", "a b", err)
+	}
+	err = c.Call(ctx, "session.rename", api.SessionRenameParams{Session: ss.Session, Name: "x$(y)"}, nil)
+	if errKind(err) != api.ErrorKindInvalid {
+		t.Fatalf("rename to %q: %v", "x$(y)", err)
+	}
+	// A name gff-hab picks skips names held on the peer.
+	prog := filepath.Join(p.a.work, "bob")
+	if err := os.WriteFile(prog, []byte("#!/bin/sh\nwhile [ ! -e \"$DIR/end\" ]; do sleep 0.05; done\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	picked := createSession(t, p.a.sock, api.SessionCreateParams{Argv: []string{prog}, Cwd: "/", Cols: 80, Rows: 24,
+		Env: []string{"PATH=/usr/bin:/bin", "DIR=" + p.a.work}})
+	var sr api.StructureResult
+	if err := json.Unmarshal([]byte(run(t, "api", "call", "-socket", p.a.sock, "structure.get")), &sr); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range sr.Sessions {
+		if s.ID == picked.Session && s.Name != "bob-2" {
+			t.Fatalf("picked name %q, want bob-2", s.Name)
+		}
+	}
+}
+
+// TestChannelsPaneIdentity: the pane door sends and waits as the pane's own session, whatever
+// the params name.
+func TestChannelsPaneIdentity(t *testing.T) {
+	e := newHabEnv(t, 0)
+	t.Cleanup(func() { writeFile(t, filepath.Join(e.work, "end"), "") })
+	addr := startSender(t, e)
+	startReceiver(t, e, "working") // bob holds what it gets
+	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(20*time.Second))
+	defer cancel()
+	var sent api.ChannelSent
+	if err := hook.Call(ctx, addr, "channel.send", api.ChannelSendParams{To: "bob", From: "bob", Text: "who am i"}, &sent); err != nil {
+		t.Fatal(err)
+	}
+	if r := channelStatus(t, e.sock, sent.ID, 0); r.From != "alice" {
+		t.Fatalf("sent as %q, want alice", r.From)
+	}
+	var w api.ChannelWaitResult
+	if err := hook.Call(ctx, addr, "channel.wait", api.ChannelWaitParams{Session: "bob", TimeoutMS: 300}, &w); err != nil {
+		t.Fatal(err)
+	}
+	if !w.TimedOut || w.Message != nil {
+		t.Fatalf("alice's pane took bob's message: %+v", w)
+	}
+	if r := channelStatus(t, e.sock, sent.ID, 0); r.State != api.ChannelStateHanded {
+		t.Fatalf("record %+v", r)
 	}
 }
 

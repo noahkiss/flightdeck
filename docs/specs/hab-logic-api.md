@@ -774,7 +774,7 @@ names the stage, and an event is defined but never sent.
 |---|---|---|
 | `session.create` | Start a program in a new pane and file it as a session | Yes (this stage) |
 | `pane.close` | Release a pane; a running program gets a hang-up first | Yes (this stage) |
-| `session.rename` | Give a session a new name; a taken name is `conflict` | Yes (task-98qp7he5) |
+| `session.rename` | Give a session a new name; a taken name is `conflict`, one outside the name charset `invalid` | Yes (task-98qp7he5) |
 | `session.close` | Remove a session record; a live pane keeps running, unfiled (2.2) | Yes (task-98qp7he5) |
 | `session.resume` | Start an exited session's harness again in a new pane, with its resume id | Part 4 stage 4 |
 | `session.interrupt` | Stop the current turn through the adapter (the chat view's Stop) | Part 4 stage 4 |
@@ -828,7 +828,9 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   events. Defaults: the hab's `$SHELL` (else `/bin/sh`); `cwd` is `project_dir`, else, with
   `project`, the project's most recently used folder that still exists (task-3x22hva9: a console
   beside a project's session starts there), else the hab's home; 80x24; the name is the
-  program's base name, then `-2`, `-3` and so on. `env` entries are
+  program's base name, then `-2`, `-3` and so on. A name is 1 to 64 of `A-Z a-z 0-9 . _ -`
+  (`mesh.md` 6.5): another name is `invalid` at create and rename, and a picked name has every
+  other character made `-`. `env` entries are
   added to the hab's own environment and replace the hab's value for the same key; `GFF_HAB` is
   always the pane's own. `project_dir` finds the project by the repository's remote (`origin`,
   else the first), else its root commit, and creates the project, named after the repository

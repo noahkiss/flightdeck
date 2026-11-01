@@ -23,8 +23,9 @@ const ChannelPath = "/channel/"
 var ChannelMethods = []string{"channel.send", "channel.status", "channel.wait"}
 
 // ChannelHandler answers one channel call from the pane. An error that is a *control.Error keeps
-// its kind; any other is unavailable.
-type ChannelHandler func(ctx context.Context, pane, method string, params json.RawMessage) (any, error)
+// its kind; any other is unavailable. written, when not nil, is called once with the result of
+// writing the answer to the caller.
+type ChannelHandler func(ctx context.Context, pane, method string, params json.RawMessage) (result any, written func(error), err error)
 
 // maxChannelBody bounds one channel call: a 64 KiB message as JSON, with room to spare.
 const maxChannelBody = 1 << 20
@@ -55,13 +56,17 @@ func (s *Server) SetChannels(h ChannelHandler) {
 }
 
 func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token string) {
-	answer := func(a channelAnswer) {
+	answer := func(a channelAnswer) error {
 		b, _ := json.Marshal(a)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(b)
+		_, err := w.Write(b)
+		if err == nil {
+			err = http.NewResponseController(w).Flush()
+		}
+		return err
 	}
 	fail := func(kind api.ErrorKind, format string, args ...any) {
-		answer(channelAnswer{Error: &channelError{Kind: kind, Message: fmt.Sprintf(format, args...)}})
+		_ = answer(channelAnswer{Error: &channelError{Kind: kind, Message: fmt.Sprintf(format, args...)}})
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxChannelBody+1))
 	if err != nil {
@@ -104,8 +109,12 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 	rc.SetWriteDeadline(time.Now().Add(channelWait + 10*time.Second))
 	ctx, cancel := context.WithTimeout(r.Context(), channelWait)
 	defer cancel()
-	res, err := h(ctx, pane, call.Method, call.Params)
+	res, written, err := h(ctx, pane, call.Method, call.Params)
+	if written == nil {
+		written = func(error) {}
+	}
 	if err != nil {
+		written(err)
 		var ce *control.Error
 		if errors.As(err, &ce) {
 			fail(ce.Data.Kind, "%s", ce.Message)
@@ -116,10 +125,11 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 	}
 	b, err := json.Marshal(res)
 	if err != nil {
+		written(err)
 		fail(api.ErrorKindUnavailable, "%v", err)
 		return
 	}
-	answer(channelAnswer{Result: b})
+	written(answer(channelAnswer{Result: b}))
 }
 
 // Call makes one channel call from a pane through the address in its GFF_HAB value, and decodes

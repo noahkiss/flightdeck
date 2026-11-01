@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/channels"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/detect"
 	"github.com/noahkiss/flightdeck/internal/holderclient"
@@ -137,6 +138,8 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 	name := p.Name
 	if name == "" {
 		name = a.freeName(filepath.Base(argv[0]))
+	} else if !channels.ValidName(name) {
+		return "", "", control.Errorf(api.ErrorKindInvalid, "session name %q: use %s", name, channels.NameRule)
 	} else if _, taken := a.store.SessionByName(name); taken {
 		return "", "", control.Errorf(api.ErrorKindConflict, "a session named %q exists", name)
 	} else if label := a.onPeer(name); label != "" {
@@ -267,6 +270,9 @@ var _ control.SessionRecords = (*actions)(nil)
 // RenameSession renames a session record (session.rename). A name another session holds is a
 // conflict.
 func (a *actions) RenameSession(session, name string) error {
+	if !channels.ValidName(name) {
+		return control.Errorf(api.ErrorKindInvalid, "session name %q: use %s", name, channels.NameRule)
+	}
 	if label := a.onPeer(name); label != "" {
 		return control.Errorf(api.ErrorKindConflict, "name %q in use on %s", name, label)
 	}
@@ -306,8 +312,18 @@ func (a *actions) ClosePane(ctx context.Context, pane string) error {
 }
 
 // freeName returns base, or base-2, base-3 and so on: the first name no session holds.
+// It keeps to channels.NameRule: other characters in base become -, and base is cut to 56.
 func (a *actions) freeName(base string) string {
-	if base == "" || base == "." || base == "/" {
+	base = strings.Map(func(r rune) rune {
+		if r < 0x80 && channels.ValidName(string(r)) {
+			return r
+		}
+		return '-'
+	}, base)
+	if len(base) > 56 {
+		base = base[:56]
+	}
+	if base == "" || base == "." || base == ".." || strings.Trim(base, "-") == "" {
 		base = "session"
 	}
 	name := base

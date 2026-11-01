@@ -5,130 +5,118 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
-// Files under <state>/channels (mesh.md 6.5): one outbox per target device id, the inbox, and
-// the ledger of sent records and received ids. Each is written whole through a synced temporary
-// file and a rename. A file that does not parse is set aside as .bad.
+// The state file (mesh.md 6.5): <state>/channels/state.json holds every outbox, the inbox, the
+// sent records and the received ids. Every change is saved whole through a synced temporary
+// file and one rename, so a crash leaves the old state or the new one, never half of each. A
+// file that does not parse is set aside as .bad.
 const (
-	dirName    = "channels"
-	inboxFile  = "inbox.json"
-	ledgerFile = "ledger.json"
-	outPrefix  = "outbox-"
+	dirName   = "channels"
+	stateFile = "state.json"
 )
 
-type savedOutbox struct {
-	Device string    `json:"device"`
-	Items  []outItem `json:"items"`
-}
-
-type savedInbox struct {
-	Items []*inItem `json:"items"`
-}
-
-type savedLedger struct {
-	Records map[string]*record `json:"records"`
-	Seen    map[string]seenID  `json:"seen"`
-}
-
-// fileSafe makes a device id usable in a file name.
-var fileSafe = strings.NewReplacer("/", "_", "+", "-", ":", "_")
-
-func (s *Service) dir() string {
+func (s *Service) path() string {
 	if s.cfg.State == "" {
 		return ""
 	}
-	return filepath.Join(s.cfg.State, dirName)
+	return filepath.Join(s.cfg.State, dirName, stateFile)
 }
 
 func (s *Service) load() error {
-	d := s.dir()
-	if d == "" {
+	p := s.path()
+	if p == "" {
 		return nil
 	}
-	if err := os.MkdirAll(d, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
-	var in savedInbox
-	if s.read(filepath.Join(d, inboxFile), &in) {
-		for _, it := range in.Items {
-			if it != nil {
-				s.inbox = append(s.inbox, it)
+	b, err := os.ReadFile(p)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+	case err != nil:
+		return err // unreadable, not corrupt: refuse to start rather than lose mail
+	default:
+		st, err := decodeState(b)
+		if err != nil {
+			s.cfg.Logf("channels: %s: %v; set aside as .bad, starting empty", p, err)
+			if err := os.Rename(p, p+".bad"); err != nil {
+				return err
 			}
+		} else {
+			s.st = st
 		}
 	}
-	var lg savedLedger
-	if s.read(filepath.Join(d, ledgerFile), &lg) {
-		for id, r := range lg.Records {
-			if r != nil {
-				s.records[id] = r
-			}
-		}
-		for id, v := range lg.Seen {
-			s.seen[id] = v
-		}
+	b, err = json.Marshal(s.st)
+	if err != nil {
+		return err
 	}
-	files, _ := filepath.Glob(filepath.Join(d, outPrefix+"*.json"))
-	for _, f := range files {
-		var o savedOutbox
-		if s.read(f, &o) && o.Device != "" && len(o.Items) > 0 {
-			s.outbox[o.Device] = append(s.outbox[o.Device], o.Items...)
-		}
-	}
+	s.lastGood = b
 	return nil
 }
 
-// read decodes a saved file. A missing file is false; one that does not parse is set aside.
-func (s *Service) read(p string, v any) bool {
-	b, err := os.ReadFile(p)
-	if errors.Is(err, os.ErrNotExist) {
-		return false
+func decodeState(b []byte) (state, error) {
+	st := newState()
+	if err := json.Unmarshal(b, &st); err != nil {
+		return newState(), err
+	}
+	if st.Outbox == nil {
+		st.Outbox = map[string][]outItem{}
+	}
+	if st.Records == nil {
+		st.Records = map[string]*record{}
+	}
+	if st.Seen == nil {
+		st.Seen = map[string]seenID{}
+	}
+	st.Inbox = compactItems(st.Inbox)
+	return st, nil
+}
+
+func compactItems(in []*inItem) []*inItem {
+	out := in[:0]
+	for _, it := range in {
+		if it != nil {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// commitLocked saves the state, then publishes the record changes made since the last save.
+// When the save fails, the state returns to the last saved one, the changes are dropped, and
+// the error is returned: no caller answers as if it were on disk.
+func (s *Service) commitLocked() error {
+	b, err := json.Marshal(s.st)
+	if err == nil && s.path() != "" {
+		err = s.cfg.write(s.path(), b)
 	}
 	if err != nil {
-		s.cfg.Logf("channels: %s: %v; starting with it empty", p, err)
-		return false
-	}
-	if err := json.Unmarshal(b, v); err != nil {
-		s.cfg.Logf("channels: %s: %v; set aside as .bad, starting with it empty", p, err)
-		os.Rename(p, p+".bad")
-		return false
-	}
-	return true
-}
-
-func (s *Service) write(name string, v any) {
-	d := s.dir()
-	if d == "" {
-		return
-	}
-	b, err := json.Marshal(v)
-	if err == nil {
-		err = writeSynced(filepath.Join(d, name), b)
-	}
-	if err != nil {
-		s.cfg.Logf("channels: save %s: %v", name, err)
-	}
-}
-
-func (s *Service) saveInboxLocked() { s.write(inboxFile, savedInbox{Items: s.inbox}) }
-
-func (s *Service) saveLedgerLocked() {
-	s.write(ledgerFile, savedLedger{Records: s.records, Seen: s.seen})
-}
-
-func (s *Service) saveOutboxLocked(device string) {
-	name := outPrefix + fileSafe.Replace(device) + ".json"
-	q := s.outbox[device]
-	if len(q) == 0 {
-		if d := s.dir(); d != "" {
-			if err := os.Remove(filepath.Join(d, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-				s.cfg.Logf("channels: remove %s: %v", name, err)
+		busy := map[string]bool{}
+		for _, it := range s.st.Inbox {
+			if it.busy {
+				busy[it.Message.ID] = true
 			}
 		}
-		return
+		if st, derr := decodeState(s.lastGood); derr == nil {
+			s.st = st
+		}
+		for _, it := range s.st.Inbox {
+			it.busy = busy[it.Message.ID]
+		}
+		s.pending = nil
+		s.broadcastLocked()
+		return err
 	}
-	s.write(name, savedOutbox{Device: device, Items: q})
+	s.lastGood = b
+	if s.cfg.Publish != nil {
+		for _, r := range s.pending {
+			s.cfg.Publish(r)
+		}
+	}
+	s.pending = nil
+	s.broadcastLocked()
+	return nil
 }
 
 // writeSynced writes a file through a temporary file that is synced before the rename, then
@@ -154,7 +142,7 @@ func writeSynced(p string, b []byte) error {
 		return err
 	}
 	if d, err := os.Open(filepath.Dir(p)); err == nil {
-		d.Sync()
+		d.Sync() // some file systems refuse a folder sync; the rename is done either way
 		d.Close()
 	}
 	return nil

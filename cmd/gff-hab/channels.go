@@ -46,34 +46,51 @@ type channelLocal struct {
 	send   *agentService // nil without the holder link
 }
 
-func (l *channelLocal) HasSession(name string) bool {
-	_, ok := l.store.SessionByName(name)
-	return ok
+func (l *channelLocal) Session(name string) (string, bool) {
+	ss, ok := l.store.SessionByName(name)
+	return ss.ID, ok
 }
 
-func (l *channelLocal) Deliver(ctx context.Context, session, text string) error {
-	ss, ok := l.store.SessionByName(session)
+// ready checks, writing nothing, that the session's agent may take a message now.
+func (l *channelLocal) ready(sessionID string) (api.Session, error) {
+	ss, ok := l.store.Session(sessionID)
 	if !ok {
-		return fmt.Errorf("no session named %s on this host", session)
+		return ss, fmt.Errorf("session %s is gone", sessionID)
 	}
 	if ss.State == api.SessionStateExited || ss.Pane == "" {
-		return errors.New("agent not running: the session has exited")
+		return ss, errors.New("agent not running: the session has exited")
 	}
 	if l.send == nil {
-		return errors.New("this hab runs without its holder link")
+		return ss, errors.New("this hab runs without its holder link")
 	}
 	st, ok := l.agents.Get(ss.Pane)
 	if !ok || st.Revision == 0 {
-		return fmt.Errorf("%w for session %s", channels.ErrNoState, session)
+		return ss, fmt.Errorf("%w for session %s", channels.ErrNoState, ss.Name)
 	}
 	switch st.State {
 	case api.AgentStatusNone, api.AgentStatusExited:
-		return fmt.Errorf("agent not running: the pane shows %s", st.State)
+		return ss, fmt.Errorf("agent not running: the pane shows %s", st.State)
 	}
 	if _, err := harness.MessageWrites(st.Harness, "x"); errors.Is(err, harness.ErrUnsupported) {
-		return fmt.Errorf("%s takes no messages yet", st.Harness)
+		return ss, fmt.Errorf("%s takes no messages yet", st.Harness)
 	}
-	err := l.send.Send(ctx, "channels", api.SessionSendParams{Session: ss.ID, Text: text})
+	if _, err := l.agents.CheckSend(ss.Pane); err != nil {
+		return ss, fmt.Errorf("%w: %v", channels.ErrBusy, err)
+	}
+	return ss, nil
+}
+
+func (l *channelLocal) Check(sessionID string) error {
+	_, err := l.ready(sessionID)
+	return err
+}
+
+func (l *channelLocal) Deliver(ctx context.Context, sessionID, text string) error {
+	ss, err := l.ready(sessionID)
+	if err != nil {
+		return err
+	}
+	err = l.send.Send(ctx, "channels", api.SessionSendParams{Session: ss.ID, Text: text})
 	if err == nil {
 		return nil
 	}
@@ -109,36 +126,43 @@ func (l *channelLocal) Agent(session string) (api.AgentStatus, bool, <-chan stru
 // channelHook answers channel calls from a pane (mesh.md 6.5): the pane's session sends and
 // waits.
 func channelHook(store *structure.Store, svc *channels.Service) hook.ChannelHandler {
-	return func(ctx context.Context, pane, method string, params json.RawMessage) (any, error) {
+	return func(ctx context.Context, pane, method string, params json.RawMessage) (any, func(error), error) {
 		ss, ok := store.SessionByPane(pane)
 		if !ok {
-			return nil, control.Errorf(api.ErrorKindInvalid, "this pane is not a session; channels send and wait as a session")
+			return nil, nil, control.Errorf(api.ErrorKindInvalid, "this pane is not a session; channels send and wait as a session")
 		}
 		bad := func(err error) error { return control.Errorf(api.ErrorKindInvalid, "%s params: %v", method, err) }
 		switch method {
 		case "channel.send":
 			var p api.ChannelSendParams
 			if err := json.Unmarshal(params, &p); err != nil {
-				return nil, bad(err)
+				return nil, nil, bad(err)
 			}
-			p.From = ss.Name
-			return svc.Send(ctx, p)
+			p.From = ss.Name // the pane's own session, whatever the params say
+			r, err := svc.Send(ctx, p)
+			return r, nil, err
 		case "channel.status":
 			var p api.ChannelStatusParams
 			if err := json.Unmarshal(params, &p); err != nil {
-				return nil, bad(err)
+				return nil, nil, bad(err)
 			}
-			return svc.Status(ctx, p)
+			r, err := svc.Status(ctx, p)
+			return r, nil, err
 		default: // channel.wait
 			var p api.ChannelWaitParams
 			if err := json.Unmarshal(params, &p); err != nil {
-				return nil, bad(err)
+				return nil, nil, bad(err)
 			}
 			if err := checkStates(p.For); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
-			p.Session = ss.Name
-			return svc.Wait(ctx, p)
+			p.Session = ss.Name // the pane's own session, whatever the params say
+			// A message counts as delivered once the answer is written to the command.
+			r, taken, err := svc.WaitTake(ctx, p, channels.PaneWait)
+			if taken == nil {
+				return r, nil, err
+			}
+			return r, func(werr error) { taken(werr == nil) }, err
 		}
 	}
 }
@@ -253,11 +277,16 @@ func waitCmd(args []string, out io.Writer) error {
 	session := fs.String("session", "", "wait for messages to this session on this hab (outside a pane only)")
 	agent := fs.String("agent", "", "also wait for this session's agent on this hab to reach a state in -for")
 	forStates := fs.String("for", "", "comma-separated agent states that end the wait for -agent (default: any change)")
-	timeout := fs.Duration("timeout", channels.DefaultWait, "give up after this long")
+	timeout := fs.Duration("timeout", channels.DefaultWait, "give up after this long (default 110s from a pane, under a harness's 2 min tool limit)")
 	asJSON := fs.Bool("json", false, "print the result as JSON")
 	fs.Parse(args)
 	if fs.NArg() > 0 {
 		return errors.New("wait takes flags only")
+	}
+	set := false
+	fs.Visit(func(f *flag.Flag) { set = set || f.Name == "timeout" })
+	if !set && *sock == "" && *via == "" && os.Getenv(hook.Env) != "" {
+		*timeout = channels.PaneWait
 	}
 	p := api.ChannelWaitParams{Session: *session, Agent: *agent, TimeoutMS: int(*timeout / time.Millisecond)}
 	if *forStates != "" {
