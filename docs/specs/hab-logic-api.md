@@ -1183,10 +1183,24 @@ project's identity, so the session files into the same project. No method of its
     `merge-requests` or `pull-requests` segment (`gh pr checkout`, a fetch of `pull/N/head`);
   - the start ref is a branch of a remote whose URL is not the project's remote;
   - a local branch's `branch.<b>.remote` is another remote or URL;
-  - no branch of the project's remote (`refs/remotes/<r>/` for each remote whose URL is the
-    project's) contains the start commit. This catches a commit id, `FETCH_HEAD`, `^{commit}`
-    and a fetched branch with no upstream. It also catches local commits not pushed yet; that
-    costs a yes. A project with no remote checks against the source checkout's HEAD instead.
+  - no branch of the project's remote contains the start commit, and the commits it lacks were
+    not all made here (the reflog rule below). A branch of the project's remote is a ref under
+    `refs/remotes/<r>/`, for each remote whose URL is the project's, whose name below that has
+    no pull request segment: the refspec `+refs/pull/*/head:refs/remotes/origin/pr/*`, which
+    GitHub documents, puts strangers' commits under `origin/pr/`. This catches a commit id,
+    `FETCH_HEAD`, `^{commit}`, `~0` and a fetched branch with no upstream. A project with no
+    remote checks against the source checkout's HEAD instead.
+
+  **The reflog rule** keeps the user's own unpushed work from waiting for a yes. gff-hab lists
+  the commits in the start commit's history that no branch of the project's remote holds (at
+  most 200; more is foreign). The start point counts as own only when each of them has a
+  `commit:` entry in a reflog (`commit (amend):`, `commit (initial):` and `commit (merge):`
+  count too). Only local git writes the reflog, so a fetched pull request has no such entry:
+  only `fetch` and `checkout`. A local commit stacked on a pull request still fails, through
+  its fetched parent. No reflog (`core.logAllRefUpdates=false`) or an entry past
+  `gc.reflogExpire` gives foreign: the safe side. Entries from `rebase`, `cherry-pick` and `am`
+  do not count. Owner question: should a local rebase or cherry-pick count as own? Until the
+  owner answers, they wait for a yes.
 
   The result is `pending` with the reason and both scripts (`script`, `teardown_script`), so
   the client shows what the yes covers. `worktree.setup` (or `setup: run` on create) is the yes.
@@ -1221,6 +1235,9 @@ project's identity, so the session files into the same project. No method of its
 
 - No pull request checkout by number: fetch it as a branch first (it then counts as foreign,
   above).
+- A pull request fetched under the project remote with a name that has no segment of its own
+  (`origin/pr-7`, not `origin/pr/7`) counts as a branch of the remote. The name check is a
+  heuristic; this gap stays.
 - No scripts, services, ports or terminals from the project file yet (Paseo has them).
 - A session whose program runs in a removed worktree keeps running in a folder that is gone.
   Removing an agent's worktree usually leaves it dirty, so the refusal without force catches

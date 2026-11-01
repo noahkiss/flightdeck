@@ -258,18 +258,88 @@ func (g Git) foreign(ctx context.Context, dir string, sp startPoint, identity st
 		}
 	}
 	if identity == "" {
-		if g.contains(ctx, dir, sp.Commit, "HEAD") {
+		if g.contains(ctx, dir, sp.Commit, "HEAD") || g.committedHere(ctx, dir, sp.Commit, []string{"HEAD"}) {
 			return ""
 		}
 		return fmt.Sprintf("commit %.12s is not in the source checkout's history", sp.Commit)
 	}
+	trusted := g.trustedRefs(ctx, dir, own)
 	for _, r := range own {
-		if out, err := g.run(ctx, dir, "for-each-ref", "--count=1", "--contains", sp.Commit,
-			"--format=%(refname)", "refs/remotes/"+r+"/"); err == nil && out != "" {
-			return ""
+		out, err := g.run(ctx, dir, "for-each-ref", "--contains", sp.Commit, "--format=%(refname)", "refs/remotes/"+r+"/")
+		if err != nil {
+			continue
+		}
+		for _, ref := range strings.Fields(out) {
+			if slices.Contains(trusted, ref) {
+				return ""
+			}
 		}
 	}
+	if g.committedHere(ctx, dir, sp.Commit, trusted) {
+		return ""
+	}
 	return fmt.Sprintf("commit %.12s is not on a branch of the project's remote", sp.Commit)
+}
+
+// trustedRefs lists the branches of the project's remotes, leaving out every ref whose name
+// below refs/remotes/<remote>/ has a pull request segment: a refspec such as
+// +refs/pull/*/head:refs/remotes/origin/pr/* puts strangers' commits there.
+func (g Git) trustedRefs(ctx context.Context, dir string, own []string) []string {
+	var out []string
+	for _, r := range own {
+		refs, err := g.run(ctx, dir, "for-each-ref", "--format=%(refname)", "refs/remotes/"+r+"/")
+		if err != nil {
+			continue
+		}
+		for _, ref := range strings.Fields(refs) {
+			if !isPullRef(strings.TrimPrefix(ref, "refs/remotes/"+r+"/")) {
+				out = append(out, ref)
+			}
+		}
+	}
+	return out
+}
+
+// maxLocalCommits bounds the commits not on the project's remote that committedHere checks.
+const maxLocalCommits = 200
+
+// committedHere reports whether every commit in commit's history that no ref in base holds was
+// made in this repository by git commit: each has a commit entry in a reflog ("commit:",
+// "commit (amend):", "commit (initial):", "commit (merge):"). Only local git writes the reflog,
+// so a fetched pull request cannot claim one. Entries from rebase, cherry-pick and am do not
+// count. No reflog, an entry past its expiry, or more than maxLocalCommits commits: false.
+func (g Git) committedHere(ctx context.Context, dir, commit string, base []string) bool {
+	var stdin strings.Builder
+	for _, b := range base {
+		stdin.WriteString("^" + b + "\n")
+	}
+	out, err := g.runIn(ctx, dir, []byte(stdin.String()), "rev-list", fmt.Sprintf("--max-count=%d", maxLocalCommits+1), commit, "--stdin")
+	if err != nil {
+		return false
+	}
+	local := strings.Fields(string(out))
+	if len(local) == 0 || len(local) > maxLocalCommits {
+		return len(local) == 0
+	}
+	made := map[string]bool{}
+	for _, args := range [][]string{{"HEAD"}, {"--all"}} {
+		log, err := g.run(ctx, dir, append([]string{"reflog", "show", "--format=%H %gs"}, args...)...)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(log, "\n") {
+			hash, subject, ok := strings.Cut(line, " ")
+			if ok && (strings.HasPrefix(subject, "commit:") || strings.HasPrefix(subject, "commit (")) {
+				made[hash] = true
+			}
+		}
+	}
+	for _, c := range local {
+		if !made[c] {
+			return false
+		}
+	}
+	return true
 }
 
 // ownRemotes returns the names of the remotes whose URL is the project's remote.
