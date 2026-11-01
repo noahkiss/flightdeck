@@ -15,6 +15,8 @@ public struct ChatContext: Equatable, Sendable {
     public var sessionExited = false
     /// The pane the composer types into: the session's pane, else the target's.
     public var pane: String?
+    /// The session is another session's console (app.md 6.3).
+    public var isConsole = false
 
     public init() {}
 
@@ -565,6 +567,7 @@ extension ChatContext {
         c.harness = c.agent?.harness
         c.model = session?.model
         c.sessionExited = session?.state == .exited
+        c.isConsole = session.map { ConsoleOpener.isConsole($0, in: store) } ?? false
         c.title = session.map { ($0.title?.isEmpty == false ? $0.title! : $0.name) } ?? (c.pane.map { "Pane \($0)" } ?? "Session")
         return c
     }

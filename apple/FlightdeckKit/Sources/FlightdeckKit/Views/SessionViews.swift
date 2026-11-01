@@ -100,7 +100,7 @@ public struct SessionView: View {
                     ToolbarItem(placement: .principal) {
                         ChatHeader(context: model.context)
                     }
-                    if model.target.session != nil {
+                    if model.target.session != nil, !model.context.isConsole {
                         ToolbarItem(placement: .secondaryAction) { consoleButton }
                     }
                     ToolbarItem(placement: .primaryAction) {
@@ -116,7 +116,7 @@ public struct SessionView: View {
                     HStack {
                         ChatHeader(context: model.context)
                         Spacer()
-                        if model.target.session != nil {
+                        if model.target.session != nil, !model.context.isConsole {
                             consoleButton
                                 .buttonStyle(.borderless)
                         }

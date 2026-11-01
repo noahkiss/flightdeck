@@ -256,12 +256,28 @@ final class ConsoleTests: XCTestCase {
         var store: HabStore
         var created: [SessionCreateParams] = []
         var closed: [String] = []
+        /// The folder of the session pane's newest command.
+        var cwd: String?
+        /// Errors the next creates throw, in order.
+        var createErrors: [Error] = []
+        /// The store after a create failed (another device's console arrived).
+        var storeAfterFailure: HabStore?
         init(_ store: HabStore) { self.store = store }
         var calls: ConsoleOpener.Calls {
             .init(
                 store: { [self] in lock.withLock { store } },
-                create: { [self] p in lock.withLock { created.append(p) }; return SessionCreated(pane: "%new", seq: 1, session: "s-new") },
-                close: { [self] id in lock.withLock { closed.append(id) } }
+                create: { [self] p in
+                    try lock.withLock {
+                        created.append(p)
+                        if !createErrors.isEmpty {
+                            if let s = storeAfterFailure { store = s }
+                            throw createErrors.removeFirst()
+                        }
+                    }
+                    return SessionCreated(pane: "%new", seq: 1, session: "s-new")
+                },
+                close: { [self] id in lock.withLock { closed.append(id) } },
+                newestCwd: { [self] _ in lock.withLock { cwd } }
             )
         }
     }
@@ -297,5 +313,75 @@ final class ConsoleTests: XCTestCase {
         XCTAssertEqual(pane, "%new")
         XCTAssertEqual(o.closed, ["s2"])
         XCTAssertEqual(o.created.count, 1)
+    }
+
+    /// A running console whose pane event has not arrived yet is the
+    /// console: it is reused, never closed.
+    func testOpenerNeverClosesARunningConsole() async throws {
+        let o = OpenerCalls(store([
+            Fixture.session("s1", name: "claude", pane: "%1", project: "p1"),
+            Fixture.session("s2", name: "claude console", pane: "%2", project: "p1"),
+        ], panes: [Fixture.pane("%1", session: "s1")]))
+        let pane = try await ConsoleOpener.open(session: "s1", calls: o.calls)
+        XCTAssertEqual(pane, "%2")
+        XCTAssertEqual(o.closed, [])
+        XCTAssertTrue(o.created.isEmpty)
+
+        // Running with no pane yet: an error, and still nothing closed.
+        let starting = OpenerCalls(store([
+            Fixture.session("s1", name: "claude", pane: "%1", project: "p1"),
+            Fixture.session("s2", name: "claude console", pane: nil, project: "p1"),
+        ], panes: [Fixture.pane("%1", session: "s1")]))
+        do {
+            _ = try await ConsoleOpener.open(session: "s1", calls: starting.calls)
+            XCTFail("a console still starting gave a pane")
+        } catch ConsoleOpener.Failure.starting {}
+        XCTAssertEqual(starting.closed, [])
+        XCTAssertTrue(starting.created.isEmpty)
+    }
+
+    /// The console starts in the folder of the session's newest command; a
+    /// folder that is gone leaves the choice to the hab.
+    func testOpenerStartsInTheSessionsFolder() async throws {
+        let st = store([Fixture.session("s1", name: "sh", pane: "%1", project: "p1")], panes: [Fixture.pane("%1", session: "s1")])
+        let o = OpenerCalls(st)
+        o.cwd = "/work/tree-b"
+        _ = try await ConsoleOpener.open(session: "s1", calls: o.calls)
+        XCTAssertEqual(o.created, [SessionCreateParams(cwd: "/work/tree-b", name: "sh console", project: "p1")])
+
+        let gone = OpenerCalls(st)
+        gone.cwd = "/work/removed"
+        gone.createErrors = [RPCError(code: -32000, message: "invalid", data: ErrorData(hint: "cwd is not a directory", kind: .invalid, seq: 1))]
+        let pane = try await ConsoleOpener.open(session: "s1", calls: gone.calls)
+        XCTAssertEqual(pane, "%new")
+        XCTAssertEqual(gone.created.map(\.cwd), ["/work/removed", nil])
+    }
+
+    /// Two opens at once: the second create meets a conflict and returns the
+    /// console the first one started.
+    func testOpenerConflictReturnsTheOtherConsole() async throws {
+        let s1 = Fixture.session("s1", name: "claude", pane: "%1", project: "p1")
+        let o = OpenerCalls(store([s1], panes: [Fixture.pane("%1", session: "s1")]))
+        o.createErrors = [RPCError(code: -32000, message: "conflict", data: ErrorData(hint: "a session named it exists", kind: .conflict, seq: 1))]
+        o.storeAfterFailure = store([s1, Fixture.session("s9", name: "claude console", pane: "%9", project: "p1")],
+                                    panes: [Fixture.pane("%1", session: "s1"), Fixture.pane("%9", session: "s9")])
+        let pane = try await ConsoleOpener.open(session: "s1", calls: o.calls)
+        XCTAssertEqual(pane, "%9")
+    }
+
+    func testIsConsole() {
+        let a = Fixture.session("s1", name: "claude", pane: "%1", project: "p1")
+        let c = Fixture.session("s2", name: "claude console", pane: "%2", project: "p1")
+        let lone = Fixture.session("s3", name: "logs console", pane: "%3", project: "p1")
+        let st = store([a, c, lone], panes: [])
+        XCTAssertTrue(ConsoleOpener.isConsole(c, in: st))
+        XCTAssertFalse(ConsoleOpener.isConsole(a, in: st))
+        XCTAssertFalse(ConsoleOpener.isConsole(lone, in: st), "no session named logs")
+
+        // The session view hides its Console button on a console.
+        var hab = Board.Hab(id: "h", configLabel: nil, endpoint: "local")
+        hab.state.store = st
+        XCTAssertTrue(ChatContext.of(SessionTarget(habID: "h", session: "s2", pane: nil), hab: hab).isConsole)
+        XCTAssertFalse(ChatContext.of(SessionTarget(habID: "h", session: "s1", pane: nil), hab: hab).isConsole)
     }
 }
