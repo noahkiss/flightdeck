@@ -634,7 +634,8 @@ func (c *conn) handlePermissions(m message) {
 
 // maxExplainTime bounds one detect.explain call: a holder round trip and a process listing.
 // explainGrace is how long past it the reply waits for an answer before it reports the overrun.
-const (
+// They are variables so a test can shorten them.
+var (
 	maxExplainTime = 15 * time.Second
 	explainGrace   = 500 * time.Millisecond
 )
