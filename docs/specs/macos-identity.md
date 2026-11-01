@@ -444,7 +444,7 @@ A check is about the process that will be responsible, so it must run as that pr
 | Background item | `launchctl print gui/<uid>/<label>` succeeds for every job | Yes | `x-apple.systempreferences:com.apple.LoginItems-Settings.extension` (**needs Mac proof**) |
 | Full Disk Access | `opendir("/Library/Application Support/com.apple.TCC")`; 10 s deadline; no answer reads `unanswered`, counted as missing | Yes | `x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles` |
 | Files and Folders | If FDA is granted: `granted` without probing. Else **cannot be checked without risking a prompt**: an `open` of an undecided folder raises the dialog. `--check` reports `unknown`. The walk probes each folder on its own thread while the user watches | **No** | `...?Privacy_FilesAndFolders` |
-| Local Network | No preflight API is known. `--check` reports `unknown` unless a connection gff-hab made to a LAN address has succeeded or failed with the local-network error since start. The walk makes one connection to a LAN peer (or the gateway) from the probe and keeps the probe alive 30 s, because a short-lived process gets no alert (TN3179) | **No** | `...?Privacy_LocalNetwork` (**needs Mac proof**) |
+| Local Network | No preflight API is known. `--check` reports `unknown` unless a connection gff-hab made to a LAN address has succeeded or failed with the local-network error since start. The walk makes one connection to a LAN peer (or the gateway) from the probe and keeps the probe alive 30 s, because a short-lived process gets no alert (TN3179) | **No** | No anchor exists (8.1): open `x-apple.systempreferences:com.apple.preference.security` and name the Local Network row in words |
 | Accessibility | `AXIsProcessTrusted()` in the probe | Yes | `...?Privacy_Accessibility`. The walk first calls `AXIsProcessTrustedWithOptions` with the prompt option once, which lists the holder in the pane, so the user only toggles it |
 | Screen Recording | `CGPreflightScreenCaptureAccess()` in the probe | Yes | `...?Privacy_ScreenCapture`. The walk first calls `CGRequestScreenCaptureAccess()` once, which lists the holder |
 | Automation | `AEDeterminePermissionToAutomateTarget(target, any, any, false)` per configured target. -1744 reads `unknown` (it means undecided or denied), -600 reads `unknown` (target not running) | Yes, but cannot tell undecided from denied | `...?Privacy_Automation` |
@@ -558,6 +558,22 @@ that Mac (`tccutil reset` included); **Account** means creating a fresh macOS us
 | P12 | Update to a second signed release (smoke 12) | No prompt; `--check` exit 0; the drained holder's panes still read the protected folder | DevID |
 
 Steps that need nothing (P0, P2, P8) can run at any time. The others wait for approval.
+
+### 8.1 Results so far
+
+**P8, static part (macOS 27.2).** Checked on disk, without opening System Settings:
+
+- The extension ids `com.apple.LoginItems-Settings.extension` and
+  `com.apple.Notifications-Settings.extension` exist in `/System/Library/ExtensionKit/Extensions`.
+- The Privacy & Security extension (`com.apple.settings.PrivacySecurity.extension`) still
+  carries the legacy name `com.apple.preference.security`, and these anchors: `Privacy_AllFiles`,
+  `Privacy_Accessibility`, `Privacy_ScreenCapture`, `Privacy_Automation`, `Privacy_DevTools`,
+  `Privacy_Pasteboard`, `Privacy_FilesAndFolders`.
+- It has **no `Privacy_LocalNetwork` anchor**. The Local Network walk must open the Privacy &
+  Security pane without an anchor and name the row in words.
+
+Still open for P8: that each URL opens the named pane. Confirming it needs a person at the screen,
+or a screen capture, which needs Screen Recording (a TCC grant).
 
 ---
 
