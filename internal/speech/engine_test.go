@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -305,10 +306,18 @@ func TestHang(t *testing.T) {
 	if kindOf(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "did not answer") {
 		t.Fatalf("hung clip: %v", err)
 	}
+	waitFor(t, "helper gone", func() bool { h.e.mu.Lock(); defer h.e.mu.Unlock(); return h.e.proc == nil })
+	// A fresh hung helper, loaded before the caller's short context starts, so the caller gives
+	// up during the decode and only the watchdog can end it.
+	if _, err := h.e.Prepare(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "ready", func() bool { st, _ := h.e.Prepare(context.Background()); return st.State == api.SpeechStateReady })
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	waitFor(t, "helper gone", func() bool { h.e.mu.Lock(); defer h.e.mu.Unlock(); return h.e.proc == nil })
-	h.e.Transcribe(ctx, pcm(2)) // gives up; the watchdog still ends the hung helper
+	if _, err := h.e.Transcribe(ctx, pcm(2)); !strings.Contains(fmt.Sprint(err), "while the clip decodes") {
+		t.Fatalf("given-up clip: %v", err)
+	}
 	t.Setenv(speechtest.Env, "ok")
 	res, err := h.e.Transcribe(context.Background(), pcm(3))
 	if err != nil || res.Text != "clip 3" {
@@ -407,32 +416,35 @@ func TestInvalidClip(t *testing.T) {
 	}
 }
 
-// longOpus is a hand-made Ogg Opus file that claims 121 s; its packets are not real audio.
+// longOpus is a hand-made Ogg Opus file of the given length: 120 ms packets (TOC bytes only,
+// not real audio) that fill it, and a granule that says it.
 func longOpus(seconds int) []byte {
+	return opusPages(seconds*1000/120, int64(seconds)*oggopus.Rate)
+}
+
+// opusPages builds n packets of 120 ms (code 3, six 20 ms CELT frames), 50 to a page, with
+// granule on the last page and -1 before it.
+func opusPages(n int, granule int64) []byte {
 	b := oggopus.Page(0x02, 0, 1, 0, oggopus.Head(1, 0, 16000))
 	b = append(b, oggopus.Page(0, 0, 1, 1, oggopus.Tags("test"))...)
-	return append(b, oggopus.Page(0x04, int64(seconds)*oggopus.Rate, 1, 2, []byte{0xf8})...)
+	pkt := []byte{31<<3 | 3, 6}
+	for i := 0; i < n; i += 50 {
+		var ps [][]byte
+		for j := i; j < min(i+50, n); j++ {
+			ps = append(ps, pkt)
+		}
+		typ, gp := byte(0), int64(-1)
+		if i+50 >= n {
+			typ, gp = 0x04, granule
+		}
+		b = append(b, oggopus.Page(typ, gp, 1, uint32(2+i/50), ps...)...)
+	}
+	return b
 }
 
 // lyingOpus is a hand-made Ogg Opus file whose pages say granule 0 but whose 1009 packets of
 // 120 ms hold 121 s.
-func lyingOpus() []byte {
-	b := oggopus.Page(0x02, 0, 1, 0, oggopus.Head(1, 0, 16000))
-	b = append(b, oggopus.Page(0, 0, 1, 1, oggopus.Tags("test"))...)
-	pkt := []byte{31<<3 | 3, 6}
-	for i := 0; i < 1009; i += 50 {
-		var ps [][]byte
-		for j := i; j < min(i+50, 1009); j++ {
-			ps = append(ps, pkt)
-		}
-		typ := byte(0)
-		if i+50 >= 1009 {
-			typ = 0x04
-		}
-		b = append(b, oggopus.Page(typ, 0, 1, uint32(2+i/50), ps...)...)
-	}
-	return b
-}
+func lyingOpus() []byte { return opusPages(1009, 0) }
 
 // TestLimits: the clip checks run before the helper sees a byte.
 func TestLimits(t *testing.T) {
@@ -446,6 +458,7 @@ func TestLimits(t *testing.T) {
 		{"too large", api.SpeechTranscribeParams{Format: "pcm16", Audio: make([]byte, MaxAudioBytes+2)}, "at most 1048576"},
 		{"too long", api.SpeechTranscribeParams{Format: "opus", Audio: longOpus(121)}, "at most 120000"},
 		{"granule lies", api.SpeechTranscribeParams{Format: "opus", Audio: lyingOpus()}, "is 121080 ms by its packets"},
+		{"granule overflows", api.SpeechTranscribeParams{Format: "opus", Audio: opusPages(10, 1<<62)}, "runs past the packets"},
 		{"language", api.SpeechTranscribeParams{Format: "pcm16", Audio: clip(1, 10), Language: "fr"}, "en only"},
 		{"format", api.SpeechTranscribeParams{Format: "mp3", Audio: clip(1, 10)}, "use opus or pcm16"},
 		{"odd", api.SpeechTranscribeParams{Format: "pcm16", Audio: []byte{1, 2, 3}}, "even number"},

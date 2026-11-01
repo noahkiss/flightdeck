@@ -249,7 +249,14 @@ func (e *Engine) startLocked() (*helper, error) {
 		return nil, errors.New("the speech engine is closed")
 	}
 	if e.proc != nil {
-		return e.proc, nil
+		// A helper that ended (killed by a watchdog, crashed) is gone even before its monitor
+		// goroutine clears e.proc: the next clip must start a fresh one, never get the dead one.
+		select {
+		case <-e.proc.done:
+			e.proc = nil
+		default:
+			return e.proc, nil
+		}
 	}
 	p, err := startHelper(e.cfg.Helper, e.dir, e.cfg.Threads, e.cfg.Logf)
 	if err != nil {
