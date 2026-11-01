@@ -557,6 +557,116 @@ func TestRebaseAndCherryPick(t *testing.T) {
 	}
 }
 
+// TestWhitespaceTwin: a pull request that copies an upstream commit's author and date, with a
+// setup script that differs only in a space, stays foreign when cherry-picked. git patch-id
+// --stable would give both the same id.
+func TestWhitespaceTwin(t *testing.T) {
+	f, identity, _ := prFixture(t)
+	origin := strings.TrimPrefix(identity, "file://")
+	base := f.git(f.repo, "rev-parse", "origin/main")
+	clone := func(name string, env ...string) (string, Git) {
+		dir := filepath.Join(filepath.Dir(f.root), name)
+		f.git(filepath.Dir(f.root), "clone", "-q", "-b", "main", origin, dir)
+		g := f.g
+		g.Env = append(slices.Clone(f.g.Env), env...)
+		return dir, g
+	}
+	run := func(g Git, dir string, args ...string) string {
+		t.Helper()
+		out, err := g.run(context.Background(), dir, args...)
+		if err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+		return out
+	}
+	// The maintainer's commit O on origin/main, which the user pulls.
+	maint, mg := clone("maintainer", "GIT_AUTHOR_NAME=maintainer", "GIT_AUTHOR_EMAIL=m@example.com")
+	f.write(maint, "flightdeck.json", `{"worktree":{"setup":"rm -rf \"$HOME\"/.cache/app"}}`)
+	run(mg, maint, "add", "flightdeck.json")
+	run(mg, maint, "commit", "-q", "-m", "clean the cache")
+	o := run(mg, maint, "rev-parse", "HEAD")
+	date := run(mg, maint, "log", "-1", "--format=%ad", "--date=raw")
+	run(mg, maint, "push", "-q", "origin", "HEAD:main")
+	f.git(f.repo, "pull", "-q", "--ff-only", "origin", "main")
+	// The twin P: O's parent, author and date, and one space more.
+	evil, eg := clone("evil", "GIT_AUTHOR_NAME=maintainer", "GIT_AUTHOR_EMAIL=m@example.com", "GIT_AUTHOR_DATE="+date)
+	run(eg, evil, "reset", "-q", "--hard", base)
+	f.write(evil, "flightdeck.json", `{"worktree":{"setup":"rm -rf \"$HOME\" /.cache/app"}}`)
+	run(eg, evil, "add", "flightdeck.json")
+	run(eg, evil, "commit", "-q", "-m", "clean the cache")
+	p := run(eg, evil, "rev-parse", "HEAD")
+	run(eg, evil, "push", "-q", "origin", "HEAD:refs/pull/9/head")
+	f.git(f.repo, "fetch", "-q", "origin", "refs/pull/9/head")
+	// git patch-id --stable, which ignores whitespace, pairs the two: the case this test is for.
+	diffs, err := f.g.runIn(context.Background(), f.repo, nil, "log", "--no-walk", "-p", "--format=commit %H", o, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stable, err := f.g.runIn(context.Background(), f.repo, diffs, "patch-id", "--stable")
+	if lines := strings.Fields(string(stable)); err != nil || len(lines) != 4 || lines[0] != lines[2] {
+		t.Fatalf("the fixture is not a whitespace twin: %q %v", stable, err)
+	}
+	f.git(f.repo, "checkout", "-q", "-b", "bp", base)
+	f.git(f.repo, "cherry-pick", p)
+	f.git(f.repo, "checkout", "-q", "main")
+	if c, err := f.create(CreateOptions{Branch: "bp", Remote: identity}); err != nil || c.Foreign == "" {
+		t.Fatalf("a whitespace twin of an upstream commit, cherry-picked: %+v %v", c, err)
+	}
+}
+
+// TestPullRebase: own commits brought up to date with git pull --rebase stay own.
+func TestPullRebase(t *testing.T) {
+	f, identity, _ := prFixture(t)
+	commit := func(file string) {
+		f.write(f.repo, file, file+"\n")
+		f.git(f.repo, "add", file)
+		f.git(f.repo, "commit", "-q", "-m", file)
+	}
+	f.gitAt(4, f.repo, "checkout", "-q", "-b", "mine", "--track", "origin/main")
+	commit("a.txt")
+	commit("b.txt")
+	f.git(f.repo, "checkout", "-q", "-b", "up", "origin/main")
+	commit("up.txt")
+	f.git(f.repo, "push", "-q", "origin", "up:main")
+	f.git(f.repo, "checkout", "-q", "mine")
+	f.gitAt(1, f.repo, "pull", "-q", "--rebase")
+	log := f.git(f.repo, "reflog", "show", "--format=%gs", "HEAD")
+	if !slices.ContainsFunc(strings.Split(log, "\n"), func(l string) bool {
+		return strings.HasPrefix(l, "pull") && strings.Contains(l, "(pick): ")
+	}) {
+		t.Fatalf("git pull --rebase wrote no pull pick entries:\n%s", log)
+	}
+	f.git(f.repo, "checkout", "-q", "main")
+	if c, err := f.create(CreateOptions{Branch: "mine", Remote: identity}); err != nil || c.Foreign != "" {
+		t.Fatalf("own commits after git pull --rebase: %+v %v", c, err)
+	}
+}
+
+func TestIsPick(t *testing.T) {
+	for subject, want := range map[string]bool{
+		"rebase (pick): a":                       true,
+		"rebase -i (pick): a":                    true,
+		"rebase (reword): a":                     true,
+		"rebase (edit): a":                       true,
+		"pull --rebase (pick): a":                true,
+		"pull -q --rebase origin main (pick): a": true,
+		"cherry-pick: a":                         true,
+		"rebase (squash): a":                     false,
+		"rebase (fixup): a":                      false,
+		"rebase (start): checkout origin/main":   false,
+		"rebase (finish): returning to refs/x":   false,
+		"rebase (continue): a":                   false,
+		"commit: a":                              false,
+		"am: a":                                  false,
+		"pull: Fast-forward":                     false,
+		"checkout: moving from a to b (pick)":    false,
+	} {
+		if isPick(subject) != want {
+			t.Errorf("isPick(%q) = %v", subject, !want)
+		}
+	}
+}
+
 func TestForeignPullRequestPaths(t *testing.T) {
 	f := newFixture(t)
 	origin := f.remote("origin")

@@ -1219,13 +1219,23 @@ project's identity, so the session files into the same project. No method of its
   second.
 
   Rebased and cherry-picked commits count as own when their source does (owner decision
-  2026-11-01). A `rebase (pick):`, `rebase (reword):`, `rebase (edit):` or `cherry-pick:` entry
-  names only the copy, so gff-hab pairs it with a source: a commit some reflog entry names that
-  has the same author name, email and date (which both keep, and which bounds the work) and
-  the same `git patch-id --stable`, the same changes. The copy then brings in nothing its
-  source did not, and the source must itself be own by this rule. `squash` and `fixup` steps,
-  and a rebase that resolved a conflict, change the changes: they wait for a yes, a false
-  alarm. So does a rebase of commits made on another machine, which no local entry names.
+  2026-11-01). A pick entry names only the copy: a `cherry-pick:` entry, or a rebase step that
+  keeps its changes, whose action (the part before the first `: `) starts with `rebase` or
+  `pull` and ends in `(pick)`, `(reword)` or `(edit)`. That covers `git rebase`,
+  `git rebase -i` and `git pull --rebase` with any arguments
+  (`pull -q --rebase origin main (pick):`). gff-hab pairs the copy with a source: a commit some
+  reflog entry names that has the same author name, email and date (which both keep, and which
+  bounds the work) and the same patch id, the same changes. The patch id is `git patch-id
+  --verbatim` over `git diff-tree -p --full-index --no-color --no-ext-diff --no-textconv
+  -U3`: whitespace counts (in a script a space can change the meaning), a binary file is
+  compared by its full blob ids, and user config cannot change the diff. A git without
+  `--verbatim` pairs nothing: false alarms only. The copy then brings in nothing its source
+  did not, and the source must itself be own by this rule. Patch ids are computed only for the
+  pick commits the walk reaches, with their same-author candidates, in one batch per step, so
+  the cost follows the commits under check, not the length of the reflog. `squash` and `fixup`
+  steps, and a rebase that resolved a conflict (`rebase (continue):`), change the changes: they
+  wait for a yes, a false alarm. So does a rebase of commits made on another machine, which no
+  local entry names.
 
   The chain of amends, rebases and cherry-picks is followed back at most 8 steps, and a set of
   commits already visited (each marked foreign while its own check runs) ends a cycle at once:
@@ -1302,6 +1312,9 @@ project's identity, so the session files into the same project. No method of its
   through expiry; reftable repositories would still need the metadata check.
 - A rebase with a resolved conflict, a squash or fixup step, and a rebase of commits made on
   another machine wait for a yes.
+- A patch id leaves out each hunk's line numbers, so a copy that puts a source's hunk at another
+  place in the same file, with the same three lines of context on each side, pairs with it. It
+  needs a file with repeated blocks.
 - A local merge commit (`git merge`, `git pull`) waits for a yes until it is pushed.
 - No scripts, services, ports or terminals from the project file yet (Paseo has them).
 - A session whose program runs in a removed worktree keeps running in a folder that is gone.

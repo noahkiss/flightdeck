@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -381,11 +382,32 @@ type reflogIndex struct {
 	// from maps a commit an amend, rebase or cherry-pick entry made to the commits it was made
 	// from: for an amend the commit it replaced, for a rebase or cherry-pick its source.
 	from map[string][]string
+	// The rebase and cherry-pick entries, whose sources are found only when the walk reaches
+	// them (resolvePicks): the commits a pick entry made, each commit's author key, and the
+	// commits the reflogs name by author key.
+	picks    map[string]bool
+	author   map[string]string
+	byAuthor map[string][]string
+	resolved map[string]bool
 }
 
-// pickSubjects start the reflog entries that copy a commit: a rebase step that keeps its changes,
-// and a cherry-pick. Squash and fixup steps change the changes, so they are not here.
-var pickSubjects = []string{"rebase (pick):", "rebase (reword):", "rebase (edit):", "rebase -i (pick):", "cherry-pick:"}
+// isPick reports whether a reflog subject is an entry that copies a commit: a rebase step that
+// keeps its changes, as `git rebase` or `git pull --rebase` writes it with any arguments
+// ("rebase (pick):", "rebase -i (pick):", "pull -q --rebase origin main (pick):"), or a
+// cherry-pick. Squash and fixup steps change the changes, so they are not picks.
+func isPick(subject string) bool {
+	action, _, ok := strings.Cut(subject, ": ")
+	if !ok {
+		return false
+	}
+	if action == "cherry-pick" {
+		return true
+	}
+	if !strings.HasPrefix(action, "rebase") && !strings.HasPrefix(action, "pull") {
+		return false
+	}
+	return strings.HasSuffix(action, "(pick)") || strings.HasSuffix(action, "(reword)") || strings.HasSuffix(action, "(edit)")
+}
 
 // commitFields reads parents, author name, email and raw date of each commit, keyed by commit.
 func (g Git) commitFields(ctx context.Context, dir string, commits []string) map[string][]string {
@@ -403,16 +425,19 @@ func (g Git) commitFields(ctx context.Context, dir string, commits []string) map
 	return fields
 }
 
-// patchIDs reads git patch-id --stable of each commit: the same id means the same changes.
-// A merge commit has none.
+// patchIDs reads the patch id of each commit: the same id means the same changes. The diff comes
+// from plumbing, so user config (textconv, external diff, context size, renames) cannot change
+// it; --full-index puts full blob ids on a binary file's index line; --verbatim keeps
+// whitespace, since in a script a space can change the meaning. A git without --verbatim
+// fails the call: no ids, so false alarms only. A merge or a root commit has no id.
 func (g Git) patchIDs(ctx context.Context, dir string, commits []string) map[string]string {
 	ids := map[string]string{}
 	diffs, err := g.runIn(ctx, dir, []byte(strings.Join(commits, "\n")+"\n"),
-		"log", "--no-walk=unsorted", "--stdin", "-p", "--no-color", "--format=commit %H")
+		"diff-tree", "--stdin", "-p", "--full-index", "--no-color", "--no-ext-diff", "--no-textconv", "-U3")
 	if err != nil {
 		return ids
 	}
-	out, err := g.runIn(ctx, dir, diffs, "patch-id", "--stable")
+	out, err := g.runIn(ctx, dir, diffs, "patch-id", "--verbatim")
 	if err != nil {
 		return ids
 	}
@@ -428,7 +453,8 @@ func (g Git) patchIDs(ctx context.Context, dir string, commits []string) map[str
 // branches. Remote-tracking reflogs, which can be large, are not read. Within one ref's log
 // (newest first) an entry's old value is the next entry's commit.
 func (g Git) readReflogs(ctx context.Context, dir string) reflogIndex {
-	idx := reflogIndex{made: map[string]bool{}, from: map[string][]string{}}
+	idx := reflogIndex{made: map[string]bool{}, from: map[string][]string{}, picks: map[string]bool{},
+		author: map[string]string{}, byAuthor: map[string][]string{}, resolved: map[string]bool{}}
 	refs := []string{"--branches", "HEAD", "main-worktree/HEAD"}
 	if common, err := g.run(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil {
 		if entries, err := os.ReadDir(filepath.Join(common, "worktrees")); err == nil {
@@ -465,7 +491,6 @@ func (g Git) readReflogs(ctx context.Context, dir string) reflogIndex {
 	}
 	type pair struct{ amended, replaced string }
 	var pairs []pair
-	var picks []string
 	seenHash := map[string]bool{}
 	var all []string // every commit the reflogs name: the sources a pick may come from
 	for _, log := range logs {
@@ -482,18 +507,13 @@ func (g Git) readReflogs(ctx context.Context, dir string) reflogIndex {
 			case strings.HasPrefix(e.subject, "commit:"), strings.HasPrefix(e.subject, "commit (initial):"),
 				strings.HasPrefix(e.subject, "commit (merge):"):
 				idx.made[e.hash] = true
-			case slices.ContainsFunc(pickSubjects, func(p string) bool { return strings.HasPrefix(e.subject, p) }):
-				picks = append(picks, e.hash)
+			case isPick(e.subject):
+				idx.picks[e.hash] = true
 			}
 		}
 	}
-	if len(pairs) == 0 && len(picks) == 0 {
+	if len(pairs) == 0 && len(idx.picks) == 0 {
 		return idx
-	}
-	add := func(c, src string) {
-		if c != src && !slices.Contains(idx.from[c], src) {
-			idx.from[c] = append(idx.from[c], src)
-		}
 	}
 	// gc expires an entry whose commit became unreachable (30 days by default), so the entry
 	// before an amend may be gone, and the next one older a different commit. Keep a pair only
@@ -502,40 +522,56 @@ func (g Git) readReflogs(ctx context.Context, dir string) reflogIndex {
 	for _, p := range pairs {
 		a, ok := fields[p.amended]
 		if ok && slices.Equal(a, fields[p.replaced]) {
-			add(p.amended, p.replaced)
+			idx.add(p.amended, p.replaced)
 		}
 	}
-	// A rebase or cherry-pick entry names only the copy. Its source is a commit the reflogs name
-	// with the same author name, email and date (which both keep) and the same patch id: the
-	// same changes, so the copy brings in nothing its source did not.
-	if len(picks) == 0 {
-		return idx
-	}
-	author := func(c string) string {
+	for _, c := range all {
 		if f, ok := fields[c]; ok {
-			return strings.Join(f[1:], "\x00")
-		}
-		return ""
-	}
-	cand := map[string][]string{} // pick -> sources with its author
-	need := slices.Clone(picks)
-	for _, p := range picks {
-		for _, c := range all {
-			if c != p && author(p) != "" && author(c) == author(p) {
-				cand[p] = append(cand[p], c)
-				need = append(need, c)
-			}
-		}
-	}
-	ids := g.patchIDs(ctx, dir, need)
-	for _, p := range picks {
-		for _, c := range cand[p] {
-			if ids[p] != "" && ids[c] == ids[p] {
-				add(p, c)
-			}
+			key := strings.Join(f[1:], "\x00")
+			idx.author[c] = key
+			idx.byAuthor[key] = append(idx.byAuthor[key], c)
 		}
 	}
 	return idx
+}
+
+// add records src as a commit c was made from.
+func (idx reflogIndex) add(c, src string) {
+	if c != src && !slices.Contains(idx.from[c], src) {
+		idx.from[c] = append(idx.from[c], src)
+	}
+}
+
+// resolvePicks finds the sources of the pick entries among commits, the ones the walk reached and
+// no commit entry made. A rebase or cherry-pick entry names only the copy. Its source is a commit
+// the reflogs name with the same author name, email and date (which both keep) and the same
+// patch id: the same changes, so the copy brings in nothing its source did not. One patch-id
+// batch per call; each pick is resolved once.
+func (g Git) resolvePicks(ctx context.Context, dir string, idx reflogIndex, commits []string) {
+	var picks []string
+	need := map[string]bool{}
+	for _, c := range commits {
+		if !idx.picks[c] || idx.made[c] || idx.resolved[c] || idx.author[c] == "" {
+			continue
+		}
+		idx.resolved[c] = true
+		picks = append(picks, c)
+		need[c] = true
+		for _, src := range idx.byAuthor[idx.author[c]] {
+			need[src] = true
+		}
+	}
+	if len(picks) == 0 {
+		return
+	}
+	ids := g.patchIDs(ctx, dir, slices.Collect(maps.Keys(need)))
+	for _, p := range picks {
+		for _, src := range idx.byAuthor[idx.author[p]] {
+			if ids[p] != "" && ids[src] == ids[p] {
+				idx.add(p, src)
+			}
+		}
+	}
 }
 
 // committedHere reports whether every commit in commit's history that no ref in base holds was
@@ -575,6 +611,9 @@ func (g Git) ownHistoryOnce(ctx context.Context, dir, commit string, base []stri
 	local := strings.Fields(string(out))
 	if len(local) > maxLocalCommits {
 		return false
+	}
+	if depth > 0 {
+		g.resolvePicks(ctx, dir, idx, local)
 	}
 	for _, c := range local {
 		if idx.made[c] {
