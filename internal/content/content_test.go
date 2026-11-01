@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -514,9 +515,17 @@ func TestForgetWritesOffPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	held := false
+	t.Cleanup(func() { // ends the writer if a check fails first
+		if held {
+			s.wmu.Unlock()
+		}
+		s.Close()
+	})
 	s.Add("s1", Shown{Path: "/a"})
 	s.Add("s2", Shown{Path: "/b"})
 	s.wmu.Lock() // a slow disk: every write waits
+	held = true
 	returned := make(chan struct{})
 	go func() { s.Forget("s1"); close(returned) }()
 	select {
@@ -530,6 +539,7 @@ func TestForgetWritesOffPath(t *testing.T) {
 	if r, _ := OpenStore(p); len(r.List("s1")) != 1 {
 		t.Fatal("the file changed while writes were held")
 	}
+	held = false
 	s.wmu.Unlock()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -558,6 +568,7 @@ func TestStoreWriteOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { s.Close() })
 	id := func(g, i int) string { return "s" + string(rune('a'+g)) + string(rune('a'+i%5)) }
 	done := make(chan struct{})
 	for g := 0; g < 8; g++ {
@@ -568,6 +579,10 @@ func TestStoreWriteOrder(t *testing.T) {
 					s.Forget(id(g, i))
 				} else if err := s.Add(id(g, i), Shown{Path: "/f" + string(rune('a'+i))}); err != nil {
 					t.Error(err)
+				} else if i%3 == 1 {
+					if err := s.SetFolder(id(g, i), "/w/"+string(rune('a'+i))); err != nil {
+						t.Error(err)
+					}
 				}
 			}
 		}(g)
@@ -584,8 +599,11 @@ func TestStoreWriteOrder(t *testing.T) {
 	}
 	for g := 0; g < 8; g++ {
 		for i := 0; i < 5; i++ {
-			if a, b := s.List(id(g, i)), r.List(id(g, i)); len(a) != len(b) {
+			if a, b := s.List(id(g, i)), r.List(id(g, i)); !reflect.DeepEqual(a, b) {
 				t.Fatalf("%s: memory %+v, file %+v", id(g, i), a, b)
+			}
+			if a, b := s.Folder(id(g, i)), r.Folder(id(g, i)); a != b {
+				t.Fatalf("%s: folder in memory %q, in the file %q", id(g, i), a, b)
 			}
 		}
 	}

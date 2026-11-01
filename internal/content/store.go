@@ -63,6 +63,8 @@ func (e *CorruptError) Error() string {
 // OpenStore loads the store at path. A missing file is an empty store. A file that does not
 // parse (a torn write, a hand edit) is renamed to <path>.bad: OpenStore returns an empty store
 // and a *CorruptError, so the hab still starts. A file it cannot read at all is an error.
+// Call Close when done: it ends the background writer the first Forget starts and saves what
+// that writer has not.
 func OpenStore(path string) (*Store, error) {
 	s := &Store{path: path, m: map[string][]Shown{}, folders: map[string]string{}}
 	if path == "" {

@@ -622,7 +622,8 @@ What carries over:
   references at once and leaves the write to one background writer, since it happens inside the
   structure store's event callback; each write takes the store's latest state and skips one
   older than the file, so writes never land out of order, and the hab's shutdown writes what is
-  left. A file that does not parse is moved to `content.json.bad` and the hab starts with no
+  left. A failed or crash-lost background write is not tried again: the prune at the next start
+  drops every session whose record is gone, so no retry loop is needed. A file that does not parse is moved to `content.json.bad` and the hab starts with no
   references, with a log line: a store of references never stops the hab.
 - **App.** `ContentModel` per session merges `content.list` with `content.updated` by id, keeps
   the last list while offline (and marks it), and loads bytes on demand in chunks. A list reply
@@ -634,7 +635,9 @@ What carries over:
   share one load. A busy answer is tried again 3 times, with a wait from 200 ms that doubles.
   Busy is an `unavailable` whose hint says "already run on this connection", the hab's
   per-connection limit; any other `unavailable` (a hab with no content service, a file it could
-  not read) fails at once. A load that still fails says "Could not load this file"; the hab's hint stays out
+  not read) fails at once. Known limit: busy is told by the hint's words. The next API revision
+  should add an additive busy field to the error data, set only by the limit; the app would read
+  it first and keep the phrase for older habs. A load that still fails says "Could not load this file"; the hab's hint stays out
   of the card.
 - **Bytes cache.** Keyed by item and file version (size and modification time, from the list),
   at most 64 MiB per open chat, the least recently used out first. A list that names a new
