@@ -2528,7 +2528,7 @@ says.
 
 | Id | Title | Area | Safe | Balanced | Bypass | Stored | Source |
 |---|---|---|---|---|---|---|---|
-| `confirm.start_elsewhere` | Confirm before an agent starts work on another host | Agents | On | On | Off | Hab, every hab | `capcom.md` 6.1, `mesh.md` 11 Q1 |
+| `confirm.start_elsewhere` | Confirm before an agent starts work on another host | Agents | On | On (owner to confirm) | Off | Hab, every hab | `capcom.md` 6.1, `mesh.md` 11 Q1 |
 | `approval.max_age` | Remote answers expire after | Approvals | 60 min | 60 min | Never | Hab, every hab | 7.4 |
 | `logbook.approval` | Require approval for memories | Agents | `agents` | `off` | `off` | Hab, every hab | `logbook.md` 9.1, `instructions-mcp-flight-rules.md` 12 |
 | `voice.yes_allows` | "Yes" counts as Allow | Voice | Off | On | On | App, this device | 13.3, 13.7 |
@@ -2537,7 +2537,8 @@ says.
 - **`confirm.start_elsewhere`** stays on in Balanced. Capcom's tools are allowed in its own
   folder (`capcom.md` 7.1), so no harness prompt stands before a start on another host. Off: the
   action runs at once and the card shows as a record. The owner's first ruling (default on)
-  stands.
+  stands. Owner to confirm: the later power-user rule (default to no extra confirmation) could
+  make it off in Balanced.
 - **`approval.max_age`** bounds a remote Allow on an old request (7.4). Never: a request takes a
   remote answer until the harness gives up. The answer path's own deadline still applies. Not
   built: the hab sends no limit yet.
