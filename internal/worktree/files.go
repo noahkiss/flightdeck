@@ -55,12 +55,24 @@ func (g Git) copyIncludes(ctx context.Context, src, dst string) ([]string, error
 	if err != nil && exitCode(err) != 1 { // 1: none of them is ignored
 		return nil, err
 	}
+	// Every write goes through a Root of the new worktree: a folder the checkout holds as a
+	// symbolic link to somewhere outside it (committed on a foreign branch, say) is refused, so
+	// the user's ignored files never land outside the worktree.
+	root, err := os.OpenRoot(dst)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	b := &copyBudget{ctx: ctx, files: MaxIncludeFiles, bytes: MaxIncludeBytes}
 	var copied []string
 	for _, rel := range strings.Split(string(out), "\x00") {
 		if rel == "" {
 			continue
 		}
-		ok, err := copyOne(filepath.Join(src, rel), filepath.Join(dst, rel))
+		if err := ctx.Err(); err != nil {
+			return copied, err
+		}
+		ok, err := copyOne(b, filepath.Join(src, rel), root, rel)
 		if err != nil {
 			return copied, fmt.Errorf("%s: %w", rel, err)
 		}
@@ -71,16 +83,57 @@ func (g Git) copyIncludes(ctx context.Context, src, dst string) ([]string, error
 	return copied, nil
 }
 
-// copyOne copies one file or symbolic link. It reports false when it skipped the file.
-func copyOne(from, to string) (bool, error) {
+// The bounds on what .worktreeinclude may copy into one worktree. Past either, creation fails
+// and the worktree is removed again: dependency folders belong in the setup script.
+var (
+	MaxIncludeFiles       = 10000
+	MaxIncludeBytes int64 = 1 << 30
+)
+
+// copyBudget counts what copyOne may still copy, and carries the deadline.
+type copyBudget struct {
+	ctx   context.Context
+	files int
+	bytes int64
+}
+
+// Read implements the deadline and the byte bound for the copy of one file.
+type budgetReader struct {
+	b *copyBudget
+	r io.Reader
+}
+
+func (br budgetReader) Read(p []byte) (int, error) {
+	if err := br.b.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := br.r.Read(p)
+	br.b.bytes -= int64(n)
+	if br.b.bytes < 0 {
+		return n, fmt.Errorf("the included files pass %d bytes", MaxIncludeBytes)
+	}
+	return n, err
+}
+
+// copyOne copies one file or symbolic link from the source checkout to rel in the worktree
+// root. It reports false when it skipped the file: the worktree has one there already.
+func copyOne(b *copyBudget, from string, root *os.Root, rel string) (bool, error) {
 	fi, err := os.Lstat(from)
 	if err != nil {
 		return false, err
 	}
-	if _, err := os.Lstat(to); err == nil {
+	if _, err := root.Lstat(rel); err == nil {
 		return false, nil // the worktree has it: keep its contents
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return false, err // a parent that leaves the worktree, among others
 	}
-	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+	if !fi.Mode().IsRegular() && fi.Mode()&fs.ModeSymlink == 0 {
+		return false, nil
+	}
+	if b.files--; b.files < 0 {
+		return false, fmt.Errorf("the included files pass %d files", MaxIncludeFiles)
+	}
+	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 		return false, err
 	}
 	switch {
@@ -89,18 +142,18 @@ func copyOne(from, to string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		return true, os.Symlink(target, to)
+		return true, root.Symlink(target, rel)
 	case fi.Mode().IsRegular():
 		in, err := os.Open(from)
 		if err != nil {
 			return false, err
 		}
 		defer in.Close()
-		out, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fi.Mode().Perm())
+		out, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fi.Mode().Perm())
 		if err != nil {
 			return false, err
 		}
-		if _, err := io.Copy(out, in); err != nil {
+		if _, err := io.Copy(out, budgetReader{b, in}); err != nil {
 			out.Close()
 			return false, err
 		}

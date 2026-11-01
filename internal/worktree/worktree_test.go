@@ -312,11 +312,96 @@ func TestIncludeKeepsExisting(t *testing.T) {
 	if err := os.WriteFile(to, []byte("old"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := copyOne(from, to); ok || err != nil {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	b := &copyBudget{ctx: context.Background(), files: 10, bytes: 1 << 20}
+	if ok, err := copyOne(b, from, root, "b"); ok || err != nil {
 		t.Fatalf("copyOne %v %v", ok, err)
 	}
 	if b, _ := os.ReadFile(to); string(b) != "old" {
 		t.Fatalf("contents %q", b)
+	}
+}
+
+// TestIncludeRefusesSymlinkedFolder: a start point that commits a folder as a symbolic link to a
+// place outside the worktree cannot steer the included files there. Creation fails and undoes.
+func TestIncludeRefusesSymlinkedFolder(t *testing.T) {
+	f := newFixture(t)
+	outside := filepath.Join(filepath.Dir(f.root), "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.write(f.repo, ".gitignore", ".env\n")
+	f.write(f.repo, IncludeFile, "secrets/\n")
+	f.git(f.repo, "add", ".gitignore", IncludeFile)
+	f.git(f.repo, "commit", "-q", "-m", "ignore")
+	f.git(f.repo, "checkout", "-q", "-b", "evil")
+	if err := os.Symlink(outside, filepath.Join(f.repo, "secrets")); err != nil {
+		t.Fatal(err)
+	}
+	f.git(f.repo, "add", "secrets")
+	f.git(f.repo, "commit", "-q", "-m", "link")
+	f.git(f.repo, "checkout", "-q", "main")
+	f.write(f.repo, "secrets/.env", "TOKEN=x\n") // a real folder in the source checkout
+
+	_, err := f.create(CreateOptions{Branch: "pr", Base: "evil"})
+	if err == nil {
+		t.Fatal("create copied through a symbolic link that leaves the worktree")
+	}
+	if _, err := os.Stat(filepath.Join(outside, ".env")); err == nil {
+		t.Fatal("the included file landed outside the worktree")
+	}
+	if list, _ := f.g.List(context.Background(), f.repo); len(list) != 1 {
+		t.Fatalf("worktree left behind: %+v", list)
+	}
+}
+
+// TestIncludeBounds: past the file or byte bound, or with the deadline gone, creation fails and
+// undoes.
+func TestIncludeBounds(t *testing.T) {
+	f := newFixture(t)
+	f.write(f.repo, ".gitignore", "*.local\n")
+	f.write(f.repo, IncludeFile, "*.local\n")
+	f.git(f.repo, "add", ".gitignore", IncludeFile)
+	f.git(f.repo, "commit", "-q", "-m", "ignore")
+	f.write(f.repo, "a.local", "0123456789")
+	f.write(f.repo, "b.local", "0123456789")
+	check := func(name string, ctx context.Context) {
+		t.Helper()
+		_, err := f.g.Create(ctx, CreateOptions{Source: f.repo, Root: f.root, Branch: name})
+		if err == nil {
+			t.Fatalf("%s: create succeeded", name)
+		}
+		if list, _ := f.g.List(context.Background(), f.repo); len(list) != 1 {
+			t.Fatalf("%s: worktree left behind: %+v", name, list)
+		}
+		if f.g.refExists(context.Background(), f.repo, "refs/heads/"+name) {
+			t.Fatalf("%s: branch left behind", name)
+		}
+	}
+	defer func(n int, b int64) { MaxIncludeFiles, MaxIncludeBytes = n, b }(MaxIncludeFiles, MaxIncludeBytes)
+	MaxIncludeFiles = 1
+	check("files", context.Background())
+	MaxIncludeFiles, MaxIncludeBytes = 10, 15
+	check("bytes", context.Background())
+	MaxIncludeBytes = 1 << 20
+
+	// The deadline ends during the copy: a reader that cancels on its first read stands in for a
+	// slow copy.
+	ctx, cancel := context.WithCancel(context.Background())
+	b := &copyBudget{ctx: ctx, files: 10, bytes: 1 << 20}
+	cancel()
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if _, err := copyOne(b, filepath.Join(f.repo, "a.local"), root, "a.local"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("copy after the deadline: %v", err)
 	}
 }
 
