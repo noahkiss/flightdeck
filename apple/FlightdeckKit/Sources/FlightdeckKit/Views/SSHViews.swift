@@ -308,7 +308,7 @@ struct AddHabView: View {
 /// code this offers the by-hand path.
 struct PairingView: View {
     let setup: SSHSetup
-    @State var offer: PairingOffer?
+    @State var offer: PairingCode?
     let done: () -> Void
 
     @State private var text = ""
@@ -377,7 +377,7 @@ struct PairingView: View {
 
     private func read(_ s: String) {
         do {
-            offer = try PairingOffer.parse(s)
+            offer = try PairingCode.parse(s)
             error = nil
         } catch {
             self.error = "\(error)"
@@ -402,18 +402,18 @@ struct SSHSheets: ViewModifier {
 
         func body(content: Content) -> some View {
             content.sheet(isPresented: Binding(
-                get: { setup.pendingOffer != nil || setup.pendingOfferError != nil },
-                set: { if !$0 { setup.pendingOffer = nil; setup.pendingOfferError = nil } }
+                get: { setup.pendingCode != nil || setup.pendingCodeError != nil },
+                set: { if !$0 { setup.pendingCode = nil; setup.pendingCodeError = nil } }
             )) {
                 NavigationStack {
-                    if let o = setup.pendingOffer {
-                        PairingView(setup: setup, offer: o) { setup.pendingOffer = nil }
+                    if let o = setup.pendingCode {
+                        PairingView(setup: setup, offer: o) { setup.pendingCode = nil }
                     } else {
-                        Form { Text(setup.pendingOfferError ?? "") }
+                        Form { Text(setup.pendingCodeError ?? "") }
                             .navigationTitle("Pair with a code")
                             .toolbar {
                                 ToolbarItem(placement: .cancellationAction) {
-                                    Button("Close") { setup.pendingOfferError = nil }
+                                    Button("Close") { setup.pendingCodeError = nil }
                                 }
                             }
                     }

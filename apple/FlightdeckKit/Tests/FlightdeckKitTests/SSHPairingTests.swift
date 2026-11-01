@@ -1,4 +1,5 @@
 import Foundation
+import HabAPI
 import NIOSSH
 import XCTest
 @testable import FlightdeckKit
@@ -95,11 +96,11 @@ final class SSHPairingTests: XCTestCase {
 
     // MARK: Pairing offer
 
-    private var tokenText: String { PairingOffer.base64url(token) }
+    private var tokenText: String { PairingCode.base64url(token) }
 
     func testOfferRoundTrip() throws {
-        let o = PairingOffer(deviceID: ecdsaFP, endpoints: [SSHEndpoint(host: "192.0.2.10", port: 2222), SSHEndpoint(host: "hab.example"), SSHEndpoint(host: "2001:db8::5", port: 2222)], token: token, label: "desk")
-        let parsed = try PairingOffer.parse(o.link)
+        let o = PairingCode(deviceID: ecdsaFP, endpoints: [SSHEndpoint(host: "192.0.2.10", port: 2222), SSHEndpoint(host: "hab.example"), SSHEndpoint(host: "2001:db8::5", port: 2222)], token: token, label: "desk")
+        let parsed = try PairingCode.parse(o.link)
         XCTAssertEqual(parsed, o)
         XCTAssertEqual(tokenText.count, 22)
     }
@@ -107,7 +108,7 @@ final class SSHPairingTests: XCTestCase {
     func testOfferFromAPercentEncodedLink() throws {
         let fp = ecdsaFP.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
         let link = "flightdeck://pair?v=1&id=\(fp)&ep=192.0.2.10%3A2222&ep=%5B2001%3Adb8%3A%3A5%5D%3A2222&t=\(tokenText)&l=build%20box"
-        let o = try PairingOffer.parse(link)
+        let o = try PairingCode.parse(link)
         XCTAssertEqual(o.deviceID, ecdsaFP)
         XCTAssertEqual(o.endpoints, [SSHEndpoint(host: "192.0.2.10", port: 2222), SSHEndpoint(host: "2001:db8::5", port: 2222)])
         XCTAssertEqual(o.token, token)
@@ -116,19 +117,19 @@ final class SSHPairingTests: XCTestCase {
 
     func testOfferInsidePastedText() throws {
         let text = "Scan this, or paste it into the app:\n  flightdeck://pair?v=1&id=\(ecdsaFP)&ep=hab.example:2222&t=\(tokenText)\nIt expires in 5 minutes."
-        let o = try PairingOffer.parse(text)
+        let o = try PairingCode.parse(text)
         XCTAssertEqual(o.endpoints, [SSHEndpoint(host: "hab.example", port: 2222)])
         XCTAssertNil(o.label)
     }
 
     func testOfferIgnoresUnknownKeysAndKeepsEndpointOrder() throws {
-        let o = try PairingOffer.parse("FLIGHTDECK://pair?v=1&x=later&id=\(ecdsaFP)&ep=b:2&ep=a:1&ep=b:2&t=\(tokenText)")
+        let o = try PairingCode.parse("FLIGHTDECK://pair?v=1&x=later&id=\(ecdsaFP)&ep=b:2&ep=a:1&ep=b:2&t=\(tokenText)")
         XCTAssertEqual(o.endpoints, [SSHEndpoint(host: "b", port: 2), SSHEndpoint(host: "a", port: 1)])
     }
 
     func testOfferErrors() {
-        func err(_ s: String) -> PairingOfferError? {
-            do { _ = try PairingOffer.parse(s); return nil } catch { return error as? PairingOfferError }
+        func err(_ s: String) -> PairingCodeError? {
+            do { _ = try PairingCode.parse(s); return nil } catch { return error as? PairingCodeError }
         }
         let ok = "id=\(ecdsaFP)&ep=hab.example:2222&t=\(tokenText)"
         XCTAssertEqual(err("hello"), .notAnOffer)
@@ -143,7 +144,7 @@ final class SSHPairingTests: XCTestCase {
         XCTAssertEqual(err("flightdeck://pair?v=1&id=\(ecdsaFP)&ep=a"), .missing("t"))
         XCTAssertEqual(err("flightdeck://pair?v=1&id=\(ecdsaFP)&ep=a&t=AAAA"), .badToken)
         XCTAssertEqual(err("flightdeck://pair?v=1&id=\(ecdsaFP)&ep=a&t=\(tokenText)!"), .badToken)
-        XCTAssertFalse(PairingOfferError.badToken.description.isEmpty)
+        XCTAssertFalse(PairingCodeError.badToken.description.isEmpty)
     }
 
     // MARK: Hab entries
@@ -166,5 +167,17 @@ final class SSHPairingTests: XCTestCase {
         XCTAssertThrowsError(try e.transport(keys: DeviceKeys(store: MemorySecretStore(), preferEnclave: false))) { err in
             XCTAssertTrue("\(err)".contains("no key"))
         }
+    }
+}
+
+extension SSHPairingTests {
+    func testCodeFromTheAPIOffer() throws {
+        let api = PairingOffer(deviceId: ecdsaFP, endpoints: ["192.0.2.10:2222", "[2001:db8::5]:2222"], expiresInMs: 300_000, seq: 1, token: PairingCode.base64url(token))
+        let code = try XCTUnwrap(PairingCode(offer: api, label: "desk"))
+        XCTAssertEqual(try PairingCode.parse(code.link), code)
+        XCTAssertEqual(code.endpoints.count, 2)
+        var bad = api
+        bad.token = "short"
+        XCTAssertNil(PairingCode(offer: bad))
     }
 }

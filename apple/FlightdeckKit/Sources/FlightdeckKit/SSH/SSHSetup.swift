@@ -16,9 +16,9 @@ public final class SSHSetup {
     /// Why the key could not be loaded or made, for Settings.
     public private(set) var keyError: String?
     /// A pairing offer opened from a link, waiting for its sheet.
-    public var pendingOffer: PairingOffer?
+    public var pendingCode: PairingCode?
     /// A pairing link that did not parse, for its sheet.
-    public var pendingOfferError: String?
+    public var pendingCodeError: String?
 
     @ObservationIgnored private let listURL: URL?
     @ObservationIgnored private weak var fleet: Fleet?
@@ -128,11 +128,11 @@ public final class SSHSetup {
     /// Opens a `flightdeck://pair` link: parses it and shows the pairing sheet.
     public func open(url: URL) {
         do {
-            pendingOffer = try PairingOffer.parse(url.absoluteString)
-            pendingOfferError = nil
+            pendingCode = try PairingCode.parse(url.absoluteString)
+            pendingCodeError = nil
         } catch {
-            pendingOffer = nil
-            pendingOfferError = String(describing: error)
+            pendingCode = nil
+            pendingCodeError = String(describing: error)
         }
     }
 

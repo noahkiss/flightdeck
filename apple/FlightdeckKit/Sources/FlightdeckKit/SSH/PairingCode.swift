@@ -1,6 +1,8 @@
 import Foundation
+import HabAPI
 
-/// A hab's pairing offer (transport.md 6.1), from its QR code, its pairing
+/// A hab's pairing offer as a code (transport.md 6.1): the fields of the
+/// API's `PairingOffer` (`devices.pair`) plus a label, from its QR code, its pairing
 /// link or the same text pasted:
 ///
 ///     flightdeck://pair?v=1&id=SHA256:<43 chars>&ep=<host:port>&ep=...&t=<token>&l=<label>
@@ -15,7 +17,7 @@ import Foundation
 ///
 /// Values are percent-encoded as in any URL query. Unknown keys are ignored,
 /// so a later hab can add some.
-public struct PairingOffer: Sendable, Equatable {
+public struct PairingCode: Sendable, Equatable {
     public var version: Int
     public var deviceID: String
     public var endpoints: [SSHEndpoint]
@@ -30,6 +32,20 @@ public struct PairingOffer: Sendable, Equatable {
         self.endpoints = endpoints
         self.token = token
         self.label = label
+    }
+
+    /// The code for an offer from `devices.pair`. Nil when a field does not
+    /// fit the code: an endpoint that is not host:port, or a token that is
+    /// not 128 bits of base64url.
+    public init?(offer: PairingOffer, label: String? = nil) {
+        guard SSHFingerprint.isValid(offer.deviceId), let token = Self.decodeBase64url(offer.token), token.count == 16 else { return nil }
+        var eps: [SSHEndpoint] = []
+        for e in offer.endpoints {
+            guard let ep = SSHEndpoint.parse(e) else { return nil }
+            eps.append(ep)
+        }
+        guard !eps.isEmpty else { return nil }
+        self.init(deviceID: offer.deviceId, endpoints: eps, token: token, label: label)
     }
 
     /// The offer as a link, the inverse of `parse`.
@@ -48,41 +64,41 @@ public struct PairingOffer: Sendable, Equatable {
 
     /// Parses an offer from a scanned code or pasted text. Text around the
     /// link is ignored.
-    public static func parse(_ text: String) throws -> PairingOffer {
+    public static func parse(_ text: String) throws -> PairingCode {
         guard let link = findLink(text), let c = URLComponents(string: link) else {
-            throw PairingOfferError.notAnOffer
+            throw PairingCodeError.notAnOffer
         }
         guard c.scheme?.lowercased() == scheme,
               (c.host?.lowercased() == "pair" || c.path.lowercased() == "pair" || c.path.lowercased() == "/pair")
         else {
-            throw PairingOfferError.notAnOffer
+            throw PairingCodeError.notAnOffer
         }
         let items = c.queryItems ?? []
         func one(_ k: String) -> String? { items.first { $0.name == k }?.value }
 
-        guard let v = one("v") else { throw PairingOfferError.missing("v") }
-        guard let version = Int(v) else { throw PairingOfferError.unsupportedVersion(v) }
-        guard version == 1 else { throw PairingOfferError.unsupportedVersion(v) }
+        guard let v = one("v") else { throw PairingCodeError.missing("v") }
+        guard let version = Int(v) else { throw PairingCodeError.unsupportedVersion(v) }
+        guard version == 1 else { throw PairingCodeError.unsupportedVersion(v) }
 
-        guard let id = one("id"), !id.isEmpty else { throw PairingOfferError.missing("id") }
-        guard SSHFingerprint.isValid(id) else { throw PairingOfferError.badDeviceID(id) }
+        guard let id = one("id"), !id.isEmpty else { throw PairingCodeError.missing("id") }
+        guard SSHFingerprint.isValid(id) else { throw PairingCodeError.badDeviceID(id) }
 
         let eps = items.filter { $0.name == "ep" }.compactMap(\.value)
-        guard !eps.isEmpty else { throw PairingOfferError.missing("ep") }
+        guard !eps.isEmpty else { throw PairingCodeError.missing("ep") }
         var endpoints: [SSHEndpoint] = []
         for e in eps {
-            guard let ep = SSHEndpoint.parse(e) else { throw PairingOfferError.badEndpoint(e) }
+            guard let ep = SSHEndpoint.parse(e) else { throw PairingCodeError.badEndpoint(e) }
             if !endpoints.contains(ep) { endpoints.append(ep) }
         }
 
-        guard let t = one("t"), !t.isEmpty else { throw PairingOfferError.missing("t") }
-        guard let token = decodeBase64url(t), token.count == 16 else { throw PairingOfferError.badToken }
+        guard let t = one("t"), !t.isEmpty else { throw PairingCodeError.missing("t") }
+        guard let token = decodeBase64url(t), token.count == 16 else { throw PairingCodeError.badToken }
 
         var label = one("l")?.trimmingCharacters(in: .whitespacesAndNewlines)
         if label?.isEmpty ?? true { label = nil }
         if let l = label, l.count > 64 { label = String(l.prefix(64)) }
 
-        return PairingOffer(version: version, deviceID: id, endpoints: endpoints, token: token, label: label)
+        return PairingCode(version: version, deviceID: id, endpoints: endpoints, token: token, label: label)
     }
 
     /// The first `flightdeck:` link in the text, up to the next whitespace.
@@ -108,7 +124,7 @@ public struct PairingOffer: Sendable, Equatable {
     }
 }
 
-public enum PairingOfferError: Error, Equatable, CustomStringConvertible {
+public enum PairingCodeError: Error, Equatable, CustomStringConvertible {
     case notAnOffer
     case unsupportedVersion(String)
     case missing(String)
