@@ -23,8 +23,12 @@ final class FakeEngine: SpeechEngine {
         return try prepareResult.get()
     }
 
+    /// How long each transcribe takes.
+    var delay: Duration = .zero
+
     func transcribe(_ clip: SpeechClip, live: String) async throws -> String {
         transcribes += 1
+        if delay > .zero { try await Task.sleep(for: delay) }
         guard !results.isEmpty else { return live }
         return try (results.count > 1 ? results.removeFirst() : results[0]).get()
     }

@@ -362,6 +362,128 @@ final class VoiceModelTests: XCTestCase {
         await b.fleet.setActive(false)
     }
 
+    /// A model over one slow engine, so a test can act while a turn is transcribed.
+    private func slowModel(_ b: Bench, text: String, settings: VoiceSettings = VoiceSettings()) -> (VoiceModel, FakeEngine) {
+        let engine = FakeEngine(.apple, [.success(text)])
+        engine.delay = .milliseconds(300)
+        var t = VoiceModel.Timing()
+        t.tick = .milliseconds(20)
+        t.replyWait = .milliseconds(500)
+        let conn = b.conn
+        let m = VoiceModel(chat: b.chat, engines: SpeechEngines([engine]), input: b.io, speaker: b.io, settings: settings, timing: t) { params in
+            _ = try await conn.call(HabMethods.approvalAnswer, params)
+        }
+        return (m, engine)
+    }
+
+    func testARequestReplacedDuringTheTranscriptionIsNotAnswered() async {
+        let r1 = PermissionRequest(command: "ls", id: "r1", title: "Run ls?", tool: "Bash")
+        let b = await setup(state: .blocked, kind: .permission, request: r1, speech: false)
+        let (m, _) = slowModel(b, text: "allow")
+        await m.start()
+        await eventually("asked r1") { m.phase == .answering }
+        b.io.emit(.words("allow", at: 0))
+        let turn = Task { await m.endTurn() }
+        await eventually("transcribing") { m.phase == .transcribing }
+        // r1 is answered elsewhere and r2 arrives while the owner's "allow" is transcribed.
+        let r2 = PermissionRequest(command: "rm -rf build", id: "r2", title: "Run rm?", tool: "Bash")
+        await b.hab.put(Fixture.agent(pane: "%1", harness: "claude", state: .blocked, kind: .permission, request: r2))
+        await turn.value
+        await eventually("r2 read back") { m.request?.id == "r2" && m.phase == .answering }
+        let answers = await b.hab.answers
+        XCTAssertTrue(answers.isEmpty, "the allow was for r1, never r2")
+        XCTAssertTrue(b.io.spoken.contains { $0.hasPrefix("Run rm?") })
+        await m.end()
+        await b.fleet.setActive(false)
+    }
+
+    func testALoneAllowSpokenBeforeTheRequestArrivesNeverAnswers() async {
+        let b = await setup(speech: false)
+        let (m, _) = slowModel(b, text: "allow")
+        await m.start()
+        b.io.emit(.words("allow", at: 0))
+        await eventually("hearing") { m.phase == .hearing }
+        let turn = Task { await m.endTurn() }
+        await eventually("transcribing") { m.phase == .transcribing }
+        let r1 = PermissionRequest(command: "ls", id: "r1", title: "Run ls?", tool: "Bash")
+        await b.hab.put(Fixture.agent(pane: "%1", harness: "claude", state: .blocked, kind: .permission, request: r1))
+        await turn.value
+        await eventually("read back") { m.phase == .answering }
+        try? await Task.sleep(for: .milliseconds(100))
+        let answers = await b.hab.answers
+        XCTAssertTrue(answers.isEmpty)
+        await m.end()
+        await b.fleet.setActive(false)
+    }
+
+    func testSaySendWhileConfirming() async {
+        var s = VoiceSettings()
+        s.confirmBeforeSend = true
+        s.askSummary = false
+        let b = await setup(speech: false, settings: s)
+        await b.model.start()
+        await say(b, live: "deploy to staging")
+        XCTAssertEqual(b.model.phase, .confirming("deploy to staging"))
+        // Other words replace the waiting text.
+        await say(b, live: "deploy to production")
+        XCTAssertEqual(b.model.phase, .confirming("deploy to production"))
+        await say(b, live: "Send.")
+        await eventually("sent") { await b.hab.sends.count == 1 }
+        let sends = await b.hab.sends
+        XCTAssertEqual(sends[0].text, "deploy to production")
+        XCTAssertNil(b.model.pendingSend)
+        await b.model.end()
+        await b.fleet.setActive(false)
+    }
+
+    func testEndDuringATranscriptionSendsNothing() async {
+        let b = await setup(speech: false)
+        let (m, _) = slowModel(b, text: "run the tests")
+        await m.start()
+        b.io.emit(.words("run the tests", at: 0))
+        await eventually("hearing") { m.phase == .hearing }
+        let turn = Task { await m.endTurn() }
+        await eventually("transcribing") { m.phase == .transcribing }
+        await m.end()
+        await turn.value
+        try? await Task.sleep(for: .milliseconds(100))
+        let sends = await b.hab.sends
+        XCTAssertTrue(sends.isEmpty)
+        XCTAssertTrue(m.isEnded, "nothing reopens an ended model")
+        await b.fleet.setActive(false)
+    }
+
+    func testARouteChangeWhileHearingEndsTheTurn() async {
+        var s = VoiceSettings()
+        s.askSummary = false
+        let b = await setup(speech: false, settings: s)
+        await b.model.start()
+        b.io.nextTurn.live = "check the logs"
+        b.io.emit(.words("check the logs", at: 0))
+        await eventually("hearing") { b.model.phase == .hearing }
+        b.io.emit(.routeChanged)
+        await eventually("sent") { await b.hab.sends.count == 1 }
+        await eventually("not stuck") { b.model.phase == .waiting || b.model.phase == .listening }
+        await b.model.end()
+        await b.fleet.setActive(false)
+    }
+
+    func testAnInterimTextIsNotReadAsTheReply() async {
+        let b = await setup(state: .working, speech: false)
+        await b.hab.putChat(ChatMessage(at: "2026-11-01T10:01:00Z", id: "u1", kind: .user, session: "s1", text: "go"))
+        await b.model.start()
+        await b.hab.putChat(ChatMessage(at: "2026-11-01T10:01:01Z", id: "a1", kind: .agent, session: "s1", text: "Let me look at the file."))
+        await b.hab.putChat(ChatMessage(at: "2026-11-01T10:01:02Z", id: "t1", kind: .tool, session: "s1", tool: ChatTool(name: "Read", status: .done, target: "a.go")))
+        // The hook's done comes before the reader has the final text.
+        await b.hab.put(Fixture.agent(pane: "%1", harness: "claude", state: .done))
+        try? await Task.sleep(for: .milliseconds(150))
+        await b.hab.putChat(ChatMessage(at: "2026-11-01T10:01:03Z", id: "a2", kind: .agent, session: "s1", text: "The file is fine."))
+        await eventually("final read") { b.io.spoken.last == "The file is fine." }
+        XCTAssertFalse(b.io.spoken.contains("Let me look at the file."))
+        await b.model.end()
+        await b.fleet.setActive(false)
+    }
+
     func testWaitToneWhileWorking() async {
         let b = await setup(state: .working, speech: false)
         var t = VoiceModel.Timing()

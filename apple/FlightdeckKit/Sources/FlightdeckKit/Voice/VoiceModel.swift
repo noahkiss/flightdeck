@@ -35,6 +35,8 @@ public final class VoiceModel {
         public var tick: Duration = .milliseconds(100)
         /// How long a turn end waits for the reply to reach the chat.
         public var replyWait: Duration = .seconds(3)
+        /// The chat must be still this long before the reply is read.
+        public var replyQuiet: Duration = .milliseconds(300)
         public var waitTone: Double = VoiceSettings.waitTone
         public var idleLimit: Double = VoiceSettings.idleLimit
         public init() {}
@@ -140,7 +142,7 @@ public final class VoiceModel {
                 self?.tick()
             }
         })
-        phase = agentWorking ? .waiting : .listening
+        go(agentWorking ? .waiting : .listening)
         chatChanged()
     }
 
@@ -161,7 +163,7 @@ public final class VoiceModel {
         muted = m
         input.setMuted(m)
         detector.reset()
-        if m, phase == .hearing { phase = agentWorking ? .waiting : .listening }
+        if m, phase == .hearing { go(restPhase) }
         if m { level = -160 }
     }
 
@@ -172,16 +174,32 @@ public final class VoiceModel {
             speaker.stopSpeaking()
         case .hearing:
             await endTurn()
-        case .confirming(let text):
-            await deliver(text)
+        case .confirming:
+            await confirmSend()
         default:
             break
         }
     }
 
-    /// Allow or Deny from the large approval card.
+    /// Allow or Deny from the large approval card: answers the request on screen.
     public func answerByTap(_ allow: Bool) async {
-        await respond(allow ? .allow : .deny, spokenAllow: false)
+        guard let id = request?.id else { return }
+        await respond(allow ? .allow : .deny, spoken: false, for: id)
+    }
+
+    // MARK: - Phase
+
+    /// Every phase change but `end` goes through here: once ended, nothing reopens.
+    private func go(_ p: Phase) {
+        guard !isEnded else { return }
+        phase = p
+    }
+
+    /// Where the model rests between turns.
+    private var restPhase: Phase {
+        if let p = pendingSend { return .confirming(p) }
+        if request != nil, readBackDone == request?.id { return answerAttempts >= 2 ? .tapToAnswer : .answering }
+        return agentWorking ? .waiting : .listening
     }
 
     // MARK: - Input
@@ -204,10 +222,12 @@ public final class VoiceModel {
             detector.reset()
             if began {
                 speaker.stopSpeaking()
-                if phase == .hearing { phase = agentWorking ? .waiting : .listening }
+                if phase == .hearing { go(restPhase) }
             }
         case .routeChanged:
+            // The audio so far is valid: end the turn with it.
             detector.reset()
+            if phase == .hearing || hearingAnswer { Task { await self.endTurn() } }
         case .failed(let why):
             Task { await self.end(why) }
         }
@@ -230,7 +250,14 @@ public final class VoiceModel {
             }
             input.beginTurn()
             liveText = ""
-            if phase != .answering && phase != .tapToAnswer { phase = .hearing } else { hearingAnswer = true }
+            if phase == .answering || phase == .tapToAnswer {
+                // The answer belongs to the request whose read-back the owner heard.
+                hearingAnswer = true
+                answerFor = readBackDone
+            } else {
+                answerFor = nil
+                go(.hearing)
+            }
         case .turnEnded:
             Task { await self.endTurn() }
         }
@@ -238,6 +265,12 @@ public final class VoiceModel {
 
     /// The owner is giving an answer to a request, not a message.
     @ObservationIgnored private var hearingAnswer = false
+    /// The request whose read-back finished last.
+    @ObservationIgnored private var readBackDone: String?
+    /// The request the current turn answers: the one read back before the owner spoke.
+    @ObservationIgnored private var answerFor: String?
+    /// "Confirm before send": the text waiting for "send" or a tap.
+    public private(set) var pendingSend: String?
 
     private func tick() {
         guard !isEnded else { return }
@@ -254,68 +287,85 @@ public final class VoiceModel {
 
     /// The turn ended (silence or a tap): its text, then a command, an answer, or a message.
     func endTurn() async {
-        let answering = phase == .answering || phase == .tapToAnswer || hearingAnswer
+        let answering = hearingAnswer || ((phase == .answering || phase == .tapToAnswer) && answerFor != nil)
         guard phase == .hearing || answering else { return }
         hearingAnswer = false
-        let resume = phase
-        phase = .transcribing
+        let target = answering ? answerFor : nil
+        answerFor = nil
+        go(.transcribing)
         detector.reset()
         let (clip, live) = await input.endTurn()
+        guard !isEnded else { return }
         guard clip.duration >= 0.25 || !live.isEmpty else {
-            phase = answering ? resume : (agentWorking ? .waiting : .listening)
+            if phase == .transcribing { go(restPhase) }
             return
         }
-        guard let r = await engines.transcribe(clip, live: live) else {
+        let r = await engines.transcribe(clip, live: live)
+        // End, or a new request read aloud meanwhile: this turn is void.
+        guard !isEnded, phase == .transcribing else { return }
+        guard let r else {
             notice = "No engine wrote text: \(engines.lastFallback ?? "")"
-            phase = answering ? resume : (agentWorking ? .waiting : .listening)
+            go(restPhase)
             return
         }
         liveText = r.text
         lastActivity = now()
         guard !r.text.isEmpty else {
-            phase = answering ? resume : (agentWorking ? .waiting : .listening)
+            go(restPhase)
             return
         }
         if answering {
-            phase = resume
-            await heardAnswer(r.text)
+            guard let target, request?.id == target else {
+                // The request changed while the owner spoke: its own read-back runs.
+                go(restPhase)
+                return
+            }
+            go(restPhase)
+            await heardAnswer(r.text, for: target)
         } else {
             await utterance(r.text)
         }
     }
 
     private func utterance(_ text: String) async {
+        if pendingSend != nil, VoiceGrammar.normalize(text) == "send" {
+            await confirmSend()
+            return
+        }
         if settings.spokenCommands, let cmd = VoiceGrammar.command(text) {
             switch cmd {
             case .stop:
-                phase = agentWorking ? .waiting : .listening
+                go(restPhase)
                 await chat.interrupt()
             case .repeatReply:
                 await speak(lastSpoken ?? "Nothing to repeat yet.")
             case .allow, .deny:
-                if request != nil {
-                    await respond(cmd == .allow ? .allow : .deny, spokenAllow: true)
-                } else {
-                    await speak("Nothing is waiting for an answer.")
-                }
+                // A lone allow or deny outside an answer turn never answers: the
+                // owner has not heard a read-back for this turn.
+                await speak(request != nil ? "Wait for the request to be read." : "Nothing is waiting for an answer.")
             case .endVoice:
                 await end(nil)
             }
             return
         }
         if settings.confirmBeforeSend {
-            phase = .confirming(text)
+            // New words replace the waiting text (app.md 13.6).
+            pendingSend = text
+            go(.confirming(text))
             return
         }
         await deliver(text)
     }
 
-    /// "send" while confirming sends the pending text; other words replace it.
+    /// Sends the text waiting for confirmation: "send" or a tap.
     public func confirmSend() async {
-        if case .confirming(let text) = phase { await deliver(text) }
+        guard let text = pendingSend else { return }
+        pendingSend = nil
+        await deliver(text)
     }
 
     private func deliver(_ text: String) async {
+        guard !isEnded else { return }
         let gate = chat.gate
         switch gate {
         case .blocked:
@@ -330,11 +380,12 @@ public final class VoiceModel {
             lastTone = now()
             if gate == .afterTurn {
                 notice = "Queued"
+                go(.waiting)
                 await speak("Queued.")
             } else {
                 notice = nil
             }
-            if phase != .speaking { phase = .waiting }
+            if phase != .speaking { go(.waiting) }
         }
     }
 
@@ -347,11 +398,14 @@ public final class VoiceModel {
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self, !self.isEnded else { return }
+                self.messagesChangedAt = ContinuousClock.now
                 self.chatChanged()
                 self.observeChat()
             }
         }
     }
+
+    @ObservationIgnored private var messagesChangedAt = ContinuousClock.now
 
     func chatChanged() {
         guard !isEnded, phase != .starting else { return }
@@ -366,18 +420,21 @@ public final class VoiceModel {
         lastStatus = status
         if status == .working {
             toolLine = Self.toolLine(chat.messages)
-            if phase == .listening { phase = .waiting }
+            if phase == .listening { go(.waiting) }
         }
         // A request answered elsewhere (another client, the TUI).
-        if request != nil, !(status == .blocked && c.agent?.request?.id == askedRequest) {
+        if askedRequest != nil, !(status == .blocked && c.agent?.request?.id == askedRequest) {
             request = nil
             askedRequest = nil
+            readBackDone = nil
             if phase == .answering || phase == .tapToAnswer || phase == .asking {
                 speaker.stopSpeaking()
-                phase = agentWorking ? .waiting : .listening
+                go(restPhase)
             }
         }
         if status == .blocked, let a = c.agent, a.kind == .permission, let id = a.request?.id, id != askedRequest {
+            // Set before the task runs, so two changes give one read-back.
+            askedRequest = id
             Task { await self.ask(a) }
             return
         }
@@ -386,7 +443,7 @@ public final class VoiceModel {
             return
         }
         guard old == .working else {
-            if phase == .waiting && status != .working { phase = .listening }
+            if phase == .waiting && status != .working { go(restPhase) }
             return
         }
         switch status {
@@ -399,10 +456,22 @@ public final class VoiceModel {
         }
     }
 
+    /// Whether the chat holds the turn's final reply: a new agent text after
+    /// the turn's last tool call, and no change for `replyQuiet`.
+    private func replySettled() -> Bool {
+        guard let m = SpokenText.finalMessage(chat.messages), m.id != lastSpokenMessage else { return false }
+        let ms = chat.messages
+        let userAt = ms.lastIndex { $0.kind == .user && $0.sender == nil } ?? -1
+        let toolAt = ms.lastIndex { $0.kind == .tool && $0.parent == nil } ?? -1
+        let textAt = ms.lastIndex { $0.id == m.id } ?? -1
+        guard toolAt <= userAt || textAt > toolAt else { return false }
+        return ContinuousClock.now - messagesChangedAt >= timing.replyQuiet
+    }
+
     /// The turn ended: wait briefly for its reply in the chat, then read it.
     private func finishTurn(stopped: Bool) async {
         let deadline = ContinuousClock.now + timing.replyWait
-        while SpokenText.finalMessage(chat.messages)?.id == lastSpokenMessage, ContinuousClock.now < deadline, !isEnded {
+        while !replySettled(), ContinuousClock.now < deadline, !isEnded {
             try? await Task.sleep(for: .milliseconds(50))
         }
         guard !isEnded else { return }
@@ -411,7 +480,7 @@ public final class VoiceModel {
         lastSpokenMessage = m?.id ?? lastSpokenMessage
         toolLine = nil
         // The owner is talking: the reply stays in the chat.
-        if phase == .hearing || phase == .transcribing || phase == .asking || phase == .answering { return }
+        if phase == .hearing || phase == .transcribing || phase == .asking || phase == .answering || phase == .tapToAnswer { return }
         let text = fresh ? SpokenText.reply(chat.messages, stopped: stopped) : (stopped ? "The turn stopped." : "Done.")
         await speak(text)
     }
@@ -427,78 +496,77 @@ public final class VoiceModel {
         guard !isEnded else { return }
         lastSpoken = text
         let wasAsking = phase == .asking
-        if !wasAsking { phase = .speaking }
+        if !wasAsking { go(.speaking) }
         _ = await speaker.speak(text)
         lastActivity = now()
         guard !isEnded, phase == .speaking else { return }
-        phase = agentWorking ? .waiting : .listening
+        go(restPhase)
     }
 
     // MARK: - Approvals
 
     private func ask(_ a: AgentState) async {
-        guard let r = a.request, let id = r.id else { return }
-        askedRequest = id
+        guard !isEnded, let r = a.request, let id = r.id, askedRequest == id else { return }
         request = r
+        readBackDone = nil
         requestMayAllow = VoiceGrammar.voiceMayAllow(r)
         answerAttempts = 0
-        await askAloud(VoiceGrammar.readBack(r, mayAllow: requestMayAllow))
+        await askAloud(VoiceGrammar.readBack(r, mayAllow: requestMayAllow), for: id)
     }
 
-    /// Speaks while not listening, so its own voice cannot answer; then listens.
-    private func askAloud(_ text: String) async {
+    /// Speaks while not listening, so its own voice cannot answer; then listens
+    /// for an answer to `id`.
+    private func askAloud(_ text: String, for id: String) async {
         speaker.stopSpeaking()
-        phase = .asking
+        go(.asking)
         input.setMuted(true)
         detector.reset()
         lastSpoken = text
         _ = await speaker.speak(text)
         if !muted { input.setMuted(false) }
-        guard !isEnded, phase == .asking, request != nil else { return }
-        phase = .answering
+        guard !isEnded, phase == .asking, request?.id == id else { return }
+        readBackDone = id
+        go(answerAttempts >= 2 ? .tapToAnswer : .answering)
         lastActivity = now()
     }
 
-    private func heardAnswer(_ text: String) async {
-        let ans = VoiceGrammar.answer(text)
-        guard let ans else {
+    private func heardAnswer(_ text: String, for id: String) async {
+        guard let ans = VoiceGrammar.answer(text) else {
             answerAttempts += 1
             if answerAttempts == 1 {
-                await askAloud(requestMayAllow ? "Allow or deny?" : "Say deny, or tap.")
+                await askAloud(requestMayAllow ? "Allow or deny?" : "Say deny, or tap.", for: id)
             } else {
-                phase = .asking
-                lastSpoken = "Tap Allow or Deny."
-                _ = await speaker.speak("Tap Allow or Deny.")
-                if phase == .asking, request != nil { phase = .tapToAnswer }
+                await askAloud("Tap Allow or Deny.", for: id)
             }
             return
         }
-        await respond(ans == .allow ? .allow : .deny, spokenAllow: true)
+        await respond(ans == .allow ? .allow : .deny, spoken: true, for: id)
     }
 
-    private func respond(_ choice: ApprovalChoice, spokenAllow: Bool) async {
-        guard let r = request, let id = r.id, let pane = chat.context.pane else { return }
+    /// Answers request `id`, and only while it is still the open one.
+    private func respond(_ choice: ApprovalChoice, spoken: Bool, for id: String) async {
+        guard !isEnded, let r = request, r.id == id, let pane = chat.context.pane else { return }
         if let e = r.expiresAt.flatMap(BoardRows.parseStamp), e <= Date() {
             request = nil
+            readBackDone = nil
             await speak("That request expired. Answer it in the terminal.")
             return
         }
-        if choice == .allow, spokenAllow, !requestMayAllow {
-            phase = .asking
-            _ = await speaker.speak("This one can be allowed only on screen.")
-            if request != nil { phase = .tapToAnswer }
+        if choice == .allow, spoken, !requestMayAllow {
+            answerAttempts = 2
+            await askAloud("This one can be allowed only on screen.", for: id)
             return
         }
         do {
             try await answer(ApprovalAnswerParams(choice: choice, pane: pane, request: id, via: .voice))
-            request = nil
+            guard !isEnded else { return }
+            if request?.id == id { request = nil; readBackDone = nil }
             await speak(choice == .allow ? "Allowed." : "Denied.")
         } catch let e as RPCError where e.kind == .conflict {
-            request = nil
+            if request?.id == id { request = nil; readBackDone = nil }
             await speak("That request was already answered or expired.")
         } catch {
             await speak("Could not reach \(chat.context.hostLabel).")
-            if request != nil { phase = .tapToAnswer }
         }
     }
 }
