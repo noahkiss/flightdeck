@@ -159,6 +159,10 @@ func row(proc api.PermissionProcess, inst string, c Check, required bool) api.Pe
 	if c.State != api.PermissionStateGranted && c.State != api.PermissionStateNote {
 		r.Settings = SettingsURL(c.Grant)
 	}
+	if r.Detail == "" && r.Settings != "" && (c.State == api.PermissionStateDenied || c.State == api.PermissionStateUnanswered) {
+		place := MenuPath(c.Grant)
+		r.Detail = "gff setup opens " + place[strings.LastIndex(place, "> ")+2:]
+	}
 	return r
 }
 

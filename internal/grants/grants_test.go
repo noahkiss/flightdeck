@@ -355,7 +355,7 @@ func (f *fakeRun) run(_ context.Context, name string, args ...string) ([]byte, e
 const team = "TEAM123456"
 
 func devID(id string) (info, req string) {
-	return "Identifier=" + id + "\nAuthority=Developer ID Application: Someone (" + team + ")\nAuthority=Developer ID Certification Authority\nTeamIdentifier=" + team + "\nflags=0x10000(runtime)\n",
+	return "Identifier=" + id + "\nAuthority=Developer ID Application: Someone (" + team + ")\nAuthority=Developer ID Certification Authority\nCodeDirectory v=20500 size=38815 flags=0x10000(runtime) hashes=1206+3 location=embedded\nTeamIdentifier=" + team + "\n",
 		strings.ReplaceAll(ReleaseRequirement(id, team), `"`+team+`"`, team) // codesign prints the team bare
 }
 
@@ -363,12 +363,12 @@ func TestCheckSignature(t *testing.T) {
 	ctx := context.Background()
 	f := &fakeRun{reqs: map[string]string{}, info: map[string]string{}, broken: map[string]bool{}}
 	f.info["/rel.app"], f.reqs["/rel.app"] = devID("p.hab-holder")
-	f.info["/adhoc.app"], f.reqs["/adhoc.app"] = "Identifier=p.hab-holder.dev\nflags=0x10002(adhoc,runtime)\n", `cdhash H"abc"`
+	f.info["/adhoc.app"], f.reqs["/adhoc.app"] = "Identifier=p.hab-holder.dev\nCodeDirectory v=20500 size=1 flags=0x10002(adhoc,runtime) hashes=1\n", `cdhash H"abc"`
 	f.info["/odd.app"], f.reqs["/odd.app"] = devID("p.hab-holder")
 	f.reqs["/odd.app"] = `identifier "p.hab-holder" and anchor apple generic`
-	f.info["/noruntime.app"] = "Identifier=p.hab\nTeamIdentifier=" + team + "\nAuthority=Developer ID Application: x\nflags=0x0(none)\n"
+	f.info["/noruntime.app"] = "Identifier=p.hab\nTeamIdentifier=" + team + "\nAuthority=Developer ID Application: x\nCodeDirectory v=20500 size=1 flags=0x0(none) hashes=1\n"
 	f.reqs["/noruntime.app"] = "identifier x"
-	f.info["/dev.app"] = "Identifier=p.hab.dev\nAuthority=Apple Development: x (Y)\nTeamIdentifier=" + team + "\nflags=0x10000(runtime)\n"
+	f.info["/dev.app"] = "Identifier=p.hab.dev\nAuthority=Apple Development: x (Y)\nTeamIdentifier=" + team + "\nCodeDirectory v=20500 size=1 flags=0x10000(runtime) hashes=1\n"
 	f.reqs["/dev.app"] = `identifier "p.hab.dev" and anchor apple generic and certificate leaf[subject.OU] = ` + team
 	f.broken["/broken.app"] = true
 

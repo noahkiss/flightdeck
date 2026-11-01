@@ -604,6 +604,87 @@ script runs the walk once before the check.
   responsible for itself.
 - The app's first-run screen runs this walk once. The app never edits TCC itself.
 
+### 7.9 Built: `hab.permissions`, `gff-hab probe` and `gff setup`
+
+Code: `internal/grants` (checks, probe protocol, signature rows, the service),
+`cmd/gff-hab/permissions.go` (probe panes, wiring), `cmd/gff/setup.go` (the command). Choices
+beyond the paper spec:
+
+- **The API method is `hab.permissions`** (revision 1, additive; capability `permissions`).
+  Params: `grants` limits the check to named grants; `request` names one grant the probe asks
+  macOS for first (accessibility, screen-recording, local-network, files-and-folders,
+  pasteboard). Only the walk sends `request`. The result is one row per grant and process:
+  `process` (holder or hab), `instance`, `draining`, `grant`, `state` (granted, denied, unknown,
+  unanswered, off, note, error), `required`, `detail`, `settings` (the URL) and `reveal` (the
+  bundle to show in Finder). The Mac app's Permissions screen reads the same rows (7.8).
+- **The client decides the exit code from the rows.** `error` on any row is exit 2; a required
+  row that is not `granted` is exit 1. gff setup prints `ok`, `missing` (denied or unanswered),
+  `unknown`, `off`, `note` or `error`. A draining holder's rows say `draining` in the first
+  column. A granted domain row goes on the host line as `Aqua`. `--json` prints the rows with
+  `exit` and `reason`.
+- **The probe protocol.** gff-hab starts `<its own executable> probe -nonce <n> -checks <g,...>
+  [-request <g>]` in a pane on the current holder, 80x24, cwd `/`, with the pane environment
+  minus `GFF_HAB`. The probe prints one line, `GFFPROBE1 <nonce> <base64 JSON>`, and exits.
+  gff-hab reads the pane's bytes from offset 0 through the link until that line, at most 256 KiB,
+  then releases the pane. A line with another nonce, or a body that names another nonce, is not
+  a result. The pane must start within 5 s (exit 2 past it); the result must come within 20 s,
+  or 2.5 minutes with a request.
+- **Probe panes are hidden.** gff-hab wraps the structure's view of the holders in a filter that
+  drops the probe's uuid, so no client ever sees a probe pane. The link still follows it, and
+  its uuid is retired after, like any closed pane.
+- **A draining holder is not probed.** It refuses new panes (`hab-holder.md` 4.3 step 4), and
+  the link spawns on the current holder only. gff-hab instead runs the signature rows on the
+  draining holder's bundle (found from its pid) and compares its designated requirement with the
+  current holder's. Same requirement: `granted`, "shares its grants" (6.2). Another requirement:
+  `denied` and required, because its panes lack every grant made since. Whether a grant made
+  after a holder started reaches it is P4's question; 6.3's restart is not built.
+- **One check at a time** per hab; a second call waits. The call runs off the connection's read
+  loop, bounded at 3 minutes.
+- **The C checks** go through `purego` (`dlopen` of ApplicationServices, CoreGraphics,
+  CoreServices and CoreFoundation) in `system_darwin.go`. `AEDesc` is passed as an opaque
+  buffer, so its packing never matters. `AXIsProcessTrustedWithOptions` gets a one-key
+  CFDictionary with the prompt key.
+- **Local Network.** `--check` cannot connect without risking the alert, so it reports `unknown`
+  until a walk's request ran: the probe connects to the default gateway's port 443. A connection,
+  or a refusal from the gateway, is `granted`; no route is `denied`; it retries every 2 s and
+  stays alive up to 30 s. **The answer is kept** in `<state>/macos/seen.json`, keyed by process
+  and a hash of the designated requirement, and later checks report it with its date. Keying on
+  the requirement follows TCC: an update with the same requirement keeps it (P12 needs exit 0),
+  a dev rebuild or a new team loses it. The paper spec said "since start"; that would fail every
+  check after an update. Files and Folders answers (when Full Disk Access is dropped) are kept
+  the same way.
+- **Pasteboard is not checked by default.** The round trip replaces the clipboard for a moment
+  (the old text is put back; other content is lost), so it runs only on request or `--grant
+  pasteboard`, and is never required.
+- **Opt-in grants come from `$GFF_MACOS_GRANTS`** on gff-hab, because no Flightdeck config file
+  exists yet: `accessibility`, `screen-recording`, `developer-tools`, `pasteboard`,
+  `automation:<bundle-id>`, and `no-full-disk-access`, which drops the holder's Full Disk Access
+  for Files and Folders (Q1). An opt-in that is off is reported `off` without a probe. It moves to
+  `macos.grants` when the config file lands.
+- **gff-hab's own Full Disk Access** is always checked, and required only when a project folder
+  the store knows lies under Desktop, Documents, Downloads, iCloud Drive or `/Volumes`.
+- **Background item.** For each launchd job (the logic job and each running holder's job):
+  `launchctl print gui/<uid>/<label>` must succeed and `launchctl print-disabled` must not list
+  it as disabled. gff-hab started with no init system gets a `note` row instead.
+- **Signature rows** run 5.3 rows 1 to 4 on each running bundle and read `spctl` (reported, not
+  gated). An ad-hoc signature (`cdhash` requirement) passes with a `dev` note; an Apple
+  Development signature passes as a dev build; a Developer ID signature must carry the release
+  requirement exactly.
+- **Re-grant owed (6.4)** is read from `<state>/macos/regrant-owed`. A full check whose required
+  rows are all granted removes it and writes `<state>/macos/last-pass`. Nothing writes the
+  record yet: `gff-hab install` does not compare requirements across builds (owed).
+- **The walk.** It runs the full check; with nothing missing it opens nothing (7.7). For each
+  required row that is not granted (or each `--grant`): requestable holder grants are requested
+  first and pass at once if the request answers granted; then it opens the row's URL (`open`,
+  and `open -R <bundle>` for Full Disk Access), prints the menu path, and re-checks that one grant
+  every 2 s. Enter re-checks, `s` then Enter skips, Ctrl-C stops and still prints the final check.
+  Local Network and Files and Folders re-send the request on each re-check. Developer Tools has
+  no check: the walk opens its pane and goes on. A signature failure or a re-grant record cannot
+  be fixed by the walk; it says what to do. Over `--host` or `--via` it prints the check and says
+  to run the walk on that Mac. On Linux it prints `loginctl enable-linger` or `gff-hab install`.
+- **Linux rows**: `lingering` (`loginctl show-user <uid> --property=Linger`) and `units`
+  (`systemctl --user is-enabled <logic unit>`), both required under systemd.
+
 ---
 
 ## 8. Proof steps on a Mac

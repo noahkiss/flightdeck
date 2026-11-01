@@ -3,6 +3,7 @@ package grants
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -33,6 +34,10 @@ func normReq(s string) string {
 
 // SameRequirement reports whether two designated requirements are the same text.
 func SameRequirement(a, b string) bool { return a != "" && normReq(a) == normReq(b) }
+
+// runtimeFlag finds the hardened runtime in the CodeDirectory line of `codesign -dv`, as in
+// "CodeDirectory v=20500 size=38815 flags=0x10000(runtime) hashes=...".
+var runtimeFlag = regexp.MustCompile(`flags=0x[0-9a-f]+\([^)]*\bruntime\b`)
 
 // codesignFields reads Key=value lines of `codesign -dv --verbose=4`. Authority repeats; the
 // first is the leaf.
@@ -91,7 +96,7 @@ func CheckSignature(ctx context.Context, run Runner, bundle string) SigInfo {
 		si.State, si.Detail = api.PermissionStateGranted, id+", ad-hoc signature (dev build)"
 		return si
 	}
-	if !strings.Contains(f["flags"], "runtime") {
+	if !runtimeFlag.Match(out) {
 		return fail("%s is signed without the hardened runtime", id)
 	}
 	if team == "" || team == "not set" {
