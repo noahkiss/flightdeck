@@ -553,6 +553,9 @@ no Ctrl+L); herdr observers (`hab-logic-api.md` 1.2).
 - The welcome carries the hab's `device_id`. `gff` pins it on first contact in its own state file.
 - A changed id fails the connection. `gff` shows both ids and says to accept it on purpose. It never
   accepts on its own. A welcome with no `device_id` leaves the hab unpinned (`transport.md` 4.1).
+- The hab reports its device id itself; the welcome carries no proof that it holds the key. So
+  the pin catches a different or reinstalled hab behind the same name, not an attacker. Over SSH,
+  the real check of the host is the known-hosts file.
 
 ### 11.5 Reconnect
 
@@ -607,9 +610,22 @@ supplies its own transport over `swift-nio-ssh` later (15.2, option A). Built tr
 - `SSHTransport`: the system `ssh`, one process per stream, running `gff-hab connect` on the host.
   It passes `-T`, `BatchMode=yes`, `ConnectTimeout=10`, `ServerAliveInterval=15` and
   `ServerAliveCountMax=3`; options the caller gives come first, so they win. A host that starts
-  with `-` or holds a space is refused. With `ControlDir` set it turns on OpenSSH connection
-  sharing (`ControlMaster=auto`, `ControlPersist=60`), so every stream after the first is a
-  session on one SSH connection. Off by default.
+  with `-` or holds a space is refused.
+- Connection sharing is on by default (15.3): `ControlMaster=auto`, `ControlPath=<dir>/%C`,
+  `ControlPersist=60`, so every stream after the first is a session on one SSH connection.
+  `NoSharing` turns it off.
+- The control directory is `ControlDir`, else `gff/ssh` under `$XDG_RUNTIME_DIR` when that is set
+  and short enough, else `/tmp/gff-ssh-<uid>`. macOS's own temporary directory is too long for
+  socket paths, so `/tmp` serves there. The path holds no user name beyond what the runtime
+  directory already holds.
+- `Dial` creates a missing control directory with mode 0700. It refuses a directory that another
+  user owns, that group or others may enter, that is a symbolic link or not a directory, or that
+  is longer than 45 bytes. The length check applies on every platform: macOS allows 104 bytes for
+  a socket path with its closing NUL, and the master's temporary socket is the directory, a
+  slash, `%C` (40 hex characters) and a 17-character suffix.
+- `SSHTransport.Reset` runs `ssh -O exit` with the same options and control path, so the master
+  exits and the next stream starts a fresh SSH connection. The `Conn` calls it through the
+  `Resetter` interface (below).
 
 **Why the system `ssh` and not `golang.org/x/crypto/ssh` (15.3).**
 
@@ -624,8 +640,10 @@ supplies its own transport over `swift-nio-ssh` later (15.2, option A). Built tr
 | Cost | One process per stream unless sharing is on; ssh's errors arrive as text on stderr | One process; typed errors |
 
 The text cost is small: the library keeps the last 4 KiB of ssh's stderr and puts it in the error
-of a failed hello or data open, so a client can show the SSH error (11.6). The seam keeps
-`x/crypto/ssh` possible later as one more transport, if process count or sleep handling demands it.
+of a failed hello or data open, so a client can show the SSH error (11.6). ssh often prints the
+error as it exits, after its stdout closed, so the library waits up to 500 ms for the process to
+exit before it reads the text. The seam keeps `x/crypto/ssh` possible later as one more
+transport, if process count or sleep handling demands it.
 
 **Control connection.**
 
@@ -646,6 +664,15 @@ of a failed hello or data open, so a client can show the SSH error (11.6). The s
 - Reconnect: at once, then backoff from 0.5 s doubling to 30 s, each wait a random point in its
   upper half. A hello refused with `revision_unsupported` or `invalid`, or a changed device id,
   stops the `Conn` for good.
+- A stale shared connection: a master whose link died during sleep still takes new sessions,
+  and `ConnectTimeout` does not apply to them, so each attempt would wait the 20 s open timeout
+  until ssh's keepalive gave up (about 45 s). When the transport is a `Resetter`, the `Conn`
+  resets it (at most 5 s) before every attempt that follows a failed one, and before the first
+  attempt after a dead link. `Retry` starts such an attempt at once.
+- A `Retry` sent while online is forgotten when the next connection comes online, so it cannot
+  cut a later outage's first backoff short.
+- A call in flight when the connection drops fails with the closed connection. It is never sent
+  again: whether the hab acted on it is unknown, and the caller decides.
 - Offline, `Call` fails at once with `ErrOffline`. Nothing is queued.
 - Updates (online, event, offline, failed) come on one channel in order, never dropped.
 
@@ -656,13 +683,23 @@ of a failed hello or data open, so a client can show the SSH error (11.6). The s
 - `Next` returns snapshot, bytes, resize and exited frames. Calling `Next` again means the last
   frame was applied: its credit is returned once 16 KiB is owed. Credit starts afresh on each data
   connection.
+- `Frames` delivers the same frames on a channel, for a client that selects over many panes (the
+  gff client core, task-g1uwtlsb). A goroutine per stream calls `Next`; taking a frame from the
+  channel returns its credit. The channel closes when the stream ends, and `Err` says why. A
+  client uses `Frames` or `Next`, never both.
+- A ctx that ends while `Next` reads closes the data connection, so the next call takes a new
+  ticket and connection. Polling `Next` with short deadlines churns connections (and ssh
+  sessions); a select loop reads `Frames` instead.
+- `PaneStream.Close` from another goroutine wakes a `Next` that waits for the host to come back,
+  or for a reopen backoff, with `ErrClosed`.
 - A dropped data connection, or a reject other than `not_found`, opens a new one with a fresh
   ticket and the offset after the last frame handed out. The hab continues from there or sends a
   snapshot. `not_found` ends the stream with `ErrPaneGone`.
 - When the control connection comes back after a drop, every data stream is closed and resumed:
   the link that dropped one likely dropped the others, and a quiet data stream cannot tell.
 - A bytes frame that starts below the held offset is trimmed to the new bytes. The hab never sends
-  one (`hab-logic-api.md` 5.4); this is a cheap guard.
+  one (`hab-logic-api.md` 5.4); this is a cheap guard. The stream counts the bytes it trims, and
+  the suite asserts the count stays zero, so the guard cannot hide a wrong resume offset.
 
 **Tests.** A fake hab in the tests is built from the real control server, data stream server and
 structure store, over a fake holder and a fake pane source; it can drop any connection from its
@@ -674,18 +711,30 @@ when key-based ssh with `BatchMode=yes` does not work.
 
 | Test | Proves |
 |---|---|
-| `ResumeAfterDrop` | The hab drops the data connection three times while 2 MiB flows; the client's bytes equal the pane's output, every frame starts where the last ended, no snapshot |
+| `ResumeAfterDrop` | The hab drops the data connection three times while 2 MiB flows; the client's bytes equal the pane's output, every frame starts where the last ended, no snapshot. Every data hello carries the offset the client held, and the repeat guard trims nothing (both checks run in `NewEpoch` and `SnapshotWhenTrimmed` too) |
 | `NewEpoch` | A restart with a lost state file: new epoch reported, the structure replaced although revisions went down, later events applied, the pane stream resumes across the restart with no gap |
 | `SameEpoch` | A dropped control connection: same client id, new token, state read again |
 | `SnapshotWhenTrimmed` | A resume from an offset the hab no longer has starts with a snapshot, and bytes follow from its offset |
-| `TestDeadLink` | A link that goes silent is found dead after `DeadAfter` and reconnects |
-| Unit tests | Seq floor, revision rule, gap and heartbeat checks, reset on a new epoch, ssh arguments, backoff bounds |
+| `TestDeadLink` | A link that goes silent is found dead after `DeadAfter` and reconnects; the transport is reset before the new dial |
+| `TestDropDuringCall` | A call whose answer never comes fails with the closed connection when the link is found dead, is not sent again, and a call after the reconnect works |
+| `TestPinAcrossReconnect` | The first welcome's device id stays pinned: a restart with the same id reconnects, one with another id stops the `Conn` with `DeviceChangedError` |
+| `TestResetBeforeRetry` | With the stand-in `ssh`: after a failed open, `Retry` runs `ssh -O exit` with the control path, then the next connect |
+| `TestRetryWhileOnline` | A `Retry` sent while online is gone after the reconnect |
+| `TestCloseWakesNext` | With the hab down, `Close` wakes a `Next` that waits to reopen, with `ErrClosed` |
+| `TestFrames` | The channel delivers the bytes in order across a dropped data connection and closes with `ErrClosed` |
+| `TestSSHErrorShown` | ssh's message, printed only as it exits after the stream ended, reaches the error |
+| `TestControlDirChecks` | A missing directory is made 0700; an open one, a link, a file, a relative path and one past 45 bytes are refused; `Dial` checks before it starts ssh |
+| Unit tests | Seq floor, revision rule, gap and heartbeat checks, reset on a new epoch, ssh arguments with and without sharing, the default control directory, backoff bounds |
+| `control` `TestClientCloseStopsPump` | 50 clients closed with notifications unread leave no delivery goroutine behind |
 
 **Limits (not built).** The bar is the popular tools in this space; these stay documented:
 
 | Limit | Why it is acceptable now |
 |---|---|
-| Without `ControlDir`, each stream is its own SSH connection and handshake | Correct, only slower to open; sharing is one option away |
+| With `NoSharing`, each stream is its own SSH connection and handshake | Correct, only slower to open |
+| `ssh -O exit` drops every session on that master, also another `gff` process's on the same host | It runs only after a failed open or a dead link, when those sessions are most likely dead too |
+| A wake from sleep while the control connection still looks up waits for dead-link detection (45 s) | `Retry` only shortens a reconnect that already started; a wake check that probes a live connection is the merge layer's job (11.5) |
+| The control directory's owner is checked only where the OS reports a Unix uid | macOS and Linux, the platforms the repo builds for |
 | With sharing, OpenSSH allows 10 sessions per connection by default | A client past nine panes on one host sees opens fail and retry; opening a second shared connection is the merge layer's job later (`transport.md` 7.6) |
 | A data stream has no heartbeat of its own | ssh's `ServerAliveInterval` and the reconnect after a control drop cover the common cases |
 | A stream reopened after `unavailable` retries until the pane comes back or the client closes it | A lost pane may return; the client shows the state the structure reports |
@@ -827,9 +876,9 @@ command and system-ssh transports (11.7); the app supplies its Swift SSH through
 Recommendation: **A**, with a config option to run a given command per host instead (as
 `gff-hab api call -via` does), for setups A cannot reach.
 
-Built: **B**, the system `ssh`, behind the transport seam, with optional connection sharing
-(11.7). Reasons: every OpenSSH feature and the user's own setup with no new dependency, and tests
-that swap the command. A stays possible as one more transport.
+Built: **B**, the system `ssh`, behind the transport seam, with connection sharing on by default
+and a checked control directory (11.7). Reasons: every OpenSSH feature and the user's own setup
+with no new dependency, and tests that swap the command. A stays possible as one more transport.
 
 **Decision: B (coordinator), A later as a transport if needed.** herdr also runs the system `ssh`
 with connection sharing. No new dependency, the user's own ssh config, and keys never touch our
