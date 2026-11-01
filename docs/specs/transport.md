@@ -138,8 +138,8 @@ What we take: nothing (see 3).
   accepts Ed25519, ECDSA P-256, P-384 and P-521, and a P-256 key held in the Secure Enclave (Apple
   platforms only). It has no RSA support; a pull request adding RSA is open, not merged
   (checked 2026-10-31). It takes keys as ready-made key objects: it does not read OpenSSH key files
-  or decrypt passphrase-protected ones, so the app needs its own reader (`app.md` 18.13). Verify
-  the Secure Enclave path in a spike before Part 6 builds on it.
+  or decrypt passphrase-protected ones, so the app needs its own reader (`app.md` 18.13). The
+  Secure Enclave path works: see the spike result in 4.8.
 - A jailbroken or instrumented device can bypass host-key pinning in its own app. That attacks the
   phone's owner only, not the hab.
 
@@ -254,10 +254,84 @@ shown as text, instead of needing sshd for the first contact. Revisit when a rea
 
 - The embedded server is new network-facing security code. Fuzz its handshake and subsystem
   parsing. Rate-limit refusals. A fresh-eyes security review runs before any real host enables it.
-- `swift-nio-ssh` with Secure Enclave keys is not yet proven in this app. A spike runs before
-  Part 6 builds on it.
+- `swift-nio-ssh` with Secure Enclave keys is proven on macOS by the spike (4.8). It is not yet
+  proven on an iPhone; the app's first device build checks it.
 
 Decision: settled (/consensus 3/3, 2026-10-31).
+
+### 4.8 Spike result: swift-nio-ssh with a Secure Enclave key
+
+The spike is `swift/Spikes/SSHSpike` (task-iv89iwd8, 2026-11-01). It is a macOS command-line tool
+built on `swift-nio-ssh` 0.15.1. `run.sh` starts a throwaway sshd on a loopback port with its own
+host key and authorized-keys file, and a `gff-hab serve` with a temporary socket and state. It
+never touches the system sshd or `~/.ssh`.
+
+**Result: the path works.**
+
+| Check | Result |
+|---|---|
+| Secure Enclave P-256 key (`ecdsa-sha2-nistp256`) | Works from an unsigned SwiftPM command-line tool on Apple silicon. No entitlement, no access-control flags, no prompt. A key made in one process and loaded from its `dataRepresentation` in another signs normally. OpenSSH 10.5 accepted it |
+| Software P-256 key | Works the same way |
+| `gff-hab connect` on an exec channel | `hab.hello` returns a welcome with revision, `client_id` and `device_id` |
+| Two more channels at once on the same connection | Both open, and each gets its own welcome (distinct `client_id`). The first channel still answers `hab.ping` afterwards |
+| A burst of 10 more channels (13 in all) | 7 open, 3 refused: OpenSSH's `MaxSessions` is 10. The refusal arrives as `NIOSSHError.channelSetupRejected` (reason 2). The connection and the open channels keep working |
+| Host key pinning | The client accepts exactly one pinned host key. A different host key fails the handshake with a mismatch error before auth, and no channel opens |
+
+Timing on an M1 Pro over loopback, Secure Enclave key, first connection of a fresh process:
+
+| Step | Time |
+|---|---|
+| TCP connect | 1.9 ms |
+| SSH handshake, auth and exec reply | 45.5 ms |
+| `hab.hello` round trip (includes the remote shell and `gff-hab connect` starting) | 94.1 ms |
+| Connect to first reply | 141.5 ms |
+| Two more channels, open to both welcomes | 92.1 ms |
+
+Later runs on the same machine under a load average near 200 ranged from 255 ms to 1.1 s. Most of
+the time goes to starting the remote process, not to the crypto. Loading the Secure Enclave key
+took about 3 ms. The cold-start time on an iPhone over a real network is still to measure
+(task-iv89iwd8 acceptance).
+
+**What `swift-nio-ssh` 0.15.1 supports:**
+
+- Client and host keys: Ed25519, ECDSA P-256, P-384, P-521, and a Secure Enclave P-256 key. OpenSSH
+  certificates for those types.
+- Key exchange: `curve25519-sha256`, `ecdh-sha2-nistp256`, `nistp384`, `nistp521`.
+- Ciphers: `aes128-gcm@openssh.com` and `aes256-gcm@openssh.com` only. MAC: `hmac-sha2-256`.
+- The embedded gff-hab server (Go, `golang.org/x/crypto/ssh`) offers all of these, so the phone
+  and the embedded server agree with no extra work.
+
+**What it lacks, and who covers it:**
+
+| Missing | Covered by |
+|---|---|
+| RSA keys | Not supported (1.8). Import refuses RSA with a clear message |
+| Reading OpenSSH key files and passphrase decryption | Our own reader, task-1csglxtc |
+| `known_hosts` parsing | Not needed: the app pins the hab's key from the pairing code (6.1). The spike parses one OpenSSH public-key line with `NIOSSHPublicKey(openSSHPublicKey:)` |
+| `chacha20-poly1305@openssh.com` and `aes-ctr` | Not needed for our servers. A system sshd limited to those ciphers would refuse the app; OpenSSH's defaults include AES-GCM |
+| Keepalive | The app sends `hab.ping` on the control connection (`hab-logic-api.md` 3.5) |
+| A high-level client API | The app writes its own: connect, one channel per connection, exec or subsystem, line or frame reading. The spike's `openExec` and `LineChannel` are about 120 lines |
+
+**What the app target needs:**
+
+- Store the Secure Enclave key's `dataRepresentation` in the Keychain with
+  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, not synchronizable. The blob is wrapped by this
+  device's enclave and useless elsewhere, but it stays out of backups.
+- Create the key with no access-control flags by default. When the user turns on Face ID, create
+  it with `SecAccessControl` flags (`.privateKeyUsage` plus `.biometryCurrentSet` or
+  `.userPresence`). The CryptoKit call is the same.
+- `SecureEnclave.isAvailable` is false in the simulator. The simulator and unit tests use a
+  software P-256 key behind the same key protocol.
+- CryptoKit Secure Enclave keys need no entitlement. A Keychain access group is needed only if a
+  notification extension must sign with the same key.
+- A channel refused for the session limit is an ordinary error. Against a system sshd the app opens
+  a second SSH connection after nine panes (`hab-logic-api.md` 4.2). The embedded server sets its
+  own limit.
+- On the embedded server the app opens subsystem channels instead of exec, with
+  `SSHChannelRequestEvent.SubsystemRequest`. The spike used exec because it ran against a system
+  sshd.
+
+Decision: settled. `swift-nio-ssh` is the app's SSH library.
 
 ---
 

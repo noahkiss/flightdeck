@@ -41,7 +41,7 @@ One Go module, `github.com/noahkiss/flightdeck`, at the repo root. Swift package
 | `internal/vt/vttest/` | The shared parser tests and their hand-written fixture |
 | `build/` | Ignored by git. `make libghostty` puts the Ghostty source and the built library here |
 | `swift/HabAPI/` | Swift package of generated `Codable` types for the app |
-| `swift/Spikes/` | Throwaway device spikes, each an XcodeGen project with its own README. `ParakeetSpike/` measures on-device Parakeet against Apple SpeechAnalyzer (`docs/specs/voice.md`) |
+| `swift/Spikes/` | Throwaway device spikes, each an XcodeGen project with its own README. `ParakeetSpike/` measures on-device Parakeet against Apple SpeechAnalyzer (`docs/specs/voice.md`). `SSHSpike/` is a SwiftPM command-line tool instead: `swift-nio-ssh` with a Secure Enclave key against a throwaway sshd and `gff-hab connect` (`docs/specs/transport.md` 4.8) |
 | `cmd/` | Binaries, as they land: `gff`, `gff-hab`, `gff-hab-holder` |
 | `docs/specs/` | Behaviour specs |
 | `docs/protocol/` | Wire protocol documents |
