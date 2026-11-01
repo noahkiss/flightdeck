@@ -35,6 +35,8 @@ var compounds = map[string]bool{
 	"upload": true, "install": true, "output": true, "input": true, "playback": true, "feedback": true,
 	"workflow": true, "workspace": true, "database": true, "website": true, "online": true,
 	"offline": true, "inside": true, "outside": true, "within": true, "upon": true, "cannot": true,
+	"timeout": true, "backend": true, "frontend": true, "filename": true, "username": true,
+	"runtime": true, "hostname": true, "endpoint": true, "keyboard": true, "password": true,
 }
 
 // Terms turns a folder's file paths (slash-separated, relative) into vocabulary terms: each

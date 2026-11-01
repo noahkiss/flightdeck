@@ -16,7 +16,8 @@ func TestTerms(t *testing.T) {
 func TestFixup(t *testing.T) {
 	terms := Terms([]string{"internal/holderreg/registry.go", "internal/link/link_test.go", "app/fetchUser.ts", "Makefile",
 		"README.md", "server/Server.swift", "a.go", "cmd/gff-hab/main.go",
-		"NOTICE", "LICENSE", ".github/workflows/ci.yml", "setup.py", "login/view.ts", "backup.sh"})
+		"NOTICE", "LICENSE", ".github/workflows/ci.yml", "setup.py", "login/view.ts", "backup.sh",
+		"internal/timeout.go", "backend/main.go"})
 	for _, tc := range []struct{ in, want string }{
 		{"Run the tests in link test dot go.", "Run the tests in link_test.go."},
 		{"call fetch user from the view", "call fetchUser from the view"},
@@ -26,6 +27,7 @@ func TestFixup(t *testing.T) {
 		{"Open a PR on GitHub.", "Open a PR on GitHub."},                               // .github
 		{"Please set up the server and log in.", "Please set up the server and log in."},
 		{"Back up the files", "Back up the files"},
+		{"the call will time out at the back end", "the call will time out at the back end"},
 		{"Fetch user first", "Fetch user first"}, // a capital that would be lost
 		{"git hub actions", "github actions"},    // the dot of .github is dropped
 		{"edit make file and build", "edit Makefile and build"},

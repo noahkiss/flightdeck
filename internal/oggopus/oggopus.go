@@ -175,6 +175,11 @@ func Parse(b []byte) (*Stream, error) {
 		}
 		s.PacketSamples += n
 	}
+	// A granule past what the packets hold, plus one packet of slack, is a lie, and a huge one
+	// would overflow the length arithmetic.
+	if len(s.Packets) > 0 && s.Granule > s.PacketSamples+5760 {
+		return nil, errors.New("the granule position runs past the packets")
+	}
 	return &s, nil
 }
 

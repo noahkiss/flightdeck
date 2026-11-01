@@ -204,6 +204,7 @@ func TestPacketRefuses(t *testing.T) {
 		{"too long", 960, []byte{3<<3 | 3, 3}, "longer than 120 ms"},
 		{"empty packet", 960, []byte{}, "empty Opus packet"},
 		{"no count", 960, []byte{0x0b}, "no frame count"},
+		{"granule past packets", 1 << 62, []byte{0x08}, "runs past the packets"},
 	} {
 		b := append(headers(), Page(0x04, tc.granule, 1, 2, tc.pkt)...)
 		if _, err := Parse(b); err == nil || !strings.Contains(err.Error(), tc.want) {
