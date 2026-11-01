@@ -61,8 +61,12 @@ public struct HabState: Sendable, Equatable {
     public var usage: [String: UsageAccount] = [:]
     /// The hab's clock less this device's, measured at the last hello from
     /// the welcome's `time` (app.md 14.6); nil before a hello, or when the
-    /// welcome carried no time. Kept while offline, for the last readings.
+    /// welcome carried no time. Kept while offline.
     public var clockOffset: TimeInterval?
+    /// The clock offset in force when each account in `usage` arrived, by
+    /// account key; no entry when there was none. A reading kept across a
+    /// reconnect keeps the offset it came with, not the new connection's.
+    public var usageClock: [String: TimeInterval] = [:]
 }
 
 /// Timings of the control connection. The defaults follow hab-logic-api.md 3.5
@@ -398,12 +402,20 @@ public actor HabConnection {
         try await waitSessionEnd()
     }
 
+    /// A hello round trip longer than this held a transport start (an ssh
+    /// connect and login), not just the hello.
+    static let slowHello: TimeInterval = 1
+
     /// The hab's clock less this device's: the welcome's `time` against the
-    /// middle of the hello's round trip. Nil with no time, or one that does not parse.
+    /// middle of the hello's round trip. After a slow round trip, against
+    /// its end: the hab writes the welcome once the transport is up, so
+    /// only the answer's way back remains, while the middle would land
+    /// inside the transport start. Nil with no time, or one that does not parse.
     static func clockOffset(habTime: String?, sent: Date, received: Date) -> TimeInterval? {
         guard let s = habTime, let hab = UsageBook.parseTime(s) else { return nil }
-        let mid = sent.addingTimeInterval(received.timeIntervalSince(sent) / 2)
-        return hab.timeIntervalSince(mid)
+        let rtt = received.timeIntervalSince(sent)
+        let moment = rtt > slowHello ? received : sent.addingTimeInterval(rtt / 2)
+        return hab.timeIntervalSince(moment)
     }
 
     private func hello(_ r: RPCClient) async throws -> Welcome {
@@ -503,7 +515,7 @@ public actor HabConnection {
         if e.type == "usage.updated", let a = try? e.data.decode(UsageAccount.self) {
             usageSeqs[a.key] = e.seq
             if state.usage[a.key] != a {
-                state.usage[a.key] = a
+                storeUsage(a)
                 publish()
             }
             return
@@ -526,10 +538,16 @@ public actor HabConnection {
         guard rpc === r else { return }
         var changed = false
         for a in res.accounts where (usageSeqs[a.key] ?? 0) <= res.seq && state.usage[a.key] != a {
-            state.usage[a.key] = a
+            storeUsage(a)
             changed = true
         }
         if changed { publish() }
+    }
+
+    /// Holds one account's reading with the clock offset in force now.
+    private func storeUsage(_ a: UsageAccount) {
+        state.usage[a.key] = a
+        state.usageClock[a.key] = state.clockOffset
     }
 
     private func livenessLoop(_ r: RPCClient) async {

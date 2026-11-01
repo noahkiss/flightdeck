@@ -49,9 +49,10 @@ public final class UsageBook {
 
     /// A hab's readings: the whole `usage.list` answer, or the readings it
     /// holds after events. Accounts it no longer reports keep their last reading.
-    /// `clockOffset` is the hab's clock less this device's, measured at hello:
-    /// the hab's times move by it onto this device's clock.
-    public func update(habID: String, habLabel: String, online: Bool, readings: [UsageAccount], clockOffset: TimeInterval? = nil) {
+    /// `clockOffsets` holds, by account key, the hab's clock less this
+    /// device's when the reading arrived: its times move by it onto this
+    /// device's clock.
+    public func update(habID: String, habLabel: String, online: Bool, readings: [UsageAccount], clockOffsets: [String: TimeInterval] = [:]) {
         var changed = false
         if online != onlineHabs.contains(habID) {
             if online { onlineHabs.insert(habID) } else { onlineHabs.remove(habID) }
@@ -60,7 +61,7 @@ public final class UsageBook {
         let t = now()
         for r in readings {
             let previous = byHab[habID]?[r.key] ?? accounts[r.key]
-            let new = Self.reading(r, habID: habID, habLabel: habLabel, receivedAt: t, previous: previous, clockOffset: clockOffset)
+            let new = Self.reading(r, habID: habID, habLabel: habLabel, receivedAt: t, previous: previous, clockOffset: clockOffsets[r.key])
             byHab[habID, default: [:]][r.key] = new
             if merge(new) { changed = true }
         }
@@ -117,10 +118,18 @@ public final class UsageBook {
                 guard old.habID != new.habID, !onlineHabs.contains(old.habID), onlineHabs.contains(new.habID) else { return false }
             } else if new.readAt < old.readAt {
                 return false
+            } else if Self.emptyDegraded(new), old.habID != new.habID, !old.windows.isEmpty, !old.unavailable, !UsageMath.isStale(old, now: now()) {
+                // A hab that read nothing never hides another hab's fresh numbers.
+                return false
             }
         }
         accounts[new.key] = new
         return true
+    }
+
+    /// Degraded with no window: the hab could read nothing for the account.
+    private static func emptyDegraded(_ a: UsageAccountReading) -> Bool {
+        a.unavailable && a.windows.isEmpty
     }
 
     /// The same reading, from any hab: nothing to show, nothing to alert.
@@ -180,15 +189,27 @@ public final class UsageBook {
             if let old = previous?.windows.first(where: { $0.name == w.name }), sameWindow(old, new) { return old }
             return new
         }
-        return UsageAccountReading(key: a.key, label: a.label, harness: a.harness, habID: habID, habLabel: habLabel, windows: windows, receivedAt: receivedAt, degraded: a.degraded)
+        var out = UsageAccountReading(key: a.key, label: a.label, harness: a.harness, habID: habID, habLabel: habLabel, windows: windows, receivedAt: receivedAt, degraded: a.degraded)
+        // The same reading again from the same hab keeps its arrival time, so
+        // an account with no windows ages instead of counting as new each time.
+        if let p = previous, p.habID == habID, sameContent(p, out) { out.receivedAt = p.receivedAt }
+        return out
     }
 
-    nonisolated static func parseTime(_ s: String) -> Date? {
+    // ISO8601DateFormatter is thread safe; one of each, made once.
+    nonisolated(unsafe) private static let fractional: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = f.date(from: s) { return d }
+        return f
+    }()
+    nonisolated(unsafe) private static let whole: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
-        return f.date(from: s)
+        return f
+    }()
+
+    nonisolated static func parseTime(_ s: String) -> Date? {
+        fractional.date(from: s) ?? whole.date(from: s)
     }
 
     /// Opens the usage sheet, at an account or at the top.

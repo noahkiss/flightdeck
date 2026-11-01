@@ -534,6 +534,11 @@ final class UsageClockOffsetTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(o), 120, accuracy: 0.001)
         XCTAssertNil(HabConnection.clockOffset(habTime: nil, sent: sent, received: received))
         XCTAssertNil(HabConnection.clockOffset(habTime: "yesterday", sent: sent, received: received))
+        // A slow hello (an ssh start) measures against its end: an exact clock
+        // whose welcome left 50 ms before the answer arrived gives no shift.
+        let slow = HabConnection.clockOffset(habTime: Fixture.stamp(t0.addingTimeInterval(3.95)), sent: t0, received: t0.addingTimeInterval(4))
+        XCTAssertEqual(try XCTUnwrap(slow), -0.05, accuracy: 0.001)
+        XCTAssertEqual(UsageBook.shift(slow), 0)
         // Whole seconds parse too.
         let ten = try XCTUnwrap(UsageBook.parseTime("2027-01-15T08:00:10Z"))
         XCTAssertEqual(try XCTUnwrap(HabConnection.clockOffset(habTime: "2027-01-15T08:00:00Z", sent: ten, received: ten)), -10, accuracy: 0.001)
@@ -567,11 +572,13 @@ final class UsageClockOffsetTests: XCTestCase {
         var changes = 0
         book.onChange = { _ in changes += 1 }
         let a = habAccount("k", [habWindow("5h", 50, resets: t0.addingTimeInterval(1810), read: t0.addingTimeInterval(10))])
-        book.update(habID: "h1", habLabel: "h1", online: true, readings: [a], clockOffset: 10)
-        book.update(habID: "h2", habLabel: "h2", online: true, readings: [a], clockOffset: 10.6)
+        book.update(habID: "h1", habLabel: "h1", online: true, readings: [a], clockOffsets: ["k": 10])
+        book.update(habID: "h2", habLabel: "h2", online: true, readings: [a], clockOffsets: ["k": 10.6])
         XCTAssertEqual(book.accounts["k"]?.habID, "h1", "the same reading stays with the hab that has it")
-        // A reconnect measures 11.2: the held times stay.
-        book.update(habID: "h1", habLabel: "h1", online: true, readings: [a], clockOffset: 11.2)
+        XCTAssertEqual(changes, 2)
+        // A reconnect measures 11.2: no change, and the held times stay.
+        book.update(habID: "h1", habLabel: "h1", online: true, readings: [a], clockOffsets: ["k": 11.2])
+        XCTAssertEqual(changes, 2, "a new measure of the same offset is no change")
         XCTAssertEqual(book.accounts["k"]?.windows[0].resetsAt, t0.addingTimeInterval(1800))
         // h1 goes offline: the tie moves to h2 at once.
         book.update(habID: "h1", habLabel: "h1", online: false, readings: [])
@@ -597,6 +604,80 @@ final class UsageClockOffsetTests: XCTestCase {
         let w = try XCTUnwrap(fleet.usage?.book.accounts["k"]?.windows.first)
         XCTAssertEqual(try XCTUnwrap(w.resetsAt).timeIntervalSince(now), 3600, accuracy: 2)
         XCTAssertFalse(UsageMath.isStale(w, now: Date()), "read now on this device's clock")
+        // The hab comes back with no time: the offset clears. The reading held
+        // keeps the offset it came with; a new one is taken as it stands.
+        await hab.setClockSkew(nil)
+        await hab.dropConnections()
+        await eventually("reconnected") {
+            let s = await conn.state
+            return s.status == .online && s.snapshots > state.snapshots
+        }
+        let after = await conn.state
+        XCTAssertNil(after.clockOffset)
+        XCTAssertEqual(after.usageClock["k"] ?? 0, -7200, accuracy: 2)
+        XCTAssertEqual(try XCTUnwrap(fleet.usage?.book.accounts["k"]?.windows.first?.resetsAt).timeIntervalSince(now), 3600, accuracy: 2)
+        await hab.putUsage(habAccount("j", [habWindow("5h", 10, resets: now.addingTimeInterval(1800), read: now)]))
+        await eventually("new account") { fleet.usage?.book.accounts["j"] != nil }
+        XCTAssertEqual(try XCTUnwrap(fleet.usage?.book.accounts["j"]?.windows.first?.resetsAt).timeIntervalSince(now), 1800, accuracy: 0.01)
+        let late = await conn.state
+        XCTAssertNil(late.usageClock["j"])
         await fleet.setActive(false)
+    }
+
+    func testReadingKeepsItsOffsetAcrossOffsetChange() {
+        // The book shifts each account by the offset it came with, not the latest.
+        let book = UsageBook(now: { t0 })
+        let a = habAccount("a", [habWindow("5h", 10, resets: t0.addingTimeInterval(3600 + 600), read: t0.addingTimeInterval(600))])
+        let b = habAccount("b", [habWindow("5h", 10, resets: t0.addingTimeInterval(3600), read: t0)])
+        book.update(habID: "h1", habLabel: "h1", online: true, readings: [a, b], clockOffsets: ["a": 600])
+        XCTAssertEqual(book.accounts["a"]?.windows[0].resetsAt, t0.addingTimeInterval(3600))
+        XCTAssertEqual(book.accounts["b"]?.windows[0].resetsAt, t0.addingTimeInterval(3600))
+    }
+}
+
+@MainActor
+final class UsageDegradedMergeTests: XCTestCase {
+    func testEmptyDegradedNeverHidesFreshNumbers() {
+        let clock = Clock(t0)
+        let book = UsageBook(now: { clock.now })
+        var changes = 0
+        book.onChange = { _ in changes += 1 }
+        let healthy = habAccount("k", [habWindow("5h", 40, resets: t0.addingTimeInterval(3600), read: t0)])
+        let broken = habAccount("k", degraded: "rate_limits: unknown shape", [])
+        book.update(habID: "h2", habLabel: "h2", online: true, readings: [healthy])
+        // The degraded hab updates again and again, as each state change of it does.
+        for i in 1...5 {
+            clock.now = t0.addingTimeInterval(Double(i) * 10)
+            book.update(habID: "h1", habLabel: "h1", online: true, readings: [broken])
+            XCTAssertEqual(book.accounts["k"]?.habID, "h2")
+            XCTAssertNil(book.accounts["k"]?.degraded)
+        }
+        // A newer healthy reading stays too.
+        clock.now = t0.addingTimeInterval(100)
+        book.update(habID: "h2", habLabel: "h2", online: true, readings: [habAccount("k", [habWindow("5h", 45, resets: t0.addingTimeInterval(3600), read: t0.addingTimeInterval(90))])])
+        clock.now = t0.addingTimeInterval(110)
+        book.update(habID: "h1", habLabel: "h1", online: true, readings: [broken])
+        XCTAssertEqual(book.accounts["k"]?.windows.first?.usedPct, 45)
+        XCTAssertEqual(changes, 3, "h2's reading, h1 online, h2's newer reading")
+    }
+
+    func testEmptyDegradedShowsOnceTheOtherIsStale() {
+        let clock = Clock(t0)
+        let book = UsageBook(now: { clock.now })
+        book.update(habID: "h2", habLabel: "h2", online: true, readings: [habAccount("k", [habWindow("5h", 40, resets: t0.addingTimeInterval(3600), read: t0)])])
+        clock.now = t0.addingTimeInterval(4000)
+        book.update(habID: "h1", habLabel: "h1", online: true, readings: [habAccount("k", degraded: "drift", [])])
+        XCTAssertEqual(book.accounts["k"]?.habID, "h1")
+        XCTAssertTrue(book.accounts["k"]?.unavailable == true)
+    }
+
+    func testEmptyReadingAgainKeepsItsArrival() {
+        let clock = Clock(t0)
+        let book = UsageBook(now: { clock.now })
+        let broken = habAccount("k", degraded: "drift", [])
+        book.update(habID: "h1", habLabel: "h1", online: true, readings: [broken])
+        clock.now = t0.addingTimeInterval(600)
+        book.update(habID: "h1", habLabel: "h1", online: true, readings: [broken])
+        XCTAssertEqual(book.accounts["k"]?.receivedAt, t0)
     }
 }

@@ -47,7 +47,7 @@ public final class UsageCenter {
 
     /// Feeds one hab's state.
     public func update(habID: String, label: String, state: HabState) {
-        book.update(habID: habID, habLabel: label, online: state.status == .online, readings: Array(state.usage.values), clockOffset: state.clockOffset)
+        book.update(habID: habID, habLabel: label, online: state.status == .online, readings: Array(state.usage.values), clockOffsets: state.usageClock)
     }
 }
 
