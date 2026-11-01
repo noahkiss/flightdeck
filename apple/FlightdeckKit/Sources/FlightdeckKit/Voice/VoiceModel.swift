@@ -128,7 +128,11 @@ public final class VoiceModel {
             await end(SpeechEngines.describe(error))
             return
         }
-        guard !isEnded else { return }
+        guard !isEnded else {
+            // Ended during the start: the microphone came on after end's stop.
+            input.stop()
+            return
+        }
         lastActivity = now()
         tasks.append(Task { [weak self, input] in
             for await e in input.events {

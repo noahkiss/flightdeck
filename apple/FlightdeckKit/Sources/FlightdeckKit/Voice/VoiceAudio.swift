@@ -55,10 +55,11 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         }
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
-        // Dictation ducks the owner's audio instead of stopping it.
-        try session.setCategory(.playAndRecord, mode: speaks ? .voiceChat : .default,
+        // Dictation ducks the owner's audio instead of stopping it. Another
+        // window's microphone already set the session: keep its mode.
+        if Self.sessionUsers == 0 { try session.setCategory(.playAndRecord, mode: speaks ? .voiceChat : .default,
                                 options: speaks ? [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP]
-                                    : [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers])
+                                    : [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers]) }
         try session.setActive(true)
         observe(session)
         #endif
@@ -413,9 +414,21 @@ struct LiveText: Sendable {
     /// A result that finished this close before a turn began belongs to it:
     /// its words started the turn.
     static let carry = 0.6
+    /// The ended turn still had a phrase in progress: it belongs to that turn.
+    /// Its later revisions and its final result are skipped.
+    private var tailOfEnded = false
 
     mutating func update(finished f: String, volatile v: String, at t: Double) {
-        if f.count > finished.count { lastFinal = (finished.count, t) }
+        if f.count > finished.count {
+            if tailOfEnded {
+                // The ended turn's phrase finished: move past it, with no carry.
+                tailOfEnded = false
+                base = f.count
+                lastFinal = nil
+            } else {
+                lastFinal = (finished.count, t)
+            }
+        }
         finished = f
         volatile = v
     }
@@ -428,11 +441,12 @@ struct LiveText: Sendable {
     mutating func end() {
         base = finished.count
         lastFinal = nil
+        tailOfEnded = !volatile.isEmpty
     }
 
     var turn: String {
         let start = finished.index(finished.startIndex, offsetBy: min(base, finished.count))
-        return (String(finished[start...]) + volatile)
+        return (String(finished[start...]) + (tailOfEnded ? "" : volatile))
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -462,11 +476,15 @@ final class LiveWords: @unchecked Sendable {
     }
 
     /// The microphone's format changed (a route change): rebuild the converter.
+    /// During the asset download it is kept for `start`.
     func reset(natural: AVAudioFormat) {
         lock.withLock {
+            latestNatural = natural
             if let f = format { converter = AVAudioConverter(from: natural, to: f) }
         }
     }
+
+    private var latestNatural: AVAudioFormat?
 
     func start(natural: AVAudioFormat) async {
         guard #available(iOS 26, macOS 26, *) else { return }
@@ -494,7 +512,7 @@ final class LiveWords: @unchecked Sendable {
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         lock.withLock {
             format = fmt
-            converter = AVAudioConverter(from: natural, to: fmt)
+            converter = AVAudioConverter(from: latestNatural ?? natural, to: fmt)
             feedSink = nil
         }
         // Buffers go through a type-erased sink so this class needs no availability mark.

@@ -420,6 +420,23 @@ final class SpeechEngineTests: XCTestCase {
         await host.release("voice-1")
     }
 
+    func testADeferredUnloadKeepsTheModelForANewHolder() async throws {
+        let rt = FakeRuntime()
+        rt.transcribeDelay = .milliseconds(150)
+        let host = ParakeetHost(runtime: rt, offered: true)
+        try await host.acquire("voice-a")
+        let t = Task { try await host.transcribe([0], for: "voice-a") }
+        await eventually("in flight") { host.inFlight == 1 }
+        await host.release("voice-a")
+        try await host.acquire("voice-b")
+        _ = try await t.value
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(rt.loaded, "voice-b holds it now")
+        XCTAssertEqual(rt.loadCount, 1)
+        await host.release("voice-b")
+        XCTAssertFalse(rt.loaded)
+    }
+
     func testTwoHoldersOfOneKindKeepTheModel() async throws {
         let rt = FakeRuntime()
         let host = ParakeetHost(runtime: rt, offered: true)

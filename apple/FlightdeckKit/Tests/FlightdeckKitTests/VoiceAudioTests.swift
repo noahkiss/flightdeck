@@ -199,6 +199,39 @@ final class VoiceAudioTests: XCTestCase {
         XCTAssertEqual(t.turn, "")
     }
 
+    func testTheEndedTurnsPhraseInProgressStaysWithIt() {
+        var t = LiveText()
+        t.update(finished: "", volatile: "deploy it", at: 0)
+        t.begin(at: 0.1)
+        XCTAssertEqual(t.turn, "deploy it")
+        t.end()
+        // The phrase is revised, then finishes, after the turn ended: no new turn text.
+        t.update(finished: "", volatile: "deploy it now", at: 0.5)
+        XCTAssertEqual(t.turn, "")
+        t.update(finished: "deploy it now.", volatile: "", at: 1.5)
+        XCTAssertEqual(t.turn, "")
+        t.begin(at: 1.7)
+        XCTAssertEqual(t.turn, "", "no carry of the ended turn's phrase")
+        t.update(finished: "deploy it now.", volatile: "and check", at: 2)
+        XCTAssertEqual(t.turn, "and check")
+    }
+
+    func testTheEndedTurnsPhraseRaisesNoWordsEvent() async {
+        let (stream, sink) = AsyncStream.makeStream(of: VoiceInputEvent.self)
+        let tap = TapState(sink: sink)
+        tap.liveChanged(finished: "", volatile: "deploy it")
+        tap.beginTurn()
+        _ = tap.endTurn()
+        tap.liveChanged(finished: "deploy it.", volatile: "")
+        sink.finish()
+        var after = 0
+        var all: [VoiceInputEvent] = []
+        for await e in stream { all.append(e) }
+        if let i = all.lastIndex(where: { if case .words = $0 { return true }; return false }) { after = i }
+        XCTAssertEqual(all.filter { if case .words = $0 { return true }; return false }.count, 1, "only the turn's own words: \(all)")
+        XCTAssertEqual(after, 0)
+    }
+
     func testLiveTextKeepsAResultThatFinishedJustBeforeTheTurn() {
         var t = LiveText()
         t.update(finished: "", volatile: "stop", at: 0)

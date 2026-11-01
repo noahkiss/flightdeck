@@ -112,8 +112,8 @@ public final class SpeechEngines {
     /// Prepares every engine at once; a sticky refusal skips it. An engine
     /// whose prepare ends after `close` is closed again, so a late Parakeet
     /// load is released at once.
+    /// A set of engines is used once: a `close` before this runs still holds.
     public func prepare() async {
-        closed = false
         await withTaskGroup(of: Void.self) { g in
             for e in engines {
                 g.addTask { @MainActor in await self.prepare(e) }

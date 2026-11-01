@@ -430,6 +430,8 @@ struct PaneDictationButton: View {
     /// A dictation already went into this pane: the next one starts with a space.
     @State private var pasted = false
     @State private var notice: String?
+    /// Set at the tap, before any await, so a second tap starts nothing.
+    @State private var starting = false
 
     var body: some View {
         if let kit {
@@ -438,7 +440,10 @@ struct PaneDictationButton: View {
                     denied = true
                     return
                 }
+                guard !starting, dictation == nil else { return }
+                starting = true
                 Task {
+                    defer { starting = false }
                     // The pane's session gives the hab's vocabulary.
                     let session = await connection.state.store.panes[pane]?.session
                     let d = kit.dictation(connection: connection, session: session)

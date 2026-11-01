@@ -151,7 +151,11 @@ public final class ParakeetHost {
             inFlight -= 1
             if inFlight == 0, unloadWhenIdle {
                 unloadWhenIdle = false
-                Task { await self.unloadNow() }
+                // A new holder may have come meanwhile: keep the model unless
+                // memory or the background asked for the unload.
+                if holders.isEmpty || evicted || !isForeground {
+                    Task { await self.unloadNow() }
+                }
             }
         }
         return try await runtime.transcribe(samples)
@@ -161,12 +165,12 @@ public final class ParakeetHost {
         if evicted {
             throw SpeechEngineError.unavailable("the on-device model was unloaded after a memory warning", sticky: true)
         }
-        if unloadWhenIdle {
-            throw SpeechEngineError.unavailable("the on-device model is unloading", sticky: false)
-        }
         guard isForeground else {
             throw SpeechEngineError.unavailable("the on-device model does not run in the background", sticky: false)
         }
+        // A deferred unload after the last release: a new holder keeps the
+        // model. (Memory warnings and the background threw above.)
+        if unloadWhenIdle { unloadWhenIdle = false }
         if isLoaded { return }
         if let l = loading {
             try await l.value

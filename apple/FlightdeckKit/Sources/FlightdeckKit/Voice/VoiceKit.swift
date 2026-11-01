@@ -48,6 +48,11 @@ public final class DictationModel {
             await engines.close()
             return
         }
+        guard phase == .listening else {
+            // Cancelled during the start: the microphone came on after cancel's stop.
+            input.stop()
+            return
+        }
         input.beginTurn()
         listen = Task { [weak self, input] in
             for await e in input.events {
