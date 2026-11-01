@@ -392,15 +392,16 @@ unreachable and keeps H1 alone. The compatibility rule in 3.2 exists to prevent 
   A package manager that deletes the old version's files cannot break a running holder's job
   definition or a later re-exec.
 - On macOS this interacts with permission grants; see 5.3.
-- Built so far (stage 6): `gff-hab install` copies both binaries into `<state>/bin` by write and
-  rename, never in place, so a running holder keeps its own executable file. Every holder job
-  names that one path, so a holder that restarts after a crash runs the newest build. Separate
-  directories per build are not built yet; they matter for a re-exec (option C) and for macOS
-  grants (Q2).
-- The one `<state>/bin` copy is an interim only. It must change to per-build copies
-  (`macos-identity.md` 6.1) before Mac proof P3 and before any grant work: a replaced binary at
-  one path may lose its grants at each install, and a crash-restarted older holder runs the new
-  build.
+- Built on macOS (stage 6): per-build copies. `gff-hab install` copies the two helper bundles
+  into `<state>/builds/<build>` (`macos-identity.md` 6.1). Each holder job names the executable
+  in its own build's bundle, so a holder that restarts after a crash runs its own build. gff-hab
+  removes a build directory once no job names it: at install, after it retires a holder, and at
+  its start.
+- Built on Linux (stage 6), unchanged: `gff-hab install` copies both binaries into `<state>/bin`
+  by write and rename, never in place, so a running holder keeps its own executable file. Every
+  holder unit names that one path, so a holder that restarts after a crash runs the newest
+  build. Linux has no grants to keep, so per-build directories there matter only for a re-exec
+  (option C); they are not built yet.
 
 ---
 
@@ -541,13 +542,20 @@ Built (stage 6):
   (`$GFF_SERVICE_PREFIX`, default `flightdeck`), `-state`, `-holders`, `-socket` and `-unit-dir`.
   `gff-hab serve` takes the same flags, and the jobs pass them on, so both sides agree.
 - Install writes: the job files (two units, or the logic plist), the enable link that
-  `systemctl --user enable` makes in `default.target.wants`, the binary copies in `<state>/bin`,
-  and on macOS the log directory. A second install replaces the binaries and job files and
+  `systemctl --user enable` makes in `default.target.wants`, the binary copies in `<state>/bin`
+  (Linux), and on macOS the log directory, the build directory `<state>/builds/<build>` with both
+  helper bundles, and the link `<state>/current` (`macos-identity.md` 6.1). A second install
+  replaces the binaries (Linux) or adds a build directory (macOS), replaces the job files and
   restarts the logic job only. `gff-hab install -dry-run` prints the job files.
+- On macOS install takes only bundles: `-hab-bin` is `GFF Hab.app` or the executable in it, and
+  `-holder-bin` defaults to the `GFF Holder.app` beside it. Bare binaries are refused with a
+  pointer to `scripts/macos-bundle.sh -dev`, because a holder outside a bundle has no stable
+  privacy identity.
 - Install records each file and each directory it creates in `<state>/install.json` before it
   writes it. A binary whose source is already the installed copy is not written, so not recorded.
-  Uninstall removes what the record lists, the holder plists and holder logs by their names, the
-  record, then each directory install created, only when it is empty. So `-state ~` never costs
+  Uninstall removes what the record lists, the holder plists and holder logs by their names, every
+  build directory in `<state>/builds` by its name (16 hex digits, or a leftover temporary
+  directory), the record, then each directory install created, only when it is empty. So `-state ~` never costs
   the user `~/logs` or a `~/bin/gff-hab` install did not write. With no record it removes the
   job files by name only, and says so.
 - Install and uninstall refuse a state directory whose record names another prefix, init system

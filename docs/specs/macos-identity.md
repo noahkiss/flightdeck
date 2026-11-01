@@ -2,7 +2,8 @@
 
 Status: draft, from the Part 1 study step of the signing task. Paper study, written on Linux.
 Every claim marked **needs Mac proof** has not been confirmed on current macOS. Every question in
-section 9 is decided; the proof steps in section 8 are approved and wait to run.
+section 9 is decided; the proof steps in section 8 are approved, and 8.1 records which ran.
+Sections 3, 5 and 6 note what was built where it differs from this paper spec.
 
 This spec says which code identity each Flightdeck process carries on macOS, which permission
 grants each one needs, how releases are signed, and how one built-in command (`gff setup`) checks
@@ -209,6 +210,19 @@ GFF Holder.app/
   (`gff-hab hook`) and `gff-hab install` run from `GFF Hab.app/Contents/MacOS/gff-hab` through a
   symlink on `PATH`. A symlink is fine for a CLI: it needs no TCC identity.
 
+Built: `scripts/macos-bundle.sh` writes the bundles. Choices it made beyond the paper spec:
+
+- `Info.plist` also carries `CFBundlePackageType` `APPL`, `CFBundleName` (`GFF Holder`,
+  `GFF Hab`), `CFBundleInfoDictionaryVersion` `6.0`, `CFBundleDevelopmentRegion` `en` and
+  `LSMinimumSystemVersion` `12.0`. `CFBundleShortVersionString` and `CFBundleVersion` are both
+  the `-version` value (numbers and dots only).
+- Each usage string says "A program running in a Flightdeck pane wants to ..." and names the
+  resource, nothing else.
+- The prefix comes from `$GFF_BUNDLE_PREFIX`, with no default. The script refuses a prefix that
+  is not reverse-DNS.
+- The bare `gff` is signed only when `cmd/gff` exists. It does not exist yet, so a release today
+  holds the two bundles only.
+
 ### 3.4 Where the bundles come from
 
 Two channels ship byte-identical, identically signed bundles:
@@ -236,6 +250,11 @@ A local `go build` is ad-hoc signed. Its requirement is a code hash. Rules:
   team, so dev grants survive rebuilds. Nothing signs by default, and nothing in the build reads a
   keychain unless that variable is set.
 - On Linux none of this applies. `make` builds bare binaries as today.
+
+Built: `scripts/macos-bundle.sh -dev` makes the dev bundles: `.dev` ids, ad-hoc signature with
+hardened runtime and the holder's entitlements, no notarization. It honours
+`GFF_DEV_SIGN_IDENTITY`; `make` does not call it yet. `gff-hab install` on macOS takes bundles
+only, so a local build goes through this script first (`scripts/service-check.sh` does).
 
 ---
 
@@ -339,6 +358,30 @@ xcrun stapler staple "GFF Hab.app"
 
 On a non-Accepted status, CI prints `notarytool log <id>` and fails.
 
+### 5.2.1 Built: `scripts/macos-bundle.sh`
+
+The script runs 5.1 to 5.3 in one pass. Settings come from the environment only:
+`GFF_BUNDLE_PREFIX`, `GFF_SIGN_IDENTITY`, `GFF_TEAM_ID`, `GFF_NOTARY_PROFILE`, and the optional
+`GFF_SIGN_KEYCHAIN` and `GFF_NOTARY_KEYCHAIN`. Without `-bin-dir` it builds both binaries with
+`-tags ghostty` against `make libghostty`. Choices that differ from the paper spec, or add to it:
+
+- **The submission uses a `notarytool` keychain profile** (`--keychain-profile`), not the key
+  file flags. The profile is stored once with `xcrun notarytool store-credentials`.
+- **A keychain of its own for signing and notarizing.** Over SSH, and in a CI job, the login
+  keychain is locked: `codesign` fails with `errSecInternalComponent` and `notarytool` with
+  `keychainLocked` (P1). The proof imported the Developer ID `.p12` into a temporary keychain with
+  a random password, ran `security set-key-partition-list` for `codesign`, stored the notary
+  profile in the same keychain, passed both as `GFF_SIGN_KEYCHAIN` and `GFF_NOTARY_KEYCHAIN`, and
+  deleted the keychain after. CI does the same.
+- **The requirement comparison ignores quotes.** `codesign -d -r-` prints the team as a bare word
+  (`certificate leaf[subject.OU] = <team-id>`), where the template quotes it. The script strips
+  `"` from both sides before it compares.
+- **`codesign --verify -R=<requirement>` takes the requirement text with no leading `=`.** A
+  leading `=` is a syntax error on macOS 27.
+- An ad-hoc dev signature uses `--timestamp=none`; a release uses `--timestamp`.
+- The bundles are zipped from one folder, `gff-macos/`, so the notary sees the same layout the
+  release archive has. After stapling, the script zips that folder again as `gff-macos.zip`.
+
 ### 5.3 Verification
 
 Run in CI after signing, and again by `gff setup --check` on the installed copies:
@@ -377,8 +420,35 @@ answers "will the grants still match".
   when the Mac app is installed.
 - A build directory is removed only when no job names it and no process runs from it
   (`hab-holder.md` 4.3 step 7).
-- Built so far: one copy of each binary in `<state>/bin` (`hab-holder.md` 4.4). That is an
-  interim only. It must become this layout before Mac proof P3 and before any grant work.
+Built (`internal/service`, `bundle.go`). Choices beyond the paper spec:
+
+- **`<build-id>` is a content hash**: the first 16 hex digits of a SHA-256 over both bundles'
+  trees (paths, modes and bytes). The same bundles always land in the same directory, so a
+  reinstall copies nothing; any changed byte, a staple included, gets a new directory. The build
+  name a holder reports (`-X main.build`) is separate.
+- **Install takes bundles only on macOS.** `-hab-bin` is `GFF Hab.app` or the executable inside
+  it; `-holder-bin` defaults to the `GFF Holder.app` beside it. Install checks each
+  `CFBundleExecutable`, that the ids end in `.hab` and `.hab-holder` (or both in `.dev`), and that
+  both share one prefix. Bare binaries are refused.
+- **The rows install runs.** For each copy: `codesign --verify --strict --verbose=2`, then
+  `codesign --verify -R=<requirement>` with the designated requirement of the source bundle. Install
+  does not know the team, so the template comparison (rows 2 and 3) stays with the release script
+  and `gff setup --check`. A build directory that already exists is verified, never written; if it
+  fails, install stops and says to reinstall.
+- **`<state>/current` is set right after the rename**, before the plist that names the build, so a
+  running gff-hab of an older build never prunes the new one.
+- **Pruning.** A build directory goes when no plist of this install names it (the logic plist and
+  every holder plist), it is not the build of the caller, and `current` does not name it. gff-hab
+  prunes at install, after it retires a holder, and at its start sweep. A temporary copy directory
+  goes once it is 10 minutes old. A process started by hand from a build directory, with no job,
+  is not seen; that is a documented limit.
+- **`gff-hab serve -build <build-id>`** tells the logic job which build it runs from, so it starts
+  holders from the `GFF Holder.app` of its own build and reads both bundle ids from their
+  `Info.plist`.
+- **`AssociatedBundleIdentifiers`** holds the job's own bundle id only. Adding
+  `<prefix>.flightdeck` waits for the Mac app.
+- **Uninstall** removes every build directory by its name, after it has stopped every job.
+- **Linux is unchanged**: one copy of each binary in `<state>/bin` (`hab-holder.md` 4.4).
 
 ### 6.2 Drain keeps grants
 
@@ -561,7 +631,7 @@ that Mac (`tccutil reset` included); **Account** means creating a fresh macOS us
 
 Steps that need nothing (P0, P2, P8) can run at any time. The owner approved P1, P3 to P7 and
 P9 to P12 (2026-11-01): Developer ID signing, TCC changes on a test Mac and a fresh user account.
-They are approved, not yet run.
+They are approved; 8.1 says which ran.
 
 ### 8.1 Results so far
 
@@ -585,7 +655,65 @@ They are approved, not yet run.
   Security pane without an anchor and name the row in words.
 
 Still open for P8: that each URL opens the named pane. Confirming it needs a person at the screen,
-or a screen capture, which needs Screen Recording (a TCC grant).
+or a screen capture, which needs Screen Recording (a TCC grant). **The visual part of P8 is still
+owed.**
+
+**P1 (macOS 27.2), passed.** Run over SSH with a proof prefix, not a product one:
+
+- `scripts/macos-bundle.sh` built gff-hab and gff-hab-holder with `-tags ghostty` twice (builds A
+  and B), wrapped both, signed them with the Developer ID identity from a temporary keychain,
+  hardened runtime and a secure timestamp, and notarized each set: status `Accepted`. It stapled
+  both bundles.
+- Every 5.3 row passed on both bundles: `--strict` verify ("valid on disk", "satisfies its
+  Designated Requirement"); `codesign -d -r-` equal to the 5.1 template; `TeamIdentifier` the
+  team and `flags=0x10000(runtime)`; `-R=<template>` exit 0; `spctl` "accepted",
+  `source=Notarized Developer ID`; `stapler validate` "The validate action worked!". The holder
+  carries exactly the seven entitlements of 4.2. There is no `gff` binary yet, so its rows did
+  not run.
+- `gff-hab install` copied each build into `<state>/builds/<build-id>` and ran it as a launch
+  agent. The hardened gff-hab started, logged `parser libghostty`, answered `hab.ping` and
+  `hab.hello`, and served `session.create`. No entitlement beyond 4.2 was needed.
+- Two blockers found and built around (5.2.1): the login keychain is locked over SSH, so
+  `codesign` failed with `errSecInternalComponent` and `notarytool` with `keychainLocked`. A
+  temporary keychain holds the identity and the notary profile for the run.
+
+**P3, the part without a grant (macOS 27.2), passed.** Notarized builds A and B, one bundle id:
+
+- Install A; a pane on A's holder. Install B over it: gff-hab of B started holder B from
+  `builds/<B>/GFF Holder.app`; a new pane landed on B; A's pane stayed on A, whose holder kept
+  running from `builds/<A>/GFF Holder.app`. Both copies verified, with one designated
+  requirement. Each plist named its executable inside its own build's bundle and carried
+  `AssociatedBundleIdentifiers`.
+- In both panes: `launchctl managername` printed `Aqua`; a `pbcopy` and `pbpaste` round trip
+  returned the token at once (P0 and P2 again, now under the signed holder); the Full Disk Access
+  probe answered `denied` at once, as expected with no grant.
+- Uninstall booted out every job and removed every build directory; no process was left.
+- `scripts/service-check.sh` passes on the Mac with dev bundles: build A's copy goes once its
+  holder retires.
+- **Waits for the owner:** the grant itself. Add build A's `GFF Holder.app` to Full Disk Access,
+  then list `~/Desktop` from a pane on A and on B, and check that System Settings shows one
+  entry. The "other channel" half needs the Mac app, which does not exist; a byte-identical
+  bundle lands in the same build directory, so there is nothing else to compare yet.
+
+**P4: waits for the owner.** Every step is a System Settings toggle. The kit that runs the probes
+around the toggles is prepared.
+
+**P5, partly.** The pasteboard round trip under the signed holder returned the token at once,
+with nothing waiting on a prompt. **Waits for the owner:** whether a prompt appeared, and whether
+Privacy & Security lists "Paste from Other Apps" with GFF Holder in it.
+
+**P6, partly.** From a pane of the signed holder, `nc -z` to the default gateway (port 443) and
+to another LAN host (port 22) connected at once, on the first try, with no Local Network
+decision recorded. So on macOS 27.2 an undecided Local Network state did not block a program in
+a launch agent's pane. **Waits for the owner:** whether an alert appeared, under which name, and
+whether Privacy & Security > Local Network lists GFF Holder. gff-hab makes no LAN connection of
+its own yet (peer habs are not built), so that half is owed.
+
+**Restoring TCC needs a bundle LaunchServices can see.** `tccutil reset All <bundle-id>` failed
+with OSStatus -10814 (`kLSApplicationNotFoundErr`) while the only copies of the bundle were under
+`/tmp`, even after `lsregister -f`. With a copy under the home directory registered, it worked.
+The installed layout (`<state>` under `~/Library`) is not affected; a proof that installs under
+`/tmp` registers a copy elsewhere before it resets.
 
 ---
 
