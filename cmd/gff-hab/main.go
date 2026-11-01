@@ -96,6 +96,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/panesize"
 	"github.com/noahkiss/flightdeck/internal/peers"
 	"github.com/noahkiss/flightdeck/internal/service"
+	"github.com/noahkiss/flightdeck/internal/speech"
 	"github.com/noahkiss/flightdeck/internal/structure"
 	"github.com/noahkiss/flightdeck/internal/transcript"
 	habusage "github.com/noahkiss/flightdeck/internal/usage"
@@ -264,7 +265,7 @@ func serve(args []string) error {
 		build: fs.String("build", "", "launchd: the build directory under <state>/builds this gff-hab runs from (gff-hab install sets it)"),
 	}
 	peersFile := fs.String("peers", "", "peer list file (default: $GFF_HAB_PEERS, else gff/peers.toml in the user config directory)")
-	habConfig := fs.String("config", "", "the hab's config file, with its [catalog] section (default: $GFF_HAB_CONFIG, else gff/hab.toml in the user config folder)")
+	habConfig := fs.String("config", "", "the hab's config file, with its [catalog] and [speech] sections (default: $GFF_HAB_CONFIG, else gff/hab.toml in the user config folder)")
 	pushConfig := fs.String("push-config", "", "push config file (default: <state>/push.json); $GFF_HAB_PUSH_* override its fields")
 	permWait := fs.Duration("permission-wait", 0, "hold Claude's PermissionRequest hook up to this long for the app's answer; 0 is off (default: $GFF_HAB_PERMISSION_WAIT, else off)")
 	wtRoot := fs.String("worktrees", "", "folder for new worktrees, as <folder>/<repository>/<branch> (default: $GFF_HAB_WORKTREES, else ~/.gff/worktrees)")
@@ -668,6 +669,17 @@ func serve(args []string) error {
 	if pushes.Enabled() {
 		caps = append(caps, "push")
 	}
+	// The speech engine (voice.md): on when its helper is installed and the host setting allows.
+	var speechSvc control.Speech
+	sp, err := speechSetup(cpath, dir, store, speechEnv{getenv: os.Getenv, executable: os.Executable, memory: speech.HostMemory()}, logger.Printf)
+	if err != nil {
+		return err
+	}
+	if sp != nil {
+		defer sp.Close()
+		speechSvc = sp
+		caps = append(caps, "speech")
+	}
 	s := control.New(control.Config{
 		Build:        build,
 		Host:         api.HostInfo{ID: *hostID},
@@ -696,6 +708,7 @@ func serve(args []string) error {
 		Content:     contents,
 		Channels:    chSvc,
 		Worktrees:   wts,
+		Speech:      speechSvc,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)

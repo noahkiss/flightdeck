@@ -36,9 +36,10 @@ func TestMain(m *testing.M) {
 	}
 	bin = filepath.Join(d, "gff-hab")
 	holderBin = filepath.Join(d, "gff-hab-holder")
-	os.Setenv("GFF_HOLDER_DIR", filepath.Join(d, "holders"))   // never the user's real holders
-	os.Setenv("GFF_HAB_PEERS", filepath.Join(d, "peers.toml")) // never the user's real peer list
-	os.Setenv("GFF_HAB_DETECT", "off")                         // the catalog runs no program from PATH
+	os.Setenv("GFF_HOLDER_DIR", filepath.Join(d, "holders"))     // never the user's real holders
+	os.Setenv("GFF_HAB_PEERS", filepath.Join(d, "peers.toml"))   // never the user's real peer list
+	os.Setenv("GFF_HAB_DETECT", "off")                           // the catalog runs no program from PATH
+	os.Setenv("GFF_HAB_SPEECH_HELPER", filepath.Join(d, "none")) // never a speech helper found on PATH
 	out, err := exec.Command("go", append(append([]string{"build"}, buildFlags...), "-o", bin, ".")...).CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "build gff-hab: %v\n%s", err, out)
