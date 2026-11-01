@@ -45,10 +45,19 @@ targets:
     sources:
       - path: App/iOS
         excludes: ["*.entitlements", "Info.plist"]
+      - path: Shared
       - path: ../design/icons/AppIcon.icon
     dependencies:
       - package: FlightdeckKit
         product: FlightdeckKit
+      - package: FlightdeckKit
+        product: FlightdeckShared
+      - target: NotificationService
+        embed: true
+        codeSign: true
+      - target: FlightdeckWidgets
+        embed: true
+        codeSign: true
       # - target: ShareExtensioniOS
       #   embed: true
       #   codeSign: true
@@ -65,6 +74,53 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
         SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+  # Adds the expiry to permission banners as a local clock time (app.md 8.6).
+  NotificationService:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: NotificationService
+        excludes: ["*.entitlements", "Info.plist"]
+    dependencies:
+      - package: FlightdeckKit
+        product: FlightdeckShared
+    settings:
+      base:
+        PRODUCT_NAME: FlightdeckNotificationService
+        PRODUCT_MODULE_NAME: FlightdeckNotificationService
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_NSE_BUNDLE_ID)
+        INFOPLIST_FILE: NotificationService/Info.plist
+        CODE_SIGN_ENTITLEMENTS: NotificationService/NotificationService.entitlements
+        "PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]": $(APP_NSE_PROFILE)
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        APPLICATION_EXTENSION_API_ONLY: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
+  # The session's Live Activity and Dynamic Island (app.md 9).
+  FlightdeckWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Widgets
+        excludes: ["*.entitlements", "Info.plist"]
+      - path: Shared
+    dependencies:
+      - package: FlightdeckKit
+        product: FlightdeckShared
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    settings:
+      base:
+        PRODUCT_NAME: FlightdeckWidgets
+        PRODUCT_MODULE_NAME: FlightdeckWidgets
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_WIDGET_BUNDLE_ID)
+        INFOPLIST_FILE: Widgets/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Widgets/Widgets.entitlements
+        "PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]": $(APP_WIDGET_PROFILE)
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        APPLICATION_EXTENSION_API_ONLY: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
   # Share extension, optional. Needs ShareExtension/<platform>/ with an
   # Info.plist (NSExtension, com.apple.share-services), a view controller and
   # entitlements.

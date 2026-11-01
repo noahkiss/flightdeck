@@ -7,8 +7,15 @@ APP_BUNDLE_ID = $(APP_BUNDLE_PREFIX).flightdeck
 // APP_SHARE_BUNDLE_ID = $(APP_BUNDLE_ID).share
 // Shared by the app and its extensions (widgets, notification service).
 APP_GROUP_ID = group.$(APP_BUNDLE_ID)
-// Push. The iOS app has only an App Store profile, which carries production.
+// Push. Release builds go out with an App Store profile, which carries
+// production. Debug builds use a development profile and the APNs sandbox;
+// the app reads the value back from Info.plist (FlightdeckAPSEnvironment) and
+// tells each hab which APNs host its token belongs to.
 APP_APS_ENVIRONMENT = production
+APP_APS_ENVIRONMENT[config=Debug] = development
+// The notification service extension and the Live Activity widget.
+APP_NSE_BUNDLE_ID = $(APP_BUNDLE_ID).notification-service
+APP_WIDGET_BUNDLE_ID = $(APP_BUNDLE_ID).widgets
 
 MARKETING_VERSION = 0.1.0
 // Local and simulator builds only. build.sh and testflight.sh set the build
