@@ -107,9 +107,10 @@ struct LockScreenView: View {
     }
 }
 
-/// Deny and Allow, equal size, Allow on the right (app.md 7.2). Each runs
-/// `ActivityAnswerIntent` in the app's process; the hab drops the buttons
-/// once the request resolves anywhere (7.5).
+/// Deny and Allow, equal size, Allow on the right (app.md 7.2). Each runs its
+/// intent in the app's process; the hab drops the buttons once the request
+/// resolves anywhere (7.5). Allow asks for Face ID or the passcode unless the
+/// owner turned on "Approve from the lock screen without unlocking".
 struct AnswerButtons: View {
     let attributes: SessionActivityAttributes
     let state: SessionActivityAttributes.ContentState
@@ -117,14 +118,21 @@ struct AnswerButtons: View {
     var body: some View {
         if let pane = state.pane, let request = state.request {
             HStack(spacing: 10) {
-                Button(intent: ActivityAnswerIntent(hab: attributes.hab, pane: pane, request: request, allow: false)) {
+                Button(intent: ActivityDenyIntent(hab: attributes.hab, pane: pane, request: request)) {
                     Text("Deny").frame(maxWidth: .infinity)
                 }
                 .tint(.red)
-                Button(intent: ActivityAnswerIntent(hab: attributes.hab, pane: pane, request: request, allow: true)) {
-                    Text("Allow").frame(maxWidth: .infinity)
+                if SharedSettings.allowWithoutUnlock() {
+                    Button(intent: ActivityAllowLockedIntent(hab: attributes.hab, pane: pane, request: request)) {
+                        Text("Allow").frame(maxWidth: .infinity)
+                    }
+                    .tint(.green)
+                } else {
+                    Button(intent: ActivityAllowIntent(hab: attributes.hab, pane: pane, request: request)) {
+                        Text("Allow").frame(maxWidth: .infinity)
+                    }
+                    .tint(.green)
                 }
-                .tint(.green)
             }
             .buttonStyle(.borderedProminent)
         }

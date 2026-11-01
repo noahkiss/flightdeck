@@ -938,9 +938,12 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
   (`HabOneShot`, 20 s). A dropped live connection tries once on a fresh one; the hab refuses a
   second answer, so this never answers twice. The hab is found by the push's host id through
   the hab book (`Flightdeck/hab-book.json`, host id to connection id, ids only, written as each
-  hab comes online). An SSH key that needs Face ID fails at once ("open Flightdeck to answer").
+  hab comes online, rewritten when a hab is removed). An SSH key that needs Face ID fails at once
+  ("open Flightdeck to answer"). Logs name the answer's outcome in public and keep the hab's hint
+  and dial errors private, since they can name hosts and commands.
 - **Failure.** `conflict` posts "Already answered" (or "Expired: answer in the terminal" past
-  `expires_at`) and nothing else. Any other failure posts "Could not reach <hab>" / "Open on
+  `expires_at`) and nothing else. When the live try dropped and the fresh try got `conflict`,
+  the first try most likely landed: the notice says "Answered". Any other failure posts "Could not reach <hab>" / "Open on
   iPhone to retry." or "Could not answer on <hab>" with the hab's hint, and keeps the request
   (at most 16, in the app's defaults). When the app is next in front and the hab is online with
   that request open, the approval sheet opens on it: the foreground prompt. Nothing retries on
@@ -961,7 +964,10 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
   Live Activity link (`flightdeck://request?hab=&pane=&request=&session=`). It reads every
   request from the board, oldest first with "1 of 3". The request on screen stays after it closes:
   when the hab's `agent.state` shows it closed without this sheet's answer, the buttons turn off
-  and it says "Answered elsewhere". The countdown uses the device clock (no offset is measured
+  and it says "Answered elsewhere". A tap on a banner or Live Activity whose request is gone
+  never opens another request in its place (that would put a different command under Allow):
+  once the hab is online the sheet shows that request as answered elsewhere; before that the
+  request waits for the foreground. The countdown uses the device clock (no offset is measured
   yet). A failed answer keeps the buttons on with the hab's hint.
 - **Plans and questions** (`landscape.md` 4.4). A permission request for Claude's
   `ExitPlanMode` shows the plan, with "Keep planning" (deny) and "Approve plan" (allow). One for
@@ -969,19 +975,34 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
   chosen labels joined with ", " (several questions: one "<header>: <labels>" line each). The hab
   refuses `answer` until the Claude adapter builds it; the sheet then shows the hab's hint.
 - **Live Activity.** `LiveActivityTracker` tracks the session the owner last sent a message to,
-  or the one that last entered `blocked`, whichever came later. When the app leaves the
-  foreground it starts the activity for that session if it is working or blocked and its hab has
-  push registered (without push nothing could update it after suspension, 9.2). The activity's
-  push token goes to that hab with `push.register_activity`, on the live connection or a
-  one-shot one. Opening the session in the app ends it. Allow and Deny run
-  `ActivityAnswerIntent`, a `LiveActivityIntent` compiled into both the app and the widget (App
-  Intents reads metadata per target); it runs in the app and answers like a banner action.
+  or the one that last entered `blocked`, whichever came later. ActivityKit starts an activity
+  only while the app is in front, so the tracker starts it when the scene turns inactive on its
+  way out, not in the background: for that session, if it is working or blocked and its hab has
+  push registered (without push nothing could update it after suspension, 9.2). One activity at
+  a time: any other is ended first, and its token dropped on its hab with `push.unregister`.
+  The first content of a session blocked on an answerable permission carries its request with
+  Allow and Deny, since the hab sends nothing until the state changes. The activity's push
+  token goes to that hab with `push.register_activity`, on the live connection or a one-shot
+  one. Opening the session in the app ends it and drops its token. An answer from the activity
+  that landed or was refused drops its buttons at once, before the hab's push.
+- **Live Activity buttons and unlock** (owner ruling 2026-11-01). The intents are compiled into
+  both the app and the widget (App Intents reads metadata per target) and run in the app. Allow
+  asks for Face ID or the passcode (`authenticationPolicy` `requiresAuthentication`); Deny runs
+  without it. The setting "Approve from the lock screen without unlocking" (Settings ›
+  Notifications, off by default, kept in the App Group so the widget reads it) swaps Allow for an
+  intent with no authentication. The device key signs only while the device is unlocked
+  (transport.md 7.2), so an answer while protected data is unavailable sends nothing: the app
+  posts "Unlock to answer" and raises the request in the foreground. With today's key class this
+  holds for Deny and for Allow with the setting on.
   Push-to-start and the "hab offline" end are not built.
 - **Mac.** The Mac app answers banners and reports focus, but asks for no APNs token: its
   entitlements have no `aps-environment` until a Developer ID profile with push exists.
 - **Tests.** `PushTests.swift` (registration against the fake hab, action mapping, categories,
   expiry text, one-shot and live answers, refusal and re-raise, focus cadence, the sheet,
-  plans and questions, Live Activity choices and links). `LiveTests.testLivePushRegister` runs
+  plans and questions, Live Activity choices and links) and `ApprovalFixTests.swift` (the Live
+  Activity through a fake ActivityKit host: start on inactive, first content, one at a time,
+  local button drop, end and unregister; unlock refusal, stale taps, withdrawal, the dropped
+  live connection, the hab book, plan text). `LiveTests.testLivePushRegister` runs
   against a real gff-hab with push config (`FLIGHTDECK_LIVE_SOCKET`, `FLIGHTDECK_LIVE_PUSH=1`).
 
 Sources: owner decision (each user brings their own APNs setup; fail gracefully without it); Moshi

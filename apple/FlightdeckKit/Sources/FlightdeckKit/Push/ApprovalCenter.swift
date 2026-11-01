@@ -93,7 +93,8 @@ public final class ApprovalCenter {
     /// refusal says it was already answered or expired.
     public func answer(host: String, _ params: ApprovalAnswerParams, meta: PushMeta?) async -> AnswerOutcome {
         let o = await answerer.answer(host: host, params)
-        log.notice("background answer \(params.choice.rawValue, privacy: .public): \(String(describing: o), privacy: .public)")
+        // The case is public; the hab's hint or the dial error may name hosts or commands.
+        log.notice("background answer \(params.choice.rawValue, privacy: .public): \(o.caseName, privacy: .public) \(o.detail, privacy: .private)")
         let label = habLabel(host: host)
         if let f = o.followUp(hab: label, expiry: meta?.expiry) {
             await post?(f.title, f.body, o.reraise ? meta : nil)
@@ -102,6 +103,24 @@ public final class ApprovalCenter {
             addPending(meta)
         }
         return o
+    }
+
+    /// Whether the device is unlocked (protected data available); the iOS app
+    /// sets it. The device key signs only while unlocked (transport.md 7.2).
+    @ObservationIgnored public var isUnlocked: @MainActor () -> Bool = { true }
+
+    /// Allow or Deny from the Live Activity. A locked device cannot sign with
+    /// its key, so the answer is refused at once with "Unlock to answer" and
+    /// the request is raised again in the foreground; nothing is sent.
+    /// Returns nil when it was refused that way.
+    public func answerFromActivity(host: String, pane: String, request: String, allow: Bool) async -> AnswerOutcome? {
+        let meta = PushMeta(kind: "permission", hab: host, pane: pane, request: request)
+        guard isUnlocked() else {
+            await post?("Unlock to answer", habLabel(host: host), meta)
+            addPending(meta)
+            return nil
+        }
+        return await answer(host: host, ApprovalAnswerParams(choice: allow ? .allow : .deny, pane: pane, request: request, via: .banner), meta: meta)
     }
 
     func habLabel(host: String) -> String {

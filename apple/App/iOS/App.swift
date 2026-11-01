@@ -14,7 +14,12 @@ struct FlightdeckApp: App {
                 .onOpenURL { url in
                     if fleet.approvals?.open(url: url) != true { fleet.ssh?.open(url: url) }
                 }
-                .task { pushDelegate.start(fleet.push) }
+                .task {
+                    // The device key signs only while unlocked: a Live Activity
+                    // answer on a locked phone says "Unlock to answer".
+                    fleet.approvals?.isUnlocked = { UIApplication.shared.isProtectedDataAvailable }
+                    pushDelegate.start(fleet.push)
+                }
         }
         .onChange(of: phase, initial: true) { _, p in
             fleet.apply(p)

@@ -138,7 +138,6 @@ public final class Fleet {
                 // connections close; a hab that misses it drops the focus
                 // with the connection anyway.
                 focus.setActive(false)
-                activities?.background()
                 await Self.within(.seconds(1)) { await self.focus.flush() }
                 terminals.setActive(false)
                 for c in connections { await c.stop() }
@@ -167,9 +166,15 @@ public final class Fleet {
     }
 
     /// iPhone and iPad: the scene phase decides. `inactive` (a sheet from the
-    /// system, the app switcher) changes nothing.
+    /// system, the app switcher) keeps the connections; it only starts the
+    /// Live Activity, which ActivityKit allows only while the app is in front.
     public func scene(active: Bool?) {
-        guard let active else { return }
+        guard let active else {
+            // On its way out the scene turns inactive first: the last moment
+            // ActivityKit lets the app start a Live Activity (app.md 9.1).
+            if isActive { Task { await activities?.start() } }
+            return
+        }
         Task { await setActive(active) }
     }
 

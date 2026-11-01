@@ -78,13 +78,19 @@ public enum AppFleet {
         actions.install()
         fleet.keepAlive.append(actions)
         #if os(iOS)
-        fleet.activities = LiveActivityTracker(board: fleet.board, push: fleet.push!, caller: answerer)
-        ActivityAnswerBridge.handler = { [weak center] hab, pane, request, allow in
-            let params = ApprovalAnswerParams(choice: allow ? .allow : .deny, pane: pane, request: request, via: .banner)
-            let meta = PushMeta(kind: "permission", hab: hab, pane: pane, request: request)
-            _ = await center?.answer(host: hab, params, meta: meta)
+        let tracker = LiveActivityTracker(board: fleet.board, push: fleet.push!, caller: answerer, host: SystemActivities())
+        fleet.activities = tracker
+        ActivityAnswerBridge.handler = { hab, pane, request, allow in
+            await activityAnswer(center: center, tracker: tracker, hab: hab, pane: pane, request: request, allow: allow)
         }
         #endif
+    }
+
+    /// Allow or Deny from the Live Activity: answer, then drop the buttons.
+    @MainActor
+    static func activityAnswer(center: ApprovalCenter, tracker: LiveActivityTracker, hab: String, pane: String, request: String, allow: Bool) async {
+        guard let o = await center.answerFromActivity(host: hab, pane: pane, request: request, allow: allow) else { return }
+        await tracker.answered(pane: pane, request: request, outcome: o)
     }
 
     /// A transport for one call to the hab a push named, from the hab book.

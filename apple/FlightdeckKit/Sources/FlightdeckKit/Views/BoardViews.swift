@@ -34,7 +34,8 @@ public struct FlightdeckRoot: View {
 
 extension Fleet {
     /// iPhone and iPad: the app-level scene phase, which is active while any
-    /// window is active. `inactive` changes nothing.
+    /// window is active. `inactive` keeps the connections and starts the Live
+    /// Activity.
     public func apply(_ phase: ScenePhase) {
         switch phase {
         case .active: scene(active: true)
@@ -73,7 +74,7 @@ public struct BoardScreen: View {
             // session.focus while the session is on screen (app.md 8.6).
             .onAppear {
                 fleet?.focus.show(row.target)
-                fleet?.activities?.opened(row.target)
+                Task { await fleet?.activities?.opened(row.target) }
             }
             .onDisappear { fleet?.focus.hide(row.target) }
     }

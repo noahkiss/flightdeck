@@ -1,11 +1,13 @@
 #if os(iOS)
 import ActivityKit
+#endif
 import Foundation
 
 /// The Live Activity of one session (app.md 9). The hab that owns the session
 /// updates it by push; the content state keys are the hab's contract
-/// (hab-logic-api.md 3.9 Push, Live Activity).
-public struct SessionActivityAttributes: ActivityAttributes {
+/// (hab-logic-api.md 3.9 Push, Live Activity). Defined on every platform so
+/// the app's logic is testable on the Mac; only iOS makes it an activity.
+public struct SessionActivityAttributes: Codable, Hashable, Sendable {
     public struct ContentState: Codable, Hashable, Sendable {
         /// `working`, `blocked`, `idle`, `done`, `error`, `exited`.
         public var state: String
@@ -59,12 +61,36 @@ public struct SessionActivityAttributes: ActivityAttributes {
     }
 }
 
-/// Where the Live Activity's Allow and Deny land. The intent itself
-/// (`ActivityAnswerIntent`, apple/Shared) is compiled into the app and the
-/// widget, because App Intents reads intent metadata from each target's own
-/// sources. A `LiveActivityIntent` runs in the app's process, where the app
-/// sets this handler at launch.
+#if os(iOS)
+extension SessionActivityAttributes: ActivityAttributes {}
+#endif
+
+/// Where the Live Activity's Allow and Deny land. The intents themselves
+/// (apple/Shared) are compiled into the app and the widget, because App
+/// Intents reads intent metadata from each target's own sources. A
+/// `LiveActivityIntent` runs in the app's process, where the app sets this
+/// handler at launch.
 public enum ActivityAnswerBridge {
     nonisolated(unsafe) public static var handler: (@Sendable (_ hab: String, _ pane: String, _ request: String, _ allow: Bool) async -> Void)?
 }
-#endif
+
+/// Settings the app shares with its widget through the App Group.
+public enum SharedSettings {
+    /// The App Group, as Info.plist names it (`FlightdeckAppGroup`).
+    public static var groupID: String? {
+        Bundle.main.object(forInfoDictionaryKey: "FlightdeckAppGroup") as? String
+    }
+
+    /// The App Group's defaults; standard defaults where there is none (tests).
+    public static var defaults: UserDefaults {
+        groupID.flatMap { UserDefaults(suiteName: $0) } ?? .standard
+    }
+
+    /// "Approve from the lock screen without unlocking"; off by default. When
+    /// off, the Live Activity's Allow asks for Face ID or the passcode first.
+    public static let allowWithoutUnlockKey = "flightdeck.activity.allow-without-unlock"
+
+    public static func allowWithoutUnlock(_ d: UserDefaults = defaults) -> Bool {
+        d.bool(forKey: allowWithoutUnlockKey)
+    }
+}

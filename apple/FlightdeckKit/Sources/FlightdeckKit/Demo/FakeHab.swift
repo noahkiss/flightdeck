@@ -71,6 +71,8 @@ public actor FakeHab {
     public private(set) var pushRegisters: [PushRegisterParams] = []
     /// Every `push.register_activity` received, oldest first.
     public private(set) var activityRegisters: [PushActivityParams] = []
+    /// Every `push.unregister` received, oldest first.
+    public private(set) var unregisters: [PushUnregisterParams] = []
     /// Every `session.focus` received, oldest first.
     public private(set) var focusReports: [SessionFocusParams] = []
     /// Every `approval.answer` received, oldest first, refused or not.
@@ -448,6 +450,13 @@ public actor FakeHab {
                 await fail(c, id: id, kind: .invalid, hint: "bad \(method) params")
                 break
             }
+            await reply(c, id: id, result: Empty(seq: c.seq))
+        case HabMethods.pushUnregister.name:
+            guard let p = try? params.decode(PushUnregisterParams.self) else {
+                await fail(c, id: id, kind: .invalid, hint: "bad push.unregister params")
+                break
+            }
+            unregisters.append(p)
             await reply(c, id: id, result: Empty(seq: c.seq))
         case HabMethods.sessionFocus.name:
             guard let p = try? params.decode(SessionFocusParams.self) else {

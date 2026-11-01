@@ -38,22 +38,44 @@ public struct ActivityPick: Sendable, Equatable {
     }
 }
 
+/// What the tracker needs from ActivityKit, so its rules run in tests on the
+/// Mac. `SystemActivities` is the iOS implementation.
+@MainActor
+public protocol ActivityHost: AnyObject {
+    var enabled: Bool { get }
+    /// Sessions with an activity that has not ended.
+    func running() -> [String]
+    /// Starts an activity and returns its push tokens as they come.
+    func start(_ attributes: SessionActivityAttributes, _ state: SessionActivityAttributes.ContentState) throws -> AsyncStream<Data>
+    func update(session: String, _ state: SessionActivityAttributes.ContentState) async
+    func end(session: String) async
+}
+
 /// Starts and ends the session's Live Activity and gives its push token to
 /// the session's hab with `push.register_activity`; that hab alone updates
 /// it (app.md 9.1, 18.1). iPhone and iPad only.
+///
+/// ActivityKit starts an activity only while the app is in front, so `start`
+/// runs when the scene turns inactive on its way out, not once it is in the
+/// background.
 @MainActor
 public final class LiveActivityTracker {
     private let board: Board
     private let push: PushRegistrar
     private let caller: ApprovalAnswerer
+    private let host: ActivityHost?
     public private(set) var pick = ActivityPick()
     private var blocked: Set<String> = []
+    /// Per running activity: its hab's host id, its push token, its last content.
+    private var live: [String: (host: String, token: String?, state: SessionActivityAttributes.ContentState)] = [:]
+    private var tokenTasks: [String: Task<Void, Never>] = [:]
     private let log = Logger(subsystem: "com.flightdeck.app", category: "activity")
 
-    public init(board: Board, push: PushRegistrar, caller: ApprovalAnswerer) {
+    public init(board: Board, push: PushRegistrar, caller: ApprovalAnswerer, host: ActivityHost?) {
         self.board = board
         self.push = push
         self.caller = caller
+        self.host = host
     }
 
     /// A message from this device reached the hab.
@@ -71,86 +93,125 @@ public final class LiveActivityTracker {
         blocked = now
     }
 
-    /// The app left the screen: start the tracked session's activity.
-    public func background() {
-        #if os(iOS)
-        guard let t = pick.tracked, let session = t.session else { return }
+    /// The app is leaving the screen (scene inactive): start the tracked
+    /// session's activity while ActivityKit still allows it. One activity at
+    /// a time (9.1): any other is ended first.
+    public func start() async {
+        guard let host, host.enabled, let t = pick.tracked, let session = t.session else { return }
         let row = board.rows.first { $0.target == t }
-        let running = Activity<SessionActivityAttributes>.activities.contains { $0.attributes.session == session && $0.activityState == .active }
-        guard ActivityPick.shouldStart(row: row, pushRegistered: push.status[t.habID] == .registered, running: running),
-              let row, ActivityAuthorizationInfo().areActivitiesEnabled,
-              let hab = board.habs.first(where: { $0.id == t.habID }),
-              let host = hab.state.welcome?.host.id
+        guard ActivityPick.shouldStart(row: row, pushRegistered: push.status[t.habID] == .registered, running: host.running().contains(session)),
+              let row, let hab = board.habs.first(where: { $0.id == t.habID }),
+              let habHost = hab.state.welcome?.host.id
         else { return }
-        let attrs = SessionActivityAttributes(session: session, name: row.title, project: row.project, hab: host, habLabel: hab.label)
-        let state = SessionActivityAttributes.ContentState(
-            state: row.state?.rawValue ?? "working", kind: row.blockedKind?.rawValue, title: row.title, detail: row.context,
-            pane: t.pane, buttons: false, since: row.since.map(Fixture.stamp) ?? Fixture.stamp(Date()), hab: host, harness: row.harness)
+        for other in host.running() where other != session {
+            await end(session: other)
+        }
+        let attrs = SessionActivityAttributes(session: session, name: row.title, project: row.project, hab: habHost, habLabel: hab.label)
+        let state = Self.initialState(row: row, request: OpenRequest.collect(board.habs).first { $0.habID == t.habID && $0.pane == t.pane }, host: habHost)
         do {
-            let a = try Activity.request(attributes: attrs, content: .init(state: state, staleDate: nil), pushType: .token)
+            let tokens = try host.start(attrs, state)
+            live[session] = (habHost, nil, state)
             log.notice("live activity started")
             let caller = self.caller
             let device = push.deviceID
-            Task.detached {
-                for await data in a.pushTokenUpdates {
+            tokenTasks[session] = Task { @MainActor [weak self] in
+                for await data in tokens {
                     let token = data.map { String(format: "%02x", $0) }.joined()
-                    // The app is on its way to the background: keep it running
-                    // until the hab has the token.
-                    await withExpiringActivity("register the Live Activity token") {
-                        _ = try? await caller.call(host: host, HabMethods.pushRegisterActivity, PushActivityParams(deviceId: device, session: session, token: token))
-                    }
+                    self?.live[session]?.token = token
+                    _ = try? await caller.call(host: habHost, HabMethods.pushRegisterActivity, PushActivityParams(deviceId: device, session: session, token: token))
                 }
             }
         } catch {
-            log.notice("live activity not started: \(String(describing: error), privacy: .public)")
+            log.notice("live activity not started: \(String(describing: error), privacy: .private)")
         }
-        #endif
+    }
+
+    /// The first content: an open permission the app can answer shows its
+    /// title and command with Allow and Deny at once, since the hab sends no
+    /// update until the state changes again.
+    static func initialState(row: BoardRow, request: OpenRequest?, host: String) -> SessionActivityAttributes.ContentState {
+        let since = row.since.map(Fixture.stamp) ?? Fixture.stamp(Date())
+        var s = SessionActivityAttributes.ContentState(
+            state: row.state?.rawValue ?? "working", kind: row.blockedKind?.rawValue, title: row.title, detail: row.context,
+            pane: row.target.pane, buttons: false, since: since, hab: host, harness: row.harness)
+        if let r = request, r.answerable, row.state == .blocked {
+            s.request = r.requestID
+            s.buttons = true
+            s.title = r.title
+        }
+        return s
+    }
+
+    /// An answer from the activity landed or was refused: its buttons go now,
+    /// without waiting for the hab's push (app.md 7.5).
+    public func answered(pane: String, request: String, outcome: AnswerOutcome) async {
+        switch outcome {
+        case .answered, .refused, .probablyAnswered: break
+        default: return
+        }
+        guard let host else { return }
+        for (session, a) in live where a.state.pane == pane && a.state.request == request {
+            var s = a.state
+            s.buttons = false
+            s.request = nil
+            live[session]?.state = s
+            await host.update(session: session, s)
+        }
     }
 
     /// The owner opened a session in the app: its activity ends (app.md 9.1).
-    public func opened(_ t: SessionTarget) {
-        #if os(iOS)
-        guard let session = t.session else { return }
-        for a in Activity<SessionActivityAttributes>.activities where a.attributes.session == session {
-            Task { await a.end(nil, dismissalPolicy: .immediate) }
+    public func opened(_ t: SessionTarget) async {
+        guard let session = t.session, let host, host.running().contains(session) else { return }
+        await end(session: session)
+    }
+
+    /// Ends an activity and tells its hab to drop the token, so the hab stops
+    /// pushing to an activity that is gone.
+    private func end(session: String) async {
+        tokenTasks.removeValue(forKey: session)?.cancel()
+        let a = live.removeValue(forKey: session)
+        await host?.end(session: session)
+        if let a, let token = a.token {
+            _ = try? await caller.call(host: a.host, HabMethods.pushUnregister, PushUnregisterParams(deviceId: push.deviceID, token: token))
         }
-        #endif
     }
 }
 
 #if os(iOS)
-/// Runs `work` while asking iOS for time to finish it in the background.
-private func withExpiringActivity(_ reason: String, _ work: @escaping @Sendable () async -> Void) async {
-    let once = ResumeOnce()
-    await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-        once.set(c)
-        ProcessInfo.processInfo.performExpiringActivity(withReason: reason) { expired in
-            if expired {
-                // Out of time (or none given): stop waiting; the call may still land.
-                once.resume()
-                return
+/// ActivityKit behind `ActivityHost`.
+@MainActor
+public final class SystemActivities: ActivityHost {
+    public init() {}
+
+    public var enabled: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
+
+    private var all: [Activity<SessionActivityAttributes>] {
+        Activity<SessionActivityAttributes>.activities.filter { $0.activityState == .active || $0.activityState == .stale }
+    }
+
+    public func running() -> [String] { all.map(\.attributes.session) }
+
+    public func start(_ attributes: SessionActivityAttributes, _ state: SessionActivityAttributes.ContentState) throws -> AsyncStream<Data> {
+        let a = try Activity.request(attributes: attributes, content: .init(state: state, staleDate: nil), pushType: .token)
+        return AsyncStream { c in
+            let t = Task {
+                for await d in a.pushTokenUpdates { c.yield(d) }
+                c.finish()
             }
-            let done = DispatchSemaphore(value: 0)
-            Task {
-                await work()
-                done.signal()
-            }
-            done.wait()
-            once.resume()
+            c.onTermination = { _ in t.cancel() }
         }
     }
-}
 
-private final class ResumeOnce: @unchecked Sendable {
-    private let lock = NSLock()
-    private var c: CheckedContinuation<Void, Never>?
-    func set(_ c: CheckedContinuation<Void, Never>) { lock.withLock { self.c = c } }
-    func resume() {
-        let c: CheckedContinuation<Void, Never>? = lock.withLock {
-            defer { self.c = nil }
-            return self.c
+    public func update(session: String, _ state: SessionActivityAttributes.ContentState) async {
+        for a in all where a.attributes.session == session {
+            await a.update(.init(state: state, staleDate: nil))
         }
-        c?.resume()
+    }
+
+    public func end(session: String) async {
+        for a in all where a.attributes.session == session {
+            await a.end(nil, dismissalPolicy: .immediate)
+        }
     }
 }
 #endif

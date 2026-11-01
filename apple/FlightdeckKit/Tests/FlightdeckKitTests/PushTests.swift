@@ -590,7 +590,7 @@ final class LiveActivityTests: XCTestCase {
         let fleet = Fleet()
         fleet.add(HabConnection(id: "h", transport: hab.transport(), timing: fastTiming()), label: "desk")
         let reg = PushRegistrar(defaults: testDefaults())
-        let tracker = LiveActivityTracker(board: fleet.board, push: reg, caller: ApprovalAnswerer(live: { _ in nil }, oneShot: { _ in throw TransportError("x") }, clientLabel: "phone"))
+        let tracker = LiveActivityTracker(board: fleet.board, push: reg, caller: ApprovalAnswerer(live: { _ in nil }, oneShot: { _ in throw TransportError("x") }, clientLabel: "phone"), host: nil)
         fleet.activities = tracker
         await fleet.setActive(true)
         await eventually("needed") { tracker.pick.tracked?.session == "s1" }
