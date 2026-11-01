@@ -70,6 +70,7 @@ public struct SessionView: View {
     private let compact: Bool
     private let close: (() -> Void)?
     @State private var mode: Mode
+    @State private var consoleShown = false
     @Environment(\.terminalSlot) private var terminal
 
     enum Mode: String, CaseIterable, Identifiable {
@@ -99,6 +100,9 @@ public struct SessionView: View {
                     ToolbarItem(placement: .principal) {
                         ChatHeader(context: model.context)
                     }
+                    if model.target.session != nil {
+                        ToolbarItem(placement: .secondaryAction) { consoleButton }
+                    }
                     ToolbarItem(placement: .primaryAction) {
                         Picker("View", selection: $mode) {
                             ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
@@ -112,6 +116,10 @@ public struct SessionView: View {
                     HStack {
                         ChatHeader(context: model.context)
                         Spacer()
+                        if model.target.session != nil {
+                            consoleButton
+                                .buttonStyle(.borderless)
+                        }
                         if let close {
                             Button("Close", systemImage: "xmark", action: close)
                                 .labelStyle(.iconOnly)
@@ -137,5 +145,14 @@ public struct SessionView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .sheet(isPresented: $consoleShown) {
+            ConsoleSheet(target: model.target)
+        }
+    }
+
+    /// Opens the session's console (app.md 6).
+    private var consoleButton: some View {
+        Button("Console", systemImage: "apple.terminal") { consoleShown = true }
+            .help("Open the console")
     }
 }

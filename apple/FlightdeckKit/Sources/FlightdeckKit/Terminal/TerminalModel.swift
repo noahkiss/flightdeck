@@ -25,6 +25,10 @@ public final class TerminalModel {
     /// The size this client last sent with `pane.set_desired_size`.
     public private(set) var sentSize: (cols: Int, rows: Int)?
     public private(set) var lastError: String?
+    /// True while the pane shows the alternate screen (a full-screen
+    /// program); the console hands over to this view then (app.md 6.1).
+    public private(set) var alternateScreen = false
+    @ObservationIgnored private var screenMode = ScreenModeScanner()
 
     /// libghostty's view state; the view shows it.
     @ObservationIgnored public let view: TerminalViewState
@@ -263,11 +267,14 @@ public final class TerminalModel {
             needsSnapshot = false
             replaySnapshot = d
             appliedOffset = off
+            screenMode.reset()
+            noteScreenMode(data)
             feed(d)
             status = .live
         case .bytes(let off, let data):
             replaySnapshot = nil
             appliedOffset = off + UInt64(data.count)
+            noteScreenMode(data)
             feed(data)
         case .resize(let r):
             let me = await calls.clientID()
@@ -285,6 +292,11 @@ public final class TerminalModel {
             case .closed: status = .closed
             }
         }
+    }
+
+    private func noteScreenMode(_ data: Data) {
+        screenMode.feed(data)
+        if screenMode.alternate != alternateScreen { alternateScreen = screenMode.alternate }
     }
 
     /// The terminal must parse output at the PTY's size, or rows wrap wrongly.

@@ -29,6 +29,15 @@ public struct ChatUpdate: Sendable {
     public var generation: Int
 }
 
+/// One `command.updated` event (hab-logic-api.md 2.5): the pane, its
+/// command, and which connection (generation) carried it. A listener that
+/// sees a new generation, or `dropped`, reads `command.list` again.
+public struct CommandUpdate: Sendable {
+    public var pane: String
+    public var command: Command
+    public var generation: Int
+}
+
 /// Everything the board needs from one hab. Published whole on each change.
 public struct HabState: Sendable, Equatable {
     public var status: HabStatus = .stopped
@@ -111,6 +120,8 @@ public actor HabConnection {
     private var wakeGen = 0
     /// Listeners for `chat.message` events (app.md 4.1), by listener id.
     private var chatTaps: [Int: AsyncStream<ChatUpdate>.Continuation] = [:]
+    /// Listeners for `command.updated` events (app.md 6.1), by listener id.
+    private var commandTaps: [Int: AsyncStream<CommandUpdate>.Continuation] = [:]
     private var nextTap = 1
     /// Counts live connections, so a chat listener can tell its seq apart.
     private var generation = 0
@@ -186,8 +197,25 @@ public actor HabConnection {
         return (r, g)
     }
 
+    /// `command.updated` events of this hab, in seq order, from now until
+    /// the stream is dropped. Every pane's commands come; the listener filters.
+    public func commandUpdates() -> AsyncStream<CommandUpdate> {
+        let (stream, sink) = AsyncStream.makeStream(of: CommandUpdate.self)
+        let id = nextTap
+        nextTap += 1
+        commandTaps[id] = sink
+        sink.onTermination = { [weak self] _ in
+            Task { await self?.dropTap(id) }
+        }
+        return stream
+    }
+
+    /// Which connection is live now; it changes on every reconnect.
+    public var connectionGeneration: Int { generation }
+
     private func dropTap(_ id: Int) {
         chatTaps[id] = nil
+        commandTaps[id] = nil
     }
 
     // MARK: - Run loop
@@ -382,6 +410,10 @@ public actor HabConnection {
         if e.type == "chat.message", !chatTaps.isEmpty, let m = try? e.data.decode(ChatMessage.self) {
             let u = ChatUpdate(message: m, seq: e.seq, generation: generation)
             for (_, t) in chatTaps { t.yield(u) }
+        }
+        if e.type == "command.updated", !commandTaps.isEmpty, let c = try? e.data.decode(Command.self) {
+            let u = CommandUpdate(pane: e.id, command: c, generation: generation)
+            for (_, t) in commandTaps { t.yield(u) }
         }
         if state.store.apply(e) { publish() }
     }

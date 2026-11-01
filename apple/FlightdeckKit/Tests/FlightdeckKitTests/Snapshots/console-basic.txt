@@ -1,0 +1,25 @@
+$ ls  [/home/user/project]
+  Exit 0 · 0.1s
+  | README.md  src
+  | Makefile   notes.txt
+$ false  [/home/user/project]
+  Exit 1 · 0.0s
+  (no output)
+$ sleep 2  [/home/user/project]
+  Exit 0 · 2.0s
+  (no output)
+$ cd src  [/home/user/project]
+  Exit 0 · 0.0s
+  (no output)
+$ vim notes.txt  [/home/user/project/src]
+  Exit 0 · 4.0s
+  (no output)
+$ make test  [/home/user/project/src]
+  Ended · 5.0s
+  | ok   1 parse
+  | ok   2 render
+  | ^Cnning 3 slow.
+$ tail -f app.log  [/home/user/project/src]
+  Running
+  | line 1
+  | line 2
