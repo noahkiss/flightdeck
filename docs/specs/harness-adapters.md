@@ -320,6 +320,8 @@ Built choices:
 - While a session lives in the pane, a hook from another harness or another session is dropped.
   A session start binds a free pane, and a session start of the same harness rebinds it, so a
   session that died with no end hook never holds the pane. A subagent hook never binds.
+- Built: while the bound session has a permission request open, a session start from another
+  session is dropped as a nested agent, so it cannot close the request.
 - Known gap until the holder link reports foreground-process changes: a nested run of the
   same harness (Codex inside Codex) rebinds the pane at its session start, and a harness that
   died with no end hook keeps the pane from another harness until that harness's process exit
@@ -345,12 +347,11 @@ When sources disagree inside one turn, the stronger one wins:
   fires no hook when the owner interrupts a turn (its `Stop` hook does not run then), so its
   OSC 7501 `idle` is the only signal. Inside the second, the `idle` is taken as a stale report
   from before the turn began and is dropped.
-- The exception never ends a `blocked:permission` whose request a hook or server reported
-  while that request is open, unless an OSC `blocked` arrived after the request opened, in the
-  same turn: Claude drew its dialog, and the owner left it with Esc. Any program in the pane
-  can write OSC 7501, and a lone forged `idle` must not end a live dialog, or a
-  `session.send` would press Enter on it. Otherwise the block ends only on a hook, a server
-  event or the program's exit.
+- The exception never ends a `blocked:permission` whose request a hook or server opened. Only
+  a hook, a server event, a new session or the program's exit closes that request; no OSC 7501
+  report does, `clear` included. Any program in the pane can write OSC 7501, and Enter from a
+  `session.send` on a live dialog would approve it. Cost: when the owner leaves such a dialog
+  with Esc (no hook fires), the pane shows `blocked` until the session's next hook.
 
 ### Ordering
 
@@ -419,8 +420,9 @@ Built choices (`internal/progstatus`, `internal/termq`, `internal/link`, `intern
   an `id` never moves the pane. `app` must name a detection manifest (or alias), so another
   program that reports status, such as a package manager, does not become an agent; a report
   with no `app` counts for the harness the pane already has. `clear` from the pane's own
-  harness means it exited: the pane becomes `exited` and the session no longer holds it, as on
-  the process exit, so a lost `SessionEnd` never leaves a shell that looks like an idle agent.
+  harness means it exited: the pane shows `exited`, so a lost `SessionEnd` never leaves a shell
+  that looks like an idle agent. Like every report, it closes no permission request a hook
+  opened, and the session keeps the pane: its next hook takes it back.
   `kind` rides along with `blocked`; `title`, `msg` and `progress` are parsed but not yet
   shown.
 - **One state.** Hooks and reports go through the same store, under the precedence and ordering
@@ -589,7 +591,9 @@ Built choices (`session.send`, `internal/harness`, `cmd/gff-hab`):
   `conflict`.
 - Claude Code: `ESC [200~` + text + `ESC [201~` as one write, then CR as its own write, queued
   back to back behind the pane's other input: no other client's `pane.input` lands between the
-  paste and its Enter. The text loses every control character except
+  paste and its Enter. A write whose caller gives up while it is still queued takes the writes
+  queued after it with it, so the Enter never goes out without its paste. The text loses every
+  control character except
   newline and tab, so it can neither end the paste early nor press keys; CR LF and CR become
   LF. Other harnesses answer `unavailable` until their stage.
 - After delivery, `done` becomes `idle` (`Store.Seen`).
@@ -616,17 +620,23 @@ Built choices (`approval.answer`, Claude Code):
   source, a request with an id that is still open, and the same id in the answer. Any miss is
   `conflict`; an OSC 7501 `blocked` alone never enables an answer.
 - `allow` and `deny` only; `answer` (a question) is `unavailable` for now.
+- One answer per request. While one is on its way, a second gets `conflict`, never keys. Once
+  an answer reached the harness (keys written, or the hook took the decision), the request
+  takes no other. An answer that delivered nothing (the hook went away first) frees it.
 - A blocking permission hook that waits on this request takes the answer as Claude's decision.
   If the hook could not write it (the hook went away at that instant), the call answers
   `unavailable`; Claude then shows its own dialog, and the owner answers again. It never
   retries as keys on its own.
 - Otherwise the dialog gets keys: `1` for allow (the dialog's first option, Yes), Esc for deny.
+  Keys go only while the pane shows that request as a hook reported it; after an OSC `clear`
+  the answer is `conflict`, so keys never land in a shell. A waiting hook still takes it.
   When a blocking hook for the request gave up with no decision less than 1 second ago, the
   keys wait out that second, so they do not land in the prompt before the dialog is drawn.
 - Either way the call then reads back for up to 3 seconds and succeeds only on a real
   resolution: a hook or server closes the request (`PostToolUse`, a new prompt, the turn's end),
-  Claude reports `working` over OSC 7501 (the tool runs), or, for a deny, an OSC `idle` ends
-  the turn (Esc interrupts it). An exit or a session change answers `unavailable`, and so does
+  Claude reports `working` over OSC 7501 (the tool runs), or, for a deny, an OSC `idle` after
+  the answer (Esc interrupts the turn). These OSC signals shape the call's result only; the
+  request stays open until a hook closes it. An exit or a session change answers `unavailable`, and so does
   a request still open after 3 seconds, with a hint to answer in the terminal.
 
 ## Edge cases
@@ -636,13 +646,13 @@ Built choices (`approval.answer`, Claude Code):
 | Untrusted Codex hooks are skipped silently | The status board shows "no hook seen" for a Codex pane that has run a turn with no `SessionStart` event. It links to the trust step. |
 | A hook fires with no pane | `GFF_HAB` is absent or its token is unknown. The hook command exits 0 and sends nothing; `gff-hab` logs an unknown token once per token. |
 | A hook fires with no terminal | Claude may start hooks without a controlling terminal. Our hooks never need one: they post to `GFF_HAB` and never write escape codes to a TTY. |
-| Nested agent in a pane | Claude: entrypoint guard. Codex and opencode: the adapter binds the pane to the first session per process and ignores hooks whose session id differs while that session lives, unless the foreground process changed. |
+| Nested agent in a pane | Claude: entrypoint guard. Codex and opencode: the adapter binds the pane to the first session per process and ignores hooks whose session id differs while that session lives, unless the foreground process changed. Built: a session start from another session is dropped only while a permission request is open. Known limit until the foreground-process check: an interactive nested session (entrypoint `cli`, such as one a background job starts) that starts at any other time takes the pane. |
 | Subagents | Claude hooks with `agent_id` never rebind the pane. |
 | Transcript format drift | Each reader pins the harness versions it was tested on. An unknown version reads in a tolerant mode that shows unknown records as placeholders and flags the adapter as degraded. gff-hab reports the degraded adapter as drift (built so far: a log line once per version; the status board shows it once it exists). A CI job runs new harness versions against our fixtures. |
 | Transcript not yet written | Claude may create the file after the first hook. The reader waits for the file; it does not fail the pane. |
 | `gff-hab` restarts | Hook posts during the gap are lost. On start, the adapter rebuilds state from the transcript tail, the last OSC 7501 report in the holder's byte ring, and the process table. It marks state as `source: screen` until the next hook. Built: the last ring report only, as `screen`; the transcript tail and process table are not read yet. |
 | A Claude starts while `gff-hab` is down | Nobody answers its OSC 7501 `?` query, and replayed bytes are never answered, so this Claude sends no reports for its whole run. Its state comes from hooks only. |
-| A program in the pane forges OSC 7501 | Reports never enable an answer, and a lone `idle` never ends a hook-reported permission block. Known limit: once Claude has drawn its dialog (its own OSC `blocked`), a forged `idle` reads as the owner's Esc and ends the block, so a `session.send` could then press Enter on the dialog. Only a structured channel closes this. |
+| A program in the pane forges OSC 7501 | gff-hab trusts OSC 7501 for the displayed state and, as herdr does, for the send gate: `session.send` goes when the pane shows `idle`, `done` or `error`. So a program that forges reports can mislead the gate. Hooks narrow this: a report never opens or closes a permission request, so it cannot end a block a hook reported, and it never enables an answer. A pane with no hooks has only OSC 7501, so there a forged `idle` over Claude's dialog would let a send's Enter approve it. A forged `clear` shows the pane exited until the next hook. |
 | Harness upgrade mid-session | The running process keeps its version; only new panes see the new one. The reader picks its parser per session from the version in the transcript, not from the installed binary. |
 | Out-of-order hooks | See [Ordering](#ordering). |
 | Codex daemon update | With the shared daemon, `codex app-server daemon update` may interrupt running work in every pane. This is one reason the hab starts Codex with `--no-daemon` (decision below). |
@@ -730,6 +740,11 @@ Built (option B, off until the owner turns it on):
   prints nothing, and Claude shows its own dialog. The command never prints for any other event.
 - **Answer.** `approval.answer` hands the decision to the waiting hook when one waits on that
   request; otherwise it falls back to keys.
+- **Wait first.** The hook's state change and its wait are one step, done before the 200, so an
+  answer that comes the moment the request is published finds the wait, never the keys path.
+- **No approver, no wait.** When the last client that can answer the pane closes or narrows its
+  subscription, the pane's waiting hooks end with no decision at once, and Claude shows its own
+  dialog.
 - Codex's hook does not use `-wait` yet.
 
 ### Who writes hook config into harness settings

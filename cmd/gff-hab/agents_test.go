@@ -214,22 +214,23 @@ func TestBlockingPermissionHook(t *testing.T) {
 }
 
 // forgingPane is Claude Code blocked on a permission dialog, plus a job in the same pane that
-// forges Claude's OSC 7501 idle once the test creates "forge". The job then sends the status
-// query and reads the answer, so the test knows gff-hab has parsed the forged report.
+// forges Claude's OSC 7501 blocked, then idle, once the test creates "forge" (Claude draws its
+// dialog with its own OSC blocked, so the forged idle alone does the same). The job then sends
+// the status query and reads the answer, so the test knows gff-hab has parsed the forgery.
 const forgingPane = `
 stty raw -echo
 printf '\033]7501;state=working:app=claude\033\\'
 "$HAB" hook claude PermissionRequest < "$DIR/permission.json"
 while [ ! -e "$DIR/forge" ]; do sleep 0.02; done
-printf '\033]7501;state=idle:app=claude\033\\\033]7501;?\033\\'
+printf '\033]7501;state=blocked:kind=permission:app=claude\033\\\033]7501;state=idle:app=claude\033\\\033]7501;?\033\\'
 head -c "$REPLYLEN" > /dev/null
 touch "$DIR/forged"
 while [ ! -e "$DIR/end" ]; do sleep 0.02; done
 `
 
-// TestForgedIdleKeepsDialog: any program in the pane can write OSC 7501. A forged idle, sent
-// well after the interrupt grace, must not end a permission block a hook reported, so
-// session.send, whose Enter would approve the dialog, stays refused.
+// TestForgedIdleKeepsDialog: any program in the pane can write OSC 7501. A forged blocked and
+// idle, sent well after the interrupt grace, must not end a permission block a hook reported,
+// so session.send, whose Enter would approve the dialog, stays refused.
 func TestForgedIdleKeepsDialog(t *testing.T) {
 	e := newHabEnv(t, 0)
 	c := e.control()

@@ -19,11 +19,13 @@ var manifests = sync.OnceValue(detect.Vendored)
 //   - app names the harness. It must resolve to a detection manifest, so a program such as a
 //     package manager that also reports status does not show as an agent. A report with no
 //     app counts for the harness the pane already has.
-//   - clear from the pane's own harness means it exited: the pane becomes exited and the
-//     session no longer holds it, as when the process is reaped. A lost SessionEnd then never
-//     leaves a shell that looks like an idle agent.
+//   - clear from the pane's own harness means it exited: the pane shows exited, so a lost
+//     SessionEnd never leaves a shell that looks like an idle agent to session.send. Like every
+//     OSC report it never closes a permission request a hook opened: a hook that waits for its
+//     answer still takes one.
 //   - The report goes through Apply, so hooks outrank it inside a turn, except for an OSC idle
-//     that ends an interrupted turn (see interruptGrace).
+//     that ends an interrupted turn (see interruptGrace); never a permission request a hook
+//     opened.
 //   - A replayed report (live false: bytes the program sent before this gff-hab followed the
 //     pane) applies with source screen, the weakest, so the next hook or live report wins. The
 //     link hands on only the last report of a replay.
@@ -58,7 +60,8 @@ func (s *Store) Report(paneID string, r progstatus.Report, t int64, live bool) b
 	return s.Apply(paneID, harness, src, t, u)
 }
 
-// cleared marks the pane exited when harness is the one it holds.
+// cleared shows the pane exited when harness is the one it holds. The open request and the
+// binding stay: the clear may be forged, and the session's next hook takes the pane back.
 func (s *Store) cleared(paneID, harness string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -66,7 +69,16 @@ func (s *Store) cleared(paneID, harness string) bool {
 	if p == nil || p.st.Revision == 0 || p.st.Harness != harness {
 		return false
 	}
-	rev := p.st.Revision
-	s.exitLocked(p)
-	return p.st.Revision != rev
+	if p.st.State == api.AgentStatusNone || p.st.State == api.AgentStatusExited {
+		return false
+	}
+	next := p.st
+	next.Last = ""
+	if next.State == api.AgentStatusDone || next.State == api.AgentStatusError {
+		next.Last = next.State
+	}
+	next.State, next.Kind, next.Request = api.AgentStatusExited, "", nil
+	next.Source = api.StateSourceOsc
+	s.commitLocked(p, next)
+	return true
 }

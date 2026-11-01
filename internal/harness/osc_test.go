@@ -114,6 +114,7 @@ func TestCheckSend(t *testing.T) {
 	if _, err := s.CheckSend("p"); !errors.Is(err, ErrNoAgent) {
 		t.Fatalf("no state: %v", err)
 	}
+	s.Apply("p", "claude", api.StateSourceHook, 1, Update{Session: "a", Bind: true, State: api.AgentStatusIdle})
 	for _, c := range []struct {
 		state api.AgentStatus
 		want  error
@@ -125,7 +126,7 @@ func TestCheckSend(t *testing.T) {
 		{api.AgentStatusError, nil},
 		{api.AgentStatusExited, ErrNoAgent},
 	} {
-		s.Apply("p", "claude", api.StateSourceHook, 1, Update{NewTurn: true, State: c.state})
+		s.Apply("p", "claude", api.StateSourceHook, 1, Update{Session: "a", NewTurn: true, State: c.state})
 		if _, err := s.CheckSend("p"); !errors.Is(err, c.want) || (c.want == nil) != (err == nil) {
 			t.Errorf("%s: %v, want %v", c.state, err, c.want)
 		}
@@ -244,6 +245,12 @@ func TestGate(t *testing.T) {
 	if d := g.Settle("p", "r3"); d <= 0 || d > DialogSettle {
 		t.Fatalf("settle after a give-up: %v", d)
 	}
+	// Release ends a pane's waits with no decision.
+	h := g.Hold("p", "r4")
+	g.Release("p")
+	if _, _, ok := h.Wait(context.Background()); ok || g.Waiting("p", "r4") {
+		t.Fatal("a released wait returned a decision")
+	}
 }
 
 func claudeHook(event string, t int64, payload string) Envelope {
@@ -269,9 +276,9 @@ func TestHookReportsOpened(t *testing.T) {
 	}
 }
 
-// TestOSCIdleKeepsPermission: an OSC idle alone never ends a permission block a hook reported,
-// however late, so session.send stays refused; after the harness's own OSC blocked for that
-// request, an OSC idle is the owner leaving the dialog and ends it.
+// TestOSCIdleKeepsPermission: an OSC idle never ends a permission request a hook reported, alone
+// or after an OSC blocked, however late, so session.send stays refused until a hook closes it.
+// For an answer's read-back, an OSC idle after the answer reads as the dialog's Esc.
 func TestOSCIdleKeepsPermission(t *testing.T) {
 	var events []structure.Event
 	s := newTestStore(&events)
@@ -279,23 +286,122 @@ func TestOSCIdleKeepsPermission(t *testing.T) {
 	s.Hook("p", claudeHook("UserPromptSubmit", 1000, `{"session_id":"a","hook_event_name":"UserPromptSubmit","prompt_id":"t1"}`))
 	_, req := s.Hook("p", claudeHook("PermissionRequest", 1100, `{"session_id":"a","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"make test"}}`))
 	mark := s.OSCMark("p")
+	if o := s.Outcome("p", req, mark); o != OutcomeOpen {
+		t.Fatalf("outcome %v, want open", o)
+	}
 	s.Report("p", idle, 9000, true)
-	if st, _ := s.Get("p"); st.State != api.AgentStatusBlocked {
-		t.Fatalf("a lone OSC idle ended the permission block: %+v", st)
+	s.Report("p", progstatus.Report{State: "blocked", Kind: "permission", App: "claude"}, 9100, true)
+	s.Report("p", idle, 9200, true)
+	if st, _ := s.Get("p"); st.State != api.AgentStatusBlocked || st.Request == nil || st.Request.ID != req {
+		t.Fatalf("an OSC idle ended the permission block: %+v", st)
 	}
 	if _, err := s.CheckSend("p"); !errors.Is(err, ErrBusy) {
 		t.Fatalf("send with the request open: %v", err)
 	}
-	if o := s.Outcome("p", req, mark); o != OutcomeOpen {
-		t.Fatalf("outcome %v, want open", o)
-	}
-	s.Report("p", progstatus.Report{State: "blocked", Kind: "permission", App: "claude"}, 9100, true)
-	s.Report("p", idle, 9200, true)
-	if st, _ := s.Get("p"); st.State != api.AgentStatusIdle {
-		t.Fatalf("the owner's Esc did not end the block: %+v", st)
-	}
 	if o := s.Outcome("p", req, mark); o != OutcomeInterrupted {
 		t.Fatalf("outcome %v, want interrupted", o)
+	}
+	s.Hook("p", claudeHook("Stop", 9300, `{"session_id":"a","hook_event_name":"Stop"}`))
+	if _, err := s.CheckSend("p"); err != nil {
+		t.Fatalf("send after the next hook: %v", err)
+	}
+}
+
+// claudeTurn binds pane p to Claude session a and opens a permission request in a turn, as its
+// hooks report them, and returns the request id.
+func claudeTurn(t *testing.T, s *Store) string {
+	t.Helper()
+	s.Hook("p", claudeHook("SessionStart", 1000, `{"session_id":"a","hook_event_name":"SessionStart"}`))
+	s.Hook("p", claudeHook("UserPromptSubmit", 1100, `{"session_id":"a","hook_event_name":"UserPromptSubmit","prompt_id":"t1"}`))
+	_, req := s.Hook("p", claudeHook("PermissionRequest", 1200, `{"session_id":"a","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"make test"}}`))
+	if req == "" {
+		t.Fatal("no request opened")
+	}
+	return req
+}
+
+// TestForgedBlockedThenIdle: a program in the pane forges Claude's OSC blocked, then idle,
+// after the grace. Only a hook closes the request a hook opened, so the pane stays blocked and a
+// send, whose Enter would approve the live dialog, stays refused.
+func TestForgedBlockedThenIdle(t *testing.T) {
+	var events []structure.Event
+	s := newTestStore(&events)
+	req := claudeTurn(t, s)
+	s.Report("p", progstatus.Report{State: "blocked", Kind: "permission", App: "claude"}, 5000, true)
+	s.Report("p", progstatus.Report{State: "idle", App: "claude"}, 5100, true)
+	if _, err := s.CheckSend("p"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("send after a forged blocked and idle: %v", err)
+	}
+	if _, err := s.CheckAnswer("p", req); err != nil || !s.Shown("p", req) {
+		t.Fatalf("the request was closed by OSC: %v", err)
+	}
+	s.Hook("p", claudeHook("PostToolUse", 6000, `{"session_id":"a","hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"x"}`))
+	s.Hook("p", claudeHook("Stop", 6100, `{"session_id":"a","hook_event_name":"Stop"}`))
+	if _, err := s.CheckSend("p"); err != nil {
+		t.Fatalf("send after Stop: %v", err)
+	}
+}
+
+// TestNestedSessionStartMidTurn: a session start from another session while the bound session
+// is inside a turn (a nested agent) neither closes the open request nor opens the send gate;
+// the nested session's hooks stay dropped. Between turns, a new session takes the pane.
+func TestNestedSessionStartMidTurn(t *testing.T) {
+	var events []structure.Event
+	s := newTestStore(&events)
+	req := claudeTurn(t, s)
+	s.Hook("p", claudeHook("SessionStart", 2000, `{"session_id":"b","hook_event_name":"SessionStart"}`))
+	s.Hook("p", claudeHook("Stop", 2100, `{"session_id":"b","hook_event_name":"Stop"}`))
+	if _, err := s.CheckSend("p"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("send after a nested session start: %v", err)
+	}
+	if _, err := s.CheckAnswer("p", req); err != nil {
+		t.Fatalf("the nested session start closed the request: %v", err)
+	}
+	s.Hook("p", claudeHook("Stop", 3000, `{"session_id":"a","hook_event_name":"Stop"}`))
+	s.Hook("p", claudeHook("SessionStart", 3100, `{"session_id":"c","hook_event_name":"SessionStart","source":"clear"}`))
+	if st, _ := s.Get("p"); st.Session != "c" {
+		t.Fatalf("a session start between turns did not take the pane: %+v", st)
+	}
+}
+
+// TestForgedClearKeepsAnswer: an OSC clear shows the pane exited, but the request stays open
+// for a waiting hook (never for keys) until the session's hooks go on.
+func TestForgedClearKeepsAnswer(t *testing.T) {
+	var events []structure.Event
+	s := newTestStore(&events)
+	req := claudeTurn(t, s)
+	s.Report("p", progstatus.Report{State: "clear", App: "claude"}, 5000, true)
+	if st, _ := s.Get("p"); st.State != api.AgentStatusExited {
+		t.Fatalf("after clear: %+v", st)
+	}
+	if _, err := s.CheckAnswer("p", req); err != nil || s.Shown("p", req) {
+		t.Fatalf("after clear: answer %v, shown %v", err, s.Shown("p", req))
+	}
+	s.Hook("p", claudeHook("PostToolUse", 6000, `{"session_id":"a","hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"x"}`))
+	s.Hook("p", claudeHook("Stop", 6100, `{"session_id":"a","hook_event_name":"Stop"}`))
+	if _, err := s.CheckSend("p"); err != nil {
+		t.Fatalf("send after the session's hooks went on: %v", err)
+	}
+}
+
+// TestBeginAnswer: one answer per request at a time; once one was sent, no other.
+func TestBeginAnswer(t *testing.T) {
+	var events []structure.Event
+	s := newTestStore(&events)
+	req := claudeTurn(t, s)
+	if _, err := s.BeginAnswer("p", req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.BeginAnswer("p", req); !errors.Is(err, ErrAnswered) {
+		t.Fatalf("second answer while one is on its way: %v", err)
+	}
+	s.EndAnswer("p", req, false)
+	if _, err := s.BeginAnswer("p", req); err != nil {
+		t.Fatalf("answer after one that sent nothing: %v", err)
+	}
+	s.EndAnswer("p", req, true)
+	if _, err := s.BeginAnswer("p", req); !errors.Is(err, ErrAnswered) {
+		t.Fatalf("answer after one was sent: %v", err)
 	}
 }
 

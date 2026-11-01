@@ -48,14 +48,17 @@ func NewGate(wait time.Duration) *Gate {
 // Enabled reports whether hooks may wait.
 func (g *Gate) Enabled() bool { return g != nil && g.wait > 0 }
 
-// Wait blocks until Answer delivers a decision for the pane's request, the wait runs out, or
-// ctx ends (the hook gave up). ok is false with no decision; the harness then shows its own
-// dialog. With a decision, the caller must call written once, with the result of handing it to
-// the harness: Answer reports that result. A second wait for the same request replaces the
-// first, which ends with no decision.
+// Wait is Hold, then the hold's Wait.
 func (g *Gate) Wait(ctx context.Context, pane, request string) (d Decision, written func(error), ok bool) {
+	return g.Hold(pane, request).Wait(ctx)
+}
+
+// Hold registers a wait for the pane's request now, so an Answer from this moment on reaches it
+// even before the hook starts waiting. The caller must call the hold's Wait. A second hold for
+// the same request replaces the first, which ends with no decision.
+func (g *Gate) Hold(pane, request string) *Hold {
 	if !g.Enabled() {
-		return Decision{}, nil, false
+		return &Hold{}
 	}
 	k := gateKey{pane, request}
 	ch := make(chan delivery, 1)
@@ -65,6 +68,26 @@ func (g *Gate) Wait(ctx context.Context, pane, request string) (d Decision, writ
 	}
 	g.waits[k] = ch
 	g.mu.Unlock()
+	return &Hold{g: g, k: k, ch: ch}
+}
+
+// Hold is one registered wait (Gate.Hold).
+type Hold struct {
+	g  *Gate
+	k  gateKey
+	ch chan delivery
+}
+
+// Wait blocks until Answer delivers a decision for the hold's request, the wait runs out,
+// Release ends it, or ctx ends (the hook gave up). ok is false with no decision; the harness
+// then shows its own dialog. With a decision, the caller must call written once, with the
+// result of handing it to the harness: Answer reports that result.
+func (h *Hold) Wait(ctx context.Context) (d Decision, written func(error), ok bool) {
+	g := h.g
+	if g == nil {
+		return Decision{}, nil, false
+	}
+	k, ch := h.k, h.ch
 	t := time.NewTimer(g.wait)
 	defer t.Stop()
 	var dl delivery
@@ -77,8 +100,8 @@ func (g *Gate) Wait(ctx context.Context, pane, request string) (d Decision, writ
 		g.mu.Lock()
 		defer g.mu.Unlock()
 		if g.waits[k] != ch {
-			// Answer or a newer wait took the entry just now: Answer's decision is already in
-			// ch, and a newer wait closed it.
+			// Answer, Release or a newer hold took the entry just now: Answer's decision is
+			// already in ch; the others closed it.
 			dl, ok = <-ch
 		} else {
 			delete(g.waits, k)
@@ -89,6 +112,40 @@ func (g *Gate) Wait(ctx context.Context, pane, request string) (d Decision, writ
 		}
 	}
 	return dl.d, func(err error) { dl.ack <- err }, true
+}
+
+// Release ends every wait on the pane with no decision: no client that can answer watches it
+// any more, so the harness must show its own dialog now.
+func (g *Gate) Release(pane string) {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for k, ch := range g.waits {
+		if k.pane == pane {
+			close(ch)
+			delete(g.waits, k)
+		}
+	}
+}
+
+// Panes returns the panes with a waiting hook.
+func (g *Gate) Panes() []string {
+	if g == nil {
+		return nil
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	var out []string
+	seen := map[string]bool{}
+	for k := range g.waits {
+		if !seen[k.pane] {
+			seen[k.pane] = true
+			out = append(out, k.pane)
+		}
+	}
+	return out
 }
 
 // endedLocked records that a wait for k ended with no decision. The caller holds g.mu.

@@ -395,7 +395,12 @@ func serve(args []string) error {
 		Chat:         chat,
 		Commands:     commands,
 		Agents:       agentCalls,
-		Logf:         logger.Printf,
+		ApproversChanged: func() {
+			if s := srv.Load(); s != nil && agentSvc != nil {
+				agentSvc.releaseUnwatched(s.Approvers)
+			}
+		},
+		Logf: logger.Printf,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)

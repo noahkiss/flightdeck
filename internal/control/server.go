@@ -137,6 +137,9 @@ type Config struct {
 	Chat         Chat     // nil: chat.page answers unavailable
 	Commands     Commands // nil: command.list and command.output answer unavailable
 	Agents       Agents   // nil: session.send and approval.answer answer unavailable
+	// ApproversChanged, if set, is called with no lock held after a connection closes or
+	// changes its subscription, so Approvers may have dropped.
+	ApproversChanged func()
 	// ActionTimeout bounds one Actions call. Default 30 s.
 	ActionTimeout time.Duration
 
@@ -289,6 +292,9 @@ func (s *Server) ServeConn(nc net.Conn) {
 		t.expires = s.cfg.Now().Add(s.cfg.ReconnectGrace)
 	}
 	s.mu.Unlock()
+	if f := s.cfg.ApproversChanged; f != nil {
+		f()
+	}
 }
 
 // Approvers returns the number of open connections that can answer a permission request on

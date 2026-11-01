@@ -18,13 +18,17 @@ var (
 	ErrBusy = errors.New("the agent is busy")
 	// ErrNotOpen: the request is not the open permission request of the pane.
 	ErrNotOpen = errors.New("no such open permission request")
+	// ErrAnswered: another answer to the request is on its way, or was sent.
+	ErrAnswered = errors.New("the request is already answered")
 	// ErrUnsupported: the harness has no adapter for this input.
 	ErrUnsupported = errors.New("not supported for this harness")
 )
 
 // CheckSend returns the pane's state when a message may be delivered now: the agent is idle,
 // done or stopped on an error, and no permission request is open. Otherwise it says why not,
-// wrapping ErrNoAgent or ErrBusy.
+// wrapping ErrNoAgent or ErrBusy. Like herdr, it trusts the displayed state, OSC 7501 included;
+// only a hook or server opens and closes a permission request, so terminal output cannot end
+// one a hook reported.
 func (s *Store) CheckSend(paneID string) (api.AgentState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -55,27 +59,81 @@ func (s *Store) CheckSend(paneID string) (api.AgentState, error) {
 	return st, fmt.Errorf("%w: the pane's agent state is %s; start or resume the harness", ErrNoAgent, st.State)
 }
 
-// CheckAnswer returns the pane's state when request is its open permission request, reported by
-// a hook or a server, never by the screen or OSC 7501 alone (harness-adapters.md, rule 2).
+// CheckAnswer returns the pane's state when request is its open permission request. Only a hook
+// or server opens a request, so OSC 7501 or the screen alone never enables an answer
+// (harness-adapters.md, rule 2), and neither can close one: a request stays answerable through
+// a waiting hook whatever the terminal output says (an OSC clear). Whether keys may answer it
+// is Shown.
 func (s *Store) CheckAnswer(paneID, request string) (api.AgentState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p := s.panes[paneID]
+	return s.checkAnswerLocked(p, paneID, request)
+}
+
+func (s *Store) checkAnswerLocked(p *pane, paneID, request string) (api.AgentState, error) {
 	if p == nil || p.st.Revision == 0 {
 		return api.AgentState{}, fmt.Errorf("%w: pane %s has no agent state", ErrNotOpen, paneID)
 	}
 	st := p.st
 	switch {
-	case st.State != api.AgentStatusBlocked || st.Kind != api.BlockedKindPermission:
-		return st, fmt.Errorf("%w: pane %s is %s, not blocked on a permission", ErrNotOpen, paneID, describe(st))
-	case st.Source != api.StateSourceHook && st.Source != api.StateSourceServer:
-		return st, fmt.Errorf("%w: pane %s looks blocked from %s output only; answer in the terminal", ErrNotOpen, paneID, st.Source)
-	case st.Request == nil || st.Request.ID == "" || p.open != st.Request.ID:
-		return st, fmt.Errorf("%w: pane %s has no open request with an id", ErrNotOpen, paneID)
-	case st.Request.ID != request:
-		return st, fmt.Errorf("%w: request %s is not open on pane %s; the open one is %s", ErrNotOpen, request, paneID, st.Request.ID)
+	case p.open == "":
+		return st, fmt.Errorf("%w: pane %s is %s, with no permission request open by its hooks", ErrNotOpen, paneID, describe(st))
+	case p.open != request:
+		return st, fmt.Errorf("%w: request %s is not open on pane %s; the open one is %s", ErrNotOpen, request, paneID, p.open)
 	}
 	return st, nil
+}
+
+// BeginAnswer is CheckAnswer, and claims the request for this answer: a second answer while
+// one is on its way, or after one was sent, is refused with ErrAnswered, so it never sends keys
+// into a dialog the first answer already closed. EndAnswer releases the claim.
+func (s *Store) BeginAnswer(paneID, request string) (api.AgentState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.panes[paneID]
+	st, err := s.checkAnswerLocked(p, paneID, request)
+	if err != nil {
+		return st, err
+	}
+	switch request {
+	case p.answering:
+		return st, fmt.Errorf("%w: another answer to request %s is on its way", ErrAnswered, request)
+	case p.answered:
+		return st, fmt.Errorf("%w: request %s was answered and waits for %s; answer it in the terminal", ErrAnswered, request, st.Harness)
+	}
+	p.answering = request
+	return st, nil
+}
+
+// EndAnswer releases BeginAnswer's claim. sent says the answer reached the harness, by keys or
+// through its hook: the request then takes no other answer. Else another may try.
+func (s *Store) EndAnswer(paneID, request string, sent bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.panes[paneID]
+	if p == nil || p.answering != request {
+		return
+	}
+	p.answering = ""
+	if sent {
+		p.answered = request
+	}
+}
+
+// Shown reports whether the pane's display still shows request as its permission dialog, as a
+// hook or server reported it, with no OSC 7501 report since that says otherwise. Only then may
+// keys answer it: a key typed after the dialog closed lands in the prompt.
+func (s *Store) Shown(paneID, request string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.panes[paneID]
+	if p == nil {
+		return false
+	}
+	st := p.st
+	return st.State == api.AgentStatusBlocked && st.Kind == api.BlockedKindPermission && gateSource(st.Source) &&
+		st.Request != nil && st.Request.ID == request && p.open == request
 }
 
 // Outcome is what became of a permission request after an answer was sent (Store.Outcome).
@@ -90,7 +148,9 @@ const (
 	// OutcomeContinued: the request is not closed yet, but the harness reported working over
 	// OSC 7501 after the answer: the dialog is gone and a long tool runs.
 	OutcomeContinued
-	// OutcomeInterrupted: an OSC idle closed it; the owner left the dialog and the turn stopped.
+	// OutcomeInterrupted: no hook closed the request, but the harness reported idle over OSC
+	// 7501 after the answer: the dialog's Esc stopped the turn. It shapes the answer's result
+	// only; the request stays open until a hook closes it.
 	OutcomeInterrupted
 	// OutcomeGone: the harness exited or its session changed, or the request is unknown.
 	OutcomeGone
@@ -115,8 +175,12 @@ func (s *Store) Outcome(paneID, request string, mark uint64) Outcome {
 	case p == nil:
 		return OutcomeGone
 	case p.open == request:
-		if p.oscN > mark && p.oscLast == api.AgentStatusWorking {
+		switch {
+		case p.oscN <= mark:
+		case p.oscLast == api.AgentStatusWorking:
 			return OutcomeContinued
+		case p.oscLast == api.AgentStatusIdle:
+			return OutcomeInterrupted
 		}
 		return OutcomeOpen
 	}
@@ -124,10 +188,8 @@ func (s *Store) Outcome(paneID, request string, mark uint64) Outcome {
 	switch {
 	case !ok || r.state == "" || r.state == api.AgentStatusExited:
 		return OutcomeGone
-	case r.src == api.StateSourceHook || r.src == api.StateSourceServer:
+	case gateSource(r.src):
 		return OutcomeAnswered
-	case r.src == api.StateSourceOsc && r.state == api.AgentStatusIdle:
-		return OutcomeInterrupted
 	}
 	return OutcomeGone
 }

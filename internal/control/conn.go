@@ -799,6 +799,9 @@ func (c *conn) handleSubscribe(m message) {
 		c.reply(m, c.currentSeq(), nil, e)
 		return
 	}
+	if f := c.s.cfg.ApproversChanged; f != nil {
+		defer f() // after the unlock below: a narrower scope may drop the pane's approvers
+	}
 	c.mu.Lock()
 	c.sub = newFilter(p.Scope)
 	c.seeding = true

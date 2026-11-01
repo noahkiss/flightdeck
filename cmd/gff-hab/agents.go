@@ -61,6 +61,10 @@ type agentService struct {
 
 	mu      sync.Mutex
 	sending map[string]bool // panes a session.send holds until the turn starts
+
+	// holdMu makes a held hook's state change and its gate wait one step: an answer takes it
+	// before it looks for the wait, so it never finds the request open but the wait missing.
+	holdMu sync.Mutex
 }
 
 var _ control.Agents = (*agentService)(nil)
@@ -148,29 +152,36 @@ func (a *agentService) holdForTurn(pane string) {
 }
 
 // Answer answers the pane's open permission request. A blocking permission hook that waits for
-// this request takes the answer as a structured decision; else the dialog gets keys. Either
-// way Answer then waits up to answerReadBack to see the request resolved, and reports success
-// only then (harness-adapters.md, Permission answers). It never answers on its own: a decision
-// the hook could not take is reported, not retried as keys.
+// this request takes the answer as a structured decision; else the dialog gets keys, but only
+// while the display still shows it. Either way Answer then waits up to answerReadBack to see
+// the request resolved, and reports success only then (harness-adapters.md, Permission
+// answers). It never answers on its own: a decision the hook could not take is reported, not
+// retried as keys. One answer per request: a second one gets conflict, never keys.
 func (a *agentService) Answer(ctx context.Context, client string, p api.ApprovalAnswerParams) error {
 	if p.Choice == api.ApprovalChoiceAnswer {
 		return control.Errorf(api.ErrorKindUnavailable, "answering a question is not built yet; answer it in the terminal")
 	}
 	allow := p.Choice == api.ApprovalChoiceAllow
-	st, err := a.agents.CheckAnswer(p.Pane, p.Request)
+	st, err := a.agents.BeginAnswer(p.Pane, p.Request)
 	if err != nil {
 		return agentErr(err)
 	}
+	sent := false
+	defer func() { a.agents.EndAnswer(p.Pane, p.Request, sent) }()
 	mark := a.agents.OSCMark(p.Pane)
 	changed := a.agents.Changed(p.Pane)
 	how := "through the permission hook"
-	if written, ok := a.gate.Answer(p.Pane, p.Request, harness.Decision{Allow: allow}); ok {
+	a.holdMu.Lock() // a hook that opened this request has registered its wait by now
+	written, ok := a.gate.Answer(p.Pane, p.Request, harness.Decision{Allow: allow})
+	a.holdMu.Unlock()
+	if ok {
 		select {
 		case err := <-written:
 			if err != nil {
 				return control.Errorf(api.ErrorKindUnavailable, "the permission hook for request %s ended before it took the answer (%v); %s shows its own dialog now: answer again", p.Request, err, st.Harness)
 			}
 		case <-ctx.Done():
+			sent = true // the hook may still write it: never answer twice
 			return control.Errorf(api.ErrorKindUnavailable, "the permission hook for request %s did not take the answer: %v", p.Request, ctx.Err())
 		}
 	} else {
@@ -190,14 +201,21 @@ func (a *agentService) Answer(ctx context.Context, client string, p api.Approval
 			}
 			changed = a.agents.Changed(p.Pane)
 		}
+		if !a.agents.Shown(p.Pane, p.Request) {
+			// The request is open by its hooks, but the terminal says the harness is gone (an
+			// OSC clear, perhaps forged): keys would land in a shell.
+			return control.Errorf(api.ErrorKindConflict, "pane %s no longer shows request %s, though no hook closed it; answer it in the terminal", p.Pane, p.Request)
+		}
 		keys, err := harness.PermissionKeys(st.Harness, allow)
 		if err != nil {
 			return agentErr(err)
 		}
+		sent = true // a write that fails may still have reached the dialog
 		if err := a.write(ctx, p.Pane, keys); err != nil {
 			return err
 		}
 	}
+	sent = true
 	a.logf("pane %s: request %s answered %s %s (client %s, via %s)", p.Pane, p.Request, p.Choice, how, client, p.Via)
 	return a.readBack(ctx, p, allow, how, mark, changed)
 }
@@ -247,17 +265,22 @@ func (a *agentService) write(ctx context.Context, pane string, writes ...[]byte)
 // with -wait while the gate is on, a client that can answer is connected (approvers), and the
 // request this very envelope opened is still open. A hook whose envelope opened nothing (a
 // nested session's, which binding dropped) never waits, so it can never take another
-// request's answer.
+// request's answer. The envelope's state change and the wait's registration happen under
+// holdMu, so an answer that comes the moment the state is published finds the wait.
 func (a *agentService) holdPermission(approvers func(pane string) int) hook.Holder {
-	return func(pane string, env harness.Envelope, opened string) hook.Wait {
+	return func(pane string, env harness.Envelope, sink func() string) hook.Wait {
+		a.holdMu.Lock()
+		defer a.holdMu.Unlock()
+		opened := sink()
 		if opened == "" || !a.gate.Enabled() || env.Harness != detect.KindClaude || env.Event != "PermissionRequest" || approvers(pane) == 0 {
 			return nil
 		}
 		if _, err := a.agents.CheckAnswer(pane, opened); err != nil {
 			return nil
 		}
+		h := a.gate.Hold(pane, opened)
 		return func(ctx context.Context) ([]byte, func(error)) {
-			d, written, ok := a.gate.Wait(ctx, pane, opened)
+			d, written, ok := h.Wait(ctx)
 			if !ok {
 				return nil, nil
 			}
@@ -271,10 +294,22 @@ func (a *agentService) holdPermission(approvers func(pane string) int) hook.Hold
 	}
 }
 
+// releaseUnwatched ends the gate's waits on every pane no client that can answer watches any
+// more, so Claude shows its own dialog at once instead of after the full wait. The control
+// server calls it when a connection closes or changes its subscription.
+func (a *agentService) releaseUnwatched(approvers func(pane string) int) {
+	for _, pane := range a.gate.Panes() {
+		if approvers(pane) == 0 {
+			a.gate.Release(pane)
+			a.logf("pane %s: no client can answer its permission request now; the hook stops waiting", pane)
+		}
+	}
+}
+
 // agentErr gives an adapter refusal its API kind.
 func agentErr(err error) error {
 	switch {
-	case errors.Is(err, harness.ErrBusy), errors.Is(err, harness.ErrNotOpen):
+	case errors.Is(err, harness.ErrBusy), errors.Is(err, harness.ErrNotOpen), errors.Is(err, harness.ErrAnswered):
 		return control.Errorf(api.ErrorKindConflict, "%v", err)
 	case errors.Is(err, harness.ErrNoAgent), errors.Is(err, harness.ErrUnsupported):
 		return control.Errorf(api.ErrorKindUnavailable, "%v", err)

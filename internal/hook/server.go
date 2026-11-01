@@ -22,9 +22,11 @@ const MaxBody = 8 << 20
 // request the envelope opened, or "" when it opened none (*harness.Store's Hook gives it).
 type Sink func(pane string, env harness.Envelope) (opened string)
 
-// Holder decides whether a hook posted with ?wait=1 waits for an answer, after the sink took its
-// envelope; opened is what the sink returned. It returns nil to answer at once; else a Wait.
-type Holder func(pane string, env harness.Envelope, opened string) Wait
+// Holder decides whether a hook posted with ?wait=1 waits for an answer. It must call sink once,
+// which hands the envelope to the server's Sink and returns what that returned, and register its
+// wait in the same step, before the state the sink published can reach a client: an answer that
+// comes at once then finds the wait. It returns nil to answer at once; else a Wait.
+type Holder func(pane string, env harness.Envelope, sink func() (opened string)) Wait
 
 // Wait waits, within ctx, and returns the answer body (a JSON object), or nil for no answer.
 // With a body, the server calls written once with the result of sending it to the hook.
@@ -120,15 +122,25 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if env.T <= 0 {
 		env.T = s.now().UnixMilli()
 	}
-	opened := s.sink(pane, env)
 	s.mu.Lock()
 	holder := s.holder
 	s.mu.Unlock()
 	if r.URL.Query().Get("wait") != "1" || holder == nil {
+		s.sink(pane, env)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	wait := holder(pane, env, opened)
+	sunk := false
+	wait := holder(pane, env, func() string {
+		if sunk {
+			return ""
+		}
+		sunk = true
+		return s.sink(pane, env)
+	})
+	if !sunk {
+		s.sink(pane, env)
+	}
 	if wait == nil {
 		w.WriteHeader(http.StatusNoContent)
 		return

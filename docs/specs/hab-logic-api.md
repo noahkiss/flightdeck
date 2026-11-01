@@ -785,9 +785,10 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   delivery). A "not delivered" report is added as an event later.
 - **`approval.answer`** `choice` is a closed set: `allow`, `deny`, or `answer` with the option or
   free text in `text`. `via` is `app`, `banner`, `watch`, `voice` or `terminal`. A request that
-  is not the pane's open one is refused with `conflict`. The call returns once the request is
-  resolved; an answer the hook could not take, an exit, or a request still open past the
-  read-back answers `unavailable` (`harness-adapters.md`, Permission answers).
+  is not the pane's open one, or a second answer to one request, is refused with `conflict`.
+  The call returns once the request is resolved; an answer the hook could not take, an exit,
+  or a request still open past the read-back answers `unavailable` (`harness-adapters.md`,
+  Permission answers).
 - Both run off the connection's read loop, so a slow pane holds up no other call.
 - **`chat.page`** pages backwards by message id (`before`); `limit` defaults to 50, at most 200.
   The result holds `messages`, oldest first, and `more`. A message has `id`, `session`, `kind`

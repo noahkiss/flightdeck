@@ -57,16 +57,24 @@ type pane struct {
 	bound      bool                      // a session lives in the pane
 	turnSource api.StateSource           // the strongest source that spoke this turn
 	lastT      map[api.StateSource]int64 // last accepted client clock per source
-	open       string                    // the open permission request id
-	resolved   []resolution              // recently resolved requests, oldest first
-	changed    chan struct{}             // closed and replaced on every accepted change and OSC report
-	// oscBlocked: an OSC blocked arrived after the open request opened, in this turn. Only then
-	// may an OSC idle end a permission block a hook reported (see interrupted).
-	oscBlocked bool
-	// oscN counts the OSC reports of the pane's harness; oscLast is the newest one's state. The
-	// permission read-back uses them to see the turn go on.
+	// open is the open permission request id. Only a hook or server opens or closes it, or the
+	// pane's harness going away (exit, a new session); PTY bytes never do (see gateSource).
+	open     string
+	resolved []resolution  // recently resolved requests, oldest first
+	changed  chan struct{} // closed and replaced on every accepted change and OSC report
+	// oscN counts the live OSC reports of the pane's harness; oscLast is the newest one's state.
+	// The permission read-back uses them to see the turn go on.
 	oscN    uint64
 	oscLast api.AgentStatus
+
+	answering string // the request an approval.answer is answering now
+	answered  string // the request an answer was sent to: no second answer
+}
+
+// gateSource reports whether src may open or close a permission request: a hook or a server,
+// never PTY output (osc, screen).
+func gateSource(src api.StateSource) bool {
+	return src == api.StateSourceHook || src == api.StateSourceServer
 }
 
 // resolution records how a permission request closed: by which source, into which state.
@@ -119,7 +127,9 @@ func (s *Store) Hook(paneID string, env Envelope) (changed bool, opened string) 
 //
 //   - Binding: while a session lives in the pane, events from another harness or session are
 //     dropped (a nested agent). A session start of the same harness rebinds the pane, so a
-//     session that ended with no end hook never holds it. A subagent never binds.
+//     session that ended with no end hook never holds it, except while the bound session has
+//     a permission request open: then it is a nested agent and dropped too. A subagent never
+//     binds.
 //   - Ordering: an event older than the last accepted one from the same source is late and
 //     changes nothing, except a resolution of the open request, which applies regardless of t.
 //     A blocked state for a request already resolved is dropped. A session start or a new turn
@@ -149,6 +159,12 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 			s.logf("pane %s: dropped %s event for %s session %q; bound to %s session %q", paneID, harness, harness, u.Session, p.st.Harness, p.st.Session)
 			return false, ""
 		}
+		if p.open != "" {
+			// A session start from another session while the bound one waits on a permission
+			// request is a nested agent (a job the turn started): the request stays open.
+			s.logf("pane %s: dropped %s session start for session %q; bound session %q has request %s open", paneID, harness, u.Session, p.st.Session, p.open)
+			return false, ""
+		}
 	}
 	if src == api.StateSourceOsc && harness == p.st.Harness {
 		p.oscN, p.oscLast = p.oscN+1, u.State
@@ -170,10 +186,6 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 	// Precedence.
 	if newTurn {
 		p.turnSource = ""
-		p.oscBlocked = false
-	}
-	if src == api.StateSourceOsc && u.State == api.AgentStatusBlocked && p.open != "" {
-		p.oscBlocked = true // the harness drew the request's dialog
 	}
 	if p.turnSource != "" && rank[src] < rank[p.turnSource] && !resolvesOpen && !p.interrupted(src, t, u) {
 		if src == api.StateSourceOsc && u.State == api.AgentStatusIdle && p.open != "" {
@@ -193,6 +205,7 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 		// A new harness or session in the pane: nothing of the old one carries over.
 		next = api.AgentState{Pane: paneID, Revision: next.Revision, State: next.State}
 		p.resolve(p.open, src, "")
+		p.oscLast, p.answering, p.answered = "", "", ""
 	}
 	next.Harness = harness
 	if u.Session != "" && !u.Subagent && (u.Bind || next.Session == "") {
@@ -221,8 +234,8 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 	}
 	keepBlocked := u.Subagent && next.State == api.AgentStatusBlocked && u.State != api.AgentStatusBlocked
 	if u.State != "" && !(late && resolvesOpen) && !keepBlocked {
-		if next.State == api.AgentStatusBlocked && u.State != api.AgentStatusBlocked && p.open != "" {
-			p.resolve(p.open, src, u.State) // leaving blocked resolves the open request
+		if p.open != "" && u.State != api.AgentStatusBlocked && gateSource(src) && !u.Subagent {
+			p.resolve(p.open, src, u.State) // a hook past the request resolves it
 		}
 		switch u.State {
 		case api.AgentStatusExited:
@@ -239,7 +252,9 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 			if u.Kind == api.BlockedKindPermission {
 				next.Request = u.Request
 			}
-			p.resolve(p.open, src, u.State) // a new prompt replaces the open one
+			if gateSource(src) {
+				p.resolve(p.open, src, u.State) // a new prompt replaces the open one
+			}
 			if next.Request != nil {
 				if next.Request.ID == "" {
 					r := *next.Request
@@ -248,7 +263,6 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 					next.Request = &r
 				}
 				p.open = next.Request.ID
-				p.oscBlocked = false
 				opened = p.open
 			}
 		default:
@@ -296,10 +310,9 @@ func (s *Store) wakeLocked(p *pane) {
 
 // interrupted reports whether an OSC idle ends a turn a stronger source holds as working or
 // blocked: the owner interrupted it, which fires no hook. It applies only once interruptGrace
-// has passed since the stronger source last spoke. A permission request a hook or server
-// reported stays open unless an OSC blocked came after it opened: the harness drew its dialog,
-// and the owner left it with Esc. Any program in the pane can write OSC 7501, and a lone forged
-// idle must not end a live dialog, or a session.send would press Enter on it.
+// has passed since the stronger source last spoke, and never to a permission request a hook or
+// server opened: only a hook, a server, a new session or the exit closes that (any program in
+// the pane can write OSC 7501, and a send's Enter on a live dialog would approve it).
 func (p *pane) interrupted(src api.StateSource, t int64, u Update) bool {
 	if src != api.StateSourceOsc || u.State != api.AgentStatusIdle {
 		return false
@@ -307,7 +320,7 @@ func (p *pane) interrupted(src api.StateSource, t int64, u Update) bool {
 	if p.st.State != api.AgentStatusWorking && p.st.State != api.AgentStatusBlocked {
 		return false
 	}
-	if p.st.State == api.AgentStatusBlocked && p.open != "" && !p.oscBlocked {
+	if p.open != "" {
 		return false
 	}
 	return t-p.lastT[p.turnSource] >= interruptGrace.Milliseconds()
@@ -369,8 +382,11 @@ func (s *Store) Exited(paneID string) {
 
 // exitLocked marks the pane's harness gone. The caller holds s.mu.
 func (s *Store) exitLocked(p *pane) {
+	p.resolve(p.open, "", api.AgentStatusExited)
+	p.bound = false
+	p.oscLast, p.answering, p.answered = "", "", ""
 	if p.st.State == api.AgentStatusNone || p.st.State == api.AgentStatusExited {
-		return
+		return // an OSC clear may have shown the exit already
 	}
 	next := p.st
 	next.Last = ""
@@ -378,8 +394,6 @@ func (s *Store) exitLocked(p *pane) {
 		next.Last = next.State
 	}
 	next.State, next.Kind, next.Request = api.AgentStatusExited, "", nil
-	p.resolve(p.open, "", api.AgentStatusExited)
-	p.bound = false
 	s.commitLocked(p, next)
 }
 
