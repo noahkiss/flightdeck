@@ -148,6 +148,25 @@ func (l *log) waitResync(mark int, labels ...string) {
 	})
 }
 
+// settle reads until every event the named hosts sent so far has arrived: it adds a session on
+// each and waits for that session's event. The stream keeps each host's order, so a resync or
+// any other event the host sent earlier is read first. A test then checks l.since(mark) knowing
+// nothing more from those hosts is on its way.
+func (l *log) settle(habs map[string]*fakehab.Hab) {
+	l.t.Helper()
+	for label, h := range habs {
+		mark := len(l.events)
+		id, _, err := h.AddSession(fmt.Sprintf("settle-%d", mark))
+		if err != nil {
+			l.t.Fatal(err)
+		}
+		key := merge.Key{Host: label, Object: "session", ID: id}
+		l.waitEvent("the settle session on "+label, mark, func(e merge.Event) bool {
+			return e.Kind == merge.KindObject && e.Key == key
+		})
+	}
+}
+
 // since returns the events read after mark.
 func (l *log) since(mark int) []merge.Event { return l.events[mark:] }
 
@@ -233,13 +252,14 @@ func TestThreeHabsOneStopped(t *testing.T) {
 			len(sessionsOf(m, "three")) == 1
 	})
 	l.waitResync(mark, "three")
-	if got := resyncs(l.since(mark)); !reflect.DeepEqual(got, map[string]int{"three": 1}) {
-		t.Fatalf("resyncs after starting three: %v; want three once", got)
-	}
 	for label, want := range before {
 		if got := sessionsOf(m.Model(), label); !reflect.DeepEqual(got, want) {
 			t.Fatalf("%s changed when three came up:\n got %+v\nwant %+v", label, got, want)
 		}
+	}
+	l.settle(map[string]*fakehab.Hab{"one": a, "two": b, "three": c})
+	if got := resyncs(l.since(mark)); !reflect.DeepEqual(got, map[string]int{"three": 1}) {
+		t.Fatalf("resyncs after starting three: %v; want three once", got)
 	}
 
 	e := startHab(t, d, "e")
@@ -252,6 +272,7 @@ func TestThreeHabsOneStopped(t *testing.T) {
 		return status(m, "four") == hosts.Online && len(locations(m, key)) == 4
 	})
 	l.waitResync(mark, "four")
+	l.settle(map[string]*fakehab.Hab{"one": a, "two": b, "three": c, "four": e})
 	if got := resyncs(l.since(mark)); !reflect.DeepEqual(got, map[string]int{"four": 1}) {
 		t.Fatalf("resyncs after adding four: %v; want four once", got)
 	}
@@ -325,15 +346,6 @@ func TestRestartResyncsOneHost(t *testing.T) {
 	}
 	l.wait("two fresh", func(m merge.Model) bool { return m.Input("two") })
 	l.waitResync(mark, "two")
-	evs := l.since(mark)
-	if got := resyncs(evs); !reflect.DeepEqual(got, map[string]int{"two": 1}) {
-		t.Fatalf("resyncs after the restart: %v; want two once", got)
-	}
-	for _, e := range evs {
-		if e.Kind == merge.KindResync && !e.NewEpoch {
-			t.Fatalf("two's resync has no NewEpoch: %+v", e)
-		}
-	}
 	mod = m.Model()
 	if h, _ := mod.Host("two"); h.Epoch != b.Epoch() || h.Stale() {
 		t.Fatalf("two after restart: %+v", h)
@@ -344,6 +356,16 @@ func TestRestartResyncsOneHost(t *testing.T) {
 	for label, want := range others {
 		if got := sessionsOf(mod, label); !reflect.DeepEqual(got, want) {
 			t.Fatalf("%s changed when two restarted:\n got %+v\nwant %+v", label, got, want)
+		}
+	}
+	l.settle(map[string]*fakehab.Hab{"one": a, "two": b, "three": c})
+	evs := l.since(mark)
+	if got := resyncs(evs); !reflect.DeepEqual(got, map[string]int{"two": 1}) {
+		t.Fatalf("resyncs after the restart: %v; want two once", got)
+	}
+	for _, e := range evs {
+		if e.Kind == merge.KindResync && !e.NewEpoch {
+			t.Fatalf("two's resync has no NewEpoch: %+v", e)
 		}
 	}
 }
