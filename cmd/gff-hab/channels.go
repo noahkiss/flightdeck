@@ -191,6 +191,7 @@ func channelCaller(ctx context.Context, sock, via string, named bool, flagName s
 		c.Close()
 		return nil, nil, err
 	}
+	c.KeepAlive(control.DefaultHeartbeat) // a wait outlasts the server's idle timeout
 	return c, func() { c.Close() }, nil
 }
 
