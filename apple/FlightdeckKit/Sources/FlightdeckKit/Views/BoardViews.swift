@@ -71,7 +71,10 @@ public struct BoardScreen: View {
         SessionView(model: fleet!.chat(for: row.target), compact: compact, close: { opened = nil })
             .id(row.target)
             // session.focus while the session is on screen (app.md 8.6).
-            .onAppear { fleet?.focus.show(row.target) }
+            .onAppear {
+                fleet?.focus.show(row.target)
+                fleet?.activities?.opened(row.target)
+            }
             .onDisappear { fleet?.focus.hide(row.target) }
     }
 

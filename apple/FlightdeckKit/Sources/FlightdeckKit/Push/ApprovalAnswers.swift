@@ -133,22 +133,26 @@ public struct ApprovalAnswerer: Sendable {
     }
 
     public func answer(host: String, _ params: ApprovalAnswerParams) async -> AnswerOutcome {
-        if let conn = await live(host), await conn.state.status == .online {
-            do {
-                _ = try await conn.call(HabMethods.approvalAnswer, params)
-                return .answered
-            } catch {
-                let o = AnswerOutcome.classify(error)
-                // The live connection died under the call: try once on a fresh one.
-                guard case .unreachable = o else { return o }
-            }
-        }
         do {
-            let t = try await oneShot(host)
-            _ = try await HabOneShot.call(t, HabMethods.approvalAnswer, params, clientLabel: clientLabel, deadline: deadline)
+            _ = try await call(host: host, HabMethods.approvalAnswer, params)
             return .answered
         } catch {
             return AnswerOutcome.classify(error)
         }
+    }
+
+    /// Any one call to a hab by host id, by the same route: the live
+    /// connection, else a one-shot connection. A hab error from the live
+    /// connection is final; a dropped live connection tries once on a fresh one.
+    public func call<P: Encodable & Sendable, R: Decodable & Sendable>(host: String, _ method: HabMethod<P, R>, _ params: P) async throws -> R {
+        if let conn = await live(host), await conn.state.status == .online {
+            do {
+                return try await conn.call(method, params)
+            } catch let e as RPCError where e.kind != nil {
+                throw e
+            } catch {}
+        }
+        let t = try await oneShot(host)
+        return try await HabOneShot.call(t, method, params, clientLabel: clientLabel, deadline: deadline).value
     }
 }

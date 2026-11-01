@@ -78,7 +78,8 @@ public enum AppFleet {
         actions.install()
         fleet.keepAlive.append(actions)
         #if os(iOS)
-        ActivityAnswerIntent.handler = { [weak center] hab, pane, request, allow in
+        fleet.activities = LiveActivityTracker(board: fleet.board, push: fleet.push!, caller: answerer)
+        ActivityAnswerBridge.handler = { [weak center] hab, pane, request, allow in
             let params = ApprovalAnswerParams(choice: allow ? .allow : .deny, pane: pane, request: request, via: .banner)
             let meta = PushMeta(kind: "permission", hab: hab, pane: pane, request: request)
             _ = await center?.answer(host: hab, params, meta: meta)

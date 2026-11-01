@@ -117,6 +117,9 @@ public final class ChatModel {
     @ObservationIgnored public var pageSize = 50
     /// How long a sent message may wait for a working signal or its user record.
     @ObservationIgnored public var readBackWindow: Duration = .seconds(5)
+    /// Called after a message reached the hab: the Live Activity tracks the
+    /// session the owner last sent a message to (app.md 9.1).
+    @ObservationIgnored public var onSent: (@MainActor (SessionTarget) -> Void)?
 
     @ObservationIgnored private let connection: HabConnection?
     @ObservationIgnored private var index: [String: Int] = [:]
@@ -459,6 +462,7 @@ public final class ChatModel {
             guard let j = outgoing.firstIndex(where: { $0.id == id }) else { return }
             outgoing[j].status = .sent
             outgoing[j].sentAt = Date()
+            onSent?(target)
             let window = readBackWindow
             Task { [weak self] in
                 try? await Task.sleep(for: window)

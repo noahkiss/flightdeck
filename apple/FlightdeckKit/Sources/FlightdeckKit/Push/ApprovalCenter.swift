@@ -55,6 +55,15 @@ public final class ApprovalCenter {
         }
     }
 
+    /// Opens a `flightdeck://request` link (`RequestLink`). Returns false for
+    /// any other link.
+    @discardableResult
+    public func open(url: URL) -> Bool {
+        guard let m = RequestLink.meta(url) else { return false }
+        open(m)
+        return true
+    }
+
     /// The board changed: show a pending prompt whose request is now open,
     /// drop ones whose hab is online and no longer has the request, and
     /// withdraw delivered banners of requests that closed.

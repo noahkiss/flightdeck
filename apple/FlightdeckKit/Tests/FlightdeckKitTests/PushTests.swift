@@ -547,3 +547,74 @@ final class ApprovalSheetTests: XCTestCase {
         await fleet.setActive(false)
     }
 }
+
+// MARK: - Live Activity choices and links
+
+@MainActor
+final class LiveActivityTests: XCTestCase {
+    let a = SessionTarget(habID: "h", session: "s1", pane: "%1")
+    let b = SessionTarget(habID: "h", session: "s2", pane: "%2")
+
+    /// The later of "last sent a message to" and "last needed the owner" wins.
+    func testTrackedSession() {
+        var p = ActivityPick()
+        XCTAssertNil(p.tracked)
+        let t = Date()
+        p.sent = (a, t)
+        XCTAssertEqual(p.tracked, a)
+        p.needed = (b, t.addingTimeInterval(5))
+        XCTAssertEqual(p.tracked, b)
+        p.sent = (a, t.addingTimeInterval(10))
+        XCTAssertEqual(p.tracked, a)
+    }
+
+    /// An activity starts only for a working or blocked session on a hab with
+    /// push registered, and never a second one.
+    func testShouldStart() {
+        var row = BoardRow(id: "h/s/s1", target: a, host: "desk", title: "fix", state: .working, rank: .working)
+        XCTAssertTrue(ActivityPick.shouldStart(row: row, pushRegistered: true, running: false))
+        XCTAssertFalse(ActivityPick.shouldStart(row: row, pushRegistered: false, running: false), "no push: nothing would update it")
+        XCTAssertFalse(ActivityPick.shouldStart(row: row, pushRegistered: true, running: true))
+        row.state = .idle
+        XCTAssertFalse(ActivityPick.shouldStart(row: row, pushRegistered: true, running: false))
+        row.state = .blocked
+        row.offline = true
+        XCTAssertFalse(ActivityPick.shouldStart(row: row, pushRegistered: true, running: false))
+        XCTAssertFalse(ActivityPick.shouldStart(row: nil, pushRegistered: true, running: false))
+    }
+
+    /// A session that newly needs the owner becomes the tracked one; a message
+    /// sent later takes it back.
+    func testTrackerFollowsBoard() async {
+        let hab = await blockedHab()
+        let fleet = Fleet()
+        fleet.add(HabConnection(id: "h", transport: hab.transport(), timing: fastTiming()), label: "desk")
+        let reg = PushRegistrar(defaults: testDefaults())
+        let tracker = LiveActivityTracker(board: fleet.board, push: reg, caller: ApprovalAnswerer(live: { _ in nil }, oneShot: { _ in throw TransportError("x") }, clientLabel: "phone"))
+        fleet.activities = tracker
+        await fleet.setActive(true)
+        await eventually("needed") { tracker.pick.tracked?.session == "s1" }
+        tracker.noteSent(b, at: Date().addingTimeInterval(1))
+        XCTAssertEqual(tracker.pick.tracked, b)
+        await fleet.setActive(false)
+    }
+
+    /// The Live Activity's link opens the sheet at its request.
+    func testRequestLinkOpensSheet() async {
+        let url = RequestLink.url(hab: "testhost", pane: "%1", request: "req-1", session: "s1")
+        XCTAssertEqual(RequestLink.meta(url), PushMeta(kind: "permission", hab: "testhost", session: "s1", pane: "%1", request: "req-1"))
+        XCTAssertNil(RequestLink.meta(URL(string: "flightdeck://pair?x=1")!))
+        let hab = await blockedHab()
+        let fleet = Fleet()
+        fleet.add(HabConnection(id: "h", transport: hab.transport(), timing: fastTiming()), label: "desk")
+        let c = ApprovalCenter(board: fleet.board, answerer: ApprovalAnswerer(live: { _ in nil }, oneShot: { _ in throw TransportError("x") }, clientLabel: "phone"), defaults: testDefaults())
+        fleet.approvals = c
+        await fleet.setActive(true)
+        await eventually("online") { fleet.board.onlineCount == 1 }
+        XCTAssertTrue(c.open(url: url))
+        XCTAssertTrue(c.presenting)
+        XCTAssertEqual(c.sheet.current?.requestID, "req-1")
+        XCTAssertFalse(c.open(url: URL(string: "flightdeck://pair?x=1")!), "a pairing link is not ours")
+        await fleet.setActive(false)
+    }
+}

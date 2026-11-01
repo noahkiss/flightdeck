@@ -1,6 +1,5 @@
 #if os(iOS)
 import ActivityKit
-import AppIntents
 import Foundation
 
 /// The Live Activity of one session (app.md 9). The hab that owns the session
@@ -60,34 +59,12 @@ public struct SessionActivityAttributes: ActivityAttributes {
     }
 }
 
-/// Allow or Deny from the Live Activity. A `LiveActivityIntent` runs in the
-/// app's process, so the app sets `handler` at launch; the widget extension
-/// only names the intent on its buttons.
-public struct ActivityAnswerIntent: LiveActivityIntent {
-    public static let title: LocalizedStringResource = "Answer a request"
-    public static let openAppWhenRun = false
-    public static let isDiscoverable = false
-
-    @Parameter(title: "Hab") public var hab: String
-    @Parameter(title: "Pane") public var pane: String
-    @Parameter(title: "Request") public var request: String
-    @Parameter(title: "Allow") public var allow: Bool
-
-    /// Set by the app at launch: answers the request and reports why it could not.
+/// Where the Live Activity's Allow and Deny land. The intent itself
+/// (`ActivityAnswerIntent`, apple/Shared) is compiled into the app and the
+/// widget, because App Intents reads intent metadata from each target's own
+/// sources. A `LiveActivityIntent` runs in the app's process, where the app
+/// sets this handler at launch.
+public enum ActivityAnswerBridge {
     nonisolated(unsafe) public static var handler: (@Sendable (_ hab: String, _ pane: String, _ request: String, _ allow: Bool) async -> Void)?
-
-    public init() {}
-
-    public init(hab: String, pane: String, request: String, allow: Bool) {
-        self.hab = hab
-        self.pane = pane
-        self.request = request
-        self.allow = allow
-    }
-
-    public func perform() async throws -> some IntentResult {
-        await Self.handler?(hab, pane, request, allow)
-        return .result()
-    }
 }
 #endif

@@ -24,6 +24,8 @@ public final class Fleet {
     public var approvals: ApprovalCenter?
     /// Host id to connection, for answers from the background.
     public var book: HabBook?
+    /// The session's Live Activity (app.md 9); iPhone and iPad only.
+    public var activities: LiveActivityTracker?
     /// `session.focus` reports for the session views on screen (app.md 8.6).
     public private(set) lazy var focus = FocusReporter { [weak self] habID, params in
         guard let conn = self?.connections.first(where: { $0.id == habID }) else { return }
@@ -69,6 +71,7 @@ public final class Fleet {
                     self?.push?.connectionOffline(id: conn.id)
                 }
                 self?.approvals?.boardChanged()
+                self?.activities?.boardChanged()
             }
         })
         if isActive {
@@ -135,6 +138,7 @@ public final class Fleet {
                 // connections close; a hab that misses it drops the focus
                 // with the connection anyway.
                 focus.setActive(false)
+                activities?.background()
                 await Self.within(.seconds(1)) { await self.focus.flush() }
                 terminals.setActive(false)
                 for c in connections { await c.stop() }
@@ -201,6 +205,7 @@ public final class Fleet {
         if let m = chats.first(where: { $0.model?.target == target })?.model { return m }
         let conn = connections.first { $0.id == target.habID }
         let m = ChatModel(target: target, connection: conn)
+        m.onSent = { [weak self] t in self?.activities?.noteSent(t) }
         if let h = board.habs.first(where: { $0.id == target.habID }) {
             m.update(ChatContext.of(target, hab: h))
         }
