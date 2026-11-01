@@ -98,6 +98,7 @@ type copyRec struct {
 // saved is catalog.json.
 type saved struct {
 	Generation uint64              `json:"generation"`
+	Own        *api.Catalog        `json:"own,omitempty"` // served after a restart until the first full build
 	Copies     map[string]*copyRec `json:"copies"`
 }
 
@@ -115,22 +116,42 @@ type Service struct {
 	own       api.Catalog
 	facts     Facts
 	declared  Declared
+	configOK  bool // a config file was read and parsed at least once
 	problems  []string
 	folders   map[string]Folder // by path, from the last scan
 	scanned   map[string]bool   // paths the last scan tried
 	copies    map[string]*copyRec
-	put       map[string]uint64 // label -> the generation last handed over on its link
-	alerted   map[string]bool   // device id -> the always-on alert went out for this outage
-	watchFrom time.Time         // since when this hab has been up without a sleep
+	put       map[string]uint64   // label -> the generation last handed over on its link
+	pulled    map[string]uint64   // device id -> the generation of the copy last pulled; a put clears it
+	fails     map[string]*failure // label -> the failed exchanges in a row on that link
+	alerted   map[string]bool     // device id -> the always-on alert went out for this outage
+	watchFrom time.Time           // since when this hab has been up without a sleep
 	lastTick  time.Time
 }
 
 // New loads the saved state and starts the catalog. The first catalog is built before New
-// returns, with no detected facts or scanned projects yet; they follow in the background.
+// returns from the facts and projects saved by the last run, if any; fresh ones follow in the
+// background.
 func New(cfg Config) (*Service, error) {
 	if cfg.Self == "" {
 		return nil, errors.New("catalog: no device id")
 	}
+	s := newService(cfg)
+	if err := s.load(); err != nil {
+		return nil, err
+	}
+	// A restart may have changed anything: the first build is a new generation.
+	s.gen = s.nextGen()
+	s.loadConfig()
+	s.build(true)
+	s.wg.Add(2)
+	go s.run()
+	go s.sync()
+	return s, nil
+}
+
+// newService fills in the defaults and makes the Service, with nothing loaded or started.
+func newService(cfg Config) *Service {
 	if cfg.Detect == nil {
 		cfg.Detect = Detect
 	}
@@ -159,28 +180,36 @@ func New(cfg Config) (*Service, error) {
 		cfg.Logf = func(string, ...any) {}
 	}
 	s := &Service{
-		cfg:     cfg,
-		poke:    make(chan struct{}, 1),
-		kick:    make(chan struct{}, 1),
-		done:    make(chan struct{}),
-		folders: map[string]Folder{},
-		scanned: map[string]bool{},
-		copies:  map[string]*copyRec{},
-		put:     map[string]uint64{},
-		alerted: map[string]bool{},
+		cfg:      cfg,
+		poke:     make(chan struct{}, 1),
+		kick:     make(chan struct{}, 1),
+		done:     make(chan struct{}),
+		declared: Declared{AlertAfter: DefaultAlertAfter},
+		folders:  map[string]Folder{},
+		scanned:  map[string]bool{},
+		copies:   map[string]*copyRec{},
+		put:      map[string]uint64{},
+		pulled:   map[string]uint64{},
+		fails:    map[string]*failure{},
+		alerted:  map[string]bool{},
 	}
-	s.watchFrom = cfg.Now()
-	if err := s.load(); err != nil {
-		return nil, err
+	s.watchFrom = s.now()
+	return s
+}
+
+// now is the wall clock with no monotonic reading. The monotonic clock stops while the host
+// sleeps on Linux and macOS, so a gap measured with it never shows a sleep (mesh.md 8).
+func (s *Service) now() time.Time { return s.cfg.Now().Round(0) }
+
+// nextGen is the generation after the current one: one more, and never below the wall clock
+// in milliseconds, so a hab that lost catalog.json starts above every generation of its earlier
+// life and no puller takes its new catalog for the one it holds.
+func (s *Service) nextGen() uint64 {
+	g := s.gen + 1
+	if ms := s.cfg.Now().UnixMilli(); ms > 0 && uint64(ms) > g {
+		g = uint64(ms)
 	}
-	// A restart may have changed anything: the first build is a new generation.
-	s.gen++
-	s.loadConfig()
-	s.build(true)
-	s.wg.Add(2)
-	go s.run()
-	go s.sync()
-	return s, nil
+	return g
 }
 
 // Close stops the catalog.
@@ -235,6 +264,10 @@ func (s *Service) Put(from api.PeerHello, c api.Catalog) error {
 		return errors.New("catalog: a catalog with this hab's own device id")
 	}
 	s.store(c)
+	// The next pull asks for everything: a put never stands in for what the peer itself says.
+	s.mu.Lock()
+	delete(s.pulled, c.DeviceID)
+	s.mu.Unlock()
 	return nil
 }
 
@@ -244,6 +277,7 @@ func (s *Service) store(c api.Catalog) {
 	s.mu.Lock()
 	old, had := s.copies[c.DeviceID]
 	changed := !had || !reflect.DeepEqual(old.Catalog, c)
+	mark := had && old.Catalog.AlwaysOn != c.AlwaysOn || !had && c.AlwaysOn
 	s.copies[c.DeviceID] = &copyRec{Catalog: c, SeenAt: s.cfg.Now()}
 	if changed {
 		s.saveLocked()
@@ -251,6 +285,9 @@ func (s *Service) store(c api.Catalog) {
 	s.mu.Unlock()
 	if changed && s.cfg.Publish != nil {
 		s.cfg.Publish(api.CatalogUpdated{DeviceID: c.DeviceID, Generation: c.Generation})
+	}
+	if mark {
+		s.Poke() // the hosts this hab watches changed
 	}
 }
 
@@ -391,18 +428,20 @@ func (s *Service) detect(ctx context.Context) {
 
 func (s *Service) loadConfig() {
 	d, problems, err := LoadConfig(s.cfg.ConfigPath, s.cfg.Home)
+	s.mu.Lock()
 	if err != nil {
 		problems = []string{err.Error()}
-		s.mu.Lock()
-		d = s.declared // a file that does not parse keeps the last good section
-		s.mu.Unlock()
+		if s.configOK {
+			d = s.declared // a file that does not parse keeps the last good section
+		} // with none yet, the defaults LoadConfig returned (the alert threshold among them)
+	} else {
+		s.configOK = true
 	}
+	s.declared, s.problems = d, problems
+	s.mu.Unlock()
 	for _, p := range problems {
 		s.cfg.Logf("catalog: %s", p)
 	}
-	s.mu.Lock()
-	s.declared, s.problems = d, problems
-	s.mu.Unlock()
 }
 
 // dirs are the folders to read: the project roots' repositories, then the structure's
@@ -491,6 +530,12 @@ func (s *Service) build(first bool) {
 	}
 	slices.Sort(peerIDs)
 	s.mu.Lock()
+	var watches []string
+	for _, id := range peerIDs {
+		if c, ok := s.copies[id]; ok && c.Catalog.AlwaysOn {
+			watches = append(watches, id)
+		}
+	}
 	c := api.Catalog{
 		DeviceID:     s.cfg.Self,
 		Host:         s.cfg.Host,
@@ -504,6 +549,7 @@ func (s *Service) build(first bool) {
 		Agents:       agents(st),
 		AlwaysOn:     s.declared.AlwaysOn,
 		Peers:        peerIDs,
+		Watches:      watches,
 	}
 	c = api.NonNil(c)
 	prev := s.own
@@ -513,7 +559,7 @@ func (s *Service) build(first bool) {
 		return
 	}
 	if !first {
-		s.gen++
+		s.gen = s.nextGen()
 	}
 	c.Generation, c.At = s.gen, s.cfg.Now().UTC().Format(time.RFC3339)
 	s.own = c
@@ -629,7 +675,9 @@ func agents(st api.Structure) []api.CatalogAgent {
 }
 
 // load reads catalog.json. A missing file is a first start; one that does not parse is set
-// aside and the catalog starts again from generation 1, which peers take as "replace".
+// aside and the catalog starts again, with a generation from the wall clock that is above the
+// earlier life's, which peers take as "replace". The saved own catalog gives back the facts
+// and the folders read, so the first catalog after a restart is not empty.
 func (s *Service) load() error {
 	if s.cfg.State == "" {
 		return nil
@@ -640,7 +688,8 @@ func (s *Service) load() error {
 		return nil
 	}
 	if err != nil {
-		return err
+		s.cfg.Logf("catalog: %s: %v; starting again", p, err)
+		return nil
 	}
 	var sv saved
 	if err := json.Unmarshal(b, &sv); err != nil {
@@ -654,28 +703,76 @@ func (s *Service) load() error {
 			s.copies[id] = c
 		}
 	}
+	if o := sv.Own; o != nil && o.DeviceID == s.cfg.Self {
+		s.restore(*o)
+	}
 	return nil
 }
 
-// saveLocked writes catalog.json through a temporary file and a rename. The caller holds s.mu.
+// restore takes the facts and the folders read back from a saved own catalog.
+func (s *Service) restore(o api.Catalog) {
+	s.facts = Facts{System: o.System, Toolchains: o.Toolchains, Harnesses: o.Harnesses}
+	for _, c := range o.Capabilities {
+		if c.Detected {
+			s.facts.Capabilities = append(s.facts.Capabilities, c.Name)
+		}
+	}
+	for _, p := range o.Projects {
+		for _, f := range p.Folders {
+			if f.Path != "" {
+				s.folders[f.Path] = Folder{Remote: p.Remote, RootCommit: p.RootCommit, Summary: p.Summary, State: f}
+			}
+		}
+	}
+}
+
+// saveLocked writes catalog.json through a temporary file, synced to disk, and a rename, so a
+// crash leaves the old file or the new one. The caller holds s.mu.
 func (s *Service) saveLocked() {
 	if s.cfg.State == "" {
 		return
 	}
-	b, err := json.Marshal(saved{Generation: s.gen, Copies: s.copies})
+	var own *api.Catalog
+	if s.own.DeviceID != "" {
+		own = &s.own
+	}
+	b, err := json.Marshal(saved{Generation: s.gen, Own: own, Copies: s.copies})
 	if err != nil {
 		s.cfg.Logf("catalog: save: %v", err)
 		return
 	}
-	p := filepath.Join(s.cfg.State, stateFile)
-	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	if err := writeSynced(filepath.Join(s.cfg.State, stateFile), b); err != nil {
 		s.cfg.Logf("catalog: save: %v", err)
-		return
+	}
+}
+
+// writeSynced writes a file through a temporary file that is synced before the rename, then
+// syncs the folder so the rename itself is on disk.
+func writeSynced(p string, b []byte) error {
+	tmp := p + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(b)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(tmp)
+		return err
 	}
 	if err := os.Rename(tmp, p); err != nil {
-		s.cfg.Logf("catalog: save: %v", err)
+		return err
 	}
+	if d, err := os.Open(filepath.Dir(p)); err == nil {
+		d.Sync()
+		d.Close()
+	}
+	return nil
 }
 
 // cloneCatalog copies a catalog so a caller's changes do not reach the stored one.

@@ -15,6 +15,17 @@ import (
 // one, the always-on clock starts again (mesh.md 8).
 const sleepGapMin = 30 * time.Second
 
+// maxBackoff is the longest a link whose catalog calls fail waits before it tries again.
+const maxBackoff = 5 * time.Minute
+
+// failure is a link whose last exchange failed: it is skipped until next, and each failure in
+// a row doubles the wait, from one poll period up to maxBackoff.
+type failure struct {
+	n    int
+	wait time.Duration
+	next time.Time
+}
+
 // sync runs a pull and put round every Pull, and at once on Kick.
 func (s *Service) sync() {
 	defer s.wg.Done()
@@ -44,12 +55,21 @@ func (s *Service) round(ctx context.Context) {
 		return
 	}
 	links := s.cfg.Peers.Links()
+	now := s.now()
 	var wg sync.WaitGroup
 	for _, l := range links {
 		if !l.Online || l.Caller == nil || !slices.Contains(l.Caps, Capability) {
 			s.mu.Lock()
 			delete(s.put, l.Label) // a link that comes back gets the catalog again
+			delete(s.fails, l.Label)
 			s.mu.Unlock()
+			continue
+		}
+		s.mu.Lock()
+		f := s.fails[l.Label]
+		wait := f != nil && now.Before(f.next)
+		s.mu.Unlock()
+		if wait {
 			continue
 		}
 		wg.Add(1)
@@ -76,49 +96,75 @@ func (s *Service) exchange(ctx context.Context, l Link) {
 	s.mu.Lock()
 	gen, own := s.gen, s.own
 	sent := s.put[l.Label]
-	var since uint64
-	if c, ok := s.copies[l.DeviceID]; ok && l.DeviceID != "" {
-		since = c.Catalog.Generation
-	}
+	// since is the generation this hab last pulled itself, never one a catalog.put handed over:
+	// a put can be a claim, and a pull over this hab's own link always replaces it.
+	since := s.pulled[l.DeviceID]
 	s.mu.Unlock()
 	if sent != gen {
 		if _, err := cl.CatalogPut(ctx, api.CatalogPutParams{Catalog: own}); err != nil {
-			s.cfg.Logf("catalog: put to %s: %v", l.Label, err)
-		} else {
-			s.mu.Lock()
-			s.put[l.Label] = gen
-			s.mu.Unlock()
+			s.failed(l, "put to", err)
+			return
 		}
+		s.mu.Lock()
+		s.put[l.Label] = gen
+		s.mu.Unlock()
 	}
 	res, err := cl.CatalogGet(ctx, api.CatalogGetParams{Since: since})
+	if err == nil && res.Catalog != nil {
+		err = s.checkPulled(l, *res.Catalog)
+	}
 	if err != nil {
-		s.cfg.Logf("catalog: pull from %s: %v", l.Label, err)
+		s.failed(l, "pull from", err)
 		return
 	}
+	s.mu.Lock()
+	if f := s.fails[l.Label]; f != nil {
+		s.cfg.Logf("catalog: %s answers again", l.Label)
+		delete(s.fails, l.Label)
+	}
+	s.mu.Unlock()
 	if res.Catalog == nil {
 		s.seen(l.DeviceID)
 		return
 	}
-	if err := s.checkPulled(l, *res.Catalog); err != nil {
-		s.cfg.Logf("catalog: pull from %s: %v", l.Label, err)
-		return
-	}
 	s.store(*res.Catalog)
+	s.mu.Lock()
+	s.pulled[l.DeviceID] = res.Catalog.Generation
 	// The peer changed, perhaps by a restart that lost its copy of this hab's catalog: put again
 	// next round.
-	s.mu.Lock()
 	delete(s.put, l.Label)
 	s.mu.Unlock()
+}
+
+// failed records a failed exchange: the link waits one poll period, doubled for each failure
+// in a row up to maxBackoff, and only the first failure in a row and each longer wait are logged.
+func (s *Service) failed(l Link, what string, err error) {
+	s.mu.Lock()
+	f := s.fails[l.Label]
+	if f == nil {
+		f = &failure{}
+		s.fails[l.Label] = f
+	}
+	f.n++
+	wait := min(s.cfg.Pull<<min(f.n-1, 16), maxBackoff)
+	logIt := wait != f.wait
+	f.wait, f.next = wait, s.now().Add(wait)
+	s.mu.Unlock()
+	if logIt {
+		s.cfg.Logf("catalog: %s %s: %v; next try in %v", what, l.Label, err, wait)
+	}
 }
 
 // checkPulled refuses a catalog that is not the linked hab's own.
 func (s *Service) checkPulled(l Link, c api.Catalog) error {
 	switch {
+	case l.DeviceID == "":
+		return errors.New("the link has no device id")
 	case c.DeviceID == "":
 		return errors.New("a catalog with no device id")
 	case c.DeviceID == s.cfg.Self:
 		return errors.New("the peer answered with this hab's own catalog")
-	case l.DeviceID != "" && c.DeviceID != l.DeviceID:
+	case c.DeviceID != l.DeviceID:
 		return fmt.Errorf("the catalog is device %s, the link is %s", c.DeviceID, l.DeviceID)
 	}
 	return nil
@@ -143,6 +189,7 @@ func (s *Service) prune(pl api.PeerList, links []Link) {
 		if !keep[id] {
 			delete(s.copies, id)
 			delete(s.alerted, id)
+			delete(s.pulled, id)
 			gone = append(gone, id)
 		}
 	}
@@ -156,6 +203,9 @@ func (s *Service) prune(pl api.PeerList, links []Link) {
 			s.cfg.Publish(api.CatalogUpdated{DeviceID: id})
 		}
 	}
+	if len(gone) > 0 {
+		s.Poke() // the hosts this hab watches may have changed
+	}
 }
 
 // peerRow is a peer's state for the always-on check.
@@ -167,9 +217,11 @@ type peerRow struct {
 
 // checkAlwaysOn raises one notification per outage of a peer marked always on (mesh.md 8): once
 // it has been offline for AlertAfter while this hab was up the whole time, and only when this
-// hab has the lowest device id among the online habs that list the marked one as a peer.
+// hab has the lowest device id among the online habs that watch the marked one. Every time here
+// is wall time: a sleep stops the monotonic clock, and a gap measured with it would hide the
+// sleep.
 func (s *Service) checkAlwaysOn(pl api.PeerList) {
-	now := s.cfg.Now()
+	now := s.now()
 	rows := map[string]peerRow{}
 	for _, p := range pl.Peers {
 		if p.DeviceID == "" {
@@ -200,7 +252,7 @@ func (s *Service) checkAlwaysOn(pl api.PeerList) {
 			delete(s.alerted, id) // back online: the next outage alerts again
 			continue
 		}
-		if !listed || s.alerted[id] || !slices.Contains(s.own.Peers, id) {
+		if !listed || s.alerted[id] || !slices.Contains(s.own.Watches, id) {
 			continue
 		}
 		from := s.watchFrom
@@ -231,13 +283,14 @@ func (s *Service) checkAlwaysOn(pl api.PeerList) {
 }
 
 // lowestLocked reports whether this hab has the lowest device id among the online habs that
-// list marked as a peer, as their copies say. The caller holds s.mu.
+// watch marked, as their copies say. A hab that lists marked but holds no copy with the mark
+// cannot alert, so it does not count. The caller holds s.mu.
 func (s *Service) lowestLocked(marked string, rows map[string]peerRow) bool {
 	for id, c := range s.copies {
 		if id == marked || id >= s.cfg.Self || !rows[id].online {
 			continue
 		}
-		if slices.Contains(c.Catalog.Peers, marked) {
+		if slices.Contains(c.Catalog.Watches, marked) {
 			return false
 		}
 	}

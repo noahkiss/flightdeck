@@ -235,7 +235,7 @@ func serve(args []string) error {
 		build: fs.String("build", "", "launchd: the build directory under <state>/builds this gff-hab runs from (gff-hab install sets it)"),
 	}
 	peersFile := fs.String("peers", "", "peer list file (default: $GFF_HAB_PEERS, else gff/peers.toml in the user config directory)")
-	habConfig := fs.String("config", "", "the hab's config file, with its [catalog] section (default: $GFF_HAB_CONFIG, else gff/hab.toml beside the peer file)")
+	habConfig := fs.String("config", "", "the hab's config file, with its [catalog] section (default: $GFF_HAB_CONFIG, else gff/hab.toml in the user config folder)")
 	pushConfig := fs.String("push-config", "", "push config file (default: <state>/push.json); $GFF_HAB_PUSH_* override its fields")
 	permWait := fs.Duration("permission-wait", 0, "hold Claude's PermissionRequest hook up to this long for the app's answer; 0 is off (default: $GFF_HAB_PERMISSION_WAIT, else off)")
 	fs.Parse(args)
@@ -526,9 +526,13 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	detectFacts, err := catalog.DetectFor(os.Getenv("GFF_HAB_DETECT"))
+	if err != nil {
+		return err
+	}
 	host := api.HostInfo{ID: *hostID}
 	cs, err := catalog.New(catalog.Config{
-		Self: key.Fingerprint(), Host: *hostID, State: dir, ConfigPath: cpath,
+		Self: key.Fingerprint(), Host: *hostID, State: dir, ConfigPath: cpath, Detect: detectFacts,
 		Structure:   func() api.Structure { return agentSource{store: store, agents: agents}.Snapshot(host) },
 		ProjectDirs: store.ProjectDirs,
 		Peers:       catalogPeers{pm},

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
@@ -170,6 +171,27 @@ func osRelease(path string) string {
 		}
 	}
 	return ""
+}
+
+// DetectBasic reads only what the Go runtime knows: OS, arch and cores. It runs no program and
+// reads no file. gff-hab uses it when $GFF_HAB_DETECT is "off", as its tests do.
+func DetectBasic(context.Context) Facts {
+	return Facts{
+		System:       api.CatalogSystem{OS: runtime.GOOS, Arch: runtime.GOARCH, Cores: runtime.NumCPU()},
+		Capabilities: detectedWords(runtime.GOOS, nil, func(string) bool { return false }),
+	}
+}
+
+// DetectFor is the detect function $GFF_HAB_DETECT names: "off" is DetectBasic, and empty or
+// "on" is Detect, which runs the programs first on PATH. Any other value is an error.
+func DetectFor(v string) (func(context.Context) Facts, error) {
+	switch v {
+	case "", "on":
+		return Detect, nil
+	case "off":
+		return DetectBasic, nil
+	}
+	return nil, fmt.Errorf("GFF_HAB_DETECT is %q; use on or off", v)
 }
 
 // memTotal is MemTotal from /proc/meminfo, in bytes.

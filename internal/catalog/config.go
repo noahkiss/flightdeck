@@ -48,9 +48,9 @@ type fileConfig struct {
 	} `toml:"catalog"`
 }
 
-// ConfigPath is the hab's own config file: $GFF_HAB_CONFIG, else gff/hab.toml beside the peer
-// file, under the user config directory on macOS and under $XDG_CONFIG_HOME or ~/.config
-// elsewhere.
+// ConfigPath is the hab's own config file: $GFF_HAB_CONFIG, else gff/hab.toml under the user
+// config directory on macOS and under $XDG_CONFIG_HOME or ~/.config elsewhere. That is where
+// the default peer file is too; $GFF_HAB_PEERS moves only the peer file.
 func ConfigPath(goos string, getenv func(string) string, home func() (string, error)) (string, error) {
 	if p := getenv("GFF_HAB_CONFIG"); p != "" {
 		return p, nil

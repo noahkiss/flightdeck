@@ -482,12 +482,14 @@ Package `internal/catalog`, wired into `gff-hab serve`. Capability `catalog`. Me
 `docs/examples/hab.toml`. Until the agent kit exists, `gff-hab api call catalog.list` reads the
 merged view.
 
-- **The hab's own config file.** `-config`, else `$GFF_HAB_CONFIG`, else `gff/hab.toml` beside
-  the peer file. Its `[catalog]` section holds `capabilities`, `project_roots` (absolute, or
+- **The hab's own config file.** `-config`, else `$GFF_HAB_CONFIG`, else `gff/hab.toml` in the
+  user config folder, where the default peer file is too (`-peers` and `$GFF_HAB_PEERS` move only
+  the peer file). Its `[catalog]` section holds `capabilities`, `project_roots` (absolute, or
   under `~/`), `always_on`, `always_on_alert` (a duration, default 30m), and `[[catalog.services]]`
   (`name`, `url`, optional `health`) and `[[catalog.actions]]` (`name`, `command`). gff-hab reads
   it at start and with every project scan (5 minutes). An entry it cannot use is left out and
-  logged; a file that does not parse keeps the last good section.
+  logged; a file that does not parse keeps the last good section, and at start, with none yet,
+  the defaults (so `always_on_alert` stays 30m, never 0).
 - **The whole catalog per generation.** `catalog.get {since}` returns the whole catalog when the
   generation differs from `since`, and no catalog when it is equal. A catalog is a few KB, so
   per-section answers would add a second shape for no real saving. A `since` above the
@@ -495,12 +497,28 @@ merged view.
   copy.
 - **The generation.** It rises on every change of the built catalog, compared field by field
   with the last one, not counting the generation and time. It is saved in `<state>/catalog.json`
-  and rises once at each start, so a peer always pulls after a restart.
+  and rises once at each start, so a peer always pulls after a restart. Each new generation is
+  one more than the last and never below the wall clock in milliseconds. A hab that lost or broke
+  `catalog.json` therefore starts above every generation of its earlier life, and no puller
+  takes its new catalog for the copy it holds. We chose the wall clock over an instance nonce:
+  it needs no second field and no new compare rule. It fails only when the clock is set back
+  past the earlier life, or when more than 1000 changes a second ran just before a restart.
+- **`catalog.json`** holds the generation, the own catalog and the peers' copies. It is written to
+  a temporary file, synced to disk, renamed into place, and the folder is synced. A file that
+  does not parse is set aside as `catalog.json.bad`; one that cannot be read is logged. Either
+  way the hab starts with no saved state rather than refusing to start.
+- **A restart serves the last catalog.** At start the hab takes the detected facts and the
+  folders read from the saved own catalog, so its first catalog (the new generation) already has
+  its toolchains, harnesses and projects. Fresh detection and the scan replace them in the
+  background. Peers never see a restarted host's projects vanish for a moment.
 - **What is detected.** OS (`os-release` on Linux, `sw_vers` on macOS), arch, cores, memory;
   `git`, `go`, `node`, `python3`, `rustc`, `docker`, `podman`, and `xcodebuild` on a Mac, each by
   its own version flag with a 10 s limit; the harnesses `claude`, `codex` and `opencode` the same
   way. Detected words: `linux` or `macos`, `xcode`, `docker` (Docker or Podman), and `gpu` when
-  `nvidia-smi` is on PATH. Read at start and every hour.
+  `nvidia-smi` is on PATH. Read at start and every hour. Detection runs the programs that are
+  first on the hab's PATH, with the hab's environment: the same trust as the user's own shell.
+  `$GFF_HAB_DETECT=off` reads only OS, arch and cores from the Go runtime and runs no program;
+  every test that starts gff-hab sets it.
 - **Projects.** The scan walks each project root to depth 3, follows no symbolic link, skips
   hidden folders, stops at a folder with `.git`, and reads at most 500 folders. It also reads
   every folder of the structure's projects. Identity is gff-hab's own (`gitIdentity`): the
@@ -513,13 +531,22 @@ merged view.
 - **Agents.** Every pane whose agent state is not `exited`, named by its session (an unfiled
   pane by its pane id), with the project's name and the time its state began.
 - **Peers in the catalog.** The catalog lists the device ids of this hab's peer list
-  (`peers`). The always-on check reads them to find which habs list the marked one.
+  (`peers`), and of those the peers it watches (`watches`): each one whose copy carries the
+  always-on mark. Only a watching hab can raise the alert, so the always-on check defers to
+  watchers, not to every hab that lists the marked one. A hab that lists the marked host but has
+  never reached it, or holds a copy from before the mark, would otherwise silence everyone.
 - **Exchange.** Every 15 s, and at once when a peer's row changes or the own catalog changes,
   this hab works each online link it dialed to a peer with `catalog`: it puts its own catalog
   when that link has not had this generation, then pulls with `since` the generation it holds.
   A link seen down puts again when it is back, and so does a link whose peer's catalog changed,
   since a restarted peer may have lost its copy. A pulled catalog must carry the link's device
-  id. `catalog.put` is taken only from a peer link (client kind `hab` with the hello's `peer`)
+  id, and a link with no device id pulls nothing. A link whose put or pull fails waits one poll
+  period, then twice that for each failure in a row, up to 5 minutes; it logs only when the
+  wait grows.
+- **`since` comes from pulls only.** It is the generation this hab last pulled over its own
+  link. A `catalog.put` for that peer clears it, so the next pull asks for everything. The hello
+  on a put is a claim (3.2), so a put that copies the peer's current generation can never
+  outlive the next pull. `catalog.put` is taken only from a peer link (client kind `hab` with the hello's `peer`)
   and only for that peer's own device id.
 - **Copies.** One per device id, with the time this hab last confirmed it with the peer
   (`seen_at`), saved in `catalog.json`. A copy is stale while its peer is not online in
@@ -530,12 +557,14 @@ merged view.
   `merge.ProjectKey`, one location per host, each with its folders and the stale mark.
 - **One hop by construction.** `catalog.get` serves only the hab's own catalog, and
   `catalog.put` refuses another hab's, so no copy travels on.
-- **The always-on alert.** Each round, for each copy marked always on: online clears the alert;
-  otherwise the hab counts from the later of the peer's last seen and the moment this hab's own
-  watch began, which is its start or the end of a sleep (two rounds further apart than three
-  poll periods and than 30 s). Past `always_on_alert`, and when no online peer copy with a lower device
-  id lists the marked hab, it raises one notice through `notice.raise` (level active, "<label>
-  is offline"). One per outage.
+- **The always-on alert.** Each round, for each marked peer this hab watches: online clears the
+  alert; otherwise the hab counts from the later of the peer's last seen and the moment this
+  hab's own watch began, which is its start or the end of a sleep (two rounds further apart than
+  three poll periods and than 30 s). Past `always_on_alert`, and when no online peer copy with a
+  lower device id watches the marked hab, it raises one notice through `notice.raise` (level
+  active, "<label> is offline"). One per outage. Every time in this check is wall time with the
+  monotonic reading stripped: Linux and macOS stop the monotonic clock during sleep, so a gap
+  measured with it never shows a sleep, and a laptop would alert the moment it woke.
 - **`catalog.updated`.** Ephemeral, host scope only, id the device id. Sent when the own
   catalog or a copy changes, and when a copy is dropped (generation 0).
 
@@ -554,7 +583,13 @@ Limits, at the bar of herdr, Rex and Paseo (none of them has a catalog):
   this hab starts the count again, so a host that stays down alerts once more 30 minutes after
   that restart.
 - The lowest-id rule reads the copies this hab holds, which can be up to one round old. Two habs
-  that each see the other offline (a network split) both alert, as section 8 accepts.
+  that each see the other offline (a network split) both alert, as section 8 accepts. So does
+  a lowest-id hab that cannot reach the marked host while others can (a laptop on a network that
+  blocks SSH): it alerts after 30 minutes.
+- `always_on_alert` is each watcher's own setting, not the marked host's. The lowest-id watcher's
+  value decides when the alert goes out.
+- An unlisted hab that keeps dialing in after the user removed it stays visible, with no label,
+  for as long as its link lasts (section 10 says its copy is dropped; it is, once the link ends).
 - Paths and the summary line go to every peer as they are. The peers are the same owner's
   machines (3.2).
 

@@ -1893,6 +1893,13 @@
             "items": {
               "$ref": "#/components/schemas/CatalogTool"
             }
+          },
+          "watches": {
+            "type": "array",
+            "description": "The peers marked always on that this hab watches: each is in its peer list and its copy carries the mark (mesh.md 8).",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -1908,7 +1915,8 @@
           "actions",
           "projects",
           "agents",
-          "peers"
+          "peers",
+          "watches"
         ]
       },
       "CatalogAction": {

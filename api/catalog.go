@@ -19,6 +19,7 @@ type Catalog struct {
 	Agents       []CatalogAgent      `json:"agents" doc:"Sessions with a running agent."`
 	AlwaysOn     bool                `json:"always_on,omitempty" doc:"The user marked this host always on (mesh.md 8)."`
 	Peers        []string            `json:"peers" doc:"The device ids in this hab's peer list."`
+	Watches      []string            `json:"watches" doc:"The peers marked always on that this hab watches: each is in its peer list and its copy carries the mark (mesh.md 8)."`
 }
 
 // CatalogSystem is the host's detected system facts. A fact that could not be read is absent.

@@ -7,7 +7,7 @@ import (
 )
 
 // habConfigPath is the hab's own config file: -config, else $GFF_HAB_CONFIG, else gff/hab.toml
-// beside the peer file (mesh.md 5.4).
+// in the user config folder (mesh.md 5.4).
 func habConfigPath(flagValue string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil

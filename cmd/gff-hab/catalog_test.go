@@ -36,6 +36,33 @@ func waitCatalog(t *testing.T, sock, what string, ok func(api.CatalogList) bool)
 	}
 }
 
+// TestCatalogDetectOff: with $GFF_HAB_DETECT=off, as every test hab runs, the catalog runs no
+// program from PATH; a stand-in claude that would leave a mark is never run.
+func TestCatalogDetectOff(t *testing.T) {
+	d := shortDir(t)
+	binDir, mark := filepath.Join(d, "bin"), filepath.Join(d, "ran")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte("#!/bin/sh\ntouch '"+mark+"'\necho 9.9.9\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sock := filepath.Join(d, "h.sock")
+	startServeWith(t, sock, filepath.Join(d, "s"), []string{"GFF_HAB_DETECT=off",
+		"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH")})
+	l := waitCatalog(t, sock, "the own catalog", func(l api.CatalogList) bool { return len(l.Hosts) > 0 })
+	if c := l.Hosts[0].Catalog; c.System.OS == "" || len(c.Harnesses) != 0 || len(c.Toolchains) != 0 {
+		t.Fatalf("own catalog %+v", c)
+	}
+	// Detection runs in the background right after the start: give it time to show.
+	for range 20 {
+		if _, err := os.Stat(mark); err == nil {
+			t.Fatal("detection ran claude from PATH")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // TestCatalogOverSSH: two gff-hab serve processes linked over the ssh stand-in each hold the
 // other's catalog, with the declared facts from each one's own config file; when one stops,
 // the other keeps its copy, stale.

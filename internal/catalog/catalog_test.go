@@ -282,12 +282,16 @@ func TestOfflineStale(t *testing.T) {
 	if e, ok := entry(a.cat.List(), b.id); !ok || !e.Stale {
 		t.Fatalf("b after more rounds: %+v %v", e, ok)
 	}
-	// Removing b from the peer list drops the copy.
+	if ids := savedCopies(t, a.state); !slices.Equal(ids, []string{b.id}) {
+		t.Fatalf("saved copies %v", ids)
+	}
+	// Removing b from the peer list drops the copy, from the view and from catalog.json.
 	write(t, a.peersFile, "")
 	wait(t, "the copy of b dropped", func() bool {
 		_, ok := entry(a.cat.List(), b.id)
 		return !ok
 	})
+	wait(t, "the copy of b gone from catalog.json", func() bool { return len(savedCopies(t, a.state)) == 0 })
 }
 
 // TestAlwaysOnAlert (acceptance 3): three habs list each other; c is marked always on. When c
@@ -309,7 +313,7 @@ func TestAlwaysOnAlert(t *testing.T) {
 				return false
 			}
 			for _, e := range l.Hosts {
-				if e.Catalog.DeviceID != c.id && !slices.Contains(e.Catalog.Peers, c.id) {
+				if e.Catalog.DeviceID != c.id && (!slices.Contains(e.Catalog.Peers, c.id) || !slices.Equal(e.Catalog.Watches, []string{c.id})) {
 					return false
 				}
 			}

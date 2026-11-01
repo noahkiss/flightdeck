@@ -263,6 +263,8 @@ public struct Catalog: Codable, Sendable, Hashable {
     public var system: CatalogSystem
     /// Tools found on PATH, with their versions.
     public var toolchains: [CatalogTool]
+    /// The peers marked always on that this hab watches: each is in its peer list and its copy carries the mark (mesh.md 8).
+    public var watches: [String]
 
     enum CodingKeys: String, CodingKey {
         case actions = "actions"
@@ -279,9 +281,10 @@ public struct Catalog: Codable, Sendable, Hashable {
         case services = "services"
         case system = "system"
         case toolchains = "toolchains"
+        case watches = "watches"
     }
 
-    public init(actions: [CatalogAction], agents: [CatalogAgent], alwaysOn: Bool? = nil, at: String, capabilities: [CatalogCapability], deviceId: String, generation: UInt64, harnesses: [CatalogTool], host: String, peers: [String], projects: [CatalogProject], services: [CatalogService], system: CatalogSystem, toolchains: [CatalogTool]) {
+    public init(actions: [CatalogAction], agents: [CatalogAgent], alwaysOn: Bool? = nil, at: String, capabilities: [CatalogCapability], deviceId: String, generation: UInt64, harnesses: [CatalogTool], host: String, peers: [String], projects: [CatalogProject], services: [CatalogService], system: CatalogSystem, toolchains: [CatalogTool], watches: [String]) {
         self.actions = actions
         self.agents = agents
         self.alwaysOn = alwaysOn
@@ -296,6 +299,7 @@ public struct Catalog: Codable, Sendable, Hashable {
         self.services = services
         self.system = system
         self.toolchains = toolchains
+        self.watches = watches
     }
 }
 

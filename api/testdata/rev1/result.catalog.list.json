@@ -84,6 +84,9 @@
             "x_unknown_field": "later"
           }
         ],
+        "watches": [
+          "watches-38"
+        ],
         "x_unknown_field": "later"
       },
       "label": "label-4",
@@ -95,28 +98,28 @@
   ],
   "projects": [
     {
-      "key": "key-38",
+      "key": "key-39",
       "locations": [
         {
-          "device_id": "device_id-42",
+          "device_id": "device_id-43",
           "folders": [
             {
-              "branch": "branch-45",
+              "branch": "branch-46",
               "dirty": true,
-              "head": "head-46",
-              "last_commit": "last_commit-47",
-              "path": "path-44",
+              "head": "head-47",
+              "last_commit": "last_commit-48",
+              "path": "path-45",
               "x_unknown_field": "later"
             }
           ],
-          "label": "label-43",
+          "label": "label-44",
           "stale": true,
           "x_unknown_field": "later"
         }
       ],
-      "name": "name-39",
-      "remote": "remote-40",
-      "root_commit": "root_commit-41",
+      "name": "name-40",
+      "remote": "remote-41",
+      "root_commit": "root_commit-42",
       "x_unknown_field": "later"
     }
   ],

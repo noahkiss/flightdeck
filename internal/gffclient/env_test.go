@@ -44,6 +44,8 @@ func TestMain(m *testing.M) {
 	gffBin = filepath.Join(d, "gff")
 	os.Setenv("GFF_HOLDER_DIR", filepath.Join(d, "holders"))   // never the user's real holders
 	os.Setenv("GFF_HAB_PEERS", filepath.Join(d, "peers.toml")) // never the user's real peer list
+	os.Setenv("GFF_HAB_CONFIG", filepath.Join(d, "hab.toml"))  // never the user's real hab config
+	os.Setenv("GFF_HAB_DETECT", "off")                         // the catalog runs no program from PATH
 	for _, b := range []struct {
 		out, pkg string
 		tags     []string
