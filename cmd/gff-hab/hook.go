@@ -21,9 +21,9 @@ import (
 // nor slow a turn: the whole run is capped at hook.Budget. `-print <harness>` prints the hook
 // config for that harness instead.
 //
-// `-wait` is the blocking permission hook, for Claude Code's PermissionRequest only. gff-hab
+// `-wait` is the blocking permission hook, for the PermissionRequest of Claude Code and Codex. gff-hab
 // answers at once unless the owner turned it on (`serve -permission-wait`); then the command
-// waits for the app's answer and prints it as Claude's hook output. The answer's header must
+// waits for the app's answer and prints it as the harness's hook output. The answer's header must
 // still come within hook.Budget, so a hung gff-hab costs no more than that; the whole run is
 // capped at hook.WaitBudget.
 func hookCmd(args []string, stdin io.Reader, stdout io.Writer) int {
@@ -32,7 +32,7 @@ func hookCmd(args []string, stdin io.Reader, stdout io.Writer) int {
 	stamp := fs.Int64("t", 0, "the event's time in ms since the Unix epoch, when the caller stamps it (default: now)")
 	print := fs.String("print", "", "print the hook config for this harness (claude, codex, opencode) and exit")
 	command := fs.String("command", "gff-hab", "with -print: how the harness should run gff-hab")
-	wait := fs.Bool("wait", false, "for claude PermissionRequest: wait for the app's answer when gff-hab holds the hook, and print it")
+	wait := fs.Bool("wait", false, "for claude and codex PermissionRequest: wait for the app's answer when gff-hab holds the hook, and print it")
 	if err := fs.Parse(args); err != nil {
 		return 0
 	}

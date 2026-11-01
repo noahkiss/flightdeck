@@ -39,15 +39,15 @@ func Config(harness, command string) (string, error) {
 		// blocking permission hook on in gff-hab, and its timeout covers the longest wait.
 		return hooksJSON(command, harness, ClaudeEvents, map[string]int{"PermissionRequest": PermissionTimeout}, map[string]string{"PermissionRequest": "-wait "})
 	case detect.KindCodex:
-		// Codex caps its end hooks at three seconds.
-		return hooksJSON(command, harness, CodexEvents, map[string]int{"SessionEnd": 2, "Interrupt": 2}, nil)
+		// Codex caps its end hooks at three seconds. PermissionRequest waits as Claude's does.
+		return hooksJSON(command, harness, CodexEvents, map[string]int{"SessionEnd": 2, "Interrupt": 2, "PermissionRequest": PermissionTimeout}, map[string]string{"PermissionRequest": "-wait "})
 	case detect.KindOpencode:
 		return opencodePlugin(command), nil
 	}
 	return "", fmt.Errorf("no hook config for harness %q; known: claude, codex, opencode", harness)
 }
 
-// PermissionTimeout is the hook timeout, in seconds, of Claude's PermissionRequest hook: above
+// PermissionTimeout is the hook timeout, in seconds, of the PermissionRequest hook: above
 // the longest wait the hab holds a hook (harness.MaxPermissionWait plus a margin).
 const PermissionTimeout = 130
 

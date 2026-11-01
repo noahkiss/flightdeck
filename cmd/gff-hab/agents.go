@@ -11,7 +11,6 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
-	"github.com/noahkiss/flightdeck/internal/detect"
 	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/link"
@@ -273,7 +272,7 @@ func (a *agentService) write(ctx context.Context, pane string, writes ...[]byte)
 	return first
 }
 
-// holdPermission is the hook server's Holder: it holds a Claude PermissionRequest hook posted
+// holdPermission is the hook server's Holder: it holds a Claude Code or Codex PermissionRequest hook posted
 // with -wait while the gate is on, a client that can answer is connected (approvers), and the
 // request this very envelope opened is still open. A hook whose envelope opened nothing (a
 // nested session's, which binding dropped) never waits, so it can never take another
@@ -284,7 +283,7 @@ func (a *agentService) holdPermission(approvers func(pane string) int) hook.Hold
 		a.holdMu.Lock()
 		defer a.holdMu.Unlock()
 		opened := sink()
-		if opened == "" || !a.gate.Enabled() || env.Harness != detect.KindClaude || env.Event != "PermissionRequest" || approvers(pane) == 0 {
+		if opened == "" || !a.gate.Enabled() || !hook.Waits(env.Harness) || env.Event != "PermissionRequest" || approvers(pane) == 0 {
 			return nil
 		}
 		if _, err := a.agents.CheckAnswer(pane, opened); err != nil {
@@ -307,7 +306,7 @@ func (a *agentService) holdPermission(approvers func(pane string) int) hook.Hold
 }
 
 // releaseUnwatched ends the gate's waits on every pane no client that can answer watches any
-// more, so Claude shows its own dialog at once instead of after the full wait. The control
+// more, so the harness shows its own dialog at once instead of after the full wait. The control
 // server calls it when a connection closes or changes its subscription.
 func (a *agentService) releaseUnwatched(approvers func(pane string) int) {
 	for _, pane := range a.gate.Panes() {

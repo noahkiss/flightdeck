@@ -263,3 +263,54 @@ func TestForgedIdleKeepsDialog(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(e.work, "end"), "")
 }
+
+// Hand-written Codex 0.166 hook payloads. As the Codex hooks documentation says,
+// PermissionRequest carries a turn_id but no tool_use_id.
+const (
+	codexPermissionPayload = `{"session_id":"019a-codex-7","turn_id":"turn-3","cwd":"/work/app","hook_event_name":"PermissionRequest","model":"model-x","permission_mode":"default","tool_name":"Bash","tool_input":{"command":"make test","description":null}}`
+	codexPostToolPayload   = `{"session_id":"019a-codex-7","turn_id":"turn-3","cwd":"/work/app","hook_event_name":"PostToolUse","model":"model-x","permission_mode":"default","tool_name":"Bash","tool_use_id":"call_9","tool_input":{"command":"make test"},"tool_response":"ok"}`
+)
+
+// TestCodexAdapter is the Codex adapter end to end with the real holder and gff-hab: the fake
+// agent reports app=codex over OSC 7501, as Codex 0.166 does, and runs the real hook command
+// with Codex payloads. session.send lands as a bracketed paste plus Enter once it is idle, and
+// approval.answer answers the hook-opened request with the dialog's first option.
+func TestCodexAdapter(t *testing.T) {
+	e := newHabEnv(t, 0)
+	c := e.control()
+	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(30*time.Second))
+	defer cancel()
+	writeFile(t, filepath.Join(e.work, "permission.json"), codexPermissionPayload)
+	writeFile(t, filepath.Join(e.work, "posttool.json"), codexPostToolPayload)
+	text := "run the tests"
+	want := "\x1b[200~" + text + "\x1b[201~\r"
+	var ss api.SessionCreated
+	err := c.Call(ctx, "session.create", api.SessionCreateParams{
+		Name: "codex", Argv: []string{"/bin/sh", "-c", strings.ReplaceAll(fakeClaude, "claude", "codex")}, Cwd: "/", Cols: 80, Rows: 24,
+		Env: []string{"PATH=/usr/bin:/bin", "LC_ALL=C", "DIR=" + e.work, "HAB=" + bin, "MSGLEN=" + strconv.Itoa(len(want)), noRaceExitSleep}}, &ss)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := waitState(t, e.sock, ss.Pane, "OSC working", func(s api.AgentState) bool { return s.State == api.AgentStatusWorking })
+	if st.Harness != "codex" || st.Source != api.StateSourceOsc {
+		t.Fatalf("state from OSC 7501: %+v", st)
+	}
+	writeFile(t, filepath.Join(e.work, "go-idle"), "")
+	waitState(t, e.sock, ss.Pane, "OSC idle", func(s api.AgentState) bool { return s.State == api.AgentStatusIdle })
+	if err := c.Call(ctx, "session.send", api.SessionSendParams{Session: ss.Session, Text: text}, nil); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	waitUntil(t, "the message in the pane", fileIs(filepath.Join(e.work, "msg"), want))
+	st = waitState(t, e.sock, ss.Pane, "blocked", func(s api.AgentState) bool { return s.State == api.AgentStatusBlocked })
+	if st.Request == nil || st.Request.ID == "" || st.Request.Command != "make test" || st.Session != "019a-codex-7" || st.Turn != "turn-3" {
+		t.Fatalf("blocked state: %+v", st)
+	}
+	if err := c.Call(ctx, "approval.answer", api.ApprovalAnswerParams{Pane: ss.Pane, Request: st.Request.ID, Choice: api.ApprovalChoiceAllow}, nil); err != nil {
+		t.Fatalf("answer: %v", err)
+	}
+	if !fileIs(filepath.Join(e.work, "key"), "1")() {
+		t.Fatal("the dialog did not get the allow key")
+	}
+	writeFile(t, filepath.Join(e.work, "end"), "")
+	waitState(t, e.sock, ss.Pane, "exited", func(s api.AgentState) bool { return s.State == api.AgentStatusExited })
+}

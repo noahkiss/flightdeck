@@ -171,8 +171,24 @@ func TestMessageWrites(t *testing.T) {
 	if _, err := MessageWrites("claude", " \x1b\n"); err == nil {
 		t.Error("an empty message was accepted")
 	}
-	if _, err := MessageWrites("codex", "hi"); !errors.Is(err, ErrUnsupported) {
-		t.Errorf("codex: %v", err)
+	if w, err := MessageWrites("codex", "hi"); err != nil || len(w) != 2 || string(w[0]) != "\x1b[200~hi\x1b[201~" {
+		t.Errorf("codex: %q %v", w, err)
+	}
+	if _, err := MessageWrites("opencode", "hi"); !errors.Is(err, ErrUnsupported) {
+		t.Errorf("opencode: %v", err)
+	}
+}
+
+func TestPermissionKeys(t *testing.T) {
+	for _, h := range []string{"claude", "codex"} {
+		allow, err1 := PermissionKeys(h, true)
+		deny, err2 := PermissionKeys(h, false)
+		if err1 != nil || err2 != nil || string(allow) != "1" || string(deny) != "\x1b" {
+			t.Errorf("%s: allow %q deny %q (%v, %v)", h, allow, deny, err1, err2)
+		}
+	}
+	if _, err := PermissionKeys("opencode", true); !errors.Is(err, ErrUnsupported) {
+		t.Errorf("opencode: %v", err)
 	}
 }
 

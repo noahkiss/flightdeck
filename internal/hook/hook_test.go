@@ -231,8 +231,11 @@ func TestConfig(t *testing.T) {
 		for _, ev := range h.events {
 			g := cfg.Hooks[ev]
 			want := "gff-hab hook " + h.name + " " + ev
-			if h.name == "claude" && ev == "PermissionRequest" {
-				want = "gff-hab hook -wait claude PermissionRequest"
+			if ev == "PermissionRequest" {
+				want = "gff-hab hook -wait " + h.name + " PermissionRequest"
+				if g[0].Hooks[0].Timeout != PermissionTimeout {
+					t.Errorf("%s PermissionRequest timeout %d", h.name, g[0].Hooks[0].Timeout)
+				}
 			}
 			if len(g) != 1 || len(g[0].Hooks) != 1 || g[0].Hooks[0].Type != "command" ||
 				g[0].Hooks[0].Command != want || g[0].Hooks[0].Timeout <= 0 {

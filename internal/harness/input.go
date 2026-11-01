@@ -255,7 +255,7 @@ const (
 // paste early nor press keys; CR LF and CR become LF.
 func MessageWrites(harness, text string) ([][]byte, error) {
 	switch harness {
-	case detect.KindClaude:
+	case detect.KindClaude, detect.KindCodex:
 	default:
 		return nil, fmt.Errorf("%w: sending a message to %s", ErrUnsupported, harness)
 	}
@@ -277,10 +277,12 @@ func MessageWrites(harness, text string) ([][]byte, error) {
 }
 
 // PermissionKeys returns the keys that choose allow or deny in harness's permission dialog.
-// Claude Code's dialog lists "1. Yes" first and takes Esc as No.
+// Claude Code's dialog lists "1. Yes" first and takes Esc as No. Codex's lists "1. Yes,
+// proceed" first, and takes Esc as "No, and tell Codex what to do differently", which stops
+// the turn as Claude's Esc does.
 func PermissionKeys(harness string, allow bool) ([]byte, error) {
 	switch harness {
-	case detect.KindClaude:
+	case detect.KindClaude, detect.KindCodex:
 		if allow {
 			return []byte("1"), nil
 		}

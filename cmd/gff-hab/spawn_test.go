@@ -395,3 +395,26 @@ func TestSessionCreateAndClose(t *testing.T) {
 		t.Errorf("close a closed session: %s, want not_found", kind)
 	}
 }
+
+// TestHarnessStart: session.create with harness codex starts `codex --no-daemon` (owner
+// decision: Codex runs without the shared daemon in the holder), keeps the caller's arguments,
+// adds the flag only once, and sets AGENT_KIND. Other harnesses are refused.
+func TestHarnessStart(t *testing.T) {
+	for _, c := range []struct{ argv, want []string }{
+		{nil, []string{"codex", "--no-daemon"}},
+		{[]string{"/opt/bin/codex", "resume", "abc"}, []string{"/opt/bin/codex", "--no-daemon", "resume", "abc"}},
+		{[]string{"codex", "resume", "--no-daemon"}, []string{"codex", "resume", "--no-daemon"}},
+	} {
+		in := api.SessionCreateParams{Harness: "codex", Argv: c.argv, Env: []string{"A=1"}}
+		p, err := harnessStart(in)
+		if err != nil || !slices.Equal(p.Argv, c.want) || !slices.Equal(p.Env, []string{"A=1", "AGENT_KIND=codex"}) {
+			t.Errorf("%q: %q %q %v", c.argv, p.Argv, p.Env, err)
+		}
+		if len(c.argv) > 0 && !slices.Equal(in.Argv, c.argv) {
+			t.Errorf("the caller's argv changed: %q", in.Argv)
+		}
+	}
+	if _, err := harnessStart(api.SessionCreateParams{Harness: "claude"}); errKind(err) != api.ErrorKindUnavailable {
+		t.Errorf("claude: %v", err)
+	}
+}

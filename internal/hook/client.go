@@ -89,7 +89,7 @@ type Invocation struct {
 	Now     func() time.Time
 	T       int64 // the event's time in ms, stamped by the caller (the opencode plugin); 0 means now
 	// Wait asks the hab to hold a permission request until the app answers (PostWait). Only
-	// Claude Code's PermissionRequest waits; any other event posts as usual.
+	// the PermissionRequest of Claude Code and Codex waits; any other event posts as usual.
 	Wait bool
 	// Stdout receives the harness's hook output when a wait ends with a decision.
 	Stdout io.Writer
@@ -141,14 +141,14 @@ func Run(ctx context.Context, in Invocation) error {
 		t = now().UnixMilli()
 	}
 	env := harness.Envelope{Harness: in.Harness, Event: event, T: t, N: 1, Payload: payload}
-	if !in.Wait || in.Harness != detect.KindClaude || event != "PermissionRequest" || in.Stdout == nil {
+	if !in.Wait || !Waits(in.Harness) || event != "PermissionRequest" || in.Stdout == nil {
 		return Post(ctx, addr, env)
 	}
 	answer, err := PostWait(ctx, addr, env)
 	if err != nil || answer == nil {
 		return err
 	}
-	out, err := ClaudeDecision(answer)
+	out, err := PermissionDecision(answer)
 	if err != nil || out == nil {
 		return err
 	}
@@ -156,10 +156,16 @@ func Run(ctx context.Context, in Invocation) error {
 	return err
 }
 
-// ClaudeDecision turns the hab's answer body into Claude Code's PermissionRequest hook output.
-// It returns nil for an answer with no decision: the hook then prints nothing, and Claude shows
-// its own dialog.
-func ClaudeDecision(answer []byte) ([]byte, error) {
+// Waits reports whether harness's PermissionRequest hook can wait for the app's answer: Claude
+// Code and Codex share the hook output shape.
+func Waits(harness string) bool {
+	return harness == detect.KindClaude || harness == detect.KindCodex
+}
+
+// PermissionDecision turns the hab's answer body into the PermissionRequest hook output of
+// Claude Code and Codex, which share one shape. It returns nil for an answer with no decision:
+// the hook then prints nothing, and the harness shows its own dialog.
+func PermissionDecision(answer []byte) ([]byte, error) {
 	var a struct {
 		Behavior string `json:"behavior"`
 		Message  string `json:"message,omitempty"`

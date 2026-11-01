@@ -14,6 +14,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/detect"
 	"github.com/noahkiss/flightdeck/internal/holderclient"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/link"
@@ -44,8 +45,10 @@ var _ control.Actions = (*actions)(nil)
 // the pane again, so no unfiled pane is left behind.
 func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) (string, string, error) {
 	if p.Harness != "" {
-		return "", "", control.Errorf(api.ErrorKindUnavailable,
-			"session.create with a harness needs that harness's adapter; Part 4 stage 4 (harness adapters) builds it. Give argv instead")
+		var err error
+		if p, err = harnessStart(p); err != nil {
+			return "", "", err
+		}
 	}
 	cols, rows := p.Cols, p.Rows
 	if cols == 0 {
@@ -128,6 +131,30 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 	}
 	a.noteDir(ctx, project, projectTop, p.Project != "" && p.Cwd != "", cwd)
 	return ss.ID, pane, nil
+}
+
+// harnessStart fills in how session.create starts a known harness (harness-adapters.md,
+// Environment contract and Open decisions). Codex runs with --no-daemon, so its agent loop and
+// tool commands stay children of the holder and see the pane's environment; argv defaults to
+// `codex` and gets the flag when it lacks it. The pane gets AGENT_KIND. Other harnesses are not
+// started this way yet.
+func harnessStart(p api.SessionCreateParams) (api.SessionCreateParams, error) {
+	switch p.Harness {
+	case detect.KindCodex:
+		argv := slices.Clone(p.Argv)
+		if len(argv) == 0 {
+			argv = []string{"codex"}
+		}
+		if !slices.Contains(argv[1:], "--no-daemon") {
+			argv = slices.Insert(argv, 1, "--no-daemon")
+		}
+		p.Argv = argv
+	default:
+		return p, control.Errorf(api.ErrorKindUnavailable,
+			"session.create with harness %q is not built yet; only codex is. Give argv instead", p.Harness)
+	}
+	p.Env = append(slices.Clone(p.Env), "AGENT_KIND="+p.Harness)
+	return p, nil
 }
 
 // noteDir records the repository folder a new session works in as its project's most recently
