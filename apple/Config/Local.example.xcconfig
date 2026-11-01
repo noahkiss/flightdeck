@@ -1,0 +1,19 @@
+// Copy to Local.xcconfig (untracked) and fill in. Never commit Local.xcconfig.
+
+// 1. Signing. Find the identities with:
+//    security find-identity -v -p codesigning
+//    The Mac app ships with Developer ID; the iOS app ships through App Store
+//    Connect. Simulator builds stay ad hoc.
+DEVELOPMENT_TEAM = <TEAM_ID>
+CODE_SIGN_IDENTITY[sdk=macosx*] = Developer ID Application
+CODE_SIGN_IDENTITY[sdk=iphoneos*] = Apple Distribution
+// A secure timestamp; notarization requires one.
+OTHER_CODE_SIGN_FLAGS[sdk=macosx*] = --timestamp
+
+// 2. iOS: an App Store provisioning profile for each bundle ID, installed on
+//    this Mac. Names as `security cms -D -i <file>` prints them under Name.
+// APP_IOS_PROFILE = <iOS app profile name>
+
+// 3. macOS: a Developer ID profile, only when an entitlement needs one
+//    (keychain groups, iCloud). Plain Developer ID signing needs none.
+// APP_MAC_PROFILE = <macOS app profile name>

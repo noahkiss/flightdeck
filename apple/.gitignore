@@ -1,0 +1,13 @@
+Config/Local.xcconfig
+Config/Local.env
+*.mobileprovision
+*.provisionprofile
+*.p12
+*.p8
+.build/
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+.swiftpm/
+*.xcodeproj/

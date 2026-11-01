@@ -89,6 +89,11 @@ The repo layout and the libghostty build are in `docs/layout.md`.
 | `gff [-socket path \| -via command \| -ssh host] [-new command]... [-split columns\|rows] [-observe] [-prefix ctrl-<key>] [pane...]` | The terminal client: show the named panes and one new pane per `-new` (with neither, the hab's shell) in this terminal. One pane that fits passes through; several share the screen. Prefix Ctrl+\ then `o` focus, `z` zoom, `s` split, `r` redraw, `n` nudge, `f` fit, `d` detach. Build with `-tags ghostty` for libghostty |
 | `go test -race ./internal/gffclient/` | Client core against the real holder and gff-hab: an observer never sends a size, typing moves ownership, one debounced size after a burst of host resizes, no query reaches the host or gets an answer, detach; then the `gff` binary in a pty with vim and a full-screen script side by side across a resize (skips without vim) |
 | `cd swift/HabAPI && swift test` | Build and test the generated Swift package (Mac) |
+| `apple/scripts/generate.sh` | Generate `apple/Flightdeck.xcodeproj` from `apple/project.yml` with XcodeGen (the pinned release is downloaded when `xcodegen` is not on PATH). The project is not committed |
+| `xcodebuild -project apple/Flightdeck.xcodeproj -scheme FlightdeckiOS -destination 'generic/platform=iOS Simulator' build` | Build the iOS app for the simulator (no signing setup needed) |
+| `xcodebuild -project apple/Flightdeck.xcodeproj -scheme FlightdeckMac -destination 'generic/platform=macOS' build` | Build the Mac app; ad hoc signed unless `apple/Config/Local.xcconfig` names an identity |
+| `apple/scripts/build.sh [--install]` | Generate, then build the Mac app (Release) into `apple/build/`, and verify its signature |
+| `cd apple/FlightdeckKit && swift test` | Test the app's shared package (it links `swift/HabAPI`) |
 | `go test ./api -run TestGoldens -update` | Rewrite the golden messages of the current API revision in `api/testdata/` |
 
 ## Delegation

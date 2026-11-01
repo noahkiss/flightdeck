@@ -1,7 +1,7 @@
 # Repo layout
 
 One Go module, `github.com/noahkiss/flightdeck`, at the repo root. Swift packages live under
-`swift/`. The app project (Part 6) will sit beside them.
+`swift/`. The app project is `apple/`.
 
 | Path | What it holds |
 |---|---|
@@ -42,6 +42,12 @@ One Go module, `github.com/noahkiss/flightdeck`, at the repo root. Swift package
 | `build/` | Ignored by git. `make libghostty` puts the Ghostty source and the built library here |
 | `swift/HabAPI/` | Swift package of generated `Codable` types for the app |
 | `swift/Spikes/` | Throwaway device spikes, each an XcodeGen project with its own README. `ParakeetSpike/` measures on-device Parakeet against Apple SpeechAnalyzer (`docs/specs/voice.md`). `SSHSpike/` is a SwiftPM command-line tool instead: `swift-nio-ssh` with a Secure Enclave key against a throwaway sshd and `gff-hab connect` (`docs/specs/transport.md` 4.8) |
+| `apple/` | The Flightdeck app: an XcodeGen spec (`project.yml`) with a macOS target and an iOS target (iPhone and iPad). The generated `.xcodeproj` is ignored by git |
+| `apple/Config/` | `Names.xcconfig` (display name, bundle ID, App Group, version), `Base.xcconfig`, and `Local.example.xcconfig`. Signing goes in `Local.xcconfig`, which is ignored by git; with none, builds sign ad hoc |
+| `apple/App/` | Each platform's entry point, `Info.plist` and entitlements. iOS: push, the App Group and time-sensitive notifications. macOS: the app sandbox and outgoing network |
+| `apple/FlightdeckKit/` | The app's shared Swift package: everything that is not AppKit or UIKit. Depends on `swift/HabAPI`. Holds the placeholder root view until the status board lands |
+| `apple/scripts/` | `generate.sh` (XcodeGen), `build.sh` (Mac Release build), `testflight.sh` and `notarize.sh` (release steps, from the app template) |
+| `design/icons/AppIcon.icon` | The app icon (Icon Composer bundle); both app targets use it in place |
 | `cmd/` | Binaries, as they land: `gff`, `gff-hab`, `gff-hab-holder` |
 | `docs/specs/` | Behaviour specs |
 | `docs/protocol/` | Wire protocol documents |

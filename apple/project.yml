@@ -1,0 +1,107 @@
+# XcodeGen spec. Generate the project with `apple/scripts/generate.sh`.
+# Names and bundle IDs live in Config/Names.xcconfig, signing in Config/Local.xcconfig.
+# Shared Swift code is the FlightdeckKit package; each platform target only adds UI.
+name: Flightdeck
+options:
+  bundleIdPrefix: com.nkmkdigital
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "14.0"
+    iOS: "17.0"
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
+packages:
+  FlightdeckKit:
+    path: FlightdeckKit
+targets:
+  FlightdeckMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: App/macOS
+        excludes: ["*.entitlements", "Info.plist"]
+      - path: ../design/icons/AppIcon.icon
+    dependencies:
+      - package: FlightdeckKit
+        product: FlightdeckKit
+      # A share extension: add its target below and embed it here.
+      # - target: ShareExtensionMac
+      #   embed: true
+      #   codeSign: true
+    settings:
+      base:
+        PRODUCT_NAME: $(APP_DISPLAY_NAME)
+        PRODUCT_MODULE_NAME: FlightdeckMac
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID)
+        INFOPLIST_FILE: App/macOS/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/macOS/App.entitlements
+        PROVISIONING_PROFILE_SPECIFIER: $(APP_MAC_PROFILE)
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO
+  FlightdeckiOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: App/iOS
+        excludes: ["*.entitlements", "Info.plist"]
+      - path: ../design/icons/AppIcon.icon
+    dependencies:
+      - package: FlightdeckKit
+        product: FlightdeckKit
+      # - target: ShareExtensioniOS
+      #   embed: true
+      #   codeSign: true
+    settings:
+      base:
+        PRODUCT_NAME: $(APP_DISPLAY_NAME)
+        PRODUCT_MODULE_NAME: FlightdeckiOS
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID)
+        INFOPLIST_FILE: App/iOS/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/iOS/App.entitlements
+        "PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]": $(APP_IOS_PROFILE)
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+  # Share extension, optional. Needs ShareExtension/<platform>/ with an
+  # Info.plist (NSExtension, com.apple.share-services), a view controller and
+  # entitlements.
+  # ShareExtensionMac:
+  #   type: app-extension
+  #   platform: macOS
+  #   sources:
+  #     - path: ShareExtension/macOS
+  #       excludes: ["*.entitlements", "Info.plist"]
+  #   dependencies:
+  #     - package: FlightdeckKit
+  #       product: FlightdeckKit
+  #   settings:
+  #     base:
+  #       PRODUCT_NAME: FlightdeckShare
+  #       PRODUCT_BUNDLE_IDENTIFIER: $(APP_SHARE_BUNDLE_ID)
+  #       INFOPLIST_FILE: ShareExtension/macOS/Info.plist
+  #       CODE_SIGN_ENTITLEMENTS: ShareExtension/macOS/ShareExtension.entitlements
+  #       GENERATE_INFOPLIST_FILE: NO
+  #       LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"
+  # ShareExtensioniOS: the same with platform iOS, ShareExtension/iOS,
+  #   TARGETED_DEVICE_FAMILY "1,2" and
+  #   LD_RUNPATH_SEARCH_PATHS "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
+schemes:
+  FlightdeckMac:
+    build:
+      targets:
+        FlightdeckMac: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  FlightdeckiOS:
+    build:
+      targets:
+        FlightdeckiOS: all
+    run:
+      config: Debug
+    archive:
+      config: Release
