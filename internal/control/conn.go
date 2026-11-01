@@ -955,6 +955,7 @@ const (
 	hintNoActions = "%s needs the holder link, which this hab is running without"
 	hintNoChat    = "%s needs the transcript reader, which this hab is running without"
 	hintNoPeers   = "%s needs the peer list, which this hab is running without; the mesh capability is absent"
+	hintNoUsage   = "%s needs the usage readings, which this hab is running without; the usage capability is absent"
 )
 
 // later names the stage that builds each method this build defines but does not serve yet
@@ -964,7 +965,6 @@ var later = map[string]string{
 	"session.interrupt": "Part 4 stage 4 (harness adapters: state and input)",
 	"attachment.put":    "Part 6 stage 5 (the app's chat view, images and files)",
 	"attachment.get":    "Part 6 stage 5 (the app's chat view, images and files)",
-	"usage.list":        "Part 4 (adapters that report harness usage)",
 	"hab.stats":         "Part 5 stage 5 (system info)",
 }
 
@@ -1070,6 +1070,17 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		return c.dispatchPush(m, s)
 	case "devices.pair", "devices.list", "devices.revoke":
 		return nil, appErr(api.ErrorKindUnavailable, hintNoDevices, m.Method)
+	case "usage.list":
+		var p api.UsageListParams
+		if e := c.decodeUp(m, &p); e != nil {
+			return nil, e
+		}
+		if c.s.cfg.Usage == nil {
+			return nil, appErr(api.ErrorKindUnavailable, hintNoUsage, m.Method)
+		}
+		res := c.s.cfg.Usage.List()
+		res.Seq = s
+		return api.NonNil(res), nil
 	case "peers.list":
 		var p api.PeersListParams
 		if e := c.decodeUp(m, &p); e != nil {

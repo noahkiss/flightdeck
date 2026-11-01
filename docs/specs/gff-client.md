@@ -1238,6 +1238,10 @@ its account's usage windows through a documented interface of that harness (for 
 harness passes to its status line or hooks). gff-hab keeps the latest reading per account and host
 and serves it to clients, which show it in the usage row, alerts and widgets.
 
+Built (task-6189lsjb): gff-hab serves `usage.list` and `usage.updated` (capability `usage`) from
+Claude Code's status-line input and Codex's rollout `token_count` events; opencode reports none.
+The source per harness and its version caveat are in `harness-adapters.md`, Usage.
+
 ### 15.7 Activity marks on hidden tabs
 
 Hidden panes have no data stream. Marks need events.

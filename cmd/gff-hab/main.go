@@ -86,6 +86,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/service"
 	"github.com/noahkiss/flightdeck/internal/structure"
 	"github.com/noahkiss/flightdeck/internal/transcript"
+	habusage "github.com/noahkiss/flightdeck/internal/usage"
 )
 
 // build is set at link time: -ldflags "-X main.build=<id>".
@@ -106,6 +107,8 @@ const usage = `usage:
   gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
   gff-hab hook [-t ms] <harness> [event] < payload
   gff-hab hook -print <harness> [-command name]
+  gff-hab statusline claude [-- command] < status-line input
+  gff-hab statusline -print claude [-command name] [-wrap command]
   gff-hab probe -nonce n -checks grant,... [-request grant]
   gff-hab install   [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
                     [-unit-dir dir] [-hab-bin path] [-holder-bin path] [-dry-run]
@@ -120,6 +123,9 @@ func main() {
 	}
 	if os.Args[1] == "hook" {
 		os.Exit(hookCmd(os.Args[2:], os.Stdin, os.Stdout))
+	}
+	if os.Args[1] == "statusline" {
+		os.Exit(statuslineCmd(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	if os.Args[1] == "probe" {
 		os.Exit(probeCmd(os.Args[2:]))
@@ -360,7 +366,15 @@ func serve(args []string) error {
 		logger.Print(msg)
 	}
 	tokens := hook.NewTokens(secret, livePane(lk))
-	var caps []string
+	// Usage readings per harness account (app.md 14): served always; fed by the adapters.
+	usageStore := habusage.NewStore(func(e structure.Event) {
+		if s := srv.Load(); s != nil {
+			s.Publish(e)
+		}
+	}, nil)
+	usages := newUsageService(&usageService{store: usageStore, host: *hostID, logf: logger.Printf})
+	defer usages.Close()
+	caps := []string{"usage"}
 	var acts control.Actions
 	var data control.Data
 	var input control.Input
@@ -402,6 +416,9 @@ func serve(args []string) error {
 		if err != nil {
 			return err
 		}
+		// Codex reports usage in its rollout: read the end of it after the session's hooks.
+		usages.codexHome = codexHome
+		usages.find = func(native string) (string, error) { return transcript.FindCodex(codexHome, native) }
 		chats = newChatService(chatConfig{
 			session: store.Session,
 			agent:   agents.Get,
@@ -510,6 +527,7 @@ func serve(args []string) error {
 		Detect:      explain,
 		Peers:       pm,
 		Push:        pushes,
+		Usage:       usageStore,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)
@@ -543,6 +561,9 @@ func serve(args []string) error {
 		}
 	}
 	hooks := hook.NewServer(tokens, func(pane string, env harness.Envelope) string {
+		if usages.Hook(env) {
+			return "" // a status-line input: usage only
+		}
 		_, opened := agents.Hook(pane, env)
 		// A hook from a pane in a project may follow a commit or a checkout: read the project's
 		// repository again, debounced.

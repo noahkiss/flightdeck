@@ -1,0 +1,19 @@
+{
+  "account": {
+    "key": "",
+    "harness": "claude",
+    "windows": [
+      {
+        "name": "spend",
+        "used_pct": 7,
+        "read_at": "2026-01-01T10:00:00Z"
+      }
+    ]
+  },
+  "version": "2.2.0",
+  "drift": [
+    "rate_limits.five_hour has no used_percentage number",
+    "rate_limits.seven_day.resets_at is not Unix seconds",
+    "rate_limits.seven_day_opus is not known"
+  ]
+}

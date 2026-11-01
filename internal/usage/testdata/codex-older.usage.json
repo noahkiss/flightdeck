@@ -1,0 +1,21 @@
+{
+  "account": {
+    "key": "",
+    "harness": "codex",
+    "windows": [
+      {
+        "name": "5h",
+        "used_pct": 55,
+        "resets_at": "2025-09-01T09:00:30Z",
+        "read_at": "2025-09-01T08:00:30Z"
+      },
+      {
+        "name": "7d",
+        "used_pct": 20,
+        "resets_at": "2025-09-02T08:00:30Z",
+        "read_at": "2025-09-01T08:00:30Z"
+      }
+    ]
+  },
+  "version": "0.40.0"
+}

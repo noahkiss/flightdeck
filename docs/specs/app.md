@@ -1414,9 +1414,9 @@ The owner sees each harness account's usage limits before hitting them.
   organisation id the harness exposes. With no such id, the key is the hab plus the harness.
 - **Documented interfaces only.** The adapter reads usage from what the harness already gives it:
   hook payloads, status-line input, transcript or rollout records, or the harness's own server
-  protocol. Examples to confirm in Part 4 *(gk)*: Claude Code's status-line input carries its
-  rate-limit windows in recent versions; Codex's rollout token-count events carry its primary and
-  secondary windows; opencode reports none. The adapter never reads credential files and never
+  protocol. Confirmed in Part 4 and built: Claude Code's status-line input carries its rate-limit
+  windows in recent versions; Codex's rollout token-count events carry its primary and secondary
+  windows; opencode reports none (`harness-adapters.md`, Usage). The adapter never reads credential files and never
   calls a private usage endpoint with the user's token.
 - The hab sends usage with its state and on change (`usage.list`, `usage.updated`, 17).
 - The app merges readings from every hab by account key. The newest reading wins. The card says

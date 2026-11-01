@@ -1,0 +1,16 @@
+{
+  "hook_event_name": "Status",
+  "session_id": "sess-usage-1",
+  "transcript_path": "/srv/agent/.claude/projects/-work-app/sess-usage-1.jsonl",
+  "cwd": "/work/app",
+  "model": {"id": "model-x", "display_name": "Model X"},
+  "workspace": {"current_dir": "/work/app", "project_dir": "/work/app", "added_dirs": []},
+  "version": "2.1.316",
+  "output_style": {"name": "default"},
+  "cost": {"total_cost_usd": 0.5, "total_duration_ms": 1000, "total_api_duration_ms": 800, "total_lines_added": 3, "total_lines_removed": 1},
+  "context_window": {"total_input_tokens": 1200, "total_output_tokens": 300, "context_window_size": 200000, "current_usage": null, "used_percentage": 1, "remaining_percentage": 99},
+  "rate_limits": {
+    "five_hour": {"used_percentage": 42.7, "resets_at": 1767268800},
+    "seven_day": {"used_percentage": 99.9, "resets_at": 1767744000}
+  }
+}

@@ -108,3 +108,26 @@ export const GffHab = async () => ({
 })
 `
 }
+
+// StatusLineEvent is the event name `gff-hab statusline` posts Claude Code's status-line input
+// under. It carries usage only (harness-adapters.md, Usage); it is not a hook and never changes
+// the agent state.
+const StatusLineEvent = "StatusLine"
+
+// StatusLineConfig returns the statusLine setting for Claude Code that runs gff-hab's status
+// line. wrap is the owner's own status-line command, run with the same input, whose output
+// Claude Code shows; empty, the status line shows nothing. It only prints.
+func StatusLineConfig(command, wrap string) (string, error) {
+	if command == "" {
+		command = "gff-hab"
+	}
+	cmd := shellQuote(command) + " statusline claude"
+	if wrap != "" {
+		cmd += " -- " + shellQuote(wrap)
+	}
+	b, err := json.MarshalIndent(map[string]any{"statusLine": map[string]any{"type": "command", "command": cmd}}, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(b) + "\n", nil
+}

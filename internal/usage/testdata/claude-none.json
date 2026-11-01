@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-usage-3",
+  "transcript_path": "/srv/agent/.claude/projects/-work-app/sess-usage-3.jsonl",
+  "version": "2.1.316",
+  "model": {"id": "model-x", "display_name": "Model X"}
+}

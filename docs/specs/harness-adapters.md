@@ -21,12 +21,13 @@ Every claim about a harness names its source in [Sources](#sources).
 7. [Claude Code](#claude-code)
 8. [Codex](#codex)
 9. [opencode](#opencode)
-10. [Input delivery](#input-delivery)
-11. [Permission answers](#permission-answers)
-12. [Edge cases](#edge-cases)
-13. [Fixtures](#fixtures)
-14. [Open decisions](#open-decisions)
-15. [Sources](#sources)
+10. [Usage](#usage)
+11. [Input delivery](#input-delivery)
+12. [Permission answers](#permission-answers)
+13. [Edge cases](#edge-cases)
+14. [Fixtures](#fixtures)
+15. [Open decisions](#open-decisions)
+16. [Sources](#sources)
 
 ## Terms
 
@@ -712,6 +713,64 @@ Notes:
 - `opencode serve` or `opencode attach` would start or attach a second front end. The adapter
   never starts a second server for a session a TUI already owns.
 
+## Usage
+
+Each adapter reports its account's rate-limit windows: name, used percentage, reset time and
+when it was read (`app.md` 14.1). gff-hab keeps the latest reading per account and serves it as
+`usage.list` and `usage.updated` (`hab-logic-api.md` 3.9). The adapter reads only what the
+harness already hands over. It never reads a credential file and never calls a usage endpoint.
+
+| Harness | Source | Version caveat |
+|---|---|---|
+| Claude Code | The status-line input: `rate_limits.five_hour`, `seven_day` and `spend_limit`, each with `used_percentage` and `resets_at` in Unix seconds. Claude Code documents this input for `statusLine` commands. Hooks carry no rate limits. | Recent versions only; tested against 2.1.316. An older version sends no `rate_limits`. Claude Code sends the field only for a subscription account (or a gateway spend limit), only after the first answer, and drops a window once its reset time passes. |
+| Codex | The rollout's `event_msg` `token_count` events: `rate_limits` with `limit_id`, `limit_name`, `primary` and `secondary` (`used_percent`, `window_minutes`, `resets_at` in Unix seconds) and `plan_type`. Hook payloads carry no rate limits. | The rollout is not a documented format. Tested against 0.159.0 to 0.166.0. Older versions have no `limit_id` and give `resets_in_seconds`; both still read. |
+| opencode | None. opencode reports no account rate limits. | The adapter adds no account: no reading, never zero. |
+
+Not built, by rule: the Claude.ai usage endpoint (the `/usage` screen) and Codex's app-server
+`account/rateLimits/read` would give the same windows outside a turn. Each needs the user's token
+or a second server process, so neither is used.
+
+Built choices (`internal/usage`, `cmd/gff-hab/usage.go`, `cmd/gff-hab/statusline.go`):
+
+- **Claude Code: a status-line wrapper.** Claude Code runs one `statusLine` command. That command
+  is `gff-hab statusline claude [-- <command>]`. It posts the input to the hook endpoint as
+  event `StatusLine`, the same way a hook does. Beside the post it runs the owner's own status-line
+  command, if one follows `--`, with the same input. That command's output, errors and exit code
+  are the status line's. With none, the status line prints nothing. The post is capped at the
+  hook budget (900 ms). Outside a gff-hab pane it posts nothing. `gff-hab statusline -print claude
+  [-wrap <command>]` prints the setting; writing it into settings is the owner's step, as for hooks.
+  A `StatusLine` envelope is usage only: it never changes the agent state.
+- **Codex: the end of the rollout, after a hook.** Each Codex hook names its session. 2 s after
+  the first hook of a burst, gff-hab reads the last 256 KiB of that session's rollout (found as for
+  the chat view) and skips the first, cut line. An unchanged file is not read again. The latest
+  `token_count` of each `limit_id` wins. `read_at` is the timestamp of the line, not the time of
+  the read, so an old rollout never looks fresh. At least one Codex hook must arrive after a
+  gff-hab start before Codex has a reading.
+- **Window names.** Claude Code: `5h`, `7d`, and `spend` plus the period (`spend monthly`).
+  Codex: the length from `window_minutes` (`5h`, `7d`). A Codex limit id other than `codex` (a
+  model with its own limit) puts its `limit_name`, else its id, first: `model-y 7d`. A limit id
+  with no windows adds none.
+- **Numbers.** `used_pct` is whole percent, rounded down: 99.6 is not yet full. A value above 100
+  stays (a spend limit can pass its limit); the client caps it. Reset times are RFC 3339 in UTC.
+- **Account key.** No source gives an account id. The key is the harness plus 12 hex digits of a
+  hash of the hab's host id, the harness and the harness's data directory: the directory above
+  `projects/` in Claude Code's `transcript_path`, and gff-hab's `$CODEX_HOME` for Codex. Two
+  accounts on one hab with separate data directories get two keys. The key names none of them.
+- **Label.** Codex `plan_type` with a capital first letter (`Plus`, `Pro`). Claude Code's
+  status-line input has no plan, so its label is empty.
+- **Merging.** Windows merge by name. A window read earlier never replaces one read later, so
+  two sessions on one account, or an old rollout, cannot undo a newer reading. A window that a
+  reading lacks stays with its reset time; the client shows it as reset with no reading since
+  (`app.md` 14.5). A reading with no windows creates no account. The store keeps at most 64
+  accounts of 16 windows.
+- **Events.** `usage.updated` goes out when a name, percentage, reset time or label changes, and
+  at most every 5 minutes for an unchanged account, so a client sees the reading's age move.
+  Every subscription gets it, scoped or not: an account belongs to no session.
+- **Drift.** A window whose numbers do not parse (a percentage that is not a number, a reset time
+  that is not Unix seconds, an unknown window key, a Codex window with no length) is left out and
+  logged once. A harness version outside the tested range is logged once. A wrong number is never
+  shown; the last good reading ages instead. The API has no degraded flag for usage yet.
+
 ## Input delivery
 
 The owner's text reaches the agent only through the paths in each harness table.
@@ -848,6 +907,11 @@ Built: the Codex rollout fixtures are `internal/transcript/testdata/codex-0.166.
 request, a nested agent, an interrupt and the end; `codex-permission-no-id.json` covers
 `PermissionRequest` with no `tool_use_id`, as Codex sends it. In a hook fixture, a request id of
 `*1`, `*2` and so on stands for each distinct one gff-hab made, in order of appearance.
+
+Built: the usage fixtures are `internal/usage/testdata/`: Claude Code status-line inputs
+(`claude-2.1.316.json`, `claude-spend.json`, `claude-none.json`, `claude-drift.json`) and Codex
+rollout ends (`codex-0.166.0.jsonl`, `codex-older.jsonl`, `codex-drift.jsonl`), with the expected
+reading, version and drift beside each as `.usage.json`.
 
 ## Open decisions
 

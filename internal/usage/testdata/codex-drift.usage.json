@@ -1,0 +1,22 @@
+{
+  "account": {
+    "key": "",
+    "label": "Pro",
+    "harness": "codex",
+    "windows": [
+      {
+        "name": "7d",
+        "used_pct": 8,
+        "resets_at": "2026-03-08T00:00:00Z",
+        "read_at": "2026-03-01T09:00:10Z"
+      }
+    ]
+  },
+  "version": "0.200.0",
+  "drift": [
+    "token_count line has no RFC 3339 timestamp",
+    "rate_limits is not an object",
+    "a rate-limit window has no used_percent",
+    "a rate-limit window has no window_minutes"
+  ]
+}

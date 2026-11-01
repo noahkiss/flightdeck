@@ -1,0 +1,5 @@
+{"timestamp":"2026-03-01T09:00:00.000Z","type":"session_meta","payload":{"id":"019a-codex-drift","cwd":"/work/app","cli_version":"0.200.0"}}
+{"timestamp":"2026-03-01T09:00:10.000Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","primary":{"used_fraction":0.4,"window_minutes":300,"resets_at":1772359200},"secondary":{"used_percent":8.0,"window_minutes":10080,"resets_at":1772928000},"plan_type":"pro"}}}
+{"timestamp":"2026-03-01T09:00:11.000Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex_x","primary":{"used_percent":5.0,"resets_at":1772359200}}}}
+{"timestamp":"not a time","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","primary":{"used_percent":99.0,"window_minutes":300,"resets_at":1772359200}}}}
+{"timestamp":"2026-03-01T09:00:12.000Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":"limited"}}

@@ -1,0 +1,28 @@
+{
+  "account": {
+    "key": "",
+    "label": "Plus",
+    "harness": "codex",
+    "windows": [
+      {
+        "name": "5h",
+        "used_pct": 12,
+        "resets_at": "2026-01-01T12:00:00Z",
+        "read_at": "2026-01-01T10:00:20Z"
+      },
+      {
+        "name": "7d",
+        "used_pct": 3,
+        "resets_at": "2026-01-07T00:00:00Z",
+        "read_at": "2026-01-01T10:00:20Z"
+      },
+      {
+        "name": "model-y 7d",
+        "used_pct": 100,
+        "resets_at": "2026-01-07T00:00:00Z",
+        "read_at": "2026-01-01T10:00:21Z"
+      }
+    ]
+  },
+  "version": "0.166.0"
+}

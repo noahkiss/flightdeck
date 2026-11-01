@@ -607,7 +607,7 @@ The schema lives in `api/` (layout and commands: `docs/layout.md`). Built choice
 ### 3.4 Capabilities
 
 Capability strings name optional features: `data-streams`, `snapshot-vt`, `snapshot-ghostty`,
-`agent-state`, `transcripts`, `devices`, `push`, `host-stats`, `mesh`, `idempotency-keys`.
+`agent-state`, `transcripts`, `devices`, `push`, `host-stats`, `mesh`, `idempotency-keys`, `usage`.
 `idempotency-keys` means the hab honours `idempotency_key` on `session.create` and
 `session.send` (3.9). `mesh` means the hab keeps
 a peer list and serves peer links, `peers.list`, `peers.accept` and `peer.updated` (`mesh.md` 4).
@@ -618,7 +618,9 @@ feature. Capabilities are for features that a host may
 lack. They are not a second versioning scheme.
 
 Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt`,
-`transcripts` and `detect-explain` (`detect.explain` works). It always sends `mesh` and `idempotency-keys`. It sends `push` only when its push config loads and validates
+`transcripts` and `detect-explain` (`detect.explain` works). It always sends `mesh`, `idempotency-keys`
+and `usage` (`usage.list` and `usage.updated` work; readings arrive only through panes with the
+holder link). It sends `push` only when its push config loads and validates
 (3.9, Push).
 
 ### 3.5 Events, seq and epoch
@@ -768,7 +770,7 @@ names the stage, and an event is defined but never sent.
 | `push.register_activity` | Store a Live Activity token for the tracked session (capability `push`) | Yes (task-oe7ioczy) |
 | `push.unregister` | Drop a token (capability `push`) | Yes (task-oe7ioczy) |
 | `notice.raise` | Raise a Flightdeck notification from a hab event or a local script: a `notice.raised` event, and a push where push is set up | Yes (task-oe7ioczy) |
-| `usage.list` | The latest usage reading of each harness account | Part 4 (usage readings) |
+| `usage.list` | The latest usage reading of each harness account (capability `usage`) | Yes (task-6189lsjb) |
 | `hab.stats` | CPU, memory, disk, battery and uptime of the host (capability `host-stats`) | Part 5 stage 5 |
 | `command.list` | A page of a pane's shell commands, found by OSC 133 marks (capability `commands`, 2.5) | Yes (task-m845kpi9) |
 | `command.output` | A run of one command's output, from a bounded replay of the holder's ring (capability `commands`, 2.5) | Yes (task-m845kpi9) |
@@ -780,7 +782,7 @@ names the stage, and an event is defined but never sent.
 | `pane.output` | A pane printed; at most once per second per pane, with its offset | Pane | Yes (task-98qp7he5) |
 | `chat.message` | A chat message was appended or changed in place | Message | Part 4 stage 5 (built for Claude Code) |
 | `session.turn_end` | The agent's turn ended; names the final message | Session | Part 4 stage 4 |
-| `usage.updated` | An account's usage reading changed | Account key | Part 4 (usage readings) |
+| `usage.updated` | An account's usage reading changed | Account key | Yes (task-6189lsjb) |
 | `command.updated` | A pane's command started or ended (2.5) | Pane | Yes (task-m845kpi9) |
 | `notice.raised` | A notice was raised (`notice.raise`) | Notice | Yes (task-oe7ioczy) |
 
@@ -856,7 +858,9 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
 - **`hab.stats`** is a method, not an event: a client asks while it shows the numbers. Sizes are
   bytes; `cpu_pct` is over all cores; `battery_pct` is absent with no battery.
 - **`usage.list`** returns `accounts`, each with `key`, `label`, `harness` and `windows` (`name`,
-  `used_pct` in whole percent, `resets_at`, `read_at`). `usage.updated` carries one account.
+  `used_pct` in whole percent, `resets_at`, `read_at`). `usage.updated` carries one account. Every
+  subscription gets `usage.updated`, scoped or not: an account belongs to no session. Sources, key,
+  names and the send rate are in `harness-adapters.md`, Usage.
 - The session, request and project fields that `app.md` 17 lists are in the schema as optional
   fields. Their golden messages are a second field set (`<message>@2.json`, `docs/testing.md`);
   the first field set stays as an older revision 1 hab sent it. Each field is defined now and

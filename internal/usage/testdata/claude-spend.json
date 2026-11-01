@@ -1,0 +1,8 @@
+{
+  "session_id": "sess-usage-2",
+  "transcript_path": "/srv/agent/claude-work/projects/-work-app/sess-usage-2.jsonl",
+  "version": "2.1.316",
+  "rate_limits": {
+    "spend_limit": {"used_percentage": 104.2, "resets_at": 1769904000, "used_usd": 52.1, "limit_usd": 50, "period": "monthly"}
+  }
+}

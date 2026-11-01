@@ -162,6 +162,12 @@ type Peers interface {
 	Unlinked(id uint64)
 }
 
+// Usage keeps the latest usage reading of each harness account (app.md 14). gff-hab implements
+// it with internal/usage.
+type Usage interface {
+	List() api.UsageReadings
+}
+
 // Config is what New needs. Source is required.
 type Config struct {
 	Build        string
@@ -180,6 +186,7 @@ type Config struct {
 	Detect       Detect      // nil: detect.explain answers unavailable
 	Peers        Peers       // nil: peers.list and peers.accept answer unavailable
 	Push         Push        // nil: the push methods, session.focus and notice.raise answer unavailable
+	Usage        Usage       // nil: usage.list answers unavailable
 	// ApproversChanged, if set, is called with no lock held after a connection closes or
 	// changes its subscription, so Approvers may have dropped.
 	ApproversChanged func()
