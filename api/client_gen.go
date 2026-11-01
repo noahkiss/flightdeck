@@ -236,6 +236,18 @@ const (
 )
 
 const (
+	SpeechFormatOpus  SpeechFormat = "opus"
+	SpeechFormatPcm16 SpeechFormat = "pcm16"
+)
+
+const (
+	SpeechStateAbsent      SpeechState = "absent"
+	SpeechStateDownloading SpeechState = "downloading"
+	SpeechStateLoading     SpeechState = "loading"
+	SpeechStateReady       SpeechState = "ready"
+)
+
+const (
 	StateSourceServer StateSource = "server"
 	StateSourceHook   StateSource = "hook"
 	StateSourceOsc    StateSource = "osc"
@@ -691,6 +703,20 @@ func (c Client) CatalogList(ctx context.Context, params CatalogListParams) (Cata
 func (c Client) HabPermissions(ctx context.Context, params PermissionsParams) (Permissions, error) {
 	var result Permissions
 	err := c.Caller.Call(ctx, "hab.permissions", params, &result)
+	return result, err
+}
+
+// SpeechPrepare calls speech.prepare. Load the speech engine now, and start the model download if needed; returns the engine state at once (voice.md). Needs the speech capability.
+func (c Client) SpeechPrepare(ctx context.Context, params SpeechPrepareParams) (SpeechStatus, error) {
+	var result SpeechStatus
+	err := c.Caller.Call(ctx, "speech.prepare", params, &result)
+	return result, err
+}
+
+// SpeechTranscribe calls speech.transcribe. Turn one recorded clip into text (voice.md). One decode at a time; others wait in order. Needs the speech capability.
+func (c Client) SpeechTranscribe(ctx context.Context, params SpeechTranscribeParams) (SpeechTranscript, error) {
+	var result SpeechTranscript
+	err := c.Caller.Call(ctx, "speech.transcribe", params, &result)
 	return result, err
 }
 

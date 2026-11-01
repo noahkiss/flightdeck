@@ -1,0 +1,19 @@
+{
+  "error": "error-6",
+  "formats": [
+    "pcm16"
+  ],
+  "model": "model-5",
+  "progress": 4,
+  "seq": 3,
+  "state": "ready",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

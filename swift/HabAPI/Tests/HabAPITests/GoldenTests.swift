@@ -111,6 +111,8 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.channelWait)
         result(HabMethods.mailPush)
         result(HabMethods.mailPull)
+        result(HabMethods.speechPrepare)
+        result(HabMethods.speechTranscribe)
         add("notification." + HabNotification.heartbeat, Heartbeat.self)
         add("notification." + HabNotification.closing, Closing.self)
         add("frame.hello", DataHello.self)

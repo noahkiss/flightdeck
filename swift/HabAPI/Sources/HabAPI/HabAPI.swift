@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -3397,6 +3397,118 @@ public struct SetupState: RawRepresentable, Codable, Sendable, Hashable {
 }
 
 /// An open word set: values outside the known list decode and round-trip unchanged.
+public struct SpeechFormat: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let opus = SpeechFormat(rawValue: "opus")
+    public static let pcm16 = SpeechFormat(rawValue: "pcm16")
+}
+
+public struct SpeechPrepareParams: Codable, Sendable, Hashable {
+    public init() {
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct SpeechState: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let absent = SpeechState(rawValue: "absent")
+    public static let downloading = SpeechState(rawValue: "downloading")
+    public static let loading = SpeechState(rawValue: "loading")
+    public static let ready = SpeechState(rawValue: "ready")
+}
+
+public struct SpeechStatus: Codable, Sendable, Hashable {
+    /// Why the last download or load failed. Absent when it did not; the next speech.prepare tries again.
+    public var error: String?
+    /// The audio formats this hab accepts.
+    public var formats: [SpeechFormat]
+    /// The model's name.
+    public var model: String
+    /// Whole percent of the model download, while downloading.
+    public var progress: Int?
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// absent: the model is not downloaded; downloading; loading: the helper is loading the model; ready.
+    public var state: SpeechState
+
+    enum CodingKeys: String, CodingKey {
+        case error = "error"
+        case formats = "formats"
+        case model = "model"
+        case progress = "progress"
+        case seq = "seq"
+        case state = "state"
+    }
+
+    public init(error: String? = nil, formats: [SpeechFormat], model: String, progress: Int? = nil, seq: UInt64, state: SpeechState) {
+        self.error = error
+        self.formats = formats
+        self.model = model
+        self.progress = progress
+        self.seq = seq
+        self.state = state
+    }
+}
+
+public struct SpeechTranscribeParams: Codable, Sendable, Hashable {
+    /// The clip, base64.
+    public var audio: Data
+    public var format: SpeechFormat
+    /// Default en, the only language this build transcribes.
+    public var language: String?
+    /// Samples per second, for pcm16. Default 16000.
+    public var sampleRate: Int?
+    /// Apply this session's vocabulary (the file and folder names of its project, as git lists them) to the text.
+    public var session: String?
+
+    enum CodingKeys: String, CodingKey {
+        case audio = "audio"
+        case format = "format"
+        case language = "language"
+        case sampleRate = "sample_rate"
+        case session = "session"
+    }
+
+    public init(audio: Data, format: SpeechFormat, language: String? = nil, sampleRate: Int? = nil, session: String? = nil) {
+        self.audio = audio
+        self.format = format
+        self.language = language
+        self.sampleRate = sampleRate
+        self.session = session
+    }
+}
+
+public struct SpeechTranscript: Codable, Sendable, Hashable {
+    /// Length of the clip.
+    public var audioMs: Int
+    /// Time the engine took, after any wait in the queue.
+    public var decodeMs: Int
+    /// The text before the vocabulary fix-up. Present only when the fix-up changed it.
+    public var raw: String?
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    public var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case audioMs = "audio_ms"
+        case decodeMs = "decode_ms"
+        case raw = "raw"
+        case seq = "seq"
+        case text = "text"
+    }
+
+    public init(audioMs: Int, decodeMs: Int, raw: String? = nil, seq: UInt64, text: String) {
+        self.audioMs = audioMs
+        self.decodeMs = decodeMs
+        self.raw = raw
+        self.seq = seq
+        self.text = text
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
 public struct StateSource: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
@@ -4026,6 +4138,10 @@ public enum HabMethods {
     public static let catalogList = HabMethod<CatalogListParams, CatalogList>(name: "catalog.list")
     /// Check the permission grants of the holders, from a probe pane, and of gff-hab (macos-identity.md 7.2). Needs the permissions capability.
     public static let habPermissions = HabMethod<PermissionsParams, Permissions>(name: "hab.permissions")
+    /// Load the speech engine now, and start the model download if needed; returns the engine state at once (voice.md). Needs the speech capability.
+    public static let speechPrepare = HabMethod<SpeechPrepareParams, SpeechStatus>(name: "speech.prepare")
+    /// Turn one recorded clip into text (voice.md). One decode at a time; others wait in order. Needs the speech capability.
+    public static let speechTranscribe = HabMethod<SpeechTranscribeParams, SpeechTranscript>(name: "speech.transcribe")
     /// Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.
     public static let detectExplain = HabMethod<DetectExplainParams, DetectExplain>(name: "detect.explain")
     /// Send a message from a session on this hab to an agent by address (mesh.md 6.5). Needs the channels capability.

@@ -28,7 +28,8 @@
     "catalog",
     "usage",
     "content",
-    "channels"
+    "channels",
+    "speech"
   ],
   "methods": [
     {
@@ -1483,6 +1484,75 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/PermissionsParams"
+      }
+    },
+    {
+      "name": "speech.prepare",
+      "summary": "Load the speech engine now, and start the model download if needed; returns the engine state at once (voice.md). Needs the speech capability.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SpeechStatus"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/SpeechPrepareParams"
+      }
+    },
+    {
+      "name": "speech.transcribe",
+      "summary": "Turn one recorded clip into text (voice.md). One decode at a time; others wait in order. Needs the speech capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "audio",
+          "description": "The clip, base64.",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "contentEncoding": "base64"
+          }
+        },
+        {
+          "name": "format",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/SpeechFormat"
+          }
+        },
+        {
+          "name": "language",
+          "description": "Default en, the only language this build transcribes.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "sample_rate",
+          "description": "Samples per second, for pcm16. Default 16000.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "session",
+          "description": "Apply this session's vocabulary (the file and folder names of its project, as git lists them) to the text.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SpeechTranscript"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/SpeechTranscribeParams"
       }
     },
     {
@@ -5710,6 +5780,128 @@
           "pending",
           "skipped",
           "error"
+        ]
+      },
+      "SpeechFormat": {
+        "type": "string",
+        "x-known-values": [
+          "opus",
+          "pcm16"
+        ]
+      },
+      "SpeechPrepareParams": {
+        "type": "object"
+      },
+      "SpeechState": {
+        "type": "string",
+        "x-known-values": [
+          "absent",
+          "downloading",
+          "loading",
+          "ready"
+        ]
+      },
+      "SpeechStatus": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Why the last download or load failed. Absent when it did not; the next speech.prepare tries again."
+          },
+          "formats": {
+            "type": "array",
+            "description": "The audio formats this hab accepts.",
+            "items": {
+              "$ref": "#/components/schemas/SpeechFormat"
+            }
+          },
+          "model": {
+            "type": "string",
+            "description": "The model's name."
+          },
+          "progress": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Whole percent of the model download, while downloading."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "state": {
+            "$ref": "#/components/schemas/SpeechState",
+            "description": "absent: the model is not downloaded; downloading; loading: the helper is loading the model; ready."
+          }
+        },
+        "required": [
+          "seq",
+          "state",
+          "model",
+          "formats"
+        ]
+      },
+      "SpeechTranscribeParams": {
+        "type": "object",
+        "properties": {
+          "audio": {
+            "type": "string",
+            "contentEncoding": "base64",
+            "description": "The clip, base64."
+          },
+          "format": {
+            "$ref": "#/components/schemas/SpeechFormat"
+          },
+          "language": {
+            "type": "string",
+            "description": "Default en, the only language this build transcribes."
+          },
+          "sample_rate": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Samples per second, for pcm16. Default 16000."
+          },
+          "session": {
+            "type": "string",
+            "description": "Apply this session's vocabulary (the file and folder names of its project, as git lists them) to the text."
+          }
+        },
+        "required": [
+          "audio",
+          "format"
+        ]
+      },
+      "SpeechTranscript": {
+        "type": "object",
+        "properties": {
+          "audio_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Length of the clip."
+          },
+          "decode_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Time the engine took, after any wait in the queue."
+          },
+          "raw": {
+            "type": "string",
+            "description": "The text before the vocabulary fix-up. Present only when the fix-up changed it."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "text",
+          "audio_ms",
+          "decode_ms"
         ]
       },
       "StateSource": {

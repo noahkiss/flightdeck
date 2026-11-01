@@ -108,6 +108,8 @@ var Methods = []Method{
 	{"catalog.put", "A peer link hands over its own hab's catalog (mesh.md 4.2). Needs the catalog capability.", CatalogPutParams{}, Empty{}},
 	{"catalog.list", "The merged view: this hab's catalog and its direct peers' copies, with projects matched across hosts (mesh.md 5.2). Needs the catalog capability.", CatalogListParams{}, CatalogList{}},
 	{"hab.permissions", "Check the permission grants of the holders, from a probe pane, and of gff-hab (macos-identity.md 7.2). Needs the permissions capability.", PermissionsParams{}, Permissions{}},
+	{"speech.prepare", "Load the speech engine now, and start the model download if needed; returns the engine state at once (voice.md). Needs the speech capability.", SpeechPrepareParams{}, SpeechStatus{}},
+	{"speech.transcribe", "Turn one recorded clip into text (voice.md). One decode at a time; others wait in order. Needs the speech capability.", SpeechTranscribeParams{}, SpeechTranscript{}},
 	{"detect.explain", "Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.", DetectExplainParams{}, DetectExplain{}},
 	{"channel.send", "Send a message from a session on this hab to an agent by address (mesh.md 6.5). Needs the channels capability.", ChannelSendParams{}, ChannelSent{}},
 	{"channel.status", "A sent message's record, optionally after waiting for its final state (mesh.md 6.5). Needs the channels capability.", ChannelStatusParams{}, ChannelStatusResult{}},
@@ -208,6 +210,9 @@ var Enums = map[string][]string{
 	"SetupMode":     {"auto", "run", "skip"},
 	"SetupState":    {"none", "started", "pending", "skipped", "error"},
 	"TeardownState": {"none", "skipped", "ran", "failed"},
+	// Sets added for the hab speech engine (voice.md).
+	"SpeechState":  {"absent", "downloading", "loading", "ready"},
+	"SpeechFormat": {"opus", "pcm16"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per
@@ -237,4 +242,6 @@ var Translators = map[int]Translator{}
 // means usage.list and the usage.updated event work (harness-adapters.md, Usage). "content"
 // means the content.* methods and the content.updated event work (app.md 4.7). "channels"
 // means the channel.* and mail.* methods and the channel.message event work (mesh.md 6.5).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels"}
+// "speech" means the hab's speech engine is installed and turned on, so speech.prepare and
+// speech.transcribe work, though the model may still need its download (voice.md).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech"}

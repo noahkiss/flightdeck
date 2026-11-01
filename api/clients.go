@@ -662,3 +662,44 @@ type WorktreeRemoved struct {
 	TeardownExit   *int          `json:"teardown_exit,omitempty" doc:"The teardown script's exit code, when it exited."`
 	TeardownOutput string        `json:"teardown_output,omitempty" doc:"The last 4 KiB of the teardown script's output, when it failed."`
 }
+
+// --- Speech (voice.md, Hab speech engine) ---
+
+// SpeechState says how far the hab's speech engine is from a transcription. An open set the
+// server sends.
+type SpeechState string
+
+// SpeechFormat names an audio format of a clip: opus (an Ogg Opus file, RFC 7845) or pcm16
+// (raw little-endian 16-bit mono samples).
+type SpeechFormat string
+
+type SpeechPrepareParams struct{}
+
+// SpeechStatus is the speech engine's state. speech.prepare returns it at once; it does not
+// wait for the download or the load.
+type SpeechStatus struct {
+	Seq
+	State    SpeechState    `json:"state" doc:"absent: the model is not downloaded; downloading; loading: the helper is loading the model; ready."`
+	Progress *int           `json:"progress,omitempty" doc:"Whole percent of the model download, while downloading."`
+	Model    string         `json:"model" doc:"The model's name."`
+	Formats  []SpeechFormat `json:"formats" doc:"The audio formats this hab accepts."`
+	Error    string         `json:"error,omitempty" doc:"Why the last download or load failed. Absent when it did not; the next speech.prepare tries again."`
+}
+
+// SpeechTranscribeParams is one recorded clip. A clip is at most 120 s and 1 MiB before base64.
+type SpeechTranscribeParams struct {
+	Audio      []byte       `json:"audio" doc:"The clip, base64."`
+	Format     SpeechFormat `json:"format"`
+	SampleRate int          `json:"sample_rate,omitempty" doc:"Samples per second, for pcm16. Default 16000."`
+	Session    string       `json:"session,omitempty" doc:"Apply this session's vocabulary (the file and folder names of its project, as git lists them) to the text."`
+	Language   string       `json:"language,omitempty" doc:"Default en, the only language this build transcribes."`
+}
+
+// SpeechTranscript is the text of one clip. gff-hab keeps neither the clip nor the text.
+type SpeechTranscript struct {
+	Seq
+	Text     string `json:"text"`
+	AudioMS  int    `json:"audio_ms" doc:"Length of the clip."`
+	DecodeMS int    `json:"decode_ms" doc:"Time the engine took, after any wait in the queue."`
+	Raw      string `json:"raw,omitempty" doc:"The text before the vocabulary fix-up. Present only when the fix-up changed it."`
+}
