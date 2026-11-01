@@ -133,6 +133,20 @@ public actor FakePanes {
         }
     }
 
+    /// A stream that fell behind, as the real hab resyncs it: a snapshot at
+    /// the current size first, then the PTY takes a new size and a resize
+    /// frame follows (hab-logic-api.md 5.8).
+    public func resync(_ id: String, cols: Int, rows: Int) {
+        guard let p = panes[id] else { return }
+        send(pane: id, snapshotFrame(p))
+        guard var q = panes[id] else { return }
+        q.cols = cols
+        q.rows = rows
+        panes[id] = q
+        resizes.append((id, cols, rows))
+        send(pane: id, resizeFrame(q))
+    }
+
     /// Closes every data connection, as a network drop does.
     public func dropDataConnections() {
         for c in conns.values {

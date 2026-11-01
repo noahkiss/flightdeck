@@ -30,7 +30,17 @@ public final class TerminalModel {
     @ObservationIgnored public let view: TerminalViewState
 
     @ObservationIgnored private let calls: Calls
-    @ObservationIgnored private let stream: PaneStream
+    /// Makes the data stream; a view that reappears gets a new one.
+    @ObservationIgnored private let makeStream: () -> PaneStream
+    @ObservationIgnored private var stream: PaneStream?
+    /// Counts streams, so events from a closed one are ignored.
+    @ObservationIgnored private var generation = 0
+    /// The holder offset after the last byte this model applied. The screen
+    /// lives as long as the model, so a new stream resumes from here.
+    @ObservationIgnored public private(set) var appliedOffset: UInt64?
+    /// The last snapshot, while no bytes have followed it: when a resize frame
+    /// right after it changes the size, it is drawn again at the new size.
+    @ObservationIgnored private var replaySnapshot: Data?
     @ObservationIgnored private let session: InMemoryTerminalSession
     @ObservationIgnored private let flags = Flags()
     @ObservationIgnored private var sizeTask: Task<Void, Never>?
@@ -80,12 +90,12 @@ public final class TerminalModel {
     }
 
     public convenience init(pane: String, connection: HabConnection) {
-        self.init(pane: pane, stream: PaneStream(pane: pane, connection: connection), calls: Calls(pane: pane, connection: connection))
+        self.init(pane: pane, makeStream: { PaneStream(pane: pane, connection: connection) }, calls: Calls(pane: pane, connection: connection))
     }
 
-    public init(pane: String, stream: PaneStream, calls: Calls) {
+    public init(pane: String, makeStream: @escaping () -> PaneStream, calls: Calls) {
         self.pane = pane
-        self.stream = stream
+        self.makeStream = makeStream
         self.calls = calls
         let input = calls.input
         let flags = flags
@@ -130,26 +140,38 @@ public final class TerminalModel {
 
     // MARK: - Lifecycle
 
-    /// Opens the data stream. `from` resumes from an offset kept earlier.
-    public func start(from offset: UInt64? = nil) {
+    /// Opens the data stream. After a `stop` it opens a new one that resumes
+    /// from the last applied offset: the screen is still here, so the hab sends
+    /// only what was missed, or a snapshot.
+    public func start() {
         guard !started else { return }
         started = true
-        let s = stream
-        let apply: PaneStream.Apply = { [weak self] e in await self?.apply(e) }
-        Task { await s.start(from: offset, apply: apply) }
+        generation += 1
+        let gen = generation
+        let s = makeStream()
+        stream = s
+        let from = appliedOffset
+        let apply: PaneStream.Apply = { [weak self] e in await self?.apply(e, generation: gen) }
+        Task { await s.start(from: from, apply: apply) }
     }
 
-    /// Closes the data stream. The hab keeps no state for a view.
+    /// Closes the data stream: the view is hidden, or the app went to the
+    /// background. `start` resumes it.
     public func stop() {
+        guard started else { return }
+        started = false
         sizeTask?.cancel()
-        Task { await stream.close() }
+        let s = stream
+        stream = nil
+        if case .exited = status {} else if status != .gone { status = .connecting }
+        Task { await s?.close() }
     }
 
     /// The pump the terminal's key output goes through; tests type with it.
     var inputPumpForTests: PaneInputPump { calls.input }
 
     /// The holder offset after the last applied byte, to resume later.
-    public func heldOffset() async -> UInt64? { await stream.offset }
+    public func heldOffset() -> UInt64? { appliedOffset }
 
     // MARK: - Actions
 
@@ -204,13 +226,17 @@ public final class TerminalModel {
 
     // MARK: - Stream events
 
-    func apply(_ e: PaneStreamEvent) async {
+    func apply(_ e: PaneStreamEvent, generation gen: Int) async {
+        guard gen == generation else { return }
         switch e {
         case .welcome(let w):
-            sizing.me = await calls.clientID()
-            setPane(cols: w.cols, rows: w.rows, owner: w.owner)
+            // The client id changes when the control connection reconnects
+            // without its token, so it is read again on every welcome and resize.
+            let me = await calls.clientID()
+            guard gen == generation else { return }
+            setPane(cols: w.cols, rows: w.rows, owner: w.owner, me: me)
             status = .live
-        case .snapshot(_, _, let data):
+        case .snapshot(let off, _, let data):
             // A snapshot redraws a new terminal: reset this one, clear its
             // scrollback, then draw.
             var d = Data("\u{1B}c\u{1B}[3J".utf8)
@@ -218,13 +244,18 @@ public final class TerminalModel {
             pending = []
             pendingBytes = 0
             needsSnapshot = false
+            replaySnapshot = d
+            appliedOffset = off
             feed(d)
             status = .live
-        case .bytes(_, let data):
+        case .bytes(let off, let data):
+            replaySnapshot = nil
+            appliedOffset = off + UInt64(data.count)
             feed(data)
         case .resize(let r):
-            if sizing.me == nil { sizing.me = await calls.clientID() }
-            setPane(cols: r.cols, rows: r.rows, owner: r.owner)
+            let me = await calls.clientID()
+            guard gen == generation else { return }
+            setPane(cols: r.cols, rows: r.rows, owner: r.owner, me: me)
         case .exited(let x):
             status = .exited(x)
         case .retrying(let why):
@@ -283,14 +314,24 @@ public final class TerminalModel {
         flush()
     }
 
-    private func setPane(cols: Int, rows: Int, owner: String?) {
+    private func setPane(cols: Int, rows: Int, owner: String?, me: String?) {
         var s = sizing
         s.cols = max(1, cols)
         s.rows = max(1, rows)
         s.owner = owner
+        s.me = me
         guard s != sizing else { return }
         let wasOwner = sizing.isOwner
+        let resized = s.cols != sizing.cols || s.rows != sizing.rows
         sizing = s
+        if resized, let snap = replaySnapshot {
+            // The hab sends a redraw's snapshot before its resize frame. With
+            // no bytes in between, the snapshot was drawn at the old size:
+            // draw it again once the grid has the new one.
+            pending = []
+            pendingBytes = 0
+            feed(snap)
+        }
         flags.owner = s.isOwner
         if s.isOwner != wasOwner { sentSize = nil }
         sizeRuleChanged()
@@ -317,6 +358,8 @@ public final class TerminalModel {
             do {
                 try await c.setSize(want.cols, want.rows)
             } catch {
+                // Not sent: the next change sends it again.
+                if let s = self.sentSize, s == want { self.sentSize = nil }
                 self.lastError = String(describing: error)
                 self.log.notice("pane \(self.pane, privacy: .public): set size: \(String(describing: error), privacy: .public)")
             }

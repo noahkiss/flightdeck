@@ -120,6 +120,81 @@ final class TerminalModelTests: XCTestCase {
         m.stop()
     }
 
+    /// A view that disappears and comes back (a push on top, a tab switch,
+    /// the app in the background) opens its stream again and resumes from
+    /// the offset it had applied.
+    func testReappearResumesTheStream() async throws {
+        let hab = FakeHab(hostID: "box")
+        await hab.terminals.add("%1")
+        let conn = await online(hab, "mac")
+        let m = model("%1", conn)
+        m.start()
+        await eventually("live") { m.status == .live }
+        await hab.terminals.write("%1", Data("one ".utf8))
+        let first = await hab.terminals.end("%1")
+        try await Task.sleep(for: .milliseconds(100))
+        m.stop()
+        await eventually("closed") { await hab.terminals.dataConnectionCount == 0 }
+        await hab.terminals.write("%1", Data("two".utf8))
+        m.start()
+        await eventually("open again") { await hab.terminals.dataConnectionCount == 1 }
+        await eventually("live again") { m.status == .live }
+        let hellos = await hab.terminals.hellos
+        XCTAssertEqual(hellos.count, 2)
+        XCTAssertEqual(hellos.last ?? nil, first, "the new stream resumes from the applied offset")
+        m.stop()
+    }
+
+    /// After the control connection reconnects with a new client id, typing
+    /// still takes the size: the view reads its id again.
+    func testNewClientIDAfterReconnectStillTakesTheSize() async throws {
+        let hab = FakeHab(hostID: "box")
+        await hab.terminals.add("%1", cols: 80, rows: 24)
+        await hab.terminals.setTypingDebounce(.milliseconds(50))
+        let conn = await online(hab, "mac")
+        let m = model("%1", conn)
+        m.containerChanged(CGSize(width: 800, height: 600))
+        m.start()
+        await eventually("live") { m.status == .live }
+        TerminalModelTests.type(m, "a")
+        await eventually("owner") { m.sizing.isOwner }
+        let before = await conn.state.welcome?.clientId
+
+        // A new gff-hab process: tokens are void, so the reconnect gets a new id.
+        await hab.restart()
+        await eventually("new id", timeout: 5) {
+            let now = await conn.state.welcome?.clientId
+            return await conn.state.status == .online && now != nil && now != before
+        }
+        await eventually("owner cleared") { !m.sizing.isOwner }
+        m.containerChanged(CGSize(width: 640, height: 480))
+        let want = m.sizing.desired
+        TerminalModelTests.type(m, "b")
+        await eventually("owner again", timeout: 3) { m.sizing.isOwner }
+        await eventually("resized to this view", timeout: 3) { m.sizing.cols == want.cols && m.sizing.rows == want.rows }
+        m.stop()
+    }
+
+    /// A snapshot followed at once by a resize frame was drawn at the old
+    /// size; the view draws it again once the grid has the new size.
+    func testSnapshotBeforeResizeIsDrawnAgain() async throws {
+        let hab = FakeHab(hostID: "box")
+        await hab.terminals.add("%1", cols: 80, rows: 24)
+        await hab.terminals.write("%1", Data("screen text".utf8))
+        let conn = await online(hab, "mac")
+        let m = model("%1", conn)
+        m.start()
+        await eventually("live") { m.status == .live }
+        m.gridForTests(cols: 80, rows: 24)
+        XCTAssertEqual(m.heldBytes, 0)
+        await hab.terminals.resync("%1", cols: 100, rows: 30)
+        await eventually("new size") { m.sizing.cols == 100 }
+        XCTAssertGreaterThan(m.heldBytes, 11, "the snapshot waits to be drawn at 100x30")
+        m.gridForTests(cols: 100, rows: 30)
+        XCTAssertEqual(m.heldBytes, 0)
+        m.stop()
+    }
+
     func testExitShowsStatus() async throws {
         let hab = FakeHab(hostID: "box")
         await hab.terminals.add("%1")
