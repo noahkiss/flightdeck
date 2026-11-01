@@ -163,12 +163,27 @@ Built choices (`internal/detect`, `gff-hab manifests`):
     and their names, `kern.procargs2` for each argv); `ps` elsewhere. `ps` prints argv as one
     line, so where `ps` runs an argument with a space reads as two. A process offers each name
     once.
+  - **Exact argv on macOS.** A `kern.procargs2` buffer holds argc, the executable path and its
+    NUL, NUL padding to the next multiple of 8, argc NUL-ended arguments, then the environment.
+    The parse skips NULs only inside that padding. An empty argument is a NUL of its own, so
+    skipping every NUL would eat an empty argv[0], shift each later argument by one, and read
+    the first environment string (perhaps a secret) as the last argument. The parse reads at
+    most argc strings, so if the padding rule is ever wrong, an extra NUL reads as an empty
+    argument and the parse stops earlier, never in the environment.
   - **Bounded listing.** A listing returns at most 256 processes and stops when the call's
     context ends. Every listing runs on its own goroutine, so a read that hangs (a `/proc` file,
     a sysctl, a `ps` that a kill cannot reach) cannot hold the reply. It never reads `cmdline`
     of a process in state `D`: `cmdline` takes the process's memory lock, which a process stuck
-    on a hung mount can hold for good. Each `ps` run is bounded to 5 s, and the wait for a
-    killed `ps` and its pipes to 500 ms.
+    on a hung mount can hold for good. On macOS it never reads the argv of a zombie, and
+    `kern.procargs2` takes the target's memory lock the same way. Each `ps` run is bounded to
+    5 s, and the wait for a killed `ps` and its pipes to 500 ms.
+  - **One listing per group.** A read stuck in the kernel holds its goroutine and an OS thread
+    until it returns, so a client that polls a stuck pane must not start a listing per call.
+    gff-hab runs at most one listing per group at a time. A call that finds one running waits
+    for it with the others. When every waiter has given up, the listing is abandoned. While an
+    abandoned listing has not returned, a call for that group answers at once with
+    `processes of group N: an earlier listing has not returned`. While 8 abandoned listings
+    have not returned, no new listing starts: `too many earlier listings have not returned`.
   - **Process budget.** The process part (the foreground query and the listing) gets 5 s of the
     call's 15 s. When the budget runs out, the process part's error names the step that timed
     out (`foreground group: timed out after 5s`, or `processes of group N: timed out after
@@ -178,7 +193,10 @@ Built choices (`internal/detect`, `gff-hab manifests`):
     `gff-hab detect explain` waits 20 s by default (`-timeout`).
   - **No reused pids.** Where `ps` runs, it runs three times: all groups, then names, then argv
     for the pids found. The second and third runs print the group again, and a row of another
-    group is dropped. Such a row is a pid that exited and was reused between runs.
+    group is dropped. Such a row is a pid that exited and was reused between runs. `/proc` and
+    sysctl read a member's name and group first, then its argv, and accept the same race: a pid
+    reused between the two reads shows the new program's argv. The window is one read wide, a
+    reuse needs the pid space to wrap in it, and the result is only shown, never acted on.
   - **Screen text.** The rules read the active screen only: its visible rows, read from the
     parser's cells, never scrollback. A stale dialog in scrollback must not match as if it
     were on screen. The read takes the pane lock for one screen of cells, not the whole

@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"runtime"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -136,6 +138,20 @@ func TestParsePS(t *testing.T) {
 	}
 }
 
+// procArgs builds a kern.procargs2 buffer the way the kernel lays it out: argc, the path and
+// its NUL padded with NULs to a multiple of pathAlign, argv, then the environment.
+func procArgs(path string, argv, env []string) []byte {
+	b := binary.LittleEndian.AppendUint32(nil, uint32(len(argv)))
+	b = append(append(b, path...), 0)
+	for (len(b)-4)%pathAlign != 0 {
+		b = append(b, 0)
+	}
+	for _, s := range append(append([]string{}, argv...), env...) {
+		b = append(append(b, s...), 0)
+	}
+	return b
+}
+
 // TestParseProcArgs reads hand-made kern.procargs2 buffers: argc, the executable path, its NUL
 // padding, argv (an argument with a space stays one), then the environment, never read.
 func TestParseProcArgs(t *testing.T) {
@@ -148,9 +164,15 @@ func TestParseProcArgs(t *testing.T) {
 		in   []byte
 		want []string
 	}{
-		{"argv", buf(3, "/bin/sh\x00\x00\x00\x00sh\x00-c\x00sleep 30; :\x00HOME=/x\x00"), []string{"sh", "-c", "sleep 30; :"}},
-		{"no padding", buf(1, "/x/claude\x00claude\x00PATH=/bin\x00"), []string{"claude"}},
-		{"an empty argument", buf(3, "/bin/echo\x00echo\x00\x00b\x00"), []string{"echo", "", "b"}},
+		{"argv", buf(3, "/bin/zsh\x00\x00\x00\x00\x00\x00\x00\x00sh\x00-c\x00sleep 30; :\x00HOME=/x\x00"), []string{"sh", "-c", "sleep 30; :"}},
+		{"path fills its slot", buf(2, "/bin/sh\x00sh\x00-c\x00HOME=/x\x00"), []string{"sh", "-c"}},
+		{"padding cut short", buf(1, "/x/claude\x00claude\x00PATH=/bin\x00"), []string{"claude"}},
+		{"an empty argument", buf(3, "/bin/echo\x00\x00\x00\x00\x00\x00\x00echo\x00\x00b\x00"), []string{"echo", "", "b"}},
+		// The review's live buffer: an 11-byte path padded to 16, then the empty argv[0]'s NUL.
+		{"an empty argv[0]", buf(2, "/bin/sleep\x00\x00\x00\x00\x00\x00\x0030\x00SECRET=hunter2\x00"), []string{"", "30"}},
+		{"an empty argv[0] after a full slot", buf(2, "/bin/sh\x00\x0030\x00SECRET=hunter2\x00"), []string{"", "30"}},
+		{"two empty arguments first", procArgs("/bin/sleep", []string{"", "", "30"}, []string{"SECRET=hunter2"}), []string{"", "", "30"}},
+		{"only empty arguments", procArgs("/usr/bin/true", []string{"", ""}, []string{"SECRET=hunter2"}), []string{"", ""}},
 		{"cut short", buf(3, "/bin/sh\x00sh\x00-c"), []string{"sh", "-c"}},
 		{"argc beyond the buffer", buf(9, "/bin/sh\x00sh\x00"), []string{"sh"}},
 		{"no argc", []byte{1, 0}, nil},
@@ -163,6 +185,21 @@ func TestParseProcArgs(t *testing.T) {
 	}
 }
 
+// TestParseProcArgsNeverReadsEnv: for every path length across two alignment slots and argv
+// with empty arguments anywhere, the parse gives argv exactly and no environment string.
+func TestParseProcArgsNeverReadsEnv(t *testing.T) {
+	argvs := [][]string{{""}, {"", "a"}, {"a", ""}, {"", "", ""}, {"", "a", "", "b"}, {"x"}}
+	for n := 1; n <= 2*pathAlign+1; n++ {
+		path := "/" + strings.Repeat("p", n-1)
+		for _, argv := range argvs {
+			got := parseProcArgs(procArgs(path, argv, []string{"GFF_TEST_SECRET=x", "B=y"}))
+			if !reflect.DeepEqual(got, argv) {
+				t.Errorf("path of %d bytes, argv %q: got %q", n, argv, got)
+			}
+		}
+	}
+}
+
 // TestBoundedReturnsOnContext: a listing that hangs and never looks at ctx holds only its own
 // goroutine; bounded returns ctx's error when ctx ends.
 func TestBoundedReturnsOnContext(t *testing.T) {
@@ -171,12 +208,142 @@ func TestBoundedReturnsOnContext(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	_, err := bounded(ctx, func() ([]Process, error) { <-hang; return nil, nil })
+	g := &flightGroup{max: 1}
+	_, err := g.run(ctx, flightKey{"t", 1}, func(context.Context) ([]Process, error) { <-hang; return nil, nil })
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err %v, want deadline exceeded", err)
 	}
 	if d := time.Since(start); d > 2*time.Second {
 		t.Errorf("returned after %v", d)
+	}
+}
+
+// TestBoundedStuckListing: a listing stuck in the kernel (it ignores its context) runs once.
+// Every later call for that group answers ErrListingStuck at once and starts nothing, so polling
+// a stuck pane adds no goroutine or thread. A second stuck group fills the cap, and a third
+// group then starts nothing either. Once the read returns, the group lists again.
+func TestBoundedStuckListing(t *testing.T) {
+	g := &flightGroup{max: 2}
+	hang := make(chan struct{})
+	var calls atomic.Int32
+	stuck := func(context.Context) ([]Process, error) { calls.Add(1); <-hang; return nil, nil }
+	short := func() (context.Context, context.CancelFunc) {
+		return context.WithTimeout(context.Background(), 30*time.Millisecond)
+	}
+	ctx, cancel := short()
+	if _, err := g.run(ctx, flightKey{"t", 1}, stuck); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("first call: %v", err)
+	}
+	cancel()
+	before := runtime.NumGoroutine()
+	start := time.Now()
+	for range 200 {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, err := g.run(ctx, flightKey{"t", 1}, stuck)
+		cancel()
+		if !errors.Is(err, ErrListingStuck) {
+			t.Fatalf("a call on the stuck group: %v", err)
+		}
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("200 calls on the stuck group took %v; want each at once", d)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Errorf("the stuck listing ran %d times, want 1", n)
+	}
+	if after := runtime.NumGoroutine(); after > before+5 {
+		t.Errorf("goroutines %d -> %d", before, after)
+	}
+
+	ctx, cancel = short()
+	if _, err := g.run(ctx, flightKey{"t", 2}, stuck); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("second group: %v", err)
+	}
+	cancel()
+	if _, err := g.run(context.Background(), flightKey{"t", 3}, stuck); !errors.Is(err, ErrTooManyStuck) {
+		t.Fatalf("third group past the cap: %v", err)
+	}
+	if n := calls.Load(); n != 2 {
+		t.Errorf("listings ran %d times, want 2", n)
+	}
+
+	close(hang)
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		g.mu.Lock()
+		n := g.abandoned
+		g.mu.Unlock()
+		if n == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d listings still abandoned after the reads returned", n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	want := []Process{{PID: 1, Name: "x"}}
+	ps, err := g.run(context.Background(), flightKey{"t", 1}, func(context.Context) ([]Process, error) { return want, nil })
+	if err != nil || !reflect.DeepEqual(ps, want) {
+		t.Fatalf("after the read returned: %+v, %v", ps, err)
+	}
+}
+
+// TestBoundedSharesOneListing: two callers of one group share one listing and each gets its
+// own copy. The listing goes on while any caller still waits, and its context is not the first
+// caller's: that caller giving up neither cancels it nor marks it stuck.
+func TestBoundedSharesOneListing(t *testing.T) {
+	g := &flightGroup{max: 1}
+	running, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	want := []Process{{PID: 2, Name: "b"}, {PID: 1, Name: "a"}}
+	list := func(ctx context.Context) ([]Process, error) {
+		calls.Add(1)
+		close(running)
+		select {
+		case <-release:
+			return want, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	key := flightKey{"t", 1}
+	first, cancelFirst := context.WithCancel(context.Background())
+	firstErr := make(chan error, 1)
+	go func() { _, err := g.run(first, key, list); firstErr <- err }()
+	<-running
+	type res struct {
+		ps  []Process
+		err error
+	}
+	second := make(chan res, 1)
+	go func() { ps, err := g.run(context.Background(), key, list); second <- res{ps, err} }()
+	for { // until the second caller waits on the listing
+		g.mu.Lock()
+		n := g.m[key].waiters
+		g.mu.Unlock()
+		if n == 2 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancelFirst()
+	if err := <-firstErr; !errors.Is(err, context.Canceled) {
+		t.Fatalf("first caller: %v", err)
+	}
+	close(release)
+	r := <-second
+	if r.err != nil || !reflect.DeepEqual(r.ps, want) {
+		t.Fatalf("second caller: %+v, %v", r.ps, r.err)
+	}
+	r.ps[0].PID = 99 // the caller sorts its slice in place; the next caller's is its own
+	if want[0].PID != 2 || calls.Load() != 1 {
+		t.Errorf("listing ran %d times; shared slice changed: %+v", calls.Load(), want)
+	}
+}
+
+// TestReadsArgs: a macOS zombie's argv is never read.
+func TestReadsArgs(t *testing.T) {
+	if readsArgs(sZomb) || !readsArgs(2) {
+		t.Errorf("readsArgs(zombie) %v, readsArgs(running) %v", readsArgs(sZomb), readsArgs(2))
 	}
 }
 

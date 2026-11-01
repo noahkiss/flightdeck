@@ -25,7 +25,7 @@ const (
 // ucomm is the executable name; args is argv as one line. The runs go on their own goroutine,
 // so a ps that a kill cannot reach holds only that goroutine.
 func listGroup(ctx context.Context, pgid int) ([]Process, error) {
-	return bounded(ctx, func() ([]Process, error) {
+	return bounded(ctx, flightKey{"ps", pgid}, func(ctx context.Context) ([]Process, error) {
 		groups, err := ps(ctx, "-A", "-o", "pid=,pgid=")
 		if err != nil {
 			return nil, err
