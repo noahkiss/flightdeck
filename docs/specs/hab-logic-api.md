@@ -918,9 +918,11 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   token's environment. Token auth: an ES256 JWT with the key id and team id, reused for 40
   minutes (APNs refuses one older than an hour or refreshed within 20 minutes), signed again
   at once when APNs calls it expired. `apns-topic` is the bundle id, plus
-  `.push-type.liveactivity` for a Live Activity. `apns-expiration` is 0: a push for a host
-  that went quiet is not stored. Alerts go at priority 10, passive ones and Live Activity
-  progress at 5.
+  `.push-type.liveactivity` for a Live Activity. `apns-expiration` keeps an alert for a device
+  that is offline: a permission banner until its request's `expires_at`, other banners and
+  notices for an hour, and a withdrawal as long as the banner it replaces. Live Activity updates
+  go with 0: APNs tries once and stores nothing. Alerts go at priority 10, passive ones and Live
+  Activity progress at 5.
 - **Tokens.** `<state>/push/tokens.json`, mode 0600 in a 0700 directory, written whole and
   renamed into place. One device token and one Live Activity token per device id: a second
   registration replaces the first. At most 64 devices; the oldest registration goes first.
@@ -929,18 +931,26 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   `DeviceTokenNotForTopic`, `ExpiredToken` or 410 drops the token and logs once. A refused key
   or topic (`InvalidProviderToken`, `TopicDisallowed` and the like) is logged once as "push
   broken" until a push succeeds. A 429 backs off from 1 s, doubling to a minute: an urgent push
-  waits once and retries, a progress update is dropped.
+  waits once and retries, and every progress update is dropped until the back-off ends.
+- **Shutdown.** Closing the notifier ends a push in flight and a back-off wait at once, and
+  drops queued pushes that have not gone out, so a stop never waits on an unreachable APNs.
 - **What pushes.** The notifier reads every `agent.state` change, keeping only the latest
   unsent state per pane. A new `blocked:permission`, `blocked:question`, `blocked:auth`,
   `error` or `done` (by state and request id) raises a banner to each device whose `kinds`
-  hold it; `done` is opt-in by its kind. A repeat of the same state raises nothing. Collapse
+  hold it; `done` is opt-in by its kind. A repeat of the same state raises nothing. A pane
+  first seen through a replayed OSC 7501 report (source `screen`, which the link sends for each
+  pane after a gff-hab restart) raises no banner: its state is recorded and its Live Activity
+  updated. Collapse
   ids: `r-<request id>` (a hash past 64 bytes), else `q-`, `a-`, `e-`, `d-` plus the pane id,
   and `n-<notice id>`.
 - **Presence tiers** (`app.md` 8.3, `landscape.md` 4.1). A device hears of an event by push
   unless (1) some connected client reported the session in focus (`session.focus`, `active`
   true) within the last 60 s: then no device gets a banner; or (2) a connected client of that
   device sent `session.focus` with `active` true, for any session, within the last 180 s: the
-  app is in use and shows its own notice from the live event. `active` false ends both at once.
+  app is in use and shows its own notice from the live event. `active` false ends the focus on
+  that session; it ends the foreground mark only when the client has no other session in focus
+  within 60 s, so moving from one session to another keeps the app in the foreground.
+  `active` false for a session that no longer exists succeeds.
   A client speaks for a device once it called `push.register` or `push.register_activity`
   with that device id. The app re-sends `active` true at least every 30 s while a session is
   on screen in an active window, and sends `active` false when it leaves or goes to the
@@ -951,6 +961,8 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   <program>" or "Denied: …". It does this at once: Claude Code keeps the request open until
   the tool has run. The same blocked state arriving afterwards raises nothing. A request that
   closes with no answer through the hab (the TUI) is replaced with "Answered in the terminal".
+  A pane that closes with a banner open has it replaced with "Pane closed", and the notifier
+  forgets the pane: it no longer counts in `others`.
   A second answer to one request stays refused with `conflict` (harness-adapters.md,
   Permission answers).
 - **Live Activity** (`app.md` 9). Each device's activity token tracks one session. Every change

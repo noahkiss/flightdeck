@@ -96,7 +96,11 @@ Then open the app. It registers its push token with each paired hab.
 - **A device token is no longer valid**: the hab drops it and logs once. The app sends a new one
   when it next connects.
 - **APNs rate-limits the hab**: the hab backs off. Approvals wait out the back-off; Live
-  Activity progress updates are dropped.
+  Activity progress updates are dropped until it ends.
+- **A device is offline**: APNs keeps an approval until the request expires, and other
+  notifications for an hour. Live Activity updates are not kept.
+- **gff-hab restarts**: a pane's last state, replayed after the restart, raises no new
+  banner. Pushes still queued when gff-hab stops are dropped.
 
 ## Notices from scripts
 
