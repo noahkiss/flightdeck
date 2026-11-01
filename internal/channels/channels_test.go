@@ -835,25 +835,29 @@ func TestWaitSkipsInFlight(t *testing.T) {
 	l := newLocal("alice", "bob")
 	l.gate = make(chan struct{})
 	a := newHab(t, "dev-a", "hosta", "", l)
+	open1 := sync.OnceFunc(func() { close(l.gate) })
+	t.Cleanup(open1) // runs before the service's Close, so a failed test does not hang
 	first := send(t, a.s, "alice", "bob", "first")
 	send(t, a.s, "alice", "bob", "second")
 	waitFor(t, "the write to start", func() bool { l.mu.Lock(); defer l.mu.Unlock(); return l.inFlight == 1 })
 	if r, _ := a.s.Wait(context.Background(), api.ChannelWaitParams{Session: "bob", TimeoutMS: 50}); !r.TimedOut {
 		t.Fatalf("wait took %+v", r.Message)
 	}
-	close(l.gate)
+	open1()
 	final(t, a.s, first.ID)
 
 	// Nor one the delivery is still checking, before it marks it.
 	l2 := newLocal("alice", "bob")
 	l2.checkGate = make(chan struct{})
 	b := newHab(t, "dev-b", "hostb", "", l2)
+	open2 := sync.OnceFunc(func() { close(l2.checkGate) })
+	t.Cleanup(open2)
 	sent := send(t, b.s, "alice", "bob", "checked")
 	waitFor(t, "the check to start", func() bool { l2.mu.Lock(); defer l2.mu.Unlock(); return l2.checking })
 	if r, _ := b.s.Wait(context.Background(), api.ChannelWaitParams{Session: "bob", TimeoutMS: 50}); !r.TimedOut {
 		t.Fatalf("wait took %+v while it was being checked", r.Message)
 	}
-	close(l2.checkGate)
+	open2()
 	final(t, b.s, sent.ID)
 	if got := l2.got("bob"); len(got) != 1 {
 		t.Fatalf("delivered %d times", len(got))
