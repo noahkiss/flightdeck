@@ -354,9 +354,12 @@ func (f *fakeRun) run(_ context.Context, name string, args ...string) ([]byte, e
 
 const team = "TEAM123456"
 
-func devID(id string) (info, req string) {
-	return "Identifier=" + id + "\nAuthority=Developer ID Application: Someone (" + team + ")\nAuthority=Developer ID Certification Authority\nCodeDirectory v=20500 size=38815 flags=0x10000(runtime) hashes=1206+3 location=embedded\nTeamIdentifier=" + team + "\n",
-		strings.ReplaceAll(ReleaseRequirement(id, team), `"`+team+`"`, team) // codesign prints the team bare
+func devID(id string) (info, req string) { return devIDOf(id, team) }
+
+// devIDOf is a valid Developer ID signature of id by team tm.
+func devIDOf(id, tm string) (info, req string) {
+	return "Identifier=" + id + "\nAuthority=Developer ID Application: Someone (" + tm + ")\nAuthority=Developer ID Certification Authority\nCodeDirectory v=20500 size=38815 flags=0x10000(runtime) hashes=1206+3 location=embedded\nTeamIdentifier=" + tm + "\n",
+		strings.ReplaceAll(ReleaseRequirement(id, tm), `"`+tm+`"`, tm) // codesign prints the team bare
 }
 
 func TestCheckSignature(t *testing.T) {
@@ -579,29 +582,53 @@ func TestServiceKeepsWalkAnswers(t *testing.T) {
 func TestServiceDrainingHolders(t *testing.T) {
 	h := newHarness(t)
 	h.run.info["/b/old/H.app"], h.run.reqs["/b/old/H.app"] = devID("p.hab-holder")
-	h.run.info["/b/other/H.app"], h.run.reqs["/b/other/H.app"] = devID("p.hab-holder")
-	h.run.reqs["/b/other/H.app"] = strings.ReplaceAll(h.run.reqs["/b/other/H.app"], team, "OTHERTEAM1")
+	// A valid release of another team: its own signature passes, but TCC keys its grants apart.
+	h.run.info["/b/other/H.app"], h.run.reqs["/b/other/H.app"] = devIDOf("p.hab-holder", "OTHERTEAM1")
+	// Two dev builds: ad-hoc, each requirement its own code hash.
+	adhoc := "Identifier=p.hab-holder.dev\nCodeDirectory v=20500 size=1 flags=0x10002(adhoc,runtime) hashes=1\n"
+	h.run.info["/b/adhoc1/H.app"], h.run.reqs["/b/adhoc1/H.app"] = adhoc, `cdhash H"aaaa"`
+	h.run.info["/b/adhoc2/H.app"], h.run.reqs["/b/adhoc2/H.app"] = adhoc, `cdhash H"bbbb"`
+	// A broken bundle fails its own signature check before any comparison.
+	h.run.info["/b/broken/H.app"], h.run.reqs["/b/broken/H.app"] = devID("p.hab-holder")
+	h.run.broken["/b/broken/H.app"] = true
 	h.holders = append(h.holders, HolderInfo{Instance: "old", Draining: true, Bundle: "/b/old/H.app"},
-		HolderInfo{Instance: "other", Draining: true, Bundle: "/b/other/H.app"})
+		HolderInfo{Instance: "other", Draining: true, Bundle: "/b/other/H.app"},
+		HolderInfo{Instance: "broken", Draining: true, Bundle: "/b/broken/H.app"})
 	h.checks[LocalNetwork] = api.PermissionStateGranted
 	res := h.check(api.PermissionsParams{})
-	var old, other api.PermissionRow
+	rows := map[string]api.PermissionRow{}
 	for _, r := range res.Rows {
-		if r.Draining && r.Instance == "old" {
-			old = r
-		}
-		if r.Draining && r.Instance == "other" {
-			other = r
+		if r.Draining {
+			rows[r.Instance] = r
 		}
 	}
-	if old.State != api.PermissionStateGranted || !strings.Contains(old.Detail, "shares its grants") {
+	if old := rows["old"]; old.State != api.PermissionStateGranted || !strings.Contains(old.Detail, "shares its grants") {
 		t.Errorf("same requirement: %+v", old)
 	}
-	if other.State != api.PermissionStateDenied || !other.Required {
-		t.Errorf("another requirement: %+v", other)
+	if other := rows["other"]; other.State != api.PermissionStateDenied || !other.Required || !strings.Contains(other.Detail, "another signing identity") {
+		t.Errorf("another team: %+v", other)
+	}
+	if broken := rows["broken"]; broken.State != api.PermissionStateDenied || !broken.Required || !strings.Contains(broken.Detail, "broken") {
+		t.Errorf("a broken bundle: %+v", broken)
 	}
 	if len(h.probed) != 1 {
 		t.Errorf("%d probes; a draining holder takes no new pane", len(h.probed))
+	}
+
+	// The current holder an ad-hoc build; a draining one a different ad-hoc build.
+	h.holders = []HolderInfo{{Instance: "h1", Bundle: "/b/adhoc1/H.app"}, {Instance: "prev", Draining: true, Bundle: "/b/adhoc2/H.app"}}
+	res = h.check(api.PermissionsParams{})
+	n := 0
+	for _, r := range res.Rows {
+		if r.Draining {
+			n++
+			if r.State != api.PermissionStateDenied || !strings.Contains(r.Detail, "another signing identity") {
+				t.Errorf("another ad-hoc build: %+v", r)
+			}
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d draining rows, want 1", n)
 	}
 }
 
