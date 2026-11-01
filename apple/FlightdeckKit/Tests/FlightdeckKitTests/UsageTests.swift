@@ -353,7 +353,7 @@ final class UsageSnapshotTests: XCTestCase {
         XCTAssertEqual(UsageLink.url(account: "k").absoluteString, "flightdeck://usage?account=k")
         XCTAssertEqual(UsageLink.account(UsageLink.url(account: "k")), .some("k"))
         XCTAssertEqual(UsageLink.account(UsageLink.url()), .some(nil))
-        XCTAssertNil(UsageLink.account(URL(string: "flightdeck://request?hab=x")!))
+        XCTAssertTrue(UsageLink.account(URL(string: "flightdeck://request?hab=x")!) == nil)
     }
 }
 
