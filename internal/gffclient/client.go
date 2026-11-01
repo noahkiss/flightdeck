@@ -1,5 +1,5 @@
-// Package gffclient is the core of gff, the terminal client: it shows one or more panes of one
-// hab in the terminal it runs in (docs/specs/gff-client.md 3, 5.2, 8.2, 10).
+// Package gffclient is gff, the terminal client: it shows panes of one or more habs in the
+// terminal it runs in (docs/specs/gff-client.md 3 to 7, 8.2, 10).
 //
 // One pane that fits the host terminal passes its bytes straight through. Otherwise each pane is
 // parsed by a terminal parser (internal/vt: libghostty in release builds) and its cells are
@@ -7,8 +7,11 @@
 // focused pane as pane.input; the hab hands size ownership to the client that types. The client
 // asks for each pane's size as its view changes, and never answers a terminal query.
 //
-// The connection is internal/habconn; merging several habs, tabs, the sidebar and the bars are
-// later stages.
+// It runs in one of two ways. The single-hab view (Config.Conn) shows the panes it is given and
+// nothing else, and ends when they all end. The workspace (Config.Hosts) connects to every
+// configured host at once and adds tabs, a sidebar of every session on every host and a status
+// board (workspace.go). Structure comes from the habs; tabs, splits, focus and the sidebar stay
+// in the client.
 package gffclient
 
 import (
@@ -22,7 +25,9 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/board"
 	"github.com/noahkiss/flightdeck/internal/habconn"
+	"github.com/noahkiss/flightdeck/internal/hosts"
 	"github.com/noahkiss/flightdeck/internal/vt"
 )
 
@@ -34,6 +39,8 @@ const DefaultSizeDebounce = 300 * time.Millisecond
 type PaneSpec struct {
 	ID    string
 	Label string // shown in the pane's frame; default the pane id
+	// Host is the host's label in the workspace; empty means the first host.
+	Host string
 	// Observe opens an observer stream (hab-logic-api.md 6.4): it never sends a size, never
 	// takes ownership and never sends input.
 	Observe bool
@@ -46,9 +53,14 @@ type Timer interface {
 	Stop()
 }
 
-// Config is what Run needs. Conn, Parser, Panes, In, Out and Size are required.
+// Config is what Run needs. Parser, In, Out and Size are required, and one of Conn (with
+// Panes) and Hosts.
 type Config struct {
-	Conn   *habconn.Conn
+	// Conn is the single-hab view: Panes of this hab and nothing else.
+	Conn *habconn.Conn
+	// Hosts is the workspace: every host, with tabs, the sidebar and the status board. Panes,
+	// if any, open in the first tab.
+	Hosts  *hosts.Set
 	Parser vt.Parser
 	Panes  []PaneSpec
 	Split  Split
@@ -66,22 +78,37 @@ type Config struct {
 	SizeDebounce time.Duration
 	// NewTimer makes the debounce timer, stopped. Nil: a real timer.
 	NewTimer func() Timer
-	Logf     func(format string, args ...any)
+	// Now is the clock for the times the workspace shows. Nil: time.Now.
+	Now func() time.Time
+	// Tick, when set, replaces the workspace's one-second redraw tick (times in state, bell
+	// marks). Tests send on it.
+	Tick <-chan time.Time
+	Logf func(format string, args ...any)
 }
-
-// errInputEnded is open's result when the host input ends; Run then returns nil, as it does
-// when the input ends later.
-var errInputEnded = errors.New("gffclient: the terminal input ended")
 
 // ErrDetached is Run's result when the owner detaches with the prefix and d.
 var ErrDetached = errors.New("gff: detached; the programs keep running")
 
+// hostState is the client's side of one host: its calls queue and whether it is online.
+type hostState struct {
+	label  string
+	conn   *habconn.Conn
+	ops    *opQueue
+	online bool
+	me     string // this client's id on the hab
+	gone   bool   // removed from the host list
+}
+
 // view is one pane on screen.
 type view struct {
 	spec   PaneSpec
-	stream *habconn.PaneStream
-	term   vt.Terminal
+	h      *hostState
+	stream *habconn.PaneStream // nil while the view is hidden or opening
+	gen    int                 // raised on each open and close, so stale frames are dropped
+	stop   context.CancelFunc  // ends the current stream's goroutine
 	in     *inputSender
+	quit   context.CancelFunc // ends the view's input sender
+	term   vt.Terminal
 
 	cols, rows int
 	owner      string
@@ -89,6 +116,9 @@ type view struct {
 	exited     *api.ExitedFrame
 	ended      error // the stream ended for good
 	note       string
+	offset     uint64 // after the last applied byte, to resume (gff-client.md 11.3)
+	haveOffset bool
+	bellUntil  time.Time
 
 	filter passFilter
 	screen vt.Screen
@@ -97,51 +127,80 @@ type view struct {
 	sentCols, sentRows int // the last size asked for
 }
 
-func (v *view) live() bool { return v.exited == nil && v.ended == nil && v.term != nil }
+func (v *view) live() bool {
+	return v.exited == nil && v.ended == nil && v.term != nil
+}
+
+// tab is one client-side page of panes (gff-client.md 5.1). The hab knows nothing of tabs.
+type tab struct {
+	name     string
+	views    []*view
+	focus    int
+	split    Split
+	zoom     bool
+	activity bool      // a hidden pane printed
+	bell     time.Time // a pane rang the bell; marked until then
+}
 
 type paneFrame struct {
-	v     *view
-	f     habconn.Frame
-	ended bool
-	err   error
+	v      *view
+	gen    int
+	opened *habconn.PaneStream
+	f      habconn.Frame
+	ended  bool
+	err    error
 }
 
 type client struct {
-	cfg     Config
-	views   []*view
-	focus   int
-	split   Split
-	zoom    bool
-	offline bool
-	me      string // this client's id on the hab
+	cfg   Config
+	ctx   context.Context
+	wg    *sync.WaitGroup
+	ws    bool // the workspace, not the single-hab view
+	hosts map[string]*hostState
+	first string // the first host's label
+	tabs  []*tab
+	cur   int
 
 	w, h   int
 	canvas canvas
-	pass   int // the view passing bytes through, or -1
-	// carry is the view whose modes the host may still have from passing through, or -1: from
-	// entering pass-through until the modes are set back. A new snapshot ends pass-through but
-	// not this.
-	carry    int
+	pass   *view // the view passing bytes through, or nil
+	// carry is the view whose modes the host may still have from passing through, or nil: from
+	// entering pass-through until the modes are set back. A new snapshot, a hidden tab or a
+	// closed view ends pass-through but not this.
+	carry    *view
 	composed bool
 	modes    map[int]bool // modes mirrored on the host while composed
 	out      bytes.Buffer
 	keys     *keyReader
-	ops      *opQueue
 	notes    chan paneNote
+	frames   chan paneFrame
+	later    chan func()
 	debounce Timer
 	// What the host shows besides the canvas, so an unchanged screen writes nothing.
 	cursorX, cursorY int
 	cursorOn         bool
+
+	ui workspaceUI
 }
 
-type paneNote struct{ pane, msg string }
+type paneNote struct{ host, pane, msg string }
 
-// Run shows the panes until the owner detaches (ErrDetached), every pane has ended (nil), ctx
-// ends, or the connection fails for good. It leaves the host terminal as it found it, except
-// for what the panes printed while passing through.
+// Run shows panes until the owner detaches (ErrDetached), ctx ends, or, in the single-hab
+// view, every pane has ended (nil) or the connection fails for good. It leaves the host
+// terminal as it found it, except for what the panes printed while passing through.
 func Run(ctx context.Context, cfg Config) (err error) {
-	if cfg.Conn == nil || cfg.Parser == nil || len(cfg.Panes) == 0 || cfg.In == nil || cfg.Out == nil || cfg.Size == nil {
-		return errors.New("gffclient: Conn, Parser, Panes, In, Out and Size are required")
+	if cfg.Parser == nil || cfg.In == nil || cfg.Out == nil || cfg.Size == nil {
+		return errors.New("gffclient: Parser, In, Out and Size are required")
+	}
+	ws := cfg.Hosts != nil
+	switch {
+	case !ws && cfg.Conn == nil:
+		return errors.New("gffclient: Conn or Hosts is required")
+	case !ws && len(cfg.Panes) == 0:
+		return errors.New("gffclient: the single-hab view needs Panes")
+	}
+	if !ws {
+		cfg.Hosts = hosts.Wrap("hab", cfg.Conn, cfg.Now)
 	}
 	if cfg.Prefix == 0 {
 		cfg.Prefix = DefaultPrefix
@@ -152,35 +211,53 @@ func Run(ctx context.Context, cfg Config) (err error) {
 	if cfg.NewTimer == nil {
 		cfg.NewTimer = newRealTimer
 	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
-	c := &client{cfg: cfg, split: cfg.Split, pass: -1, carry: -1, modes: map[int]bool{}, keys: newKeyReader(cfg.Prefix),
-		notes: make(chan paneNote, 64), debounce: cfg.NewTimer()}
+	c := &client{cfg: cfg, ctx: ctx, wg: &wg, ws: ws, hosts: map[string]*hostState{}, modes: map[int]bool{},
+		keys: newKeyReader(cfg.Prefix), notes: make(chan paneNote, 64), frames: make(chan paneFrame),
+		later: make(chan func(), 64), debounce: cfg.NewTimer()}
+	c.ui.init(c)
+	c.tabs = []*tab{{name: "1", split: cfg.Split}}
 	defer func() {
 		cancel()
 		c.debounce.Stop()
-		for _, v := range c.views {
-			v.stream.Close()
+		for _, t := range c.tabs {
+			for _, v := range t.views {
+				c.closeStream(v)
+			}
 		}
 		wg.Wait()
-		for _, v := range c.views {
-			if v.term != nil {
-				v.term.Close()
+		for _, t := range c.tabs {
+			for _, v := range t.views {
+				if v.term != nil {
+					v.term.Close()
+				}
 			}
 		}
 	}()
-	if w, ok := cfg.Conn.Welcome(); ok {
-		c.me = w.ClientID
+	for _, hm := range cfg.Hosts.Hosts() {
+		c.host(hm)
 	}
-	c.ops = newOpQueue(cfg.Conn, func(pane, msg string) { c.postNote(pane, msg) })
-	wg.Add(1)
-	go func() { defer wg.Done(); c.ops.run(ctx) }()
+	for _, spec := range cfg.Panes {
+		hs := c.hosts[spec.Host]
+		if spec.Host == "" {
+			hs = c.hosts[c.first]
+		}
+		if hs == nil {
+			return fmt.Errorf("pane %s: no host %q", spec.ID, spec.Host)
+		}
+		c.addView(c.tabs[0], spec, hs)
+	}
 
-	// The input reader starts before the panes open: the host is already raw, so the prefix and
-	// d must end a start that hangs, and keys typed meanwhile go to the focused pane.
+	// Views open their streams off the loop, so the loop reads keys while they open: the
+	// prefix and d end a start that hangs with the host raw, and keys typed meanwhile go to the
+	// focused pane (typeKeys sends before the first snapshot).
 	input := make(chan []byte)
 	inputErr := make(chan error, 1)
 	go func() { // not waited for: a terminal read cannot be interrupted
@@ -201,44 +278,6 @@ func Run(ctx context.Context, cfg Config) (err error) {
 		}
 	}()
 
-	streams, typeahead, err := c.open(ctx, input, inputErr)
-	if err == errInputEnded {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	frames := make(chan paneFrame)
-	for i, spec := range cfg.Panes {
-		if spec.Label == "" {
-			spec.Label = spec.ID
-		}
-		s := streams[i]
-		w := s.Welcome()
-		v := &view{spec: spec, stream: s, cols: w.Cols, rows: w.Rows, owner: w.Owner}
-		c.views = append(c.views, v)
-		pane := spec.ID
-		v.in = newInputSender(cfg.Conn, pane, func(msg string) { c.postNote(pane, msg) })
-		wg.Add(2)
-		go func() { defer wg.Done(); v.in.run(ctx) }()
-		go func() {
-			defer wg.Done()
-			for f := range s.Frames() {
-				select {
-				case frames <- paneFrame{v: v, f: f}:
-				case <-ctx.Done():
-					return
-				}
-			}
-			select {
-			case frames <- paneFrame{v: v, ended: true, err: s.Err()}:
-			case <-ctx.Done():
-			}
-		}()
-	}
-	for _, p := range typeahead {
-		c.typeKeys(p)
-	}
-
 	c.w, c.h = c.hostSize()
 	c.canvas.resize(c.w, c.h)
 	c.sendSizes()
@@ -247,7 +286,13 @@ func Run(ctx context.Context, cfg Config) (err error) {
 		cfg.Out.Write(c.out.Bytes())
 	}()
 
-	updates := cfg.Conn.Updates()
+	tick := cfg.Tick
+	if ws && tick == nil {
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		tick = t.C
+	}
+	updates := cfg.Hosts.Updates()
 	for {
 		c.render()
 		if c.out.Len() > 0 {
@@ -256,18 +301,20 @@ func Run(ctx context.Context, cfg Config) (err error) {
 			}
 			c.out.Reset()
 		}
-		if done, err := c.allEnded(); done {
-			return err
+		if !ws {
+			if done, err := c.allEnded(); done {
+				return err
+			}
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case pf := <-frames:
+		case pf := <-c.frames:
 			c.frame(pf)
 			// Apply what else is ready before drawing once.
 			for range 64 {
 				select {
-				case pf := <-frames:
+				case pf := <-c.frames:
 					c.frame(pf)
 					continue
 				default:
@@ -292,6 +339,10 @@ func Run(ctx context.Context, cfg Config) (err error) {
 			}
 		case <-c.debounce.C():
 			c.sendSizes()
+		case <-tick:
+			c.ui.tick()
+		case f := <-c.later:
+			f()
 		case u, ok := <-updates:
 			if !ok {
 				updates = nil
@@ -301,81 +352,188 @@ func Run(ctx context.Context, cfg Config) (err error) {
 				return err
 			}
 		case n := <-c.notes:
-			for _, v := range c.views {
-				if v.spec.ID == n.pane {
+			c.eachView(func(_ *tab, v *view) {
+				if v.h.label == n.host && v.spec.ID == n.pane {
 					v.note = n.msg
 					v.dirty = true
 				}
-			}
+			})
 		}
 	}
 }
 
-// open opens every pane's stream while it reads host input. Input that comes meanwhile is
-// returned as typeahead; the prefix and d end the start with ErrDetached. Opening waits while
-// the hab is offline (habconn), and the host is raw, so Ctrl+C is no signal: without this a
-// hab that never comes back would leave the owner no way out.
-func (c *client) open(ctx context.Context, input <-chan []byte, inputErr <-chan error) ([]*habconn.PaneStream, [][]byte, error) {
-	type result struct {
-		streams []*habconn.PaneStream
-		err     error
+// host returns the client's state for a host, making it on first sight.
+func (c *client) host(hm hosts.Host) *hostState {
+	if hs := c.hosts[hm.Label]; hs != nil {
+		return hs
 	}
-	opened := make(chan result)
-	go func() { // not waited for: it ends with ctx
-		var r result
-		for _, spec := range c.cfg.Panes {
-			s, err := c.cfg.Conn.OpenPane(ctx, spec.ID, habconn.PaneOptions{Observe: spec.Observe})
-			if err != nil {
-				r.err = fmt.Errorf("open pane %s: %w", spec.ID, err)
-				break
-			}
-			r.streams = append(r.streams, s)
+	hs := &hostState{label: hm.Label, conn: hm.Conn, online: hm.Online(), me: hm.Welcome.ClientID}
+	label := hm.Label
+	hs.ops = newOpQueue(hm.Conn, func(pane, msg string) { c.postNote(label, pane, msg) })
+	c.wg.Add(1)
+	go func() { defer c.wg.Done(); hs.ops.run(c.ctx) }()
+	c.hosts[hm.Label] = hs
+	if c.first == "" {
+		c.first = hm.Label
+	}
+	return hs
+}
+
+// tab returns the current tab.
+func (c *client) tab() *tab { return c.tabs[c.cur] }
+
+func (c *client) eachView(f func(*tab, *view)) {
+	for _, t := range c.tabs {
+		for _, v := range t.views {
+			f(t, v)
 		}
-		if r.err == nil {
-			select {
-			case opened <- r:
-				return
-			case <-ctx.Done():
+	}
+}
+
+// addView adds a view of a hab pane to t and, when t is shown, opens its stream.
+func (c *client) addView(t *tab, spec PaneSpec, hs *hostState) *view {
+	if spec.Label == "" {
+		spec.Label = spec.ID
+	}
+	v := &view{spec: spec, h: hs}
+	ictx, quit := context.WithCancel(c.ctx)
+	v.quit = quit
+	host, pane := hs.label, spec.ID
+	v.in = newInputSender(hs.conn, pane, func(msg string) { c.postNote(host, pane, msg) })
+	c.wg.Add(1)
+	go func() { defer c.wg.Done(); v.in.run(ictx) }()
+	t.views = append(t.views, v)
+	if t == c.tab() {
+		c.openStream(v)
+	}
+	return v
+}
+
+// removeView takes a view out of its tab; the program keeps running (gff-client.md 5.2).
+func (c *client) removeView(t *tab, v *view) {
+	for i, x := range t.views {
+		if x == v {
+			t.views = append(t.views[:i], t.views[i+1:]...)
+			if t.focus >= len(t.views) {
+				t.focus = max(len(t.views)-1, 0)
 			}
-		} else {
+			break
+		}
+	}
+	c.closeStream(v)
+	v.quit()
+	if v.term != nil {
+		v.term.Close()
+		v.term = nil
+	}
+	if c.pass == v {
+		c.pass = nil
+	}
+	if len(t.views) < 2 {
+		t.zoom = false
+	}
+}
+
+// openStream opens the view's data stream off the loop: it resumes from the view's offset
+// when it has one (gff-client.md 11.3).
+func (c *client) openStream(v *view) {
+	if v.stream != nil || v.stop != nil || v.ended != nil || v.exited != nil {
+		return
+	}
+	v.gen++
+	gen := v.gen
+	ctx, stop := context.WithCancel(c.ctx)
+	v.stop = stop
+	v.opens = 0
+	opts := habconn.PaneOptions{Observe: v.spec.Observe}
+	if v.haveOffset {
+		off := v.offset
+		opts.Offset = &off
+	}
+	conn := v.h.conn
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		send := func(pf paneFrame) bool {
 			select {
-			case opened <- result{err: r.err}:
+			case c.frames <- pf:
+				return true
 			case <-ctx.Done():
+				return false
 			}
 		}
-		for _, s := range r.streams {
+		s, err := openPane(ctx, conn, v.spec.ID, opts)
+		if err != nil {
+			send(paneFrame{v: v, gen: gen, ended: true, err: err})
+			return
+		}
+		if !send(paneFrame{v: v, gen: gen, opened: s}) {
 			s.Close()
+			return
 		}
+		for f := range s.Frames() {
+			if !send(paneFrame{v: v, gen: gen, f: f}) {
+				return
+			}
+		}
+		send(paneFrame{v: v, gen: gen, ended: true, err: s.Err()})
 	}()
-	var typeahead [][]byte
-	for {
-		select {
-		case r := <-opened:
-			return r.streams, typeahead, r.err
-		case p := <-input:
-			for _, ev := range c.keys.feed(p) {
-				switch {
-				case ev.cmd == 0:
-					typeahead = append(typeahead, ev.data)
-				case ev.cmd == cmdDetach:
-					return nil, nil, ErrDetached
-				}
+}
+
+// openPane opens a pane's stream, and gives up when ctx ends even if the open has not
+// returned: a hab that hangs must not hold Run's return (the prefix and d while opening). A
+// stream that opens after that is closed.
+func openPane(ctx context.Context, conn *habconn.Conn, pane string, opts habconn.PaneOptions) (*habconn.PaneStream, error) {
+	type result struct {
+		s   *habconn.PaneStream
+		err error
+	}
+	done := make(chan result, 1)
+	go func() { // not waited for: it ends when the open returns
+		s, err := conn.OpenPane(ctx, pane, opts)
+		done <- result{s, err}
+	}()
+	select {
+	case r := <-done:
+		return r.s, r.err
+	case <-ctx.Done():
+		go func() {
+			if r := <-done; r.s != nil {
+				r.s.Close()
 			}
-		case err := <-inputErr:
-			if err == io.EOF {
-				return nil, nil, errInputEnded
-			}
-			return nil, nil, fmt.Errorf("read the terminal: %w", err)
-		case <-ctx.Done():
-			return nil, nil, ctx.Err()
-		}
+		}()
+		return nil, ctx.Err()
 	}
 }
 
-func (c *client) postNote(pane, msg string) {
+// closeStream closes the view's stream and keeps its parser and offset, for a hidden tab.
+func (c *client) closeStream(v *view) {
+	if v.stop != nil {
+		v.stop()
+		v.stop = nil
+	}
+	if v.stream != nil {
+		v.stream.Close()
+		v.stream = nil
+	}
+	v.gen++
+	if c.pass == v {
+		c.pass = nil
+	}
+}
+
+func (c *client) postNote(host, pane, msg string) {
 	select {
-	case c.notes <- paneNote{pane, msg}:
+	case c.notes <- paneNote{host, pane, msg}:
 	default:
+	}
+}
+
+// run hands f to the loop: results of calls made off the loop.
+func (c *client) run(f func()) {
+	select {
+	case c.later <- f:
+	case <-c.ctx.Done():
 	}
 }
 
@@ -389,12 +547,13 @@ func (c *client) hostSize() (int, int) {
 
 // allEnded reports whether every pane has exited or gone, with the reason to return.
 func (c *client) allEnded() (bool, error) {
-	for _, v := range c.views {
+	vs := c.tab().views
+	for _, v := range vs {
 		if v.exited == nil && v.ended == nil {
 			return false, nil
 		}
 	}
-	for _, v := range c.views {
+	for _, v := range vs {
 		if v.ended != nil && !errors.Is(v.ended, io.EOF) && v.exited == nil {
 			return true, fmt.Errorf("pane %s: %w", v.spec.ID, v.ended)
 		}
@@ -402,14 +561,25 @@ func (c *client) allEnded() (bool, error) {
 	return true, nil
 }
 
-// frame applies one frame of a pane's stream.
+// frame applies one message of a view's stream goroutine.
 func (c *client) frame(pf paneFrame) {
 	v := pf.v
+	if pf.gen != v.gen {
+		if pf.opened != nil {
+			pf.opened.Close()
+		}
+		return // a stream closed since
+	}
+	if pf.opened != nil {
+		v.stream = pf.opened
+		return
+	}
 	if pf.ended {
 		v.ended = pf.err
 		if v.ended == nil {
 			v.ended = io.EOF
 		}
+		v.stop = nil
 		v.dirty = true
 		return
 	}
@@ -436,22 +606,25 @@ func (c *client) frame(pf paneFrame) {
 		}
 		if err != nil {
 			c.cfg.Logf("pane %s: parser: %v", v.spec.ID, err)
+			v.term = nil
 			v.ended = err
 			return
 		}
 		v.term, v.cols, v.rows = t, cfg.Cols, cfg.Rows
+		v.offset, v.haveOffset = f.Offset, true
 		v.filter.reset()
-		if c.pass >= 0 && c.views[c.pass] == v {
-			c.pass = -1 // pass through again from the new screen
+		if c.pass == v {
+			c.pass = nil // pass through again from the new screen
 		}
 	case api.FrameBytes:
 		if v.term == nil {
 			return
 		}
 		v.term.Write(f.Data)
+		v.offset, v.haveOffset = f.Offset+uint64(len(f.Data)), true
 		start := c.out.Len()
 		v.filter.write(&c.out, f.Data)
-		if c.pass < 0 || c.views[c.pass] != v {
+		if c.pass != v {
 			c.out.Truncate(start) // only the pass-through view reaches the host
 		}
 	case api.FrameResize:
@@ -475,6 +648,10 @@ func (c *client) frame(pf paneFrame) {
 func (c *client) input(p []byte) error {
 	for _, ev := range c.keys.feed(p) {
 		if ev.cmd == 0 {
+			if c.ws && c.ui.mode != modePanes {
+				c.ui.keys(ev.data)
+				continue
+			}
 			c.typeKeys(ev.data)
 			continue
 		}
@@ -490,38 +667,54 @@ func (c *client) input(p []byte) error {
 func (c *client) typeKeys(p []byte) {
 	v := c.focused()
 	switch {
+	case v == nil:
 	case v.spec.Observe:
 		v.note, v.dirty = "observer: input off", true
 	case v.exited != nil || v.ended != nil:
-	case c.offline:
+	case !v.h.online:
 		v.note, v.dirty = "offline: input dropped", true
 	default:
 		v.in.send(p)
 	}
 }
 
-func (c *client) focused() *view { return c.views[c.focus] }
+func (c *client) focused() *view {
+	t := c.tab()
+	if len(t.views) == 0 {
+		return nil
+	}
+	return t.views[min(t.focus, len(t.views)-1)]
+}
 
 func (c *client) command(r rune) error {
-	v := c.focused()
-	switch r {
-	case cmdDetach:
+	if r == cmdDetach {
 		return ErrDetached
+	}
+	if c.ws && c.ui.command(r) {
+		return nil
+	}
+	t := c.tab()
+	v := c.focused()
+	if v == nil {
+		return nil
+	}
+	switch r {
 	case cmdFocusNext, '\t':
-		c.focus = (c.focus + 1) % len(c.views)
-		if c.zoom {
+		t.focus = (t.focus + 1) % len(t.views)
+		if t.zoom {
 			c.layoutChanged()
 		}
+		c.ui.focusChanged()
 	case cmdZoom:
-		if len(c.views) > 1 {
-			c.zoom = !c.zoom
+		if len(t.views) > 1 {
+			t.zoom = !t.zoom
 			c.layoutChanged()
 		}
 	case cmdSplit:
-		if c.split == SplitColumns {
-			c.split = SplitRows
+		if t.split == SplitColumns {
+			t.split = SplitRows
 		} else {
-			c.split = SplitColumns
+			t.split = SplitColumns
 		}
 		c.layoutChanged()
 	case cmdRedraw, cmdNudge:
@@ -533,15 +726,15 @@ func (c *client) command(r rune) error {
 			}
 			mode = api.RedrawModeNudge
 		}
-		c.ops.push(op{kind: opRedraw, pane: v.spec.ID, mode: mode})
+		v.h.ops.push(op{kind: opRedraw, pane: v.spec.ID, mode: mode})
 		c.canvas.valid = false
-		c.pass = -1
+		c.pass = nil
 	case cmdFit:
 		if v.spec.Observe {
 			v.note, v.dirty = "observer: cannot fit", true
 			return nil
 		}
-		c.ops.push(op{kind: opTake, pane: v.spec.ID})
+		v.h.ops.push(op{kind: opTake, pane: v.spec.ID})
 	}
 	return nil
 }
@@ -549,50 +742,107 @@ func (c *client) command(r rune) error {
 // layoutChanged repaints at once and asks for the new sizes after the debounce.
 func (c *client) layoutChanged() {
 	c.canvas.valid = false
-	for _, v := range c.views {
+	for _, v := range c.tab().views {
 		v.dirty = true
 	}
 	c.debounce.Reset(c.cfg.SizeDebounce)
 }
 
+// paneArea is where the current tab's panes go: the whole host, less the workspace's bars.
+func (c *client) paneArea() rect {
+	if !c.ws {
+		return rect{0, 0, c.w, c.h}
+	}
+	return c.ui.paneArea()
+}
+
+// arrangement lays out the current tab in the pane area.
+func (c *client) arrangement() arrangement {
+	t := c.tab()
+	if len(t.views) == 0 {
+		return arrangement{}
+	}
+	r := c.paneArea()
+	a := arrange(len(t.views), min(t.focus, len(t.views)-1), t.split, t.zoom, r.w, r.h)
+	for i := range a.slots {
+		s := &a.slots[i]
+		s.frame.x += r.x
+		s.frame.y += r.y
+		s.content.x += r.x
+		s.content.y += r.y
+	}
+	for i := range a.seps {
+		a.seps[i].x += r.x
+		a.seps[i].y += r.y
+	}
+	return a
+}
+
 // sendSizes asks for each shown pane's size where it changed. Hidden and observer views ask
 // for nothing (hab-logic-api.md 6.4).
 func (c *client) sendSizes() {
-	a := arrange(len(c.views), c.focus, c.split, c.zoom, c.w, c.h)
+	a := c.arrangement()
+	vs := c.tab().views
 	for _, s := range a.slots {
-		v := c.views[s.view]
+		v := vs[s.view]
 		if v.spec.Observe || (v.sentCols == s.wantCols && v.sentRows == s.wantRows) {
 			continue
 		}
 		v.sentCols, v.sentRows = s.wantCols, s.wantRows
-		c.ops.push(op{kind: opSize, pane: v.spec.ID, cols: s.wantCols, rows: s.wantRows})
+		v.h.ops.push(op{kind: opSize, pane: v.spec.ID, cols: s.wantCols, rows: s.wantRows})
 	}
 }
 
-// update handles one connection update.
-func (c *client) update(u habconn.Update) error {
+// update handles one host update.
+func (c *client) update(u hosts.Update) error {
+	hm, known := c.cfg.Hosts.Host(u.Host)
+	hs := c.hosts[u.Host]
+	if hs == nil {
+		if !known {
+			return nil
+		}
+		hs = c.host(hm)
+	}
+	views := func(f func(*view)) {
+		c.eachView(func(_ *tab, v *view) {
+			if v.h == hs {
+				f(v)
+			}
+		})
+	}
+	if u.Removed {
+		hs.gone, hs.online = true, false
+		views(func(v *view) {
+			c.closeStream(v)
+			v.ended, v.dirty = errors.New("host removed"), true
+		})
+		delete(c.hosts, u.Host)
+		c.ui.changed()
+		return nil
+	}
 	switch u.Kind {
 	case habconn.UpdateOnline:
-		c.offline = false
-		c.me = u.Welcome.ClientID
+		hs.online = true
+		hs.me = u.Welcome.ClientID
 		if u.NewEpoch {
 			// A new hab process keeps no desired sizes and no owners: ask again.
-			for _, v := range c.views {
-				v.sentCols, v.sentRows = 0, 0
-			}
+			views(func(v *view) { v.sentCols, v.sentRows = 0, 0 })
 			c.sendSizes()
 		}
-		for _, v := range c.views {
-			v.dirty = true
-		}
-	case habconn.UpdateOffline:
-		c.offline = true
-		for _, v := range c.views {
-			v.dirty = true
-		}
+		views(func(v *view) { v.dirty = true })
+	case habconn.UpdateOffline, habconn.UpdateRetrying:
+		hs.online = false
+		views(func(v *view) { v.dirty = true })
 	case habconn.UpdateFailed:
-		return fmt.Errorf("hab connection: %w", u.Err)
+		hs.online = false
+		if !c.ws {
+			return fmt.Errorf("hab connection: %w", u.Err)
+		}
+		views(func(v *view) { v.dirty = true })
+	case habconn.UpdateEvent:
+		c.ui.event(hs, u.Event)
 	}
+	c.ui.changed()
 	return nil
 }
 
@@ -628,33 +878,33 @@ var mirrored = []struct {
 // render brings the host terminal up to date: pass-through when one pane fits it, else a
 // composed screen.
 func (c *client) render() {
-	if c.pass >= 0 {
+	if c.pass != nil && !c.ws {
 		if done, _ := c.allEnded(); done {
 			return // the last pane ended: the host keeps what it drew, as after ssh
 		}
 	}
-	a := arrange(len(c.views), c.focus, c.split, c.zoom, c.w, c.h)
-	if len(a.slots) == 1 {
-		i := a.slots[0].view
-		v := c.views[i]
+	a := c.arrangement()
+	if len(a.slots) == 1 && (!c.ws || c.ui.passOK()) {
+		v := c.tab().views[a.slots[0].view]
+		r := c.paneArea()
 		if v.term == nil && v.ended == nil {
 			return // wait for the first snapshot: it may pass straight through
 		}
-		if v.live() && !c.offline && v.cols == c.w && v.rows == c.h {
-			if c.pass != i {
-				c.enterPass(i)
+		if v.live() && v.h.online && r.w == c.w && r.h == c.h && v.cols == c.w && v.rows == c.h {
+			if c.pass != v {
+				c.enterPass(v)
 			}
 			return
 		}
 	}
-	if c.pass >= 0 || !c.composed {
-		if c.carry >= 0 {
+	if c.pass != nil || !c.composed {
+		if c.carry != nil {
 			c.out.WriteString(resetPaneModes)
-			c.carry = -1
+			c.carry = nil
 		}
 		// The alternate screen comes clear; the main screen keeps what the pane drew.
 		c.out.WriteString(enterCompose)
-		c.pass, c.composed = -1, true
+		c.pass, c.composed = nil, true
 		c.canvas.valid = false
 		c.cursorOn = false
 		clear(c.modes)
@@ -662,10 +912,9 @@ func (c *client) render() {
 	c.compose(a)
 }
 
-// enterPass makes view i pass its bytes through: the host leaves the composed screen and
+// enterPass makes view v pass its bytes through: the host leaves the composed screen and
 // gets the pane's screen and modes from the local parser, then the pane's bytes as they come.
-func (c *client) enterPass(i int) {
-	v := c.views[i]
+func (c *client) enterPass(v *view) {
 	if c.composed {
 		c.out.WriteString(resetMirrored(c.modes))
 		c.out.WriteString(leaveCompose)
@@ -680,7 +929,7 @@ func (c *client) enterPass(i int) {
 	// A snapshot holds no query (hab-logic-api.md 5.5); the filter is a cheap guard all the same.
 	var f passFilter
 	f.write(&c.out, snap)
-	c.pass, c.carry = i, i
+	c.pass, c.carry = v, v
 }
 
 func resetMirrored(modes map[int]bool) string {
@@ -700,8 +949,8 @@ func (c *client) restoreHost() {
 	case c.composed:
 		c.out.WriteString(resetMirrored(c.modes))
 		c.out.WriteString(leaveCompose)
-	case c.carry >= 0:
-		v := c.views[c.carry]
+	case c.carry != nil:
+		v := c.carry
 		leave := ""
 		if v.term != nil {
 			// Each way onto the alternate screen has its own way off.
@@ -719,52 +968,62 @@ func (c *client) restoreHost() {
 			c.out.WriteString("\x1b[" + strconv.Itoa(c.h) + ";1H\r\n")
 		}
 	}
-	c.composed, c.pass, c.carry = false, -1, -1
+	c.composed, c.pass, c.carry = false, nil, nil
 }
 
-// compose draws every shown pane, its frame row and the separators, and writes the changes.
+// compose draws the workspace's bars, every shown pane, its frame row and the separators, and
+// writes the changes.
 func (c *client) compose(a arrangement) {
 	c.canvas.clear()
-	sepStyle := vt.Style{Faint: true}
-	for _, r := range a.seps {
-		for y := r.y; y < r.y+r.h; y++ {
-			c.canvas.set(r.x, y, hcell{text: "│", style: sepStyle})
-		}
-	}
 	var cursorX, cursorY int
 	cursorOn := false
-	for _, s := range a.slots {
-		v := c.views[s.view]
-		focused := s.view == c.focus
-		if v.term != nil {
-			if v.dirty || v.screen.Cells == nil {
-				if err := v.term.ReadScreen(&v.screen); err != nil {
-					c.cfg.Logf("pane %s: read screen: %v", v.spec.ID, err)
-				}
-				v.dirty = false
-			}
-			c.canvas.pane(&v.screen, s.content, c.offline || !v.live())
-			if focused && v.live() && v.screen.CursorVisible {
-				x := v.screen.CursorX - clampOrigin(v.screen.CursorX, v.screen.Cols, s.content.w)
-				y := v.screen.CursorY - clampOrigin(v.screen.CursorY, v.screen.Rows, s.content.h)
-				if x >= 0 && y >= 0 && x < s.content.w && y < s.content.h {
-					cursorX, cursorY, cursorOn = s.content.x+x, s.content.y+y, true
-				}
+	board := c.ws && c.ui.mode == modeBoard
+	if c.ws {
+		cx, cy, on := c.ui.draw()
+		cursorX, cursorY, cursorOn = cx, cy, on
+	}
+	t := c.tab()
+	if !board {
+		sepStyle := vt.Style{Faint: true}
+		for _, r := range a.seps {
+			for y := r.y; y < r.y+r.h; y++ {
+				c.canvas.set(r.x, y, hcell{text: "│", style: sepStyle})
 			}
 		}
-		st := vt.Style{Inverse: true, Faint: !focused, Bold: focused}
-		c.canvas.text(s.frame.x, s.frame.y, s.frame.w, c.frameText(v, s), st)
+		paneFocus := !c.ws || c.ui.mode == modePanes
+		for _, s := range a.slots {
+			v := t.views[s.view]
+			focused := s.view == t.focus
+			if v.term != nil {
+				if v.dirty || v.screen.Cells == nil {
+					if err := v.term.ReadScreen(&v.screen); err != nil {
+						c.cfg.Logf("pane %s: read screen: %v", v.spec.ID, err)
+					}
+					v.dirty = false
+				}
+				c.canvas.pane(&v.screen, s.content, !v.h.online || !v.live())
+				if focused && paneFocus && v.live() && v.screen.CursorVisible {
+					x := v.screen.CursorX - clampOrigin(v.screen.CursorX, v.screen.Cols, s.content.w)
+					y := v.screen.CursorY - clampOrigin(v.screen.CursorY, v.screen.Rows, s.content.h)
+					if x >= 0 && y >= 0 && x < s.content.w && y < s.content.h {
+						cursorX, cursorY, cursorOn = s.content.x+x, s.content.y+y, true
+					}
+				}
+			}
+			st := vt.Style{Inverse: true, Faint: !focused, Bold: focused}
+			c.canvas.text(s.frame.x, s.frame.y, s.frame.w, c.frameText(v, s), st)
+		}
 	}
 	start := c.out.Len()
 	c.out.WriteString("\x1b[?25l")
 	mark := c.out.Len()
 	c.canvas.flush(&c.out)
 	changed := c.out.Len() > mark
-	// The focused pane's input modes, mirrored on the host.
+	// The focused pane's input modes, mirrored on the host while keys go to it.
 	fv := c.focused()
 	for _, m := range mirrored {
 		want := false
-		if fv.term != nil && fv.live() {
+		if fv != nil && fv.term != nil && fv.live() && (!c.ws || c.ui.mode == modePanes) {
 			want, _ = fv.term.Mode(m.mode, false)
 		}
 		if want != c.modes[m.mode] {
@@ -787,23 +1046,33 @@ func (c *client) compose(a arrangement) {
 	}
 }
 
-// frameText is a pane's frame row: its label and a short note (gff-client.md 3.1).
+// frameText is a pane's frame row: its label, in the workspace its host and agent state, and
+// a short note (gff-client.md 3.1).
 func (c *client) frameText(v *view, s slot) string {
 	t := " " + v.spec.Label
 	var notes []string
+	if c.ws {
+		notes = append(notes, v.h.label)
+		if st := c.ui.agentWord(v); st != "" {
+			notes = append(notes, st)
+		}
+		if c.cfg.Now().Before(v.bellUntil) {
+			notes = append(notes, "bell")
+		}
+	}
 	switch {
 	case v.exited != nil:
 		notes = append(notes, "exited"+exitText(v.exited))
 	case v.ended != nil:
 		notes = append(notes, "gone")
-	case c.offline:
+	case !v.h.online:
 		notes = append(notes, "offline")
 	}
 	if v.spec.Observe {
 		notes = append(notes, "observer")
 	}
 	if v.term != nil && (v.cols != s.content.w || v.rows != s.content.h) {
-		if v.owner != "" && v.owner != c.me {
+		if v.owner != "" && v.owner != v.h.me {
 			notes = append(notes, "owner "+short(v.owner)+" "+strconv.Itoa(v.cols)+"x"+strconv.Itoa(v.rows))
 		} else {
 			notes = append(notes, strconv.Itoa(v.cols)+"x"+strconv.Itoa(v.rows))
@@ -833,6 +1102,16 @@ func short(id string) string {
 		return id[:8]
 	}
 	return id
+}
+
+// rowOf finds the board row of a view, if the hab knows its pane.
+func rowOf(rows []board.Row, v *view) (board.Row, bool) {
+	for _, r := range rows {
+		if r.Host == v.h.label && r.Pane == v.spec.ID {
+			return r, true
+		}
+	}
+	return board.Row{}, false
 }
 
 type realTimer struct{ t *time.Timer }

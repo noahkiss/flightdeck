@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/habconn"
@@ -121,11 +122,12 @@ func TestKeyReader(t *testing.T) {
 // testClient is a client with no connection, for driving frame and render by hand. Its views
 // have a zero PaneStream: no data connection opens, so a snapshot keeps the view's size.
 func testClient(t *testing.T, w, h int, ids ...string) *client {
-	c := &client{cfg: Config{Parser: vt.Fake{}, Logf: t.Logf}, pass: -1, carry: -1, modes: map[int]bool{},
-		keys: newKeyReader(DefaultPrefix), w: w, h: h}
+	hs := &hostState{label: "hab", online: true}
+	c := &client{cfg: Config{Parser: vt.Fake{}, Logf: t.Logf, Now: time.Now}, hosts: map[string]*hostState{"hab": hs},
+		first: "hab", tabs: []*tab{{name: "1"}}, modes: map[int]bool{}, keys: newKeyReader(DefaultPrefix), w: w, h: h}
 	c.canvas.resize(w, h)
 	for _, id := range ids {
-		c.views = append(c.views, &view{spec: PaneSpec{ID: id, Label: id}, stream: &habconn.PaneStream{}, cols: w, rows: h})
+		c.tabs[0].views = append(c.tabs[0].views, &view{spec: PaneSpec{ID: id, Label: id}, h: hs, stream: &habconn.PaneStream{}, cols: w, rows: h})
 	}
 	return c
 }
@@ -143,10 +145,10 @@ func bytesFrame(v *view, data string) paneFrame {
 // host before the composed view starts.
 func TestNewSnapshotResetsModes(t *testing.T) {
 	c := testClient(t, 80, 24, "p")
-	v := c.views[0]
+	v := c.tab().views[0]
 	c.frame(snapshotFrame(v, "hi"))
 	c.render()
-	if c.pass != 0 {
+	if c.pass != v {
 		t.Fatal("the pane does not pass through")
 	}
 	c.frame(bytesFrame(v, "\x1b[?1000h\x1b[>4;2m"))
@@ -187,7 +189,7 @@ func (m modeTerm) Mode(n int, ansi bool) (bool, bool) { return !ansi && m.on[n],
 func TestRestoreLeavesAltScreen(t *testing.T) {
 	for _, m := range []int{1049, 1047, 47} {
 		c := testClient(t, 80, 24, "p")
-		v := c.views[0]
+		v := c.tab().views[0]
 		c.frame(snapshotFrame(v, "hi"))
 		c.render()
 		v.term = modeTerm{Terminal: v.term, on: map[int]bool{m: true}}
