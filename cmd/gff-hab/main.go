@@ -10,6 +10,7 @@
 //	gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
 //	gff-hab peers    [-socket path] [-json]
 //	gff-hab peers accept [-socket path] <label>
+//	gff-hab notify   [-socket path | -via command] [-level l] [-session id] <title> [body]
 //	gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
 //	gff-hab manifests list    [-state dir]
 //	gff-hab hook [-t ms] <harness> [event] < payload
@@ -35,6 +36,8 @@
 // else $GFF_HAB_GIT_INTERVAL, else 60s, besides the reads that hooks and ref changes trigger.
 // A pane's screen checkpoint is written once it has printed nothing for $GFF_HAB_CHECKPOINT_IDLE,
 // else 1s, and at least every $GFF_HAB_CHECKPOINT_EVERY, else 10s, while it prints.
+// Push config comes from -push-config, else <state>/push.json, with $GFF_HAB_PUSH_* over it
+// (docs/push.md); with none, the hab runs without push. `gff-hab notify` raises a notice.
 //
 // With -init systemd or launchd (as the jobs that `gff-hab install` writes run it), gff-hab asks
 // the init system for each holder as its own job (internal/service, holder spec 5.4) and removes
@@ -95,6 +98,7 @@ const usage = `usage:
   gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
   gff-hab peers    [-socket path] [-json]
   gff-hab peers accept [-socket path] <label>
+  gff-hab notify   [-socket path | -via command] [-level passive|active|time-sensitive] [-session id] <title> [body]
   gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
   gff-hab manifests list    [-state dir]
   gff-hab hook [-t ms] <harness> [event] < payload
@@ -133,6 +137,8 @@ func main() {
 		err = events(os.Args[2:])
 	case "peers":
 		err = peersCmd(os.Args[2:], os.Stdout)
+	case "notify":
+		err = notifyCmd(os.Args[2:])
 	case "manifests":
 		err = manifests(os.Args[2:], os.Stdout)
 	case "install":
@@ -213,6 +219,7 @@ func serve(args []string) error {
 		build: fs.String("build", "", "launchd: the build directory under <state>/builds this gff-hab runs from (gff-hab install sets it)"),
 	}
 	peersFile := fs.String("peers", "", "peer list file (default: $GFF_HAB_PEERS, else gff/peers.toml in the user config directory)")
+	pushConfig := fs.String("push-config", "", "push config file (default: <state>/push.json); $GFF_HAB_PUSH_* override its fields")
 	permWait := fs.Duration("permission-wait", 0, "hold Claude's PermissionRequest hook up to this long for the app's answer; 0 is off (default: $GFF_HAB_PERMISSION_WAIT, else off)")
 	fs.Parse(args)
 	logger := log.New(os.Stderr, "gff-hab: ", log.LstdFlags)
@@ -304,14 +311,35 @@ func serve(args []string) error {
 	if os.Getenv("GFF_HAB_DEBUG") != "" {
 		debugf = logger.Printf
 	}
+	var pushes *pushService // set before anything publishes an agent state
 	agents := harness.NewStore(harness.Config{
 		Publish: func(e structure.Event) {
 			if s := srv.Load(); s != nil {
 				s.Publish(e)
 			}
+			if st, ok := e.Data.(api.AgentState); ok && pushes != nil && pushes.notifier != nil {
+				pushes.notifier.State(st) // never blocks
+			}
 		},
 		Logf: debugf,
 	})
+	// Push (app.md 8): the hab sends to APNs with the user's own key, when it is set up.
+	pushes = newPushService(pushSetup{
+		configPath: *pushConfig, state: dir, hab: *hostID, getenv: os.Getenv, logf: logger.Printf,
+		connected: func(c string) bool { s := srv.Load(); return s != nil && s.Connected(c) },
+		label: func(c string) string {
+			if s := srv.Load(); s != nil {
+				return s.ClientLabel(c)
+			}
+			return ""
+		},
+		publish: func(e structure.Event) {
+			if s := srv.Load(); s != nil {
+				s.Publish(e)
+			}
+		},
+	}, store, agents)
+	defer pushes.Close()
 	hpath, err := hookSocketPath(*hookSock, path)
 	if err != nil {
 		return err
@@ -398,7 +426,8 @@ func serve(args []string) error {
 		defer stopCmds()
 		commands = commandService{lk}
 		caps = append(caps, "commands")
-		agentSvc = &agentService{store: store, agents: agents, gate: harness.NewGate(pwait), input: linkQueuer{lk}, logf: logger.Printf}
+		agentSvc = &agentService{store: store, agents: agents, gate: harness.NewGate(pwait), input: linkQueuer{lk}, logf: logger.Printf,
+			answering: pushes.answering}
 		agentCalls = agentSvc
 		// Activity marks for hidden tabs (gff-client.md 15.7): pane.output and pane.bell, at
 		// most once a second per pane.
@@ -444,6 +473,9 @@ func serve(args []string) error {
 	}
 	defer pm.Close()
 	caps = append(caps, peers.Capability)
+	if pushes.Enabled() {
+		caps = append(caps, "push")
+	}
 	s := control.New(control.Config{
 		Build:        build,
 		Host:         api.HostInfo{ID: *hostID},
@@ -465,6 +497,7 @@ func serve(args []string) error {
 		Logf:        logger.Printf,
 		Permissions: permissionService{perms},
 		Peers:       pm,
+		Push:        pushes,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)

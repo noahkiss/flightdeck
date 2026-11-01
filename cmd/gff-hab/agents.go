@@ -57,6 +57,9 @@ type agentService struct {
 	gate   *harness.Gate
 	input  queuer
 	logf   func(string, ...any)
+	// answering, if set, hears of an answer about to go out and, through done, whether it did:
+	// the push notifier names the client when it withdraws the banner (app.md 7.5).
+	answering func(pane, request, client string, allow bool) (done func(ok bool))
 
 	mu      sync.Mutex
 	sending map[string]bool // panes a session.send holds until the turn starts
@@ -156,7 +159,7 @@ func (a *agentService) holdForTurn(pane string) {
 // the request resolved, and reports success only then (harness-adapters.md, Permission
 // answers). It never answers on its own: a decision the hook could not take is reported, not
 // retried as keys. One answer per request: a second one gets conflict, never keys.
-func (a *agentService) Answer(ctx context.Context, client string, p api.ApprovalAnswerParams) error {
+func (a *agentService) Answer(ctx context.Context, client string, p api.ApprovalAnswerParams) (err error) {
 	if p.Choice == api.ApprovalChoiceAnswer {
 		return control.Errorf(api.ErrorKindUnavailable, "answering a question is not built yet; answer it in the terminal")
 	}
@@ -167,6 +170,10 @@ func (a *agentService) Answer(ctx context.Context, client string, p api.Approval
 	st, err := a.agents.BeginAnswer(p.Pane, p.Request)
 	if err != nil {
 		return agentErr(err)
+	}
+	if a.answering != nil {
+		done := a.answering(p.Pane, p.Request, client, allow)
+		defer func() { done(err == nil) }()
 	}
 	sent := false
 	defer func() { a.agents.EndAnswer(p.Pane, p.Request, sent) }()

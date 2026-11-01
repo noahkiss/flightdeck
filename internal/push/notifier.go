@@ -86,6 +86,7 @@ type Notifier struct {
 	open     map[string]*sent     // pane -> the approval banner to withdraw
 	laLast   map[string]time.Time // device -> last Live Activity update sent
 	laKey    map[string]string    // device -> the state key of that update
+	settled  map[string]answer    // pane -> the request an answer resolved, seen as resolved now
 	backoff  time.Duration
 	brokenMu sync.Mutex
 	broken   string
@@ -144,6 +145,7 @@ func NewNotifier(cfg NotifierConfig) *Notifier {
 		open:    map[string]*sent{},
 		laLast:  map[string]time.Time{},
 		laKey:   map[string]string{},
+		settled: map[string]answer{},
 	}
 	go n.run()
 	return n
@@ -223,6 +225,35 @@ func (n *Notifier) Answering(pane, request, by string, allow bool) {
 	n.mu.Lock()
 	n.answers[pane] = answer{request: request, by: by, allow: allow}
 	n.mu.Unlock()
+}
+
+// Answered reports that an answer to request reached the harness. The banner is withdrawn and
+// the Live Activity loses its buttons now, without waiting for the harness's next hook: Claude
+// Code keeps the request open until the tool has run.
+func (n *Notifier) Answered(pane, request string, allow bool) {
+	n.mu.Lock()
+	n.jobs = append(n.jobs, func() {
+		n.settled[pane] = answer{request: request, allow: allow}
+		if st, ok := n.last[pane]; ok {
+			n.process(st)
+		}
+	})
+	n.mu.Unlock()
+	n.signal()
+}
+
+// effective reads a state whose permission request an answer already resolved as the state the
+// answer leads to: working after an allow, idle after a deny.
+func (n *Notifier) effective(st api.AgentState) api.AgentState {
+	a, ok := n.settled[st.Pane]
+	if !ok || st.State != api.AgentStatusBlocked || requestID(st) == "" || requestID(st) != a.request {
+		return st
+	}
+	st.State, st.Kind, st.Request = api.AgentStatusWorking, "", nil
+	if !a.allow {
+		st.State = api.AgentStatusIdle
+	}
+	return st
 }
 
 // Unanswering drops the record Answering made for request, if it is still there.
@@ -386,6 +417,7 @@ func priority(l Level) int {
 }
 
 func (n *Notifier) process(st api.AgentState) {
+	st = n.effective(st)
 	prev, seen := n.last[st.Pane]
 	n.last[st.Pane] = st
 	w := n.cfg.Where(st.Pane, "")

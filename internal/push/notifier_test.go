@@ -350,3 +350,40 @@ func TestNotifierRaise(t *testing.T) {
 		t.Errorf("a notice about a watched session went to %d devices", n)
 	}
 }
+
+// TestNotifierAnsweredEarly: Claude Code keeps a request open until the tool has run. An answer
+// that reached the harness withdraws the banner and drops the Live Activity buttons at once;
+// the same blocked state arriving again raises nothing.
+func TestNotifierAnsweredEarly(t *testing.T) {
+	r := newNotifierRig(t)
+	r.store.Register("dev-phone", phone, Production, allKinds, false)
+	r.store.RegisterActivity("dev-phone", "s1", phoneLA)
+	r.n.State(blocked("r1", "make test"))
+	r.n.Sync()
+	r.n.Answering("p1", "r1", "desk", false)
+	r.n.Answered("p1", "r1", false)
+	r.n.Sync()
+	pa := alerts(r.prod.requests(), phone)
+	if len(pa) != 2 || alertField(pa[1], "title") != "Answered on desk" || alertField(pa[1], "body") != "Denied: make test" {
+		t.Fatalf("early withdrawal: %d alerts", len(pa))
+	}
+	var la []fakeReq
+	for _, q := range r.prod.requests() {
+		if q.Token == phoneLA {
+			la = append(la, q)
+		}
+	}
+	if len(la) != 2 {
+		t.Fatalf("activity updates %d, want 2", len(la))
+	}
+	if cs := la[1].Body["aps"].(map[string]any)["content-state"].(map[string]any); cs["buttons"] != false || cs["state"] != "idle" {
+		t.Errorf("after the answer: %v", cs)
+	}
+	again := blocked("r1", "make test")
+	again.Revision = 9
+	r.n.State(again)
+	r.n.Sync()
+	if n := len(r.prod.requests()); n != 4 {
+		t.Errorf("the settled request raised more pushes: %d requests, want 4", n)
+	}
+}
