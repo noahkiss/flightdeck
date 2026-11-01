@@ -14,8 +14,9 @@
 #
 # Release mode signs with a Developer ID identity, hardened runtime and a secure timestamp,
 # submits one zip to the notary service, staples both bundles and runs every 5.3 check.
-# -dev signs ad-hoc (or with $GFF_DEV_SIGN_IDENTITY) under the .dev bundle ids (3.5), and never
-# notarizes. A dev build holds privacy grants only until its next rebuild.
+# -dev signs ad-hoc (or with $GFF_DEV_SIGN_IDENTITY) under the .dev bundle ids, named
+# "GFF Holder Dev" and "GFF Hab Dev" (3.5), and never notarizes. A dev build holds privacy grants
+# only until its next rebuild.
 #
 # The binaries come from -bin-dir (gff-hab and gff-hab-holder, and gff when present), else this
 # script builds them for this Mac with libghostty (make libghostty, go build -tags ghostty).
@@ -73,8 +74,10 @@ printf '%s' "$prefix" | grep -Eq '^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$' ||
 printf '%s' "$version" | grep -Eq '^[0-9]+(\.[0-9]+){0,2}$' || fail "-version '$version': want x, x.y or x.y.z"
 
 suffix=
+label= # added to the name System Settings shows, so a dev row never reads as the release's
 if [ "$dev" = 1 ]; then
 	suffix=.dev
+	label=" Dev"
 	identity=${GFF_DEV_SIGN_IDENTITY:--}
 	notarize=0
 else
@@ -149,7 +152,8 @@ write_bundle() {
 		plist_string CFBundleExecutable "$exe"
 		plist_string CFBundleIdentifier "$id"
 		plist_string CFBundleInfoDictionaryVersion 6.0
-		plist_string CFBundleName "$name"
+		plist_string CFBundleName "$name$label"
+		[ -n "$label" ] && plist_string CFBundleDisplayName "$name$label"
 		plist_string CFBundlePackageType APPL
 		plist_string CFBundleShortVersionString "$version"
 		plist_string CFBundleVersion "$version"

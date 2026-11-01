@@ -309,17 +309,19 @@ func (s *Service) darwin(ctx context.Context, p api.PermissionsParams, want func
 		}
 	}
 	if want(FullDiskAccess) {
-		c := OpenCheck(ctx, s.cfg.Sys, FullDiskAccess, FDAPath, FDATimeout)
+		// gff-hab opens the protected folder only when a project needs it. A denied open makes
+		// macOS add a switched-off "GFF Hab" row to Full Disk Access, a row the user never
+		// asked for (8.1).
 		need := s.protectedProject()
-		if c.State != api.PermissionStateGranted {
-			if need == "" {
-				c.Detail = strings.TrimPrefix(c.Detail+"; ", "; ") + "not needed: no project is in a protected folder"
-			} else {
+		c := Check{Grant: FullDiskAccess, State: api.PermissionStateNote, Detail: "not needed: no project is in a protected folder"}
+		if need != "" {
+			c = OpenCheck(ctx, s.cfg.Sys, FullDiskAccess, FDAPath, FDATimeout)
+			if c.State != api.PermissionStateGranted {
 				c.Detail = "a project is in " + need
 			}
 		}
 		r := row(api.PermissionProcessHab, "", c, need != "")
-		if c.State != api.PermissionStateGranted && s.cfg.HabBundle != "" {
+		if need != "" && c.State != api.PermissionStateGranted && s.cfg.HabBundle != "" {
 			r.Reveal = s.cfg.HabBundle
 		}
 		rows = append(rows, r)

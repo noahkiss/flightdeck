@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -116,10 +117,15 @@ type fakeSys struct {
 	clip       string
 	clipErr    error
 	home       string
+	mu         sync.Mutex
+	opened     []string // guarded by mu: an open that times out still runs
 }
 
 func (f *fakeSys) ManagerName(context.Context) (string, error) { return f.manager, f.managerErr }
 func (f *fakeSys) OpenDir(p string) error {
+	f.mu.Lock()
+	f.opened = append(f.opened, p)
+	f.mu.Unlock()
 	if f.block[p] {
 		select {}
 	}
@@ -494,8 +500,15 @@ func TestServiceDefaults(t *testing.T) {
 		t.Error("a check sent a request")
 	}
 	// gff-hab's own FDA: not required with no project in a protected folder.
-	if r, _ := find(res, api.PermissionProcessHab, FullDiskAccess); r.Required {
-		t.Errorf("hab FDA required with no protected project: %+v", r)
+	// Nor checked: a denied open would add a switched-off GFF Hab row to Settings (spec 8.1).
+	if r, _ := find(res, api.PermissionProcessHab, FullDiskAccess); r.Required || r.State != api.PermissionStateNote || r.Reveal != "" {
+		t.Errorf("hab FDA with no protected project: %+v", r)
+	}
+	h.sys.mu.Lock()
+	opened := slices.Contains(h.sys.opened, FDAPath)
+	h.sys.mu.Unlock()
+	if opened {
+		t.Error("gff-hab opened the Full Disk Access folder with no project in a protected folder")
 	}
 	for _, g := range []string{Domain, Signature, BackgroundItem} {
 		if r, ok := find(res, api.PermissionProcessHab, g); !ok || r.State != api.PermissionStateGranted {
