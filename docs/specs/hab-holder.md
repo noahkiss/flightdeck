@@ -679,7 +679,8 @@ ends it at once.
 A second gff-hab that says hello takes over; the first is dropped. It is recorded as a crash,
 unless it had already sent handover. The holder first lets the first connection's reader take
 what is already in its socket (up to 100 ms), so a handover sent just before the second hello
-counts. Each
+counts. The newest hello wins: when a third hello arrives while the second still waits for that
+reader, the second ends without a welcome, and never takes over from the third. Each
 logic process holds a lock in the state directory, so this happens only by accident.
 
 ---

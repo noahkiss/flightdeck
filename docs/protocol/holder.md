@@ -308,7 +308,8 @@ records "crash"; the next welcome says previous = 2. A newer hello that replaces
 which already sent handover records "handover": a gff-hab may still be closing when its
 successor says hello. Before it decides, the holder lets the old connection's reader take
 what is already in the socket, for up to 100 ms, so a handover sent just before the newer
-hello counts even if the holder has not read it yet. Recovery is the same as step 5. The only
+hello counts even if the holder has not read it yet. The newest hello wins: an older hello still
+waiting for that reader when a newer one arrives ends without a welcome. Recovery is the same as step 5. The only
 difference is how fresh the checkpoint is. The holder keeps no state about gff-hab's saves.
 
 **Drain (upgrade).**

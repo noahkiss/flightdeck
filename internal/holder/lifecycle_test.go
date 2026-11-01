@@ -522,3 +522,52 @@ func TestListenChecks(t *testing.T) {
 	}
 	l.Close()
 }
+
+// TestHelloOrder: of two hellos that arrive while a connection is open, the later one wins, even
+// when the earlier one is still waiting for the old reader as the later one installs. The earlier
+// one ends without a welcome; it never takes over from the later one.
+func TestHelloOrder(t *testing.T) {
+	waiting, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	_, path := testHolder(t, Config{}, func(h *Holder) {
+		h.afterReplaceWait = func(*conn) {
+			once.Do(func() {
+				close(waiting)
+				<-release
+			})
+		}
+	})
+	c1 := dial(t, path, true)
+	// The earlier hello: it replaces c1, then stops in the hook after c1's reader ended.
+	type result struct {
+		w   *hp.Welcome
+		err error
+	}
+	early := make(chan result, 1)
+	go func() {
+		nc, err := net.Dial("unix", path)
+		if err != nil {
+			early <- result{err: err}
+			return
+		}
+		t.Cleanup(func() { nc.Close() })
+		_ = nc.SetDeadline(time.Now().Add(waitLong))
+		w, err := hp.NewConn(nc, hp.V1()).Hello("early")
+		early <- result{w, err}
+	}()
+	select {
+	case <-waiting:
+	case <-time.After(waitLong):
+		t.Fatal("the earlier hello never waited for the old reader")
+	}
+	if err := c1.closed(); !isEOF(err) {
+		t.Fatalf("replaced connection: %v", err)
+	}
+	c3 := dial(t, path, true) // the later hello: no connection is current, so it installs
+	close(release)
+	r := <-early
+	if r.err == nil {
+		t.Fatalf("the earlier hello got a welcome after the later one: %+v", r.w)
+	}
+	c3.sync() // the later connection is still current
+}

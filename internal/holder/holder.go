@@ -153,7 +153,8 @@ type Holder struct {
 	// the holder never stops serving while it is not empty.
 	owned    map[*pane]struct{}
 	next     hp.Handle
-	conn     *conn // the current logic connection, or nil
+	conn     *conn  // the current logic connection, or nil
+	hellos   uint64 // the number of the newest hello, which is the one that may install
 	previous hp.Previous
 	draining bool
 	closing  bool
@@ -174,6 +175,9 @@ type Holder struct {
 	afterReplayFrame func()
 	// beforeDispatch runs in the reader before each request is handled, outside the lock.
 	beforeDispatch func(c *conn, f hp.Frame)
+	// afterReplaceWait runs in install after a hello waited for the old connection's reader,
+	// outside the lock. Tests use it to land a newer hello in that window.
+	afterReplaceWait func(c *conn)
 	// onOutput runs in the pump under the lock, at the start of each output step. Tests use it
 	// to panic inside a real critical section.
 	onOutput func(p *pane)
@@ -495,7 +499,8 @@ const (
 // connection, if any (spec 6.8). A handover the old gff-hab sent just before its successor's
 // hello may still sit unread in the old socket. So the holder gives the old reader a short read
 // deadline, waits outside the lock for it to read and handle what is there and end, and only
-// then records handover or crash. It returns false when the holder is closing.
+// then records handover or crash. It returns false when the holder is closing, or
+// when a newer hello arrived while c waited: c then ends without a welcome.
 func (h *Holder) install(c *conn) bool {
 	for {
 		old, ok := h.installStep(c)
@@ -509,18 +514,31 @@ func (h *Holder) install(c *conn) bool {
 		case <-old.readerDone:
 		case <-time.After(replaceWait):
 		}
+		if h.afterReplaceWait != nil {
+			h.afterReplaceWait(c)
+		}
 		h.locked(func() { h.dropLocked(old, "replaced by a newer hello") }) // a no-op when the reader dropped it
 	}
 }
 
 // installStep is one locked step of install. It installs c and returns (nil, true) when no
 // connection is current; it returns the old connection to wait for, with its read deadline set;
-// it returns ok false when the holder is closing.
+// it returns ok false when the holder is closing or a newer hello arrived while c waited. The
+// newest hello wins: an older one that was still waiting for the old reader never takes over
+// from a newer one that installed in the meantime.
 func (h *Holder) installStep(c *conn) (old *conn, ok bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if c.hello == 0 {
+		h.hellos++
+		c.hello = h.hellos
+	}
 	for {
 		if h.closing {
+			return nil, false
+		}
+		if c.hello != h.hellos {
+			h.cfg.Logf("holder: hello dropped: replaced by a newer hello")
 			return nil, false
 		}
 		old = h.conn

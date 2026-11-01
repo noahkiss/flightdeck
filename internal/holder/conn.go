@@ -29,6 +29,8 @@ type conn struct {
 	writeTimer *time.Timer
 	// replacing: a newer hello is waiting for this connection's reader to finish.
 	replacing bool
+	// hello numbers this connection's hello in arrival order (Holder.hellos), under the lock.
+	hello uint64
 
 	cond   *sync.Cond // the writer waits here for items
 	q      []item
