@@ -76,6 +76,25 @@ final class ByteCache {
 /// count second, the least recently used out first. The newest image always stays, even past
 /// the byte bound, so a view never decodes it again on each draw.
 final class ImageCache {
+    /// The one cache every open chat shares, so the byte bound holds for the device. It
+    /// empties when the system reports memory pressure.
+    @MainActor static let shared: ImageCache = {
+        let c = ImageCache()
+        let src = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        src.setEventHandler { MainActor.assumeIsolated { c.removeAll() } }
+        src.activate()
+        c.pressure = src
+        return c
+    }()
+
+    private var pressure: DispatchSourceMemoryPressure?
+
+    func removeAll() {
+        entries.removeAll()
+        order.removeAll()
+        total = 0
+    }
+
     let byteLimit: Int
     let countLimit: Int
     private(set) var total = 0

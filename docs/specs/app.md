@@ -637,13 +637,15 @@ What carries over:
   not read) fails at once. A load that still fails says "Could not load this file"; the hab's hint stays out
   of the card.
 - **Bytes cache.** Keyed by item and file version (size and modification time, from the list),
-  at most 64 MiB, the least recently used out first. A list that names a new version drops the
-  old bytes.
+  at most 64 MiB per open chat, the least recently used out first. A list that names a new
+  version drops the old bytes.
 - **Rendering.** Images decode once, off the main thread, with ImageIO thumbnails: at most 1080
   px on the long side inline, 2048 in a document view, 4096 zoomed. Decoded images are kept by
   bitmap bytes: a 32nd of the device's memory, from 64 to 256 MiB (128 MiB on a 4 GiB phone, two
   zoomed images and the inline ones), and at most 24 of them; the least recently used goes
-  first, and the newest always stays.
+  first, and the newest always stays. Every open chat shares this one cache (keys name the hab
+  and the session, since item ids are per hab), and it empties when the system reports memory
+  pressure.
   Text shows its first 256 KiB, cut at a line end, with "Show all", which renders the file as a
   lazy list of 200-line runs. Markdown renders its first 256 KiB; past that a line under it says
   "Showing the first 256 KB of <size>" with "Show all as text", the same lazy list (a whole

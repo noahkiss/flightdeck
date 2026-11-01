@@ -377,6 +377,25 @@ final class ContentLimitTests: XCTestCase {
         XCTAssertEqual(ImageCache.budget(physicalMemory: 4 << 30), 128 << 20)
         XCTAssertEqual(ImageCache.budget(physicalMemory: 1 << 30), 64 << 20)
         XCTAssertEqual(ImageCache.budget(physicalMemory: 64 << 30), 256 << 20)
+        c.removeAll()
+        XCTAssertEqual(c.count, 0)
+        XCTAssertEqual(c.total, 0)
+    }
+
+    /// S1: every chat shares one image cache, and the same item id on two habs is two images.
+    func testImageCacheSharedAcrossChats() async {
+        let png = DemoContent.chartPNG()
+        let a = ContentModel(target: SessionTarget(habID: "h1", session: "s1", pane: nil), items: [], context: ChatContext())
+        let b = ContentModel(target: SessionTarget(habID: "h2", session: "s1", pane: nil), items: [], context: ChatContext())
+        XCTAssertTrue(a.decoded === b.decoded, "one cache for the device")
+        let it = ContentItem(at: "2026-01-01T10:00:05Z", id: "img", kind: .image, modified: "v1", name: "c.png", path: "/w/c.png",
+                             session: "s1", shown: true, size: png.count, type: "image/png")
+        let before = a.decoded.count
+        let ia = await a.image(for: it, data: png, maxPixel: 64)
+        let ib = await b.image(for: it, data: png, maxPixel: 64)
+        XCTAssertNotNil(ia)
+        XCTAssertNotNil(ib)
+        XCTAssertEqual(a.decoded.count, min(before + 2, a.decoded.countLimit), "the same id on two habs is kept apart")
     }
 
     /// R6: a diff file is parsed, and a text file split into runs, once per version: redraws
