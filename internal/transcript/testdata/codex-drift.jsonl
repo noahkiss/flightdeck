@@ -1,0 +1,4 @@
+{"timestamp":"2026-01-01T10:00:00.000Z","type":"session_meta","payload":{"session_id":"019a0000-0000-7000-8000-000000000002","id":"019a0000-0000-7000-8000-000000000002","cwd":"/work/demo","originator":"codex-tui","cli_version":"0.170.0"}}
+{"timestamp":"2026-01-01T10:00:01.000Z","type":"event_msg","payload":{"type":"item_completed","turn_id":"t1","item":{"type":"UserMessage","id":"u1","content":[{"type":"text","text":"Hello"}]}}}
+{"timestamp":"2026-01-01T10:00:02.000Z","type":"event_msg","payload":{"type":"item_completed","turn_id":"t1","item":{"type":"AgentMessage","id":"a1","content":[{"type":"Text","text":"Hi."}],"phase":"final_answer"}}}
+{"timestamp": not json

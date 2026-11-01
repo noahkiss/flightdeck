@@ -1,0 +1,204 @@
+[
+  {
+    "id": "019a0000-0000-7000-8000-0000000000u1",
+    "session": "s1",
+    "kind": "user",
+    "at": "2026-01-01T10:00:01.100Z",
+    "text": "[image]\n\nRename greet to hello in app.py, then run the tests."
+  },
+  {
+    "id": "msg_a1",
+    "session": "s1",
+    "kind": "agent",
+    "at": "2026-01-01T10:00:03.000Z",
+    "text": "I will look at app.py first."
+  },
+  {
+    "id": "exec-0001",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-01-01T10:00:04.500Z",
+    "tool": {
+      "name": "exec",
+      "target": "grep -n greet app.py",
+      "status": "done",
+      "input": {
+        "command": "grep -n greet app.py"
+      },
+      "output": "3:def greet():\n"
+    }
+  },
+  {
+    "id": "exec-0002",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-01-01T10:00:06.000Z",
+    "tool": {
+      "name": "apply_patch",
+      "target": "/work/demo/app.py and 1 more",
+      "status": "done",
+      "input": {
+        "/work/demo/app.py": {
+          "type": "update",
+          "unified_diff": "@@ -3 +3 @@\n-def greet():\n+def hello():\n",
+          "move_path": null
+        },
+        "/work/demo/test_app.py": {
+          "type": "update",
+          "unified_diff": "@@ -1 +1 @@\n-from app import greet\n+from app import hello\n",
+          "move_path": null
+        }
+      },
+      "output": "Success. Updated the following files:\nM app.py\nM test_app.py"
+    }
+  },
+  {
+    "id": "exec-0003",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-01-01T10:00:07.000Z",
+    "tool": {
+      "name": "exec",
+      "target": "python -m pytest -q",
+      "status": "error",
+      "input": {
+        "command": "python -m pytest -q\n# second line"
+      },
+      "output": "1 failed, 2 passed\n"
+    }
+  },
+  {
+    "id": "exec-0004",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-01-01T10:00:08.000Z",
+    "tool": {
+      "name": "exec",
+      "target": "rm -rf build",
+      "status": "denied",
+      "input": {
+        "command": "rm -rf build"
+      }
+    }
+  },
+  {
+    "id": "exec-0005",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-01-01T10:00:09.000Z",
+    "tool": {
+      "name": "mcp__docs__search",
+      "target": "pytest fixtures",
+      "status": "error",
+      "input": {
+        "query": "pytest fixtures"
+      },
+      "output": "no results"
+    }
+  },
+  {
+    "id": "exec-0006",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-01-01T10:00:10.000Z",
+    "tool": {
+      "name": "web_search",
+      "target": "pytest rename fixture",
+      "status": "done"
+    }
+  },
+  {
+    "id": "exec-0007",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-01-01T10:00:11.000Z",
+    "tool": {
+      "name": "image_gen",
+      "target": "/work/demo/icon.png",
+      "status": "done"
+    }
+  },
+  {
+    "id": "exec-0008",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-01-01T10:00:12.000Z",
+    "tool": {
+      "name": "view_image",
+      "target": "/work/demo/icon.png",
+      "status": "done"
+    }
+  },
+  {
+    "id": "call_sub1",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-01-01T10:00:13.000Z",
+    "text": "Subagent checker started",
+    "event": "notice"
+  },
+  {
+    "id": "call_wait1",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-01-01T10:00:15.000Z",
+    "tool": {
+      "name": "agent_wait",
+      "status": "done"
+    }
+  },
+  {
+    "id": "fut-1",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-01-01T10:00:16.000Z",
+    "text": "Unsupported Codex item: FutureItem",
+    "event": "unknown"
+  },
+  {
+    "id": "line-7698",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-01-01T10:00:17.000Z",
+    "text": "Unsupported Codex record: future_line",
+    "event": "unknown"
+  },
+  {
+    "id": "msg_a2",
+    "session": "s1",
+    "kind": "agent",
+    "at": "2026-01-01T10:00:18.000Z",
+    "text": "Renamed greet to hello. One test still fails."
+  },
+  {
+    "id": "019a0000-0000-7000-8000-0000000000u2",
+    "session": "s1",
+    "kind": "user",
+    "at": "2026-01-01T10:00:30.000Z",
+    "text": "Fix the failing test."
+  },
+  {
+    "id": "line-8913",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-01-01T10:00:31.000Z",
+    "text": "Interrupted by the owner",
+    "event": "interrupt"
+  },
+  {
+    "id": "line-9049",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-01-01T10:00:32.000Z",
+    "text": "Rate limit reached; try again later.",
+    "event": "notice"
+  },
+  {
+    "id": "line-9159",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-01-01T10:00:40.000Z",
+    "text": "Conversation compacted",
+    "event": "compaction"
+  }
+]

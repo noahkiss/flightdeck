@@ -1,5 +1,5 @@
 // Package transcript reads a harness's conversation transcript in place and serves it as chat
-// messages (docs/specs/harness-adapters.md, Claude Code: conversation). It tails the file the
+// messages (docs/specs/harness-adapters.md, Claude Code and Codex: conversation). It tails the file the
 // harness writes and never copies, moves or rewrites it.
 //
 // Message ids are stable: they come from the transcript's own record ids, or from byte offsets
@@ -22,8 +22,10 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 )
 
-// Reader reads one Claude Code transcript. It is safe for concurrent use.
+// Reader reads one harness transcript: a Claude Code session JSONL or a Codex rollout. It is
+// safe for concurrent use.
 type Reader struct {
+	format   format
 	path     string
 	session  string // the gff-hab session id put on every message
 	logf     func(string, ...any)
@@ -32,7 +34,7 @@ type Reader struct {
 	mu      sync.Mutex
 	t       *tail
 	c       *conversation
-	p       *claudeParser
+	p       lineParser
 	loaded  bool // the first read is done; changes after it are reported to onChange
 	warned  map[string]bool
 	drift   string
@@ -40,7 +42,26 @@ type Reader struct {
 	pending []*item // changed during the current refresh
 }
 
-// Config is what NewClaude needs. Path is required.
+// lineParser turns one complete transcript line, ending at byte offset end, into chat messages.
+// data is nil for a line over maxLine.
+type lineParser interface {
+	line(data []byte, end int64)
+}
+
+// format is what differs between the harnesses' transcripts: the parser, and the versions it
+// was tested against.
+type format struct {
+	name     string // the harness, for log lines
+	min, max string // the tested version range
+	parser   func(r *Reader) lineParser
+}
+
+var (
+	claudeFormat = format{name: "Claude Code", min: ClaudeTestedMin, max: ClaudeTestedMax, parser: newClaudeParser}
+	codexFormat  = format{name: "Codex", min: CodexTestedMin, max: CodexTestedMax, parser: newCodexParser}
+)
+
+// Config is what NewClaude and NewCodex need. Path is required.
 type Config struct {
 	Path    string // the session JSONL
 	Session string // gff-hab session id for the messages
@@ -57,8 +78,14 @@ type Config struct {
 
 // NewClaude returns a reader of a Claude Code session transcript. It reads nothing until the
 // first call; a file that does not exist yet reads as an empty conversation.
-func NewClaude(cfg Config) *Reader {
-	r := &Reader{path: cfg.Path, session: cfg.Session, logf: cfg.Logf, onChange: cfg.OnChange, warned: map[string]bool{}}
+func NewClaude(cfg Config) *Reader { return newReader(claudeFormat, cfg) }
+
+// NewCodex returns a reader of a Codex rollout file. Like NewClaude, it reads nothing until the
+// first call.
+func NewCodex(cfg Config) *Reader { return newReader(codexFormat, cfg) }
+
+func newReader(f format, cfg Config) *Reader {
+	r := &Reader{format: f, path: cfg.Path, session: cfg.Session, logf: cfg.Logf, onChange: cfg.OnChange, warned: map[string]bool{}}
 	if r.logf == nil {
 		r.logf = func(string, ...any) {}
 	}
@@ -70,9 +97,12 @@ func NewClaude(cfg Config) *Reader {
 func (r *Reader) reset() {
 	r.t = &tail{path: r.path}
 	r.c = newConversation()
-	r.p = &claudeParser{c: r.c, tools: map[string]string{}, r: r, changed: func(it *item) { r.pending = append(r.pending, it) }}
+	r.p = r.format.parser(r)
 	r.loaded = false
 }
+
+// changed records that the current line added or changed it, for OnChange.
+func (r *Reader) changed(it *item) { r.pending = append(r.pending, it) }
 
 // warn logs a problem once per key for this reader.
 func (r *Reader) warn(key, format string, args ...any) {
@@ -83,16 +113,17 @@ func (r *Reader) warn(key, format string, args ...any) {
 	r.logf("transcript %s: "+format, append([]any{r.path}, args...)...)
 }
 
-// checkVersion records drift when a record's Claude Code version is outside the tested range.
+// checkVersion records drift when a record's harness version is outside the tested range.
 // Drift follows the newest record: a record inside the range clears it.
 func (r *Reader) checkVersion(v string) {
-	lo, ok1 := compareVersions(v, ClaudeTestedMin)
-	hi, ok2 := compareVersions(v, ClaudeTestedMax)
+	f := r.format
+	lo, ok1 := compareVersions(v, f.min)
+	hi, ok2 := compareVersions(v, f.max)
 	switch {
 	case !ok1 || !ok2:
-		r.drift = fmt.Sprintf("Claude Code version %q is unreadable; reading in tolerant mode", v)
+		r.drift = fmt.Sprintf("%s version %q is unreadable; reading in tolerant mode", f.name, v)
 	case lo < 0 || hi > 0:
-		r.drift = fmt.Sprintf("Claude Code %s is outside the tested range %s to %s; reading in tolerant mode", v, ClaudeTestedMin, ClaudeTestedMax)
+		r.drift = fmt.Sprintf("%s %s is outside the tested range %s to %s; reading in tolerant mode", f.name, v, f.min, f.max)
 	default:
 		r.drift = ""
 		return
@@ -243,7 +274,13 @@ func FindClaude(configDir, sessionID string) (string, error) {
 	if !claudeSessionID.MatchString(sessionID) {
 		return "", fmt.Errorf("session id %q cannot name a transcript", sessionID)
 	}
-	matches, err := filepath.Glob(filepath.Join(configDir, "projects", "*", sessionID+".jsonl"))
+	return newestFile(filepath.Join(configDir, "projects", "*", sessionID+".jsonl"))
+}
+
+// newestFile returns the most recently written regular file that matches pattern, or
+// ErrNoTranscript.
+func newestFile(pattern string) (string, error) {
+	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return "", err
 	}

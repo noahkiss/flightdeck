@@ -356,10 +356,14 @@ func serve(args []string) error {
 		if err != nil {
 			return err
 		}
+		codexHome, err := transcript.CodexHome(os.Getenv)
+		if err != nil {
+			return err
+		}
 		chats = newChatService(chatConfig{
 			session: store.Session,
 			agent:   agents.Get,
-			find:    func(native string) (string, error) { return transcript.FindClaude(claudeDir, native) },
+			find:    transcriptFinder(claudeDir, codexHome),
 			publish: func(e structure.Event) {
 				if s := srv.Load(); s != nil {
 					s.Publish(e)

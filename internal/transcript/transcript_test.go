@@ -62,16 +62,22 @@ func readAll(t *testing.T, r *Reader, limit int) []api.ChatMessage {
 }
 
 // TestFixtures reads each hand-written fixture and compares the chat messages with the expected
-// file beside it (.chat.json). Each fixture states the Claude Code version its shape follows.
+// file beside it (.chat.json). Each fixture states the harness version its shape follows:
+// claude-<version>.jsonl for Claude Code, codex-<version>.jsonl for a Codex rollout.
 func TestFixtures(t *testing.T) {
-	files, _ := filepath.Glob("testdata/claude-*.jsonl")
-	if len(files) == 0 {
+	claude, _ := filepath.Glob("testdata/claude-*.jsonl")
+	codex, _ := filepath.Glob("testdata/codex-*.jsonl")
+	if len(claude) == 0 || len(codex) == 0 {
 		t.Fatal("no fixtures")
 	}
-	for _, f := range files {
+	for _, f := range append(claude, codex...) {
 		t.Run(filepath.Base(f), func(t *testing.T) {
 			var l logs
-			r := NewClaude(Config{Path: f, Session: "s1", Logf: l.logf})
+			open := NewClaude
+			if strings.HasPrefix(filepath.Base(f), "codex-") {
+				open = NewCodex
+			}
+			r := open(Config{Path: f, Session: "s1", Logf: l.logf})
 			got := readAll(t, r, 7)
 			if full := readAll(t, r, 200); !reflect.DeepEqual(got, full) {
 				t.Fatal("paging in pages of 7 gives other messages than one page")
@@ -338,6 +344,110 @@ func TestFindClaude(t *testing.T) {
 	})
 	if err != nil || got != "/cfg" {
 		t.Errorf("config dir %q %v", got, err)
+	}
+}
+
+// TestCodexUnknown: an unknown rollout line type and an unknown item type become placeholders
+// with a warning; an unknown event_msg type is only logged, since Codex has many UI events. The
+// generated image's bytes never reach a message.
+func TestCodexUnknown(t *testing.T) {
+	var l logs
+	r := NewCodex(Config{Path: "testdata/codex-0.166.0.jsonl", Session: "s1", Logf: l.logf})
+	msgs := readAll(t, r, 200)
+	for _, want := range []string{"future_line", "FutureItem"} {
+		found := false
+		for _, m := range msgs {
+			if m.Event == api.ChatEventUnknown && strings.Contains(m.Text, want) {
+				found = true
+			}
+		}
+		if !found || !l.has(want) {
+			t.Errorf("no placeholder or warning for %s; logs %q", want, l.lines)
+		}
+	}
+	if !l.has("future_event") {
+		t.Errorf("no warning for an unknown event; logs %q", l.lines)
+	}
+	b, _ := json.Marshal(msgs)
+	for _, leak := range []string{"future_event", "iVBORw0K", "environment_context", "opaque"} {
+		if bytes.Contains(b, []byte(leak)) {
+			t.Errorf("messages contain %q", leak)
+		}
+	}
+	if r.Drift() != "" {
+		t.Errorf("drift on a tested version: %s", r.Drift())
+	}
+}
+
+// TestCodexDrift: a newer Codex reads in tolerant mode and is reported; an unreadable line is a
+// placeholder.
+func TestCodexDrift(t *testing.T) {
+	var l logs
+	r := NewCodex(Config{Path: "testdata/codex-drift.jsonl", Session: "s1", Logf: l.logf})
+	msgs := readAll(t, r, 200)
+	if len(msgs) != 3 || msgs[0].Kind != api.ChatKindUser || msgs[1].Kind != api.ChatKindAgent || msgs[2].Event != api.ChatEventUnknown {
+		t.Fatalf("messages: %+v", msgs)
+	}
+	if !strings.Contains(r.Drift(), "Codex 0.170.0") || !l.has("outside the tested range") || !l.has("unreadable") {
+		t.Errorf("drift %q, logs %q", r.Drift(), l.lines)
+	}
+}
+
+// TestCodexTail: a rollout read while Codex appends to it reports each new item once, and a
+// half-written last line waits for its newline.
+func TestCodexTail(t *testing.T) {
+	b, err := os.ReadFile("testdata/codex-0.166.0.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.SplitAfter(b, []byte("\n"))
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	appendFile(t, path, bytes.Join(lines[:6], nil))
+	var changes []api.ChatMessage
+	r := NewCodex(Config{Path: path, Session: "s1", OnChange: func(m []api.ChatMessage) { changes = append(changes, m...) }})
+	msgs, _, _, err := r.Page(context.Background(), "", 50)
+	if err != nil || len(msgs) != 1 || msgs[0].Kind != api.ChatKindUser {
+		t.Fatalf("first page: %+v %v", msgs, err)
+	}
+	half := lines[8][:len(lines[8])/2]
+	appendFile(t, path, bytes.Join(lines[6:8], nil))
+	appendFile(t, path, half)
+	if err := r.Refresh(); err != nil || len(changes) != 0 {
+		t.Fatalf("half line: %+v %v", changes, err)
+	}
+	appendFile(t, path, lines[8][len(half):])
+	if err := r.Refresh(); err != nil || len(changes) != 1 || changes[0].ID != "msg_a1" {
+		t.Fatalf("after the newline: %+v %v", changes, err)
+	}
+}
+
+func TestFindCodex(t *testing.T) {
+	dir := t.TempDir()
+	id := "019a0000-0000-7000-8000-000000000001"
+	if _, err := FindCodex(dir, id); !errors.Is(err, ErrNoTranscript) {
+		t.Fatalf("empty dir: %v", err)
+	}
+	p := filepath.Join(dir, "sessions", "2026", "01", "01", "rollout-2026-01-01T10-00-00-"+id+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	appendFile(t, p, []byte("{}\n"))
+	if got, err := FindCodex(dir, id); err != nil || got != p {
+		t.Fatalf("got %q %v", got, err)
+	}
+	for _, bad := range []string{"", "../x", "a/b", "*", ".hidden"} {
+		if _, err := FindCodex(dir, bad); err == nil {
+			t.Errorf("id %q was accepted", bad)
+		}
+	}
+	got, err := CodexHome(func(k string) string {
+		if k == "CODEX_HOME" {
+			return "/codex"
+		}
+		return ""
+	})
+	if err != nil || got != "/codex" {
+		t.Errorf("codex home %q %v", got, err)
 	}
 }
 

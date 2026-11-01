@@ -13,10 +13,10 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/structure"
-	"github.com/noahkiss/flightdeck/internal/transcript"
 )
 
-// chatWorld is the state a chatService looks up: sessions, agent states, a Claude config dir.
+// chatWorld is the state a chatService looks up: sessions, agent states, and one directory that
+// serves as both the Claude config dir and the Codex home.
 type chatWorld struct {
 	mu       sync.Mutex
 	sessions map[string]api.Session
@@ -39,7 +39,7 @@ func (w *chatWorld) service(t *testing.T, tweak ...func(*chatConfig)) *chatServi
 			a, ok := w.agents[pane]
 			return a, ok
 		},
-		find:    func(native string) (string, error) { return transcript.FindClaude(w.dir, native) },
+		find:    transcriptFinder(w.dir, w.dir),
 		publish: func(e structure.Event) { w.mu.Lock(); w.events = append(w.events, e); w.mu.Unlock() },
 		every:   10 * time.Millisecond,
 	}
@@ -74,7 +74,7 @@ func TestChatService(t *testing.T) {
 	w := &chatWorld{
 		dir:      t.TempDir(),
 		sessions: map[string]api.Session{"s1": {ID: "s1", Pane: "p1"}, "s2": {ID: "s2", Pane: "p2"}, "s3": {ID: "s3"}},
-		agents:   map[string]api.AgentState{"p1": {Pane: "p1", Harness: "claude", Session: native}, "p2": {Pane: "p2", Harness: "codex", Session: "x"}},
+		agents:   map[string]api.AgentState{"p1": {Pane: "p1", Harness: "claude", Session: native}, "p2": {Pane: "p2", Harness: "opencode", Session: "x"}},
 	}
 	c := w.service(t)
 	ctx := context.Background()
@@ -246,5 +246,51 @@ func TestChatEvict(t *testing.T) {
 	set(chatIdle+time.Second, true)
 	if c.pass(); open() != 0 {
 		t.Fatal("kept a reader whose agent is gone and whose file stopped growing")
+	}
+}
+
+// TestChatCodex: a Codex pane's conversation comes from its rollout under the Codex home, named
+// by the session id its hooks reported; what Codex appends goes out as chat.message events.
+func TestChatCodex(t *testing.T) {
+	native := "019a0000-0000-7000-8000-000000000001"
+	w := &chatWorld{
+		dir:      t.TempDir(),
+		sessions: map[string]api.Session{"s1": {ID: "s1", Pane: "p1"}},
+		agents:   map[string]api.AgentState{"p1": {Pane: "p1", Harness: "codex", Session: native}},
+	}
+	c := w.service(t)
+	ctx := context.Background()
+	fixture, err := os.ReadFile("../../internal/transcript/testdata/codex-0.166.0.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.SplitAfter(fixture, []byte("\n"))
+	path := filepath.Join(w.dir, "sessions", "2026", "01", "01", "rollout-2026-01-01T10-00-00-"+native+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, bytes.Join(lines[:9], nil), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first, err := c.ChatPage(ctx, api.ChatPageParams{Session: "s1"})
+	if err != nil || len(first.Messages) != 2 || first.Messages[0].Kind != api.ChatKindUser || first.Messages[1].Kind != api.ChatKindAgent {
+		t.Fatalf("first page: %+v %v", first, err)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Write(bytes.Join(lines[9:11], nil)) // a function call (skipped) and its command item
+	f.Close()
+	waitUntil(t, "the command as an event", func() bool { return w.eventCount() == 1 })
+	w.mu.Lock()
+	m := w.events[0].Data.(api.ChatMessage)
+	w.mu.Unlock()
+	if m.Tool == nil || m.Tool.Name != "exec" || m.Session != "s1" {
+		t.Fatalf("event %+v", m)
+	}
+	next, err := c.ChatPage(ctx, api.ChatPageParams{Session: "s1", After: first.Cursor})
+	if err != nil || len(next.Messages) != 1 || next.Messages[0].ID != m.ID {
+		t.Fatalf("after the cursor: %+v %v", next, err)
 	}
 }

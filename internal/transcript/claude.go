@@ -92,6 +92,10 @@ type claudeParser struct {
 	changed func(*item)
 }
 
+func newClaudeParser(r *Reader) lineParser {
+	return &claudeParser{c: r.c, tools: map[string]string{}, r: r, changed: r.changed}
+}
+
 func (p *claudeParser) emit(msg api.ChatMessage, end int64) {
 	if msg.At == "" {
 		msg.At = p.at

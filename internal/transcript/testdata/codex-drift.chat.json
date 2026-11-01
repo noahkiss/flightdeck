@@ -1,0 +1,24 @@
+[
+  {
+    "id": "u1",
+    "session": "s1",
+    "kind": "user",
+    "at": "2026-01-01T10:00:01.000Z",
+    "text": "Hello"
+  },
+  {
+    "id": "a1",
+    "session": "s1",
+    "kind": "agent",
+    "at": "2026-01-01T10:00:02.000Z",
+    "text": "Hi."
+  },
+  {
+    "id": "line-672",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-01-01T10:00:02.000Z",
+    "text": "An unreadable transcript record",
+    "event": "unknown"
+  }
+]

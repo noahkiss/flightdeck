@@ -8,9 +8,21 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/detect"
 	"github.com/noahkiss/flightdeck/internal/structure"
 	"github.com/noahkiss/flightdeck/internal/transcript"
 )
+
+// transcriptFinder finds a native session's transcript: a Claude Code session file under
+// claudeDir, or a Codex rollout under codexHome.
+func transcriptFinder(claudeDir, codexHome string) func(harness, native string) (string, error) {
+	return func(harness, native string) (string, error) {
+		if harness == detect.KindCodex {
+			return transcript.FindCodex(codexHome, native)
+		}
+		return transcript.FindClaude(claudeDir, native)
+	}
+}
 
 // chatPoll is how often open transcripts are read for new lines, to send chat.message events.
 const chatPoll = time.Second
@@ -19,7 +31,7 @@ const chatPoll = time.Second
 const chatIdle = 10 * time.Minute
 
 // chatService serves chat.page from each session's harness transcript, read in place
-// (harness-adapters.md, Claude Code: conversation), and sends chat.message events for what the
+// (harness-adapters.md, Claude Code and Codex: conversation), and sends chat.message events for what the
 // harness appends. A session's transcript is found through its pane's agent state: the native
 // session id the hooks reported is the resume id, and names the file.
 type chatService struct {
@@ -35,7 +47,7 @@ type chatService struct {
 type chatConfig struct {
 	session func(id string) (api.Session, bool)
 	agent   func(pane string) (api.AgentState, bool)
-	find    func(native string) (string, error) // the Claude Code transcript of a native session
+	find    func(harness, native string) (string, error) // the transcript of a native session
 	publish func(structure.Event)
 	watched func(session string) bool // a subscription gets this session's events; nil: none does
 	logf    func(string, ...any)
@@ -46,11 +58,12 @@ type chatConfig struct {
 
 // chatReader is one session's transcript reader. Its fields change under chatService.mu.
 type chatReader struct {
-	native string
-	r      *transcript.Reader // nil while the file is not written: the poll opens it when it is
-	paged  time.Time          // the last chat.page
-	size   int64              // bytes read, at the last poll
-	grew   time.Time          // when size last changed, or when the reader was made
+	harness string // claude or codex: picks the file and the parser
+	native  string
+	r       *transcript.Reader // nil while the file is not written: the poll opens it when it is
+	paged   time.Time          // the last chat.page
+	size    int64              // bytes read, at the last poll
+	grew    time.Time          // when size last changed, or when the reader was made
 }
 
 func newChatService(cfg chatConfig) *chatService {
@@ -118,14 +131,14 @@ func (c *chatService) pass() {
 		}
 		r := e.r
 		if r == nil {
-			path, err := c.find(e.native)
+			path, err := c.find(e.harness, e.native)
 			if err != nil {
 				continue // not written yet, or unreadable: the next pass tries again
 			}
 			c.mu.Lock()
 			if c.readers[e.id] == e.cr && e.cr.r == nil {
 				// The client saw an empty conversation: report everything the file holds.
-				e.cr.r = c.open(e.id, path, true)
+				e.cr.r = c.open(e.harness, e.id, path, true)
 			}
 			r = e.cr.r
 			c.mu.Unlock()
@@ -165,8 +178,12 @@ func (c *chatService) unneeded(id string, cr chatReader, now time.Time) bool {
 	return now.Sub(cr.grew) >= c.idle
 }
 
-func (c *chatService) open(id, path string, fromEmpty bool) *transcript.Reader {
-	return transcript.NewClaude(transcript.Config{Path: path, Session: id, Logf: c.logf, OnChange: c.changed, FromEmpty: fromEmpty})
+func (c *chatService) open(harness, id, path string, fromEmpty bool) *transcript.Reader {
+	cfg := transcript.Config{Path: path, Session: id, Logf: c.logf, OnChange: c.changed, FromEmpty: fromEmpty}
+	if harness == detect.KindCodex {
+		return transcript.NewCodex(cfg)
+	}
+	return transcript.NewClaude(cfg)
 }
 
 // reader returns the transcript reader of a gff-hab session, opening it on first use. A nil
@@ -177,13 +194,13 @@ func (c *chatService) reader(id string) (*transcript.Reader, error) {
 	if !ok {
 		return nil, control.Errorf(api.ErrorKindNotFound, "no session %s", id)
 	}
-	var native string
+	var harness, native string
 	if sess.Pane != "" {
 		if st, ok := c.agent(sess.Pane); ok && st.Session != "" {
-			if st.Harness != "claude" {
+			if st.Harness != detect.KindClaude && st.Harness != detect.KindCodex {
 				return nil, control.Errorf(api.ErrorKindUnavailable, "session %s runs %s, which has no transcript reader yet", id, st.Harness)
 			}
-			native = st.Session
+			harness, native = st.Harness, st.Session
 		}
 	}
 	now := c.now()
@@ -199,7 +216,7 @@ func (c *chatService) reader(id string) (*transcript.Reader, error) {
 	if native == "" {
 		return nil, control.Errorf(api.ErrorKindUnavailable, "session %s has no agent session yet: its harness has not reported one", id)
 	}
-	path, err := c.find(native)
+	path, err := c.find(harness, native)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	cur := c.readers[id]
@@ -209,7 +226,7 @@ func (c *chatService) reader(id string) (*transcript.Reader, error) {
 	}
 	if errors.Is(err, transcript.ErrNoTranscript) {
 		if cur == nil || cur.native != native {
-			c.readers[id] = &chatReader{native: native, grew: now}
+			c.readers[id] = &chatReader{harness: harness, native: native, grew: now}
 		}
 		c.readers[id].paged = now
 		return nil, nil
@@ -218,8 +235,8 @@ func (c *chatService) reader(id string) (*transcript.Reader, error) {
 		return nil, control.Errorf(api.ErrorKindUnavailable, "session %s: %v", id, err)
 	}
 	fromEmpty := cur != nil && cur.native == native // a client paged it while it was not written
-	r := c.open(id, path, fromEmpty)
-	c.readers[id] = &chatReader{native: native, r: r, paged: now, grew: now}
+	r := c.open(harness, id, path, fromEmpty)
+	c.readers[id] = &chatReader{harness: harness, native: native, r: r, paged: now, grew: now}
 	return r, nil
 }
 
