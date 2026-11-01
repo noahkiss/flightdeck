@@ -295,3 +295,55 @@ func TestStoreConcurrent(t *testing.T) {
 		}
 	}
 }
+
+// TestClaudeWindowName: a known key keeps its name; another key of lower-case words is a window
+// named by its words with a leading length shortened; any other key is refused. A spend period
+// that is not short lower-case words is left off the name.
+func TestClaudeWindowName(t *testing.T) {
+	for k, want := range map[string]string{
+		"five_hour": "5h", "seven_day": "7d", "spend_limit": "spend",
+		"seven_day_opus": "7d opus", "five_hour_sonnet": "5h sonnet", "30_day": "30d",
+		"two_weeks": "2w", "monthly": "monthly", "opus_weekly": "opus weekly", "day_opus": "day opus",
+		"Opus": "", "seven__day": "", "_x": "", "x_": "", "seven-day": "", "": "",
+		strings.Repeat("a", 41): "", "été": "",
+	} {
+		got, ok := claudeWindowName(k)
+		if got != want || ok != (want != "") {
+			t.Errorf("%q: %q, %v; want %q", k, got, ok, want)
+		}
+	}
+	at := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
+	for period, want := range map[string]string{"monthly": "spend monthly", "per day": "spend per day",
+		"": "spend", "Monthly": "spend", strings.Repeat("m", 25): "spend", "a\nb": "spend"} {
+		b, _ := json.Marshal(map[string]any{"rate_limits": map[string]any{"spend_limit": map[string]any{"used_percentage": 1, "period": period}}})
+		st, err := ParseClaudeStatus(b, at, "hab-a")
+		if err != nil || len(st.Windows) != 1 || st.Windows[0].Name != want {
+			t.Errorf("period %q: %+v %v, want %q", period, st.Windows, err, want)
+		}
+	}
+}
+
+// TestCodexOrder: when lines come out of time order, the newest timestamp of each limit id and
+// of the plan wins, not the last line.
+func TestCodexOrder(t *testing.T) {
+	line := func(ts, limit string, used int, plan string) string {
+		return fmt.Sprintf(`{"timestamp":"2026-01-01T10:00:%s.000Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":%q,"primary":{"used_percent":%d,"window_minutes":300,"resets_at":1767268800},"plan_type":%q}}}`+"\n", ts, limit, used, plan)
+	}
+	data := line("20", "codex", 20, "pro") + line("10", "codex", 10, "plus") +
+		line("30", "other", 30, "") + line("05", "other", 5, "")
+	u := ParseCodexRollout([]byte(data), "hab-a", "")
+	if u.Label != "Pro" || len(u.Windows) != 2 || u.Windows[0].UsedPct != 20 || u.Windows[1].UsedPct != 30 ||
+		u.Windows[0].ReadAt != "2026-01-01T10:00:20Z" {
+		t.Errorf("out of order: label %q, windows %+v", u.Label, u.Windows)
+	}
+}
+
+// TestPlanLabel: the first letter is upper-cased by rune; an empty or long plan has no label.
+func TestPlanLabel(t *testing.T) {
+	for p, want := range map[string]string{"plus": "Plus", "pro": "Pro", "": "", "élite": "Élite",
+		strings.Repeat("p", 33): ""} {
+		if got := planLabel(p); got != want {
+			t.Errorf("planLabel(%q) = %q, want %q", p, got, want)
+		}
+	}
+}

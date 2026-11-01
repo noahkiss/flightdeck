@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,12 +21,61 @@ const (
 	ClaudeTestedMax = "2.1.316"
 )
 
-// claudeWindows maps a status-line rate_limits key to a window name. Any other key is left out
-// and reported as drift once.
+// claudeWindows maps the known status-line rate_limits keys to window names. Another key whose
+// value parses is a window too, named by claudeWindowName.
 var claudeWindows = map[string]string{
 	"five_hour":   "5h",
 	"seven_day":   "7d",
 	"spend_limit": "spend",
+}
+
+// Number words and units of a rate_limits key such as seven_day_opus.
+var (
+	claudeNumbers = map[string]int{"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+		"seven": 7, "eight": 8, "nine": 9, "ten": 10, "twelve": 12, "fourteen": 14, "thirty": 30}
+	claudeUnits = map[string]string{"minute": "m", "minutes": "m", "hour": "h", "hours": "h",
+		"day": "d", "days": "d", "week": "w", "weeks": "w"}
+)
+
+// claudeWindowName names the window of a rate_limits key: a known key by claudeWindows, any
+// other by its words, a leading length shortened: seven_day_opus is "7d opus". It refuses a key
+// that is not lower-case words of letters and digits joined by "_", or is longer than 40 bytes.
+func claudeWindowName(k string) (string, bool) {
+	if n, ok := claudeWindows[k]; ok {
+		return n, true
+	}
+	if !lowerWords(k, '_', 40) {
+		return "", false
+	}
+	words := strings.Split(k, "_")
+	if len(words) >= 2 {
+		n, ok := claudeNumbers[words[0]]
+		if !ok {
+			n, _ = strconv.Atoi(words[0])
+		}
+		if u, ok := claudeUnits[words[1]]; ok && n > 0 {
+			words = append([]string{strconv.Itoa(n) + u}, words[2:]...)
+		}
+	}
+	return strings.Join(words, " "), true
+}
+
+// lowerWords reports whether s is 1 to limit bytes of words of a-z and 0-9, each separated by
+// one sep.
+func lowerWords(s string, sep byte, limit int) bool {
+	if s == "" || len(s) > limit || s[0] == sep || s[len(s)-1] == sep {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		case c == sep && s[i-1] != sep:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // ClaudeStatus is the result of reading one status-line input.
@@ -63,9 +113,9 @@ func ParseClaudeStatus(payload []byte, at time.Time, host string) (ClaudeStatus,
 		if string(raw) == "null" {
 			continue
 		}
-		name, ok := claudeWindows[k]
+		name, ok := claudeWindowName(k)
 		if !ok {
-			st.Drift = append(st.Drift, "rate_limits."+k+" is not known")
+			st.Drift = append(st.Drift, "a rate_limits key is not a window name")
 			continue
 		}
 		var w struct {
@@ -91,7 +141,7 @@ func ParseClaudeStatus(payload []byte, at time.Time, host string) (ClaudeStatus,
 			}
 			uw.ResetsAt = r
 		}
-		if name == "spend" && w.Period != "" {
+		if name == "spend" && lowerWords(w.Period, ' ', 24) {
 			uw.Name = "spend " + w.Period
 		}
 		st.Windows = append(st.Windows, uw)

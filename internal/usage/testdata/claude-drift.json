@@ -6,6 +6,8 @@
     "five_hour": {"used_percentage": "42%", "resets_at": 1767268800},
     "seven_day": {"used_percentage": 12, "resets_at": 1767744000000},
     "seven_day_opus": {"used_percentage": 5, "resets_at": 1767744000},
+    "Odd Key": {"used_percentage": 9},
+    "fourteen_day_sonnet_4": {"used_percentage": 1.5},
     "monthly": null,
     "spend_limit": {"used_percentage": 7}
   }

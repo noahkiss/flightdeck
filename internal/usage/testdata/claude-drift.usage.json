@@ -4,6 +4,17 @@
     "harness": "claude",
     "windows": [
       {
+        "name": "14d sonnet 4",
+        "used_pct": 1,
+        "read_at": "2026-01-01T10:00:00Z"
+      },
+      {
+        "name": "7d opus",
+        "used_pct": 5,
+        "resets_at": "2026-01-07T00:00:00Z",
+        "read_at": "2026-01-01T10:00:00Z"
+      },
+      {
         "name": "spend",
         "used_pct": 7,
         "read_at": "2026-01-01T10:00:00Z"
@@ -12,8 +23,8 @@
   },
   "version": "2.2.0",
   "drift": [
+    "a rate_limits key is not a window name",
     "rate_limits.five_hour has no used_percentage number",
-    "rate_limits.seven_day.resets_at is not Unix seconds",
-    "rate_limits.seven_day_opus is not known"
+    "rate_limits.seven_day.resets_at is not Unix seconds"
   ]
 }

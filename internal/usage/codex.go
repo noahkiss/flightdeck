@@ -4,8 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"sort"
-	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/detect"
@@ -199,5 +200,6 @@ func planLabel(p string) string {
 	if p == "" || len(p) > 32 {
 		return ""
 	}
-	return strings.ToUpper(p[:1]) + p[1:]
+	r, n := utf8.DecodeRuneInString(p)
+	return string(unicode.ToUpper(r)) + p[n:]
 }
