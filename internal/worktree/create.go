@@ -14,6 +14,9 @@ import (
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
+// testHookAfterCheck, when set, runs between the foreign check and git worktree add.
+var testHookAfterCheck func()
+
 // BranchPrefix starts the name of a branch Create makes up when the caller gives none.
 const BranchPrefix = "wt/"
 
@@ -148,6 +151,9 @@ func (g Git) Create(ctx context.Context, o CreateOptions) (Created, error) {
 		newBranch = true
 	}
 	foreign := g.foreign(ctx, src, sp, o.Remote)
+	if testHookAfterCheck != nil {
+		testHookAfterCheck()
+	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return Created{}, fmt.Errorf("make %s: %w", filepath.Dir(path), err)
@@ -158,6 +164,11 @@ func (g Git) Create(ctx context.Context, o CreateOptions) (Created, error) {
 			return Created{}, fmt.Errorf("%w: %v", ErrConflict, err)
 		}
 		return Created{}, err
+	}
+	// git worktree add resolved the start point again; a fetch in between may have moved it.
+	// The foreign check covered sp.Commit only.
+	if head, err := g.run(ctx, path, "rev-parse", "HEAD"); err != nil || head != sp.Commit {
+		foreign = fmt.Sprintf("the start point moved to %.12s after the check of %.12s", head, sp.Commit)
 	}
 
 	copied, err := g.copyIncludes(ctx, src, path)
@@ -213,13 +224,66 @@ type startPoint struct {
 }
 
 // isPullRef reports whether a ref name has a pull request segment.
+// It compares segments without regard to case, so origin/PR/7 counts too.
 func isPullRef(ref string) bool {
 	for _, seg := range strings.Split(ref, "/") {
-		if seg == "pull" || seg == "pr" || seg == "merge-requests" || seg == "pull-requests" {
+		switch strings.ToLower(seg) {
+		case "pull", "pr", "pull-requests", "merge-requests", "mr", "changes":
 			return true
 		}
 	}
 	return false
+}
+
+// refspec is one fetch refspec of a remote, without its leading +.
+type refspec struct{ src, dst string }
+
+// fetchSpecs reads remote.<r>.fetch. Negative refspecs (^...) are left out.
+func (g Git) fetchSpecs(ctx context.Context, dir, remote string) []refspec {
+	out, err := g.run(ctx, dir, "config", "--get-all", "remote."+remote+".fetch")
+	if err != nil {
+		return nil
+	}
+	var specs []refspec
+	for _, line := range strings.Split(out, "\n") {
+		s := strings.TrimPrefix(strings.TrimSpace(line), "+")
+		if s == "" || strings.HasPrefix(s, "^") {
+			continue
+		}
+		src, dst, ok := strings.Cut(s, ":")
+		if !ok {
+			continue
+		}
+		specs = append(specs, refspec{src, dst})
+	}
+	return specs
+}
+
+// globMatch matches ref against a refspec side with at most one *.
+func globMatch(pattern, ref string) bool {
+	before, after, ok := strings.Cut(pattern, "*")
+	if !ok {
+		return pattern == ref
+	}
+	return strings.HasPrefix(ref, before) && strings.HasSuffix(ref, after) && len(ref) >= len(before)+len(after)
+}
+
+// branchRef reports whether a remote-tracking ref holds a branch of the remote by the remote's
+// configured refspecs: some refspec from refs/heads/ maps onto it, and no refspec from anywhere
+// else (refs/pull/, refs/changes/, refs/*) does. The default +refs/heads/*:refs/remotes/origin/*
+// also matches origin/pr/7, so the second clause is what keeps a pull request refspec's refs out.
+func branchRef(ref string, specs []refspec) bool {
+	heads := false
+	for _, s := range specs {
+		if !globMatch(s.dst, ref) {
+			continue
+		}
+		if !strings.HasPrefix(s.src, "refs/heads/") {
+			return false
+		}
+		heads = true
+	}
+	return heads
 }
 
 // foreign says why the code at a start point may come from someone other than the project, or ""
@@ -281,18 +345,21 @@ func (g Git) foreign(ctx context.Context, dir string, sp startPoint, identity st
 	return fmt.Sprintf("commit %.12s is not on a branch of the project's remote", sp.Commit)
 }
 
-// trustedRefs lists the branches of the project's remotes, leaving out every ref whose name
-// below refs/remotes/<remote>/ has a pull request segment: a refspec such as
-// +refs/pull/*/head:refs/remotes/origin/pr/* puts strangers' commits there.
+// trustedRefs lists the branches of the project's remotes. Two layers decide: the remote's
+// fetch refspecs (branchRef), so a refspec such as
+// +refs/pull/*/head:refs/remotes/origin/pull-request/* keeps its refs out whatever their names;
+// then the name, for a one-off fetch into the remote's namespace: a ref whose name below
+// refs/remotes/<remote>/ has a pull request segment is left out.
 func (g Git) trustedRefs(ctx context.Context, dir string, own []string) []string {
 	var out []string
 	for _, r := range own {
+		specs := g.fetchSpecs(ctx, dir, r)
 		refs, err := g.run(ctx, dir, "for-each-ref", "--format=%(refname)", "refs/remotes/"+r+"/")
 		if err != nil {
 			continue
 		}
 		for _, ref := range strings.Fields(refs) {
-			if !isPullRef(strings.TrimPrefix(ref, "refs/remotes/"+r+"/")) {
+			if branchRef(ref, specs) && !isPullRef(strings.TrimPrefix(ref, "refs/remotes/"+r+"/")) {
 				out = append(out, ref)
 			}
 		}
@@ -303,12 +370,74 @@ func (g Git) trustedRefs(ctx context.Context, dir string, own []string) []string
 // maxLocalCommits bounds the commits not on the project's remote that committedHere checks.
 const maxLocalCommits = 200
 
+// maxAmendDepth bounds how far committedHere follows a chain of amends back.
+const maxAmendDepth = 8
+
+// reflogIndex is what the reflogs say about commits made here.
+type reflogIndex struct {
+	made    map[string]bool     // commits a "commit:", "commit (initial):" or "commit (merge):" entry made
+	amendOf map[string][]string // a "commit (amend):" entry's commit -> the commits it replaced
+}
+
+// readReflogs reads the reflogs that git commit writes: each worktree's HEAD and the local
+// branches. Remote-tracking reflogs, which can be large, are not read. Within one ref's log
+// (newest first) an entry's old value is the next entry's commit.
+func (g Git) readReflogs(ctx context.Context, dir string) reflogIndex {
+	idx := reflogIndex{made: map[string]bool{}, amendOf: map[string][]string{}}
+	refs := []string{"--branches", "HEAD", "main-worktree/HEAD"}
+	if common, err := g.run(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil {
+		if entries, err := os.ReadDir(filepath.Join(common, "worktrees")); err == nil {
+			for _, e := range entries {
+				refs = append(refs, "worktrees/"+e.Name()+"/HEAD")
+			}
+		}
+	}
+	log, err := g.run(ctx, dir, append([]string{"reflog", "show", "--format=%gD %H %gs"}, refs...)...)
+	if err != nil { // a worktree with no log, say: read what every repository has
+		if log, err = g.run(ctx, dir, "reflog", "show", "--format=%gD %H %gs", "--branches", "HEAD"); err != nil {
+			return idx
+		}
+	}
+	type entry struct{ ref, hash, subject string }
+	var entries []entry
+	for _, line := range strings.Split(log, "\n") {
+		sel, rest, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		hash, subject, _ := strings.Cut(rest, " ")
+		ref := sel
+		if i := strings.LastIndex(sel, "@{"); i > 0 {
+			ref = sel[:i]
+		}
+		entries = append(entries, entry{ref, hash, subject})
+	}
+	for i, e := range entries {
+		switch {
+		case strings.HasPrefix(e.subject, "commit (amend):"):
+			if i+1 < len(entries) && entries[i+1].ref == e.ref {
+				idx.amendOf[e.hash] = append(idx.amendOf[e.hash], entries[i+1].hash)
+			}
+		case strings.HasPrefix(e.subject, "commit:"), strings.HasPrefix(e.subject, "commit (initial):"),
+			strings.HasPrefix(e.subject, "commit (merge):"):
+			idx.made[e.hash] = true
+		}
+	}
+	return idx
+}
+
 // committedHere reports whether every commit in commit's history that no ref in base holds was
-// made in this repository by git commit: each has a commit entry in a reflog ("commit:",
-// "commit (amend):", "commit (initial):", "commit (merge):"). Only local git writes the reflog,
-// so a fetched pull request cannot claim one. Entries from rebase, cherry-pick and am do not
-// count. No reflog, an entry past its expiry, or more than maxLocalCommits commits: false.
+// made in this repository by git commit: each has a "commit:", "commit (initial):" or
+// "commit (merge):" entry in a reflog, or a "commit (amend):" entry whose replaced commit is
+// itself own by this same rule (followed back at most maxAmendDepth amends). So amending a
+// fetched pull request does not make it own. Only local git writes the reflog, so a fetched
+// pull request cannot claim an entry. Entries from rebase, cherry-pick and am do not count. No
+// reflog entry, an entry past its expiry, or more than maxLocalCommits commits: false.
 func (g Git) committedHere(ctx context.Context, dir, commit string, base []string) bool {
+	return g.ownHistory(ctx, dir, commit, base, g.readReflogs(ctx, dir), maxAmendDepth)
+}
+
+func (g Git) ownHistory(ctx context.Context, dir, commit string, base []string, idx reflogIndex, depth int) bool {
 	var stdin strings.Builder
 	for _, b := range base {
 		stdin.WriteString("^" + b + "\n")
@@ -318,24 +447,23 @@ func (g Git) committedHere(ctx context.Context, dir, commit string, base []strin
 		return false
 	}
 	local := strings.Fields(string(out))
-	if len(local) == 0 || len(local) > maxLocalCommits {
-		return len(local) == 0
-	}
-	made := map[string]bool{}
-	for _, args := range [][]string{{"HEAD"}, {"--all"}} {
-		log, err := g.run(ctx, dir, append([]string{"reflog", "show", "--format=%H %gs"}, args...)...)
-		if err != nil {
-			continue
-		}
-		for _, line := range strings.Split(log, "\n") {
-			hash, subject, ok := strings.Cut(line, " ")
-			if ok && (strings.HasPrefix(subject, "commit:") || strings.HasPrefix(subject, "commit (")) {
-				made[hash] = true
-			}
-		}
+	if len(local) > maxLocalCommits {
+		return false
 	}
 	for _, c := range local {
-		if !made[c] {
+		if idx.made[c] {
+			continue
+		}
+		replacedOwn := false
+		if depth > 0 {
+			for _, old := range idx.amendOf[c] {
+				if g.ownHistory(ctx, dir, old, base, idx, depth-1) {
+					replacedOwn = true
+					break
+				}
+			}
+		}
+		if !replacedOwn {
 			return false
 		}
 	}

@@ -1179,28 +1179,59 @@ project's identity, so the session files into the same project. No method of its
 - **Setup from someone else waits for a yes.** A false alarm costs one yes; a miss runs a
   stranger's script. So the check leans to foreign. In `auto`, setup does not run when any of
   these holds:
-  - the start ref, or a local branch's `branch.<b>.merge`, has a `pull`, `pr`,
-    `merge-requests` or `pull-requests` segment (`gh pr checkout`, a fetch of `pull/N/head`);
+  - the start ref, or a local branch's `branch.<b>.merge`, has a pull request segment: `pull`,
+    `pr`, `pull-requests`, `merge-requests`, `mr` or `changes`, in any case (`gh pr checkout`,
+    a fetch of `pull/N/head`);
   - the start ref is a branch of a remote whose URL is not the project's remote;
   - a local branch's `branch.<b>.remote` is another remote or URL;
   - no branch of the project's remote contains the start commit, and the commits it lacks were
-    not all made here (the reflog rule below). A branch of the project's remote is a ref under
-    `refs/remotes/<r>/`, for each remote whose URL is the project's, whose name below that has
-    no pull request segment: the refspec `+refs/pull/*/head:refs/remotes/origin/pr/*`, which
-    GitHub documents, puts strangers' commits under `origin/pr/`. This catches a commit id,
-    `FETCH_HEAD`, `^{commit}`, `~0` and a fetched branch with no upstream. A project with no
-    remote checks against the source checkout's HEAD instead.
+    not all made here (the reflog rule below). This catches a commit id, `FETCH_HEAD`,
+    `^{commit}`, `~0` and a fetched branch with no upstream. A project with no remote checks
+    against the source checkout's HEAD instead.
+
+  **A branch of the project's remote** is a ref under `refs/remotes/<r>/`, for each remote whose
+  URL is the project's, that passes two layers:
+  1. The remote's fetch refspecs (`remote.<r>.fetch`; a leading `+` dropped, negative `^`
+     refspecs skipped). The ref must match the destination of a refspec whose source starts
+     with `refs/heads/`, and match the destination of no refspec whose source does not. The
+     second clause matters: the default `+refs/heads/*:refs/remotes/origin/*` also matches
+     `origin/pr/7`, so a refspec such as `+refs/pull/*/head:refs/remotes/origin/pr-*` (any
+     name) keeps its refs out only through it. A destination has at most one `*`. A catch-all
+     such as `+refs/*:refs/remotes/origin/*` trusts nothing: false alarms only.
+  2. The name, for a one-off fetch into the remote's namespace that no refspec names: the part
+     below `refs/remotes/<r>/` may have no pull request segment (as above).
 
   **The reflog rule** keeps the user's own unpushed work from waiting for a yes. gff-hab lists
   the commits in the start commit's history that no branch of the project's remote holds (at
   most 200; more is foreign). The start point counts as own only when each of them has a
-  `commit:` entry in a reflog (`commit (amend):`, `commit (initial):` and `commit (merge):`
-  count too). Only local git writes the reflog, so a fetched pull request has no such entry:
-  only `fetch` and `checkout`. A local commit stacked on a pull request still fails, through
-  its fetched parent. No reflog (`core.logAllRefUpdates=false`) or an entry past
-  `gc.reflogExpire` gives foreign: the safe side. Entries from `rebase`, `cherry-pick` and `am`
-  do not count. Owner question: should a local rebase or cherry-pick count as own? Until the
-  owner answers, they wait for a yes.
+  `commit:`, `commit (initial):` or `commit (merge):` entry in a reflog, or a
+  `commit (amend):` entry whose replaced commit (the entry's old value, the next older entry
+  of the same ref) is itself own by this rule, followed back at most 8 amends. So amending a
+  fetched pull request (`gh pr checkout 7 && git commit --amend`) stays foreign. gff-hab reads
+  the reflogs `git commit` writes: each worktree's HEAD (`HEAD`, `main-worktree/HEAD`,
+  `worktrees/<id>/HEAD`) and the local branches (`--branches`), never the remote-tracking
+  reflogs, which can hold thousands of fetch entries.
+
+  Only local git writes the reflog, so a fetched pull request commit has no such entry: only
+  `fetch` and `checkout`. A local commit stacked on a pull request still fails, through its
+  fetched parent. A start point with no reflog entry gives foreign, the safe side: for example
+  a repository that never wrote logs, or an entry past `gc.reflogExpire`. (Setting
+  `core.logAllRefUpdates=false` later changes nothing: git still appends to log files that
+  exist.) Entries from `rebase`, `cherry-pick` and `am` do not count.
+
+  The reflog shows who made a commit, not whose changes it holds. A local `git commit` that
+  takes in a pull request's changes counts as own: `git merge --squash` then `git commit`,
+  `git cherry-pick -n` then `git commit`, and a conflicted cherry-pick finished with
+  `git commit`. Code cannot see these. **Owner question:** should commits from a local rebase
+  or cherry-pick count as own? It is the same question as these limits. Until the owner
+  answers, rebased and cherry-picked commits wait for a yes.
+
+  A known false alarm: a local `git merge` or `git pull` that makes a merge commit (reflog
+  subjects `merge <x>:` and `pull:`) waits for a yes until it is pushed.
+
+  gff-hab checks the commit the worktree really got: `git worktree add` resolves the start
+  point again, so a fetch in between could move it. A worktree whose HEAD is not the checked
+  commit is foreign.
 
   The result is `pending` with the reason and both scripts (`script`, `teardown_script`), so
   the client shows what the yes covers. `worktree.setup` (or `setup: run` on create) is the yes.
@@ -1235,9 +1266,14 @@ project's identity, so the session files into the same project. No method of its
 
 - No pull request checkout by number: fetch it as a branch first (it then counts as foreign,
   above).
-- A pull request fetched under the project remote with a name that has no segment of its own
-  (`origin/pr-7`, not `origin/pr/7`) counts as a branch of the remote. The name check is a
-  heuristic; this gap stays.
+- A pull request fetched once, by hand, into the project remote's namespace under a name with
+  no pull request segment (`git fetch origin pull/7/head:refs/remotes/origin/pr-7`) counts as a
+  branch of the remote: no refspec names it, and the name check is a heuristic. A configured
+  refspec closes this, whatever the name.
+- A local `git commit` that takes in a pull request's changes counts as own:
+  `merge --squash` or `cherry-pick -n` followed by `git commit`, and a conflicted cherry-pick
+  finished with `git commit`. The reflog cannot tell these apart (owner question above).
+- A local merge commit (`git merge`, `git pull`) waits for a yes until it is pushed.
 - No scripts, services, ports or terminals from the project file yet (Paseo has them).
 - A session whose program runs in a removed worktree keeps running in a folder that is gone.
   Removing an agent's worktree usually leaves it dirty, so the refusal without force catches

