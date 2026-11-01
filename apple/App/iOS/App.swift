@@ -3,9 +3,11 @@ import SwiftUI
 
 @main
 struct FlightdeckApp: App {
+    @State private var fleet = AppFleet.make()
+
     var body: some Scene {
         WindowGroup {
-            PlaceholderView()
+            FlightdeckRoot(fleet: fleet)
         }
     }
 }
