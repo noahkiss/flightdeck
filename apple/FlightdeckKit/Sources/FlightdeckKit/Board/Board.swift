@@ -46,6 +46,12 @@ public final class Board {
         rebuild()
     }
 
+    /// Removes a hab and its rows.
+    public func unregister(id: String) {
+        habs.removeAll { $0.id == id }
+        rebuild()
+    }
+
     /// Replaces one hab's state.
     public func update(_ id: String, _ state: HabState) {
         guard let i = habs.firstIndex(where: { $0.id == id }) else { return }

@@ -28,7 +28,25 @@ public enum AppFleet {
                 log.notice("hab \(i + 1) skipped: \(String(describing: error), privacy: .public)")
             }
         }
+        addSSH(to: fleet, environment: env)
         return fleet
+    }
+
+    /// The in-app SSH carrier's habs. iPhone and iPad make the device key on
+    /// first start and install the notification actions. The Mac keeps the
+    /// system ssh as its default; it loads its key only when an entry needs it.
+    @MainActor
+    static func addSSH(to fleet: Fleet, environment env: [String: String]) {
+        let listURL = SSHHabList.path(environment: env)
+        let ssh = SSHSetup(keys: DeviceKeys(store: KeychainStore()), listURL: listURL, fleet: fleet, clientLabel: clientLabel, clientVersion: version)
+        fleet.ssh = ssh
+        #if os(iOS)
+        ssh.loadKey()
+        let actions = HabActions(keys: ssh.keys, listURL: listURL)
+        actions.install()
+        fleet.keepAlive.append(actions)
+        #endif
+        ssh.connectAll()
     }
 
     static var clientLabel: String {

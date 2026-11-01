@@ -17,6 +17,8 @@ public struct FlightdeckRoot: View {
             .environment(\.habConnections, fleet.lookup)
             .environment(\.terminals, fleet.terminals)
             .openPaneOnLaunch(fleet)
+            .environment(\.sshSetup, fleet.ssh)
+            .sshSheets(fleet.ssh)
             .onAppear { fleet.windowOpened() }
             .onDisappear { fleet.windowClosed() }
         #else
@@ -24,6 +26,8 @@ public struct FlightdeckRoot: View {
             .environment(\.habConnections, fleet.lookup)
             .environment(\.terminals, fleet.terminals)
             .openPaneOnLaunch(fleet)
+            .environment(\.sshSetup, fleet.ssh)
+            .sshSheets(fleet.ssh)
         #endif
     }
 }
@@ -232,6 +236,8 @@ struct BoardRowView: View {
 
 struct ConnectionsList: View {
     let board: Board
+    @Environment(\.sshSetup) private var ssh
+    @State private var showSSH = false
 
     var body: some View {
         List {
@@ -260,6 +266,27 @@ struct ConnectionsList: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+            }
+            if ssh != nil {
+                Section {
+                    Button("SSH keys and habs") { showSSH = true }
+                }
+            }
+        }
+        .sheet(isPresented: $showSSH) {
+            if let ssh {
+                NavigationStack {
+                    SSHSettingsView(setup: ssh)
+                        .navigationTitle("SSH")
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Done") { showSSH = false }
+                            }
+                        }
+                }
+                #if os(macOS)
+                .frame(minWidth: 480, minHeight: 520)
+                #endif
             }
         }
     }

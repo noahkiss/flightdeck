@@ -10,6 +10,7 @@ struct FlightdeckApp: App {
     var body: some Scene {
         WindowGroup {
             FlightdeckRoot(fleet: fleet)
+                .onOpenURL { fleet.ssh?.open(url: $0) }
         }
         .onChange(of: phase, initial: true) { _, p in
             fleet.apply(p)

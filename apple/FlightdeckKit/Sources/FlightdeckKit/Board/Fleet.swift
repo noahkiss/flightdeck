@@ -15,6 +15,8 @@ public final class Fleet {
     public private(set) var isActive = false
     /// Open terminal views; their data connections follow the lifecycle too.
     public let terminals = TerminalRegistry()
+    /// The in-app SSH carrier's keys and hab entries; nil in demo mode.
+    public var ssh: SSHSetup?
 
     private var consumers: [Task<Void, Never>] = []
     private var windows = 0
@@ -50,6 +52,15 @@ public final class Fleet {
         if isActive {
             Task { await conn.start() }
         }
+    }
+
+    /// Stops a hab's connection and removes it and its rows.
+    public func remove(id: String) async {
+        guard let i = connections.firstIndex(where: { $0.id == id }) else { return }
+        let conn = connections.remove(at: i)
+        consumers.remove(at: i).cancel()
+        await conn.stop()
+        board.unregister(id: id)
     }
 
     /// Connects every hab (visible) or closes every connection (background).
