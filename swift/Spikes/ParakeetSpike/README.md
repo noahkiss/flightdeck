@@ -2,7 +2,8 @@
 
 A one-screen iOS and iPadOS test app. It measures whether NVIDIA Parakeet TDT 0.6B v2
 (English) runs well on a phone or tablet, compared with Apple SpeechAnalyzer. The result
-sets the per-device default engine in `docs/specs/voice.md` ("Where transcription runs").
+decides which device classes offer the on-device option in `docs/specs/voice.md` ("Where
+transcription runs"). The default engine runs on the hab; `spikes/hab-parakeet` measures it.
 
 This is a throwaway spike, not part of the Flightdeck app.
 

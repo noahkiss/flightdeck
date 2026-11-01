@@ -961,8 +961,8 @@ no wake word, no system assistant in the path.
   hab and state, the live transcript of what the owner says, and three controls: end, mute the
   microphone, and switch to the keyboard.
 - **The loop.**
-  1. **Listen.** On-device speech-to-text runs while the owner speaks. The words appear as they
-     are heard.
+  1. **Listen.** The app records while the owner speaks. Apple's on-device recognizer shows the
+     words as they are heard; when the turn ends, the hab's text replaces them (13.5).
   2. **Send.** A pause (default 1.2 s of silence) or a tap ends the turn. The text goes to the
      session as an ordinary message (`session.send`, 17), under the input rules of 4.2. With
      "confirm before send" on (off by default), the owner says "send" or taps.
@@ -1016,7 +1016,7 @@ no wake word, no system assistant in the path.
 ### 13.4 Dictation
 
 - A microphone in the chat composer and on the terminal keyboard bar (5.1) starts dictation: the
-  same on-device speech-to-text, writing into the composer or the pane.
+  same speech-to-text as voice mode (13.5), writing into the composer or the pane.
 - In the composer, words appear as heard and stay editable; the owner sends.
 - In the terminal, the text goes to the pane as one paste when the owner stops, without Enter.
 - The language follows the system; a setting picks another.
@@ -1025,16 +1025,20 @@ no wake word, no system assistant in the path.
 
 - This section describes what the owner experiences. The speech-to-text and text-to-speech models,
   and whether a conversation layer sits between the voice and the agent, are chosen in
-  `docs/specs/voice.md` (a separate study, not yet written).
-- The owner's rule stands for that study: speech recognition runs on the device, with no cloud
-  fallback.
-- Audio is never stored. Only the text of a turn goes to the hab, the same as a typed message.
+  `docs/specs/voice.md`.
+- Engine order (owner, 2026-11-01, following Paseo): speech recognition runs on the session's hab
+  by default. Parakeet on the device and Apple's engine are options, in that order. There is no
+  cloud fallback; a hosted engine runs only when the owner turns it on with their own key.
+- Audio is never stored. With the hab engine, the recorded turn goes to the hab, which returns
+  the text and keeps neither. The text reaches the session only when it is sent, as a typed
+  message does.
 
 ### 13.6 Edge cases
 
 | Case | Behaviour |
 |---|---|
-| No on-device model for the language | Voice mode and dictation stay off, with "Download <language> for on-device dictation" and a link to the setting. Never a cloud fallback |
+| The hab has no speech engine, or its model is still downloading | The app uses the next engine the owner enabled and names it in the voice view. A download shows its progress |
+| No engine for the language (hab and device) | Voice mode and dictation stay off, with "Download <language> for on-device dictation" and a link to the setting. Never a cloud fallback |
 | Microphone or speech permission denied | The voice button explains and links to Settings |
 | A phone call or alarm interrupts | Listening and speech pause. After the interruption, voice mode resumes listening; a running turn is not touched |
 | The hab goes offline mid-turn | The view says "lost <hab>" and keeps trying (10.2). It reads nothing until it reconnects and the turn's end is known |

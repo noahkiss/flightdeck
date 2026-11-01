@@ -48,6 +48,7 @@ One Go module, `github.com/noahkiss/flightdeck`, at the repo root. Swift package
 | `apple/FlightdeckKit/` | The app's shared Swift package: everything that is not AppKit or UIKit. Depends on `swift/HabAPI`. Holds the placeholder root view until the status board lands |
 | `apple/scripts/` | `generate.sh` (XcodeGen), `build.sh` (Mac Release build), `testflight.sh` and `notarize.sh` (release steps, from the app template) |
 | `design/icons/AppIcon.icon` | The app icon (Icon Composer bundle); both app targets use it in place |
+| `spikes/` | Throwaway host-side spikes (scripts, no Go module changes), each with its own README. `hab-parakeet/` measures Parakeet through the sherpa-onnx CLI on a hab host (`docs/specs/voice.md`). Models and binaries are downloaded outside the repo |
 | `cmd/` | Binaries, as they land: `gff`, `gff-hab`, `gff-hab-holder` |
 | `docs/specs/` | Behaviour specs |
 | `docs/protocol/` | Wire protocol documents |

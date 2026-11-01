@@ -170,9 +170,9 @@ match it.
 |---|---|
 | Paseo | Runs on the daemon host: Parakeet TDT 0.6B through sherpa-onnx with Silero voice detection, and Kokoro for speech; OpenAI as an option. Voice mode runs a hidden agent session (Claude Haiku by default) with voice tools over MCP. Dictation is on by default |
 | herdr, Rex | None. herdr#5718: dictation arrives as a run of `a` characters |
-| Ours | Parakeet on the device through Core ML; Apple voices; approvals by a fixed grammar, never a model (`voice.md`; `app.md` 13) |
+| Ours | Parakeet on the hab through sherpa-onnx by default (owner, 2026-11-01), with Parakeet on the device and Apple's engine as options; Apple voices; approvals by a fixed grammar, never a model (`voice.md`; `app.md` 13) |
 | Bar | Match Paseo |
-| Flag | **Even**. Both picked Parakeet. Paseo's host-side engine avoids a 440 MB download on the phone (idea 4.12) |
+| Flag | **Even**. Same engine in the same place (idea 4.12). We send whole turns, not a raw audio stream |
 
 ### 2.11 Images and files to agents
 
@@ -278,7 +278,7 @@ through its API, or host its TUI in a PTY.
 | Shell integration | OSC 133 / OSC 633 | OSC 633 (VS Code style) | — | — | OSC 133 `A` resets status (spec) | OSC 133 (`hab-logic-api.md` 2.5) |
 | Hosting split | A holder that outlives the logic | Terminal worker, drain N-1 | Experimental fd handoff | Holder plus core, drain | None | Holder plus logic, drain |
 | Remote transport | SSH / tailnet identity / relay | Noise relay, direct, SSH tunnel | SSH | SSH | tsnet, tailnet identity | SSH |
-| Speech | NVIDIA Parakeet TDT 0.6B; Kokoro | Both, on the host | — | — | — | Parakeet on device; Kokoro later |
+| Speech | NVIDIA Parakeet TDT 0.6B; Kokoro | Both, on the host | — | — | — | Parakeet on the hab, device options; Kokoro later |
 | Push | APNs | Through Expo | — | — | — | Direct, each user's key |
 | Agent manual | The binary prints or installs its own skill | Not found | — | `hc --skill` | `rex skill setup` | Agent kit (task-6ho9972u) |
 
@@ -312,7 +312,7 @@ accepted ideas into tasks.
 | 4.9 | Stale remote input off | herdr | A host that dropped shows cached state dimmed; input stays off until fresh state arrives | Nobody types into a screen that is minutes old | task-kbvoirca |
 | 4.10 | Adopt a session started elsewhere | Paseo | Bring a harness session started in a plain terminal into Flightdeck by its resume id | An owner moving in keeps their running work | new task: "Adopt an outside session by resume id" (Part 4) |
 | 4.11 | Clipboard images over SSH | herdr | `gff` forwards a pasted image to the remote pane's agent | Screenshots reach a remote agent from the desktop client too | task-g1uwtlsb, or new task in Part 5 |
-| 4.12 | Speech on the hab | Paseo | The phone streams audio; the hab transcribes with Parakeet | No 440 MB model on the phone; old phones get the good engine | task-h011ghy9 (an option beside on-device) |
+| 4.12 | Speech on the hab | Paseo | The phone streams audio; the hab transcribes with Parakeet | No 440 MB model on the phone; old phones get the good engine | task-h011ghy9; the default engine since 2026-11-01 (`voice.md`) |
 | 4.13 | Save before logout and restart | herdr | Watch the Mac's logout and restart signals and checkpoint 15 to 20 s before agents are killed | The reboot restore (`gff-client.md` 6.2) has fresh layouts and resume ids | new task: "hab: checkpoint on Mac logout and shutdown" (Part 1) |
 | 4.14 | Agents start agents on other hosts | Paseo | An MCP tool lets an agent start a session on a named host | Capcom and teammates can place work on the right machine | task-6iwat66b, task-ph00sdci |
 

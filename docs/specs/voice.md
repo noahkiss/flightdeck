@@ -1,24 +1,24 @@
 # Voice mode: models and pipeline
 
 This spec picks the speech models and the pipeline behind voice mode. The user experience is in
-`app.md` 13. Researched 2026-10-31. Facts marked *(unverified)* come from blogs or aggregators, not primary sources.
+`app.md` 13. Researched 2026-10-31; engine order changed 2026-11-01 (hab first). Facts marked *(unverified)* come from blogs or aggregators, not primary sources.
 
 ## Decisions
 
 | Question | Decision |
 |---|---|
-| Cloud features | On device by default and free. Cloud summaries, cloud voices and realtime speech APIs are opt-in settings that use the user's own key. No Flightdeck service sits in the path |
+| Cloud features | On the owner's own hosts and devices by default, and free. Cloud summaries, cloud voices and realtime speech APIs are opt-in settings that use the user's own key. No Flightdeck service sits in the path |
 | Spoken summary | In voice mode the app appends a request for a two-sentence spoken summary to each spoken prompt. The app reads that summary aloud and skips code, diffs and tables |
 | Devices | iPhone and iPad in the first build; the Mac follows with the same speech APIs |
 | Languages | English only (owner, 2026-10-31). So the engine is Parakeet TDT 0.6B v2, the English model: more accurate than the multilingual v3 and slightly smaller |
-| Speech engine | NVIDIA Parakeet first, on device through a Core ML port, because it handles software-engineering speech better (owner, 2026-10-31). The model downloads on first use (about 440 MB int8 for the English v2 model), not with the app. Apple SpeechAnalyzer is the fallback before the download finishes and on devices that cannot run Parakeet. A hosted Parakeet endpoint with the user's key (about $0.0015 per audio minute in October 2026) is an opt-in option. All engines sit behind one interface |
+| Speech engine | NVIDIA Parakeet, because it handles software-engineering speech better (owner, 2026-10-31). It runs **on the hab by default**, as Paseo does (owner, 2026-11-01): a hab is always connected when the owner talks to an agent, no device carries a 440 MB model, and the app, `gff` and the Mac get one quality. Options, in order: Parakeet on the device (Core ML, downloaded on first use), then Apple SpeechAnalyzer. A hosted Parakeet endpoint with the user's key (about $0.0015 per audio minute in October 2026) is an opt-in option. All engines sit behind one interface |
 
 ## Recommendation
 
-First build: an on-device pipeline with no extra model in the loop.
+First build: transcription on the hab, with no extra model in the loop.
 
-1. **Speech-to-text:** NVIDIA Parakeet through a Core ML port, downloaded on first use. Fallback: Apple SpeechAnalyzer (no download, live partial results). A small streaming Parakeet variant can show live partials while the larger model gives the final text; test both on a device.
-2. **Identifier fix-up:** the hab sends a session vocabulary (file names, symbols). The app passes it as recognizer hints and fuzzy-matches the transcript against it.
+1. **Speech-to-text:** the app records the turn and sends it to the session's hab (`speech.transcribe`, below). The hab runs Parakeet TDT 0.6B v2 and returns the text. While the owner speaks, Apple SpeechAnalyzer shows live words on screen (a system process, so it costs the app almost no memory); the hab's text replaces them when the turn ends. Options: Parakeet on the device, then Apple's engine alone.
+2. **Identifier fix-up:** the session vocabulary (file names, symbols) lives on the hab. With the hab engine, the hab applies it before it returns the text. With an on-device engine, the hab sends the vocabulary; the app passes it as recognizer hints and fuzzy-matches the transcript against it.
 3. **Turn in:** the cleaned transcript goes straight into the session as a normal prompt.
 4. **Turn out:** speak only the agent's final text. A deterministic trimmer drops code, diffs and tables ("3 files changed"). Voice mode may append "end with a two-sentence spoken summary" to each prompt, so the agent summarizes from full context at no extra cost.
 5. **Text-to-speech:** Apple premium system voices. Barge-in stops playback when speech starts.
@@ -28,19 +28,106 @@ Upgrade path, each a setting: Kokoro-82M voice; a long-reply summarizer (Apple F
 
 ## Where transcription runs
 
-Three engines sit behind one interface, chosen per device:
+Three engines sit behind one interface. The default is the hab; the app falls back down the list.
 
-| Engine | Runs on | Memory cost to the app | Notes |
-|---|---|---|---|
-| Parakeet on device | The phone's Neural Engine | The model loads into the app: about 0.5 to 0.8 GB peak for a 0.6B model (a streaming 0.6B port measured 757 MB peak on an iPhone 15 Pro Max) | Best accuracy on software speech. Load only while voice mode is open; unload on exit and on a memory warning |
-| Apple SpeechAnalyzer | A system process | Almost none: the model lives outside the app | Always available; the fallback |
-| Transcription on the hab | The host | None on the phone | The app sends a short compressed clip (a few kilobytes per second) over the existing SSH connection; the hab runs Parakeet (Core ML on a Mac, an ONNX or GPU runtime on Linux) and returns text. Adds one network round trip |
+| Order | Engine | Runs on | Memory cost to the app | Notes |
+|---|---|---|---|---|
+| 1 (default) | Transcription on the hab | The session's host | None on the phone | The app sends the recorded turn, compressed (about 3 KB per second), over the existing SSH connection. The hab runs Parakeet through sherpa-onnx (CPU on Linux and macOS; a Core ML port is an option on a Mac) and returns text. Adds one round trip plus the decode: about 2 s for a 15 s turn (spike below) |
+| 2 | Parakeet on device | The phone's Neural Engine | The model loads into the app: about 0.5 to 0.8 GB peak for a 0.6B model (a streaming 0.6B port measured 757 MB peak on an iPhone 15 Pro Max) | For a hab that cannot run the engine, or an owner who wants the device independent of the hab. Load only while voice mode is open; unload on exit and on a memory warning |
+| 3 | Apple SpeechAnalyzer | A system process | Almost none: the model lives outside the app | Always available. It gives the live words during a turn whatever the engine, and it is the last fallback |
 
-Rule: a device spike decides the default before the build. It measures peak memory, load time,
-speed and battery for Parakeet on the oldest supported iPhone and on the owner's devices. If peak
-memory exceeds the budget (default 1 GB, or the app is killed in testing), that device class
-defaults to the hab engine or Apple's. Voice mode never runs Parakeet in the background: a
-suspended app gets far less memory, so the model unloads when the app leaves the foreground.
+Rules:
+
+- **Fallback.** A hab without the `speech` capability, or one that answers `unavailable`, sends
+  the app to the next engine the owner enabled. The voice view's footer names the engine that
+  wrote the text. The app never sends audio to a cloud service unless the owner turned that option on.
+- **On-device sizing.** The on-device test app (`swift/Spikes/ParakeetSpike`) still runs. It
+  measures peak memory, load time, speed and battery on the oldest supported iPhone and on the
+  owner's devices. If peak memory exceeds the budget (default 1 GB, or the app is killed in
+  testing), that device class does not offer the on-device option. Voice mode never runs Parakeet
+  on the device in the background: a suspended app gets far less memory, so the model unloads when
+  the app leaves the foreground.
+- **Turn end.** The app ends a turn on silence (1.2 s, `app.md` 13.1) or a tap, as before. Apple's
+  live recognizer and the audio level are enough for that. Paseo runs Silero voice detection on
+  its host, because its clients stream raw audio. Ours send whole turns, so the hab needs voice
+  detection only for streaming (below).
+
+## Hab speech engine
+
+Paseo's design (`landscape.md` 2.10): its daemon host runs Parakeet TDT 0.6B through sherpa-onnx,
+with Silero voice detection, and Kokoro for speech. We take the same engine in the same place and
+write our own code.
+
+### Spike result (2026-11-01)
+
+`spikes/hab-parakeet` ran the sherpa-onnx 2.0.1 CLI with the int8 v2 model on an Apple M1 Pro
+(16 GB, CPU, 4 threads, a busy machine). macOS `say` spoke the clips, which hold code identifiers.
+
+| Clip | Load | Decode | Real-time factor | Peak memory | WER |
+|---|---|---|---|---|---|
+| 4.8 s | 0.94 to 1.12 s | 0.48 to 0.94 s | 0.10 to 0.20 | 1.12 to 1.14 GB | 0 / 16 |
+| 15.2 s | 0.93 to 1.00 s | 1.52 to 2.26 s | 0.10 to 0.15 | 1.19 to 1.20 GB | 0 / 53 |
+| 59.7 s | 0.92 to 1.02 s | 5.63 to 6.13 s | 0.09 to 0.10 | 1.49 to 1.52 GB | 13 / 194 |
+
+- Speed is no problem. Memory is: about 1.1 GB resident once loaded, more for long clips. The
+  model files take 661 MB on disk.
+- Every error was a project word ("hab" as "hat", "holderreg" as "holder egg", "go vet" as
+  "govet"). No identifier came out written as code. The vocabulary fix-up stays necessary.
+- The Core ML provider showed no clear gain over CPU. Thread count matters: 1 thread was about
+  three times slower than 4.
+- Linux: the same release has static CLI builds for linux-x64 and linux-aarch64 (CPU, with
+  onnxruntime linked in), and CUDA builds. A Linux run is still to do.
+- Licences: sherpa-onnx Apache-2.0, onnxruntime MIT, Silero VAD MIT, the Parakeet model
+  CC-BY-4.0 (an attribution line wherever the model is downloaded).
+
+### Design
+
+- **A helper process.** sherpa-onnx's Go bindings need cgo, and gff-hab builds with
+  `CGO_ENABLED=0` (`layout.md`). So gff-hab starts a speech helper (the sherpa-onnx runtime) as a
+  child on the first request and talks to it over stdio. The helper holds the model. It exits
+  after 10 minutes with no request, the idle limit of voice mode (`app.md` 13.1), so an idle hab
+  gives the memory back. A load takes about 1 s, so the first turn waits that long.
+- **Warm-up.** The app calls `speech.prepare` when voice mode or dictation opens, so the model is
+  loaded before the first turn ends.
+- **The model.** It downloads on first use into the hab's state folder, with a checksum check,
+  not with the release. A host setting turns the engine off. Default: on when the host has at
+  least 4 GB of memory, else off. A smaller model (Parakeet TDT-CTC 110M) may serve small hosts;
+  it is not measured yet.
+- **Audio in.** The app sends the turn as one compressed clip: Opus at about 24 kbit/s (a 15 s
+  turn is about 50 KB). The hab also accepts 16 kHz mono 16-bit PCM, for a client with no
+  encoder. The helper decodes and resamples; gff-hab passes the bytes through.
+- **Any client.** `gff` and the Mac app can call the same method, so dictation gives the same
+  text everywhere.
+
+### API addition (proposal, not yet in the schema)
+
+In the style of `hab-logic-api.md` 3.9. A new capability `speech` says the hab runs the engine:
+it is installed and turned on, though the model may still need its download.
+
+| Method | Purpose | Built |
+|---|---|---|
+| `speech.prepare` | Load the engine now, and start the model download if needed; returns the engine state | Part 6 (voice mode) |
+| `speech.transcribe` | Turn one recorded clip into text | Part 6 (voice mode) |
+
+- **`speech.prepare`** takes `{}` and returns `state` (`absent`, `downloading`, `loading`,
+  `ready`; open), `progress` (whole percent, while downloading), `model` (its name) and `formats`
+  (the audio formats the hab accepts: `opus`, `pcm16`; open). It returns at once and does not wait
+  for the load.
+- **`speech.transcribe`** takes `audio` (the clip, base64) and `format` (`opus` or `pcm16`), and
+  the optional `sample_rate` (for `pcm16`; default 16000), `session` (whose vocabulary to apply)
+  and `language` (default `en`). It returns `text`, `audio_ms` and `decode_ms`, and `raw` (the
+  text before the vocabulary fix-up) when the fix-up changed anything.
+- **Limits.** A clip is at most 120 s and 1 MiB before base64; a larger one is `invalid`. The
+  control connection carries it like any other request. It runs off the read loop, so a long
+  decode does not hold up other calls. The hab runs one decode at a time; others wait in order.
+- **Errors.** No `speech` capability, the engine off, or the model not downloaded yet:
+  `unavailable`, with a hint such as `downloading 40%`. A clip that does not decode: `invalid`.
+- **Nothing stored.** gff-hab keeps no audio and no text from this call, and logs neither. The
+  text reaches the session only when the client sends it (`session.send`), as typed text does.
+- **Streaming, later.** Live words from the hab need a stream: a data connection of a new kind
+  (`speech`, opened with a ticket as in `hab-logic-api.md` 5.2), with audio frames in, partial
+  text out, and Silero voice detection on the hab. Apple's live words make it unnecessary for the
+  first build.
 
 ## Speech-to-text
 
@@ -49,7 +136,7 @@ WER is LibriSpeech test-clean / test-other, mostly from one M2 Pro benchmark (Ly
 | Engine | Size on disk | RAM | Speed | WER (LS) | Streaming | Languages | License | Apple runtime |
 |---|---|---|---|---|---|---|---|---|
 | Apple SpeechAnalyzer (iOS/macOS 26+) | System asset | Unpublished | ~3x faster than Whisper Small on M2 Pro | 2.12 / 4.56 | Yes, live partials | ~30 locales | Apple SDK | Native Swift |
-| NVIDIA Parakeet TDT 0.6B v2 | ~443 MB int8 | Unpublished | Very fast: "150x realtime" on Apple silicon *(unverified)* | 2.01 / 3.40 | No (batch) | English | CC-BY-4.0 | FluidAudio (Core ML, ANE) |
+| NVIDIA Parakeet TDT 0.6B v2 | ~443 MB int8 | Unpublished | Very fast: "150x realtime" on Apple silicon *(unverified)* | 2.01 / 3.40 | No (batch) | English | CC-BY-4.0 | FluidAudio (Core ML, ANE); sherpa-onnx on the hab |
 | Parakeet TDT 0.6B v3 | ~467 MB int8 | Unpublished | As v2 | 2.51 / 4.28 | No | 25 European | CC-BY-4.0 | FluidAudio |
 | NVIDIA Nemotron Speech Streaming 0.6B | ~564 MB int8 | 757 MB peak on iPhone 15 Pro Max | 52x realtime on A17 Pro | 1.99 (clean, 1.12 s chunks) | Yes | English; a multilingual 3.5 build exists | Unclear: NVIDIA eval license or OpenMDW *(check)* | FluidAudio Core ML ports |
 | Moonshine streaming Tiny / Small / Medium | 48 MB / 189 MB / 509 MB | Small | Built for low latency | 4.5 / 2.53 / 2.16 (clean only) | Yes | English (others in separate models) | MIT | moonshine-swift (SPM) |
@@ -89,6 +176,8 @@ Recommendation: **A** first; then **B** for long replies, **D** opt-in, **E** an
 - https://news.ycombinator.com/item?id=47145321 (Parakeet, Canary-Qwen vs Moonshine)
 - https://news.ycombinator.com/item?id=47406323 (Parakeet speed on Apple silicon)
 - https://news.ycombinator.com/item?id=50193043 and https://huggingface.co/ibm-granite/granite-speech-5.0-2b
+- https://github.com/k2-fsa/sherpa-onnx (Apache-2.0) and its `asr-models` release (`sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8`)
+- https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2 (CC-BY-4.0)
 - https://github.com/FluidInference/FluidAudio
 - https://huggingface.co/FluidInference/parakeet-tdt-0.6b-v3-coreml
 - https://huggingface.co/coder543/nemotron-speech-streaming-en-0.6b-coreai
