@@ -188,6 +188,31 @@ final class LifecycleTests: XCTestCase {
         await fleet.setActive(false)
     }
 
+    /// Background then foreground without waiting: every hab ends up online.
+    func testQuickBackgroundForegroundLeavesAllOnline() async {
+        let a = await sampleHab("one")
+        let b = await sampleHab("two")
+        let fleet = Fleet()
+        fleet.add(HabConnection(id: "a", transport: a.transport(), timing: fastTiming()), label: nil)
+        fleet.add(HabConnection(id: "b", transport: b.transport(), timing: fastTiming()), label: nil)
+        await fleet.setActive(true)
+        await eventually("online") { fleet.board.onlineCount == 2 }
+        let off = Task { await fleet.setActive(false) }
+        let on = Task { await fleet.setActive(true) }
+        await off.value
+        await on.value
+        XCTAssertTrue(fleet.isActive)
+        await eventually("all online again") { fleet.board.onlineCount == 2 }
+        XCTAssertFalse(fleet.board.habs.contains { $0.state.status == .stopped })
+        // The reverse order ends with every stream closed.
+        let on2 = Task { await fleet.setActive(true) }
+        let off2 = Task { await fleet.setActive(false) }
+        await on2.value
+        await off2.value
+        XCTAssertFalse(fleet.isActive)
+        XCTAssertEqual(fleet.openStreams(), 0)
+    }
+
     func testMacLastWindowClosedDisconnects() async {
         let a = await sampleHab()
         let fleet = Fleet()
@@ -238,7 +263,8 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(try t1.arguments(), ["-p", "2222", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
                                             "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
                                             "--", "buildbox", "gff-hab", "connect"])
-        XCTAssertEqual(c.habs[1].id(index: 1), "ssh:buildbox")
+        XCTAssertEqual(c.habs[1].id(index: 1), "ssh:buildbox#1")
+        XCTAssertNotEqual(c.habs[1].id(index: 1), c.habs[1].id(index: 2), "two entries for one host stay apart")
     }
 
     func testEntryNeedsOneEndpoint() {

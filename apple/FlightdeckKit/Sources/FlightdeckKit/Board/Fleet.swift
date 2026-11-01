@@ -17,6 +17,8 @@ public final class Fleet {
     private var consumers: [Task<Void, Never>] = []
     private var windows = 0
     private var check: Task<Void, Never>?
+    private var wanted = false
+    private var transition: Task<Void, Never>?
     private let log = Logger(subsystem: "com.flightdeck.app", category: "lifecycle")
 
     /// How long after going to the background the open-stream check runs.
@@ -48,26 +50,42 @@ public final class Fleet {
     }
 
     /// Connects every hab (visible) or closes every connection (background).
-    /// Returns once every connection has started or closed.
+    /// Returns once every connection has started or closed. Calls run one after
+    /// another, and the last wanted state wins, so a quick background and
+    /// foreground never leaves some habs stopped.
     public func setActive(_ active: Bool) async {
-        guard active != isActive else { return }
-        isActive = active
-        check?.cancel()
-        if active {
-            log.info("foreground: connecting \(self.connections.count) habs")
-            for c in connections { await c.start() }
-            for c in connections { await c.retryNow() }
-        } else {
-            for c in connections { await c.stop() }
-            // iOS may suspend the app before the delayed check runs, so log the count now too.
-            log.notice("background: closed \(self.connections.count) habs, \(self.openStreams()) open streams")
-            let delay = checkDelay
-            check = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: delay)
-                guard let self, !Task.isCancelled, !self.isActive else { return }
-                let n = self.openStreams()
-                self.lastBackgroundCheck = n
-                self.log.notice("background check: \(n) open streams \(delay.components.seconds) s after going to the background")
+        wanted = active
+        let previous = transition
+        let t = Task { @MainActor in
+            await previous?.value
+            await self.converge()
+        }
+        transition = t
+        await t.value
+    }
+
+    /// Applies `wanted` until it holds; a call that arrived meanwhile changes it.
+    private func converge() async {
+        while wanted != isActive {
+            let active = wanted
+            isActive = active
+            check?.cancel()
+            if active {
+                log.info("foreground: connecting \(self.connections.count) habs")
+                for c in connections { await c.start() }
+                for c in connections { await c.retryNow() }
+            } else {
+                for c in connections { await c.stop() }
+                // iOS may suspend the app before the delayed check runs, so log the count now too.
+                log.notice("background: closed \(self.connections.count) habs, \(self.openStreams()) open streams")
+                let delay = checkDelay
+                check = Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: delay)
+                    guard let self, !Task.isCancelled, !self.isActive else { return }
+                    let n = self.openStreams()
+                    self.lastBackgroundCheck = n
+                    self.log.notice("background check: \(n) open streams \(delay.components.seconds) s after going to the background")
+                }
             }
         }
     }

@@ -67,7 +67,8 @@ public final class Board {
 
     /// Sessions that need the owner, across online habs (the app badge).
     public var needsYouCount: Int {
-        sections.first { $0.kind == .needsYou }?.rows.filter { !$0.offline }.count ?? 0
+        let online = Set(habs.filter { $0.state.status == .online }.map(\.id))
+        return sections.first { $0.kind == .needsYou }?.rows.filter { online.contains($0.target.habID) }.count ?? 0
     }
 
     public var onlineCount: Int { habs.filter { $0.state.status == .online }.count }

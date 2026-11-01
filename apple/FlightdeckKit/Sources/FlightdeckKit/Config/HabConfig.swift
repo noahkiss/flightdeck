@@ -81,7 +81,7 @@ public struct HabConfig: Codable, Sendable, Equatable {
 
     /// A stable id for the hab within this list.
     public func id(index: Int) -> String {
-        if let s = ssh { return "ssh:" + s.host }
+        if let s = ssh { return "ssh:\(s.host)#\(index)" }
         return "local:\(local?.socket ?? "default")#\(index)"
     }
 

@@ -1,11 +1,11 @@
 import HabAPI
 import SwiftUI
 
-/// The app's root: the status board, plus the lifecycle rule. iPhone and iPad
-/// connect while the scene is active; the Mac connects while any window is open.
+/// The app's root: the status board. On the Mac it also counts windows for
+/// the lifecycle rule. On iPhone and iPad the `App` drives the rule with
+/// `Fleet.apply(_:)` from its own scene phase, which combines every window.
 public struct FlightdeckRoot: View {
     private let fleet: Fleet
-    @Environment(\.scenePhase) private var phase
 
     public init(fleet: Fleet) {
         self.fleet = fleet
@@ -18,14 +18,19 @@ public struct FlightdeckRoot: View {
             .onDisappear { fleet.windowClosed() }
         #else
         BoardScreen(board: fleet.board)
-            .onChange(of: phase, initial: true) { _, p in
-                switch p {
-                case .active: fleet.scene(active: true)
-                case .background: fleet.scene(active: false)
-                default: fleet.scene(active: nil)
-                }
-            }
         #endif
+    }
+}
+
+extension Fleet {
+    /// iPhone and iPad: the app-level scene phase, which is active while any
+    /// window is active. `inactive` changes nothing.
+    public func apply(_ phase: ScenePhase) {
+        switch phase {
+        case .active: scene(active: true)
+        case .background: scene(active: false)
+        default: scene(active: nil)
+        }
     }
 }
 
