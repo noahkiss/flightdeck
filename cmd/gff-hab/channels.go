@@ -285,9 +285,7 @@ func waitCmd(args []string, out io.Writer) error {
 	}
 	set := false
 	fs.Visit(func(f *flag.Flag) { set = set || f.Name == "timeout" })
-	if !set && *sock == "" && *via == "" && os.Getenv(hook.Env) != "" {
-		*timeout = channels.PaneWait
-	}
+	*timeout = waitTimeout(*timeout, set, *sock != "" || *via != "", os.Getenv(hook.Env) != "")
 	p := api.ChannelWaitParams{Session: *session, Agent: *agent, TimeoutMS: int(*timeout / time.Millisecond)}
 	if *forStates != "" {
 		for _, s := range strings.Split(*forStates, ",") {
@@ -329,4 +327,13 @@ func waitCmd(args []string, out io.Writer) error {
 		return fmt.Errorf("nothing within %v", *timeout)
 	}
 	return nil
+}
+
+// waitTimeout is the wait of gff-hab wait: the -timeout given, else 110 s from a pane (the hook
+// door), under the 2 minute limit a harness puts on one tool command, else the flag's default.
+func waitTimeout(flagValue time.Duration, set, control, inPane bool) time.Duration {
+	if !set && !control && inPane {
+		return channels.PaneWait
+	}
+	return flagValue
 }

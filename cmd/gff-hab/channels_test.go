@@ -274,10 +274,21 @@ func TestChannelsNameClash(t *testing.T) {
 	if err := json.Unmarshal([]byte(run(t, "api", "call", "-socket", p.a.sock, "structure.get")), &sr); err != nil {
 		t.Fatal(err)
 	}
+	odd := filepath.Join(p.a.work, "my prog$x")
+	if err := os.WriteFile(odd, []byte("#!/bin/sh\nwhile [ ! -e \"$DIR/end\" ]; do sleep 0.05; done\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cleaned := createSession(t, p.a.sock, api.SessionCreateParams{Argv: []string{odd}, Cwd: "/", Cols: 80, Rows: 24,
+		Env: []string{"PATH=/usr/bin:/bin", "DIR=" + p.a.work}})
+	if err := json.Unmarshal([]byte(run(t, "api", "call", "-socket", p.a.sock, "structure.get")), &sr); err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]string{}
 	for _, s := range sr.Sessions {
-		if s.ID == picked.Session && s.Name != "bob-2" {
-			t.Fatalf("picked name %q, want bob-2", s.Name)
-		}
+		names[s.ID] = s.Name
+	}
+	if names[picked.Session] != "bob-2" || names[cleaned.Session] != "my-prog-x" {
+		t.Fatalf("picked names %q and %q, want bob-2 and my-prog-x", names[picked.Session], names[cleaned.Session])
 	}
 }
 
@@ -345,5 +356,21 @@ func TestChannelsWaitCommand(t *testing.T) {
 	}
 	if out := run(t, "send", "-socket", e.sock, "-from", "alice", "bob", "x"); !strings.Contains(out, "handed") {
 		t.Fatalf("send -from: %q", out)
+	}
+}
+
+func TestWaitTimeoutDefault(t *testing.T) {
+	for _, c := range []struct {
+		set, control, inPane bool
+		want                 time.Duration
+	}{
+		{false, false, true, channels.PaneWait},
+		{true, false, true, time.Second},
+		{false, true, true, time.Second},
+		{false, false, false, time.Second},
+	} {
+		if got := waitTimeout(time.Second, c.set, c.control, c.inPane); got != c.want {
+			t.Errorf("%+v: %v", c, got)
+		}
 	}
 }
