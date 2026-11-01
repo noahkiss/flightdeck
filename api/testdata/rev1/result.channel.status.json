@@ -1,0 +1,22 @@
+{
+  "record": {
+    "at": "at-8",
+    "created": "created-9",
+    "from": "from-5",
+    "id": "id-4",
+    "reason": "reason-7",
+    "state": "expired",
+    "to": "to-6",
+    "x_unknown_field": "later"
+  },
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

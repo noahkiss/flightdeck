@@ -38,6 +38,15 @@ const (
 )
 
 const (
+	ChannelStateQueued       ChannelState = "queued"
+	ChannelStateHanded       ChannelState = "handed"
+	ChannelStateDelivered    ChannelState = "delivered"
+	ChannelStateNotDelivered ChannelState = "not_delivered"
+	ChannelStateRefused      ChannelState = "refused"
+	ChannelStateExpired      ChannelState = "expired"
+)
+
+const (
 	ChatEventCompaction ChatEvent = "compaction"
 	ChatEventPermission ChatEvent = "permission"
 	ChatEventInterrupt  ChatEvent = "interrupt"
@@ -123,6 +132,11 @@ const (
 
 const (
 	HookHealthMissing HookHealth = "missing"
+)
+
+const (
+	MailKindMessage MailKind = "message"
+	MailKindStatus  MailKind = "status"
 )
 
 const (
@@ -243,6 +257,7 @@ const (
 	EventCatalogUpdated EventType = "catalog.updated"
 	EventNoticeRaised   EventType = "notice.raised"
 	EventContentUpdated EventType = "content.updated"
+	EventChannelMessage EventType = "channel.message"
 )
 
 // DecodeData decodes e.Data into the type its event type names. It returns
@@ -323,6 +338,10 @@ func (e Event) DecodeData() (any, error) {
 		return v, err
 	case EventContentUpdated:
 		var v ContentItem
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventChannelMessage:
+		var v ChannelRecord
 		err := json.Unmarshal(e.Data, &v)
 		return v, err
 	}
@@ -658,5 +677,40 @@ func (c Client) HabPermissions(ctx context.Context, params PermissionsParams) (P
 func (c Client) DetectExplain(ctx context.Context, params DetectExplainParams) (DetectExplain, error) {
 	var result DetectExplain
 	err := c.Caller.Call(ctx, "detect.explain", params, &result)
+	return result, err
+}
+
+// ChannelSend calls channel.send. Send a message from a session on this hab to an agent by address (mesh.md 6.5). Needs the channels capability.
+func (c Client) ChannelSend(ctx context.Context, params ChannelSendParams) (ChannelSent, error) {
+	var result ChannelSent
+	err := c.Caller.Call(ctx, "channel.send", params, &result)
+	return result, err
+}
+
+// ChannelStatus calls channel.status. A sent message's record, optionally after waiting for its final state (mesh.md 6.5). Needs the channels capability.
+func (c Client) ChannelStatus(ctx context.Context, params ChannelStatusParams) (ChannelStatusResult, error) {
+	var result ChannelStatusResult
+	err := c.Caller.Call(ctx, "channel.status", params, &result)
+	return result, err
+}
+
+// ChannelWait calls channel.wait. Wait for a message to a session, or for an agent's state, or the end of the time (mesh.md 6.4). Needs the channels capability.
+func (c Client) ChannelWait(ctx context.Context, params ChannelWaitParams) (ChannelWaitResult, error) {
+	var result ChannelWaitResult
+	err := c.Caller.Call(ctx, "channel.wait", params, &result)
+	return result, err
+}
+
+// MailPush calls mail.push. A peer link hands over outbox items for this hab; one result per item (mesh.md 6.5). Needs the channels capability.
+func (c Client) MailPush(ctx context.Context, params MailPushParams) (MailPushResult, error) {
+	var result MailPushResult
+	err := c.Caller.Call(ctx, "mail.push", params, &result)
+	return result, err
+}
+
+// MailPull calls mail.pull. A peer link takes the outbox items waiting for its hab, and reports on its last pull (mesh.md 6.5). Needs the channels capability.
+func (c Client) MailPull(ctx context.Context, params MailPullParams) (MailPullResult, error) {
+	var result MailPullResult
+	err := c.Caller.Call(ctx, "mail.pull", params, &result)
 	return result, err
 }

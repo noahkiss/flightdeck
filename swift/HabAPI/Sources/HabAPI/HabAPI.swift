@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -641,6 +641,295 @@ public struct CatalogUpdated: Codable, Sendable, Hashable {
     public init(deviceId: String, generation: UInt64) {
         self.deviceId = deviceId
         self.generation = generation
+    }
+}
+
+public struct ChannelAgent: Codable, Sendable, Hashable {
+    public var session: String
+    public var state: AgentStatus
+
+    enum CodingKeys: String, CodingKey {
+        case session = "session"
+        case state = "state"
+    }
+
+    public init(session: String, state: AgentStatus) {
+        self.session = session
+        self.state = state
+    }
+}
+
+public struct ChannelEnd: Codable, Sendable, Hashable {
+    /// The hab's device id.
+    public var deviceId: String
+    /// The hab's host id. Set on the sender only.
+    public var host: String?
+    /// The session's name on that hab.
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case host = "host"
+        case session = "session"
+    }
+
+    public init(deviceId: String, host: String? = nil, session: String) {
+        self.deviceId = deviceId
+        self.host = host
+        self.session = session
+    }
+}
+
+public struct ChannelInbound: Codable, Sendable, Hashable {
+    /// RFC 3339 time the sender hab made it.
+    public var at: String
+    /// The sender's address as this hab names it.
+    public var from: String
+    public var id: String
+    public var replyTo: String?
+    public var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case from = "from"
+        case id = "id"
+        case replyTo = "reply_to"
+        case text = "text"
+    }
+
+    public init(at: String, from: String, id: String, replyTo: String? = nil, text: String) {
+        self.at = at
+        self.from = from
+        self.id = id
+        self.replyTo = replyTo
+        self.text = text
+    }
+}
+
+public struct ChannelMessage: Codable, Sendable, Hashable {
+    /// RFC 3339 time the sender hab made the message, by its clock.
+    public var at: String
+    public var from: ChannelEnd
+    /// 128 random bits as 32 hex digits, made by the sender hab.
+    public var id: String
+    /// The id of the message this one answers.
+    public var replyTo: String?
+    /// At most 64 KiB.
+    public var text: String
+    public var to: ChannelEnd
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case from = "from"
+        case id = "id"
+        case replyTo = "reply_to"
+        case text = "text"
+        case to = "to"
+    }
+
+    public init(at: String, from: ChannelEnd, id: String, replyTo: String? = nil, text: String, to: ChannelEnd) {
+        self.at = at
+        self.from = from
+        self.id = id
+        self.replyTo = replyTo
+        self.text = text
+        self.to = to
+    }
+}
+
+public struct ChannelRecord: Codable, Sendable, Hashable {
+    /// RFC 3339 time of the last change.
+    public var at: String
+    /// RFC 3339 time it was sent.
+    public var created: String
+    /// The sending session's name.
+    public var from: String
+    public var id: String
+    /// Why it was refused or not delivered.
+    public var reason: String?
+    public var state: ChannelState
+    /// The address it was sent to.
+    public var to: String
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case created = "created"
+        case from = "from"
+        case id = "id"
+        case reason = "reason"
+        case state = "state"
+        case to = "to"
+    }
+
+    public init(at: String, created: String, from: String, id: String, reason: String? = nil, state: ChannelState, to: String) {
+        self.at = at
+        self.created = created
+        self.from = from
+        self.id = id
+        self.reason = reason
+        self.state = state
+        self.to = to
+    }
+}
+
+public struct ChannelSendParams: Codable, Sendable, Hashable {
+    /// The sending session's name on this hab. The hook endpoint fills it from the pane's token.
+    public var from: String?
+    public var replyTo: String?
+    public var text: String
+    /// An address: label/name, or a bare name (mesh.md 6.5).
+    public var to: String
+
+    enum CodingKeys: String, CodingKey {
+        case from = "from"
+        case replyTo = "reply_to"
+        case text = "text"
+        case to = "to"
+    }
+
+    public init(from: String? = nil, replyTo: String? = nil, text: String, to: String) {
+        self.from = from
+        self.replyTo = replyTo
+        self.text = text
+        self.to = to
+    }
+}
+
+public struct ChannelSent: Codable, Sendable, Hashable {
+    public var id: String
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// handed for a session on this hab, else queued.
+    public var state: ChannelState
+    /// The resolved address: label/name, or the name for a session on this hab.
+    public var to: String
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case seq = "seq"
+        case state = "state"
+        case to = "to"
+    }
+
+    public init(id: String, seq: UInt64, state: ChannelState, to: String) {
+        self.id = id
+        self.seq = seq
+        self.state = state
+        self.to = to
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct ChannelState: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let queued = ChannelState(rawValue: "queued")
+    public static let handed = ChannelState(rawValue: "handed")
+    public static let delivered = ChannelState(rawValue: "delivered")
+    public static let notDelivered = ChannelState(rawValue: "not_delivered")
+    public static let refused = ChannelState(rawValue: "refused")
+    public static let expired = ChannelState(rawValue: "expired")
+}
+
+public struct ChannelStatus: Codable, Sendable, Hashable {
+    /// RFC 3339 time of the change, by the target hab's clock.
+    public var at: String
+    /// The message id.
+    public var id: String
+    public var reason: String?
+    public var state: ChannelState
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case id = "id"
+        case reason = "reason"
+        case state = "state"
+    }
+
+    public init(at: String, id: String, reason: String? = nil, state: ChannelState) {
+        self.at = at
+        self.id = id
+        self.reason = reason
+        self.state = state
+    }
+}
+
+public struct ChannelStatusParams: Codable, Sendable, Hashable {
+    public var id: String
+    /// Wait up to this long for a final state; 0 answers at once. At most 600000.
+    public var waitMs: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case waitMs = "wait_ms"
+    }
+
+    public init(id: String, waitMs: Int? = nil) {
+        self.id = id
+        self.waitMs = waitMs
+    }
+}
+
+public struct ChannelStatusResult: Codable, Sendable, Hashable {
+    public var record: ChannelRecord
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case record = "record"
+        case seq = "seq"
+    }
+
+    public init(record: ChannelRecord, seq: UInt64) {
+        self.record = record
+        self.seq = seq
+    }
+}
+
+public struct ChannelWaitParams: Codable, Sendable, Hashable {
+    /// Wait for this session's agent on this hab to reach a state in for.
+    public var agent: String?
+    /// The states that end the wait for agent; empty means any change.
+    public var `for`: [AgentStatus]?
+    /// Wait for a message to this session on this hab. The hook endpoint fills it from the pane's token.
+    public var session: String?
+    /// Default 180000, at most 600000.
+    public var timeoutMs: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case agent = "agent"
+        case `for` = "for"
+        case session = "session"
+        case timeoutMs = "timeout_ms"
+    }
+
+    public init(agent: String? = nil, `for`: [AgentStatus]? = nil, session: String? = nil, timeoutMs: Int? = nil) {
+        self.agent = agent
+        self.`for` = `for`
+        self.session = session
+        self.timeoutMs = timeoutMs
+    }
+}
+
+public struct ChannelWaitResult: Codable, Sendable, Hashable {
+    public var agent: ChannelAgent?
+    public var message: ChannelInbound?
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    public var timedOut: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case agent = "agent"
+        case message = "message"
+        case seq = "seq"
+        case timedOut = "timed_out"
+    }
+
+    public init(agent: ChannelAgent? = nil, message: ChannelInbound? = nil, seq: UInt64, timedOut: Bool? = nil) {
+        self.agent = agent
+        self.message = message
+        self.seq = seq
+        self.timedOut = timedOut
     }
 }
 
@@ -1981,6 +2270,116 @@ public struct LinkedPeer: Codable, Sendable, Hashable {
     public init(deviceId: String, host: String) {
         self.deviceId = deviceId
         self.host = host
+    }
+}
+
+public struct MailItem: Codable, Sendable, Hashable {
+    public var kind: MailKind
+    /// Kind message.
+    public var message: ChannelMessage?
+    /// Kind status.
+    public var status: ChannelStatus?
+
+    enum CodingKeys: String, CodingKey {
+        case kind = "kind"
+        case message = "message"
+        case status = "status"
+    }
+
+    public init(kind: MailKind, message: ChannelMessage? = nil, status: ChannelStatus? = nil) {
+        self.kind = kind
+        self.message = message
+        self.status = status
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct MailKind: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let message = MailKind(rawValue: "message")
+    public static let status = MailKind(rawValue: "status")
+}
+
+public struct MailPullParams: Codable, Sendable, Hashable {
+    /// Results for the items of the caller's last pull; the hab removes them from its outbox.
+    public var done: [MailResult]?
+
+    enum CodingKeys: String, CodingKey {
+        case done = "done"
+    }
+
+    public init(done: [MailResult]? = nil) {
+        self.done = done
+    }
+}
+
+public struct MailPullResult: Codable, Sendable, Hashable {
+    /// In outbox order, at most 100.
+    public var items: [MailItem]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case items = "items"
+        case seq = "seq"
+    }
+
+    public init(items: [MailItem], seq: UInt64) {
+        self.items = items
+        self.seq = seq
+    }
+}
+
+public struct MailPushParams: Codable, Sendable, Hashable {
+    /// In outbox order, at most 100.
+    public var items: [MailItem]
+
+    enum CodingKeys: String, CodingKey {
+        case items = "items"
+    }
+
+    public init(items: [MailItem]) {
+        self.items = items
+    }
+}
+
+public struct MailPushResult: Codable, Sendable, Hashable {
+    public var results: [MailResult]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case results = "results"
+        case seq = "seq"
+    }
+
+    public init(results: [MailResult], seq: UInt64) {
+        self.results = results
+        self.seq = seq
+    }
+}
+
+public struct MailResult: Codable, Sendable, Hashable {
+    /// The message id the item carries.
+    public var id: String
+    public var kind: MailKind
+    public var reason: String?
+    /// For a message: handed or refused. For a status item: its own state, as a receipt.
+    public var state: ChannelState
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case kind = "kind"
+        case reason = "reason"
+        case state = "state"
+    }
+
+    public init(id: String, kind: MailKind, reason: String? = nil, state: ChannelState) {
+        self.id = id
+        self.kind = kind
+        self.reason = reason
+        self.state = state
     }
 }
 
@@ -3325,6 +3724,16 @@ public enum HabMethods {
     public static let habPermissions = HabMethod<PermissionsParams, Permissions>(name: "hab.permissions")
     /// Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.
     public static let detectExplain = HabMethod<DetectExplainParams, DetectExplain>(name: "detect.explain")
+    /// Send a message from a session on this hab to an agent by address (mesh.md 6.5). Needs the channels capability.
+    public static let channelSend = HabMethod<ChannelSendParams, ChannelSent>(name: "channel.send")
+    /// A sent message's record, optionally after waiting for its final state (mesh.md 6.5). Needs the channels capability.
+    public static let channelStatus = HabMethod<ChannelStatusParams, ChannelStatusResult>(name: "channel.status")
+    /// Wait for a message to a session, or for an agent's state, or the end of the time (mesh.md 6.4). Needs the channels capability.
+    public static let channelWait = HabMethod<ChannelWaitParams, ChannelWaitResult>(name: "channel.wait")
+    /// A peer link hands over outbox items for this hab; one result per item (mesh.md 6.5). Needs the channels capability.
+    public static let mailPush = HabMethod<MailPushParams, MailPushResult>(name: "mail.push")
+    /// A peer link takes the outbox items waiting for its hab, and reports on its last pull (mesh.md 6.5). Needs the channels capability.
+    public static let mailPull = HabMethod<MailPullParams, MailPullResult>(name: "mail.pull")
 }
 
 public enum HabNotification {
@@ -3373,6 +3782,8 @@ public enum HabEvent: Sendable, Hashable {
     case noticeRaised(Notice)
     /// A session showed a file (content.show); the id is the item id. Ephemeral.
     case contentUpdated(ContentItem)
+    /// A message this hab sent changed state; the id is the message id (mesh.md 6.5). Host scope only. Ephemeral.
+    case channelMessage(ChannelRecord)
     case unknown(type: String, data: JSONValue)
 
     public init(_ event: Event) throws {
@@ -3396,6 +3807,7 @@ public enum HabEvent: Sendable, Hashable {
         case "catalog.updated": self = .catalogUpdated(try event.data.decode(CatalogUpdated.self))
         case "notice.raised": self = .noticeRaised(try event.data.decode(Notice.self))
         case "content.updated": self = .contentUpdated(try event.data.decode(ContentItem.self))
+        case "channel.message": self = .channelMessage(try event.data.decode(ChannelRecord.self))
         default: self = .unknown(type: event.type, data: event.data)
         }
     }

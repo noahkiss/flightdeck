@@ -27,7 +27,8 @@
     "detect-explain",
     "catalog",
     "usage",
-    "content"
+    "content",
+    "channels"
   ],
   "methods": [
     {
@@ -1513,6 +1514,182 @@
       "x-params": {
         "$ref": "#/components/schemas/DetectExplainParams"
       }
+    },
+    {
+      "name": "channel.send",
+      "summary": "Send a message from a session on this hab to an agent by address (mesh.md 6.5). Needs the channels capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "from",
+          "description": "The sending session's name on this hab. The hook endpoint fills it from the pane's token.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "reply_to",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "to",
+          "description": "An address: label/name, or a bare name (mesh.md 6.5).",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ChannelSent"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/ChannelSendParams"
+      }
+    },
+    {
+      "name": "channel.status",
+      "summary": "A sent message's record, optionally after waiting for its final state (mesh.md 6.5). Needs the channels capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "wait_ms",
+          "description": "Wait up to this long for a final state; 0 answers at once. At most 600000.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ChannelStatusResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/ChannelStatusParams"
+      }
+    },
+    {
+      "name": "channel.wait",
+      "summary": "Wait for a message to a session, or for an agent's state, or the end of the time (mesh.md 6.4). Needs the channels capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "agent",
+          "description": "Wait for this session's agent on this hab to reach a state in for.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "for",
+          "description": "The states that end the wait for agent; empty means any change.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentStatus"
+            }
+          }
+        },
+        {
+          "name": "session",
+          "description": "Wait for a message to this session on this hab. The hook endpoint fills it from the pane's token.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "timeout_ms",
+          "description": "Default 180000, at most 600000.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ChannelWaitResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/ChannelWaitParams"
+      }
+    },
+    {
+      "name": "mail.push",
+      "summary": "A peer link hands over outbox items for this hab; one result per item (mesh.md 6.5). Needs the channels capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "items",
+          "description": "In outbox order, at most 100.",
+          "required": true,
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MailItem"
+            }
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MailPushResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/MailPushParams"
+      }
+    },
+    {
+      "name": "mail.pull",
+      "summary": "A peer link takes the outbox items waiting for its hab, and reports on its last pull (mesh.md 6.5). Needs the channels capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "done",
+          "description": "Results for the items of the caller's last pull; the hab removes them from its outbox.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MailResult"
+            }
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/MailPullResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/MailPullParams"
+      }
     }
   ],
   "x-notifications": [
@@ -1670,6 +1847,13 @@
       "summary": "A session showed a file (content.show); the id is the item id. Ephemeral.",
       "data": {
         "$ref": "#/components/schemas/ContentItem"
+      }
+    },
+    {
+      "type": "channel.message",
+      "summary": "A message this hab sent changed state; the id is the message id (mesh.md 6.5). Host scope only. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/ChannelRecord"
       }
     }
   ],
@@ -2435,6 +2619,308 @@
         "required": [
           "device_id",
           "generation"
+        ]
+      },
+      "ChannelAgent": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/AgentStatus"
+          }
+        },
+        "required": [
+          "session",
+          "state"
+        ]
+      },
+      "ChannelEnd": {
+        "type": "object",
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "description": "The hab's device id."
+          },
+          "host": {
+            "type": "string",
+            "description": "The hab's host id. Set on the sender only."
+          },
+          "session": {
+            "type": "string",
+            "description": "The session's name on that hab."
+          }
+        },
+        "required": [
+          "device_id",
+          "session"
+        ]
+      },
+      "ChannelInbound": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time the sender hab made it."
+          },
+          "from": {
+            "type": "string",
+            "description": "The sender's address as this hab names it."
+          },
+          "id": {
+            "type": "string"
+          },
+          "reply_to": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "from",
+          "text",
+          "at"
+        ]
+      },
+      "ChannelMessage": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time the sender hab made the message, by its clock."
+          },
+          "from": {
+            "$ref": "#/components/schemas/ChannelEnd"
+          },
+          "id": {
+            "type": "string",
+            "description": "128 random bits as 32 hex digits, made by the sender hab."
+          },
+          "reply_to": {
+            "type": "string",
+            "description": "The id of the message this one answers."
+          },
+          "text": {
+            "type": "string",
+            "description": "At most 64 KiB."
+          },
+          "to": {
+            "$ref": "#/components/schemas/ChannelEnd"
+          }
+        },
+        "required": [
+          "id",
+          "from",
+          "to",
+          "text",
+          "at"
+        ]
+      },
+      "ChannelRecord": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time of the last change."
+          },
+          "created": {
+            "type": "string",
+            "description": "RFC 3339 time it was sent."
+          },
+          "from": {
+            "type": "string",
+            "description": "The sending session's name."
+          },
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why it was refused or not delivered."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ChannelState"
+          },
+          "to": {
+            "type": "string",
+            "description": "The address it was sent to."
+          }
+        },
+        "required": [
+          "id",
+          "from",
+          "to",
+          "state",
+          "at",
+          "created"
+        ]
+      },
+      "ChannelSendParams": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "The sending session's name on this hab. The hook endpoint fills it from the pane's token."
+          },
+          "reply_to": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string",
+            "description": "An address: label/name, or a bare name (mesh.md 6.5)."
+          }
+        },
+        "required": [
+          "to",
+          "text"
+        ]
+      },
+      "ChannelSent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ChannelState",
+            "description": "handed for a session on this hab, else queued."
+          },
+          "to": {
+            "type": "string",
+            "description": "The resolved address: label/name, or the name for a session on this hab."
+          }
+        },
+        "required": [
+          "seq",
+          "id",
+          "to",
+          "state"
+        ]
+      },
+      "ChannelState": {
+        "type": "string",
+        "x-known-values": [
+          "queued",
+          "handed",
+          "delivered",
+          "not_delivered",
+          "refused",
+          "expired"
+        ]
+      },
+      "ChannelStatus": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time of the change, by the target hab's clock."
+          },
+          "id": {
+            "type": "string",
+            "description": "The message id."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ChannelState"
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "at"
+        ]
+      },
+      "ChannelStatusParams": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "wait_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Wait up to this long for a final state; 0 answers at once. At most 600000."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "ChannelStatusResult": {
+        "type": "object",
+        "properties": {
+          "record": {
+            "$ref": "#/components/schemas/ChannelRecord"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "record"
+        ]
+      },
+      "ChannelWaitParams": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "type": "string",
+            "description": "Wait for this session's agent on this hab to reach a state in for."
+          },
+          "for": {
+            "type": "array",
+            "description": "The states that end the wait for agent; empty means any change.",
+            "items": {
+              "$ref": "#/components/schemas/AgentStatus"
+            }
+          },
+          "session": {
+            "type": "string",
+            "description": "Wait for a message to this session on this hab. The hook endpoint fills it from the pane's token."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Default 180000, at most 600000."
+          }
+        }
+      },
+      "ChannelWaitResult": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/ChannelAgent"
+          },
+          "message": {
+            "$ref": "#/components/schemas/ChannelInbound"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "timed_out": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "seq"
         ]
       },
       "ChatEvent": {
@@ -3870,6 +4356,124 @@
         "required": [
           "device_id",
           "host"
+        ]
+      },
+      "MailItem": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/MailKind"
+          },
+          "message": {
+            "$ref": "#/components/schemas/ChannelMessage",
+            "description": "Kind message."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ChannelStatus",
+            "description": "Kind status."
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "MailKind": {
+        "type": "string",
+        "x-known-values": [
+          "message",
+          "status"
+        ]
+      },
+      "MailPullParams": {
+        "type": "object",
+        "properties": {
+          "done": {
+            "type": "array",
+            "description": "Results for the items of the caller's last pull; the hab removes them from its outbox.",
+            "items": {
+              "$ref": "#/components/schemas/MailResult"
+            }
+          }
+        }
+      },
+      "MailPullResult": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "description": "In outbox order, at most 100.",
+            "items": {
+              "$ref": "#/components/schemas/MailItem"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "items"
+        ]
+      },
+      "MailPushParams": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "description": "In outbox order, at most 100.",
+            "items": {
+              "$ref": "#/components/schemas/MailItem"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "MailPushResult": {
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MailResult"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "results"
+        ]
+      },
+      "MailResult": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The message id the item carries."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MailKind"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ChannelState",
+            "description": "For a message: handed or refused. For a status item: its own state, as a receipt."
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "state"
         ]
       },
       "Notice": {

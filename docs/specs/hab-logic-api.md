@@ -622,11 +622,13 @@ The schema lives in `api/` (layout and commands: `docs/layout.md`). Built choice
 ### 3.4 Capabilities
 
 Capability strings name optional features: `data-streams`, `snapshot-vt`, `snapshot-ghostty`,
-`agent-state`, `transcripts`, `devices`, `push`, `host-stats`, `mesh`, `idempotency-keys`, `usage`, `catalog`.
+`agent-state`, `transcripts`, `devices`, `push`, `host-stats`, `mesh`, `idempotency-keys`, `usage`, `catalog`, `channels`.
 `idempotency-keys` means the hab honours `idempotency_key` on `session.create` and
 `session.send` (3.9). `mesh` means the hab keeps
 a peer list and serves peer links, `peers.list`, `peers.accept` and `peer.updated` (`mesh.md` 4).
 `catalog` means `catalog.get`, `catalog.put`, `catalog.list` and `catalog.updated` work (`mesh.md` 5).
+`channels` means `channel.send`, `channel.status`, `channel.wait`, `mail.push`, `mail.pull` and
+`channel.message` work (`mesh.md` 6.5).
 `devices` means the embedded SSH
 server is on and the `devices.*` methods work. `push` means the hab has working push config;
 `host-stats` means `hab.stats` works (3.9). A client checks for a capability before it uses the
@@ -635,7 +637,7 @@ lack. They are not a second versioning scheme.
 
 Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt`,
 `transcripts` and `detect-explain` (`detect.explain` works). It always sends `mesh`, `idempotency-keys`,
-`catalog` and `usage` (`usage.list` and `usage.updated` work; readings arrive only through panes with the
+`catalog`, `channels` and `usage` (`usage.list` and `usage.updated` work; readings arrive only through panes with the
 holder link). It sends `push` only when its push config loads and validates
 (3.9, Push).
 

@@ -109,6 +109,11 @@ var Methods = []Method{
 	{"catalog.list", "The merged view: this hab's catalog and its direct peers' copies, with projects matched across hosts (mesh.md 5.2). Needs the catalog capability.", CatalogListParams{}, CatalogList{}},
 	{"hab.permissions", "Check the permission grants of the holders, from a probe pane, and of gff-hab (macos-identity.md 7.2). Needs the permissions capability.", PermissionsParams{}, Permissions{}},
 	{"detect.explain", "Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.", DetectExplainParams{}, DetectExplain{}},
+	{"channel.send", "Send a message from a session on this hab to an agent by address (mesh.md 6.5). Needs the channels capability.", ChannelSendParams{}, ChannelSent{}},
+	{"channel.status", "A sent message's record, optionally after waiting for its final state (mesh.md 6.5). Needs the channels capability.", ChannelStatusParams{}, ChannelStatusResult{}},
+	{"channel.wait", "Wait for a message to a session, or for an agent's state, or the end of the time (mesh.md 6.4). Needs the channels capability.", ChannelWaitParams{}, ChannelWaitResult{}},
+	{"mail.push", "A peer link hands over outbox items for this hab; one result per item (mesh.md 6.5). Needs the channels capability.", MailPushParams{}, MailPushResult{}},
+	{"mail.pull", "A peer link takes the outbox items waiting for its hab, and reports on its last pull (mesh.md 6.5). Needs the channels capability.", MailPullParams{}, MailPullResult{}},
 }
 
 // Notifications is every notification the server sends on a control connection.
@@ -139,6 +144,7 @@ var Events = []EventDef{
 	{"catalog.updated", "A catalog this hab holds changed: its own or a peer's copy; the id is the device id (mesh.md 5.2). Host scope only. Ephemeral.", CatalogUpdated{}},
 	{"notice.raised", "A notice was raised (notice.raise); the id is the notice id. Ephemeral.", Notice{}},
 	{"content.updated", "A session showed a file (content.show); the id is the item id. Ephemeral.", ContentItem{}},
+	{"channel.message", "A message this hab sent changed state; the id is the message id (mesh.md 6.5). Host scope only. Ephemeral.", ChannelRecord{}},
 }
 
 // Frames is every data connection frame kind. A frame is the kind byte, a 4-byte big-endian
@@ -191,6 +197,9 @@ var Enums = map[string][]string{
 	"PermissionState":   {"granted", "denied", "unknown", "unanswered", "off", "note", "error"},
 	// Sets added for the mesh (mesh.md 4.3).
 	"PeerState": {"online", "connecting", "offline", "refused", "update_needed"},
+	// Sets added for channels (mesh.md 6.5).
+	"ChannelState": {"queued", "handed", "delivered", "not_delivered", "refused", "expired"},
+	"MailKind":     {"message", "status"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per
@@ -218,5 +227,6 @@ var Translators = map[int]Translator{}
 // detect.explain works (harness-adapters.md, Detection).
 // "catalog" means the catalog.* methods and the catalog.updated event work (mesh.md 5). "usage"
 // means usage.list and the usage.updated event work (harness-adapters.md, Usage). "content"
-// means the content.* methods and the content.updated event work (app.md 4.7).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content"}
+// means the content.* methods and the content.updated event work (app.md 4.7). "channels"
+// means the channel.* and mail.* methods and the channel.message event work (mesh.md 6.5).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels"}

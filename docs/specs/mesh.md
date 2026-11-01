@@ -689,6 +689,153 @@ only in a way the plan already asked for.
   state changes (`--for idle|done|blocked|exit`), or on timeout (default 180 s, as hc).
 - It is a hab call, so no client polls a screen (`gff-client.md` 15.10).
 
+### 6.5 Built choices (task-z5pysi5t)
+
+Package `internal/channels`, wired into `gff-hab serve`. Capability `channels`. Methods
+`channel.send`, `channel.status`, `channel.wait`, `mail.push` and `mail.pull`; event
+`channel.message`. Commands: `gff-hab send` and `gff-hab wait`. Channels own deliver-when-idle;
+the agent kit (task-6ho9972u) calls the same service and may give the commands other names.
+
+**Two front doors, one service.**
+
+- **From a pane.** The command reads `GFF_HAB` and posts `{"method", "params"}` to
+  `POST /channel/<token>` on the hook endpoint. The token names the pane, and the pane's session
+  is the sender (6.2 step 1). The answer is `{"result": ...}` or `{"error": {"kind", "message"}}`.
+  The route takes `channel.send`, `channel.status` and `channel.wait`. A pane with no session
+  cannot send.
+- **From a client.** The control connection takes the same three methods. `channel.send` names
+  the sending session in `from`; `channel.wait` names the waiting session in `session`. Any
+  control client is already the owner (3.2), so naming a session is enough.
+- **The command picks the door.** With `-socket` or `-via`, the control connection, and `-from`
+  or `-session` is needed. Else, with `GFF_HAB` set, the hook endpoint. Else the default
+  control socket.
+
+**Messages and ids.**
+
+- A message is: id (128 random bits, 32 hex digits), `from` (device id, host id, session name),
+  `to` (device id, session name), text, optional `reply_to`, and the sender hab's time.
+- Text is at most 64 KiB. Empty text is refused with `invalid`.
+- `channel.send` returns the id, the resolved address and the state: `handed` for a target on
+  this hab, else `queued`. The sender hab keeps one record per message for 7 days
+  (`channel.status`), with its state, a reason for a refusal, and the time of the last change.
+- A state moves only forward: `queued`, then `handed`, then one final state (`delivered`,
+  `not_delivered`, `refused`, `expired`). A late or repeated update for an earlier state is
+  ignored.
+- `channel.message` is sent on the sender hab each time a record changes. Ephemeral, host scope,
+  id the message id.
+
+**Addresses and names.**
+
+- `label/name`: `label` is a peer label in this hab's peer list, and the peer's device id must be
+  known (pinned or seen). The sender does not check the name; the target hab does, and refuses an
+  unknown one. So `label/name` works while the target is offline or the catalog copy is old.
+- A bare `name`: this hab's sessions, then every catalog copy it holds, stale ones included. A
+  copy names its agents (5.4), so a bare name finds only sessions with an agent running when the
+  copy was pulled. No match is `not_found` with a hint to use `label/name`. Matches on two or
+  more hosts are `conflict`, listing each full address.
+- **The cache is the catalog.** The copies are the "who has this name" cache the research
+  proposed. They refresh with each catalog pull (every 15 s, at once on a peer change). There
+  is no second cache to invalidate.
+- A name found only in an unlisted hab's copy is refused with "add <host id> as a peer": mail
+  goes only to habs in the peer list (6.3, no forwarding).
+- **Names unique across peers.** `session.create` with a name, and `session.rename`, refuse with
+  `conflict` "name in use on <label>" when a catalog copy (stale included) lists an agent with
+  that name. A name gff-hab picks itself (`claude`, then `claude-2`) also skips names in the
+  copies. A clash made while a peer was offline stays (10); `label/name` reaches either agent.
+
+**Outbox, handover and retry.**
+
+- **One outbox per target device id**, in `<state>/channels/outbox-<id>.json`, where `<id>` is
+  the device id with `/`, `+` and `:` made file-safe. It holds messages and status items, in
+  order. At most 1000 items per target: a send beyond that is refused with `conflict` "outbox
+  full for <label>". An item older than 7 days is dropped; a dropped message's record turns
+  `expired`.
+- **Every write reaches the disk before the answer.** Each file is written to a temporary file,
+  synced, renamed into place, and the folder synced (as `catalog.json`). A file that does not
+  parse is set aside as `.bad` and the hab starts with that part empty.
+- **Push.** Every 15 s, and at once after a send or when a peer's row changes, the hab works
+  each online link it dialed to a peer with `channels`. It pushes that peer's outbox in order,
+  up to 100 items per `mail.push`. The answer has one result per item. A failed call keeps every
+  item and waits 1 s, doubled for each failure in a row up to 60 s. A link that comes back
+  online is tried at once.
+- **Pull.** On the same rounds the hab calls `mail.pull` over each such link. The answer holds
+  up to 100 items waiting for the caller's device id. The next pull carries the results of those
+  items, and the peer then removes them; the hab pulls again at once while items come. So a hab
+  that only the other side can dial (4.2) still sends and receives. Results that a lost answer
+  dropped cost one repeat, which dedup absorbs.
+- **No forwarding.** `mail.push` and `mail.pull` need a peer link: client kind `hab` with the
+  hello's `peer` field. A message whose `from` device is not the link's, or whose `to` device is
+  not this hab, is refused.
+
+**Receive and dedup.**
+
+- For each message the receiving hab checks, in order: a repeated id gets its first result
+  again; a session name this hab does not hold is `refused` "no session named <name> on this
+  host"; else the message joins the inbox and is `handed`. The id is kept 7 days from its first
+  arrival, with its result, in `<state>/channels/ledger.json`. The inbox
+  (`<state>/channels/inbox.json`) and the ledger are on disk before the answer goes back.
+- At most 1000 messages per session wait in the inbox; one more is `refused` "inbox full".
+- A message to this hab's own session takes the same path at once, with no outbox.
+
+**Delivery.**
+
+- The hab tries the oldest message for each session when any agent state changes, after a new
+  message arrives, and once a second. Messages to one session go one at a time, in arrival order.
+- It delivers through `session.send`'s own path (`harness-adapters.md`, Input delivery):
+  bracketed paste, then Enter; only while `idle`, `done` or `error`; never with a permission
+  request open; one message per turn. Busy (`working`, `blocked`, an open request, a message
+  still starting its turn) holds the message. `error` delivers, as `session.send` does: the turn
+  stopped and the harness is at its prompt again.
+- **Refused:** the session is gone or exited, the pane shows `none` or `exited`, or the harness
+  takes no messages yet (opencode). A pane with no agent state at all is held for 30 s after the
+  message arrived or the hab started, whichever is later, so a hab that just restarted can
+  learn the state again; after that it is refused "agent not running".
+- **`not_delivered`:** the paste reached the prompt but Enter was not sent. It is not retried.
+- **`delivered`** means both writes reached the program. The read back (a `working` signal
+  within a few seconds) is Part 4's and is not built yet.
+- **`channel.wait` also delivers.** An agent that runs `gff-hab wait` is `working`, so the PTY
+  path would hold its messages until the wait ends. So a wait takes the oldest held message for
+  its session, marks it `delivered`, and returns it. A message being written to the PTY at that
+  moment is not taken.
+- **Status back to the sender.** Each final state goes into the outbox for the sender's device
+  id as a status item, and travels by push or pull like a message. The sender applies it only to
+  a record whose target is the device that sent it.
+
+**The envelope** (provisional; Part 4 may change the words):
+
+```
+[Flightdeck: message from agent <address>, not from the owner. Reply with: gff-hab send <address> "<text>"]
+<text>
+```
+
+`<address>` is the sender as the receiving hab would address it: `label/name` with the label of
+the sender's device in the receiving hab's peer list, else `<host id>/name`. A message from the
+same hab gives the bare name. It is one paste, so a multi-line message stays one message.
+
+**`channel.wait`** (6.4):
+
+- Waits for a message to `session`, or, with `agent`, for that agent on this hab to reach one of
+  the states in `for` (any change when `for` is empty; `exited` also when the session goes).
+  Whichever comes first returns. `timeout_ms` defaults to 180 000 and is at most 600 000; the
+  end of the time returns `timed_out`, not an error.
+- `channel.status` with `wait_ms` waits the same way for the record's final state.
+
+Not built in this stage:
+
+- `gff-hab wait -agent` for an agent on another host; `-for` reads this hab's agents only.
+- The read back and its `not_delivered`; the two-second typing pause (both Part 4).
+- The `mesh.changed` wake-up: a hab that only pulls sees new mail within one round (15 s).
+- An MCP tool and the printed skill (agent kit, task-6ho9972u).
+- Revocations as control items (`transport.md` 6.6): the outbox takes only messages and status
+  items.
+
+Limits, at the bar of herdr, Rex and Paseo (hc has no outbox and no dedup):
+
+- A hab that lost its state directory has lost its ledger: a message pushed again after that is
+  delivered twice (10).
+- Clocks: expiry counts from the sender hab's own clock; the dedup window from the receiver's.
+- A name clash made while a peer was offline is not shown on the status board yet.
+
 ---
 
 ## 7. Suggestions (no router)
