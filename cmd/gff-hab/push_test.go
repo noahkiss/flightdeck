@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -79,7 +80,9 @@ func writePushConfig(t *testing.T, state string) {
 
 // TestAnswerWithdrawsBanner: a permission request pushes a banner; an approval.answer from the
 // phone resolves it, and the notifier replaces the banner by its collapse id with "Answered on
-// phone". A second answer to the same request id is refused with conflict and sends no keys.
+// phone". The state change that ends the request is kept from the notifier, so the withdrawal
+// can only come from the answer itself (Answered). A second answer to the same request id is
+// refused with conflict and sends no keys.
 func TestAnswerWithdrawsBanner(t *testing.T) {
 	state := t.TempDir()
 	writePushConfig(t, state)
@@ -90,8 +93,10 @@ func TestAnswerWithdrawsBanner(t *testing.T) {
 	defer st.Close()
 	sent := &sentLog{}
 	var pushes *pushService
+	var forward atomic.Bool
+	forward.Store(true)
 	agents := harness.NewStore(harness.Config{Publish: func(e structure.Event) {
-		if s, ok := e.Data.(api.AgentState); ok && pushes != nil {
+		if s, ok := e.Data.(api.AgentState); ok && pushes != nil && forward.Load() {
 			pushes.notifier.State(s)
 		}
 	}})
@@ -126,6 +131,7 @@ func TestAnswerWithdrawsBanner(t *testing.T) {
 		done <- a.Answer(ctx, "c-phone", api.ApprovalAnswerParams{Pane: "p", Request: request, Choice: api.ApprovalChoiceAllow, Via: api.AnswerViaBanner})
 	}()
 	waitUntil(t, "the answer's keys", func() bool { keys.mu.Lock(); defer keys.mu.Unlock(); return len(keys.writes) == 1 })
+	forward.Store(false)
 	agents.Report("p", progstatus.Report{State: "working", App: "claude"}, time.Now().UnixMilli(), true)
 	if err := <-done; err != nil {
 		t.Fatalf("answer: %v", err)
