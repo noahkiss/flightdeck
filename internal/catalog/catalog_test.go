@@ -221,9 +221,15 @@ func TestSharedProject(t *testing.T) {
 		wait(t, h.name+" holds both catalogs with the app on two hosts", func() bool {
 			l := h.cat.List()
 			g, ok := group(l, "remote:example.com/o/app")
-			return len(l.Hosts) == 2 && ok && len(g.Locations) == 2
+			// The peer's label shows once this hab knows the peer's device id: an inbound
+			// link that comes first shows the peer as unlisted for a moment.
+			return len(l.Hosts) == 2 && ok && len(g.Locations) == 2 && l.Hosts[1].Label != ""
 		})
 	}
+	wait(t, "a's copy of b lists a as b's peer", func() bool {
+		e, _ := entry(a.cat.List(), b.id)
+		return slices.Equal(e.Catalog.Peers, []string{a.id})
+	})
 	l := a.cat.List()
 	if !l.Hosts[0].Self || l.Hosts[0].Catalog.DeviceID != a.id || l.Hosts[1].Label != "b" || l.Hosts[1].Stale {
 		t.Fatalf("hosts %+v", l.Hosts)
