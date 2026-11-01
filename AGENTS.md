@@ -59,7 +59,7 @@ The repo layout and the libghostty build are in `docs/layout.md`.
 | `make test` | Build libghostty, then run every Go test with `-tags ghostty` |
 | `make build`, `make vet` | Build or vet every package with `-tags ghostty` |
 | `make test-pure` | Run the Go tests without cgo or libghostty |
-| `make race` | Run the holder, holderproto, holderclient, holderreg, structure, link, control, datastream, habconn, panesize, termq, cmdmarks, harness, hook, gitstatus, transcript, service and `cmd` tests with `-race -count=3` |
+| `make race` | Run the holder, holderproto, holderclient, holderreg, structure, link, control, datastream, habconn, gffclient, panesize, termq, cmdmarks, harness, hook, gitstatus, transcript, service and `cmd` tests with `-race -count=3` |
 | `make fuzz [FUZZTIME=30s]` | Run each holderproto fuzz target for `FUZZTIME` in turn (nightly) |
 | `make check-pure` | Fail when a package other than `internal/vt/ghostty` needs cgo |
 | `make check-gen` | Fail when a generated file is stale |
@@ -86,6 +86,8 @@ The repo layout and the libghostty build are in `docs/layout.md`.
 | `go test -race ./internal/control/... ./cmd/gff-hab/...` | Control connection tests: seq and epoch rules, backlog close, the binary over a real socket and over `connect` |
 | `go test ./internal/link/` | Holder link end-to-end tests: real holder, the link as its own process, restarted by plan and SIGKILL; `-tags ghostty` uses libghostty. `GFF_RESTART_LOOP=200` sets the restart count (nightly) |
 | `go test -race ./internal/habconn/` | Connection library suite over the Unix socket, an in-process pipe, `SSHTransport` with a stand-in `ssh`, and the real `ssh` to localhost (`$GFF_TEST_SSH_HOST` overrides; skips without key-based `BatchMode` ssh): data drops resume from the held offset with no gap or repeat, a new epoch replaces the structure, a dead link reconnects after a transport reset, the ssh control directory checks |
+| `gff [-socket path \| -via command \| -ssh host] [-new command]... [-split columns\|rows] [-observe] [-prefix ctrl-<key>] [pane...]` | The terminal client: show the named panes and one new pane per `-new` (with neither, the hab's shell) in this terminal. One pane that fits passes through; several share the screen. Prefix Ctrl+\ then `o` focus, `z` zoom, `s` split, `r` redraw, `n` nudge, `f` fit, `d` detach. Build with `-tags ghostty` for libghostty |
+| `go test -race ./internal/gffclient/` | Client core against the real holder and gff-hab: an observer never sends a size, typing moves ownership, one debounced size after a burst of host resizes, no query reaches the host or gets an answer, detach; then the `gff` binary in a pty with vim and a full-screen script side by side across a resize (skips without vim) |
 | `cd swift/HabAPI && swift test` | Build and test the generated Swift package (Mac) |
 | `go test ./api -run TestGoldens -update` | Rewrite the golden messages of the current API revision in `api/testdata/` |
 

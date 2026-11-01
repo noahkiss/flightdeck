@@ -176,8 +176,10 @@ Sources: `hab-logic-api.md` 2.2 (structure on the hab, presentation per client);
 
 - **Composed view (default).** `gff` keeps one terminal parser per visible pane. It draws each
   pane's cells into its rectangle, then draws the bars, and writes only the changed cells to the
-  host terminal. The parser choice is a plan `/consensus` (libghostty through cgo, or pure Go,
-  behind one interface).
+  host terminal. **Parser: libghostty through `internal/vt`, the same parser as gff-hab**
+  (coordinator ruling 2026-11-01, task-g1uwtlsb, in place of a `/consensus` run). It builds
+  with the `ghostty` tag; pure builds use `vt.Fake`, which keeps text only. So gff's release
+  builds need the libghostty build (`make libghostty`), as gff-hab's do.
 - **Pass-through view.** In full-screen mode with one pane, `gff` may write the pane's bytes
   straight to the host terminal. It starts from a `snapshot-vt` (`hab-logic-api.md` 5.5, Q6).
   It leaves pass-through the moment a bar, a split or a resize would need composing.
@@ -199,10 +201,126 @@ Sources: `hab-logic-api.md` 2.2 (structure on the hab, presentation per client);
 | A pane program sets a palette colour (OSC 4) | It changes that pane's parser only, never the host terminal |
 | A pane program sets the window title (OSC 0/2) | It becomes the pane's title, shown in its frame and in the host title when focused |
 | Pass-through and a host resize | `gff` leaves pass-through, composes once, and may re-enter |
-| A pane prints a terminal query | The hab already answered and removed it (`hab-logic-api.md` 5.6). `gff` never answers a query from a stream |
+| A pane prints a terminal query | The hab already answered and removed it (`hab-logic-api.md` 5.6). `gff` never answers a query from a stream, and keeps the ones the hab leaves to clients away from the host terminal (3.4) |
 
 Sources: zellij layout and frames (1.1); the owner's setup (1.6); `hab-logic-api.md` 5.5, 5.6, Q6;
 r1-sessions section 2 (pass-through for one pane, a parser per pane for splits).
+
+### 3.4 Built choices (task-g1uwtlsb, `internal/gffclient`, `cmd/gff`)
+
+The client core shows one or more panes of one hab in the terminal `gff` runs in. Tabs, the
+sidebar, the bars, the keymap with modes and several habs are later stages.
+
+**Parser.** libghostty through `internal/vt` (3.2, 15.1). `vt.Terminal.ReadScreen` gives the
+composed view the active screen as cells: each cell's grapheme, width and style (palette colours
+stay indexes, so they draw in the host's own theme), plus the cursor and whether it shows.
+libghostty reads them through its render state; `vt.Fake` gives text in the default style.
+
+**Layout.** One row or column of panes: side by side with a separator column, or stacked
+(`-split columns|rows`, or the prefix and `s`). Each composed pane has a one-row frame on top
+with its label and notes (exited, gone, offline, observer, the owner and size when they differ
+from the view). Zoom shows the focused pane alone.
+
+**Pass-through or composed.** One pane passes its bytes straight through when it is the only
+pane shown, it is live, the hab is online, and its size equals the host terminal's. Otherwise
+the view is composed.
+
+- Entering pass-through: the host leaves the composed screen, its modes are set back, the
+  screen is cleared, and the local parser's `snapshot-vt` (no scrollback) draws the pane and
+  sets its modes. Then each bytes frame goes to the host as it comes.
+- Composed: the host's alternate screen with autowrap off. Each pane's cells go into its
+  rectangle; only cells that changed are written. A pane larger than its view follows the
+  cursor; a smaller one leaves a dim fill. The focused pane's cursor-key, keypad and bracketed
+  paste modes are set on the host, so the host encodes keys and pastes as the program asked.
+- A host resize, a split or a zoom repaints at once from the parsers. The pane's new size comes
+  back as a resize frame; when it fits the host again, pass-through starts again (3.3).
+- On exit gff sets back every mode it or a pane set, and leaves the alternate screen. After
+  pass-through the screen keeps what the pane drew, as after `ssh`.
+
+**Terminal queries.** gff sends no query of its own to the host terminal, and its parsers never
+answer one: the `vt` wrapper gives libghostty no reply callback. In pass-through, a filter runs
+over every pane's bytes and drops whatever the host would answer, so no answer can come back as
+typing. It also drops settings that would change the host beyond the pane. The filter runs on
+the bytes of every pane, shown or not, so a pane that starts passing through mid-sequence is
+still parsed right.
+
+| Dropped | Why |
+|---|---|
+| Every `CSI … n` and `CSI … c` (device status, cursor position, device attributes), `CSI > q`, `CSI … $ p`, `CSI ? u`, `CSI x`, `CSI ? … S`, `CSI ? … m`, `CSI … * y`, `CSI … $ w` | The host answers them, also the ones gff-hab leaves to clients (`hab-logic-api.md` 5.8) |
+| `CSI Ps t` except 22 and 23 (the title stack) | Size reports, also `14 t` and `16 t`, and window moves and resizes |
+| An OSC with a field that is `?` | Colour and clipboard reads (OSC 52) |
+| OSC 4, 5, 7, 10 to 19, 104, 105, 110 to 119 | The palette and special colours change that pane only (3.3); the working directory |
+| DCS `$q`, `+q` and `tmux;` | Setting and termcap queries, and wrapped sequences |
+| APC (kitty graphics) | The host answers its commands |
+
+A control byte inside a CSI does not hide the sequence: the filter reads the parameters around
+it. A string longer than 1 KiB cannot be a query, so it streams once its start says it is not
+dropped (a long OSC 52 clipboard write passes).
+
+**Input and keys.** Host input goes to the focused pane as `pane.input`. Each pane has one
+sender: keys typed while a call is out go in the next call, in order. Offline, input is refused
+with a frame note, never queued (11.6); an observer view sends none. The prefix key is Ctrl+(`-prefix ctrl-<key>` changes it; the keys that are Backspace, Tab, Enter and Esc are refused).
+The key reader knows the prefix in legacy form and in kitty form (`CSI 92;5u`), which a host
+sends while a pane in pass-through has the kitty keyboard protocol on. After the prefix:
+
+| Key | Action |
+|---|---|
+| `o`, Tab | Focus the next pane |
+| `z` | Zoom the focused pane, and back |
+| `s` | Side by side or stacked |
+| `r` | `pane.redraw` snapshot, and a full repaint of the host |
+| `n` | `pane.redraw` nudge (not for an observer) |
+| `f` | `pane.take`: fit the pane to this view (not for an observer) |
+| `d` | Detach: gff quits, the programs keep running |
+| The prefix | Sends the prefix to the pane |
+| Esc | Cancels |
+
+**Sizes.** Opening a pane asks for its view's size at once (`pane.set_desired_size`); a view
+alone asks for the whole host. Later changes (a host resize, a split, a zoom, focus in a zoom)
+wait until the layout has held still for 300 ms, then each changed size goes out once. One queue
+makes the size, take and redraw calls in order, and a size still waiting is replaced by a newer
+one for the same pane. On a new epoch every size is asked again. Observer views ask for nothing.
+gff never takes a pane on its own: typing moves ownership through the hab's debounce (10.1).
+
+Note: 10.1 says the client coalesces a burst and sends the last size "at most every 50 ms"; the
+stage task asked for a debounce of about 300 ms on host resizes. The built client follows the
+task (`Config.SizeDebounce`, default 300 ms). Which one the spec keeps is an open question for
+the owner.
+
+**`gff` command.** `gff [-socket path | -via command | -ssh host] [-new command]...
+[-split columns|rows] [-observe] [-prefix ctrl-<key>] [pane...]`. It shows the panes named,
+then one new pane per `-new` (run under `/bin/sh -c` on the hab; on the local socket, in gff's
+working directory). Each new pane starts at its view's size, so its program gets no resize while
+it starts. With neither, it starts the hab's shell. It needs a terminal on stdin and
+stdout, puts it in raw mode, and puts it back on exit and on SIGTERM, SIGHUP and SIGINT.
+
+**Tests.** The suite runs the real holder and gff-hab binaries, and gff in process with a fake
+host terminal (pipes, its output parsed by `vt.Fake`), a transport that records every control
+request, and a debounce timer the test fires.
+
+| Test | Proves |
+|---|---|
+| `TestObserverNeverResizes` | An observer view sends no size, take, redraw or input, through opening, a host resize, typing and the fit key; its tickets ask for `observe`; the pane keeps its size and owner |
+| `TestTypingTakesOwnership` | With another client owning the pane, gff shows it composed with the owner note; typing makes gff the owner (reason `typed`) with no `pane.take`; the program gets gff's size and gff passes its bytes through |
+| `TestHostResizeDebounced` | Five host resizes send no size until the debounce fires, then one, for the last size; the program sees only that size |
+| `TestQueriesNeverAnswered` | A host that answers every query it sees gets none, in pass-through and composed: the program reads only the keys typed after its queries (pixel size reports, a clipboard read, a size report with a control byte inside) |
+| `TestDetach` | The prefix and `d` end `Run` and leave the host's own screen |
+| `TestSplitsRedrawAfterResize` | The `gff` binary in a pty starts vim and a full-screen script side by side, each at its view's size; after the terminal resizes, both draw at their new sizes and gff composes them; detach exits 0. Skips without vim |
+| Unit tests | The filter from any read split, a long string streams, the key reader (legacy and kitty prefix, split reads), the layout, the canvas writes only changed cells and clips a wide cell |
+
+**Limits (not built).** The bar is the popular tools in this space; these stay documented:
+
+| Limit | Why it is acceptable now |
+|---|---|
+| The composed view reads keys as the host sends them; it does not ask the host for the kitty keyboard protocol and does not re-encode keys per pane (8.2) | Cursor-key, keypad and bracketed paste modes are mirrored; pass-through gets the full protocol. The keymap stage owns key encoding |
+| No mouse in the composed view; no wheel scrolling of scrollback; no selection (5.2) | Pass-through gets the pane's mouse modes. Later stages |
+| Kitty graphics and other APC strings are dropped in pass-through | The host would answer them; images are a later stage |
+| Window titles (OSC 0, 2) pass through in pass-through and are ignored when composed; no host title of gff's own (3.2) | The tab bar stage owns titles |
+| The cursor style (DECSCUSR) is not mirrored in the composed view | Cosmetic |
+| Entering pass-through redraws from the local snapshot without scrollback | The host's own scrollback keeps what scrolled while passing through |
+| A pane that starts passing through inside a long control string or a UTF-8 character may show a stray byte | Needs a frame cut there and a layout change at that moment; the next redraw clears it |
+| One hab, one row or column of panes, no tabs, no saved workspace | Later stages (5.1, 6) |
+| gff-hab may parse a program's redraw after a resize at the old size: the link resizes its parser only after the holder answers the resize, and a program like vim redraws at once on SIGWINCH. Every client then shows that pane wrong until the next redraw | A gff-hab issue, reported from this stage (the holder's resize answer would need the output offset at the resize). The nudge key works around it; `TestSplitsRedrawAfterResize` makes vim redraw with Ctrl+L once the hab has the sizes, so it tests the client alone |
 
 ---
 
@@ -836,14 +954,16 @@ their stage. Where `app.md` 17 already proposes a call, `gff` uses the same one.
 Each question has options and a recommendation, and ends with its decision. One question, 15.4,
 waits for the owner because it changes what a user sees and the right answer is unclear.
 
-### 15.1 The parser for the composed view
+### 15.1 The parser for the composed view. **Decision: libghostty (coordinator)**
 
-Already a plan `/consensus` (libghostty through cgo, or pure Go, behind one interface). This spec
-needs only: input from `snapshot-vt` and raw bytes, a cell grid with styles, scrollback, the
-program's modes (keyboard protocol, mouse, bracketed paste, alternate screen) and the title.
+This spec needs only: input from `snapshot-vt` and raw bytes, a cell grid with styles,
+scrollback, the program's modes (keyboard protocol, mouse, bracketed paste, alternate screen) and
+the title.
 
-Recommendation: libghostty behind the interface, matching `gff-hab` and the app, with the pure-Go
-fake for tests.
+Decided 2026-11-01 (coordinator ruling, task-g1uwtlsb): libghostty through `internal/vt`, the
+same parser as gff-hab, with `vt.Fake` in pure builds and tests. The interface and the build
+already existed, and libghostty is the common choice (`landscape.md`). gff's release builds need
+the libghostty build. Built in 3.4.
 
 Decision: libghostty through `internal/vt`, the parser gff-hab uses; `vt.Fake` in pure builds
 (coordinator, 2026-11-01, in place of the `/consensus` run). herdr and Rex use libghostty too

@@ -1038,7 +1038,8 @@ keyboard protocol queries, termcap queries, window size reports.
   reads, `CSI 14 t` and `CSI 16 t`, a query with a C0 byte inside its CSI, a query cut by a gap).
   Each client's parser must discard its own replies to those queries, and the client stages must
   build this. Otherwise two clients on one pane answer twice, and an OSC 52 read could send a
-  client's clipboard to the program.
+  client's clipboard to the program. Built in gff (`gff-client.md` 3.4): its parsers answer
+  nothing, and its pass-through view keeps every query away from the host terminal.
 
 ### 5.7 Backlog and flow
 
