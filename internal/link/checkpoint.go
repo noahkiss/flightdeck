@@ -14,6 +14,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/internal/cmdmarks"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
+	"github.com/noahkiss/flightdeck/internal/progstatus"
 	"github.com/noahkiss/flightdeck/internal/vt"
 )
 
@@ -43,7 +44,11 @@ type checkpoint struct {
 	// Commands is the pane's command list and mark state at Offset (hab-logic-api.md 2.5).
 	// Absent in a checkpoint from an older build: the list then starts empty.
 	Commands *cmdmarks.Saved `json:"commands,omitempty"`
-	Snapshot []byte          `json:"-"`
+	// Report is the pane's newest root status report (OSC 7501) before Offset, unless a shell
+	// prompt came after it. A restart replays from Offset, so the bytes that held it are not
+	// replayed; gff-hab hands it on like a replayed report. Absent in an older checkpoint.
+	Report   *progstatus.Report `json:"report,omitempty"`
+	Snapshot []byte             `json:"-"`
 }
 
 func checkpointPath(dir string, u hp.UUID) string {

@@ -77,6 +77,7 @@ type Tracker struct {
 	cmds    []Command
 	changed map[uint64]bool // ids changed since the last Changes
 	now     time.Time       // the time of the bytes being fed; zero for replayed bytes
+	prompts uint64          // prompt (A) marks seen since New or Restore
 }
 
 // New returns a tracker for a stream whose next byte is at offset off.
@@ -134,6 +135,7 @@ func (t *Tracker) Feed(off uint64, data []byte, now time.Time) {
 func (t *Tracker) apply(m Mark) {
 	switch m.Kind {
 	case 'A':
+		t.prompts++
 		t.closeRunning(m.Start)
 		at := m.Start
 		t.phase, t.prompt, t.input = phPrompt, &at, nil
@@ -289,6 +291,13 @@ func (t *Tracker) List(before *uint64, limit int) ([]Command, bool) {
 	start := max(end-limit, 0)
 	return append([]Command{}, t.cmds[start:end]...), start > 0
 }
+
+// Prompts counts the prompt (A) marks fed since New or Restore.
+func (t *Tracker) Prompts() uint64 { return t.prompts }
+
+// AtPrompt reports whether a shell prompt shows now: an A or B mark came, and no command has
+// started since.
+func (t *Tracker) AtPrompt() bool { return t.phase == phPrompt || t.phase == phTyping }
 
 // Len returns the number of commands kept.
 func (t *Tracker) Len() int { return len(t.cmds) }

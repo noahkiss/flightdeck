@@ -58,7 +58,8 @@ type pane struct {
 	turnSource api.StateSource           // the strongest source that spoke this turn
 	lastT      map[api.StateSource]int64 // last accepted client clock per source
 	// open is the open permission request id. Only a hook or server opens or closes it, or the
-	// pane's harness going away (exit, a new session); PTY bytes never do (see gateSource).
+	// pane's harness going away (exit, a new session); PTY bytes never do (see gateSource),
+	// except once Flightdeck answered it (answered): then an OSC idle or a shell prompt may.
 	open     string
 	resolved []resolution  // recently resolved requests, oldest first
 	changed  chan struct{} // closed and replaced on every accepted change and OSC report
@@ -173,6 +174,11 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 
 	// Ordering.
 	resolvesOpen := u.Resolves != "" && u.Resolves == p.open
+	// An OSC idle ends a request Flightdeck already answered: Claude fires no hook after a deny
+	// by keys, and goes back to its prompt. A request nobody answered stays open (gateSource).
+	endsAnswered := src == api.StateSourceOsc && u.State == api.AgentStatusIdle && harness == p.st.Harness &&
+		p.open != "" && p.answered == p.open
+	resolvesOpen = resolvesOpen || endsAnswered
 	if u.State == api.AgentStatusBlocked && u.Request != nil && u.Request.ID != "" && p.isResolved(u.Request.ID) {
 		return false, "" // a late blocked for a request already resolved
 	}
@@ -367,6 +373,59 @@ func (s *Store) Seen(paneID string) {
 	next := p.st
 	next.State = api.AgentStatusIdle
 	s.commitLocked(p, next)
+}
+
+// Interrupt records that the owner typed data into the pane (pane.input). An interrupt key
+// (InterruptKey: Esc or Ctrl-C for Claude Code) typed while the agent works ends the turn on
+// the display: Claude fires no hook when the owner interrupts it. It never touches an open
+// permission request, and the next report from any source wins, so a key that interrupted
+// nothing is corrected by the harness's next report. It reports whether the state changed.
+func (s *Store) Interrupt(paneID string, data []byte) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.panes[paneID]
+	if p == nil || p.st.Revision == 0 || p.st.State != api.AgentStatusWorking || p.open != "" || !InterruptKey(p.st.Harness, data) {
+		return false
+	}
+	next := p.st
+	next.State, next.Last, next.Kind, next.Request = api.AgentStatusIdle, "", "", nil
+	next.Source = api.StateSourceServer
+	p.turnSource = ""
+	s.commitLocked(p, next)
+	return true
+}
+
+// Prompt records that a shell prompt (an OSC 133 A mark) came back in the pane's live output
+// after the last status report: the harness no longer runs in the foreground. A working or
+// blocked state that terminal output set (osc or screen) shows exited, as an OSC clear does, so
+// session.send never types into the shell. A permission request Flightdeck answered closes too.
+// A request nobody answered stays open, with its state: terminal output never ends it. The
+// binding stays, so the session's next hook takes the pane back. It reports whether the state
+// changed.
+func (s *Store) Prompt(paneID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.panes[paneID]
+	if p == nil || p.st.Revision == 0 {
+		return false
+	}
+	answered := p.open != "" && p.answered == p.open
+	if answered {
+		p.resolve(p.open, api.StateSourceOsc, api.AgentStatusExited)
+	}
+	if p.open != "" {
+		return false
+	}
+	byOutput := p.st.Source == api.StateSourceOsc || p.st.Source == api.StateSourceScreen
+	if p.st.State != api.AgentStatusWorking && p.st.State != api.AgentStatusBlocked || !byOutput && !answered {
+		return false
+	}
+	next := p.st
+	next.State, next.Last, next.Kind, next.Request = api.AgentStatusExited, "", "", nil
+	next.Source = api.StateSourceOsc
+	p.turnSource = ""
+	s.commitLocked(p, next)
+	return true
 }
 
 // Exited records that the pane's program ended: a harness in the pane is gone with it. The last

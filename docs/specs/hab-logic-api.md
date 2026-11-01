@@ -260,6 +260,11 @@ Decisions taken in stage 4 (`internal/link`):
   checkpoint. It is written to a temporary file, synced, renamed, and the directory synced, so a
   crash leaves the old or the new one. The encoding is `snapshot-ghostty` when the parser has it,
   else `snapshot-vt`.
+- The header also holds the pane's newest root OSC 7501 report, as an optional `report` field,
+  unless a shell prompt (OSC 133 `A`) came after it. The replay starts at the checkpoint's
+  offset, past the bytes that held the report, so without it a restarted gff-hab would have no
+  agent state for the pane until the next hook (`harness-adapters.md`, Edge cases). A checkpoint
+  without it (an older build) hands on only a report found in the replayed bytes.
 - A checkpoint is taken only where the output stream is in the parser's ground state: not inside
   an escape sequence, a control string or a UTF-8 character. A snapshot cannot carry a half-parsed
   sequence. A small scanner in the link tracks this; mid-sequence, the tick is skipped, and a

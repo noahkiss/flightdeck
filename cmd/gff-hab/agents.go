@@ -180,6 +180,7 @@ func (a *agentService) Answer(ctx context.Context, client string, p api.Approval
 			if err != nil {
 				return control.Errorf(api.ErrorKindUnavailable, "the permission hook for request %s ended before it took the answer (%v); %s shows its own dialog now: answer again", p.Request, err, st.Harness)
 			}
+			a.agents.Sent(p.Pane, p.Request)
 		case <-ctx.Done():
 			sent = true // the hook may still write it: never answer twice
 			return control.Errorf(api.ErrorKindUnavailable, "the permission hook for request %s did not take the answer: %v", p.Request, ctx.Err())
@@ -211,6 +212,7 @@ func (a *agentService) Answer(ctx context.Context, client string, p api.Approval
 			return agentErr(err)
 		}
 		sent = true // a write that fails may still have reached the dialog
+		a.agents.Sent(p.Pane, p.Request)
 		if err := a.write(ctx, p.Pane, keys); err != nil {
 			return err
 		}

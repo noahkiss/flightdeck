@@ -82,6 +82,9 @@ const (
 	PaneCommands                       // commands started or ended; read them with CommandChanges
 	// PaneReport: the program sent a status report (OSC 7501). Only Pane.UUID is set.
 	PaneReport
+	// PanePrompt: a shell prompt (an OSC 133 A mark) came back in live output, after the last
+	// status report, and no command started after it. Only Pane.UUID is set.
+	PanePrompt
 )
 
 // Notice is one pane change.
@@ -221,13 +224,17 @@ type pane struct {
 	// (spec 5.6). Its offset is off whenever it holds nothing back.
 	queries *termq.Scanner
 	// progs follows the stream for program status reports (OSC 7501); reports holds the live
-	// ones found by the feed in progress, for the caller to hand to the watchers. A replay keeps
-	// only its last report, in replayLast; at the replay's end it moves to replayed and goes to
-	// the watchers (harness-adapters.md, Edge cases: gff-hab restarts).
-	progs      progstatus.Scanner
-	reports    []Notice
-	replayLast *progstatus.Report
-	replayed   *progstatus.Report
+	// ones found by the feed in progress, for the caller to hand to the watchers. last is the
+	// newest root report (no id) in the stream, live or replayed; a shell prompt after it clears
+	// it. It is saved with the checkpoint, so a restart that replays from the checkpoint still
+	// has it. replayHas says the replay in progress holds a report: last, from the checkpoint or
+	// the replayed bytes. At the replay's end last moves to replayed and goes to the watchers
+	// (harness-adapters.md, Edge cases: gff-hab restarts).
+	progs     progstatus.Scanner
+	reports   []Notice
+	last      *progstatus.Report
+	replayHas bool
+	replayed  *progstatus.Report
 	// inq holds writes to the program's input in order: client input and query answers.
 	// inBusy is true while a writer goroutine drains it.
 	inq    []*inputReq
@@ -365,6 +372,7 @@ func (p *pane) prepare(l *Link, h *holderclient.Holder, pi hp.PaneInfo) (from ui
 			p.queries.Reset(p.off) // a checkpoint is taken in the ground state only
 			p.cmds = restoreCommands(ck)
 			p.cmds.Trim(pi.Oldest) // the ring may have moved on while no gff-hab followed it
+			p.last, p.replayHas = ck.Report, ck.Report != nil
 			return p.off, back
 		}
 	}
@@ -383,6 +391,7 @@ func (p *pane) prepare(l *Link, h *holderclient.Holder, pi hp.PaneInfo) (from ui
 	p.seq.reset()
 	p.queries.Reset(p.off)
 	p.cmds = cmdmarks.New(p.off)
+	p.last, p.replayHas = nil, false
 	return p.off, back
 }
 
@@ -427,7 +436,17 @@ func (p *pane) feed(l *Link, off uint64, data []byte, live bool) []Notice {
 	}
 	p.parse(l, data, live)
 	p.seq.write(data)
+	prompts := p.cmds.Prompts()
 	p.findMarks(off, data, live)
+	if p.cmds.Prompts() != prompts && p.cmds.AtPrompt() && p.last != nil {
+		// A shell prompt is back after the last report: the program that sent it no longer
+		// runs in the foreground. Marks and reports in one chunk are not ordered against each
+		// other, but a report after the prompt with no command started is the shell's own.
+		p.last = nil
+		if live {
+			p.reports = append(p.reports, Notice{Kind: PanePrompt, Pane: PaneStatus{UUID: p.uuid}})
+		}
+	}
 	p.off = end
 	p.buf = append(p.buf, data...)
 	if lim := l.cfg.BufferBytes; len(p.buf) > 2*lim {
@@ -457,8 +476,11 @@ func (p *pane) feed(l *Link, off uint64, data []byte, live bool) []Notice {
 // holder's answer to typed input, which comes behind that output, arrives late.
 func (p *pane) parse(l *Link, data []byte, live bool) {
 	p.progs.Feed(data, func(r progstatus.Report) {
+		if r.ID == "" {
+			p.last = &r
+		}
 		if !live {
-			p.replayLast = &r
+			p.replayHas = p.replayHas || r.ID == ""
 			return
 		}
 		p.reports = append(p.reports, Notice{Kind: PaneReport, Pane: PaneStatus{UUID: p.uuid}, Report: r, Live: true})
@@ -794,8 +816,9 @@ func (p *pane) ownerReason() api.OwnerReason {
 	return p.reason
 }
 
-// replayEnd ends the pane's replay. It returns a PaneReport notice, not live, for the last
-// status report in the replayed bytes, if there was one.
+// replayEnd ends the pane's replay. It returns a PaneReport notice, not live, for the newest
+// root status report the replay held, from the replayed bytes or the checkpoint, if there was
+// one and no shell prompt came after it.
 func (p *pane) replayEnd(l *Link, e *hp.ReplayEnd) []Notice {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -803,10 +826,12 @@ func (p *pane) replayEnd(l *Link, e *hp.ReplayEnd) []Notice {
 		return nil
 	}
 	var notices []Notice
-	if p.replayLast != nil {
-		p.replayed, p.replayLast = p.replayLast, nil
-		notices = append(notices, Notice{Kind: PaneReport, Pane: PaneStatus{UUID: p.uuid}, Report: *p.replayed})
+	if p.replayHas && p.last != nil {
+		r := *p.last
+		p.replayed = &r
+		notices = append(notices, Notice{Kind: PaneReport, Pane: PaneStatus{UUID: p.uuid}, Report: r})
 	}
+	p.replayHas = false
 	if e.Gap {
 		l.cfg.Logf("link: pane %s: replay lost bytes to the ring (sent %d to %d): screen is suspect", p.uuid, e.Start, e.End)
 		p.suspect = true
@@ -986,7 +1011,7 @@ func (p *pane) checkpoint(l *Link, force bool) error {
 	ck := &checkpoint{
 		Version: checkpointVersion, Pane: p.uuid.String(), Offset: p.off, Encoding: l.enc,
 		Cols: cols, Rows: rows, Suspect: p.suspect, Written: time.Now().UTC(), Snapshot: snap,
-		Commands: p.saveCommands(),
+		Commands: p.saveCommands(), Report: p.last,
 	}
 	if p.holder != nil {
 		ck.Holder = p.holder.Instance()

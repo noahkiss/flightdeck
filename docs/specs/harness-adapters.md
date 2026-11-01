@@ -351,7 +351,24 @@ When sources disagree inside one turn, the stronger one wins:
   a hook, a server event, a new session or the program's exit closes that request; no OSC 7501
   report does, `clear` included. Any program in the pane can write OSC 7501, and Enter from a
   `session.send` on a live dialog would approve it. Cost: when the owner leaves such a dialog
-  with Esc (no hook fires), the pane shows `blocked` until the session's next hook.
+  with Esc in the terminal (no hook fires), the pane shows `blocked` until the session's next
+  hook.
+- Built exception, for a request Flightdeck answered: once `approval.answer` sent its answer
+  (keys written, or the waiting hook took the decision), the next OSC `idle` or shell prompt
+  mark closes the request. Claude fires no hook after a deny by Esc; it returns to its prompt
+  and reports `idle`. Untrusted bytes still never close a request nobody answered.
+- Built reset, for the owner's interrupt: Esc or Ctrl-C typed through `pane.input` into a
+  `working` Claude pane, as one write and with no request open, shows `idle` with source
+  `server` (Paseo does the same). It resets precedence, so the harness's next report of any
+  source wins again: a key that interrupted nothing is corrected at once. Plain bytes and the
+  kitty keyboard forms count; a paste never does.
+- Built reset, for a shell prompt (Rex spec): an OSC 133 `A` mark in live output after the
+  pane's last OSC 7501 report, with no command started after it, means the harness no longer
+  runs in the foreground. A `working` or `blocked` state that terminal output set (`osc` or
+  `screen`) then shows `exited`, as an OSC `clear` does, so `session.send` never types into
+  the shell. The binding stays, and the session's next hook takes the pane back. A state a hook
+  set stays, and so does a request nobody answered. Claude Code 2.1.316 writes no OSC 133
+  marks of its own, so the mark comes from the shell around it.
 
 ### Ordering
 
@@ -413,9 +430,13 @@ Built choices (`internal/progstatus`, `internal/termq`, `internal/link`, `intern
   pair is skipped, a report with no known `state`, bad base64, a control character in decoded
   text, invalid UTF-8 in decoded text, a bad `id` or more than 4096 bytes is discarded whole.
   Reports stay in the bytes clients get; a terminal ignores an OSC it does not know. The link
-  hands each live one to its watchers as a `PaneReport` notice. From replayed bytes (after a
-  gff-hab restart) it keeps only the last report and hands it on, marked not live, when the
-  replay ends; gff-hab applies it with source `screen` (see Edge cases).
+  hands each live one to its watchers as a `PaneReport` notice. It also keeps the pane's newest
+  root report and saves it in the pane's checkpoint, since a restart replays only the bytes
+  after the checkpoint. After a gff-hab restart it hands on that report, marked not live, when
+  the replay ends: the newest one in the replayed bytes, else the checkpoint's. gff-hab applies
+  it with source `screen` (see Edge cases). A shell prompt after the report (an OSC 133 `A`
+  mark, no command started after it) drops it, and in live output it reaches the watchers as
+  a `PanePrompt` notice.
 - **Mapping.** A report applies with source `osc`. Only the root record counts: a report with
   an `id` never moves the pane. `app` must name a detection manifest (or alias), so another
   program that reports status, such as a package manager, does not become an agent; a report
@@ -635,8 +656,9 @@ Built choices (`approval.answer`, Claude Code):
 - Either way the call then reads back for up to 3 seconds and succeeds only on a real
   resolution: a hook or server closes the request (`PostToolUse`, a new prompt, the turn's end),
   Claude reports `working` over OSC 7501 (the tool runs), or, for a deny, an OSC `idle` after
-  the answer (Esc interrupts the turn). These OSC signals shape the call's result only; the
-  request stays open until a hook closes it. An exit or a session change answers `unavailable`, and so does
+  the answer (Esc interrupts the turn). That `idle` also closes the request, so the pane
+  returns to `idle` and takes a `session.send` (Source precedence). An OSC `working` only shapes
+  the call's result; the request stays open until a hook closes it. An exit or a session change answers `unavailable`, and so does
   a request still open after 3 seconds, with a hint to answer in the terminal.
 
 ## Edge cases
@@ -650,7 +672,7 @@ Built choices (`approval.answer`, Claude Code):
 | Subagents | Claude hooks with `agent_id` never rebind the pane. |
 | Transcript format drift | Each reader pins the harness versions it was tested on. An unknown version reads in a tolerant mode that shows unknown records as placeholders and flags the adapter as degraded. gff-hab reports the degraded adapter as drift (built so far: a log line once per version; the status board shows it once it exists). A CI job runs new harness versions against our fixtures. |
 | Transcript not yet written | Claude may create the file after the first hook. The reader waits for the file; it does not fail the pane. |
-| `gff-hab` restarts | Hook posts during the gap are lost. On start, the adapter rebuilds state from the transcript tail, the last OSC 7501 report in the holder's byte ring, and the process table. It marks state as `source: screen` until the next hook. Built: the last ring report only, as `screen`; the transcript tail and process table are not read yet. |
+| `gff-hab` restarts | Hook posts during the gap are lost. On start, the adapter rebuilds state from the transcript tail, the last OSC 7501 report in the holder's byte ring, and the process table. It marks state as `source: screen` until the next hook. Built: the last OSC 7501 report only, as `screen`: from the replayed ring, else from the pane's checkpoint (the replay starts there). The transcript tail and process table are not read yet. A permission request open before the restart is not rebuilt: the pane shows the report's `blocked`, sends stay refused, and an answer waits for the session's next hook or goes through the terminal. |
 | A Claude starts while `gff-hab` is down | Nobody answers its OSC 7501 `?` query, and replayed bytes are never answered, so this Claude sends no reports for its whole run. Its state comes from hooks only. |
 | A program in the pane forges OSC 7501 | gff-hab trusts OSC 7501 for the displayed state and, as herdr does, for the send gate: `session.send` goes when the pane shows `idle`, `done` or `error`. So a program that forges reports can mislead the gate. Hooks narrow this: a report never opens or closes a permission request, so it cannot end a block a hook reported, and it never enables an answer. A pane with no hooks has only OSC 7501, so there a forged `idle` over Claude's dialog would let a send's Enter approve it. A forged `clear` shows the pane exited until the next hook. |
 | Harness upgrade mid-session | The running process keeps its version; only new panes see the new one. The reader picks its parser per session from the version in the transcript, not from the installed binary. |

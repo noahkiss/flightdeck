@@ -28,7 +28,7 @@ var (
 // done or stopped on an error, and no permission request is open. Otherwise it says why not,
 // wrapping ErrNoAgent or ErrBusy. Like herdr, it trusts the displayed state, OSC 7501 included;
 // only a hook or server opens and closes a permission request, so terminal output cannot end
-// one a hook reported.
+// one a hook reported, unless Flightdeck already answered it.
 func (s *Store) CheckSend(paneID string) (api.AgentState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -106,6 +106,18 @@ func (s *Store) BeginAnswer(paneID, request string) (api.AgentState, error) {
 	return st, nil
 }
 
+// Sent records that the answer BeginAnswer claimed reached the harness, or is about to: the
+// keys go out next, or the waiting hook took the decision. From now on the next OSC 7501 idle
+// or shell prompt may close the request (Store.Apply, Store.Prompt), since Claude fires no hook
+// after a deny. EndAnswer still releases the claim.
+func (s *Store) Sent(paneID, request string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if p := s.panes[paneID]; p != nil && p.answering == request {
+		p.answered = request
+	}
+}
+
 // EndAnswer releases BeginAnswer's claim. sent says the answer reached the harness, by keys or
 // through its hook: the request then takes no other answer. Else another may try.
 func (s *Store) EndAnswer(paneID, request string, sent bool) {
@@ -149,8 +161,8 @@ const (
 	// OSC 7501 after the answer: the dialog is gone and a long tool runs.
 	OutcomeContinued
 	// OutcomeInterrupted: no hook closed the request, but the harness reported idle over OSC
-	// 7501 after the answer: the dialog's Esc stopped the turn. It shapes the answer's result
-	// only; the request stays open until a hook closes it.
+	// 7501 after the answer: the dialog's Esc stopped the turn. That idle closes the request,
+	// since Flightdeck answered it (Store.Sent).
 	OutcomeInterrupted
 	// OutcomeGone: the harness exited or its session changed, or the request is unknown.
 	OutcomeGone
@@ -190,6 +202,8 @@ func (s *Store) Outcome(paneID, request string, mark uint64) Outcome {
 		return OutcomeGone
 	case gateSource(r.src):
 		return OutcomeAnswered
+	case r.src == api.StateSourceOsc && r.state == api.AgentStatusIdle:
+		return OutcomeInterrupted // an OSC idle closed the answered request: the turn stopped
 	}
 	return OutcomeGone
 }
@@ -199,6 +213,20 @@ func describe(st api.AgentState) string {
 		return string(st.State) + ":" + string(st.Kind)
 	}
 	return string(st.State)
+}
+
+// InterruptKey reports whether data, typed by the owner, is the key that interrupts harness's
+// turn: Esc or Ctrl-C for Claude Code, as plain bytes or in the kitty keyboard encoding. A paste
+// is never a key.
+func InterruptKey(harness string, data []byte) bool {
+	if harness != detect.KindClaude || strings.HasPrefix(string(data), pasteStart) {
+		return false
+	}
+	switch string(data) {
+	case "\x1b", "\x03", "\x1b[27u", "\x1b[99;5u":
+		return true
+	}
+	return false
 }
 
 // Bracketed paste markers.

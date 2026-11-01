@@ -10,6 +10,7 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/datastream"
+	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/link"
 	"github.com/noahkiss/flightdeck/internal/panesize"
 	"github.com/noahkiss/flightdeck/internal/structure"
@@ -71,8 +72,12 @@ func (d dataService) Ticket(client, pane string, observe bool) (string, time.Dur
 
 func (d dataService) ServeConn(nc net.Conn, br *bufio.Reader) { d.ds.ServeConn(nc, br) }
 
-// inputService writes pane.input to a pane through the link (spec 3.8).
-type inputService struct{ lk *link.Link }
+// inputService writes pane.input to a pane through the link (spec 3.8). An interrupt key that
+// reached a working agent ends its turn on the display (harness.Store.Interrupt).
+type inputService struct {
+	lk     *link.Link
+	agents *harness.Store
+}
 
 func (i inputService) QueueInput(ctx context.Context, _ string, pane string, data []byte) func() error {
 	u, ok := parseUUID(pane)
@@ -80,7 +85,13 @@ func (i inputService) QueueInput(ctx context.Context, _ string, pane string, dat
 		return func() error { return control.Errorf(api.ErrorKindInvalid, "pane %q is not a pane id", pane) }
 	}
 	wait := i.lk.QueueInput(ctx, u, data)
-	return func() error { return inputErr(pane, wait()) }
+	return func() error {
+		err := wait()
+		if err == nil && i.agents != nil {
+			i.agents.Interrupt(pane, data)
+		}
+		return inputErr(pane, err)
+	}
 }
 
 // inputErr gives a link input error its kind.

@@ -334,7 +334,7 @@ func serve(args []string) error {
 		caps = append(caps, "agent-state") // panes gff-hab spawns post hooks
 		caps = append(caps, "data-streams", "snapshot-vt")
 		ds = datastream.New(datastream.Config{Source: linkSource{lk}, Logf: debugf})
-		data, input = dataService{ds}, inputService{lk}
+		data, input = dataService{ds}, inputService{lk, agents}
 		mgr = newSizes(lk, store, ds, logger.Printf)
 		defer mgr.Close()
 		sizes = sizeService{mgr}
@@ -453,6 +453,8 @@ func serve(args []string) error {
 				agents.Exited(n.Pane.UUID.String())
 			case link.PaneReport: // OSC 7501 from the program; a replayed one applies as screen
 				agents.Report(n.Pane.UUID.String(), n.Report, time.Now().UnixMilli(), n.Live)
+			case link.PanePrompt: // a shell prompt is back: stale OSC working or blocked ends
+				agents.Prompt(n.Pane.UUID.String())
 			}
 		})
 		defer stopWatch()

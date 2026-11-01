@@ -25,7 +25,7 @@ var manifests = sync.OnceValue(detect.Vendored)
 //     answer still takes one.
 //   - The report goes through Apply, so hooks outrank it inside a turn, except for an OSC idle
 //     that ends an interrupted turn (see interruptGrace); never a permission request a hook
-//     opened.
+//     opened, unless Flightdeck already answered it (Store.Sent).
 //   - A replayed report (live false: bytes the program sent before this gff-hab followed the
 //     pane) applies with source screen, the weakest, so the next hook or live report wins. The
 //     link hands on only the last report of a replay.
