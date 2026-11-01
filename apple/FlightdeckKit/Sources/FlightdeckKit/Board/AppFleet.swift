@@ -33,6 +33,7 @@ public enum AppFleet {
             }
         }
         addSSH(to: fleet, environment: env)
+        pruneUsage(fleet)
         addPush(to: fleet, environment: env)
         return fleet
     }
@@ -52,6 +53,13 @@ public enum AppFleet {
     }
 
     static let demoUsageSuite = "flightdeck.demo.usage"
+
+    /// Drops readings seeded from the snapshot whose hab is no longer in the
+    /// app (a config edit or a removed SSH entry between launches).
+    @MainActor
+    static func pruneUsage(_ fleet: Fleet) {
+        fleet.usage?.book.retain(habIDs: Set(fleet.connections.map(\.id)))
+    }
 
     /// The in-app SSH carrier's habs. iPhone and iPad make the device key on
     /// first start. The Mac keeps the system ssh as its default; it loads its

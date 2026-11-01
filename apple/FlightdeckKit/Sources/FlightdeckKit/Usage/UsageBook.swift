@@ -17,6 +17,9 @@ public final class UsageBook {
     public private(set) var accounts: [String: UsageAccountReading] = [:]
     /// Habs online now; an account from any other hab shows "hab offline".
     public private(set) var onlineHabs: Set<String> = []
+    /// Each hab's latest reading per account, so a tie can move to another
+    /// hab at once when the hab holding it goes offline.
+    @ObservationIgnored private var byHab: [String: [String: UsageAccountReading]] = [:]
     /// The account the usage sheet opens at; the sheet shows while set.
     public var presented: Presented?
 
@@ -54,9 +57,12 @@ public final class UsageBook {
         }
         let t = now()
         for r in readings {
-            let new = Self.reading(r, habID: habID, habLabel: habLabel, receivedAt: t)
+            let previous = byHab[habID]?[r.key] ?? accounts[r.key]
+            let new = Self.reading(r, habID: habID, habLabel: habLabel, receivedAt: t, previous: previous)
+            byHab[habID, default: [:]][r.key] = new
             if merge(new) { changed = true }
         }
+        if !online && rehome(from: habID) { changed = true }
         // A label change (config or welcome) renames the hab on its cards.
         for (k, a) in accounts where a.habID == habID && a.habLabel != habLabel {
             accounts[k]?.habLabel = habLabel
@@ -70,7 +76,34 @@ public final class UsageBook {
         let before = accounts.count
         accounts = accounts.filter { $0.value.habID != habID }
         onlineHabs.remove(habID)
+        byHab[habID] = nil
         if accounts.count != before { onChange?(Array(accounts.values)) }
+    }
+
+    /// Keeps only the accounts of these habs: at launch, seeded accounts of a
+    /// hab no longer configured go.
+    public func retain(habIDs: Set<String>) {
+        let before = accounts.count
+        accounts = accounts.filter { habIDs.contains($0.value.habID) }
+        byHab = byHab.filter { habIDs.contains($0.key) }
+        onlineHabs.formIntersection(habIDs)
+        if accounts.count != before { onChange?(Array(accounts.values)) }
+    }
+
+    /// The hab went offline: each account it holds moves to an online hab
+    /// that holds the same reading. Returns whether any moved.
+    private func rehome(from habID: String) -> Bool {
+        var moved = false
+        for (k, a) in accounts where a.habID == habID {
+            let other = byHab.first { h, readings in
+                h != habID && onlineHabs.contains(h) && readings[k].map { Self.sameContent($0, a) } == true
+            }
+            if let r = other?.value[k] {
+                accounts[k] = r
+                moved = true
+            }
+        }
+        return moved
     }
 
     /// Merges one reading. Returns whether the book changed.
@@ -94,14 +127,17 @@ public final class UsageBook {
     }
 
     /// Converts the hab's account. A window with an unreadable time keeps the
-    /// percentage; one with an unreadable read time counts as read now.
-    static func reading(_ a: UsageAccount, habID: String, habLabel: String, receivedAt: Date) -> UsageAccountReading {
-        let windows = a.windows.map { w in
-            UsageWindowReading(
-                name: w.name,
-                usedPct: w.usedPct,
-                resetsAt: w.resetsAt.flatMap(Self.parseTime),
-                readAt: Self.parseTime(w.readAt) ?? receivedAt)
+    /// percentage. One with an unreadable read time counts as read now,
+    /// unless `previous` held the same window with the same values: then it
+    /// keeps that time, so the same reading again is no change.
+    static func reading(_ a: UsageAccount, habID: String, habLabel: String, receivedAt: Date, previous: UsageAccountReading? = nil) -> UsageAccountReading {
+        let windows = a.windows.map { w -> UsageWindowReading in
+            let resets = w.resetsAt.flatMap(Self.parseTime)
+            var read = Self.parseTime(w.readAt)
+            if read == nil, let old = previous?.windows.first(where: { $0.name == w.name }), old.usedPct == w.usedPct, old.resetsAt == resets {
+                read = old.readAt
+            }
+            return UsageWindowReading(name: w.name, usedPct: w.usedPct, resetsAt: resets, readAt: read ?? receivedAt)
         }
         return UsageAccountReading(key: a.key, label: a.label, harness: a.harness, habID: habID, habLabel: habLabel, windows: windows, receivedAt: receivedAt)
     }
