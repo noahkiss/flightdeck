@@ -214,7 +214,7 @@ GFF Holder.app/
 Built: `scripts/macos-bundle.sh` writes the bundles. Choices it made beyond the paper spec:
 
 - `Info.plist` also carries `CFBundlePackageType` `APPL`, `CFBundleName` (`GFF Holder`,
-  `GFF Hab`), `CFBundleInfoDictionaryVersion` `6.0`, `CFBundleDevelopmentRegion` `en` and
+  `GFF Hab`; with `-dev`, `GFF Holder Dev` and `GFF Hab Dev`, also as `CFBundleDisplayName`), `CFBundleInfoDictionaryVersion` `6.0`, `CFBundleDevelopmentRegion` `en` and
   `LSMinimumSystemVersion` `12.0`. `CFBundleShortVersionString` and `CFBundleVersion` are both
   the `-version` value (numbers and dots only).
 - Each usage string says "A program running in a Flightdeck pane wants to ..." and names the
@@ -253,7 +253,10 @@ A local `go build` is ad-hoc signed. Its requirement is a code hash. Rules:
 - On Linux none of this applies. `make` builds bare binaries as today.
 
 Built: `scripts/macos-bundle.sh -dev` makes the dev bundles: `.dev` ids, ad-hoc signature with
-hardened runtime and the holder's entitlements, no notarization. It honours
+hardened runtime and the holder's entitlements, no notarization. The dev bundles are named
+`GFF Holder Dev` and `GFF Hab Dev`. System Settings names a privacy row by the bundle, so a dev
+row and a release row with one name read as a duplicate (8.1). The file names stay
+`GFF Holder.app` and `GFF Hab.app`, which install expects. It honours
 `GFF_DEV_SIGN_IDENTITY`; `make` does not call it yet. `gff-hab install` on macOS takes bundles
 only, so a local build goes through this script first (`scripts/service-check.sh` does).
 
@@ -454,6 +457,11 @@ Built (`internal/service`, `bundle.go`). Choices beyond the paper spec:
   remove them. System Settings and `tccutil` find a bundle by its id only through a registered
   copy (8.1). A launch agent's first start registers its bundle too, so a failed `lsregister -f`
   is a warning, not an error.
+- **Two registered builds do not make two rows.** While an old holder drains, both builds'
+  copies stay registered, and this is correct. A privacy row follows a TCC entry, keyed by the
+  bundle id, not by a copy, and the two builds share one id and one requirement. So the drain
+  keeps one row per bundle id, and the draining holder keeps its grant. Install registers every
+  build it copies. An early unregister of the draining build would remove no row (8.1).
 - **Linux is unchanged**: one copy of each binary in `<state>/bin` (`hab-holder.md` 4.4).
 
 ### 6.2 Drain keeps grants
@@ -686,8 +694,11 @@ beyond the paper spec:
   typo, or `automation:` with no bundle id) gets a warning at install and a required, `denied`
   `opt-in` row on gff-hab, so `--check` exits 1 instead of passing without the grant the user
   asked for. The walk cannot fix that row; it says to fix the variable and install again.
-- **gff-hab's own Full Disk Access** is always checked, and required only when a project folder
-  the store knows lies under Desktop, Documents, Downloads, iCloud Drive or `/Volumes`.
+- **gff-hab's own Full Disk Access** is checked and required only when a project folder the
+  store knows lies under Desktop, Documents, Downloads, iCloud Drive or `/Volumes`. With no such
+  project, gff-hab does not open the protected folder and reports a `note` row, "not needed". A
+  denied open adds a switched-off GFF Hab row to Full Disk Access, which the user never asked
+  for (8.1).
 - **Background item.** For each launchd job (the logic job and each running holder's job):
   `launchctl print gui/<uid>/<label>` must succeed and `launchctl print-disabled` must not list
   it as disabled. gff-hab started with no init system gets a `note` row instead.
@@ -890,6 +901,43 @@ So the product path was registered only as a side effect of a job's start, and n
 now registers each build copy itself and unregisters it before the build goes (6.1). With that
 change, `scripts/service-check.sh` checks the dump after install, after the retire, and after
 uninstall. Proof kits keep every installed state under `~/Library/Application Support`.
+
+**Two rows per entry in Full Disk Access: leftover dev entries, not two builds (macOS 27.2).**
+After kit A's P3 (release A granted, then release B over it while A drained), the owner saw two
+rows for each entry. Some rows had appeared without being added, switched off. Read-only evidence from the same
+Mac:
+
+- The system TCC database held four Full Disk Access entries, all by bundle id
+  (`client_type` 0): the release holder and hab ids, and the two `.dev` ids. The `.dev` entries'
+  requirement was the code hash of a dev build from an earlier kit B run, whose stop had skipped
+  its reset. A dev bundle carried the same name as the release one, so Settings showed two
+  "GFF Holder" rows and two "GFF Hab" rows.
+- LaunchServices held each release id at three paths: the copies of builds A and B in
+  `<state>/builds`, and the kit's source copy of release B, which the system registered on its
+  own; the kit never ran that copy. Three registered copies still made one TCC entry
+  per id: the release requirement names the id and the team, not a copy.
+- **Rows appear by themselves, switched off.** A denied Full Disk Access open adds an entry with
+  `auth_value` 0 (`auth_reason` 5) for the responsible bundle. Reproduced with a dev install
+  (its own job prefix and `.dev` ids, state under `~/Library/Application Support`): a pane that
+  opened the TCC folder added a switched-off holder entry within 6 s; one `hab.permissions` call
+  added a switched-off hab entry, because gff-hab opened the folder itself to check its own
+  grant.
+- The same dev install then updated to build B while A's holder drained: the dump held both
+  builds' copies (four records), and TCC still held one entry per id. After A retired, the dump
+  held B's two copies. After `tccutil reset` of the test ids and uninstall: no record and no
+  entry.
+
+So the product does not show a row per build. Inferred, since nobody looked at Settings during
+the reproduction: a user sees one GFF Holder row. Before this change, every `gff setup` check
+also added a switched-off GFF Hab row, even with no project in a protected folder. Two changes:
+
+- gff-hab opens the protected folder only when a project lives in one (7.9). Otherwise its row
+  is a `note` and no GFF Hab entry appears.
+- Dev bundles are named `GFF Holder Dev` and `GFF Hab Dev` (3.5), so a developer's dev row
+  does not read as a second release row.
+
+The proof kits now reset all four proof ids, release and dev, at each kit's start and stop, and
+unregister every proof copy, the source builds included.
 
 ---
 
