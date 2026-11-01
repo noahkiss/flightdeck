@@ -52,8 +52,13 @@ public final class DictationModel {
         listen = Task { [weak self, input] in
             for await e in input.events {
                 guard let self else { return }
-                if case .words(let t, _) = e { self.liveText = t }
-                if case .failed(let why) = e { self.notice = why }
+                switch e {
+                case .words(let t, _): self.liveText = t
+                case .failed(let why): self.notice = why
+                case .turnFull: self.notice = "Dictation reached 120 s; stop to keep it."
+                case .liveWords(let s): self.notice = s
+                default: break
+                }
             }
         }
     }

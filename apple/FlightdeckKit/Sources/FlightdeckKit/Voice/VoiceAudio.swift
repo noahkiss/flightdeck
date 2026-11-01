@@ -21,6 +21,8 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
     private var running = false
     private var speakDone: CheckedContinuation<Bool, Never>?
     private var speakID = 0
+    /// Open microphones across windows; the last to stop ends the audio session.
+    static var sessionUsers = 0
     /// The format the player renders in: the mixer's, mono.
     private var playFormat: AVAudioFormat?
     /// Whether the speaker side is used (voice mode) or only the microphone (dictation).
@@ -53,8 +55,10 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         }
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
+        // Dictation ducks the owner's audio instead of stopping it.
         try session.setCategory(.playAndRecord, mode: speaks ? .voiceChat : .default,
-                                options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP])
+                                options: speaks ? [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP]
+                                    : [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers])
         try session.setActive(true)
         observe(session)
         #endif
@@ -72,14 +76,7 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         guard format.sampleRate > 0, format.channelCount > 0 else {
             throw SpeechEngineError.unavailable("no microphone input", sticky: true)
         }
-        if LiveWords.isSupported {
-            let words = LiveWords { [weak self] text in
-                Task { @MainActor in self?.tapState.liveChanged(text) }
-            }
-            live = words
-            await words.start(natural: format)
-        }
-        tapState.reset(input: format, live: live)
+        tapState.reset(input: format, live: nil)
         input.installTap(onBus: 0, bufferSize: 2048, format: format) { [tapState] buffer, _ in
             tapState.take(buffer)
         }
@@ -87,6 +84,23 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         try engine.start()
         if speaks { player.play() }
         running = true
+        Self.sessionUsers += 1
+        // The microphone runs now; live words follow, after their asset downloads.
+        if LiveWords.isSupported {
+            let words = LiveWords(onText: { [weak self] finished, volatile in
+                Task { @MainActor in self?.tapState.liveChanged(finished: finished, volatile: volatile) }
+            }, onStatus: { [weak self] status in
+                Task { @MainActor in self?.sink.yield(.liveWords(status)) }
+            })
+            live = words
+            Task { [weak self] in
+                await words.start(natural: format)
+                guard let self, self.running, self.live === words else { return }
+                self.tapState.attach(words)
+            }
+        } else {
+            sink.yield(.liveWords("Live words need iOS 26 or macOS 26"))
+        }
         observers.append(NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.restart() }
         })
@@ -102,8 +116,12 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         live = nil
         for o in observers { NotificationCenter.default.removeObserver(o) }
         observers = []
+        Self.sessionUsers = max(0, Self.sessionUsers - 1)
         #if os(iOS)
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        // Another window's voice mode or dictation may still use the session.
+        if Self.sessionUsers == 0 {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
         #endif
         sink.finish()
     }
@@ -127,6 +145,7 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         engine.inputNode.removeTap(onBus: 0)
         let format = engine.inputNode.outputFormat(forBus: 0)
         guard format.sampleRate > 0 else { return }
+        live?.reset(natural: format)
         tapState.reset(input: format, live: live)
         engine.inputNode.installTap(onBus: 0, bufferSize: 2048, format: format) { [tapState] buffer, _ in
             tapState.take(buffer)
@@ -278,9 +297,9 @@ final class TapState: @unchecked Sendable {
     private weak var live: LiveWords?
     private var muted = false
     private var inTurn = false
+    private var full = false
     private var samples: [Float] = []
-    private var liveText = ""
-    private var liveBase = ""
+    private var text = LiveText()
     private let clock = ContinuousClock()
     private let start = ContinuousClock.now
     /// Lead-in kept before a turn starts, so its first word is not cut.
@@ -298,46 +317,44 @@ final class TapState: @unchecked Sendable {
         }
     }
 
+    func attach(_ live: LiveWords) {
+        lock.withLock { self.live = live }
+    }
+
     func setMuted(_ m: Bool) {
         lock.withLock {
             muted = m
-            if m { samples.removeAll(); inTurn = false }
+            if m { samples.removeAll(); inTurn = false; full = false }
         }
     }
 
     func beginTurn() {
         lock.withLock {
             inTurn = true
-            liveBase = liveText
+            full = false
+            text.begin(at: now())
         }
     }
 
     func endTurn() -> (clip: SpeechClip, live: String) {
         lock.withLock {
             let clip = SpeechClip(samples: samples)
-            let text = Self.turnText(all: liveText, base: liveBase)
+            let t = text.turn
             samples.removeAll(keepingCapacity: true)
             inTurn = false
-            liveBase = liveText
-            return (clip, text)
+            full = false
+            text.end()
+            return (clip, t)
         }
     }
 
-    /// The live text heard since the turn began: what was there at its start is cut off.
-    static func turnText(all: String, base: String) -> String {
-        if !base.isEmpty, all.hasPrefix(base) {
-            return String(all.dropFirst(base.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+    func liveChanged(finished: String, volatile: String) {
+        let event: VoiceInputEvent? = lock.withLock {
+            text.update(finished: finished, volatile: volatile, at: now())
+            let t = text.turn
+            return muted || t.isEmpty ? nil : .words(t, at: now())
         }
-        return all.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    func liveChanged(_ text: String) {
-        let (event, report): (VoiceInputEvent?, Bool) = lock.withLock {
-            liveText = text
-            let t = Self.turnText(all: text, base: liveBase)
-            return (muted || t.isEmpty ? nil : .words(t, at: now()), true)
-        }
-        if report, let event { sink.yield(event) }
+        if let event { sink.yield(event) }
     }
 
     func take(_ buffer: AVAudioPCMBuffer) {
@@ -348,20 +365,67 @@ final class TapState: @unchecked Sendable {
         let n = Int(out.frameLength)
         let chunk = UnsafeBufferPointer(start: data[0], count: n)
         let db = audioLevel(chunk)
-        lock.withLock {
-            samples.append(contentsOf: chunk)
-            if !inTurn, samples.count > Self.leadIn {
-                samples.removeFirst(samples.count - Self.leadIn)
-            } else if samples.count > Self.maxTurn {
-                samples.removeFirst(samples.count - Self.maxTurn)
+        let reachedFull: Bool = lock.withLock {
+            if !inTurn {
+                samples.append(contentsOf: chunk)
+                if samples.count > Self.leadIn { samples.removeFirst(samples.count - Self.leadIn) }
+                return false
             }
+            guard !full else { return false }
+            let room = Self.maxTurn - samples.count
+            samples.append(contentsOf: chunk.prefix(max(0, room)))
+            if samples.count >= Self.maxTurn {
+                // The hab takes at most 120 s: the turn ends here, whole.
+                full = true
+                return true
+            }
+            return false
         }
         sink.yield(.level(db, at: now()))
+        if reachedFull { sink.yield(.turnFull) }
     }
 
     private func now() -> Double {
         let d = clock.now - start
         return Double(d.components.seconds) + Double(d.components.attoseconds) / 1e18
+    }
+}
+
+/// The live recognizer's text, split by turn. Finished results only grow,
+/// so a turn is the finished text since it began plus the result in
+/// progress; a revision of the result in progress never brings back earlier speech.
+struct LiveText: Sendable {
+    private(set) var finished = ""
+    private(set) var volatile = ""
+    /// Where the current (or next) turn's finished text starts.
+    private var base = 0
+    /// The finished length before the last result that finished, and when.
+    private var lastFinal: (before: Int, at: Double)?
+    /// A result that finished this close before a turn began belongs to it:
+    /// its words started the turn.
+    static let carry = 0.6
+
+    mutating func update(finished f: String, volatile v: String, at t: Double) {
+        if f.count > finished.count { lastFinal = (finished.count, t) }
+        finished = f
+        volatile = v
+    }
+
+    mutating func begin(at t: Double) {
+        base = finished.count
+        if let l = lastFinal, t - l.at <= Self.carry, l.before >= 0 { base = min(base, l.before) }
+    }
+
+    mutating func end() {
+        base = finished.count
+        lastFinal = nil
+    }
+
+    var turn: String {
+        let start = finished.index(finished.startIndex, offsetBy: min(base, finished.count))
+        return (String(finished[start...]) + volatile)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -374,7 +438,8 @@ final class LiveWords: @unchecked Sendable {
     }
 
     private let lock = NSLock()
-    private let onText: @Sendable (String) -> Void
+    private let onText: @Sendable (_ finished: String, _ volatile: String) -> Void
+    private let onStatus: @Sendable (String?) -> Void
     private var feedSink: AsyncStream<AnyObject>.Continuation?
     private var converter: AVAudioConverter?
     private var format: AVAudioFormat?
@@ -382,23 +447,40 @@ final class LiveWords: @unchecked Sendable {
     private var finished = ""
     private var volatile = ""
 
-    init(onText: @escaping @Sendable (String) -> Void) {
+    init(onText: @escaping @Sendable (_ finished: String, _ volatile: String) -> Void, onStatus: @escaping @Sendable (String?) -> Void) {
         self.onText = onText
+        self.onStatus = onStatus
+    }
+
+    /// The microphone's format changed (a route change): rebuild the converter.
+    func reset(natural: AVAudioFormat) {
+        lock.withLock {
+            if let f = format { converter = AVAudioConverter(from: natural, to: f) }
+        }
     }
 
     func start(natural: AVAudioFormat) async {
         guard #available(iOS 26, macOS 26, *) else { return }
         guard SpeechTranscriber.isAvailable,
-              let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "en-US")) else { return }
+              let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: "en-US")) else {
+            onStatus("Live words are off: no English speech model on this device")
+            return
+        }
         let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [.volatileResults], attributeOptions: [])
         do {
             if let req = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                onStatus("Downloading speech for live words")
                 try await req.downloadAndInstall()
             }
         } catch {
+            onStatus("Live words are off: \(error.localizedDescription)")
             return
         }
-        guard let fmt = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber], considering: natural) else { return }
+        guard let fmt = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber], considering: natural) else {
+            onStatus("Live words are off: no audio format fits")
+            return
+        }
+        onStatus(nil)
         let (stream, cont) = AsyncStream.makeStream(of: AnalyzerInput.self)
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         lock.withLock {
@@ -421,18 +503,20 @@ final class LiveWords: @unchecked Sendable {
                 for try await r in transcriber.results {
                     guard let self else { break }
                     let t = String(r.text.characters)
-                    let text: String = self.lock.withLock {
+                    let (f, v): (String, String) = self.lock.withLock {
                         if r.isFinal {
                             self.finished += t
                             self.volatile = ""
                         } else {
                             self.volatile = t
                         }
-                        return self.finished + self.volatile
+                        return (self.finished, self.volatile)
                     }
-                    self.onText(text)
+                    self.onText(f, v)
                 }
-            } catch {}
+            } catch {
+                self?.onStatus("Live words stopped: \(error.localizedDescription)")
+            }
             pump.cancel()
             await analyzer.cancelAndFinishNow()
         }

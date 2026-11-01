@@ -411,7 +411,7 @@ final class SpeechEngineTests: XCTestCase {
         let host = ParakeetHost(runtime: rt, offered: true)
         try await host.acquire("voice-1")
         let t = Task { try await host.transcribe([0], for: "voice-1") }
-        try await Task.sleep(for: .milliseconds(30))
+        await eventually("in flight") { host.inFlight == 1 }
         await host.setForeground(false)
         XCTAssertTrue(rt.loaded, "not freed under the inference")
         let text = try await t.value

@@ -230,8 +230,18 @@ public final class VoiceModel {
             if phase == .hearing || hearingAnswer { Task { await self.endTurn() } }
         case .failed(let why):
             Task { await self.end(why) }
+        case .turnFull:
+            if phase == .hearing || hearingAnswer {
+                notice = "The turn reached 120 s and ended there."
+                Task { await self.endTurn() }
+            }
+        case .liveWords(let status):
+            liveWordsNote = status
         }
     }
+
+    /// Why Apple's live words do not show, or nil while they run.
+    public private(set) var liveWordsNote: String?
 
     private func process(_ e: TurnDetector.Event?) {
         guard let e else { return }
@@ -382,7 +392,7 @@ public final class VoiceModel {
                 notice = "Queued"
                 go(.waiting)
                 await speak("Queued.")
-            } else {
+            } else if notice == "Queued" || notice?.hasPrefix("No engine") == true {
                 notice = nil
             }
             if phase != .speaking { go(.waiting) }

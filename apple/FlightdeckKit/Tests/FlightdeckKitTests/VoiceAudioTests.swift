@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import XCTest
 @testable import FlightdeckKit
@@ -149,9 +150,52 @@ final class VoiceAudioTests: XCTestCase {
         XCTAssertEqual(tenth.withUnsafeBufferPointer(audioLevel), -20, accuracy: 0.01)
     }
 
-    func testTurnTextCutsWhatCameBefore() {
-        XCTAssertEqual(TapState.turnText(all: "hello there run the tests", base: "hello there"), "run the tests")
-        XCTAssertEqual(TapState.turnText(all: "rewritten text", base: "hello there"), "rewritten text")
-        XCTAssertEqual(TapState.turnText(all: " a ", base: ""), "a")
+    func testATurnStopsAt120SecondsAndSaysSo() async throws {
+        let (stream, sink) = AsyncStream.makeStream(of: VoiceInputEvent.self)
+        let tap = TapState(sink: sink)
+        let fmt = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1)!
+        tap.reset(input: fmt, live: nil)
+        tap.beginTurn()
+        let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 16_000)!
+        buf.frameLength = 16_000
+        for i in 0..<16_000 { buf.floatChannelData![0][i] = 0.1 }
+        for _ in 0..<125 { tap.take(buf) }
+        sink.finish()
+        var full = 0
+        for await e in stream where e == .turnFull { full += 1 }
+        XCTAssertEqual(full, 1)
+        let (clip, _) = tap.endTurn()
+        XCTAssertEqual(clip.duration, 120, accuracy: 0.5, "the start is kept, the rest is not taken")
+    }
+
+    func testLiveTextSplitsTurnsAndSurvivesRevisions() {
+        var t = LiveText()
+        // Earlier speech, finished before the turn.
+        t.update(finished: "hello there.", volatile: "", at: 0)
+        t.end()
+        // The turn starts from words still in progress: they belong to it.
+        t.update(finished: "hello there.", volatile: "run the", at: 5)
+        t.begin(at: 5.1)
+        XCTAssertEqual(t.turn, "run the")
+        // The recognizer revises the result in progress: never the history.
+        t.update(finished: "hello there.", volatile: "rerun the tests", at: 5.5)
+        XCTAssertEqual(t.turn, "rerun the tests")
+        t.update(finished: "hello there. rerun the tests.", volatile: "", at: 6)
+        XCTAssertEqual(t.turn, "rerun the tests.")
+        t.end()
+        XCTAssertEqual(t.turn, "")
+    }
+
+    func testLiveTextKeepsAResultThatFinishedJustBeforeTheTurn() {
+        var t = LiveText()
+        t.update(finished: "", volatile: "stop", at: 0)
+        t.update(finished: "stop.", volatile: "", at: 0.2)
+        t.begin(at: 0.4)
+        XCTAssertEqual(t.turn, "stop.", "the words that started the turn")
+        t.end()
+        // A result that finished long before a turn stays out.
+        t.update(finished: "stop. noise.", volatile: "", at: 3)
+        t.begin(at: 10)
+        XCTAssertEqual(t.turn, "")
     }
 }

@@ -468,6 +468,23 @@ final class VoiceModelTests: XCTestCase {
         await b.fleet.setActive(false)
     }
 
+    func testAFullTurnEndsAndIsSent() async {
+        var s = VoiceSettings()
+        s.askSummary = false
+        let b = await setup(speech: false, settings: s)
+        await b.model.start()
+        b.io.nextTurn.live = "a very long description"
+        b.io.emit(.words("a very long description", at: 0))
+        await eventually("hearing") { b.model.phase == .hearing }
+        b.io.emit(.turnFull)
+        await eventually("sent") { await b.hab.sends.count == 1 }
+        XCTAssertEqual(b.model.notice, "The turn reached 120 s and ended there.")
+        b.io.emit(.liveWords("Downloading speech for live words"))
+        await eventually("live words note") { b.model.liveWordsNote == "Downloading speech for live words" }
+        await b.model.end()
+        await b.fleet.setActive(false)
+    }
+
     func testAnInterimTextIsNotReadAsTheReply() async {
         let b = await setup(state: .working, speech: false)
         await b.hab.putChat(ChatMessage(at: "2026-11-01T10:01:00Z", id: "u1", kind: .user, session: "s1", text: "go"))

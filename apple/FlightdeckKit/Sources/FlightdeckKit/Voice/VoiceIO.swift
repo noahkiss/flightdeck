@@ -12,6 +12,11 @@ public enum VoiceInputEvent: Sendable, Equatable {
     case routeChanged
     /// The input stopped with an error.
     case failed(String)
+    /// The turn reached the hab's 120 s limit; it ends now.
+    case turnFull
+    /// Apple's live words: nil when they run, else why they do not
+    /// ("Downloading speech for live words", "Live words are off: ...").
+    case liveWords(String?)
 }
 
 /// The microphone, the live recognizer and the turn buffer. The real one is
