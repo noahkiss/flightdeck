@@ -136,6 +136,12 @@ func isExit(err error, code int) bool {
 	return errors.As(err, &ge) && ge.code == code
 }
 
+// Run runs one git command in dir under the same rules as Read: the clean environment, no
+// optional locks, the time limit of ctx. The caller passes only commands that read.
+func (r Reader) Run(ctx context.Context, dir string, args ...string) (string, error) {
+	return r.git(ctx, dir, args...)
+}
+
 // git runs one read-only git command in dir and returns its trimmed output.
 func (r Reader) git(ctx context.Context, dir string, args ...string) (string, error) {
 	bin := r.Git

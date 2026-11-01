@@ -215,6 +215,7 @@ const (
 	EventUsageUpdated   EventType = "usage.updated"
 	EventCommandUpdated EventType = "command.updated"
 	EventPeerUpdated    EventType = "peer.updated"
+	EventCatalogUpdated EventType = "catalog.updated"
 	EventNoticeRaised   EventType = "notice.raised"
 )
 
@@ -284,6 +285,10 @@ func (e Event) DecodeData() (any, error) {
 		return v, err
 	case EventPeerUpdated:
 		var v Peer
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventCatalogUpdated:
+		var v CatalogUpdated
 		err := json.Unmarshal(e.Data, &v)
 		return v, err
 	case EventNoticeRaised:
@@ -560,6 +565,27 @@ func (c Client) PeersList(ctx context.Context, params PeersListParams) (PeerList
 func (c Client) PeersAccept(ctx context.Context, params PeersAcceptParams) (PeerAccepted, error) {
 	var result PeerAccepted
 	err := c.Caller.Call(ctx, "peers.accept", params, &result)
+	return result, err
+}
+
+// CatalogGet calls catalog.get. This hab's own catalog, whole, when its generation differs from since (mesh.md 5.2). Needs the catalog capability.
+func (c Client) CatalogGet(ctx context.Context, params CatalogGetParams) (CatalogGetResult, error) {
+	var result CatalogGetResult
+	err := c.Caller.Call(ctx, "catalog.get", params, &result)
+	return result, err
+}
+
+// CatalogPut calls catalog.put. A peer link hands over its own hab's catalog (mesh.md 4.2). Needs the catalog capability.
+func (c Client) CatalogPut(ctx context.Context, params CatalogPutParams) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "catalog.put", params, &result)
+	return result, err
+}
+
+// CatalogList calls catalog.list. The merged view: this hab's catalog and its direct peers' copies, with projects matched across hosts (mesh.md 5.2). Needs the catalog capability.
+func (c Client) CatalogList(ctx context.Context, params CatalogListParams) (CatalogList, error) {
+	var result CatalogList
+	err := c.Caller.Call(ctx, "catalog.list", params, &result)
 	return result, err
 }
 

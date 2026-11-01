@@ -24,7 +24,8 @@
     "permissions",
     "mesh",
     "idempotency-keys",
-    "detect-explain"
+    "detect-explain",
+    "catalog"
   ],
   "methods": [
     {
@@ -1235,6 +1236,69 @@
       }
     },
     {
+      "name": "catalog.get",
+      "summary": "This hab's own catalog, whole, when its generation differs from since (mesh.md 5.2). Needs the catalog capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "since",
+          "description": "The generation the caller holds; 0 for none.",
+          "schema": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CatalogGetResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CatalogGetParams"
+      }
+    },
+    {
+      "name": "catalog.put",
+      "summary": "A peer link hands over its own hab's catalog (mesh.md 4.2). Needs the catalog capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "catalog",
+          "description": "The caller's own catalog. Its device_id must be the peer link's.",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Catalog"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CatalogPutParams"
+      }
+    },
+    {
+      "name": "catalog.list",
+      "summary": "The merged view: this hab's catalog and its direct peers' copies, with projects matched across hosts (mesh.md 5.2). Needs the catalog capability.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CatalogList"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CatalogListParams"
+      }
+    },
+    {
       "name": "hab.permissions",
       "summary": "Check the permission grants of the holders, from a probe pane, and of gff-hab (macos-identity.md 7.2). Needs the permissions capability.",
       "paramStructure": "by-name",
@@ -1432,6 +1496,13 @@
       "summary": "A peer's link state changed; the id is the peer's label (mesh.md 4.3). Host scope only. Ephemeral.",
       "data": {
         "$ref": "#/components/schemas/Peer"
+      }
+    },
+    {
+      "type": "catalog.updated",
+      "summary": "A catalog this hab holds changed: its own or a peer's copy; the id is the device id (mesh.md 5.2). Host scope only. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/CatalogUpdated"
       }
     },
     {
@@ -1738,6 +1809,464 @@
           "permission",
           "question",
           "auth"
+        ]
+      },
+      "Catalog": {
+        "type": "object",
+        "properties": {
+          "actions": {
+            "type": "array",
+            "description": "Quick actions the user declared for this host.",
+            "items": {
+              "$ref": "#/components/schemas/CatalogAction"
+            }
+          },
+          "agents": {
+            "type": "array",
+            "description": "Sessions with a running agent.",
+            "items": {
+              "$ref": "#/components/schemas/CatalogAgent"
+            }
+          },
+          "always_on": {
+            "type": "boolean",
+            "description": "The user marked this host always on (mesh.md 8)."
+          },
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time of the last change, by the publishing hab's clock."
+          },
+          "capabilities": {
+            "type": "array",
+            "description": "Detected and declared capability words, sorted.",
+            "items": {
+              "$ref": "#/components/schemas/CatalogCapability"
+            }
+          },
+          "device_id": {
+            "type": "string",
+            "description": "The publishing hab's device id."
+          },
+          "generation": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Raised on every change of this catalog; kept across restarts."
+          },
+          "harnesses": {
+            "type": "array",
+            "description": "Coding-agent harnesses found on PATH, with their versions.",
+            "items": {
+              "$ref": "#/components/schemas/CatalogTool"
+            }
+          },
+          "host": {
+            "type": "string",
+            "description": "The publishing hab's host id."
+          },
+          "peers": {
+            "type": "array",
+            "description": "The device ids in this hab's peer list.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "projects": {
+            "type": "array",
+            "description": "Git projects on this host, one per identity.",
+            "items": {
+              "$ref": "#/components/schemas/CatalogProject"
+            }
+          },
+          "services": {
+            "type": "array",
+            "description": "Services the user declared for this host.",
+            "items": {
+              "$ref": "#/components/schemas/CatalogService"
+            }
+          },
+          "system": {
+            "$ref": "#/components/schemas/CatalogSystem"
+          },
+          "toolchains": {
+            "type": "array",
+            "description": "Tools found on PATH, with their versions.",
+            "items": {
+              "$ref": "#/components/schemas/CatalogTool"
+            }
+          }
+        },
+        "required": [
+          "device_id",
+          "host",
+          "generation",
+          "at",
+          "system",
+          "toolchains",
+          "harnesses",
+          "capabilities",
+          "services",
+          "actions",
+          "projects",
+          "agents",
+          "peers"
+        ]
+      },
+      "CatalogAction": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "command"
+        ]
+      },
+      "CatalogAgent": {
+        "type": "object",
+        "properties": {
+          "harness": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string",
+            "description": "The project's name. Absent for an unfiled session."
+          },
+          "session": {
+            "type": "string",
+            "description": "The session's name on its host."
+          },
+          "since": {
+            "type": "string",
+            "description": "RFC 3339 time the state began."
+          },
+          "state": {
+            "$ref": "#/components/schemas/AgentStatus"
+          }
+        },
+        "required": [
+          "session",
+          "harness",
+          "state",
+          "since"
+        ]
+      },
+      "CatalogCapability": {
+        "type": "object",
+        "properties": {
+          "declared": {
+            "type": "boolean",
+            "description": "Named in the hab's config."
+          },
+          "detected": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "CatalogEntry": {
+        "type": "object",
+        "properties": {
+          "catalog": {
+            "$ref": "#/components/schemas/Catalog"
+          },
+          "label": {
+            "type": "string",
+            "description": "This hab's label for the peer. Absent for this hab and for a hab not in the peer list."
+          },
+          "seen_at": {
+            "type": "string",
+            "description": "RFC 3339 time this hab last confirmed the copy with the peer."
+          },
+          "self": {
+            "type": "boolean",
+            "description": "This hab's own catalog."
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "The peer is offline; the copy is its last."
+          }
+        },
+        "required": [
+          "seen_at",
+          "catalog"
+        ]
+      },
+      "CatalogFolder": {
+        "type": "object",
+        "properties": {
+          "branch": {
+            "type": "string",
+            "description": "Absent on a detached HEAD."
+          },
+          "dirty": {
+            "type": "boolean",
+            "description": "Changes or untracked files. Absent when not read yet."
+          },
+          "head": {
+            "type": "string",
+            "description": "Full commit id of HEAD. Absent before the first commit."
+          },
+          "last_commit": {
+            "type": "string",
+            "description": "RFC 3339 commit time of HEAD."
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "CatalogGetParams": {
+        "type": "object",
+        "properties": {
+          "since": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The generation the caller holds; 0 for none."
+          }
+        }
+      },
+      "CatalogGetResult": {
+        "type": "object",
+        "properties": {
+          "catalog": {
+            "$ref": "#/components/schemas/Catalog",
+            "description": "The whole catalog. Absent when generation equals since."
+          },
+          "generation": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "This hab's catalog generation now."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "generation"
+        ]
+      },
+      "CatalogList": {
+        "type": "object",
+        "properties": {
+          "hosts": {
+            "type": "array",
+            "description": "This hab first, then its peers' copies in peer list order.",
+            "items": {
+              "$ref": "#/components/schemas/CatalogEntry"
+            }
+          },
+          "projects": {
+            "type": "array",
+            "description": "Projects matched by identity across hosts.",
+            "items": {
+              "$ref": "#/components/schemas/CatalogProjectGroup"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "hosts",
+          "projects"
+        ]
+      },
+      "CatalogListParams": {
+        "type": "object"
+      },
+      "CatalogLocation": {
+        "type": "object",
+        "properties": {
+          "device_id": {
+            "type": "string"
+          },
+          "folders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogFolder"
+            }
+          },
+          "label": {
+            "type": "string",
+            "description": "As in the host's entry."
+          },
+          "stale": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "device_id",
+          "folders"
+        ]
+      },
+      "CatalogProject": {
+        "type": "object",
+        "properties": {
+          "folders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogFolder"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "remote": {
+            "type": "string",
+            "description": "The normalized git remote that identifies the project."
+          },
+          "root_commit": {
+            "type": "string",
+            "description": "The root commit, when the project has no remote."
+          },
+          "summary": {
+            "type": "string",
+            "description": "The first line of AGENTS.md, else README, in its first folder."
+          }
+        },
+        "required": [
+          "name",
+          "folders"
+        ]
+      },
+      "CatalogProjectGroup": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "remote:\u003cremote\u003e, root:\u003ccommit\u003e, else host:\u003cdevice id\u003e/\u003cfolder\u003e."
+          },
+          "locations": {
+            "type": "array",
+            "description": "One per host, in host order.",
+            "items": {
+              "$ref": "#/components/schemas/CatalogLocation"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "remote": {
+            "type": "string"
+          },
+          "root_commit": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "locations"
+        ]
+      },
+      "CatalogPutParams": {
+        "type": "object",
+        "properties": {
+          "catalog": {
+            "$ref": "#/components/schemas/Catalog",
+            "description": "The caller's own catalog. Its device_id must be the peer link's."
+          }
+        },
+        "required": [
+          "catalog"
+        ]
+      },
+      "CatalogService": {
+        "type": "object",
+        "properties": {
+          "health": {
+            "type": "string",
+            "description": "A health URL, as the user wrote it."
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "url"
+        ]
+      },
+      "CatalogSystem": {
+        "type": "object",
+        "properties": {
+          "arch": {
+            "type": "string",
+            "description": "Go GOARCH word, such as amd64 or arm64."
+          },
+          "cores": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "memory_bytes": {
+            "type": "integer",
+            "format": "uint64"
+          },
+          "os": {
+            "type": "string",
+            "description": "linux, darwin, or another Go GOOS word."
+          },
+          "os_version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "os",
+          "arch",
+          "cores"
+        ]
+      },
+      "CatalogTool": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string",
+            "description": "The first version-like word of its version output. Absent when none was found."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "CatalogUpdated": {
+        "type": "object",
+        "properties": {
+          "device_id": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        "required": [
+          "device_id",
+          "generation"
         ]
       },
       "ChatEvent": {

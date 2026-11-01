@@ -352,6 +352,29 @@ func (m *Manager) List() api.PeerList {
 	return out
 }
 
+// Link is one peer's link from this hab, for the calls a peer link makes (mesh.md 4.2).
+type Link struct {
+	Label    string
+	DeviceID string   // the pinned id, else the one its welcome gave; "" before first contact
+	Online   bool     // the link is up and the peer is not this hab
+	Caps     []string // the capabilities of its last welcome
+	Conn     *habconn.Conn
+}
+
+// Links returns every peer's link, in file order.
+func (m *Manager) Links() []Link {
+	hs := m.set.Hosts()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Link, 0, len(hs))
+	for _, h := range hs {
+		id := m.idLocked(h)
+		out = append(out, Link{Label: h.Label, DeviceID: id, Online: h.Status == hosts.Online && id != m.cfg.Self,
+			Caps: slices.Clone(h.Welcome.Capabilities), Conn: h.Conn})
+	}
+	return out
+}
+
 // Accept pins the device id that a refused peer presented (transport.md 6.3).
 func (m *Manager) Accept(label string) (api.PeerAccepted, error) {
 	h, ok := m.set.Host(label)

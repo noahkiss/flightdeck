@@ -100,6 +100,9 @@ var Methods = []Method{
 	{"command.output", "Read a run of one command's output from the holder's ring (spec 2.5). Needs the commands capability.", CommandOutputParams{}, CommandOutput{}},
 	{"peers.list", "This hab's peers with their link state, and habs linked to it that it does not list (mesh.md 3, 4.3). Needs the mesh capability.", PeersListParams{}, PeerList{}},
 	{"peers.accept", "Pin the device id a peer presented in place of the pinned one (transport.md 6.3). Needs the mesh capability.", PeersAcceptParams{}, PeerAccepted{}},
+	{"catalog.get", "This hab's own catalog, whole, when its generation differs from since (mesh.md 5.2). Needs the catalog capability.", CatalogGetParams{}, CatalogGetResult{}},
+	{"catalog.put", "A peer link hands over its own hab's catalog (mesh.md 4.2). Needs the catalog capability.", CatalogPutParams{}, Empty{}},
+	{"catalog.list", "The merged view: this hab's catalog and its direct peers' copies, with projects matched across hosts (mesh.md 5.2). Needs the catalog capability.", CatalogListParams{}, CatalogList{}},
 	{"hab.permissions", "Check the permission grants of the holders, from a probe pane, and of gff-hab (macos-identity.md 7.2). Needs the permissions capability.", PermissionsParams{}, Permissions{}},
 	{"detect.explain", "Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.", DetectExplainParams{}, DetectExplain{}},
 }
@@ -129,6 +132,7 @@ var Events = []EventDef{
 	{"usage.updated", "An account's usage reading changed; the id is the account key. Ephemeral.", UsageAccount{}},
 	{"command.updated", "A pane's command started or ended; the id is the pane id (spec 2.5). Ephemeral.", Command{}},
 	{"peer.updated", "A peer's link state changed; the id is the peer's label (mesh.md 4.3). Host scope only. Ephemeral.", Peer{}},
+	{"catalog.updated", "A catalog this hab holds changed: its own or a peer's copy; the id is the device id (mesh.md 5.2). Host scope only. Ephemeral.", CatalogUpdated{}},
 	{"notice.raised", "A notice was raised (notice.raise); the id is the notice id. Ephemeral.", Notice{}},
 }
 
@@ -203,4 +207,5 @@ var Translators = map[int]Translator{}
 // "idempotency-keys" means the hab honours idempotency_key on session.create and session.send
 // (spec 3.9); a client sends keys only to a hab that lists it. "detect-explain" means
 // detect.explain works (harness-adapters.md, Detection).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain"}
+// "catalog" means the catalog.* methods and the catalog.updated event work (mesh.md 5).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog"}

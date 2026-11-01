@@ -1,0 +1,20 @@
+{
+  "data": {
+    "device_id": "device_id-3",
+    "generation": 4,
+    "x_unknown_field": "later"
+  },
+  "id": "id-7",
+  "revision": 5,
+  "seq": 6,
+  "type": "catalog.updated",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

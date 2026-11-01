@@ -36,8 +36,9 @@ type conn struct {
 	hello    bool
 	token    string
 	clientID string
-	linked   bool   // a peer link reported to Peers.Linked
-	linkID   uint64 // its id
+	linked   bool           // a peer link reported to Peers.Linked
+	linkID   uint64         // its id
+	peer     *api.PeerHello // the hello's peer field from a client of kind hab, else nil
 
 	mu       sync.Mutex
 	queue    [][]byte
@@ -879,6 +880,10 @@ func (c *conn) handleHello(m message) {
 	c.mu.Unlock()
 	// A hab that dials this one says who it is (mesh.md 3.2). It counts as a link from that
 	// device for as long as the connection lasts.
+	if p.Client.Kind == api.ClientKindHab && p.Peer != nil && p.Peer.DeviceID != "" {
+		pc := *p.Peer
+		c.peer = &pc
+	}
 	if p.Client.Kind == api.ClientKindHab && p.Peer != nil && p.Peer.DeviceID != "" && c.s.cfg.Peers != nil {
 		c.linked, c.linkID = true, linkIDs.Add(1)
 		c.s.cfg.Peers.Linked(c.linkID, *p.Peer)
@@ -1081,6 +1086,8 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		res := c.s.cfg.Usage.List()
 		res.Seq = s
 		return api.NonNil(res), nil
+	case "catalog.get", "catalog.put", "catalog.list":
+		return c.dispatchCatalog(m, s)
 	case "peers.list":
 		var p api.PeersListParams
 		if e := c.decodeUp(m, &p); e != nil {

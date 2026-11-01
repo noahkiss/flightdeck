@@ -185,6 +185,7 @@ type Config struct {
 	Permissions  Permissions // nil: hab.permissions answers unavailable
 	Detect       Detect      // nil: detect.explain answers unavailable
 	Peers        Peers       // nil: peers.list and peers.accept answer unavailable
+	Catalog      Catalog     // nil: the catalog methods answer unavailable
 	Push         Push        // nil: the push methods, session.focus and notice.raise answer unavailable
 	Usage        Usage       // nil: usage.list answers unavailable
 	// ApproversChanged, if set, is called with no lock held after a connection closes or

@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -233,6 +233,411 @@ public struct BlockedKind: RawRepresentable, Codable, Sendable, Hashable {
     public static let permission = BlockedKind(rawValue: "permission")
     public static let question = BlockedKind(rawValue: "question")
     public static let auth = BlockedKind(rawValue: "auth")
+}
+
+public struct Catalog: Codable, Sendable, Hashable {
+    /// Quick actions the user declared for this host.
+    public var actions: [CatalogAction]
+    /// Sessions with a running agent.
+    public var agents: [CatalogAgent]
+    /// The user marked this host always on (mesh.md 8).
+    public var alwaysOn: Bool?
+    /// RFC 3339 time of the last change, by the publishing hab's clock.
+    public var at: String
+    /// Detected and declared capability words, sorted.
+    public var capabilities: [CatalogCapability]
+    /// The publishing hab's device id.
+    public var deviceId: String
+    /// Raised on every change of this catalog; kept across restarts.
+    public var generation: UInt64
+    /// Coding-agent harnesses found on PATH, with their versions.
+    public var harnesses: [CatalogTool]
+    /// The publishing hab's host id.
+    public var host: String
+    /// The device ids in this hab's peer list.
+    public var peers: [String]
+    /// Git projects on this host, one per identity.
+    public var projects: [CatalogProject]
+    /// Services the user declared for this host.
+    public var services: [CatalogService]
+    public var system: CatalogSystem
+    /// Tools found on PATH, with their versions.
+    public var toolchains: [CatalogTool]
+
+    enum CodingKeys: String, CodingKey {
+        case actions = "actions"
+        case agents = "agents"
+        case alwaysOn = "always_on"
+        case at = "at"
+        case capabilities = "capabilities"
+        case deviceId = "device_id"
+        case generation = "generation"
+        case harnesses = "harnesses"
+        case host = "host"
+        case peers = "peers"
+        case projects = "projects"
+        case services = "services"
+        case system = "system"
+        case toolchains = "toolchains"
+    }
+
+    public init(actions: [CatalogAction], agents: [CatalogAgent], alwaysOn: Bool? = nil, at: String, capabilities: [CatalogCapability], deviceId: String, generation: UInt64, harnesses: [CatalogTool], host: String, peers: [String], projects: [CatalogProject], services: [CatalogService], system: CatalogSystem, toolchains: [CatalogTool]) {
+        self.actions = actions
+        self.agents = agents
+        self.alwaysOn = alwaysOn
+        self.at = at
+        self.capabilities = capabilities
+        self.deviceId = deviceId
+        self.generation = generation
+        self.harnesses = harnesses
+        self.host = host
+        self.peers = peers
+        self.projects = projects
+        self.services = services
+        self.system = system
+        self.toolchains = toolchains
+    }
+}
+
+public struct CatalogAction: Codable, Sendable, Hashable {
+    public var command: String
+    public var name: String
+
+    enum CodingKeys: String, CodingKey {
+        case command = "command"
+        case name = "name"
+    }
+
+    public init(command: String, name: String) {
+        self.command = command
+        self.name = name
+    }
+}
+
+public struct CatalogAgent: Codable, Sendable, Hashable {
+    public var harness: String
+    /// The project's name. Absent for an unfiled session.
+    public var project: String?
+    /// The session's name on its host.
+    public var session: String
+    /// RFC 3339 time the state began.
+    public var since: String
+    public var state: AgentStatus
+
+    enum CodingKeys: String, CodingKey {
+        case harness = "harness"
+        case project = "project"
+        case session = "session"
+        case since = "since"
+        case state = "state"
+    }
+
+    public init(harness: String, project: String? = nil, session: String, since: String, state: AgentStatus) {
+        self.harness = harness
+        self.project = project
+        self.session = session
+        self.since = since
+        self.state = state
+    }
+}
+
+public struct CatalogCapability: Codable, Sendable, Hashable {
+    /// Named in the hab's config.
+    public var declared: Bool?
+    public var detected: Bool?
+    public var name: String
+
+    enum CodingKeys: String, CodingKey {
+        case declared = "declared"
+        case detected = "detected"
+        case name = "name"
+    }
+
+    public init(declared: Bool? = nil, detected: Bool? = nil, name: String) {
+        self.declared = declared
+        self.detected = detected
+        self.name = name
+    }
+}
+
+public struct CatalogEntry: Codable, Sendable, Hashable {
+    public var catalog: Catalog
+    /// This hab's label for the peer. Absent for this hab and for a hab not in the peer list.
+    public var label: String?
+    /// RFC 3339 time this hab last confirmed the copy with the peer.
+    public var seenAt: String
+    /// This hab's own catalog.
+    public var `self`: Bool?
+    /// The peer is offline; the copy is its last.
+    public var stale: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case catalog = "catalog"
+        case label = "label"
+        case seenAt = "seen_at"
+        case `self` = "self"
+        case stale = "stale"
+    }
+
+    public init(catalog: Catalog, label: String? = nil, seenAt: String, `self`: Bool? = nil, stale: Bool? = nil) {
+        self.catalog = catalog
+        self.label = label
+        self.seenAt = seenAt
+        self.`self` = `self`
+        self.stale = stale
+    }
+}
+
+public struct CatalogFolder: Codable, Sendable, Hashable {
+    /// Absent on a detached HEAD.
+    public var branch: String?
+    /// Changes or untracked files. Absent when not read yet.
+    public var dirty: Bool?
+    /// Full commit id of HEAD. Absent before the first commit.
+    public var head: String?
+    /// RFC 3339 commit time of HEAD.
+    public var lastCommit: String?
+    public var path: String
+
+    enum CodingKeys: String, CodingKey {
+        case branch = "branch"
+        case dirty = "dirty"
+        case head = "head"
+        case lastCommit = "last_commit"
+        case path = "path"
+    }
+
+    public init(branch: String? = nil, dirty: Bool? = nil, head: String? = nil, lastCommit: String? = nil, path: String) {
+        self.branch = branch
+        self.dirty = dirty
+        self.head = head
+        self.lastCommit = lastCommit
+        self.path = path
+    }
+}
+
+public struct CatalogGetParams: Codable, Sendable, Hashable {
+    /// The generation the caller holds; 0 for none.
+    public var since: UInt64?
+
+    enum CodingKeys: String, CodingKey {
+        case since = "since"
+    }
+
+    public init(since: UInt64? = nil) {
+        self.since = since
+    }
+}
+
+public struct CatalogGetResult: Codable, Sendable, Hashable {
+    /// The whole catalog. Absent when generation equals since.
+    public var catalog: Catalog?
+    /// This hab's catalog generation now.
+    public var generation: UInt64
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case catalog = "catalog"
+        case generation = "generation"
+        case seq = "seq"
+    }
+
+    public init(catalog: Catalog? = nil, generation: UInt64, seq: UInt64) {
+        self.catalog = catalog
+        self.generation = generation
+        self.seq = seq
+    }
+}
+
+public struct CatalogList: Codable, Sendable, Hashable {
+    /// This hab first, then its peers' copies in peer list order.
+    public var hosts: [CatalogEntry]
+    /// Projects matched by identity across hosts.
+    public var projects: [CatalogProjectGroup]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case hosts = "hosts"
+        case projects = "projects"
+        case seq = "seq"
+    }
+
+    public init(hosts: [CatalogEntry], projects: [CatalogProjectGroup], seq: UInt64) {
+        self.hosts = hosts
+        self.projects = projects
+        self.seq = seq
+    }
+}
+
+public struct CatalogListParams: Codable, Sendable, Hashable {
+    public init() {
+    }
+}
+
+public struct CatalogLocation: Codable, Sendable, Hashable {
+    public var deviceId: String
+    public var folders: [CatalogFolder]
+    /// As in the host's entry.
+    public var label: String?
+    public var stale: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case folders = "folders"
+        case label = "label"
+        case stale = "stale"
+    }
+
+    public init(deviceId: String, folders: [CatalogFolder], label: String? = nil, stale: Bool? = nil) {
+        self.deviceId = deviceId
+        self.folders = folders
+        self.label = label
+        self.stale = stale
+    }
+}
+
+public struct CatalogProject: Codable, Sendable, Hashable {
+    public var folders: [CatalogFolder]
+    public var name: String
+    /// The normalized git remote that identifies the project.
+    public var remote: String?
+    /// The root commit, when the project has no remote.
+    public var rootCommit: String?
+    /// The first line of AGENTS.md, else README, in its first folder.
+    public var summary: String?
+
+    enum CodingKeys: String, CodingKey {
+        case folders = "folders"
+        case name = "name"
+        case remote = "remote"
+        case rootCommit = "root_commit"
+        case summary = "summary"
+    }
+
+    public init(folders: [CatalogFolder], name: String, remote: String? = nil, rootCommit: String? = nil, summary: String? = nil) {
+        self.folders = folders
+        self.name = name
+        self.remote = remote
+        self.rootCommit = rootCommit
+        self.summary = summary
+    }
+}
+
+public struct CatalogProjectGroup: Codable, Sendable, Hashable {
+    /// remote:<remote>, root:<commit>, else host:<device id>/<folder>.
+    public var key: String
+    /// One per host, in host order.
+    public var locations: [CatalogLocation]
+    public var name: String
+    public var remote: String?
+    public var rootCommit: String?
+
+    enum CodingKeys: String, CodingKey {
+        case key = "key"
+        case locations = "locations"
+        case name = "name"
+        case remote = "remote"
+        case rootCommit = "root_commit"
+    }
+
+    public init(key: String, locations: [CatalogLocation], name: String, remote: String? = nil, rootCommit: String? = nil) {
+        self.key = key
+        self.locations = locations
+        self.name = name
+        self.remote = remote
+        self.rootCommit = rootCommit
+    }
+}
+
+public struct CatalogPutParams: Codable, Sendable, Hashable {
+    /// The caller's own catalog. Its device_id must be the peer link's.
+    public var catalog: Catalog
+
+    enum CodingKeys: String, CodingKey {
+        case catalog = "catalog"
+    }
+
+    public init(catalog: Catalog) {
+        self.catalog = catalog
+    }
+}
+
+public struct CatalogService: Codable, Sendable, Hashable {
+    /// A health URL, as the user wrote it.
+    public var health: String?
+    public var name: String
+    public var url: String
+
+    enum CodingKeys: String, CodingKey {
+        case health = "health"
+        case name = "name"
+        case url = "url"
+    }
+
+    public init(health: String? = nil, name: String, url: String) {
+        self.health = health
+        self.name = name
+        self.url = url
+    }
+}
+
+public struct CatalogSystem: Codable, Sendable, Hashable {
+    /// Go GOARCH word, such as amd64 or arm64.
+    public var arch: String
+    public var cores: Int
+    public var memoryBytes: UInt64?
+    /// linux, darwin, or another Go GOOS word.
+    public var os: String
+    public var osVersion: String?
+
+    enum CodingKeys: String, CodingKey {
+        case arch = "arch"
+        case cores = "cores"
+        case memoryBytes = "memory_bytes"
+        case os = "os"
+        case osVersion = "os_version"
+    }
+
+    public init(arch: String, cores: Int, memoryBytes: UInt64? = nil, os: String, osVersion: String? = nil) {
+        self.arch = arch
+        self.cores = cores
+        self.memoryBytes = memoryBytes
+        self.os = os
+        self.osVersion = osVersion
+    }
+}
+
+public struct CatalogTool: Codable, Sendable, Hashable {
+    public var name: String
+    /// The first version-like word of its version output. Absent when none was found.
+    public var version: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name = "name"
+        case version = "version"
+    }
+
+    public init(name: String, version: String? = nil) {
+        self.name = name
+        self.version = version
+    }
+}
+
+public struct CatalogUpdated: Codable, Sendable, Hashable {
+    public var deviceId: String
+    public var generation: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case generation = "generation"
+    }
+
+    public init(deviceId: String, generation: UInt64) {
+        self.deviceId = deviceId
+        self.generation = generation
+    }
 }
 
 /// An open word set: values outside the known list decode and round-trip unchanged.
@@ -2613,6 +3018,12 @@ public enum HabMethods {
     public static let peersList = HabMethod<PeersListParams, PeerList>(name: "peers.list")
     /// Pin the device id a peer presented in place of the pinned one (transport.md 6.3). Needs the mesh capability.
     public static let peersAccept = HabMethod<PeersAcceptParams, PeerAccepted>(name: "peers.accept")
+    /// This hab's own catalog, whole, when its generation differs from since (mesh.md 5.2). Needs the catalog capability.
+    public static let catalogGet = HabMethod<CatalogGetParams, CatalogGetResult>(name: "catalog.get")
+    /// A peer link hands over its own hab's catalog (mesh.md 4.2). Needs the catalog capability.
+    public static let catalogPut = HabMethod<CatalogPutParams, Empty>(name: "catalog.put")
+    /// The merged view: this hab's catalog and its direct peers' copies, with projects matched across hosts (mesh.md 5.2). Needs the catalog capability.
+    public static let catalogList = HabMethod<CatalogListParams, CatalogList>(name: "catalog.list")
     /// Check the permission grants of the holders, from a probe pane, and of gff-hab (macos-identity.md 7.2). Needs the permissions capability.
     public static let habPermissions = HabMethod<PermissionsParams, Permissions>(name: "hab.permissions")
     /// Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.
@@ -2659,6 +3070,8 @@ public enum HabEvent: Sendable, Hashable {
     case commandUpdated(Command)
     /// A peer's link state changed; the id is the peer's label (mesh.md 4.3). Host scope only. Ephemeral.
     case peerUpdated(Peer)
+    /// A catalog this hab holds changed: its own or a peer's copy; the id is the device id (mesh.md 5.2). Host scope only. Ephemeral.
+    case catalogUpdated(CatalogUpdated)
     /// A notice was raised (notice.raise); the id is the notice id. Ephemeral.
     case noticeRaised(Notice)
     case unknown(type: String, data: JSONValue)
@@ -2681,6 +3094,7 @@ public enum HabEvent: Sendable, Hashable {
         case "usage.updated": self = .usageUpdated(try event.data.decode(UsageAccount.self))
         case "command.updated": self = .commandUpdated(try event.data.decode(Command.self))
         case "peer.updated": self = .peerUpdated(try event.data.decode(Peer.self))
+        case "catalog.updated": self = .catalogUpdated(try event.data.decode(CatalogUpdated.self))
         case "notice.raised": self = .noticeRaised(try event.data.decode(Notice.self))
         default: self = .unknown(type: event.type, data: event.data)
         }
