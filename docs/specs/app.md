@@ -1345,8 +1345,8 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH`.
   an (encrypted) Time Machine backup, as with other SSH tools.
   iPhone and iPad make the key on first start; the Mac makes it when Settings › SSH first opens,
   so a Mac that never uses the carrier never touches the keychain. A locked device gives "the device is locked: its SSH key works only while
-  it is unlocked". The key source is the `SSHKeySource` protocol, so an imported OpenSSH key
-  (task-1csglxtc) plugs in beside the generated one.
+  it is unlocked". The key source is the `SSHKeySource` protocol; an imported OpenSSH key
+  (10.7) is the second source.
 - **Settings › SSH.** Opened from the connections list. It shows the key's type, fingerprint and
   OpenSSH line with Copy and Share, the Face ID option (Secure Enclave keys), the SSH habs, and a
   test notification per hab.
@@ -1381,6 +1381,69 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH`.
   one-shot call and a pane stream over a data channel. `SSHPairingTests` cover the code parser,
   endpoints, fingerprints against `ssh-keygen`, keys and the entry file. `SSHLiveTests` run
   against a real sshd through `apple/scripts/ssh-live-check.sh`.
+
+### 10.7 Built choices: imported SSH keys (task-1csglxtc)
+
+Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH/KeyImport` and `Views/KeyImportViews.swift`.
+
+- **Reader.** `OpenSSHKeyFile` reads the OpenSSH key format (PROTOCOL.key): one key, Ed25519 or
+  ECDSA P-256, P-384 or P-521. The key type and public key come from the unencrypted part, so
+  RSA, `sk-` keys, other types and unknown ciphers are refused before the passphrase prompt. It
+  takes the first private key block in the text and ignores the rest; CRLF line ends are fine.
+- **Ciphers.** `none`, and with the `bcrypt` key derivation: `aes128/192/256-ctr` (the
+  `ssh-keygen` default is `aes256-ctr`), `aes128/192/256-cbc` and `aes128/256-gcm@openssh.com`.
+  CTR and CBC use CommonCrypto, GCM uses CryptoKit. `chacha20-poly1305@openssh.com` and 3DES are
+  refused with the `ssh-keygen -p -Z aes256-ctr` command. GCM and CBC cost a few lines each, and
+  a key someone re-encrypted with `-Z` imports instead of failing.
+- **bcrypt_pbkdf.** Our own code from OpenBSD's description, on our own Blowfish. Blowfish's
+  tables come from pi, computed by `apple/scripts/gen-blowfish-tables.py` (Machin's formula in
+  integer arithmetic). Tests: published Blowfish vectors and `bcrypt_pbkdf` answers from an
+  independent implementation (pyca/bcrypt). The state is one raw buffer, so a 16-round key
+  takes about 0.3 s in a debug build and much less in release.
+- **Checks.** The two check words must match: a mismatch is "wrong passphrase" for an encrypted
+  key and "damaged" for a plain one; a GCM tag failure is also "wrong passphrase". Then the
+  padding (1, 2, 3 ...), the lengths, and the private key must give the file's public key.
+  Messages: wrong passphrase, unsupported type or cipher, RSA, security key, public key only,
+  encrypted PEM, damaged (check words, padding, a named field), cut short.
+- **Older PEM keys.** Unencrypted SEC1 (`EC PRIVATE KEY`) and PKCS#8 (`PRIVATE KEY`, ECDSA or
+  Ed25519) import through a small DER reader: `ssh-keygen -m PEM` writes explicit curve
+  parameters, which CryptoKit's PEM reader refuses. The curve follows from the private value's
+  length, and the embedded public key must match.
+- **Storage.** The decrypted raw key (the Ed25519 seed or the ECDSA scalar), its type, comment,
+  Face ID flag and date go to the same Keychain service as the generated key, account
+  `imported-` plus the first 12 bytes of the public key's SHA-256 in hex. The same key imported
+  twice lands on the same item, and the app says it kept one. The passphrase and the file never
+  reach the store or a log; the log gets the type and fingerprint. The passphrase buffer and the
+  derived key are zeroed after use; Swift strings cannot be, so the import sheet drops them.
+- **Storage class.** Every write sets `WhenUnlockedThisDeviceOnly` and not synchronisable. A test
+  checks the query and, on the real Keychain, the stored item. On the Mac the login keychain
+  keeps no accessibility class (10.6), so there the test checks only the sync flag.
+- **Face ID.** A per-key "Require Face ID for this key" switch (iOS), off by default. When on, the
+  app asks for Face ID before each dial, like the generated key. It is an app check, not a
+  Keychain access rule: the item stays readable whenever the device is unlocked. Background
+  actions refuse such a key at once, as with the generated key.
+- **Choosing a key.** Each hab entry names its key (`keyID`). "Add a hab by address" shows a key
+  picker once an imported key exists; the generated key is preselected. Each row in Habs over
+  SSH has a key menu. An entry whose key is gone (deleted, or a restore from a backup) says "No
+  key: choose one" and its connection fails with "no key: pair again or choose a key".
+- **Import.** Settings › SSH › Imported keys › Import a key: paste into the field, Paste from the
+  clipboard, or Choose a file. iOS also opens key files from the share sheet and Files: the app
+  declares `public.data` and `public.text` as a viewer with rank Alternate (OpenSSH key files
+  have no extension), and removes the copy iOS puts in its Inbox once read. The sheet shows the
+  type and fingerprint, asks for the passphrase when needed (a wrong one clears the field; no
+  limit on tries), then shows the public line with Copy and Share. The trade-off line sits under
+  the paste field.
+- **Detail.** Type, comment, fingerprint, the public line, the habs that use it, Face ID, Delete
+  (with a confirmation that its habs stop connecting).
+- **Not built.** The warning when an imported key is used for pairing with the embedded server
+  (pairing is not built). Open in on the Mac (it imports through paste and the file picker).
+- **Tests.** `KeyImportTests`: fixtures from `ssh-keygen` (`apple/scripts/gen-key-fixtures.sh`,
+  throwaway keys with invented comments, stored without their BEGIN and END lines so secret
+  scanners pass them) for every type, plain and encrypted, each cipher family, one round, SEC1
+  and PKCS#8; wrong passphrase, padding and check words corrupted, a changed public key,
+  truncation, RSA, chacha20, encrypted PEM, a public key, text around the key; the store; the
+  storage class; an imported key on the in-process SSH server. `SSHLiveTests.testLiveImportedKey`
+  pings a real sshd with an imported passphrase-protected Ed25519 key made by `ssh-keygen`.
 
 ---
 
@@ -2012,6 +2075,7 @@ writes (each type, with and without a passphrase, each round count) and against 
 key-derivation test vectors.
 
 Decision: A (coordinator, 2026-11-01). It covers every key type the owner may import, ECDSA included.
+Built in task-1csglxtc (10.7).
 
 ---
 
