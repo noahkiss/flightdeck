@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -227,7 +228,7 @@ func processNames(p Process) []string {
 		for _, ext := range []string{".exe", ".js", ".mjs", ".cjs", ".py"} {
 			n = strings.TrimSuffix(n, ext)
 		}
-		if n != "" && n != "." && n != "/" {
+		if n != "" && n != "." && n != "/" && !slices.Contains(out, n) {
 			out = append(out, n)
 		}
 	}

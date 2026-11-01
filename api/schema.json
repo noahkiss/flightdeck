@@ -23,7 +23,8 @@
     "commands",
     "permissions",
     "mesh",
-    "idempotency-keys"
+    "idempotency-keys",
+    "detect-explain"
   ],
   "methods": [
     {
@@ -1265,6 +1266,36 @@
       "x-params": {
         "$ref": "#/components/schemas/PermissionsParams"
       }
+    },
+    {
+      "name": "detect.explain",
+      "summary": "Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "pane",
+          "description": "Pane id. Give pane or session.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "session",
+          "description": "Session id or name; the session's live pane is explained.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/DetectExplain"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/DetectExplainParams"
+      }
     }
   ],
   "x-notifications": [
@@ -2220,6 +2251,248 @@
         "required": [
           "seq",
           "applied"
+        ]
+      },
+      "DetectExplain": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/AgentState",
+            "description": "The pane's agent state now; its source is the source that won. Absent when no source has reported for the pane."
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/DetectManifest",
+            "description": "The manifest whose screen rules ran. Absent when neither the foreground process nor the agent state names one."
+          },
+          "open_request": {
+            "type": "string",
+            "description": "The open permission request; only a hook or server closes it."
+          },
+          "owner_stop": {
+            "type": "boolean",
+            "description": "The owner's interrupt key shows idle; session.send waits until the harness itself reports."
+          },
+          "pane": {
+            "type": "string"
+          },
+          "process": {
+            "$ref": "#/components/schemas/DetectProcess"
+          },
+          "screen": {
+            "$ref": "#/components/schemas/DetectScreen",
+            "description": "The screen rules over the pane's screen now. Absent with no manifest, or when the screen could not be read."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "turn_source": {
+            "$ref": "#/components/schemas/StateSource",
+            "description": "The strongest source that spoke this turn: a weaker one cannot change the state until the turn ends. Absent after a reset, when the next report of any source wins."
+          }
+        },
+        "required": [
+          "seq",
+          "pane",
+          "process"
+        ]
+      },
+      "DetectExplainParams": {
+        "type": "object",
+        "properties": {
+          "pane": {
+            "type": "string",
+            "description": "Pane id. Give pane or session."
+          },
+          "session": {
+            "type": "string",
+            "description": "Session id or name; the session's live pane is explained."
+          }
+        }
+      },
+      "DetectManifest": {
+        "type": "object",
+        "properties": {
+          "chosen_by": {
+            "type": "string",
+            "description": "process: the foreground process matched it; agent: the pane's agent state names its harness."
+          },
+          "from": {
+            "type": "string",
+            "description": "vendored: built into gff-hab; data: refreshed into the state directory."
+          },
+          "id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "from",
+          "path",
+          "chosen_by"
+        ]
+      },
+      "DetectProc": {
+        "type": "object",
+        "properties": {
+          "args": {
+            "type": "array",
+            "description": "argv, where readable. Outside Linux it is split on white space.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "leader": {
+            "type": "boolean",
+            "description": "The group's leader."
+          },
+          "match": {
+            "type": "string",
+            "description": "The manifest id its first matching name resolves to."
+          },
+          "name": {
+            "type": "string",
+            "description": "The executable name the system reports."
+          },
+          "names": {
+            "type": "array",
+            "description": "The names it offers, in the order they are tried.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pid": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "pid",
+          "name",
+          "names"
+        ]
+      },
+      "DetectProcess": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Why the group or its processes could not be read."
+          },
+          "match": {
+            "type": "string",
+            "description": "The manifest id the process part found. Absent when no process matches."
+          },
+          "match_name": {
+            "type": "string",
+            "description": "The name that matched."
+          },
+          "match_pid": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The process that matched."
+          },
+          "pgid": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The PTY's foreground process group; 0 when it has none."
+          },
+          "processes": {
+            "type": "array",
+            "description": "The group's processes in the order they are tried: the leader first, then the others by pid.",
+            "items": {
+              "$ref": "#/components/schemas/DetectProc"
+            }
+          }
+        },
+        "required": [
+          "pgid",
+          "processes"
+        ]
+      },
+      "DetectRule": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "matched": {
+            "type": "boolean"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "region": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "description": "The region's text as the rule read it, cut to its last 2048 bytes. osc_title and osc_progress read empty: this build does not track them."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The text was cut."
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "priority",
+          "region",
+          "matched",
+          "text"
+        ]
+      },
+      "DetectScreen": {
+        "type": "object",
+        "properties": {
+          "cols": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "lines": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The lines the rules read: the visible rows, trailing blank ones dropped."
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "rule": {
+            "type": "string",
+            "description": "The winning rule: the matching rule of highest priority, the first in the file on a tie."
+          },
+          "rules": {
+            "type": "array",
+            "description": "Every rule, in file order.",
+            "items": {
+              "$ref": "#/components/schemas/DetectRule"
+            }
+          },
+          "state": {
+            "type": "string",
+            "description": "What the screen says: idle, working, blocked or unknown (no rule matched)."
+          }
+        },
+        "required": [
+          "cols",
+          "rows",
+          "lines",
+          "state",
+          "rules"
         ]
       },
       "Device": {

@@ -358,6 +358,22 @@ func (h *Holder) Ping(ctx context.Context) error {
 	return err
 }
 
+// Foreground asks for the pane's foreground process group, read from its PTY now. 0 means the
+// PTY has none, or is closed.
+func (h *Holder) Foreground(ctx context.Context, hd hp.Handle) (int, error) {
+	fs, err := h.call(ctx, func(tok uint32) hp.Frame {
+		return &hp.ForegroundQuery{Handle: hd, Token: tok}
+	}, func(hp.Frame) bool { return true })
+	if err != nil {
+		return 0, err
+	}
+	f, ok := fs[0].(*hp.Foreground)
+	if !ok {
+		return 0, fmt.Errorf("holderclient: unexpected answer to foreground-query: %s", fs[0].Header().Kind)
+	}
+	return int(f.Pgid), nil
+}
+
 // Spawn starts a pane on this holder. A draining holder refuses with code draining.
 func (h *Holder) Spawn(ctx context.Context, s hp.Spawn) (*Pane, error) {
 	fs, err := h.call(ctx, func(tok uint32) hp.Frame {

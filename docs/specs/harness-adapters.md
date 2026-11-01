@@ -138,6 +138,41 @@ Built choices (`internal/detect`, `gff-hab manifests`):
   version above it, or one with no number in it, gives a version warning. The warning rides on
   the pane's `agent.state` (see [State event model](#state-event-model)); it does not stop the
   adapter.
+- **Explain** (`detect.explain`, `gff-hab detect explain <pane|session>`; herdr's
+  `agent explain`, `landscape.md` idea 4.7). It answers "why does this pane show this state?"
+  in one call and changes nothing. It returns:
+  - the pane's agent state with the source that set it, the strongest source this turn (empty
+    after a reset), an open request and the owner's interrupt flag;
+  - the process part over the PTY's foreground group, read now: every process in the order it
+    is tried, the names each offers, and the match;
+  - the manifest whose screen rules ran, and what chose it;
+  - every rule of that manifest in file order, with the region text it read, whether it
+    matched, and the winner.
+
+  Choices:
+  - **Manifest.** The process match picks it; with none, the harness in the agent state. With
+    neither, there is no screen part.
+  - **Fresh manifests.** Each call loads the set from the state directory again, so a refresh
+    shows at once.
+  - **Foreground group.** The holder reads it from the PTY (`foreground-query`, holder
+    protocol). gff-hab then lists the group's processes: `/proc` on Linux, `ps` elsewhere, so no
+    cgo. `ps` prints argv as one line, so outside Linux an argument with a space reads as two.
+    A process offers each name once.
+  - **Screen text.** The rules read the last `rows` lines of the parsed screen, with trailing
+    blank lines dropped. Without the drop, the blank rows under a fresh prompt would push the
+    printed text out of every `bottom_lines(N)` region.
+  - **Region text.** Each rule carries its region's last 2048 bytes, cut at a line where it can.
+    The CLI prints the winner's region; `-all` prints every rule with its region.
+  - **OSC regions.** gff-hab does not track the OSC title or OSC 9;4 progress yet, so
+    `osc_title` and `osc_progress` read empty. Rules on them never match.
+  - **Not applied.** This build runs the screen rules only for explain. It never writes a screen
+    state into `agent.state`. When the screen disagrees, the verdict line says so, and says that
+    the screen is shown, not applied. The fallback that applies it is later work, under the
+    precedence rules below.
+  - **Names.** The argument is a pane id, a session id or a session name. A session must have a
+    live pane.
+  - **Revision 1, additive.** A new method and the capability `detect-explain`, sent with the
+    holder link on.
 
 **Claude session id at spawn.** When `gff-hab` starts Claude, it may pass
 `--session-id <uuid>`. The adapter then knows the transcript before the first hook fires. Codex

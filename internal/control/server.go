@@ -8,7 +8,7 @@
 // through Config.Data, pane.input through Config.Input, chat.page through Config.Chat, the size
 // ownership and redraw methods through Config.Size, command.list and command.output through
 // Config.Commands, session.send and approval.answer through Config.Agents, and
-// hab.permissions through Config.Permissions, and the push methods, session.focus and
+// hab.permissions through Config.Permissions, detect.explain through Config.Detect, and the push methods, session.focus and
 // notice.raise through Config.Push. The devices methods and the calls later
 // stages build answer "unavailable", with a hint that names the stage.
 package control
@@ -141,6 +141,14 @@ type Permissions interface {
 	Permissions(ctx context.Context, p api.PermissionsParams) (api.Permissions, error)
 }
 
+// Detect serves detect.explain (harness-adapters.md, Detection). It asks the holder and lists
+// processes, so it runs off the connection's read loop. An error that is an *Error keeps its
+// kind.
+type Detect interface {
+	// Explain explains one pane. p names a pane or a session, never both.
+	Explain(ctx context.Context, p api.DetectExplainParams) (api.DetectExplain, error)
+}
+
 // Peers keeps the hab's peer list and its links (mesh.md 3, 4). gff-hab implements it with
 // internal/peers. An error that is an *Error keeps its kind.
 type Peers interface {
@@ -169,6 +177,7 @@ type Config struct {
 	Commands     Commands    // nil: command.list and command.output answer unavailable
 	Agents       Agents      // nil: session.send and approval.answer answer unavailable
 	Permissions  Permissions // nil: hab.permissions answers unavailable
+	Detect       Detect      // nil: detect.explain answers unavailable
 	Peers        Peers       // nil: peers.list and peers.accept answer unavailable
 	Push         Push        // nil: the push methods, session.focus and notice.raise answer unavailable
 	// ApproversChanged, if set, is called with no lock held after a connection closes or

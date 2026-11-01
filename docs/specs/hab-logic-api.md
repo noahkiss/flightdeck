@@ -617,8 +617,8 @@ server is on and the `devices.*` methods work. `push` means the hab has working 
 feature. Capabilities are for features that a host may
 lack. They are not a second versioning scheme.
 
-Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt` and
-`transcripts`. It always sends `mesh` and `idempotency-keys`. It sends `push` only when its push config loads and validates
+Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt`,
+`transcripts` and `detect-explain` (`detect.explain` works). It always sends `mesh` and `idempotency-keys`. It sends `push` only when its push config loads and validates
 (3.9, Push).
 
 ### 3.5 Events, seq and epoch
@@ -772,6 +772,7 @@ names the stage, and an event is defined but never sent.
 | `hab.stats` | CPU, memory, disk, battery and uptime of the host (capability `host-stats`) | Part 5 stage 5 |
 | `command.list` | A page of a pane's shell commands, found by OSC 133 marks (capability `commands`, 2.5) | Yes (task-m845kpi9) |
 | `command.output` | A run of one command's output, from a bounded replay of the holder's ring (capability `commands`, 2.5) | Yes (task-m845kpi9) |
+| `detect.explain` | Why a pane shows its agent state: the source that won, the process match, and each screen rule's region and result (capability `detect-explain`; `harness-adapters.md`, Detection) | Yes (task-bgjbr5rn) |
 
 | Event | Purpose | Id | Sent from |
 |---|---|---|---|

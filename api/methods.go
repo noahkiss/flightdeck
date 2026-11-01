@@ -101,6 +101,7 @@ var Methods = []Method{
 	{"peers.list", "This hab's peers with their link state, and habs linked to it that it does not list (mesh.md 3, 4.3). Needs the mesh capability.", PeersListParams{}, PeerList{}},
 	{"peers.accept", "Pin the device id a peer presented in place of the pinned one (transport.md 6.3). Needs the mesh capability.", PeersAcceptParams{}, PeerAccepted{}},
 	{"hab.permissions", "Check the permission grants of the holders, from a probe pane, and of gff-hab (macos-identity.md 7.2). Needs the permissions capability.", PermissionsParams{}, Permissions{}},
+	{"detect.explain", "Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.", DetectExplainParams{}, DetectExplain{}},
 }
 
 // Notifications is every notification the server sends on a control connection.
@@ -200,5 +201,6 @@ var Translators = map[int]Translator{}
 // hab.permissions works (macos-identity.md 7.2). "mesh" means the hab keeps a peer list and
 // serves peer links, the peers.* methods and the peer.updated event (mesh.md 4.2).
 // "idempotency-keys" means the hab honours idempotency_key on session.create and session.send
-// (spec 3.9); a client sends keys only to a hab that lists it.
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys"}
+// (spec 3.9); a client sends keys only to a hab that lists it. "detect-explain" means
+// detect.explain works (harness-adapters.md, Detection).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain"}

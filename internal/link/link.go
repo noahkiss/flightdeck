@@ -1188,6 +1188,24 @@ func (l *Link) Screen(u hp.UUID) (Screen, error) {
 	return p.screen()
 }
 
+// Foreground asks pane u's holder for the pane's foreground process group (0: none).
+func (l *Link) Foreground(ctx context.Context, u hp.UUID) (int, error) {
+	p := l.pane(u)
+	if p == nil {
+		return 0, ErrNoPane
+	}
+	p.mu.Lock()
+	h, hd, lost := p.holder, p.handle, p.lost
+	p.mu.Unlock()
+	if lost != nil {
+		return 0, lost
+	}
+	if h == nil {
+		return 0, ErrNoPane
+	}
+	return h.Foreground(ctx, hd)
+}
+
 // ScrollbackPage is a run of pane scrollback rows older than a snapshot carries; see Scrollback.
 type ScrollbackPage struct {
 	vt.ScrollbackPage

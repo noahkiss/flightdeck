@@ -569,3 +569,10 @@ func (c Client) HabPermissions(ctx context.Context, params PermissionsParams) (P
 	err := c.Caller.Call(ctx, "hab.permissions", params, &result)
 	return result, err
 }
+
+// DetectExplain calls detect.explain. Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.
+func (c Client) DetectExplain(ctx context.Context, params DetectExplainParams) (DetectExplain, error) {
+	var result DetectExplain
+	err := c.Caller.Call(ctx, "detect.explain", params, &result)
+	return result, err
+}

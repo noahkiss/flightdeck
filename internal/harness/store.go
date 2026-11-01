@@ -529,6 +529,29 @@ func (s *Store) Get(paneID string) (api.AgentState, bool) {
 	return api.AgentState{}, false
 }
 
+// Trace is how a pane's state came to be, for `gff-hab detect explain`.
+type Trace struct {
+	State api.AgentState
+	// TurnSource is the strongest source that spoke this turn: a weaker one cannot change the
+	// state until the turn ends. Empty after a reset (a new turn, a session's end, the owner's
+	// interrupt), when the next report of any source wins.
+	TurnSource api.StateSource
+	Open       string // the open permission request; only a hook or server closes it
+	OwnerStop  bool   // the owner's interrupt shows idle; sends wait for the harness to report
+	Hooked     string // the harness whose hook last reached gff-hab for this pane, this run
+}
+
+// Trace returns one pane's state and how it came to be.
+func (s *Store) Trace(paneID string) (Trace, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.panes[paneID]
+	if p == nil || p.st.Revision == 0 {
+		return Trace{}, false
+	}
+	return Trace{State: api.NonNil(p.st), TurnSource: p.turnSource, Open: p.open, OwnerStop: p.ownerStop, Hooked: p.hooked}, true
+}
+
 // Snapshot returns the state of every pane, sorted by pane id.
 func (s *Store) Snapshot() []api.AgentState {
 	s.mu.Lock()

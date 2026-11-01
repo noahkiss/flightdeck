@@ -13,6 +13,7 @@
 //	gff-hab notify   [-socket path | -via command] [-level l] [-session id] <title> [body]
 //	gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
 //	gff-hab manifests list    [-state dir]
+//	gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
 //	gff-hab hook [-t ms] <harness> [event] < payload
 //	gff-hab hook -print <harness> [-command name]
 //	gff-hab probe -nonce n -checks grant,... [-request grant]
@@ -74,6 +75,7 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/datastream"
+	"github.com/noahkiss/flightdeck/internal/detect"
 	"github.com/noahkiss/flightdeck/internal/gitstatus"
 	"github.com/noahkiss/flightdeck/internal/habkey"
 	"github.com/noahkiss/flightdeck/internal/harness"
@@ -101,6 +103,7 @@ const usage = `usage:
   gff-hab notify   [-socket path | -via command] [-level passive|active|time-sensitive] [-session id] <title> [body]
   gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
   gff-hab manifests list    [-state dir]
+  gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
   gff-hab hook [-t ms] <harness> [event] < payload
   gff-hab hook -print <harness> [-command name]
   gff-hab probe -nonce n -checks grant,... [-request grant]
@@ -141,6 +144,8 @@ func main() {
 		err = notifyCmd(os.Args[2:])
 	case "manifests":
 		err = manifests(os.Args[2:], os.Stdout)
+	case "detect":
+		err = detectCmd(os.Args[2:], os.Stdout)
 	case "install":
 		err = install(os.Args[2:], os.Stdout)
 	case "uninstall":
@@ -365,6 +370,7 @@ func serve(args []string) error {
 	var chats *chatService
 	var agentCalls control.Agents
 	var agentSvc *agentService
+	var explain control.Detect
 	var ds *datastream.Server
 	var mgr *panesize.Manager
 	if lk != nil {
@@ -429,6 +435,11 @@ func serve(args []string) error {
 		agentSvc = &agentService{store: store, agents: agents, gate: harness.NewGate(pwait), input: linkQueuer{lk}, logf: logger.Printf,
 			answering: pushes.answering}
 		agentCalls = agentSvc
+		// Why a pane shows its state (harness-adapters.md, Detection): read only.
+		mdir := filepath.Join(dir, "manifests")
+		explain = &detectService{lk: linkPanes{lk}, store: store, agents: agents,
+			manifests: func() *detect.Set { return detect.Load(mdir) }, group: detect.GroupProcesses}
+		caps = append(caps, "detect-explain")
 		// Activity marks for hidden tabs (gff-client.md 15.7): pane.output and pane.bell, at
 		// most once a second per pane.
 		activity := newActivityEvents(lk, func(e structure.Event) {
@@ -496,6 +507,7 @@ func serve(args []string) error {
 		},
 		Logf:        logger.Printf,
 		Permissions: permissionService{perms},
+		Detect:      explain,
 		Peers:       pm,
 		Push:        pushes,
 	})

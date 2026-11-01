@@ -389,3 +389,76 @@ type PermissionRow struct {
 	Settings   string `json:"settings,omitempty" doc:"The System Settings URL that changes this grant."`
 	Reveal     string `json:"reveal,omitempty" doc:"A path to show in Finder, so the user can drag it into the Settings list."`
 }
+
+// --- Detection explain (harness-adapters.md, Detection) ---
+
+// DetectExplainParams names the pane to explain: a pane id, or a session whose live pane it is.
+type DetectExplainParams struct {
+	Pane    string `json:"pane,omitempty" doc:"Pane id. Give pane or session."`
+	Session string `json:"session,omitempty" doc:"Session id or name; the session's live pane is explained."`
+}
+
+// DetectExplain says why a pane shows the agent state it does: the source that set it, what the
+// process part of detection finds in the pane's foreground, and what each screen rule of the
+// chosen manifest reads and finds.
+type DetectExplain struct {
+	Seq
+	Pane       string          `json:"pane"`
+	Agent      *AgentState     `json:"agent,omitempty" doc:"The pane's agent state now; its source is the source that won. Absent when no source has reported for the pane."`
+	TurnSource StateSource     `json:"turn_source,omitempty" doc:"The strongest source that spoke this turn: a weaker one cannot change the state until the turn ends. Absent after a reset, when the next report of any source wins."`
+	Open       string          `json:"open_request,omitempty" doc:"The open permission request; only a hook or server closes it."`
+	OwnerStop  bool            `json:"owner_stop,omitempty" doc:"The owner's interrupt key shows idle; session.send waits until the harness itself reports."`
+	Process    DetectProcess   `json:"process"`
+	Manifest   *DetectManifest `json:"manifest,omitempty" doc:"The manifest whose screen rules ran. Absent when neither the foreground process nor the agent state names one."`
+	Screen     *DetectScreen   `json:"screen,omitempty" doc:"The screen rules over the pane's screen now. Absent with no manifest, or when the screen could not be read."`
+}
+
+// DetectProcess is the process part of detection over the pane's foreground process group.
+type DetectProcess struct {
+	Pgid      int          `json:"pgid" doc:"The PTY's foreground process group; 0 when it has none."`
+	Processes []DetectProc `json:"processes" doc:"The group's processes in the order they are tried: the leader first, then the others by pid."`
+	Match     string       `json:"match,omitempty" doc:"The manifest id the process part found. Absent when no process matches."`
+	MatchPID  int          `json:"match_pid,omitempty" doc:"The process that matched."`
+	MatchName string       `json:"match_name,omitempty" doc:"The name that matched."`
+	Error     string       `json:"error,omitempty" doc:"Why the group or its processes could not be read."`
+}
+
+// DetectProc is one process of the foreground group.
+type DetectProc struct {
+	PID    int      `json:"pid"`
+	Name   string   `json:"name" doc:"The executable name the system reports."`
+	Args   []string `json:"args,omitempty" doc:"argv, where readable. Outside Linux it is split on white space."`
+	Leader bool     `json:"leader,omitempty" doc:"The group's leader."`
+	Names  []string `json:"names" doc:"The names it offers, in the order they are tried."`
+	Match  string   `json:"match,omitempty" doc:"The manifest id its first matching name resolves to."`
+}
+
+// DetectManifest names the manifest whose screen rules ran.
+type DetectManifest struct {
+	ID       string `json:"id"`
+	Version  string `json:"version"`
+	From     string `json:"from" doc:"vendored: built into gff-hab; data: refreshed into the state directory."`
+	Path     string `json:"path"`
+	ChosenBy string `json:"chosen_by" doc:"process: the foreground process matched it; agent: the pane's agent state names its harness."`
+}
+
+// DetectScreen is the screen rules of one manifest over the pane's screen.
+type DetectScreen struct {
+	Cols  int          `json:"cols"`
+	Rows  int          `json:"rows"`
+	Lines int          `json:"lines" doc:"The lines the rules read: the visible rows, trailing blank ones dropped."`
+	State string       `json:"state" doc:"What the screen says: idle, working, blocked or unknown (no rule matched)."`
+	Rule  string       `json:"rule,omitempty" doc:"The winning rule: the matching rule of highest priority, the first in the file on a tie."`
+	Rules []DetectRule `json:"rules" doc:"Every rule, in file order."`
+}
+
+// DetectRule is one screen rule: the region it read and whether it matched.
+type DetectRule struct {
+	ID        string `json:"id"`
+	State     string `json:"state"`
+	Priority  int    `json:"priority"`
+	Region    string `json:"region"`
+	Matched   bool   `json:"matched"`
+	Text      string `json:"text" doc:"The region's text as the rule read it, cut to its last 2048 bytes. osc_title and osc_progress read empty: this build does not track them."`
+	Truncated bool   `json:"truncated,omitempty" doc:"The text was cut."`
+}

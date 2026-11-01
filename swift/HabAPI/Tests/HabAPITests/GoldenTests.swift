@@ -94,6 +94,7 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.peersList)
         result(HabMethods.peersAccept)
         result(HabMethods.habPermissions)
+        result(HabMethods.detectExplain)
         add("notification." + HabNotification.heartbeat, Heartbeat.self)
         add("notification." + HabNotification.closing, Closing.self)
         add("frame.hello", DataHello.self)

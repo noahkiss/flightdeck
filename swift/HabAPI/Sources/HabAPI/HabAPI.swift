@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -707,6 +707,220 @@ public struct DesiredSizeResult: Codable, Sendable, Hashable {
     public init(applied: Bool, seq: UInt64) {
         self.applied = applied
         self.seq = seq
+    }
+}
+
+public struct DetectExplain: Codable, Sendable, Hashable {
+    /// The pane's agent state now; its source is the source that won. Absent when no source has reported for the pane.
+    public var agent: AgentState?
+    /// The manifest whose screen rules ran. Absent when neither the foreground process nor the agent state names one.
+    public var manifest: DetectManifest?
+    /// The open permission request; only a hook or server closes it.
+    public var openRequest: String?
+    /// The owner's interrupt key shows idle; session.send waits until the harness itself reports.
+    public var ownerStop: Bool?
+    public var pane: String
+    public var process: DetectProcess
+    /// The screen rules over the pane's screen now. Absent with no manifest, or when the screen could not be read.
+    public var screen: DetectScreen?
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// The strongest source that spoke this turn: a weaker one cannot change the state until the turn ends. Absent after a reset, when the next report of any source wins.
+    public var turnSource: StateSource?
+
+    enum CodingKeys: String, CodingKey {
+        case agent = "agent"
+        case manifest = "manifest"
+        case openRequest = "open_request"
+        case ownerStop = "owner_stop"
+        case pane = "pane"
+        case process = "process"
+        case screen = "screen"
+        case seq = "seq"
+        case turnSource = "turn_source"
+    }
+
+    public init(agent: AgentState? = nil, manifest: DetectManifest? = nil, openRequest: String? = nil, ownerStop: Bool? = nil, pane: String, process: DetectProcess, screen: DetectScreen? = nil, seq: UInt64, turnSource: StateSource? = nil) {
+        self.agent = agent
+        self.manifest = manifest
+        self.openRequest = openRequest
+        self.ownerStop = ownerStop
+        self.pane = pane
+        self.process = process
+        self.screen = screen
+        self.seq = seq
+        self.turnSource = turnSource
+    }
+}
+
+public struct DetectExplainParams: Codable, Sendable, Hashable {
+    /// Pane id. Give pane or session.
+    public var pane: String?
+    /// Session id or name; the session's live pane is explained.
+    public var session: String?
+
+    enum CodingKeys: String, CodingKey {
+        case pane = "pane"
+        case session = "session"
+    }
+
+    public init(pane: String? = nil, session: String? = nil) {
+        self.pane = pane
+        self.session = session
+    }
+}
+
+public struct DetectManifest: Codable, Sendable, Hashable {
+    /// process: the foreground process matched it; agent: the pane's agent state names its harness.
+    public var chosenBy: String
+    /// vendored: built into gff-hab; data: refreshed into the state directory.
+    public var from: String
+    public var id: String
+    public var path: String
+    public var version: String
+
+    enum CodingKeys: String, CodingKey {
+        case chosenBy = "chosen_by"
+        case from = "from"
+        case id = "id"
+        case path = "path"
+        case version = "version"
+    }
+
+    public init(chosenBy: String, from: String, id: String, path: String, version: String) {
+        self.chosenBy = chosenBy
+        self.from = from
+        self.id = id
+        self.path = path
+        self.version = version
+    }
+}
+
+public struct DetectProc: Codable, Sendable, Hashable {
+    /// argv, where readable. Outside Linux it is split on white space.
+    public var args: [String]?
+    /// The group's leader.
+    public var leader: Bool?
+    /// The manifest id its first matching name resolves to.
+    public var match: String?
+    /// The executable name the system reports.
+    public var name: String
+    /// The names it offers, in the order they are tried.
+    public var names: [String]
+    public var pid: Int
+
+    enum CodingKeys: String, CodingKey {
+        case args = "args"
+        case leader = "leader"
+        case match = "match"
+        case name = "name"
+        case names = "names"
+        case pid = "pid"
+    }
+
+    public init(args: [String]? = nil, leader: Bool? = nil, match: String? = nil, name: String, names: [String], pid: Int) {
+        self.args = args
+        self.leader = leader
+        self.match = match
+        self.name = name
+        self.names = names
+        self.pid = pid
+    }
+}
+
+public struct DetectProcess: Codable, Sendable, Hashable {
+    /// Why the group or its processes could not be read.
+    public var error: String?
+    /// The manifest id the process part found. Absent when no process matches.
+    public var match: String?
+    /// The name that matched.
+    public var matchName: String?
+    /// The process that matched.
+    public var matchPid: Int?
+    /// The PTY's foreground process group; 0 when it has none.
+    public var pgid: Int
+    /// The group's processes in the order they are tried: the leader first, then the others by pid.
+    public var processes: [DetectProc]
+
+    enum CodingKeys: String, CodingKey {
+        case error = "error"
+        case match = "match"
+        case matchName = "match_name"
+        case matchPid = "match_pid"
+        case pgid = "pgid"
+        case processes = "processes"
+    }
+
+    public init(error: String? = nil, match: String? = nil, matchName: String? = nil, matchPid: Int? = nil, pgid: Int, processes: [DetectProc]) {
+        self.error = error
+        self.match = match
+        self.matchName = matchName
+        self.matchPid = matchPid
+        self.pgid = pgid
+        self.processes = processes
+    }
+}
+
+public struct DetectRule: Codable, Sendable, Hashable {
+    public var id: String
+    public var matched: Bool
+    public var priority: Int
+    public var region: String
+    public var state: String
+    /// The region's text as the rule read it, cut to its last 2048 bytes. osc_title and osc_progress read empty: this build does not track them.
+    public var text: String
+    /// The text was cut.
+    public var truncated: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case matched = "matched"
+        case priority = "priority"
+        case region = "region"
+        case state = "state"
+        case text = "text"
+        case truncated = "truncated"
+    }
+
+    public init(id: String, matched: Bool, priority: Int, region: String, state: String, text: String, truncated: Bool? = nil) {
+        self.id = id
+        self.matched = matched
+        self.priority = priority
+        self.region = region
+        self.state = state
+        self.text = text
+        self.truncated = truncated
+    }
+}
+
+public struct DetectScreen: Codable, Sendable, Hashable {
+    public var cols: Int
+    /// The lines the rules read: the visible rows, trailing blank ones dropped.
+    public var lines: Int
+    public var rows: Int
+    /// The winning rule: the matching rule of highest priority, the first in the file on a tie.
+    public var rule: String?
+    /// Every rule, in file order.
+    public var rules: [DetectRule]
+    /// What the screen says: idle, working, blocked or unknown (no rule matched).
+    public var state: String
+
+    enum CodingKeys: String, CodingKey {
+        case cols = "cols"
+        case lines = "lines"
+        case rows = "rows"
+        case rule = "rule"
+        case rules = "rules"
+        case state = "state"
+    }
+
+    public init(cols: Int, lines: Int, rows: Int, rule: String? = nil, rules: [DetectRule], state: String) {
+        self.cols = cols
+        self.lines = lines
+        self.rows = rows
+        self.rule = rule
+        self.rules = rules
+        self.state = state
     }
 }
 
@@ -2397,6 +2611,8 @@ public enum HabMethods {
     public static let peersAccept = HabMethod<PeersAcceptParams, PeerAccepted>(name: "peers.accept")
     /// Check the permission grants of the holders, from a probe pane, and of gff-hab (macos-identity.md 7.2). Needs the permissions capability.
     public static let habPermissions = HabMethod<PermissionsParams, Permissions>(name: "hab.permissions")
+    /// Say why a pane shows its agent state: the source that won, the process match and each screen rule's region and result (harness-adapters.md, Detection). Needs the detect-explain capability.
+    public static let detectExplain = HabMethod<DetectExplainParams, DetectExplain>(name: "detect.explain")
 }
 
 public enum HabNotification {

@@ -437,6 +437,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handlePermissions(m)
 		return
 	}
+	if m.Method == "detect.explain" {
+		c.handleExplain(m)
+		return
+	}
 	seq := c.currentSeq()
 	result, e := c.dispatch(m, seq)
 	c.reply(m, seq, result, e)
@@ -624,6 +628,39 @@ func (c *conn) handlePermissions(m message) {
 		}
 		res.Seq = api.Seq{Seq: seq}
 		c.reply(m, seq, res, nil)
+	}()
+}
+
+// maxExplainTime bounds one detect.explain call: a holder round trip and a process listing.
+const maxExplainTime = 15 * time.Second
+
+// handleExplain runs a detect.explain call on its own goroutine: it asks the holder for the
+// pane's foreground group and lists its processes, and the read loop goes on meanwhile.
+func (c *conn) handleExplain(m message) {
+	seq := c.currentSeq()
+	var p api.DetectExplainParams
+	if e := c.decodeUp(m, &p); e != nil {
+		c.reply(m, seq, nil, e)
+		return
+	}
+	if (p.Pane == "") == (p.Session == "") {
+		c.reply(m, seq, nil, appErr(api.ErrorKindInvalid, "detect.explain needs pane or session, not both"))
+		return
+	}
+	if c.s.cfg.Detect == nil {
+		c.reply(m, seq, nil, appErr(api.ErrorKindUnavailable, "detect.explain needs gff-hab serve with its holder link"))
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(c.ctx, maxExplainTime)
+		defer cancel()
+		res, err := c.s.cfg.Detect.Explain(ctx, p)
+		if err != nil {
+			c.reply(m, seq, nil, actionErr(m.Method, err))
+			return
+		}
+		res.Seq = api.Seq{Seq: seq}
+		c.reply(m, seq, api.NonNil(res), nil)
 	}()
 }
 
