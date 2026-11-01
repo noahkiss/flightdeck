@@ -11,14 +11,16 @@ import (
 	"image/jpeg"
 	_ "image/png"
 	"io"
+	"sync"
 )
 
 // ThumbSide is the longest side of a thumbnail, in pixels.
 const ThumbSide = 320
 
 // maxPixels refuses a source image larger than this before it is decoded: a small file can
-// claim a huge size.
-const maxPixels = 80_000_000
+// claim a huge size. The app never sends more than 2048 px on a side (4.2 M pixels); 24 M
+// pixels leaves room for a large file sent from Files and bounds one decode to about 200 MB.
+const maxPixels = 24_000_000
 
 // Thumbnail decodes a PNG, JPEG or GIF and returns a JPEG of at most ThumbSide pixels on its
 // longest side, with any transparency drawn over white.
@@ -90,4 +92,49 @@ func scale(src image.Image, side int) *image.RGBA {
 		}
 	}
 	return dst
+}
+
+// thumbCacheSize is how many thumbnails the hab keeps: every device asks again on each chat load.
+const thumbCacheSize = 64
+
+// thumbCache holds recent thumbnails by id, the least recently used out first. A stored file
+// never changes, so an entry never goes stale.
+type thumbCache struct {
+	mu    sync.Mutex
+	order []string
+	m     map[string][]byte
+}
+
+func (c *thumbCache) get(id string) ([]byte, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	b, ok := c.m[id]
+	if ok {
+		c.touch(id)
+	}
+	return b, ok
+}
+
+func (c *thumbCache) put(id string, b []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.m == nil {
+		c.m = map[string][]byte{}
+	}
+	c.m[id] = b
+	c.touch(id)
+	for len(c.order) > thumbCacheSize {
+		delete(c.m, c.order[0])
+		c.order = c.order[1:]
+	}
+}
+
+func (c *thumbCache) touch(id string) {
+	for i, x := range c.order {
+		if x == id {
+			c.order = append(c.order[:i], c.order[i+1:]...)
+			break
+		}
+	}
+	c.order = append(c.order, id)
 }

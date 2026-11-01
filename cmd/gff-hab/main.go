@@ -527,6 +527,12 @@ func serve(args []string) error {
 				a := attachRef.Load()
 				return a != nil && a.Known(id)
 			},
+			matchSend: func(session, text string, at time.Time) (string, []string, bool) {
+				if a := attachRef.Load(); a != nil {
+					return a.Match(session, text, at)
+				}
+				return text, nil, false
+			},
 		})
 		defer chats.Close()
 		ocs.dirty = chats.dirty
@@ -582,7 +588,7 @@ func serve(args []string) error {
 		commands = commandService{lk}
 		caps = append(caps, "commands")
 		agentSvc = &agentService{store: store, agents: agents, gate: harness.NewGate(pwait), input: linkQueuer{lk}, logf: logger.Printf,
-			answering: pushes.answering, opencode: ocs, attachments: attachSvc.Paths}
+			answering: pushes.answering, opencode: ocs, attachments: attachSvc}
 		agentCalls = agentSvc
 		// Why a pane shows its state (harness-adapters.md, Detection): read only.
 		// The manifests are parsed now, off the start path, and again only when the data

@@ -70,9 +70,9 @@ type agentService struct {
 	// opencode reaches the private server of an opencode pane gff-hab started: sends and
 	// answers go through its API, not the terminal. Nil: none.
 	opencode *opencodeServers
-	// attachments returns the stored paths of a send's attachment ids (app.md 4.4). Nil: a send
-	// with attachments answers unavailable.
-	attachments func(session string, ids []string) ([]string, error)
+	// attachments holds the files of a send's attachment ids, and hears of each delivered send
+	// (app.md 4.4). Nil: a send with attachments answers unavailable.
+	attachments attachmentStore
 
 	mu      sync.Mutex
 	sending map[string]bool // panes a session.send holds until the turn starts
@@ -83,6 +83,12 @@ type agentService struct {
 }
 
 var _ control.Agents = (*agentService)(nil)
+
+// attachmentStore is what session.send needs of internal/attach.
+type attachmentStore interface {
+	Files(session string, ids []string) ([]attach.Record, error)
+	NoteSent(session, text string, ids []string)
+}
 
 // claim marks the pane as taking a message. It reports false when a send already holds it.
 func (a *agentService) claim(pane string) bool {
@@ -109,17 +115,23 @@ func (a *agentService) unclaim(pane string) {
 // conflict; the hab queues nothing. One send at a time per pane: a second one while the first
 // has not started its turn (sendStart) is refused with conflict too.
 func (a *agentService) Send(ctx context.Context, client string, p api.SessionSendParams) error {
+	typed := p.Text
+	var images, others []string // stored paths: images the harness may take as images, other files
 	if len(p.Attachments) > 0 {
-		// Each stored path goes into the text, which every supported harness reads with its
-		// own file tools (harness-adapters.md, Input delivery).
 		if a.attachments == nil {
 			return control.Errorf(api.ErrorKindUnavailable, "session.send with attachments needs the attachment store, which this hab is running without")
 		}
-		paths, err := a.attachments(p.Session, p.Attachments)
+		recs, err := a.attachments.Files(p.Session, p.Attachments)
 		if err != nil {
 			return err
 		}
-		p.Text = attach.MessageText(p.Text, paths)
+		for _, r := range recs {
+			if attach.IsImage(r.Type) {
+				images = append(images, r.Path)
+			} else {
+				others = append(others, r.Path)
+			}
+		}
 	}
 	ss, ok := a.store.Session(p.Session)
 	if !ok {
@@ -142,11 +154,14 @@ func (a *agentService) Send(ctx context.Context, client string, p api.SessionSen
 		return agentErr(err)
 	}
 	if c, ok := a.opencodeClient(ss.Pane, st.Harness); ok {
-		if err := a.promptOpencode(ctx, c, st, p.Text); err != nil {
+		// opencode reads every path with its own tools, images too (harness-adapters.md).
+		if err := a.promptOpencode(ctx, c, st, attach.MessageText(p.Text, append(others, images...))); err != nil {
 			return err
 		}
 	} else {
-		writes, err := harness.MessageWrites(st.Harness, p.Text)
+		// Each harness takes an image its own way (harness-adapters.md, Input delivery); other
+		// files go as paths after the text.
+		writes, err := harness.ImageMessageWrites(st.Harness, attach.MessageText(p.Text, others), images)
 		if err != nil {
 			return agentErr(err)
 		}
@@ -160,6 +175,9 @@ func (a *agentService) Send(ctx context.Context, client string, p api.SessionSen
 		}
 	}
 	a.agents.Seen(ss.Pane)
+	if len(p.Attachments) > 0 {
+		a.attachments.NoteSent(p.Session, typed, p.Attachments)
+	}
 	a.logf("session %s: message sent (%s, client %s)", p.Session, p.Origin, client)
 	held = true
 	go a.holdForTurn(ss.Pane)

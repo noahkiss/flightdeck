@@ -65,6 +65,9 @@ type chatConfig struct {
 	// attachment reports whether an id names a file this hab stored (app.md 4.4): a user
 	// message's trailing attachment paths become its attachments. nil: none do.
 	attachment func(id string) bool
+	// matchSend finds the send a user message came from when its harness turned the paths
+	// into images (attach.Service.Match). nil: none is matched.
+	matchSend func(session, text string, at time.Time) (clean string, ids []string, ok bool)
 }
 
 // chatSource is a conversation a chat.page reads: a transcript file, or an opencode server.
@@ -363,19 +366,33 @@ func (c *chatService) ChatPage(ctx context.Context, p api.ChatPageParams) (api.C
 	return out, nil
 }
 
-// withAttachments takes the attachment paths session.send put at the end of each user message
-// off its text and lists their ids, so the chat view shows thumbnails, not paths (app.md 4.4).
-// The slice it is given may be a reader's own: a change goes into a copy.
+// withAttachments gives each user message the ids of the files the owner sent with it, so the
+// chat view shows thumbnails (app.md 4.4). Two cases: the trailing attachment paths
+// session.send put in the text, when the harness kept them as text; and a message whose
+// harness turned the paths into images (Claude Code's [Image #1], Codex's image items), matched
+// to its send by text and time. Either way the text loses the paths and image markers. The
+// slice it is given may be a reader's own: a change goes into a copy.
 func (c *chatService) withAttachments(msgs []api.ChatMessage) []api.ChatMessage {
 	if c.attachment == nil {
 		return msgs
 	}
 	var out []api.ChatMessage
 	for i, m := range msgs {
-		if m.Kind != api.ChatKindUser || !strings.Contains(m.Text, attach.Folder) {
+		if m.Kind != api.ChatKindUser {
+			continue
+		}
+		hasPath, hasMarker := strings.Contains(m.Text, attach.Folder), attach.HasMarker(m.Text)
+		if !hasPath && !hasMarker {
 			continue
 		}
 		text, ids := attach.SplitMessage(m.Text, c.attachment)
+		if c.matchSend != nil && (hasMarker || len(ids) > 0) {
+			if at, err := time.Parse(time.RFC3339Nano, m.At); err == nil {
+				if clean, sent, ok := c.matchSend(m.Session, m.Text, at); ok {
+					text, ids = clean, sent
+				}
+			}
+		}
 		if len(ids) == 0 {
 			continue
 		}

@@ -284,6 +284,48 @@ func MessageWrites(harness, text string) ([][]byte, error) {
 	return [][]byte{[]byte(pasteStart + clean + pasteEnd), []byte("\r")}, nil
 }
 
+// ImageMessageWrites delivers a message with images the way harness takes an image from its
+// prompt (app.md 4.4).
+//
+//   - Claude Code splits a paste into lines and reads each line that is one absolute .png,
+//     .jpg, .gif or .webp path as an image; other lines stay text. So the images go as path
+//     lines after the text, in the one paste MessageWrites makes.
+//   - Codex attaches an image when a paste is one image path and nothing else. So each image
+//     goes as its own paste, then the text as one more, then Enter.
+//
+// text holds the owner's text and any paths of files that are not images.
+func ImageMessageWrites(harness, text string, images []string) ([][]byte, error) {
+	if len(images) == 0 {
+		return MessageWrites(harness, text)
+	}
+	switch harness {
+	case detect.KindClaude:
+		t := strings.TrimRight(text, "\n")
+		if strings.TrimSpace(t) != "" {
+			t += "\n\n"
+		}
+		return MessageWrites(harness, t+strings.Join(images, "\n"))
+	case detect.KindCodex:
+	default:
+		return nil, fmt.Errorf("%w: sending a message to %s", ErrUnsupported, harness)
+	}
+	var out [][]byte
+	for _, p := range images {
+		clean := CleanText(strings.ReplaceAll(p, "\n", ""))
+		if clean == "" {
+			continue
+		}
+		out = append(out, []byte(pasteStart+clean+pasteEnd))
+	}
+	if clean := CleanText(text); strings.TrimSpace(clean) != "" {
+		out = append(out, []byte(pasteStart+clean+pasteEnd))
+	}
+	if len(out) == 0 {
+		return nil, errors.New("the message is empty")
+	}
+	return append(out, []byte("\r")), nil
+}
+
 // PermissionKeys returns the keys that choose allow or deny in harness's permission dialog.
 // Claude Code's dialog lists "1. Yes" first and takes Esc as No. Codex's lists "1. Yes,
 // proceed" first, and takes Esc as "No, and tell Codex what to do differently", which stops

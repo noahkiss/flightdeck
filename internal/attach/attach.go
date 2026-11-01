@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -95,10 +96,26 @@ type Service struct {
 	mu      sync.Mutex
 	recs    map[string]Record
 	open    map[string]*upload
+	sends   []Sent
+	closed  bool
+	orphans []string // partial files of writes still running at Close: removed at the next start
+	thumbs  thumbCache
 	stop    chan struct{}
 	stopped sync.Once
 	done    chan struct{}
 }
+
+// Sent is one session.send with attachments: the owner's text and the ids in order. The chat
+// view matches a transcript message whose harness turned paths into images back to its files.
+type Sent struct {
+	Session string    `json:"session"`
+	Text    string    `json:"text"`
+	IDs     []string  `json:"ids"`
+	At      time.Time `json:"at"`
+}
+
+// MaxSends bounds the sends the index keeps.
+const MaxSends = 500
 
 type upload struct {
 	rec      Record
@@ -114,6 +131,7 @@ type upload struct {
 type index struct {
 	Files []Record `json:"files"`
 	Parts []string `json:"parts,omitempty"`
+	Sends []Sent   `json:"sends,omitempty"`
 }
 
 func errf(kind api.ErrorKind, format string, args ...any) error {
@@ -148,6 +166,7 @@ func New(cfg Config) *Service {
 					s.recs[r.ID] = r
 				}
 			}
+			s.sends = ix.Sends
 			for _, p := range ix.Parts {
 				if strings.HasSuffix(p, ".part") && strings.Contains(p, Folder) {
 					os.Remove(p)
@@ -169,8 +188,13 @@ func (s *Service) Close() {
 		close(s.stop)
 		<-s.done
 		s.mu.Lock()
+		s.closed = true
 		for id, u := range s.open {
-			if !u.busy {
+			if u.busy {
+				// The write ends after Close and removes the file; if gff-hab exits first, the
+				// index still names it for the next start.
+				s.orphans = append(s.orphans, u.part)
+			} else {
 				u.f.Close()
 				os.Remove(u.part)
 			}
@@ -229,9 +253,12 @@ func (s *Service) expireLocked() {
 	now := s.cfg.Now()
 	for id, r := range s.recs {
 		fi, err := os.Lstat(r.Path)
-		if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
 			delete(s.recs, id) // gone: the agent moved it, or the owner deleted it
 			continue
+		}
+		if err != nil {
+			continue // an unmounted or failing disk: keep the record and look again later
 		}
 		if now.Sub(r.At) < KeepFor {
 			continue
@@ -244,6 +271,13 @@ func (s *Service) expireLocked() {
 		}
 		delete(s.recs, id)
 	}
+	keep := s.sends[:0]
+	for _, x := range s.sends {
+		if now.Sub(x.At) < KeepFor {
+			keep = append(keep, x)
+		}
+	}
+	s.sends = keep
 }
 
 func (s *Service) saveLocked() {
@@ -258,7 +292,9 @@ func (s *Service) saveLocked() {
 	for _, u := range s.open {
 		ix.Parts = append(ix.Parts, u.part)
 	}
+	ix.Parts = append(ix.Parts, s.orphans...)
 	sort.Strings(ix.Parts)
+	ix.Sends = s.sends
 	b, err := json.Marshal(ix)
 	if err == nil {
 		err = writeFileAtomic(s.cfg.StatePath, b)
@@ -374,14 +410,16 @@ func (s *Service) folderFor(ctx context.Context, session string) (string, error)
 		base = fallback
 	}
 	dir := filepath.Join(base, Folder)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		// A folder the hab may not write in (a session started in /): the hab's own folder.
+	if err := makeFolder(base); err != nil {
+		// A folder the hab may not write in (a session started in /), or a .flightdeck that is a
+		// link out of the session folder (a cloned repository can commit one): the hab's own
+		// folder.
 		if fallback == "" || base == fallback {
 			return "", errf(api.ErrorKindUnavailable, "make the attachment folder: %v", err)
 		}
 		s.cfg.Logf("attachments: session %s: %v; storing in %s", session, err, fallback)
 		base, dir = fallback, filepath.Join(fallback, Folder)
-		if err := os.MkdirAll(dir, 0o700); err != nil {
+		if err := makeFolder(base); err != nil {
 			return "", errf(api.ErrorKindUnavailable, "make the attachment folder: %v", err)
 		}
 	}
@@ -401,6 +439,24 @@ func (s *Service) folderFor(ctx context.Context, session string) (string, error)
 	return dir, nil
 }
 
+// makeFolder makes base/.flightdeck/attachments and checks that neither part is a link, so the
+// files stay inside base.
+func makeFolder(base string) error {
+	if err := os.MkdirAll(filepath.Join(base, Folder), 0o700); err != nil {
+		return err
+	}
+	for _, d := range []string{filepath.Join(base, ".flightdeck"), filepath.Join(base, Folder)} {
+		fi, err := os.Lstat(d)
+		if err != nil {
+			return err
+		}
+		if !fi.Mode().IsDir() {
+			return fmt.Errorf("%s is not a folder of its own (a link?)", d)
+		}
+	}
+	return nil
+}
+
 // Put starts an upload.
 func (s *Service) Put(ctx context.Context, p api.AttachmentPutParams) (api.AttachmentStored, error) {
 	if p.Session == "" || !s.cfg.Session(p.Session) {
@@ -417,6 +473,15 @@ func (s *Service) Put(ctx context.Context, p api.AttachmentPutParams) (api.Attac
 		return api.AttachmentStored{}, errf(api.ErrorKindInvalid, "sha256 %q is not 64 hex digits", p.SHA256)
 	}
 	s.mu.Lock()
+	// The same file for the same session again: the app retries after a break. The old upload
+	// goes now, so retries never fill the open limit.
+	for id, u := range s.open {
+		if !u.busy && u.rec.Session == p.Session && u.rec.SHA256 == sum {
+			u.f.Close()
+			os.Remove(u.part)
+			delete(s.open, id)
+		}
+	}
 	n := len(s.open)
 	s.mu.Unlock()
 	if n >= MaxOpen {
@@ -505,6 +570,11 @@ func (s *Service) Write(ctx context.Context, p api.AttachmentWriteParams) (api.A
 	defer s.mu.Unlock()
 	u.busy = false
 	u.last = s.cfg.Now()
+	if s.closed {
+		u.f.Close()
+		os.Remove(u.part)
+		return api.AttachmentWritten{}, errf(api.ErrorKindUnavailable, "the attachment store closed during upload %s", p.ID)
+	}
 	if err != nil {
 		s.dropLocked(u)
 		return api.AttachmentWritten{}, errf(api.ErrorKindUnavailable, "write upload %s: %v; start it again", p.ID, err)
@@ -569,7 +639,13 @@ func (s *Service) Get(ctx context.Context, p api.AttachmentGetParams) (api.Attac
 		if fi.Size() > s.cfg.MaxSize {
 			return api.AttachmentData{}, errf(api.ErrorKindInvalid, "attachment %s is too large for a thumbnail", p.ID)
 		}
+		if b, ok := s.thumbs.get(r.ID); ok {
+			return api.AttachmentData{ID: r.ID, Name: r.Name, Type: "image/jpeg", Data: b, Size: int64(len(b)), EOF: true}, nil
+		}
 		b, err := Thumbnail(ctx, io.LimitReader(f, s.cfg.MaxSize))
+		if err == nil {
+			s.thumbs.put(r.ID, b)
+		}
 		if err != nil {
 			return api.AttachmentData{}, errf(api.ErrorKindInvalid, "no thumbnail for %s (%s): %v", p.ID, r.Type, err)
 		}
@@ -598,9 +674,22 @@ func (s *Service) Get(ctx context.Context, p api.AttachmentGetParams) (api.Attac
 
 // Paths returns the stored paths of ids for a session.send, in order.
 func (s *Service) Paths(session string, ids []string) ([]string, error) {
+	recs, err := s.Files(session, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(recs))
+	for i, r := range recs {
+		out[i] = r.Path
+	}
+	return out, nil
+}
+
+// Files returns the stored records of ids for a session.send, in order.
+func (s *Service) Files(session string, ids []string) ([]Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]string, 0, len(ids))
+	out := make([]Record, 0, len(ids))
 	for _, id := range ids {
 		if u, ok := s.open[id]; ok && u.rec.Session == session {
 			return nil, errf(api.ErrorKindConflict, "attachment %s is still uploading (%d of %d bytes)", id, u.received, u.rec.Size)
@@ -612,9 +701,95 @@ func (s *Service) Paths(session string, ids []string) ([]string, error) {
 		if _, err := os.Stat(r.Path); err != nil {
 			return nil, errf(api.ErrorKindNotFound, "attachment %s is no longer at %s", id, r.Path)
 		}
-		out = append(out, r.Path)
+		out = append(out, r)
 	}
 	return out, nil
+}
+
+// NoteSent records a delivered message with attachments, for Match.
+func (s *Service) NoteSent(session, text string, ids []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sends = append(s.sends, Sent{Session: session, Text: text, IDs: append([]string(nil), ids...), At: s.cfg.Now()})
+	if len(s.sends) > MaxSends {
+		s.sends = append([]Sent(nil), s.sends[len(s.sends)-MaxSends:]...)
+	}
+	s.saveLocked()
+}
+
+// MatchWindow is how far apart a transcript message and its send may be.
+const MatchWindow = 10 * time.Minute
+
+// Match finds the send a transcript user message came from, when the harness turned its paths
+// into images: the same text once image markers and attachment paths are taken out, within
+// MatchWindow, the nearest in time. It returns the text without markers and the send's ids.
+func (s *Service) Match(session, text string, at time.Time) (string, []string, bool) {
+	clean := CleanText(text)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var best *Sent
+	var bestGap time.Duration
+	for i := range s.sends {
+		x := &s.sends[i]
+		if x.Session != session || CleanText(x.Text) != clean {
+			continue
+		}
+		gap := at.Sub(x.At)
+		if gap < 0 {
+			gap = -gap
+		}
+		if gap > MatchWindow {
+			continue
+		}
+		if best == nil || gap < bestGap {
+			best, bestGap = x, gap
+		}
+	}
+	if best == nil {
+		return text, nil, false
+	}
+	return clean, append([]string(nil), best.IDs...), true
+}
+
+// markerRE finds what harnesses put in a message for a pasted image: Claude Code's
+// "[Image #1]", the transcript readers' "[image]", Codex's "[image 800x600 PNG]" and
+// "[local_image: path]".
+var markerRE = regexp.MustCompile(`\[(?:Image #\d+|image(?: [^\]\n]*)?|local_image:[^\]\n]*)\]`)
+
+// HasMarker reports whether text holds an image marker.
+func HasMarker(text string) bool { return markerRE.MatchString(text) }
+
+// CleanText is text without image markers and attachment path lines, each line trimmed, runs
+// of blank lines made one, trimmed.
+func CleanText(text string) string {
+	text = markerRE.ReplaceAllString(text, "")
+	var out []string
+	blank := false
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if IDOfPath(line) != "" && filepath.IsAbs(line) {
+			continue
+		}
+		if line == "" {
+			if !blank && len(out) > 0 {
+				out = append(out, "")
+			}
+			blank = true
+			continue
+		}
+		blank = false
+		out = append(out, line)
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+// IsImage reports whether a media type is one Claude Code and Codex take as an image.
+func IsImage(typ string) bool {
+	switch strings.ToLower(typ) {
+	case "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp":
+		return true
+	}
+	return false
 }
 
 // Known reports whether id names a stored file. The chat view uses it to show an attachment
@@ -628,7 +803,8 @@ func (s *Service) Known(id string) bool {
 
 // MessageText is the text the adapter delivers for a message with attachments: the owner's
 // text, a blank line, then each path on its own line. Every supported harness reads a path in
-// the message with its own file tools; Claude Code also takes an image path as an image.
+// the message with its own file tools. Images take each harness's own route
+// (harness.ImageMessageWrites).
 func MessageText(text string, paths []string) string {
 	if len(paths) == 0 {
 		return text

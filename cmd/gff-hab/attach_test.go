@@ -135,4 +135,22 @@ func TestChatAttachments(t *testing.T) {
 	if in[0].Text != "look\n\n"+p || in[0].Attachments != nil {
 		t.Errorf("the reader's slice changed: %+v", in[0])
 	}
+
+	// A message whose harness turned the paths into images matches its send.
+	c.matchSend = func(session, text string, at time.Time) (string, []string, bool) {
+		if session == "s1" && attach.CleanText(text) == "see this" {
+			return "see this", []string{"0123456789ab", "ba9876543210"}, true
+		}
+		return text, nil, false
+	}
+	got := c.withAttachments([]api.ChatMessage{
+		{ID: "4", Session: "s1", Kind: api.ChatKindUser, At: "2026-03-01T12:00:00Z", Text: "see this\n\n[Image #1]\n\n[image]"},
+		{ID: "5", Session: "s1", Kind: api.ChatKindUser, At: "2026-03-01T12:00:00Z", Text: "no match [image]"},
+	})
+	if got[0].Text != "see this" || !slices.Equal(got[0].Attachments, []string{"0123456789ab", "ba9876543210"}) {
+		t.Errorf("matched message: %+v", got[0])
+	}
+	if got[1].Text != "no match [image]" || got[1].Attachments != nil {
+		t.Errorf("unmatched message changed: %+v", got[1])
+	}
 }

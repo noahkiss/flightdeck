@@ -255,13 +255,17 @@ func TestOpenLimitAndIdle(t *testing.T) {
 	ctx := context.Background()
 	var ids []string
 	for i := 0; i < MaxOpen; i++ {
-		st, err := f.s.Put(ctx, api.AttachmentPutParams{Session: "s1", Name: "a", Size: 2, SHA256: sum([]byte("ab"))})
+		content := []byte("ab") // distinct files: the same file again replaces its upload
+		if i > 0 {
+			content = []byte{'x', byte(i)}
+		}
+		st, err := f.s.Put(ctx, api.AttachmentPutParams{Session: "s1", Name: "a", Size: 2, SHA256: sum(content)})
 		if err != nil {
 			t.Fatal(err)
 		}
 		ids = append(ids, st.ID)
 	}
-	if _, err := f.s.Put(ctx, api.AttachmentPutParams{Session: "s1", Name: "a", Size: 2, SHA256: sum([]byte("ab"))}); err == nil || kindOf(t, err) != api.ErrorKindUnavailable {
+	if _, err := f.s.Put(ctx, api.AttachmentPutParams{Session: "s1", Name: "a", Size: 2, SHA256: sum([]byte("zz"))}); err == nil || kindOf(t, err) != api.ErrorKindUnavailable {
 		t.Fatalf("put past the limit: %v", err)
 	}
 	if _, err := f.s.Write(ctx, api.AttachmentWriteParams{ID: ids[0], Data: []byte("a")}); err != nil {
