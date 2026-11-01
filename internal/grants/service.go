@@ -480,6 +480,10 @@ func (s *Service) fullPass(rows []api.PermissionRow) bool {
 
 var writeMu sync.Mutex
 
+// WriteFileAtomic writes a <state>/macos record through a temporary file (mode 0600) and a
+// rename.
+func WriteFileAtomic(path string, data []byte) error { return writeFileAtomic(path, data) }
+
 func writeFileAtomic(path string, data []byte) error {
 	writeMu.Lock()
 	defer writeMu.Unlock()

@@ -632,7 +632,12 @@ beyond the paper spec:
   or 2.5 minutes with a request.
 - **Probe panes are hidden.** gff-hab wraps the structure's view of the holders in a filter that
   drops the probe's uuid, so no client ever sees a probe pane. The link still follows it, and
-  its uuid is retired after, like any closed pane.
+  its uuid is retired after, like any closed pane. gff-hab writes each probe pane's uuid to
+  `<state>/macos/probe-panes` before the spawn, and removes it once the pane is released or
+  gone. A gff-hab that restarts mid-probe reads that list: the holder still has the pane, so the
+  new gff-hab hides it and closes it as soon as the holder lists it. A release that failed (the
+  holder connection dropped) leaves the uuid listed, and the pane is closed when the link sees it
+  again. A listed uuid no holder shows within 24 hours is dropped.
 - **A draining holder is not probed.** It refuses new panes (`hab-holder.md` 4.3 step 4), and
   the link spawns on the current holder only. gff-hab instead runs the signature rows on the
   draining holder's bundle (found from its pid) and compares its designated requirement with the

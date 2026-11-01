@@ -265,8 +265,9 @@ func serve(args []string) error {
 		return err
 	}
 	var hs structure.Holders = emptyHolders{}
-	hidden := newHiddenPanes()
+	hidden := newHiddenPanes(filepath.Join(dir, "macos", probePanesFile), logger.Printf)
 	if lk != nil {
+		hidden.close = linkCloser(lk)
 		hs = hidingHolders{inner: lk.Structure(), hide: hidden}
 	}
 	var srv atomic.Pointer[control.Server]

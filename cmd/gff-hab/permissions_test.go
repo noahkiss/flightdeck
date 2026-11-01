@@ -15,6 +15,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/grants"
+	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/link"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
@@ -36,7 +37,7 @@ func TestProbePane(t *testing.T) {
 	if err := lk.Ready(ctx); err != nil {
 		t.Fatal(err)
 	}
-	hide := newHiddenPanes()
+	hide := newHiddenPanes("", t.Logf)
 	hs := hidingHolders{inner: lk.Structure(), hide: hide}
 	var notices []structure.Notice
 	noticed := make(chan struct{}, 16)
@@ -102,6 +103,124 @@ func TestProbePane(t *testing.T) {
 }
 
 var _ probeLink = (*link.Link)(nil)
+
+// TestProbePaneAfterRestart: gff-hab restarts while a probe pane runs. The holder keeps the pane;
+// the new gff-hab must still hide it, and close it.
+func TestProbePaneAfterRestart(t *testing.T) {
+	d := shortDir(t)
+	hdir, state := filepath.Join(d, "h"), filepath.Join(d, "state")
+	os.MkdirAll(hdir, 0o700)
+	startHolder(t, hdir, "one")
+	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(30*time.Second))
+	defer cancel()
+	list := filepath.Join(state, "macos", probePanesFile)
+
+	lk, err := openLinkIn(hdir, state, linkOptions{}, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lk.Ready(ctx); err != nil {
+		t.Fatal(err)
+	}
+	hide := newHiddenPanes(list, t.Logf)
+	u := newUUID()
+	hide.add(u.String()) // as prober.run does before its spawn
+	if _, err := lk.Spawn(ctx, hp.Spawn{UUID: u, Cols: 80, Rows: 24, Cwd: "/", Argv: []string{"/bin/sh", "-c", "sleep 60"},
+		Env: []string{"PATH=" + os.Getenv("PATH")}}); err != nil {
+		t.Fatal(err)
+	}
+	lk.Close() // gff-hab ends mid-probe; the holder keeps the pane
+
+	lk2, err := openLinkIn(hdir, state, linkOptions{}, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lk2.Close()
+	if err := lk2.Ready(ctx); err != nil {
+		t.Fatal(err)
+	}
+	hide2 := newHiddenPanes(list, t.Logf)
+	hide2.close = linkCloser(lk2)
+	hs := hidingHolders{inner: lk2.Structure(), hide: hide2}
+	ps, err := hs.Panes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range ps {
+		if p.ID == u.String() {
+			t.Fatal("after a restart the structure lists the probe pane")
+		}
+	}
+	for {
+		raw, _ := lk2.Structure().Panes()
+		_, err := os.Stat(list)
+		if !slices.ContainsFunc(raw, func(p structure.HolderPane) bool { return p.ID == u.String() }) && os.IsNotExist(err) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("the probe pane left from before was not closed (still listed, or still in %s)", probePanesFile)
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+}
+
+// TestHiddenPanesRetryClose: a probe pane whose release failed (the holder connection dropped)
+// stays hidden, and is closed when the holder lists it again.
+func TestHiddenPanesRetryClose(t *testing.T) {
+	list := filepath.Join(t.TempDir(), "macos", probePanesFile)
+	hide := newHiddenPanes(list, t.Logf)
+	closed := make(chan string, 4)
+	hide.close = func(_ context.Context, id string) error { closed <- id; return nil }
+	hide.add("p1")
+	hide.add("p2")
+	hide.done("p1", false) // the release failed
+	hide.done("p2", true)
+	fake := structure.NewFakeHolder(structure.HolderPane{ID: "p1"}, structure.HolderPane{ID: "p2"}, structure.HolderPane{ID: "user"})
+	hs := hidingHolders{inner: fake, hide: hide}
+	ps, err := hs.Panes()
+	if err != nil || len(ps) != 1 || ps[0].ID != "user" {
+		t.Fatalf("panes %+v, %v", ps, err)
+	}
+	select {
+	case id := <-closed:
+		if id != "p1" {
+			t.Errorf("closed %s, want p1", id)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a probe pane whose release failed was not closed when seen again")
+	}
+	select {
+	case id := <-closed:
+		t.Errorf("closed %s again; it was released", id)
+	case <-time.After(50 * time.Millisecond):
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		if _, err := os.Stat(list); os.IsNotExist(err) {
+			break
+		}
+		if time.Now().After(deadline) {
+			b, _ := os.ReadFile(list)
+			t.Fatalf("%s still lists %q", probePanesFile, b)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// A notice that the pane is gone also ends it; a notice for a user pane passes.
+	var got []string
+	stop := hs.Subscribe(func(n structure.Notice) { got = append(got, n.Pane.ID) })
+	defer stop()
+	hide.add("p3")
+	fake.Add(structure.HolderPane{ID: "p3"}) // a probe runs in it: not closed from here
+	hide.done("p3", false)
+	fake.Remove("p3")
+	fake.Add(structure.HolderPane{ID: "user2"})
+	if len(got) != 1 || got[0] != "user2" {
+		t.Errorf("notices %v, want only user2", got)
+	}
+	if b, err := os.ReadFile(list); err == nil {
+		t.Errorf("a gone pane is still listed: %q", b)
+	}
+}
 
 // TestPermissionsCall calls hab.permissions on a served hab. On Linux the rows are the systemd
 // ones; with no init system there is one note, and the call passes.

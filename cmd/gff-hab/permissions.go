@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,25 +31,114 @@ import (
 // probeStart bounds the wait for a probe pane to start (7.6: exit 2 past it).
 const probeStart = 5 * time.Second
 
-// hiddenPanes holds the uuids of probe panes. An id stays an hour after it was added, long
+// probePanesFile, under <state>/macos, lists the probe panes gff-hab has not seen closed, one
+// "<uuid> <RFC 3339 time>" per line.
+const probePanesFile = "probe-panes"
+
+// staleProbe is how long an open probe pane that no holder ever listed is kept. A probe lives
+// 2.5 minutes at most, and a holder lists its panes as soon as the link connects.
+const staleProbe = 24 * time.Hour
+
+// hiddenPanes holds the uuids of probe panes. A pane is open from before its spawn until gff-hab
+// sees it closed or gone. The open ids are kept in a file, so a gff-hab that restarts mid-probe,
+// while the holder keeps the pane, still hides it and closes it. A closed id stays an hour, long
 // after its pane is gone: link notices may arrive late, and a gone uuid is never reused.
 type hiddenPanes struct {
-	mu  sync.Mutex
-	ids map[string]time.Time
+	mu   sync.Mutex
+	path string // "" keeps nothing on disk
+	ids  map[string]*hiddenPane
+	// close releases a pane; nil until the link exists. A probe pane that is not running a
+	// probe in this gff-hab, and that the holder still lists, is closed with it.
+	close func(ctx context.Context, id string) error
+	logf  func(string, ...any)
 }
 
-func newHiddenPanes() *hiddenPanes { return &hiddenPanes{ids: map[string]time.Time{}} }
+type hiddenPane struct {
+	at      time.Time
+	open    bool // not yet seen closed or gone
+	busy    bool // a probe runs in it now
+	closing bool
+}
 
+// newHiddenPanes loads the open probe panes from path.
+func newHiddenPanes(path string, logf func(string, ...any)) *hiddenPanes {
+	h := &hiddenPanes{path: path, ids: map[string]*hiddenPane{}, logf: logf}
+	if path == "" {
+		return h
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return h
+	}
+	now := time.Now()
+	for _, line := range strings.Split(string(b), "\n") {
+		id, ts, _ := strings.Cut(strings.TrimSpace(line), " ")
+		if id == "" {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, ts)
+		if err != nil {
+			at = now
+		}
+		h.ids[id] = &hiddenPane{at: at, open: true}
+	}
+	return h
+}
+
+// save writes the open ids; the caller holds mu.
+func (h *hiddenPanes) save() {
+	if h.path == "" {
+		return
+	}
+	var open []string
+	for id, p := range h.ids {
+		if p.open {
+			open = append(open, id+" "+p.at.UTC().Format(time.RFC3339))
+		}
+	}
+	if len(open) == 0 {
+		if err := os.Remove(h.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			h.logf("probe panes: %v", err)
+		}
+		return
+	}
+	slices.Sort(open)
+	if err := os.MkdirAll(filepath.Dir(h.path), 0o700); err != nil {
+		h.logf("probe panes: %v", err)
+		return
+	}
+	if err := grants.WriteFileAtomic(h.path, []byte(strings.Join(open, "\n")+"\n")); err != nil {
+		h.logf("probe panes: %v", err)
+	}
+}
+
+// add records a probe pane before its spawn.
 func (h *hiddenPanes) add(id string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := time.Now()
-	for k, t := range h.ids {
-		if now.Sub(t) > time.Hour {
+	for k, p := range h.ids {
+		if !p.open && now.Sub(p.at) > time.Hour || p.open && !p.busy && !p.closing && now.Sub(p.at) > staleProbe {
 			delete(h.ids, k)
 		}
 	}
-	h.ids[id] = now
+	h.ids[id] = &hiddenPane{at: now, open: true, busy: true}
+	h.save()
+}
+
+// done ends a probe in its pane; closed says the pane was released or never started.
+func (h *hiddenPanes) done(id string, closed bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	p := h.ids[id]
+	if p == nil {
+		return
+	}
+	p.busy = false
+	if closed && p.open {
+		p.open, p.at = false, time.Now()
+		h.save()
+	}
 }
 
 func (h *hiddenPanes) has(id string) bool {
@@ -56,6 +146,55 @@ func (h *hiddenPanes) has(id string) bool {
 	defer h.mu.Unlock()
 	_, ok := h.ids[id]
 	return ok
+}
+
+// seen notes that the holder lists probe pane id, alive or exited. An open one no probe runs in
+// is left from an earlier gff-hab, or from a close that failed: it is closed now.
+func (h *hiddenPanes) seen(id string) {
+	h.mu.Lock()
+	p := h.ids[id]
+	if p == nil || !p.open || p.busy || p.closing || h.close == nil {
+		h.mu.Unlock()
+		return
+	}
+	p.closing = true
+	h.mu.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := h.close(ctx, id)
+		if err != nil && !errors.Is(err, link.ErrReleasing) {
+			h.logf("probe pane %s left from before: close: %v", id, err)
+		}
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		p.closing = false
+		if err == nil && p.open {
+			p.open, p.at = false, time.Now()
+			h.save()
+		}
+	}()
+}
+
+// gone notes that the holder no longer has probe pane id.
+func (h *hiddenPanes) gone(id string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if p := h.ids[id]; p != nil && p.open {
+		p.open, p.at = false, time.Now()
+		h.save()
+	}
+}
+
+// linkCloser is hiddenPanes.close for a link.
+func linkCloser(lk probeLink) func(context.Context, string) error {
+	return func(ctx context.Context, id string) error {
+		u, ok := parseUUID(id)
+		if !ok {
+			return fmt.Errorf("pane id %q", id)
+		}
+		return lk.ClosePane(ctx, u)
+	}
 }
 
 // hidingHolders is the structure's view of the holders without the probe panes.
@@ -71,7 +210,9 @@ func (h hidingHolders) Panes() ([]structure.HolderPane, error) {
 	}
 	out := ps[:0:0]
 	for _, p := range ps {
-		if !h.hide.has(p.ID) {
+		if h.hide.has(p.ID) {
+			h.hide.seen(p.ID)
+		} else {
 			out = append(out, p)
 		}
 	}
@@ -80,8 +221,13 @@ func (h hidingHolders) Panes() ([]structure.HolderPane, error) {
 
 func (h hidingHolders) Subscribe(fn func(structure.Notice)) func() {
 	return h.inner.Subscribe(func(n structure.Notice) {
-		if !h.hide.has(n.Pane.ID) {
+		switch {
+		case !h.hide.has(n.Pane.ID):
 			fn(n)
+		case n.Kind == structure.PaneGone:
+			h.hide.gone(n.Pane.ID)
+		default:
+			h.hide.seen(n.Pane.ID)
 		}
 	})
 }
@@ -107,6 +253,17 @@ func (p *prober) run(ctx context.Context, checks []string, request string) (stri
 	nonce := grants.NewNonce()
 	u := newUUID()
 	p.hide.add(u.String())
+	// The pane is released after the probe, or after a spawn that failed (it may have started
+	// late). A failed release keeps the pane on the open list, so it is closed when next seen.
+	defer func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := p.lk.ClosePane(cctx, u)
+		if err != nil && !errors.Is(err, link.ErrNoPane) {
+			p.logf("probe pane %s: close: %v", u, err)
+		}
+		p.hide.done(u.String(), err == nil || errors.Is(err, link.ErrNoPane))
+	}()
 	sctx, cancel := context.WithTimeout(ctx, probeStart)
 	st, err := p.lk.Spawn(sctx, hp.Spawn{UUID: u, Cols: 80, Rows: 24, Cwd: "/",
 		Argv: append(append([]string{}, p.argv...), grants.ProbeArgs(nonce, checks, request)...), Env: p.env()})
@@ -114,13 +271,6 @@ func (p *prober) run(ctx context.Context, checks []string, request string) (stri
 	if err != nil {
 		return "", nil, fmt.Errorf("%w within %v: %v", grants.ErrProbeStart, probeStart, err)
 	}
-	defer func() {
-		cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := p.lk.ClosePane(cctx, u); err != nil && !errors.Is(err, link.ErrNoPane) {
-			p.logf("probe pane %s: close: %v", u, err)
-		}
-	}()
 	limit := grants.FDATimeout + 10*time.Second
 	if request != "" {
 		limit = grants.RequestTimeout + grants.LANKeepAlive + 10*time.Second
