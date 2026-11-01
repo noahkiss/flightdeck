@@ -20,7 +20,7 @@ Capcom builds on other parts. This spec names their pieces and does not define t
 | Sessions, the API rules, `session.create`, `session.send` | `hab-logic-api.md` |
 | Agent state, input delivery, the agent kit, `GFF_HAB` | `harness-adapters.md` |
 | The Capcom view, approvals, notifications | `app.md` |
-| Logbook records and verbs | the Logbook spec (Part 12, not yet written) |
+| Logbook records and verbs | `logbook.md` (Part 12) |
 | Memory and flight rules proposals | the Part 8 spec (not yet written) |
 | The bar we match | `landscape.md` |
 
