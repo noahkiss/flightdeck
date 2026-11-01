@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -12,7 +15,15 @@ import (
 	"github.com/noahkiss/flightdeck/internal/gitstatus"
 	"github.com/noahkiss/flightdeck/internal/holderreg"
 	"github.com/noahkiss/flightdeck/internal/link"
+	"github.com/noahkiss/flightdeck/internal/service"
 )
+
+// newInstanceID returns a random holder instance id, in the holder's own format.
+func newInstanceID() string {
+	var b [8]byte
+	rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
 
 // DefaultScrollbackMiB is each pane parser's scrollback cap: about 10,000 lines of 120 columns
 // (spec 2.3). A cap of zero would leave libghostty's default of about 10 kB.
@@ -104,9 +115,10 @@ func gitInterval(flagValue time.Duration, getenv func(string) string) (time.Dura
 
 // linkOptions are the holder link settings that come from flags or the environment.
 type linkOptions struct {
-	scrollback int           // scrollback cap per pane, bytes
-	budget     int           // scrollback cap for all panes, bytes
-	retiredTTL time.Duration // how long a retired pane uuid stays refused
+	scrollback int             // scrollback cap per pane, bytes
+	budget     int             // scrollback cap for all panes, bytes
+	retiredTTL time.Duration   // how long a retired pane uuid stays refused
+	starter    service.Starter // starts holders as init system jobs; nil starts none
 }
 
 // openLink starts the holder link (spec 2.3). The holder directory comes from -holders, else
@@ -124,6 +136,11 @@ func openLink(holders, state string, opt linkOptions, logger *log.Logger) (*link
 		}
 	}
 	p, name := parser()
+	var start func(context.Context) error
+	var retired func(string, int)
+	if opt.starter != nil {
+		start, retired = opt.starter.Start, opt.starter.Retire
+	}
 	logger.Printf("holder link: holders in %s, parser %s, scrollback %d MiB per pane, %d MiB for all panes",
 		dir, name, opt.scrollback>>20, opt.budget>>20)
 	return link.Open(link.Config{
@@ -134,6 +151,8 @@ func openLink(holders, state string, opt linkOptions, logger *log.Logger) (*link
 		ScrollbackBytes:  opt.scrollback,
 		ScrollbackBudget: opt.budget,
 		RetiredTTL:       opt.retiredTTL,
+		Start:            start,
+		Retired:          retired,
 		Logf:             logger.Printf,
 	})
 }

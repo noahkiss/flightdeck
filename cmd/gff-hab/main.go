@@ -4,7 +4,7 @@
 //
 //	gff-hab serve   [-socket path] [-hook-socket path] [-state dir] [-host-id id] [-holders dir]
 //	                [-scrollback-mib n] [-scrollback-budget-mib n] [-retired-days n]
-//	                [-git-interval d]
+//	                [-git-interval d] [-init none|systemd|launchd] [-prefix p] [-unit-dir dir]
 //	gff-hab connect [-socket path]
 //	gff-hab api call [-socket path | -via command] <method> [params-json]
 //	gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
@@ -12,6 +12,10 @@
 //	gff-hab manifests list    [-state dir]
 //	gff-hab hook [-t ms] <harness> [event] < payload
 //	gff-hab hook -print <harness> [-command name]
+//	gff-hab install   [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
+//	                  [-unit-dir dir] [-hab-bin path] [-holder-bin path] [-dry-run]
+//	gff-hab uninstall [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
+//	                  [-unit-dir dir] [-yes]
 //
 // The socket path comes from -socket, else $GFF_HAB_SOCKET, else gff/hab.sock under the user
 // config directory on macOS and under $XDG_RUNTIME_DIR elsewhere. The state directory comes from
@@ -26,6 +30,13 @@
 // spawns, across restarts, for -retired-days, else $GFF_HAB_RETIRED_DAYS, else 30 days. Each
 // project's repository state (branch, head, ahead, behind) is read again every -git-interval,
 // else $GFF_HAB_GIT_INTERVAL, else 60s, besides the reads that hooks and ref changes trigger.
+//
+// With -init systemd or launchd (as the jobs that `gff-hab install` writes run it), gff-hab asks
+// the init system for each holder as its own job (internal/service, holder spec 5.4) and removes
+// a holder's job once it exits cleanly. With -init none, the default, it starts no holders.
+// `gff-hab install` writes the jobs from the same flags and copies the binaries to <state>/bin;
+// `gff-hab uninstall` asks before it ends programs (-yes skips that) and removes every file
+// install wrote.
 //
 // `gff-hab connect` copies stdin to the socket and the socket to stdout, so
 // `ssh <host> gff-hab connect` reaches a remote hab with no new listener. -via runs a command
@@ -61,6 +72,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/link"
 	"github.com/noahkiss/flightdeck/internal/panesize"
+	"github.com/noahkiss/flightdeck/internal/service"
 	"github.com/noahkiss/flightdeck/internal/structure"
 	"github.com/noahkiss/flightdeck/internal/transcript"
 )
@@ -71,6 +83,7 @@ var build = "dev"
 const usage = `usage:
   gff-hab serve   [-socket path] [-hook-socket path] [-state dir] [-host-id id] [-holders dir]
                   [-scrollback-mib n] [-scrollback-budget-mib n] [-retired-days n]
+                  [-init none|systemd|launchd] [-prefix p] [-unit-dir dir]
   gff-hab connect [-socket path]
   gff-hab api call [-socket path | -via command] <method> [params-json]
   gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
@@ -78,6 +91,10 @@ const usage = `usage:
   gff-hab manifests list    [-state dir]
   gff-hab hook [-t ms] <harness> [event] < payload
   gff-hab hook -print <harness> [-command name]
+  gff-hab install   [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
+                    [-unit-dir dir] [-hab-bin path] [-holder-bin path] [-dry-run]
+  gff-hab uninstall [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
+                    [-unit-dir dir] [-yes]
 `
 
 func main() {
@@ -104,6 +121,10 @@ func main() {
 		err = events(os.Args[2:])
 	case "manifests":
 		err = manifests(os.Args[2:], os.Stdout)
+	case "install":
+		err = install(os.Args[2:], os.Stdout)
+	case "uninstall":
+		err = uninstall(os.Args[2:], os.Stdin, os.Stdout)
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
@@ -170,6 +191,12 @@ func serve(args []string) error {
 	retiredDays := fs.Int("retired-days", 0, "days a gone pane's uuid stays refused (default: $GFF_HAB_RETIRED_DAYS, else 30)")
 	budgetMiB := fs.Int("scrollback-budget-mib", 0, "scrollback cap for all panes together in MiB (default: $GFF_HAB_SCROLLBACK_BUDGET_MIB, else 256)")
 	gitEvery := fs.Duration("git-interval", 0, "read each project's repository state this often (default: $GFF_HAB_GIT_INTERVAL, else 60s)")
+	sf := &serviceFlags{
+		init:    fs.String("init", os.Getenv("GFF_HAB_INIT"), "init system that starts holders: none, systemd or launchd (default: $GFF_HAB_INIT, else none: holders are started by hand)"),
+		prefix:  fs.String("prefix", "", "job name prefix (default: $GFF_SERVICE_PREFIX, else "+service.DefaultPrefix+")"),
+		unitDir: fs.String("unit-dir", "", "systemd user unit or LaunchAgents directory (default: the user's)"),
+		state:   state, holders: holders, socket: sock,
+	}
 	fs.Parse(args)
 	logger := log.New(os.Stderr, "gff-hab: ", log.LstdFlags)
 
@@ -207,7 +234,11 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
-	lk, err := openLink(*holders, dir, linkOptions{scrollback, budget, ttl}, logger)
+	starter, err := serveStarter(sf, logger.Printf)
+	if err != nil {
+		return err
+	}
+	lk, err := openLink(*holders, dir, linkOptions{scrollback, budget, ttl, starter}, logger)
 	if err != nil {
 		return err
 	}

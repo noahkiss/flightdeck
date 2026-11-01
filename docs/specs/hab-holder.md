@@ -392,6 +392,11 @@ unreachable and keeps H1 alone. The compatibility rule in 3.2 exists to prevent 
   A package manager that deletes the old version's files cannot break a running holder's job
   definition or a later re-exec.
 - On macOS this interacts with permission grants; see 5.3.
+- Built so far (stage 6): `gff-hab install` copies both binaries into `<state>/bin` by write and
+  rename, never in place, so a running holder keeps its own executable file. Every holder job
+  names that one path, so a holder that restarts after a crash runs the newest build. Separate
+  directories per build are not built yet; they matter for a re-exec (option C) and for macOS
+  grants (Q2).
 
 ---
 
@@ -409,8 +414,12 @@ end its children. gff-hab therefore asks the init system to start each holder as
 
 ### 5.2 Linux: systemd user units
 
-- `gff-hab.service`: the logic process. `Restart=always`.
-- `gff-hab-holder@.service`: a template; the instance name is the holder instance id.
+- Unit names carry the configured prefix (5.4): `<prefix>-gff-hab.service` and
+  `<prefix>-gff-hab-holder@.service`. The default prefix is `flightdeck`.
+- `<prefix>-gff-hab.service`: the logic process. `Restart=always`, `RestartSec=1`, and
+  `StartLimitIntervalSec=0`: systemd's default start limit (5 starts in 10 s) would refuse a
+  sixth restart by hand, and the logic job restarts freely.
+- `<prefix>-gff-hab-holder@.service`: a template; the instance name is the holder instance id.
   `Restart=on-failure`. `KillMode=process`, so a stop or a crash restart signals only the holder
   itself and never its children directly; the holder's own shutdown path (2.8) ends programs when
   that is intended. `KillMode=process` also keeps option E possible.
@@ -418,7 +427,8 @@ end its children. gff-hab therefore asks the init system to start each holder as
   login. The install command checks `loginctl show-user` for `Linger=yes` and prints the command
   when it is off. Some distributions need administrator approval for it.
 - A unit gets a bare environment. gff-hab passes each pane's full environment in spawn (2.2), so
-  the holder unit needs only `PATH` for itself.
+  the holder unit needs only `PATH` for itself. Install writes the installing user's `PATH` into
+  both units.
 
 ### 5.3 macOS: launchd agents in the GUI domain
 
@@ -434,6 +444,10 @@ programs can never reach those resources.
 - A job's output goes to log files under the GFF state directory; launchd discards it otherwise.
   The install creates that directory first.
 - The plist names a stable absolute binary path and sets a working directory.
+- Built (stage 6): the logic plist has `KeepAlive` true and `ThrottleInterval` 1. Each holder
+  plist has `KeepAlive` with `SuccessfulExit` false, `AbandonProcessGroup` true (launchd signals
+  only the holder when the job ends) and `ExitTimeOut` 30 (above the 5 s grace of 2.8). Logs go
+  to `<state>/logs/gff-hab.log` and `<state>/logs/gff-hab-holder.<instance>.log`.
 
 **Responsible process.** macOS charges a pane's protected access to the holder: launchd starts
 the holder, so the holder is the responsible process for every program in its panes. Two
@@ -473,6 +487,19 @@ before stage 5 relies on it.
 The label prefix comes from configuration. One launchd job runs one process, so each holder
 instance needs its own label.
 
+Built (stage 6):
+
+- gff-hab picks the instance id and asks for the job. It starts a holder whenever none of its
+  own build is connected: at start, at each registry scan, and before a spawn. A failed start is
+  retried by scans after 30 s, and at once by a spawn. A new build therefore starts its holder
+  and drains the older ones as soon as it runs (4.3).
+- When a holder says bye, gff-hab waits until its pid is gone, then boots out its launchd job and
+  deletes its plist. A holder still running after a minute keeps its job. On systemd there is
+  nothing to remove.
+- A holder that exits cleanly while gff-hab is down keeps its plist until the next uninstall.
+- Running with no init system stays possible: `gff-hab serve -init none` (the default) starts no
+  holders; they are started by hand or by a test.
+
 ### 5.5 Install and uninstall
 
 - `gff-hab install` writes the units or plists from templates, with the binary paths, state
@@ -481,6 +508,22 @@ instance needs its own label.
 - `gff-hab uninstall` stops the logic job, sends shutdown to every holder (after confirmation,
   because it ends programs), boots out or disables every job, and removes every file install
   wrote, per-instance holder plists included.
+
+Built (stage 6):
+
+- The settings come from flags, else the environment, else defaults: `-prefix`
+  (`$GFF_SERVICE_PREFIX`, default `flightdeck`), `-state`, `-holders`, `-socket` and `-unit-dir`.
+  `gff-hab serve` takes the same flags, and the jobs pass them on, so both sides agree.
+- Install writes: the job files (two units, or the logic plist), the enable link that
+  `systemctl --user enable` makes in `default.target.wants`, the binary copies in `<state>/bin`,
+  and on macOS the log directory. A second install replaces the binaries and job files and
+  restarts the logic job only. `gff-hab install -dry-run` prints the job files.
+- On Linux, install checks `loginctl show-user <uid> --property=Linger` and prints
+  `loginctl enable-linger` when it is off. It never runs sudo.
+- On macOS, install and each holder start refuse when `launchctl print gui/<uid>` fails (Q5).
+- Uninstall asks once when any holder job runs; `-yes` skips the question, and with no terminal
+  and no `-yes` it changes nothing. Shutdown is the init system's stop: SIGTERM, which runs the
+  holder's shutdown (2.8). Uninstall leaves gff-hab's own state (structure, keys, checkpoints).
 
 ---
 
@@ -643,6 +686,8 @@ not change.
 ### Q5. A Mac without a graphical login. **Decision: open**
 
 Recommendation in 5.3: refuse by default, allow a flagged `Background` holder by explicit option.
+
+Stage 6 builds the refusal (5.5). The explicit `Background` option is not built.
 
 ---
 

@@ -59,13 +59,18 @@ The repo layout and the libghostty build are in `docs/layout.md`.
 | `make test` | Build libghostty, then run every Go test with `-tags ghostty` |
 | `make build`, `make vet` | Build or vet every package with `-tags ghostty` |
 | `make test-pure` | Run the Go tests without cgo or libghostty |
-| `make race` | Run the holder, holderproto, holderclient, holderreg, structure, link, control, datastream, panesize, termq, harness, hook, gitstatus, transcript and `cmd` tests with `-race -count=3` |
+| `make race` | Run the holder, holderproto, holderclient, holderreg, structure, link, control, datastream, panesize, termq, harness, hook, gitstatus, transcript, service and `cmd` tests with `-race -count=3` |
 | `make fuzz [FUZZTIME=30s]` | Run each holderproto fuzz target for `FUZZTIME` in turn (nightly) |
 | `make check-pure` | Fail when a package other than `internal/vt/ghostty` needs cgo |
 | `make check-gen` | Fail when a generated file is stale |
 | `go run ./cmd/gff-hab-holder [-socket path \| -dir dir]` | Run a holder; the socket directory defaults to `$GFF_HOLDER_DIR`, else `gff/holders` under `~/Library/Application Support` on macOS and under `$XDG_RUNTIME_DIR` elsewhere (no `XDG_RUNTIME_DIR`: it refuses to start) |
 | `go test -race ./internal/holder/... ./cmd/...` | Holder end-to-end tests: real PTYs, a real Unix socket |
 | `go run ./cmd/gff-hab serve [-socket path] [-hook-socket path] [-state dir] [-host-id id]` | Run gff-hab with an empty pane source. The hook endpoint listens on `hook.sock` beside the control socket (or `$GFF_HAB_HOOK_SOCKET`). Socket: `$GFF_HAB_SOCKET`, else `gff/hab.sock` under the user config directory on macOS and under `$XDG_RUNTIME_DIR` elsewhere. State: `$GFF_HAB_STATE`, else `gff/hab` under the user config directory on macOS and under `$XDG_STATE_HOME` (or `~/.local/state`) elsewhere. Claude Code transcripts for `chat.page` are read in place under `$CLAUDE_CONFIG_DIR`, else `~/.claude`. No TCP port |
+| `gff-hab serve ... -init systemd\|launchd [-prefix p] [-unit-dir dir]` | What the installed logic job runs: gff-hab starts each holder as its own init system job and removes a launchd holder job after a clean exit. `-init none` (the default, or `$GFF_HAB_INIT`) starts no holders |
+| `gff-hab install [-prefix p] [-state dir] [-holders dir] [-socket path] [-unit-dir dir] [-hab-bin path] [-holder-bin path] [-dry-run]` | Copy both binaries to `<state>/bin`, write the systemd user units (Linux) or the launchd plist (macOS, refuses with no GUI login), load and (re)start the logic job. Prefix: `$GFF_SERVICE_PREFIX`, else `flightdeck`. Prints `loginctl enable-linger` when lingering is off; never runs sudo |
+| `gff-hab uninstall [same flags] [-yes]` | Ask before ending programs (`-yes` skips it), stop the logic job, shut down every holder job, remove every file install wrote |
+| `go test ./internal/service/` | Unit and plist rendering (no user or host names, absolute paths), install and uninstall file sets with a fake init system |
+| `scripts/service-check.sh` | Core tests 2 and 13 on this machine's init system: install, 20 logic restarts (`GFF_SVC_LOOPS`), a reinstall of a newer build, uninstall; checks the child's pid and output, and that nothing is left. Uses its own job prefix and a temporary directory |
 | `gff-hab connect [-socket path]` | Bridge stdin and stdout to the local socket, for `ssh <host> gff-hab connect` |
 | `gff-hab api call [-socket path \| -via command] <method> [params-json]` | Say hello, send one request, print its result as JSON (`hab.hello` prints the welcome). Exit 3 on an API error |
 | `gff-hab events [-socket path \| -via command] [-scope host\|projects:id,...\|sessions:id,...]` | Subscribe and print the welcome, the snapshot and every notification, one JSON line each. Exit 1 when the hab ends the connection with no `closing` or with a reason other than shutdown |
