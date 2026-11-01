@@ -181,6 +181,9 @@ type Holder struct {
 	beforeWrite func(c *conn)
 	// afterWait runs in the waiter after the child is collected, outside the lock.
 	afterWait func(p *pane)
+	// beforeRegister runs in serve after the closing check and before the registry file is
+	// written. Tests use it to land a shutdown in that window.
+	beforeRegister func()
 }
 
 // acceptor is the listener Serve accepts on. Tests wrap a real listener to inject errors.
@@ -319,6 +322,9 @@ func (h *Holder) serve(l acceptor) error {
 	if closing {
 		l.Close()
 		return nil
+	}
+	if h.beforeRegister != nil {
+		h.beforeRegister()
 	}
 	if err := h.register(l.Addr().String()); err != nil {
 		h.closeListener()
@@ -704,11 +710,17 @@ func (h *Holder) register(sock string) error {
 	return nil
 }
 
-// writeRegistry records the holder's registry entry and writes its file.
+// writeRegistry records the holder's registry entry and writes its file, unless the holder has
+// already unregistered for good.
 func (h *Holder) writeRegistry(sock string, draining bool) error {
 	r := h.reg.Range()
 	h.regMu.Lock()
 	defer h.regMu.Unlock()
+	if h.regGone {
+		// A shutdown already ran unregister, between serve's closing check and this write.
+		// Writing now would leave a file that nothing removes.
+		return nil
+	}
 	h.regEntry = holderreg.Entry{
 		Instance: h.cfg.Instance,
 		Build:    h.cfg.Build,

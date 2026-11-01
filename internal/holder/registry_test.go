@@ -120,6 +120,47 @@ func TestRegistryShutdownRemovesFile(t *testing.T) {
 	}
 }
 
+// TestShutdownBeforeRegister: a shutdown that lands after serve has checked closing but
+// before it writes the registry file must not leave the file behind. Before the fix, unregister
+// found no entry yet and marked the file gone, then register wrote it, and nothing removed it.
+func TestShutdownBeforeRegister(t *testing.T) {
+	dir, err := os.MkdirTemp("", "fdr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	l, err := Listen(holderreg.SocketPath(dir, "inst-r"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(Config{Build: "reg-test", Instance: "inst-r", RegistryDir: dir, ShutdownGrace: 200 * time.Millisecond})
+	h.beforeRegister = func() {
+		go h.Shutdown()
+		// Wait until the shutdown has unregistered, so register runs after it.
+		deadline := time.Now().Add(waitLong)
+		for {
+			h.regMu.Lock()
+			gone := h.regGone
+			h.regMu.Unlock()
+			if gone {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Error("shutdown never unregistered")
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if err := h.Serve(l); err != nil {
+		t.Fatalf("serve: %v", err)
+	}
+	<-h.Done()
+	if _, err := os.Lstat(holderreg.Path(dir, "inst-r")); !os.IsNotExist(err) {
+		t.Fatalf("registry file left behind after shutdown: %v", err)
+	}
+}
+
 // TestRestartAfterCrashWhileDraining (spec 6.7): a holder that crashed while draining left its
 // registry file, marked draining, and its socket. The init system restarts the same instance.
 // The restarted holder has no panes and is not the current build, so it exits at once and
