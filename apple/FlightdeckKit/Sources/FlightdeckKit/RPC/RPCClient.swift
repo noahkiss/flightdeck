@@ -97,16 +97,10 @@ public actor RPCClient {
 
     /// Sends a request and waits for its response.
     public func call<P, R>(_ method: HabMethod<P, R>, _ params: P, timeout: Duration = .seconds(30)) async throws -> R {
-        try await call(named: method.name, params, timeout: timeout)
-    }
-
-    /// Sends a request by method name, for a method the generated package
-    /// does not have yet (the hand-written speech methods, `Voice/SpeechAPI.swift`).
-    public func call<P: Encodable & Sendable, R: Decodable & Sendable>(named name: String, _ params: P, timeout: Duration = .seconds(30)) async throws -> R {
         if let e = ended { throw e }
         let id = nextID
         nextID += 1
-        var data = try encoder.encode(Request(id: id, method: name, params: params))
+        var data = try encoder.encode(Request(id: id, method: method.name, params: params))
         data.append(0x0A)
         let line: Data = try await withCheckedThrowingContinuation { c in
             pending[id] = c
@@ -114,7 +108,7 @@ public actor RPCClient {
             timeouts[id] = Task {
                 try? await Task.sleep(for: timeout)
                 if Task.isCancelled { return }
-                await self.fail(id, ProtocolError("\(name) timed out"))
+                await self.fail(id, ProtocolError("\(method.name) timed out"))
             }
         }
         let resp = try decoder.decode(Response<R>.self, from: line)
@@ -122,7 +116,7 @@ public actor RPCClient {
             throw RPCError(code: e.code, message: e.message, data: e.data)
         }
         guard let r = resp.result else {
-            throw ProtocolError("\(name): response has neither result nor error")
+            throw ProtocolError("\(method.name): response has neither result nor error")
         }
         return r
     }

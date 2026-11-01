@@ -166,6 +166,13 @@ public struct VoiceModeView: View {
             if let f = model.engines.lastFallback {
                 Text(f)
                     .lineLimit(2)
+            } else {
+                ForEach(SpeechEngineKind.allCases) { k in
+                    if case .failed(let why)? = model.engines.status[k] {
+                        Text("\(k.label): \(why)")
+                            .lineLimit(2)
+                    }
+                }
             }
         }
         .font(.caption)

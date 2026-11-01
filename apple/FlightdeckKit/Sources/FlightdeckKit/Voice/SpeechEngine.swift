@@ -63,6 +63,9 @@ public enum SpeechEngineStatus: Equatable, Sendable {
     case ready
     /// Usable soon: a download or load runs; the hint says how far.
     case preparing(String)
+    /// The last download or load failed (the hab's `error`); the next
+    /// prepare tries again.
+    case failed(String)
 }
 
 /// One speech-to-text engine. Voice mode and dictation open it with
@@ -162,7 +165,7 @@ public final class HabSpeechEngine: SpeechEngine {
     private let hab: SpeechHab?
     private let session: String?
     private let encode: (SpeechClip) throws -> Data
-    private var last: SpeechPrepareResult?
+    private var last: SpeechStatus?
 
     /// `encode` makes the Ogg Opus clip; `OpusEncoder.oggOpus` by default.
     public init(hab: SpeechHab?, session: String?, encode: @escaping (SpeechClip) throws -> Data = { try OpusEncoder.oggOpus($0) }) {
@@ -175,7 +178,7 @@ public final class HabSpeechEngine: SpeechEngine {
         guard let hab, await hab.hasSpeech() else {
             throw SpeechEngineError.unavailable("this hab has no speech engine", sticky: true)
         }
-        let r: SpeechPrepareResult
+        let r: SpeechStatus
         do {
             r = try await hab.prepare()
         } catch let e as RPCError where e.kind == .unavailable {
@@ -185,9 +188,10 @@ public final class HabSpeechEngine: SpeechEngine {
         return Self.status(r)
     }
 
-    static func status(_ r: SpeechPrepareResult) -> SpeechEngineStatus {
+    static func status(_ r: SpeechStatus) -> SpeechEngineStatus {
         switch r.state {
         case .ready, .loading: return .ready
+        case _ where r.error?.isEmpty == false: return .failed(r.error!)
         case .downloading: return .preparing(r.progress.map { "downloading \($0)%" } ?? "downloading")
         default: return .preparing("the model downloads on first use")
         }
@@ -199,8 +203,11 @@ public final class HabSpeechEngine: SpeechEngine {
             // A download may have finished since the last turn.
             _ = try await prepare()
         }
-        if let l = last, case .preparing(let hint) = Self.status(l) {
+        switch last.map(Self.status) {
+        case .preparing(let hint)?, .failed(let hint)?:
             throw SpeechEngineError.unavailable(hint, sticky: false)
+        default:
+            break
         }
         guard clip.duration <= SpeechLimits.maxClipSeconds else {
             throw SpeechEngineError.unavailable("the turn is longer than 120 s", sticky: false)
@@ -216,15 +223,15 @@ public final class HabSpeechEngine: SpeechEngine {
 
     /// The request body: Opus when the hab takes it, else PCM; at most 1 MiB.
     func body(_ clip: SpeechClip) throws -> SpeechTranscribeParams {
-        let formats = last?.formats ?? [.pcm16]
+        let formats = last?.formats ?? [SpeechFormat.pcm16]
         if formats.contains(.opus), let data = try? encode(clip), !data.isEmpty, data.count <= SpeechLimits.maxClipBytes {
-            return SpeechTranscribeParams(audio: data.base64EncodedString(), format: .opus, session: session, language: "en")
+            return SpeechTranscribeParams(audio: data, format: .opus, language: "en", session: session)
         }
         let pcm = clip.pcm16
         guard pcm.count <= SpeechLimits.maxClipBytes else {
             throw SpeechEngineError.unavailable("the turn is over 1 MiB as PCM", sticky: false)
         }
-        return SpeechTranscribeParams(audio: pcm.base64EncodedString(), format: .pcm16, sampleRate: SpeechClip.sampleRate, session: session, language: "en")
+        return SpeechTranscribeParams(audio: pcm, format: .pcm16, language: "en", sampleRate: SpeechClip.sampleRate, session: session)
     }
 
     public func close() async {

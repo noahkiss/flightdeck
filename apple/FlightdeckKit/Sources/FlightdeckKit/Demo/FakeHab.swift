@@ -150,7 +150,7 @@ public actor FakeHab {
     // MARK: Speech (voice.md, "API addition")
 
     /// What `speech.prepare` answers while the hab has the `speech` capability.
-    private var speechPrepare = SpeechPrepareResult(state: .ready, model: "parakeet-tdt-0.6b-v2", formats: [.opus, .pcm16])
+    private var speechPrepare = SpeechStatus(formats: [.opus, .pcm16], model: "parakeet-tdt-0.6b-v2", seq: 0, state: .ready)
     /// What `speech.transcribe` answers: the text for each clip, in order; the
     /// last one repeats. Empty: the clip's byte count as words, for demo mode.
     private var speechTexts: [String] = []
@@ -161,7 +161,7 @@ public actor FakeHab {
     public private(set) var transcribes: [SpeechTranscribeParams] = []
 
     /// Sets what `speech.prepare` answers.
-    public func setSpeechPrepare(_ r: SpeechPrepareResult) {
+    public func setSpeechPrepare(_ r: SpeechStatus) {
         speechPrepare = r
     }
 
@@ -638,19 +638,21 @@ public actor FakeHab {
             a.request = nil
             a.at = Fixture.stamp(Date())
             await put(a)
-        case SpeechAPI.prepareMethod:
+        case HabMethods.speechPrepare.name:
             guard capabilities.contains(speechCapability) else {
                 await fail(c, id: id, kind: .unavailable, hint: "this hab has no speech engine")
                 break
             }
             speechPrepares += 1
-            await reply(c, id: id, result: speechPrepare)
-        case SpeechAPI.transcribeMethod:
+            var status = speechPrepare
+            status.seq = c.seq
+            await reply(c, id: id, result: status)
+        case HabMethods.speechTranscribe.name:
             guard capabilities.contains(speechCapability) else {
                 await fail(c, id: id, kind: .unavailable, hint: "this hab has no speech engine")
                 break
             }
-            guard let p = try? params.decode(SpeechTranscribeParams.self), let bytes = Data(base64Encoded: p.audio) else {
+            guard let p = try? params.decode(SpeechTranscribeParams.self) else {
                 await fail(c, id: id, kind: .invalid, hint: "bad speech.transcribe params")
                 break
             }
@@ -665,13 +667,13 @@ public actor FakeHab {
                 await fail(c, id: id, kind: .unavailable, hint: hint)
                 break
             }
-            if bytes.count > SpeechLimits.maxClipBytes {
+            if p.audio.count > SpeechLimits.maxClipBytes {
                 await fail(c, id: id, kind: .invalid, hint: "the clip is over 1 MiB")
                 break
             }
             let n = transcribes.count - 1
-            let text = speechTexts.isEmpty ? "a clip of \(bytes.count) bytes" : speechTexts[min(n, speechTexts.count - 1)]
-            await reply(c, id: id, result: SpeechTranscribeResult(text: text, audioMs: 0, decodeMs: 0))
+            let text = speechTexts.isEmpty ? "a clip of \(p.audio.count) bytes" : speechTexts[min(n, speechTexts.count - 1)]
+            await reply(c, id: id, result: SpeechTranscript(audioMs: 0, decodeMs: 0, seq: c.seq, text: text))
         default:
             await fail(c, id: id, kind: .unavailable, hint: "the fake hab does not serve \(method)")
         }

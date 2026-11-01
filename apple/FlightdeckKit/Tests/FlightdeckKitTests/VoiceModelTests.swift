@@ -166,7 +166,7 @@ final class VoiceModelTests: XCTestCase {
 
     func testDownloadingHabFallsBackPerTurn() async {
         let b = await setup()
-        await b.hab.setSpeechPrepare(SpeechPrepareResult(state: .downloading, progress: 40))
+        await b.hab.setSpeechPrepare(status(.downloading, progress: 40))
         await b.model.start()
         await eventually("status") { b.model.engines.status[.hab] == .preparing("downloading 40%") }
         await say(b, live: "first words")

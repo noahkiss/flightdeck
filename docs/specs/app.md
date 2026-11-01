@@ -1764,10 +1764,10 @@ general behaviour *(gk)*. Model and provider choices: `voice.md`.
 Code in `apple/FlightdeckKit` (`Voice/`, `Views/VoiceViews.swift`) and the
 `FlightdeckParakeet` library, which only the iOS app links.
 
-- **Hand-written speech types.** `Voice/SpeechAPI.swift` holds `speech.prepare` and
-  `speech.transcribe` as `voice.md` writes them, called by name (`RPCClient.call(named:)`),
-  because the generated `HabMethod` has no public initializer. Moving to the generated types
-  changes that file only.
+- **Speech calls.** `Voice/SpeechAPI.swift` calls `speech.prepare` and `speech.transcribe`
+  through the generated types; a transcribe waits up to 60 s. When `speech.prepare` carries an
+  `error` (the last download or load failed), the hab engine skips that turn, the voice view's
+  footer names the engine with the error, and the next turn asks the hab again.
 - **One engine interface.** `SpeechEngine` has `prepare`, `transcribe(clip, live:)` and
   `close`. `SpeechEngines` holds the enabled engines in the fixed order: hab, Parakeet on the
   device, Apple. Every failure moves the turn to the next engine. A sticky refusal skips an

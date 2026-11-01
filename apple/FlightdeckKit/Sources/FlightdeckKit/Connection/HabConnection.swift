@@ -210,13 +210,13 @@ public actor HabConnection {
         return try await r.call(method, params, timeout: timing.callTimeout)
     }
 
-    /// Sends a request by method name on the live connection, for a method
-    /// the generated package does not have yet (`Voice/SpeechAPI.swift`).
-    public func call<P: Encodable & Sendable, R: Decodable & Sendable>(named name: String, _ params: P, timeout: Duration? = nil) async throws -> R {
+    /// Sends a request with its own time limit, for a call that may run
+    /// longer than most (`speech.transcribe`).
+    public func call<P, R>(_ method: HabMethod<P, R>, _ params: P, timeout: Duration) async throws -> R {
         guard let r = rpc, state.status == .online else {
             throw ConnectionClosed(detail: "hab \(id) is not online")
         }
-        return try await r.call(named: name, params, timeout: timeout ?? timing.callTimeout)
+        return try await r.call(method, params, timeout: timeout)
     }
 
     /// Whether the hab's welcome on the live connection names `capability`.

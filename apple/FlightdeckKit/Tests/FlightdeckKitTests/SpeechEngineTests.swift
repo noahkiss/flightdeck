@@ -67,20 +67,25 @@ final class FakeRuntime: ParakeetRuntime, @unchecked Sendable {
 /// A `SpeechHab` with scripted answers.
 final class FakeSpeechHab: SpeechHab, @unchecked Sendable {
     var speech = true
-    var prepareResult: Result<SpeechPrepareResult, Error> = .success(SpeechPrepareResult(state: .ready, formats: [.opus, .pcm16]))
-    var transcribeResult: Result<SpeechTranscribeResult, Error> = .success(SpeechTranscribeResult(text: "hab text"))
+    var prepareResult: Result<SpeechStatus, Error> = .success(status(.ready, formats: [.opus, .pcm16]))
+    var transcribeResult: Result<SpeechTranscript, Error> = .success(SpeechTranscript(audioMs: 0, decodeMs: 0, seq: 0, text: "hab text"))
     private(set) var sent: [SpeechTranscribeParams] = []
     private(set) var prepares = 0
 
     func hasSpeech() async -> Bool { speech }
-    func prepare() async throws -> SpeechPrepareResult {
+    func prepare() async throws -> SpeechStatus {
         prepares += 1
         return try prepareResult.get()
     }
-    func transcribe(_ p: SpeechTranscribeParams) async throws -> SpeechTranscribeResult {
+    func transcribe(_ p: SpeechTranscribeParams) async throws -> SpeechTranscript {
         sent.append(p)
         return try transcribeResult.get()
     }
+}
+
+/// A `speech.prepare` result.
+func status(_ state: SpeechState, progress: Int? = nil, formats: [SpeechFormat] = [.pcm16], error: String? = nil) -> SpeechStatus {
+    SpeechStatus(error: error, formats: formats, model: "parakeet-tdt-0.6b-v2", progress: progress, seq: 0, state: state)
 }
 
 func rpcError(_ kind: ErrorKind, _ hint: String) -> RPCError {
@@ -180,7 +185,7 @@ final class SpeechEngineTests: XCTestCase {
 
     func testHabDownloadingFallsBackThenUsesHabWhenReady() async {
         let api = FakeSpeechHab()
-        api.prepareResult = .success(SpeechPrepareResult(state: .downloading, progress: 40, formats: [.pcm16]))
+        api.prepareResult = .success(status(.downloading, progress: 40))
         let hab = HabSpeechEngine(hab: api, session: "s1", encode: { _ in Data() })
         let e = SpeechEngines([hab, FakeEngine(.apple)])
         await e.prepare()
@@ -189,10 +194,25 @@ final class SpeechEngineTests: XCTestCase {
         XCTAssertEqual(r?.engine, .apple)
         XCTAssertEqual(e.lastFallback, "Parakeet on the hab: downloading 40%")
         XCTAssertTrue(api.sent.isEmpty)
-        api.prepareResult = .success(SpeechPrepareResult(state: .ready, formats: [.pcm16]))
+        api.prepareResult = .success(status(.ready))
         r = await e.transcribe(clip, live: "live")
         XCTAssertEqual(r?.engine, .hab)
         XCTAssertEqual(r?.text, "hab text")
+    }
+
+    func testHabErrorIsShownAndRetriedNextTurn() async {
+        let api = FakeSpeechHab()
+        api.prepareResult = .success(status(.absent, error: "the model download failed: disk full"))
+        let e = SpeechEngines([HabSpeechEngine(hab: api, session: "s1", encode: { _ in Data() }), FakeEngine(.apple)])
+        await e.prepare()
+        XCTAssertEqual(e.status[.hab], .failed("the model download failed: disk full"))
+        XCTAssertNil(e.skipped[.hab], "the next prepare tries again")
+        var r = await e.transcribe(clip, live: "live")
+        XCTAssertEqual(r?.engine, .apple)
+        XCTAssertEqual(e.lastFallback, "Parakeet on the hab: the model download failed: disk full")
+        api.prepareResult = .success(status(.ready))
+        r = await e.transcribe(clip, live: "live")
+        XCTAssertEqual(r?.engine, .hab)
     }
 
     func testHabUnavailableOnTranscribeFallsBack() async {
@@ -222,10 +242,10 @@ final class SpeechEngineTests: XCTestCase {
         b = try broken.body(clip)
         XCTAssertEqual(b.format, .pcm16)
         XCTAssertEqual(b.sampleRate, 16_000)
-        XCTAssertEqual(Data(base64Encoded: b.audio)?.count, clip.samples.count * 2)
+        XCTAssertEqual(b.audio.count, clip.samples.count * 2)
 
         // The hab takes only PCM.
-        api.prepareResult = .success(SpeechPrepareResult(state: .ready, formats: [.pcm16]))
+        api.prepareResult = .success(status(.ready))
         let pcmOnly = HabSpeechEngine(hab: api, session: nil, encode: { _ in Data([1]) })
         _ = try await pcmOnly.prepare()
         XCTAssertEqual(try pcmOnly.body(clip).format, .pcm16)
@@ -290,7 +310,7 @@ final class SpeechEngineTests: XCTestCase {
         XCTAssertEqual(sent.first?.session, "s1")
 
         // A hab whose model is downloading answers unavailable: the turn goes to Apple.
-        await fake.setSpeechPrepare(SpeechPrepareResult(state: .downloading, progress: 40))
+        await fake.setSpeechPrepare(status(.downloading, progress: 40))
         await fake.failNextTranscribe(kind: .unavailable, hint: "downloading 40%")
         let r2 = await e.transcribe(clip, live: "fallback words")
         XCTAssertEqual(r2?.engine, .apple)
