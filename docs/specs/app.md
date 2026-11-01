@@ -618,7 +618,11 @@ What carries over:
   the app lists again, debounced, after a tool `chat.message` that is done.
 - **Stored references** live in the state directory (`content.json`), at most 200 per session,
   and go when the session record goes (`session.deleted`). The file is synced before its
-  rename. A file that does not parse is moved to `content.json.bad` and the hab starts with no
+  rename. A show and a folder change write before they answer. A record that goes drops the
+  references at once and leaves the write to one background writer, since it happens inside the
+  structure store's event callback; each write takes the store's latest state and skips one
+  older than the file, so writes never land out of order, and the hab's shutdown writes what is
+  left. A file that does not parse is moved to `content.json.bad` and the hab starts with no
   references, with a log line: a store of references never stops the hab.
 - **App.** `ContentModel` per session merges `content.list` with `content.updated` by id, keeps
   the last list while offline (and marks it), and loads bytes on demand in chunks. A list reply

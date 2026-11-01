@@ -87,8 +87,12 @@ func New(cfg Config) *Service {
 	if cfg.CacheFor <= 0 {
 		cfg.CacheFor = 5 * time.Second
 	}
+	cfg.Store.SetLogf(cfg.Logf)
 	return &Service{cfg: cfg, cache: map[string]cached{}}
 }
+
+// Close saves any reference change not yet written.
+func (s *Service) Close() error { return s.cfg.Store.Close() }
 
 func errf(kind api.ErrorKind, format string, args ...any) error {
 	return control.Errorf(kind, format, args...)
@@ -157,10 +161,9 @@ func (s *Service) Show(ctx context.Context, p api.ContentShowParams) (api.Conten
 }
 
 // Forget drops a session's stored references and folder: its record is gone.
+// It runs inside the structure store's event callback, so the file write happens off this path.
 func (s *Service) Forget(session string) {
-	if err := s.cfg.Store.Forget(session); err != nil {
-		s.cfg.Logf("content: %v", err)
-	}
+	s.cfg.Store.Forget(session)
 	s.mu.Lock()
 	delete(s.cache, session)
 	s.mu.Unlock()

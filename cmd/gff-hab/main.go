@@ -541,6 +541,11 @@ func serve(args []string) error {
 		if err != nil {
 			return err
 		}
+		defer func() {
+			if err := contentSvc.Close(); err != nil {
+				logger.Printf("content: %v", err)
+			}
+		}()
 		contents = contentSvc
 		contentRef.Store(contentSvc)
 		caps = append(caps, "content")

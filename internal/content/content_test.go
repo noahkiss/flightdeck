@@ -506,6 +506,91 @@ func TestForget(t *testing.T) {
 	}
 }
 
+// TestForgetWritesOffPath: Forget returns while a file write is held up, the background writer
+// saves the change after, Close saves what is left, and a Forget after Close writes in line.
+func TestForgetWritesOffPath(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "content.json")
+	s, err := OpenStore(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Add("s1", Shown{Path: "/a"})
+	s.Add("s2", Shown{Path: "/b"})
+	s.wmu.Lock() // a slow disk: every write waits
+	returned := make(chan struct{})
+	go func() { s.Forget("s1"); close(returned) }()
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Forget waited for the file write")
+	}
+	if len(s.List("s1")) != 0 {
+		t.Fatal("Forget kept the references in memory")
+	}
+	if r, _ := OpenStore(p); len(r.List("s1")) != 1 {
+		t.Fatal("the file changed while writes were held")
+	}
+	s.wmu.Unlock()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if r, _ := OpenStore(p); len(r.List("s1")) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the background writer never saved the Forget")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s.Forget("s2")
+	if r, _ := OpenStore(p); len(r.List("s2")) != 0 {
+		t.Fatal("a Forget after Close was not written")
+	}
+}
+
+// TestStoreWriteOrder: Adds and Forgets from many goroutines, then Close, leave the file equal
+// to the store in memory: no older state lands over a newer one.
+func TestStoreWriteOrder(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "content.json")
+	s, err := OpenStore(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := func(g, i int) string { return "s" + string(rune('a'+g)) + string(rune('a'+i%5)) }
+	done := make(chan struct{})
+	for g := 0; g < 8; g++ {
+		go func(g int) {
+			defer func() { done <- struct{}{} }()
+			for i := 0; i < 40; i++ {
+				if i%3 == 2 {
+					s.Forget(id(g, i))
+				} else if err := s.Add(id(g, i), Shown{Path: "/f" + string(rune('a'+i))}); err != nil {
+					t.Error(err)
+				}
+			}
+		}(g)
+	}
+	for g := 0; g < 8; g++ {
+		<-done
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r, err := OpenStore(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for g := 0; g < 8; g++ {
+		for i := 0; i < 5; i++ {
+			if a, b := s.List(id(g, i)), r.List(id(g, i)); len(a) != len(b) {
+				t.Fatalf("%s: memory %+v, file %+v", id(g, i), a, b)
+			}
+		}
+	}
+}
+
 // TestShowResolvesSymlinks: a show through a symlinked folder stores the real path, so it is
 // the same item as a git status entry or tool call for that file.
 func TestShowResolvesSymlinks(t *testing.T) {
