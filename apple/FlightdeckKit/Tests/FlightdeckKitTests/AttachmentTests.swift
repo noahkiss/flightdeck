@@ -121,6 +121,32 @@ final class AttachmentTests: XCTestCase {
         await fleet.setActive(false)
     }
 
+    /// A hab whose count of bytes does not grow fails the message instead of looping.
+    func testStalledUploadFails() async {
+        let (fleet, hab, model) = await setup()
+        await hab.setAttachmentStall(true)
+        model.send("x", attachments: [DraftAttachment(name: "a.png", type: "image/png", data: Data([1, 2]))])
+        await eventually("failed") { if case .failed = model.outgoing.first?.status { return true }; return false }
+        let writes = await hab.attachmentWrites
+        XCTAssertEqual(writes, 1)
+        await fleet.setActive(false)
+    }
+
+    /// A thumbnail that failed for a dropped connection loads on the next try.
+    func testTransientThumbnailFailureRetries() async {
+        let (fleet, hab, model) = await setup()
+        await hab.storeAttachment(id: "0123456789ab", name: "shot.png", data: png(width: 8, height: 8))
+        await fleet.setActive(false)
+        await eventually("offline") { fleet.board.habs.first?.state.status != .online }
+        await model.images.load("0123456789ab")
+        XCTAssertFalse(model.images.didFail("0123456789ab"))
+        await fleet.setActive(true)
+        await eventually("online") { fleet.board.habs.first?.state.status == .online }
+        await model.images.load("0123456789ab")
+        XCTAssertNotNil(model.images.thumbnail("0123456789ab"))
+        await fleet.setActive(false)
+    }
+
     /// A file over 25 MB is refused before upload and the limit is named.
     func testOverTheLimitIsRefusedBeforeUpload() async {
         let (fleet, _, model) = await setup()
@@ -145,6 +171,11 @@ final class AttachmentTests: XCTestCase {
         XCTAssertEqual(model.images.thumbnail("0123456789ab")?.width, 40)
         await model.images.load("ffffffffffff")
         XCTAssertTrue(model.images.didFail("ffffffffffff"))
+        XCTAssertEqual(model.images.file("ffffffffffff")?.gone, true)
+        // A file with no thumbnail shows its name and size.
+        await hab.storeAttachment(id: "bbbbbbbbbbbb", name: "build.log", data: Data(count: 1234), type: "text/plain")
+        await model.images.load("bbbbbbbbbbbb")
+        XCTAssertEqual(model.images.file("bbbbbbbbbbbb"), AttachmentImages.FileInfo(name: "build.log", size: 1234))
         let full = await model.images.full("0123456789ab")
         XCTAssertEqual(full?.height, 20)
         model.stop()
@@ -228,12 +259,16 @@ final class AttachmentTests: XCTestCase {
 
     // MARK: - Open in Flightdeck
 
-    /// A private key goes to key import; a public key and a broken key block too, so key
-    /// import explains them; any other file goes to the send sheet.
+    /// Only a private key file goes to key import (a broken one too, so key import explains
+    /// it); a public key, an authorized_keys file and a README that quotes a key go to the send
+    /// sheet, as does any other file.
     func testRouteKeysToKeyImportAndOtherFilesToSend() {
         XCTAssertEqual(SendFileCenter.route(Data(KeyFixtures.ed25519.utf8)), .key)
-        XCTAssertEqual(SendFileCenter.route(Data("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA== someone".utf8)), .key)
+        XCTAssertEqual(SendFileCenter.route(Data(("\n  \n" + KeyFixtures.ecdsa256_pem).utf8)), .key)
         XCTAssertEqual(SendFileCenter.route(Data("-----BEGIN OPENSSH PRIVATE KEY-----\nabc".utf8)), .key)
+        XCTAssertEqual(SendFileCenter.route(Data("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA== someone".utf8)), .file)
+        XCTAssertEqual(SendFileCenter.route(Data(("# Setup\nPaste your key:\n" + KeyFixtures.ed25519).utf8)), .file)
+        XCTAssertEqual(SendFileCenter.route(Data("-----BEGIN PUBLIC KEY-----\nMFkw\n-----END PUBLIC KEY-----".utf8)), .file)
         XCTAssertEqual(SendFileCenter.route(Data("# Notes\nplain text".utf8)), .file)
         XCTAssertEqual(SendFileCenter.route(png(width: 4, height: 4)), .file)
         XCTAssertEqual(SendFileCenter.route(Data(count: 70_000)), .file)

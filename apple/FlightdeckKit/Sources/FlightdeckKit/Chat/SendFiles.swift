@@ -39,19 +39,17 @@ public final class SendFileCenter {
         case file
     }
 
-    /// A file at most 64 KiB that holds a private key block, or something that tries to be one
-    /// (a public key, a broken or encrypted key), goes to key import, which explains what it
-    /// found. Anything else is a file to send.
+    /// Only a private key file goes to key import: at most 64 KiB, and its first line that is
+    /// not blank opens a private key block (`-----BEGIN OPENSSH PRIVATE KEY-----`, a PEM
+    /// `... PRIVATE KEY-----`). Key import then explains a broken or encrypted one. Anything
+    /// else, a public key or a README that quotes a key included, is a file to send.
     public nonisolated static func route(_ data: Data) -> Route {
-        guard data.count <= OpenSSHKeyFile.maxSize else { return .file }
-        do {
-            _ = try OpenSSHKeyFile.parse(data)
-            return .key
-        } catch KeyImportError.notAKey, KeyImportError.tooLarge {
-            return .file
-        } catch {
-            return .key
-        }
+        guard data.count <= OpenSSHKeyFile.maxSize,
+              let text = String(data: data.prefix(4096), encoding: .utf8) ?? String(data: data.prefix(4096), encoding: .isoLatin1) else { return .file }
+        let first = text.split(whereSeparator: \.isNewline).lazy
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty } ?? ""
+        return first.hasPrefix("-----BEGIN ") && first.hasSuffix("PRIVATE KEY-----") ? .key : .file
     }
 
     /// Takes a file opened from another app. A copy iOS placed in the app's Inbox is removed
@@ -129,7 +127,7 @@ struct SendFileSheet: View {
             List {
                 Section {
                     HStack(spacing: 12) {
-                        if let a = incoming.attachment, a.isImage, let img = ImageDecode.thumbnail(a.data, maxPixel: 192) {
+                        if let a = incoming.attachment, let img = DraftThumbs.image(a) {
                             Image(decorative: img, scale: 1).resizable().scaledToFill()
                                 .frame(width: 56, height: 56)
                                 .clipShape(RoundedRectangle(cornerRadius: 8))

@@ -68,6 +68,8 @@ public enum AttachmentUpload {
             let end = min(offset + chunk, a.data.count)
             let w = try await connection.call(HabMethods.attachmentWrite, AttachmentWriteParams(
                 data: a.data.subdata(in: offset..<end), id: put.id, offset: offset))
+            // A hab that takes a run but holds no more bytes would loop forever.
+            guard w.done || w.received > offset else { throw UploadStalled(id: put.id, received: w.received) }
             offset = w.received
             await progress?(offset)
             if w.done { break }
@@ -87,6 +89,34 @@ public enum AttachmentUpload {
         }
         first.data = data
         return first
+    }
+}
+
+/// The hab took a run but its count of bytes did not grow.
+public struct UploadStalled: Error, CustomStringConvertible {
+    public var id: String
+    public var received: Int
+    public var description: String { "upload \(id) stopped at \(received) bytes" }
+}
+
+/// Small previews of composer attachments, made once per file version and kept: a view body
+/// asks for them on every pass, and an upload changes the row every 1 MiB.
+@MainActor
+enum DraftThumbs {
+    private static let cache: NSCache<NSString, CGImage> = {
+        let c = NSCache<NSString, CGImage>()
+        c.countLimit = 64
+        return c
+    }()
+
+    /// The preview of `a`, or nil when it is no image this device can read.
+    static func image(_ a: DraftAttachment) -> CGImage? {
+        guard a.isImage else { return nil }
+        let key = "\(a.id.uuidString)-\(a.data.count)-\(a.data.hashValue)" as NSString
+        if let img = cache.object(forKey: key) { return img }
+        guard let img = ImageDecode.thumbnail(a.data, maxPixel: 192) else { return nil }
+        cache.setObject(img, forKey: key)
+        return img
     }
 }
 
@@ -138,8 +168,8 @@ public enum AttachmentPrep {
         return out as Data
     }
 
-    /// A file as an attachment: images are prepared as above; other files go as they are, with
-    /// their media type from the name.
+    /// A file as an attachment: images are prepared as above; other files (a video, a PDF)
+    /// go as they are, metadata and all, with their media type from the name.
     public static func file(_ data: Data, name: String) -> DraftAttachment {
         let type = UTType(filenameExtension: (name as NSString).pathExtension)
         if type?.conforms(to: .image) == true, let img = image(data, name: name) { return img }
@@ -154,8 +184,17 @@ public enum AttachmentPrep {
 public final class AttachmentImages {
     @ObservationIgnored private let connection: HabConnection?
     private(set) var thumbs: [String: CGImage] = [:]
-    @ObservationIgnored private var failed: Set<String> = []
+    /// Name and size of a file with no thumbnail, for its chip.
+    private(set) var files: [String: FileInfo] = [:]
+    private(set) var failed: Set<String> = []
     @ObservationIgnored private var loading: Set<String> = []
+
+    struct FileInfo: Equatable {
+        var name: String
+        var size: Int?
+        /// The hab no longer has the file.
+        var gone = false
+    }
 
     init(connection: HabConnection?) {
         self.connection = connection
@@ -163,9 +202,11 @@ public final class AttachmentImages {
 
     func thumbnail(_ id: String) -> CGImage? { thumbs[id] }
     func didFail(_ id: String) -> Bool { failed.contains(id) }
+    func file(_ id: String) -> FileInfo? { files[id] }
 
-    /// Loads a thumbnail once. A file that is not an image, or is gone, fails quietly: the row
-    /// shows a file chip.
+    /// Loads a thumbnail once. A file with no thumbnail (not an image) gets its name and size
+    /// for a chip; a file the hab no longer has says so. Any other error (a dropped connection)
+    /// is not remembered: the next appearance tries again.
     func load(_ id: String) async {
         guard thumbs[id] == nil, !failed.contains(id), !loading.contains(id), let c = connection else { return }
         loading.insert(id)
@@ -175,10 +216,20 @@ public final class AttachmentImages {
             if let img = ImageDecode.thumbnail(d.data, maxPixel: 640) {
                 thumbs[id] = img
             } else {
+                files[id] = FileInfo(name: d.name, size: nil)
                 failed.insert(id)
             }
-        } catch {
+        } catch let e as RPCError where e.kind == .invalid {
+            // No thumbnail: one byte of the file brings its name and size.
+            if let d = try? await c.call(HabMethods.attachmentGet, AttachmentGetParams(id: id, limit: 1)) {
+                files[id] = FileInfo(name: d.name, size: d.size)
+            }
             failed.insert(id)
+        } catch let e as RPCError where e.kind == .notFound {
+            files[id] = FileInfo(name: "File", size: nil, gone: true)
+            failed.insert(id)
+        } catch {
+            // Transient: try again on the next appearance.
         }
     }
 

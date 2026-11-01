@@ -47,15 +47,35 @@ struct AttachmentThumbRow: View {
             .accessibilityLabel("Attached image")
             .accessibilityHint("Opens it full size")
         } else if images == nil || images?.didFail(id) == true {
-            Label("File", systemImage: "doc")
-                .font(.caption)
-                .padding(8)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+            FileChipLabel(info: images?.file(id))
         } else {
             ProgressView()
                 .frame(width: 96, height: 96)
                 .task { await images?.load(id) }
         }
+    }
+}
+
+/// A file attachment with no thumbnail: its name and size, or that the hab no longer has it.
+struct FileChipLabel: View {
+    let info: AttachmentImages.FileInfo?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: info?.gone == true ? "doc.badge.ellipsis" : "doc")
+            VStack(alignment: .leading, spacing: 1) {
+                Text(info?.name ?? "File").lineLimit(1)
+                if info?.gone == true {
+                    Text("No longer on the hab").foregroundStyle(.secondary)
+                } else if let size = info?.size {
+                    Text(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .font(.caption)
+        .padding(8)
+        .frame(maxWidth: 220, alignment: .leading)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -134,7 +154,7 @@ struct DraftStrip: View {
     private func chip(_ a: DraftAttachment) -> some View {
         ZStack(alignment: .topTrailing) {
             Group {
-                if a.isImage, let img = ImageDecode.thumbnail(a.data, maxPixel: 192) {
+                if let img = DraftThumbs.image(a) {
                     Button {
                         #if os(iOS)
                         marking = a

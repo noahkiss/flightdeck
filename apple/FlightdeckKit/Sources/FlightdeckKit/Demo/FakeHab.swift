@@ -91,10 +91,13 @@ public actor FakeHab {
     private var nextAttachment = 1
 
     public func setAttachmentChunk(_ n: Int) { attachmentChunk = n }
+    /// A broken hab: writes answer without taking the bytes.
+    private var attachmentStall = false
+    public func setAttachmentStall(_ on: Bool) { attachmentStall = on }
     public func failNextAttachmentWrites(_ n: Int) { attachmentWriteFailures = n }
     /// Stores a file as an upload would, for the chat view's thumbnails.
-    public func storeAttachment(id: String, name: String, data: Data) {
-        storedFiles[id] = (AttachmentPutParams(name: name, session: "", sha256: "", size: UInt64(data.count), type: "image/png"), data)
+    public func storeAttachment(id: String, name: String, data: Data, type: String = "image/png") {
+        storedFiles[id] = (AttachmentPutParams(name: name, session: "", sha256: "", size: UInt64(data.count), type: type), data)
     }
 
     public func setContentDelay(_ d: Duration?) { contentDelay = d }
@@ -751,6 +754,9 @@ public actor FakeHab {
                 return await reply(c, id: id, result: AttachmentWritten(done: true, id: p.id, received: done.data.count, seq: c.seq))
             }
             guard var u = uploads[p.id] else { return await fail(c, id: id, kind: .notFound, hint: "no upload \(p.id)") }
+            if attachmentStall {
+                return await reply(c, id: id, result: AttachmentWritten(done: false, id: p.id, received: u.data.count, seq: c.seq))
+            }
             guard p.offset == u.data.count else {
                 return await fail(c, id: id, kind: .conflict, hint: "upload \(p.id) has \(u.data.count) bytes")
             }
@@ -774,6 +780,9 @@ public actor FakeHab {
             }
             guard let f = storedFiles[p.id] else { return await fail(c, id: id, kind: .notFound, hint: "no attachment \(p.id)") }
             if p.thumbnail == true {
+                guard f.put.type.hasPrefix("image/") else {
+                    return await fail(c, id: id, kind: .invalid, hint: "no thumbnail for \(p.id) (\(f.put.type))")
+                }
                 // The fake's thumbnail is the file itself.
                 return await reply(c, id: id, result: AttachmentData(data: f.data, eof: true, id: p.id, name: f.put.name, seq: c.seq, size: f.data.count, type: "image/jpeg"))
             }

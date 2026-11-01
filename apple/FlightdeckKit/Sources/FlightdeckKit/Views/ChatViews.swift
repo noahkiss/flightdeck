@@ -550,7 +550,7 @@ struct OutgoingView: View {
                 if !outgoing.attachments.isEmpty {
                     HStack(spacing: 6) {
                         ForEach(outgoing.attachments) { a in
-                            if a.isImage, let img = ImageDecode.thumbnail(a.data, maxPixel: 192) {
+                            if let img = DraftThumbs.image(a) {
                                 Image(decorative: img, scale: 1).resizable().scaledToFill()
                                     .frame(width: 64, height: 64)
                                     .clipShape(RoundedRectangle(cornerRadius: 8))
