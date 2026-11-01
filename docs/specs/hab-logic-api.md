@@ -518,7 +518,7 @@ Decision: proposed (this stage). Calls and the event: 3.9.
 - Every result is a JSON object, never a bare value, so fields can be added later.
 - Requests on one connection may run side by side. A client must match responses by id.
 - Method names are grouped by prefix: `hab.*`, `structure.*`, `pane.*`, `session.*`, `project.*`,
-  `data.*`, `events.*`, `devices.*`, `approval.*`, `chat.*`, `attachment.*`, `push.*`, `usage.*`,
+  `data.*`, `events.*`, `devices.*`, `peers.*`, `approval.*`, `chat.*`, `attachment.*`, `push.*`, `usage.*`,
   `rpc.discover`. The calls the clients need are listed in 3.9.
 - `devices.pair`, `devices.list` and `devices.revoke` manage the hab's trust store
   (`transport.md` 5, 6). They need the `devices` capability. Until pairing is built they answer
@@ -537,6 +537,7 @@ The first request on a control connection must be `hab.hello`.
 | `client` | Name, version and kind of the client |
 | `label` | Optional human label ("phone", "desk") |
 | `reconnect_token` | Optional; from an earlier welcome, see 3.7 |
+| `peer` | Optional; set by a hab that dials another hab (`client.kind` `hab`): its device id and host id (`mesh.md` 3.2) |
 
 | welcome field | Meaning |
 |---|---|
@@ -606,14 +607,16 @@ The schema lives in `api/` (layout and commands: `docs/layout.md`). Built choice
 ### 3.4 Capabilities
 
 Capability strings name optional features: `data-streams`, `snapshot-vt`, `snapshot-ghostty`,
-`agent-state`, `transcripts`, `devices`, `push`, `host-stats`. `devices` means the embedded SSH
+`agent-state`, `transcripts`, `devices`, `push`, `host-stats`, `mesh`. `mesh` means the hab keeps
+a peer list and serves peer links, `peers.list`, `peers.accept` and `peer.updated` (`mesh.md` 4).
+`devices` means the embedded SSH
 server is on and the `devices.*` methods work. `push` means the hab has working push config;
 `host-stats` means `hab.stats` works (3.9). A client checks for a capability before it uses the
 feature. Capabilities are for features that a host may
 lack. They are not a second versioning scheme.
 
 Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt` and
-`transcripts`.
+`transcripts`. It always sends `mesh`.
 
 ### 3.5 Events, seq and epoch
 

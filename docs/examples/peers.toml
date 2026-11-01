@@ -1,0 +1,31 @@
+# Example peer list for gff-hab (docs/specs/mesh.md 3.1).
+#
+# Copy it to $GFF_HAB_PEERS, or to gff/peers.toml in your config directory:
+#   macOS:  ~/Library/Application Support/gff/peers.toml
+#   others: $XDG_CONFIG_HOME/gff/peers.toml, else ~/.config/gff/peers.toml
+#
+# One file can serve every host: a hab skips its own entry. gff-hab reads the file again when
+# it changes. Every name below is a placeholder; use your own.
+#
+# Each entry has a label (your name for the peer), one or more endpoints tried in order, and an
+# optional device_id. An endpoint is one of:
+#   - an SSH destination, anything `ssh` takes, an alias from your SSH config included;
+#     gff-hab runs `ssh <destination> gff-hab connect` with your SSH keys;
+#   - an absolute path to a hab's local socket;
+#   - cmd:<command>, a command whose stdin and stdout carry the connection.
+#
+# Leave device_id out at first. The first link writes the peer's device id here. A different id
+# later is refused until you run `gff-hab peers accept <label>`, which shows both ids.
+
+[[peers]]
+label = "desk"
+endpoints = ["desk.example.internal", "user@192.0.2.10"]
+
+[[peers]]
+label = "laptop"
+endpoints = ["laptop-alias"]
+
+[[peers]]
+label = "build"
+endpoints = ["cmd:ssh -J jump.example.internal build.example.internal gff-hab connect"]
+# device_id = "SHA256:<the peer's device id, written on first link>"

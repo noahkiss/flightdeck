@@ -3,11 +3,13 @@
 // structure store, and follows every holder's panes through the holder link (internal/link).
 //
 //	gff-hab serve   [-socket path] [-hook-socket path] [-state dir] [-host-id id] [-holders dir]
-//	                [-scrollback-mib n] [-scrollback-budget-mib n] [-retired-days n]
+//	                [-scrollback-mib n] [-scrollback-budget-mib n] [-retired-days n] [-peers file]
 //	                [-git-interval d] [-init none|systemd|launchd] [-prefix p] [-unit-dir dir]
 //	gff-hab connect [-socket path]
 //	gff-hab api call [-socket path | -via command] <method> [params-json]
 //	gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
+//	gff-hab peers    [-socket path] [-json]
+//	gff-hab peers accept [-socket path] <label>
 //	gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
 //	gff-hab manifests list    [-state dir]
 //	gff-hab hook [-t ms] <harness> [event] < payload
@@ -75,6 +77,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/link"
 	"github.com/noahkiss/flightdeck/internal/panesize"
+	"github.com/noahkiss/flightdeck/internal/peers"
 	"github.com/noahkiss/flightdeck/internal/service"
 	"github.com/noahkiss/flightdeck/internal/structure"
 	"github.com/noahkiss/flightdeck/internal/transcript"
@@ -85,11 +88,13 @@ var build = "dev"
 
 const usage = `usage:
   gff-hab serve   [-socket path] [-hook-socket path] [-state dir] [-host-id id] [-holders dir]
-                  [-scrollback-mib n] [-scrollback-budget-mib n] [-retired-days n]
+                  [-scrollback-mib n] [-scrollback-budget-mib n] [-retired-days n] [-peers file]
                   [-init none|systemd|launchd] [-prefix p] [-unit-dir dir]
   gff-hab connect [-socket path]
   gff-hab api call [-socket path | -via command] <method> [params-json]
   gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
+  gff-hab peers    [-socket path] [-json]
+  gff-hab peers accept [-socket path] <label>
   gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
   gff-hab manifests list    [-state dir]
   gff-hab hook [-t ms] <harness> [event] < payload
@@ -126,6 +131,8 @@ func main() {
 		err = apiCall(os.Args[3:])
 	case "events":
 		err = events(os.Args[2:])
+	case "peers":
+		err = peersCmd(os.Args[2:], os.Stdout)
 	case "manifests":
 		err = manifests(os.Args[2:], os.Stdout)
 	case "install":
@@ -205,6 +212,7 @@ func serve(args []string) error {
 		state:   state, holders: holders, socket: sock,
 		build: fs.String("build", "", "launchd: the build directory under <state>/builds this gff-hab runs from (gff-hab install sets it)"),
 	}
+	peersFile := fs.String("peers", "", "peer list file (default: $GFF_HAB_PEERS, else gff/peers.toml in the user config directory)")
 	permWait := fs.Duration("permission-wait", 0, "hold Claude's PermissionRequest hook up to this long for the app's answer; 0 is off (default: $GFF_HAB_PERMISSION_WAIT, else off)")
 	fs.Parse(args)
 	logger := log.New(os.Stderr, "gff-hab: ", log.LstdFlags)
@@ -417,6 +425,25 @@ func serve(args []string) error {
 		return err
 	}
 	caps = append(caps, "permissions")
+	// The peer list and one link per peer (mesh.md 3, 4).
+	ppath, err := peersPath(*peersFile)
+	if err != nil {
+		return err
+	}
+	pm, err := peers.Open(peers.Config{
+		Path: ppath, Self: key.Fingerprint(), Host: *hostID, Build: build,
+		Publish: func(p api.Peer) {
+			if s := srv.Load(); s != nil {
+				s.Publish(structure.Event{Type: api.EventPeerUpdated, ID: p.Label, Data: p})
+			}
+		},
+		Logf: logger.Printf,
+	})
+	if err != nil {
+		return err
+	}
+	defer pm.Close()
+	caps = append(caps, peers.Capability)
 	s := control.New(control.Config{
 		Build:        build,
 		Host:         api.HostInfo{ID: *hostID},
@@ -437,6 +464,7 @@ func serve(args []string) error {
 		},
 		Logf:        logger.Printf,
 		Permissions: permissionService{perms},
+		Peers:       pm,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)

@@ -251,6 +251,58 @@ send and receive, and a pull model needs no inbound path to it.
 
 `gff-hab peers` lists label, state, the endpoint in use, the short device id and last seen.
 
+### 4.4 Built choices (task-phkmrjaw)
+
+Package `internal/peers`, wired into `gff-hab serve`. Commands: `gff-hab peers` and
+`gff-hab peers accept <label>`. Example file: `docs/examples/peers.toml`.
+
+- **One entry format.** A `[[peers]]` entry is gff's `[[hosts]]` entry (`hosts.Entry`), parsed by
+  the same code (`hosts.ParseEntries`). Endpoint forms are gff's: an absolute path is a local
+  socket, `cmd:<command>` runs under `/bin/sh -c`, anything else is an SSH destination.
+- **The path.** `-peers`, else `$GFF_HAB_PEERS`, else `gff/peers.toml` beside gff's
+  `config.toml`.
+- **Bad lines by line.** The TOML library gives no key positions, so each problem names the line
+  of its entry's `[[peers]]` header. A file that does not parse keeps the last good list and
+  shows the parse error, with its line, in `peers.list`.
+- **Reload on change.** gff-hab checks the file's size and modification time every 2 s. No file
+  watcher library.
+- **The pin is a line edit.** It replaces the entry's `device_id` line, or adds one after its
+  `label` line, at the same indent. Every other line stays, comments included. The edited text
+  must parse with the new pin before it replaces the file, in one rename that keeps the mode. An
+  entry whose label is not on a line of its own is not edited; the log says to set the pin by
+  hand.
+- **The first pin reconnects once.** Writing the pin changes the entry, and `hosts.Reload` gives
+  a changed entry a new connection. The peer shows `connecting` for a moment after first contact.
+- **Endpoints in turn.** Each attempt uses one endpoint. After a failed attempt the next one is
+  tried, wrapping round (`habconn.Failover`), spaced by the reconnect backoff. There is no
+  parallel stagger: an `ssh` process always starts, and fails only at the hello. A working
+  endpoint stays in use until an attempt on it fails.
+- **The peer link.** Client kind `hab`, the hello's `peer` field, and no `events.subscribe`
+  (`habconn.Config.NoSubscribe`). Liveness is habconn's: a ping every 15 s, dead after 45 s.
+- **Online.** A peer is online while this hab's link to it is up, or while a link from it is
+  open: a hello whose `peer.device_id` matches the pin. `refused` wins over an inbound link.
+- **Self.** An entry pinned to this hab's own device id is skipped at load. An entry whose
+  endpoint answers with this hab's id is dropped for the life of the process and not written to
+  the file, so a shared file stays the same on every host.
+- **Unlisted links.** A hab that links in and is not in the list shows in `peers.list` as
+  `unlisted`, with its claimed device id and host id. The add action waits for `peers add`.
+- **`peer.updated`.** Ephemeral, id is the label, host scope only. Sent when a peer's row
+  changes; a moving `last_seen` alone sends nothing.
+- **Accept goes through the running hab.** Only it holds the id the peer presented. The command
+  prints both ids and asks no question: running it is the owner's deliberate act.
+- **Last seen** is kept in memory. A gff-hab restart forgets it until the peer is seen again.
+- **Not built in this stage:** `peers add`, `rm` and `rename`; "known to <label>"; the
+  `mesh.changed` wake-up; a retry on wake or network change; the "network blocks SSH" and "no hab
+  at <endpoint>" hints (the row shows ssh's own last error line); the two-hosts-one-device-id
+  check (10).
+
+Limits, at the bar of herdr, Rex and Paseo:
+
+- The hello's `peer` field is a claim. Over the system sshd the caller is already the owner
+  (3.2), so an inbound link from a claimed id can mark that peer online. Nothing else trusts it.
+- The pin protects the dialer only. A hab that dials a refused peer sends it nothing beyond the
+  hello and closes.
+
 ---
 
 ## 5. Catalog
