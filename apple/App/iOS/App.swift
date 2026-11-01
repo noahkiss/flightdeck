@@ -12,6 +12,7 @@ struct FlightdeckApp: App {
         WindowGroup {
             FlightdeckRoot(fleet: fleet)
                 .onOpenURL { url in
+                    if fleet.usage?.open(url: url) == true { return }
                     if fleet.approvals?.open(url: url) != true { fleet.ssh?.open(url: url) }
                 }
                 .task {

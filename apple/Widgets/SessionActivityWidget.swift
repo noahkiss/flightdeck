@@ -8,6 +8,7 @@ import WidgetKit
 struct FlightdeckWidgets: WidgetBundle {
     var body: some Widget {
         SessionActivityWidget()
+        UsageWidget()
     }
 }
 
