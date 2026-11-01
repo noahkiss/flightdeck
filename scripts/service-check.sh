@@ -364,10 +364,10 @@ if [ "$init" = systemd ]; then
 	[ -z "$left" ] || fail "units still loaded: $left"
 fi
 after=$(paths)
-removed=$(comm -23 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))
+removed=$(LC_ALL=C comm -23 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))
 [ -z "$removed" ] || fail "uninstall removed what install did not write:
 $removed"
-added=$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))
+added=$(LC_ALL=C comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))
 # gff-hab's own state (structure, keys, checkpoints) stays by design (spec 5.5); nothing else may.
 stray=$(printf '%s\n' "$added" | grep -v -x -e "$state" -e "$state/.*" || true)
 installed=$(printf '%s\n' "$added" | grep -x -e "$state/bin.*" -e "$state/logs.*" -e "$state/builds.*" \
