@@ -41,6 +41,9 @@ func (s *Store) CheckSend(paneID string) (api.AgentState, error) {
 		// Whatever the state says: Enter on a live permission dialog would approve it.
 		return st, fmt.Errorf("%w: %s waits for permission request %s; answer that first", ErrBusy, st.Harness, p.open)
 	}
+	if p.ownerStop {
+		return st, fmt.Errorf("%w: the owner interrupted %s; send when it reports it is at its prompt", ErrBusy, st.Harness)
+	}
 	switch st.State {
 	case api.AgentStatusIdle, api.AgentStatusDone:
 		return st, nil
@@ -109,12 +112,23 @@ func (s *Store) BeginAnswer(paneID, request string) (api.AgentState, error) {
 // Sent records that the answer BeginAnswer claimed reached the harness, or is about to: the
 // keys go out next, or the waiting hook took the decision. From now on the next OSC 7501 idle
 // or shell prompt may close the request (Store.Apply, Store.Prompt), since Claude fires no hook
-// after a deny. EndAnswer still releases the claim.
+// after a deny. Unsent withdraws it. EndAnswer still releases the claim.
 func (s *Store) Sent(paneID, request string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if p := s.panes[paneID]; p != nil && p.answering == request {
-		p.answered = request
+		p.took = request
+	}
+}
+
+// Unsent withdraws Sent: the keys could not be written, or the request was still open when the
+// read-back gave up, so the answer may have landed somewhere else and the dialog may still be
+// live. Terminal output again never closes the request.
+func (s *Store) Unsent(paneID, request string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if p := s.panes[paneID]; p != nil && p.took == request {
+		p.took = ""
 	}
 }
 

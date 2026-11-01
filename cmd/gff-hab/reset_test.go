@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,16 +78,22 @@ func TestInterruptAndDenyByKeys(t *testing.T) {
 	pane := ss.Pane
 	waitState(t, e.sock, pane, "OSC working", func(s api.AgentState) bool { return s.State == api.AgentStatusWorking })
 
-	call(t, c, "pane.input", api.InputParams{Pane: pane, Data: []byte("\x1b")}, nil)
+	// A client may name the pane in upper case; the store keys it by the canonical id.
+	call(t, c, "pane.input", api.InputParams{Pane: strings.ToUpper(pane), Data: []byte("\x1b")}, nil)
 	st := waitState(t, e.sock, pane, "idle after Esc", func(s api.AgentState) bool { return s.State == api.AgentStatusIdle })
 	if st.Source != api.StateSourceServer {
 		t.Fatalf("state after the owner's Esc: %+v", st)
 	}
 	waitUntil(t, "the Esc in the pane", fileIs(filepath.Join(e.work, "k1"), "\x1b"))
+	// Display only: Claude has not reported since the key, so a send waits.
+	err := c.Call(ctx, "session.send", api.SessionSendParams{Session: ss.Session, Text: text}, nil)
+	if errKind(err) != api.ErrorKindConflict {
+		t.Fatalf("send before the harness confirmed the interrupt: %v", err)
+	}
 
 	writeFile(t, filepath.Join(e.work, "ask"), "")
 	st = waitState(t, e.sock, pane, "blocked", func(s api.AgentState) bool { return s.State == api.AgentStatusBlocked && s.Request != nil })
-	if err := c.Call(ctx, "approval.answer", api.ApprovalAnswerParams{Pane: pane, Request: st.Request.ID, Choice: api.ApprovalChoiceDeny}, nil); err != nil {
+	if err := c.Call(ctx, "approval.answer", api.ApprovalAnswerParams{Pane: strings.ToUpper(pane), Request: st.Request.ID, Choice: api.ApprovalChoiceDeny}, nil); err != nil {
 		t.Fatalf("deny: %v", err)
 	}
 	if !fileIs(filepath.Join(e.work, "key"), "\x1b")() {

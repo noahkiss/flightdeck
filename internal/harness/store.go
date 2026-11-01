@@ -70,6 +70,13 @@ type pane struct {
 
 	answering string // the request an approval.answer is answering now
 	answered  string // the request an answer was sent to: no second answer
+	// took is the request whose answer reached the harness (Store.Sent) and was not withdrawn
+	// (Store.Unsent): only then may an OSC idle or a shell prompt close it.
+	took string
+	// ownerStop is set by the owner's interrupt key (Store.Interrupt): the pane shows idle,
+	// but sends stay refused until the harness itself reports, which shows it still runs and is
+	// at its prompt. Any accepted report or hook clears it.
+	ownerStop bool
 }
 
 // gateSource reports whether src may open or close a permission request: a hook or a server,
@@ -177,7 +184,7 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 	// An OSC idle ends a request Flightdeck already answered: Claude fires no hook after a deny
 	// by keys, and goes back to its prompt. A request nobody answered stays open (gateSource).
 	endsAnswered := src == api.StateSourceOsc && u.State == api.AgentStatusIdle && harness == p.st.Harness &&
-		p.open != "" && p.answered == p.open
+		p.open != "" && p.took == p.open
 	resolvesOpen = resolvesOpen || endsAnswered
 	if u.State == api.AgentStatusBlocked && u.Request != nil && u.Request.ID != "" && p.isResolved(u.Request.ID) {
 		return false, "" // a late blocked for a request already resolved
@@ -199,6 +206,7 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 		}
 		return false, ""
 	}
+	p.ownerStop = false // the harness spoke after the owner's interrupt
 	if rank[src] > rank[p.turnSource] {
 		p.turnSource = src
 	}
@@ -211,7 +219,7 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 		// A new harness or session in the pane: nothing of the old one carries over.
 		next = api.AgentState{Pane: paneID, Revision: next.Revision, State: next.State}
 		p.resolve(p.open, src, "")
-		p.oscLast, p.answering, p.answered = "", "", ""
+		p.oscLast, p.answering, p.answered, p.took, p.ownerStop = "", "", "", "", false
 	}
 	next.Harness = harness
 	if u.Session != "" && !u.Subagent && (u.Bind || next.Session == "") {
@@ -379,7 +387,9 @@ func (s *Store) Seen(paneID string) {
 // (InterruptKey: Esc or Ctrl-C for Claude Code) typed while the agent works ends the turn on
 // the display: Claude fires no hook when the owner interrupts it. It never touches an open
 // permission request, and the next report from any source wins, so a key that interrupted
-// nothing is corrected by the harness's next report. It reports whether the state changed.
+// nothing is corrected by the harness's next report. Display only: CheckSend refuses until the
+// harness reports again, since the key may have gone to a shell whose harness was killed. It
+// reports whether the state changed.
 func (s *Store) Interrupt(paneID string, data []byte) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -391,6 +401,7 @@ func (s *Store) Interrupt(paneID string, data []byte) bool {
 	next.State, next.Last, next.Kind, next.Request = api.AgentStatusIdle, "", "", nil
 	next.Source = api.StateSourceServer
 	p.turnSource = ""
+	p.ownerStop = true
 	s.commitLocked(p, next)
 	return true
 }
@@ -409,7 +420,7 @@ func (s *Store) Prompt(paneID string) bool {
 	if p == nil || p.st.Revision == 0 {
 		return false
 	}
-	answered := p.open != "" && p.answered == p.open
+	answered := p.open != "" && p.took == p.open
 	if answered {
 		p.resolve(p.open, api.StateSourceOsc, api.AgentStatusExited)
 	}
@@ -443,7 +454,7 @@ func (s *Store) Exited(paneID string) {
 func (s *Store) exitLocked(p *pane) {
 	p.resolve(p.open, "", api.AgentStatusExited)
 	p.bound = false
-	p.oscLast, p.answering, p.answered = "", "", ""
+	p.oscLast, p.answering, p.answered, p.took, p.ownerStop = "", "", "", "", false
 	if p.st.State == api.AgentStatusNone || p.st.State == api.AgentStatusExited {
 		return // an OSC clear may have shown the exit already
 	}

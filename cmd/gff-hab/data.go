@@ -88,7 +88,7 @@ func (i inputService) QueueInput(ctx context.Context, _ string, pane string, dat
 	return func() error {
 		err := wait()
 		if err == nil && i.agents != nil {
-			i.agents.Interrupt(pane, data)
+			i.agents.Interrupt(u.String(), data) // the store keys panes by the canonical id
 		}
 		return inputErr(pane, err)
 	}

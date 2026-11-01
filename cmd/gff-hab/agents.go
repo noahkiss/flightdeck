@@ -162,6 +162,9 @@ func (a *agentService) Answer(ctx context.Context, client string, p api.Approval
 		return control.Errorf(api.ErrorKindUnavailable, "answering a question is not built yet; answer it in the terminal")
 	}
 	allow := p.Choice == api.ApprovalChoiceAllow
+	if u, ok := parseUUID(p.Pane); ok {
+		p.Pane = u.String() // the store keys panes by the canonical id
+	}
 	st, err := a.agents.BeginAnswer(p.Pane, p.Request)
 	if err != nil {
 		return agentErr(err)
@@ -214,12 +217,19 @@ func (a *agentService) Answer(ctx context.Context, client string, p api.Approval
 		sent = true // a write that fails may still have reached the dialog
 		a.agents.Sent(p.Pane, p.Request)
 		if err := a.write(ctx, p.Pane, keys); err != nil {
+			a.agents.Unsent(p.Pane, p.Request)
 			return err
 		}
 	}
 	sent = true
 	a.logf("pane %s: request %s answered %s %s (client %s, via %s)", p.Pane, p.Request, p.Choice, how, client, p.Via)
-	return a.readBack(ctx, p, allow, how, mark, changed)
+	err = a.readBack(ctx, p, allow, how, mark, changed)
+	if err != nil {
+		// The request may still be open with its dialog live, the answer having landed
+		// elsewhere: terminal output must not close it.
+		a.agents.Unsent(p.Pane, p.Request)
+	}
+	return err
 }
 
 // readBack waits for the request to resolve after an answer. Success needs a resolution by a

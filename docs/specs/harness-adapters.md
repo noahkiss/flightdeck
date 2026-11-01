@@ -356,12 +356,17 @@ When sources disagree inside one turn, the stronger one wins:
 - Built exception, for a request Flightdeck answered: once `approval.answer` sent its answer
   (keys written, or the waiting hook took the decision), the next OSC `idle` or shell prompt
   mark closes the request. Claude fires no hook after a deny by Esc; it returns to its prompt
-  and reports `idle`. Untrusted bytes still never close a request nobody answered.
+  and reports `idle`. Untrusted bytes still never close a request nobody answered. An answer
+  that did not take counts as no answer here: the hook went away before it took the decision,
+  the keys could not be written, or the read-back gave up with the request still open.
 - Built reset, for the owner's interrupt: Esc or Ctrl-C typed through `pane.input` into a
   `working` Claude pane, as one write and with no request open, shows `idle` with source
   `server` (Paseo does the same). It resets precedence, so the harness's next report of any
   source wins again: a key that interrupted nothing is corrected at once. Plain bytes and the
-  kitty keyboard forms count; a paste never does.
+  kitty keyboard forms count; a paste never does. The reset is display only: `session.send`
+  stays refused until the harness itself reports again (Claude sends OSC `idle` once it
+  stops). The key may have gone to a shell whose Claude was killed, and a send would then
+  type into the shell.
 - Built reset, for a shell prompt (Rex spec): an OSC 133 `A` mark in live output after the
   pane's last OSC 7501 report, with no command started after it, means the harness no longer
   runs in the foreground. A `working` or `blocked` state that terminal output set (`osc` or
@@ -673,6 +678,7 @@ Built choices (`approval.answer`, Claude Code):
 | Transcript format drift | Each reader pins the harness versions it was tested on. An unknown version reads in a tolerant mode that shows unknown records as placeholders and flags the adapter as degraded. gff-hab reports the degraded adapter as drift (built so far: a log line once per version; the status board shows it once it exists). A CI job runs new harness versions against our fixtures. |
 | Transcript not yet written | Claude may create the file after the first hook. The reader waits for the file; it does not fail the pane. |
 | `gff-hab` restarts | Hook posts during the gap are lost. On start, the adapter rebuilds state from the transcript tail, the last OSC 7501 report in the holder's byte ring, and the process table. It marks state as `source: screen` until the next hook. Built: the last OSC 7501 report only, as `screen`: from the replayed ring, else from the pane's checkpoint (the replay starts there). The transcript tail and process table are not read yet. A permission request open before the restart is not rebuilt: the pane shows the report's `blocked`, sends stay refused, and an answer waits for the session's next hook or goes through the terminal. |
+| Esc that is not an interrupt | In Claude Code, Esc while it works may only close an autocomplete menu or leave the editor opened for a queued message. The pane then shows `idle` (source `server`) until Claude's next report, which may take minutes in a long tool run. Sends stay refused meanwhile (Source precedence). |
 | A Claude starts while `gff-hab` is down | Nobody answers its OSC 7501 `?` query, and replayed bytes are never answered, so this Claude sends no reports for its whole run. Its state comes from hooks only. |
 | A program in the pane forges OSC 7501 | gff-hab trusts OSC 7501 for the displayed state and, as herdr does, for the send gate: `session.send` goes when the pane shows `idle`, `done` or `error`. So a program that forges reports can mislead the gate. Hooks narrow this: a report never opens or closes a permission request, so it cannot end a block a hook reported, and it never enables an answer. A pane with no hooks has only OSC 7501, so there a forged `idle` over Claude's dialog would let a send's Enter approve it. A forged `clear` shows the pane exited until the next hook. |
 | Harness upgrade mid-session | The running process keeps its version; only new panes see the new one. The reader picks its parser per session from the version in the transcript, not from the installed binary. |

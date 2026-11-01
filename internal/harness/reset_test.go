@@ -44,6 +44,40 @@ func TestDenyByKeysThenOSCIdle(t *testing.T) {
 	}
 }
 
+// TestAnswerThatDidNotTake: an answer that never reached the harness (the hook gave up first),
+// or whose keys went out but the read-back gave up with the request open, leaves the guard on:
+// a forged OSC idle or a shell prompt still closes nothing.
+func TestAnswerThatDidNotTake(t *testing.T) {
+	var events []structure.Event
+	s := newTestStore(&events)
+	req := claudeTurn(t, s)
+	idle := progstatus.Report{State: "idle", App: "claude"}
+	if _, err := s.BeginAnswer("p", req); err != nil {
+		t.Fatal(err)
+	}
+	s.EndAnswer("p", req, true) // marked sent, as on the hook path's timeout, but never Sent
+	s.Report("p", idle, 5000, true)
+	if s.Prompt("p") {
+		t.Fatal("a prompt moved the pane after an answer that did not take")
+	}
+	if _, err := s.CheckSend("p"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("a forged idle closed a request whose answer did not take: %v", err)
+	}
+
+	s = newTestStore(&events)
+	req = claudeTurn(t, s)
+	if _, err := s.BeginAnswer("p", req); err != nil {
+		t.Fatal(err)
+	}
+	s.Sent("p", req)
+	s.Unsent("p", req) // the read-back gave up with the request still open
+	s.EndAnswer("p", req, true)
+	s.Report("p", idle, 5000, true)
+	if _, err := s.CheckSend("p"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("a forged idle closed a request after the read-back gave up: %v", err)
+	}
+}
+
 // TestPromptMark: a shell prompt after OSC working shows the pane exited (sends refused). A
 // request nobody answered stays open and blocked; one Flightdeck answered closes. A state a hook
 // set stays.
@@ -114,8 +148,14 @@ func TestOwnerInterrupt(t *testing.T) {
 	if st.State != api.AgentStatusIdle || st.Source != api.StateSourceServer {
 		t.Fatalf("after Ctrl-C: %+v", st)
 	}
+	// Display only: the key may have reached a shell whose Claude was killed, so a send waits
+	// for the harness to report again.
+	if _, err := s.CheckSend("p"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("send before the harness confirmed the interrupt: %v", err)
+	}
+	s.Report("p", progstatus.Report{State: "idle", App: "claude"}, 1150, true)
 	if _, err := s.CheckSend("p"); err != nil {
-		t.Fatalf("send after the interrupt: %v", err)
+		t.Fatalf("send after Claude's OSC idle: %v", err)
 	}
 	// The key interrupted nothing after all: Claude's next OSC working wins.
 	s.Report("p", progstatus.Report{State: "working", App: "claude"}, 1200, true)
