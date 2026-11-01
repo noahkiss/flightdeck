@@ -448,6 +448,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleContent(m)
 		return
 	}
+	if isChannelMethod(m.Method) {
+		c.handleChannels(m)
+		return
+	}
 	seq := c.currentSeq()
 	result, e := c.dispatch(m, seq)
 	c.reply(m, seq, result, e)

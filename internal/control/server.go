@@ -189,6 +189,7 @@ type Config struct {
 	Push         Push        // nil: the push methods, session.focus and notice.raise answer unavailable
 	Usage        Usage       // nil: usage.list answers unavailable
 	Content      Content     // nil: the content.* methods answer unavailable
+	Channels     Channels    // nil: the channel and mail methods answer unavailable
 	// ApproversChanged, if set, is called with no lock held after a connection closes or
 	// changes its subscription, so Approvers may have dropped.
 	ApproversChanged func()

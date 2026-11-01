@@ -46,10 +46,11 @@ type Server struct {
 	now  func() time.Time
 	logf func(string, ...any)
 
-	mu      sync.Mutex
-	unknown map[string]bool // tokens already logged as unknown
-	holder  Holder
-	http    *http.Server
+	mu       sync.Mutex
+	unknown  map[string]bool // tokens already logged as unknown
+	holder   Holder
+	channels ChannelHandler
+	http     *http.Server
 }
 
 // SetHolder sets the holder for posts with ?wait=1. With none, they answer at once like any post.
@@ -83,6 +84,10 @@ func (s *Server) Serve(l net.Listener) error {
 func (s *Server) Close() error { return s.http.Close() }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if token, ok := strings.CutPrefix(r.URL.Path, ChannelPath); ok && r.Method == http.MethodPost {
+		s.serveChannel(w, r, token)
+		return
+	}
 	token, ok := strings.CutPrefix(r.URL.Path, "/hooks/")
 	if !ok || r.Method != http.MethodPost {
 		http.Error(w, "POST /hooks/<token>", http.StatusNotFound)
