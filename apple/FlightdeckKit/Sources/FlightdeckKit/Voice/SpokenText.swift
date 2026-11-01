@@ -32,11 +32,15 @@ public enum SpokenText {
     /// agent's final text of the turn. Tool calls, tool output and subagent
     /// messages are never read.
     public static func finalText(_ messages: [ChatMessage]) -> String? {
+        finalMessage(messages).map { ($0.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+
+    /// The message `finalText` reads.
+    public static func finalMessage(_ messages: [ChatMessage]) -> ChatMessage? {
         let start = (messages.lastIndex { $0.kind == .user && $0.sender == nil }).map { $0 + 1 } ?? 0
         guard start < messages.count else { return nil }
         for m in messages[start...].reversed() where m.kind == .agent && m.parent == nil {
-            let t = (m.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !t.isEmpty { return t }
+            if !(m.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return m }
         }
         return nil
     }

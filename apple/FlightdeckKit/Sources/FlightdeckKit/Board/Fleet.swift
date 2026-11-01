@@ -34,6 +34,26 @@ public final class Fleet {
         _ = try? await conn.call(HabMethods.sessionFocus, params)
     }
 
+    /// Voice mode and dictation (app.md 13). Its connection hold keeps the
+    /// session's hab connected in the background while voice mode is open.
+    public private(set) lazy var voice: VoiceKit = {
+        let k = VoiceKit()
+        k.hold = { [weak self] id, on in self?.holdForVoice(id, on) }
+        return k
+    }()
+
+    /// Habs voice mode keeps connected in the background, with a count per hab.
+    public private(set) var voiceHolds: [String: Int] = [:]
+
+    /// Holds or releases a hab's connection for voice mode (app.md 13.1, the
+    /// one exception to 12.1). A release in the background closes it then.
+    public func holdForVoice(_ habID: String, _ on: Bool) {
+        let n = max(0, voiceHolds[habID, default: 0] + (on ? 1 : -1))
+        voiceHolds[habID] = n == 0 ? nil : n
+        guard n == 0, !on, !isActive, !wanted, let c = connections.first(where: { $0.id == habID }) else { return }
+        Task { await c.stop() }
+    }
+
     private var consumers: [Task<Void, Never>] = []
     private var windows = 0
     private var check: Task<Void, Never>?
@@ -146,7 +166,7 @@ public final class Fleet {
                 focus.setActive(false)
                 await Self.within(.seconds(1)) { await self.focus.flush() }
                 terminals.setActive(false)
-                for c in connections { await c.stop() }
+                for c in connections where voiceHolds[c.id] == nil { await c.stop() }
                 // iOS may suspend the app before the delayed check runs, so log the count now too.
                 log.notice("background: closed \(self.connections.count) habs, \(self.openStreams()) open streams")
                 let delay = checkDelay

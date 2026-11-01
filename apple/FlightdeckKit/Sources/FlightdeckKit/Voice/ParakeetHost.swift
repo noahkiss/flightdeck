@@ -37,14 +37,22 @@ public final class ParakeetHost {
     /// How many loads ran, for tests and the log.
     public private(set) var loads = 0
 
-    /// The device class offers the option (memory budget, voice.md).
-    public let offered: Bool
-    @ObservationIgnored private let runtime: ParakeetRuntime?
+    /// The device class offers the option (memory budget, voice.md) and the
+    /// build links the runtime.
+    public var offered: Bool { deviceOffered && runtime != nil }
+    @ObservationIgnored private let deviceOffered: Bool
+    private var runtime: ParakeetRuntime?
     @ObservationIgnored private var loading: Task<Void, Error>?
 
     public init(runtime: ParakeetRuntime?, offered: Bool = ParakeetHost.deviceOffers()) {
         self.runtime = runtime
-        self.offered = offered && runtime != nil
+        self.deviceOffered = offered
+    }
+
+    /// Links the runtime: the iOS app does this at launch.
+    public func install(_ runtime: ParakeetRuntime) {
+        guard self.runtime == nil else { return }
+        self.runtime = runtime
     }
 
     /// The memory budget (voice.md, default 1 GB peak for the model): offered

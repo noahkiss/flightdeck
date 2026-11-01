@@ -81,6 +81,8 @@ public struct Outgoing: Identifiable, Equatable, Sendable {
     public var text: String
     public var status: Status
     public var sentAt: Date?
+    /// Typed in the composer, or spoken (voice mode, dictation).
+    public var origin: SendOrigin = .typed
 }
 
 /// How the chat view loads (app.md 4.3).
@@ -398,11 +400,12 @@ public final class ChatModel {
     public var gate: SendGate { SendGate.of(context) }
 
     /// Sends the owner's text under the send gate. Empty text does nothing.
-    public func send(_ text: String) {
+    /// Voice mode sends with origin `dictated`.
+    public func send(_ text: String, origin: SendOrigin = .typed) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty, gate.allowsSend else { return }
         notice = nil
-        let o = Outgoing(id: nextOutgoing, text: t, status: gate == .now ? .sending : .queued)
+        let o = Outgoing(id: nextOutgoing, text: t, status: gate == .now ? .sending : .queued, origin: origin)
         nextOutgoing += 1
         outgoing.append(o)
         if o.status == .sending {
@@ -459,10 +462,11 @@ public final class ChatModel {
         guard let conn = connection, let session = target.session,
               let i = outgoing.firstIndex(where: { $0.id == id }) else { return }
         let text = outgoing[i].text
+        let origin = outgoing[i].origin
         outgoing[i].status = .sending
         do {
             do {
-                _ = try await conn.call(HabMethods.sessionSend, SessionSendParams(origin: .typed, session: session, text: text))
+                _ = try await conn.call(HabMethods.sessionSend, SessionSendParams(origin: origin, session: session, text: text))
             } catch let e as RPCError where e.kind == .unavailable && typesWithoutAdapter {
                 // The harness has no adapter on this hab yet: type it as the adapter would.
                 guard let pane = context.pane else { throw e }
