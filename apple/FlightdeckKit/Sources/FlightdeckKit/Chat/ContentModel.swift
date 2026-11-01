@@ -366,6 +366,12 @@ public final class ContentModel {
         return blocks
     }
 
+    /// Whether an item's Markdown renders cut: only its first `ContentText.previewLimit` bytes
+    /// are parsed.
+    nonisolated static func markdownCut(_ data: Data) -> Bool {
+        data.count > ContentText.previewLimit
+    }
+
     /// A version of an item's bytes: the list's version and the byte count, so bytes that
     /// arrive under a version the list did not name never reuse another parse.
     struct VersionKey: Hashable {

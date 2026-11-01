@@ -645,7 +645,9 @@ What carries over:
   zoomed images and the inline ones), and at most 24 of them; the least recently used goes
   first, and the newest always stays.
   Text shows its first 256 KiB, cut at a line end, with "Show all", which renders the file as a
-  lazy list of 200-line runs. Markdown, a diff file's parse and a text file's runs are made
+  lazy list of 200-line runs. Markdown renders its first 256 KiB; past that a line under it says
+  "Showing the first 256 KB of <size>" with "Show all as text", the same lazy list (a whole
+  large file as Markdown would stall the view). Markdown, a diff file's parse and a text file's runs are made
   once per file version (the list's version and the byte count); a redraw reuses them. A PDF view loads a new
   document only when its bytes change, so a redraw keeps its scroll position and zoom.
 

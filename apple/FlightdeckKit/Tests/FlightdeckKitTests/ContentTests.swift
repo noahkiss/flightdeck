@@ -394,6 +394,22 @@ final class ContentLimitTests: XCTestCase {
         XCTAssertEqual(m.chunkSplits, 1)
     }
 
+    /// R5: Markdown past the preview limit renders cut, and says so; the whole file is there as
+    /// text runs for "Show all as text".
+    func testLargeMarkdownMarkedCut() {
+        let m = ContentModel(target: SessionTarget(habID: "h", session: "s1", pane: "%1"), items: [], context: ChatContext())
+        let para = "Line of text " + String(repeating: "x", count: 86) + "\n\n" // 101 bytes
+        let big = Data(String(repeating: para, count: 3000).utf8) // about 300 KB
+        let it = ContentItem(at: "2026-01-01T10:00:05Z", id: "md", kind: .markdown, modified: "v1", name: "big.md", path: "/w/big.md",
+                             session: "s1", shown: true, size: big.count, type: "text/markdown")
+        XCTAssertTrue(ContentModel.markdownCut(big))
+        XCTAssertFalse(ContentModel.markdownCut(Data(para.utf8)))
+        XCTAssertFalse(ContentModel.markdownCut(Data(count: ContentText.previewLimit)), "exactly the limit renders whole")
+        let blocks = m.markdown(for: it, data: big)
+        XCTAssertLessThan(blocks.count, 3000, "only the first part is parsed")
+        XCTAssertEqual(m.textChunks(for: it, data: big).joined(separator: "\n").utf8.count, big.count, "the runs hold the whole file")
+    }
+
     /// S3: a large image decodes to the asked bound, not to its full size.
     func testImageDecodesToBound() throws {
         let w = 3000, h = 1200

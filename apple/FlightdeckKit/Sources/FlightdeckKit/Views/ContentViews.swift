@@ -307,12 +307,24 @@ struct DocumentBody: View {
             PDFDocumentView(data: data)
                 .frame(height: folded ? 180 : 560)
         case .markdown:
-            // Folded keeps whole blocks, so a code fence is never cut open.
-            let blocks = model.markdown(for: item, data: data)
-            VStack(alignment: .leading, spacing: 4) {
-                MarkdownView(blocks: folded ? Array(blocks.prefix(Self.foldedBlocks)) : blocks)
-                if folded && blocks.count > Self.foldedBlocks {
-                    Text("…").foregroundStyle(.secondary)
+            if showAll && !folded {
+                fullText
+            } else {
+                // Folded keeps whole blocks, so a code fence is never cut open.
+                let blocks = model.markdown(for: item, data: data)
+                VStack(alignment: .leading, spacing: 4) {
+                    MarkdownView(blocks: folded ? Array(blocks.prefix(Self.foldedBlocks)) : blocks)
+                    if folded && blocks.count > Self.foldedBlocks {
+                        Text("…").foregroundStyle(.secondary)
+                    }
+                    if !folded && ContentModel.markdownCut(data) {
+                        // Only the first part is rendered; the whole file opens as text.
+                        Divider()
+                        Text("Showing the first \(Self.size(ContentText.previewLimit)) of \(Self.size(data.count))")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("Show all as text") { showAll = true }
+                            .font(.caption)
+                    }
                 }
             }
         case .diff:
@@ -323,14 +335,7 @@ struct DocumentBody: View {
             if data.prefix(4096).contains(0) {
                 FileChip(item: item)
             } else if showAll && !folded {
-                // The whole file as a lazy list of line runs: one huge Text would stall the view.
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(model.textChunks(for: item, data: data).enumerated()), id: \.offset) { _, run in
-                        Text(run).font(.caption.monospaced())
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                .textSelection(.enabled)
+                fullText
             } else {
                 let preview = ContentText.preview(data, limit: folded ? 8 << 10 : ContentText.previewLimit)
                 VStack(alignment: .leading, spacing: 4) {
@@ -339,12 +344,27 @@ struct DocumentBody: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if preview.truncated && !folded {
-                        Button("Show all \(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file))") { showAll = true }
+                        Button("Show all \(Self.size(data.count))") { showAll = true }
                             .font(.caption)
                     }
                 }
             }
         }
+    }
+
+    /// The whole file as a lazy list of line runs: one huge Text would stall the view.
+    private var fullText: some View {
+        LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(model.textChunks(for: item, data: data).enumerated()), id: \.offset) { _, run in
+                Text(run).font(.caption.monospaced())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .textSelection(.enabled)
+    }
+
+    private static func size(_ n: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .file)
     }
 
     private func limitLines(_ s: String, _ n: Int?) -> String {
