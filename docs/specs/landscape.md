@@ -202,9 +202,9 @@ match it.
 | Paseo | Workspaces of three kinds: a folder, a checkout, or a worktree it creates. A project file defines setup, teardown, scripts and services. An include file copies ignored files (such as `.env`) into a new worktree. Setup from a PR out of another repository waits for the user to confirm. A diff and PR panel per workspace |
 | herdr | `herdr worktree create/open/remove`, with groups |
 | Rex | None |
-| Ours | Projects keyed by repository identity, with the latest folder of several worktrees (`hab-logic-api.md` 3.9, project fields). No worktree creation planned |
+| Ours | Projects keyed by repository identity, with the latest folder of several worktrees (`hab-logic-api.md` 3.9, project fields). Built (task-wvbuz085, `hab-logic-api.md` 3.10): `worktree.create`, `worktree.list`, `worktree.setup` and `worktree.remove`, and `gff-hab worktree`; `flightdeck.json` setup and teardown, `.worktreeinclude`, setup from another remote or a pull request ref waits for a yes. Open is `session.create` with the worktree as `project_dir`. No PR checkout by number, scripts or services yet |
 | Bar | Match herdr: create, open and remove a worktree for a project |
-| Flag | **Below** (idea 4.5) |
+| Flag | **Meets** (idea 4.5) |
 
 ### 2.14 Scheduling
 
@@ -329,7 +329,7 @@ look at. Staged release rollout; it is for a larger user base than ours.
 
 | Area | Gap | Cheapest fix |
 |---|---|---|
-| Worktrees (2.13) | No create or remove | Idea 4.5 |
+| Worktrees (2.13) | Built 2026-11-01 (`hab-logic-api.md` 3.10); was: no create or remove | Idea 4.5, done |
 | Plan approval (2.6) | Only tool permissions and questions | Idea 4.4 |
 | Scheduling (2.14) | Not built | Part 13 as planned, plus 4.6 |
 | Push setup (2.9) | Each user needs an Apple developer key; Paseo needs none | Owner decision stands; the setup guide must be short (`app.md` 8.4) |
@@ -367,7 +367,7 @@ not code.
 
 | Tool | Licence and reuse | Cadence | Where changes appear | Paths worth watching | Feeds our areas |
 |---|---|---|---|---|---|
-| Paseo | Apache-2.0. Code reuse would be legal with attribution and NOTICE | About weekly: 0.12.0 (10-19), 0.13.0 (10-24), 0.13.1 and 0.13.2 (10-26), 0.14.0 (10-29), betas between | GitHub releases, `CHANGELOG.md` (with an unreleased section), its Discord, the author's posts | `docs/terminal-worker.md`, `docs/terminal-activity.md`, `docs/agent-lifecycle.md`, `docs/permissions.md`, `docs/connected-hosts.md`, `SECURITY.md`, `public-docs/voice.md`, `public-docs/schedules.md`, `public-docs/worktrees.md`, `packages/server/src/server/agent-attention-policy.ts`, `packages/server/src/server/agent/providers/` | 2.1, 2.4, 2.6, 2.9, 2.10, 2.13, 2.14 |
+| Paseo | Apache-2.0. Code reuse would be legal with attribution and NOTICE | About weekly: 0.12.0 (10-19), 0.13.0 (10-24), 0.13.1 and 0.13.2 (10-26), 0.14.0 (10-29), betas between | GitHub releases, `CHANGELOG.md` (with an unreleased section), its Discord, the author's posts | `docs/terminal-worker.md`, `docs/terminal-activity.md`, `docs/agent-lifecycle.md`, `docs/permissions.md`, `docs/connected-hosts.md`, `SECURITY.md`, `public-docs/voice.md`, `public-docs/schedules.md`, `public-docs/worktrees/index.md`, `packages/server/src/server/agent-attention-policy.ts`, `packages/server/src/server/agent/providers/` | 2.1, 2.4, 2.6, 2.9, 2.10, 2.13, 2.14 |
 | herdr TUI | Apache-2.0 | Weekly to fortnightly: 0.9.0 (09-07), 0.9.1 (09-16), 0.9.2 and 0.9.3 (09-29), 0.9.4 (10-13), 0.9.5 (10-14); fixes only since | GitHub releases, `CHANGELOG.md`, the website docs | `distribution/agent-detection/*.toml` and `index.toml` (the catalogue we vendor), `docs/next/` (agents, integrations, agent automation, connecting machines), `src/platform/macos/` | 2.2, 2.4, 2.5, 2.16 |
 | herdr-core (`hc`) | Apache-2.0 | Near daily: 0.1.10 (10-23) to 0.1.16 (10-31); no GitHub releases | `CHANGELOG.md` | `schema/released.openrpc.json`, `docs/security.md`, `crates/herdr-core/src/SKILL.md`, the holder sources | 2.1, 2.5, 2.17 |
 | herdr-app | Apache-2.0 | Seven releases from 10-23 to 10-31 | `CHANGELOG.md` | `defaults/AGENTS.md`, `docs/security.md` | 2.11, 2.16 |
@@ -390,7 +390,7 @@ Paseo (read 2026-11-01, repository HEAD 8efb21f):
   `docs/architecture.md`, `docs/agent-lifecycle.md`, `docs/terminal-worker.md`,
   `docs/terminal-activity.md`, `docs/connected-hosts.md`, `docs/permissions.md`,
   `docs/timeline-sync.md`, `docs/hub.md`, `public-docs/connectivity.md`, `public-docs/cli.md`,
-  `public-docs/voice.md`, `public-docs/schedules.md`, `public-docs/worktrees.md`,
+  `public-docs/voice.md`, `public-docs/schedules.md`, `public-docs/worktrees/index.md`,
   `public-docs/updates.md`.
 - Code read to confirm behaviour: `packages/server/src/server/agent-attention-policy.ts`,
   `packages/server/src/server/push/push-service.ts`, `packages/protocol/src/agent-attention-notification.ts`,

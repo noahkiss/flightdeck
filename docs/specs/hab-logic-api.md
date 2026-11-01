@@ -797,6 +797,7 @@ names the stage, and an event is defined but never sent.
 | `command.list` | A page of a pane's shell commands, found by OSC 133 marks (capability `commands`, 2.5) | Yes (task-m845kpi9) |
 | `command.output` | A run of one command's output, from a bounded replay of the holder's ring (capability `commands`, 2.5) | Yes (task-m845kpi9) |
 | `detect.explain` | Why a pane shows its agent state: the source that won, the process match, and each screen rule's region and result (capability `detect-explain`; `harness-adapters.md`, Detection) | Yes (task-bgjbr5rn) |
+| `worktree.list`, `worktree.create`, `worktree.setup`, `worktree.remove` | A project's git worktrees: list, make one and run its setup script, run a pending setup, remove one (3.10) | Yes (task-wvbuz085) |
 
 | Event | Purpose | Id | Sent from |
 |---|---|---|---|
@@ -1099,6 +1100,113 @@ gone (2.3): its data streams end, its checkpoint is removed, a `pane.deleted` ev
 its session is marked exited. The session record stays until a client closes it. Closing a pane
 that is already gone succeeds. A lost pane (its holder is not connected) answers `unavailable`;
 an unknown pane answers `not_found`. The client confirms with the owner before it calls.
+
+### 3.10 Worktrees
+
+Parallel agents on one repository each want their own folder and branch. gff-hab makes, lists
+and removes git worktrees for a project, and runs a project's setup and teardown scripts
+(task-wvbuz085; `landscape.md` 2.13 and idea 4.5). Code: `internal/worktree` (git, files),
+`cmd/gff-hab/worktrees.go` (the methods and `gff-hab worktree`).
+
+**What the reference tools do.**
+
+- **herdr.** `herdr worktree create`, `open` and `remove`. New checkouts go to
+  `<directory>/<repo>/<branch slug>` (default directory `~/.herdr/worktrees`). With no branch
+  it makes up a name. Remove refuses a checkout with modified or untracked files
+  (`git status --porcelain --untracked-files=all`) unless forced. A forced remove of a checkout
+  whose folder is half gone cleans up what is left. Open makes a workspace for a worktree that
+  exists.
+- **Paseo** (`public-docs/worktrees/index.md`, `worktreeinclude.md`). Worktrees under
+  `~/.paseo/worktrees/<hash>/<slug>`. Modes: branch off a base, check out a branch, check out a
+  pull request. `paseo.json` at the repository root names `worktree.setup` and
+  `worktree.teardown`: a script or a list of commands, run with the worktree as the working
+  folder and `$PASEO_SOURCE_CHECKOUT_PATH` set. It is read from the base's committed version.
+  Setup runs once after creation; teardown runs before removal, and a failing teardown does not
+  stop the removal. `.worktreeinclude` (gitignore syntax) copies ignored files such as `.env`
+  from the source checkout before setup: only files git already ignores, an existing file in
+  the worktree is kept, and a copy error removes the new worktree. Setup, terminals and scripts
+  in a pull request from a fork wait for the user's approval. Archiving asks first when the
+  worktree has uncommitted or unpushed work. Setup output streams into the workspace.
+- **Rex.** No worktrees.
+
+**Calls** (all take `project` or `project_dir`, exactly one, and run off the read loop):
+
+| Method | What it does |
+|---|---|
+| `worktree.list` | The repository's working trees, the main one first: `path`, `branch`, `head`, `main`, `locked`, `prunable`, and `managed` (made by `worktree.create` on this hab) |
+| `worktree.create` | Make a worktree, copy the files `.worktreeinclude` names, then start the setup script per `setup` (`auto`, the default; `run`; `skip`). Returns `project`, `worktree`, `copied` and `setup` |
+| `worktree.setup` | Start a linked worktree's setup script now: the yes to a pending setup, or a rerun |
+| `worktree.remove` | Run the teardown script, then remove a linked worktree. The branch stays. Uncommitted or untracked changes need `force` |
+
+"Open" is `session.create` with the worktree folder as `project_dir`: the worktree has the
+project's identity, so the session files into the same project. No method of its own is needed.
+
+**Built choices.**
+
+- **Which folder.** `project_dir` resolves the project as `session.create` does (3.9). With
+  `project`, gff-hab uses the project's most recently used folder that still exists; a project
+  with none answers `unavailable` and asks for `project_dir`. Listing does not record a folder.
+- **Where new worktrees go.** `<root>/<main working tree folder>/<branch slug>`. The root is
+  `serve -worktrees`, else `$GFF_HAB_WORKTREES`, else `~/.gff/worktrees` (`~/` expands). The
+  slug is the branch in lower case, with one dash per run of other characters. `path` puts the
+  worktree anywhere. A folder that exists is a `conflict`; gff-hab never reuses one.
+- **Branches.** A local branch is checked out (with `base` too it is a `conflict`). With no
+  `base`, a branch that exactly one remote has becomes a local branch that tracks it. Otherwise
+  a new branch starts at `base`, else at the source checkout's HEAD, with `--no-track`, so its
+  first push names its own branch, never the base. No branch: `wt/<word>-<word>-<4 hex>`. A
+  branch checked out elsewhere, or on several remotes with no base, is a `conflict`; a bad name
+  is `invalid`; an unknown base is `not_found`. gff-hab never fetches: `base: origin/main` is
+  whatever the last fetch brought.
+- **Included files.** `.worktreeinclude` is read from the source checkout. gff-hab asks git for
+  the untracked files its patterns match (`ls-files --others --ignored --exclude-from`), keeps
+  those git ignores anyway (`check-ignore --stdin`), and copies each: regular files with their
+  mode, symbolic links as links, folders (nested repositories) skipped, a file the worktree has
+  kept. A copy error removes the worktree again, and the branch when gff-hab made it.
+- **The project file.** `flightdeck.json` at the repository root, read from the new worktree,
+  so it is the version committed on the start point:
+  `{"worktree": {"setup": "...", "teardown": "..."}}`, each a script or a list of commands.
+  Unknown keys are ignored, so scripts and services can join later. A file that does not parse
+  leaves the worktree in place with setup `error` and the reason.
+- **Setup runs in a session.** The script runs as `/bin/sh -c 'set -e; ...'` in a new pane of
+  the project, named `setup-<folder>`, working in the worktree. So it outlives a gff-hab
+  restart, its output shows in the terminal view, and the session's exit status says how it
+  ended. The caller owns the pane, as with `session.create`. `worktree.create` does not wait
+  for it; a client that wants an agent after setup starts it once the session exits. Scripts
+  get `GFF_SOURCE_CHECKOUT`, `GFF_WORKTREE` and `GFF_BRANCH`.
+- **Setup from someone else waits for a yes.** In `auto`, setup does not run when the code may
+  come from someone else: the start point (or a local branch's upstream) is a branch of a remote
+  whose URL is not the project's remote, or a ref with a `pull`, `pr` or `merge-requests`
+  segment. The result is `pending` with the reason. `worktree.setup` (or `setup: run` on create)
+  is the yes. A commit id or a local branch with no upstream counts as the project's own.
+- **The mark.** gff-hab writes `gff-worktree.json` in the worktree's private git folder
+  (`.git/worktrees/<name>/`): the source checkout, when it was made, whether its scripts are
+  approved, and why setup waited. Git ignores the file and removes it with the worktree; the
+  working tree stays clean. `managed` in the list is "this file exists".
+- **Teardown.** Runs only in a worktree whose mark says approved: one this hab made from the
+  project's own code, or one the user said yes to. It runs in gff-hab, not in a pane, bounded to
+  2 minutes, with stdin empty. A non-zero exit, a timeout or a start failure is `failed` with
+  the last 4 KiB of output; the removal goes on either way.
+- **Removal.** Never the main working tree (`invalid`, even with force). A locked worktree is a
+  `conflict`: unlock it with git. Without `force`, modified, staged or untracked files are a
+  `conflict`; ignored files do not count. A tree that changes between the check and the removal
+  is refused by git. A worktree whose folder is gone is pruned. git runs from the main working
+  tree, so removing the folder the project resolved to works. The branch is never deleted, so
+  unpushed commits are never lost; that is why gff-hab, unlike Paseo, needs no unpushed check.
+- **One at a time.** Each project has one create, setup or remove running at a time. A call
+  runs to its end if the client goes away, so git is never cut off halfway; each call has
+  5 minutes.
+
+**Limits** (at the bar, `landscape.md` 2.13):
+
+- No pull request checkout by number: fetch it as a branch first (it then counts as foreign
+  when its ref names a pull request or comes from another remote).
+- No scripts, services, ports or terminals from the project file yet (Paseo has them).
+- A session whose program runs in a removed worktree keeps running in a folder that is gone.
+  Removing an agent's worktree usually leaves it dirty, so the refusal without force catches
+  most of these; the client confirms before force.
+- No events: a client calls `worktree.list` again after a change. The project's branch fields
+  follow the folder of the most recent session (3.9).
+- A teardown script's child processes that outlive the 2 minutes are not killed as a group.
 
 ---
 

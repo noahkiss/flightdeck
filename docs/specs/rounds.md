@@ -524,7 +524,7 @@ devices, and the app's in-app notices. A new push kind `round` is added to `push
 | Two rounds target the same session | They take turns: one send at a time per pane; the second waits under the lock |
 | The user deletes a round during a run | The run goes on to its end; its session follows the normal rules; no further runs |
 | The user pauses a round while a run waits for the lock | The waiting run ends as `skipped`, "paused" |
-| A `fresh` run in a folder where the user's own agent works | Allowed: two sessions, one folder, as Paseo's default "local" isolation. Worktree isolation comes with idea 4.5 (14) |
+| A `fresh` run in a folder where the user's own agent works | Allowed: two sessions, one folder, as Paseo's default "local" isolation. Worktree isolation for a run is a later stage (14), on top of `worktree.create` (`hab-logic-api.md` 3.10) |
 | The harness needs a sign-in | The run is `blocked` with kind `auth`; the usual push goes out |
 | The harness's usage window is full | The run fails with the harness's message. A usage-aware skip is a later stage (14) |
 | A round's harness is not installed on the runner | Refused at creation; if it disappears later, each run fails with "harness not found", then the round pauses |
@@ -626,7 +626,7 @@ close.
 | 6 | Agent kit and confirmation | MCP tools and `gff round` from inside a session; `--target self`; the confirmation card per Q1 and its setting | An agent creates a round through MCP; the card shows the fields; a declined card creates nothing; with the setting off no card appears; an agent stops its own round with `$GFF_ROUND` |
 | 7 | App and gff views | Rounds list, round page, run history, badges, Run now, edit; the gff client's rounds pane | UI tests in the app; `gff round ls --all` matches the app's list |
 | 8 | Event triggers | The four events in 4.3, debounce, cooldown, no self-loops | Each event triggers once per debounce window; a burst in cooldown makes one run; a round's own session never triggers it |
-| 9 | Later ideas | Worktree isolation for `fresh` runs (with idea 4.5); skip when a harness usage window is above a threshold; file a run's result as a Logbook record (Part 12) | Each gets its own acceptance list when planned |
+| 9 | Later ideas | Worktree isolation for `fresh` runs (on `worktree.create`, `hab-logic-api.md` 3.10); skip when a harness usage window is above a threshold; file a run's result as a Logbook record (Part 12) | Each gets its own acceptance list when planned |
 
 ---
 
