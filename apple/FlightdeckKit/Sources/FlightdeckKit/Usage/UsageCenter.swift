@@ -126,17 +126,25 @@ public final class SystemUsageNotifier: UsageNotifier, @unchecked Sendable {
         c.userInfo = [Self.accountKey: account]
         var trigger: UNNotificationTrigger?
         if let at, at.timeIntervalSinceNow > 1 {
-            // A calendar date with its time zone, not an interval: it fires at
-            // that instant across sleep and a time-zone change.
-            var parts = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: at)
-            parts.timeZone = Calendar.current.timeZone
-            trigger = UNCalendarNotificationTrigger(dateMatching: parts, repeats: false)
+            trigger = UNCalendarNotificationTrigger(dateMatching: Self.triggerComponents(at), repeats: false)
         }
         ops.yield(.add(UNNotificationRequest(identifier: id, content: c, trigger: trigger)))
     }
 
     public func cancel(id: String) {
         ops.yield(.remove(id))
+    }
+
+    /// The calendar date of a trigger, in UTC. Not an interval: it fires at
+    /// that instant across sleep and a time-zone change. Not local time: a
+    /// local time can be ambiguous on the night clocks go back.
+    static func triggerComponents(_ at: Date) -> DateComponents {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        var parts = cal.dateComponents([.year, .month, .day, .hour, .minute, .second], from: at)
+        parts.calendar = cal
+        parts.timeZone = cal.timeZone
+        return parts
     }
 }
 
