@@ -1427,7 +1427,9 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH/KeyImport` and `Views/Key
   keeps no accessibility class (10.6), so there the test checks only the sync flag.
 - **Face ID.** A per-key "Require Face ID for this key" switch (iOS), off by default. When on, the
   app asks for Face ID before each dial, like the generated key. It is an app check, not a
-  Keychain access rule: the item stays readable whenever the device is unlocked. Background
+  Keychain access rule: the item stays readable whenever the device is unlocked. Turning the
+  switch off asks for the owner's authentication (Face ID or the passcode) first, so whoever
+  holds the unlocked device cannot drop the check; turning it on asks nothing. Background
   actions refuse such a key at once, as with the generated key.
 - **Choosing a key.** Each hab entry names its key (`keyID`). "Add a hab by address" shows a key
   picker once an imported key exists; the generated key is preselected. Each row in Habs over
@@ -1439,7 +1441,9 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH/KeyImport` and `Views/Key
 - **Import.** Settings › SSH › Imported keys › Import a key: paste into the field, Paste from the
   clipboard, or Choose a file. iOS also opens key files from the share sheet and Files: the app
   declares `public.data` and `public.text` as a viewer with rank Alternate (OpenSSH key files
-  have no extension), and removes the copy iOS puts in its Inbox once read. A file that
+  have no extension), and removes the copy iOS puts in its Inbox once read. The Inbox check
+  compares standardized paths with symbolic links resolved, since the file URL may read
+  /private/var while the home folder reads /var. A file that
   cannot be read opens the sheet with the read error. A pairing link and a key file that
   arrive together share one sheet and show in turn, the pairing link first. The sheet shows the
   type and fingerprint, asks for the passphrase when needed (a wrong one clears the field; no

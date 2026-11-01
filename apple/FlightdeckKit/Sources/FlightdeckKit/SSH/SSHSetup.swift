@@ -1,5 +1,6 @@
 import Foundation
 import HabAPI
+import LocalAuthentication
 import NIOSSH
 import Observation
 import os
@@ -32,6 +33,11 @@ public final class SSHSetup {
     @ObservationIgnored private let clientLabel: String
     @ObservationIgnored private let clientVersion: String
     @ObservationIgnored private let log = Logger(subsystem: "com.flightdeck.app", category: "ssh")
+    /// Asks the device owner to authenticate (Face ID, Touch ID or the
+    /// passcode) with this reason. Tests replace it.
+    @ObservationIgnored public var authenticate: @Sendable (String) async throws -> Void = { reason in
+        _ = try await LAContext().evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)
+    }
 
     public init(keys: DeviceKeys, listURL: URL?, fleet: Fleet?, timing: SSHTiming = SSHTiming(), clientLabel: String = "phone", clientVersion: String = "0") {
         self.keys = keys
@@ -178,8 +184,14 @@ public final class SSHSetup {
         return r
     }
 
-    /// Turns "Require Face ID" on or off for an imported key.
-    public func setBiometry(_ on: Bool, forImported id: String) throws {
+    /// Turns "Require Face ID" on or off for an imported key. Turning it off
+    /// asks the owner to authenticate first, so whoever holds the unlocked
+    /// device cannot drop the check.
+    public func setBiometry(_ on: Bool, forImported id: String) async throws {
+        let current = importedKeys.first { $0.id == id }?.requiresBiometry ?? ((try? keys.key(id))?.requiresBiometry ?? false)
+        if current && !on {
+            try await authenticate("Turn off Face ID for this SSH key")
+        }
         try keys.setBiometry(on, forImported: id)
         loadImportedKeys()
         reconnect { $0.keyID == id }
@@ -248,11 +260,23 @@ public final class SSHSetup {
         }
         #if os(iOS)
         // "Open in" copies the file into this app's own Inbox; drop that copy.
-        let home = NSHomeDirectory()
-        if url.path.hasPrefix(home), url.path.contains("/Documents/Inbox/") || url.path.contains("-Inbox/") {
+        if Self.isOwnInboxCopy(url, home: NSHomeDirectory()) {
             try? FileManager.default.removeItem(at: url)
         }
         #endif
+    }
+
+    /// Whether a file is the copy iOS put in this app's Inbox. Both paths are
+    /// standardized with symbolic links resolved, since a file URL may arrive
+    /// as /private/var/... while the home folder reads /var/....
+    nonisolated static func isOwnInboxCopy(_ url: URL, home: String) -> Bool {
+        func clean(_ u: URL) -> String { u.standardizedFileURL.resolvingSymlinksInPath().path }
+        let path = clean(url)
+        var root = clean(URL(fileURLWithPath: home, isDirectory: true))
+        if !root.hasSuffix("/") { root += "/" }
+        guard path.hasPrefix(root) else { return false }
+        let inside = String(path.dropFirst(root.count))
+        return inside.hasPrefix("Documents/Inbox/") || (inside.hasPrefix("tmp/") && inside.contains("-Inbox/"))
     }
 
     private func reconnect(_ match: (SSHHabEntry) -> Bool) {

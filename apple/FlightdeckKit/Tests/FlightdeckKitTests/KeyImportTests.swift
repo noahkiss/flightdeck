@@ -475,6 +475,59 @@ final class KeyImportTests: XCTestCase {
         XCTAssertTrue(DeviceKeys.explain(KeychainStore.error("read", errSecInteractionNotAllowed)).description.contains("locked"))
     }
 
+    /// Turning Face ID off for an imported key asks for authentication;
+    /// a refusal leaves it on (fix round 2).
+    @MainActor
+    func testFaceIDOffNeedsAuthentication() async throws {
+        let keys = DeviceKeys(store: MemorySecretStore(), preferEnclave: false)
+        let setup = SSHSetup(keys: keys, listURL: nil, fleet: nil)
+        let k = try keys.importKey(try OpenSSHKeyFile.parse(KeyFixtures.ed25519).decrypt(passphrase: nil)).key
+        setup.loadImportedKeys()
+        let asked = Counter()
+        setup.authenticate = { _ in
+            asked.add()
+            throw CancellationError()
+        }
+        // On needs nothing.
+        try await setup.setBiometry(true, forImported: k.id)
+        XCTAssertEqual(asked.n, 0)
+        XCTAssertTrue(try XCTUnwrap(setup.importedKeys.first).requiresBiometry)
+        // Off with a refused authentication stays on.
+        do {
+            try await setup.setBiometry(false, forImported: k.id)
+            XCTFail("Face ID was turned off without authentication")
+        } catch {}
+        XCTAssertEqual(asked.n, 1)
+        XCTAssertTrue(try XCTUnwrap(try keys.key(k.id)).requiresBiometry)
+        // Off with authentication works.
+        setup.authenticate = { _ in asked.add() }
+        try await setup.setBiometry(false, forImported: k.id)
+        XCTAssertEqual(asked.n, 2)
+        XCTAssertFalse(try XCTUnwrap(setup.importedKeys.first).requiresBiometry)
+    }
+
+    /// The Inbox copy is found when the file URL and the home folder spell
+    /// /var differently (fix round 2).
+    func testInboxCopyMatchesAcrossPrivateVar() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("home-" + UUID().uuidString)
+        let inbox = home.appendingPathComponent("tmp/com.example.app-Inbox")
+        try FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let file = inbox.appendingPathComponent("id_test")
+        try Data("x".utf8).write(to: file)
+        let resolved = file.resolvingSymlinksInPath().path
+        let homeVar = home.path.hasPrefix("/private/") ? String(home.path.dropFirst("/private".count)) : home.path
+        let filePrivate = resolved.hasPrefix("/private/") ? resolved : "/private" + resolved
+        guard FileManager.default.fileExists(atPath: filePrivate), homeVar.hasPrefix("/var/") else {
+            throw XCTSkip("the temporary folder is not under /var here")
+        }
+        XCTAssertTrue(SSHSetup.isOwnInboxCopy(URL(fileURLWithPath: filePrivate), home: homeVar))
+        XCTAssertTrue(SSHSetup.isOwnInboxCopy(URL(fileURLWithPath: homeVar + "/Documents/Inbox/k"), home: "/private" + homeVar))
+        XCTAssertFalse(SSHSetup.isOwnInboxCopy(URL(fileURLWithPath: homeVar + "/Documents/notes/k"), home: homeVar))
+        XCTAssertFalse(SSHSetup.isOwnInboxCopy(URL(fileURLWithPath: "/var/other-Inbox/k"), home: homeVar))
+        XCTAssertFalse(SSHSetup.isOwnInboxCopy(URL(fileURLWithPath: homeVar + "x/tmp/a-Inbox/k"), home: homeVar))
+    }
+
     /// A pairing link and a key file arriving together are shown in turn
     /// (review N2).
     @MainActor
@@ -488,6 +541,13 @@ final class KeyImportTests: XCTestCase {
         setup.pendingKeyFile = nil
         XCTAssertNil(SSHSheets.item(setup))
     }
+}
+
+private final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    var n: Int { lock.withLock { value } }
+    func add() { lock.withLock { value += 1 } }
 }
 
 /// A store whose items exist but cannot be read: a locked device.

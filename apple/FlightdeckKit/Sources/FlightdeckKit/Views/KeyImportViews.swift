@@ -81,7 +81,9 @@ struct ImportedKeyDetailView: View {
                 Toggle("Require Face ID for this key", isOn: Binding(
                     get: { setup.importedKeys.first { $0.id == key.id }?.requiresBiometry ?? key.requiresBiometry },
                     set: { on in
-                        do { try setup.setBiometry(on, forImported: key.id) } catch { message = "\(error)" }
+                        Task {
+                            do { try await setup.setBiometry(on, forImported: key.id) } catch { message = "\(error)" }
+                        }
                     }
                 ))
                 #endif
