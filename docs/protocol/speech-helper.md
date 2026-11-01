@@ -71,4 +71,5 @@ together, so there is no translation: gff-hab refuses a helper of another versio
   binary run as the helper): load, ready, results, errors, a crash, a wrong protocol, a helper with
   no hello, the queue, the idle exit.
 - `cmd/gff-hab-speech` (`make test-speech`): the helper's serve loop in process, a missing model,
-  an Opus round trip, and real recognition when `$GFF_SPEECH_MODEL_DIR` names the model.
+  an Opus round trip, and real recognition when `$GFF_SPEECH_MODEL_DIR` names the model (a
+  clip from macOS `say`, else the WAV `$GFF_SPEECH_TEST_WAV` names).

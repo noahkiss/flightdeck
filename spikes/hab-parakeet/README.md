@@ -81,8 +81,9 @@ Findings:
 
 The same sherpa-onnx release ships static CLI builds for `linux-x64` and `linux-aarch64`
 (CPU, onnxruntime linked in), plus CUDA builds. The model files are the same on every
-platform. Nothing in the spike is macOS-only except `say` and `afconvert`. A Linux run is
-still to do; expect a similar memory figure and a decode speed that depends on the CPU.
+platform. Nothing in the spike is macOS-only except `say` and `afconvert`. The x64 run
+(2026-11-01, a 6 vCPU VM, piper for the clips) is in `docs/specs/voice.md`, Linux run:
+RTF 0.06 to 0.11, load 1.5 to 1.7 s, peak memory 0.81 to 1.17 GB, the same WER.
 
 ## Licences
 

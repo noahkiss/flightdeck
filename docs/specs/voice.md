@@ -82,10 +82,67 @@ recent iPhones; the hab engine stays the default. No iPad run yet.
 - The Core ML provider showed no clear gain over CPU. Thread count matters: 1 thread was about
   three times slower than 4.
 - Linux: the same release has static CLI builds for linux-x64 and linux-aarch64 (CPU, with
-  onnxruntime linked in), and CUDA builds. A Linux run is still to do.
+  onnxruntime linked in), and CUDA builds. The x64 run is below.
 - Licences: sherpa-onnx Apache-2.0, onnxruntime MIT, Silero VAD MIT, the Parakeet model
   CC-BY-4.0 (an attribution line wherever the model is downloaded). The helper's full list is in
   `NOTICE`.
+
+### Linux run (2026-11-01)
+
+A Linux x86-64 VM: 6 vCPU of an Intel Core i7-12700KF (AVX2, AVX-VNNI, no AVX-512), 23 GiB
+RAM, kernel 6.14. Same int8 model, 4 threads, model files in the file cache, 5 runs per clip;
+each cell is the median, with the range in brackets. Linux has no `say`: piper (voice
+`en_US-lessac-medium`) spoke `spikes/hab-parakeet/clips.txt`, resampled to 16 kHz mono. The
+clips last 5.0 s, 15.4 s and 59.2 s.
+
+Two methods:
+
+- **CLI** is the spike's method: `sherpa-onnx-offline` 2.0.1 (linux-x64 static) under
+  `/usr/bin/time -v`. Load and decode come from its log.
+- **Helper** is `build/gff-hab-speech` from `make speech-helper`: one process per run, the
+  `load_ms` of its ready frame, one pcm16 transcribe and its `decode_ms`. Peak memory comes from
+  `/usr/bin/time -v`.
+
+Another job shared the machine. Before each run the 1-minute load average had to be at most
+half the CPU count (3.0). It never went past that, so no run waited. The load column gives the
+range seen before the runs. Part of that load is the runs themselves.
+
+| Clip | Method | Load | Decode | Real-time factor | Peak memory | WER | 1-min load |
+|---|---|---|---|---|---|---|---|
+| 5.0 s | CLI | 1.66 s (1.53 to 1.77) | 0.55 s (0.48 to 0.75) | 0.111 (0.097 to 0.151) | 806 MB | 0 / 16 | 1.1 to 2.8 |
+| 5.0 s | Helper | 1.59 s (1.52 to 1.80) | 0.65 s (0.54 to 1.04) | 0.130 (0.108 to 0.210) | 814 MB | 0 / 16 | 1.1 to 2.8 |
+| 15.4 s | CLI | 1.50 s (1.48 to 1.88) | 0.98 s (0.93 to 1.19) | 0.064 (0.060 to 0.077) | 876 MB | 0 / 53 | 2.5 to 2.9 |
+| 15.4 s | Helper | 1.56 s (1.52 to 1.78) | 0.99 s (0.89 to 1.11) | 0.064 (0.058 to 0.072) | 880 MB | 0 / 53 | 2.5 to 2.9 |
+| 59.2 s | CLI | 1.60 s (1.47 to 1.71) | 3.63 s (3.42 to 4.51) | 0.061 (0.058 to 0.076) | 1.17 GB | 13 / 194 | 2.5 to 3.0 |
+| 59.2 s | Helper | 1.52 s (1.52 to 1.59) | 3.43 s (3.31 to 3.86) | 0.058 (0.056 to 0.065) | 1.19 GB | 13 / 194 | 2.5 to 2.9 |
+
+Beside the Mac (Apple M1 Pro, 4 threads, a busier machine; the table above):
+
+| | Mac (M1 Pro) | Linux x86-64 VM |
+|---|---|---|
+| Model load | 0.92 to 1.12 s (CLI); 1.2 to 1.4 s (helper) | 1.5 to 1.7 s, either method |
+| RTF, 15 s clip | 0.10 to 0.15 | 0.064 |
+| RTF, 60 s clip | 0.09 to 0.10 | 0.06 |
+| Peak memory, 5 s clip | 1.12 to 1.14 GB | 0.81 GB |
+| Peak memory, 60 s clip | 1.49 to 1.52 GB | 1.17 to 1.19 GB |
+
+- The helper costs no more than the CLI: the same load time, speed and memory within a few
+  per cent. The cgo layer, Go runtime and libopus add 4 to 26 MB of peak memory.
+- Speed is no problem here either: a 15 s turn decodes in about 1 s. Load takes about 0.5 s
+  longer than on the Mac.
+- Peak memory is about 0.3 GB lower than on the Mac at every clip length. It still grows with
+  clip length: 0.8 GB at 5 s, 1.2 GB at 60 s.
+- The 60 s clip has the same error count as on the Mac, all of them project words: "holder
+  rig", "habolder", "gffhab", "govet", "erase". Voice and machine differ, so this is no
+  benchmark of WER.
+- First load from a cold disk was not measured, as on the Mac.
+- `make test-speech` passes with the real model, given `$GFF_SPEECH_TEST_WAV` in place of
+  `say` (`layout.md`). The 3.1 s test clip loads in 2.0 s and decodes in 0.44 s (pcm16) and
+  0.34 s (Opus), with the exact text.
+- linux-aarch64 was not built. The sherpa-onnx archives are built with GNU g++ and need its
+  libstdc++. A zig cross link fails on those symbols, since zig ships libc++. An arm64 build
+  needs an aarch64 GNU cross toolchain (Debian `g++-aarch64-linux-gnu`) and an arm64 libopus,
+  or a native arm64 host.
 
 ### Design
 
@@ -222,9 +279,8 @@ helper.
 
 ### Open items
 
-- **Linux.** The helper builds from the `linux-x64` and `linux-aarch64` static releases (the
-  Makefile pins both, and links the archives as a group), but no Linux build or run has happened.
-  The dev box does it next: build, `make test-speech`, the speed and memory figures.
+- **Linux.** The helper builds and runs on linux-x64 (Linux run, above). linux-aarch64 is pinned
+  in the Makefile but not built yet: it needs an arm64 host or a GNU cross toolchain.
 - **Shipping the helper.** `gff-hab install` does not copy the helper yet, and the macOS helper
   bundles do not include it. For now it is installed by hand: install libopus (Homebrew `opus`,
   Debian `libopus-dev`), run `make speech-helper`, then copy `build/gff-hab-speech` beside

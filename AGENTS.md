@@ -62,7 +62,7 @@ The repo layout and the libghostty build are in `docs/layout.md`.
 | `make race` | Run the holder, holderproto, holderclient, holderreg, structure, link, control, datastream, habconn, hosts, merge, peers, catalog, channels, board, gffclient, panesize, termq, cmdmarks, harness, hook, opencode, gitstatus, worktree, transcript, usage, service, grants, push, speech, speechproto, oggopus and `cmd` tests with `-race -count=3` |
 | `make sherpa-onnx` | Fetch sherpa-onnx's pinned static C library and `c-api.h` for this platform into `build/sherpa-onnx`, check both SHA-256 sums, and write their pkg-config file |
 | `make speech-helper` | Build the speech helper into `build/gff-hab-speech` (`-tags speech`, cgo, sherpa-onnx and the system's libopus through pkg-config) |
-| `make test-speech` | Run the helper's tests: the serve loop, a missing model, an Opus round trip from hand-made audio; with `$GFF_SPEECH_MODEL_DIR` (the extracted Parakeet archive) and macOS `say`, real recognition of one spoken clip as pcm16 and as Ogg Opus |
+| `make test-speech` | Run the helper's tests: the serve loop, a missing model, an Opus round trip from hand-made audio; with `$GFF_SPEECH_MODEL_DIR` (the extracted Parakeet archive) and macOS `say` (or `$GFF_SPEECH_TEST_WAV`, a 16 kHz mono WAV of the test sentence, where there is no `say`), real recognition of one spoken clip as pcm16 and as Ogg Opus |
 | `make fuzz [FUZZTIME=30s]` | Run each holderproto fuzz target for `FUZZTIME` in turn (nightly) |
 | `make check-pure` | Fail when a package other than `internal/vt/ghostty` needs cgo |
 | `make check-gen` | Fail when a generated file is stale |

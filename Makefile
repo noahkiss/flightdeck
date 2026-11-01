@@ -95,7 +95,8 @@ clean-sherpa-onnx:
 speech-helper: sherpa-onnx
 	$(SPEECH_ENV) $(GO) build -tags speech -o build/gff-hab-speech ./cmd/gff-hab-speech
 
-# Run the helper's own tests (Opus decode; recognition when $GFF_SPEECH_MODEL_DIR names the model).
+# Run the helper's own tests (Opus decode; recognition when $GFF_SPEECH_MODEL_DIR names the model,
+# with a clip from macOS say or the WAV $GFF_SPEECH_TEST_WAV names).
 test-speech: sherpa-onnx
 	$(SPEECH_ENV) $(GO) test -tags speech ./cmd/gff-hab-speech
 

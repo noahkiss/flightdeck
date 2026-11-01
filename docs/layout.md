@@ -147,7 +147,9 @@ cgo and gff-hab builds with `CGO_ENABLED=0` (`voice.md`, Hab speech engine).
 - **libopus** comes from the system: `pkg-config opus` (Homebrew `opus`, Debian `libopus-dev`).
 - **Build and test.** `make speech-helper` writes `build/gff-hab-speech`. `make test-speech` runs
   its tests; set `$GFF_SPEECH_MODEL_DIR` to the extracted model archive to include real
-  recognition. gff-hab finds the helper as `voice.md`, Built choices says.
+  recognition. The clip comes from macOS `say`; with no `say` (Linux), set `$GFF_SPEECH_TEST_WAV`
+  to a 16 kHz mono 16-bit WAV of "Please run the tests again and then open the pull request."
+  gff-hab finds the helper as `voice.md`, Built choices says.
 - **The model** is never in the repo or a release: gff-hab downloads it on first use into its
   state folder.
 - **Licences.** sherpa-onnx Apache-2.0, onnxruntime MIT, libopus BSD-3-Clause, and the libraries

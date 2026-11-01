@@ -157,16 +157,19 @@ func TestServeNoModel(t *testing.T) {
 	}
 }
 
-// spoken makes a clip of synthetic speech with macOS say, 16 kHz pcm16. It skips without say.
+// spoken returns a clip of text, 16 kHz pcm16: the WAV $GFF_SPEECH_TEST_WAV names (16 kHz mono
+// 16-bit, from any TTS or a recording; for Linux, which has no say), else synthetic speech from
+// macOS say. It skips with neither.
 func spoken(t *testing.T, text string) []int16 {
 	t.Helper()
-	say, err := exec.LookPath("say")
-	if err != nil {
-		t.Skip("no say(1) to make a spoken clip")
-	}
-	wav := filepath.Join(t.TempDir(), "clip.wav")
-	if out, err := exec.Command(say, "--file-format=WAVE", "--data-format=LEI16@16000", "-o", wav, text).CombinedOutput(); err != nil {
-		t.Skipf("say: %v %s", err, out)
+	wav := os.Getenv("GFF_SPEECH_TEST_WAV")
+	if say, err := exec.LookPath("say"); err == nil && wav == "" {
+		wav = filepath.Join(t.TempDir(), "clip.wav")
+		if out, err := exec.Command(say, "--file-format=WAVE", "--data-format=LEI16@16000", "-o", wav, text).CombinedOutput(); err != nil {
+			t.Skipf("say: %v %s", err, out)
+		}
+	} else if wav == "" {
+		t.Skip("no say(1) and no $GFF_SPEECH_TEST_WAV to make a spoken clip")
 	}
 	b, err := os.ReadFile(wav)
 	if err != nil {
