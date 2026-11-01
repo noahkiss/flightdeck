@@ -281,6 +281,23 @@ final class ContentLimitTests: XCTestCase {
         await fleet.setActive(false)
     }
 
+    /// R4: an `unavailable` that is not the busy limit (a hab with no content service) fails at
+    /// once, with no retry waits.
+    func testUnavailableNotBusyFailsFast() async {
+        let (fleet, hab, content, items) = await setup(files: 1)
+        content.busyBackoff = .seconds(2)
+        await hab.setCapability("content", false)
+        let start = ContinuousClock.now
+        let r = await content.bytes(for: items[0])
+        XCTAssertEqual(r, .failed(ContentModel.loadFailed))
+        let d = await content.diff(for: items[0])
+        XCTAssertEqual(d, .failed(ContentModel.loadFailed))
+        XCTAssertLessThan(ContinuousClock.now - start, .seconds(1), "no retry wait for a hab with no content service")
+        XCTAssertTrue(ContentModel.isBusy(RPCError(code: 1, message: "", data: ErrorData(hint: "4 content calls already run on this connection", kind: .unavailable, seq: 0))))
+        XCTAssertFalse(ContentModel.isBusy(RPCError(code: 1, message: "", data: ErrorData(hint: "/w/a: input/output error", kind: .unavailable, seq: 0))))
+        await fleet.setActive(false)
+    }
+
     /// S2: a file rewritten at the same size, with a new modified time, loads again.
     func testSameSizeRewriteLoadsAgain() async {
         let (fleet, hab, content, items) = await setup(files: 1)

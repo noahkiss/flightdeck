@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -69,7 +70,17 @@ func TestContentCalls(t *testing.T) {
 	if _, err := (api.Client{Caller: c2}).ContentList(ctx(t), api.ContentListParams{Session: "s1"}); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindUnavailable {
 		t.Errorf("no Content: %v", err)
 	}
+	// The app tries a content call again only on the busy hint's phrase (app.md 4.7).
+	if strings.Contains(ce.Data.Hint, busyPhrase) {
+		t.Errorf("the no-Content hint reads as busy: %q", ce.Data.Hint)
+	}
+	if !strings.Contains(hintContentBusy, busyPhrase) {
+		t.Errorf("the busy hint %q lost the phrase the app matches", hintContentBusy)
+	}
 }
+
+// busyPhrase is what the app looks for to tell a busy answer from another unavailable one.
+const busyPhrase = "already run on this connection"
 
 // TestContentScope: content.updated reaches a subscription with its session in scope and stays
 // out of other scopes.

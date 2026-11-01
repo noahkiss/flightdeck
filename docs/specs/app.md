@@ -631,8 +631,10 @@ What carries over:
 - **The hab's call limit.** The hab runs at most 4 content calls per connection. The app sends
   `content.read` and `content.diff` through 3 slots per connection, shared by every session's
   cards, which leaves room for `content.list`. Views that ask for the same file version at once
-  share one load. A busy answer (`unavailable`) is tried again 3 times, with a wait from 200 ms
-  that doubles. A load that still fails says "Could not load this file"; the hab's hint stays out
+  share one load. A busy answer is tried again 3 times, with a wait from 200 ms that doubles.
+  Busy is an `unavailable` whose hint says "already run on this connection", the hab's
+  per-connection limit; any other `unavailable` (a hab with no content service, a file it could
+  not read) fails at once. A load that still fails says "Could not load this file"; the hab's hint stays out
   of the card.
 - **Bytes cache.** Keyed by item and file version (size and modification time, from the list),
   at most 64 MiB, the least recently used out first. A list that names a new version drops the

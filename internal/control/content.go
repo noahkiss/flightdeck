@@ -24,6 +24,10 @@ type Content interface {
 // holds up to 1 MiB until its reply is queued.
 const maxRunningContent = 4
 
+// hintContentBusy answers a content call past maxRunningContent. The app tries again only on
+// an unavailable answer whose hint says "already run on this connection" (app.md 4.7).
+const hintContentBusy = "%d content calls already run on this connection"
+
 // handleContent checks a content.* call and runs it on its own goroutine.
 func (c *conn) handleContent(m message) {
 	seq := c.currentSeq()
@@ -105,7 +109,7 @@ func (c *conn) handleContent(m message) {
 	c.mu.Lock()
 	if c.contents >= maxRunningContent {
 		c.mu.Unlock()
-		c.reply(m, seq, nil, appErr(api.ErrorKindUnavailable, "%d content calls already run on this connection", maxRunningContent))
+		c.reply(m, seq, nil, appErr(api.ErrorKindUnavailable, hintContentBusy, maxRunningContent))
 		return
 	}
 	c.contents++

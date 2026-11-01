@@ -301,14 +301,21 @@ public final class ContentModel {
     /// the log: it is written for a developer, not for the card.
     public static let loadFailed = "Could not load this file"
 
-    /// Runs a content call again, with a doubling wait, while the hab answers `unavailable`
-    /// (busy) and the connection stays online.
+    /// Whether an error is the hab's per-connection call limit (busy), the one `unavailable`
+    /// answer worth trying again. A hab with no content service, or a file it could not
+    /// read, is also `unavailable` but fails at once.
+    nonisolated static func isBusy(_ e: RPCError) -> Bool {
+        e.kind == .unavailable && (e.data?.hint ?? e.message).contains("already run on this connection")
+    }
+
+    /// Runs a content call again, with a doubling wait, while the hab answers busy and the
+    /// connection stays online.
     private func busyRetry<R>(_ call: () async throws -> R) async throws -> R {
         var wait = busyBackoff
         for attempt in 1... {
             do {
                 return try await call()
-            } catch let e as RPCError where e.kind == .unavailable && attempt < Self.busyTries && context.online {
+            } catch let e as RPCError where Self.isBusy(e) && attempt < Self.busyTries && context.online {
                 try? await Task.sleep(for: wait)
                 wait *= 2
             }
