@@ -1411,7 +1411,10 @@ The owner sees each harness account's usage limits before hitting them.
   name, such as "Max 5x" or "Plus"), the harness, and a list of windows. A window has a name ("5h",
   "7d", or a model name), a used percentage, a reset time, and when it was read.
 - The account key is stable and not secret: a hash the adapter makes from an account or
-  organisation id the harness exposes. With no such id, the key is the hab plus the harness.
+  organisation id the harness exposes. With no such id, the key is a hash of the hab, the harness
+  and the harness's data directory (`harness-adapters.md`, Usage). No harness gives an id today,
+  so every key is per hab: one account used on two habs shows as two accounts, and the merge by
+  key below never joins them.
 - **Documented interfaces only.** The adapter reads usage from what the harness already gives it:
   hook payloads, status-line input, transcript or rollout records, or the harness's own server
   protocol. Confirmed in Part 4 and built: Claude Code's status-line input carries its rate-limit

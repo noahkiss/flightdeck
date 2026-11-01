@@ -722,7 +722,7 @@ harness already hands over. It never reads a credential file and never calls a u
 
 | Harness | Source | Version caveat |
 |---|---|---|
-| Claude Code | The status-line input: `rate_limits.five_hour`, `seven_day` and `spend_limit`, each with `used_percentage` and `resets_at` in Unix seconds. Claude Code documents this input for `statusLine` commands. Hooks carry no rate limits. | Recent versions only; tested against 2.1.316. An older version sends no `rate_limits`. Claude Code sends the field only for a subscription account (or a gateway spend limit), only after the first answer, and drops a window once its reset time passes. |
+| Claude Code | The status-line input: `rate_limits.five_hour`, `seven_day`, `spend_limit` and any other key, each with `used_percentage` and `resets_at` in Unix seconds. Claude Code documents this input for `statusLine` commands. Hooks carry no rate limits. | Recent versions only; tested against 2.1.316. An older version sends no `rate_limits`. Claude Code sends the field only for a subscription account (or a gateway spend limit), only after the first answer, and drops a window once its reset time passes. |
 | Codex | The rollout's `event_msg` `token_count` events: `rate_limits` with `limit_id`, `limit_name`, `primary` and `secondary` (`used_percent`, `window_minutes`, `resets_at` in Unix seconds) and `plan_type`. Hook payloads carry no rate limits. | The rollout is not a documented format. Tested against 0.159.0 to 0.166.0. Older versions have no `limit_id` and give `resets_in_seconds`; both still read. |
 | opencode | None. opencode reports no account rate limits. | The adapter adds no account: no reading, never zero. |
 
@@ -733,20 +733,36 @@ or a second server process, so neither is used.
 Built choices (`internal/usage`, `cmd/gff-hab/usage.go`, `cmd/gff-hab/statusline.go`):
 
 - **Claude Code: a status-line wrapper.** Claude Code runs one `statusLine` command. That command
-  is `gff-hab statusline claude [-- <command>]`. It posts the input to the hook endpoint as
-  event `StatusLine`, the same way a hook does. Beside the post it runs the owner's own status-line
-  command, if one follows `--`, with the same input. That command's output, errors and exit code
-  are the status line's. With none, the status line prints nothing. The post is capped at the
-  hook budget (900 ms). Outside a gff-hab pane it posts nothing. `gff-hab statusline -print claude
-  [-wrap <command>]` prints the setting; writing it into settings is the owner's step, as for hooks.
-  A `StatusLine` envelope is usage only: it never changes the agent state.
-- **Codex: the end of the rollout, after a hook.** Each Codex hook names its session. 2 s after
-  the first hook of a burst, gff-hab reads the last 256 KiB of that session's rollout (found as for
-  the chat view) and skips the first, cut line. An unchanged file is not read again. The latest
-  `token_count` of each `limit_id` wins. `read_at` is the timestamp of the line, not the time of
-  the read, so an old rollout never looks fresh. At least one Codex hook must arrive after a
-  gff-hab start before Codex has a reading.
-- **Window names.** Claude Code: `5h`, `7d`, and `spend` plus the period (`spend monthly`).
+  is `gff-hab statusline claude [-timeout d] [-- <command>...]`. It posts the input to the hook
+  endpoint as event `StatusLine`, the same way a hook does. Beside the post it runs the owner's own
+  status-line command, if one follows `--`, with the same input. One word after `--` is a shell
+  string, run with `/bin/sh -c` as Claude Code runs its own; several words are the argv, run as
+  is. That command's output, errors and exit code are the status line's (127 when it cannot
+  start). With none, the status line prints nothing. Outside a gff-hab pane it posts nothing.
+  `gff-hab statusline -print claude [-wrap <command>]` prints the setting; writing it into
+  settings is the owner's step, as for hooks. A `StatusLine` envelope is usage only: it never
+  changes the agent state.
+- **The status line never waits on gff-hab.** Claude Code refreshes the status line many times a
+  turn and waits for each run. The post is capped at 200 ms, dial and answer, from the start of
+  the run: a hung gff-hab costs the status line at most that, and the next refresh sends the same
+  snapshot again.
+- **The wrapped command leaves nothing behind.** It runs in its own process group. SIGTERM,
+  SIGINT and SIGHUP to `gff-hab statusline` go to the whole group, and the group is killed one
+  second later if it still runs. A command that runs past `-timeout` (default 10 s) is killed with
+  its group.
+- **Codex: the end of the rollout, after a hook.** Each Codex hook names its session. Once a
+  session's hooks pause for 2 s, and at most 10 s after the first hook of a burst, gff-hab reads
+  the last 256 KiB of that session's rollout (found as for the chat view) and skips the first, cut
+  line. A burst of hooks is one read. An unchanged file is not read again. A read that ends
+  mid-line does not count as read: the last `token_count` may still be written, so gff-hab reads
+  again 2 s later, up to 3 times, with no hook. The latest `token_count` of each `limit_id` wins,
+  by its timestamp. `read_at` is the timestamp of the line, not the time of the read, so an old
+  rollout never looks fresh. At least one Codex hook must arrive after a gff-hab start before
+  Codex has a reading.
+- **Window names.** Claude Code: `5h`, `7d`, and `spend` plus the period (`spend monthly`), when
+  the period is short lower-case words. Any other `rate_limits` key whose value parses is a window
+  too, named by its words with a leading length shortened: `seven_day_opus` is `7d opus`. A key
+  that is not lower-case words joined by `_` (40 bytes at most) is drift.
   Codex: the length from `window_minutes` (`5h`, `7d`). A Codex limit id other than `codex` (a
   model with its own limit) puts its `limit_name`, else its id, first: `model-y 7d`. A limit id
   with no windows adds none.
@@ -767,8 +783,8 @@ Built choices (`internal/usage`, `cmd/gff-hab/usage.go`, `cmd/gff-hab/statusline
   at most every 5 minutes for an unchanged account, so a client sees the reading's age move.
   Every subscription gets it, scoped or not: an account belongs to no session.
 - **Drift.** A window whose numbers do not parse (a percentage that is not a number, a reset time
-  that is not Unix seconds, an unknown window key, a Codex window with no length) is left out and
-  logged once. A harness version outside the tested range is logged once. A wrong number is never
+  that is not Unix seconds, a window key that is not lower-case words, a Codex window with no
+  length) is left out and logged once, up to 256 distinct lines per gff-hab run. A harness version outside the tested range is logged once. A wrong number is never
   shown; the last good reading ages instead. The API has no degraded flag for usage yet.
 
 ## Input delivery
