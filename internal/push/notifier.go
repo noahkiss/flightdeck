@@ -451,7 +451,10 @@ func (n *Notifier) process(st api.AgentState) {
 			n.send(Message{Token: t.token, Environment: t.env, Type: TypeAlert, Priority: 5, CollapseID: ob.collapse, Payload: payload}, true)
 		}
 	}
-	if changed {
+	// A pane first seen through a replayed screen report is old state: after a gff-hab restart
+	// the link replays each pane's last OSC 7501 report. Record it and update the Live
+	// Activity, but raise no banner.
+	if changed && !(!seen && st.Source == api.StateSourceScreen) {
 		n.banner(st, w)
 	}
 	n.activity(st, w, changed)

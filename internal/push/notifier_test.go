@@ -387,3 +387,38 @@ func TestNotifierAnsweredEarly(t *testing.T) {
 		t.Errorf("the settled request raised more pushes: %d requests, want 4", n)
 	}
 }
+
+// TestNotifierReplayNoBanner: after a gff-hab restart the link replays each pane's last OSC
+// 7501 report with source screen. A pane first seen that way raises no banner, but its Live
+// Activity is updated; the next live change pushes as usual.
+func TestNotifierReplayNoBanner(t *testing.T) {
+	r := newNotifierRig(t)
+	r.store.Register("dev-phone", phone, Production, append(allKinds, KindDone), false)
+	r.store.RegisterActivity("dev-phone", "s1", phoneLA)
+	replay := state(api.AgentStatusError)
+	replay.Source = api.StateSourceScreen
+	r.n.State(replay)
+	other := state(api.AgentStatusBlocked)
+	other.Pane, other.Kind, other.Source = "p2", api.BlockedKindPermission, api.StateSourceScreen
+	r.n.State(other)
+	r.n.Sync()
+	if n := len(alerts(r.prod.requests(), phone)); n != 0 {
+		t.Fatalf("replayed state pushed %d banners", n)
+	}
+	la := 0
+	for _, q := range r.prod.requests() {
+		if q.Token == phoneLA {
+			la++
+		}
+	}
+	if la == 0 {
+		t.Fatal("replayed state did not update the Live Activity")
+	}
+	live := state(api.AgentStatusDone)
+	live.Source = api.StateSourceOsc
+	r.n.State(live)
+	r.n.Sync()
+	if n := len(alerts(r.prod.requests(), phone)); n != 1 {
+		t.Fatalf("a live change after the replay pushed %d banners, want 1", n)
+	}
+}
