@@ -615,6 +615,9 @@ The schema lives in `api/` (layout and commands: `docs/layout.md`). Built choice
   be exactly one higher and have a translator (`api.Translators`) for every step down to
   `min_revision`.
 - `rpc.discover` returns the schema document itself, so its result carries no `seq`.
+- Changed before any release, so with no new revision: `hab.stats` `cpu_pct` became optional
+  (2026-11-01), so a host that cannot measure CPU leaves it out. No revision had been released, and
+  no client read the field.
 
 ### 3.4 Capabilities
 
