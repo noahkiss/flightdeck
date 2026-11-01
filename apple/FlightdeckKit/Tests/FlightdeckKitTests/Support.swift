@@ -13,6 +13,7 @@ func fastTiming() -> HabTiming {
     t.helloTimeout = .seconds(2)
     t.callTimeout = .seconds(2)
     t.tick = .milliseconds(25)
+    t.stableAfter = .milliseconds(150)
     return t
 }
 

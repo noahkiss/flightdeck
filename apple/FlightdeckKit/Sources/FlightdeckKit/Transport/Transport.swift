@@ -42,10 +42,15 @@ public protocol Transport: Sendable {
     /// Drops any shared connection, so the next `open` starts afresh. A carrier
     /// with nothing shared does nothing.
     func reset() async
+    /// How long the hello may take on this carrier, counted from the open;
+    /// nil uses the connection's default. ssh needs room for connect, key
+    /// exchange, auth and the remote shell.
+    var helloTimeout: Duration? { get }
 }
 
 extension Transport {
     public func reset() async {}
+    public var helloTimeout: Duration? { nil }
 }
 
 public struct TransportError: Error, CustomStringConvertible, Sendable {

@@ -83,6 +83,7 @@ final class ConnectionTests: XCTestCase {
         let conn = HabConnection(id: "a", transport: hab.transport(), timing: t)
         await conn.start()
         await eventually("online") { await conn.state.status == .online }
+        try? await Task.sleep(for: .milliseconds(300)) // past stableAfter
         await hab.dropConnections()
         // With a 5 s backoff, only an immediate retry is back within 2 s.
         await eventually("back online", timeout: 2) { let s = await conn.state; return s.status == .online && s.snapshots == 2 }
@@ -256,6 +257,31 @@ final class ConnectionTests: XCTestCase {
         XCTAssertEqual(n, 2)
     }
 
+    /// A hab that drops every connection right after the snapshot is not
+    /// hammered: short sessions count as failures and back off.
+    func testShortSessionsBackOff() async {
+        let hab = await sampleHab()
+        let transport = hab.transport()
+        var t = fastTiming()
+        t.stableAfter = .seconds(5)
+        t.minBackoff = .milliseconds(200)
+        t.maxBackoff = .milliseconds(200)
+        let conn = HabConnection(id: "a", transport: transport, timing: t)
+        await conn.start()
+        let dropper = Task {
+            while !Task.isCancelled {
+                if await hab.subscribes > 0 { await hab.dropConnections() }
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(1000))
+        dropper.cancel()
+        // Back-to-back immediate retries would make dozens of attempts in 1 s;
+        // backing off at 100-200 ms allows about ten.
+        XCTAssertLessThanOrEqual(transport.openAttempts, 12, "attempts: \(transport.openAttempts)")
+        await conn.stop()
+    }
+
     func testBackoffBounds() {
         let lo = Duration.milliseconds(500), hi = Duration.seconds(30)
         for attempt in 1...20 {
@@ -274,30 +300,29 @@ final class ConnectionTests: XCTestCase {
 final class SeqRuleTests: XCTestCase {
     func testEventsAtOrBelowResponseSeqAreDropped() async throws {
         // A hand-written server: on subscribe it sends events 1 and 2, then the
-        // response with seq 1 (event 1 is in the snapshot), then event 3.
+        // response with seq 1, then event 3. Event 1 is the only change to s1 and
+        // is already in the snapshot, so only the seq rule can drop it: its
+        // revision (9) is above the snapshot's (2), so the revision rule would let
+        // it through. Events 2 and 3 touch s2, so they cannot mask it.
         let transport = FakeTransport { server, _ in
             Task {
                 var lines = LineBuffer()
                 while let chunk = try? await server.read() {
                     for line in (try? lines.append(chunk)) ?? [] {
-                        let obj = try JSONSerialization.jsonObject(with: line) as! [String: Any]
-                        let id = obj["id"] as! Int
-                        let method = obj["method"] as! String
+                        let obj = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] ?? [:]
+                        let id = obj["id"] as? Int ?? 0
+                        let method = obj["method"] as? String ?? ""
                         func send(_ s: String) async { try? await server.write(Data((s + "\n").utf8)) }
-                        func event(_ seq: Int, _ title: String, rev: Int) -> String {
-                            #"{"jsonrpc":"2.0","method":"event","params":{"seq":\#(seq),"type":"session.updated","id":"s1","revision":\#(rev),"data":{"id":"s1","name":"x","revision":\#(rev),"state":"running","title":"\#(title)"}}}"#
+                        func event(_ seq: Int, _ sid: String, _ title: String, rev: Int) -> String {
+                            #"{"jsonrpc":"2.0","method":"event","params":{"seq":\#(seq),"type":"session.updated","id":"\#(sid)","revision":\#(rev),"data":{"id":"\#(sid)","name":"x","revision":\#(rev),"state":"running","title":"\#(title)"}}}"#
                         }
                         if method == "hab.hello" {
                             await send(#"{"jsonrpc":"2.0","id":\#(id),"result":{"build":"t","capabilities":[],"client_id":"c1","epoch":"e1","host":{"id":"h"},"reconnect_token":"tok","revision":1,"seq":0}}"#)
                         } else if method == "events.subscribe" {
-                            // Event 1 carries revision 2, but the snapshot already holds
-                            // revision 2 with another title: if event 1 were applied the
-                            // revision rule would drop it anyway, so give it revision 9
-                            // to prove the seq rule drops it.
-                            await send(event(1, "from event 1", rev: 9))
-                            await send(event(2, "from event 2", rev: 10))
-                            await send(#"{"jsonrpc":"2.0","id":\#(id),"result":{"host":{"id":"h"},"panes":[],"projects":[],"seq":1,"sessions":[{"id":"s1","name":"x","revision":2,"state":"running","title":"snapshot"}]}}"#)
-                            await send(event(3, "from event 3", rev: 11))
+                            await send(event(1, "s1", "from event 1", rev: 9))
+                            await send(event(2, "s2", "from event 2", rev: 2))
+                            await send(#"{"jsonrpc":"2.0","id":\#(id),"result":{"host":{"id":"h"},"panes":[],"projects":[],"seq":1,"sessions":[{"id":"s1","name":"x","revision":2,"state":"running","title":"snapshot"},{"id":"s2","name":"y","revision":1,"state":"running","title":"s2 snapshot"}]}}"#)
+                            await send(event(3, "s2", "from event 3", rev: 3))
                         }
                     }
                 }
@@ -305,9 +330,10 @@ final class SeqRuleTests: XCTestCase {
         }
         let conn = HabConnection(id: "a", transport: transport, timing: fastTiming())
         await conn.start()
-        await eventually("event 3") { await conn.state.store.sessions["s1"]?.title == "from event 3" }
-        let rev = await conn.state.store.sessions["s1"]?.revision
-        XCTAssertEqual(rev, 11)
+        await eventually("event 3") { await conn.state.store.sessions["s2"]?.title == "from event 3" }
+        let s1 = await conn.state.store.sessions["s1"]
+        XCTAssertEqual(s1?.title, "snapshot", "event 1 has seq 1, not above the response seq")
+        XCTAssertEqual(s1?.revision, 2)
         await conn.stop()
     }
 

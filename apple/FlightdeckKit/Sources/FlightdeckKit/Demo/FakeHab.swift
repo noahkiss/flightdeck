@@ -332,7 +332,12 @@ public actor FakeHab {
     private func write<T: Encodable>(_ c: Conn, _ value: T) async {
         guard var data = try? JSONEncoder().encode(value) else { return }
         data.append(0x0A)
-        try? await c.stream.write(data)
+        if let f = c.stream as? FakeStream {
+            // No suspension between a seq being taken and its bytes going out.
+            try? f.send(data)
+        } else {
+            try? await c.stream.write(data)
+        }
     }
 
     static func randomID() -> String {

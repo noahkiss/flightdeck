@@ -108,6 +108,12 @@ public final class FakeStream: ByteStream, @unchecked Sendable {
     }
 
     public func write(_ data: Data) async throws {
+        try send(data)
+    }
+
+    /// Writes without suspending, so a caller on an actor keeps its order:
+    /// nothing else on that actor runs between deciding a message and sending it.
+    public func send(_ data: Data) throws {
         let s = shared
         let peer = 1 - side
         enum Outcome { case closed, buffered, wake(CheckedContinuation<Data?, Error>) }

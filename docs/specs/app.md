@@ -891,7 +891,8 @@ The first app stage: the connection to every hab and the status board. Code in
   BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -- <host> gff-hab connect` with
   the user's own keys and ssh config. ssh never prompts; its last stderr lines become the error
   shown under the hab. Each stream is its own ssh process for now; connection sharing comes with
-  data streams.
+  data streams. The hello has 25 s over ssh (10 s on the socket): its clock starts when ssh
+  starts, so it covers connect, key exchange, auth and the remote shell.
 - **Hab list (Mac).** Flightdeck's own file, `Flightdeck/habs.json` under Application Support, or
   the path in `$FLIGHTDECK_HABS`. Each entry has a `label` and exactly one of `local` (optional
   `socket`) or `ssh` (`host`, optional `command` and `options`). No file means the local hab
@@ -910,8 +911,10 @@ The first app stage: the connection to every hab and the status board. Code in
   ignored. `agent.state` carries its revision in the data when the envelope has none.
 - **Liveness.** `hab.ping` goes out when nothing was sent for 15 s. Nothing received for 45 s
   ends the connection. The check runs every second.
-- **Reconnect.** The first retry after a live connection ends goes at once. Later retries wait
-  0.5 s doubling to 30 s, then a random point in the upper half of that wait. Three failures in a
+- **Reconnect.** The first retry after a connection that stayed online for 10 s goes at once. A
+  shorter one counts as a failure, so a hab that drops every connection after the snapshot is
+  not hammered. Later retries wait 0.5 s doubling to 30 s, then a random point in the upper half
+  of that wait. Three failures in a
   row mark the hab offline; retries go on while the app is visible. A return to the foreground
   retries at once.
 - **Offline and update needed.** Rows dim only when the hab is offline (three failures), with
@@ -928,8 +931,10 @@ The first app stage: the connection to every hab and the status board. Code in
 - **Layout.** iPhone: the list, with connections in a sheet. iPad and Mac: the list beside a
   column with a session cards placeholder and the connections list. The project and hab grouping
   switch, search and the usage footer are not built yet.
-- **Lifecycle.** iPhone and iPad close every connection when the scene enters the background and
-  reconnect when it becomes active; `inactive` changes nothing. The Mac counts open windows; the
+- **Lifecycle.** iPhone and iPad close every connection when the app enters the background and
+  reconnect when it becomes active; `inactive` changes nothing. The App reads the app-level
+  scene phase, which is active while any window is, so one iPad window going to the background
+  does not disconnect another. Transitions run one after another and the last wanted state wins. The Mac counts open windows; the
   last one closed disconnects. Closing happens at once, so the hab ends size ownership at once.
   Proof: unit tests over fake and real Unix socket streams count open streams after the
   background; the app logs the count when it goes to the background and again 10 s later (iOS

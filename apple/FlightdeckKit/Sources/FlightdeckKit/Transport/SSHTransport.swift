@@ -30,6 +30,10 @@ public struct SSHTransport: Transport {
 
     public var endpoint: String { "ssh " + host }
 
+    /// ConnectTimeout (10 s), key exchange, auth and the remote shell all run
+    /// before the hab can answer.
+    public var helloTimeout: Duration? { .seconds(25) }
+
     /// The ssh arguments for one stream, without the program.
     public func arguments() throws -> [String] {
         if host.isEmpty || host.hasPrefix("-") || host.contains(where: { $0.isWhitespace }) {

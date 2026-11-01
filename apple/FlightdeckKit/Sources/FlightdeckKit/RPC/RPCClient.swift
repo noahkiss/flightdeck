@@ -70,6 +70,7 @@ public actor RPCClient {
     private let stream: ByteStream
     private var nextID = 1
     private var pending: [Int: CheckedContinuation<Data, Error>] = [:]
+    private var timeouts: [Int: Task<Void, Never>] = [:]
     private var ended: Error?
     private var started = false
     private let encoder = JSONEncoder()
@@ -104,8 +105,9 @@ public actor RPCClient {
         let line: Data = try await withCheckedThrowingContinuation { c in
             pending[id] = c
             Task { await self.send(data, id: id) }
-            Task {
+            timeouts[id] = Task {
                 try? await Task.sleep(for: timeout)
+                if Task.isCancelled { return }
                 await self.fail(id, ProtocolError("\(method.name) timed out"))
             }
         }
@@ -126,6 +128,9 @@ public actor RPCClient {
 
     public var isClosed: Bool { ended != nil }
 
+    /// Why the stream ended, once it has; nil while open.
+    public var endError: Error? { ended }
+
     private func send(_ data: Data, id: Int) async {
         do {
             lastSent = .now
@@ -136,6 +141,7 @@ public actor RPCClient {
     }
 
     private func fail(_ id: Int, _ error: Error) {
+        timeouts.removeValue(forKey: id)?.cancel()
         pending.removeValue(forKey: id)?.resume(throwing: error)
     }
 
@@ -162,6 +168,7 @@ public actor RPCClient {
             return
         }
         if let id = head.id {
+            timeouts.removeValue(forKey: id)?.cancel()
             pending.removeValue(forKey: id)?.resume(returning: line)
         }
     }
@@ -171,6 +178,8 @@ public actor RPCClient {
         ended = error
         let waiting = pending
         pending.removeAll()
+        for (_, t) in timeouts { t.cancel() }
+        timeouts.removeAll()
         for (_, c) in waiting { c.resume(throwing: error) }
         inboundSink.finish()
         stream.close()

@@ -51,12 +51,17 @@ public struct HabTiming: Sendable {
     public var minBackoff: Duration = .milliseconds(500)
     /// Retries are at most this far apart, before jitter.
     public var maxBackoff: Duration = .seconds(30)
+    /// The hello's timeout, unless the transport names its own (ssh needs longer).
     public var helloTimeout: Duration = .seconds(10)
     public var callTimeout: Duration = .seconds(30)
     /// Failures in a row before the hab shows offline.
     public var offlineAfter = 3
     /// How often the liveness check runs.
     public var tick: Duration = .seconds(1)
+    /// A connection that stayed online this long ended in success: the next
+    /// retry goes at once. A shorter one counts as a failure and backs off, so
+    /// a hab that drops every connection after the snapshot is not hammered.
+    public var stableAfter: Duration = .seconds(10)
 
     public init() {}
 }
@@ -93,6 +98,7 @@ public actor HabConnection {
     private var sessionEnd: CheckedContinuation<Void, Error>?
     private var sessionEndError: Error?
     private var reachedOnline = false
+    private var onlineSince: ContinuousClock.Instant?
     private var wake: CheckedContinuation<Void, Never>?
     private var wakeGen = 0
 
@@ -161,6 +167,7 @@ public actor HabConnection {
                 if Task.isCancelled { break }
             }
             reachedOnline = false
+            onlineSince = nil
             do {
                 try await runSession()
             } catch let p as Permanent {
@@ -176,10 +183,16 @@ public actor HabConnection {
             }
             if Task.isCancelled { break }
             if reachedOnline {
-                // A live connection ended: the first retry goes at once.
-                failures = 0
                 state.lostAt = Date()
-                state.status = .connecting
+                let stable = onlineSince.map { ContinuousClock.now - $0 >= timing.stableAfter } ?? false
+                if stable {
+                    // A long-lived connection ended: the first retry goes at once.
+                    failures = 0
+                    state.status = .connecting
+                } else {
+                    failures += 1
+                    state.status = failures >= timing.offlineAfter ? .offline : .connecting
+                }
             } else {
                 failures += 1
                 if state.lostAt == nil { state.lostAt = Date() }
@@ -207,7 +220,9 @@ public actor HabConnection {
             for await n in r.inbound {
                 await self.handle(n, from: r)
             }
-            await self.endSession(r, ConnectionClosed(detail: stream.diagnostics))
+            // Keep the client's own reason (a read error, an over-long message) when it has one.
+            let why = await r.endError ?? ConnectionClosed(detail: stream.diagnostics)
+            await self.endSession(r, why)
         }
         var liveness: Task<Void, Never>?
         defer {
@@ -233,6 +248,7 @@ public actor HabConnection {
         state.status = .online
         state.lastError = nil
         reachedOnline = true
+        onlineSince = .now
         publish()
 
         try await waitSessionEnd()
@@ -248,7 +264,7 @@ public actor HabConnection {
         )
         let w: Welcome
         do {
-            w = try await r.call(HabMethods.habHello, params, timeout: timing.helloTimeout)
+            w = try await r.call(HabMethods.habHello, params, timeout: transport.helloTimeout ?? timing.helloTimeout)
         } catch let e as RPCError where e.kind == .revisionUnsupported {
             let side: UpdateSide = (e.data?.server.map { $0.max < HabAPI.minRevision } ?? false) ? .hab : .app
             throw Permanent(side: side, hint: e.data?.hint ?? e.message)
