@@ -1,9 +1,8 @@
 import HabAPI
 import SwiftUI
 
-/// The view that fills the terminal half of a session. The terminal view
-/// stage sets it with `.terminalSlot { target in ... }`; until then a
-/// placeholder holds the place.
+/// The view that fills the terminal half of a session: the pane's terminal
+/// view by default. `.terminalSlot { target in ... }` replaces it.
 public struct TerminalSlot {
     public var make: @MainActor (SessionTarget) -> AnyView
 
@@ -11,11 +10,29 @@ public struct TerminalSlot {
         self.make = make
     }
 
+    /// The terminal view of the target's pane, through the hab connection in
+    /// the environment; the placeholder when there is no pane or connection.
+    public static let terminal = TerminalSlot { target in AnyView(PaneTerminal(target: target)) }
+
     public static let placeholder = TerminalSlot { target in AnyView(TerminalPlaceholder(target: target)) }
 }
 
+/// The terminal view of one session's pane.
+struct PaneTerminal: View {
+    let target: SessionTarget
+    @Environment(\.habConnections) private var habs
+
+    var body: some View {
+        if let pane = target.pane, let conn = habs.find(target.habID) {
+            TerminalScreen(pane: pane, connection: conn)
+        } else {
+            TerminalPlaceholder(target: target)
+        }
+    }
+}
+
 private struct TerminalSlotKey: EnvironmentKey {
-    static let defaultValue = TerminalSlot.placeholder
+    static let defaultValue = TerminalSlot.terminal
 }
 
 extension EnvironmentValues {
@@ -39,7 +56,7 @@ struct TerminalPlaceholder: View {
         ContentUnavailableView {
             Label("Terminal", systemImage: "terminal")
         } description: {
-            Text("The terminal view is not built yet.")
+            Text("This session has no pane to show.")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.background.secondary)

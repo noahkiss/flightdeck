@@ -167,7 +167,8 @@ public indirect enum ChatItem: Hashable, Sendable, Identifiable {
 public enum ChatRender {
     /// Tool names whose card folds to one line.
     static let oneLineTools: Set<String> = ["Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "NotebookRead",
-                                            "read", "grep", "glob", "list", "webfetch", "websearch"]
+                                            "read", "grep", "glob", "list", "webfetch", "websearch",
+                                            "web_search", "view_image"]
 
     /// Rows already built, by message id, with the message they came from.
     public struct Cache {
@@ -256,6 +257,23 @@ public enum ChatRender {
         }
         if let content = obj?["content"]?.stringValue, t.name == "Write" || t.name == "write" {
             return .diff(content.components(separatedBy: "\n").map { DiffLine(kind: .added, text: $0) })
+        }
+        // Codex apply_patch: each file holds a unified diff, or the content of a new file.
+        if let files = obj, !files.isEmpty,
+           files.values.allSatisfy({ $0.objectValue?["unified_diff"] != nil || $0.objectValue?["content"] != nil }) {
+            var lines: [DiffLine] = []
+            for (_, f) in files.sorted(by: { $0.key < $1.key }) {
+                let o = f.objectValue
+                if let d = o?["unified_diff"]?.stringValue {
+                    for l in d.components(separatedBy: "\n") where !l.hasPrefix("---") && !l.hasPrefix("+++") {
+                        if l.hasPrefix("-") { lines.append(DiffLine(kind: .removed, text: String(l.dropFirst()))) }
+                        if l.hasPrefix("+") { lines.append(DiffLine(kind: .added, text: String(l.dropFirst()))) }
+                    }
+                } else if let c = o?["content"]?.stringValue {
+                    lines += c.components(separatedBy: "\n").map { DiffLine(kind: .added, text: $0) }
+                }
+            }
+            if !lines.isEmpty { return .diff(lines) }
         }
         return .input(input.prettyJSON)
     }

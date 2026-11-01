@@ -500,8 +500,8 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
   items (task boxes too), quotes and rules. Inline Markdown uses
   `AttributedString(markdown:)`. No third-party renderer.
 - **Tool cards** are folded. Reads and searches fold to one line. Shell tools show the exact
-  command, edits a removed and added diff, `Write` its content as added lines, other tools
-  their input as JSON. Output shows 12 lines with "show all"; a truncated output says the hab
+  command, edits a removed and added diff, `Write` its content as added lines, Codex's
+  `apply_patch` the changed lines of each file's diff, other tools their input as JSON. Output shows 12 lines with "show all"; a truncated output says the hab
   sent the first part (no call fetches more yet).
 - **Banners.** Offline or reconnecting shows a banner and turns the composer off. An agent
   state with a version warning shows "chat view may be incomplete" with a Terminal button.
@@ -509,13 +509,16 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
   the terminal. A session with no harness opens on the terminal. iPad and Mac: the board list
   stays on the left; the session fills the rest with chat and terminal at 50/50 under one header
   (harness, host, model). The divider does not drag yet.
-- **Terminal slot.** `.terminalSlot { target in ... }` sets the view in the terminal half. The
-  terminal view stage fills it; a placeholder holds it now.
+- **Terminal slot.** The terminal half shows the pane's `TerminalScreen` (5), reached through
+  the hab connection in the environment; a session with no pane shows a placeholder.
+  `.terminalSlot { target in ... }` replaces the view. On the phone the switch shows one view at
+  a time, so the terminal's data stream opens when it shows and closes when the chat returns.
 - **Snapshot tests.** The tests read `internal/transcript/testdata/<harness>-*.chat.json` in
   place, so the app and the hab share one fixture set. Each renders to plain text
   (`ChatRender.text`) and is compared with `Tests/FlightdeckKitTests/Snapshots/`. On macOS each
   also renders through `ImageRenderer`, checked for size only: pixels change with fonts and OS
-  versions. Codex and opencode have no reader and no fixtures yet; their files drop in by name.
+  versions. The Claude Code and Codex fixtures have snapshots; opencode has no reader or
+  fixtures yet, and its files drop in by name.
 - **Demo mode.** The fake hab serves `chat.page` (with `before` and a cursor), sends
   `chat.message`, and records `pane.input`. In demo mode six sessions hold invented
   conversations, and a sent message gets an invented reply.
