@@ -1,5 +1,7 @@
 import Foundation
 import HabAPI
+import ImageIO
+import PDFKit
 import XCTest
 @testable import FlightdeckKit
 
@@ -198,7 +200,7 @@ final class ContentTests: XCTestCase {
     func testDemoContentRendersOnTheTideSession() async {
         let png = DemoContent.chartPNG()
         XCTAssertGreaterThan(png.count, 100)
-        XCTAssertNotNil(platformImage(png))
+        XCTAssertNotNil(ImageDecode.thumbnail(png, maxPixel: 256))
         XCTAssertEqual(DiffParser.parse(DemoContent.stationsDiff).files.first?.added, 1)
     }
 }
@@ -208,5 +210,166 @@ actor Counter {
     func next() -> Int {
         n += 1
         return n
+    }
+}
+
+// MARK: - Fix round: limits, caches, decoding
+
+@MainActor
+final class ContentLimitTests: XCTestCase {
+    private func item(_ id: String, size: Int, modified: String = "v1") -> ContentItem {
+        ContentItem(at: "2026-01-01T10:00:05Z", id: id, kind: .text, modified: modified, name: id + ".txt", path: "/w/" + id,
+                    session: "s1", shown: true, size: size, type: "text/plain")
+    }
+
+    /// A fleet with one fake hab whose session s1 has `n` small text files.
+    private func setup(files n: Int) async -> (Fleet, FakeHab, ContentModel, [ContentItem]) {
+        let hab = await sampleHab()
+        await hab.put(Fixture.agent(pane: "%1", harness: "claude", state: .idle))
+        await hab.setChat(session: "s1", [])
+        let items = (0..<n).map { item("f\($0)", size: 5) }
+        await hab.setContent(session: "s1", items: items, files: Dictionary(uniqueKeysWithValues: items.map { ($0.id, Data("hello".utf8)) }))
+        let fleet = Fleet()
+        fleet.add(HabConnection(id: "h", transport: hab.transport(), timing: fastTiming()), label: "bench")
+        await fleet.setActive(true)
+        await eventually("online") { fleet.board.habs.first?.state.status == .online }
+        let model = fleet.chat(for: SessionTarget(habID: "h", session: "s1", pane: "%1"))
+        await eventually("context") { model.content.context.online }
+        model.content.busyBackoff = .milliseconds(10)
+        return (fleet, hab, model.content, items)
+    }
+
+    /// B1: eight cards loading at once stay under the hab's limit of four content calls per
+    /// connection, and every one gets its bytes.
+    func testManyCardsStayUnderTheHabLimit() async {
+        let (fleet, hab, content, items) = await setup(files: 8)
+        await hab.setContentDelay(.milliseconds(60))
+        let results = await withTaskGroup(of: ContentBytes.self) { g in
+            for it in items { g.addTask { await content.bytes(for: it) } }
+            var out: [ContentBytes] = []
+            for await r in g { out.append(r) }
+            return out
+        }
+        XCTAssertEqual(results.filter { $0 == .data(Data("hello".utf8), changedWhileLoading: false) }.count, 8, "\(results)")
+        let peak = await hab.contentPeak
+        XCTAssertLessThanOrEqual(peak, HabConnection.contentSlots)
+        await fleet.setActive(false)
+    }
+
+    /// B1: views asking for the same file at once share one load.
+    func testSameFileLoadsOnce() async {
+        let (fleet, hab, content, items) = await setup(files: 1)
+        await hab.setContentDelay(.milliseconds(60))
+        async let a = content.bytes(for: items[0])
+        async let b = content.bytes(for: items[0])
+        let (ra, rb) = await (a, b)
+        XCTAssertEqual(ra, rb)
+        let reads = await hab.contentReads
+        XCTAssertEqual(reads, 1)
+        await fleet.setActive(false)
+    }
+
+    /// B1: a busy answer is tried again; one that stays busy shows a plain line, never the hab's hint.
+    func testBusyRetriedAndHintHidden() async {
+        let (fleet, hab, content, items) = await setup(files: 2)
+        await hab.failNextContentReads(2)
+        let ok = await content.bytes(for: items[0])
+        XCTAssertEqual(ok, .data(Data("hello".utf8), changedWhileLoading: false))
+        await hab.failNextContentReads(100)
+        let failed = await content.bytes(for: items[1])
+        XCTAssertEqual(failed, .failed(ContentModel.loadFailed))
+        await fleet.setActive(false)
+    }
+
+    /// S2: a file rewritten at the same size, with a new modified time, loads again.
+    func testSameSizeRewriteLoadsAgain() async {
+        let (fleet, hab, content, items) = await setup(files: 1)
+        let first = await content.bytes(for: items[0])
+        XCTAssertEqual(first, .data(Data("hello".utf8), changedWhileLoading: false))
+        let newer = item("f0", size: 5, modified: "v2")
+        await hab.setContent(session: "s1", items: [newer])
+        await hab.setContentFile(id: "f0", data: Data("world".utf8), modified: "v2")
+        await content.refresh()
+        XCTAssertEqual(content.items.first?.modified, "v2")
+        let second = await content.bytes(for: newer)
+        XCTAssertEqual(second, .data(Data("world".utf8), changedWhileLoading: false))
+        await fleet.setActive(false)
+    }
+
+    /// N7: a list reply that a later call's reply already replaced is dropped.
+    func testOlderListReplyDropped() async {
+        let (fleet, hab, content, items) = await setup(files: 1)
+        await hab.setContentListHook { n in
+            if n == 1 { try? await Task.sleep(for: .milliseconds(300)) }
+        }
+        let slow = Task { await content.refresh() }
+        try? await Task.sleep(for: .milliseconds(50))
+        await hab.setContent(session: "s1", items: items + [item("f9", size: 5)])
+        await content.refresh()
+        XCTAssertEqual(content.items.count, 2)
+        await slow.value
+        XCTAssertEqual(content.items.count, 2, "the older reply must not replace the newer list")
+        await fleet.setActive(false)
+    }
+
+    /// S2: the byte cache holds one version per item and stays under its byte limit,
+    /// dropping the least recently used first.
+    func testByteCacheBoundAndVersions() {
+        let c = ByteCache(limit: 10)
+        let k1 = ByteCache.Key(id: "a", size: 4, modified: "v1")
+        c.put(id: "a", key: k1, data: Data(count: 4))
+        XCTAssertNotNil(c.get(id: "a", key: k1))
+        XCTAssertNil(c.get(id: "a", key: ByteCache.Key(id: "a", size: 4, modified: "v2")), "another version is a miss")
+        c.put(id: "b", key: ByteCache.Key(id: "b", size: 4, modified: nil), data: Data(count: 4))
+        _ = c.get(id: "a", key: k1) // a is now the most recent
+        c.put(id: "c", key: ByteCache.Key(id: "c", size: 4, modified: nil), data: Data(count: 4))
+        XCTAssertLessThanOrEqual(c.total, 10)
+        XCTAssertNil(c.get(id: "b", key: ByteCache.Key(id: "b", size: 4, modified: nil)), "the least recently used went first")
+        XCTAssertNotNil(c.get(id: "a", key: k1))
+        c.put(id: "big", key: ByteCache.Key(id: "big", size: 11, modified: nil), data: Data(count: 11))
+        XCTAssertEqual(c.count, 2, "bytes over the whole limit are not held")
+        c.keep(id: "a", key: ByteCache.Key(id: "a", size: 4, modified: "v2"))
+        XCTAssertNil(c.get(id: "a", key: k1), "a list that names a new version drops the old bytes")
+    }
+
+    /// S3: a large image decodes to the asked bound, not to its full size.
+    func testImageDecodesToBound() throws {
+        let w = 3000, h = 1200
+        let ctx = try XCTUnwrap(CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        ctx.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        let out = NSMutableData()
+        let dest = try XCTUnwrap(CGImageDestinationCreateWithData(out, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(dest, try XCTUnwrap(ctx.makeImage()), nil)
+        CGImageDestinationFinalize(dest)
+        let img = try XCTUnwrap(ImageDecode.thumbnail(out as Data, maxPixel: 512))
+        XCTAssertEqual(max(img.width, img.height), 512)
+        XCTAssertEqual(img.height, 205, accuracy: 1)
+    }
+
+    /// S4: a huge text renders a bounded preview cut at a line end, and says more follows.
+    func testTextPreviewBounded() {
+        let line = String(repeating: "x", count: 99) + "\n"
+        let data = Data(String(repeating: line, count: 10_000).utf8) // 1 MB
+        let p = ContentText.preview(data, limit: 1000)
+        XCTAssertTrue(p.truncated)
+        XCTAssertLessThanOrEqual(p.text.utf8.count, 1000)
+        XCTAssertTrue(p.text.hasSuffix("x"), "cut at a line end")
+        XCTAssertFalse(ContentText.preview(Data("short".utf8)).truncated)
+        XCTAssertEqual(ContentText.chunks(Data("a\nb\nc".utf8), lines: 2), ["a\nb", "c"])
+    }
+
+    /// S4: a parent redraw with the same PDF bytes keeps the document.
+    func testPDFKeepsDocumentOnRedraw() {
+        let src = PDFSource()
+        let d = Data("%PDF-1.4".utf8)
+        XCTAssertTrue(src.needsLoad(d))
+        let v = PDFView()
+        src.show(d, in: v)
+        src.show(d, in: v)
+        XCTAssertEqual(src.loads, 1)
+        src.show(Data("%PDF-1.5".utf8), in: v)
+        XCTAssertEqual(src.loads, 2)
     }
 }

@@ -599,21 +599,45 @@ What carries over:
   of its project.
 - **Reads are bounded.** `content.read` serves only ids `content.list` would return for that
   session; any other id is `not_found`. Chunks are at most 1 MiB (default 256 KiB), files at most
-  32 MiB. The hab opens the path again on each chunk and refuses a path that is not a regular
-  file. Each chunk carries the file's size and modification time, so the app sees a change.
+  32 MiB. The hab checks the path again before each chunk and refuses one that is not a
+  regular file (a device reacts to an open), then checks the open file again. Each chunk
+  carries the file's size and modification time, so the app sees a change. A shown path is
+  stored with its symlinks resolved, so it is the same item as a git status entry for the file.
+  This guard is cheap, not a boundary: any control client can show any path, and could start a
+  shell anyway.
 - **Git status paths** are resolved through symlinks and must stay inside the repository's top
-  folder; one that leads out is left out. The list holds at most 500 items.
+  folder; one that leads out is left out, and one swapped for such a symlink after the list is
+  refused on read. Paths from tool calls have no folder bound: a file the agent wrote or edited
+  anywhere is listed. A write that failed or was denied changed nothing, so its path is listed
+  only when it is an image (as a read). The list holds at most 500 items; past that, items only
+  git status lists go first, then the oldest.
 - **Diffs.** A tracked file: `git diff HEAD -- <path>` with the same restricted environment as
   project git status. An untracked or added file: every line added. Outside a repository: the
   transcript's edit calls in order, as hunks. At most 512 KiB, then `truncated`.
 - **Events.** The hab sends `content.updated` for a show. Derived items change with tool calls;
   the app lists again, debounced, after a tool `chat.message` that is done.
 - **Stored references** live in the state directory (`content.json`), at most 200 per session,
-  and go when the session record goes.
+  and go when the session record goes (`session.deleted`). The file is synced before its
+  rename. A file that does not parse is moved to `content.json.bad` and the hab starts with no
+  references, with a log line: a store of references never stops the hab.
 - **App.** `ContentModel` per session merges `content.list` with `content.updated` by id, keeps
-  the last list while offline (and marks it), and loads bytes on demand in chunks, with a cache
-  per item keyed by size and modification time. `DiffParser` splits a unified diff into files,
+  the last list while offline (and marks it), and loads bytes on demand in chunks. A list reply
+  older than one already applied is dropped. `DiffParser` splits a unified diff into files,
   hunks and lines.
+- **The hab's call limit.** The hab runs at most 4 content calls per connection. The app sends
+  `content.read` and `content.diff` through 3 slots per connection, shared by every session's
+  cards, which leaves room for `content.list`. Views that ask for the same file version at once
+  share one load. A busy answer (`unavailable`) is tried again 3 times, with a wait from 200 ms
+  that doubles. A load that still fails says "Could not load this file"; the hab's hint stays out
+  of the card.
+- **Bytes cache.** Keyed by item and file version (size and modification time, from the list),
+  at most 64 MiB, the least recently used out first. A list that names a new version drops the
+  old bytes.
+- **Rendering.** Images decode once, off the main thread, with ImageIO thumbnails: at most 1080
+  px on the long side inline, 2048 in a document view, 4096 zoomed; 24 decoded images are kept.
+  Text shows its first 256 KiB, cut at a line end, with "Show all", which renders the file as a
+  lazy list of 200-line runs. Markdown is parsed once per file version. A PDF view loads a new
+  document only when its bytes change, so a redraw keeps its scroll position and zoom.
 
 ---
 

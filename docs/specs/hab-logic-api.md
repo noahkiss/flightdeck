@@ -879,7 +879,7 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   wrote or viewed; files the session wrote or edited; git status of the session's folder),
   `folder` and `more` (at most 500). An item has `id` (a hash of session and path), `session`,
   `kind`, `path`, `name`, `type`, `at`, and the optional `title`, `size` (absent when the file
-  is gone), `shown`, `change` (`added`, `modified`, `deleted`, `renamed`, `untracked`; open) and
+  is gone), `modified` (the file's modification time, as `content.read` reports it), `shown`, `change` (`added`, `modified`, `deleted`, `renamed`, `untracked`; open) and
   `message` (the tool call). `content.read {session, id, offset?, limit?}` serves only ids the
   list holds for that session (else `not_found`), in runs of at most 1 MiB (default 256 KiB),
   of regular files up to 32 MiB; each run carries `size` and `modified`. `content.diff

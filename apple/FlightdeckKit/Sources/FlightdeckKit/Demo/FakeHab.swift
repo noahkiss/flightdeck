@@ -65,6 +65,24 @@ public actor FakeHab {
     private var contentChunk = 1 << 20
     private var contentReadHook: (@Sendable (ContentReadParams) async -> Void)?
     public private(set) var contentReads = 0
+    /// Content calls running per connection, and the most seen at once.
+    private var contentRunning: [ObjectIdentifier: Int] = [:]
+    public private(set) var contentPeak = 0
+    /// How long each content call takes; tests set it to make calls overlap.
+    private var contentDelay: Duration?
+    /// Content reads to refuse with `unavailable` before serving again.
+    private var contentUnavailable = 0
+    /// Runs before each `content.list` reply, so a test can hold one back.
+    private var contentListHook: (@Sendable (Int) async -> Void)?
+    private var contentLists = 0
+
+    public func setContentDelay(_ d: Duration?) { contentDelay = d }
+    public func failNextContentReads(_ n: Int) { contentUnavailable = n }
+    public func setContentListHook(_ hook: (@Sendable (Int) async -> Void)?) { contentListHook = hook }
+
+    private func contentDone(_ c: Conn) {
+        contentRunning[ObjectIdentifier(c), default: 1] -= 1
+    }
 
     /// Sets a session's content: its items, the bytes behind them and their diffs.
     public func setContent(session: String, items: [ContentItem], files: [String: Data] = [:], diffs: [String: String] = [:]) {
@@ -493,7 +511,18 @@ public actor FakeHab {
                 await fail(c, id: id, kind: .invalid, hint: "bad chat.page params")
             }
         case HabMethods.contentList.name, HabMethods.contentRead.name, HabMethods.contentDiff.name:
-            await contentCall(method, params, c, id: id)
+            // Off the read loop, with the real hab's limit of 4 content calls per connection.
+            guard contentRunning[ObjectIdentifier(c), default: 0] < 4 else {
+                await fail(c, id: id, kind: .unavailable, hint: "4 content calls already run on this connection")
+                break
+            }
+            contentRunning[ObjectIdentifier(c), default: 0] += 1
+            contentPeak = max(contentPeak, contentRunning[ObjectIdentifier(c)] ?? 0)
+            Task {
+                if let d = self.contentDelay { try? await Task.sleep(for: d) }
+                await self.contentCall(method, params, c, id: id)
+                self.contentDone(c)
+            }
         case HabMethods.sessionSend.name:
             guard sendWorks else {
                 await fail(c, id: id, kind: .unavailable, hint: "session.send is not built (fake hab)")
@@ -595,12 +624,19 @@ public actor FakeHab {
             guard let p = try? params.decode(ContentListParams.self) else {
                 return await fail(c, id: id, kind: .invalid, hint: "bad content.list params")
             }
-            await reply(c, id: id, result: ContentList(items: contentItems[p.session] ?? [], more: false, seq: c.seq))
+            contentLists += 1
+            let items = contentItems[p.session] ?? []
+            if let h = contentListHook { await h(contentLists) }
+            await reply(c, id: id, result: ContentList(items: items, more: false, seq: c.seq))
         case HabMethods.contentRead.name:
             guard let p = try? params.decode(ContentReadParams.self) else {
                 return await fail(c, id: id, kind: .invalid, hint: "bad content.read params")
             }
             contentReads += 1
+            if contentUnavailable > 0 {
+                contentUnavailable -= 1
+                return await fail(c, id: id, kind: .unavailable, hint: "4 content calls already run on this connection")
+            }
             if let h = contentReadHook { await h(p) }
             guard let it = listed(p.session, p.id), let f = contentFiles[it.id] else {
                 return await fail(c, id: id, kind: .notFound, hint: "no content \(p.id) in session \(p.session)")

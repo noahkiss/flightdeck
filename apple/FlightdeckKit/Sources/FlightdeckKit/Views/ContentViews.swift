@@ -49,7 +49,7 @@ struct ContentLoader<Content: View>: View {
                 ContentPlaceholder(text: e, symbol: "exclamationmark.triangle")
             }
         }
-        .task(id: LoadKey(id: item.id, size: item.size, online: model.context.online)) {
+        .task(id: LoadKey(id: item.id, size: item.size, modified: item.modified, online: model.context.online)) {
             load = await model.bytes(for: item)
         }
     }
@@ -57,16 +57,36 @@ struct ContentLoader<Content: View>: View {
     private struct LoadKey: Hashable {
         var id: String
         var size: Int?
+        var modified: String?
         var online: Bool
     }
 }
 
-func platformImage(_ d: Data) -> Image? {
-    #if canImport(UIKit)
-    return UIImage(data: d).map { Image(uiImage: $0) }
-    #else
-    return NSImage(data: d).map { Image(nsImage: $0) }
-    #endif
+/// An image decoded once off the main actor, scaled to `maxPixel` on its long side.
+struct DecodedImage<Content: View>: View {
+    let model: ContentModel
+    let item: ContentItem
+    let data: Data
+    let maxPixel: Int
+    @ViewBuilder let content: (Image) -> Content
+    @State private var image: CGImage?
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                content(Image(decorative: image, scale: 1))
+            } else if failed {
+                FileChip(item: item)
+            } else {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 60)
+            }
+        }
+        .task(id: "\(item.id)|\(data.count)|\(item.modified ?? "")|\(maxPixel)") {
+            image = await model.image(for: item, data: data, maxPixel: maxPixel)
+            failed = image == nil
+        }
+    }
 }
 
 /// Content shown inline under a chat row.
@@ -92,7 +112,8 @@ struct InlineImageView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             ContentLoader(model: model, item: item) { data, _ in
-                if let img = platformImage(data) {
+                // About 3x the 360 pt frame: sharp on a phone, a fraction of a full decode.
+                DecodedImage(model: model, item: item, data: data, maxPixel: 1080) { img in
                     Button { zoomed = true } label: {
                         img.resizable().scaledToFit()
                             .frame(maxWidth: 360, maxHeight: 260, alignment: .leading)
@@ -101,14 +122,12 @@ struct InlineImageView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Image \(item.title ?? item.name)")
                     .accessibilityHint("Opens it full size")
-                    #if os(iOS)
-                    .fullScreenCover(isPresented: $zoomed) { ZoomedImage(image: img, title: item.title ?? item.name) }
-                    #else
-                    .sheet(isPresented: $zoomed) { ZoomedImage(image: img, title: item.title ?? item.name).frame(minWidth: 640, minHeight: 480) }
-                    #endif
-                } else {
-                    FileChip(item: item)
                 }
+                #if os(iOS)
+                .fullScreenCover(isPresented: $zoomed) { ZoomedImage(model: model, item: item, data: data) }
+                #else
+                .sheet(isPresented: $zoomed) { ZoomedImage(model: model, item: item, data: data).frame(minWidth: 640, minHeight: 480) }
+                #endif
             }
             Text(item.title ?? item.name)
                 .font(.caption)
@@ -121,8 +140,10 @@ struct InlineImageView: View {
 
 /// An image full size: pinch or scroll to zoom, double tap to fit or zoom in.
 struct ZoomedImage: View {
-    let image: Image
-    let title: String
+    let model: ContentModel
+    let item: ContentItem
+    let data: Data
+    private var title: String { item.title ?? item.name }
     @Environment(\.dismiss) private var dismiss
     @State private var scale: CGFloat = 1
     @State private var base: CGFloat = 1
@@ -131,8 +152,10 @@ struct ZoomedImage: View {
         NavigationStack {
             GeometryReader { geo in
                 ScrollView([.horizontal, .vertical]) {
-                    image.resizable().scaledToFit()
-                        .frame(width: geo.size.width * scale, height: geo.size.height * scale)
+                    DecodedImage(model: model, item: item, data: data, maxPixel: ZoomedImage.maxPixel) { image in
+                        image.resizable().scaledToFit()
+                    }
+                    .frame(width: geo.size.width * scale, height: geo.size.height * scale)
                 }
                 .gesture(MagnifyGesture()
                     .onChanged { scale = max(1, min(8, base * $0.magnification)) }
@@ -154,6 +177,11 @@ struct ZoomedImage: View {
             }
         }
     }
+}
+
+extension ZoomedImage {
+    /// The zoomed view's decode bound: enough for 8x zoom of a phone-sized view.
+    static let maxPixel = 4096
 }
 
 /// A file the app cannot render: name and size.
@@ -271,6 +299,7 @@ struct DocumentBody: View {
 
     static let foldedLines = 8
     static let foldedBlocks = 4
+    @State private var showAll = false
 
     var body: some View {
         switch item.kind {
@@ -279,7 +308,7 @@ struct DocumentBody: View {
                 .frame(height: folded ? 180 : 560)
         case .markdown:
             // Folded keeps whole blocks, so a code fence is never cut open.
-            let blocks = MarkdownBlock.parse(text(limit: nil))
+            let blocks = model.markdown(for: item, data: data)
             VStack(alignment: .leading, spacing: 4) {
                 MarkdownView(blocks: folded ? Array(blocks.prefix(Self.foldedBlocks)) : blocks)
                 if folded && blocks.count > Self.foldedBlocks {
@@ -289,20 +318,34 @@ struct DocumentBody: View {
         case .diff:
             DiffBody(diff: DiffParser.parse(String(decoding: data, as: UTF8.self)), maxLines: folded ? Self.foldedLines : nil)
         case .image:
-            if let img = platformImage(data) { img.resizable().scaledToFit() } else { FileChip(item: item) }
+            DecodedImage(model: model, item: item, data: data, maxPixel: 2048) { $0.resizable().scaledToFit() }
         default:
-            if let s = String(data: data, encoding: .utf8) {
-                Text(limitLines(s, folded ? Self.foldedLines : nil))
-                    .font(.caption.monospaced())
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
+            if data.prefix(4096).contains(0) {
                 FileChip(item: item)
+            } else if showAll && !folded {
+                // The whole file as a lazy list of line runs: one huge Text would stall the view.
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(ContentText.chunks(data).enumerated()), id: \.offset) { _, run in
+                        Text(run).font(.caption.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .textSelection(.enabled)
+            } else {
+                let preview = ContentText.preview(data, limit: folded ? 8 << 10 : ContentText.previewLimit)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(limitLines(preview.text, folded ? Self.foldedLines : nil))
+                        .font(.caption.monospaced())
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if preview.truncated && !folded {
+                        Button("Show all \(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file))") { showAll = true }
+                            .font(.caption)
+                    }
+                }
             }
         }
     }
-
-    private func text(limit: Int?) -> String { limitLines(String(decoding: data, as: UTF8.self), limit) }
 
     private func limitLines(_ s: String, _ n: Int?) -> String {
         guard let n else { return s }
@@ -315,28 +358,47 @@ struct DocumentBody: View {
 #if canImport(UIKit)
 struct PDFDocumentView: UIViewRepresentable {
     let data: Data
+    func makeCoordinator() -> PDFSource { PDFSource() }
     func makeUIView(context: Context) -> PDFView {
         let v = PDFView()
         v.autoScales = true
         return v
     }
     func updateUIView(_ v: PDFView, context: Context) {
-        if v.document?.dataRepresentation() != data { v.document = PDFDocument(data: data) }
+        context.coordinator.show(data, in: v)
     }
 }
 #else
 struct PDFDocumentView: NSViewRepresentable {
     let data: Data
+    func makeCoordinator() -> PDFSource { PDFSource() }
     func makeNSView(context: Context) -> PDFView {
         let v = PDFView()
         v.autoScales = true
         return v
     }
     func updateNSView(_ v: PDFView, context: Context) {
-        if v.document?.dataRepresentation() != data { v.document = PDFDocument(data: data) }
+        context.coordinator.show(data, in: v)
     }
 }
 #endif
+
+/// The bytes a PDF view shows. A parent redraw with the same bytes keeps the document, its
+/// scroll position and zoom; re-serializing the document to compare would cost a full copy.
+final class PDFSource {
+    private(set) var shown: Data?
+    private(set) var loads = 0
+
+    /// Says whether the view needs a new document for these bytes.
+    func needsLoad(_ data: Data) -> Bool { shown != data }
+
+    func show(_ data: Data, in v: PDFView) {
+        guard needsLoad(data) else { return }
+        shown = data
+        loads += 1
+        v.document = PDFDocument(data: data)
+    }
+}
 
 /// One item in full: an image, a document, or a modified file's diff.
 struct ContentDetail: View {

@@ -177,6 +177,31 @@ public actor HabConnection {
         fireWake(nil)
     }
 
+    /// The `content.read` and `content.diff` calls one connection runs at once. The hab
+    /// refuses a fifth content call on a connection (`hab-logic-api.md` 3.9); three leave
+    /// room for `content.list`.
+    public static let contentSlots = 3
+    private var contentFree = HabConnection.contentSlots
+    private var contentWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// Sends a content call once one of the connection's content slots is free, so every
+    /// session's cards together stay under the hab's limit.
+    public func callContent<P, R>(_ method: HabMethod<P, R>, _ params: P) async throws -> R {
+        if contentFree > 0 {
+            contentFree -= 1
+        } else {
+            await withCheckedContinuation { contentWaiters.append($0) }
+        }
+        defer {
+            if contentWaiters.isEmpty {
+                contentFree += 1
+            } else {
+                contentWaiters.removeFirst().resume() // the slot passes straight on
+            }
+        }
+        return try await call(method, params)
+    }
+
     /// Sends a request on the live connection.
     public func call<P, R>(_ method: HabMethod<P, R>, _ params: P) async throws -> R {
         guard let r = rpc, state.status == .online else {

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import HabAPI
 import Observation
@@ -83,7 +84,29 @@ public final class ContentModel {
     @ObservationIgnored private var listen: Task<Void, Never>?
     @ObservationIgnored private var pending: Task<Void, Never>?
     @ObservationIgnored private var viewers = 0
-    @ObservationIgnored private var cache: [String: (size: Int, modified: String, data: Data)] = [:]
+    /// Loaded bytes, bounded by total size, keyed by item and file version.
+    @ObservationIgnored let cache = ByteCache(limit: ContentModel.cacheLimit)
+    /// Loads in flight, by item and version: the inline card, the panel and a sheet share one.
+    @ObservationIgnored private var inflight: [ByteCache.Key: Task<ContentBytes, Never>] = [:]
+    /// Decoded images, by item, version and pixel size.
+    @ObservationIgnored private var decoded: [String: CGImage] = [:]
+    @ObservationIgnored private var decodedOrder: [String] = []
+    /// Parsed Markdown, by item and version.
+    @ObservationIgnored private var markdownCache: [ByteCache.Key: [MarkdownBlock]] = [:]
+    /// Each list call's number; a reply older than the last one applied is dropped.
+    @ObservationIgnored private var listGen = 0
+    @ObservationIgnored private var appliedGen = 0
+    /// Events seen while each list call runs, by its number.
+    @ObservationIgnored private var racing: [Int: [ContentItem]] = [:]
+
+    /// The byte cache's bound: about 64 MiB of file bytes.
+    public static let cacheLimit = 64 << 20
+    /// Decoded images kept at once.
+    static let imageLimit = 24
+    /// Tries of a content call the hab turned away as busy (`unavailable`).
+    static let busyTries = 4
+    /// The first wait after a busy answer; it doubles each try.
+    @ObservationIgnored var busyBackoff: Duration = .milliseconds(200)
 
     public init(target: SessionTarget, connection: HabConnection?) {
         self.target = target
@@ -178,11 +201,9 @@ public final class ContentModel {
     func receive(_ it: ContentItem) {
         guard it.session == target.session else { return }
         items = Self.merge(items, it)
-        racing?.append(it)
-        cache[it.id] = nil
+        for k in racing.keys { racing[k]?.append(it) }
+        cache.keep(id: it.id, key: ByteCache.Key(it))
     }
-
-    @ObservationIgnored private var racing: [ContentItem]?
 
     private func scheduleRefresh() {
         pending?.cancel()
@@ -194,33 +215,51 @@ public final class ContentModel {
         }
     }
 
-    /// Loads the list from the hab.
+    /// Loads the list from the hab. A reply that an answer to a later call already
+    /// replaced is dropped.
     public func refresh() async {
         guard let conn = connection, let session = target.session, context.online else { return }
-        racing = []
+        listGen += 1
+        let gen = listGen
+        racing[gen] = []
+        defer { racing[gen] = nil }
         do {
             let list = try await conn.call(HabMethods.contentList, ContentListParams(session: session))
-            items = Self.replace(list.items, keeping: racing ?? [])
+            guard gen > appliedGen else { return }
+            appliedGen = gen
+            items = Self.replace(list.items, keeping: racing[gen] ?? [])
             folder = list.folder
             problem = nil
             loaded = true
+            // Bytes of a file that changed since they were loaded go now, not when evicted.
+            for it in items { cache.keep(id: it.id, key: ByteCache.Key(it)) }
         } catch let e as RPCError {
             problem = e.data?.hint ?? e.message
         } catch {
             // Offline mid-call: keep the last list; the placeholder says why.
         }
-        racing = nil
     }
 
     // MARK: - Bytes
 
     /// Loads an item's bytes in chunks. A file that changes between chunks is
-    /// read again once; then what arrived shows with a mark.
+    /// read again once; then what arrived shows with a mark. Two views asking for
+    /// the same version share one load.
     public func bytes(for it: ContentItem) async -> ContentBytes {
         if let off = offlineText { return .offline(off) }
-        guard let conn = connection, let session = target.session else { return .offline("Not available") }
         if let s = it.size, s > Self.maxFile { return .tooLarge(s) }
-        if let c = cache[it.id], c.size == it.size { return .data(c.data, changedWhileLoading: false) }
+        let key = ByteCache.Key(it)
+        if let d = cache.get(id: it.id, key: key) { return .data(d, changedWhileLoading: false) }
+        if let t = inflight[key] { return await t.value }
+        let t = Task { await self.load(it, key: key) }
+        inflight[key] = t
+        let r = await t.value
+        inflight[key] = nil
+        return r
+    }
+
+    private func load(_ it: ContentItem, key: ByteCache.Key) async -> ContentBytes {
+        guard let conn = connection, let session = target.session else { return .offline("Not available") }
         var last = Data()
         do {
             for _ in 0..<2 {
@@ -228,7 +267,8 @@ public final class ContentModel {
                 var first: ContentData?
                 var changed = false
                 while true {
-                    let r = try await conn.call(HabMethods.contentRead, ContentReadParams(id: it.id, limit: 1 << 20, offset: buf.count, session: session))
+                    let off = buf.count
+                    let r = try await busyRetry { try await conn.callContent(HabMethods.contentRead, ContentReadParams(id: it.id, limit: 1 << 20, offset: off, session: session)) }
                     if let f = first, f.size != r.size || f.modified != r.modified {
                         changed = true
                         break
@@ -238,8 +278,9 @@ public final class ContentModel {
                     if r.eof || r.data.isEmpty { break }
                 }
                 last = buf
-                if !changed, let f = first {
-                    cache[it.id] = (f.size, f.modified, buf)
+                if !changed, first != nil {
+                    // Kept under the version the list knows, so the next view finds it.
+                    cache.put(id: it.id, key: key, data: buf)
                     return .data(buf, changedWhileLoading: false)
                 }
             }
@@ -247,12 +288,32 @@ public final class ContentModel {
         } catch let e as RPCError {
             switch e.kind {
             case .notFound?: return .gone
-            case .invalid? where (e.data?.hint ?? "").contains("bytes;"): return .tooLarge(it.size ?? 0)
-            default: return .failed(e.description)
+            case .invalid? where (it.size ?? 0) > Self.maxFile: return .tooLarge(it.size ?? 0)
+            default: return .failed(Self.loadFailed)
             }
         } catch {
-            return .offline(offlineText ?? "Not available while the hab is offline")
+            if let off = offlineText { return .offline(off) }
+            return .failed(Self.loadFailed)
         }
+    }
+
+    /// What a card says when the hab could not serve a file. The hab's own hint stays in
+    /// the log: it is written for a developer, not for the card.
+    public static let loadFailed = "Could not load this file"
+
+    /// Runs a content call again, with a doubling wait, while the hab answers `unavailable`
+    /// (busy) and the connection stays online.
+    private func busyRetry<R>(_ call: () async throws -> R) async throws -> R {
+        var wait = busyBackoff
+        for attempt in 1... {
+            do {
+                return try await call()
+            } catch let e as RPCError where e.kind == .unavailable && attempt < Self.busyTries && context.online {
+                try? await Task.sleep(for: wait)
+                wait *= 2
+            }
+        }
+        fatalError("unreachable")
     }
 
     /// Loads an item's diff.
@@ -260,15 +321,40 @@ public final class ContentModel {
         if let off = offlineText { return .offline(off) }
         guard let conn = connection, let session = target.session else { return .offline("Not available") }
         do {
-            let d = try await conn.call(HabMethods.contentDiff, ContentDiffParams(id: it.id, session: session))
+            let d = try await busyRetry { try await conn.callContent(HabMethods.contentDiff, ContentDiffParams(id: it.id, session: session)) }
             return .diff(DiffParser.parse(d.diff), source: d.source.rawValue, truncated: d.truncated ?? false)
         } catch let e as RPCError where e.kind == .notFound {
             return .gone
-        } catch let e as RPCError {
-            return .failed(e.description)
+        } catch is RPCError {
+            return .failed(Self.loadFailed)
         } catch {
-            return .offline(offlineText ?? "Not available while the hab is offline")
+            if let off = offlineText { return .offline(off) }
+            return .failed(Self.loadFailed)
         }
+    }
+
+    // MARK: - Decoded content
+
+    /// An image decoded once, off the main actor, no larger than `maxPixel` on its long side.
+    public func image(for it: ContentItem, data: Data, maxPixel: Int) async -> CGImage? {
+        let k = "\(it.id)|\(it.size ?? -1)|\(it.modified ?? "")|\(maxPixel)"
+        if let img = decoded[k] { return img }
+        let img = await Task.detached(priority: .userInitiated) { ImageDecode.thumbnail(data, maxPixel: maxPixel) }.value
+        guard let img else { return nil }
+        decoded[k] = img
+        decodedOrder.append(k)
+        if decodedOrder.count > Self.imageLimit { decoded[decodedOrder.removeFirst()] = nil }
+        return img
+    }
+
+    /// An item's Markdown, parsed once per version.
+    public func markdown(for it: ContentItem, data: Data) -> [MarkdownBlock] {
+        let key = ByteCache.Key(it)
+        if let b = markdownCache[key] { return b }
+        let blocks = MarkdownBlock.parse(ContentText.preview(data).text)
+        if markdownCache.count > 32 { markdownCache.removeAll() }
+        markdownCache[key] = blocks
+        return blocks
     }
 
     nonisolated static func date(_ s: String) -> Date? {
