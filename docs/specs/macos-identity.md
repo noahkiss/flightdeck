@@ -449,6 +449,11 @@ Built (`internal/service`, `bundle.go`). Choices beyond the paper spec:
 - **`AssociatedBundleIdentifiers`** holds the job's own bundle id only. Adding
   `<prefix>.flightdeck` waits for the Mac app.
 - **Uninstall** removes every build directory by its name, after it has stopped every job.
+- **LaunchServices registration.** After the rename, install runs `lsregister -f` on both bundle
+  copies of the build. A prune and uninstall run `lsregister -u` on a build's copies before they
+  remove them. System Settings and `tccutil` find a bundle by its id only through a registered
+  copy (8.1). A launch agent's first start registers its bundle too, so a failed `lsregister -f`
+  is a warning, not an error.
 - **Linux is unchanged**: one copy of each binary in `<state>/bin` (`hab-holder.md` 4.4).
 
 ### 6.2 Drain keeps grants
@@ -859,6 +864,27 @@ with OSStatus -10814 (`kLSApplicationNotFoundErr`) while the only copies of the 
 `/tmp`, even after `lsregister -f`. With a copy under the home directory registered, it worked.
 The installed layout (`<state>` under `~/Library`) is not affected; a proof that installs under
 `/tmp` registers a copy elsewhere before it resets.
+
+**A build under `/tmp` cannot be granted (macOS 27.2).** An owner proof kit installed its state
+under `/tmp`. Dragging that build's `GFF Holder.app` into Full Disk Access added no row. The
+cause is LaunchServices, checked on the same Mac:
+
+- `lsregister -f` on a copy under `/tmp` adds a record (the dump shows `/private/tmp/...`), but
+  `tccutil reset All <id>` still fails with -10814 while that is the only copy. LaunchServices
+  lookups by bundle id skip `/tmp`.
+- `gff-hab install` with its state under `~/Library/Application Support` (dev bundles, a test
+  prefix): both build copies were in the dump within 5 s, registered as each job started.
+  `tccutil reset All` succeeded for both ids. No path component is hidden or a dot path.
+  Finder hides `~/Library` by default; `open -R` still reveals a bundle in it.
+- A plain `ditto` copy under `~/Library/Application Support` is not registered, and running its
+  executable from an SSH shell does not register it: `tccutil` gave -10814. `lsregister -f`
+  registered it, and `lsregister -u` removed it again.
+- After an uninstall the dump kept records for the deleted build paths.
+
+So the product path was registered, but only as a side effect of the job's first start. Install
+now registers each build copy itself and unregisters it before the build goes (6.1). With that
+change, `scripts/service-check.sh` checks the dump after install, after the retire, and after
+uninstall. Proof kits keep every installed state under `~/Library/Application Support`.
 
 ---
 

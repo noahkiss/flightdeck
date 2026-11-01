@@ -124,7 +124,8 @@ its pane's output offset still grows, and that exactly one holder is registered.
 checks its environment: TERM, COLORTERM and a locale are set, and no variable of the init
 system's job is. After the reinstall it ends the child and waits until the drained holder exits
 and its job is gone (on macOS: booted out, plist deleted, and its build's bundle copies
-removed). On macOS both builds are dev helper bundles from `scripts/macos-bundle.sh -dev`, so
+unregistered from LaunchServices and removed). On macOS it also reads `lsregister -dump` after the
+install, after the retire and after the uninstall: it must list exactly the installed builds. On macOS both builds are dev helper bundles from `scripts/macos-bundle.sh -dev`, so
 the test runs the per-build layout of `docs/specs/macos-identity.md` 6.1. After the uninstall it checks that the
 second pane's program ended, that no job is loaded (on macOS `launchctl print gui/<uid>/<label>`
 for the logic job and every holder seen, which works over SSH too), and that no process of the
