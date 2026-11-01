@@ -2965,7 +2965,7 @@
         "properties": {
           "at": {
             "type": "string",
-            "description": "RFC 3339 time it was shown, or of the tool call that touched it last. Absent for a file only git status lists."
+            "description": "RFC 3339 time it was shown, or of the tool call that touched it last. Empty for a file only git status lists."
           },
           "change": {
             "$ref": "#/components/schemas/ContentChange",

@@ -1123,7 +1123,7 @@ public struct ContentDiffSource: RawRepresentable, Codable, Sendable, Hashable {
 }
 
 public struct ContentItem: Codable, Sendable, Hashable {
-    /// RFC 3339 time it was shown, or of the tool call that touched it last. Absent for a file only git status lists.
+    /// RFC 3339 time it was shown, or of the tool call that touched it last. Empty for a file only git status lists.
     public var at: String
     /// Set when the session changed the file: added, modified, deleted, renamed or untracked.
     public var change: ContentChange?

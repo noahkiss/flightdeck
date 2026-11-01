@@ -215,7 +215,7 @@ type ContentItem struct {
 	Title   string        `json:"title,omitempty" doc:"From content.show."`
 	Type    string        `json:"type" doc:"Media type, from the file name."`
 	Size    *int64        `json:"size,omitempty" doc:"Bytes, when the file exists. Absent: the file is gone or unreadable."`
-	At      string        `json:"at" doc:"RFC 3339 time it was shown, or of the tool call that touched it last. Absent for a file only git status lists."`
+	At      string        `json:"at" doc:"RFC 3339 time it was shown, or of the tool call that touched it last. Empty for a file only git status lists."`
 	Shown   bool          `json:"shown,omitempty" doc:"True when the agent showed it with content.show."`
 	Change  ContentChange `json:"change,omitempty" doc:"Set when the session changed the file: added, modified, deleted, renamed or untracked."`
 	Message string        `json:"message,omitempty" doc:"The chat message id of the tool call that touched it last."`
