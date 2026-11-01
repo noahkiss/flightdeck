@@ -28,7 +28,7 @@ type speechEnv struct {
 
 // speechSetup decides whether this hab runs the speech engine (voice.md, Design): on when the
 // helper is installed and the [speech] section of the hab's config file turns it on, or leaves
-// it to the default (on with at least 4 GB of memory). It returns nil, with the reason logged,
+// it to the default (on for a host sold as 4 GB or more). It returns nil, with the reason logged,
 // when the engine is off. A config file that does not parse is an error.
 func speechSetup(configPath, state string, store *structure.Store, env speechEnv, logf func(string, ...any)) (*speech.Engine, error) {
 	set, err := speech.LoadSettings(configPath)

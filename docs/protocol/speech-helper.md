@@ -52,7 +52,11 @@ most 2 MiB. Every payload is JSON, except the audio of a transcribe frame.
   libopus decodes it at 16 kHz, mixing stereo down. The pre-skip is dropped and the end is cut at
   the last page's granule position.
 - `audio_ms` in a result is the decoded length. gff-hab checks the limits (1 MiB, 120 s) before
-  it sends a clip, from the byte count (pcm16) or the last granule position (opus).
+  it sends a clip: from the byte count (pcm16), or from the last granule position and the
+  packets' own lengths (opus). The helper also stops decoding an Opus clip past 120 s plus its
+  pre-skip and answers `invalid`.
+- gff-hab kills a helper that does not answer a clip within 30 s plus twice the clip's length,
+  or does not send ready within 60 s of its start.
 
 ## 5. Versions
 

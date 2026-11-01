@@ -30,7 +30,7 @@ command = "make update"
 
 # The [speech] section: the hab speech engine (docs/specs/voice.md, Hab speech engine).
 [speech]
-# On or off. Leave it out for the default: on when the host has at least 4 GB of memory.
+# On or off. Leave it out for the default: on for a host sold as 4 GB or more.
 enabled = true
 # The helper program. Leave it out to use $GFF_HAB_SPEECH_HELPER, gff-hab-speech beside gff-hab,
 # or gff-hab-speech on PATH.

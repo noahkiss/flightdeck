@@ -97,8 +97,8 @@ recent iPhones; the hab engine stays the default. No iPad run yet.
 - **Warm-up.** The app calls `speech.prepare` when voice mode or dictation opens, so the model is
   loaded before the first turn ends.
 - **The model.** It downloads on first use into the hab's state folder, with a checksum check,
-  not with the release. A host setting turns the engine off. Default: on when the host has at
-  least 4 GB of memory, else off. A smaller model (Parakeet TDT-CTC 110M) may serve small hosts;
+  not with the release. A host setting turns the engine off. Default: on for a host sold as
+  4 GB or more, else off. A smaller model (Parakeet TDT-CTC 110M) may serve small hosts;
   it is not measured yet.
 - **Audio in.** The app sends the turn as one compressed clip: Opus at about 24 kbit/s (a 15 s
   turn is about 50 KB). The hab also accepts 16 kHz mono 16-bit PCM, for a client with no
@@ -154,9 +154,9 @@ helper.
 - **Finding it.** gff-hab looks for the helper at `[speech] helper` in the hab's config file, then
   `$GFF_HAB_SPEECH_HELPER`, then beside the gff-hab binary, then on PATH. A path named in the file
   or the variable that is not an executable file means no helper: gff-hab does not fall back.
-- **On or off.** `[speech] enabled` turns the engine on or off. With no setting it is on when the
-  host has at least 3.5 GiB of memory: a host sold as 4 GB reports a little less (Linux keeps
-  some back from `MemTotal`). The capability is on when the engine is on and the helper is found.
+- **On or off.** `[speech] enabled` turns the engine on or off. With no setting it is on for a
+  host sold as 4 GB or more: the code's line is 3.5 GiB, since such a host reports a little less
+  (Linux keeps some back from `MemTotal`). The capability is on when the engine is on and the helper is found.
   gff-hab reads the section at start only.
 - **Formats.** gff-hab runs `gff-hab-speech -info` once, on the first speech call, and reports
   the formats it prints. A helper that does not run makes both methods `unavailable`.
@@ -167,28 +167,52 @@ helper.
   by base name, so no archive path can leave the folder. `ATTRIBUTION.txt` beside them holds the
   CC-BY-4.0 line, and the log line that starts each download carries it too. `[speech] model_url`
   names a mirror; the checksum still applies.
+- **Download guards.** The download fails when no bytes arrive for 60 s (a dropped connection
+  after sleep or a network change), when the archive runs past its known size, or when one
+  extracted file grows past that size (a compressed file can expand without bound). Each download
+  first removes the temporary folders an earlier one left when gff-hab restarted mid-download;
+  one gff-hab owns a state folder.
 - **Retries.** A failed download or load leaves `error` set until one succeeds. The next
   `speech.prepare` or `speech.transcribe` tries again. An idle exit or a stop is not an error.
 - **Queue.** One decode at a time across all connections, in arrival order. At most 16 clips wait;
   one more is `unavailable`. A clip whose caller gives up (timeout, closed connection) keeps the
   decoder until the helper answers, so two decodes never overlap. One connection may run 8 speech
   calls at once; each call has 5 minutes.
-- **Limits.** gff-hab checks the clip before the helper sees it: 1 MiB, 120 s (from the byte count
-  for `pcm16`, from the last granule position for Opus), `sample_rate` 8000 to 48000, `language`
-  absent or `en`. A pcm16 clip of 1 MiB lasts at most 65 s, so only Opus can reach the 120 s
-  limit.
+- **Watchdogs.** A model load has 60 s (measured: 1.3 s). A clip's answer has 30 s plus twice
+  the clip's length. A helper that misses either is killed: the caller gets `unavailable`, the
+  decoder is free, and the next clip starts a fresh helper. The watchdog runs even after the
+  caller gave up, so a hang never holds the decoder until gff-hab restarts.
+- **Limits.** gff-hab checks the clip before the helper sees it: 1 MiB, 120 s, `sample_rate` 8000
+  to 48000, `language` absent or `en`. A pcm16 clip's length comes from its byte count; a pcm16
+  clip of 1 MiB lasts at most 65 s, so only Opus can reach the 120 s limit. An Opus clip's length
+  comes from the last granule position, and its packets' own lengths (from each packet's TOC
+  byte, RFC 6716 3.1) bound it too: a granule that understates the clip by more than one packet
+  is refused, and a last page with no granule position is `invalid`. The helper also stops
+  decoding past 120 s plus the pre-skip, whatever gff-hab let through.
 - **Vocabulary.** With `session`, gff-hab lists the files git knows in the session's project
   folder (the newest one that exists): tracked, plus untracked files that are not ignored. Each path
   element and each file name without its extension is a term. The list is kept for one minute;
   git has 3 s. A term replaces a run of up to 6 words when the words, joined and lowercased,
   spell the term with its separators and case taken out ("link test dot go" to `link_test.go`,
   "holder reg" to `holderreg`). "dot", "underscore", "dash", "hyphen" and "slash" inside a run
-  count as separators. A term must have 5 letters or digits. A single word changes only to a term
-  that looks like code (a separator, or a capital after the first letter), so "server" never
-  becomes `Server`. Two terms with the same spelling leave the words alone. A session with no
-  project, or an unknown session, gets no fix-up rather than an error.
+  count as separators. A term must have 5 letters or digits. Ordinary words stay as spoken:
+  - A single word changes only to a term that looks like code (a separator, or a capital after
+    the first letter), so "server" never becomes `Server`.
+  - A name in all capitals (`NOTICE`, `LICENSE`, `README`) is never a term: it is also a plain word.
+  - A leading dot is dropped (`.github` is the term `github`).
+  - A plain term that is also an English compound or phrasal verb (setup, login, backup, update,
+    checkout and about 40 more) never joins two words: "set up" stays "set up".
+  - A capitalized first word ("Back up", "Fetch user") keeps the words, since a lowercase term
+    would lose the capital of a sentence start or a name.
+  - Two terms with the same spelling leave the words alone.
+
+  A session with no project, or an unknown session, gets no fix-up rather than an error. When the
+  fix-up changes anything it joins the words with single spaces, so runs of spaces and line breaks
+  in the engine's text become one space. Parakeet writes neither, so this is a documented limit,
+  not a fix.
 - **Nothing kept.** gff-hab and the helper keep no audio and no text, and log neither. The
-  helper's stderr reaches gff-hab's log; the helper writes only load messages there.
+  helper's stderr reaches gff-hab's log, one line each, cut at 4 KiB; the helper writes only load
+  messages there.
 
 ### Open items
 
@@ -196,9 +220,10 @@ helper.
   Makefile pins both, and links the archives as a group), but no Linux build or run has happened.
   The dev box does it next: build, `make test-speech`, the speed and memory figures.
 - **Shipping the helper.** `gff-hab install` does not copy the helper yet, and the macOS helper
-  bundles do not include it. It is a manual install for now (owner steps in the report). The
-  helper links libopus dynamically from the system package; a release build should link it
-  statically.
+  bundles do not include it. For now it is installed by hand: install libopus (Homebrew `opus`,
+  Debian `libopus-dev`), run `make speech-helper`, then copy `build/gff-hab-speech` beside
+  gff-hab or name it in `[speech] helper`, and restart gff-hab. The helper links libopus
+  dynamically from the system package; a release build should link it statically.
 - **Symbols.** The vocabulary holds file and folder names only. Symbols (function and type names)
   need a source the hab can read cheaply, such as the agent's transcript; not built.
 - **Small hosts.** Parakeet TDT-CTC 110M for hosts under 4 GB is not measured.
