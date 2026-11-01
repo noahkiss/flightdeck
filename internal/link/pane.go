@@ -450,6 +450,11 @@ func (p *pane) feed(l *Link, off uint64, data []byte, live bool) []Notice {
 // parse writes data to the parser and follows it for terminal queries. In live bytes it answers
 // each query once, from the parser's state just after the query, and queues the answer to the
 // program's input (spec 5.6). Replayed bytes get no answer. The caller holds p.mu.
+//
+// A query whose answer is dropped for a full queue needs no parser state, so the parser is not
+// stopped at it. Under a query flood nearly every answer is dropped, and stopping at each query
+// costs several calls into the parser per query: the link then parses the flood slowly, and the
+// holder's answer to typed input, which comes behind that output, arrives late.
 func (p *pane) parse(l *Link, data []byte, live bool) {
 	p.progs.Feed(data, func(r progstatus.Report) {
 		if !live {
@@ -466,6 +471,10 @@ func (p *pane) parse(l *Link, data []byte, live bool) {
 	start, done := p.queries.Offset(), 0
 	p.queries.Feed(data, func(seg termq.Segment) {
 		if seg.Query == nil {
+			return
+		}
+		if p.answersFullLocked() {
+			p.dropAnswerLocked(l)
 			return
 		}
 		end := int(seg.Off + uint64(len(seg.Data)) - start) // the query ends inside data
@@ -508,20 +517,31 @@ func (p *pane) queueInputLocked(l *Link, r *inputReq) {
 // the holder refuses input. One answer larger than maxAnswerBytes may wait alone. The first
 // drop of a burst is logged. The caller holds p.mu.
 func (p *pane) queueAnswerLocked(l *Link, ans []byte) {
-	if p.ansRefused || p.ansN >= maxAnswers || p.ansN > 0 && p.ansBytes+len(ans) > maxAnswerBytes {
-		if p.ansDropped == 0 {
-			why := "too many wait"
-			if p.ansRefused {
-				why = "the holder refuses input"
-			}
-			l.cfg.Logf("link: pane %s: dropping answers to terminal queries: %s", p.uuid, why)
-		}
-		p.ansDropped++
+	if p.answersFullLocked() || p.ansN > 0 && p.ansBytes+len(ans) > maxAnswerBytes {
+		p.dropAnswerLocked(l)
 		return
 	}
 	p.ansN++
 	p.ansBytes += len(ans)
 	p.queueInputLocked(l, &inputReq{data: ans, answer: true, n: 1})
+}
+
+// answersFullLocked reports whether every new answer is dropped, whatever its size: too many
+// wait, or the holder refuses input. The caller holds p.mu.
+func (p *pane) answersFullLocked() bool {
+	return p.ansRefused || p.ansN >= maxAnswers
+}
+
+// dropAnswerLocked drops one answer and logs the first drop of a burst. The caller holds p.mu.
+func (p *pane) dropAnswerLocked(l *Link) {
+	if p.ansDropped == 0 {
+		why := "too many wait"
+		if p.ansRefused {
+			why = "the holder refuses input"
+		}
+		l.cfg.Logf("link: pane %s: dropping answers to terminal queries: %s", p.uuid, why)
+	}
+	p.ansDropped++
 }
 
 // endBurstLocked logs the end of a burst of dropped answers once answers flow again. The
