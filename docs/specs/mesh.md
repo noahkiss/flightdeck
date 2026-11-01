@@ -887,7 +887,9 @@ the rest of client kind `hab`.
   CR LF and CR become LF, and C0 (but tab and LF), DEL and C1 characters go. So a control
   character the write would drop cannot hide a marker. Then a line in the text that starts like
   a marker (`[begin agent message`, `[end agent message`, in any case) has its `[` made `(`, so
-  the text cannot close the envelope early or open a second one.
+  the text cannot close the envelope early or open a second one. Unicode spaces and invisible
+  format characters count as spaces there, so `[end` with a no-break space before `agent` is
+  caught too.
 - It is one paste, so a multi-line message stays one message.
 
 **`channel.wait`** (6.4):
