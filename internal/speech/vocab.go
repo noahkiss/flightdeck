@@ -23,6 +23,20 @@ const (
 // connectors are words a speaker says for a separator inside a term.
 var connectors = map[string]bool{"dot": true, "underscore": true, "dash": true, "hyphen": true, "slash": true}
 
+// compounds are plain terms that are also English compounds or phrasal verbs ("set up", "log
+// in"). Spoken as two words they are ordinary speech, so such a term never joins a run of words.
+var compounds = map[string]bool{
+	"setup": true, "login": true, "logout": true, "backup": true, "update": true, "checkout": true,
+	"cleanup": true, "lookup": true, "shutdown": true, "startup": true, "signup": true, "signin": true,
+	"without": true, "together": true, "into": true, "onto": true, "maybe": true, "everything": true,
+	"something": true, "nothing": true, "anything": true, "someone": true, "anyone": true,
+	"everyone": true, "however": true, "whatever": true, "already": true, "sometimes": true,
+	"rollback": true, "rollout": true, "teardown": true, "breakdown": true, "download": true,
+	"upload": true, "install": true, "output": true, "input": true, "playback": true, "feedback": true,
+	"workflow": true, "workspace": true, "database": true, "website": true, "online": true,
+	"offline": true, "inside": true, "outside": true, "within": true, "upon": true, "cannot": true,
+}
+
 // Terms turns a folder's file paths (slash-separated, relative) into vocabulary terms: each
 // path element and each file name without its extension. Terms are unique and in first-seen
 // order; at most maxTerms.
@@ -30,6 +44,7 @@ func Terms(paths []string) []string {
 	seen := map[string]bool{}
 	var out []string
 	add := func(t string) {
+		t = strings.TrimLeft(t, ".") // .github is said "github"
 		if t == "" || len(t) > maxTermsB || seen[t] || len(out) >= maxTerms {
 			return
 		}
@@ -91,8 +106,8 @@ func Fixup(text string, terms []string) (string, bool) {
 	index := map[string]*entry{}
 	for _, t := range terms {
 		k, ok := key(t)
-		if !ok {
-			continue
+		if !ok || !strings.ContainsFunc(t, unicode.IsLower) || strings.HasPrefix(t, ".") {
+			continue // too short; all capitals (NOTICE, LICENSE: also plain words); a dotfile
 		}
 		if e, ok := index[k]; ok {
 			if e.form != t {
@@ -152,15 +167,26 @@ func match(words []string, index map[string]*entry) (int, string) {
 		if e == nil || e.ambiguous {
 			continue
 		}
-		if n == 1 {
-			_, core, _ := split(words[0])
-			if !marked(e.form) || core == e.form {
-				continue
-			}
+		_, first, _ := split(words[0])
+		if n == 1 && (!marked(e.form) || first == e.form) {
+			continue
+		}
+		if n > 1 && !marked(e.form) && compounds[e.form] {
+			continue // "set up", "log in": ordinary speech
+		}
+		// A capitalized first word starts a sentence or a name; a term written in lowercase
+		// would lose that capital ("Back up" to "backup"), so the words stay.
+		if r, _ := utf8.DecodeRuneInString(first); unicode.IsUpper(r) && !unicode.IsUpper(firstRune(e.form)) {
+			continue
 		}
 		return n, e.form
 	}
 	return 0, ""
+}
+
+func firstRune(s string) rune {
+	r, _ := utf8.DecodeRuneInString(s)
+	return r
 }
 
 // split cuts a word into its leading punctuation, its core and its trailing punctuation. Marks

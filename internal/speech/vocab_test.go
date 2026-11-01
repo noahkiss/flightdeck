@@ -15,12 +15,19 @@ func TestTerms(t *testing.T) {
 
 func TestFixup(t *testing.T) {
 	terms := Terms([]string{"internal/holderreg/registry.go", "internal/link/link_test.go", "app/fetchUser.ts", "Makefile",
-		"README.md", "server/Server.swift", "a.go", "cmd/gff-hab/main.go"})
+		"README.md", "server/Server.swift", "a.go", "cmd/gff-hab/main.go",
+		"NOTICE", "LICENSE", ".github/workflows/ci.yml", "setup.py", "login/view.ts", "backup.sh"})
 	for _, tc := range []struct{ in, want string }{
 		{"Run the tests in link test dot go.", "Run the tests in link_test.go."},
 		{"call fetch user from the view", "call fetchUser from the view"},
 		{"Look in holder reg, then registry.", "Look in holderreg, then registry."},
-		{"open the readme", "open the README"},
+		{"open the readme", "open the readme"},                                         // all capitals: never a term
+		{"You will notice the license is MIT.", "You will notice the license is MIT."}, // NOTICE, LICENSE
+		{"Open a PR on GitHub.", "Open a PR on GitHub."},                               // .github
+		{"Please set up the server and log in.", "Please set up the server and log in."},
+		{"Back up the files", "Back up the files"},
+		{"Fetch user first", "Fetch user first"}, // a capital that would be lost
+		{"git hub actions", "github actions"},    // the dot of .github is dropped
 		{"edit make file and build", "edit Makefile and build"},
 		{"start the server now", "start the server now"},             // plain term: no recase of one word
 		{"long ago", "long ago"},                                     // a.go is too short to match
