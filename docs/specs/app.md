@@ -877,6 +877,68 @@ request; Citadel source (OpenSSH key reader with bcrypt and AES-CTR); Moshi stor
 the Keychain behind Face ID); OpenSSH key format and `ssh-keygen` defaults *(gk)*; `transport.md`
 1.8, 4.3, 7.3.
 
+### 10.5 Built choices (task-46vch3ag)
+
+The first app stage: the connection to every hab and the status board. Code in
+`apple/FlightdeckKit`.
+
+- **Transport.** `Transport.open(kind)` returns one byte stream; `kind` is `control` or `data`, so
+  a data stream per pane opens on the same carrier later (`hab-logic-api.md` 4.2, option A). The
+  iOS SSH carrier (task-iv89iwd8) implements the same protocol. `reset()` drops a shared
+  connection; today no carrier shares one.
+- **Mac carriers.** The local Unix socket uses gff-hab's default path rule (`$GFF_HAB_SOCKET`,
+  else `gff/hab.sock` under Application Support). The ssh carrier runs the system `ssh -T -o
+  BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -- <host> gff-hab connect` with
+  the user's own keys and ssh config. ssh never prompts; its last stderr lines become the error
+  shown under the hab. Each stream is its own ssh process for now; connection sharing comes with
+  data streams.
+- **Hab list (Mac).** Flightdeck's own file, `Flightdeck/habs.json` under Application Support, or
+  the path in `$FLIGHTDECK_HABS`. Each entry has a `label` and exactly one of `local` (optional
+  `socket`) or `ssh` (`host`, optional `command` and `options`). No file means the local hab
+  only. Pairing replaces this list on the phone later.
+- **No sandbox.** The Mac app drops the App Sandbox (owner decision: Developer ID, unsandboxed),
+  so it can reach the local socket and run `ssh`. Its entitlements file is empty.
+- **One connection actor per hab.** It sends `hab.hello` with the reconnect token, then
+  `events.subscribe` with scope `host`. Events that arrive before the subscribe response wait;
+  the snapshot applies first, then only events with a seq above its seq. A seq gap, or a
+  heartbeat whose seq is ahead of the last event, ends the connection and starts a reconnect.
+- **Every snapshot replaces the hab's objects.** No replay exists (`hab-logic-api.md` Q5), so a
+  reconnect in the same epoch also reads state again; the snapshot is newer than anything held.
+  A new epoch counts as such only for client state (the token no longer holds; sizes and tickets
+  are dropped when those exist). Rows swap when the snapshot arrives, so they do not flash.
+- **Revision rule.** Within an epoch an event whose revision is not above the held one is
+  ignored. `agent.state` carries its revision in the data when the envelope has none.
+- **Liveness.** `hab.ping` goes out when nothing was sent for 15 s. Nothing received for 45 s
+  ends the connection. The check runs every second.
+- **Reconnect.** The first retry after a live connection ends goes at once. Later retries wait
+  0.5 s doubling to 30 s, then a random point in the upper half of that wait. Three failures in a
+  row mark the hab offline; retries go on while the app is visible. A return to the foreground
+  retries at once.
+- **Offline and update needed.** Rows dim only when the hab is offline (three failures), with
+  "offline since" the last time it was online. A short reconnect does not dim them. A revision
+  mismatch stops retries until the next start and hides the hab's rows; the list and the
+  connections column say which side to update.
+- **Board order.** Rows sort by rank, then by when the row entered its rank, newest first. The
+  first sight of a row uses the hab's `at` stamp. A change inside the same rank does not move a
+  row. Times in state use the phone's clock against the hab's stamp; the API has no hab clock yet.
+- **Seen.** Opening a `done` row marks it seen on this device, keyed by pane and state stamp, so
+  a later `done` counts again. `session.focus` (17) replaces this in Part 6 stage 7.
+- **Open hook.** `Board.onOpen` receives a `SessionTarget` (hab, session, pane). Chat and terminal
+  views attach there; until then a sheet shows the session's fields.
+- **Layout.** iPhone: the list, with connections in a sheet. iPad and Mac: the list beside a
+  column with a session cards placeholder and the connections list. The project and hab grouping
+  switch, search and the usage footer are not built yet.
+- **Lifecycle.** iPhone and iPad close every connection when the scene enters the background and
+  reconnect when it becomes active; `inactive` changes nothing. The Mac counts open windows; the
+  last one closed disconnects. Closing happens at once, so the hab ends size ownership at once.
+  Proof: unit tests over fake and real Unix socket streams count open streams after the
+  background; the app logs the count when it goes to the background and again 10 s later (iOS
+  may suspend it before the second line).
+- **Fake hab and demo mode.** `FakeHab` speaks the control protocol over the in-memory transport
+  (hello and the revision rule, tokens per epoch, subscribe, seq, heartbeat, ping) for tests and
+  demo mode. `-FlightdeckDemo YES` loads two invented hosts with sessions in every rank and
+  replays a short script.
+
 ---
 
 ## 11. Layout per device
