@@ -63,6 +63,9 @@ public final class UsageAlerts {
     public static let defaultThresholds = [80, 95]
     /// Reset times closer than this are one window.
     nonisolated static let sameWindow: TimeInterval = 600
+    /// A reset time that moved by less than this keeps the scheduled
+    /// notification: Codex derives its reset times and they jitter.
+    static let rescheduleAfter: TimeInterval = 60
 
     @ObservationIgnored private var fired: [Fired]
     @ObservationIgnored private let defaults: UserDefaults
@@ -78,6 +81,18 @@ public final class UsageAlerts {
         thresholds = stored.isEmpty ? Self.defaultThresholds : stored
         fired = Self.load([Fired].self, defaults, Keys.fired) ?? []
         freeRequests = Self.load([FreeRequest].self, defaults, Keys.free) ?? []
+    }
+
+    /// Where threshold `i` may move: between its neighbours with 5 points of
+    /// room each side, inside 50 to 100, so a stepper never lands one
+    /// threshold on another and merges them.
+    public static func stepRange(_ i: Int, in t: [Int]) -> ClosedRange<Int> {
+        guard t.indices.contains(i) else { return 50...100 }
+        var lo = i > 0 ? t[i - 1] + 5 : 50
+        var hi = i < t.count - 1 ? t[i + 1] - 5 : 100
+        lo = min(max(lo, 1), t[i])
+        hi = max(min(hi, 100), t[i])
+        return lo...hi
     }
 
     static func clean(_ t: [Int]) -> [Int] {
@@ -187,7 +202,7 @@ public final class UsageAlerts {
             if UsageMath.isFull(w) {
                 // Still full. A newer reset time moves the notification; a
                 // reading with no reset time leaves it where it is.
-                if let r = w.resetsAt, abs(r.timeIntervalSince(req.resetsAt)) >= 1 {
+                if let r = w.resetsAt, abs(r.timeIntervalSince(req.resetsAt)) >= Self.rescheduleAfter {
                     req.resetsAt = r
                     scheduleFree(a.harnessName, account: a.key, window: req.window, at: r)
                 }

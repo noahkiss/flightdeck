@@ -281,7 +281,7 @@ struct UsageWarningSettings: View {
                             all[i] = v
                             alerts.thresholds = all
                         }
-                    ), in: 50...100, step: 5) {
+                    ), in: UsageAlerts.stepRange(i, in: alerts.thresholds), step: 5) {
                         Text("Warn at \(t)%")
                     }
                 }
