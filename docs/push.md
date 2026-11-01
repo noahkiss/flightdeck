@@ -79,12 +79,17 @@ gff-hab reads the config at start. Its log says which way it went:
 - `push is off: <reason>`: the config is incomplete, malformed, or the key file fails its
   checks. gff-hab still starts; fix the config and restart.
 
-Then open the app. It registers its push token with each paired hab.
+Then open the app. It registers its push token with each paired hab, every time it connects.
+Connections › Notifications shows each hab's push status. A Debug build from Xcode registers
+a development token, a Release or TestFlight build a production one. The iPhone app needs its
+notification service extension and widget extension signed by the same team (`APP_NSE_PROFILE`
+and `APP_WIDGET_PROFILE` in `Local.xcconfig`).
 
 ## When push is not set up
 
 - The hab leaves out the `push` capability. `push.register` answers `unavailable`.
-- The app shows "Push is not set up on <hab>" in Settings, with a link to this guide.
+- The app shows "Push is not set up on <hab>" in Connections › Notifications, with a link to
+  this guide.
 - Approvals, questions and notices still reach the app while it is open.
 - `gff-hab notify` still works: open clients see the notice.
 

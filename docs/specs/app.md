@@ -905,6 +905,84 @@ relies on:
   one for the next turn.
 - **Left for the app half.** Registration, the notification service extension, the categories,
   the widget, push-to-start, and showing "push broken" (the hab logs it; no API field yet).
+  8.7 covers what the app half built.
+
+### 8.7 Built choices (task-oe7ioczy, app side)
+
+Code in `apple/FlightdeckKit/Sources/FlightdeckKit/Push`, the shared module
+`FlightdeckShared` (push payload, expiry text, Live Activity attributes, request links), and
+the iOS targets `NotificationService` and `FlightdeckWidgets`.
+
+- **Registration.** `PushRegistrar` calls `push.register` on every hab whose welcome lists
+  `push`, each time a connection reaches online (a new snapshot count), and on every online hab
+  again when the token, "Show commands in notifications" or "Notify when a turn finishes"
+  changes. The app disconnects in the background (12.1), so each return to the foreground
+  registers again; the hab keeps one token per device id. The device id is a random UUID kept in
+  the app's defaults. Kinds: `permission`, `question`, `auth`, `error`, plus `done` when that
+  setting is on. A hab without `push`, or one that answers `unavailable`, shows "Push is not set
+  up on <hab>" with a link to `docs/push.md` in Settings › Notifications.
+- **Environment.** The build's `aps-environment` is development for Debug and production for
+  Release (`APP_APS_ENVIRONMENT` in `Names.xcconfig`); Info.plist repeats it as
+  `FlightdeckAPSEnvironment` and the app sends that value, so a token always names its own APNs
+  host.
+- **Token first.** The app asks APNs for the token before the notification prompt: the token
+  needs no permission, and Live Activity pushes work with alerts off.
+- **Categories.** `approval` (Deny, Approve), `approval-deny` (Deny, Open), `open` (Open) and
+  `question` (Reply as text, Open). Approve, Deny and Reply need unlock (7.6). Open reads "Open on
+  iPhone" on iOS, for the mirrored Watch banner (16.2). The Reply action is on `question` only:
+  `approval.answer` takes text only with the `answer` choice, and the hab sends no `question`
+  category until it answers questions.
+- **Answers.** An action maps to `approval.answer` with the push's pane and request id and `via`
+  `banner`; a push with no request id opens the app instead. The answer goes on the live
+  connection when the hab is online in this process, else on a one-shot connection
+  (`HabOneShot`, 20 s). A dropped live connection tries once on a fresh one; the hab refuses a
+  second answer, so this never answers twice. The hab is found by the push's host id through
+  the hab book (`Flightdeck/hab-book.json`, host id to connection id, ids only, written as each
+  hab comes online). An SSH key that needs Face ID fails at once ("open Flightdeck to answer").
+- **Failure.** `conflict` posts "Already answered" (or "Expired: answer in the terminal" past
+  `expires_at`) and nothing else. Any other failure posts "Could not reach <hab>" / "Open on
+  iPhone to retry." or "Could not answer on <hab>" with the hab's hint, and keeps the request
+  (at most 16, in the app's defaults). When the app is next in front and the hab is online with
+  that request open, the approval sheet opens on it: the foreground prompt. Nothing retries on
+  its own (18.7).
+- **Notification service extension.** Built: the hab leaves the expiry out of the body, so the
+  extension appends " · Expires 14:05" in the device's time zone and clock style to a permission
+  banner whose `expires_at` is still ahead (with the date when it is over 20 hours away). Every
+  other push passes through unchanged. The Mac has no extension yet.
+- **Withdrawal while the app runs.** When a request closes on the board, the app removes
+  delivered permission banners for that request id (18.6, B where iOS allows).
+- **Focus.** `FocusReporter` sends `session.focus` `active` true when a session view appears in
+  an active scene, again every 25 s (under the hab's 30 s, so the 60 s hold never lapses while
+  the owner looks), and `active` false when the view goes or the app leaves the foreground; the
+  false goes out before the connections close, with at most 1 s of waiting. Calls run in order.
+  A reconnect repeats the focus after the registration, so the new client is bound to the device
+  first. A Mac window showing the same session twice stays focused until both close.
+- **Approval sheet.** Opens from a rank 1 row, a notification tap, a re-raised request, or a
+  Live Activity link (`flightdeck://request?hab=&pane=&request=&session=`). It reads every
+  request from the board, oldest first with "1 of 3". The request on screen stays after it closes:
+  when the hab's `agent.state` shows it closed without this sheet's answer, the buttons turn off
+  and it says "Answered elsewhere". The countdown uses the device clock (no offset is measured
+  yet). A failed answer keeps the buttons on with the hab's hint.
+- **Plans and questions** (`landscape.md` 4.4). A permission request for Claude's
+  `ExitPlanMode` shows the plan, with "Keep planning" (deny) and "Approve plan" (allow). One for
+  `AskUserQuestion` shows each question's options; the answer is `answer` with `text` set to the
+  chosen labels joined with ", " (several questions: one "<header>: <labels>" line each). The hab
+  refuses `answer` until the Claude adapter builds it; the sheet then shows the hab's hint.
+- **Live Activity.** `LiveActivityTracker` tracks the session the owner last sent a message to,
+  or the one that last entered `blocked`, whichever came later. When the app leaves the
+  foreground it starts the activity for that session if it is working or blocked and its hab has
+  push registered (without push nothing could update it after suspension, 9.2). The activity's
+  push token goes to that hab with `push.register_activity`, on the live connection or a
+  one-shot one. Opening the session in the app ends it. Allow and Deny run
+  `ActivityAnswerIntent`, a `LiveActivityIntent` compiled into both the app and the widget (App
+  Intents reads metadata per target); it runs in the app and answers like a banner action.
+  Push-to-start and the "hab offline" end are not built.
+- **Mac.** The Mac app answers banners and reports focus, but asks for no APNs token: its
+  entitlements have no `aps-environment` until a Developer ID profile with push exists.
+- **Tests.** `PushTests.swift` (registration against the fake hab, action mapping, categories,
+  expiry text, one-shot and live answers, refusal and re-raise, focus cadence, the sheet,
+  plans and questions, Live Activity choices and links). `LiveTests.testLivePushRegister` runs
+  against a real gff-hab with push config (`FLIGHTDECK_LIVE_SOCKET`, `FLIGHTDECK_LIVE_PUSH=1`).
 
 Sources: owner decision (each user brings their own APNs setup; fail gracefully without it); Moshi
 docs, hooks and notifications (which events raise a banner, never drop an approval silently,
