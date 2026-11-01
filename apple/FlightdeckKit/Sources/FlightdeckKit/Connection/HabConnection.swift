@@ -59,6 +59,10 @@ public struct HabState: Sendable, Equatable {
     /// account key (app.md 14.1): `usage.list` after each snapshot, then
     /// `usage.updated`. Kept across reconnects.
     public var usage: [String: UsageAccount] = [:]
+    /// The hab's clock less this device's, measured at the last hello from
+    /// the welcome's `time` (app.md 14.6); nil before a hello, or when the
+    /// welcome carried no time. Kept while offline, for the last readings.
+    public var clockOffset: TimeInterval?
 }
 
 /// Timings of the control connection. The defaults follow hab-logic-api.md 3.5
@@ -367,7 +371,9 @@ public actor HabConnection {
             Task { await r.close() }
         }
 
+        let sent = Date()
         let welcome = try await hello(r)
+        state.clockOffset = Self.clockOffset(habTime: welcome.time, sent: sent, received: Date())
         let newEpoch = epoch != nil && epoch != welcome.epoch
         state.resumed = clientID != nil && welcome.clientId == clientID && !newEpoch
         token = welcome.reconnectToken
@@ -390,6 +396,14 @@ public actor HabConnection {
         }
 
         try await waitSessionEnd()
+    }
+
+    /// The hab's clock less this device's: the welcome's `time` against the
+    /// middle of the hello's round trip. Nil with no time, or one that does not parse.
+    static func clockOffset(habTime: String?, sent: Date, received: Date) -> TimeInterval? {
+        guard let s = habTime, let hab = UsageBook.parseTime(s) else { return nil }
+        let mid = sent.addingTimeInterval(received.timeIntervalSince(sent) / 2)
+        return hab.timeIntervalSince(mid)
     }
 
     private func hello(_ r: RPCClient) async throws -> Welcome {

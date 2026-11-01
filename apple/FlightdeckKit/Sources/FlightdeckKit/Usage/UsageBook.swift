@@ -49,7 +49,9 @@ public final class UsageBook {
 
     /// A hab's readings: the whole `usage.list` answer, or the readings it
     /// holds after events. Accounts it no longer reports keep their last reading.
-    public func update(habID: String, habLabel: String, online: Bool, readings: [UsageAccount]) {
+    /// `clockOffset` is the hab's clock less this device's, measured at hello:
+    /// the hab's times move by it onto this device's clock.
+    public func update(habID: String, habLabel: String, online: Bool, readings: [UsageAccount], clockOffset: TimeInterval? = nil) {
         var changed = false
         if online != onlineHabs.contains(habID) {
             if online { onlineHabs.insert(habID) } else { onlineHabs.remove(habID) }
@@ -58,7 +60,7 @@ public final class UsageBook {
         let t = now()
         for r in readings {
             let previous = byHab[habID]?[r.key] ?? accounts[r.key]
-            let new = Self.reading(r, habID: habID, habLabel: habLabel, receivedAt: t, previous: previous)
+            let new = Self.reading(r, habID: habID, habLabel: habLabel, receivedAt: t, previous: previous, clockOffset: clockOffset)
             byHab[habID, default: [:]][r.key] = new
             if merge(new) { changed = true }
         }
@@ -122,27 +124,66 @@ public final class UsageBook {
     }
 
     /// The same reading, from any hab: nothing to show, nothing to alert.
+    /// Times match within `sameTime`: two connections to one hab measure its
+    /// clock offset a little apart.
     private static func sameContent(_ a: UsageAccountReading, _ b: UsageAccountReading) -> Bool {
-        a.label == b.label && a.harness == b.harness && a.windows == b.windows
+        a.label == b.label && a.harness == b.harness && a.degraded == b.degraded
+            && a.windows.count == b.windows.count && zip(a.windows, b.windows).allSatisfy(sameWindow)
     }
 
-    /// Converts the hab's account. A window with an unreadable time keeps the
+    /// Two dates this close are one time after the clock offset (app.md 14.6).
+    static let sameTime: TimeInterval = 2
+
+    static func near(_ a: Date?, _ b: Date?) -> Bool {
+        switch (a, b) {
+        case (nil, nil): return true
+        case let (x?, y?): return abs(x.timeIntervalSince(y)) < sameTime
+        default: return false
+        }
+    }
+
+    private static func sameWindow(_ a: UsageWindowReading, _ b: UsageWindowReading) -> Bool {
+        a.name == b.name && a.usedPct == b.usedPct && a.length == b.length
+            && near(a.resetsAt, b.resetsAt) && near(a.startsAt, b.startsAt) && near(a.readAt, b.readAt)
+    }
+
+    /// An offset under this is measurement noise, not a wrong clock: none is applied.
+    static let minOffset: TimeInterval = 1
+
+    /// The shift applied to a hab's times: none for an unknown or tiny offset.
+    static func shift(_ clockOffset: TimeInterval?) -> TimeInterval {
+        guard let o = clockOffset, abs(o) >= minOffset else { return 0 }
+        return o
+    }
+
+    /// Converts the hab's account, moving its times onto this device's clock
+    /// by `clockOffset`. A window that matches `previous` within `sameTime`
+    /// keeps the held window. A window with an unreadable time keeps the
     /// percentage. One with an unreadable read time counts as read now,
     /// unless `previous` held the same window with the same values: then it
     /// keeps that time, so the same reading again is no change.
-    static func reading(_ a: UsageAccount, habID: String, habLabel: String, receivedAt: Date, previous: UsageAccountReading? = nil) -> UsageAccountReading {
+    static func reading(_ a: UsageAccount, habID: String, habLabel: String, receivedAt: Date, previous: UsageAccountReading? = nil, clockOffset: TimeInterval? = nil) -> UsageAccountReading {
+        let shift = Self.shift(clockOffset)
+        func local(_ s: String?) -> Date? {
+            s.flatMap(Self.parseTime).map { $0.addingTimeInterval(-shift) }
+        }
         let windows = a.windows.map { w -> UsageWindowReading in
-            let resets = w.resetsAt.flatMap(Self.parseTime)
-            var read = Self.parseTime(w.readAt)
-            if read == nil, let old = previous?.windows.first(where: { $0.name == w.name }), old.usedPct == w.usedPct, old.resetsAt == resets {
+            let resets = local(w.resetsAt)
+            var read = local(w.readAt)
+            if read == nil, let old = previous?.windows.first(where: { $0.name == w.name }), old.usedPct == w.usedPct, near(old.resetsAt, resets) {
                 read = old.readAt
             }
-            return UsageWindowReading(name: w.name, usedPct: w.usedPct, resetsAt: resets, readAt: read ?? receivedAt)
+            let length = w.lengthS.flatMap { $0 > 0 ? TimeInterval($0) : nil }
+            let new = UsageWindowReading(name: w.name, usedPct: w.usedPct, resetsAt: resets, readAt: read ?? receivedAt, length: length, startsAt: local(w.startsAt))
+            // The same window again, moved a little by a new offset measure, keeps its
+            // times: a reconnect is no change to show, alert or write to the widget.
+            if let old = previous?.windows.first(where: { $0.name == w.name }), sameWindow(old, new) { return old }
+            return new
         }
-        return UsageAccountReading(key: a.key, label: a.label, harness: a.harness, habID: habID, habLabel: habLabel, windows: windows, receivedAt: receivedAt)
+        return UsageAccountReading(key: a.key, label: a.label, harness: a.harness, habID: habID, habLabel: habLabel, windows: windows, receivedAt: receivedAt, degraded: a.degraded)
     }
 
-    static func parseTime(_ s: String) -> Date? {
+    nonisolated static func parseTime(_ s: String) -> Date? {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let d = f.date(from: s) { return d }

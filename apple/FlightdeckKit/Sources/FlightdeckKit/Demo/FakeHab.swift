@@ -20,6 +20,9 @@ public actor FakeHab {
     private var capabilities: [String]
     /// Usage readings by account key, for `usage.list` and `usage.updated`.
     private var usage: [String: UsageAccount] = [:]
+    /// How far the fake hab's clock runs ahead of this device's, for the
+    /// welcome's `time`; nil sends no time, as an older hab.
+    private var clockSkew: TimeInterval?
     /// How many `usage.list` calls were answered.
     public private(set) var usageLists = 0
     /// Runs once, after the next `usage.list` answer is read and before it is sent.
@@ -413,6 +416,11 @@ public actor FakeHab {
         for a in accounts { usage[a.key] = a }
     }
 
+    /// Sets the welcome's `time` to this device's clock plus `skew`; nil sends none.
+    public func setClockSkew(_ skew: TimeInterval?) {
+        clockSkew = skew
+    }
+
     /// Runs `hook` once between reading the next `usage.list` answer and sending it.
     public func setUsageListHook(_ hook: (@Sendable () async -> Void)?) {
         usageListHook = hook
@@ -508,7 +516,8 @@ public actor FakeHab {
             await reply(c, id: id, result: Welcome(
                 build: "fake", capabilities: capabilities, clientId: c.clientID,
                 deviceId: "SHA256:fake-" + hostID, epoch: epoch, host: HostInfo(id: hostID),
-                reconnectToken: token, revision: chosen, seq: 0))
+                reconnectToken: token, revision: chosen, seq: 0,
+                time: clockSkew.map { Fixture.stamp(Date().addingTimeInterval($0)) }))
             startHeartbeat(c)
         case HabMethods.habPing.name:
             pings += 1

@@ -11,12 +11,19 @@ public struct UsageWindowReading: Codable, Hashable, Sendable {
     public var usedPct: Int
     public var resetsAt: Date?
     public var readAt: Date
+    /// The window's length as the hab sends it (`length_s`); nil when the
+    /// harness's data defines none, or from a hab that sends none.
+    public var length: TimeInterval?
+    /// When the window started (`starts_at`); nil with no length or no reset time.
+    public var startsAt: Date?
 
-    public init(name: String, usedPct: Int, resetsAt: Date?, readAt: Date) {
+    public init(name: String, usedPct: Int, resetsAt: Date?, readAt: Date, length: TimeInterval? = nil, startsAt: Date? = nil) {
         self.name = name
         self.usedPct = usedPct
         self.resetsAt = resetsAt
         self.readAt = readAt
+        self.length = length
+        self.startsAt = startsAt
     }
 }
 
@@ -32,10 +39,13 @@ public struct UsageAccountReading: Codable, Hashable, Sendable, Identifiable {
     public var windows: [UsageWindowReading]
     /// When the app received the reading; the reading time of an account with no windows.
     public var receivedAt: Date
+    /// What the hab could not read in the account's newest report, as one
+    /// line; set means "Usage unavailable", and `windows` are the last good ones.
+    public var degraded: String?
 
     public var id: String { key }
 
-    public init(key: String, label: String?, harness: String, habID: String, habLabel: String, windows: [UsageWindowReading], receivedAt: Date) {
+    public init(key: String, label: String?, harness: String, habID: String, habLabel: String, windows: [UsageWindowReading], receivedAt: Date, degraded: String? = nil) {
         self.key = key
         self.label = label
         self.harness = harness
@@ -43,7 +53,11 @@ public struct UsageAccountReading: Codable, Hashable, Sendable, Identifiable {
         self.habLabel = habLabel
         self.windows = windows
         self.receivedAt = receivedAt
+        self.degraded = degraded
     }
+
+    /// The hab marked the account degraded: the app shows "Usage unavailable", no numbers.
+    public var unavailable: Bool { degraded != nil }
 
     /// When the hab read the account: its newest window, else when the app got it.
     public var readAt: Date {
@@ -59,9 +73,21 @@ public enum UsageMath {
     /// A reading older than this is stale, or older than its window when that is shorter.
     public static let staleAfter: TimeInterval = 3600
 
+    /// The words shown where an unavailable account's numbers would be.
+    public static let unavailableText = "Usage unavailable"
+
+    /// The window's length: the hab's `length_s`, else its reset time less
+    /// its start, else read from its name (a hab that sends neither).
+    public static func length(of w: UsageWindowReading) -> TimeInterval? {
+        if let l = w.length, l > 0 { return l }
+        if let s = w.startsAt, let r = w.resetsAt, r > s { return r.timeIntervalSince(s) }
+        return length(of: w.name)
+    }
+
     /// The window's length, read from its name: the first word like `5h`,
     /// `30m`, `7d` or `2w`, or a period word (`daily`, `weekly`, `monthly`).
-    /// The hab sends no length (task-bw97v7dk), so a model name alone has none.
+    /// Only the fallback for a window with no `length_s` and no `starts_at`;
+    /// a model name alone has none.
     public static func length(of name: String) -> TimeInterval? {
         for word in name.lowercased().split(whereSeparator: { $0 == " " || $0 == "_" || $0 == "-" }) {
             switch word {
@@ -106,7 +132,7 @@ public enum UsageMath {
     /// The share of the window already gone, 0 to 1: where even spending
     /// would put usage. Nil without a length or a reset time.
     public static func pace(_ w: UsageWindowReading, now: Date) -> Double? {
-        guard let len = length(of: w.name), let r = w.resetsAt, !resetPassed(w, now: now) else { return nil }
+        guard let len = length(of: w), let r = w.resetsAt, !resetPassed(w, now: now) else { return nil }
         let left = r.timeIntervalSince(now)
         return min(1, max(0, 1 - left / len))
     }
@@ -119,8 +145,12 @@ public enum UsageMath {
 
     /// Older than an hour, or than the window when that is shorter.
     public static func isStale(_ w: UsageWindowReading, now: Date) -> Bool {
-        let limit = min(staleAfter, length(of: w.name) ?? staleAfter)
-        return now.timeIntervalSince(w.readAt) > limit
+        now > staleAt(w)
+    }
+
+    /// When a window's reading turns stale.
+    public static func staleAt(_ w: UsageWindowReading) -> Date {
+        w.readAt.addingTimeInterval(min(staleAfter, length(of: w) ?? staleAfter))
     }
 
     /// An account's age follows its newest window: a window the harness
@@ -142,11 +172,15 @@ public enum UsageMath {
         }
     }
 
-    /// Accounts ordered tightest first, then by key.
+    /// Accounts ordered tightest first, then by key. An unavailable account
+    /// has no number to rank by: it goes with the accounts with no windows.
     public static func byTightest(_ accounts: [UsageAccountReading], now: Date) -> [UsageAccountReading] {
-        accounts.sorted { a, b in
-            let pa = tightest(a, now: now).map { effectivePct($0, now: now) } ?? -1
-            let pb = tightest(b, now: now).map { effectivePct($0, now: now) } ?? -1
+        func rank(_ a: UsageAccountReading) -> Int {
+            a.unavailable ? -1 : tightest(a, now: now).map { effectivePct($0, now: now) } ?? -1
+        }
+        return accounts.sorted { a, b in
+            let pa = rank(a)
+            let pb = rank(b)
             if pa != pb { return pa > pb }
             return a.key < b.key
         }
@@ -182,6 +216,7 @@ public enum UsageText {
 
     /// The line under an account's rows: a reached limit first, then over pace, then on pace.
     public static func status(_ a: UsageAccountReading, now: Date) -> String? {
+        if a.unavailable { return UsageMath.unavailableText }
         let live = a.windows.filter { !UsageMath.resetPassed($0, now: now) }
         if let full = live.first(where: UsageMath.isFull) {
             if let r = resetsIn(full, now: now) { return "\(full.name) limit reached · resets in \(r)" }
