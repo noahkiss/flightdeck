@@ -10,8 +10,8 @@ spec, `docs/specs/hab-holder.md`. This spec covers only what `gff-hab` does on i
 link.
 
 Each section that settles a question ends with a **Decision** line. "Decision: proposed" means this
-spec recommends it and the build can start from it. "Decision: open" means the owner decides; the
-options and a recommendation are in [Open questions](#8-open-questions).
+spec recommends it and the build can start from it. The questions once open are all decided now;
+their options and reasons stay in [Open questions](#8-open-questions).
 
 ## Contents
 
@@ -320,16 +320,10 @@ Decisions taken in stage 4 (`internal/link`):
 
 ### 2.4 Backends
 
-gff-hab talks to its terminals through a backend interface with two implementations:
+gff-hab talks to its terminals through one backend: gff-hab-holder. It gives the pane list,
+events from the holder, raw bytes and data streams.
 
-| Backend | Structure and lifecycle | Raw bytes | Data streams |
-|---|---|---|---|
-| gff-hab-holder | Pane list, events from the holder | Yes | Yes |
-| zellij (interim) | The fork's event stream plus a tree read on a gap | No | Not available; capability absent |
-
-Under the zellij backend the terminal view attaches a real zellij client. Seq and epoch are minted
-by gff-hab, never taken from zellij. Whether this interim backend exists at all is Decision: open
-(Q1).
+An interim zellij backend was studied and dropped: there is no interim (Q1).
 
 ### 2.5 Commands from prompt marks (OSC 133)
 
@@ -571,7 +565,7 @@ Built choices (`internal/control`):
   fails on any breaking change. A breaking change passes only together with a new revision and its
   translator.
 
-How long the floor stays is Decision: open (Q4).
+How long the floor stays: 90 days after a revision is replaced, and at least two revisions (Q4).
 
 The schema lives in `api/` (layout and commands: `docs/layout.md`). Built choices:
 
@@ -594,7 +588,7 @@ Capability strings name optional features: `data-streams`, `snapshot-vt`, `snaps
 `agent-state`, `transcripts`, `devices`, `push`, `host-stats`. `devices` means the embedded SSH
 server is on and the `devices.*` methods work. `push` means the hab has working push config;
 `host-stats` means `hab.stats` works (3.9). A client checks for a capability before it uses the
-feature. The zellij backend omits `data-streams`. Capabilities are for features that a host may
+feature. Capabilities are for features that a host may
 lack. They are not a second versioning scheme.
 
 Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt` and
@@ -634,8 +628,8 @@ Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `sn
   `closing {reason: "event_backlog"}` notification and closes. The client reconnects and reads
   state again.
 
-Decision: proposed. Whether a reconnect within the same epoch can replay missed events is
-Decision: open (Q5).
+Decision: proposed. A reconnect within the same epoch does not replay missed events; the client
+reads state again (Q5).
 
 Built choices (`internal/control`):
 
@@ -1002,8 +996,7 @@ in-band nonce is decided: frames (Q3).
   keyboard protocol).
 - **Encoding.** `snapshot-vt` is plain VT bytes that redraw the screen in any terminal. It works for
   the Go client's pass-through view. `snapshot-ghostty` is libghostty's own format, which keeps more
-  state. Which one is the baseline is Decision: open (Q6); this spec recommends `snapshot-vt` as the
-  baseline, with `snapshot-ghostty` offered as a capability.
+  state. `snapshot-vt` is the baseline; `snapshot-ghostty` is offered as a capability (Q6).
 - A snapshot never contains a terminal query.
 - A `snapshot-vt` never sets the palette (OSC 4) or the working directory (OSC 7). On a
   pass-through client those would change the user's own terminal.
@@ -1037,8 +1030,8 @@ keyboard protocol queries, termcap queries, window size reports.
 - **Replayed bytes get no answer.** During a restart replay or a crash rebuild, gff-hab answers
   nothing: those queries were answered by the previous process or are stale.
 - **Bytes that arrived while no gff-hab ran get no answer.** A late answer would land in the
-  program's input as typed text. Programs that query use timeouts and carry on. Whether the holder
-  should answer a fixed few queries itself in that window is Decision: open (Q7).
+  program's input as typed text. Programs that query use timeouts and carry on. The holder does not
+  answer any query itself in that window (Q7).
 - **Focus reports** (focus in and out, when a program asks for them) come only from the size owner's
   client. Other clients' focus changes are dropped.
 - **Queries gff-hab does not recognise reach every client** (5.8 lists them: OSC 52 clipboard
@@ -1337,8 +1330,7 @@ hosts. No hab relays another hab's events in this part.
 
 ## 8. Open questions
 
-Each question has options, a recommendation and the reason. All are **Decision: open** for the
-owner.
+Each question has options, a recommendation and the reason. Each now ends with its decision.
 
 ### Q1. The interim path (blocks stage 9)
 
@@ -1355,7 +1347,8 @@ data streams, and the terminal view attaches a real zellij client, as the interi
 found. The earlier GFF server keeps running unchanged until gff-hab replaces it. The design doc's
 "first version" (option A) predates the finding that GFF's server is TypeScript, not Go.
 
-Decision: open.
+Decision: C, no interim; the holder came first (owner). Stage 9 is dropped. The earlier GFF stays
+the owner's daily driver until Flightdeck is stable.
 
 ### Q2. Data connections over SSH stdio (stage 1 of the plan)
 
@@ -1393,7 +1386,8 @@ Decision: A, frames on every transport (coordinator ruling): a program cannot fo
 Recommendation: **B**, with a minimum of two revisions. The app on TestFlight is the oldest client
 in practice, and days fit that better than counts.
 
-Decision: open.
+Decision: B, 90 days and at least two revisions (coordinator, 2026-11-01). Not user-visible; the
+compat test already enforces translators down to `MinRevision`.
 
 ### Q5. Event replay on reconnect
 
@@ -1405,7 +1399,8 @@ Decision: open.
 Recommendation: **A** for the first release. Structure is small; a re-read is cheap. Revisit if the
 phone's reconnect traffic measures high.
 
-Decision: open.
+Decision: A, no replay (coordinator, 2026-11-01). Rex and herdr-core re-read state too
+(`landscape.md` 2.18); none was built.
 
 ### Q6. Snapshot encoding baseline
 
@@ -1417,7 +1412,7 @@ Decision: open.
 Recommendation: **A.** The Go client's single-pane view passes bytes to the host terminal, and the
 CLI should not need libghostty. The app can ask for the Ghostty format.
 
-Decision: open.
+Decision: A (coordinator, 2026-11-01). Built: gff-hab advertises `snapshot-vt` with data streams.
 
 ### Q7. Terminal queries while gff-hab is down
 
@@ -1430,7 +1425,8 @@ Recommendation: **A.** gff-hab restarts take seconds. Most programs query with a
 a supported harness hangs. Align with the holder spec's OSC 133 decision, which faces the same
 "scan or not" question.
 
-Decision: open.
+Decision: A, nobody answers (coordinator, 2026-11-01). The holder stays a byte pump, as it does for
+OSC 133 (`hab-holder.md` Q1).
 
 ### Q8. Reconnect grace period
 
@@ -1441,7 +1437,7 @@ Built (stage 8): size ownership uses the reconnect grace (`control.DefaultReconn
 so a client keeps its sizes and its claim to restore exactly as long as its token. Not yet a
 flag.
 
-Decision: open.
+Decision: 60 s, configurable later (coordinator, 2026-11-01). Built as `control.DefaultReconnectGrace`.
 
 ---
 
@@ -1454,4 +1450,4 @@ Decision: open.
 - Stage 6 (control connection): 3 and 4.1, 4.2.
 - Stage 7 (data connections): 5.
 - Stage 8 (pane size): 6.
-- Stage 9 (zellij backend): 2.4 and Q1.
+- Stage 9 (zellij backend): dropped (Q1).

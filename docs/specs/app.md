@@ -580,7 +580,8 @@ the context bar, the title, then the command on one line in the accent colour, t
 - Each open request carries an `expires_at` from the hab. It is the earlier of two times: the
   answer path's own deadline, and the hab's limit for remote answers.
 - **The answer path's deadline.** With a blocking permission hook, the hook gives up after its
-  timeout and the harness falls back to its own dialog (`harness-adapters.md`, open decisions).
+  timeout and the harness falls back to its own dialog (`harness-adapters.md`, Open decisions:
+  a per-host setting, off by default, about 30 s).
   After that, only a keystroke answer or the terminal can resolve it.
 - **The hab's limit.** A setting on the hab, default 60 minutes. A request older than this takes no
   remote Allow. The owner must open the session and answer there. A stale approval is easy to
@@ -677,8 +678,8 @@ service.
 
 - **Never drop an approval silently.** If the hab cannot decide whether to hold a push, it sends it.
 - **Hold while watched.** If a client reports the session in focus in an active window within the
-  last 60 s, the hab skips the banner for that session. The Live Activity still updates. (Open
-  question 18.4.)
+  last 60 s, the hab skips the banner for that session. The Live Activity still updates. (Decided in
+  18.4.)
 - **Collapse.** Each request uses its request id as the collapse id. A later push for the same
   request replaces the earlier one.
 - **Small payloads.** A push carries the hab, session, pane, state, request id and a short text. The
@@ -779,7 +780,7 @@ The connection follows `transport.md`. This section says what the app does.
   hosts it uses the system sshd with the user's keys, or pairs as the phone does.
 - **Before the embedded server is on.** A hab without the embedded SSH server cannot pair. The app
   offers a fallback: it shows its public key to copy, and the owner adds it to the system sshd's
-  authorized keys on that host. The app then runs `gff-hab connect` over SSH. (Open question 18.8.)
+  authorized keys on that host. The app then runs `gff-hab connect` over SSH. (Decided in 18.8.)
 
 ### 10.2 Reconnect
 
@@ -981,7 +982,7 @@ no wake word, no system assistant in the path.
 - **The screen locks.** Voice mode keeps running while its view is open, the screen locks or the
   app goes to the background: it holds the audio session and the one connection to the session's
   hab. It ends after 10 minutes with no speech and no turn running, or when the owner ends it. This
-  is the one exception to the background rule in 12.1 (open question 18.11).
+  is the one exception to the background rule in 12.1 (decided in 18.11).
 - **Audio routes.** Speaker, wired and Bluetooth headsets. A route change pauses listening for a
   moment, then carries on.
 
@@ -1269,7 +1270,7 @@ Voice mode needs no voice call: speech becomes text on the device and goes throu
 
 ## 18. Open questions
 
-Each question has options and a recommendation. All are **Decision: open** for the owner.
+Each question has options and a recommendation, and ends with its decision.
 
 ### 18.1 Live Activity across several habs
 
@@ -1281,6 +1282,8 @@ Each question has options and a recommendation. All are **Decision: open** for t
 
 Recommendation: **A.** It works without a hub and matches the best reference.
 
+Decision: A (coordinator, 2026-11-01). It matches Moshi and needs no hub.
+
 ### 18.2 Face ID and the device key
 
 `transport.md` 4.3 says the phone's key is "gated by Face ID or the passcode". The owner decided
@@ -1288,7 +1291,9 @@ Face ID is optional and off by default.
 
 Recommendation: the key needs the device unlocked (this device only, never in backups). It does not
 need biometrics. The Face ID setting, when on, gates the app and in-app answers. Lock-screen actions
-always need unlock. Decided (coordinator, following the owner's Face ID decision): `transport.md`
+always need unlock.
+
+Decision: as recommended (coordinator, following the owner's Face ID decision). `transport.md`
 4.3, 7.2 and 7.3 now say the key is usable only while the device is unlocked.
 
 ### 18.3 Bring your own APNs key versus who signs the build
@@ -1305,16 +1310,24 @@ Recommendation: **A, with B as its consequence.** Document plainly in the push s
 needs a build signed by the same team as the key. The app works without push, so the owner's builds
 still serve others for live use.
 
+Decision: A, with B as its consequence (owner, 2026-10-31): push needs the user's own build and
+APNs key; the owner's builds use the owner's key; no relay.
+
 ### 18.4 Hold banners while watched
 
 Recommendation: hold the banner when any client has the session in focus in an active window
 within the last 60 s. Never hold an approval when the focus report is older than that. Moshi's
 equivalent is off by default; ours is on because it keys on the session, not the whole machine.
 
+Decision: as recommended (coordinator, 2026-11-01). Paseo also sends nothing to a client focused on the agent
+(`landscape.md` 2.9); its in-app tier is idea 4.1 (task-oe7ioczy).
+
 ### 18.5 A banner for `done`
 
 Recommendation: off by default. The Live Activity shows it. A per-device setting turns it on, as a
 passive banner.
+
+Decision: as recommended (coordinator, 2026-11-01). A per-device setting, so a user who wants it turns it on.
 
 ### 18.6 How "answered elsewhere" withdraws a banner
 
@@ -1325,10 +1338,14 @@ passive banner.
 
 Recommendation: **A**, plus B where iOS allows. Confirm against the owner's Moshi screens (7).
 
+Decision: A, plus B where iOS allows (coordinator, 2026-11-01). A works while the app is suspended.
+
 ### 18.7 A lock-screen answer when the hab is unreachable
 
 Recommendation: fail fast, post a local "could not reach" notice, never retry on its own. A stale
 retry could approve a command the owner no longer wants.
+
+Decision: as recommended (coordinator, 2026-11-01). Failing fast costs nothing to build.
 
 ### 18.8 Connecting before the embedded SSH server exists
 
@@ -1336,11 +1353,17 @@ Recommendation: support the fallback in Part 6 stage 4. The app shows its public
 adds it to the host's authorized keys by hand. This needs no new listener, and it is the path
 `transport.md` 4.1 already opens. QR pairing replaces it once the embedded server is enabled.
 
+Decision: as recommended (coordinator, 2026-11-01). It is the same path as the owner's decision to import an
+existing SSH key (10.4).
+
 ### 18.9 Sealed push payloads
 
 The plan already calls a `/consensus` on this. Recommendation for the first release: plain short
 text through APNs, the "show commands in notifications" setting, and a payload shape that leaves
 room for a sealed body later.
+
+Decision: as recommended for the first release (coordinator, 2026-11-01), in place of the `/consensus` run. Paseo
+sends a clear-text preview (`landscape.md` 2.9); a sealed body stays a later step.
 
 ### 18.10 Apple Watch
 
@@ -1357,6 +1380,9 @@ banner, written for the Watch first (16).
 Recommendation: **A**, ending after 10 minutes with no speech and no turn running. It is the one
 exception to 12.1, and it lasts only while the owner chose voice mode.
 
+Decision: A (coordinator, 2026-11-01). The owner asked for voice mode like the Claude and ChatGPT apps, which keep
+running with the screen locked.
+
 ### 18.12 Where attachments live
 
 | Option | For | Against |
@@ -1366,6 +1392,8 @@ exception to 12.1, and it lasts only while the owner chose voice mode.
 
 Recommendation: **A**, as 4.4 says. The hab adds the ignore rule to the repository's local exclude
 file, never to a tracked file, and clears old files after 30 days.
+
+Decision: A (coordinator, 2026-11-01). Not a question a user sees; harnesses read the file with no prompt.
 
 ### 18.13 Reading imported OpenSSH keys
 
@@ -1380,6 +1408,8 @@ decrypt them (`transport.md` 1.8).
 Recommendation: **A.** The format is short and documented. Test it against keys `ssh-keygen`
 writes (each type, with and without a passphrase, each round count) and against OpenSSH's own
 key-derivation test vectors.
+
+Decision: A (coordinator, 2026-11-01). It covers every key type the owner may import, ECDSA included.
 
 ---
 

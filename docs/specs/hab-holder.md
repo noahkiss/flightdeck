@@ -1,6 +1,6 @@
 # gff-hab-holder: behaviour spec
 
-Status: draft, from the Part 1 study stage. Open decisions are marked **Decision: open**.
+Status: draft, from the Part 1 study stage. Every question in section 7 is decided.
 
 gff-hab-holder (the holder) is the small process on each host that owns every PTY. It spawns
 programs, pumps their output into a raw byte ring per pane, resizes, signals and reaps. It parses
@@ -712,7 +712,7 @@ which we do not support.
 Ruling (coordinator, not an owner decision): the init system supervises gff-hab; the holder does
 not start or restart it. See 2.1 (fixed choices) and 2.9.
 
-### Q4. Who ends processes that escaped a pane? **Decision: open**
+### Q4. Who ends processes that escaped a pane? **Decision: gff-hab, by pane token (coordinator, 2026-11-01)**
 
 herdr-core's holder sweeps every process carrying a pane's scope token when the program exits.
 Recommendation: gff-hab owns this policy. The holder sets nothing beyond what spawn gives it;
@@ -720,11 +720,15 @@ gff-hab adds a pane token to the environment, and sweeps on release by reading p
 environments from the OS. Keeping it out of the holder keeps policy out of the process that must
 not change.
 
-### Q5. A Mac without a graphical login. **Decision: open**
+Ruling (coordinator, 2026-11-01): take the recommendation. hc sweeps by a scope token too
+(`landscape.md` 2.1); we keep the same behaviour but run it in gff-hab. Not built yet.
+
+### Q5. A Mac without a graphical login. **Decision: refuse by default; a flagged `Background` holder later, by explicit option (coordinator, 2026-11-01)**
 
 Recommendation in 5.3: refuse by default, allow a flagged `Background` holder by explicit option.
 
-Stage 6 builds the refusal (5.5). The explicit `Background` option is not built.
+Stage 6 builds the refusal (5.5). The explicit `Background` option is not built. herdr also runs
+its server in the GUI domain (`landscape.md` 2.16), so the refusal matches the bar.
 
 ---
 

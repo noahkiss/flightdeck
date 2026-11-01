@@ -128,7 +128,7 @@ match it.
 | Paseo | Structured, through the SDK's tool-permission callback. The app also answers AskUserQuestion with real choices and approves a plan at plan-mode exit. CLI: `paseo permit allow/deny` |
 | herdr | Keystrokes only |
 | Rex | None built in. A community board types into the pane |
-| Ours | Structured where the harness offers it; keystrokes as a fallback with a read-back. The blocking Claude hook is an open decision. Requests expire after 60 minutes, need an unlocked phone, and are withdrawn everywhere once answered (`app.md` 7; `harness-adapters.md`, Permission answers) |
+| Ours | Structured where the harness offers it; keystrokes as a fallback with a read-back. The blocking Claude hook is a per-host setting, off by default (owner, 2026-11-01). Requests expire after 60 minutes, need an unlocked phone, and are withdrawn everywhere once answered (`app.md` 7; `harness-adapters.md`, Permission answers) |
 | Bar | Match Paseo: structured answers for permissions, questions and plan approval |
 | Flag | **Below** on plan approval, which no spec covers yet (idea 4.4). **Above** on expiry, Watch fit and withdrawal |
 
@@ -285,7 +285,7 @@ through its API, or host its TUI in a PTY.
 **Lineage.** herdr-core took OSC 7501 from Rex; herdr#5069 cites the Rex spec. Paseo names none
 of the others and uses no herdr data or libghostty. herdr's phone story rests on third-party
 apps (Moshi, Heeler). None of the three uses ACP, the Agent SDK or Codex app-server, except
-Paseo. hc tells agents to run Codex with `--no-daemon`, our recommendation too
+Paseo. hc tells agents to run Codex with `--no-daemon`, which the owner also chose
 (`harness-adapters.md`, open decisions).
 
 **Where we sit.** We follow the PTY camp (herdr, Rex) for hosting and the terminal. We follow
@@ -350,7 +350,7 @@ The owner can drop any of these to the bar. Each line says what the bar is.
 | Approve from a Watch banner only when the whole command fits (`app.md` 16.1) | Nobody else has Watch approvals except Moshi |
 | An answer button needs a hook or server source and a matching request id; screen text never answers (`harness-adapters.md` Rule 2) | herdr answers by keys from screen state; Rex and hc accept unauthenticated OSC 7501 |
 | Read back after each send and show "not delivered" (`harness-adapters.md`, Input delivery) | herdr and hc: refuse while blocked, no read-back |
-| Hook config is printed, never written into harness settings without approval (`harness-adapters.md`, open decisions) | Paseo, herdr and Rex install hooks or skills themselves |
+| Hook config is printed; a later opt-in install command writes it after showing the diff (owner, 2026-11-01; `harness-adapters.md`, open decisions) | Paseo, herdr and Rex install hooks or skills themselves |
 | Secure Enclave keys, pinned device ids, revocation that reaches every hab (`transport.md` 4, 6.6) | herdr: plain SSH; Rex: tailnet identity; Paseo: an optional password |
 | Signed per-build bundles and a guided grant walk (`macos-identity.md`) | Rex (1698) has a signed helper; others none |
 

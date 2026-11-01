@@ -1,8 +1,8 @@
 # macOS code identity and permission grants: behaviour spec
 
 Status: draft, from the Part 1 study step of the signing task. Paper study, written on Linux.
-Every claim marked **needs Mac proof** has not been confirmed on current macOS. Open decisions are
-marked **Decision: open**.
+Every claim marked **needs Mac proof** has not been confirmed on current macOS. Every question in
+section 9 is decided; the proof steps in section 8 are approved and wait to run.
 
 This spec says which code identity each Flightdeck process carries on macOS, which permission
 grants each one needs, how releases are signed, and how one built-in command (`gff setup`) checks
@@ -559,7 +559,9 @@ that Mac (`tccutil reset` included); **Account** means creating a fresh macOS us
 | P11 | Run `gff setup` from start to finish on a fresh user account (task acceptance) | Ends with `--check` exit 0; a pane reads a protected folder and the clipboard with no prompt | DevID, TCC, Account |
 | P12 | Update to a second signed release (smoke 12) | No prompt; `--check` exit 0; the drained holder's panes still read the protected folder | DevID |
 
-Steps that need nothing (P0, P2, P8) can run at any time. The others wait for approval.
+Steps that need nothing (P0, P2, P8) can run at any time. The owner approved P1, P3 to P7 and
+P9 to P12 (2026-11-01): Developer ID signing, TCC changes on a test Mac and a fresh user account.
+They are approved, not yet run.
 
 ### 8.1 Results so far
 
@@ -589,10 +591,10 @@ or a screen capture, which needs Screen Recording (a TCC grant).
 
 ## 9. Open questions
 
-Q2 to Q5 are decided by the coordinator. Q1 and Q6 widen what the holder can reach, so they
-wait for the owner.
+Q2 to Q5 are decided by the coordinator. Q1 and Q6 widen what the holder can reach, so the
+owner decided them (2026-11-01).
 
-### Q1. Holder Full Disk Access by default. **Decision: open (owner)**
+### Q1. Holder Full Disk Access by default. **Decision: yes, FDA by default (owner, 2026-11-01)**
 
 Full Disk Access is broad. The alternative is per-folder Files and Folders grants. Recommendation:
 require FDA for the holder. Agents work anywhere, every terminal user grants FDA to their terminal
@@ -630,7 +632,7 @@ Recommendation: no. Release builds sign in CI only; dev builds use `.dev` ids an
 local identity through `GFF_DEV_SIGN_IDENTITY` (3.5). This matches what the zellij fork learned:
 signing on each Mac needs an unlocked keychain and invites team mix-ups.
 
-### Q6. The opt-in entitlements on the holder. **Decision: open (owner)**
+### Q6. The opt-in entitlements on the holder. **Decision: yes, carry them as terminals do (owner, 2026-11-01)**
 
 Carrying camera, microphone, contacts and similar entitlements lets a pane program ask for them,
 as in a terminal app. It also widens what the holder could be asked for. Recommendation: carry
@@ -640,7 +642,7 @@ them, as terminals do; the user still answers each prompt, and `--check` never r
 
 ## 10. Proposed change to hab-holder.md
 
-Applied: `hab-holder.md` 5.3 and Q2 now carry this decision. Proposed for the coordinator to apply. Replace the **Decision: open** block in 5.3 (from
+Applied: `hab-holder.md` 5.3 and Q2 now carry this decision. The text below is kept as the record of the change. It replaced the open block in 5.3 (from
 "**Decision: open — how the holder keeps one TCC identity across builds.**" through
 "Recommendation: **option 1**, ... before stage 5 relies on it.") and the body of Q2 with:
 

@@ -723,7 +723,7 @@ read back through a terminal parser.
 | Exit status on the frame | A pane that exited non-zero is marked with its status | Frame note (5.2) | Screen test: an `exited` frame shows the status |
 | Bell marker | A bell marks the pane briefly, then clears | Bell mark on pane and tab for about 1 s (5.2) | Screen test: the mark appears, then clears (needs the bell event, 14) |
 | Finished command drops to a shell | A command pane that exits cleanly becomes a shell | Console pane offers a new shell (5.2) | E2E: a console command exits 0; one key gives a shell in the same directory |
-| Large floating pane | Temporary panes (an image, a quick command) float over the tab at most of its size | Open question 15.9 | Decided in 15.9 |
+| Large floating pane | Temporary panes (an image, a quick command) float over the tab at most of its size | A zoomed pane in a scratch tab first (15.9) | Decided in 15.9 |
 | Window title names the host | The terminal window title shows host, workspace and pane | Title template (3.2) | Screen test: the OSC 2 output matches the template |
 | Several windows mirror one workspace | Two terminal windows on one machine show the same tabs and focus | Open question 15.4 | Decided in 15.4 |
 | Agents on every host | Lists coding agents in every session on every listed host | Sidebar and board across habs (4, 6, 7) | E2E: two habs; the sidebar lists both hosts' sessions, ranked |
@@ -740,8 +740,9 @@ read back through a terminal parser.
 
 ## 13. Plugins and add-ons to confirm with the owner
 
-Each item is loaded by the current workspace config. The recommendation is ours; the owner
-decides (Part 5 decision "which zellij behaviours and plugins become `gff` features").
+Each item is loaded by the current workspace config. The owner accepted every recommendation
+below on 2026-10-31, except that usage is first-class: on by default in `gff`, and in the app,
+alerts and widgets (15.6).
 
 | Plugin or add-on | What it does | Recommendation |
 |---|---|---|
@@ -783,8 +784,8 @@ their stage. Where `app.md` 17 already proposes a call, `gff` uses the same one.
 
 ## 15. Open questions
 
-Each question has options and a recommendation. All are **Decision: open** for the owner unless
-marked.
+Each question has options and a recommendation, and ends with its decision. One question, 15.4,
+waits for the owner because it changes what a user sees and the right answer is unclear.
 
 ### 15.1 The parser for the composed view
 
@@ -794,6 +795,10 @@ program's modes (keyboard protocol, mouse, bracketed paste, alternate screen) an
 
 Recommendation: libghostty behind the interface, matching `gff-hab` and the app, with the pure-Go
 fake for tests.
+
+Decision: libghostty through `internal/vt`, the parser gff-hab uses; `vt.Fake` in pure builds
+(coordinator, 2026-11-01, in place of the `/consensus` run). herdr and Rex use libghostty too
+(`landscape.md` 3). gff release builds need the libghostty build.
 
 ### 15.2 The shared library and the app's SSH
 
@@ -808,6 +813,9 @@ put the app's SSH on `swift-nio-ssh` with a Secure Enclave key, which Go cannot 
 
 Recommendation: **A.** The library owns hello, seq, events, tickets, offsets, credit and reconnect.
 It asks its host for "a new control stream" and "a new data stream" to a hab.
+
+Decision: A (coordinator, 2026-11-01). Built: `internal/habconn` has a `Transport` seam with Unix,
+command and system-ssh transports (11.7); the app supplies its Swift SSH through the same seam.
 
 ### 15.3 In-process SSH or the system `ssh`. **Decision: B (coordinator)**
 
@@ -842,6 +850,8 @@ The owner's current setup mirrors one workspace into every terminal window: same
 Recommendation: **B.** Tabs follow the owner; each window keeps its own focus. A "follow" key makes
 one window mirror another's focus while held.
 
+Decision: open (owner, user-visible). The owner's own setup today is C; the recommendation is B.
+
 ### 15.5 Default keymap
 
 | Option | For | Against |
@@ -850,6 +860,9 @@ one window mirror another's focus while held.
 | B. One prefix key, tmux style | Takes one key only | Two strokes for everything |
 
 Recommendation: **A** as the default, with B as a shipped alternative keymap.
+
+Decision: A as the default, B shipped as an alternative (coordinator, 2026-11-01). Both ship, and
+the keymap lives in `gff`'s config file, so a user picks either.
 
 ### 15.6 Agent usage budgets
 
@@ -868,10 +881,15 @@ Hidden panes have no data stream. Marks need events.
 Recommendation: add `pane.output` (throttled, at most once per second per pane) and `pane.bell`
 to the hab API (14). Agent state already arrives as events.
 
+Decision: add both events, as recommended (coordinator, 2026-11-01). Not built yet.
+
 ### 15.8 Desktop notifications from gff
 
 Recommendation: off by default. When on, OSC 9 or OSC 777 through the host terminal, only for
 needs-you sessions not on screen. Push stays the app's job.
+
+Decision: as recommended (coordinator, 2026-11-01). herdr also notifies through the outer terminal
+(`landscape.md` 2.9).
 
 ### 15.9 Floating panes
 
@@ -881,6 +899,8 @@ needs-you sessions not on screen. Push stays the app's job.
 | B. Temporary panes open as a zoomed pane in a scratch tab | Nothing new to build | Not over the current work |
 
 Recommendation: **B** for the first build, **A** after the parity review if the owner misses it.
+
+Decision: B first; the parity review (task-s47wjpc1) decides on A (coordinator, 2026-11-01).
 
 ### 15.10 Agents driving the workspace
 
@@ -897,10 +917,13 @@ Recommendation: **C**, with the MCP in the plan part that owns agent tooling (Pa
 on output needs a hab call ("wait for a line, for quiet, for exit, for a state change") so no
 client polls the screen.
 
+Decision: C (coordinator, 2026-11-01). Not user-visible; hab methods first keep each layer small.
+
 ### 15.11 Which plugins carry over (owner)
 
-Section 13 lists each plugin and add-on with a recommendation. The owner confirms or changes each
-row. Answer recorded in the Part 5 plan.
+Section 13 lists each plugin and add-on with a recommendation.
+
+Decision: section 13 accepted, except that usage is first-class (15.6) (owner, 2026-10-31).
 
 ---
 

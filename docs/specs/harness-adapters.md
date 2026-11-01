@@ -194,8 +194,8 @@ endpoint, which takes an optional `harness` field that defaults to `claude`.
 - **Server side.** `gff-hab` validates the envelope, resolves the pane from the token, and hands
   the payload to that harness's adapter. Unknown harness values are logged and dropped. Unknown
   native events are logged at debug level and dropped.
-- **Hook config.** `gff-hab` prints the hook config for each harness. Writing it into a
-  harness's settings is a separate, approved step (plan decision, owner).
+- **Hook config.** `gff-hab` prints the hook config for each harness. A later opt-in install
+  command writes it after showing the diff (owner decision, see [Open decisions](#open-decisions)).
 
 Built choices (`internal/hook`, `internal/harness`, `gff-hab hook`):
 
@@ -370,7 +370,7 @@ When sources disagree inside one turn, the stronger one wins:
 | State | Two sources. (1) Native OSC 7501 reports, sent only after the terminal answers the `?` query; hab answers it. (2) Hooks: `UserPromptSubmit` → `working`; `PreToolUse`/`PostToolUse` → `working`; `PermissionRequest` → `blocked:permission`; `Notification` with `permission_prompt` → `blocked:permission`, `elicitation_dialog` → `blocked:question`, `idle_prompt` → `idle`; `Stop` → `done`; `StopFailure` → `error`; `SessionStart`/`SessionEnd` bind and unbind the session. |
 | Conversation | Tail the session JSONL named by `transcript_path` in every hook payload (under the Claude config dir, `projects/<encoded cwd>/<session id>.jsonl`). Read records of type `user` and `assistant` for the chat view, linked by `uuid` and `parentUuid`. Use `attachment` records for the context ledger. Skip the other known record types; an unknown type becomes a placeholder message. |
 | Input | PTY: bracketed paste of the text, then Enter. |
-| Permission answer | Default: the TUI dialog, answered by the owner in the terminal, or by PTY keys from the app after the checks in [Permission answers](#permission-answers). Opt-in: a blocking `PermissionRequest` hook (see open decisions). |
+| Permission answer | Default: the TUI dialog, answered by the owner in the terminal, or by PTY keys from the app after the checks in [Permission answers](#permission-answers). Opt-in: a blocking `PermissionRequest` hook, a per-host setting, off by default (see [Open decisions](#open-decisions)). |
 | Resume id | `session_id` in every hook payload; `claude --resume <id>`. |
 
 Notes:
@@ -463,7 +463,7 @@ Built choices for the transcript reader (`internal/transcript`, `cmd/gff-hab/cha
 |---|---|
 | Detection | Process name `codex` (manifest id `codex`). The manifest also marks Codex's own startup dialogs (trust this folder, update available) as `blocked`. |
 | State | Hooks. Codex does not emit OSC 7501 itself. `SessionStart` binds; `UserPromptSubmit`, `PreToolUse`, `PostToolUse` → `working`; `PermissionRequest` → `blocked:permission`; `Stop` → `done`; `Interrupt` → `idle`; `SessionEnd` unbinds. With the app-server path (option B or C below), server notifications replace hooks as the state source. |
-| Conversation | Depends on the daemon decision. Without the app-server: tail the rollout JSONL named by `transcript_path` (under the Codex home, `sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl`). Each line has `timestamp`, `type` and `payload`; use `session_meta`, `turn_context`, `response_item` and `event_msg`, and skip the rest. With the app-server: `thread/resume` with `excludeTurns`, then `item/*` notifications. |
+| Conversation | With `--no-daemon` (decided), there is no app-server: tail the rollout JSONL named by `transcript_path` (under the Codex home, `sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl`). Each line has `timestamp`, `type` and `payload`; use `session_meta`, `turn_context`, `response_item` and `event_msg`, and skip the rest. With the app-server (the later option C spike): `thread/resume` with `excludeTurns`, then `item/*` notifications. |
 | Input | PTY: bracketed paste, then Enter. With the app-server: `turn/start` when idle, `turn/steer` with `expectedTurnId` when working. |
 | Permission answer | Without the app-server: TUI dialog or PTY keys, after the checks below; or a blocking `PermissionRequest` hook. With the app-server: answer the server request (`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`, `item/permissions/requestApproval`) with `accept`, `acceptForSession`, `decline` or `cancel`; `serverRequest/resolved` confirms. |
 | Resume id | `session_id` in hook payloads, `thread.sessionId` on the app-server; `codex resume <id>`. |
@@ -555,7 +555,7 @@ Further rules:
 | `gff-hab` restarts | Hook posts during the gap are lost. On start, the adapter rebuilds state from the transcript tail, the last OSC 7501 report in the holder's byte ring, and the process table. It marks state as `source: screen` until the next hook. |
 | Harness upgrade mid-session | The running process keeps its version; only new panes see the new one. The reader picks its parser per session from the version in the transcript, not from the installed binary. |
 | Out-of-order hooks | See [Ordering](#ordering). |
-| Codex daemon update | With the shared daemon, `codex app-server daemon update` may interrupt running work in every pane. This is one reason for the open decision below. |
+| Codex daemon update | With the shared daemon, `codex app-server daemon update` may interrupt running work in every pane. This is one reason the hab starts Codex with `--no-daemon` (decision below). |
 
 ## Fixtures
 
@@ -570,9 +570,12 @@ unreadable line.
 
 ## Open decisions
 
+All three are now decided by the owner (2026-11-01). The section keeps its name so links hold.
+
 ### Codex: shared daemon or `--no-daemon`
 
-Decision: open (owner). Blocks the Codex stage.
+Decision: A, `--no-daemon` in the holder now; C, a private app-server per pane, is a later spike
+(owner, 2026-11-01).
 
 Codex 0.157 and later start a shared, per-user app-server daemon by default. The TUI is a
 client of it, and the agent loop and its tool commands run in the daemon, not under the pane.
@@ -602,7 +605,8 @@ inform the choice.
 
 ### Claude: blocking `PermissionRequest` hook
 
-Decision: open (owner). Blocks only the approval bullet of the Claude stage; it ships disabled.
+Decision: B, keep the blocking hook as a per-host setting, off by default, with about a 30-second
+wait (owner, 2026-11-01).
 
 | | A. Fire-and-forget (today) | B. Blocking hook with timeout |
 |---|---|---|
@@ -617,9 +621,9 @@ and can share the code.
 
 ### Who writes hook config into harness settings
 
-Decision: open (owner), already recorded in the Part 4 plan. `gff-hab` prints the config for
-each harness. Writing it into settings files that the owner's dotfiles track needs approval.
-This spec assumes print-only until then.
+Decision: print first; a later opt-in install command writes the config after it shows the diff
+(owner, 2026-11-01). This is the install prompt that `landscape.md` section 6 suggests; Paseo,
+herdr and Rex install hooks themselves. Today `gff-hab hook -print` prints only.
 
 ## Sources
 
