@@ -408,8 +408,8 @@ whiteboard, a log file.
 | A file over the size limit (default 25 MB) | The app refuses it before upload and names the limit |
 | A large photo | The app downscales it to the longest side the harness accepts (default 2048 px), as PNG for screenshots and JPEG for photos. No setting sends the original (20.6) |
 | The upload breaks off | The message stays "not sent" with a retry. The hab discards partial files |
-| The session is `working` | The file uploads at once; the message waits as "sends after this turn" (4.2) |
-| The harness accepts no images at all | The app warns before send. The path still goes in the text |
+| The session is `working` | The message waits as "sends after this turn" (4.2); its files upload when it goes out (built choice below) |
+| The harness accepts no images at all | Not built: no warning yet. The path still goes in the text, which every supported harness reads |
 | A name clash in the folder | The hab prefixes the time and a short id; it never overwrites |
 | The project is not a repository | The folder is still made; nothing to ignore |
 | The hab's disk is full | The hab refuses the upload with a clear error; nothing partial stays |
@@ -423,32 +423,61 @@ Built choices (task-mthck7r4):
   The hab needs the `attachments` capability; an older hab gets "this hab cannot take files;
   update gff-hab" before any upload. The app uploads when the message goes out, so a queued
   message ("sends after this turn") uploads when the turn ends. A retry uploads only the
-  files the hab does not hold yet. The row shows "Uploading 2 of 3, 40%".
+  files the hab does not hold yet. The row shows "Uploading 2 of 3, 40%". A put of the same
+  file for the same session drops that session's earlier open upload of it, so retries never
+  fill the open limit. A hab whose byte count stops growing fails the message ("upload ...
+  stopped") instead of looping.
 - **Where the hab stores it.** `<session folder>/.flightdeck/attachments/<id>-<name>`. The
   session folder is the one it started in (recorded at `session.create`), else its
   transcript's, else its project's most recent folder. A folder the hab cannot write in (a
-  session started in `/`), or no folder at all, falls back to `attachments/<session>/` in the
-  hab's state folder. The id is 12 hex digits. The name keeps letters, digits, `.`, `-` and
-  `_`; anything else becomes `-`, so a path needs no quoting in message text.
+  session started in `/`), a `.flightdeck` or `.flightdeck/attachments` that is a link (a
+  cloned repository can commit one), or no folder at all, falls back to
+  `attachments/<session>/` in the hab's state folder. The id is 12 hex digits. The file name
+  keeps letters, digits, `.`, `-` and `_`; anything else becomes `-`, and it is cut to 100
+  bytes with a short extension kept. The session folder part of the path may still hold
+  spaces.
 - **The ignore rule.** The hab writes `.flightdeck/.gitignore` holding `*` when it is missing:
   the folder ignores itself, including the ignore file. This is local and untracked, needs no
   git call, works in every worktree, and never edits a tracked file or `info/exclude`. An
   ignore file already there is left alone.
 - **Clean-up.** The hab keeps an index in `attachments.json` in its state folder. It deletes
   a file 30 days after upload, checked at start and hourly, only when the file is still at its
-  path with the stored size. A file that is gone is forgotten. An upload with no write for 2
-  minutes is dropped with its partial file. Partial files left by a stopped hab go at the next
-  start. At most 8 uploads are open at once.
-- **Handed to the harness.** The text, a blank line, then one absolute path per line
-  (`harness-adapters.md`, Input delivery). A message may be files alone. `chat.page` and
-  `chat.message` take those trailing paths off the user message again and list their ids in
-  `attachments`. The chat view shows 96 pt thumbnails from `attachment.get` with `thumbnail`
-  (a JPEG of at most 320 px from the hab). Tap opens the hab's copy full screen. A file with
-  no thumbnail shows as a file chip.
+  path with the stored size. A file that is gone is forgotten; one that cannot be checked
+  (a disk that is not mounted) keeps its record. An upload with no write for 2 minutes is
+  dropped with its partial file. Partial files left by a stopped hab go at the next start,
+  including one a write still held when it stopped. At most 8 uploads are open at once. The
+  hab keeps the last 64 thumbnails in memory and decodes no source over 24 M pixels.
+- **Handed to the harness.** Each harness gets an image the way its prompt takes one, so the
+  model receives a real image, not only a path (`harness-adapters.md`, Input delivery). Files
+  that are not images go as paths after the text. A message may be files alone.
+  - Claude Code (verified in the installed 2.1.316 bundle, its paste handler): it splits a
+    paste into lines and reads each line that is one absolute `.png`, `.jpg`, `.jpeg`, `.gif`
+    or `.webp` path as an image, after its read-permission check; the other lines stay text.
+    So the hab sends one paste: the text, a blank line, one path per line. A path it may not
+    read stays text. Inferred, not run: the transcript then holds the image blocks and an
+    `[Image #N]` marker instead of the paths.
+  - Codex (inferred from the installed 0.166 binary: its TUI logs `attach_image path=` and
+    `pasted image size=`, and the open-source TUI attaches a paste that is one image path and
+    nothing else): each image goes as its own paste, then the text, then Enter. Not run
+    against a live Codex.
+  - opencode: one prompt through its server, the paths in the text; its read tool takes
+    images. Its server takes file parts, but this build does not use them (not installed
+    here to verify the shape).
+- **Thumbnails in the chat.** `chat.page` and `chat.message` give each user message the ids
+  of its files: the trailing paths when the harness kept them as text, else the send it came
+  from, matched by its text once image markers (`[Image #N]`, `[image]`, Codex's
+  `[image WxH FMT]`) and paths are taken out, within 10 minutes, the nearest in time. The hab
+  keeps the last 500 sends with files for this. The text loses the markers. The chat view
+  shows 96 pt thumbnails from `attachment.get` with `thumbnail` (a JPEG of at most 320 px from
+  the hab). Tap opens the hab's copy full screen. A file with no thumbnail shows as a chip
+  with its name and size; a file the hab no longer has says so. A thumbnail that failed for a
+  dropped connection loads again the next time the row appears.
 - **Prepared on the phone.** An image is written again through ImageIO with no metadata, so
   location and camera data never leave the phone. The longest side is at most 2048 px. A PNG
-  source (a screenshot) stays PNG; any other image becomes JPEG at quality 0.85. Not built:
-  the setting that keeps metadata and the setting that sends originals.
+  source (a screenshot) stays PNG; any other image becomes JPEG at quality 0.85, so a RAW or
+  DNG picked in Files arrives as a 2048 px JPEG. Other files (a video, a PDF) go as they are,
+  metadata included: the promise covers photos. Not built: the setting that keeps metadata,
+  the setting that sends originals, and the warning for a harness that takes no images.
 - **Attach menu.** Photos (the system picker, up to 10, needs no library permission), Files,
   and Paste (an image on the clipboard). Not built: Camera.
 - **Mark up.** iPhone and iPad: tap a thumbnail in the composer. PencilKit's pens, marker,
@@ -456,9 +485,11 @@ Built choices (task-mthck7r4):
   marks into the image at full size; Cancel keeps it as it was. Not built: crop and text.
   The Mac has no markup (PencilKit's canvas is iOS only).
 - **Open in Flightdeck.** The app takes any file from the share sheet or Files (the
-  `public.data` and `public.text` registration of key import, 10.4). A file at most 64 KiB
-  with a private key block, a public key, or a broken key block goes to key import, which
-  explains it. Any other file opens the send sheet: the file with its size, a Capcom row when
+  `public.data` and `public.text` registration of key import, 10.4). Only a private key file
+  goes to key import: at most 64 KiB, and its first line that is not blank opens a private
+  key block (`-----BEGIN ... PRIVATE KEY-----`); key import explains a broken or encrypted
+  one. Any other file, a public key or a README that quotes a key included, opens the send
+  sheet: the file with its size, a Capcom row when
   a hab offers the standing Capcom conversation (none does yet, so the row is hidden), then
   every session by host; offline sessions cannot be picked. Picking a session opens it with
   the file in the composer, where the owner can mark it up, add text and send. A file over
@@ -2471,8 +2502,9 @@ running with the screen locked.
 | A. A folder inside the project, excluded with a local, untracked ignore rule | Every harness can read it with no extra permission prompt; the agent can move it into the project | A folder in the owner's tree; must never be committed by accident |
 | B. The hab's state directory, outside the project | Nothing in the project | Harnesses may ask permission to read outside the project, which breaks the flow from a phone |
 
-Recommendation: **A**, as 4.4 says. The hab adds the ignore rule to the repository's local exclude
-file, never to a tracked file, and clears old files after 30 days.
+Recommendation: **A**, as 4.4 says. The hab writes a local, untracked ignore rule, never a
+tracked file, and clears old files after 30 days. As built: `.flightdeck/.gitignore` holding
+`*`, not the repository's `info/exclude` (4.4, built choices).
 
 Decision: A (coordinator, 2026-11-01). Not a question a user sees; harnesses read the file with no prompt.
 

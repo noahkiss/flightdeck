@@ -1070,15 +1070,22 @@ Built choices (`session.send`, `internal/harness`, `cmd/gff-hab`):
 - Agent messages (channels, `mesh.md` 6.5) take this same path, wrapped in their envelope.
   Unlike `session.send`, the hab queues them: a busy agent holds a message until it is idle,
   done or stopped on an error. To opencode they go through its server, as one prompt.
-- Attachments (`app.md` 4.4). `session.send` with attachment ids appends each stored file's
-  absolute path to the text, after a blank line, one path per line, and the message then takes
-  the same path as plain text: one paste and its Enter for Claude Code and Codex, one prompt
-  through the server for opencode. A path is the one input all three harnesses take: each
-  reads the file with its own tools, and Claude Code also shows an image path as an image. No
-  harness here offers a structured image input through the terminal, so no adapter uses one.
-  The stored names hold no spaces or shell characters, so a path needs no quoting. A message
-  may be paths alone. `chat.page` and `chat.message` take the trailing paths of stored files
-  off a user message's text again and list their ids in `attachments`.
+- Attachments (`app.md` 4.4). `session.send` with attachment ids sends each image the way the
+  harness's prompt takes one, and every other file as an absolute path after the text, one
+  per line (`harness.ImageMessageWrites`):
+  - Claude Code: one paste of the text, a blank line, then one image path per line. Its paste
+    handler (verified in the 2.1.316 bundle) turns each line that is one absolute image path
+    into an image and keeps the rest as text.
+  - Codex: each image path as its own paste, then the text as one more, then Enter. Codex
+    attaches a paste that is one image path and nothing else (inferred from the 0.166 binary
+    and its open-source TUI; not run live).
+  - opencode: one prompt through its server with every path in the text; its read tool takes
+    images. Its server's file parts are not used yet.
+  Only the stored file name is free of spaces and shell characters; the session folder part
+  of a path may hold spaces, which a pasted path needs no quoting for. A message may be files
+  alone. After delivery the hab records the send (text and ids), so `chat.page` and
+  `chat.message` can give a user message its ids: from trailing paths left as text, or by
+  matching a message whose paths became images to its send (`app.md` 4.4).
 - Not built yet: the two-second typing pause, the read back and its "not delivered" event.
 
 ## Permission answers

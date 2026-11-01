@@ -927,7 +927,8 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   (`invalid`); a match moves the file to `path`. A write for an id that is already done answers
   `done` again, so a retried last run is harmless. An upload with no write for 2 minutes is
   dropped with its partial file, as is every partial file when gff-hab starts; at most 8
-  uploads are open at once. `attachment.get {id, thumbnail?, offset?, limit?}` returns `name`,
+  uploads are open at once. A put of the same file (same hash) for the same session drops that
+  session's earlier open upload of it, so a retry never fills the limit. `attachment.get {id, thumbnail?, offset?, limit?}` returns `name`,
   `type`, `size`, `offset`, `data` and `eof`: a run of at most 1 MiB (default 256 KiB) of the
   file, or with `thumbnail` a JPEG of at most 320 px on its longest side (PNG, JPEG and GIF
   sources; any other type is `invalid`). `session.send` takes the ids of done uploads for that
