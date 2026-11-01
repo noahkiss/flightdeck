@@ -1,6 +1,7 @@
 package detect
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -114,21 +115,19 @@ func TestExplainProcessMatchesDetect(t *testing.T) {
 	}
 }
 
-func TestVisibleText(t *testing.T) {
+func TestScreenText(t *testing.T) {
 	tests := []struct {
-		plain string
-		rows  int
-		want  string
+		rows []string
+		want string
 	}{
-		{"old 1\nold 2\na\nb\nc\n\n\n", 5, "a\nb\nc"},
-		{"a\r\nb\r\n", 24, "a\nb"},
-		{"", 24, ""},
-		{"\n\n\n", 3, ""},
-		{"x\ny", 0, "x\ny"},
+		{[]string{"a", "", "b", "c", "", "   "}, "a\n\nb\nc"},
+		{nil, ""},
+		{[]string{"", "", ""}, ""},
+		{[]string{"x", "y"}, "x\ny"},
 	}
 	for _, tt := range tests {
-		if got := VisibleText(tt.plain, tt.rows); got != tt.want {
-			t.Errorf("VisibleText(%q, %d) = %q, want %q", tt.plain, tt.rows, got, tt.want)
+		if got := ScreenText(tt.rows); got != tt.want {
+			t.Errorf("ScreenText(%q) = %q, want %q", tt.rows, got, tt.want)
 		}
 	}
 }
@@ -162,7 +161,7 @@ func TestGroupProcesses(t *testing.T) {
 	}
 	defer func() { member.Process.Kill(); member.Wait() }()
 
-	fg, err := GroupProcesses(pgid)
+	fg, err := GroupProcesses(context.Background(), pgid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,10 +179,10 @@ func TestGroupProcesses(t *testing.T) {
 	member.Wait()
 	leader.Process.Kill()
 	leader.Wait()
-	if _, err := GroupProcesses(pgid); !errors.Is(err, ErrNoGroup) {
+	if _, err := GroupProcesses(context.Background(), pgid); !errors.Is(err, ErrNoGroup) {
 		t.Errorf("group after exit: %v, want ErrNoGroup", err)
 	}
-	if _, err := GroupProcesses(0); !errors.Is(err, ErrNoGroup) {
+	if _, err := GroupProcesses(context.Background(), 0); !errors.Is(err, ErrNoGroup) {
 		t.Errorf("group 0: %v", err)
 	}
 }

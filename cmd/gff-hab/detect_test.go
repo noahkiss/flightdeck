@@ -192,3 +192,63 @@ func TestRegionTail(t *testing.T) {
 		t.Errorf("rune boundary: %q %v", s, cut)
 	}
 }
+
+// staleDialog is a Claude permission dialog that scrolls into scrollback before the screen is
+// cleared (ESC[H ESC[2J, as Ctrl-L does), leaving one line on screen.
+var staleDialog = `● I'll remove the build directory.
+
+──────────────────────────────────────────────────
+ Bash command
+
+   rm -rf build
+   Remove build output
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for rm commands in this folder
+   3. No, and tell Claude what to do differently (esc)
+
+ Esc to cancel · Tab to amend
+` + strings.Repeat("filler\n", 24) + "\033[H\033[2Jhello\n"
+
+// TestDetectExplainVisibleOnly: the screen rules read the active screen only. A permission
+// dialog in scrollback, above a cleared screen, does not make the screen say blocked, and the
+// rules read one line.
+func TestDetectExplainVisibleOnly(t *testing.T) {
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip("no sleep")
+	}
+	e := newHabEnv(t, 0)
+	data, err := os.ReadFile(sleep)
+	if err != nil {
+		t.Skip(err)
+	}
+	writeFile(t, filepath.Join(e.work, "screen"), staleDialog)
+	if err := os.WriteFile(filepath.Join(e.work, "claude"), data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := e.control()
+	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(10*time.Second))
+	defer cancel()
+	var sc api.SessionCreated
+	if err := c.Call(ctx, "session.create", api.SessionCreateParams{
+		Argv: []string{"/bin/sh", "-c", `cat "$DIR/screen"; exec "$DIR/claude" 60`}, Cwd: "/", Cols: 80, Rows: 24,
+		Env: []string{"PATH=/usr/bin:/bin", "LC_ALL=C", "DIR=" + e.work}}, &sc); err != nil {
+		t.Fatal(err)
+	}
+	var res api.DetectExplain
+	waitUntil(t, "explain to see claude in the foreground and hello on screen", func() bool {
+		r, err := explain(t, e, api.DetectExplainParams{Pane: sc.Pane})
+		res = r
+		return err == nil && r.Process.Match == "claude" && r.Screen != nil && r.Screen.Lines > 0
+	})
+	if s := res.Screen; s.State != "unknown" || s.Rule != "" || s.Lines != 1 || s.Rows != 24 {
+		t.Errorf("screen %+v; want unknown from the one line on screen", *s)
+	}
+	for _, r := range res.Screen.Rules {
+		if strings.Contains(r.Text, "proceed") {
+			t.Errorf("rule %s read scrollback: %q", r.ID, r.Text)
+		}
+	}
+}

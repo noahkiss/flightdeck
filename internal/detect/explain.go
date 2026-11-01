@@ -39,19 +39,16 @@ func (m *Manifest) ExplainScreen(in Input) ScreenTrace {
 	return t
 }
 
-// VisibleText cuts what the rules read from a pane's plain text (scrollback, then the active
-// screen, one line per row): the last rows lines, with trailing blank lines dropped. The
-// manifests are written for the live bottom of the screen, and the blank rows under a fresh
-// prompt would push it out of every bottom_lines(N) region.
-func VisibleText(plain string, rows int) string {
-	ls := splitLines(plain)
-	if rows > 0 && len(ls) > rows {
-		ls = ls[len(ls)-rows:]
+// ScreenText joins the visible rows of a pane's active screen into what the rules read, with
+// the blank rows below the last printed one dropped. The manifests are written for the live
+// bottom of the screen, and the blank rows under a fresh prompt would push it out of every
+// bottom_lines(N) region. rows must be the active screen only, never scrollback: a stale dialog
+// in scrollback would match as if it were on screen.
+func ScreenText(rows []string) string {
+	for len(rows) > 0 && strings.TrimSpace(rows[len(rows)-1]) == "" {
+		rows = rows[:len(rows)-1]
 	}
-	for len(ls) > 0 && strings.TrimSpace(ls[len(ls)-1]) == "" {
-		ls = ls[:len(ls)-1]
-	}
-	return strings.Join(ls, "\n")
+	return strings.Join(rows, "\n")
 }
 
 // ProcessTrace is one foreground process as an explanation shows it.

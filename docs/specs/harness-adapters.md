@@ -158,9 +158,19 @@ Built choices (`internal/detect`, `gff-hab manifests`):
     protocol). gff-hab then lists the group's processes: `/proc` on Linux, `ps` elsewhere, so no
     cgo. `ps` prints argv as one line, so outside Linux an argument with a space reads as two.
     A process offers each name once.
-  - **Screen text.** The rules read the last `rows` lines of the parsed screen, with trailing
-    blank lines dropped. Without the drop, the blank rows under a fresh prompt would push the
-    printed text out of every `bottom_lines(N)` region.
+  - **Bounded listing.** A listing returns at most 256 processes and stops when the call's
+    context ends (15 s). On Linux the `/proc` walk runs on its own goroutine, so a read that
+    hangs cannot hold the reply. It never reads `cmdline` of a process in state `D`: `cmdline`
+    takes the process's memory lock, which a process stuck on a hung mount can hold for good.
+    Each `ps` run is bounded to 5 s.
+  - **No reused pids.** `ps` runs three times: all groups, then names, then argv for the pids
+    found. The second and third runs print the group again, and a row of another group is
+    dropped. Such a row is a pid that exited and was reused between runs.
+  - **Screen text.** The rules read the active screen only: its visible rows, read from the
+    parser's cells, never scrollback. A stale dialog in scrollback must not match as if it
+    were on screen. The read takes the pane lock for one screen of cells, not the whole
+    scrollback. The blank rows below the last printed row are dropped, so a fresh prompt at the
+    top of a cleared screen stays inside `bottom_lines(N)` regions.
   - **Region text.** Each rule carries its region's last 2048 bytes, cut at a line where it can.
     The CLI prints the winner's region; `-all` prints every rule with its region.
   - **OSC regions.** gff-hab does not track the OSC title or OSC 9;4 progress yet, so

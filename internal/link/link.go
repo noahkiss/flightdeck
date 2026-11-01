@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1186,6 +1187,48 @@ func (l *Link) Screen(u hp.UUID) (Screen, error) {
 		return Screen{}, ErrNoPane
 	}
 	return p.screen()
+}
+
+// VisibleRows returns pane u's active screen as text, one string per row, with trailing spaces
+// removed, and the screen's size. It reads only the visible rows: no scrollback, no snapshot.
+func (l *Link) VisibleRows(u hp.UUID) (rows []string, cols int, err error) {
+	p := l.pane(u)
+	if p == nil {
+		return nil, 0, ErrNoPane
+	}
+	var s vt.Screen
+	p.mu.Lock()
+	if p.term == nil {
+		p.mu.Unlock()
+		return nil, 0, ErrClosed
+	}
+	err = p.term.ReadScreen(&s)
+	p.mu.Unlock()
+	if err != nil {
+		return nil, 0, err
+	}
+	return ScreenRows(&s), s.Cols, nil
+}
+
+// ScreenRows turns a screen's cells into one string per row: a blank cell is a space, a wide
+// character's spacer cell adds nothing, and trailing spaces are removed.
+func ScreenRows(s *vt.Screen) []string {
+	out := make([]string, s.Rows)
+	var b strings.Builder
+	for y := 0; y < s.Rows; y++ {
+		b.Reset()
+		for _, c := range s.Cells[y*s.Cols : (y+1)*s.Cols] {
+			switch {
+			case c.Spacer:
+			case c.Text == "":
+				b.WriteByte(' ')
+			default:
+				b.WriteString(c.Text)
+			}
+		}
+		out[y] = strings.TrimRight(b.String(), " ")
+	}
+	return out
 }
 
 // Foreground asks pane u's holder for the pane's foreground process group (0: none).

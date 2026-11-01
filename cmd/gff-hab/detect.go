@@ -32,19 +32,19 @@ type detectService struct {
 	// manifests loads the detection manifests for each call, so a refresh shows at once.
 	manifests func() *detect.Set
 	// group lists a process group's processes; detect.GroupProcesses, or a stand-in in tests.
-	group func(pgid int) (detect.Foreground, error)
+	group func(ctx context.Context, pgid int) (detect.Foreground, error)
 }
 
 // paneReader is what explain reads from the holder link; *link.Link is one.
 type paneReader interface {
-	Screen(u hp.UUID) (link.Screen, error)
+	VisibleRows(u hp.UUID) (rows []string, cols int, err error)
 	Foreground(ctx context.Context, u hp.UUID) (int, error)
 }
 
 // linkPanes adapts *link.Link to paneReader.
 type linkPanes struct{ lk *link.Link }
 
-func (l linkPanes) Screen(u hp.UUID) (link.Screen, error) { return l.lk.Screen(u) }
+func (l linkPanes) VisibleRows(u hp.UUID) ([]string, int, error) { return l.lk.VisibleRows(u) }
 func (l linkPanes) Foreground(ctx context.Context, u hp.UUID) (int, error) {
 	return l.lk.Foreground(ctx, u)
 }
@@ -71,7 +71,7 @@ func (d *detectService) Explain(ctx context.Context, p api.DetectExplainParams) 
 		return api.DetectExplain{}, control.Errorf(api.ErrorKindInvalid, "pane %q is not a pane id", pane)
 	}
 	pane = u.String()
-	scr, err := d.lk.Screen(u)
+	rows, cols, err := d.lk.VisibleRows(u)
 	if errors.Is(err, link.ErrNoPane) {
 		return api.DetectExplain{}, control.Errorf(api.ErrorKindNotFound, "pane %s does not exist", pane)
 	}
@@ -100,9 +100,9 @@ func (d *detectService) Explain(ctx context.Context, p api.DetectExplainParams) 
 	if err != nil {
 		return res, nil // a pane the link follows with no parser yet: no screen to read
 	}
-	text := detect.VisibleText(scr.Text, scr.Rows)
+	text := detect.ScreenText(rows)
 	tr := m.ExplainScreen(detect.Input{Screen: text})
-	ds := &api.DetectScreen{Cols: scr.Cols, Rows: scr.Rows, State: string(tr.Result.State), Rule: tr.Result.Rule}
+	ds := &api.DetectScreen{Cols: cols, Rows: len(rows), State: string(tr.Result.State), Rule: tr.Result.Rule}
 	if text != "" {
 		ds.Lines = strings.Count(text, "\n") + 1
 	}
@@ -128,7 +128,7 @@ func (d *detectService) process(ctx context.Context, u hp.UUID, set *detect.Set)
 		out.Error = "the terminal has no foreground process group"
 		return out
 	}
-	fg, err := d.group(pgid)
+	fg, err := d.group(ctx, pgid)
 	if err != nil {
 		out.Error = fmt.Sprintf("processes of group %d: %v", pgid, err)
 		return out
