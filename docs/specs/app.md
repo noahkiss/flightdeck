@@ -415,6 +415,55 @@ whiteboard, a log file.
 | The hab's disk is full | The hab refuses the upload with a clear error; nothing partial stays |
 | A file type the app cannot preview (an archive, a binary) | It sends as a file chip with name and size |
 
+Built choices (task-mthck7r4):
+
+- **Upload.** `attachment.put`, then `attachment.write` runs of at most 1 MiB in order, as
+  `content.read` serves bytes; the last run checks the SHA-256 (`hab-logic-api.md`,
+  `attachment.*`). One control message is at most 16 MiB, so a 25 MB file cannot go in one.
+  The hab needs the `attachments` capability; an older hab gets "this hab cannot take files;
+  update gff-hab" before any upload. The app uploads when the message goes out, so a queued
+  message ("sends after this turn") uploads when the turn ends. A retry uploads only the
+  files the hab does not hold yet. The row shows "Uploading 2 of 3, 40%".
+- **Where the hab stores it.** `<session folder>/.flightdeck/attachments/<id>-<name>`. The
+  session folder is the one it started in (recorded at `session.create`), else its
+  transcript's, else its project's most recent folder. A folder the hab cannot write in (a
+  session started in `/`), or no folder at all, falls back to `attachments/<session>/` in the
+  hab's state folder. The id is 12 hex digits. The name keeps letters, digits, `.`, `-` and
+  `_`; anything else becomes `-`, so a path needs no quoting in message text.
+- **The ignore rule.** The hab writes `.flightdeck/.gitignore` holding `*` when it is missing:
+  the folder ignores itself, including the ignore file. This is local and untracked, needs no
+  git call, works in every worktree, and never edits a tracked file or `info/exclude`. An
+  ignore file already there is left alone.
+- **Clean-up.** The hab keeps an index in `attachments.json` in its state folder. It deletes
+  a file 30 days after upload, checked at start and hourly, only when the file is still at its
+  path with the stored size. A file that is gone is forgotten. An upload with no write for 2
+  minutes is dropped with its partial file. Partial files left by a stopped hab go at the next
+  start. At most 8 uploads are open at once.
+- **Handed to the harness.** The text, a blank line, then one absolute path per line
+  (`harness-adapters.md`, Input delivery). A message may be files alone. `chat.page` and
+  `chat.message` take those trailing paths off the user message again and list their ids in
+  `attachments`. The chat view shows 96 pt thumbnails from `attachment.get` with `thumbnail`
+  (a JPEG of at most 320 px from the hab). Tap opens the hab's copy full screen. A file with
+  no thumbnail shows as a file chip.
+- **Prepared on the phone.** An image is written again through ImageIO with no metadata, so
+  location and camera data never leave the phone. The longest side is at most 2048 px. A PNG
+  source (a screenshot) stays PNG; any other image becomes JPEG at quality 0.85. Not built:
+  the setting that keeps metadata and the setting that sends originals.
+- **Attach menu.** Photos (the system picker, up to 10, needs no library permission), Files,
+  and Paste (an image on the clipboard). Not built: Camera.
+- **Mark up.** iPhone and iPad: tap a thumbnail in the composer. PencilKit's pens, marker,
+  eraser, lasso and ruler draw over the image, laid exactly on its fitted frame. Done draws the
+  marks into the image at full size; Cancel keeps it as it was. Not built: crop and text.
+  The Mac has no markup (PencilKit's canvas is iOS only).
+- **Open in Flightdeck.** The app takes any file from the share sheet or Files (the
+  `public.data` and `public.text` registration of key import, 10.4). A file at most 64 KiB
+  with a private key block, a public key, or a broken key block goes to key import, which
+  explains it. Any other file opens the send sheet: the file with its size, a Capcom row when
+  a hab offers the standing Capcom conversation (none does yet, so the row is hidden), then
+  every session by host; offline sessions cannot be picked. Picking a session opens it with
+  the file in the composer, where the owner can mark it up, add text and send. A file over
+  25 MB shows the limit and offers no target.
+
 ### 4.5 Plan checklist
 
 - When the agent writes or updates a plan (Claude's task list tool, Codex's plan update), the chat
@@ -2275,8 +2324,9 @@ stage that fills it.
 | `chat.page {session, before?, limit}` | Read a page of chat messages from the transcript reader |
 | events for chat | Chat messages appended or updated while subscribed |
 | `session.send {session, text, attachments?, origin, idempotency_key?}` | Send a message through the adapter under the input rules of 4.2. A retry with the same `idempotency_key` delivers once; the app sends a key only to a hab whose welcome lists `idempotency-keys` (`hab-logic-api.md` 3.9). `attachments` lists ids from `attachment.put`. `origin` is typed, dictated or voice, for the hab's log only |
-| `attachment.put {session, name, type, size, sha256}` | Start an upload (4.4). The bytes follow on their own channel of the same SSH connection. Returns `{id, path}` once the hash matches; refuses a file over the hab's limit |
-| `attachment.get {id, thumbnail?}` | Fetch an attachment or its thumbnail, for the chat view on any device |
+| `attachment.put {session, name, type, size, sha256}` | Start an upload (4.4). Returns `{id, path, chunk, done}`; refuses a file over the hab's limit |
+| `attachment.write {id, offset, data}` | The next run of the upload's bytes, at most `chunk`, in order. Returns `{received, done}`; the run that completes the file checks the hash |
+| `attachment.get {id, thumbnail?, offset?, limit?}` | Fetch a run of an attachment, or its thumbnail, for the chat view on any device |
 | event `session.turn_end {session, final_message?}` | The turn ended; names the final agent message. Voice mode reads it aloud (13.2) |
 | session fields `title`, `model`, `context_pct` | The row's title, the model in use, and how full the context window is (3.4). `context_pct` is absent when unknown |
 | request fields `title`, `description?`, `context_line?`, `expires_at?` | What the approval sheet and the banner show (7.2, 7.4, 16.2) |
