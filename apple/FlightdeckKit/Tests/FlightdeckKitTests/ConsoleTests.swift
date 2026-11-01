@@ -32,6 +32,8 @@ final class ConsoleTests: XCTestCase {
         var inputs: [String] = []
         var lists = 0
         var outputReads = 0
+        /// Answers output reads first, when set; nil falls back to `outputs`.
+        var outputHook: (@Sendable (UInt64, UInt64?) async -> CommandOutput?)?
         let events: AsyncStream<CommandUpdate>
         let sink: AsyncStream<CommandUpdate>.Continuation
 
@@ -54,6 +56,10 @@ final class ConsoleTests: XCTestCase {
                     }
                 },
                 output: { [self] id, from in
+                    if let hook = with({ outputHook }), let o = await hook(id, from) {
+                        with { outputReads += 1 }
+                        return o
+                    }
                     let o: CommandOutput? = with {
                         outputReads += 1
                         return outputs[id]
@@ -161,6 +167,100 @@ final class ConsoleTests: XCTestCase {
         await eventually("after reconnect") { m.list.cards.count == 5 }
     }
 
+    /// A hab-side running command: a growing buffer that `command.output`
+    /// serves from any offset, at most `limit` bytes per call.
+    final class Growing: @unchecked Sendable {
+        let lock = NSLock()
+        let command: Command
+        var bytes = Data()
+        var froms: [UInt64?] = []
+        let limit: Int
+        init(_ c: Command, limit: Int) { command = c; self.limit = limit }
+        func append(_ s: String) { lock.withLock { bytes.append(contentsOf: s.utf8) } }
+        func read(_ from: UInt64?) -> CommandOutput {
+            lock.withLock {
+                froms.append(from)
+                let start = Int((from ?? command.output) - command.output)
+                let end = min(bytes.count, start + limit)
+                return CommandOutput(command: command, data: bytes.subdata(in: start..<end),
+                                     end: command.output + UInt64(end), gap: false, more: true, seq: 1, start: command.output + UInt64(start))
+            }
+        }
+    }
+
+    /// An open running card reads on from where it stopped, so output past
+    /// the first read shows, and keeps only its last part.
+    func testRunningCardReadsOnFromItsCursor() async throws {
+        var c = try Self.fixture("basic")[6].command // tail -f, running
+        c.state = .running
+        let g = Growing(c, limit: 8)
+        for i in 1...6 { g.append("line \(i)\r\n") }
+        let fake = FakeCalls([CommandOutput(command: c, data: Data(), end: c.output, gap: false, more: true, seq: 1, start: c.output)])
+        fake.outputHook = { id, from in id == c.id ? g.read(from) : nil }
+        let m = ConsoleModel(pane: "%9", calls: fake.calls, terminal: nil)
+        m.readLimit = 8
+        m.outputTail = 40
+        m.pollEvery = .milliseconds(50)
+        m.start()
+        defer { m.stop() }
+        await eventually("loaded") { m.list.cards.count == 1 }
+        m.toggle(c.id)
+        await eventually("first read") { m.list.card(c.id)?.output?.last == "line 6" }
+        XCTAssertEqual(m.list.card(c.id)?.outputCut, true, "40 bytes keep the last lines only")
+        XCTAssertFalse(m.list.card(c.id)?.output?.contains("line 1") ?? true)
+
+        let before = g.lock.withLock { g.froms.count }
+        g.append("line 7\r\n")
+        await eventually("new line") { m.list.card(c.id)?.output?.last == "line 7" }
+        // The poll after the first read started where the first read ended.
+        let froms = g.lock.withLock { Array(g.froms[before...]) }
+        XCTAssertEqual(froms.first ?? nil, c.output + 48, "read on from the cursor, not from the start")
+    }
+
+    /// The command ends while a read of its running output is out: the card
+    /// gets the ended output, not the stale running part.
+    func testEndDuringAReadReadsAgain() async throws {
+        let fx = try Self.fixture("basic")
+        let done = fx[0] // ls, ended
+        var runningCmd = done.command
+        runningCmd.state = .running
+        runningCmd.end = nil
+        runningCmd.endedAt = nil
+        runningCmd.exit = nil
+        let fake = FakeCalls([done], listed: 0)
+        fake.with { fake.commands = [runningCmd] }
+        let gate = Gate()
+        fake.outputHook = { id, from in
+            guard await gate.isFirst() else { return nil }
+            await gate.wait()
+            return CommandOutput(command: runningCmd, data: Data("partial\r\n".utf8), end: runningCmd.output + 9, gap: false, more: true, seq: 1, start: runningCmd.output)
+        }
+        let m = ConsoleModel(pane: "%9", calls: fake.calls, terminal: nil)
+        m.pollEvery = .seconds(60)
+        m.start()
+        defer { m.stop() }
+        await eventually("loaded") { m.list.cards.count == 1 }
+        m.toggle(runningCmd.id)
+        await eventually("read out") { await gate.waiting }
+        fake.sink.yield(CommandUpdate(pane: "%9", command: done.command, generation: 1))
+        await eventually("ended") { m.list.cards.first?.status == "Exit 0" }
+        await gate.open()
+        await eventually("ended output") { m.list.card(done.command.id)?.output?.first == "README.md  src" }
+        XCTAssertFalse(m.list.card(done.command.id)?.output?.contains("partial") ?? true)
+    }
+
+    actor Gate {
+        private var first = true
+        private(set) var waiting = false
+        private var cont: CheckedContinuation<Void, Never>?
+        func isFirst() -> Bool { defer { first = false }; return first }
+        func wait() async {
+            waiting = true
+            await withCheckedContinuation { cont = $0 }
+        }
+        func open() { cont?.resume(); cont = nil }
+    }
+
     func testInputLineTypesTheCommandAndEnter() async {
         let fake = FakeCalls([])
         let m = ConsoleModel(pane: "%9", calls: fake.calls, terminal: nil)
@@ -170,6 +270,27 @@ final class ConsoleTests: XCTestCase {
         m.sendRaw("\u{03}")
         await eventually("typed") { fake.with { fake.inputs.count } == 2 }
         XCTAssertEqual(fake.with { fake.inputs }, ["sleep 2\r", "\u{03}"])
+    }
+
+    /// A fresh page replaces the list, but a card newer than the page (an
+    /// event that came while the page was read) stays.
+    func testReplaceKeepsACardNewerThanThePage() throws {
+        let fx = try Self.fixture("basic")
+        var list = ConsoleCardList()
+        list.merge(fx.map(\.command))
+        list.replace(CommandList(commands: Array(fx.prefix(3).map(\.command)), more: true, seq: 1))
+        XCTAssertEqual(list.cards.map(\.id), fx.prefix(3).map(\.command.id) + fx.suffix(4).map(\.command.id))
+        list.replace(CommandList(commands: [fx[6].command], more: false, seq: 2))
+        XCTAssertEqual(list.cards.map(\.id), [fx[6].command.id], "older cards not on the page go")
+    }
+
+    /// The input line drops control characters and sends pasted lines as one
+    /// bracketed paste, so the shell does not run them one by one.
+    func testInputLineGuards() {
+        XCTAssertEqual(ConsoleModel.inputText("ls\t-la"), "ls\t-la\r")
+        XCTAssertEqual(ConsoleModel.inputText("echo \u{1B}[2Jx\u{03}\u{7F}\u{9B}"), "echo [2Jx\r")
+        XCTAssertEqual(ConsoleModel.inputText("cd /tmp\nrm -rf x"), "\u{1B}[200~cd /tmp\nrm -rf x\u{1B}[201~\r")
+        XCTAssertEqual(ConsoleModel.inputText("a\r\nb"), "\u{1B}[200~a\nb\u{1B}[201~\r")
     }
 
     func testEmptyListIsLoadedWithNoCards() async {

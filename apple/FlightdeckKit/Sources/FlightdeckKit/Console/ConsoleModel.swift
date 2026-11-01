@@ -75,6 +75,11 @@ public final class ConsoleModel {
     @ObservationIgnored public var outputTail: UInt64 = 256 << 10
     /// A card shows at most this many lines, the last ones.
     public static let maxLines = 500
+    /// The most bytes one `command.output` call returns (the hab's default).
+    @ObservationIgnored var readLimit = 1 << 20
+    /// A running card's output so far: the last `outputTail` bytes and the
+    /// offset to read on from, so each poll reads only what is new.
+    @ObservationIgnored private var running: [UInt64: (next: UInt64?, tail: Data, cut: Bool)] = [:]
     @ObservationIgnored private let log = Logger(subsystem: "com.flightdeck.app", category: "console")
 
     public convenience init(pane: String, connection: HabConnection) {
@@ -148,12 +153,26 @@ public final class ConsoleModel {
         run(line)
     }
 
+    /// What the input line writes for `line`: control characters other than
+    /// tab and newline dropped; text with a newline goes as one bracketed
+    /// paste, so the shell does not run each line on its own; then Enter.
+    static func inputText(_ line: String) -> String {
+        var text = String(String.UnicodeScalarView(line.replacingOccurrences(of: "\r\n", with: "\n").unicodeScalars.filter {
+            $0 == "\t" || $0 == "\n" || ($0.value >= 0x20 && $0.value != 0x7f && !(0x80...0x9f).contains($0.value))
+        }))
+        if text.contains("\n") {
+            text = "\u{1B}[200~" + text + "\u{1B}[201~"
+        }
+        return text + "\r"
+    }
+
     /// Types `line` and Enter into the pane.
     public func run(_ line: String) {
         let c = calls
+        let text = Self.inputText(line)
         Task { [weak self] in
             do {
-                try await c.input(line + "\r")
+                try await c.input(text)
             } catch {
                 self?.lastError = String(describing: error)
             }
@@ -240,32 +259,76 @@ public final class ConsoleModel {
     func readOutput(_ id: UInt64) async {
         guard let card = list.card(id), !reading.contains(id) else { return }
         reading.insert(id)
-        defer { reading.remove(id) }
-        var from: UInt64?
-        var cut = false
-        if let end = card.command.end, end - card.command.output > outputTail {
-            from = end - outputTail
-            cut = true
+        let read: (data: Data, cut: Bool)?
+        if card.command.state == .running {
+            read = await readRunning(id)
+        } else {
+            running[id] = nil
+            read = await readEnded(card.command)
         }
-        var data = Data()
-        do {
-            var next = from
-            while true {
-                let r = try await calls.output(id, next)
-                data.append(r.data)
-                if r.gap { cut = true }
-                if !r.more || r.data.isEmpty || r.command.state == .running || data.count >= Int(outputTail) { break }
-                next = r.end
-            }
-        } catch {
-            lastError = String(describing: error)
+        reading.remove(id)
+        guard let read else { return }
+        // The command went on or ended while the read was out: what came back
+        // is stale. Read again while the card is open.
+        if let now = list.card(id), now.command.state != card.command.state || now.command.end != card.command.end {
+            if expanded.contains(id) { await readOutput(id) }
             return
         }
-        var lines = TerminalText.lines(data)
+        var cut = read.cut
+        var lines = TerminalText.lines(read.data)
         if lines.count > Self.maxLines {
             lines.removeFirst(lines.count - Self.maxLines)
             cut = true
         }
         list.setOutput(id, lines: lines, cut: cut)
+    }
+
+    /// An ended command: at most the last `outputTail` bytes of its range.
+    private func readEnded(_ c: Command) async -> (data: Data, cut: Bool)? {
+        var next: UInt64?
+        var cut = false
+        if let end = c.end, end - c.output > outputTail {
+            next = end - outputTail
+            cut = true
+        }
+        var data = Data()
+        do {
+            while true {
+                let r = try await calls.output(c.id, next)
+                data.append(r.data)
+                if r.gap { cut = true }
+                if !r.more || r.data.isEmpty || data.count >= Int(outputTail) { break }
+                next = r.end
+            }
+        } catch {
+            lastError = String(describing: error)
+            return nil
+        }
+        return (data, cut)
+    }
+
+    /// A running command: what is new since the last read, added to the
+    /// held tail, which keeps its last `outputTail` bytes.
+    private func readRunning(_ id: UInt64) async -> (data: Data, cut: Bool)? {
+        var held = running[id] ?? (next: nil, tail: Data(), cut: false)
+        do {
+            while true {
+                let r = try await calls.output(id, held.next)
+                held.tail.append(r.data)
+                if r.gap { held.cut = true }
+                if held.tail.count > Int(outputTail) {
+                    held.tail.removeFirst(held.tail.count - Int(outputTail))
+                    held.cut = true
+                }
+                held.next = r.end
+                // Caught up: the hab had less than a full read, or nothing.
+                if !r.more || r.data.count < readLimit { break }
+            }
+        } catch {
+            lastError = String(describing: error)
+            return nil
+        }
+        running[id] = held
+        return (held.tail, held.cut)
     }
 }

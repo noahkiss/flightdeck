@@ -86,10 +86,12 @@ public struct ConsoleCardList: Equatable, Sendable {
     /// Replaces the list with a fresh newest page, keeping what was read
     /// for commands that did not change.
     public mutating func replace(_ page: CommandList) {
+        // A card newer than the page came by event while the page was read: keep it.
+        let newest = page.commands.last?.id ?? 0
+        let keep = { (held: ConsoleCard) in held.id > newest || page.commands.contains { $0.id == held.id } }
         var next = ConsoleCardList()
-        next.cards = cards.filter { held in page.commands.contains { $0.id == held.id } }
+        next.cards = cards.filter(keep)
         next.merge(page.commands)
-        next.cards.removeAll { held in !page.commands.contains { $0.id == held.id } }
         next.more = page.more
         self = next
     }
@@ -104,15 +106,25 @@ public struct ConsoleCardList: Equatable, Sendable {
 }
 
 enum ConsoleTime {
-    static func parse(_ s: String) -> Date? {
+    // Built once: a running card's time is drawn every second. The
+    // formatter is thread-safe for parsing.
+    nonisolated(unsafe) private static let fractional: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = f.date(from: s) { return d }
+        return f
+    }()
+    nonisolated(unsafe) private static let whole: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
-        return f.date(from: s)
+        return f
+    }()
+
+    static func parse(_ s: String) -> Date? {
+        fractional.date(from: s) ?? whole.date(from: s)
     }
 
-    /// "0.12s", "2.0s", "3m 12s", "1h 4m" (app.md 15: "Exit 0 · 3m 12s").
+    /// "0.1s" and "2.0s" under 10 s (tenths, rounded down), "12s", "3m 12s",
+    /// "1h 4m" (app.md 15: "Exit 0 · 3m 12s").
     static func duration(_ t: TimeInterval) -> String {
         if t < 10 { return String(format: "%.1fs", (t * 10).rounded(.down) / 10) }
         if t < 60 { return "\(Int(t))s" }
