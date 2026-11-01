@@ -102,7 +102,9 @@ recent iPhones; the hab engine stays the default. No iPad run yet.
   it is not measured yet.
 - **Audio in.** The app sends the turn as one compressed clip: Opus at about 24 kbit/s (a 15 s
   turn is about 50 KB). The hab also accepts 16 kHz mono 16-bit PCM, for a client with no
-  encoder. The helper decodes and resamples; gff-hab passes the bytes through.
+  encoder. The helper decodes and resamples; gff-hab passes the bytes through. `opus` means an
+  Ogg Opus file (RFC 7845): the app writes mono, 16 kHz input, 20 ms packets, with the end
+  granule set so the decoder trims the padding (`app.md` 13.7).
 - **Any client.** `gff` and the Mac app can call the same method, so dictation gives the same
   text everywhere.
 

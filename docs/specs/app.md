@@ -1759,6 +1759,79 @@ on-device only); Moshi App Store screens (dictation strip in the terminal) and s
 (voice to terminal with on-device recognition); voice modes of the Claude and ChatGPT apps,
 general behaviour *(gk)*. Model and provider choices: `voice.md`.
 
+### 13.7 Built choices (task-h011ghy9, app side)
+
+Code in `apple/FlightdeckKit` (`Voice/`, `Views/VoiceViews.swift`) and the
+`FlightdeckParakeet` library, which only the iOS app links.
+
+- **Hand-written speech types.** `Voice/SpeechAPI.swift` holds `speech.prepare` and
+  `speech.transcribe` as `voice.md` writes them, called by name (`RPCClient.call(named:)`),
+  because the generated `HabMethod` has no public initializer. Moving to the generated types
+  changes that file only.
+- **One engine interface.** `SpeechEngine` has `prepare`, `transcribe(clip, live:)` and
+  `close`. `SpeechEngines` holds the enabled engines in the fixed order: hab, Parakeet on the
+  device, Apple. Every failure moves the turn to the next engine. A sticky refusal skips an
+  engine until voice mode or dictation closes: no `speech` capability, `unavailable` from
+  `speech.prepare`, no model on the device, an older system. A model still downloading on the
+  hab, an `unavailable` from `speech.transcribe`, a clip over 120 s or a network error moves
+  only this turn; the next turn asks the hab again.
+- **Audio to the hab.** Ogg Opus (RFC 7845), mono, 16 kHz input, 20 ms packets at 24 kbit/s,
+  from the system encoder. When the hab does not list `opus` in `formats`, or the encoder
+  fails, the app sends 16-bit PCM at 16 kHz. A clip over 1 MiB as PCM goes to the next engine.
+- **Apple's engine is the live words.** SpeechAnalyzer runs for the whole of voice mode and
+  shows words as heard (iOS and macOS 26 and later). As the last engine, its text for the turn
+  is those live words, so it costs no second pass. On an older system the Apple engine is
+  skipped and no live words show; the hab and Parakeet still write the text.
+- **Parakeet on the device.** `ParakeetHost` loads the model while voice mode or dictation holds
+  it, and unloads it when the last one lets go, on a memory warning, and when the app leaves
+  the foreground. Voice mode keeps running in the background (13.1) without it: those turns go
+  to the next engine, and the model loads again on return. After a memory warning it stays
+  unloaded until every holder has let go. The option shows on devices with at least 6 GB of
+  memory (the iPhone 15 Pro, 8 GB, ran it well). The model downloads from Settings with
+  progress, with its CC-BY-4.0 attribution line.
+- **Turn end.** The audio level and new live words mark speech. A turn starts after 0.15 s of
+  speech and ends after the pause setting (default 1.2 s) or a tap. The turn keeps 0.5 s of
+  audio from before speech started, so the first word is not cut.
+- **Echo and barge-in.** Speech plays through the same audio engine as the microphone, with
+  voice processing on, so the echo canceller removes the app's own voice. While the app speaks,
+  a barge-in needs 10 dB more level, and live words alone do not start a turn. "Noisy room"
+  raises the speech level from -38 to -28 dBFS.
+- **What is read.** The last top-level agent text after the last user message, never tool calls,
+  tool output or subagent text. When it has a line that starts with "Spoken summary:", only
+  what follows is read. The trimmer (`SpokenText`) turns a code block into "A code block, shown
+  on screen.", a diff (fenced or bare) into "A diff, shown on screen.", a table into "A table.",
+  a link into its text, a bare link into its site, a path into its file name, and drops Markdown
+  marks. It caps at 110 words (about 45 s) and says "The rest is in the chat." A turn end waits
+  up to 3 s for the reply to reach the chat. A reply that arrives while the owner speaks is not
+  read.
+- **The summary request.** Each spoken prompt ends with a request for a "Spoken summary:" line
+  of two sentences. The chat shows the request on the owner's message. A setting turns it off.
+- **Send path.** A spoken turn goes through `ChatModel.send` with origin `dictated`, so the send
+  gate, "sends after this turn" and the read-back are the composer's.
+- **Approvals.** The app reads the title and the command, muted, then listens. It takes
+  "allow", "approve", "deny" and "no", alone. "yes" is not an Allow: a stray yes must not run a
+  command. An unclear answer asks once more, then waits for a tap. Voice may Allow only a
+  command of at most 100 characters and 16 words (the banner's body budget, 16.2) or an edit of
+  at most three files; anything else can be denied by voice and allowed by tap. The large
+  approval card's Allow and Deny always work by tap. The answer carries `via: voice`.
+- **Questions** are not read with their options yet: voice mode says "The agent asks a question.
+  Answer it on screen."
+- **Background.** While voice mode is open, the fleet keeps that hab's connection when the app
+  goes to the background (`Fleet.holdForVoice`); the release closes it if the app is still in
+  the background. The iOS app has the `audio` background mode for this.
+- **Dictation.** The composer's microphone writes heard words into the draft and replaces them
+  with the engine's text on stop. A long press opens voice mode. In the terminal view a
+  microphone in the toolbar sends the text as one `pane.input` write on stop, with control
+  characters turned into spaces and no Enter. There is no keyboard bar yet (5.1). Bracketed
+  paste needs the pane's paste mode, which the app does not track yet.
+- **Settings › Voice.** The three engines in order, each a switch (defaults: hab and Apple on,
+  Parakeet off). The Parakeet row shows only where offered, with its download. Switches for the
+  summary request, spoken commands, confirm before send, barge-in, a noisy room, and the pause
+  before send (0.8 to 2.0 s).
+- **Not built yet.** The chime and banner for another session (13.1), a reply voice per language
+  (13.6), the Face ID check before a voice Allow (7.6), the vocabulary hints to the on-device
+  engines (`voice.md`, Recommendation 2), and the language setting for dictation (13.4).
+
 ---
 
 ## 14. Usage
