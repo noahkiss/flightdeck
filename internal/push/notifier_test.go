@@ -1,6 +1,7 @@
 package push
 
 import (
+	"context"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -36,7 +37,7 @@ func newNotifierRig(t *testing.T) *notifierRig {
 	}
 	r.store = s
 	r.n = NewNotifier(NotifierConfig{
-		Sender: r.client, Store: s, Hab: "laptop", Now: r.clock.Now, Sleep: func(time.Duration) {},
+		Sender: r.client, Store: s, Hab: "laptop", Now: r.clock.Now, Sleep: func(context.Context, time.Duration) {},
 		Where: func(pane, session string) Where {
 			return Where{Session: "s1", SessionName: "fix-login", Project: "web-app", Harness: "claude"}
 		},
@@ -493,5 +494,62 @@ func TestNotifierForget(t *testing.T) {
 	}
 	if cs := last.Body["aps"].(map[string]any)["content-state"].(map[string]any); cs["pane"] != "p2" || cs["others"] != nil && cs["others"] != float64(0) {
 		t.Errorf("Live Activity after the close: %v", cs)
+	}
+}
+
+// stuckSender stands in for an unreachable APNs: each send waits for its context, or, with
+// limit set, answers 429 at once.
+type stuckSender struct {
+	mu    sync.Mutex
+	calls int
+	limit bool
+	in    chan struct{}
+}
+
+func (s *stuckSender) Send(ctx context.Context, m Message) error {
+	s.mu.Lock()
+	s.calls++
+	s.mu.Unlock()
+	select {
+	case s.in <- struct{}{}:
+	default:
+	}
+	if s.limit {
+		return &Error{Status: 429, Reason: "TooManyRequests"}
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// TestNotifierCloseCancels: Close ends a send in flight and a rate-limit wait at once, and
+// drops queued work that has not run, so shutdown never waits on an unreachable APNs.
+func TestNotifierCloseCancels(t *testing.T) {
+	for _, limit := range []bool{false, true} {
+		s, err := OpenStore(filepath.Join(t.TempDir(), "push"), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.Register("dev-phone", phone, Production, allKinds, false)
+		s.Register("dev-mac", mac, Production, allKinds, false)
+		snd := &stuckSender{limit: limit, in: make(chan struct{}, 1)}
+		n := NewNotifier(NotifierConfig{Sender: snd, Store: s, Hab: "laptop"})
+		n.State(blocked("r1", "make"))
+		for i := 2; i < 6; i++ {
+			st := blocked("r", "make")
+			st.Pane = "p" + strconv.Itoa(i)
+			n.State(st)
+		}
+		<-snd.in
+		start := time.Now()
+		n.Close()
+		if d := time.Since(start); d > 500*time.Millisecond {
+			t.Errorf("limit %v: Close took %v", limit, d)
+		}
+		snd.mu.Lock()
+		calls := snd.calls
+		snd.mu.Unlock()
+		if calls > 1 {
+			t.Errorf("limit %v: %d sends after close, want 1", limit, calls)
+		}
 	}
 }

@@ -52,8 +52,9 @@ type NotifierConfig struct {
 	// token. Default production.
 	DefaultEnv string
 	Now        func() time.Time
-	Sleep      func(time.Duration) // the rate-limit wait; default time.Sleep
-	Logf       func(string, ...any)
+	// Sleep is the rate-limit wait; it returns early when ctx ends. Default: a timer.
+	Sleep func(ctx context.Context, d time.Duration)
+	Logf  func(string, ...any)
 }
 
 // Notice is a notification raised through notice.raise or by the hab itself.
@@ -77,6 +78,8 @@ type Notifier struct {
 	wake    chan struct{}
 	closed  bool
 	done    chan struct{}
+	ctx     context.Context // ends at Close: sends and waits stop, unrun work is dropped
+	cancel  context.CancelFunc
 
 	// Presence, under mu.
 	focus  map[string]map[string]time.Time // session -> client -> last in-focus report
@@ -132,7 +135,14 @@ func NewNotifier(cfg NotifierConfig) *Notifier {
 		cfg.Connected = func(string) bool { return false }
 	}
 	if cfg.Sleep == nil {
-		cfg.Sleep = time.Sleep
+		cfg.Sleep = func(ctx context.Context, d time.Duration) {
+			t := time.NewTimer(d)
+			defer t.Stop()
+			select {
+			case <-t.C:
+			case <-ctx.Done():
+			}
+		}
 	}
 	if cfg.DefaultEnv == "" {
 		cfg.DefaultEnv = Production
@@ -152,18 +162,22 @@ func NewNotifier(cfg NotifierConfig) *Notifier {
 		laKey:   map[string]string{},
 		settled: map[string]answer{},
 	}
+	n.ctx, n.cancel = context.WithCancel(context.Background())
 	go n.run()
 	return n
 }
 
-// Close stops the goroutine after the queued work.
+// Close stops the goroutine. A send in flight or a rate-limit wait ends at once, and queued
+// work that has not run is dropped: shutdown must not wait on an unreachable APNs.
 func (n *Notifier) Close() {
 	n.mu.Lock()
 	if n.closed {
 		n.mu.Unlock()
+		<-n.done
 		return
 	}
 	n.closed = true
+	n.cancel()
 	n.mu.Unlock()
 	n.signal()
 	<-n.done
@@ -195,7 +209,10 @@ func (n *Notifier) Sync() {
 	n.jobs = append(n.jobs, func() { close(ch) })
 	n.mu.Unlock()
 	n.signal()
-	<-ch
+	select {
+	case <-ch:
+	case <-n.done:
+	}
 }
 
 // Bind records that a client speaks for a device (push.register and push.register_activity
@@ -389,17 +406,23 @@ func (n *Notifier) run() {
 		order, pending, jobs, closed := n.order, n.pending, n.jobs, n.closed
 		n.order, n.pending, n.jobs = nil, map[string]api.AgentState{}, nil
 		n.mu.Unlock()
+		if closed {
+			return
+		}
 		for _, p := range order {
+			if n.ctx.Err() != nil {
+				return
+			}
 			n.process(pending[p])
 		}
 		for _, j := range jobs {
+			if n.ctx.Err() != nil {
+				return
+			}
 			j()
 		}
 		if len(order) > 0 || len(jobs) > 0 {
 			continue
-		}
-		if closed {
-			return
 		}
 		<-n.wake
 	}
@@ -650,9 +673,15 @@ func (n *Notifier) othersBlocked(pane string) int {
 // back-off and try once more, others are dropped. It reports whether APNs took the message.
 func (n *Notifier) send(m Message, urgent bool) bool {
 	for attempt := 0; attempt < 2; attempt++ {
-		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+		if n.ctx.Err() != nil {
+			return false // closing: drop it
+		}
+		ctx, cancel := context.WithTimeout(n.ctx, sendTimeout)
 		err := n.cfg.Sender.Send(ctx, m)
 		cancel()
+		if err != nil && n.ctx.Err() != nil {
+			return false
+		}
 		if err == nil {
 			n.backoff = 0
 			n.setBroken("")
@@ -678,7 +707,7 @@ func (n *Notifier) send(m Message, urgent bool) bool {
 				return false
 			}
 			n.cfg.Logf("push: APNs rate limit; waiting %v", n.backoff)
-			n.cfg.Sleep(n.backoff)
+			n.cfg.Sleep(n.ctx, n.backoff)
 			continue
 		}
 		n.cfg.Logf("push: %v", err)

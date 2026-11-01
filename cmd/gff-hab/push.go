@@ -88,7 +88,7 @@ func newPushService(ps pushSetup, store *structure.Store, agents *harness.Store)
 	return s
 }
 
-// Close stops the notifier after the pushes it holds.
+// Close stops the notifier; pushes it has not sent are dropped.
 func (s *pushService) Close() {
 	if s.notifier != nil {
 		s.notifier.Close()
