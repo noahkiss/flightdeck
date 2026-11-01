@@ -559,8 +559,8 @@ general case with no peers.
 | `off` (default) | Land at once | Land at once |
 | `agents` | Become proposals | Land at once |
 
-- The setting lives in each hab's Flightdeck config. The app writes the same value to every hab it
-  reaches, and `gff lb status` shows a hab whose value differs.
+- It is a hab-side setting (`app.md` 20.5): the app writes the same value to every hab, and a
+  value in the hab's config file locks it. `gff lb status` shows a hab whose value differs.
 - Under `agents`, an agent's write returns `proposed` and a proposal id. The agent is told the
   record waits for the user's approval and should not ask again.
 - `logbook.approval` also covers harness memory: under `agents`, each harness's native memory

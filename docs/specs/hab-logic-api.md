@@ -634,7 +634,8 @@ a peer list and serves peer links, `peers.list`, `peers.accept` and `peer.update
 `channel.message` work (`mesh.md` 6.5).
 `devices` means the embedded SSH
 server is on and the `devices.*` methods work. `push` means the hab has working push config;
-`host-stats` means `hab.stats` works (3.9). A client checks for a capability before it uses the
+`host-stats` means `hab.stats` works (3.9). Planned: `settings`, for hab-side settings
+(`settings.get`, `settings.set`, `settings.updated`; `app.md` 20.5). A client checks for a capability before it uses the
 feature. Capabilities are for features that a host may
 lack. They are not a second versioning scheme.
 
@@ -715,6 +716,9 @@ JSON-RPC error objects with code `-32000` for application errors. `data` always 
 | `seq` | Last queued seq, as for results |
 
 Clients branch on `kind`, never on `message`.
+
+Planned with the `settings` capability: kind `locked`, a setting set in the hab's config, with
+`data.id` (`app.md` 20.5). Kinds are a server-sent word set, so adding one needs no revision.
 
 ### 3.7 Reconnect
 
@@ -804,6 +808,7 @@ names the stage, and an event is defined but never sent.
 | `worktree.list`, `worktree.create`, `worktree.setup`, `worktree.remove` | A project's git worktrees: list, make one and run its setup script, run a pending setup, remove one (3.10) | Yes (task-wvbuz085) |
 | `speech.prepare` | Load the speech engine and start the model download if needed; returns the engine state at once (capability `speech`; `voice.md`, API addition) | Yes (task-h011ghy9) |
 | `speech.transcribe` | Turn one recorded clip into text, one decode at a time in arrival order (capability `speech`; `voice.md`, API addition) | Yes (task-h011ghy9) |
+| `settings.get`, `settings.set` | Read hab-side settings, and write them all or nothing with a revision check; event `settings.updated` (capability `settings`; `app.md` 20.5) | Planned (task-yfmrj6yc) |
 
 | Event | Purpose | Id | Sent from |
 |---|---|---|---|

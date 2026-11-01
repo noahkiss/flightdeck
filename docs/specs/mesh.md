@@ -1047,8 +1047,8 @@ The study recommended no extra gate (the harness's own tool prompt only, as in P
 
 - Before `session.create` or a project set-up on a host other than the agent's own, the hab
   raises a confirmation card. It uses Capcom's mechanism (`capcom.md` 6.1, 6.3).
-- `confirm.start_elsewhere` in Flightdeck's config, default on, also in the app's settings,
-  turns the card off. Off, the action runs at once and the card shows as a record.
+- `confirm.start_elsewhere`, default on, turns the card off. It is a hab-side setting
+  (`app.md` 20.5): the app writes it, and a value in the hab's config file locks it. Off, the action runs at once and the card shows as a record.
 - The level picker sets it: on at Safe and Balanced, off at Bypass permissions (`app.md` 20.3).
 - Handing work to an agent already on a project needs no card (owner, 2026-11-01).
 
