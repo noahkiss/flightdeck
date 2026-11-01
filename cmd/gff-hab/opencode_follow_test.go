@@ -646,10 +646,21 @@ func buildFakeOpencode(t *testing.T) string {
 
 // TestOpencodePaneSquatter (review M1, the wrapper's side): the server picks its own port and
 // the wrapper takes the URL from it; when the process answering at that URL is not the
-// server, the wrapper starts no TUI and reports no server.
+// server, the wrapper starts no TUI and reports no server, and its server ends. "slow start":
+// the server is still starting when the wrapper refuses it and sends SIGTERM.
 func TestOpencodePaneSquatter(t *testing.T) {
+	t.Run("ready", func(t *testing.T) { testOpencodePaneSquatter(t, "") })
+	t.Run("slow start", func(t *testing.T) { testOpencodePaneSquatter(t, "300ms") })
+}
+
+func testOpencodePaneSquatter(t *testing.T, settle string) {
 	fake := buildFakeOpencode(t)
 	d := t.TempDir()
+	if settle != "" {
+		if err := os.WriteFile(filepath.Join(d, "settle"), []byte(settle), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	squatter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"version":"2.2.5","pid":1}`)
 	}))

@@ -1,7 +1,8 @@
 // Command fakeopencode stands in for opencode 2.2.5 in gff-hab's tests. `fakeopencode serve
 // --stdio --hostname h --port p` serves the few API operations the adapter uses, with the
 // password from OPENCODE_PASSWORD, prints {"url": ...} once it listens, and ends when its stdin
-// closes, on SIGTERM, or when $DIR/die appears. Any other argv is the TUI: it records its argv
+// closes, on SIGTERM, or when $DIR/die appears, and records why in $DIR/server.exit, even when
+// the end comes right after the URL. Any other argv is the TUI: it records its argv
 // and waits for $DIR/end. Everything it does is driven by files in $DIR: each line the test
 // appends to $DIR/emit is sent as an event, $DIR/active lists the sessions that run, prompts go
 // to $DIR/prompts, and permission replies to $DIR/replies.
@@ -109,6 +110,22 @@ func serve() {
 	appendLine("server.env", envState())
 	appendLine("server.args", strings.Join(os.Args[1:], " "))
 	s := &server{subs: map[chan string]bool{}, pending: map[string]string{}}
+	// Watch for the end before the URL goes out: the wrapper may close stdin or send SIGTERM as
+	// soon as it reads the URL, and the end must still be recorded in $DIR/server.exit.
+	ended := make(chan string, 3)
+	go func() { io.Copy(io.Discard, os.Stdin); ended <- "stdin closed" }()
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM)
+	go func() { <-sigs; ended <- "SIGTERM" }()
+	go func() { // $DIR/die: the server crashes while the TUI lives
+		for {
+			time.Sleep(20 * time.Millisecond)
+			if _, err := os.Stat(filepath.Join(dir, "die")); err == nil {
+				ended <- "died"
+				return
+			}
+		}
+	}()
 	l, err := net.Listen("tcp", "127.0.0.1:"+port)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -121,6 +138,13 @@ func serve() {
 		url = strings.TrimSpace(string(b))
 	}
 	fmt.Printf("{\"url\":%q}\n", url)
+	// $DIR/settle, when it exists, holds a duration the server takes to finish starting after
+	// it printed its URL: a slow start.
+	if b, err := os.ReadFile(filepath.Join(dir, "settle")); err == nil {
+		if d, err := time.ParseDuration(strings.TrimSpace(string(b))); err == nil {
+			time.Sleep(d)
+		}
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/info", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"version":"2.2.5","pid":%d}`, os.Getpid())
@@ -231,20 +255,6 @@ func serve() {
 	})
 	go http.Serve(l, auth)
 	go emitLoop(s)
-	ended := make(chan string, 2)
-	go func() { io.Copy(io.Discard, os.Stdin); ended <- "stdin closed" }()
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGTERM)
-	go func() { <-sigs; ended <- "SIGTERM" }()
-	go func() { // $DIR/die: the server crashes while the TUI lives
-		for {
-			time.Sleep(20 * time.Millisecond)
-			if _, err := os.Stat(filepath.Join(dir, "die")); err == nil {
-				ended <- "died"
-				return
-			}
-		}
-	}()
 	appendLine("server.exit", <-ended)
 }
 
