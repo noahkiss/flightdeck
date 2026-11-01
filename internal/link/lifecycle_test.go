@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -472,4 +473,77 @@ func TestClosePane(t *testing.T) {
 	if err := l.ClosePane(ctx, uuidN(72)); !errors.Is(err, ErrNoPane) {
 		t.Errorf("close of an unknown pane: %v, want ErrNoPane", err)
 	}
+}
+
+// TestStartHolderOnDemand: with Config.Start, the link starts a holder when none of its build is
+// connected, first making the holder directory. A failed start at open is not retried by scans
+// until StartBackoff, but a spawn retries at once. A holder that says bye is handed to Retired
+// with its pid, and the link starts the next holder by itself.
+func TestStartHolderOnDemand(t *testing.T) {
+	if holderBin == "" {
+		t.Skip("no go toolchain to build the holder binary")
+	}
+	hdir := filepath.Join(shortDir(t), "holders") // missing until the first start
+	var mu sync.Mutex
+	var procs []*exec.Cmd
+	calls := 0
+	start := func(ctx context.Context) error {
+		mu.Lock()
+		defer mu.Unlock()
+		calls++
+		if calls == 1 {
+			return errors.New("init system said no")
+		}
+		cmd := exec.Command(holderBin, "-dir", hdir, "-instance", fmt.Sprintf("s%d", calls))
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		procs = append(procs, cmd)
+		go cmd.Wait()
+		return nil
+	}
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range procs {
+			c.Process.Signal(syscall.SIGTERM)
+		}
+	})
+	type retiredHolder struct {
+		instance string
+		pid      int
+	}
+	retired := make(chan retiredHolder, 4)
+	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond, Start: start,
+		Retired: func(inst string, pid int) { retired <- retiredHolder{inst, pid} }})
+	if l.client.Current() != nil {
+		t.Fatal("a holder is current although its start failed")
+	}
+	u := uuidN(70)
+	st := spawn(t, l, u, "echo started-on-demand; sleep 60")
+	mu.Lock()
+	n, first := calls, procs[0]
+	mu.Unlock()
+	if n != 2 {
+		t.Fatalf("Start ran %d times, want 2 (the failed one, then the spawn's)", n)
+	}
+	if st.Instance != "s2" {
+		t.Fatalf("pane on holder %q, want s2", st.Instance)
+	}
+	waitFor(t, "the pane's output", func() bool { return screenHas(t, l, u, "started-on-demand") })
+
+	first.Process.Signal(syscall.SIGTERM) // a clean exit: shutdown, then bye
+	select {
+	case r := <-retired:
+		if r.instance != "s2" || r.pid != first.Process.Pid {
+			t.Fatalf("Retired(%q, %d), want (s2, %d)", r.instance, r.pid, first.Process.Pid)
+		}
+	case <-time.After(waitLong):
+		t.Fatal("Retired was not called after the holder said bye")
+	}
+	waitFor(t, "the next holder started by a scan", func() bool {
+		h := l.client.Current()
+		return h != nil && h.Instance() == "s3"
+	})
 }

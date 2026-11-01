@@ -90,10 +90,21 @@ type Config struct {
 	Colors *termq.Colors
 	// Logf receives diagnostics. Nil discards them.
 	Logf func(format string, args ...any)
+	// Start asks the init system for a holder of this build (holder spec 5.4). With it set, the
+	// link starts one whenever none of this build is connected: at a scan (after a failed start,
+	// not again for StartBackoff) and before a spawn. A new build then drains the older holders
+	// (spec 4.3). Nil means holders are started by hand or by a test.
+	Start func(ctx context.Context) error
+	// Retired is called on its own goroutine when a holder says bye: it exited cleanly, after its
+	// drain or a shutdown, so its job can go (spec 5.4). pid is the holder's process id.
+	Retired func(instance string, pid int)
 
 	// saveDelay delays each write of the retired file, so tests can stand in for a slow fsync.
 	saveDelay time.Duration
 }
+
+// StartBackoff is how long a scan waits after a failed holder start before it tries again.
+const StartBackoff = 30 * time.Second
 
 // DefaultSnapshotScrollback is the default of Config.SnapshotScrollback. 1000 rows of 120
 // columns are about 0.14 MiB of snapshot-vt (spec 2.3).
@@ -141,6 +152,11 @@ type Link struct {
 	wg     sync.WaitGroup
 	rescan chan struct{}
 	tasks  chan func() // run on the event loop, in order with holder frames
+
+	// scanMu keeps scans one at a time: two scans could connect to one holder twice, and the
+	// second hello would take the first connection over.
+	scanMu      sync.Mutex
+	startFailed time.Time // the last failed Start; guarded by scanMu
 
 	mu       sync.Mutex
 	panes    map[hp.UUID]*pane
@@ -228,7 +244,7 @@ func Open(cfg Config) (*Link, error) {
 	l := &Link{
 		cfg: cfg,
 		client: holderclient.New(holderclient.Config{
-			Dir: cfg.HolderDir, Build: cfg.Build, Protocol: cfg.Protocol, Logf: cfg.Logf,
+			Dir: cfg.HolderDir, Build: cfg.Build, Protocol: cfg.Protocol, Start: cfg.Start, Logf: cfg.Logf,
 		}),
 		enc:          checkpointEncoding(encs),
 		colors:       termq.DefaultColors(),
@@ -296,14 +312,33 @@ func (l *Link) Previous() map[string]hp.Previous {
 }
 
 // scan lists the registry, connects to new holders, drains holders of other builds once a
-// holder of this build is connected, and attaches the panes of every new holder.
-func (l *Link) scan() {
+// holder of this build is connected, and attaches the panes of every new holder. With
+// Config.Start set, it first starts a holder of this build when none is connected.
+func (l *Link) scan() { l.scanWith(false) }
+
+// scanWith is scan; force skips the StartBackoff after a failed start.
+func (l *Link) scanWith(force bool) {
+	l.scanMu.Lock()
+	defer l.scanMu.Unlock()
 	ctx, cancel := context.WithTimeout(l.ctx, 10*time.Second)
 	defer cancel()
-	if err := l.client.Scan(ctx); err != nil && !errors.Is(err, context.Canceled) {
+	err := l.client.Scan(ctx)
+	// With Start set, a missing directory is expected before the first holder: Upgrade makes it.
+	quiet := l.cfg.Start != nil && errors.Is(err, os.ErrNotExist)
+	if err != nil && !errors.Is(err, context.Canceled) && !quiet {
 		l.cfg.Logf("link: scan: %v", err)
 	}
-	if l.client.Current() != nil {
+	if l.cfg.Start != nil && l.client.Current() == nil && (force || time.Since(l.startFailed) >= StartBackoff) {
+		// Upgrade starts a holder, waits for it, and drains the rest (spec 4.3).
+		if _, err := l.client.Upgrade(ctx); err != nil {
+			l.cfg.Logf("link: start holder: %v", err)
+		}
+		if l.client.Current() == nil {
+			l.startFailed = time.Now()
+		} else {
+			l.startFailed = time.Time{}
+		}
+	} else if l.client.Current() != nil {
 		if _, err := l.client.Upgrade(ctx); err != nil {
 			l.cfg.Logf("link: drain: %v", err)
 		}
@@ -631,6 +666,9 @@ func (l *Link) holderEnded(h *holderclient.Holder, err error) {
 	if err == nil {
 		why = ErrGone
 		l.cfg.Logf("link: holder %s said bye", h.Instance())
+		if l.cfg.Retired != nil {
+			go l.cfg.Retired(h.Instance(), h.Entry().Pid)
+		}
 	} else {
 		l.cfg.Logf("link: holder %s connection ended: %v; %d panes lost", h.Instance(), err, len(ps))
 	}
@@ -708,6 +746,10 @@ func (l *Link) attach(h *holderclient.Holder, pi hp.PaneInfo) {
 // spawn that already ran (the holder starts nothing then).
 func (l *Link) Spawn(ctx context.Context, s hp.Spawn) (PaneStatus, error) {
 	h := l.client.Current()
+	if h == nil && l.cfg.Start != nil {
+		l.scanWith(true) // starts a holder and attaches it
+		h = l.client.Current()
+	}
 	if h == nil {
 		return PaneStatus{}, holderclient.ErrNoHolder
 	}

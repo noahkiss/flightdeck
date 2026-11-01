@@ -375,11 +375,19 @@ func (c *Client) Current() *Holder {
 }
 
 // Upgrade makes sure a holder of this build takes new panes, and drains the rest (spec 4.3).
-// It scans the registry; when no current holder exists it calls Start and waits, until ctx
+// It scans the registry (with Start set, it makes the directory first when it is missing); when
+// no current holder exists it calls Start and waits, until ctx
 // ends, for the new holder's registry file and a connection to it. Then it sends drain to every
 // connected holder other than the current one that is not draining yet. Their panes stay where they are
 // and stay served. It returns the current holder.
 func (c *Client) Upgrade(ctx context.Context) (*Holder, error) {
+	if c.cfg.Start != nil {
+		// The first holder makes the directory; until then a scan would fail on it. The holder
+		// checks the directory itself before it listens (spec 2.10).
+		if err := os.MkdirAll(c.cfg.Dir, 0o700); err != nil {
+			return nil, err
+		}
+	}
 	if err := c.Scan(ctx); err != nil {
 		return nil, err
 	}
