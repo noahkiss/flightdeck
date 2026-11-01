@@ -219,6 +219,11 @@ public actor HabConnection {
         return try await r.call(method, params, timeout: timeout)
     }
 
+    /// Online, with the hab's welcome in hand.
+    public var isWelcomed: Bool {
+        state.status == .online && state.welcome != nil
+    }
+
     /// Whether the hab's welcome on the live connection names `capability`.
     public func has(capability: String) -> Bool {
         state.welcome?.capabilities.contains(capability) ?? false

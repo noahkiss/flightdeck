@@ -106,17 +106,40 @@ public final class SpeechEngines {
         engines.first { skipped[$0.kind] == nil }?.kind
     }
 
-    /// Prepares every engine; a sticky refusal skips it.
+    /// Set by `close`; a `prepare` that finishes after it gives back what it took.
+    @ObservationIgnored private var closed = false
+
+    /// Prepares every engine at once; a sticky refusal skips it. An engine
+    /// whose prepare ends after `close` is closed again, so a late Parakeet
+    /// load is released at once.
     public func prepare() async {
-        for e in engines {
-            do {
-                status[e.kind] = try await e.prepare()
-            } catch let SpeechEngineError.unavailable(hint, sticky) {
-                status[e.kind] = nil
-                if sticky { skipped[e.kind] = hint }
-            } catch {
-                status[e.kind] = nil
+        closed = false
+        await withTaskGroup(of: Void.self) { g in
+            for e in engines {
+                g.addTask { @MainActor in await self.prepare(e) }
             }
+        }
+    }
+
+    private func prepare(_ e: SpeechEngine) async {
+        let result: Result<SpeechEngineStatus, Error>
+        do {
+            result = .success(try await e.prepare())
+        } catch {
+            result = .failure(error)
+        }
+        if closed {
+            await e.close()
+            return
+        }
+        switch result {
+        case .success(let s):
+            status[e.kind] = s
+        case .failure(SpeechEngineError.unavailable(let hint, let sticky)):
+            status[e.kind] = nil
+            if sticky { skipped[e.kind] = hint }
+        case .failure:
+            status[e.kind] = nil
         }
     }
 
@@ -133,6 +156,9 @@ public final class SpeechEngines {
             } catch let SpeechEngineError.unavailable(hint, sticky) {
                 if sticky { skipped[e.kind] = hint }
                 reasons.append("\(e.kind.label): \(hint)")
+            } catch is CancellationError {
+                // Voice mode or dictation closed: no other engine runs.
+                return nil
             } catch {
                 reasons.append("\(e.kind.label): \(Self.describe(error))")
             }
@@ -141,8 +167,9 @@ public final class SpeechEngines {
         return nil
     }
 
-    /// Closes every engine.
+    /// Closes every engine. It does not wait for a prepare in flight.
     public func close() async {
+        closed = true
         for e in engines { await e.close() }
         skipped = [:]
         status = [:]
@@ -175,7 +202,12 @@ public final class HabSpeechEngine: SpeechEngine {
     }
 
     public func prepare() async throws -> SpeechEngineStatus {
-        guard let hab, await hab.hasSpeech() else {
+        guard let hab else { throw SpeechEngineError.unavailable("no hab", sticky: true) }
+        guard await hab.isWelcomed() else {
+            // Not connected yet: ask again on the next turn.
+            throw SpeechEngineError.unavailable("the hab is not connected yet", sticky: false)
+        }
+        guard await hab.hasSpeech() else {
             throw SpeechEngineError.unavailable("this hab has no speech engine", sticky: true)
         }
         let r: SpeechStatus
@@ -280,7 +312,7 @@ public final class ParakeetSpeechEngine: SpeechEngine {
     private let host: ParakeetHost
     private let holder: String
 
-    /// `holder` names who holds the model: voice mode or dictation.
+    /// `holder` names who holds the model: one token per voice mode or dictation.
     public init(host: ParakeetHost, holder: String) {
         self.host = host
         self.holder = holder
@@ -292,10 +324,15 @@ public final class ParakeetSpeechEngine: SpeechEngine {
     }
 
     public func transcribe(_ clip: SpeechClip, live: String) async throws -> String {
-        try await host.transcribe(clip.samples, for: holder)
+        // A turn can end before `prepare` held the model (a slow hab first).
+        if !closed, !host.holders.contains(holder) { try await host.acquire(holder) }
+        return try await host.transcribe(clip.samples, for: holder)
     }
 
+    private var closed = false
+
     public func close() async {
+        closed = true
         await host.release(holder)
     }
 }

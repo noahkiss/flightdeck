@@ -62,10 +62,27 @@ final class FakeRuntime: ParakeetRuntime, @unchecked Sendable {
         lock.withLock { _loaded = true; loadCount += 1 }
     }
     func unload() async { lock.withLock { _loaded = false; unloadCount += 1 } }
+    var transcribeDelay: Duration = .zero
     func transcribe(_ samples: [Float]) async throws -> String {
+        if transcribeDelay > .zero { try await Task.sleep(for: transcribeDelay) }
         guard loaded else { throw SpeechEngineError.unavailable("not loaded", sticky: false) }
         return text
     }
+}
+
+/// Wraps an engine so its prepare takes a while.
+@MainActor
+final class SlowPrepare: SpeechEngine {
+    let inner: SpeechEngine
+    let delay: Duration
+    init(inner: SpeechEngine, delay: Duration) { self.inner = inner; self.delay = delay }
+    var kind: SpeechEngineKind { inner.kind }
+    func prepare() async throws -> SpeechEngineStatus {
+        try? await Task.sleep(for: delay)
+        return try await inner.prepare()
+    }
+    func transcribe(_ clip: SpeechClip, live: String) async throws -> String { try await inner.transcribe(clip, live: live) }
+    func close() async { await inner.close() }
 }
 
 /// A `SpeechHab` with scripted answers.
@@ -76,6 +93,8 @@ final class FakeSpeechHab: SpeechHab, @unchecked Sendable {
     private(set) var sent: [SpeechTranscribeParams] = []
     private(set) var prepares = 0
 
+    var welcomed = true
+    func isWelcomed() async -> Bool { welcomed }
     func hasSpeech() async -> Bool { speech }
     func prepare() async throws -> SpeechStatus {
         prepares += 1
@@ -339,7 +358,78 @@ final class SpeechEngineTests: XCTestCase {
         await fleet.setActive(false)
     }
 
+    func testHabNotWelcomedYetIsTriedAgainNextTurn() async {
+        let api = FakeSpeechHab()
+        api.welcomed = false
+        let e = SpeechEngines([HabSpeechEngine(hab: api, session: "s1", encode: { _ in Data() }), FakeEngine(.apple)])
+        await e.prepare()
+        XCTAssertNil(e.skipped[.hab], "not connected yet is not sticky")
+        var r = await e.transcribe(clip, live: "live")
+        XCTAssertEqual(r?.engine, .apple)
+        api.welcomed = true
+        r = await e.transcribe(clip, live: "live")
+        XCTAssertEqual(r?.engine, .hab)
+    }
+
+    func testCancellationStopsTheFallback() async {
+        let first = FakeEngine(.hab, [.failure(CancellationError())])
+        let apple = FakeEngine(.apple)
+        let r = await SpeechEngines([first, apple]).transcribe(clip, live: "x")
+        XCTAssertNil(r)
+        XCTAssertEqual(apple.transcribes, 0)
+    }
+
     // MARK: - Parakeet load and unload rules
+
+    func testALatePrepareAfterCloseReleasesParakeet() async {
+        let rt = FakeRuntime()
+        let host = ParakeetHost(runtime: rt, offered: true)
+        let slowHab = FakeEngine(.hab)
+        let slow = SlowPrepare(inner: ParakeetSpeechEngine(host: host, holder: "dictation-1"), delay: .milliseconds(150))
+        let e = SpeechEngines([slowHab, slow])
+        let prep = Task { await e.prepare() }
+        try? await Task.sleep(for: .milliseconds(30))
+        await e.close()
+        await prep.value
+        XCTAssertFalse(rt.loaded, "the late load was released")
+        XCTAssertTrue(host.holders.isEmpty)
+    }
+
+    func testParakeetTranscribesBeforePrepareHeldIt() async throws {
+        let rt = FakeRuntime()
+        let host = ParakeetHost(runtime: rt, offered: true)
+        let engine = ParakeetSpeechEngine(host: host, holder: "voice-1")
+        let text = try await engine.transcribe(clip, live: "")
+        XCTAssertEqual(text, "on device text")
+        await engine.close()
+        XCTAssertFalse(rt.loaded)
+    }
+
+    func testParakeetUnloadWaitsForARunningTranscribe() async throws {
+        let rt = FakeRuntime()
+        rt.transcribeDelay = .milliseconds(150)
+        let host = ParakeetHost(runtime: rt, offered: true)
+        try await host.acquire("voice-1")
+        let t = Task { try await host.transcribe([0], for: "voice-1") }
+        try await Task.sleep(for: .milliseconds(30))
+        await host.setForeground(false)
+        XCTAssertTrue(rt.loaded, "not freed under the inference")
+        let text = try await t.value
+        XCTAssertEqual(text, "on device text")
+        await eventually("unloaded after it") { !rt.loaded }
+        await host.release("voice-1")
+    }
+
+    func testTwoHoldersOfOneKindKeepTheModel() async throws {
+        let rt = FakeRuntime()
+        let host = ParakeetHost(runtime: rt, offered: true)
+        try await host.acquire("voice-a")
+        try await host.acquire("voice-b")
+        await host.release("voice-a")
+        XCTAssertTrue(rt.loaded, "the other window still holds it")
+        await host.release("voice-b")
+        XCTAssertFalse(rt.loaded)
+    }
 
     func testParakeetLoadsWhileHeldAndUnloadsOnLastRelease() async throws {
         let rt = FakeRuntime()

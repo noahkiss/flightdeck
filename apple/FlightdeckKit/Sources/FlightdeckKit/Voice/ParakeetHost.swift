@@ -136,18 +136,33 @@ public final class ParakeetHost {
         }
     }
 
+    /// Transcribes running now; an unload waits for them.
+    public private(set) var inFlight = 0
+    @ObservationIgnored private var unloadWhenIdle = false
+
     /// One turn's text. Loads again after a return to the foreground.
     public func transcribe(_ samples: [Float], for holder: String) async throws -> String {
         guard let runtime, holders.contains(holder) else {
-            throw SpeechEngineError.unavailable("the on-device model is not held", sticky: true)
+            throw SpeechEngineError.unavailable("the on-device model is not held yet", sticky: false)
         }
         try await ensureLoaded()
+        inFlight += 1
+        defer {
+            inFlight -= 1
+            if inFlight == 0, unloadWhenIdle {
+                unloadWhenIdle = false
+                Task { await self.unloadNow() }
+            }
+        }
         return try await runtime.transcribe(samples)
     }
 
     private func ensureLoaded() async throws {
         if evicted {
             throw SpeechEngineError.unavailable("the on-device model was unloaded after a memory warning", sticky: true)
+        }
+        if unloadWhenIdle {
+            throw SpeechEngineError.unavailable("the on-device model is unloading", sticky: false)
         }
         guard isForeground else {
             throw SpeechEngineError.unavailable("the on-device model does not run in the background", sticky: false)
@@ -181,6 +196,11 @@ public final class ParakeetHost {
     private func unloadNow() async {
         loading?.cancel()
         guard isLoaded, let runtime else { return }
+        if inFlight > 0 {
+            // Never free the model under a running inference: unload after it.
+            unloadWhenIdle = true
+            return
+        }
         isLoaded = false
         await runtime.unload()
     }

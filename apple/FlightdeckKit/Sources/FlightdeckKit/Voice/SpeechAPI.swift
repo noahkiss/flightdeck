@@ -17,6 +17,8 @@ public enum SpeechLimits {
 
 /// The two speech calls on one hab connection: the seam the hab engine uses.
 public protocol SpeechHab: Sendable {
+    /// Whether the connection is online with a welcome.
+    func isWelcomed() async -> Bool
     /// Whether the live connection's welcome names `speech`.
     func hasSpeech() async -> Bool
     func prepare() async throws -> SpeechStatus
@@ -33,6 +35,10 @@ public struct SpeechAPI: SpeechHab {
 
     public init(connection: HabConnection) {
         self.connection = connection
+    }
+
+    public func isWelcomed() async -> Bool {
+        await connection.isWelcomed
     }
 
     public func hasSpeech() async -> Bool {

@@ -133,7 +133,7 @@ public final class VoiceKit {
     /// Voice mode for a session.
     public func voiceModel(chat: ChatModel, connection: HabConnection?) -> VoiceModel {
         let audio = makeAudio(true)
-        let m = VoiceModel(chat: chat, engines: engines(connection: connection, session: chat.target.session, holder: "voice"),
+        let m = VoiceModel(chat: chat, engines: engines(connection: connection, session: chat.target.session, holder: "voice-" + UUID().uuidString),
                            input: audio, speaker: audio, settings: settings.value) { params in
             guard let connection else { throw ConnectionClosed(detail: "no connection") }
             _ = try await connection.call(HabMethods.approvalAnswer, params)
@@ -143,7 +143,7 @@ public final class VoiceKit {
 
     /// Dictation into the composer or a pane.
     public func dictation(connection: HabConnection?, session: String?) -> DictationModel {
-        DictationModel(engines: engines(connection: connection, session: session, holder: "dictation"), input: makeAudio(false))
+        DictationModel(engines: engines(connection: connection, session: session, holder: "dictation-" + UUID().uuidString), input: makeAudio(false))
     }
 }
 
