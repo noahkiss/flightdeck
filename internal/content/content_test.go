@@ -45,6 +45,9 @@ func TestTouches(t *testing.T) {
 		tool("m7", "apply_patch", "done", map[string]any{"/w/c.py": map[string]string{"type": "update", "unified_diff": "@@ -1 +1 @@\n-a\n+b\n"}, "/w/d.py": map[string]string{"type": "delete"}}),
 		{ID: "m8", Kind: api.ChatKindTool, Tool: &api.ChatTool{Name: "view_image", Status: "done", Target: "/tmp/v.jpg"}},
 		tool("m9", "Edit", "denied", map[string]string{"file_path": "/w/denied.go", "old_string": "a", "new_string": "b"}),
+		tool("m10", "Write", "denied", map[string]string{"file_path": "/home/x/.ssh/authorized_keys", "content": "k"}),
+		tool("m11", "Write", "error", map[string]string{"file_path": "/w/failed.txt", "content": "k"}),
+		tool("m12", "Write", "denied", map[string]string{"file_path": "/w/denied.png", "content": "png"}),
 	}
 	got := map[string]Touch{}
 	for _, t := range Touches(msgs, "/w") {
@@ -55,6 +58,14 @@ func TestTouches(t *testing.T) {
 	}
 	if _, ok := got["/w/failed.go"]; ok {
 		t.Error("a failed edit counts")
+	}
+	for _, p := range []string{"/home/x/.ssh/authorized_keys", "/w/failed.txt"} {
+		if _, ok := got[p]; ok {
+			t.Errorf("a refused Write of %s is listed, so the hab would read it", p)
+		}
+	}
+	if d := got["/w/denied.png"]; !d.Image || d.Changed {
+		t.Errorf("a refused Write of an image counts as a read only: %+v", d)
 	}
 	if _, ok := got["/w/denied.go"]; ok {
 		t.Error("a denied edit counts")
@@ -148,13 +159,13 @@ type world struct {
 	store *Store
 }
 
-func newWorld(t *testing.T) *world {
+func newWorld(t *testing.T, tweak ...func(*Config)) *world {
 	w := &world{dir: t.TempDir(), now: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)}
 	if r, err := filepath.EvalSymlinks(w.dir); err == nil {
 		w.dir = r
 	}
 	w.store, _ = OpenStore("")
-	w.svc = New(Config{
+	cfg := Config{
 		Store:   w.store,
 		Session: func(id string) (api.Session, bool) { return api.Session{ID: id}, id == "s1" || id == "s2" },
 		PaneSession: func(tok string) (string, bool) {
@@ -170,7 +181,11 @@ func newWorld(t *testing.T) *world {
 		Now:      func() time.Time { return w.now },
 		Logf:     t.Logf,
 		CacheFor: time.Nanosecond,
-	})
+	}
+	for _, f := range tweak {
+		f(&cfg)
+	}
+	w.svc = New(cfg)
 	return w
 }
 
@@ -451,5 +466,125 @@ func TestInside(t *testing.T) {
 		if got := inside(top, p); got != want {
 			t.Errorf("inside(%s) = %v", p, got)
 		}
+	}
+}
+
+// TestCorruptStore: a store file that does not parse is moved aside and the store starts empty,
+// so the hab still starts; the next save writes a good file.
+func TestCorruptStore(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "content.json")
+	if err := os.WriteFile(p, []byte(`{"shown": {"s1": [`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := OpenStore(p)
+	var bad *CorruptError
+	if !errors.As(err, &bad) || s == nil {
+		t.Fatalf("open of a torn file: %v %v", s, err)
+	}
+	if b, err := os.ReadFile(p + ".bad"); err != nil || string(b) != `{"shown": {"s1": [` {
+		t.Fatalf("set aside: %q %v", b, err)
+	}
+	if err := s.Add("s1", Shown{Path: "/a"}); err != nil {
+		t.Fatal(err)
+	}
+	if s2, err := OpenStore(p); err != nil || len(s2.List("s1")) != 1 {
+		t.Fatalf("reopen after a save: %v", err)
+	}
+}
+
+// TestForget: a session's references and folder go with its record.
+func TestForget(t *testing.T) {
+	w := newWorld(t)
+	f := w.file(t, "a.md", "# a")
+	if _, err := w.svc.Show(context.Background(), api.ContentShowParams{Session: "s1", Path: f}); err != nil {
+		t.Fatal(err)
+	}
+	w.store.SetFolder("s1", w.dir)
+	w.svc.Forget("s1")
+	if len(w.store.List("s1")) != 0 || w.store.Folder("s1") != "" {
+		t.Fatal("references kept after Forget")
+	}
+}
+
+// TestShowResolvesSymlinks: a show through a symlinked folder stores the real path, so it is
+// the same item as a git status entry or tool call for that file.
+func TestShowResolvesSymlinks(t *testing.T) {
+	w := newWorld(t)
+	real := w.file(t, "real/shot.png", "png")
+	link := filepath.Join(w.dir, "alias")
+	if err := os.Symlink(filepath.Join(w.dir, "real"), link); err != nil {
+		t.Fatal(err)
+	}
+	res, err := w.svc.Show(context.Background(), api.ContentShowParams{Session: "s1", Path: filepath.Join(link, "shot.png")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ID != ID("s1", real) || w.pub[0].Path != real {
+		t.Fatalf("show through a symlink: %+v %+v", res, w.pub[0])
+	}
+}
+
+// TestListModifiedAndCap: items carry the file's modified time; past the cap git-only items go
+// before anything shown or touched.
+func TestListModifiedAndCap(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	w := newWorld(t, func(c *Config) { c.MaxItems = 5 })
+	repo := filepath.Join(w.dir, "repo")
+	os.MkdirAll(repo, 0o755)
+	git(t, repo, "init", "-q", "-b", "main")
+	for i := 0; i < 10; i++ {
+		w.file(t, filepath.Join("repo", "u"+string(rune('a'+i))+".txt"), "x")
+	}
+	shot := w.file(t, "repo/shot.png", "png")
+	w.cwd = repo
+	if _, err := w.svc.Show(context.Background(), api.ContentShowParams{Session: "s1", Path: shot}); err != nil {
+		t.Fatal(err)
+	}
+	l, err := w.svc.List(context.Background(), api.ContentListParams{Session: "s1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Items) != 5 || !l.More || l.Items[0].Path != shot {
+		t.Fatalf("cap kept %d items, first %+v", len(l.Items), l.Items[0])
+	}
+	if l.Items[0].Modified == "" || l.Items[0].Modified != w.pub[0].Modified {
+		t.Errorf("modified: %q vs %q", l.Items[0].Modified, w.pub[0].Modified)
+	}
+}
+
+// TestDotDotNameAndSwap: a top-level file named "..env" still gets its git diff; a git-only
+// item swapped for a symlink that leads out after the list is refused on read and diff.
+func TestDotDotNameAndSwap(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	w := newWorld(t, func(c *Config) { c.CacheFor = time.Hour })
+	repo := filepath.Join(w.dir, "repo")
+	os.MkdirAll(repo, 0o755)
+	git(t, repo, "init", "-q", "-b", "main")
+	dot := w.file(t, "repo/..env", "A=1\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-q", "-m", "init")
+	w.file(t, "repo/..env", "A=2\n")
+	untracked := w.file(t, "repo/new.txt", "new\n")
+	w.file(t, "outside.txt", "secret\n")
+	w.cwd = repo
+	w.list(t, "s1")
+	ctx := context.Background()
+	d, err := w.svc.Diff(ctx, api.ContentDiffParams{Session: "s1", ID: ID("s1", dot)})
+	if err != nil || d.Source != api.ContentDiffSourceGit {
+		t.Errorf("diff of ..env: %+v %v", d, err)
+	}
+	os.Remove(untracked)
+	if err := os.Symlink(filepath.Join(w.dir, "outside.txt"), untracked); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.svc.Read(ctx, api.ContentReadParams{Session: "s1", ID: ID("s1", untracked)}); kindOf(err) != api.ErrorKindNotFound {
+		t.Errorf("read of a git path swapped for a symlink out: %v", err)
+	}
+	if _, err := w.svc.Diff(ctx, api.ContentDiffParams{Session: "s1", ID: ID("s1", untracked)}); kindOf(err) != api.ErrorKindNotFound {
+		t.Errorf("diff of a git path swapped for a symlink out: %v", err)
 	}
 }

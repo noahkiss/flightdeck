@@ -60,6 +60,9 @@ func Touches(msgs []api.ChatMessage, cwd string) []Touch {
 		switch tool.Name {
 		case "Write":
 			path := str(in, "file_path")
+			if !ok && !IsImage(path) {
+				continue // a refused write changed nothing; only an image counts, as a read
+			}
 			if t := touch(m, path); t != nil {
 				t.Image = t.Image || IsImage(path)
 				if ok {

@@ -79,7 +79,10 @@ func paneSessionOf(tokens *hook.Tokens, store *structure.Store) func(token strin
 // newContent opens the shown references in dir and returns the content service.
 func newContent(dir string, cfg content.Config) (*content.Service, error) {
 	st, err := content.OpenStore(filepath.Join(dir, contentFile))
-	if err != nil {
+	var bad *content.CorruptError
+	if errors.As(err, &bad) {
+		cfg.Logf("content: %v", err) // a store of references never stops the hab
+	} else if err != nil {
 		return nil, err
 	}
 	cfg.Store = st

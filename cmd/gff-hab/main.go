@@ -320,12 +320,19 @@ func serve(args []string) error {
 			c.Poke()
 		}
 	}
+	var contentRef atomic.Pointer[content.Service] // set once the content service exists
 	store, err := structure.Open(structure.Config{
 		Dir:     dir,
 		Holders: hs,
 		OnEvent: func(e structure.Event) {
 			if s := srv.Load(); s != nil {
 				s.Publish(e)
+			}
+			if e.Type == structure.SessionDeleted {
+				// Shown references go with the session record (app.md 4.7).
+				if c := contentRef.Load(); c != nil {
+					c.Forget(e.ID)
+				}
 			}
 			pokeCatalog()
 		},
@@ -479,7 +486,7 @@ func serve(args []string) error {
 		chat = chats
 		caps = append(caps, "transcripts")
 		// Rich content (app.md 4.7): references to files a session showed or touched.
-		cs, err := newContent(dir, content.Config{
+		contentSvc, err := newContent(dir, content.Config{
 			Session:      store.Session,
 			PaneSession:  paneSessionOf(tokens, store),
 			Conversation: chats.conversation,
@@ -494,7 +501,8 @@ func serve(args []string) error {
 		if err != nil {
 			return err
 		}
-		contents = cs
+		contents = contentSvc
+		contentRef.Store(contentSvc)
 		caps = append(caps, "content")
 		// Commands from OSC 133 marks (hab-logic-api.md 2.5): command.updated events are read
 		// from the link and sent at a bounded rate.

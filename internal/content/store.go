@@ -3,6 +3,7 @@ package content
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -35,8 +36,19 @@ type file struct {
 	Folders map[string]string  `json:"folders,omitempty"`
 }
 
-// OpenStore loads the store at path. A missing file is an empty store; an unreadable one is
-// an error.
+// CorruptError says OpenStore set an unreadable store file aside and started empty.
+type CorruptError struct {
+	Path, Aside string
+	Err         error
+}
+
+func (e *CorruptError) Error() string {
+	return fmt.Sprintf("content store %s is unreadable (%v); moved it to %s and started empty", e.Path, e.Err, e.Aside)
+}
+
+// OpenStore loads the store at path. A missing file is an empty store. A file that does not
+// parse (a torn write, a hand edit) is renamed to <path>.bad: OpenStore returns an empty store
+// and a *CorruptError, so the hab still starts. A file it cannot read at all is an error.
 func OpenStore(path string) (*Store, error) {
 	s := &Store{path: path, m: map[string][]Shown{}, folders: map[string]string{}}
 	if path == "" {
@@ -51,7 +63,11 @@ func OpenStore(path string) (*Store, error) {
 	}
 	var f file
 	if err := json.Unmarshal(b, &f); err != nil {
-		return nil, err
+		aside := path + ".bad"
+		if rerr := os.Rename(path, aside); rerr != nil {
+			return nil, fmt.Errorf("content store %s is unreadable (%v) and could not be moved aside: %w", path, err, rerr)
+		}
+		return s, &CorruptError{Path: path, Aside: aside, Err: err}
 	}
 	if f.Shown != nil {
 		s.m = f.Shown
@@ -107,6 +123,11 @@ func (s *Store) List(session string) []Shown {
 	return append([]Shown(nil), s.m[session]...)
 }
 
+// Forget drops a session's references and folder, when its record goes.
+func (s *Store) Forget(session string) error {
+	return s.Prune(func(id string) bool { return id != session })
+}
+
 // Prune drops the references of every session keep says is gone.
 func (s *Store) Prune(keep func(session string) bool) error {
 	s.mu.Lock()
@@ -142,8 +163,21 @@ func (s *Store) save() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
+	// Synced before the rename, so a power loss leaves the old file or the new one, not a torn one.
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
 		return err
 	}
 	return os.Rename(tmp, s.path)

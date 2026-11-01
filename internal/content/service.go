@@ -37,6 +37,8 @@ type Config struct {
 	Logf    func(string, ...any)
 	// GitTimeout bounds one git status or git diff. Default 2 s.
 	GitTimeout time.Duration
+	// MaxItems bounds one list. Default MaxItems.
+	MaxItems int
 	// CacheFor is how long a session's list answers content.read and content.diff before it is
 	// built again. Default 5 s.
 	CacheFor time.Duration
@@ -61,6 +63,8 @@ type built struct {
 	more    bool
 	folder  string
 	top     string                      // the repository's top folder, or ""
+	realTop string                      // top with its symlinks resolved
+	shown   map[string]bool             // paths with a stored reference
 	changes map[string]gitstatus.Change // by absolute path
 	touches map[string]Touch            // by absolute path
 	byID    map[string]int              // index into items
@@ -76,6 +80,9 @@ func New(cfg Config) *Service {
 	}
 	if cfg.GitTimeout <= 0 {
 		cfg.GitTimeout = 2 * time.Second
+	}
+	if cfg.MaxItems <= 0 {
+		cfg.MaxItems = MaxItems
 	}
 	if cfg.CacheFor <= 0 {
 		cfg.CacheFor = 5 * time.Second
@@ -116,7 +123,12 @@ func (s *Service) Show(ctx context.Context, p api.ContentShowParams) (api.Conten
 	if utf8.RuneCountInString(p.Title) > MaxTitle {
 		return api.ContentShown{}, errf(api.ErrorKindInvalid, "title is longer than %d characters", MaxTitle)
 	}
-	path := filepath.Clean(p.Path)
+	// Resolved, so a show through a symlinked folder (macOS /tmp, /var) and a git status entry
+	// for the same file make one item.
+	path, err := filepath.EvalSymlinks(filepath.Clean(p.Path))
+	if err != nil {
+		return api.ContentShown{}, errf(api.ErrorKindNotFound, "%s: no such file", p.Path)
+	}
 	fi, err := os.Stat(path)
 	if err != nil {
 		return api.ContentShown{}, errf(api.ErrorKindNotFound, "%s: no such file", path)
@@ -144,6 +156,16 @@ func (s *Service) Show(ctx context.Context, p api.ContentShowParams) (api.Conten
 	return api.ContentShown{ID: it.ID, Session: session}, nil
 }
 
+// Forget drops a session's stored references and folder: its record is gone.
+func (s *Service) Forget(session string) {
+	if err := s.cfg.Store.Forget(session); err != nil {
+		s.cfg.Logf("content: %v", err)
+	}
+	s.mu.Lock()
+	delete(s.cache, session)
+	s.mu.Unlock()
+}
+
 func isKind(k api.ContentKind) bool {
 	for _, w := range api.Enums["ContentKind"] {
 		if string(k) == w {
@@ -165,13 +187,17 @@ func applyShown(it *api.ContentItem, r Shown) {
 	}
 }
 
-// stat fills Size for a regular file.
+// stat fills Size and Modified for a regular file.
 func stat(it *api.ContentItem) {
 	if fi, err := os.Stat(it.Path); err == nil && fi.Mode().IsRegular() {
 		n := fi.Size()
 		it.Size = &n
+		it.Modified = modTime(fi)
 	}
 }
+
+// modTime is the modification time as content.read and content.list report it.
+func modTime(fi os.FileInfo) string { return fi.ModTime().UTC().Format(time.RFC3339Nano) }
 
 // List builds the session's content.
 func (s *Service) List(ctx context.Context, p api.ContentListParams) (api.ContentList, error) {
@@ -245,7 +271,7 @@ func (s *Service) build(ctx context.Context, session string) (built, error) {
 	if folder == "" && s.cfg.ProjectDir != nil {
 		folder = s.cfg.ProjectDir(session)
 	}
-	b := built{folder: folder, changes: map[string]gitstatus.Change{}, touches: map[string]Touch{}, byID: map[string]int{}}
+	b := built{folder: folder, changes: map[string]gitstatus.Change{}, touches: map[string]Touch{}, byID: map[string]int{}, shown: map[string]bool{}}
 	byPath := map[string]*api.ContentItem{}
 	var order []string
 	get := func(path string) *api.ContentItem {
@@ -259,6 +285,7 @@ func (s *Service) build(ctx context.Context, session string) (built, error) {
 	}
 	for _, r := range s.cfg.Store.List(session) {
 		applyShown(get(r.Path), r)
+		b.shown[r.Path] = true
 	}
 	for _, t := range Touches(msgs, folder) {
 		b.touches[t.Path] = t
@@ -286,6 +313,7 @@ func (s *Service) build(ctx context.Context, session string) (built, error) {
 				realTop = r
 			}
 		}
+		b.realTop = realTop
 		for _, c := range changes {
 			path := filepath.Join(top, filepath.FromSlash(c.Path))
 			if !inside(realTop, path) {
@@ -316,8 +344,19 @@ func (s *Service) build(ctx context.Context, session string) (built, error) {
 		}
 		return timeOf(a).Before(timeOf(c))
 	})
-	if len(items) > MaxItems {
-		items = items[len(items)-MaxItems:]
+	if limit := s.cfg.MaxItems; len(items) > limit {
+		// Git-only items (no time) sit last and go first, so a large untracked tree never
+		// pushes out what the agent showed or touched; then the oldest timed items go.
+		timed := 0
+		for timed < len(items) && items[timed].At != "" {
+			timed++
+		}
+		keepGit := max(0, limit-timed)
+		keepGit = min(keepGit, len(items)-timed)
+		items = append(items[:timed:timed], items[timed:timed+keepGit]...)
+		if len(items) > limit {
+			items = items[len(items)-limit:]
+		}
 		b.more = true
 	}
 	b.items = items
@@ -365,8 +404,11 @@ func (s *Service) Read(ctx context.Context, p api.ContentReadParams) (api.Conten
 	if p.Limit < 0 {
 		return api.ContentData{}, errf(api.ErrorKindInvalid, "limit must not be negative")
 	}
-	it, _, err := s.lookup(ctx, p.Session, p.ID)
+	it, b, err := s.lookup(ctx, p.Session, p.ID)
 	if err != nil {
+		return api.ContentData{}, err
+	}
+	if err := b.check(it.Path); err != nil {
 		return api.ContentData{}, err
 	}
 	limit := p.Limit
@@ -380,6 +422,7 @@ func (s *Service) Read(ctx context.Context, p api.ContentReadParams) (api.Conten
 		return api.ContentData{}, errf(api.ErrorKindNotFound, "%s is no longer on the host", it.Path)
 	}
 	defer f.Close()
+	// Checked again on the open file: the path may have changed since check.
 	fi, err := f.Stat()
 	if err != nil {
 		return api.ContentData{}, errf(api.ErrorKindUnavailable, "%s: %v", it.Path, err)
@@ -402,7 +445,7 @@ func (s *Service) Read(ctx context.Context, p api.ContentReadParams) (api.Conten
 	}
 	buf = buf[:got]
 	return api.ContentData{
-		ID: it.ID, Type: it.Type, Size: size, Modified: fi.ModTime().UTC().Format(time.RFC3339Nano),
+		ID: it.ID, Type: it.Type, Size: size, Modified: modTime(fi),
 		Offset: p.Offset, Data: buf, EOF: p.Offset+int64(got) >= size,
 	}, nil
 }
@@ -417,9 +460,12 @@ func (s *Service) Diff(ctx context.Context, p api.ContentDiffParams) (api.Conten
 	out := api.ContentDiff{ID: it.ID, Path: it.Path, Source: api.ContentDiffSourceNone}
 	rel := ""
 	if b.top != "" {
-		if r, err := filepath.Rel(b.top, it.Path); err == nil && !strings.HasPrefix(r, "..") {
+		if r, err := filepath.Rel(b.top, it.Path); err == nil && r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)) {
 			rel = filepath.ToSlash(r)
 		}
+	}
+	if err := b.check(it.Path); err != nil {
+		return api.ContentDiff{}, err
 	}
 	c, changed := b.changes[it.Path]
 	if changed && (c.Kind == "untracked" || c.Kind == "added") {
@@ -447,6 +493,25 @@ func (s *Service) Diff(ctx context.Context, p api.ContentDiffParams) (api.Conten
 	return out, nil
 }
 
+// check refuses a path that is not a regular file (a device reacts to an open) and, for an item
+// only git status listed, one that now leads out of the repository through a symlink.
+func (b built) check(path string) error {
+	if fi, err := os.Stat(path); err == nil && !fi.Mode().IsRegular() {
+		return errf(api.ErrorKindInvalid, "%s is not a regular file", path)
+	}
+	_, gitOnly := b.changes[path]
+	_, touched := b.touches[path]
+	if gitOnly && !touched && !b.shown[path] && !inside(b.realTop, path) {
+		return errf(api.ErrorKindNotFound, "%s leads out of the repository", path)
+	}
+	return nil
+}
+
+// diffName keeps a file name on one diff header line.
+func diffName(s string) string {
+	return strings.NewReplacer("\n", "?", "\r", "?").Replace(s)
+}
+
 // addedDiff is a diff that adds every line of the file.
 func addedDiff(path, rel string) (string, bool, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
@@ -462,9 +527,9 @@ func addedDiff(path, rel string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	name := rel
-	if name == "" {
-		name = path
+	name := diffName(rel)
+	if rel == "" {
+		name = diffName(path)
 	}
 	if !utf8.Valid(data) || strings.IndexByte(string(data), 0) >= 0 {
 		return fmt.Sprintf("--- /dev/null\n+++ b/%s\nBinary file\n", name), false, nil
@@ -482,7 +547,7 @@ func addedDiff(path, rel string) (string, bool, error) {
 // unknown, so each hunk header names the edit instead.
 func editsDiff(path string, edits []Edit) (string, bool) {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "--- a%s\n+++ b%s\n", path, path)
+	fmt.Fprintf(&sb, "--- a%s\n+++ b%s\n", diffName(path), diffName(path))
 	for i, e := range edits {
 		switch {
 		case e.Deleted:

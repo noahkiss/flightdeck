@@ -2,10 +2,10 @@ package structure
 
 import (
 	"fmt"
-
-	"github.com/noahkiss/flightdeck/api"
 	"path/filepath"
 	"slices"
+
+	"github.com/noahkiss/flightdeck/api"
 )
 
 // maxProjectDirs bounds the working directories kept per project.
