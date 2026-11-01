@@ -71,6 +71,8 @@ public struct SessionView: View {
     private let close: (() -> Void)?
     @State private var mode: Mode
     @State private var consoleShown = false
+    /// The content side panel (Mac, iPad) or sheet (iPhone), app.md 4.7.
+    @State private var showFiles = false
     @Environment(\.terminalSlot) private var terminal
 
     enum Mode: String, CaseIterable, Identifiable {
@@ -103,6 +105,9 @@ public struct SessionView: View {
                     if model.target.session != nil, !model.context.isConsole {
                         ToolbarItem(placement: .secondaryAction) { consoleButton }
                     }
+                    ToolbarItem(placement: .secondaryAction) {
+                        Button("Files", systemImage: "doc.on.doc") { showFiles = true }
+                    }
                     ToolbarItem(placement: .primaryAction) {
                         Picker("View", selection: $mode) {
                             ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
@@ -110,6 +115,10 @@ public struct SessionView: View {
                         .pickerStyle(.segmented)
                         .fixedSize()
                     }
+                }
+                .sheet(isPresented: $showFiles) {
+                    ContentPanel(model: model.content)
+                        .presentationDetents([.medium, .large])
                 }
             } else {
                 VStack(spacing: 0) {
@@ -120,6 +129,12 @@ public struct SessionView: View {
                             consoleButton
                                 .buttonStyle(.borderless)
                         }
+                        Button(showFiles ? "Hide files" : "Show files", systemImage: "sidebar.right") {
+                            withAnimation(.easeOut(duration: 0.15)) { showFiles.toggle() }
+                        }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .help(showFiles ? "Hide files" : "Show files")
                         if let close {
                             Button("Close", systemImage: "xmark", action: close)
                                 .labelStyle(.iconOnly)
@@ -130,13 +145,21 @@ public struct SessionView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     Divider()
-                    GeometryReader { geo in
-                        HStack(spacing: 0) {
-                            ChatView(model: model)
-                                .frame(width: geo.size.width / 2)
+                    HStack(spacing: 0) {
+                        GeometryReader { geo in
+                            HStack(spacing: 0) {
+                                ChatView(model: model)
+                                    .frame(width: geo.size.width / 2)
+                                Divider()
+                                terminal.make(model.target)
+                                    .frame(maxWidth: .infinity)
+                            }
+                        }
+                        if showFiles {
                             Divider()
-                            terminal.make(model.target)
-                                .frame(maxWidth: .infinity)
+                            ContentPanel(model: model.content)
+                                .frame(width: 320)
+                                .transition(.move(edge: .trailing))
                         }
                     }
                 }

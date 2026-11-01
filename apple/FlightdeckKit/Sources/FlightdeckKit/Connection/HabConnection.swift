@@ -126,6 +126,8 @@ public actor HabConnection {
     private var chatTaps: [Int: AsyncStream<ChatUpdate>.Continuation] = [:]
     /// Listeners for `command.updated` events (app.md 6.1), by listener id.
     private var commandTaps: [Int: AsyncStream<CommandUpdate>.Continuation] = [:]
+    /// Listeners for `content.updated` events (app.md 4.7), by listener id.
+    private var contentTaps: [Int: AsyncStream<ContentItem>.Continuation] = [:]
     private var nextTap = 1
     /// Counts live connections, so a chat listener can tell its seq apart.
     private var generation = 0
@@ -196,6 +198,19 @@ public actor HabConnection {
         return stream
     }
 
+    /// `content.updated` events of this hab, from now until the stream is
+    /// dropped. Every session's items come; the listener filters.
+    public func contentUpdates() -> AsyncStream<ContentItem> {
+        let (stream, sink) = AsyncStream.makeStream(of: ContentItem.self)
+        let id = nextTap
+        nextTap += 1
+        contentTaps[id] = sink
+        sink.onTermination = { [weak self] _ in
+            Task { await self?.dropTap(id) }
+        }
+        return stream
+    }
+
     /// Calls a method on the live connection and says which connection
     /// answered, so a result's seq can be matched with `chatUpdates`.
     public func callTagged<P, R>(_ method: HabMethod<P, R>, _ params: P) async throws -> (R, Int) {
@@ -223,6 +238,7 @@ public actor HabConnection {
     private func dropTap(_ id: Int) {
         chatTaps[id] = nil
         commandTaps[id] = nil
+        contentTaps[id] = nil
     }
 
     // MARK: - Run loop
@@ -433,6 +449,9 @@ public actor HabConnection {
                 publish()
             }
             return
+        }
+        if e.type == "content.updated", !contentTaps.isEmpty, let it = try? e.data.decode(ContentItem.self) {
+            for (_, t) in contentTaps { t.yield(it) }
         }
         if state.store.apply(e) { publish() }
     }

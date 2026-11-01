@@ -69,6 +69,7 @@ enum DemoChat {
     /// Loads the demo conversations and makes `session.send` answer with a short invented reply.
     static func populate(workbench: FakeHab, attic: FakeHab) async {
         await workbench.setChat(session: "s1", tide("s1"))
+        await DemoContent.populate(workbench, session: "s1")
         await workbench.setChat(session: "s3", docs("s3"))
         await workbench.setChat(session: "s4", [
             msg("s4", 1, .user, 5, text: "Split the layout engine into measure and place passes."),

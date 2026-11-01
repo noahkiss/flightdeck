@@ -159,6 +159,7 @@ struct ChatTranscript: View {
 
     var body: some View {
         let items = model.items
+        let placed = ContentPlacement.of(items: model.content.items, messages: model.messages, rowIDs: Set(items.map(\.id)))
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
@@ -173,7 +174,14 @@ struct ChatTranscript: View {
                     ForEach(items) { item in
                         ChatItemView(item: item)
                             .id(item.id)
+                        ForEach(placed.byRow[item.id] ?? [], id: \.id) { c in
+                            InlineContentView(model: model.content, item: c)
+                        }
                     }
+                    ForEach(placed.trailing, id: \.id) { c in
+                        InlineContentView(model: model.content, item: c)
+                    }
+                    ModifiedFilesCard(model: model.content)
                     ForEach(model.outgoing) { o in
                         OutgoingView(outgoing: o, model: model)
                             .id("out-\(o.id)")

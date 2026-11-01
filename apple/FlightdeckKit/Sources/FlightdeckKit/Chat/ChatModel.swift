@@ -123,6 +123,9 @@ public final class ChatModel {
     /// session the owner last sent a message to (app.md 9.1).
     @ObservationIgnored public var onSent: (@MainActor (SessionTarget) -> Void)?
 
+    /// The session's rich content (app.md 4.7): shown files, images, modified files.
+    public let content: ContentModel
+
     @ObservationIgnored private let connection: HabConnection?
     @ObservationIgnored private var index: [String: Int] = [:]
     @ObservationIgnored private var cursor: String?
@@ -143,13 +146,15 @@ public final class ChatModel {
     public init(target: SessionTarget, connection: HabConnection?) {
         self.target = target
         self.connection = connection
+        self.content = ContentModel(target: target, connection: connection)
     }
 
     /// A model over fixed messages, for previews and snapshots.
-    public init(target: SessionTarget, messages: [ChatMessage], context: ChatContext) {
+    public init(target: SessionTarget, messages: [ChatMessage], context: ChatContext, content: [ContentItem] = []) {
         self.target = target
         self.connection = nil
         self.context = context
+        self.content = ContentModel(target: target, items: content, context: context)
         self.load = .ready
         replaceAll(messages)
     }
@@ -160,6 +165,7 @@ public final class ChatModel {
     /// share one model, so each `start` needs its own `stop`.
     public func start() {
         viewers += 1
+        content.start()
         guard viewers == 1, let conn = connection else { return }
         listen = Task { [weak self] in
             let stream = await conn.chatUpdates()
@@ -175,6 +181,7 @@ public final class ChatModel {
     public func stop() {
         guard viewers > 0 else { return }
         viewers -= 1
+        content.stop()
         guard viewers == 0 else { return }
         listen?.cancel()
         listen = nil
@@ -188,6 +195,7 @@ public final class ChatModel {
         let old = context
         guard c != old else { return }
         context = c
+        content.update(c)
         if started, c.online, !old.online {
             Task { await self.catchUp() }
         } else if started, c.online, let native = c.agent?.session, native != tailNative {
@@ -350,6 +358,7 @@ public final class ChatModel {
         }
         if isStale(u) { return }
         take(u)
+        content.chatChanged(u.message)
         if load == .waiting { load = .ready }
     }
 

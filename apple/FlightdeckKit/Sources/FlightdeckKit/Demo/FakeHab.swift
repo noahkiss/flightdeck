@@ -57,6 +57,43 @@ public actor FakeHab {
     private var nextSendFailure: Failure?
     private var chatPageHook: (@Sendable (ChatPageParams, ChatPagePhase) async -> Void)?
 
+    /// Rich content (app.md 4.7): items by session, file bytes and diffs by item id.
+    private var contentItems: [String: [ContentItem]] = [:]
+    private var contentFiles: [String: (data: Data, modified: String)] = [:]
+    private var contentDiffs: [String: String] = [:]
+    /// The largest run one `content.read` returns; tests make it small to see chunks.
+    private var contentChunk = 1 << 20
+    private var contentReadHook: (@Sendable (ContentReadParams) async -> Void)?
+    public private(set) var contentReads = 0
+
+    /// Sets a session's content: its items, the bytes behind them and their diffs.
+    public func setContent(session: String, items: [ContentItem], files: [String: Data] = [:], diffs: [String: String] = [:]) {
+        contentItems[session] = items
+        for (id, d) in files { contentFiles[id] = (d, "2026-01-01T10:00:00.000000000Z") }
+        for (id, d) in diffs { contentDiffs[id] = d }
+    }
+
+    /// Replaces one file's bytes, with a new modification time.
+    public func setContentFile(id: String, data: Data, modified: String) {
+        contentFiles[id] = (data, modified)
+    }
+
+    public func setContentChunk(_ n: Int) { contentChunk = n }
+
+    /// Runs `hook` before each `content.read`, so a test can change the file between chunks.
+    public func setContentReadHook(_ hook: (@Sendable (ContentReadParams) async -> Void)?) {
+        contentReadHook = hook
+    }
+
+    /// Sends `content.updated` for an item, and keeps it in the session's list.
+    public func showContent(_ it: ContentItem) async {
+        var list = contentItems[it.session] ?? []
+        list.removeAll { $0.id == it.id }
+        list.append(it)
+        contentItems[it.session] = list
+        await emit(type: "content.updated", id: it.id, revision: nil, data: it)
+    }
+
     /// When a `chat.page` hook runs: before the page is read, or after it is
     /// read and before the reply goes out.
     public enum ChatPagePhase: Sendable { case before, after }
@@ -101,7 +138,7 @@ public actor FakeHab {
     /// Panes with data streams, input and size ownership (`FakePanes`).
     public nonisolated let terminals = FakePanes()
 
-    public init(hostID: String, revisions: ClosedRange<Int> = HabAPI.minRevision...HabAPI.revision, capabilities: [String] = ["agent-state", "data-streams", "snapshot-vt", "transcripts"]) {
+    public init(hostID: String, revisions: ClosedRange<Int> = HabAPI.minRevision...HabAPI.revision, capabilities: [String] = ["agent-state", "data-streams", "snapshot-vt", "transcripts", "content"]) {
         self.hostID = hostID
         self.epoch = Self.randomID()
         self.serverRevisions = revisions
@@ -455,6 +492,8 @@ public actor FakeHab {
             } catch {
                 await fail(c, id: id, kind: .invalid, hint: "bad chat.page params")
             }
+        case HabMethods.contentList.name, HabMethods.contentRead.name, HabMethods.contentDiff.name:
+            await contentCall(method, params, c, id: id)
         case HabMethods.sessionSend.name:
             guard sendWorks else {
                 await fail(c, id: id, kind: .unavailable, hint: "session.send is not built (fake hab)")
@@ -540,6 +579,50 @@ public actor FakeHab {
             await fail(c, id: id, kind: .unavailable, hint: "the fake hab does not serve \(method)")
         }
         return true
+    }
+
+    /// The content methods, from `setContent`. Like the real hab, only listed ids are read.
+    private func contentCall(_ method: String, _ params: JSONValue, _ c: Conn, id: Int) async {
+        guard capabilities.contains("content") else {
+            await fail(c, id: id, kind: .unavailable, hint: "the content capability is absent")
+            return
+        }
+        func listed(_ session: String, _ item: String) -> ContentItem? {
+            contentItems[session]?.first { $0.id == item }
+        }
+        switch method {
+        case HabMethods.contentList.name:
+            guard let p = try? params.decode(ContentListParams.self) else {
+                return await fail(c, id: id, kind: .invalid, hint: "bad content.list params")
+            }
+            await reply(c, id: id, result: ContentList(items: contentItems[p.session] ?? [], more: false, seq: c.seq))
+        case HabMethods.contentRead.name:
+            guard let p = try? params.decode(ContentReadParams.self) else {
+                return await fail(c, id: id, kind: .invalid, hint: "bad content.read params")
+            }
+            contentReads += 1
+            if let h = contentReadHook { await h(p) }
+            guard let it = listed(p.session, p.id), let f = contentFiles[it.id] else {
+                return await fail(c, id: id, kind: .notFound, hint: "no content \(p.id) in session \(p.session)")
+            }
+            let off = p.offset ?? 0
+            guard off <= f.data.count else {
+                return await fail(c, id: id, kind: .invalid, hint: "offset past the end")
+            }
+            let n = min(p.limit ?? (256 << 10), contentChunk, f.data.count - off)
+            let chunk = f.data.subdata(in: off..<(off + n))
+            await reply(c, id: id, result: ContentData(data: chunk, eof: off + n >= f.data.count, id: it.id, modified: f.modified,
+                                                       offset: off, seq: c.seq, size: f.data.count, type: it.type))
+        default:
+            guard let p = try? params.decode(ContentDiffParams.self) else {
+                return await fail(c, id: id, kind: .invalid, hint: "bad content.diff params")
+            }
+            guard let it = listed(p.session, p.id) else {
+                return await fail(c, id: id, kind: .notFound, hint: "no content \(p.id) in session \(p.session)")
+            }
+            let d = contentDiffs[it.id]
+            await reply(c, id: id, result: ContentDiff(diff: d ?? "", id: it.id, path: it.path, seq: c.seq, source: d == nil ? .none : .git))
+        }
     }
 
     /// The pane methods, answered by `terminals`.
