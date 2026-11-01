@@ -981,7 +981,7 @@ the context bar, the title, then the command on one line in the accent colour, t
 | Many approvals in a burst | One banner per request, grouped by session. The Live Activity shows the count and the oldest request |
 | Push not set up | Approvals appear in the app only, while it is open |
 | The request expires while the sheet is open | The buttons turn off at zero. The sheet says "Expired: answer in the terminal" and offers to open it |
-| The phone's clock is wrong | The countdown uses the offset from the hab's clock measured on connect. A banner shows the expiry as text from the hab, not a live timer |
+| The phone's clock is wrong | The countdown will use the offset from the hab's clock measured at hello (14.6); not built: only usage reads it today. A banner shows the expiry as text from the hab, not a live timer |
 | The call has no description and an unknown tool | The title is "Allow <tool name>?". The request block shows the raw input |
 | The context percentage is unknown | The context bar is hidden, not shown as zero |
 | The agent's last message is very long | The context line shows its first two lines; the chat icon opens the rest |
@@ -1970,7 +1970,9 @@ widget snapshot), `FlightdeckKit/Usage/` (book, alerts, center, views), `apple/W
   connections (one hab reached two ways) stays with the connection that has it. When that
   connection goes offline, the account moves at once to an online connection that holds the same
   reading. A read time that does not parse keeps the time held for the same values, so the same
-  reading again is no change. A hab that stops reporting an account leaves its
+  reading again is no change. The same reading again from the same hab keeps its arrival time, so
+  an account with no windows ages. A degraded account with no windows (the hab read nothing)
+  never replaces another hab's reading that has windows, is not degraded and is not stale. A hab that stops reporting an account leaves its
   last reading. Removing a hab removes its accounts.
 - **Last known values.** The book starts from the widget snapshot, so cards, footer and widget show
   the last readings with their age before any hab connects. An account whose hab is not online
@@ -1988,21 +1990,31 @@ widget snapshot), `FlightdeckKit/Usage/` (book, alerts, center, views), `apple/W
   an hour. The widget snapshot keeps the length and start; a snapshot an earlier build wrote
   still reads.
 - **Usage unavailable.** An account the hab marks `degraded` shows "Usage unavailable" in place of
-  its numbers: in the footer (no bar), on the card (no window rows, the hab's reason under it)
+  its numbers: in the footer (no bar), on the card (no window rows; the hab's one-line reason
+  under it, kept on purpose for power users, up to two lines)
   and in the widget (no ring; the Lock Screen gauge shows its plain icon). The windows it still
   holds are kept, not shown. It sorts with the accounts that have no windows. It posts no
   warning, and a waiting "alert me when free" request stays until its reset time; the card keeps
   that request's cancel button. The mark set or cleared is a change, to the widget too. The
   Live Activity shows no usage, so it has nothing to change.
 - **Clock offset.** At each hello the connection takes the welcome's `time` against the middle of
-  the hello's round trip: the hab's clock less this device's, per hab connection. A welcome
-  with no `time` clears it. The book moves every hab time (`resets_at`, `read_at`,
-  `starts_at`) onto this device's clock as it reads the account, so reset countdowns, pace,
-  staleness, warnings, "alert me when free" and the widget all run on local time. An offset
-  under 1 s is measurement noise and is not applied. Two times within 2 s count as one when the
-  book compares readings: one hab reached two ways measures its offset a little apart, and a
-  reconnect measures it again; neither is a change, and a window that matches keeps its held
-  times. The offset stays while the hab is offline, for its last readings.
+  the hello's round trip: the hab's clock less this device's, per hab connection. A round trip
+  over 1 s held a transport start (the Mac's `ssh` connect and login run inside it), so the
+  connection measures against the round trip's end instead: the hab writes the welcome once the
+  transport is up. A welcome with no `time` clears the offset. Each account the connection
+  receives keeps the offset in force when it arrived, so a reading held across a reconnect
+  (to another hab, an older hab, or a hab whose clock stepped) keeps its own shift. The book
+  moves every hab time (`resets_at`, `read_at`, `starts_at`) onto this device's clock by that
+  offset as it reads the account, so reset countdowns, pace, staleness, warnings, "alert me
+  when free" and the widget all run on local time. An offset under 1 s is measurement noise and
+  is not applied. Two times within 2 s count as one when the book compares readings: one hab
+  reached two ways measures its offset a little apart, and a reconnect measures it again;
+  neither is a change, and a window that matches keeps its held times.
+- **The offset trusts the hab's clock.** Claude Code's and Codex's reset times are the
+  provider's own times, not the hab's; the book shifts them as hab times all the same. That is
+  right when this device's clock is wrong. When the hab's clock is wrong, its reset times move by
+  the hab's error. The hab does not say which times are the provider's; the reference tools do
+  not handle this either.
 - **Stale** means older than an hour, or than the window when shorter. An account's age follows
   its newest window: a window the harness stopped sending greys only its own row. **Tightest** window: the
   highest percentage that counts now (a window whose reset passed counts as 0), ties to the later
@@ -2031,7 +2043,9 @@ widget snapshot), `FlightdeckKit/Usage/` (book, alerts, center, views), `apple/W
 - **Debug.** `-FlightdeckOpenUsage <key|all>` opens the sheet at launch (Debug builds).
 - **Tests.** `UsageTests.swift` (math, merge, warnings, alert when free, snapshot, the feed from a
   fake hab; the hab's length and start, the name fallback, unavailable accounts, the clock
-  offset, its noise floor and tolerance, and a fake hab whose clock runs two hours behind). `apple/scripts/usage-live-check.sh` runs `LiveTests.testLiveUsage` against a real
+  offset, its noise floor and tolerance, a slow hello, the offset kept per reading, a fake hab
+  whose clock runs two hours behind and then sends no time, and a degraded account with no
+  windows beside a healthy one). `apple/scripts/usage-live-check.sh` runs `LiveTests.testLiveUsage` against a real
   gff-hab: a hab pane pipes hand-written status lines (full, then with room) into
   `gff-hab statusline claude` once the test creates its trigger file.
 
