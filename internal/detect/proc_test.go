@@ -2,10 +2,13 @@ package detect
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"syscall"
 	"testing"
@@ -130,5 +133,78 @@ func TestParsePS(t *testing.T) {
 	}
 	if got := parsePS([]string{"7 100 Google Chrome Helper"}, nil, 100); len(got) != 1 || got[0].Name != "Google Chrome Helper" {
 		t.Errorf("a name with spaces: %+v", got)
+	}
+}
+
+// TestParseProcArgs reads hand-made kern.procargs2 buffers: argc, the executable path, its NUL
+// padding, argv (an argument with a space stays one), then the environment, never read.
+func TestParseProcArgs(t *testing.T) {
+	buf := func(argc int32, rest string) []byte {
+		b := binary.LittleEndian.AppendUint32(nil, uint32(argc))
+		return append(b, rest...)
+	}
+	for _, tc := range []struct {
+		name string
+		in   []byte
+		want []string
+	}{
+		{"argv", buf(3, "/bin/sh\x00\x00\x00\x00sh\x00-c\x00sleep 30; :\x00HOME=/x\x00"), []string{"sh", "-c", "sleep 30; :"}},
+		{"no padding", buf(1, "/x/claude\x00claude\x00PATH=/bin\x00"), []string{"claude"}},
+		{"an empty argument", buf(3, "/bin/echo\x00echo\x00\x00b\x00"), []string{"echo", "", "b"}},
+		{"cut short", buf(3, "/bin/sh\x00sh\x00-c"), []string{"sh", "-c"}},
+		{"argc beyond the buffer", buf(9, "/bin/sh\x00sh\x00"), []string{"sh"}},
+		{"no argc", []byte{1, 0}, nil},
+		{"negative argc", buf(-1, "/bin/sh\x00sh\x00"), nil},
+		{"no path end", buf(1, "/bin/sh"), nil},
+	} {
+		if got := parseProcArgs(tc.in); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestBoundedReturnsOnContext: a listing that hangs and never looks at ctx holds only its own
+// goroutine; bounded returns ctx's error when ctx ends.
+func TestBoundedReturnsOnContext(t *testing.T) {
+	hang := make(chan struct{})
+	defer close(hang)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := bounded(ctx, func() ([]Process, error) { <-hang; return nil, nil })
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err %v, want deadline exceeded", err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("returned after %v", d)
+	}
+}
+
+// TestGroupProcessesExactArgs: on Linux and macOS argv is read as the kernel holds it, so a
+// shell's script with spaces in it stays one argument.
+func TestGroupProcessesExactArgs(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("ps prints argv as one line")
+	}
+	cmd := exec.Command("/bin/sh", "-c", "sleep 30; :")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Skip(err)
+	}
+	defer func() { syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); cmd.Wait() }()
+	want := []string{"/bin/sh", "-c", "sleep 30; :"}
+	var fg Foreground
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		var err error
+		if fg, err = GroupProcesses(context.Background(), cmd.Process.Pid); err != nil {
+			t.Fatal(err)
+		}
+		if reflect.DeepEqual(fg.Leader.Args, want) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("leader %+v; want args %q", fg.Leader, want)
+		}
+		time.Sleep(20 * time.Millisecond) // until the child has run exec
 	}
 }

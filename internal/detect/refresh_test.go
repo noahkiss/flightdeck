@@ -194,6 +194,46 @@ func TestLoadKeepsVendoredOverBadOrOlderData(t *testing.T) {
 	}
 }
 
+// TestCache: a Cache returns the same set while the data directory is unchanged, and loads
+// again when a manifest is added, rewritten or removed. Sets from Vendored share the parsed
+// manifests but never their maps or problems.
+func TestCache(t *testing.T) {
+	data := t.TempDir()
+	c := NewCache(data)
+	s1 := c.Set()
+	if e := s1.Lookup("opencode"); e == nil || e.From != FromVendored {
+		t.Fatalf("opencode %+v, want vendored", e)
+	}
+	if c.Set() != s1 {
+		t.Errorf("an unchanged directory loaded again")
+	}
+	writeFiles(t, data, map[string]string{"opencode.toml": manifestText("opencode", "2026.12.1.1", 1, "")})
+	s2 := c.Set()
+	if e := s2.Lookup("opencode"); s2 == s1 || e.From != FromData || e.Manifest.Version != "2026.12.1.1" {
+		t.Fatalf("after a write: opencode %+v", e)
+	}
+	writeFiles(t, data, map[string]string{"opencode.toml": manifestText("opencode", "2026.12.1.22", 1, "")})
+	if e := c.Set().Lookup("opencode"); e.Manifest.Version != "2026.12.1.22" {
+		t.Errorf("after a rewrite: version %s", e.Manifest.Version)
+	}
+	if err := os.Remove(filepath.Join(data, "opencode.toml")); err != nil {
+		t.Fatal(err)
+	}
+	if e := c.Set().Lookup("opencode"); e.From != FromVendored {
+		t.Errorf("after a remove: from %s", e.From)
+	}
+
+	a, b := Vendored(), Vendored()
+	if a.Lookup("claude").Manifest != b.Lookup("claude").Manifest {
+		t.Errorf("vendored manifests parsed again")
+	}
+	a.Problems = append(a.Problems, Problem{"x", "y"})
+	a.put(&Entry{Manifest: &Manifest{ID: "claude"}, From: FromData})
+	if b.Lookup("claude").From != FromVendored || len(b.Problems) != 0 || len(Vendored().Problems) != 0 {
+		t.Errorf("a change to one vendored set reached another")
+	}
+}
+
 // TestRefreshPathTraversal: an id that is not a plain file name never writes outside the data
 // directory.
 func TestRefreshPathTraversal(t *testing.T) {

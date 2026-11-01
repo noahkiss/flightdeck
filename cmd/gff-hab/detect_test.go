@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/detect"
+	"github.com/noahkiss/flightdeck/internal/harness"
+	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 )
 
 // detectScreen is a hand-written Claude Code screen at its prompt, with the OSC 7501 report a
@@ -156,6 +159,64 @@ func TestDetectExplain(t *testing.T) {
 	}
 }
 
+// stubPanes is a paneReader with a fixed screen and foreground group. A nil fgDone answers
+// Foreground at once; otherwise Foreground waits on it and ignores its context.
+type stubPanes struct {
+	rows   []string
+	pgid   int
+	fgDone chan struct{}
+}
+
+func (s stubPanes) VisibleRows(hp.UUID) ([]string, int, error) { return s.rows, 80, nil }
+func (s stubPanes) Foreground(context.Context, hp.UUID) (int, error) {
+	if s.fgDone != nil {
+		<-s.fgDone
+	}
+	return s.pgid, nil
+}
+
+// TestExplainPartial: when the process part hangs past its budget, ignoring its context (a
+// listing stuck on a loaded machine), explain still answers in time with the agent state and
+// the screen part, and the process part says which step timed out.
+func TestExplainPartial(t *testing.T) {
+	const pane = "00000000-0000-0000-0000-0000000000aa"
+	agents := harness.NewStore(harness.Config{})
+	agents.Apply(pane, "claude", api.StateSourceOsc, 1, harness.Update{State: api.AgentStatusWorking})
+	hang := make(chan struct{})
+	defer close(hang)
+	set := detect.Vendored()
+	for _, tc := range []struct {
+		name  string
+		panes stubPanes
+		want  string
+	}{
+		{"listing", stubPanes{rows: strings.Split(detectScreen, "\n"), pgid: 42}, "processes of group 42: timed out after 100ms"},
+		{"foreground", stubPanes{rows: strings.Split(detectScreen, "\n"), fgDone: hang}, "foreground group: timed out after 100ms"},
+	} {
+		d := &detectService{lk: tc.panes, agents: agents, manifests: func() *detect.Set { return set }, budget: 100 * time.Millisecond,
+			group: func(context.Context, int) (detect.Foreground, error) { <-hang; return detect.Foreground{}, nil }}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		start := time.Now()
+		res, err := d.Explain(ctx, api.DetectExplainParams{Pane: pane})
+		cancel()
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if el := time.Since(start); el > 5*time.Second {
+			t.Errorf("%s: answered after %v", tc.name, el)
+		}
+		if res.Process.Error != tc.want {
+			t.Errorf("%s: process error %q, want %q", tc.name, res.Process.Error, tc.want)
+		}
+		if res.Agent == nil || res.Agent.Harness != "claude" {
+			t.Errorf("%s: agent %+v", tc.name, res.Agent)
+		}
+		if m := res.Manifest; m == nil || m.ChosenBy != "agent" || res.Screen == nil || res.Screen.Rule != "live_prompt_box" {
+			t.Errorf("%s: manifest %+v, screen %+v; want the screen part chosen by the agent", tc.name, m, res.Screen)
+		}
+	}
+}
+
 // TestExplainVerdict covers the verdict's cases without a hab.
 func TestExplainVerdict(t *testing.T) {
 	working := &api.AgentState{Harness: "claude", State: api.AgentStatusWorking, Source: api.StateSourceHook}
@@ -241,7 +302,10 @@ func TestDetectExplainVisibleOnly(t *testing.T) {
 	waitUntil(t, "explain to see claude in the foreground and hello on screen", func() bool {
 		r, err := explain(t, e, api.DetectExplainParams{Pane: sc.Pane})
 		res = r
-		return err == nil && r.Process.Match == "claude" && r.Screen != nil && r.Screen.Lines > 0
+		// The program is in front once cat has written the whole screen, but the hab may not
+		// have read all of it yet: wait for the last line, which comes after the clear.
+		return err == nil && r.Process.Match == "claude" && r.Screen != nil &&
+			slices.ContainsFunc(r.Screen.Rules, func(dr api.DetectRule) bool { return strings.Contains(dr.Text, "hello") })
 	})
 	if s := res.Screen; s.State != "unknown" || s.Rule != "" || s.Lines != 1 || s.Rows != 24 {
 		t.Errorf("screen %+v; want unknown from the one line on screen", *s)

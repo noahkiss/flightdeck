@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -29,11 +30,19 @@ type detectService struct {
 	lk     paneReader
 	store  *structure.Store
 	agents *harness.Store
-	// manifests loads the detection manifests for each call, so a refresh shows at once.
+	// manifests returns the detection manifests for each call; a detect.Cache, so a refresh
+	// shows at the next call and a call with no change parses nothing.
 	manifests func() *detect.Set
 	// group lists a process group's processes; detect.GroupProcesses, or a stand-in in tests.
 	group func(ctx context.Context, pgid int) (detect.Foreground, error)
+	// budget bounds the process part; 0 means processBudget.
+	budget time.Duration
 }
+
+// processBudget bounds the process part of one explain call: the holder's foreground query and
+// the group listing. It is a third of the call's 15 s (control's maxExplainTime), so a listing
+// that hangs on a loaded machine still leaves time to answer the rest.
+const processBudget = 5 * time.Second
 
 // paneReader is what explain reads from the holder link; *link.Link is one.
 type paneReader interface {
@@ -115,22 +124,59 @@ func (d *detectService) Explain(ctx context.Context, p api.DetectExplainParams) 
 	return res, nil
 }
 
-// process runs the process part of detection over the pane's foreground group.
+// process runs the process part of detection over the pane's foreground group, within the
+// process budget. It runs on its own goroutine: when the budget ends first, the part says
+// which step timed out, and the call goes on to answer the rest.
 func (d *detectService) process(ctx context.Context, u hp.UUID, set *detect.Set) api.DetectProcess {
+	budget := d.budget
+	if budget <= 0 {
+		budget = processBudget
+	}
+	ctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	var pgid atomic.Int64 // set once the holder has answered
+	ch := make(chan api.DetectProcess, 1)
+	go func() { ch <- d.readProcess(ctx, u, set, budget, &pgid) }()
+	select {
+	case out := <-ch:
+		return out
+	case <-ctx.Done():
+		out := api.DetectProcess{Pgid: int(pgid.Load())}
+		if out.Pgid == 0 {
+			out.Error = "foreground group: " + budgetErr(ctx.Err(), budget)
+		} else {
+			out.Error = fmt.Sprintf("processes of group %d: %s", out.Pgid, budgetErr(ctx.Err(), budget))
+		}
+		return out
+	}
+}
+
+// budgetErr words err for a process part with this budget.
+func budgetErr(err error, budget time.Duration) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timed out after " + budget.String()
+	}
+	return err.Error()
+}
+
+// readProcess is the process part: the holder's answer for the foreground group, stored in
+// pgidOut as soon as it comes, then the group's processes and the match.
+func (d *detectService) readProcess(ctx context.Context, u hp.UUID, set *detect.Set, budget time.Duration, pgidOut *atomic.Int64) api.DetectProcess {
 	var out api.DetectProcess
 	pgid, err := d.lk.Foreground(ctx, u)
 	if err != nil {
-		out.Error = "foreground group: " + err.Error()
+		out.Error = "foreground group: " + budgetErr(err, budget)
 		return out
 	}
 	out.Pgid = pgid
+	pgidOut.Store(int64(pgid))
 	if pgid == 0 {
 		out.Error = "the terminal has no foreground process group"
 		return out
 	}
 	fg, err := d.group(ctx, pgid)
 	if err != nil {
-		out.Error = fmt.Sprintf("processes of group %d: %v", pgid, err)
+		out.Error = fmt.Sprintf("processes of group %d: %s", pgid, budgetErr(err, budget))
 		return out
 	}
 	trace, det, err := set.ExplainProcess(fg)

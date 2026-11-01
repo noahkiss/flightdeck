@@ -633,7 +633,11 @@ func (c *conn) handlePermissions(m message) {
 }
 
 // maxExplainTime bounds one detect.explain call: a holder round trip and a process listing.
-const maxExplainTime = 15 * time.Second
+// explainGrace is how long past it the reply waits for an answer before it reports the overrun.
+const (
+	maxExplainTime = 15 * time.Second
+	explainGrace   = 500 * time.Millisecond
+)
 
 // handleExplain runs a detect.explain call on its own goroutine: it asks the holder for the
 // pane's foreground group and lists its processes, and the read loop goes on meanwhile.
@@ -655,7 +659,28 @@ func (c *conn) handleExplain(m message) {
 	go func() {
 		ctx, cancel := context.WithTimeout(c.ctx, maxExplainTime)
 		defer cancel()
-		res, err := c.s.cfg.Detect.Explain(ctx, p)
+		type result struct {
+			res api.DetectExplain
+			err error
+		}
+		ch := make(chan result, 1)
+		go func() {
+			res, err := c.s.cfg.Detect.Explain(ctx, p)
+			ch <- result{res, err}
+		}()
+		// Explain stops when ctx ends. If a step under it does not, the caller still gets an
+		// answer: an error after a short grace, never silence.
+		var r result
+		select {
+		case r = <-ch:
+		case <-ctx.Done():
+			select {
+			case r = <-ch:
+			case <-time.After(explainGrace):
+				r.err = appErr(api.ErrorKindUnavailable, "detect.explain did not finish within %s", maxExplainTime)
+			}
+		}
+		res, err := r.res, r.err
 		if err != nil {
 			c.reply(m, seq, nil, actionErr(m.Method, err))
 			return

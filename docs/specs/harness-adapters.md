@@ -153,20 +153,32 @@ Built choices (`internal/detect`, `gff-hab manifests`):
   Choices:
   - **Manifest.** The process match picks it; with none, the harness in the agent state. With
     neither, there is no screen part.
-  - **Fresh manifests.** Each call loads the set from the state directory again, so a refresh
-    shows at once.
+  - **Fresh manifests, parsed once.** gff-hab parses the vendored set once and keeps the set it
+    loaded from the state directory. It loads that set again when a `*.toml` file there
+    changes (its name, size or modification time) or the year turns, so a refresh shows at the
+    next call. A call with no change parses nothing. gff-hab loads the set once at start.
   - **Foreground group.** The holder reads it from the PTY (`foreground-query`, holder
-    protocol). gff-hab then lists the group's processes: `/proc` on Linux, `ps` elsewhere, so no
-    cgo. `ps` prints argv as one line, so outside Linux an argument with a space reads as two.
-    A process offers each name once.
+    protocol). gff-hab then lists the group's processes with no cgo and, on Linux and macOS,
+    with no program run: `/proc` on Linux; sysctl on macOS (`kern.proc.pgrp` for the members
+    and their names, `kern.procargs2` for each argv); `ps` elsewhere. `ps` prints argv as one
+    line, so where `ps` runs an argument with a space reads as two. A process offers each name
+    once.
   - **Bounded listing.** A listing returns at most 256 processes and stops when the call's
-    context ends (15 s). On Linux the `/proc` walk runs on its own goroutine, so a read that
-    hangs cannot hold the reply. It never reads `cmdline` of a process in state `D`: `cmdline`
-    takes the process's memory lock, which a process stuck on a hung mount can hold for good.
-    Each `ps` run is bounded to 5 s.
-  - **No reused pids.** `ps` runs three times: all groups, then names, then argv for the pids
-    found. The second and third runs print the group again, and a row of another group is
-    dropped. Such a row is a pid that exited and was reused between runs.
+    context ends. Every listing runs on its own goroutine, so a read that hangs (a `/proc` file,
+    a sysctl, a `ps` that a kill cannot reach) cannot hold the reply. It never reads `cmdline`
+    of a process in state `D`: `cmdline` takes the process's memory lock, which a process stuck
+    on a hung mount can hold for good. Each `ps` run is bounded to 5 s, and the wait for a
+    killed `ps` and its pipes to 500 ms.
+  - **Process budget.** The process part (the foreground query and the listing) gets 5 s of the
+    call's 15 s. When the budget runs out, the process part's error names the step that timed
+    out (`foreground group: timed out after 5s`, or `processes of group N: timed out after
+    5s`). The call still answers the rest: the agent state, and the screen part with the
+    manifest the agent state picks. If the call itself passes 15 s, the reply is an
+    `unavailable` error 500 ms later, never silence. A client waits longer than 15 s:
+    `gff-hab detect explain` waits 20 s by default (`-timeout`).
+  - **No reused pids.** Where `ps` runs, it runs three times: all groups, then names, then argv
+    for the pids found. The second and third runs print the group again, and a row of another
+    group is dropped. Such a row is a pid that exited and was reused between runs.
   - **Screen text.** The rules read the active screen only: its visible rows, read from the
     parser's cells, never scrollback. A stale dialog in scrollback must not match as if it
     were on screen. The read takes the pane lock for one screen of cells, not the whole

@@ -19,21 +19,7 @@ const maxGroup = 256
 // mount) can hold it for good. A process that exits during the walk is skipped. At most
 // maxGroup processes are returned.
 func procGroup(ctx context.Context, root string, pgid int) ([]Process, error) {
-	type result struct {
-		ps  []Process
-		err error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		ps, err := walkProc(ctx, root, pgid)
-		ch <- result{ps, err}
-	}()
-	select {
-	case r := <-ch:
-		return r.ps, r.err
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
+	return bounded(ctx, func() ([]Process, error) { return walkProc(ctx, root, pgid) })
 }
 
 func walkProc(ctx context.Context, root string, pgid int) ([]Process, error) {

@@ -489,9 +489,12 @@ func serve(args []string) error {
 			answering: pushes.answering, opencode: ocs}
 		agentCalls = agentSvc
 		// Why a pane shows its state (harness-adapters.md, Detection): read only.
-		mdir := filepath.Join(dir, "manifests")
+		// The manifests are parsed now, off the start path, and again only when the data
+		// directory changes.
+		mcache := detect.NewCache(filepath.Join(dir, "manifests"))
+		go mcache.Set()
 		explain = &detectService{lk: linkPanes{lk}, store: store, agents: agents,
-			manifests: func() *detect.Set { return detect.Load(mdir) }, group: detect.GroupProcesses}
+			manifests: mcache.Set, group: detect.GroupProcesses}
 		caps = append(caps, "detect-explain")
 		// Activity marks for hidden tabs (gff-client.md 15.7): pane.output and pane.bell, at
 		// most once a second per pane.

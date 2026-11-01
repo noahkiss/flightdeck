@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -50,9 +51,25 @@ type Set struct {
 }
 
 // Vendored returns the set built into the binary. A vendored manifest that fails to load is a
-// Problem, never a panic, so one bad file cannot stop gff-hab.
+// Problem, never a panic, so one bad file cannot stop gff-hab. The embedded files never
+// change, so they are parsed once; each call returns a new Set over the same manifests.
 func Vendored() *Set {
-	s := &Set{entries: map[string]*Entry{}, names: map[string]string{}}
+	v := parsedVendored()
+	s := &Set{entries: make(map[string]*Entry, len(v.entries)), names: map[string]string{},
+		Problems: slices.Clone(v.problems)}
+	for _, e := range v.entries {
+		s.put(e)
+	}
+	s.reindex()
+	return s
+}
+
+// parsedVendored parses the embedded manifests once. Entries and manifests are never changed
+// after they are built, so every Set may share them.
+var parsedVendored = sync.OnceValue(func() (v struct {
+	entries  []*Entry
+	problems []Problem
+}) {
 	files, _ := fs.Glob(vendored, "manifests/*.toml")
 	for _, f := range files {
 		if filepath.Base(f) == "index.toml" {
@@ -62,14 +79,61 @@ func Vendored() *Set {
 		if err == nil {
 			var m *Manifest
 			if m, err = Parse(data); err == nil {
-				s.put(&Entry{Manifest: m, From: FromVendored, Path: f})
+				v.entries = append(v.entries, &Entry{Manifest: m, From: FromVendored, Path: f})
 				continue
 			}
 		}
-		s.Problems = append(s.Problems, Problem{f, err.Error()})
+		v.problems = append(v.problems, Problem{f, err.Error()})
 	}
-	s.reindex()
-	return s
+	return v
+})
+
+// Cache holds the Set that Load gives for one directory. It loads again only when the
+// directory's *.toml files change (a name, size or modification time) or the year turns, which
+// moves the newest version Load accepts. So a refresh shows at the next call, and a call with
+// no change parses nothing. It is safe for concurrent use.
+type Cache struct {
+	dir string
+	mu  sync.Mutex
+	key string
+	set *Set
+}
+
+// NewCache returns a Cache for dir; nothing is loaded until the first Set.
+func NewCache(dir string) *Cache { return &Cache{dir: dir} }
+
+// Set returns the current set for the cache's directory.
+func (c *Cache) Set() *Set {
+	key := dirKey(c.dir)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.set == nil || key != c.key {
+		c.set, c.key = Load(c.dir), key
+	}
+	return c.set
+}
+
+// dirKey describes the *.toml files in dir as Load would see them. The key is taken before
+// the load, so a file that changes during a load gives a new key at the next call.
+func dirKey(dir string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d\n", time.Now().Year())
+	if dir == "" {
+		return b.String()
+	}
+	files, err := filepath.Glob(filepath.Join(dir, "*.toml"))
+	if err != nil {
+		return b.String() + err.Error()
+	}
+	for _, f := range files {
+		fi, err := os.Stat(f)
+		if err != nil {
+			fmt.Fprintf(&b, "%s\t%v\n", f, err)
+			continue
+		}
+		fmt.Fprintf(&b, "%s\t%d\t%d\n", f, fi.Size(), fi.ModTime().UnixNano())
+	}
+	return b.String()
 }
 
 // Load returns the vendored set overlaid with the manifests in dir (the hab's data directory
