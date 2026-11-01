@@ -12,6 +12,7 @@
 package peers
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -89,19 +90,37 @@ func parse(path string, b []byte) (specs []hosts.Spec, problems []string, err er
 // the file as it was, comments included. It replaces the entry's device_id line, or adds one
 // after its label line. It refuses a file whose entry it cannot find on lines of their own:
 // the user then edits the file by hand. The new file replaces the old one in one rename, with
-// the old one's mode.
+// the old one's mode. A file that changes while the edit is written, such as the user saving
+// it, is read again and edited again, so the user's save is not lost.
 func SetPin(path, label, id string) error {
 	if strings.ContainsAny(id, "\"\\\n") {
 		return fmt.Errorf("peers: device id %q is not a plain string", id)
 	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("peers: %w", err)
+	for range 3 {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("peers: %w", err)
+		}
+		out, err := withPin(path, b, label, id)
+		if err != nil {
+			return err
+		}
+		if err := replaceFile(path, out, b); !errors.Is(err, errChanged) {
+			return err
+		}
 	}
+	return fmt.Errorf("peers: %s keeps changing; set device_id = %q by hand", path, id)
+}
+
+// errChanged reports a file that no longer holds what the edit was made from.
+var errChanged = errors.New("peers: the file changed during the edit")
+
+// withPin returns the file b with id pinned in the entry labelled label, checked to parse.
+func withPin(path string, b []byte, label, id string) ([]byte, error) {
 	lines := strings.SplitAfter(string(b), "\n")
 	start, end, labelLine, err := findEntry(lines, label)
 	if err != nil {
-		return fmt.Errorf("peers: %s: %w; set device_id = %q by hand", path, err, id)
+		return nil, fmt.Errorf("peers: %s: %w; set device_id = %q by hand", path, err, id)
 	}
 	pin := fmt.Sprintf("device_id = %q", id)
 	replaced := false
@@ -124,7 +143,7 @@ func SetPin(path, label, id string) error {
 	// Check the result before it replaces the file: the entry must read back with the pin.
 	specs, _, err := parse(path, out)
 	if err != nil {
-		return fmt.Errorf("peers: the edited file would not parse: %w; set device_id = %q by hand", err, id)
+		return nil, fmt.Errorf("peers: the edited file would not parse: %w; set device_id = %q by hand", err, id)
 	}
 	ok := false
 	for _, sp := range specs {
@@ -133,9 +152,9 @@ func SetPin(path, label, id string) error {
 		}
 	}
 	if !ok {
-		return fmt.Errorf("peers: %s: could not set the pin of %q; set device_id = %q by hand", path, label, id)
+		return nil, fmt.Errorf("peers: %s: could not set the pin of %q; set device_id = %q by hand", path, label, id)
 	}
-	return replaceFile(path, out)
+	return out, nil
 }
 
 // findEntry finds the [[peers]] entry whose label line names label: the lines from its header
@@ -233,8 +252,10 @@ func eol(line string) string {
 }
 
 // replaceFile writes b to a temporary file beside path and renames it over path, keeping
-// path's mode. A symlink is followed: its target is replaced.
-func replaceFile(path string, b []byte) error {
+// path's mode. A symlink is followed: its target is replaced. Once b is on disk, path must still
+// hold was; when it does not, nothing is renamed and the error is errChanged. The write and its
+// fsync can take long enough on a busy disk for the user to save the file in between.
+func replaceFile(path string, b, was []byte) error {
 	if p, err := filepath.EvalSymlinks(path); err == nil {
 		path = p
 	}
@@ -258,10 +279,20 @@ func replaceFile(path string, b []byte) error {
 		werr = cerr
 	}
 	if werr == nil {
+		if now, err := os.ReadFile(path); err != nil {
+			werr = err
+		} else if !bytes.Equal(now, was) {
+			werr = errChanged
+		}
+	}
+	if werr == nil {
 		werr = os.Rename(tmp, path)
 	}
 	if werr != nil {
 		os.Remove(tmp)
+		if errors.Is(werr, errChanged) {
+			return werr
+		}
 		return fmt.Errorf("peers: %w", werr)
 	}
 	return nil

@@ -270,9 +270,11 @@ Package `internal/peers`, wired into `gff-hab serve`. Commands: `gff-hab peers` 
   `label` line, at the same indent. Every other line stays, comments included. The edited text
   must parse with the new pin before it replaces the file, in one rename that keeps the mode. An
   entry whose label is not on a line of its own is not edited; the log says to set the pin by
-  hand.
+  hand. The edit reads the file once more after its fsync, just before the rename: when the
+  user saved it in between, nothing is renamed and the edit starts again from the saved file.
 - **The first pin reconnects once.** Writing the pin changes the entry, and `hosts.Reload` gives
-  a changed entry a new connection. The peer shows `connecting` for a moment after first contact.
+  a changed entry a new connection. The peer shows `connecting` for a moment after first contact,
+  or `online` with no endpoint in use while its own link to this hab is open.
 - **Endpoints in turn.** Each attempt uses one endpoint. After a failed attempt the next one is
   tried, wrapping round (`habconn.Failover`), spaced by the reconnect backoff. There is no
   parallel stagger: an `ssh` process always starts, and fails only at the hello. A working
