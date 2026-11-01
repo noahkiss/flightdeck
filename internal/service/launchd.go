@@ -82,9 +82,9 @@ func (p *plist) args(k string, argv []string) {
 	p.b.WriteString("\t</array>\n")
 }
 
-// env writes PATH and the locale settings (spec 5.2: a job gets a bare environment).
+// env writes PATH, the locale settings and GFF_MACOS_GRANTS (spec 5.2: a job gets a bare environment).
 func (p *plist) env(c Config) {
-	vars := c.Locale
+	vars := c.JobEnv()
 	if c.Path != "" {
 		vars = append([]string{"PATH=" + c.Path}, vars...)
 	}

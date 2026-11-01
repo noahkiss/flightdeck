@@ -93,6 +93,9 @@ type Config struct {
 	// Locale is the installing user's LANG and LC_* settings, as KEY=value, which the jobs get
 	// too, so programs in panes keep the user's locale.
 	Locale []string
+	// Grants is the opt-in permission list, $GFF_MACOS_GRANTS (macos-identity.md 7.9), which
+	// the jobs get when it is set.
+	Grants string
 	// UID is the user's id, for the launchd domain gui/<uid>.
 	UID int
 	// Build is the launchd build directory, <state>/builds/<build>, that the jobs run from.
@@ -104,6 +107,17 @@ type Config struct {
 }
 
 var prefixRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+// grantsRE matches a GFF_MACOS_GRANTS value: grant names and bundle ids.
+var grantsRE = regexp.MustCompile(`^[A-Za-z0-9.,:_ -]*$`)
+
+// JobEnv is the environment every job gets beyond PATH: the locale, and GFF_MACOS_GRANTS when set.
+func (c Config) JobEnv() []string {
+	if c.Grants == "" {
+		return c.Locale
+	}
+	return append(append([]string{}, c.Locale...), "GFF_MACOS_GRANTS="+c.Grants)
+}
 
 // localeRE matches one locale setting the jobs may carry.
 var localeRE = regexp.MustCompile(`^(LANG|LC_[A-Z]+)=[^\x00\n\r]*$`)
@@ -139,6 +153,9 @@ func (c Config) Validate() error {
 	}
 	if strings.ContainsAny(c.Path, "\x00\n\r") {
 		return errors.New("service: PATH holds a control character")
+	}
+	if !grantsRE.MatchString(c.Grants) {
+		return fmt.Errorf("service: GFF_MACOS_GRANTS %q: want grant names separated by commas or spaces", c.Grants)
 	}
 	for _, kv := range c.Locale {
 		if !localeRE.MatchString(kv) {

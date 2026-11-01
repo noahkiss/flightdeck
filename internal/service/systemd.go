@@ -52,7 +52,7 @@ func writeEnv(b *bytes.Buffer, c Config) {
 	if c.Path != "" {
 		fmt.Fprintf(b, "Environment=%s\n", systemdQuote("PATH="+c.Path, false))
 	}
-	for _, kv := range c.Locale {
+	for _, kv := range c.JobEnv() {
 		fmt.Fprintf(b, "Environment=%s\n", systemdQuote(kv, false))
 	}
 }

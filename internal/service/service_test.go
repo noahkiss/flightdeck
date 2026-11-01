@@ -104,6 +104,7 @@ func TestValidate(t *testing.T) {
 		"dot-first prefix": func(c *Config) { c.Prefix = ".x" },
 		"other variable":   func(c *Config) { c.Locale = []string{"HOME=/x"} },
 		"newline locale":   func(c *Config) { c.Locale = []string{"LANG=a\nb"} },
+		"odd grants":       func(c *Config) { c.Grants = "accessibility\nX=1" },
 	} {
 		c := good
 		mut(&c)
@@ -159,6 +160,17 @@ func TestJobsCarryLocale(t *testing.T) {
 	}
 	if p := string(logicPlist(ld)); !strings.Contains(p, "<key>LC_TIME</key>\n\t\t<string>zz_ZZ.UTF-8</string>") {
 		t.Errorf("logic plist:\n%s", p)
+	}
+	// The opt-in grant list reaches every job when it is set (macos-identity.md 7.9).
+	sd.Grants, ld.Grants = "accessibility,automation:com.apple.Terminal", "accessibility"
+	if u := string(logicUnit(sd)); !strings.Contains(u, `Environment="GFF_MACOS_GRANTS=accessibility,automation:com.apple.Terminal"`) {
+		t.Errorf("logic unit:\n%s", u)
+	}
+	if p := string(holderPlist(ld, "0123abcd")); !strings.Contains(p, "<key>GFF_MACOS_GRANTS</key>\n\t\t<string>accessibility</string>") {
+		t.Errorf("holder plist:\n%s", p)
+	}
+	if err := sd.Validate(); err != nil {
+		t.Error(err)
 	}
 	got := LocaleEnv([]string{"LC_ALL=a", "HOME=/x", "LANG=b", "LANGUAGE=c", "LC_=d", "XLC_CTYPE=e"})
 	if !slices.Equal(got, []string{"LANG=b", "LC_ALL=a"}) {

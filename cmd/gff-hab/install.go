@@ -64,6 +64,7 @@ func osInit() (service.Init, error) {
 func (f *serviceFlags) config(in service.Init) (service.Config, error) {
 	c := service.Config{
 		Init: in, Prefix: *f.prefix, Path: os.Getenv("PATH"), Locale: service.LocaleEnv(os.Environ()), UID: os.Getuid(),
+		Grants: os.Getenv("GFF_MACOS_GRANTS"),
 	}
 	if c.Prefix == "" {
 		c.Prefix = os.Getenv("GFF_SERVICE_PREFIX")
