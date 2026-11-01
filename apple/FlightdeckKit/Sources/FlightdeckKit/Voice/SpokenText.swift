@@ -50,9 +50,10 @@ public enum SpokenText {
     public static func reply(_ messages: [ChatMessage], stopped: Bool, capWords: Int = defaultCapWords) -> String {
         let text = finalText(messages)
         if stopped {
-            let first = text.map { speakable($0, capWords: capWords) }
-                .flatMap { $0.split(separator: ".", maxSplits: 1).first.map(String.init) }
-            return first.map { "The turn stopped. \($0)." } ?? "The turn stopped."
+            // The hab sends no error text, so the agent's last words stand in:
+            // their first sentence ("main.go" does not end one).
+            let first = text.map { speakable($0, capWords: capWords) }.flatMap(firstSentence)
+            return first.map { "The turn stopped. \(sentence($0))" } ?? "The turn stopped."
         }
         guard let text else { return "Done." }
         let s = speakable(text, capWords: capWords)
@@ -79,20 +80,43 @@ public enum SpokenText {
             parts.append(s)
         }
 
-        var fence: (marker: String, diff: Bool)?
+        var fence: (char: Character, count: Int)?
         var inDiff = false
+        var inTable = false
+        var inIndented = false
+        var prevBlank = true
+        var prevList = false
         for raw in source.components(separatedBy: .newlines) {
             let line = raw.trimmingCharacters(in: .whitespaces)
+            defer {
+                if !line.isEmpty { prevList = line.range(of: "^([-*+]|\\d+[.)])\\s", options: .regularExpression) != nil }
+                prevBlank = line.isEmpty
+            }
             if let f = fence {
-                if line.hasPrefix(f.marker) { fence = nil }
+                // A fence closes only with as many of its marks, alone on the line.
+                if line.count >= f.count, line.allSatisfy({ $0 == f.char }) { fence = nil }
                 continue
             }
-            if line.hasPrefix("```") || line.hasPrefix("~~~") {
-                let marker = String(line.prefix(3))
-                let lang = line.dropFirst(3).trimmingCharacters(in: .whitespaces).lowercased()
+            if let open = fenceOpen(line) {
+                let lang = line.drop(while: { $0 == open.char }).trimmingCharacters(in: .whitespaces).lowercased()
                 let diff = lang.hasPrefix("diff") || lang.hasPrefix("patch")
-                fence = (marker, diff)
+                fence = open
                 add(diff ? diffPlaceholder : codePlaceholder, placeholder: true)
+                continue
+            }
+            // An indented code block: four spaces or a tab after a blank line, not in a list.
+            let indented = raw.hasPrefix("    ") || raw.hasPrefix("\t")
+            if indented, !line.isEmpty, inIndented || (prevBlank && !prevList) {
+                inIndented = true
+                add(codePlaceholder, placeholder: true)
+                continue
+            }
+            if !line.isEmpty { inIndented = false }
+            if !inDiff, isTableSeparator(line) {
+                // The header row above it was read as prose: take it back.
+                if lastPlaceholder == nil, !parts.isEmpty { parts.removeLast() }
+                inTable = true
+                add(tablePlaceholder, placeholder: true)
                 continue
             }
             if isDiffLine(raw, continuing: inDiff) {
@@ -101,10 +125,12 @@ public enum SpokenText {
                 continue
             }
             inDiff = false
-            if line.hasPrefix("|") {
+            if line.hasPrefix("|") || (inTable && line.contains("|")) {
+                inTable = true
                 add(tablePlaceholder, placeholder: true)
                 continue
             }
+            inTable = false
             let spoken = speakLine(line)
             if !spoken.isEmpty { add(sentence(spoken)) }
         }
@@ -112,6 +138,29 @@ public enum SpokenText {
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespaces)
         return cap(joined, words: capWords)
+    }
+
+    /// A fence opening: three or more backticks or tildes.
+    static func fenceOpen(_ line: String) -> (char: Character, count: Int)? {
+        guard let c = line.first, c == "`" || c == "~" else { return nil }
+        let n = line.prefix(while: { $0 == c }).count
+        return n >= 3 ? (c, n) : nil
+    }
+
+    /// A table's separator row, with or without outer pipes: "---|:---:".
+    static func isTableSeparator(_ line: String) -> Bool {
+        line.contains("-") && line.contains("|")
+            && line.range(of: "^\\|?\\s*:?-{3,}:?\\s*(\\|\\s*:?-{3,}:?\\s*)+\\|?$", options: .regularExpression) != nil
+    }
+
+    /// The first sentence: up to a stop followed by a space or the end.
+    static func firstSentence(_ s: String) -> String? {
+        let t = s.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return nil }
+        if let r = t.range(of: "[.!?](\\s|$)", options: .regularExpression) {
+            return String(t[..<r.lowerBound]).trimmingCharacters(in: .whitespaces) + String(t[r.lowerBound])
+        }
+        return t
     }
 
     /// The text after the summary marker, when the agent wrote one.

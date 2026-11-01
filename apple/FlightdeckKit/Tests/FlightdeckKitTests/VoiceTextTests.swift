@@ -57,6 +57,21 @@ final class VoiceTextTests: XCTestCase {
                        "Summary. Fixed the bug in link_test.go. See the docs and example.org. Quoted note about snake_case_name. Run check.sh.")
     }
 
+    func testTrimmerEdges() {
+        // A table without outer pipes: its header row is taken back.
+        XCTAssertEqual(SpokenText.speakable("Results:\nName | Count\n--- | ---\na | 1\nDone."), "Results: A table. Done.")
+        // An indented code block after a blank line; a list's continuation is prose.
+        XCTAssertEqual(SpokenText.speakable("Run this:\n\n    make test\n    make vet\n\nThen push."), "Run this: A code block, shown on screen. Then push.")
+        XCTAssertEqual(SpokenText.speakable("- first\n    more of first"), "first. more of first.")
+        // A four-backtick fence holds a triple-backtick line.
+        XCTAssertEqual(SpokenText.speakable("````md\n```go\nx\n```\n````\nAfter."), "A code block, shown on screen. After.")
+    }
+
+    func testStoppedTurnReadsTheFirstSentence() {
+        let ms = [msg("1", .user, "go"), msg("2", .agent, "Build failed in main.go at line 3. Try again.")]
+        XCTAssertEqual(SpokenText.reply(ms, stopped: true), "The turn stopped. Build failed in main.go at line 3.")
+    }
+
     func testWordsWithSlashesThatAreNotPaths() {
         XCTAssertEqual(SpokenText.speakable("Use and/or here."), "Use and/or here.")
     }
@@ -151,7 +166,9 @@ final class VoiceTextTests: XCTestCase {
         let r = PermissionRequest(command: "wrangler deploy --env prod", id: "r1", title: "Run wrangler deploy?", tool: "Bash")
         XCTAssertEqual(VoiceGrammar.speakCommand("wrangler deploy --env prod"), "wrangler deploy, dash dash env prod")
         XCTAssertEqual(VoiceGrammar.readBack(r, mayAllow: true), "Run wrangler deploy? wrangler deploy, dash dash env prod. Allow or deny?")
-        XCTAssertEqual(VoiceGrammar.speakCommand("cd /srv/app && rm -rf build"), "cd app and then rm, dash rf build")
+        XCTAssertEqual(VoiceGrammar.speakCommand("cd /srv/app && rm -rf build"), "cd slash srv slash app and then rm, dash rf build")
+        XCTAssertEqual(VoiceGrammar.speakCommand("rm -rf ~/work/app/build"), "rm, dash rf home slash work slash app slash build")
+        XCTAssertEqual(VoiceGrammar.speakCommand("make || echo failed; ls | wc"), "make or else echo failed then ls pipe wc")
         let untitled = PermissionRequest(command: "ls", id: "r2", tool: "Bash")
         XCTAssertTrue(VoiceGrammar.readBack(untitled, mayAllow: false).hasPrefix("Allow Bash? ls. This one can be allowed only on screen."))
     }
@@ -170,5 +187,7 @@ final class VoiceTextTests: XCTestCase {
         XCTAssertTrue(VoiceGrammar.voiceMayAllow(PermissionRequest(files: ["a.go"], id: "r1"), now: now))
         XCTAssertFalse(VoiceGrammar.voiceMayAllow(PermissionRequest(files: ["a", "b", "c", "d"], id: "r1"), now: now))
         XCTAssertFalse(VoiceGrammar.voiceMayAllow(nil, now: now))
+        XCTAssertFalse(VoiceGrammar.voiceMayAllow(PermissionRequest(command: "echo $(whoami)", id: "r1"), now: now), "a command substitution")
+        XCTAssertFalse(VoiceGrammar.voiceMayAllow(PermissionRequest(command: "echo `id`", id: "r1"), now: now))
     }
 }

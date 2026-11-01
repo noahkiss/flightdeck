@@ -61,10 +61,13 @@ public enum VoiceGrammar {
         guard let r, r.id != nil else { return false }
         if let e = r.expiresAt.flatMap(BoardRows.parseStamp), e <= now { return false }
         guard let c = r.command?.trimmingCharacters(in: .whitespacesAndNewlines), !c.isEmpty else {
+            if r.command != nil { return false }
             // A file edit: the files are the request; read them all or tap.
             let files = r.files ?? []
             return !files.isEmpty && files.count <= 3
         }
+        // A command substitution cannot be read back: allow it on screen only.
+        if c.contains("$(") || c.contains("`") { return false }
         let words = c.split(whereSeparator: { $0.isWhitespace }).count
         return c.count <= allowMaxCharacters && words <= allowMaxWords
     }
@@ -81,10 +84,19 @@ public enum VoiceGrammar {
         if let c = r?.command, !c.isEmpty {
             parts.append(SpokenText.sentence(speakCommand(c)))
         } else if let files = r?.files, !files.isEmpty {
-            parts.append(SpokenText.sentence(files.map { SpokenText.speakToken($0) }.joined(separator: ", ")))
+            parts.append(SpokenText.sentence(files.map(speakPath).joined(separator: ", ")))
         }
         parts.append(mayAllow ? "Allow or deny?" : "This one can be allowed only on screen. Say deny, or tap.")
         return parts.joined(separator: " ")
+    }
+
+    /// A path read whole: "~/work/build" is "home slash work slash build".
+    static func speakPath(_ p: String) -> String {
+        var t = p
+        if t.hasPrefix("~/") { t = "home/" + t.dropFirst(2) } else if t == "~" { t = "home" }
+        return t.replacingOccurrences(of: "/", with: " slash ")
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
     }
 
     /// A command as it is read aloud: "wrangler deploy --env prod" becomes
@@ -100,10 +112,13 @@ public enum VoiceGrammar {
                 t = "dash " + t.dropFirst()
                 out.append(",")
             } else {
-                t = t.replacingOccurrences(of: "&&", with: "and then")
+                t = t.replacingOccurrences(of: "&&", with: " and then ")
+                    .replacingOccurrences(of: "||", with: " or else ")
                     .replacingOccurrences(of: "|", with: " pipe ")
+                    .replacingOccurrences(of: ";", with: " then ")
                     .replacingOccurrences(of: ">", with: " into ")
-                t = SpokenText.isPath(t) ? (t.split(separator: "/").last.map(String.init) ?? t) : t
+                // A path is read whole: the owner hears exactly what runs.
+                if t.contains("/") { t = speakPath(t) }
             }
             out.append(t)
         }
