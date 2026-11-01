@@ -204,15 +204,24 @@ func produce(src *paneSource, n int) {
 }
 
 // readBytes reads frames until the stream holds want bytes from offset 0, appending to got.
-// Every bytes frame must start where the last one ended, and no snapshot may come.
-func readBytes(t *testing.T, p *PaneStream, got []byte, want int, each func(got []byte)) []byte {
+// Every bytes frame must start where the last one ended, and no snapshot may come. Each data
+// connection the stream opens on the way must say hello with the offset the client held.
+func readBytes(t *testing.T, h *fakeHab, p *PaneStream, got []byte, want int, each func(got []byte)) []byte {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*waitLong())
 	defer cancel()
 	for len(got) < want {
+		opens, seen := p.Opens(), len(h.src.subscribes())
+		held, ok := p.Offset()
+		if !ok || held != uint64(len(got)) {
+			t.Fatalf("offset %d %v before a read, want %d", held, ok, len(got))
+		}
 		f, err := p.Next(ctx)
 		if err != nil {
 			t.Fatalf("next at %d of %d: %v", len(got), want, err)
+		}
+		if p.Opens() > opens {
+			checkResume(t, h, seen, held)
 		}
 		switch f.Kind {
 		case api.FrameBytes:
@@ -227,7 +236,33 @@ func readBytes(t *testing.T, p *PaneStream, got []byte, want int, each func(got 
 			t.Fatalf("snapshot at %d: the resume should have been served from bytes", f.Offset)
 		}
 	}
+	noTrim(t, p)
 	return got
+}
+
+// checkResume: every data hello the hab got since the first seen ones carried offset held.
+func checkResume(t *testing.T, h *fakeHab, seen int, held uint64) {
+	t.Helper()
+	froms := h.src.subscribes()[seen:]
+	if len(froms) == 0 {
+		t.Fatal("a data connection opened, but the hab saw no data hello")
+	}
+	for _, from := range froms {
+		if from != held {
+			t.Fatalf("data hello with offset %d, want the client's offset %d", from, held)
+		}
+	}
+}
+
+// noTrim: the hab never sent a byte the client already had, so the repeat guard dropped none.
+func noTrim(t *testing.T, p *PaneStream) {
+	t.Helper()
+	p.mu.Lock()
+	n := p.trimmed
+	p.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("the hab repeated %d bytes the client already had", n)
+	}
 }
 
 func TestSuite(t *testing.T) {
@@ -267,14 +302,14 @@ func testResumeAfterDrop(t *testing.T, h *fakeHab, tr Transport) {
 	done := make(chan struct{})
 	go func() { defer close(done); produce(h.src, total) }()
 	drops := 0
-	got := readBytes(t, p, nil, total, func(got []byte) {
+	got := readBytes(t, h, p, nil, total, func(got []byte) {
 		if drops < 3 && len(got) >= (drops+1)*total/4 && h.dropData() > 0 {
 			drops++
 		}
 	})
 	<-done
 	want, end := h.src.output()
-	got = readBytes(t, p, got, int(end), nil)
+	got = readBytes(t, h, p, got, int(end), nil)
 	if drops != 3 {
 		t.Fatalf("dropped %d data connections, want 3", drops)
 	}
@@ -306,7 +341,7 @@ func testNewEpoch(t *testing.T, h *fakeHab, tr Transport) {
 	defer p.Close()
 	produce(h.src, 64<<10)
 	_, end := h.src.output()
-	got := readBytes(t, p, nil, int(end), nil)
+	got := readBytes(t, h, p, nil, int(end), nil)
 
 	h.restart(true)
 	u := waitUpdate(t, c, "online after the restart", func(u Update) bool { return u.Kind == UpdateOnline })
@@ -324,7 +359,7 @@ func testNewEpoch(t *testing.T, h *fakeHab, tr Transport) {
 
 	produce(h.src, 64<<10)
 	want, end := h.src.output()
-	got = readBytes(t, p, got, int(end), nil)
+	got = readBytes(t, h, p, got, int(end), nil)
 	if !bytes.Equal(got, want) {
 		t.Fatal("client bytes differ from the pane's output across the restart")
 	}
@@ -363,7 +398,7 @@ func testSnapshotWhenTrimmed(t *testing.T, h *fakeHab, tr Transport) {
 	defer p.Close()
 	produce(h.src, 8<<10)
 	_, end := h.src.output()
-	readBytes(t, p, nil, int(end), nil)
+	readBytes(t, h, p, nil, int(end), nil)
 	// Trim with no live subscriber: drop the stream, wait until the hab has none, then trim.
 	p.kick()
 	produce(h.src, 8<<10)
@@ -373,10 +408,13 @@ func testSnapshotWhenTrimmed(t *testing.T, h *fakeHab, tr Transport) {
 	_, snapAt := h.src.output()
 
 	ctx := testCtx(t)
+	held, _ := p.Offset()
+	seen := len(h.src.subscribes())
 	f, err := p.Next(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	checkResume(t, h, seen, held)
 	if f.Kind != api.FrameSnapshot || f.Offset != snapAt {
 		t.Fatalf("first frame after the trim: kind %d at %d, want a snapshot at %d", f.Kind, f.Offset, snapAt)
 	}
@@ -399,6 +437,7 @@ func testSnapshotWhenTrimmed(t *testing.T, h *fakeHab, tr Transport) {
 	if !bytes.Equal(got, want) {
 		t.Fatal("bytes after the snapshot differ")
 	}
+	noTrim(t, p)
 }
 
 // TestDeadLink: a link that stops delivering anything is found dead after DeadAfter, and the

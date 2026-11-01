@@ -55,7 +55,8 @@ type PaneStream struct {
 	owed    int    // credit for frames handed out and not yet returned
 	exited  bool
 	closed  bool
-	opens   int // data connections opened
+	opens   int    // data connections opened
+	trimmed uint64 // bytes dropped by the repeat guard in take; the hab never sends any
 }
 
 // OpenPane opens the first data connection to pane and reads its welcome.
@@ -205,8 +206,10 @@ func (p *PaneStream) take(m datastream.Msg) (Frame, bool) {
 			// correct even if one did.
 			skip := p.offset - m.Offset
 			if skip >= uint64(len(m.Data)) {
+				p.trimmed += uint64(len(m.Data))
 				return Frame{}, false
 			}
+			p.trimmed += skip
 			f.Data, f.Offset = m.Data[skip:], p.offset
 		}
 		p.offset, p.have = f.Offset+uint64(len(f.Data)), true

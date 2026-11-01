@@ -263,6 +263,7 @@ type paneSource struct {
 	out   []byte // output from offset start
 	start uint64
 	wake  chan struct{} // closed and replaced on every write
+	froms []uint64      // the from of every Subscribe: a data hello's offset, or FromNow
 }
 
 func newPaneSource() *paneSource { return &paneSource{wake: make(chan struct{})} }
@@ -283,6 +284,13 @@ func (s *paneSource) output() ([]byte, uint64) {
 	return append([]byte(nil), s.out...), s.start + uint64(len(s.out))
 }
 
+// subscribes returns the from of every Subscribe so far, in order.
+func (s *paneSource) subscribes() []uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]uint64(nil), s.froms...)
+}
+
 // trim forgets the output before off, so a resume from earlier gets a snapshot.
 func (s *paneSource) trim(off uint64) {
 	s.mu.Lock()
@@ -296,6 +304,7 @@ func (s *paneSource) Subscribe(_ context.Context, pane string, from uint64) (dat
 		return nil, link.ErrNoPane
 	}
 	s.mu.Lock()
+	s.froms = append(s.froms, from)
 	end := s.start + uint64(len(s.out))
 	if from != link.FromNow && from > end {
 		s.mu.Unlock()
