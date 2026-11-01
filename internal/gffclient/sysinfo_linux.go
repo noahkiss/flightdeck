@@ -11,9 +11,14 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 )
 
-// readLocal fills CPU, memory, battery and uptime from /proc and /sys.
-func readLocal(s *api.HostStats, prev *cpuSample) {
-	if b, err := os.ReadFile("/proc/stat"); err == nil {
+// readLocal fills CPU, memory, battery (when battery is set) and uptime from /proc and /sys.
+func readLocal(s *api.HostStats, prev *cpuSample, battery bool) {
+	readProcSys(s, prev, battery, "/")
+}
+
+// readProcSys is readLocal over the file systems under root, so a test can give fixtures.
+func readProcSys(s *api.HostStats, prev *cpuSample, battery bool, root string) {
+	if b, err := os.ReadFile(filepath.Join(root, "proc/stat")); err == nil {
 		line, _, _ := strings.Cut(string(b), "\n")
 		f := strings.Fields(line)
 		if len(f) > 4 && f[0] == "cpu" {
@@ -25,11 +30,12 @@ func readLocal(s *api.HostStats, prev *cpuSample) {
 					cur.busy += n
 				}
 			}
-			s.CPUPct = cpuPct(*prev, cur)
+			pct := cpuPct(*prev, cur)
+			s.CPUPct = &pct
 			*prev = cur
 		}
 	}
-	if b, err := os.ReadFile("/proc/meminfo"); err == nil {
+	if b, err := os.ReadFile(filepath.Join(root, "proc/meminfo")); err == nil {
 		var total, avail uint64
 		for _, l := range strings.Split(string(b), "\n") {
 			f := strings.Fields(l)
@@ -48,7 +54,7 @@ func readLocal(s *api.HostStats, prev *cpuSample) {
 			s.MemTotal, s.MemUsed = total, total-avail
 		}
 	}
-	if b, err := os.ReadFile("/proc/uptime"); err == nil {
+	if b, err := os.ReadFile(filepath.Join(root, "proc/uptime")); err == nil {
 		f := strings.Fields(string(b))
 		if len(f) > 0 {
 			if up, err := strconv.ParseFloat(f[0], 64); err == nil {
@@ -56,9 +62,17 @@ func readLocal(s *api.HostStats, prev *cpuSample) {
 			}
 		}
 	}
-	supplies, _ := filepath.Glob("/sys/class/power_supply/*")
+	if !battery {
+		return
+	}
+	// The machine's battery: type Battery, and not a device's own (a wireless mouse or
+	// keyboard has scope Device).
+	supplies, _ := filepath.Glob(filepath.Join(root, "sys/class/power_supply/*"))
 	for _, d := range supplies {
 		if t, err := os.ReadFile(filepath.Join(d, "type")); err != nil || strings.TrimSpace(string(t)) != "Battery" {
+			continue
+		}
+		if sc, err := os.ReadFile(filepath.Join(d, "scope")); err == nil && strings.TrimSpace(string(sc)) == "Device" {
 			continue
 		}
 		if c, err := os.ReadFile(filepath.Join(d, "capacity")); err == nil {
@@ -70,12 +84,11 @@ func readLocal(s *api.HostStats, prev *cpuSample) {
 	}
 }
 
-// diskUse is the used and total bytes of the file system that holds path.
+// diskUse is the used and total bytes of the file system that holds path, as df counts them.
 func diskUse(path string) (used, total uint64) {
 	var st unix.Statfs_t
 	if unix.Statfs(path, &st) != nil {
 		return 0, 0
 	}
-	bs := uint64(st.Bsize)
-	return (st.Blocks - st.Bfree) * bs, st.Blocks * bs
+	return diskFigures(st.Blocks, st.Bfree, st.Bavail, uint64(st.Bsize))
 }

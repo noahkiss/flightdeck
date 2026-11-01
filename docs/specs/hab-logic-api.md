@@ -871,7 +871,8 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   `session` and `at`; a scoped subscription gets it when the notice names no session or a
   session in its scope.
 - **`hab.stats`** is a method, not an event: a client asks while it shows the numbers. Sizes are
-  bytes; `cpu_pct` is over all cores; `battery_pct` is absent with no battery.
+  bytes; `cpu_pct` is over all cores and absent where the host cannot measure it; `battery_pct`
+  is absent with no battery.
 - **`usage.list`** returns `accounts`, each with `key`, `label`, `harness` and `windows` (`name`,
   `used_pct` in whole percent, `resets_at`, `read_at`). `usage.updated` carries one account. Every
   subscription gets `usage.updated`, scoped or not: an account belongs to no session. Sources, key,

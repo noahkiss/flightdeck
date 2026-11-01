@@ -741,9 +741,44 @@ Packages: `internal/gffclient` (`keymap.go`, `keys.go`, `bars.go`), `cmd/gff`.
 |---|---|---|
 | normal | Only its own Ctrl keys; the rest go to the pane | A leader moves to another mode |
 | prefix | One command key, then back to normal; a key it does not bind cancels | The command, or Esc |
-| pane, tab | Every key; a key the mode does not bind goes nowhere | Esc or Enter, always, even if unbound |
+| pane, tab | Every key; a key the mode does not bind goes nowhere | A `back` key; Esc or Enter while the mode does not bind it |
 | locked | Only its own Ctrl keys (unlock); every other key, the prefix included, goes to the pane | Unlock |
 | sidebar, board | The keys while that part has focus (4.3, 7) | Esc or `q` |
+
+**No mode traps the user.** After loading, `LoadSettings` walks the modes the keymap reaches
+from normal (and the sidebar, where the workspace may start). A reached mode with no way back
+gets the default one, over what that key had, and a problem says so: Ctrl+G unlocks locked
+mode; Esc goes back in pane, tab, sidebar and board mode. A keymap where no reached mode binds
+`detach` is a problem too: gff cannot be left from the keyboard. Decided (implementer): the
+check and repair, rather than "Esc and Enter always leave pane and tab mode, whatever they are
+bound to". The check also covers locked mode, the sidebar and the board, which an Esc rule
+does not. It keeps Esc and Enter bindable in pane and tab mode while another key goes back.
+The fallback for an unbound Esc or Enter stays.
+
+**Sending a leader.** In a command mode (prefix, pane, tab), the key that entered the mode,
+pressed again, sends itself to the pane when the mode does not bind it. So the prefix pressed
+twice sends it, a moved prefix sends the new key and not the old one, and the sample's pane
+and tab leaders send themselves the same way. A `send` binding sends its own key from any
+command mode.
+
+**Paste.** A bracketed paste (CSI 200~ to CSI 201~) is never keys. It goes to the pane whole,
+markers included, in every mode. A paste in prefix, pane or tab mode ends the mode first. A
+leader or unlock byte inside a paste does not act. While the sidebar, board or a prompt has the
+keys, a paste runs no command: its printable text goes into a prompt or the filter, and
+elsewhere nowhere.
+
+**Kitty keys.** Under kitty's report-all-keys mode, a shifted key is named by the shifted
+alternate key, else the text field, else an upper-case letter. With none of these it names no
+key, never the unshifted one, so Shift+1 is `!`, not `1`. The reader records each key whose
+press it took. The key's release is dropped in whatever mode it comes, so the unlock key's
+release and a command key's release never reach the pane. Modifier keys alone (Shift, Ctrl,
+Alt, Super, Hyper, Meta, AltGr and Level 5 shift) and the lock keys are no command. Ctrl+Shift
+with a leader is not the leader.
+
+**Outside the workspace** (`gff` with pane arguments or `-new`) no bar shows the mode. In pane,
+tab or locked mode the focused frame row names the mode and its key back: `pane · Esc/Enter
+back`, `locked · Ctrl+G unlock`. A pane alone is composed under its frame row while the mode
+lasts, then passes through again.
 
 **Default keymap.** Normal binds one leader, Ctrl+\, to prefix mode. Prefix mode has the keys of
 3.4 and 4.3, plus `p` pane mode, `t` tab mode, `l` lock and `!` the warnings. The prefix pressed
@@ -760,7 +795,9 @@ mode, Ctrl+] command mode (sidebar, board, bars, warnings, detach), Ctrl+G lock 
 These are zellij's leaders with Ctrl+P, Ctrl+O, Ctrl+N and Ctrl+S swapped away, since shells
 and harnesses use them. The sample sets `defaults = false`, so it is the whole keymap: using it
 is a config change only, and so is making either keymap a user's default. `[keys.normal]`
-takes any action, so one chord can also run a command directly.
+takes any action, so one chord can also run a command directly. Ctrl+\, Ctrl+T and Ctrl+]
+pressed twice send themselves; Ctrl+] then Ctrl+G sends Ctrl+G. Locked mode cannot send Ctrl+G,
+since Ctrl+G is its unlock key.
 
 **Config.** gff's config file (4.3) holds the keymap in `[keys.<mode>]` tables, `key =
 "action"` per line, over the default keymap:
@@ -784,10 +821,13 @@ d = "none"                # unbind
   `close-session`, `filter`, `group`. `none` unbinds.
 - An unknown mode, key or action, an action the mode cannot take, or a plain key in normal or
   locked mode is a problem printed at start with the file and line; the rest loads (8.3).
+- A value of the wrong type, in `[keys.<mode>]` or `[bar]`, is a problem on its line; the rest
+  of its table and the file load. A table header may carry a comment.
 - TOML refuses a key written twice in one table, so the file does not load and gff says where.
   Two spellings of one key (`esc`, `escape`) are a problem and the later line wins.
-- `-prefix ctrl-<key>` moves the prefix: the normal keys that enter prefix mode and the prefix
-  key that sends it.
+- `-prefix ctrl-<key>` moves the prefix: the normal keys that enter prefix mode, and a prefix
+  `send` binding on the old key. Another normal binding of the new key gives way, with a
+  problem.
 - The host reader (`internal/hosts`) warns about keys it does not know; `cmd/gff` drops those
   warnings for the `keys` and `bar` tables, which `gffclient.LoadSettings` reads and checks.
 
@@ -806,9 +846,19 @@ replaces the row.
 |---|---|
 | `TestBarFollowsMode` | gff's screen over a fake hab: the bar shows the sidebar's keys, then normal's leader, the prefix mode's commands, pane mode's keys (kept after a command), tab mode's, then only the unlock key while locked; each Esc, Enter or unlock returns to normal |
 | `TestKeymapConfig` | An unbound key leaves the hints; a new key joins its action's hint; each bad line is a problem with its file and line; `defaults = false`; another prefix; `SetPrefix`; `max_hints` |
-| `TestKeyReader` | The reader's modes: prefix one-shot, cancel, send, pane and tab modes that stay, locked mode passing the prefix, unlock in legacy and kitty forms; the prefix in legacy, kitty and modifyOtherKeys forms across split reads, releases and modifier keys skipped |
+| `TestKeyReader` | The reader's modes: prefix one-shot, cancel, send, pane and tab modes that stay, locked mode passing the prefix, unlock in legacy and kitty forms; the prefix in legacy, kitty and modifyOtherKeys forms across split reads, releases and modifier keys skipped; a paste whole in tab mode, after the prefix, around a leader or unlock byte and across reads; Shift in kitty's forms; releases of taken keys dropped in the next mode (unlock, a command key, the prefix sent, an arrow); right Ctrl, AltGr and Level 5 shift skipped; Ctrl+Shift+\ passes |
 | `TestFitHints` | Hints drop by priority, then show keys alone |
-| `TestSampleKeymapModes` | The A sample loads with no problems, reaches every mode (as the default does), each mode but normal has a key back, it binds none of Ctrl+O, Ctrl+S, Ctrl+P, Ctrl+N, Ctrl+B, nothing of the default leaks in, and its leaders drive the reader |
+| `TestSampleKeymapModes` | The A sample loads with no problems, reaches every mode (as the default does), each mode but normal has a key back, it binds none of Ctrl+O, Ctrl+S, Ctrl+P, Ctrl+N, Ctrl+B, nothing of the default leaks in, its leaders drive the reader, and each leader sends as its header says |
+| `TestKeymapNoTraps` | Locked with its unlock unbound, pane with Esc and Enter rebound, and `defaults = false` with a lock key each get a way back and a problem; no detach is a problem; unreached modes and the default keymap give none |
+| `TestEscLeavesWhenUnbound` | Esc leaves pane mode and Enter tab mode while unbound |
+| `TestPrefixSendFollowsTheKey` | A config-moved prefix pressed twice sends the new key, the old one nothing; `-prefix` over a normal binding of its key replaces it, with a problem, and the bar shows no dead hint |
+| `TestConfigValueTypes` | A non-string action and wrong-type `[bar]` values are problems on their lines; the rest loads; `[keys] default` is an unknown key |
+| `TestKeyLineHeaderComment` | Problems keep their line under a header with a comment or spaces |
+| `TestConfigLaterLineWins` | Two spellings of one key: a problem, and the later line wins, over 20 loads |
+| `TestConfigLockedAndSend` | Locked mode refuses other actions; `send` never shows on the bar |
+| `TestModeShownOutsideWorkspace` | Outside the workspace, pane and locked mode leave pass-through and name the mode and its key back on the frame row, then pass through again |
+| `TestPasteInSidebar` | A paste in the sidebar runs no command; in a prompt its text is typed |
+| `TestHostProblems` (`cmd/gff`) | The host reader's warnings for `[keys]` and `[bar]` are dropped; its others stay |
 
 **Limits (not built).**
 
@@ -854,9 +904,10 @@ usage row); `hab-logic-api.md` 3.4 (capabilities for features a host may lack).
 Packages: `internal/gffclient` (`bars.go`, `sysinfo*.go`, `usage.go`).
 
 **System info.** The right end of the shortcut bar: `cpu 12% mem 51% disk 61% bat 80% up 3d
-4h`. `[bar] info` lists the items and their order; an item left out is hidden. The battery
-hides on a machine with none. The row gives the info at most half its width; the hints get the
-rest.
+4h`. `[bar] info` lists the items and their order; an item left out is hidden. An item the host
+does not give hides: the battery on a machine with none, CPU where the system or the hab gives
+no figure (`cpu_pct` is optional in `hab.stats`). The row gives the info at most half its
+width; the hints get the rest.
 
 - **Whose figures.** When the focused pane's host listed `host-stats` in its welcome, gff calls
   `hab.stats` and labels the figures with the host label. Otherwise gff reads this machine's
@@ -867,11 +918,15 @@ rest.
 - **Offline.** A host that offered stats and is offline keeps its last figures, dimmed, with
   their age.
 - **This machine.** Linux: CPU from `/proc/stat` since the last reading, memory in use as
-  MemTotal less MemAvailable, uptime, the first battery under `/sys/class/power_supply`.
-  macOS, with no cgo: CPU as the one-minute load over the core count (sysctl gives no CPU time
-  counters), memory in use as all but the free pages (it counts the file cache), uptime from
-  `kern.boottime`, the battery from `pmset -g batt` at most once a minute. Disk: the file system
-  of the home directory. Other systems: disk only.
+  MemTotal less MemAvailable, uptime, the first supply of type `Battery` under
+  `/sys/class/power_supply` whose scope is not `Device` (a wireless mouse or keyboard reports
+  its own battery with that scope). macOS, with no cgo: CPU as the one-minute load over the
+  core count (sysctl gives no CPU time counters), memory in use as all but the free pages (it
+  counts the file cache), uptime from `kern.boottime`, the battery from `pmset -g batt` at most
+  once a minute. The battery is read only while `[bar] info` lists it, so pmset never runs
+  otherwise. Disk: the file system of the home directory, as df counts it: used is every block
+  not free, total is used plus what a user may still write, so blocks kept for root count as
+  neither. Other systems: disk only.
 
 **Tab bar.** On the right: the needs-you count, the warnings count when there are any (`2
 warnings`), online hosts out of all, and the clock. `[bar] clock` is a Go time layout (default
@@ -892,7 +947,10 @@ claude Max 5x · 5h 42% resets 1h 58m · 7d 61% resets 4d 23h · over pace on 7d
   a reset time, the pace is the share of the window already gone. A window used more than that
   is over pace. The account ends with the first that holds: `<w> limit reached · resets in
   <time>` for each window at 100 per cent or more; `over pace on <w>, <w>`; `on pace` when any
-  window has a pace. A window named for a model has no length, so no pace.
+  window has a pace. A window named for a model has no length, so no pace. A stale window has
+  no pace either: its pace would rise with now while its figure stays old.
+- **Which hab.** When two accounts would read alike (one harness and label from two habs, each
+  with no account id), each names its hab: `claude on two · 5h 10% ...` (app.md 14.5).
 - **Edge cases** as app.md 14.5: a reading above 100 shows 100 and "limit reached"; a reset time
   that passed with no reading since says `<w> reset at 14:00; no reading since`; with no
   reset time, the percentage only; an account with no windows says `no limits reported`; when
@@ -909,7 +967,16 @@ claude Max 5x · 5h 42% resets 1h 58m · 7d 61% resets 4d 23h · over pace on 7d
 
 | Test | Proves |
 |---|---|
-| `TestUsagePaceText` | Fixture readings give the expected text: over pace, on pace, limit reached, near a limit, a model window, no reset time, a reset with no reading since, stale, no windows |
+| `TestUsagePaceText` | Fixture readings give the expected text: over pace, on pace, limit reached, near a limit, a model window, no reset time, a reset with no reading since, stale with no pace, stale for its window inside the hour, used equal to the pace, a reading after the reset, no windows |
+| `TestUsageNamesHab` | Two accounts that read alike from two habs each name their hab; one alone does not |
+| `TestStatsRefreshRules` | No reading while the bars are hidden; at most one every 2 s; one at a time |
+| `TestUsageRowHeight` | The usage row shows from 8 rows |
+| `TestTabBarWarningsAndClock` | The warnings count (`1 warning`, `2 warnings`) and a configured clock layout |
+| `TestInfoOfflineAndWidth` | An offline host's figures are labelled, dimmed and aged; the info takes at most half the row |
+| `TestStatsHost` | Over a fake hab: the figures' host is the focused pane's hab when it lists `host-stats`, else this machine |
+| `TestDiskFigures`, `TestInfoHidesUnknown` | Disk as df counts it; an absent CPU figure hides |
+| `TestReadProcSys` (Linux) | `/proc` and `/sys` fixtures: CPU busy time without idle and iowait, memory, uptime; the machine's battery, not a mains supply or a mouse's; no battery read while the bar does not show it |
+| `TestReadLocalDarwin` (macOS) | sysctl figures; pmset runs only for a bar that shows the battery |
 | `TestUsageRowReading` | The row shows two fixture accounts' pace text under the tab bar, the one at 96 per cent in the limit colour; the pane area starts below it |
 | `TestUsageRow` | Over a fake hab that serves no usage: `no usage reported`, and the count of working sessions |
 | `TestUsageBookNewestWins` | An older reading of one account from another host does not replace a newer one |

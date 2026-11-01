@@ -3325,7 +3325,7 @@
           "cpu_pct": {
             "type": "integer",
             "format": "int64",
-            "description": "CPU in use over the last few seconds, as a percentage of all cores."
+            "description": "CPU in use over the last few seconds, as a percentage of all cores. Absent where the host cannot measure it."
           },
           "disk_total": {
             "type": "integer",
@@ -3360,7 +3360,6 @@
         },
         "required": [
           "seq",
-          "cpu_pct",
           "mem_used",
           "mem_total",
           "disk_used",

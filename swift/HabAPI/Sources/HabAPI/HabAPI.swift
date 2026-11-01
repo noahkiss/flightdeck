@@ -1624,8 +1624,8 @@ public struct HostStats: Codable, Sendable, Hashable {
     public var at: String
     /// Absent on a host with no battery.
     public var batteryPct: Int?
-    /// CPU in use over the last few seconds, as a percentage of all cores.
-    public var cpuPct: Int
+    /// CPU in use over the last few seconds, as a percentage of all cores. Absent where the host cannot measure it.
+    public var cpuPct: Int?
     /// Bytes.
     public var diskTotal: UInt64
     /// Bytes, on the file system of the hab's state directory.
@@ -1651,7 +1651,7 @@ public struct HostStats: Codable, Sendable, Hashable {
         case uptimeS = "uptime_s"
     }
 
-    public init(at: String, batteryPct: Int? = nil, cpuPct: Int, diskTotal: UInt64, diskUsed: UInt64, memTotal: UInt64, memUsed: UInt64, seq: UInt64, uptimeS: UInt64) {
+    public init(at: String, batteryPct: Int? = nil, cpuPct: Int? = nil, diskTotal: UInt64, diskUsed: UInt64, memTotal: UInt64, memUsed: UInt64, seq: UInt64, uptimeS: UInt64) {
         self.at = at
         self.batteryPct = batteryPct
         self.cpuPct = cpuPct

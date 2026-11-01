@@ -107,6 +107,43 @@ func TestKeyReader(t *testing.T) {
 		{"locked passes the prefix", []string{"\x1cl\x1cz\x07\x1cz"}, []keyEvent{pre, a(actLock, "l"), d("\x1cz"),
 			a(actUnlock, "ctrl-g"), pre, a(actZoom, "z")}},
 		{"kitty unlock", []string{"\x1cl\x1b[103;5u\x1cz"}, []keyEvent{pre, a(actLock, "l"), a(actUnlock, "ctrl-g"), pre, a(actZoom, "z")}},
+
+		// A bracketed paste goes to the pane whole, with its markers, in any mode, and is never
+		// keys: in tab mode "xc12" closes no view and makes no tab; after the prefix the start
+		// marker is not the one key; a prefix or unlock byte inside it does not act.
+		{"paste in tab mode", []string{"\x1ct\x1b[200~xc12\x1b[201~x"}, []keyEvent{pre, a(actTabMode, "t"),
+			d("\x1b[200~xc12\x1b[201~x")}},
+		{"paste after the prefix", []string{"\x1c\x1b[200~hello\x1b[201~"}, []keyEvent{pre, d("\x1b[200~hello\x1b[201~")}},
+		{"prefix inside a paste", []string{"a\x1b[200~b\x1cz\x1b[201~\x1cz"}, []keyEvent{d("a\x1b[200~b\x1cz\x1b[201~"), pre,
+			a(actZoom, "z")}},
+		{"unlock inside a paste", []string{"\x1cl\x1b[200~\x07\x1b[201~\x07"}, []keyEvent{pre, a(actLock, "l"),
+			d("\x1b[200~\x07\x1b[201~"), a(actUnlock, "ctrl-g")}},
+		{"paste split across reads", []string{"\x1b[20", "0~a\x1c", "b\x1b[2", "01~\x1cz"}, []keyEvent{d("\x1b[200~a\x1c"),
+			d("b"), d("\x1b[201~"), pre, a(actZoom, "z")}},
+
+		// Kitty's report-all-keys mode: Shift+1 is "!" from the shifted key or the text field,
+		// never "1"; with neither, it names no key, so the prefix cancels.
+		{"kitty shift alternate", []string{"\x1c\x1b[49:33;2u"}, []keyEvent{pre, a(actWarnings, "!")}},
+		{"kitty shift text", []string{"\x1c\x1b[49;2;33u"}, []keyEvent{pre, a(actWarnings, "!")}},
+		{"kitty shift no alternate", []string{"\x1c\x1b[49;2ux"}, []keyEvent{pre, d("x")}},
+		{"kitty shift letter", []string{"\x1c\x1b[122;2ux"}, []keyEvent{pre, d("x")}},
+
+		// The release of a key the reader took never reaches the pane, in whatever mode it comes.
+		{"kitty unlock release", []string{"\x1cl\x1b[103;5u\x1b[103;5:3ua"}, []keyEvent{pre, a(actLock, "l"),
+			a(actUnlock, "ctrl-g"), d("a")}},
+		{"command key release after the prefix", []string{"\x1b[92;5uz\x1b[122;1:3ua"}, []keyEvent{pre, a(actZoom, "z"), d("a")}},
+		{"prefix twice, release in normal mode", []string{"\x1b[92;5u\x1b[92;5u\x1b[92;5:3ua"}, []keyEvent{pre,
+			a(actSend, `ctrl-\`), d("a")}},
+		{"arrow release after pane mode", []string{"\x1cp\x1b[1;1:1A\x1b", "\x1b[1;1:3Aa"}, []keyEvent{pre,
+			a(actPaneMode, "p"), a(actBack, "esc"), d("a")}},
+		{"other release passes", []string{"\x1b[120;1:3u"}, []keyEvent{d("\x1b[120;1:3u")}},
+
+		// Modifier keys alone are no command: right Ctrl, and AltGr on a European layout.
+		{"kitty right ctrl", []string{"\x1c\x1b[57448;5uz"}, []keyEvent{pre, a(actZoom, "z")}},
+		{"kitty altgr", []string{"\x1c\x1b[57453u]"}, []keyEvent{pre, a(actNextTab, "]")}},
+		{"kitty level 5 shift", []string{"\x1c\x1b[57454u]"}, []keyEvent{pre, a(actNextTab, "]")}},
+		// Ctrl+Shift+\ is not the prefix.
+		{"kitty ctrl shift passes", []string{"\x1b[92;6u"}, []keyEvent{d("\x1b[92;6u")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			k := newKeyReader(DefaultKeymap())

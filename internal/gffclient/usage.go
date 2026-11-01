@@ -49,6 +49,20 @@ func (b *usageBook) entries() []usageEntry {
 	return out
 }
 
+// hostShown reports, for each entry, whether the row names its host: when another entry has
+// the same harness and label, so the two would read alike (app.md 14.5 labels each by hab).
+func hostShown(es []usageEntry) []bool {
+	n := map[[2]string]int{}
+	for _, e := range es {
+		n[[2]string{e.acct.Harness, e.acct.Label}]++
+	}
+	out := make([]bool, len(es))
+	for i, e := range es {
+		out[i] = n[[2]string{e.acct.Harness, e.acct.Label}] > 1
+	}
+	return out
+}
+
 func readAt(a api.UsageAccount) time.Time {
 	var t time.Time
 	for _, w := range a.Windows {
@@ -118,11 +132,13 @@ func windowAt(w api.UsageWindow, now time.Time) windowState {
 			s.pace = int(min(max(gone*100/length, 0), 100))
 		}
 	}
-	// A stale reading: older than the window, or than an hour (app.md 14.5).
+	// A stale reading: older than the window, or than an hour (app.md 14.5). Its pace would
+	// rise with now while its figure stays old, so a stale window has none.
 	if rerr == nil {
 		age := now.Sub(read)
 		if age > time.Hour || (hasLen && age > length) {
 			s.stale = true
+			s.pace = -1
 		}
 	}
 	return s
@@ -131,11 +147,15 @@ func windowAt(w api.UsageWindow, now time.Time) windowState {
 // usageText is the usage row's text for one account (app.md 14.2 status line):
 // "claude Max 5x · 5h 42% resets 1h 58m · 7d 61% resets 4d 23h · over pace on 7d". A window
 // that reached its limit says so first; a window spent faster than an even pace is over pace;
-// with a pace and neither, the account is on pace.
-func usageText(a api.UsageAccount, now time.Time) usageView {
+// with a pace and neither, the account is on pace. host, when not "", names the hab the
+// reading came from: "claude on two · ...".
+func usageText(a api.UsageAccount, host string, now time.Time) usageView {
 	head := a.Harness
 	if a.Label != "" {
 		head += " " + a.Label
+	}
+	if host != "" {
+		head += " on " + host
 	}
 	parts := []string{head}
 	var v usageView

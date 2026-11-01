@@ -259,7 +259,7 @@ type HabStatsParams struct{}
 // HostStats is a reading of the host's resources.
 type HostStats struct {
 	Seq
-	CPUPct     int    `json:"cpu_pct" doc:"CPU in use over the last few seconds, as a percentage of all cores."`
+	CPUPct     *int   `json:"cpu_pct,omitempty" doc:"CPU in use over the last few seconds, as a percentage of all cores. Absent where the host cannot measure it."`
 	MemUsed    uint64 `json:"mem_used" doc:"Bytes."`
 	MemTotal   uint64 `json:"mem_total" doc:"Bytes."`
 	DiskUsed   uint64 `json:"disk_used" doc:"Bytes, on the file system of the hab's state directory."`

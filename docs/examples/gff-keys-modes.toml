@@ -15,7 +15,12 @@
 # gff-client.md 8.1 leaves Ctrl+S to programs. Ctrl+\ and Ctrl+] are rarely bound by programs.
 # Ctrl+T and Ctrl+G are taken from programs here, as in zellij: Ctrl+T is readline's
 # transpose-chars and some harnesses' task list; Ctrl+G is readline's abort and some harnesses'
-# editor key. Locked mode gives both back. A leader pressed twice sends it to the program.
+# editor key.
+#
+# To send a leader to the program:
+#   Ctrl+\, Ctrl+T or Ctrl+] pressed twice sends it: the key that entered a mode sends itself.
+#   Ctrl+] then Ctrl+G sends Ctrl+G. Locked mode cannot: there Ctrl+G is the unlock key.
+#   Locked mode sends Ctrl+\, Ctrl+T and Ctrl+] as they are.
 #
 # Resize, move and session modes are not built yet, so this file has none.
 
@@ -37,7 +42,7 @@ g = "board"
 b = "bars"
 "!" = "warnings"
 d = "detach"
-"ctrl-]" = "send"
+"ctrl-g" = "send" # Ctrl+] then Ctrl+G sends Ctrl+G
 esc = "back"
 
 [keys.pane]
@@ -49,7 +54,6 @@ x = "close-view"
 r = "redraw"
 n = "nudge"
 f = "fit"
-'ctrl-\' = "send"
 esc = "back"
 enter = "back"
 
@@ -67,7 +71,6 @@ c = "new-tab"
 8 = "tab-8"
 9 = "tab-9"
 x = "close-view"
-"ctrl-t" = "send"
 esc = "back"
 enter = "back"
 

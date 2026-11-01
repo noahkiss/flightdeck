@@ -157,15 +157,43 @@ func (km *Keymap) bind(m Mode, k, act string) {
 }
 
 // SetPrefix moves the prefix to key k (ctrl-<key>): the normal-mode keys that enter prefix
-// mode, and the prefix-mode key that sends the prefix to the pane.
-func (km *Keymap) SetPrefix(k string) {
+// mode, and a prefix-mode key bound to send that was one of them. The prefix pressed again
+// sends itself unless prefix mode binds it (keyReader.act). Another normal-mode binding of k
+// gives way, and SetPrefix returns a problem for each.
+func (km *Keymap) SetPrefix(k string) []string {
+	var problems []string
+	old := map[string]bool{}
+	for _, b := range km.modes[ModeNormal] {
+		if b.Action == actPrefix {
+			old[b.Key] = true
+		}
+	}
 	for m, bs := range km.modes {
 		for i, b := range bs {
-			if (m == ModeNormal && b.Action == actPrefix) || (m == ModePrefix && b.Action == actSend) {
+			if (m == ModeNormal && b.Action == actPrefix) || (m == ModePrefix && b.Action == actSend && old[b.Key]) {
 				bs[i].Key = k
 			}
 		}
 	}
+	for _, m := range []Mode{ModeNormal, ModePrefix} {
+		var kept []Binding
+		seen := false
+		for _, b := range km.modes[m] {
+			switch {
+			case b.Key != k:
+			case m == ModeNormal && b.Action != actPrefix:
+				problems = append(problems, fmt.Sprintf("-prefix %s replaces [keys.normal] %s = %q", k, k, b.Action))
+				continue
+			case seen:
+				continue // two old prefix keys moved to one
+			default:
+				seen = true
+			}
+			kept = append(kept, b)
+		}
+		km.modes[m] = kept
+	}
+	return problems
 }
 
 // chords returns the Ctrl bytes bound in mode m, for the key reader.
@@ -181,6 +209,7 @@ func (km *Keymap) chords(m Mode) map[byte]bool {
 
 // DefaultKeymap is the shipped keymap: one leader, Ctrl+\, that takes one command key or opens
 // the pane and tab modes (gff-client.md 15.5). It takes none of the keys 8.1 leaves to programs.
+// The leader pressed twice sends it to the pane (keyReader.act).
 func DefaultKeymap() *Keymap {
 	km := &Keymap{modes: map[Mode][]Binding{}}
 	add := func(m Mode, pairs ...string) {
@@ -194,7 +223,7 @@ func DefaultKeymap() *Keymap {
 		"w", actSidebar, "g", actBoard, "p", actPaneMode, "t", actTabMode, "c", actNewTab,
 		"]", actNextTab, "[", actPrevTab, "x", actCloseView, "z", actZoom, "o", actFocusNext,
 		"tab", actFocusNext, "s", actSplit, "l", actLock, "b", actBars, "!", actWarnings,
-		"r", actRedraw, "n", actNudge, "f", actFit, "d", actDetach, `ctrl-\`, actSend, "esc", actBack)
+		"r", actRedraw, "n", actNudge, "f", actFit, "d", actDetach, "esc", actBack)
 	for i := 1; i <= 9; i++ {
 		add(ModePrefix, strconv.Itoa(i), actTabN+strconv.Itoa(i))
 	}
@@ -396,15 +425,11 @@ func DefaultBar() BarConfig {
 func DefaultSettings() Settings { return Settings{Keymap: DefaultKeymap(), Bar: DefaultBar()} }
 
 // fileSettings is the part of gff's config file this package reads. The hosts belong to
-// internal/hosts.
+// internal/hosts. Each value is read on its own, so one of the wrong type is a problem on its
+// line and the rest still loads.
 type fileSettings struct {
-	Keys map[string]toml.Primitive `toml:"keys"`
-	Bar  struct {
-		MaxHints *int      `toml:"max_hints"`
-		Clock    *string   `toml:"clock"`
-		Usage    *bool     `toml:"usage"`
-		Info     *[]string `toml:"info"`
-	} `toml:"bar"`
+	Keys toml.Primitive `toml:"keys"`
+	Bar  toml.Primitive `toml:"bar"`
 }
 
 // SettingsTables are the config file's tables LoadSettings reads, for a reader of the rest of
@@ -425,8 +450,10 @@ var SettingsTables = []string{"keys", "bar"}
 //	usage = true
 //	info = ["cpu", "mem", "disk", "battery", "uptime"]
 //
-// An unknown mode, key or action, or one a mode cannot take, is a problem naming the file and
-// line, and the rest still loads (8.3). A missing file is the defaults and no error.
+// An unknown mode, key or action, one a mode cannot take, or a value of the wrong type, is a
+// problem naming the file and line, and the rest still loads (8.3). A keymap that leaves a
+// mode with no way back gets the default way back, and a problem (exits). A missing file is
+// the defaults and no error.
 func LoadSettings(path string) (Settings, []string, error) {
 	s := DefaultSettings()
 	b, err := os.ReadFile(path)
@@ -448,7 +475,21 @@ func LoadSettings(path string) (Settings, []string, error) {
 		}
 		return fmt.Sprintf("%s: [%s] %s", path, table, key)
 	}
-	if p, ok := fs.Keys["defaults"]; ok {
+	// table reads one table as its values, each still to decode. An absent table is empty; a
+	// value that is no table is a problem.
+	table := func(p toml.Primitive, name string) map[string]toml.Primitive {
+		if !md.IsDefined(strings.Split(name, ".")...) {
+			return nil
+		}
+		var t map[string]toml.Primitive
+		if err := md.PrimitiveDecode(p, &t); err != nil {
+			problems = append(problems, fmt.Sprintf("%s: [%s]: want a table", path, name))
+			return nil
+		}
+		return t
+	}
+	keys := table(fs.Keys, "keys")
+	if p, ok := keys["defaults"]; ok {
 		var on bool
 		if err := md.PrimitiveDecode(p, &on); err != nil {
 			problems = append(problems, where("keys", "defaults")+": want true or false")
@@ -456,89 +497,174 @@ func LoadSettings(path string) (Settings, []string, error) {
 			s.Keymap = &Keymap{modes: map[Mode][]Binding{}}
 		}
 	}
-	names := make([]string, 0, len(fs.Keys))
-	for n := range fs.Keys {
+	names := make([]string, 0, len(keys))
+	for n := range keys {
 		if n != "defaults" {
 			names = append(names, n)
 		}
 	}
 	// The modes in a fixed order, so problems come out the same way each time.
 	slices.SortFunc(names, func(a, b string) int {
-		return slices.Index(Modes, Mode(a)) - slices.Index(Modes, Mode(b))
+		if d := slices.Index(Modes, Mode(a)) - slices.Index(Modes, Mode(b)); d != 0 {
+			return d
+		}
+		return strings.Compare(a, b)
 	})
 	for _, n := range names {
 		m := Mode(n)
-		table := "keys." + n
+		tname := "keys." + n
+		if md.Type("keys", n) != "Hash" {
+			problems = append(problems, where("keys", n)+": unknown key; [keys] takes defaults and a table per mode")
+			continue
+		}
 		if !slices.Contains(Modes, m) {
-			problems = append(problems, fmt.Sprintf("%s: [%s]: unknown mode; modes are %s", path, table, modeList()))
+			problems = append(problems, fmt.Sprintf("%s: [%s]: unknown mode; modes are %s", path, tname, modeList()))
 			continue
 		}
-		var binds map[string]string
-		if err := md.PrimitiveDecode(fs.Keys[n], &binds); err != nil {
-			problems = append(problems, fmt.Sprintf("%s: [%s]: want key = \"action\" lines", path, table))
-			continue
-		}
+		binds := table(keys[n], tname)
 		ks := make([]string, 0, len(binds))
 		for k := range binds {
 			ks = append(ks, k)
 		}
 		// In file order, so a later line wins over an earlier one that names the same key.
-		slices.SortFunc(ks, func(x, y string) int { return keyLine(b, table, x) - keyLine(b, table, y) })
+		slices.SortFunc(ks, func(x, y string) int { return keyLine(b, tname, x) - keyLine(b, tname, y) })
 		seen := map[string]bool{}
 		for _, k := range ks {
-			act := binds[k]
+			var act string
+			if err := md.PrimitiveDecode(binds[k], &act); err != nil {
+				problems = append(problems, where(tname, k)+`: want an action in quotes, such as "zoom"`)
+				continue
+			}
 			key, err := ParseKey(k)
 			switch {
 			case err != nil:
-				problems = append(problems, where(table, k)+": "+err.Error())
+				problems = append(problems, where(tname, k)+": "+err.Error())
 				continue
 			case seen[key]:
-				problems = append(problems, where(table, k)+": the key is bound twice; this later line wins")
+				problems = append(problems, where(tname, k)+": the key is bound twice; this later line wins")
 			}
 			seen[key] = true
 			switch {
 			case m.chord() && !strings.HasPrefix(key, "ctrl-"):
-				problems = append(problems, where(table, k)+": "+string(m)+" mode takes only ctrl-<key>; other keys go to the program")
+				problems = append(problems, where(tname, k)+": "+string(m)+" mode takes only ctrl-<key>; other keys go to the program")
 				continue
 			case act == "none":
 				s.Keymap.bind(m, key, "")
 				continue
 			case !modeAllows(m, act):
 				if _, ok := actionLabels[act]; ok {
-					problems = append(problems, fmt.Sprintf("%s: action %q does not work in %s mode", where(table, k), act, m))
+					problems = append(problems, fmt.Sprintf("%s: action %q does not work in %s mode", where(tname, k), act, m))
 				} else {
-					problems = append(problems, fmt.Sprintf("%s: unknown action %q", where(table, k), act))
+					problems = append(problems, fmt.Sprintf("%s: unknown action %q", where(tname, k), act))
 				}
 				continue
 			}
 			s.Keymap.bind(m, key, act)
 		}
 	}
-	if fs.Bar.MaxHints != nil {
-		s.Bar.MaxHints = max(*fs.Bar.MaxHints, 0)
+	bar := table(fs.Bar, "bar")
+	barKeys := make([]string, 0, len(bar))
+	for k := range bar {
+		barKeys = append(barKeys, k)
 	}
-	if fs.Bar.Clock != nil {
-		s.Bar.Clock = *fs.Bar.Clock
-	}
-	if fs.Bar.Usage != nil {
-		s.Bar.Usage = *fs.Bar.Usage
-	}
-	if fs.Bar.Info != nil {
-		s.Bar.Info = nil
-		for _, it := range *fs.Bar.Info {
-			if !slices.Contains(infoItems, it) {
-				problems = append(problems, fmt.Sprintf("%s: unknown info item %q; items are %s", where("bar", "info"), it, strings.Join(infoItems, ", ")))
-				continue
+	slices.Sort(barKeys)
+	for _, k := range barKeys {
+		var err error
+		want := ""
+		switch k {
+		case "max_hints":
+			var n int
+			if err = md.PrimitiveDecode(bar[k], &n); err == nil {
+				s.Bar.MaxHints = max(n, 0)
 			}
-			s.Bar.Info = append(s.Bar.Info, it)
+			want = "a number"
+		case "clock":
+			var c string
+			if err = md.PrimitiveDecode(bar[k], &c); err == nil {
+				s.Bar.Clock = c
+			}
+			want = `a Go time layout in quotes, or ""`
+		case "usage":
+			var on bool
+			if err = md.PrimitiveDecode(bar[k], &on); err == nil {
+				s.Bar.Usage = on
+			}
+			want = "true or false"
+		case "info":
+			var items []string
+			if err = md.PrimitiveDecode(bar[k], &items); err == nil {
+				s.Bar.Info = nil
+				for _, it := range items {
+					if !slices.Contains(infoItems, it) {
+						problems = append(problems, fmt.Sprintf("%s: unknown info item %q; items are %s", where("bar", "info"), it, strings.Join(infoItems, ", ")))
+						continue
+					}
+					s.Bar.Info = append(s.Bar.Info, it)
+				}
+			}
+			want = "a list of items in quotes"
+		default:
+			problems = append(problems, where("bar", k)+": unknown key")
+			continue
+		}
+		if err != nil {
+			problems = append(problems, where("bar", k)+": want "+want)
 		}
 	}
-	for _, k := range md.Undecoded() {
-		if k[0] == "bar" {
-			problems = append(problems, fmt.Sprintf("%s: unknown key %s", path, k))
-		}
-	}
+	problems = append(problems, s.Keymap.exits(path)...)
 	return s, problems, nil
+}
+
+// exits gives each mode the keymap reaches a way back, so no config traps the user in a mode
+// (gff-client.md 8.4). Locked mode needs an unlock key; pane and tab mode need a back key, or
+// Esc or Enter unbound (keyReader.act); the sidebar, which the workspace may start in, and the
+// board need a back key. A mode without one gets the default (Ctrl+G unlock, Esc back) over
+// what that key had, and a problem says so. With no key to detach in any reachable mode, a
+// problem says gff cannot be left from the keyboard.
+func (km *Keymap) exits(path string) []string {
+	to := map[string]Mode{actPrefix: ModePrefix, actPaneMode: ModePane, actTabMode: ModeTab, actLock: ModeLocked,
+		actSidebar: ModeSidebar, actBoard: ModeBoard}
+	seen := map[Mode]bool{ModeNormal: true, ModeSidebar: true}
+	queue := []Mode{ModeNormal, ModeSidebar}
+	detach := false
+	for len(queue) > 0 {
+		m := queue[0]
+		queue = queue[1:]
+		for _, b := range km.modes[m] {
+			if b.Action == actDetach {
+				detach = true
+			}
+			if n, ok := to[b.Action]; ok && !seen[n] {
+				seen[n] = true
+				queue = append(queue, n)
+			}
+		}
+	}
+	var problems []string
+	for _, m := range Modes {
+		if !seen[m] || m == ModeNormal || m == ModePrefix {
+			continue // prefix mode takes one key and returns
+		}
+		out := m.sticky() && (km.lookup(m, "esc") == "" || km.lookup(m, "enter") == "")
+		for _, b := range km.modes[m] {
+			if b.Action == actBack || b.Action == actUnlock {
+				out = true
+			}
+		}
+		if out {
+			continue
+		}
+		key, act := "esc", actBack
+		if m == ModeLocked {
+			key, act = "ctrl-g", actUnlock
+		}
+		km.bind(m, key, act)
+		problems = append(problems, fmt.Sprintf("%s: [keys.%s]: no key leaves %s mode; %s now does (%s)", path, m, m, keyLabel(key), act))
+	}
+	if !detach {
+		problems = append(problems, path+": no mode binds detach; gff cannot be left from the keyboard")
+	}
+	return problems
 }
 
 // infoItems are the system info items (gff-client.md 9.1).
@@ -559,7 +685,11 @@ func keyLine(b []byte, table, key string) int {
 	for i, l := range strings.Split(string(b), "\n") {
 		l = strings.TrimSpace(l)
 		if strings.HasPrefix(l, "[") {
-			in = strings.TrimSpace(strings.Trim(l, "[]")) == table
+			// [table] or [[table]], perhaps with a comment or spaces after it.
+			if j := strings.IndexByte(l, ']'); j >= 0 {
+				l = l[:j]
+			}
+			in = strings.TrimSpace(strings.TrimLeft(l, "[")) == table
 			continue
 		}
 		if !in {

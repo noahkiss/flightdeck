@@ -20,7 +20,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -214,7 +216,7 @@ func Run(ctx context.Context, cfg Config) (err error) {
 		cfg.Bar = &b
 	}
 	if cfg.Stats == nil {
-		cfg.Stats = new(LocalStats).Read
+		cfg.Stats = (&LocalStats{Battery: slices.Contains(cfg.Bar.Info, "battery")}).Read
 	}
 	if cfg.SizeDebounce <= 0 {
 		cfg.SizeDebounce = DefaultSizeDebounce
@@ -905,7 +907,7 @@ func (c *client) render() {
 		}
 	}
 	a := c.arrangement()
-	if len(a.slots) == 1 && (!c.ws || c.ui.passOK()) {
+	if len(a.slots) == 1 && (!c.ws || c.ui.passOK()) && c.modeNote() == "" {
 		v := c.tab().views[a.slots[0].view]
 		r := c.paneArea()
 		if v.term == nil && v.ended == nil {
@@ -1102,10 +1104,31 @@ func (c *client) frameText(v *view, s slot) string {
 	if v.note != "" {
 		notes = append(notes, v.note)
 	}
+	if m := c.modeNote(); m != "" && v == c.focused() {
+		notes = append(notes, m)
+	}
 	for _, n := range notes {
 		t += " · " + n
 	}
 	return t + " "
+}
+
+// modeNote names the key reader's mode and its way back for the focused frame row outside the
+// workspace, where no bar shows them: "pane · Esc/Enter back", "locked · Ctrl+G unlock". It is
+// "" in normal and prefix mode, and in the workspace. While it is not "", a pane alone is
+// composed under its frame row rather than passed through, so the mode shows.
+func (c *client) modeNote() string {
+	m := c.keys.mode
+	if c.ws || m == ModeNormal || m == ModePrefix {
+		return ""
+	}
+	parts := []string{string(m)}
+	for _, h := range c.keys.km.hints(m) {
+		if h.label == actionLabels[actBack] || h.label == actionLabels[actUnlock] {
+			parts = append(parts, h.full())
+		}
+	}
+	return strings.Join(parts, " · ")
 }
 
 func exitText(e *api.ExitedFrame) string {

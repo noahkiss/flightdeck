@@ -26,13 +26,16 @@ type sysReading struct {
 }
 
 // infoText writes the figures for the bar, the items in the order given: "cpu 12% mem 51%
-// disk 61% bat 80% up 3d 4h". The battery hides on a machine with none.
+// disk 61% bat 80% up 3d 4h". An item the host does not give hides: the battery on a machine
+// with none, CPU where the system gives no figure.
 func infoText(s api.HostStats, items []string) string {
 	var parts []string
 	for _, it := range items {
 		switch it {
 		case "cpu":
-			parts = append(parts, "cpu "+strconv.Itoa(s.CPUPct)+"%")
+			if s.CPUPct != nil {
+				parts = append(parts, "cpu "+strconv.Itoa(*s.CPUPct)+"%")
+			}
 		case "mem":
 			if s.MemTotal > 0 {
 				parts = append(parts, "mem "+strconv.Itoa(int(s.MemUsed*100/s.MemTotal))+"%")
@@ -68,6 +71,10 @@ func hasCap(w api.Welcome, c string) bool { return slices.Contains(w.Capabilitie
 // LocalStats reads this machine's figures. Each call measures CPU since the last call; the
 // first measures since boot.
 type LocalStats struct {
+	// Battery reads the battery too. On macOS that runs pmset, so gff sets it only when the
+	// bar shows the battery.
+	Battery bool
+
 	mu   sync.Mutex
 	prev cpuSample
 }
@@ -75,17 +82,28 @@ type LocalStats struct {
 // cpuSample is the CPU time counters at one moment, where the system gives them.
 type cpuSample struct{ busy, total uint64 }
 
-// Read returns this machine's figures. Figures the system does not give stay zero, and the
-// battery stays absent.
+// Read returns this machine's figures. Figures the system does not give stay zero, and CPU and
+// the battery stay absent.
 func (l *LocalStats) Read() (api.HostStats, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	s := api.HostStats{At: time.Now().UTC().Format(time.RFC3339)}
-	readLocal(&s, &l.prev)
+	readLocal(&s, &l.prev, l.Battery)
 	if home, err := os.UserHomeDir(); err == nil {
 		s.DiskUsed, s.DiskTotal = diskUse(home)
 	}
 	return s, nil
+}
+
+// diskFigures is a file system's used and total bytes as df counts them: used is every block
+// not free, and total is used plus what an ordinary user may still write, so the blocks kept
+// for root count as neither.
+func diskFigures(blocks, bfree, bavail, bsize uint64) (used, total uint64) {
+	if bfree > blocks {
+		return 0, 0
+	}
+	used = (blocks - bfree) * bsize
+	return used, used + bavail*bsize
 }
 
 // cpuPct is the busy share between two samples, in whole percent.

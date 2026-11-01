@@ -152,11 +152,18 @@ info = ["cpu", "temp"]
 		t.Errorf("ctrl-a prefix: %q", evs)
 	}
 
-	// SetPrefix moves the leader and the key that sends it.
+	// SetPrefix moves the leader; pressed twice, the new one sends itself and the old one does
+	// nothing in prefix mode.
 	km := DefaultKeymap()
-	km.SetPrefix("ctrl-a")
-	if km.lookup(ModeNormal, "ctrl-a") != actPrefix || km.lookup(ModePrefix, "ctrl-a") != actSend || km.lookup(ModeNormal, `ctrl-\`) != "" {
+	if p := km.SetPrefix("ctrl-a"); len(p) != 0 {
+		t.Errorf("SetPrefix problems %q", p)
+	}
+	if km.lookup(ModeNormal, "ctrl-a") != actPrefix || km.lookup(ModeNormal, `ctrl-\`) != "" {
 		t.Error("SetPrefix did not move the prefix")
+	}
+	if evs := newKeyReader(km).feed([]byte("\x01\x01\x01\x1cx")); !reflect.DeepEqual(evs, []keyEvent{
+		{act: actPrefix, key: "ctrl-a"}, {act: actSend, key: "ctrl-a"}, {act: actPrefix, key: "ctrl-a"}, {data: []byte("x")}}) {
+		t.Errorf("ctrl-a twice, then ctrl-a and ctrl-\\: %q", evs)
 	}
 	if _, _, err := LoadSettings(filepath.Join(t.TempDir(), "none.toml")); err != nil {
 		t.Errorf("missing file: %v", err)
@@ -227,6 +234,17 @@ func TestSampleKeymapModes(t *testing.T) {
 	if !reflect.DeepEqual(evs, want) {
 		t.Errorf("sample keys: %q, want %q", evs, want)
 	}
+	// What its header says: each of Ctrl+\, Ctrl+T and Ctrl+] pressed twice sends itself; Ctrl+]
+	// then Ctrl+G sends Ctrl+G; Ctrl+G twice locks and unlocks, sending nothing.
+	evs = newKeyReader(s.Keymap).feed([]byte("\x1c\x1c\x1b\x14\x14\x1b\x1d\x1d\x1d\x07\x07\x07"))
+	want = []keyEvent{{act: actPaneMode, key: `ctrl-\`}, {act: actSend, key: `ctrl-\`}, {act: actBack, key: "esc"},
+		{act: actTabMode, key: "ctrl-t"}, {act: actSend, key: "ctrl-t"}, {act: actBack, key: "esc"},
+		{act: actPrefix, key: "ctrl-]"}, {act: actSend, key: "ctrl-]"},
+		{act: actPrefix, key: "ctrl-]"}, {act: actSend, key: "ctrl-g"},
+		{act: actLock, key: "ctrl-g"}, {act: actUnlock, key: "ctrl-g"}}
+	if !reflect.DeepEqual(evs, want) {
+		t.Errorf("sample sends: %q, want %q", evs, want)
+	}
 }
 
 // When the bar is short, hints drop from the lowest priority; with fewer than three left, the
@@ -292,12 +310,23 @@ func TestUsagePaceText(t *testing.T) {
 		{"reset with no reading since", api.UsageAccount{Harness: "claude", Windows: []api.UsageWindow{
 			{Name: "5h", UsedPct: 70, ResetsAt: at(-10 * time.Minute), ReadAt: at(-20 * time.Minute)}}},
 			"claude · 5h reset at 11:50; no reading since", 0, false},
+		// A stale window has no pace: its pace would rise with now while its figure stays old.
 		{"stale", api.UsageAccount{Harness: "claude", Windows: []api.UsageWindow{
 			{Name: "7d", UsedPct: 5, ResetsAt: at(6 * 24 * time.Hour), ReadAt: at(-2 * time.Hour)}}},
-			"claude · 7d 5% resets 6d 0h · on pace · as of 10:00", 0, true},
+			"claude · 7d 5% resets 6d 0h · as of 10:00", 0, true},
+		{"stale for its window, inside the hour", api.UsageAccount{Harness: "codex", Windows: []api.UsageWindow{
+			{Name: "30m", UsedPct: 10, ResetsAt: at(10 * time.Minute), ReadAt: at(-45 * time.Minute)}}},
+			"codex · 30m 10% resets 10m · as of 11:15", 0, true},
+		// 2h of 5h gone: pace 40%. Used at the pace is on pace, not over.
+		{"used equals pace", api.UsageAccount{Harness: "codex", Windows: []api.UsageWindow{
+			{Name: "5h", UsedPct: 40, ResetsAt: at(3 * time.Hour), ReadAt: read}}},
+			"codex · 5h 40% resets 3h 0m · on pace", 0, false},
+		{"a reading after the reset", api.UsageAccount{Harness: "claude", Windows: []api.UsageWindow{
+			{Name: "5h", UsedPct: 3, ResetsAt: at(-10 * time.Minute), ReadAt: at(-5 * time.Minute)}}},
+			"claude · 5h 3% resets under 1m", 0, false},
 		{"no windows", api.UsageAccount{Harness: "claude", Label: "API"}, "claude API · no limits reported", 0, false},
 	} {
-		v := usageText(tc.acct, now)
+		v := usageText(tc.acct, "", now)
 		if v.text != tc.want || v.level != tc.level || v.stale != tc.stale {
 			t.Errorf("%s: %q level %d stale %v, want %q level %d stale %v", tc.name, v.text, v.level, v.stale, tc.want, tc.level, tc.stale)
 		}
@@ -334,8 +363,8 @@ func TestUsageRow(t *testing.T) {
 
 // System info: the formatter over fixed figures; the battery hides on a machine with none.
 func TestInfoText(t *testing.T) {
-	bat := 80
-	s := api.HostStats{CPUPct: 12, MemUsed: 8 << 30, MemTotal: 16 << 30, DiskUsed: 61, DiskTotal: 100, BatteryPct: &bat,
+	bat, cpu := 80, 12
+	s := api.HostStats{CPUPct: &cpu, MemUsed: 8 << 30, MemTotal: 16 << 30, DiskUsed: 61, DiskTotal: 100, BatteryPct: &bat,
 		UptimeS: uint64((3*24*time.Hour + 4*time.Hour) / time.Second)}
 	if got, want := infoText(s, infoItems), "cpu 12% mem 50% disk 61% bat 80% up 3d 4h"; got != want {
 		t.Errorf("infoText = %q, want %q", got, want)

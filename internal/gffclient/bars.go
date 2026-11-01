@@ -183,9 +183,14 @@ func (u *workspaceUI) drawUsage(y int) {
 		return
 	}
 	now := c.cfg.Now()
+	named := hostShown(es)
 	x := 0
 	for i, e := range es {
-		v := usageText(e.acct, now)
+		host := ""
+		if named[i] {
+			host = e.host
+		}
+		v := usageText(e.acct, host, now)
 		s := " " + v.text + " "
 		if i > 0 {
 			s = "│" + s

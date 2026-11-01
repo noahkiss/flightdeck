@@ -27,6 +27,8 @@ type Hab struct {
 	Sock     string
 	HostID   string
 	DeviceID string
+	// Capabilities are offered in the welcome beside agent-state. Set it, then Stop and Start.
+	Capabilities []string
 
 	holder *structure.FakeHolder
 	dir    string
@@ -74,7 +76,7 @@ func (h *Hab) Start() error {
 		Build:        "test",
 		Host:         api.HostInfo{ID: h.HostID},
 		DeviceID:     h.DeviceID,
-		Capabilities: []string{"agent-state"},
+		Capabilities: append([]string{"agent-state"}, h.Capabilities...),
 		Source:       source{h, st},
 		Actions:      actions{h},
 	})

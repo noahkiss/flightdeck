@@ -15,16 +15,18 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 )
 
-// readLocal fills CPU, memory, battery and uptime from sysctl, with no cgo. macOS gives no CPU
-// time counters through sysctl, so CPU is the one-minute load over the core count. Memory in
-// use is all but the free pages, so it counts the file cache.
-func readLocal(s *api.HostStats, _ *cpuSample) {
+// readLocal fills CPU, memory, battery (when battery is set) and uptime from sysctl, with no
+// cgo. macOS gives no CPU time counters through sysctl, so CPU is the one-minute load over the
+// core count. Memory in use is all but the free pages, so it counts the file cache. The
+// battery comes from pmset, run only when the bar shows the battery.
+func readLocal(s *api.HostStats, _ *cpuSample, battery bool) {
 	if b, err := unix.SysctlRaw("vm.loadavg"); err == nil && len(b) >= 24 {
 		// struct loadavg { fixpt_t ldavg[3]; long fscale; }: three uint32, padding, an int64.
 		load := binary.LittleEndian.Uint32(b[0:4])
 		scale := binary.LittleEndian.Uint64(b[16:24])
 		if scale > 0 {
-			s.CPUPct = min(int(uint64(load)*100/scale)/max(runtime.NumCPU(), 1), 100)
+			pct := min(int(uint64(load)*100/scale)/max(runtime.NumCPU(), 1), 100)
+			s.CPUPct = &pct
 		}
 	}
 	if total, err := unix.SysctlUint64("hw.memsize"); err == nil {
@@ -38,7 +40,9 @@ func readLocal(s *api.HostStats, _ *cpuSample) {
 	if tv, err := unix.SysctlTimeval("kern.boottime"); err == nil && tv.Sec > 0 {
 		s.UptimeS = uint64(max(time.Since(time.Unix(tv.Sec, int64(tv.Usec)*1000))/time.Second, 0))
 	}
-	s.BatteryPct = darwinBattery()
+	if battery {
+		s.BatteryPct = darwinBattery()
+	}
 }
 
 var (
@@ -71,12 +75,11 @@ func darwinBattery() *int {
 	return battPct
 }
 
-// diskUse is the used and total bytes of the file system that holds path.
+// diskUse is the used and total bytes of the file system that holds path, as df counts them.
 func diskUse(path string) (used, total uint64) {
 	var st unix.Statfs_t
 	if unix.Statfs(path, &st) != nil {
 		return 0, 0
 	}
-	bs := uint64(st.Bsize)
-	return (st.Blocks - st.Bfree) * bs, st.Blocks * bs
+	return diskFigures(st.Blocks, st.Bfree, st.Bavail, uint64(st.Bsize))
 }

@@ -5,6 +5,7 @@ package gffclient
 // and is ranked by internal/board; everything here is presentation, kept in this process.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -69,6 +70,7 @@ type workspaceUI struct {
 	sys     *sysReading // the last system info reading, or nil
 	sysAt   time.Time   // when the last reading started
 	sysBusy bool        // a reading is out
+	pasting bool        // inside a bracketed paste that came to the sidebar, board or a prompt
 }
 
 func (u *workspaceUI) init(c *client) {
@@ -399,12 +401,43 @@ func (u *workspaceUI) open(r board.Row, newTab bool) {
 	u.dirty = true
 }
 
-// keys handles input while the sidebar, the board or a prompt has the keys.
+// keys handles input while the sidebar, the board or a prompt has the keys. A bracketed paste
+// is never keys: its text goes into a prompt or the filter, and elsewhere it is dropped.
 func (u *workspaceUI) keys(p []byte) {
 	for len(p) > 0 {
+		if u.pasting {
+			text := p
+			p = nil
+			if j := bytes.Index(text, pasteEnd); j >= 0 {
+				text, p = text[:j], text[j+len(pasteEnd):]
+				u.pasting = false
+			}
+			u.paste(text)
+			continue
+		}
+		if bytes.HasPrefix(p, pasteStart) {
+			u.pasting = true
+			p = p[len(pasteStart):]
+			continue
+		}
 		k, n := readKey(p)
 		p = p[n:]
 		u.key(k)
+	}
+}
+
+// paste adds pasted text, its printable characters only, to the prompt or the filter.
+func (u *workspaceUI) paste(text []byte) {
+	for _, r := range string(text) {
+		if r < 0x20 || r == 0x7f || r == utf8.RuneError {
+			continue
+		}
+		switch {
+		case u.mode == modePrompt && !u.prompt.yesNo:
+			u.prompt.text = append(u.prompt.text, r)
+		case u.filterOn:
+			u.filter += string(r)
+		}
 	}
 }
 

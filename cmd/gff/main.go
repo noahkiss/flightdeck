@@ -129,15 +129,15 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	for _, p := range problems {
-		fmt.Fprintln(os.Stderr, "gff:", p)
-	}
 	if *prefixFlag != "" {
 		k, err := gffclient.ParseKey(*prefixFlag)
 		if err != nil || !strings.HasPrefix(k, "ctrl-") {
 			return fmt.Errorf("-prefix %q: want ctrl-<key>, such as ctrl-\\ or ctrl-a", *prefixFlag)
 		}
-		settings.Keymap.SetPrefix(k)
+		problems = append(problems, settings.Keymap.SetPrefix(k)...)
+	}
+	for _, p := range problems {
+		fmt.Fprintln(os.Stderr, "gff:", p)
 	}
 	var sp gffclient.Split
 	switch *split {
