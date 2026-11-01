@@ -97,6 +97,9 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 	if cwd == "" {
 		cwd = p.ProjectDir
 	}
+	if cwd == "" && p.Project != "" {
+		cwd = a.recentDir(p.Project)
+	}
 	if cwd == "" {
 		cwd = a.home
 	}
@@ -131,6 +134,21 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 	}
 	a.noteDir(ctx, project, projectTop, p.Project != "" && p.Cwd != "", cwd)
 	return ss.ID, pane, nil
+}
+
+// recentDir returns the project's most recently used folder that is still a directory, or "".
+func (a *actions) recentDir(project string) string {
+	for _, pd := range a.store.ProjectDirs() {
+		if pd.ID != project {
+			continue
+		}
+		for _, d := range pd.Dirs {
+			if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+				return d
+			}
+		}
+	}
+	return ""
 }
 
 // harnessStart fills in how session.create starts a known harness (harness-adapters.md,

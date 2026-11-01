@@ -60,7 +60,7 @@ func commandErr(pane string, err error) error {
 
 func apiCommand(c cmdmarks.Command) api.Command {
 	a := api.Command{ID: c.ID, State: api.CommandState(c.State), Prompt: c.Prompt, Input: c.Input,
-		Output: c.Output, End: c.End, Exit: c.Exit, Text: c.Text, TextTruncated: c.TextTruncated}
+		Output: c.Output, End: c.End, Exit: c.Exit, Text: c.Text, TextTruncated: c.TextTruncated, Cwd: c.Cwd}
 	if !c.Started.IsZero() {
 		a.StartedAt = c.Started.UTC().Format(time.RFC3339Nano)
 	}

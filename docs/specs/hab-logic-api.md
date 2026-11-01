@@ -500,11 +500,21 @@ Decision: proposed (this stage). Calls and the event: 3.9.
   the marks; they are test fixtures, not the console's snippet. zsh prints its partial-line mark
   (`PROMPT_SP`, `PROMPT_CR`) before `precmd`, so that mark would land inside a command's output
   range before `D`; the fixture turns both off. The shipped snippet has to deal with it.
-- **Not built here:** the working directory of a command (OSC 7, later: an additive field that
-  nothing depends on), text from bash (bash sends no command line in its marks without more
+- **Not built here:** text from bash (bash sends no command line in its marks without more
   setup), and a nonce against fake marks (see the hard gate above). zsh's `PROMPT_SP` mark
   landing inside an output range before `D` is fixed later in the console snippet (for example,
   send `D` first thing in `precmd`), not in the tracker.
+
+#### Built choices: the working directory (task-3x22hva9)
+
+- **OSC 7.** The scanner also keeps `ESC ] 7 ; <url>` reports, under the same payload cap and
+  rules as a mark. The tracker keeps the last good report's path; a command takes it at its `C`
+  mark, as the optional `cwd` (field set 3 of `Command`). Only an absolute `file:` URL with a
+  valid UTF-8 path of at most 1 KiB counts; a cut, malformed or other report leaves the last
+  path in place. The host part is not checked: the field shows where the shell said it was,
+  as a terminal's title does. The path is saved with the tracker's state in the checkpoint.
+  Display only, under the nonce gate above.
+- The test snippets send OSC 7 after `D` in their prompt hook.
 
 ---
 
@@ -801,8 +811,10 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
 
 - **`session.create`** takes `name`, `project` or `project_dir`, `harness`, `argv`, `cwd`, `env`,
   `cols` and `rows`, all optional, and returns the `session` and `pane` ids. The objects arrive as
-  events. Defaults: the hab's `$SHELL` (else `/bin/sh`); `cwd` is `project_dir`, else the hab's
-  home; 80x24; the name is the program's base name, then `-2`, `-3` and so on. `env` entries are
+  events. Defaults: the hab's `$SHELL` (else `/bin/sh`); `cwd` is `project_dir`, else, with
+  `project`, the project's most recently used folder that still exists (task-3x22hva9: a console
+  beside a project's session starts there), else the hab's home; 80x24; the name is the
+  program's base name, then `-2`, `-3` and so on. `env` entries are
   added to the hab's own environment and replace the hab's value for the same key; `GFF_HAB` is
   always the pane's own. `project_dir` finds the project by the repository's remote (`origin`,
   else the first), else its root commit, and creates the project, named after the repository

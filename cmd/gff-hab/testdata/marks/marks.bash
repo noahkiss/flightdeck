@@ -4,7 +4,8 @@
 HISTFILE=
 bind 'set enable-bracketed-paste off' 2>/dev/null
 # D with the last status, before every prompt (and once before the first: the hab ignores it).
-PROMPT_COMMAND='printf "\033]133;D;%s\007" "$?"'
+# Then OSC 7 with the working directory (not percent-encoded: test folders need none).
+PROMPT_COMMAND='printf "\033]133;D;%s\007\033]7;file://%s%s\007" "$?" "$HOSTNAME" "$PWD"'
 # A, the prompt, B; the typed line follows.
 PS1='\[\033]133;A\007\]$ \[\033]133;B\007\]'
 # C after the line is read, before the command runs.

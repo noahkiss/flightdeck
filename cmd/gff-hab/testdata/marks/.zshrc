@@ -6,7 +6,8 @@ unsetopt BEEP
 # would land inside the output range, before D. A shipped snippet must handle that too.
 unsetopt PROMPT_SP PROMPT_CR
 # D with the last status, before every prompt (and once before the first: the hab ignores it).
-_gff_precmd() { print -rn -- $'\e]133;D;'$?$'\a' }
+# Then OSC 7 with the working directory (not percent-encoded: test folders need none).
+_gff_precmd() { print -rn -- $'\e]133;D;'$?$'\a\e]7;file://'$HOST$PWD$'\a' }
 # C with the command line, percent-encoded, after the line is read.
 _gff_preexec() {
   local s=$1 out= c

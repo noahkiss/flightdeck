@@ -44,6 +44,9 @@ type Command struct {
 	// MaxText bytes. TextTruncated says it was cut, at MaxText or by the mark's payload cap.
 	Text          string `json:"text,omitempty"`
 	TextTruncated bool   `json:"text_truncated,omitempty"`
+	// Cwd is the working directory the shell last reported with OSC 7 before the C mark, when
+	// it reported one. At most MaxText bytes; a longer path is not kept.
+	Cwd string `json:"cwd,omitempty"`
 	// Started and Ended are when the C mark and the closing mark arrived as live output. Zero
 	// for marks found in replayed bytes: the time is unknown.
 	Started time.Time `json:"started,omitzero"`
@@ -65,6 +68,7 @@ type Saved struct {
 	Phase    phase     `json:"phase,omitempty"`
 	Prompt   *uint64   `json:"prompt,omitempty"`
 	Input    *uint64   `json:"input,omitempty"`
+	Cwd      string    `json:"cwd,omitempty"`
 	Commands []Command `json:"commands,omitempty"`
 }
 
@@ -74,6 +78,7 @@ type Tracker struct {
 	phase   phase
 	prompt  *uint64 // the A of the prompt now showing
 	input   *uint64 // just after the B of the line being typed
+	cwd     string  // the last working directory reported with OSC 7
 	cmds    []Command
 	changed map[uint64]bool // ids changed since the last Changes
 	now     time.Time       // the time of the bytes being fed; zero for replayed bytes
@@ -88,7 +93,7 @@ func New(off uint64) *Tracker {
 // Restore returns a tracker in the state s, for a stream whose next byte is at offset off.
 func Restore(off uint64, s Saved) *Tracker {
 	t := New(off)
-	t.phase, t.prompt, t.input = s.Phase, s.Prompt, s.Input
+	t.phase, t.prompt, t.input, t.cwd = s.Phase, s.Prompt, s.Input, s.Cwd
 	switch t.phase {
 	case phIdle, phPrompt, phTyping, phRunning:
 	default:
@@ -106,7 +111,7 @@ func Restore(off uint64, s Saved) *Tracker {
 
 // Save returns the tracker's state for a checkpoint.
 func (t *Tracker) Save() Saved {
-	return Saved{Phase: t.phase, Prompt: t.prompt, Input: t.input, Commands: append([]Command(nil), t.cmds...)}
+	return Saved{Phase: t.phase, Prompt: t.prompt, Input: t.input, Cwd: t.cwd, Commands: append([]Command(nil), t.cmds...)}
 }
 
 // Offset returns the offset after the last byte fed.
@@ -134,6 +139,10 @@ func (t *Tracker) Feed(off uint64, data []byte, now time.Time) {
 // apply moves the state machine by one mark (spec 2.5, the rules table).
 func (t *Tracker) apply(m Mark) {
 	switch m.Kind {
+	case '7':
+		if d, ok := cwdPath(m); ok {
+			t.cwd = d
+		}
 	case 'A':
 		t.prompts++
 		t.closeRunning(m.Start)
@@ -153,7 +162,7 @@ func (t *Tracker) apply(m Mark) {
 			return
 		}
 		c := Command{ID: m.Start, Prompt: t.prompt, Input: t.input, Output: m.End, State: Running,
-			Started: t.now}
+			Cwd: t.cwd, Started: t.now}
 		c.Text, c.TextTruncated = cmdline(m)
 		t.phase, t.prompt, t.input = phRunning, nil, nil
 		t.add(c)
@@ -225,6 +234,21 @@ func cmdline(m Mark) (string, bool) {
 		return s, cut
 	}
 	return "", false
+}
+
+// cwdPath reads the path of an OSC 7 report: file://host/path, percent-encoded. The host is
+// not checked: the path is the one the shell reported, as a terminal shows it. A cut,
+// malformed, relative, non-UTF-8 or over-long report is not used.
+func cwdPath(m Mark) (string, bool) {
+	if m.Truncated || len(m.Params) != 1 {
+		return "", false
+	}
+	u, err := url.Parse(m.Params[0])
+	if err != nil || u.Scheme != "file" || !strings.HasPrefix(u.Path, "/") || len(u.Path) > MaxText ||
+		!utf8.ValidString(u.Path) {
+		return "", false
+	}
+	return u.Path, true
 }
 
 // Trim drops the ended commands whose output ends at or before oldest: the holder's ring no

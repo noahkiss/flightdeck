@@ -439,6 +439,8 @@ public struct ClosingReason: RawRepresentable, Codable, Sendable, Hashable {
 }
 
 public struct Command: Codable, Sendable, Hashable {
+    /// Working directory the shell last reported with OSC 7 before the command started. Absent when it reported none. At most 1 KiB.
+    public var cwd: String?
     /// In a command.updated event only: how many changes of this pane, older than this one, the hab left out to bound its events. Read command.list to catch up.
     public var dropped: Int?
     /// Offset where the output ends: the command-end mark (D), or what closed the command. Absent while it runs.
@@ -464,6 +466,7 @@ public struct Command: Codable, Sendable, Hashable {
     public var textTruncated: Bool?
 
     enum CodingKeys: String, CodingKey {
+        case cwd = "cwd"
         case dropped = "dropped"
         case end = "end"
         case endedAt = "ended_at"
@@ -478,7 +481,8 @@ public struct Command: Codable, Sendable, Hashable {
         case textTruncated = "text_truncated"
     }
 
-    public init(dropped: Int? = nil, end: UInt64? = nil, endedAt: String? = nil, exit: Int? = nil, id: UInt64, input: UInt64? = nil, output: UInt64, prompt: UInt64? = nil, startedAt: String? = nil, state: CommandState, text: String? = nil, textTruncated: Bool? = nil) {
+    public init(cwd: String? = nil, dropped: Int? = nil, end: UInt64? = nil, endedAt: String? = nil, exit: Int? = nil, id: UInt64, input: UInt64? = nil, output: UInt64, prompt: UInt64? = nil, startedAt: String? = nil, state: CommandState, text: String? = nil, textTruncated: Bool? = nil) {
+        self.cwd = cwd
         self.dropped = dropped
         self.end = end
         self.endedAt = endedAt
@@ -2136,7 +2140,7 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
     public var argv: [String]?
     /// Initial width. Default 80.
     public var cols: Int?
-    /// Absolute working directory. Default: project_dir, else the hab's home directory.
+    /// Absolute working directory. Default: project_dir, else the most recently used folder of the project, else the hab's home directory.
     public var cwd: String?
     /// KEY=value entries added to the hab's own environment; an entry replaces the hab's value for its key.
     public var env: [String]?

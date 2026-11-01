@@ -78,6 +78,9 @@ func TestScannerForms(t *testing.T) {
 		{"DCS body", "\x1bP]133;A\x07\x1b\\", nil},
 		{"tmux passthrough", "\x1bPtmux;\x1b\x1b]133;A\x07\x1b\\", []Mark{{Kind: 'A', Start: 8, End: 16}}},
 		{"APC aborted", "\x1b_x\x1b]133;B\x07", []Mark{{Kind: 'B', Start: 3, End: 11}}},
+		{"OSC 7", "\x1b]7;file://h/a%20b\x07", []Mark{{Kind: '7', Start: 0, End: 19, Params: []string{"file://h/a%20b"}}}},
+		{"OSC 7 ST", "\x1b]7;file:///t\x1b\\", []Mark{{Kind: '7', Start: 0, End: 15, Params: []string{"file:///t"}}}},
+		{"OSC 7 lookalikes", "\x1b]70;x\x07\x1b]7\x07\x1b]77;x\x07", nil},
 	}
 	for _, c := range cases {
 		for _, split := range []string{"whole", "bytes"} {
@@ -199,11 +202,23 @@ func (s *session) command(line, output string, exit int, st bool) {
 	}
 }
 
+// cwd writes an OSC 7 report of the working directory, as a shell's precmd does.
+func (s *session) cwd(u string, st bool) {
+	s.b.WriteString("\x1b]7;" + u)
+	if st {
+		s.b.WriteString("\x1b\\")
+	} else {
+		s.b.WriteString("\x07")
+	}
+}
+
 func threeCommands() *session {
 	var s session
 	s.mark("D", false) // a shell's precmd before the first prompt: no command runs
+	s.cwd("file://box/home/u/a%20b", false)
 	s.command("echo one", "one\r\n", 0, false)
 	s.command("false", "", 1, true)
+	s.cwd("file:///tmp", true)
 	s.command("printf 'a\\033[31mb'", "a\x1b[31mb", -1, false)
 	s.mark("A", false)
 	s.b.WriteString("$ ")
@@ -256,10 +271,14 @@ func TestThreeCommands(t *testing.T) {
 		exit  *int
 		state State
 		text  string
-	}{{ptr(0), Done, "echo one"}, {ptr(1), Done, "false"}, {nil, Done, "printf 'a\\033[31mb'"}} {
+		cwd   string
+	}{{ptr(0), Done, "echo one", "/home/u/a b"}, {ptr(1), Done, "false", "/home/u/a b"}, {nil, Done, "printf 'a\\033[31mb'", "/tmp"}} {
 		c := cs[i]
 		if fmt.Sprint(deref(c.Exit)) != fmt.Sprint(deref(want.exit)) || c.State != want.state || c.Text != want.text {
 			t.Errorf("command %d: exit %v state %s text %q; want %v %s %q", i, deref(c.Exit), c.State, c.Text, deref(want.exit), want.state, want.text)
+		}
+		if c.Cwd != want.cwd {
+			t.Errorf("command %d: cwd %q, want %q", i, c.Cwd, want.cwd)
 		}
 		if c.Prompt == nil || c.Input == nil || *c.Prompt >= *c.Input || *c.Input >= c.ID || c.ID >= c.Output {
 			t.Errorf("command %d: offsets out of order: %s", i, dump(cs[i:i+1]))
@@ -274,6 +293,33 @@ func TestThreeCommands(t *testing.T) {
 }
 
 func ptr(n int) *int { return &n }
+
+// TestCwdReports: an OSC 7 report that is not an absolute file URL, is cut by the payload cap,
+// or is longer than MaxText leaves the last good working directory in place.
+func TestCwdReports(t *testing.T) {
+	long := "file:///" + strings.Repeat("d", MaxText)
+	huge := "file:///" + strings.Repeat("e", MaxPayload)
+	for _, c := range []struct {
+		name, report, want string
+	}{
+		{"good", "file:///srv/x", "/srv/x"},
+		{"other scheme", "http://h/srv", "/start"},
+		{"relative", "file:srv", "/start"},
+		{"bad escape", "file:///a%zz", "/start"},
+		{"bad UTF-8", "file:///a%ff", "/start"},
+		{"too long", long, "/start"},
+		{"cut by the cap", huge, "/start"},
+	} {
+		var s session
+		s.cwd("file:///start", false)
+		s.cwd(c.report, false)
+		s.command("pwd", "x\r\n", 0, false)
+		cs, _ := track(s.b.Bytes(), nil).List(nil, 10)
+		if len(cs) != 1 || cs[0].Cwd != c.want {
+			t.Errorf("%s: got %s, want cwd %q", c.name, dump(cs), c.want)
+		}
+	}
+}
 
 func deref(p *int) any {
 	if p == nil {

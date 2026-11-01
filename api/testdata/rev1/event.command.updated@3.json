@@ -1,0 +1,31 @@
+{
+  "data": {
+    "cwd": "cwd-13",
+    "dropped": 12,
+    "end": 7,
+    "ended_at": "ended_at-11",
+    "exit": 8,
+    "id": 3,
+    "input": 5,
+    "output": 6,
+    "prompt": 4,
+    "started_at": "started_at-10",
+    "state": "unknown",
+    "text": "text-9",
+    "text_truncated": true,
+    "x_unknown_field": "later"
+  },
+  "id": "id-16",
+  "revision": 14,
+  "seq": 15,
+  "type": "command.updated",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

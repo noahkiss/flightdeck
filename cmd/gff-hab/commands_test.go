@@ -113,6 +113,10 @@ func testCommandMarks(t *testing.T, shell string) {
 	cc := e.control()
 	pane := e.markedShell(cc, shell)
 	evs := commandEventsFor(t, e.control(), pane)
+	work, err := filepath.EvalSymlinks(e.work)
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Builtins only: a forked job can get the shell's own text in its output
 	// (TestCommandMarksRing says when).
 	steps := []struct {
@@ -146,6 +150,9 @@ func testCommandMarks(t *testing.T, shell string) {
 		}
 		if shell == "zsh" && c.Text != s.line {
 			t.Errorf("%q: text %q", s.line, c.Text)
+		}
+		if got, _ := filepath.EvalSymlinks(c.Cwd); got != work {
+			t.Errorf("%q: cwd %q, want %q", s.line, c.Cwd, work)
 		}
 		var out api.CommandOutput
 		call(t, cc, "command.output", api.CommandOutputParams{Pane: pane, Command: c.ID}, &out)

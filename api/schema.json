@@ -448,7 +448,7 @@
         },
         {
           "name": "cwd",
-          "description": "Absolute working directory. Default: project_dir, else the hab's home directory.",
+          "description": "Absolute working directory. Default: project_dir, else the most recently used folder of the project, else the hab's home directory.",
           "schema": {
             "type": "string"
           }
@@ -1954,6 +1954,10 @@
       "Command": {
         "type": "object",
         "properties": {
+          "cwd": {
+            "type": "string",
+            "description": "Working directory the shell last reported with OSC 7 before the command started. Absent when it reported none. At most 1 KiB."
+          },
           "dropped": {
             "type": "integer",
             "format": "int64",
@@ -3771,7 +3775,7 @@
           },
           "cwd": {
             "type": "string",
-            "description": "Absolute working directory. Default: project_dir, else the hab's home directory."
+            "description": "Absolute working directory. Default: project_dir, else the most recently used folder of the project, else the hab's home directory."
           },
           "env": {
             "type": "array",

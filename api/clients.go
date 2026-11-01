@@ -12,7 +12,7 @@ type SessionCreateParams struct {
 	ProjectDir string   `json:"project_dir,omitempty" doc:"Absolute path inside a git repository. The hab finds the project by the repository's remote, else its root commit, and creates the project when it is new."`
 	Harness    string   `json:"harness,omitempty" doc:"Detection manifest id of a harness to start, such as claude. Needs that harness's adapter."`
 	Argv       []string `json:"argv,omitempty" doc:"Program and arguments. Default: the hab's $SHELL, else /bin/sh."`
-	Cwd        string   `json:"cwd,omitempty" doc:"Absolute working directory. Default: project_dir, else the hab's home directory."`
+	Cwd        string   `json:"cwd,omitempty" doc:"Absolute working directory. Default: project_dir, else the most recently used folder of the project, else the hab's home directory."`
 	Env        []string `json:"env,omitempty" doc:"KEY=value entries added to the hab's own environment; an entry replaces the hab's value for its key."`
 	Cols       int      `json:"cols,omitempty" doc:"Initial width. Default 80."`
 	Rows       int      `json:"rows,omitempty" doc:"Initial height. Default 24."`
@@ -316,6 +316,8 @@ type Command struct {
 	// checkpoint and the events; a client still learns that something was left out.
 	TextTruncated bool `json:"text_truncated,omitempty" doc:"True when text was cut: at 1 KiB, or by the mark's 4 KiB payload cap."`
 	Dropped       int  `json:"dropped,omitempty" doc:"In a command.updated event only: how many changes of this pane, older than this one, the hab left out to bound its events. Read command.list to catch up."`
+	// Cwd is field set 3: the shell's OSC 7 report, so a card can show where a command ran.
+	Cwd string `json:"cwd,omitempty" doc:"Working directory the shell last reported with OSC 7 before the command started. Absent when it reported none. At most 1 KiB."`
 }
 
 // CommandListParams reads a page of a pane's commands.

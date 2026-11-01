@@ -14,9 +14,10 @@ import "bytes"
 // there: the rest is followed to its end and not held, and the mark says Truncated.
 const MaxPayload = 4 << 10
 
-// Mark is one well-formed OSC 133 mark.
+// Mark is one well-formed OSC 133 mark, or an OSC 7 working directory report.
 type Mark struct {
-	// Kind is 'A' (prompt start), 'B' (command start), 'C' (output start) or 'D' (command end).
+	// Kind is 'A' (prompt start), 'B' (command start), 'C' (output start) or 'D' (command end),
+	// or '7' for an OSC 7 report, whose one param is the URL as sent.
 	Kind byte
 	// Start is the offset of the mark's ESC; End the offset just after its terminator.
 	Start, End uint64
@@ -35,9 +36,12 @@ const (
 	stOSCEsc           // after ESC inside an OSC string: ST when a backslash follows
 )
 
-var prefix = []byte("133;")
+var (
+	prefix    = []byte("133;")
+	cwdPrefix = []byte("7;")
+)
 
-// Scanner finds OSC 133 marks in a byte stream fed in any splits.
+// Scanner finds OSC 133 marks and OSC 7 reports in a byte stream fed in any splits.
 type Scanner struct {
 	off   uint64 // offset after the last byte fed
 	st    scanState
@@ -130,10 +134,22 @@ func (s *Scanner) hold(b byte) {
 		return
 	}
 	s.buf = append(s.buf, b)
-	if n := len(s.buf); n <= len(prefix) && s.buf[n-1] != prefix[n-1] {
+	if !startsMark(s.buf) {
 		s.drop = true // another OSC: follow it to its end, hold nothing
 		s.buf = s.buf[:0]
 	}
+}
+
+// startsMark reports whether the held payload can still be, or already is, an OSC 133 mark or an
+// OSC 7 report.
+func startsMark(p []byte) bool {
+	for _, pre := range [][]byte{prefix, cwdPrefix} {
+		n := min(len(p), len(pre))
+		if bytes.Equal(p[:n], pre[:n]) {
+			return true
+		}
+	}
+	return false
 }
 
 // finish ends the OSC at end and emits it when it is a well-formed mark.
@@ -149,15 +165,19 @@ func (s *Scanner) finish(end uint64, emit func(Mark)) {
 	s.buf = s.buf[:0]
 }
 
-// parse reads an OSC payload as a mark: "133;" then A to D, then nothing or ";" and params.
+// parse reads an OSC payload as a mark: "133;" then A to D, then nothing or ";" and params; or
+// "7;" and a URL.
 func parse(p []byte) (Mark, bool) {
-	if len(p) < len(prefix)+1 || !bytes.HasPrefix(p, prefix) {
-		return Mark{}, false
-	}
 	for _, b := range p {
 		if b < 0x20 || b == 0x7f {
 			return Mark{}, false
 		}
+	}
+	if u, ok := bytes.CutPrefix(p, cwdPrefix); ok {
+		return Mark{Kind: '7', Params: []string{string(u)}}, true
+	}
+	if len(p) < len(prefix)+1 || !bytes.HasPrefix(p, prefix) {
+		return Mark{}, false
 	}
 	k := p[len(prefix)]
 	if k < 'A' || k > 'D' {
