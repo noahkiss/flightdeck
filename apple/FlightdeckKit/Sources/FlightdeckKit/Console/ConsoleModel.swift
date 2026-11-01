@@ -68,6 +68,9 @@ public final class ConsoleModel {
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
     /// The last input sent; the next one waits for it.
     @ObservationIgnored private var inputTail: Task<Void, Never>?
+    /// Inputs numbered in the order given, and the last number not to send.
+    @ObservationIgnored private var inputsQueued = 0
+    @ObservationIgnored private var dropInputsThrough = 0
     @ObservationIgnored private var listGeneration: Int?
     @ObservationIgnored private var reading: Set<UInt64> = []
     /// How often the model checks for a control reconnect, and reads the
@@ -132,6 +135,8 @@ public final class ConsoleModel {
     public func stop() {
         for t in tasks { t.cancel() }
         tasks = []
+        // Inputs still queued go nowhere once the console is closed.
+        dropInputsThrough = inputsQueued
     }
 
     // MARK: - Actions
@@ -180,16 +185,22 @@ public final class ConsoleModel {
 
     /// Sends input in the order the owner gave it: each call waits for the
     /// one before, so a Ctrl+C never reaches the shell ahead of the command
-    /// it should stop. A failed call does not hold back the next one.
+    /// it should stop. When a call fails, the inputs queued behind it are
+    /// dropped with that one error, instead of each waiting out its own
+    /// timeout on a dead link; input given after the failure goes again.
     private func input(_ text: String) {
         let c = calls
         let previous = inputTail
+        inputsQueued += 1
+        let n = inputsQueued
         inputTail = Task { [weak self] in
             await previous?.value
+            guard let self, n > self.dropInputsThrough else { return }
             do {
                 try await c.input(text)
             } catch {
-                self?.lastError = String(describing: error)
+                self.lastError = String(describing: error)
+                self.dropInputsThrough = self.inputsQueued
             }
         }
     }

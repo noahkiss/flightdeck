@@ -295,6 +295,40 @@ final class ConsoleTests: XCTestCase {
         XCTAssertEqual(fake.with { fake.inputs }, ["sleep 2\r", "\u{03}", "echo ok\r"])
     }
 
+    /// A failed call drops the inputs queued behind it with one error, so
+    /// they do not each wait out a dead link; input given later goes.
+    func testFailedInputDropsTheQueue() async {
+        let fake = FakeCalls([])
+        fake.with {
+            fake.inputHook = { text in
+                if text == "first\r" { try? await Task.sleep(for: .milliseconds(50)) }
+            }
+        }
+        let failing = ConsoleModel.Calls(
+            list: fake.calls.list, output: fake.calls.output,
+            input: { text in
+                try await fake.calls.input(text)
+                if text == "first\r" { throw TransportError("link down") }
+            },
+            updates: fake.calls.updates, generation: fake.calls.generation)
+        let m = ConsoleModel(pane: "%9", calls: failing, terminal: nil)
+        m.run("first")
+        m.run("second")
+        m.sendRaw("\u{03}")
+        await eventually("failed") { m.lastError != nil }
+        m.run("later")
+        await eventually("later sent") { fake.with { fake.inputs.count } == 2 }
+        XCTAssertEqual(fake.with { fake.inputs }, ["first\r", "later\r"])
+        // Closing the console drops what is still queued: input given just
+        // before the close has not started, so none of it goes.
+        m.run("a")
+        m.run("b")
+        m.stop()
+        m.run("after close")
+        await eventually("after close sent") { fake.with { fake.inputs.count } == 3 }
+        XCTAssertEqual(fake.with { fake.inputs }, ["first\r", "later\r", "after close\r"])
+    }
+
     /// A fresh page replaces the list, but a card newer than the page (an
     /// event that came while the page was read) stays.
     func testReplaceKeepsACardNewerThanThePage() throws {
