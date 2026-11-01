@@ -22,6 +22,8 @@ public actor FakeHab {
     private var usage: [String: UsageAccount] = [:]
     /// How many `usage.list` calls were answered.
     public private(set) var usageLists = 0
+    /// Runs once, after the next `usage.list` answer is read and before it is sent.
+    private var usageListHook: (@Sendable () async -> Void)?
 
     private final class Conn {
         let stream: ByteStream
@@ -322,6 +324,11 @@ public actor FakeHab {
         for a in accounts { usage[a.key] = a }
     }
 
+    /// Runs `hook` once between reading the next `usage.list` answer and sending it.
+    public func setUsageListHook(_ hook: (@Sendable () async -> Void)?) {
+        usageListHook = hook
+    }
+
     /// Stores one account's reading and sends `usage.updated`.
     public func putUsage(_ a: UsageAccount) async {
         usage[a.key] = a
@@ -428,7 +435,13 @@ public actor FakeHab {
             await terminalCall(method, params, c, id: id)
         case HabMethods.usageList.name where capabilities.contains("usage"):
             usageLists += 1
-            await reply(c, id: id, result: UsageReadings(accounts: usage.values.sorted { $0.key < $1.key }, seq: c.seq))
+            // Read the answer first: events the hook sends go out before the reply, as on a busy hab.
+            let res = UsageReadings(accounts: usage.values.sorted { $0.key < $1.key }, seq: c.seq)
+            if let h = usageListHook {
+                usageListHook = nil
+                await h()
+            }
+            await reply(c, id: id, result: res)
         case HabMethods.chatPage.name:
             do {
                 let p = try params.decode(ChatPageParams.self)

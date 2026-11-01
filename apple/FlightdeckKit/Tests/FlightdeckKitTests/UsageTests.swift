@@ -23,8 +23,9 @@ private func apiAccount(_ key: String, _ windows: [(String, Int, Date?, Date)]) 
     })
 }
 
+/// One suite, emptied for each test, so test runs leave one preferences file.
 private func freshDefaults() -> UserDefaults {
-    let name = "flightdeck.tests.usage." + UUID().uuidString
+    let name = "flightdeck.tests.usage"
     let d = UserDefaults(suiteName: name)!
     d.removePersistentDomain(forName: name)
     return d
