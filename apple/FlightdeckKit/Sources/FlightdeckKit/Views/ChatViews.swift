@@ -6,11 +6,17 @@ public struct ChatView: View {
     @Bindable var model: ChatModel
     /// Opens the terminal view, from the composer's button. Nil hides it.
     var openTerminal: (() -> Void)?
+    /// Opens voice mode, from a long press on the microphone. Nil: no voice mode.
+    var openVoice: (() -> Void)?
+    /// A change focuses the composer (voice mode's Keyboard control).
+    var focusComposer = 0
     @State private var draft = ""
 
-    public init(model: ChatModel, openTerminal: (() -> Void)? = nil) {
+    public init(model: ChatModel, openTerminal: (() -> Void)? = nil, openVoice: (() -> Void)? = nil, focusComposer: Int = 0) {
         self.model = model
         self.openTerminal = openTerminal
+        self.openVoice = openVoice
+        self.focusComposer = focusComposer
     }
 
     public var body: some View {
@@ -18,7 +24,7 @@ public struct ChatView: View {
             ChatBanners(context: model.context, load: model.load, openTerminal: openTerminal)
             ChatTranscript(model: model)
             Divider()
-            ComposerView(model: model, draft: $draft, openTerminal: openTerminal)
+            ComposerView(model: model, draft: $draft, openTerminal: openTerminal, openVoice: openVoice, focusRequest: focusComposer)
         }
         .onAppear { model.start() }
         .onDisappear { model.stop() }
@@ -573,7 +579,15 @@ struct ComposerView: View {
     let model: ChatModel
     @Binding var draft: String
     let openTerminal: (() -> Void)?
+    var openVoice: (() -> Void)?
+    var focusRequest = 0
     @FocusState private var focused: Bool
+    @Environment(\.voiceKit) private var voiceKit
+    @Environment(\.habConnections) private var habs
+    @State private var dictation: DictationModel?
+    /// The draft before dictation started; heard words follow it.
+    @State private var dictationBase = ""
+    @State private var micDenied = false
 
     var body: some View {
         let gate = model.gate
@@ -604,6 +618,17 @@ struct ComposerView: View {
                     }
                     .buttonStyle(.borderless)
                     .accessibilityLabel("Open the terminal")
+                }
+                if voiceKit != nil {
+                    DictationButton(dictation: dictation, start: startDictation, stop: stopDictation)
+                        .disabled(!gate.allowsSend && dictation == nil)
+                        .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                            if dictation == nil, VoiceButton.allowed(model) { openVoice?() }
+                        })
+                        .alert("Microphone access is off", isPresented: $micDenied) {
+                            Button("Open Settings") { openPrivacySettings() }
+                            Button("Cancel", role: .cancel) {}
+                        }
                 }
                 TextField(placeholder(gate), text: $draft, axis: .vertical)
                     .lineLimit(1...8)
@@ -636,12 +661,51 @@ struct ComposerView: View {
             }
         }
         .padding(10)
+        .onChange(of: focusRequest) { _, _ in focused = true }
+        .onChange(of: dictation?.liveText) { _, live in
+            guard let live, dictation?.phase == .listening else { return }
+            draft = Self.join(dictationBase, live)
+        }
+        .onDisappear {
+            if let d = dictation { Task { await d.cancel() } }
+        }
     }
 
     private func send() {
         guard model.gate.allowsSend else { return }
         model.send(draft)
         draft = ""
+    }
+
+    /// Dictation writes into the draft as words are heard; they stay editable (app.md 13.4).
+    private func startDictation() {
+        guard let kit = voiceKit, dictation == nil else { return }
+        if VoiceAudio.permissionDenied {
+            micDenied = true
+            return
+        }
+        let d = kit.dictation(connection: habs.find(model.target.habID), session: model.target.session)
+        dictation = d
+        dictationBase = draft
+        Task { await d.start() }
+    }
+
+    /// Stops; the engine's text replaces the heard words.
+    private func stopDictation() {
+        guard let d = dictation else { return }
+        Task {
+            if let text = await d.stop() {
+                draft = Self.join(dictationBase, text)
+            }
+            dictation = nil
+            focused = true
+        }
+    }
+
+    static func join(_ base: String, _ heard: String) -> String {
+        guard !heard.isEmpty else { return base }
+        guard !base.isEmpty else { return heard }
+        return base.hasSuffix(" ") || base.hasSuffix("\n") ? base + heard : base + " " + heard
     }
 
     private func placeholder(_ g: SendGate) -> String {

@@ -113,6 +113,16 @@ final class VoiceTextTests: XCTestCase {
         XCTAssertTrue(p.contains(SpokenText.summaryMarker))
     }
 
+    // MARK: - Dictation text
+
+    func testDictationJoinsTheDraftAndStripsControlsForAPane() {
+        XCTAssertEqual(ComposerView.join("", "hello"), "hello")
+        XCTAssertEqual(ComposerView.join("fix", "the test"), "fix the test")
+        XCTAssertEqual(ComposerView.join("fix ", "the test"), "fix the test")
+        XCTAssertEqual(ComposerView.join("fix", ""), "fix")
+        XCTAssertEqual(String(decoding: PaneDictationButton.paneText("ls\n-la\u{1b}[A\r"), as: UTF8.self), "ls -la [A ")
+    }
+
     // MARK: - Grammar
 
     func testCommandsMatchOnlyTheWholeUtterance() {

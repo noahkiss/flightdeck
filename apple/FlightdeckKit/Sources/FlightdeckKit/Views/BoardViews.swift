@@ -18,6 +18,7 @@ public struct FlightdeckRoot: View {
             .environment(\.terminals, fleet.terminals)
             .openPaneOnLaunch(fleet)
             .environment(\.sshSetup, fleet.ssh)
+            .environment(\.voiceKit, fleet.voice)
             .sshSheets(fleet.ssh)
             .onAppear { fleet.windowOpened() }
             .onDisappear { fleet.windowClosed() }
@@ -27,6 +28,7 @@ public struct FlightdeckRoot: View {
             .environment(\.terminals, fleet.terminals)
             .openPaneOnLaunch(fleet)
             .environment(\.sshSetup, fleet.ssh)
+            .environment(\.voiceKit, fleet.voice)
             .sshSheets(fleet.ssh)
         #endif
     }
@@ -303,8 +305,10 @@ struct ConnectionsList: View {
     /// Opens the usage sheet; the board closes this list first when it is a sheet.
     var openUsage: (() -> Void)?
     @Environment(\.sshSetup) private var ssh
+    @Environment(\.voiceKit) private var voice
     @State private var showSSH = false
     @State private var showNotifications = false
+    @State private var showVoice = false
 
     var body: some View {
         List {
@@ -346,6 +350,25 @@ struct ConnectionsList: View {
                         if let openUsage { openUsage() } else { usage?.book.present(account: nil) }
                     }
                 }
+                if voice != nil {
+                    Button("Voice") { showVoice = true }
+                }
+            }
+        }
+        .sheet(isPresented: $showVoice) {
+            if let voice {
+                NavigationStack {
+                    VoiceSettingsView(kit: voice)
+                        .navigationTitle("Voice")
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Done") { showVoice = false }
+                            }
+                        }
+                }
+                #if os(macOS)
+                .frame(minWidth: 440, minHeight: 480)
+                #endif
             }
         }
         .sheet(isPresented: $showNotifications) {

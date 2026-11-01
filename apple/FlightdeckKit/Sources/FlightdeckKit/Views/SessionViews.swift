@@ -73,6 +73,9 @@ public struct SessionView: View {
     @State private var consoleShown = false
     /// The content side panel (Mac, iPad) or sheet (iPhone), app.md 4.7.
     @State private var showFiles = Self.filesAtLaunch
+    @State private var voiceShown = false
+    /// Raised by voice mode's Keyboard control: focus the composer.
+    @State private var focusComposer = 0
     @Environment(\.terminalSlot) private var terminal
 
     enum Mode: String, CaseIterable, Identifiable {
@@ -103,7 +106,7 @@ public struct SessionView: View {
             if compact {
                 Group {
                     switch mode {
-                    case .chat: ChatView(model: model) { mode = .terminal }
+                    case .chat: ChatView(model: model, openTerminal: { mode = .terminal }, openVoice: { voiceShown = true }, focusComposer: focusComposer)
                     case .terminal: terminal.make(model.target)
                     }
                 }
@@ -116,6 +119,9 @@ public struct SessionView: View {
                     }
                     ToolbarItem(placement: .secondaryAction) {
                         Button("Files", systemImage: "doc.on.doc") { showFiles = true }
+                    }
+                    ToolbarItem(placement: .primaryAction) {
+                        VoiceButton(model: model, shown: $voiceShown)
                     }
                     ToolbarItem(placement: .primaryAction) {
                         Picker("View", selection: $mode) {
@@ -134,6 +140,8 @@ public struct SessionView: View {
                     HStack {
                         ChatHeader(context: model.context)
                         Spacer()
+                        VoiceButton(model: model, shown: $voiceShown)
+                            .buttonStyle(.borderless)
                         if model.target.session != nil, !model.context.isConsole {
                             consoleButton
                                 .buttonStyle(.borderless)
@@ -157,7 +165,7 @@ public struct SessionView: View {
                     HStack(spacing: 0) {
                         GeometryReader { geo in
                             HStack(spacing: 0) {
-                                ChatView(model: model)
+                                ChatView(model: model, openVoice: { voiceShown = true }, focusComposer: focusComposer)
                                     .frame(width: geo.size.width / 2)
                                 Divider()
                                 terminal.make(model.target)
@@ -179,6 +187,10 @@ public struct SessionView: View {
         #endif
         .sheet(isPresented: $consoleShown) {
             ConsoleSheet(target: model.target)
+        }
+        .voiceMode($voiceShown, chat: model) {
+            mode = .chat
+            focusComposer += 1
         }
     }
 

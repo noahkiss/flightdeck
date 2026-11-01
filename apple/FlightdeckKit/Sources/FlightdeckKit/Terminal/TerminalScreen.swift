@@ -8,16 +8,20 @@ import SwiftUI
 /// view can host it beside the chat.
 public struct TerminalScreen: View {
     @State private var model: TerminalModel
+    /// For dictation into the pane; nil hides it.
+    private let connection: HabConnection?
     @Environment(\.displayScale) private var displayScale
     @Environment(\.dismiss) private var dismiss
     @Environment(\.terminals) private var terminals
 
     public init(pane: String, connection: HabConnection) {
         _model = State(initialValue: TerminalModel(pane: pane, connection: connection))
+        self.connection = connection
     }
 
-    public init(model: TerminalModel) {
+    public init(model: TerminalModel, connection: HabConnection? = nil) {
         _model = State(initialValue: model)
+        self.connection = connection
     }
 
     public var body: some View {
@@ -53,6 +57,9 @@ public struct TerminalScreen: View {
         }
         .toolbar {
             ToolbarItemGroup {
+                if let connection {
+                    PaneDictationButton(pane: model.pane, connection: connection)
+                }
                 Button {
                     model.fitToScreen()
                 } label: {
