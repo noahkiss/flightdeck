@@ -520,9 +520,9 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
   `chat.message`, and records `pane.input`. In demo mode six sessions hold invented
   conversations, and a sent message gets an invented reply.
 - **Live check.** `LiveTests.testLiveChatSendAndReply` drives a Claude Code session through
-  the same model. Run 2026-11-01: the message reached the TUI by `pane.input`, the user record
-  and the reply came back as events, and `claude --resume` from a plain terminal recalled the
-  turn.
+  the same model. Runs on 2026-11-01, first by `pane.input`, then by the hab's `session.send`:
+  the message reached the TUI, the user record and the reply came back as events, and
+  `claude --resume` from a plain terminal recalled the turn.
 ---
 
 ## 5. Terminal view
