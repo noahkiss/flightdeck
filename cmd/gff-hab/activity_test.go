@@ -26,11 +26,14 @@ func TestBellScanner(t *testing.T) {
 
 // TestActivityEvents: a pane that prints and rings sends pane.output with its offset and
 // pane.bell with the count, as ephemeral events (no revision), and each at most once a second:
-// a burst of output is one event.
+// a burst of output is one event. The hab follows a new pane from a goroutine and from now on,
+// so the program prints dots until a key comes: the test types only once a pane.output shows
+// the hab follows it, else the bells could go by before it does.
 func TestActivityEvents(t *testing.T) {
 	e := newHabEnv(t, 0)
 	cc := e.control()
-	pane := e.spawn(cc, "read x; printf 'out\\a\\a'; for i in 1 2 3 4 5 6 7 8 9; do echo $i; done; exec sleep 600")
+	pane := e.spawn(cc, "stty -icanon min 0 time 1; while [ -z \"$(dd bs=1 count=1 2>/dev/null)\" ]; do printf .; done; "+
+		"printf 'out\\a\\a'; for i in 1 2 3 4 5 6 7 8 9; do echo $i; done; exec sleep 600")
 	ec := e.control()
 	call(t, ec, "events.subscribe", api.SubscribeParams{Scope: api.Scope{Kind: api.ScopeKindHost}}, nil)
 	type seen struct {
@@ -62,7 +65,14 @@ func TestActivityEvents(t *testing.T) {
 			got <- s
 		}
 	}()
-	call(t, cc, "pane.input", api.InputParams{Pane: pane, Text: "go\r"}, nil)
+	var before int
+	waitUntil(t, "the hab to follow the pane's output", func() bool {
+		s := <-got
+		got <- s
+		before = len(s.outputs)
+		return before > 0
+	})
+	call(t, cc, "pane.input", api.InputParams{Pane: pane, Text: "g"}, nil)
 	var last seen
 	waitUntil(t, "two bells and output past the burst", func() bool {
 		s := <-got
@@ -80,7 +90,7 @@ func TestActivityEvents(t *testing.T) {
 		}
 		return false
 	})
-	if len(last.outputs) > 3 {
-		t.Errorf("%d pane.output events for one burst, want at most a few (one a second)", len(last.outputs))
+	if n := len(last.outputs) - before; n > 3 {
+		t.Errorf("%d pane.output events for one burst, want at most a few (one a second)", n)
 	}
 }
