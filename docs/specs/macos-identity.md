@@ -881,7 +881,12 @@ cause is LaunchServices, checked on the same Mac:
   registered it, and `lsregister -u` removed it again.
 - After an uninstall the dump kept records for the deleted build paths.
 
-So the product path was registered, but only as a side effect of the job's first start. Install
+- That side effect is not reliable. In a later install of a notarized build from before this
+  change, the hab copy was registered and the holder copy was still missing from the dump 20 s
+  after install, while its holder ran a pane. `tccutil reset All` of the holder id failed with
+  -10814.
+
+So the product path was registered only as a side effect of a job's start, and not always. Install
 now registers each build copy itself and unregisters it before the build goes (6.1). With that
 change, `scripts/service-check.sh` checks the dump after install, after the retire, and after
 uninstall. Proof kits keep every installed state under `~/Library/Application Support`.
