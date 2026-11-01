@@ -6,14 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/detect"
 	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/link"
+	"github.com/noahkiss/flightdeck/internal/opencode"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
@@ -60,6 +63,9 @@ type agentService struct {
 	// answering, if set, hears of an answer about to go out and, through done, whether it did:
 	// the push notifier names the client when it withdraws the banner (app.md 7.5).
 	answering func(pane, request, client string, allow bool) (done func(ok bool))
+	// opencode reaches the private server of an opencode pane gff-hab started: sends and
+	// answers go through its API, not the terminal. Nil: none.
+	opencode *opencodeServers
 
 	mu      sync.Mutex
 	sending map[string]bool // panes a session.send holds until the turn starts
@@ -119,17 +125,23 @@ func (a *agentService) Send(ctx context.Context, client string, p api.SessionSen
 	if err != nil {
 		return agentErr(err)
 	}
-	writes, err := harness.MessageWrites(st.Harness, p.Text)
-	if err != nil {
-		return agentErr(err)
-	}
-	if taken, err := a.writeAll(ctx, ss.Pane, writes...); err != nil {
-		if taken == 0 {
+	if c, ok := a.opencode.Client(ss.Pane); ok && st.Harness == detect.KindOpencode {
+		if err := a.promptOpencode(ctx, c, st, p.Text); err != nil {
 			return err
 		}
-		// The paste is in the prompt but Enter was not sent: a retry must not paste it again.
-		e := control.Errorf(api.ErrorKindUnavailable, "the message reached the prompt of session %s but Enter was not sent (%v); press Enter in the terminal, or clear the prompt and send again with a new key", p.Session, err)
-		return control.Partial(e)
+	} else {
+		writes, err := harness.MessageWrites(st.Harness, p.Text)
+		if err != nil {
+			return agentErr(err)
+		}
+		if taken, err := a.writeAll(ctx, ss.Pane, writes...); err != nil {
+			if taken == 0 {
+				return err
+			}
+			// The paste is in the prompt but Enter was not sent: a retry must not paste it again.
+			e := control.Errorf(api.ErrorKindUnavailable, "the message reached the prompt of session %s but Enter was not sent (%v); press Enter in the terminal, or clear the prompt and send again with a new key", p.Session, err)
+			return control.Partial(e)
+		}
 	}
 	a.agents.Seen(ss.Pane)
 	a.logf("session %s: message sent (%s, client %s)", p.Session, p.Origin, client)
@@ -188,7 +200,16 @@ func (a *agentService) Answer(ctx context.Context, client string, p api.Approval
 	a.holdMu.Lock() // a hook that opened this request has registered its wait by now
 	written, ok := a.gate.Answer(p.Pane, p.Request, harness.Decision{Allow: allow})
 	a.holdMu.Unlock()
-	if ok {
+	oc, server := a.opencode.Client(p.Pane)
+	if !ok && server && st.Harness == detect.KindOpencode {
+		how = "through the opencode server"
+		sent = true // a reply that fails may still have reached the server
+		a.agents.Sent(p.Pane, p.Request)
+		if err := a.replyOpencode(ctx, oc, p, st, allow); err != nil {
+			a.agents.Unsent(p.Pane, p.Request)
+			return err
+		}
+	} else if ok {
 		select {
 		case err := <-written:
 			if err != nil {
@@ -242,6 +263,50 @@ func (a *agentService) Answer(ctx context.Context, client string, p api.Approval
 		a.agents.Unsent(p.Pane, p.Request)
 	}
 	return err
+}
+
+// opencodeTimeout bounds one call to an opencode server.
+const opencodeTimeout = 5 * time.Second
+
+// promptOpencode sends a message to the pane's opencode session through its server's prompt
+// API (harness-adapters.md, opencode, built choices). The TUI is a client of the same server
+// and shows the message as the owner's turn.
+func (a *agentService) promptOpencode(ctx context.Context, c *opencode.Client, st api.AgentState, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return control.Errorf(api.ErrorKindInvalid, "the message is empty")
+	}
+	if st.Session == "" {
+		return control.Errorf(api.ErrorKindUnavailable, "opencode has no session yet; type the first message in its terminal")
+	}
+	ctx, cancel := context.WithTimeout(ctx, opencodeTimeout)
+	defer cancel()
+	if err := c.Prompt(ctx, st.Session, text); err != nil {
+		if opencode.NotFound(err) {
+			return control.Errorf(api.ErrorKindConflict, "opencode session %s is gone: %v", st.Session, err)
+		}
+		return control.Errorf(api.ErrorKindUnavailable, "%v", err)
+	}
+	return nil
+}
+
+// replyOpencode answers a permission request through the pane's opencode server: once for
+// allow, reject for deny. A request a child session asked is answered under that session. A
+// request the server no longer has was answered elsewhere (in the TUI) or ended.
+func (a *agentService) replyOpencode(ctx context.Context, c *opencode.Client, p api.ApprovalAnswerParams, st api.AgentState, allow bool) error {
+	session := firstNonEmpty(a.opencode.requestSession(p.Pane, p.Request), st.Session)
+	decision, message := opencode.ReplyOnce, ""
+	if !allow {
+		decision, message = opencode.ReplyReject, "The owner denied this request from Flightdeck."
+	}
+	ctx, cancel := context.WithTimeout(ctx, opencodeTimeout)
+	defer cancel()
+	if err := c.Reply(ctx, session, p.Request, decision, message); err != nil {
+		if opencode.NotFound(err) {
+			return control.Errorf(api.ErrorKindConflict, "opencode has no open request %s: it was answered in the terminal, or it ended", p.Request)
+		}
+		return control.Errorf(api.ErrorKindUnavailable, "%v", err)
+	}
+	return nil
 }
 
 // readBack waits for the request to resolve after an answer. Success needs a resolution by a

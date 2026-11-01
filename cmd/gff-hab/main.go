@@ -18,6 +18,7 @@
 //	gff-hab hook [-t ms] <harness> [event] < payload
 //	gff-hab hook -print <harness> [-command name]
 //	gff-hab probe -nonce n -checks grant,... [-request grant]
+//	gff-hab opencode-pane -port n [--] [opencode argv]
 //	gff-hab install   [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
 //	                  [-unit-dir dir] [-hab-bin path] [-holder-bin path] [-dry-run]
 //	gff-hab uninstall [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
@@ -81,8 +82,10 @@ import (
 	"github.com/noahkiss/flightdeck/internal/gitstatus"
 	"github.com/noahkiss/flightdeck/internal/habkey"
 	"github.com/noahkiss/flightdeck/internal/harness"
+	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/link"
+	"github.com/noahkiss/flightdeck/internal/opencode"
 	"github.com/noahkiss/flightdeck/internal/panesize"
 	"github.com/noahkiss/flightdeck/internal/peers"
 	"github.com/noahkiss/flightdeck/internal/service"
@@ -113,6 +116,7 @@ const usage = `usage:
   gff-hab statusline claude [-timeout d] [-- command...] < status-line input
   gff-hab statusline -print claude [-command name] [-wrap command]
   gff-hab probe -nonce n -checks grant,... [-request grant]
+  gff-hab opencode-pane -port n [--] [opencode argv]
   gff-hab install   [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
                     [-unit-dir dir] [-hab-bin path] [-holder-bin path] [-dry-run]
   gff-hab uninstall [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
@@ -132,6 +136,9 @@ func main() {
 	}
 	if os.Args[1] == "probe" {
 		os.Exit(probeCmd(os.Args[2:]))
+	}
+	if os.Args[1] == "opencode-pane" {
+		os.Exit(opencodePaneCmd(os.Args[2:]))
 	}
 	var err error
 	switch os.Args[1] {
@@ -382,6 +389,10 @@ func serve(args []string) error {
 		logger.Print(msg)
 	}
 	tokens := hook.NewTokens(secret, livePane(lk))
+	// opencode panes gff-hab starts run a private server; gff-hab follows each one
+	// (harness-adapters.md, opencode).
+	ocs := newOpencodeServers(dir, secret, agents, logger.Printf)
+	defer ocs.Close()
 	// Usage readings per harness account (app.md 14): served always; fed by the adapters.
 	usageStore := habusage.NewStore(func(e structure.Event) {
 		if s := srv.Load(); s != nil {
@@ -416,12 +427,16 @@ func serve(args []string) error {
 			home = "/"
 		}
 		acts = &actions{
-			sp:      &spawner{lk: lk, tokens: tokens, hookSock: hpath},
-			store:   store,
-			getenv:  os.Getenv,
-			environ: func() []string { return basePaneEnv(os.Environ(), runtime.GOOS) },
-			home:    home,
-			refresh: repos.Refresh,
+			sp:       &spawner{lk: lk, tokens: tokens, hookSock: hpath},
+			store:    store,
+			getenv:   os.Getenv,
+			environ:  func() []string { return basePaneEnv(os.Environ(), runtime.GOOS) },
+			home:     home,
+			refresh:  repos.Refresh,
+			opencode: ocs,
+		}
+		if exe, err := os.Executable(); err == nil {
+			acts.(*actions).exe = exe
 		}
 		// The chat view reads each session's harness transcript where the harness writes it.
 		claudeDir, err := transcript.ClaudeConfigDir(os.Getenv)
@@ -449,8 +464,13 @@ func serve(args []string) error {
 				return s != nil && s.Watching(session)
 			},
 			logf: logger.Printf,
+			opencode: func(pane string) (*opencode.Client, string, bool) {
+				c, ok := ocs.Client(pane)
+				return c, ocs.version(pane), ok
+			},
 		})
 		defer chats.Close()
+		ocs.dirty = chats.dirty
 		chat = chats
 		caps = append(caps, "transcripts")
 		// Commands from OSC 133 marks (hab-logic-api.md 2.5): command.updated events are read
@@ -466,7 +486,7 @@ func serve(args []string) error {
 		commands = commandService{lk}
 		caps = append(caps, "commands")
 		agentSvc = &agentService{store: store, agents: agents, gate: harness.NewGate(pwait), input: linkQueuer{lk}, logf: logger.Printf,
-			answering: pushes.answering}
+			answering: pushes.answering, opencode: ocs}
 		agentCalls = agentSvc
 		// Why a pane shows its state (harness-adapters.md, Detection): read only.
 		mdir := filepath.Join(dir, "manifests")
@@ -597,6 +617,7 @@ func serve(args []string) error {
 		stopWatch := lk.Watch(func(n link.Notice) {
 			switch n.Kind {
 			case link.PaneGone:
+				ocs.forget(n.Pane.UUID.String())
 				agents.Forget(n.Pane.UUID.String())
 				pushes.forget(n.Pane.UUID.String())
 				mgr.Forget(n.Pane.UUID.String())
@@ -609,6 +630,15 @@ func serve(args []string) error {
 			}
 		})
 		defer stopWatch()
+		// The opencode servers of panes that outlived the last gff-hab.
+		ocs.load(func(pane string) (hp.UUID, bool) {
+			u, ok := parseUUID(pane)
+			if !ok {
+				return u, false
+			}
+			_, live := livePane(lk)(u)
+			return u, live
+		})
 		// Replays that ended before the watcher was added: the last report of each.
 		for _, n := range lk.ReplayedReports() {
 			agents.Report(n.Pane.UUID.String(), n.Report, time.Now().UnixMilli(), false)

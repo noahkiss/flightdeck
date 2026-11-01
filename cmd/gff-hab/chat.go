@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/detect"
+	"github.com/noahkiss/flightdeck/internal/opencode"
 	"github.com/noahkiss/flightdeck/internal/structure"
 	"github.com/noahkiss/flightdeck/internal/transcript"
 )
@@ -54,16 +56,28 @@ type chatConfig struct {
 	every   time.Duration    // poll interval; default chatPoll
 	idle    time.Duration    // default chatIdle
 	now     func() time.Time // default time.Now
+	// opencode returns the client of an opencode pane's server, and its version; nil: none.
+	// An opencode session's conversation is read through that server, never from a file.
+	opencode func(pane string) (c *opencode.Client, version string, ok bool)
+}
+
+// chatSource is a conversation a chat.page reads: a transcript file, or an opencode server.
+type chatSource interface {
+	Page(ctx context.Context, before string, limit int) ([]api.ChatMessage, bool, string, error)
+	Since(ctx context.Context, cursor string, limit int) ([]api.ChatMessage, bool, string, error)
+	Refresh() error
+	Size() int64
 }
 
 // chatReader is one session's transcript reader. Its fields change under chatService.mu.
 type chatReader struct {
-	harness string // claude or codex: picks the file and the parser
+	harness string // claude, codex or opencode: picks the source and the parser
 	native  string
-	r       *transcript.Reader // nil while the file is not written: the poll opens it when it is
-	paged   time.Time          // the last chat.page
-	size    int64              // bytes read, at the last poll
-	grew    time.Time          // when size last changed, or when the reader was made
+	pane    string     // the pane the agent ran in, for opencode's change notices
+	r       chatSource // nil while the file is not written: the poll opens it when it is
+	paged   time.Time  // the last chat.page
+	size    int64      // bytes read, at the last poll
+	grew    time.Time  // when size last changed, or when the reader was made
 }
 
 func newChatService(cfg chatConfig) *chatService {
@@ -178,7 +192,7 @@ func (c *chatService) unneeded(id string, cr chatReader, now time.Time) bool {
 	return now.Sub(cr.grew) >= c.idle
 }
 
-func (c *chatService) open(harness, id, path string, fromEmpty bool) *transcript.Reader {
+func (c *chatService) open(harness, id, path string, fromEmpty bool) chatSource {
 	cfg := transcript.Config{Path: path, Session: id, Logf: c.logf, OnChange: c.changed, FromEmpty: fromEmpty}
 	if harness == detect.KindCodex {
 		return transcript.NewCodex(cfg)
@@ -189,7 +203,7 @@ func (c *chatService) open(harness, id, path string, fromEmpty bool) *transcript
 // reader returns the transcript reader of a gff-hab session, opening it on first use. A nil
 // reader with no error means the transcript is not written yet; the poll opens it when it
 // appears and sends its messages as events.
-func (c *chatService) reader(id string) (*transcript.Reader, error) {
+func (c *chatService) reader(id string) (chatSource, error) {
 	sess, ok := c.session(id)
 	if !ok {
 		return nil, control.Errorf(api.ErrorKindNotFound, "no session %s", id)
@@ -197,6 +211,9 @@ func (c *chatService) reader(id string) (*transcript.Reader, error) {
 	var harness, native string
 	if sess.Pane != "" {
 		if st, ok := c.agent(sess.Pane); ok && st.Session != "" {
+			if st.Harness == detect.KindOpencode {
+				return c.opencodeReader(id, sess.Pane, st.Session)
+			}
 			if st.Harness != detect.KindClaude && st.Harness != detect.KindCodex {
 				return nil, control.Errorf(api.ErrorKindUnavailable, "session %s runs %s, which has no transcript reader yet", id, st.Harness)
 			}
@@ -238,6 +255,51 @@ func (c *chatService) reader(id string) (*transcript.Reader, error) {
 	r := c.open(harness, id, path, fromEmpty)
 	c.readers[id] = &chatReader{harness: harness, native: native, r: r, paged: now, grew: now}
 	return r, nil
+}
+
+// opencodeReader returns the reader of an opencode session, read through its pane's server
+// (harness-adapters.md, opencode, built choices). A pane whose opencode gff-hab did not start
+// has no server gff-hab knows, so no conversation.
+func (c *chatService) opencodeReader(id, pane, native string) (chatSource, error) {
+	if c.opencode == nil {
+		return nil, control.Errorf(api.ErrorKindUnavailable, "session %s runs opencode, and this gff-hab reads no opencode server", id)
+	}
+	client, version, ok := c.opencode(pane)
+	if !ok {
+		return nil, control.Errorf(api.ErrorKindUnavailable, "session %s runs an opencode gff-hab did not start, so its server is unknown; start it with session.create harness opencode", id)
+	}
+	now := c.now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cr := c.readers[id]; cr != nil && cr.native == native && cr.r != nil {
+		cr.paged = now
+		return cr.r, nil
+	}
+	r := transcript.NewOpencode(transcript.OpencodeConfig{
+		Session: id, Logf: c.logf, OnChange: c.changed,
+		Fetch: func(ctx context.Context, cursor string) ([]json.RawMessage, string, error) {
+			ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			page, err := client.Messages(ctx, native, cursor, transcript.OpencodePage)
+			return page.Data, page.Cursor.Next, err
+		},
+	})
+	r.SetVersion(version)
+	c.readers[id] = &chatReader{harness: detect.KindOpencode, native: native, pane: pane, r: r, paged: now, grew: now}
+	return r, nil
+}
+
+// dirty tells the opencode readers of a pane that its server reported a change.
+func (c *chatService) dirty(pane string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, cr := range c.readers {
+		if cr.pane == pane {
+			if r, ok := cr.r.(*transcript.OpencodeReader); ok {
+				r.MarkDirty()
+			}
+		}
+	}
 }
 
 // changed sends one chat.message event per added or changed message.
