@@ -50,8 +50,7 @@ change, plus a nightly macOS end-to-end run). Which tests we keep, and why, is i
 - Swift and SwiftUI work happens on a Mac, with Xcode and the simulator.
 - Signing and release builds will move to CI once it exists.
 
-Go is pinned in `.go-version` and Zig in `mise.toml` (mise). The repo layout and the libghostty
-build are in `docs/layout.md`.
+The repo layout and the libghostty build are in `docs/layout.md`.
 
 | Command | What it does |
 |---|---|
