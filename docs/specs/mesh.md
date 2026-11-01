@@ -340,6 +340,21 @@ the client side: a client connects to every hab itself; no hab relays (`hab-logi
   can already hold a later change than the event just read. A client redraws from the model on
   each event; the next event says what changed again. An event that changed no copy
   (`pane.output`, an old revision) keeps the model as it was.
+- **A replaced host keeps its cache.** When `hosts.Set.Reload` replaces a host's connection (new
+  endpoints, pin or transport), the new one starts Connecting with the old one's last welcome
+  and structure. A host that was down keeps its rows, stale, and an online one does not blink
+  out (`gff-client.md` 4.2). Input stays off until the new connection's snapshot arrives. If
+  the new pin refuses the hab, the host fails and its rows hide, as for any failed host.
+- **Event status comes from the stream.** `Event.Status` is the host's status after that
+  update, worked out from the updates alone: Connecting until the host first connects since it
+  was added or replaced, then Offline while it is not online. `Event.Err` is the update's own
+  error. The model may hold a later status already, so an offline event read after a fast
+  reconnect still says offline. A host wrapped by `hosts.Wrap` while offline reports
+  Connecting, not Offline, until its first drop or connect: a label only.
+- **Close.** `Merger.Close` closes the Set and ends `Events` at once, dropping events not yet
+  read, even when nobody reads them. The Merger still reads the Set's updates to their end, so
+  the Set finishes too. `Done` closes when everything has stopped: after `Close`, or once the
+  Set has closed and `Events` was read to its end. A client that drops a Merger calls `Close`.
 - **iOS.** `scripts/ios-build-check.sh` builds the package and its imports as a C archive for
   iOS on a Mac (device, or `-sim`). The app links no Go yet; this only proves the build.
 
@@ -349,6 +364,20 @@ Limits, at the bar of herdr, Rex and Paseo:
   sessions, not tuned past that.
 - gff's workspace still reads `hosts.Set` and `board` directly; it already dims offline rows and
   refuses their actions. Moving it onto `merge.Merger` is a later step.
+- The event queue is unbounded: `pane.output` and `pane.activity` pile up while a client stops
+  reading. Coalescing them per key is not done yet.
+
+Left for the project-identity `/consensus` (`logbook.md` 3), not decided here:
+
+- **Fork workflow.** A fork's clone (origin is the owner's fork, upstream is the original) and a
+  clone of the original (origin is the original) get different keys, since the hab picks origin
+  (`hab-logic-api.md` 2.2, 3.9). One project shows as two groups. Falling back to the root commit
+  would merge them, and would also merge real forks that went their own way. herdr, Paseo and
+  Rex do not group across hosts by repository identity, so they give no answer.
+- **Identity frozen at creation.** A project made from its root commit alone, with an origin
+  added later, keeps its `root:` key. The same repository on another host, made after the
+  remote was added, has a `remote:` key, so the two do not merge. Remote-less clones that share
+  a root commit do merge across hosts, as they do on one hab.
 
 ---
 

@@ -257,7 +257,8 @@ seq and storage, and it is not always reachable for sync. The hab it talks to is
 
 ## 3. Projects
 
-**/consensus** (project identity), as the plan asks.
+**/consensus** (project identity), as the plan asks. The client merge adds two items to it
+(`mesh.md` 4.5): the fork workflow and identity frozen at creation.
 
 ### 3.1 Identity
 
