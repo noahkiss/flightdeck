@@ -60,6 +60,7 @@ type conn struct {
 	chats    int // chat.page calls running, until their reply
 	outputs  int // command.output calls running, until their reply
 	contents int // content.* calls running, until their reply
+	speeches int // speech calls running or waiting for the decoder, until their reply
 
 	// ctx ends when the connection's read loop ends: calls running off the loop stop with it.
 	ctx    context.Context
@@ -451,6 +452,9 @@ func (c *conn) handleLine(line []byte) {
 	switch m.Method {
 	case "content.show", "content.list", "content.read", "content.diff":
 		c.handleContent(m)
+		return
+	case "speech.prepare", "speech.transcribe":
+		c.handleSpeech(m)
 		return
 	}
 	if isChannelMethod(m.Method) {

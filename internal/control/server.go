@@ -201,6 +201,7 @@ type Config struct {
 	Content      Content     // nil: the content.* methods answer unavailable
 	Channels     Channels    // nil: the channel and mail methods answer unavailable
 	Worktrees    Worktrees   // nil: the worktree.* methods answer unavailable
+	Speech       Speech      // nil: speech.prepare and speech.transcribe answer unavailable
 	// ApproversChanged, if set, is called with no lock held after a connection closes or
 	// changes its subscription, so Approvers may have dropped.
 	ApproversChanged func()
