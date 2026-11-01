@@ -93,6 +93,8 @@ var Methods = []Method{
 	{"push.unregister", "Drop a push token. Needs the push capability.", PushUnregisterParams{}, Empty{}},
 	{"usage.list", "The latest usage reading of each harness account on this hab.", UsageListParams{}, UsageReadings{}},
 	{"hab.stats", "CPU, memory, disk, battery and uptime of the host. Needs the host-stats capability.", HabStatsParams{}, HostStats{}},
+	{"command.list", "Read a page of a pane's shell commands, found by OSC 133 marks (spec 2.5). Needs the commands capability.", CommandListParams{}, CommandList{}},
+	{"command.output", "Read a run of one command's output from the holder's ring (spec 2.5). Needs the commands capability.", CommandOutputParams{}, CommandOutput{}},
 }
 
 // Notifications is every notification the server sends on a control connection.
@@ -118,6 +120,7 @@ var Events = []EventDef{
 	{"chat.message", "A chat message was appended or changed; the id is the message id. Ephemeral.", ChatMessage{}},
 	{"session.turn_end", "The agent's turn ended; the id is the session id. Ephemeral.", TurnEnd{}},
 	{"usage.updated", "An account's usage reading changed; the id is the account key. Ephemeral.", UsageAccount{}},
+	{"command.updated", "A pane's command started or ended; the id is the pane id (spec 2.5). Ephemeral.", Command{}},
 }
 
 // Frames is every data connection frame kind. A frame is the kind byte, a 4-byte big-endian
@@ -158,6 +161,7 @@ var Enums = map[string][]string{
 	"PlanStepStatus":  {"pending", "in_progress", "done"},
 	"PushEnvironment": {"development", "production"},
 	"PushKind":        {"permission", "question", "auth", "error", "done", "usage"},
+	"CommandState":    {"running", "done", "unknown"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per
@@ -176,5 +180,6 @@ var Translators = map[int]Translator{}
 
 // Capabilities lists the known capability strings (spec 3.4). "devices" means the hab's embedded
 // SSH server is on and the devices.* methods work (transport.md 9.4). "push" means the hab has
-// working push config (app.md 8.4). "host-stats" means hab.stats works.
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats"}
+// working push config (app.md 8.4). "host-stats" means hab.stats works. "commands" means the
+// command.* methods and the command.updated event work (spec 2.5).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands"}

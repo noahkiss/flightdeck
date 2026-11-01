@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/noahkiss/flightdeck/internal/cmdmarks"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/vt"
 )
@@ -37,9 +38,12 @@ type checkpoint struct {
 	Written  time.Time   `json:"written"`
 	// Len and CRC are the snapshot's length and CRC-32 (IEEE). A file that disagrees with them
 	// counts as no checkpoint.
-	Len      int    `json:"len"`
-	CRC      uint32 `json:"crc32"`
-	Snapshot []byte `json:"-"`
+	Len int    `json:"len"`
+	CRC uint32 `json:"crc32"`
+	// Commands is the pane's command list and mark state at Offset (hab-logic-api.md 2.5).
+	// Absent in a checkpoint from an older build: the list then starts empty.
+	Commands *cmdmarks.Saved `json:"commands,omitempty"`
+	Snapshot []byte          `json:"-"`
 }
 
 func checkpointPath(dir string, u hp.UUID) string {

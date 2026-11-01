@@ -5,8 +5,9 @@
 // that the CLI and tests use.
 //
 // session.create and pane.close run through Config.Actions, data.ticket and data connections
-// through Config.Data, pane.input through Config.Input, chat.page through Config.Chat, and the size
-// ownership and redraw methods through Config.Size. The devices methods and the calls later stages
+// through Config.Data, pane.input through Config.Input, chat.page through Config.Chat, the size
+// ownership and redraw methods through Config.Size, and command.list and command.output through
+// Config.Commands. The devices methods and the calls later stages
 // build answer "unavailable", with a hint that names the stage.
 package control
 
@@ -98,6 +99,19 @@ type Chat interface {
 	ChatPage(ctx context.Context, p api.ChatPageParams) (api.ChatMessages, error)
 }
 
+// EventCommandUpdated is the event type of a command that started or ended (spec 2.5). Its id
+// is the pane id.
+const EventCommandUpdated api.EventType = "command.updated"
+
+// Commands serves a pane's shell commands found by OSC 133 marks (spec 2.5). An error that is
+// an *Error keeps its kind.
+type Commands interface {
+	// CommandList reads a page of a pane's commands.
+	CommandList(p api.CommandListParams) (api.CommandList, error)
+	// CommandOutput reads a run of one command's output from the holder's ring.
+	CommandOutput(ctx context.Context, p api.CommandOutputParams) (api.CommandOutput, error)
+}
+
 // Config is what New needs. Source is required.
 type Config struct {
 	Build        string
@@ -105,11 +119,12 @@ type Config struct {
 	DeviceID     string   // the hab's host-key fingerprint; sent in every welcome
 	Capabilities []string // strings for the features this hab offers (spec 3.4)
 	Source       Source
-	Actions      Actions // nil: session.create and pane.close answer unavailable
-	Data         Data    // nil: data.ticket answers unavailable and a data hello is rejected
-	Input        Input   // nil: pane.input answers unavailable
-	Size         Size    // nil: the size ownership and redraw methods answer unavailable
-	Chat         Chat    // nil: chat.page answers unavailable
+	Actions      Actions  // nil: session.create and pane.close answer unavailable
+	Data         Data     // nil: data.ticket answers unavailable and a data hello is rejected
+	Input        Input    // nil: pane.input answers unavailable
+	Size         Size     // nil: the size ownership and redraw methods answer unavailable
+	Chat         Chat     // nil: chat.page answers unavailable
+	Commands     Commands // nil: command.list and command.output answer unavailable
 	// ActionTimeout bounds one Actions call. Default 30 s.
 	ActionTimeout time.Duration
 

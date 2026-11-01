@@ -59,7 +59,7 @@ The repo layout and the libghostty build are in `docs/layout.md`.
 | `make test` | Build libghostty, then run every Go test with `-tags ghostty` |
 | `make build`, `make vet` | Build or vet every package with `-tags ghostty` |
 | `make test-pure` | Run the Go tests without cgo or libghostty |
-| `make race` | Run the holder, holderproto, holderclient, holderreg, structure, link, control, datastream, panesize, termq, harness, hook, gitstatus, transcript, service and `cmd` tests with `-race -count=3` |
+| `make race` | Run the holder, holderproto, holderclient, holderreg, structure, link, control, datastream, panesize, termq, cmdmarks, harness, hook, gitstatus, transcript, service and `cmd` tests with `-race -count=3` |
 | `make fuzz [FUZZTIME=30s]` | Run each holderproto fuzz target for `FUZZTIME` in turn (nightly) |
 | `make check-pure` | Fail when a package other than `internal/vt/ghostty` needs cgo |
 | `make check-gen` | Fail when a generated file is stale |
@@ -81,6 +81,7 @@ The repo layout and the libghostty build are in `docs/layout.md`.
 | `go test -race ./internal/harness/... ./internal/hook/...` | Hook fixtures per harness to the exact `agent.state` stream, precedence and ordering rules, the endpoint over a real socket into a control connection |
 | `go test -race ./internal/gitstatus/` | Project git status with real git in temp folders (skips with no git): ahead and behind against a local bare upstream, a branch switch seen by the ref poll, a folder outside a repository, a hung git that times out, no event without a change |
 | `go test -race ./internal/transcript/` | Claude Code transcript reader over hand-written fixtures (`testdata/claude-*.jsonl`, expected messages in `.chat.json`; `-update` rewrites them): each record type, unknown records as placeholders with a warning, version drift, a half-written last line, cursor resume, a rewritten file and its reset event, an idle read that allocates no buffer |
+| `go test -race ./internal/cmdmarks/ && go test -race -run TestCommandMarks ./cmd/gff-hab` | OSC 133 commands: marks split byte by byte and at random, nested shells, fake and malformed marks, the bounds; then a real bash and zsh (skipped when absent) running three commands, each command's output read back from the ring, the list across restarts |
 | `go test ./internal/detect/...` | Detection tests: process and screen matching for Claude Code, Codex and opencode, refresh, version warnings |
 | `go test -race ./internal/control/... ./cmd/gff-hab/...` | Control connection tests: seq and epoch rules, backlog close, the binary over a real socket and over `connect` |
 | `go test ./internal/link/` | Holder link end-to-end tests: real holder, the link as its own process, restarted by plan and SIGKILL; `-tags ghostty` uses libghostty. `GFF_RESTART_LOOP=200` sets the restart count (nightly) |

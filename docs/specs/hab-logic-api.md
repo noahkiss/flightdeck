@@ -331,6 +331,133 @@ Under the zellij backend the terminal view attaches a real zellij client. Seq an
 by gff-hab, never taken from zellij. Whether this interim backend exists at all is Decision: open
 (Q1).
 
+### 2.5 Commands from prompt marks (OSC 133)
+
+The console shows each shell command as a card (`app.md` 6). A shell that emits the four OSC 133
+marks tells gff-hab where each command's prompt, typed line, output and end fall in the pane's
+byte stream. gff-hab finds the marks; the holder parses nothing (holder spec Q1). A command's
+bytes come from a bounded replay of the holder's ring.
+
+**The marks.** Each is an OSC: `ESC ] 1 3 3 ; <letter> [; <params>]`, ended by BEL or by
+`ESC \` (ST).
+
+| Mark | Meaning | Params gff-hab reads |
+|---|---|---|
+| `A` | Prompt start | none |
+| `B` | Command start: the typed line follows | none |
+| `C` | Output start: the command runs | `cmdline_url=<percent-encoded command line>`, when present |
+| `D` | Command end | the first param, when it is a decimal exit status |
+
+Other letters and other params are ignored.
+
+**Finding them.** A small scanner follows the stream byte by byte, without a VT parser, so a
+mark split across any number of reads is found once, at the same offsets.
+
+- It follows OSC strings as a terminal does: BEL or ST ends one; CAN or SUB aborts it; an ESC
+  that is not followed by `\` aborts it and starts a new escape sequence. An OSC that is not
+  OSC 133 is followed to its end and dropped.
+- A mark's payload is held up to 4 KiB. A longer OSC 133 is malformed: it is followed to its end
+  and dropped. So any output, however hostile, costs the scanner at most 4 KiB.
+- A payload with a byte below 0x20 or the byte 0x7f, a letter other than A to D, or a letter
+  followed by something other than `;` or the end, is malformed and dropped.
+- A gap in the stream (bytes that never arrived) resets the scanner, and a held candidate is
+  dropped.
+
+**The command list.** A pane has a list of commands, oldest first. A command starts at a `C`
+mark. Its fields:
+
+- **id**: the offset of its `C` mark. It is unique in the pane and stays the same when gff-hab
+  rebuilds the list from the ring after a restart.
+- **prompt**: the offset of the `A` mark before it, and **input**: the offset just after the
+  `B` mark, when the shell sent them for this command.
+- **output**: the offset just after the `C` mark; the command's output starts there.
+- **end**: where the output ends. A `D` mark ends it at the `D` mark's first byte, so the
+  command's bytes, from output to end, hold its output only, without any mark.
+- **state**: `running` until it ends; `done` after a `D`; `unknown` when something other than
+  a `D` closed it (see below). **exit** is the `D` mark's status, when it had one.
+- **text**: the command line from `cmdline_url`, decoded, at most 4 KiB, when the shell sent it.
+- **started_at**, **ended_at**: when gff-hab read the `C` and the closing mark as live output.
+  Marks found in replayed bytes (after a restart) carry no time: it is unknown, never guessed.
+
+**Rules, one state per pane.** The tracker is in one of: idle, prompt (after `A`), typing (after
+`B`) or running (after `C`).
+
+| Mark | In state | Result |
+|---|---|---|
+| `A` | running | The running command closes with state `unknown` at the `A` mark (`app.md` 6.2: a missing end). Then a new prompt |
+| `A` | any other | A new prompt; an earlier `A` or `B` with no `C` is forgotten |
+| `B` | prompt | Typing; input starts after the mark |
+| `B` | idle or typing | Typing, with no prompt (or the newer input) |
+| `B` | running | Ignored |
+| `C` | idle, prompt or typing | A new command starts, running |
+| `C` | running | Ignored: one command runs at a time |
+| `D` | running | The command ends: `done`, with the exit status if present |
+| `D` | any other | Ignored. A shell sends one before its first prompt, and after an empty line |
+
+- **Nested shells.** A marked shell started from a marked shell (`bash` inside `zsh`): the inner
+  shell's first `A` closes the outer command (`bash`) as `unknown`, and the inner commands
+  become commands of their own. When the inner shell exits, the outer shell's `D` finds no
+  running command and is ignored. A nested shell without marks joins the running command until
+  marks return (`app.md` 6.2).
+- **Fake marks.** A program can print marks (`cat` of a file holding them). They are taken as
+  real: there is no nonce. The rules keep the list sound whatever arrives: commands never
+  overlap, their offsets only grow, and a stray `D` or `B` changes nothing. A fake `A` closes
+  the running command as `unknown`, and the shell's real `D` that follows is then ignored.
+- **A gap.** When bytes never arrived, a running command closes as `unknown` at the gap's start,
+  and the state goes to idle.
+
+**Bounds.** A pane keeps at most 1000 commands; past that the oldest is dropped. A command whose
+end has left the holder's ring is dropped too: its bytes are gone. A running command is never
+dropped by the ring, only by the count. A program that prints marks in a loop therefore costs at
+most 1000 small records per pane.
+
+**Restarts.** The list is saved with the pane's checkpoint, so a restart that replays from the
+checkpoint keeps it and goes on from the saved state. A screen rebuilt from the ring alone
+rebuilds the list from the marks still in the ring.
+
+**Reading a command's bytes.** `command.output` asks the pane's holder for a bounded replay
+(holder protocol 6, replay with *has to*) of the command's output range, at most 1 MiB per
+call. A running command's range ends at the bytes gff-hab holds now. When the ring has lost part
+of the range, the answer starts later and says so. The holder protocol does not change.
+
+Decision: proposed (this stage). Calls and the event: 3.9.
+
+#### Built choices (task-m845kpi9)
+
+- **Where.** `internal/cmdmarks` holds the scanner and the per-pane tracker (pure Go). The holder
+  link feeds each pane's tracker from one call in its byte path, after the parser, with live and
+  replayed bytes alike (`internal/link/commands.go`). `cmd/gff-hab/commands.go` serves the calls
+  and sends the events. The holder and its protocol are unchanged.
+- **Shapes.** `command.list` takes `pane`, `before` (a command id) and `limit` (default 100, at
+  most 1000), and returns `commands`, oldest first, and `more` when older ones exist: it pages
+  backwards like `chat.page`. `command.output` takes `pane`, `command` (the id), `from` (an offset;
+  default the output's start) and `limit` (bytes; default and most 1 MiB), and returns `command`
+  as it stood, `data`, the range `[start, end)` it covers, `gap` when the ring had lost bytes
+  before `start`, and `more` when output goes on past `end` (the limit cut it, or the command
+  runs). A `from` outside the command's range is clamped to it. An unknown command answers
+  `not_found`; a lost pane `unavailable`. `command.output` runs off the read loop, at most 4 at a
+  time per connection.
+- **Times** are RFC 3339 with nanoseconds, in UTC, from gff-hab's clock when it read the mark as
+  live output.
+- **Events.** `command.updated` carries one `Command`; its id is the pane id, so a scope that
+  holds the pane gets it. The link notes which commands changed; `gff-hab` reads the changes and
+  sends them at most every 200 ms, at most 32 per pane per flush (the newest). The last event of
+  a command is its final state; a client that missed some reads `command.list`.
+- **Saved.** The checkpoint header gains an optional `commands` field: the list and the
+  tracker's state (`phase`, the pending `prompt` and `input`). A checkpoint without it (an older
+  build) starts an empty list at its offset.
+- **The ring.** The link drops a command once its end is at or before the pane's offset minus
+  the holder's ring size (the welcome's ring size).
+- **A read the ring overtakes.** When the holder skips bytes in the middle of a bounded replay
+  (the ring moved on while it sent), the bytes cannot be placed, so gff-hab asks again, up to
+  three times; the next replay starts after the lost bytes and says gap.
+- **Test snippet.** `cmd/gff-hab/testdata/marks` holds a bash rcfile and a zsh `.zshrc` that emit
+  the marks; they are test fixtures, not the console's snippet. zsh prints its partial-line mark
+  (`PROMPT_SP`, `PROMPT_CR`) before `precmd`, so that mark would land inside a command's output
+  range before `D`; the fixture turns both off. The shipped snippet has to deal with it.
+- **Not built here:** the working directory of a command (OSC 7), text from bash (bash sends no
+  command line in its marks without more setup), and a nonce against fake marks.
+
 ---
 
 ## 3. API rules
@@ -586,6 +713,8 @@ names the stage, and an event is defined but never sent.
 | `push.unregister` | Drop a token (capability `push`) | Part 6 stage 7 |
 | `usage.list` | The latest usage reading of each harness account | Part 4 (usage readings) |
 | `hab.stats` | CPU, memory, disk, battery and uptime of the host (capability `host-stats`) | Part 5 stage 5 |
+| `command.list` | A page of a pane's shell commands, found by OSC 133 marks (capability `commands`, 2.5) | Yes (task-m845kpi9) |
+| `command.output` | A run of one command's output, from a bounded replay of the holder's ring (capability `commands`, 2.5) | Yes (task-m845kpi9) |
 
 | Event | Purpose | Id | Sent from |
 |---|---|---|---|
@@ -594,15 +723,18 @@ names the stage, and an event is defined but never sent.
 | `chat.message` | A chat message was appended or changed in place | Message | Part 4 stage 5 (built for Claude Code) |
 | `session.turn_end` | The agent's turn ended; names the final message | Session | Part 4 stage 4 |
 | `usage.updated` | An account's usage reading changed | Account key | Part 4 (usage readings) |
+| `command.updated` | A pane's command started or ended (2.5) | Pane | Yes (task-m845kpi9) |
 
-All five events are ephemeral (3.5): they carry no revision, and a client applies them in seq
+All six events are ephemeral (3.5): they carry no revision, and a client applies them in seq
 order. A chat message lives in the transcript, not in gff-hab, so it has no stored revision
 either; an update repeats the message id and replaces the message. A scoped subscription gets a
 `chat.message` when the message's `session` is in its scope.
 
 Built: gff-hab sends no `revision` key on these events.
 
-New capabilities: `push` (the hab has working push config, `app.md` 8.4) and `host-stats`.
+New capabilities: `push` (the hab has working push config, `app.md` 8.4), `host-stats`, and
+`commands` (the `command.*` methods and the `command.updated` event work; a hab with the holder
+link sends it).
 
 Shapes the specs left open, and the choice taken (the smallest that serves both clients):
 

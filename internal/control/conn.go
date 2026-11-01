@@ -52,6 +52,7 @@ type conn struct {
 	lanes   map[string]*lane
 	waiting int // pane.input calls in lanes, until their reply
 	chats   int // chat.page calls running, until their reply
+	outputs int // command.output calls running, until their reply
 
 	// ctx ends when the connection's read loop ends: calls running off the loop stop with it.
 	ctx    context.Context
@@ -78,6 +79,10 @@ const maxWaitingInput = 256
 
 // maxRunningChat bounds the chat.page calls one connection may have running.
 const maxRunningChat = 16
+
+// maxRunningOutput bounds the command.output calls one connection may have running. Each holds
+// up to 1 MiB of output until its reply is queued.
+const maxRunningOutput = 4
 
 func newConn(s *Server, nc net.Conn, br *bufio.Reader) *conn {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -416,6 +421,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleChat(m)
 		return
 	}
+	if m.Method == "command.output" {
+		c.handleCommandOutput(m)
+		return
+	}
 	seq := c.currentSeq()
 	result, e := c.dispatch(m, seq)
 	c.reply(m, seq, result, e)
@@ -522,6 +531,54 @@ func (c *conn) handleChat(m message) {
 		}
 		page.Seq = api.Seq{Seq: seq}
 		c.reply(m, seq, page, nil)
+	}()
+}
+
+// handleCommandOutput checks a command.output call and runs it on its own goroutine: it waits
+// for a replay from the pane's holder, which queues behind that holder's live output, and the
+// read loop goes on meanwhile.
+func (c *conn) handleCommandOutput(m message) {
+	seq := c.currentSeq()
+	var p api.CommandOutputParams
+	if e := c.decodeUp(m, &p); e != nil {
+		c.reply(m, seq, nil, e)
+		return
+	}
+	switch {
+	case c.s.cfg.Commands == nil:
+		c.reply(m, seq, nil, appErr(api.ErrorKindUnavailable, hintNoActions, m.Method))
+		return
+	case p.Pane == "":
+		c.reply(m, seq, nil, appErr(api.ErrorKindInvalid, "command.output needs a pane"))
+		return
+	case p.Limit < 0:
+		c.reply(m, seq, nil, appErr(api.ErrorKindInvalid, "command.output limit must not be negative"))
+		return
+	}
+	c.mu.Lock()
+	if c.outputs >= maxRunningOutput {
+		c.mu.Unlock()
+		c.reply(m, seq, nil, appErr(api.ErrorKindUnavailable, "%d command.output calls already run on this connection", maxRunningOutput))
+		return
+	}
+	c.outputs++
+	c.mu.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(c.ctx, c.s.cfg.ActionTimeout)
+		defer cancel()
+		out, err := c.s.cfg.Commands.CommandOutput(ctx, p)
+		c.mu.Lock()
+		c.outputs--
+		c.mu.Unlock()
+		if err != nil {
+			c.reply(m, seq, nil, actionErr(m.Method, err))
+			return
+		}
+		if out.Data == nil {
+			out.Data = []byte{}
+		}
+		out.Seq = api.Seq{Seq: seq}
+		c.reply(m, seq, out, nil)
 	}()
 }
 
@@ -878,6 +935,31 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 			c.s.cfg.Size.Created(c.clientID, pane) // the creator owns the new pane (spec 6.5)
 		}
 		return api.SessionCreated{Seq: s, Session: session, Pane: pane}, nil
+	case "command.list":
+		var p api.CommandListParams
+		if e := c.decodeUp(m, &p); e != nil {
+			return nil, e
+		}
+		switch {
+		case c.s.cfg.Commands == nil:
+			return nil, appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
+		case p.Pane == "":
+			return nil, appErr(api.ErrorKindInvalid, "command.list needs a pane")
+		case p.Limit < 0 || p.Limit > 1000:
+			return nil, appErr(api.ErrorKindInvalid, "command.list limit must be 0 to 1000")
+		}
+		if p.Limit == 0 {
+			p.Limit = 100
+		}
+		res, err := c.s.cfg.Commands.CommandList(p)
+		if err != nil {
+			return nil, actionErr(m.Method, err)
+		}
+		if res.Commands == nil {
+			res.Commands = []api.Command{}
+		}
+		res.Seq = s
+		return res, nil
 	case "pane.close":
 		var p api.PaneRef
 		if e := c.decodeUp(m, &p); e != nil {

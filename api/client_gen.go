@@ -68,6 +68,12 @@ const (
 )
 
 const (
+	CommandStateRunning CommandState = "running"
+	CommandStateDone    CommandState = "done"
+	CommandStateUnknown CommandState = "unknown"
+)
+
+const (
 	DeviceKindHab     DeviceKind = "hab"
 	DeviceKindPhone   DeviceKind = "phone"
 	DeviceKindDesktop DeviceKind = "desktop"
@@ -173,6 +179,7 @@ const (
 	EventChatMessage    EventType = "chat.message"
 	EventSessionTurnEnd EventType = "session.turn_end"
 	EventUsageUpdated   EventType = "usage.updated"
+	EventCommandUpdated EventType = "command.updated"
 )
 
 // DecodeData decodes e.Data into the type its event type names. It returns
@@ -233,6 +240,10 @@ func (e Event) DecodeData() (any, error) {
 		return v, err
 	case EventUsageUpdated:
 		var v UsageAccount
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventCommandUpdated:
+		var v Command
 		err := json.Unmarshal(e.Data, &v)
 		return v, err
 	}
@@ -456,5 +467,19 @@ func (c Client) UsageList(ctx context.Context, params UsageListParams) (UsageRea
 func (c Client) HabStats(ctx context.Context, params HabStatsParams) (HostStats, error) {
 	var result HostStats
 	err := c.Caller.Call(ctx, "hab.stats", params, &result)
+	return result, err
+}
+
+// CommandList calls command.list. Read a page of a pane's shell commands, found by OSC 133 marks (spec 2.5). Needs the commands capability.
+func (c Client) CommandList(ctx context.Context, params CommandListParams) (CommandList, error) {
+	var result CommandList
+	err := c.Caller.Call(ctx, "command.list", params, &result)
+	return result, err
+}
+
+// CommandOutput calls command.output. Read a run of one command's output from the holder's ring (spec 2.5). Needs the commands capability.
+func (c Client) CommandOutput(ctx context.Context, params CommandOutputParams) (CommandOutput, error) {
+	var result CommandOutput
+	err := c.Caller.Call(ctx, "command.output", params, &result)
 	return result, err
 }

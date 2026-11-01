@@ -301,6 +301,7 @@ func serve(args []string) error {
 	var input control.Input
 	var sizes control.Size
 	var chat control.Chat
+	var commands control.Commands
 	var chats *chatService
 	var ds *datastream.Server
 	var mgr *panesize.Manager
@@ -347,6 +348,18 @@ func serve(args []string) error {
 		defer chats.Close()
 		chat = chats
 		caps = append(caps, "transcripts")
+		// Commands from OSC 133 marks (hab-logic-api.md 2.5): command.updated events are read
+		// from the link and sent at a bounded rate.
+		cmdEvents := newCommandEvents(lk, func(e structure.Event) {
+			if s := srv.Load(); s != nil {
+				s.Publish(e)
+			}
+		})
+		defer cmdEvents.Close()
+		stopCmds := lk.Watch(cmdEvents.notice)
+		defer stopCmds()
+		commands = commandService{lk}
+		caps = append(caps, "commands")
 	}
 	s := control.New(control.Config{
 		Build:        build,
@@ -359,6 +372,7 @@ func serve(args []string) error {
 		Input:        input,
 		Size:         sizes,
 		Chat:         chat,
+		Commands:     commands,
 		Logf:         logger.Printf,
 	})
 	srv.Store(s)

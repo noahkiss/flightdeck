@@ -617,8 +617,10 @@ func (l *Link) apply(p *pane, f hp.Frame) {
 	switch f := f.(type) {
 	case *hp.Output:
 		p.feed(l, f.Offset, f.Data, true)
+		notices = p.commandNotice(notices)
 	case *hp.ReplayData:
 		p.feed(l, f.Offset, f.Data, false)
+		notices = p.commandNotice(notices)
 	case *hp.ReplayEnd:
 		p.replayEnd(l, f)
 		defer l.releaseEnded(p)

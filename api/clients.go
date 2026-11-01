@@ -251,3 +251,55 @@ type UsageReadings struct {
 	Seq
 	Accounts []UsageAccount `json:"accounts"`
 }
+
+// --- Commands from prompt marks (hab-logic-api.md 2.5) ---
+
+// CommandState says how far a command got. An open set the server sends.
+type CommandState string
+
+// Command is one shell command found by its OSC 133 marks. Offsets are the pane's holder offsets.
+type Command struct {
+	ID        uint64       `json:"id" doc:"Offset of the command's output-start mark (C). Unique in the pane, and the same after a hab restart."`
+	State     CommandState `json:"state"`
+	Prompt    *uint64      `json:"prompt,omitempty" doc:"Offset of the prompt-start mark (A) before it. Absent when the shell sent none."`
+	Input     *uint64      `json:"input,omitempty" doc:"Offset just after the command-start mark (B): the typed line starts here. Absent when the shell sent none."`
+	Output    uint64       `json:"output" doc:"Offset just after the C mark: the first byte of output."`
+	End       *uint64      `json:"end,omitempty" doc:"Offset where the output ends: the command-end mark (D), or what closed the command. Absent while it runs."`
+	Exit      *int         `json:"exit,omitempty" doc:"Exit status from the D mark. Absent when the mark had none, or no D came."`
+	Text      string       `json:"text,omitempty" doc:"The command line, when the shell sent it in the C mark (cmdline_url)."`
+	StartedAt string       `json:"started_at,omitempty" doc:"RFC 3339 time the C mark arrived. Absent when the hab found the mark in replayed output."`
+	EndedAt   string       `json:"ended_at,omitempty" doc:"RFC 3339 time the command ended. Absent while it runs, or when unknown."`
+}
+
+// CommandListParams reads a page of a pane's commands.
+type CommandListParams struct {
+	Pane   string  `json:"pane"`
+	Before *uint64 `json:"before,omitempty" doc:"Command id: return the commands before it. Absent means the newest."`
+	Limit  int     `json:"limit,omitempty" doc:"Most commands to return. Default 100, at most 1000."`
+}
+
+// CommandList is a page of a pane's commands, oldest first.
+type CommandList struct {
+	Seq
+	Commands []Command `json:"commands"`
+	More     bool      `json:"more" doc:"True when older commands exist."`
+}
+
+// CommandOutputParams reads a run of one command's output bytes.
+type CommandOutputParams struct {
+	Pane    string  `json:"pane"`
+	Command uint64  `json:"command" doc:"Command id."`
+	From    *uint64 `json:"from,omitempty" doc:"Offset to read from. Absent means the output's start."`
+	Limit   int     `json:"limit,omitempty" doc:"Most bytes to return. Default and most 1 MiB."`
+}
+
+// CommandOutput is a run of a command's output, from the holder's ring.
+type CommandOutput struct {
+	Seq
+	Command Command `json:"command" doc:"The command as it stood when the bytes were read."`
+	Start   uint64  `json:"start" doc:"Offset of the first byte of data."`
+	End     uint64  `json:"end" doc:"Offset after the last byte of data; pass it as from to read on."`
+	Data    []byte  `json:"data" doc:"The output bytes in [start, end), marks excluded."`
+	Gap     bool    `json:"gap" doc:"True when the ring no longer held bytes before start."`
+	More    bool    `json:"more" doc:"True when output goes on past end: the limit cut it, or the command still runs."`
+}

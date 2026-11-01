@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/cmdmarks"
 	"github.com/noahkiss/flightdeck/internal/holderclient"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/termq"
@@ -73,10 +74,11 @@ type Screen struct {
 type NoticeKind int
 
 const (
-	PaneAdded   NoticeKind = iota + 1 // the link started following a pane, or one came back
-	PaneExited                        // the pane's child was reaped
-	PaneGone                          // the pane is lost or released
-	PaneResized                       // Resize changed the pane's size
+	PaneAdded    NoticeKind = iota + 1 // the link started following a pane, or one came back
+	PaneExited                         // the pane's child was reaped
+	PaneGone                           // the pane is lost or released
+	PaneResized                        // Resize changed the pane's size
+	PaneCommands                       // commands started or ended; read them with CommandChanges
 )
 
 // Notice is one pane change.
@@ -225,6 +227,8 @@ type pane struct {
 	// owner and reason tag every size change for the subscribers (SetOwner, spec 6.5).
 	owner  string
 	reason api.OwnerReason
+	// cmds finds the OSC 133 marks in the stream and keeps the pane's commands (commands.go).
+	cmds *cmdmarks.Tracker
 }
 
 // Bounds on a pane's answers to terminal queries waiting to be written. A program that floods
@@ -254,7 +258,7 @@ type inputReq struct {
 
 func newPane(u hp.UUID, snapRows int) *pane {
 	return &pane{uuid: u, ready: make(chan struct{}), subs: map[*Subscription]struct{}{}, snapRows: snapRows,
-		queries: termq.NewScanner(0), inWake: make(chan struct{}, 1)}
+		queries: termq.NewScanner(0), inWake: make(chan struct{}, 1), cmds: cmdmarks.New(0)}
 }
 
 func (p *pane) markReady() {
@@ -342,6 +346,7 @@ func (p *pane) prepare(l *Link, h *holderclient.Holder, pi hp.PaneInfo) (from ui
 			p.ckOff, p.ckValid, p.restored = ck.Offset, true, true
 			p.seq.reset()
 			p.queries.Reset(p.off) // a checkpoint is taken in the ground state only
+			p.cmds = restoreCommands(ck)
 			return p.off, back
 		}
 	}
@@ -359,6 +364,7 @@ func (p *pane) prepare(l *Link, h *holderclient.Holder, pi hp.PaneInfo) (from ui
 	p.ckValid, p.restored = false, false
 	p.seq.reset()
 	p.queries.Reset(p.off)
+	p.cmds = cmdmarks.New(p.off)
 	return p.off, back
 }
 
@@ -401,6 +407,7 @@ func (p *pane) feed(l *Link, off uint64, data []byte, live bool) {
 	}
 	p.parse(l, data, live)
 	p.seq.write(data)
+	p.findMarks(off, data, live)
 	p.off = end
 	p.buf = append(p.buf, data...)
 	if lim := l.cfg.BufferBytes; len(p.buf) > 2*lim {
@@ -919,6 +926,7 @@ func (p *pane) checkpoint(l *Link, force bool) error {
 	ck := &checkpoint{
 		Version: checkpointVersion, Pane: p.uuid.String(), Offset: p.off, Encoding: l.enc,
 		Cols: cols, Rows: rows, Suspect: p.suspect, Written: time.Now().UTC(), Snapshot: snap,
+		Commands: p.saveCommands(),
 	}
 	if p.holder != nil {
 		ck.Holder = p.holder.Instance()

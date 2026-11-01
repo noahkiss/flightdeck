@@ -19,7 +19,8 @@
     "transcripts",
     "devices",
     "push",
-    "host-stats"
+    "host-stats",
+    "commands"
   ],
   "methods": [
     {
@@ -975,6 +976,93 @@
       "x-params": {
         "$ref": "#/components/schemas/HabStatsParams"
       }
+    },
+    {
+      "name": "command.list",
+      "summary": "Read a page of a pane's shell commands, found by OSC 133 marks (spec 2.5). Needs the commands capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "before",
+          "description": "Command id: return the commands before it. Absent means the newest.",
+          "schema": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        {
+          "name": "limit",
+          "description": "Most commands to return. Default 100, at most 1000.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "pane",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CommandList"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CommandListParams"
+      }
+    },
+    {
+      "name": "command.output",
+      "summary": "Read a run of one command's output from the holder's ring (spec 2.5). Needs the commands capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "command",
+          "description": "Command id.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        {
+          "name": "from",
+          "description": "Offset to read from. Absent means the output's start.",
+          "schema": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        {
+          "name": "limit",
+          "description": "Most bytes to return. Default and most 1 MiB.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "pane",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CommandOutput"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CommandOutputParams"
+      }
     }
   ],
   "x-notifications": [
@@ -1097,6 +1185,13 @@
       "summary": "An account's usage reading changed; the id is the account key. Ephemeral.",
       "data": {
         "$ref": "#/components/schemas/UsageAccount"
+      }
+    },
+    {
+      "type": "command.updated",
+      "summary": "A pane's command started or ended; the id is the pane id (spec 2.5). Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/Command"
       }
     }
   ],
@@ -1602,6 +1697,188 @@
         "x-known-values": [
           "event_backlog",
           "shutdown"
+        ]
+      },
+      "Command": {
+        "type": "object",
+        "properties": {
+          "end": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Offset where the output ends: the command-end mark (D), or what closed the command. Absent while it runs."
+          },
+          "ended_at": {
+            "type": "string",
+            "description": "RFC 3339 time the command ended. Absent while it runs, or when unknown."
+          },
+          "exit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Exit status from the D mark. Absent when the mark had none, or no D came."
+          },
+          "id": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Offset of the command's output-start mark (C). Unique in the pane, and the same after a hab restart."
+          },
+          "input": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Offset just after the command-start mark (B): the typed line starts here. Absent when the shell sent none."
+          },
+          "output": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Offset just after the C mark: the first byte of output."
+          },
+          "prompt": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Offset of the prompt-start mark (A) before it. Absent when the shell sent none."
+          },
+          "started_at": {
+            "type": "string",
+            "description": "RFC 3339 time the C mark arrived. Absent when the hab found the mark in replayed output."
+          },
+          "state": {
+            "$ref": "#/components/schemas/CommandState"
+          },
+          "text": {
+            "type": "string",
+            "description": "The command line, when the shell sent it in the C mark (cmdline_url)."
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "output"
+        ]
+      },
+      "CommandList": {
+        "type": "object",
+        "properties": {
+          "commands": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Command"
+            }
+          },
+          "more": {
+            "type": "boolean",
+            "description": "True when older commands exist."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "commands",
+          "more"
+        ]
+      },
+      "CommandListParams": {
+        "type": "object",
+        "properties": {
+          "before": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Command id: return the commands before it. Absent means the newest."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Most commands to return. Default 100, at most 1000."
+          },
+          "pane": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pane"
+        ]
+      },
+      "CommandOutput": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "$ref": "#/components/schemas/Command",
+            "description": "The command as it stood when the bytes were read."
+          },
+          "data": {
+            "type": "string",
+            "contentEncoding": "base64",
+            "description": "The output bytes in [start, end), marks excluded."
+          },
+          "end": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Offset after the last byte of data; pass it as from to read on."
+          },
+          "gap": {
+            "type": "boolean",
+            "description": "True when the ring no longer held bytes before start."
+          },
+          "more": {
+            "type": "boolean",
+            "description": "True when output goes on past end: the limit cut it, or the command still runs."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "start": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Offset of the first byte of data."
+          }
+        },
+        "required": [
+          "seq",
+          "command",
+          "start",
+          "end",
+          "data",
+          "gap",
+          "more"
+        ]
+      },
+      "CommandOutputParams": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Command id."
+          },
+          "from": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Offset to read from. Absent means the output's start."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Most bytes to return. Default and most 1 MiB."
+          },
+          "pane": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pane",
+          "command"
+        ]
+      },
+      "CommandState": {
+        "type": "string",
+        "x-known-values": [
+          "running",
+          "done",
+          "unknown"
         ]
       },
       "CreditFrame": {

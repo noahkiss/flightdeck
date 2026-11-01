@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -431,6 +431,164 @@ public struct ClosingReason: RawRepresentable, Codable, Sendable, Hashable {
     public init(rawValue: String) { self.rawValue = rawValue }
     public static let eventBacklog = ClosingReason(rawValue: "event_backlog")
     public static let shutdown = ClosingReason(rawValue: "shutdown")
+}
+
+public struct Command: Codable, Sendable, Hashable {
+    /// Offset where the output ends: the command-end mark (D), or what closed the command. Absent while it runs.
+    public var end: UInt64?
+    /// RFC 3339 time the command ended. Absent while it runs, or when unknown.
+    public var endedAt: String?
+    /// Exit status from the D mark. Absent when the mark had none, or no D came.
+    public var exit: Int?
+    /// Offset of the command's output-start mark (C). Unique in the pane, and the same after a hab restart.
+    public var id: UInt64
+    /// Offset just after the command-start mark (B): the typed line starts here. Absent when the shell sent none.
+    public var input: UInt64?
+    /// Offset just after the C mark: the first byte of output.
+    public var output: UInt64
+    /// Offset of the prompt-start mark (A) before it. Absent when the shell sent none.
+    public var prompt: UInt64?
+    /// RFC 3339 time the C mark arrived. Absent when the hab found the mark in replayed output.
+    public var startedAt: String?
+    public var state: CommandState
+    /// The command line, when the shell sent it in the C mark (cmdline_url).
+    public var text: String?
+
+    enum CodingKeys: String, CodingKey {
+        case end = "end"
+        case endedAt = "ended_at"
+        case exit = "exit"
+        case id = "id"
+        case input = "input"
+        case output = "output"
+        case prompt = "prompt"
+        case startedAt = "started_at"
+        case state = "state"
+        case text = "text"
+    }
+
+    public init(end: UInt64? = nil, endedAt: String? = nil, exit: Int? = nil, id: UInt64, input: UInt64? = nil, output: UInt64, prompt: UInt64? = nil, startedAt: String? = nil, state: CommandState, text: String? = nil) {
+        self.end = end
+        self.endedAt = endedAt
+        self.exit = exit
+        self.id = id
+        self.input = input
+        self.output = output
+        self.prompt = prompt
+        self.startedAt = startedAt
+        self.state = state
+        self.text = text
+    }
+}
+
+public struct CommandList: Codable, Sendable, Hashable {
+    public var commands: [Command]
+    /// True when older commands exist.
+    public var more: Bool
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case commands = "commands"
+        case more = "more"
+        case seq = "seq"
+    }
+
+    public init(commands: [Command], more: Bool, seq: UInt64) {
+        self.commands = commands
+        self.more = more
+        self.seq = seq
+    }
+}
+
+public struct CommandListParams: Codable, Sendable, Hashable {
+    /// Command id: return the commands before it. Absent means the newest.
+    public var before: UInt64?
+    /// Most commands to return. Default 100, at most 1000.
+    public var limit: Int?
+    public var pane: String
+
+    enum CodingKeys: String, CodingKey {
+        case before = "before"
+        case limit = "limit"
+        case pane = "pane"
+    }
+
+    public init(before: UInt64? = nil, limit: Int? = nil, pane: String) {
+        self.before = before
+        self.limit = limit
+        self.pane = pane
+    }
+}
+
+public struct CommandOutput: Codable, Sendable, Hashable {
+    /// The command as it stood when the bytes were read.
+    public var command: Command
+    /// The output bytes in [start, end), marks excluded.
+    public var data: Data
+    /// Offset after the last byte of data; pass it as from to read on.
+    public var end: UInt64
+    /// True when the ring no longer held bytes before start.
+    public var gap: Bool
+    /// True when output goes on past end: the limit cut it, or the command still runs.
+    public var more: Bool
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// Offset of the first byte of data.
+    public var start: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case command = "command"
+        case data = "data"
+        case end = "end"
+        case gap = "gap"
+        case more = "more"
+        case seq = "seq"
+        case start = "start"
+    }
+
+    public init(command: Command, data: Data, end: UInt64, gap: Bool, more: Bool, seq: UInt64, start: UInt64) {
+        self.command = command
+        self.data = data
+        self.end = end
+        self.gap = gap
+        self.more = more
+        self.seq = seq
+        self.start = start
+    }
+}
+
+public struct CommandOutputParams: Codable, Sendable, Hashable {
+    /// Command id.
+    public var command: UInt64
+    /// Offset to read from. Absent means the output's start.
+    public var from: UInt64?
+    /// Most bytes to return. Default and most 1 MiB.
+    public var limit: Int?
+    public var pane: String
+
+    enum CodingKeys: String, CodingKey {
+        case command = "command"
+        case from = "from"
+        case limit = "limit"
+        case pane = "pane"
+    }
+
+    public init(command: UInt64, from: UInt64? = nil, limit: Int? = nil, pane: String) {
+        self.command = command
+        self.from = from
+        self.limit = limit
+        self.pane = pane
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct CommandState: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let running = CommandState(rawValue: "running")
+    public static let done = CommandState(rawValue: "done")
+    public static let unknown = CommandState(rawValue: "unknown")
 }
 
 public struct CreditFrame: Codable, Sendable, Hashable {
@@ -1825,6 +1983,10 @@ public enum HabMethods {
     public static let usageList = HabMethod<UsageListParams, UsageReadings>(name: "usage.list")
     /// CPU, memory, disk, battery and uptime of the host. Needs the host-stats capability.
     public static let habStats = HabMethod<HabStatsParams, HostStats>(name: "hab.stats")
+    /// Read a page of a pane's shell commands, found by OSC 133 marks (spec 2.5). Needs the commands capability.
+    public static let commandList = HabMethod<CommandListParams, CommandList>(name: "command.list")
+    /// Read a run of one command's output from the holder's ring (spec 2.5). Needs the commands capability.
+    public static let commandOutput = HabMethod<CommandOutputParams, CommandOutput>(name: "command.output")
 }
 
 public enum HabNotification {
@@ -1863,6 +2025,8 @@ public enum HabEvent: Sendable, Hashable {
     case sessionTurnEnd(TurnEnd)
     /// An account's usage reading changed; the id is the account key. Ephemeral.
     case usageUpdated(UsageAccount)
+    /// A pane's command started or ended; the id is the pane id (spec 2.5). Ephemeral.
+    case commandUpdated(Command)
     case unknown(type: String, data: JSONValue)
 
     public init(_ event: Event) throws {
@@ -1881,6 +2045,7 @@ public enum HabEvent: Sendable, Hashable {
         case "chat.message": self = .chatMessage(try event.data.decode(ChatMessage.self))
         case "session.turn_end": self = .sessionTurnEnd(try event.data.decode(TurnEnd.self))
         case "usage.updated": self = .usageUpdated(try event.data.decode(UsageAccount.self))
+        case "command.updated": self = .commandUpdated(try event.data.decode(Command.self))
         default: self = .unknown(type: event.type, data: event.data)
         }
     }
