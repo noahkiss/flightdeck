@@ -6,6 +6,7 @@ package gffclient
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -215,12 +216,17 @@ func (u *workspaceUI) event(hs *hostState, e api.Event) {
 			}
 		}
 	case api.EventPaneOutput:
+		var o api.PaneOutput
+		if json.Unmarshal(e.Data, &o) != nil {
+			return
+		}
 		for i, t := range u.c.tabs {
 			if i == u.c.cur {
 				continue
 			}
 			for _, v := range t.views {
-				if v.h == hs && v.spec.ID == e.ID {
+				// Output the view already applied, before its tab was hidden, is not news.
+				if v.h == hs && v.spec.ID == e.ID && (!v.haveOffset || o.Offset > v.offset) {
 					t.activity = true
 				}
 			}

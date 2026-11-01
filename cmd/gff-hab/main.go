@@ -387,6 +387,14 @@ func serve(args []string) error {
 		caps = append(caps, "commands")
 		agentSvc = &agentService{store: store, agents: agents, gate: harness.NewGate(pwait), input: linkQueuer{lk}, logf: logger.Printf}
 		agentCalls = agentSvc
+		// Activity marks for hidden tabs (gff-client.md 15.7): pane.output and pane.bell, at
+		// most once a second per pane.
+		activity := newActivityEvents(lk, func(e structure.Event) {
+			if s := srv.Load(); s != nil {
+				s.Publish(e)
+			}
+		}, activityEvery)
+		defer activity.Close()
 	}
 	// The permission check (macos-identity.md 7.2): the holder's checks run in a hidden probe
 	// pane on the current holder; gff-hab's own checks run here.

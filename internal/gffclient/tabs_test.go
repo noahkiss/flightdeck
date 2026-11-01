@@ -37,6 +37,8 @@ func TestTabsKeepPanes(t *testing.T) {
 
 	var empty api.Empty
 	call(t, other, "pane.input", api.InputParams{Pane: first, Data: []byte("zz\n")}, &empty)
+	// The hidden tab gets the activity mark from the hab's pane.output event, with no stream.
+	hst.waitScreen("tab 1 marked as printed", func(s string) bool { return strings.Contains(s, "1:1~") })
 	hst.typ(prefix + "1")
 	hst.waitScreen("tab 1 with what sh printed while hidden", func(s string) bool {
 		return strings.Contains(s, "hello-one") && strings.Contains(s, "after-zz") && !strings.Contains(s, "hello-two")
