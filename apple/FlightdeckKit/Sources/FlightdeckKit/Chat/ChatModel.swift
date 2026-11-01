@@ -40,8 +40,12 @@ public enum SendGate: Equatable, Sendable {
     /// The hab is not online.
     case offline
 
+    /// The hab decides; this only shapes the composer. A pane with no agent
+    /// state yet (after a hab restart, until the next hook) still sends, and
+    /// the hab's answer shows.
     public static func of(_ c: ChatContext) -> SendGate {
         guard c.online else { return .offline }
+        if c.agent == nil && !c.sessionExited { return .now }
         switch c.agentStatus {
         case .idle, .done: return .now
         case .working: return .afterTurn
@@ -120,13 +124,16 @@ public final class ChatModel {
     @ObservationIgnored private var listen: Task<Void, Never>?
     @ObservationIgnored private var viewers = 0
     @ObservationIgnored private var loadGen = 0
+    /// The seq rule's floors: the oldest connection still current, the last
+    /// tail page (every message), and per message the newest page or event.
+    @ObservationIgnored private var minGen = 0
+    @ObservationIgnored private var floorAll: (gen: Int, seq: UInt64)?
+    @ObservationIgnored private var floors: [String: (gen: Int, seq: UInt64)] = [:]
     /// The native session id the tail was loaded for.
     @ObservationIgnored private var tailNative: String?
     /// Events that arrive while the tail loads; applied after it by the seq rule.
     @ObservationIgnored private var buffer: [ChatUpdate]?
     @ObservationIgnored private var nextOutgoing = 1
-    /// Set once `session.send` answered `unavailable`: type through `pane.input`.
-    @ObservationIgnored private var useInput = false
 
     public init(target: SessionTarget, connection: HabConnection?) {
         self.target = target
@@ -207,7 +214,10 @@ public final class ChatModel {
             for m in page.messages where m.kind == .user { matchOutgoing(m) }
             hasOlder = page.more
             cursor = page.cursor
-            flushBuffer(connGen: connGen, pageSeq: page.seq, pageSeqs: [:])
+            minGen = connGen
+            floorAll = (connGen, page.seq)
+            floors = [:]
+            flushBuffer()
             load = messages.isEmpty && (page.cursor ?? "").isEmpty ? .waiting : .ready
         } catch {
             guard gen == loadGen else { return }
@@ -265,6 +275,8 @@ public final class ChatModel {
                     lastGen = connGen
                 }
                 for m in page.messages {
+                    // An event newer than this page already holds the message.
+                    if let f = floors[m.id], f.gen == connGen, f.seq > page.seq { continue }
                     apply(m)
                     pageSeqs[m.id] = page.seq
                 }
@@ -286,22 +298,35 @@ public final class ChatModel {
             return
         }
         cursor = next
-        flushBuffer(connGen: lastGen, pageSeq: nil, pageSeqs: pageSeqs)
+        minGen = max(minGen, lastGen)
+        for (id, seq) in pageSeqs { floors[id] = (lastGen, seq) }
+        flushBuffer()
         if !messages.isEmpty { load = .ready }
     }
 
-    /// Applies the events that waited for a page. An event from an older
-    /// connection predates the page and is dropped. On the page's connection an
-    /// event applies only when its seq is above the page that last carried its
-    /// message (`pageSeqs`), or above `pageSeq` for every message.
-    private func flushBuffer(connGen: Int, pageSeq: UInt64?, pageSeqs: [String: UInt64]) {
+    /// Applies the events that waited for a page, by the seq rule.
+    private func flushBuffer() {
         let waiting = buffer ?? []
         buffer = nil
-        for u in waiting {
-            if u.generation < connGen { continue }
-            if u.generation == connGen, let floor = pageSeq ?? pageSeqs[u.message.id], u.seq <= floor { continue }
-            apply(u.message)
-        }
+        for u in waiting where !isStale(u) { take(u) }
+    }
+
+    /// The seq rule. An event from a connection older than the last page
+    /// predates it. On the page's connection, an event at or below the seq of
+    /// the page that last carried its message is older than what is held. The
+    /// rule holds after the page too: an event and a page reply reach the model
+    /// by separate paths, so an older event can arrive after its page.
+    private func isStale(_ u: ChatUpdate) -> Bool {
+        if u.generation < minGen { return true }
+        if let f = floors[u.message.id], u.generation == f.gen, u.seq <= f.seq { return true }
+        if let f = floorAll, u.generation == f.gen, u.seq <= f.seq { return true }
+        return false
+    }
+
+    /// Applies one event and raises its message's floor.
+    private func take(_ u: ChatUpdate) {
+        floors[u.message.id] = (u.generation, u.seq)
+        apply(u.message)
     }
 
     // MARK: - Events
@@ -318,7 +343,8 @@ public final class ChatModel {
             buffer?.append(u)
             return
         }
-        apply(u.message)
+        if isStale(u) { return }
+        take(u)
         if load == .waiting { load = .ready }
     }
 
@@ -421,15 +447,11 @@ public final class ChatModel {
         let text = outgoing[i].text
         outgoing[i].status = .sending
         do {
-            if !useInput {
-                do {
-                    _ = try await conn.call(HabMethods.sessionSend, SessionSendParams(origin: .typed, session: session, text: text))
-                } catch let e as RPCError where e.kind == .unavailable {
-                    useInput = true
-                }
-            }
-            if useInput {
-                guard let pane = context.pane else { throw ProtocolError("the session has no pane") }
+            do {
+                _ = try await conn.call(HabMethods.sessionSend, SessionSendParams(origin: .typed, session: session, text: text))
+            } catch let e as RPCError where e.kind == .unavailable && typesWithoutAdapter {
+                // The harness has no adapter on this hab yet: type it as the adapter would.
+                guard let pane = context.pane else { throw e }
                 for chunk in Self.typedInput(text) {
                     _ = try await conn.call(HabMethods.paneInput, InputParams(data: chunk, pane: pane))
                 }
@@ -442,10 +464,28 @@ public final class ChatModel {
                 try? await Task.sleep(for: window)
                 self?.readBackExpired(id)
             }
+        } catch let e as RPCError where e.kind == .conflict && context.agentStatus == .working {
+            // The hab does not queue: keep the text and send it when the turn ends.
+            guard let j = outgoing.firstIndex(where: { $0.id == id }) else { return }
+            outgoing[j].status = .queued
         } catch {
             guard let j = outgoing.firstIndex(where: { $0.id == id }) else { return }
-            outgoing[j].status = .failed(Self.describe(error))
+            outgoing[j].status = .failed(Self.refusal(error))
         }
+    }
+
+    /// Whether `pane.input` may stand in for `session.send`: only for a pane
+    /// whose harness has no adapter on the hab yet (Claude Code has one), with
+    /// a known agent at its prompt. Never for a pane with no agent state.
+    private var typesWithoutAdapter: Bool {
+        guard let a = context.agent, a.harness != "claude" else { return false }
+        return a.state == .idle || a.state == .done || a.state == .error
+    }
+
+    /// The hab's reason for refusing, with its error kind.
+    static func refusal(_ error: Error) -> String {
+        if let e = error as? RPCError, let d = e.data { return "\(d.kind.rawValue): \(d.hint)" }
+        return describe(error)
     }
 
     /// The writes that type a message into a harness prompt: the text in

@@ -451,7 +451,8 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
   message by id and appends a new id.
 - **Tail and seq.** The view opens with `chat.page` for the tail (50 messages). Events that
   arrive while the page loads wait. After it, the model drops those with a seq at or below the
-  page's seq on the same connection, and applies the rest.
+  page's seq on the same connection, and applies the rest. The rule stays after the page: an
+  event and a page reply reach the model by separate paths, so an older event can arrive late.
 - **Older pages** load with `before` when the top row appears. An unknown `before` takes the
   tail again. A page that returns after a tail reload or a reset is dropped.
 - **Reconnect.** A return to online asks `after: cursor` until `more` is false, at most 20
@@ -471,15 +472,20 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
 - **No reader yet.** `unavailable` from `chat.page` shows the hab's hint. The model tries again
   when the agent state names a native session or a harness. An empty page with an empty cursor
   shows "waiting for the first message".
-- **Send gate in the app.** `idle`, `done` and `error` send at once. `working` queues the
-  message in the app ("Sends after this turn", with Cancel); the next `idle` or `done` sends one
-  queued message. `blocked` shows the pending request above the composer. `none` and `exited`
-  turn send off; an exited session offers Resume (`session.resume`). Offline turns it off.
-- **Send path.** The composer calls `session.send`. While the hab answers `unavailable` (Part 4
-  stage 4 is not built), it types through `pane.input` as the adapter rules say: the text in
-  bracketed paste (any ESC in the text removed), then Enter as its own call. The first `unavailable` switches the model to
-  `pane.input` for the rest of its life. The app does not wait for typing to pause; the hab's
-  `session.send` will.
+- **The hab decides.** `session.send` holds the send gate (`harness-adapters.md`, built
+  choices). The app shapes only the composer: `blocked` shows the pending request above it and
+  turns send off; `none` and an exited session turn it off, and an exited session offers Resume
+  (`session.resume`); offline turns it off. A pane with no agent state yet (after a hab restart,
+  until the next hook) still sends, and the hab's answer shows.
+- **After this turn.** The hab does not queue. While the agent works, the app keeps the message
+  ("Sends after this turn", with Cancel) and sends one at the next `idle`, `done` or `error`. A
+  `conflict` while the agent works puts the message back in that queue.
+- **Refusals** show the hab's error kind and hint on the message ("conflict: the agent is
+  blocked"), with Retry and Dismiss.
+- **Send path.** The composer calls `session.send`. Only when the hab answers `unavailable` for
+  a harness with no adapter (not Claude Code) and the agent is at its prompt does the app type
+  through `pane.input` as the adapter would: the text in bracketed paste (any ESC removed), then
+  Enter as its own call. A pane with no agent state never gets typed into.
 - **Read back.** A sent message waits 5 s for a `working` state or a user record with the same
   text. Then it shows "not delivered" with Retry and Dismiss. The app never retries on its own.
   A matching user record removes the outgoing message, from an event or a tail page; the end of the turn removes one that

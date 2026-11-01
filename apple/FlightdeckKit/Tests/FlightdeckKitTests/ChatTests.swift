@@ -10,9 +10,9 @@ final class ChatTests: XCTestCase {
     }
 
     /// A fleet with one fake hab whose session s1 (pane %1) runs claude in `state`.
-    private func setup(state: AgentStatus = .idle, messages: Int = 0) async -> (Fleet, FakeHab, ChatModel) {
+    private func setup(state: AgentStatus = .idle, harness: String = "claude", messages: Int = 0) async -> (Fleet, FakeHab, ChatModel) {
         let hab = await sampleHab()
-        await hab.put(Fixture.agent(pane: "%1", harness: "claude", state: state))
+        await hab.put(Fixture.agent(pane: "%1", harness: harness, state: state))
         await hab.setChat(session: "s1", (1...max(1, messages)).prefix(messages).map { msg($0) })
         let fleet = Fleet()
         fleet.add(HabConnection(id: "h", transport: hab.transport(), timing: fastTiming()), label: "bench")
@@ -69,7 +69,6 @@ final class ChatTests: XCTestCase {
         let model = fleet.chat(for: SessionTarget(habID: "h", session: "s2", pane: "%2"))
         model.start()
         await eventually("unavailable") { if case .unavailable = model.load { return true }; return false }
-        XCTAssertEqual(model.gate, .noAgent)
         await fleet.setActive(false)
     }
 
@@ -104,8 +103,9 @@ final class ChatTests: XCTestCase {
         await fleet.setActive(false)
     }
 
+    /// A harness with no adapter on the hab: the app types as the adapter would.
     func testSendFallsBackToPaneInputWithBracketedPasteThenEnter() async {
-        let (fleet, hab, model) = await setup(state: .idle)
+        let (fleet, hab, model) = await setup(state: .idle, harness: "codex")
         model.start()
         model.send("  two\nlines  ")
         await eventually("typed") { await hab.inputs.count == 2 }
@@ -122,7 +122,6 @@ final class ChatTests: XCTestCase {
 
     func testSendUsesSessionSendWhenBuilt() async {
         let (fleet, hab, model) = await setup(state: .done)
-        await hab.setSend(works: true)
         model.start()
         model.send("hi")
         await eventually("sent") { await hab.sends.count == 1 }
@@ -144,10 +143,12 @@ final class ChatTests: XCTestCase {
         model.cancel(model.outgoing[1].id)
         XCTAssertEqual(model.outgoing.count, 1)
         try? await Task.sleep(for: .milliseconds(100))
-        let none = await hab.inputs
+        let none = await hab.sends
         XCTAssertTrue(none.isEmpty)
         await hab.put(Fixture.agent(pane: "%1", harness: "claude", state: .idle))
-        await eventually("delivered after the turn") { await hab.inputs.count == 2 }
+        await eventually("delivered after the turn") { await hab.sends.count == 1 }
+        let inputs = await hab.inputs
+        XCTAssertTrue(inputs.isEmpty)
         await fleet.setActive(false)
     }
 
@@ -157,10 +158,10 @@ final class ChatTests: XCTestCase {
         model.send("anyone there")
         await eventually("not delivered") { model.outgoing.first?.status == .notDelivered }
         try? await Task.sleep(for: .milliseconds(200))
-        let n = await hab.inputs.count
-        XCTAssertEqual(n, 2, "no retry on its own")
+        let n = await hab.sends.count
+        XCTAssertEqual(n, 1, "no retry on its own")
         model.retry(model.outgoing[0].id)
-        await eventually("retried") { await hab.inputs.count == 4 }
+        await eventually("retried") { await hab.sends.count == 2 }
         // A working signal confirms delivery.
         await hab.put(Fixture.agent(pane: "%1", harness: "claude", state: .working))
         await eventually("delivered") { model.outgoing.first?.status == .delivered }
@@ -172,6 +173,32 @@ final class ChatTests: XCTestCase {
         XCTAssertEqual(model.gate, .blocked)
         model.send("ignored")
         XCTAssertTrue(model.outgoing.isEmpty)
+        await fleet.setActive(false)
+    }
+
+    /// The hab's refusal shows with its kind and hint; the app does not type instead.
+    func testRefusalShowsHabReason() async {
+        let (fleet, hab, model) = await setup(state: .idle)
+        model.start()
+        await hab.failNextSend(kind: .conflict, hint: "another message is starting its turn")
+        model.send("hello")
+        await eventually("refused") { model.outgoing.first?.status == .failed("conflict: another message is starting its turn") }
+        let inputs = await hab.inputs
+        XCTAssertTrue(inputs.isEmpty)
+        model.retry(model.outgoing[0].id)
+        await eventually("retried") { await hab.sends.count == 1 }
+        await fleet.setActive(false)
+    }
+
+    /// A pane with no agent state (after a hab restart) still sends; the hab answers.
+    func testNoAgentStateSendsAndShowsHint() async {
+        let (fleet, hab, _) = await setup()
+        let model = fleet.chat(for: SessionTarget(habID: "h", session: "s2", pane: "%2"))
+        XCTAssertEqual(model.gate, .now)
+        model.send("are you there")
+        await eventually("refused") { model.outgoing.first?.status == .failed("unavailable: session s2 has no agent state") }
+        let inputs = await hab.inputs
+        XCTAssertTrue(inputs.isEmpty, "no typing into a pane with no agent")
         await fleet.setActive(false)
     }
 

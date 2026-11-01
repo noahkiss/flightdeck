@@ -42,10 +42,13 @@ public actor FakeHab {
     /// Change counter per session: the counter value each message last changed at.
     private var chatChanges: [String: [String: Int]] = [:]
     private var chatClock = 0
-    /// Whether `session.send` works. The real hab answers `unavailable` until
-    /// its adapter stage; tests and demo mode turn it on.
-    private var sendWorks = false
+    /// Whether `session.send` is built. It follows the hab's rules: Claude Code
+    /// only, `conflict` while the agent works or waits, `unavailable` with no agent.
+    private var sendWorks = true
     private var onSend: (@Sendable (SessionSendParams) async -> Void)?
+    /// Demo mode: every harness takes `session.send`, not only Claude Code.
+    private var sendAnyHarness = false
+    private var nextSendFailure: Failure?
     private var chatPageHook: (@Sendable (ChatPageParams, ChatPagePhase) async -> Void)?
 
     /// When a `chat.page` hook runs: before the page is read, or after it is
@@ -174,9 +177,15 @@ public actor FakeHab {
     public func chat(_ session: String) -> [ChatMessage] { chats[session] ?? [] }
 
     /// Turns `session.send` on, with an optional hook that runs for each send.
-    public func setSend(works: Bool, onSend: (@Sendable (SessionSendParams) async -> Void)? = nil) {
+    public func setSend(works: Bool, anyHarness: Bool = false, onSend: (@Sendable (SessionSendParams) async -> Void)? = nil) {
         sendWorks = works
+        sendAnyHarness = anyHarness
         self.onSend = onSend
+    }
+
+    /// Makes the next `session.send` fail with this error, whatever the state.
+    public func failNextSend(kind: ErrorKind, hint: String) {
+        nextSendFailure = Failure(kind: kind, hint: hint)
     }
 
     private func chatPage(_ p: ChatPageParams, seq: UInt64) throws -> ChatMessages {
@@ -203,6 +212,24 @@ public actor FakeHab {
         let start = max(0, end - limit)
         // An empty transcript has no cursor yet, as when the real file is not written.
         return ChatMessages(cursor: list.isEmpty ? "" : String(chatClock), messages: Array(list[start..<end]), more: start > 0, seq: seq)
+    }
+
+    /// The hab's send gate (`harness-adapters.md`, `session.send` built choices).
+    private func sendRefusal(_ p: SessionSendParams) -> Failure? {
+        if let f = nextSendFailure {
+            nextSendFailure = nil
+            return f
+        }
+        guard let s = sessions[p.session] else { return Failure(kind: .notFound, hint: "no session \(p.session)") }
+        if s.state == .exited { return Failure(kind: .conflict, hint: "session \(p.session) has exited") }
+        guard let pane = s.pane, let a = agents[pane] else {
+            return Failure(kind: .unavailable, hint: "session \(p.session) has no agent state")
+        }
+        guard a.harness == "claude" || sendAnyHarness else { return Failure(kind: .unavailable, hint: "\(a.harness) has no adapter yet") }
+        switch a.state {
+        case .idle, .done, .error: return nil
+        default: return Failure(kind: .conflict, hint: "the agent is \(a.state.rawValue)")
+        }
     }
 
     private struct Failure: Error {
@@ -382,6 +409,10 @@ public actor FakeHab {
             }
             guard let p = try? params.decode(SessionSendParams.self) else {
                 await fail(c, id: id, kind: .invalid, hint: "bad session.send params")
+                break
+            }
+            if let refusal = sendRefusal(p) {
+                await fail(c, id: id, kind: refusal.kind, hint: refusal.hint)
                 break
             }
             sends.append(p)

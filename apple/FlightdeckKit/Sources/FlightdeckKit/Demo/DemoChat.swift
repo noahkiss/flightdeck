@@ -82,7 +82,7 @@ enum DemoChat {
         ])
         for (hab, panes) in [(workbench, ["s1": "%1", "s3": "%3", "s4": "%4"]), (attic, ["s11": "%11", "s12": "%12", "s13": "%13"])] {
             let panes = panes
-            await hab.setSend(works: true) { [weak hab] p in
+            await hab.setSend(works: true, anyHarness: true) { [weak hab] p in
                 guard let hab else { return }
                 await reply(hab, send: p, pane: panes[p.session])
             }
