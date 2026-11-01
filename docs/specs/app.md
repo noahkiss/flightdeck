@@ -22,11 +22,10 @@ Owner rules this spec works within:
   notarized.
 - No hub. The app connects to each hab itself.
 - Transcripts stay native. The app stores no agent data beyond a cache it can drop.
-- A confirmation that adds friction gets a setting to turn it off (owner, 2026-11-01). Today
-  that is "Confirm before an agent starts work on another host" (`confirm.start_elsewhere`,
-  default on; `capcom.md` 6.1). Memory approval runs the other way: off by default, and "Require
-  approval for memories" turns it on (`instructions-mcp-flight-rules.md` 12). A new
-  confirmation added later comes with its own setting.
+- Flightdeck adds few confirmations, and few choices are settings (owner, 2026-11-01). One level
+  picker (Safe, Balanced, Bypass permissions) sets the levelled ones at once; touching one shows
+  Custom. Section 20 holds the rule, the levels and the registry. A new confirmation or setting
+  joins that registry, or its dropped list.
 - Settings also hold the Capcom host picker, which assigns and re-assigns the host that runs
   Capcom (`capcom.md` 7.3; owner, 2026-11-01).
 
@@ -54,6 +53,7 @@ of Apple platforms, not from a page opened for this spec. A device test must con
 17. [Calls the app needs from the hab](#17-calls-the-app-needs-from-the-hab)
 18. [Open questions](#18-open-questions)
 19. [Sources](#19-sources)
+20. [Settings and levels](#20-settings-and-levels)
 
 ---
 
@@ -398,15 +398,15 @@ whiteboard, a log file.
 - **In the chat view** the attachment shows as a thumbnail on the owner's message. Tap opens it
   full screen. The thumbnail comes from the hab's copy, so the chat view on another device shows it
   too.
-- **Privacy.** The app strips location and camera metadata from photos before upload. A setting
-  keeps it, off by default.
+- **Privacy.** The app strips location and camera metadata from photos before upload, always
+  (no setting, 20.6).
 - **Clean-up.** The hab keeps attachments for a set time (default 30 days), then deletes them. A
   file the agent moved or committed is no longer in the folder, so it is not touched.
 
 | Case | Behaviour |
 |---|---|
 | A file over the size limit (default 25 MB) | The app refuses it before upload and names the limit |
-| A large photo | The app downscales it to the longest side the harness accepts (default 2048 px), as PNG for screenshots and JPEG for photos. A setting sends the original |
+| A large photo | The app downscales it to the longest side the harness accepts (default 2048 px), as PNG for screenshots and JPEG for photos. No setting sends the original (20.6) |
 | The upload breaks off | The message stays "not sent" with a retry. The hab discards partial files |
 | The session is `working` | The file uploads at once; the message waits as "sends after this turn" (4.2) |
 | The harness accepts no images at all | The app warns before send. The path still goes in the text |
@@ -572,8 +572,11 @@ What carries over:
 - **Side panel.** On Mac and iPad a panel to the right of the session lists the session's
   documents, images and modified files. Selecting one shows it in the panel. On iPhone the same
   list opens as a sheet from the session header.
-- **Offline host.** Content from a hab that is offline shows a plain placeholder ("Not
-  available while <hab> is offline"), never an error. It loads when the hab returns.
+- **Offline host.** Content the app already holds (the last list and the bytes cache) still
+  shows while its hab is offline. Anything else shows a plain placeholder ("Not available while
+  <hab> is offline"), never an error, and loads when the hab returns. No setting (20.6). Not
+  built: `ContentModel` checks for offline before its bytes cache, so cached files show the
+  placeholder too.
 
 | Case | Behaviour |
 |---|---|
@@ -958,8 +961,8 @@ the context bar, the title, then the command on one line in the accent colour, t
   timeout and the harness falls back to its own dialog (`harness-adapters.md`, Open decisions:
   a per-host setting, off by default, about 30 s).
   After that, only a keystroke answer or the terminal can resolve it.
-- **The hab's limit.** A setting on the hab, default 60 minutes. A request older than this takes no
-  remote Allow. The owner must open the session and answer there. A stale approval is easy to
+- **The hab's limit.** A setting on the hab (`approval.max_age`, 20.3), default 60 minutes, none
+  at Bypass permissions. A request older than this takes no remote Allow. The owner must open the session and answer there. A stale approval is easy to
   grant by habit, and the context may have changed.
 - When the countdown reaches zero, Allow and Deny turn off on every surface. The card says
   "Expired: answer in the terminal" and opens the terminal view on tap. The hab refuses a late
@@ -981,8 +984,10 @@ the context bar, the title, then the command on one line in the accent colour, t
 
 - A lock-screen Allow or Deny always needs the device unlocked (the action is marked "authentication
   required"). An Allow can run a command, so it never runs from a locked phone.
-- Face ID is a setting, off by default. When on, the app asks for Face ID before an approval from
-  the app, and before it opens. Moshi's store text puts Face ID on its SSH keys, not on approvals.
+- The app adds no Face ID gate of its own to approvals or to opening the app. Face ID is one
+  setting on the SSH keys, "Require Face ID for SSH keys" (`ssh.require_face_id`, off by
+  default; 10.7, 20.3). Moshi's store text puts Face ID on its SSH keys, not on approvals.
+  The device passcode guards the rest (20.6).
 - The device key needs the device unlocked to sign (`transport.md` 7.2). An unlocked device is
   therefore enough for the background answer.
 - A Watch answer needs the Watch on the wrist and unlocked (16.1).
@@ -1133,6 +1138,10 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
   host.
 - **Token first.** The app asks APNs for the token before the notification prompt: the token
   needs no permission, and Live Activity pushes work with alerts off.
+- **When the prompt shows.** The app asks for notification permission once, when the first hab
+  whose welcome lists `push` reaches online. No setting changes this (20.6). "Alert me when
+  free" and a hab's test notification ask on their own when used. Not built: the iOS app asks
+  at launch (`PushDelegate`).
 - **Categories.** `approval` (Deny, Approve), `approval-deny` (Deny, Open), `open` (Open) and
   `question` (Reply as text, Open). Approve, Deny and Reply need unlock (7.6). Open reads "Open on
   iPhone" on iOS, for the mirrored Watch banner (16.2). The Reply action is on `question` only:
@@ -1198,12 +1207,12 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
 - **Live Activity buttons and unlock** (owner ruling 2026-11-01). The intents are compiled into
   both the app and the widget (App Intents reads metadata per target) and run in the app. Allow
   asks for Face ID or the passcode (`authenticationPolicy` `requiresAuthentication`); Deny runs
-  without it. The setting "Approve from the lock screen without unlocking" (Settings ›
-  Notifications, off by default, kept in the App Group so the widget reads it) swaps Allow for an
-  intent with no authentication. The device key signs only while the device is unlocked
-  (transport.md 7.2), so an answer while protected data is unavailable sends nothing: the app
-  posts "Unlock to answer" and raises the request in the foreground. With today's key class this
-  holds for Deny and for Allow with the setting on.
+  without it. The device key signs only while the device is unlocked (transport.md 7.2), so an
+  answer while protected data is unavailable sends nothing: the app posts "Unlock to answer" and
+  raises the request in the foreground. This holds for Deny too. The built setting "Approve from
+  the lock screen without unlocking" (Settings › Notifications, in the App Group) swaps Allow
+  for an intent with no authentication. With today's key class that changes nothing, so the
+  setting goes (20.6); the build that removes it keeps the authenticated Allow.
   Push-to-start and the "hab offline" end are not built.
 - **Mac.** The Mac app answers banners and reports focus, but asks for no APNs token: its
   entitlements have no `aps-environment` until a Developer ID profile with push exists.
@@ -1763,12 +1772,13 @@ no wake word, no system assistant in the path.
   the command in a speakable form ("wrangler deploy, dash dash env prod"). It then asks "Allow or
   deny?" and shows the approval sheet in large type.
 - It listens for the answer only after it has finished asking, so its own voice cannot answer. The
-  answer must be a clear match: allow, approve or yes; deny or no. Anything else, or a low-confidence
+  answer must be a clear match: allow, approve or yes; deny or no. "Yes" counts only while
+  `voice.yes_allows` is on (the default; off at Safe, 20.3). Anything else, or a low-confidence
   result, makes it ask once more, then wait for a tap.
 - It says what it did: "Allowed" or "Denied".
 - Voice Allow follows the same limits as a banner Allow (7.8): a command longer than the limit, or
-  a broad choice, can be denied by voice but allowed only by tap. Expiry applies (7.4). With the
-  Face ID setting on, a voice Allow asks for Face ID.
+  a broad choice, can be denied by voice but allowed only by tap. Expiry applies (7.4). A voice
+  Allow asks for no Face ID (7.6).
 - `blocked:question` reads the question and numbers its options. The owner says a number, an
   option, or a free answer.
 
@@ -1895,8 +1905,8 @@ Code in `apple/FlightdeckKit` (`Voice/`, `Views/VoiceViews.swift`) and the
   an ordinary turn never answers. An unclear answer asks once more, then waits for a tap. Voice
   may Allow only a command of at most 100 characters and 16 words (the banner's body budget,
   16.2), with no command substitution (`$(` or a backtick), or an edit of at most three files;
-  anything else can be denied by voice and allowed by tap. Requiring the exact word "allow"
-  will be part of a future Safe level, not a setting now. The large
+  anything else can be denied by voice and allowed by tap. At Safe, `voice.yes_allows` is
+  off and "yes" asks again (20.3); not built yet. The large
   approval card's Allow and Deny always work by tap. The answer carries `via: voice`.
 - **Confirm before send.** The waiting text stays until "send" (said alone) or a tap sends it;
   other words replace it.
@@ -1922,7 +1932,7 @@ Code in `apple/FlightdeckKit` (`Voice/`, `Views/VoiceViews.swift`) and the
   summary request, spoken commands, confirm before send, barge-in, a noisy room, and the pause
   before send (0.8 to 2.0 s).
 - **Not built yet.** The chime and banner for another session (13.1), a reply voice per language
-  (13.6), the Face ID check before a voice Allow (7.6), the vocabulary hints to the on-device
+  (13.6), the vocabulary hints to the on-device
   engines (`voice.md`, Recommendation 2), and the language setting for dictation (13.4).
 - **Known limits.**
   - No shared golden file yet checks that the hab's Ogg reader takes the app's files; the
@@ -2274,6 +2284,7 @@ stage that fills it.
 | `approval.answer` field `via` | Where the answer came from (app, banner, Watch banner, voice), for the hab's log |
 | `content.show`, `content.list`, `content.read`, `content.diff` and event `content.updated` | Rich content: shown files, images from tool calls, modified files with diffs (4.7). Capability `content` |
 | `chat.search {query, limit}` (later) | Full-text search over chat messages on this hab (3.6) |
+| `settings.get`, `settings.set` and event `settings.updated` (not in the schema yet) | Read and write hab-side settings with a revision check (20.5). Capability `settings` |
 
 Nothing new is needed for the Watch: it answers through the phone's notification actions (16).
 Voice mode needs no voice call: speech becomes text on the device and goes through
@@ -2308,6 +2319,9 @@ always need unlock.
 
 Decision: as recommended (coordinator, following the owner's Face ID decision). `transport.md`
 4.3, 7.2 and 7.3 now say the key is usable only while the device is unlocked.
+
+Later (2026-11-01, settings levels): the one Face ID setting is "Require Face ID for SSH keys"
+(10.7, owner). The gate on the app and in-app answers is dropped (7.6, 20.6).
 
 ### 18.3 Bring your own APNs key versus who signs the build
 
@@ -2451,3 +2465,169 @@ against them, or a device test, in stage 7.
 
 Internal inputs: the project's planning notes and research reports on native apps and
 notifications. None of their private detail is reproduced here.
+
+---
+
+## 20. Settings and levels
+
+Owner decisions, 2026-11-01. Flightdeck is a power-user system: it adds few confirmations, and
+few of its choices are settings. One level picker sets the few levelled settings at once. This
+section is the registry; the sections it links hold each setting's behaviour. Built: nothing of
+this section yet (task-yfmrj6yc). Today each built setting has its own switch where its section
+says.
+
+### 20.1 What becomes a setting
+
+- **No extra confirmation by default.** Flightdeck adds a confirmation only where an action
+  crosses a line the harness does not see: another host, someone else's code, a stale request.
+- **The harness already asks: no confirmation.** Flightdeck never repeats a question the
+  harness's own permission prompt asks. Harness permissions belong to the harness.
+- **A setting only where people really differ.** A choice with one right answer for nearly
+  everyone is a fixed behaviour (20.6).
+- **A guard against someone else's code is never a setting.** The foreign worktree setup yes
+  (`hab-logic-api.md` 3.10) stays on at every level. Paseo asks there too (`landscape.md`).
+- **Each setting has a default.** Balanced holds the defaults.
+
+### 20.2 Levels
+
+| Level | Meaning |
+|---|---|
+| Safe | Every confirmation and check Flightdeck offers is on |
+| Balanced | The defaults: hands-off, with the one cross-host confirmation kept |
+| Bypass permissions | No confirmation or check that Flightdeck adds |
+| Custom | Shown, never picked: the values match no level |
+
+- **The picker** sits at the top of Settings. It shows the level whose column matches every
+  levelled setting (20.3), else Custom.
+- **Custom is derived, not stored.** The app compares the current values with each column. It
+  reads app-side values on this device and hab-side values on every hab it reaches. Changing one
+  levelled setting by hand shows Custom at once. Setting it back shows the level again.
+- **Picking a level** writes that column's values at once, with no confirmation. A short notice
+  lists what changed ("Safe: 3 settings changed"). App-side values apply on this device.
+  Hab-side values go to every hab the app reaches (20.5). Preferences (20.4) never change.
+- **Turning a check off can ask for authentication.** "Require Face ID for SSH keys" asks for
+  Face ID or the passcode before it turns off (10.7), also when a level turns it off. A refusal
+  keeps it on, and the picker shows Custom.
+- **Levels are per device.** The app keeps the last picked level in its defaults. A phone at Safe
+  and a Mac at Balanced is fine for app-side settings. Hab-side settings are shared, so the last
+  write wins (20.5).
+- **A new hab** reports its defaults (Balanced). When every levelled value on it is still a
+  default that no client wrote, the app writes its picked level there on connect. Otherwise the
+  row shows "Differs on <hab>", as `logbook.md` 9.1 does.
+- **What Bypass never touches.**
+  - Harness permissions: permission modes, allow and deny rules, the harness's own prompts.
+  - The harness's own bypass flag, such as `--dangerously-skip-permissions`. A level never sets
+    it; the user picks it per session, in the harness or its config.
+  - The foreign worktree setup yes (20.1).
+  - Unlock for an answer from a banner or a Live Activity (7.6): the device key signs only while
+    the device is unlocked (`transport.md` 7.2).
+  - The voice Allow limits (13.7): a long command or a broad choice is allowed only by tap.
+  - Pairing, host key pins and device ids (`transport.md`, `mesh.md` 4).
+
+### 20.3 Registry: levelled settings
+
+| Id | Title | Area | Safe | Balanced | Bypass | Stored | Source |
+|---|---|---|---|---|---|---|---|
+| `confirm.start_elsewhere` | Confirm before an agent starts work on another host | Agents | On | On | Off | Hab, every hab | `capcom.md` 6.1, `mesh.md` 11 Q1 |
+| `approval.max_age` | Remote answers expire after | Approvals | 60 min | 60 min | Never | Hab, every hab | 7.4 |
+| `logbook.approval` | Require approval for memories | Agents | `agents` | `off` | `off` | Hab, every hab | `logbook.md` 9.1, `instructions-mcp-flight-rules.md` 12 |
+| `voice.yes_allows` | "Yes" counts as Allow | Voice | Off | On | On | App, this device | 13.3, 13.7 |
+| `ssh.require_face_id` | Require Face ID for SSH keys | Security | On | Off | Off | App, Keychain item | 10.7 |
+
+- **`confirm.start_elsewhere`** stays on in Balanced. Capcom's tools are allowed in its own
+  folder (`capcom.md` 7.1), so no harness prompt stands before a start on another host. Off: the
+  action runs at once and the card shows as a record. The owner's first ruling (default on)
+  stands.
+- **`approval.max_age`** bounds a remote Allow on an old request (7.4). Never: a request takes a
+  remote answer until the harness gives up. The answer path's own deadline still applies. Not
+  built: the hab sends no limit yet.
+- **`logbook.approval`** is one setting for both kinds of memory: Logbook writes by agents and
+  each harness's native memory. It replaces the per-harness switches
+  (`instructions-mcp-flight-rules.md` 12). The user's own writes always land at once.
+- **`voice.yes_allows`** off: only "allow", "approve", "allow it" and "approve it" answer Allow,
+  and "yes" makes the app ask again. The deny words are the same at every level.
+- **`ssh.require_face_id`** is one setting over the generated key and every imported key. It
+  replaces the Face ID setting that 7.6 named for approvals and app open (20.6).
+
+### 20.4 Preferences: settings with no level
+
+These differ by taste or by device. They show on the Settings page and in its search, but the
+picker never changes them.
+
+| Id | Title | Area | Default | Stored | Source |
+|---|---|---|---|---|---|
+| `notify.done` | Notify when a turn finishes | Notifications | Off | App; push kind `done` on each hab | 8.2, 18.5 |
+| `notify.show_commands` | Show commands in notifications | Notifications | On | App; `hide_commands` on `push.register` | 8.3 |
+| `notify.command_done` | Notify when a long command finishes | Notifications | Off | App | 6.1, 8.2 |
+| `notify.tap` | Open a notification in | Notifications | Smart | App | 9.1 |
+| `usage.warnings` | Usage warnings, with thresholds | Usage | On, 80 and 95 % | App | 14.3 |
+| `widget.hide_titles` | Hide titles on the Lock Screen | Widgets | Off | App Group | 15.2 |
+| `mac.keep_connected` | Stay connected in the background | Connection | Off | App (Mac) | 12.1 |
+| `hab.permission_wait` | Answer permissions from the app (blocking hook) | Approvals | Off; 30 s when on | Hab, this hab only | 7.4, `harness-adapters.md` (blocking hook) |
+| `voice.*` | Engines, summary request, spoken commands, confirm before send, barge-in, noisy room, pause | Voice | As 13.7 | App | 13.7 |
+
+- The Capcom host picker (`capcom.md` 7.3) and each hab's push status are controls, not
+  settings. They sit in Settings with no id.
+- **`hab.permission_wait`** is per host: the app writes it to one hab. Off is 0; on is the wait
+  in seconds, at most 120 (`MaxPermissionWait`). A change applies to the next hook; a hook
+  already waiting keeps its wait. The `-permission-wait` flag or `$GFF_HAB_PERMISSION_WAIT`
+  locks the value (20.5).
+
+### 20.5 Hab-side settings and the API
+
+A hab-side setting lives on the hab that enforces it. The app writes it through the hab API.
+
+- **Where the hab keeps them.** Client writes go to `<state>/settings.json`. A key in the
+  `[settings]` table of the hab's config file (`hab.toml`), or a flag or environment variable
+  for it, locks the value: the hab enforces that value and refuses writes. The app shows a
+  locked row read-only, with "Set in the hab's config".
+- **One value everywhere.** For a setting stored on every hab, the app writes the same value to
+  each hab it reaches. The app and `gff lb status` show a hab whose value differs.
+- **Offline habs.** The app queues the write and sends it when the hab connects, with the
+  revision it last saw there. When the hab's revision moved since (another device wrote), the
+  hab's value stands, the app drops its write, and the row shows the hab's value.
+
+The API addition, by name and shape; the schema comes with the build stage:
+
+| Call or event | Shape | Purpose |
+|---|---|---|
+| capability `settings` | — | The hab serves the calls below |
+| `settings.get {ids?}` | → `{settings: [{id, value, default, rev, locked}]}` | Read every hab-side setting, or the named ones |
+| `settings.set {id, value, rev}` | → `{id, value, rev}` | Write one value. A stale `rev` is `conflict`; a locked id is `conflict` with the reason; an unknown id or a bad value is `invalid` |
+| event `settings.updated` | `{id, value, rev}` | A value changed: by a client, or by a config reload |
+
+- Values are small JSON values. `rev` counts writes per id, like herdr-core's version-checked
+  documents (`hab-logic-api.md` 1.2).
+- The hab applies a change at once: to the next start elsewhere, the next request's expiry, the
+  next memory write, the next permission hook.
+- The rows join `hab-logic-api.md` 3.9 with the build stage. Until then, a hab without
+  `settings` keeps the values from its config, and the app shows its rows read-only.
+
+### 20.6 Dropped, not settings
+
+Each candidate below is a fixed behaviour now.
+
+| Candidate | Fixed behaviour | Why |
+|---|---|---|
+| Approve from the lock screen without unlocking | An answer from a banner or a Live Activity needs the device unlocked | The device key signs only while unlocked (`transport.md` 7.2), so the switch changed nothing (8.7) |
+| Face ID before in-app approvals, app open and a voice Allow (7.6) | No Face ID gate of our own beyond the SSH keys | `ssh.require_face_id` covers each dial, and the passcode guards the device. Moshi puts Face ID on keys only |
+| Worktree setup trust for rebased and cherry-picked commits | They count as own when their source does (`hab-logic-api.md` 3.10) | A false alarm costs one yes, and nobody wants more of them. Not levelled: it guards against someone else's code |
+| Alert when free fires at once | A fresh reading with room fires the alert now (14.4) | The user asked to know when it is free |
+| Offline cached images | Content the app already holds shows while its hab is offline (4.7) | Showing what is in hand costs nothing; Paseo shows cached rows offline |
+| Changed-files scope | The list holds the session's own edits and the folder's git status, each marked (4.7) | The marks tell them apart. A filter in the list can come later; it is not a setting |
+| Spoken summary shown in chat | The chat hides the "Spoken summary:" request on the user's message (13.7) | The transcript and the TUI keep it; the request itself has its switch |
+| Notification prompt timing | The app asks for notification permission when the first hab with `push` connects (8.7) | Asked in context; a user with no push never sees the prompt |
+| Keep photo location and camera data | Always stripped before upload (4.4) | No agent needs where a photo was taken |
+| Send the original photo | Downscaled to what the harness accepts (4.4) | The harness takes no more; a larger file only costs time |
+| Per-harness memory approval switches | One `logbook.approval` (20.3) | One rule for memory is easier to trust |
+
+### 20.7 The Settings page
+
+- **One page, grouped by area:** Agents, Approvals, Notifications, Voice, Usage, Widgets,
+  Connection, Security, and Habs (each hab's push status, keys and the Capcom host picker).
+- **The level picker** heads the page, above the groups.
+- **Search** filters rows by title and id across groups. Each row shows its id in small type, so
+  a doc or an issue can name it.
+- **A hab-side row** says where it is stored: "On every hab" or "On <hab>".
+- **Today's pages** (Settings › Notifications, › Voice, › SSH and the usage warnings) become
+  groups of this page. Their sections keep the wording of each row.
