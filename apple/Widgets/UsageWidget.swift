@@ -65,12 +65,8 @@ struct UsageEntry: TimelineEntry {
     var selected: String?
 
     /// The accounts to show: the chosen one first, then the tightest others.
-    var accounts: [UsageAccountReading] {
-        let all = UsageMath.byTightest(snapshot?.accounts ?? [], now: date)
-        guard let selected, let i = all.firstIndex(where: { $0.key == selected }) else { return all }
-        var out = all
-        out.insert(out.remove(at: i), at: 0)
-        return out
+    var pick: (accounts: [UsageAccountReading], missing: Bool) {
+        UsageWidgetPick.accounts(snapshot?.accounts ?? [], selected: selected, now: date)
     }
 }
 
@@ -110,10 +106,14 @@ struct UsageWidgetView: View {
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
-        let accounts = entry.accounts
+        let (accounts, missing) = entry.pick
         Group {
             if entry.snapshot == nil {
                 Text("Open Flightdeck")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if missing {
+                Text("Account not reporting")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else if accounts.isEmpty {

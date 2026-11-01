@@ -204,6 +204,20 @@ public enum UsageText {
     }
 }
 
+/// Which accounts a usage widget shows (app.md 15.1, 15.2).
+public enum UsageWidgetPick {
+    /// The chosen account first, then the others tightest first. With a
+    /// chosen account the snapshot no longer holds, `missing` is true and
+    /// the widget says so instead of showing another account.
+    public static func accounts(_ all: [UsageAccountReading], selected: String?, now: Date) -> (accounts: [UsageAccountReading], missing: Bool) {
+        var out = UsageMath.byTightest(all, now: now)
+        guard let selected else { return (out, false) }
+        guard let i = out.firstIndex(where: { $0.key == selected }) else { return ([], true) }
+        out.insert(out.remove(at: i), at: 0)
+        return (out, false)
+    }
+}
+
 /// What the app hands the widgets through the App Group (app.md 15.1): the
 /// last known readings and when they were written.
 public struct UsageSnapshot: Codable, Equatable, Sendable {
