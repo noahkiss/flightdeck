@@ -1,0 +1,8 @@
+// Shared build settings for the spike. Do not put a team id here.
+// Copy Local.xcconfig.example to Local.xcconfig and set your own values there.
+
+PRODUCT_BUNDLE_IDENTIFIER = dev.flightdeck.spike.parakeet
+CODE_SIGN_STYLE = Automatic
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"

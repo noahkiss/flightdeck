@@ -1,0 +1,6 @@
+// Copy to Local.xcconfig (gitignored) and fill in.
+// Your Apple development team id, from Xcode > Settings > Accounts.
+DEVELOPMENT_TEAM = ABCDE12345
+
+// Optional: a bundle id unique to you, if the default is taken on your account.
+// PRODUCT_BUNDLE_IDENTIFIER = dev.flightdeck.spike.parakeet.yourname

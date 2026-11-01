@@ -1,0 +1,38 @@
+# Generate the Xcode project with `xcodegen generate` in this folder.
+# The generated ParakeetSpike.xcodeproj is not committed.
+name: ParakeetSpike
+options:
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+packages:
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio
+    exactVersion: 0.17.7
+targets:
+  ParakeetSpike:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    # Bundle id, team and signing style come from Config/Spike.xcconfig,
+    # which includes the gitignored Config/Local.xcconfig when present.
+    configFiles:
+      Debug: Config/Spike.xcconfig
+      Release: Config/Spike.xcconfig
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: YES
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        INFOPLIST_KEY_CFBundleDisplayName: Parakeet Spike
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: Records clips to compare speech-to-text engines.
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Transcribes recorded clips with Apple speech recognition.
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+    dependencies:
+      - package: FluidAudio
