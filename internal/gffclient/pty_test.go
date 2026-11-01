@@ -1,12 +1,14 @@
 package gffclient
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -109,6 +111,11 @@ while :; do sleep 0.1; done
 // When gff dies without setting the terminal back (SIGQUIT ends a Go program the way a panic
 // on any goroutine does: no deferred call runs), its guard puts back the terminal's settings
 // and leaves the alternate screen.
+//
+// gff runs the way a terminal runs it: under a shell that leads the session and owns the
+// terminal. When a session leader exits, macOS revokes its controlling terminal and every
+// open of it then fails, so gff must not be the leader here. The shell reports the settings
+// with stty -g before gff starts and, once gff has ended, again every 100 ms.
 func TestCrashRestoresTerminal(t *testing.T) {
 	h := startHab(t)
 	ptmx, tty, err := pty.Open()
@@ -120,24 +127,63 @@ func TestCrashRestoresTerminal(t *testing.T) {
 	if err := pty.Setsize(ptmx, &pty.Winsize{Cols: 80, Rows: 24}); err != nil {
 		t.Fatal(err)
 	}
-	cooked, err := unix.IoctlGetTermios(int(tty.Fd()), ioctlGetTermios)
+	rep, repw, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer rep.Close()
+	// A non-interactive shell gives a background job /dev/null as its input, so the job takes
+	// the terminal from fd 4. Fd 3 reports, one line each: the settings, gff's pid, then the
+	// settings again in a loop once gff has ended.
+	const script = `stty -g >&3
+exec 4<&0
+"$@" <&4 3>&- 4<&- &
+echo $! >&3
+wait $!
+while :; do stty -g >&3; sleep 0.1; done`
 	// Two panes: the composed view, on the host's alternate screen.
-	cmd := exec.Command(gffBin, "-socket", h.sock, "-new", "echo left; exec sleep 600", "-new", "echo right; exec sleep 600")
+	cmd := exec.Command("/bin/sh", "-c", script, "sh", gffBin, "-socket", h.sock,
+		"-new", "echo left; exec sleep 600", "-new", "echo right; exec sleep 600")
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = tty, tty, tty
+	cmd.ExtraFiles = []*os.File{repw}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
-	if err := cmd.Start(); err != nil {
+	err = cmd.Start()
+	repw.Close()
+	if err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	t.Cleanup(func() {
-		cmd.Process.Kill()
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // the shell's group: gff, its guard, sleep
 		<-done
 	})
+	lines := make(chan string, 64)
+	go func() {
+		sc := bufio.NewScanner(rep)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+	}()
+	next := func(what string) string {
+		select {
+		case l, ok := <-lines:
+			if !ok {
+				t.Fatalf("the shell ended before it reported %s", what)
+			}
+			return l
+		case <-time.After(waitLong()):
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		return ""
+	}
+	cooked := next("the settings")
+	pid, err := strconv.Atoi(next("gff's pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	hst := newHost(t, 80, 24, false)
 	go io.Copy(hst, ptmx)
 	hst.waitScreen("both panes", func(s string) bool { return strings.Contains(s, "left") && strings.Contains(s, "right") })
@@ -145,17 +191,14 @@ func TestCrashRestoresTerminal(t *testing.T) {
 		t.Fatal("gff did not put the terminal in raw mode")
 	}
 
-	cmd.Process.Signal(syscall.SIGQUIT)
-	select {
-	case <-done:
-		done <- nil
-	case <-time.After(waitLong()):
-		t.Fatal("gff did not end on SIGQUIT")
+	syscall.Kill(pid, syscall.SIGQUIT)
+	// The shell reports again only once gff has ended.
+	deadline := time.Now().Add(waitLong())
+	for now := next("the settings after gff ended"); now != cooked; now = next("the settings after gff ended") {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for the terminal's settings put back: have %s, want %s", now, cooked)
+		}
 	}
-	waitUntil(t, "the terminal's settings put back", func() bool {
-		now, err := unix.IoctlGetTermios(int(tty.Fd()), ioctlGetTermios)
-		return err == nil && now.Lflag == cooked.Lflag && now.Iflag == cooked.Iflag && now.Oflag == cooked.Oflag
-	})
 	waitUntil(t, "the alternate screen left", func() bool { return bytes.Contains(hst.output(), []byte(HostReset)) })
 	if s := hst.screen(); strings.Contains(s, "left") {
 		t.Errorf("the host is still on the composed screen:\n%s", s)
