@@ -25,6 +25,9 @@ const opusRate = 16000
 // maxOpusFrame is the most samples one Opus packet can hold at opusRate: 120 ms.
 const maxOpusFrame = opusRate * 120 / 1000
 
+// maxClipMS is the longest clip the helper decodes, the API's limit (voice.md).
+const maxClipMS = 120_000
+
 // decodeOpus decodes an Ogg Opus file (RFC 7845) to mono floats at opusRate. A stereo stream is
 // mixed down by libopus. The pre-skip is dropped and the end is cut at the last granule
 // position, as RFC 7845 4.2 and 4.4 say.
@@ -39,7 +42,11 @@ func decodeOpus(b []byte) ([]float32, error) {
 		return nil, fmt.Errorf("opus decoder: %s", C.GoString(C.opus_strerror(cerr)))
 	}
 	defer C.opus_decoder_destroy(dec)
-	out := make([]float32, 0, len(s.Packets)*opusRate/50)
+	// gff-hab checks the length first; the helper still never decodes more than the limit plus
+	// the pre-skip, whatever the stream says.
+	limit := (maxClipMS*opusRate)/1000 + s.PreSkip*opusRate/oggopus.Rate + maxOpusFrame
+	want := min(int(max(s.Granule, s.PacketSamples)*opusRate/oggopus.Rate), limit)
+	out := make([]float32, 0, want)
 	buf := make([]float32, maxOpusFrame)
 	for i, p := range s.Packets {
 		if len(p) == 0 {
@@ -49,6 +56,9 @@ func decodeOpus(b []byte) ([]float32, error) {
 			(*C.float)(unsafe.Pointer(&buf[0])), C.int(maxOpusFrame), 0)
 		if n < 0 {
 			return nil, fmt.Errorf("opus packet %d: %s", i, C.GoString(C.opus_strerror(n)))
+		}
+		if len(out)+int(n) > limit {
+			return nil, fmt.Errorf("the clip is longer than %d ms", maxClipMS)
 		}
 		out = append(out, buf[:n]...)
 	}

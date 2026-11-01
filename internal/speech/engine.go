@@ -417,6 +417,11 @@ func check(p api.SpeechTranscribeParams, formats []api.SpeechFormat) (int, error
 			return 0, control.Errorf(api.ErrorKindInvalid, "the clip is not Ogg Opus: %v", err)
 		}
 		ms = s.DurationMS()
+		// The packets' own lengths bound what the helper decodes: a granule that understates
+		// the clip by more than one packet (120 ms) does not get past the limit.
+		if m := s.MaxDurationMS(); m > MaxAudioMS+120 {
+			return 0, control.Errorf(api.ErrorKindInvalid, "the clip is %d ms by its packets; at most %d", m, MaxAudioMS)
+		}
 	}
 	if ms > MaxAudioMS {
 		return 0, control.Errorf(api.ErrorKindInvalid, "the clip is %d ms; at most %d", ms, MaxAudioMS)

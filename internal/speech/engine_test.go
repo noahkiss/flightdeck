@@ -377,6 +377,26 @@ func longOpus(seconds int) []byte {
 	return append(b, oggopus.Page(0x04, int64(seconds)*oggopus.Rate, 1, 2, []byte{0xf8})...)
 }
 
+// lyingOpus is a hand-made Ogg Opus file whose pages say granule 0 but whose 1009 packets of
+// 120 ms hold 121 s.
+func lyingOpus() []byte {
+	b := oggopus.Page(0x02, 0, 1, 0, oggopus.Head(1, 0, 16000))
+	b = append(b, oggopus.Page(0, 0, 1, 1, oggopus.Tags("test"))...)
+	pkt := []byte{31<<3 | 3, 6}
+	for i := 0; i < 1009; i += 50 {
+		var ps [][]byte
+		for j := i; j < min(i+50, 1009); j++ {
+			ps = append(ps, pkt)
+		}
+		typ := byte(0)
+		if i+50 >= 1009 {
+			typ = 0x04
+		}
+		b = append(b, oggopus.Page(typ, 0, 1, uint32(2+i/50), ps...)...)
+	}
+	return b
+}
+
 // TestLimits: the clip checks run before the helper sees a byte.
 func TestLimits(t *testing.T) {
 	h := newHarness(t, "ok", testModel, true, nil)
@@ -388,6 +408,7 @@ func TestLimits(t *testing.T) {
 		{"empty", api.SpeechTranscribeParams{Format: "pcm16"}, "needs audio"},
 		{"too large", api.SpeechTranscribeParams{Format: "pcm16", Audio: make([]byte, MaxAudioBytes+2)}, "at most 1048576"},
 		{"too long", api.SpeechTranscribeParams{Format: "opus", Audio: longOpus(121)}, "at most 120000"},
+		{"granule lies", api.SpeechTranscribeParams{Format: "opus", Audio: lyingOpus()}, "is 121080 ms by its packets"},
 		{"language", api.SpeechTranscribeParams{Format: "pcm16", Audio: clip(1, 10), Language: "fr"}, "en only"},
 		{"format", api.SpeechTranscribeParams{Format: "mp3", Audio: clip(1, 10)}, "use opus or pcm16"},
 		{"odd", api.SpeechTranscribeParams{Format: "pcm16", Audio: []byte{1, 2, 3}}, "even number"},

@@ -142,3 +142,84 @@ func TestChecksumKnown(t *testing.T) {
 		t.Fatalf("crc %#x", c)
 	}
 }
+
+// lyingClip has n packets of 120 ms (code 3, six 20 ms CELT frames) on pages whose granule is
+// granule each.
+func lyingClip(n int, granule int64) []byte {
+	b := Page(0x02, 0, 1, 0, Head(1, 0, 16000))
+	b = append(b, Page(0, 0, 1, 1, Tags(""))...)
+	pkt := []byte{31<<3 | 3, 6} // config 31 (CELT 20 ms), code 3, 6 frames
+	for i := 0; i < n; i += 50 {
+		var ps [][]byte
+		for j := i; j < min(i+50, n); j++ {
+			ps = append(ps, pkt)
+		}
+		typ := byte(0)
+		if i+50 >= n {
+			typ = 0x04
+		}
+		b = append(b, Page(typ, granule, 1, uint32(2+i/50), ps...)...)
+	}
+	return b
+}
+
+// TestPacketLengths: a stream cannot claim less audio than its packets hold. 1009 packets of
+// 120 ms with granule 0 still read as 121 s.
+func TestPacketLengths(t *testing.T) {
+	s, err := Parse(lyingClip(1009, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.DurationMS() != 121080 {
+		t.Fatalf("duration %d ms, want 121080", s.DurationMS())
+	}
+	for _, tc := range []struct {
+		p    []byte
+		want int64
+	}{
+		{[]byte{0x08}, 960},           // SILK 20 ms, one frame
+		{[]byte{0x01, 0}, 960},        // SILK 10 ms, two frames
+		{[]byte{12<<3 | 2, 0}, 960},   // hybrid 10 ms, two frames
+		{[]byte{16 << 3}, 120},        // CELT 2.5 ms
+		{[]byte{3<<3 | 3, 2}, 5760},   // SILK 60 ms, two frames: 120 ms
+		{[]byte{16<<3 | 3, 48}, 5760}, // 48 frames of 2.5 ms
+	} {
+		if n, err := packetSamples(tc.p); err != nil || n != tc.want {
+			t.Errorf("%x: %d %v, want %d", tc.p, n, err, tc.want)
+		}
+	}
+}
+
+func TestPacketRefuses(t *testing.T) {
+	headers := func() []byte {
+		return append(Page(0x02, 0, 1, 0, Head(1, 0, 16000)), Page(0, 0, 1, 1, Tags(""))...)
+	}
+	for _, tc := range []struct {
+		name    string
+		granule int64
+		pkt     []byte
+		want    string
+	}{
+		{"no granule", -1, []byte{0x08}, "no granule position"},
+		{"too long", 960, []byte{3<<3 | 3, 3}, "longer than 120 ms"},
+		{"empty packet", 960, []byte{}, "empty Opus packet"},
+		{"no count", 960, []byte{0x0b}, "no frame count"},
+	} {
+		b := append(headers(), Page(0x04, tc.granule, 1, 2, tc.pkt)...)
+		if _, err := Parse(b); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v, want %q", tc.name, err, tc.want)
+		}
+	}
+}
+
+// FuzzParse feeds Parse arbitrary bytes, seeded with the hand-made streams: it must never panic.
+func FuzzParse(f *testing.F) {
+	f.Add(clip(3, 4))
+	f.Add(lyingClip(60, 0))
+	f.Add([]byte("OggS"))
+	f.Fuzz(func(t *testing.T, b []byte) {
+		if s, err := Parse(b); err == nil {
+			_ = s.DurationMS()
+		}
+	})
+}

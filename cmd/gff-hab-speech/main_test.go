@@ -80,6 +80,21 @@ func TestOpusRoundTrip(t *testing.T) {
 	t.Logf("1 s at 24 kbit/s: %d bytes", len(ogg))
 }
 
+// TestOpusCap: the helper refuses to decode past the 120 s limit, whatever gff-hab let through.
+func TestOpusCap(t *testing.T) {
+	ogg, err := encodeOgg(make([]int16, 16000*125), 16000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeOpus(ogg); err == nil || !strings.Contains(err.Error(), "longer than 120000 ms") {
+		t.Fatalf("125 s clip: %v", err)
+	}
+	ogg, _ = encodeOgg(make([]int16, 16000*119), 16000)
+	if got, err := decodeOpus(ogg); err != nil || len(got) != 16000*119 {
+		t.Fatalf("119 s clip: %d samples, %v", len(got), err)
+	}
+}
+
 func TestTranscribeRefuses(t *testing.T) {
 	for _, req := range []speechproto.Request{{ID: 1, Format: "opus"}, {ID: 2, Format: "pcm16"}, {ID: 3, Format: "mp3"}} {
 		audio := []byte{1, 2, 3}

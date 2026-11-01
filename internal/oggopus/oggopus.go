@@ -21,15 +21,61 @@ type Stream struct {
 	InputRate int      // the encoder's input rate; informational only
 	Packets   [][]byte // the audio packets, in order; they alias the input
 	Granule   int64    // granule position of the last page: decoded samples at 48 kHz, pre-skip included
+	// PacketSamples is the sum of the packets' own lengths at 48 kHz, read from each packet's
+	// TOC byte (RFC 6716 3.1). It bounds what a decoder outputs, whatever the granule says.
+	PacketSamples int64
 }
 
-// Samples returns the stream's playable length in samples at 48 kHz.
+// Samples returns the stream's playable length in samples at 48 kHz, from the granule position;
+// with no granule (0), from the packets' own lengths.
 func (s *Stream) Samples() int64 {
-	n := s.Granule - int64(s.PreSkip)
-	if n < 0 {
-		return 0
+	g := s.Granule
+	if g <= 0 {
+		g = s.PacketSamples
 	}
-	return n
+	return max(g-int64(s.PreSkip), 0)
+}
+
+// MaxDurationMS returns the most audio the packets can decode to, in milliseconds, whatever the
+// granule says. A stream that ends cleanly holds at most one packet more than its playable
+// length (the encoder's lookahead); a larger gap means the granule understates the clip.
+func (s *Stream) MaxDurationMS() int {
+	return int(max(s.PacketSamples-int64(s.PreSkip), 0) * 1000 / Rate)
+}
+
+// frameSamples is the frame length at 48 kHz of each TOC config (RFC 6716 3.1, Table 2): SILK
+// 10, 20, 40, 60 ms; hybrid 10, 20 ms; CELT 2.5, 5, 10, 20 ms.
+func frameSamples(config byte) int64 {
+	switch {
+	case config < 12:
+		return []int64{480, 960, 1920, 2880}[config%4]
+	case config < 16:
+		return []int64{480, 960}[config%2]
+	default:
+		return []int64{120, 240, 480, 960}[config%4]
+	}
+}
+
+// packetSamples returns one Opus packet's length at 48 kHz from its TOC byte and frame count.
+func packetSamples(p []byte) (int64, error) {
+	if len(p) == 0 {
+		return 0, errors.New("an empty Opus packet")
+	}
+	frames := int64(1)
+	switch p[0] & 0x03 {
+	case 1, 2:
+		frames = 2
+	case 3:
+		if len(p) < 2 || p[1]&0x3f == 0 {
+			return 0, errors.New("an Opus packet with no frame count")
+		}
+		frames = int64(p[1] & 0x3f)
+	}
+	n := frames * frameSamples(p[0]>>3)
+	if n > 5760 { // 120 ms, the most one packet may hold
+		return 0, errors.New("an Opus packet longer than 120 ms")
+	}
+	return n, nil
 }
 
 // DurationMS returns the stream's playable length in milliseconds.
@@ -56,6 +102,7 @@ func Parse(b []byte) (*Stream, error) {
 		open    bool   // packet continues on the next page
 		packets [][]byte
 		lastGP  int64
+		finalGP int64 // granule of the stream's last page, as written
 		eos     bool
 	)
 	for off := 0; off < len(b); {
@@ -100,6 +147,7 @@ func Parse(b []byte) (*Stream, error) {
 		if p.granule != -1 {
 			lastGP = p.granule
 		}
+		finalGP = p.granule
 		eos = p.typ&0x04 != 0
 	}
 	if open {
@@ -116,6 +164,17 @@ func Parse(b []byte) (*Stream, error) {
 	}
 	s.Packets = packets[2:]
 	s.Granule = lastGP
+	// The last page ends a packet, so it must carry a granule position (RFC 7845 4).
+	if len(s.Packets) > 0 && finalGP < 0 {
+		return nil, errors.New("the last page has no granule position")
+	}
+	for i, p := range s.Packets {
+		n, err := packetSamples(p)
+		if err != nil {
+			return nil, fmt.Errorf("audio packet %d: %w", i, err)
+		}
+		s.PacketSamples += n
+	}
 	return &s, nil
 }
 
