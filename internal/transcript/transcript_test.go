@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -47,7 +49,7 @@ func readAll(t *testing.T, r *Reader, limit int) []api.ChatMessage {
 	var all []api.ChatMessage
 	before := ""
 	for {
-		msgs, more, _, err := r.Page(before, limit)
+		msgs, more, _, err := r.Page(context.Background(), before, limit)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -163,7 +165,8 @@ func appendFile(t *testing.T, path string, b []byte) {
 }
 
 // TestTruncatedLastLine: while the writer is mid-append, the half-written last line yields no
-// message; once its newline lands, the message appears once and is reported as a change.
+// message; once its newline lands, the message appears once and is reported as a change. A
+// file that did not exist when a client paged it reports what it holds once it appears.
 func TestTruncatedLastLine(t *testing.T) {
 	lines := fixtureLines(t)
 	path := filepath.Join(t.TempDir(), "s.jsonl")
@@ -173,7 +176,7 @@ func TestTruncatedLastLine(t *testing.T) {
 	var changes [][]api.ChatMessage
 	r := NewClaude(Config{Path: path, Session: "s1", OnChange: func(m []api.ChatMessage) { changes = append(changes, m) }})
 	// Not written yet: an empty conversation, not an error.
-	if msgs, more, cur, err := r.Page("", 50); err != nil || len(msgs) != 0 || more || cur != "" {
+	if msgs, more, cur, err := r.Page(context.Background(), "", 50); err != nil || len(msgs) != 0 || more || cur != "" {
 		t.Fatalf("missing file: %v %v %q %v", msgs, more, cur, err)
 	}
 	appendFile(t, path, bytes.Join(lines[:4], nil)) // up to and with the first prompt
@@ -201,8 +204,8 @@ func TestTruncatedLastLine(t *testing.T) {
 			t.Fatalf("cut at %d: changes %+v", cutAt, got)
 		}
 	}
-	if len(changes) != 0 {
-		t.Fatalf("the first read reported changes: %+v", changes)
+	if len(changes) != 1 || len(changes[0]) != 1 || changes[0][0].ID != before[0].ID {
+		t.Fatalf("the file appeared after an empty page; changes %+v, want its first prompt", changes)
 	}
 }
 
@@ -237,7 +240,7 @@ func TestCursorResume(t *testing.T) {
 			appendFile(t, path, bytes.Join(lines[:pause], nil))
 			r := NewClaude(Config{Path: path, Session: "s1"})
 			var c client
-			msgs, _, cur, err := r.Page("", 200)
+			msgs, _, cur, err := r.Page(context.Background(), "", 200)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -245,7 +248,7 @@ func TestCursorResume(t *testing.T) {
 			c.cursor = cur
 			appendFile(t, path, bytes.Join(lines[pause:], nil))
 			for i := 0; ; i++ {
-				msgs, more, next, err := r.Since(c.cursor, limit)
+				msgs, more, next, err := r.Since(context.Background(), c.cursor, limit)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -263,7 +266,7 @@ func TestCursorResume(t *testing.T) {
 				t.Fatalf("limit %d pause %d: the resumed conversation differs:\n%+v\nwant\n%+v", limit, pause, c.msgs, full)
 			}
 			// A cursor at the end gives nothing new; a fresh reader (a restarted gff-hab) takes it.
-			msgs, more, _, err := NewClaude(Config{Path: path, Session: "s1"}).Since(c.cursor, limit)
+			msgs, more, _, err := NewClaude(Config{Path: path, Session: "s1"}).Since(context.Background(), c.cursor, limit)
 			if err != nil || len(msgs) != 0 || more {
 				t.Fatalf("limit %d pause %d: cursor at the end: %+v %v %v", limit, pause, msgs, more, err)
 			}
@@ -280,17 +283,17 @@ func TestStaleCursor(t *testing.T) {
 	appendFile(t, path, bytes.Join(lines[:10], nil))
 	var l logs
 	r := NewClaude(Config{Path: path, Session: "s1", Logf: l.logf})
-	_, _, cur, err := r.Page("", 50)
+	_, _, cur, err := r.Page(context.Background(), "", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
 	gen, _, _ := strings.Cut(cur, ":")
 	for _, bad := range []string{"x", gen + ":999999", "000000000000:10", gen + ":-1"} {
-		if _, _, _, err := r.Since(bad, 50); !errors.Is(err, ErrStaleCursor) {
+		if _, _, _, err := r.Since(context.Background(), bad, 50); !errors.Is(err, ErrStaleCursor) {
 			t.Errorf("cursor %q: %v", bad, err)
 		}
 	}
-	if _, _, _, err := r.Page("no-such-id", 50); !errors.Is(err, ErrUnknownMessage) {
+	if _, _, _, err := r.Page(context.Background(), "no-such-id", 50); !errors.Is(err, ErrUnknownMessage) {
 		t.Errorf("unknown before: %v", err)
 	}
 	// Replace the file with other contents.
@@ -299,7 +302,7 @@ func TestStaleCursor(t *testing.T) {
 	if err := os.Rename(tmp, path); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := r.Since(cur, 50); !errors.Is(err, ErrStaleCursor) {
+	if _, _, _, err := r.Since(context.Background(), cur, 50); !errors.Is(err, ErrStaleCursor) {
 		t.Errorf("cursor after a replacement: %v", err)
 	}
 	msgs := readAll(t, r, 50)
@@ -351,5 +354,120 @@ func TestFixturesClean(t *testing.T) {
 				t.Errorf("%s contains %q", f, bad)
 			}
 		}
+	}
+}
+
+// TestIdlePollAllocatesLittle: reading a file that has not grown allocates no read buffer.
+func TestIdlePollAllocatesLittle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	appendFile(t, path, bytes.Join(fixtureLines(t), nil))
+	r := NewClaude(Config{Path: path, Session: "s1"})
+	if err := r.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	var a, b runtime.MemStats
+	runtime.ReadMemStats(&a)
+	for range 100 {
+		if err := r.Refresh(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runtime.ReadMemStats(&b)
+	if got := b.TotalAlloc - a.TotalAlloc; got > 1<<20 {
+		t.Errorf("100 idle reads allocated %d bytes", got)
+	}
+}
+
+// TestRewriteSeen: a file truncated and written again past the old size, and a file replaced,
+// are read again from the start; each time a subscriber gets one reset event, never the
+// messages read again, and the log names each replacement.
+func TestRewriteSeen(t *testing.T) {
+	lines := fixtureLines(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "s.jsonl")
+	appendFile(t, path, bytes.Join(lines[:6], nil))
+	var l logs
+	var changes []api.ChatMessage
+	r := NewClaude(Config{Path: path, Session: "s1", Logf: l.logf, OnChange: func(m []api.ChatMessage) { changes = append(changes, m...) }})
+	if err := r.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	// Same file, truncated, then other contents longer than what was read.
+	if err := os.WriteFile(path, bytes.Join(append([][]byte{lines[5]}, lines[:10]...), nil), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Event != api.ChatEventReset || changes[0].Session != "s1" || changes[0].ID != "reset-1" {
+		t.Fatalf("after a rewrite: changes %+v", changes)
+	}
+	if msgs := readAll(t, r, 200); len(msgs) != 5 || msgs[0].Kind != api.ChatKindAgent {
+		t.Fatalf("after a rewrite the conversation was not read again: %+v", msgs)
+	}
+	tmp := filepath.Join(dir, "new.jsonl")
+	appendFile(t, tmp, bytes.Join(lines[:4], nil))
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 2 || changes[1].ID != "reset-2" || !l.has("2 times") {
+		t.Fatalf("after a replacement: changes %+v, logs %q", changes, l.lines)
+	}
+}
+
+// TestPageHonoursContext: a page whose context has ended returns its error, and the next page
+// reads the whole file with no change reported.
+func TestPageHonoursContext(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	appendFile(t, path, bytes.Join(fixtureLines(t), nil))
+	var changes int
+	r := NewClaude(Config{Path: path, Session: "s1", OnChange: func(m []api.ChatMessage) { changes += len(m) }})
+	done, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, _, err := r.Page(done, "", 50); !errors.Is(err, context.Canceled) {
+		t.Fatalf("page with an ended context: %v", err)
+	}
+	if msgs := readAll(t, r, 200); len(msgs) == 0 || changes != 0 {
+		t.Fatalf("after: %d messages, %d changes reported", len(msgs), changes)
+	}
+}
+
+// TestNoSilentDrops: a known record that yields nothing to show becomes a placeholder with a
+// warning, and a tool result whose call id now names a placeholder does not crash the reader.
+// A version inside the tested range after one outside it clears the drift.
+func TestNoSilentDrops(t *testing.T) {
+	recs := []string{
+		`{"type":"user","uuid":"u1","timestamp":"2026-01-01T10:00:00Z","version":"2.9.0"}`,
+		`{"type":"system","subtype":"informational","uuid":"s1","timestamp":"2026-01-01T10:00:01Z","content":{"x":1}}`,
+		`{"type":"system","subtype":"api_error","uuid":"s2","timestamp":"2026-01-01T10:00:02Z","content":""}`,
+		`{"type":"system","subtype":"local_command","uuid":"s3","timestamp":"2026-01-01T10:00:03Z","content":["x"]}`,
+		`{"type":"assistant","uuid":"a1","timestamp":"2026-01-01T10:00:04Z","version":"2.1.310","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}`,
+		`{"type":"future-record","uuid":"a1","timestamp":"2026-01-01T10:00:05Z"}`,
+		`{"type":"user","uuid":"u2","timestamp":"2026-01-01T10:00:06Z","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}`,
+	}
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	appendFile(t, path, []byte(strings.Join(recs, "\n")+"\n"))
+	var l logs
+	r := NewClaude(Config{Path: path, Session: "s1", Logf: l.logf})
+	msgs := readAll(t, r, 200)
+	unknown := map[string]bool{}
+	for _, m := range msgs {
+		if m.Event == api.ChatEventUnknown {
+			unknown[m.ID] = true
+		}
+	}
+	for _, id := range []string{"u1", "s1", "s2", "s3"} {
+		if !unknown[id] {
+			t.Errorf("record %s left no placeholder: %+v", id, msgs)
+		}
+	}
+	if !l.has("u1 has no message") || !l.has("s1 (informational)") || !l.has("s2 (api_error)") || !l.has("s3 (local_command)") {
+		t.Errorf("logs %q", l.lines)
+	}
+	if r.Drift() != "" {
+		t.Errorf("drift %q after a record in the tested range", r.Drift())
 	}
 }

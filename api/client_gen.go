@@ -43,6 +43,7 @@ const (
 	ChatEventInterrupt  ChatEvent = "interrupt"
 	ChatEventCommand    ChatEvent = "command"
 	ChatEventNotice     ChatEvent = "notice"
+	ChatEventReset      ChatEvent = "reset"
 	ChatEventUnknown    ChatEvent = "unknown"
 )
 

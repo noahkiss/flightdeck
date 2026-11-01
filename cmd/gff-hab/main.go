@@ -307,6 +307,10 @@ func serve(args []string) error {
 					s.Publish(e)
 				}
 			},
+			watched: func(session string) bool {
+				s := srv.Load()
+				return s != nil && s.Watching(session)
+			},
 			logf: logger.Printf,
 		})
 		defer chats.Close()

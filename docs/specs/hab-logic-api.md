@@ -598,6 +598,8 @@ order. A chat message lives in the transcript, not in gff-hab, so it has no stor
 either; an update repeats the message id and replaces the message. A scoped subscription gets a
 `chat.message` when the message's `session` is in its scope.
 
+Built: gff-hab sends no `revision` key on these events.
+
 New capabilities: `push` (the hab has working push config, `app.md` 8.4) and `host-stats`.
 
 Shapes the specs left open, and the choice taken (the smallest that serves both clients):
@@ -629,7 +631,10 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   not with `before`) returns what was added or changed since the cursor, oldest first, with
   `more` set when further changes wait; the result's `cursor` is the value to pass next; a
   message's `event` says what a kind `event` line marks (`compaction`, `permission`,
-  `interrupt`, `command`, `notice`, `unknown`; open). A stale cursor answers `conflict`, an
+  `interrupt`, `command`, `notice`, `reset`, `unknown`; open). `reset` comes only as a
+  `chat.message` event, never in a page: the transcript was replaced, and the client takes the
+  tail again. An empty `cursor` means there is nothing to resume from yet: the client pages
+  again. A stale cursor answers `conflict`, an
   unknown `before` answers `not_found`. The rules are in `harness-adapters.md`, Claude Code,
   built choices for the transcript reader. Golden files: `result.chat.page@2.json` and
   `event.chat.message@2.json`.

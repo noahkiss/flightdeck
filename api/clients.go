@@ -110,7 +110,7 @@ type ChatMessage struct {
 	Attachments []string   `json:"attachments,omitempty" doc:"Attachment ids shown on the message."`
 	// Event is added by the transcript reader (Part 4 stage 5). Optional, so a newer client
 	// reads a message from an older revision 1 hab.
-	Event ChatEvent `json:"event,omitempty" doc:"With kind event: what the line marks. unknown marks a transcript record the reader does not know; text names it."`
+	Event ChatEvent `json:"event,omitempty" doc:"With kind event: what the line marks. unknown marks a transcript record the reader does not know; text names it. reset, sent only as an event, says the transcript was replaced: take the tail again."`
 }
 
 // ChatPageParams reads one page of a session's conversation.

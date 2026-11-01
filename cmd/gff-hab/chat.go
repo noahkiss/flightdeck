@@ -15,6 +15,9 @@ import (
 // chatPoll is how often open transcripts are read for new lines, to send chat.message events.
 const chatPoll = time.Second
 
+// chatIdle is how long a reader stays open with no chat.page before the poll may close it.
+const chatIdle = 10 * time.Minute
+
 // chatService serves chat.page from each session's harness transcript, read in place
 // (harness-adapters.md, Claude Code: conversation), and sends chat.message events for what the
 // harness appends. A session's transcript is found through its pane's agent state: the native
@@ -34,13 +37,20 @@ type chatConfig struct {
 	agent   func(pane string) (api.AgentState, bool)
 	find    func(native string) (string, error) // the Claude Code transcript of a native session
 	publish func(structure.Event)
+	watched func(session string) bool // a subscription gets this session's events; nil: none does
 	logf    func(string, ...any)
-	every   time.Duration // poll interval; default chatPoll
+	every   time.Duration    // poll interval; default chatPoll
+	idle    time.Duration    // default chatIdle
+	now     func() time.Time // default time.Now
 }
 
+// chatReader is one session's transcript reader. Its fields change under chatService.mu.
 type chatReader struct {
 	native string
-	r      *transcript.Reader
+	r      *transcript.Reader // nil while the file is not written: the poll opens it when it is
+	paged  time.Time          // the last chat.page
+	size   int64              // bytes read, at the last poll
+	grew   time.Time          // when size last changed, or when the reader was made
 }
 
 func newChatService(cfg chatConfig) *chatService {
@@ -49,6 +59,12 @@ func newChatService(cfg chatConfig) *chatService {
 	}
 	if cfg.every <= 0 {
 		cfg.every = chatPoll
+	}
+	if cfg.idle <= 0 {
+		cfg.idle = chatIdle
+	}
+	if cfg.now == nil {
+		cfg.now = time.Now
 	}
 	c := &chatService{chatConfig: cfg, readers: map[string]*chatReader{}, stop: make(chan struct{}), done: make(chan struct{})}
 	go c.poll()
@@ -61,8 +77,7 @@ func (c *chatService) Close() {
 	<-c.done
 }
 
-// poll reads every open transcript once per interval. A reader whose session record is gone is
-// dropped.
+// poll runs one pass per interval.
 func (c *chatService) poll() {
 	defer close(c.done)
 	t := time.NewTicker(c.every)
@@ -73,26 +88,90 @@ func (c *chatService) poll() {
 			return
 		case <-t.C:
 		}
-		c.mu.Lock()
-		var rs []*transcript.Reader
-		for id, cr := range c.readers {
-			if _, ok := c.session(id); !ok {
-				delete(c.readers, id)
-				continue
-			}
-			rs = append(rs, cr.r)
-		}
-		c.mu.Unlock()
-		for _, r := range rs {
-			if err := r.Refresh(); err != nil {
-				c.logf("transcript: %v", err)
-			}
-		}
+		c.pass()
 	}
 }
 
+// pass closes the readers no one needs, opens the transcripts that appeared, and reads every
+// open transcript once.
+func (c *chatService) pass() {
+	type entry struct {
+		id string
+		cr *chatReader
+		chatReader
+	}
+	c.mu.Lock()
+	entries := make([]entry, 0, len(c.readers))
+	for id, cr := range c.readers {
+		entries = append(entries, entry{id, cr, *cr})
+	}
+	c.mu.Unlock()
+	now := c.now()
+	for _, e := range entries {
+		if c.unneeded(e.id, e.chatReader, now) {
+			c.mu.Lock()
+			if c.readers[e.id] == e.cr {
+				delete(c.readers, e.id)
+			}
+			c.mu.Unlock()
+			continue
+		}
+		r := e.r
+		if r == nil {
+			path, err := c.find(e.native)
+			if err != nil {
+				continue // not written yet, or unreadable: the next pass tries again
+			}
+			c.mu.Lock()
+			if c.readers[e.id] == e.cr && e.cr.r == nil {
+				// The client saw an empty conversation: report everything the file holds.
+				e.cr.r = c.open(e.id, path, true)
+			}
+			r = e.cr.r
+			c.mu.Unlock()
+		}
+		if err := r.Refresh(); err != nil {
+			c.logf("transcript: %v", err)
+		}
+		size := r.Size()
+		c.mu.Lock()
+		if size != e.cr.size {
+			e.cr.size, e.cr.grew = size, now
+		}
+		c.mu.Unlock()
+	}
+}
+
+// unneeded says the poll should close a reader: its session record is gone, or no chat.page
+// came for the idle time and either no subscription gets the session's events, or the
+// session's agent is gone and the file has not grown for the idle time. A client that pages
+// again opens a new reader; its cursor still works, since cursors name file offsets.
+func (c *chatService) unneeded(id string, cr chatReader, now time.Time) bool {
+	sess, ok := c.session(id)
+	if !ok {
+		return true
+	}
+	if now.Sub(cr.paged) < c.idle {
+		return false
+	}
+	if c.watched == nil || !c.watched(id) {
+		return true
+	}
+	if sess.Pane != "" {
+		if st, ok := c.agent(sess.Pane); ok && st.Session == cr.native {
+			return false // the agent still runs: its next turn sends events to the subscriber
+		}
+	}
+	return now.Sub(cr.grew) >= c.idle
+}
+
+func (c *chatService) open(id, path string, fromEmpty bool) *transcript.Reader {
+	return transcript.NewClaude(transcript.Config{Path: path, Session: id, Logf: c.logf, OnChange: c.changed, FromEmpty: fromEmpty})
+}
+
 // reader returns the transcript reader of a gff-hab session, opening it on first use. A nil
-// reader with no error means the transcript is not written yet.
+// reader with no error means the transcript is not written yet; the poll opens it when it
+// appears and sends its messages as events.
 func (c *chatService) reader(id string) (*transcript.Reader, error) {
 	sess, ok := c.session(id)
 	if !ok {
@@ -107,27 +186,40 @@ func (c *chatService) reader(id string) (*transcript.Reader, error) {
 			native = st.Session
 		}
 	}
+	now := c.now()
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	cr := c.readers[id]
-	if native == "" {
-		if cr != nil { // the agent left, or the pane is gone: keep showing the last conversation
-			return cr.r, nil
-		}
-		return nil, control.Errorf(api.ErrorKindUnavailable, "session %s has no agent session yet: its harness has not reported one", id)
-	}
-	if cr != nil && cr.native == native {
+	if cr != nil && cr.r != nil && (native == "" || cr.native == native) {
+		// With no agent (it left, or the pane is gone) the last conversation stays readable.
+		cr.paged = now
+		c.mu.Unlock()
 		return cr.r, nil
 	}
+	c.mu.Unlock()
+	if native == "" {
+		return nil, control.Errorf(api.ErrorKindUnavailable, "session %s has no agent session yet: its harness has not reported one", id)
+	}
 	path, err := c.find(native)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cur := c.readers[id]
+	if cur != nil && cur.native == native && cur.r != nil { // the poll opened it meanwhile
+		cur.paged = now
+		return cur.r, nil
+	}
 	if errors.Is(err, transcript.ErrNoTranscript) {
+		if cur == nil || cur.native != native {
+			c.readers[id] = &chatReader{native: native, grew: now}
+		}
+		c.readers[id].paged = now
 		return nil, nil
 	}
 	if err != nil {
 		return nil, control.Errorf(api.ErrorKindUnavailable, "session %s: %v", id, err)
 	}
-	r := transcript.NewClaude(transcript.Config{Path: path, Session: id, Logf: c.logf, OnChange: c.changed})
-	c.readers[id] = &chatReader{native: native, r: r}
+	fromEmpty := cur != nil && cur.native == native // a client paged it while it was not written
+	r := c.open(id, path, fromEmpty)
+	c.readers[id] = &chatReader{native: native, r: r, paged: now, grew: now}
 	return r, nil
 }
 
@@ -139,7 +231,11 @@ func (c *chatService) changed(msgs []api.ChatMessage) {
 }
 
 // ChatPage implements control.Chat.
-func (c *chatService) ChatPage(_ context.Context, p api.ChatPageParams) (api.ChatMessages, error) {
+// The read stops when ctx ends; a later page goes on from where it stopped.
+func (c *chatService) ChatPage(ctx context.Context, p api.ChatPageParams) (api.ChatMessages, error) {
+	if err := ctx.Err(); err != nil {
+		return api.ChatMessages{}, control.Errorf(api.ErrorKindUnavailable, "session %s: %v", p.Session, err)
+	}
 	r, err := c.reader(p.Session)
 	if err != nil {
 		return api.ChatMessages{}, err
@@ -155,9 +251,9 @@ func (c *chatService) ChatPage(_ context.Context, p api.ChatPageParams) (api.Cha
 	}
 	var out api.ChatMessages
 	if p.After != "" {
-		out.Messages, out.More, out.Cursor, err = r.Since(p.After, p.Limit)
+		out.Messages, out.More, out.Cursor, err = r.Since(ctx, p.After, p.Limit)
 	} else {
-		out.Messages, out.More, out.Cursor, err = r.Page(p.Before, p.Limit)
+		out.Messages, out.More, out.Cursor, err = r.Page(ctx, p.Before, p.Limit)
 	}
 	switch {
 	case errors.Is(err, transcript.ErrUnknownMessage):

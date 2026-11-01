@@ -1402,6 +1402,7 @@
           "interrupt",
           "command",
           "notice",
+          "reset",
           "unknown"
         ]
       },
@@ -1431,7 +1432,7 @@
           },
           "event": {
             "$ref": "#/components/schemas/ChatEvent",
-            "description": "With kind event: what the line marks. unknown marks a transcript record the reader does not know; text names it."
+            "description": "With kind event: what the line marks. unknown marks a transcript record the reader does not know; text names it. reset, sent only as an event, says the transcript was replaced: take the tail again."
           },
           "id": {
             "type": "string",

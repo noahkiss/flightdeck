@@ -8,13 +8,16 @@
 package transcript
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"sync"
+	"time"
 
 	"github.com/noahkiss/flightdeck/api"
 )
@@ -33,6 +36,7 @@ type Reader struct {
 	loaded  bool // the first read is done; changes after it are reported to onChange
 	warned  map[string]bool
 	drift   string
+	resets  int     // replacements seen
 	pending []*item // changed during the current refresh
 }
 
@@ -42,9 +46,13 @@ type Config struct {
 	Session string // gff-hab session id for the messages
 	Logf    func(string, ...any)
 	// OnChange receives the messages a read added or changed, in conversation order. The first
-	// read of a file, and the read after a replacement, report nothing: a client takes a page.
+	// read of a file reports nothing: a client takes a page. After a replacement it receives
+	// one message of kind event, event reset, and nothing for the contents read again.
 	// It is called with the reader's lock held and must not call back into the reader.
 	OnChange func([]api.ChatMessage)
+	// FromEmpty says a client already saw this conversation as empty (the file did not exist
+	// yet): the first read reports every message it finds to OnChange.
+	FromEmpty bool
 }
 
 // NewClaude returns a reader of a Claude Code session transcript. It reads nothing until the
@@ -55,6 +63,7 @@ func NewClaude(cfg Config) *Reader {
 		r.logf = func(string, ...any) {}
 	}
 	r.reset()
+	r.loaded = cfg.FromEmpty
 	return r
 }
 
@@ -75,6 +84,7 @@ func (r *Reader) warn(key, format string, args ...any) {
 }
 
 // checkVersion records drift when a record's Claude Code version is outside the tested range.
+// Drift follows the newest record: a record inside the range clears it.
 func (r *Reader) checkVersion(v string) {
 	lo, ok1 := compareVersions(v, ClaudeTestedMin)
 	hi, ok2 := compareVersions(v, ClaudeTestedMax)
@@ -84,6 +94,7 @@ func (r *Reader) checkVersion(v string) {
 	case lo < 0 || hi > 0:
 		r.drift = fmt.Sprintf("Claude Code %s is outside the tested range %s to %s; reading in tolerant mode", v, ClaudeTestedMin, ClaudeTestedMax)
 	default:
+		r.drift = ""
 		return
 	}
 	r.warn("version:"+v, "%s", r.drift)
@@ -100,18 +111,39 @@ func (r *Reader) Drift() string {
 func (r *Reader) Refresh() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.refresh()
+	return r.refresh(context.Background())
 }
 
-func (r *Reader) refresh() error {
-	lines, err := r.t.next()
+// Size is how many bytes of the file the reader has read.
+func (r *Reader) Size() int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.t.read
+}
+
+// refresh reads the new lines. When ctx ends partway, the lines read so far are kept and the
+// next refresh goes on from there; a first read that ends early still reports nothing.
+func (r *Reader) refresh(ctx context.Context) error {
+	lines, err := r.t.next(ctx)
 	if errors.Is(err, errReplaced) {
-		r.warn("replaced", "the file was replaced or truncated; reading it again from the start")
+		r.resets++
+		r.logf("transcript %s: the file was replaced or truncated (%d times so far); reading it again from the start", r.path, r.resets)
+		seen := r.loaded
 		r.reset()
-		lines, err = r.t.next()
+		r.drift = ""
+		if seen && r.onChange != nil {
+			// Messages a client holds may be gone or moved: tell it to take the tail again.
+			r.onChange([]api.ChatMessage{{ID: "reset-" + strconv.Itoa(r.resets), Session: r.session,
+				Kind: api.ChatKindEvent, Event: api.ChatEventReset, At: time.Now().UTC().Format(time.RFC3339),
+				Text: "The transcript was replaced; the conversation was read again"}})
+		}
+		lines, err = r.t.next(ctx)
 	}
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil // not written yet: the harness may create it after its first hook
+		// Not written yet: the harness may create it after its first hook. A client sees an
+		// empty conversation, so what the file holds once it appears is reported.
+		r.loaded = true
+		return nil
 	}
 	r.pending = r.pending[:0]
 	for _, l := range lines {
@@ -121,7 +153,9 @@ func (r *Reader) refresh() error {
 		r.onChange(r.messages(dedupe(r.pending)))
 	}
 	r.pending = r.pending[:0]
-	r.loaded = true
+	if err == nil {
+		r.loaded = true
+	}
 	return err
 }
 
@@ -157,11 +191,13 @@ func (r *Reader) withSession(msgs []api.ChatMessage) []api.ChatMessage {
 
 // Page reads the file's new lines, then returns up to limit messages before the message with id
 // before (the tail when before is empty), oldest first, whether older ones exist, and a cursor
-// for Since.
-func (r *Reader) Page(before string, limit int) (msgs []api.ChatMessage, more bool, cursor string, err error) {
+// for Since. The cursor is empty while the file holds no complete line: there is nothing to
+// resume from, and the client takes a page again. When ctx ends during the read, Page returns
+// its error.
+func (r *Reader) Page(ctx context.Context, before string, limit int) (msgs []api.ChatMessage, more bool, cursor string, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if err := r.refresh(); err != nil {
+	if err := r.refresh(ctx); err != nil {
 		return nil, false, "", err
 	}
 	msgs, more, err = r.c.page(before, limit)
@@ -177,10 +213,10 @@ func (r *Reader) Page(before string, limit int) (msgs []api.ChatMessage, more bo
 // Since reads the file's new lines, then returns the messages added or changed after cursor,
 // oldest first, the cursor to pass next, and whether more changes wait after it. A cursor from
 // other file contents, or past the end, is ErrStaleCursor: the client takes the tail again.
-func (r *Reader) Since(cursor string, limit int) (msgs []api.ChatMessage, more bool, next string, err error) {
+func (r *Reader) Since(ctx context.Context, cursor string, limit int) (msgs []api.ChatMessage, more bool, next string, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if err := r.refresh(); err != nil {
+	if err := r.refresh(ctx); err != nil {
 		return nil, false, "", err
 	}
 	from, err := parseCursor(cursor, r.t.gen, r.t.done)

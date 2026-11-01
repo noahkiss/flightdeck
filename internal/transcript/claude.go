@@ -176,8 +176,13 @@ func userText(text string) (kind api.ChatKind, event api.ChatEvent, out string, 
 }
 
 func (p *claudeParser) user(rec *claudeRecord, id string, end int64) {
-	if rec.IsMeta || rec.IsCompactSummary || rec.Message == nil {
+	if rec.IsMeta || rec.IsCompactSummary {
 		return // context the model sees, not the owner's words; the boundary marks a compaction
+	}
+	if rec.Message == nil {
+		p.r.warn("user-message", "user record %s has no message; shown as a placeholder", id)
+		p.placeholder(id, rec.Timestamp, "A user message in an unknown shape", end)
+		return
 	}
 	raw := rec.Message.Content
 	var s string
@@ -220,7 +225,7 @@ func (p *claudeParser) toolResult(rec *claudeRecord, id string, b claudeBlock, e
 	out, truncated := toolOutput(b.Content)
 	msgID, ok := p.tools[b.ToolUseID]
 	var msg api.ChatMessage
-	if it := p.c.get(msgID); ok && it != nil {
+	if it := p.c.get(msgID); ok && it != nil && it.msg.Tool != nil {
 		msg = it.msg
 		t := *msg.Tool
 		msg.Tool = &t
@@ -293,7 +298,13 @@ func (p *claudeParser) assistant(rec *claudeRecord, id string, end int64) {
 
 func (p *claudeParser) system(rec *claudeRecord, id string, end int64) {
 	var content string
-	_ = json.Unmarshal(rec.Content, &content)
+	if raw := bytes.TrimSpace(rec.Content); len(raw) > 0 && string(raw) != "null" && json.Unmarshal(raw, &content) != nil {
+		if rec.Subtype == "informational" || rec.Subtype == "api_error" || rec.Subtype == "local_command" {
+			p.r.warn("system-content:"+rec.Subtype, "system record %s (%s): content is not text; shown as a placeholder", id, rec.Subtype)
+			p.placeholder(id, rec.Timestamp, "A Claude Code system record in an unknown shape: "+rec.Subtype, end)
+			return
+		}
+	}
 	msg := api.ChatMessage{ID: id, Kind: api.ChatKindEvent, At: rec.Timestamp}
 	switch rec.Subtype {
 	case "compact_boundary":
@@ -305,9 +316,11 @@ func (p *claudeParser) system(rec *claudeRecord, id string, end int64) {
 		msg.Event, msg.Text = api.ChatEventNotice, strings.TrimSpace(content)
 	case "local_command":
 		msg.Event = api.ChatEventCommand
-		if _, _, text, ok := userText(content); ok {
-			msg.Text = text
+		_, _, text, ok := userText(content)
+		if ok && text == "" || strings.HasPrefix(strings.TrimSpace(content), "<local-command-caveat>") {
+			return // a command that printed nothing, or the caveat the model sees
 		}
+		msg.Text = text
 	default:
 		if claudeSystemSkipped[rec.Subtype] {
 			return
@@ -316,6 +329,8 @@ func (p *claudeParser) system(rec *claudeRecord, id string, end int64) {
 		msg.Event, msg.Text = api.ChatEventUnknown, "Unsupported Claude Code system record: "+rec.Subtype
 	}
 	if msg.Text == "" {
+		p.r.warn("system-empty:"+rec.Subtype, "system record %s (%s) has no text; shown as a placeholder", id, rec.Subtype)
+		p.placeholder(id, rec.Timestamp, "A Claude Code system record with no text: "+rec.Subtype, end)
 		return
 	}
 	p.emit(msg, end)

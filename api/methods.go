@@ -154,7 +154,7 @@ var Enums = map[string][]string{
 	"AnswerVia":       {"app", "banner", "watch", "voice", "terminal"},
 	"ChatKind":        {"user", "agent", "tool", "event", "plan"},
 	"ToolStatus":      {"running", "done", "error", "denied"},
-	"ChatEvent":       {"compaction", "permission", "interrupt", "command", "notice", "unknown"},
+	"ChatEvent":       {"compaction", "permission", "interrupt", "command", "notice", "reset", "unknown"},
 	"PlanStepStatus":  {"pending", "in_progress", "done"},
 	"PushEnvironment": {"development", "production"},
 	"PushKind":        {"permission", "question", "auth", "error", "done", "usage"},

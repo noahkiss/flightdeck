@@ -392,30 +392,46 @@ Built choices for the transcript reader (`internal/transcript`, `cmd/gff-hab/cha
   resume id). The file is `projects/*/<session id>.jsonl` under `$CLAUDE_CONFIG_DIR`, else
   `~/.claude`; when several project folders hold one, the most recently written wins. A
   session id that could name another path is refused. A file not written yet reads as an empty
-  page. When the agent leaves the pane, the last conversation stays readable while gff-hab runs.
+  page with an empty `cursor`; gff-hab then looks for the file once a second, and when it
+  appears sends each of its messages as a `chat.message` event, with no new page needed. When
+  the agent leaves the pane, the last conversation stays readable while its reader is open.
 - **Tailing.** The reader opens the file, reads only the bytes appended since its last read,
   and closes it. It hands out complete lines only: a last line with no newline (the writer is
   mid-append) waits for its newline, so it never makes a broken message. A line over 32 MiB is
-  skipped as a placeholder. A file that shrinks or is replaced is read again from the start,
-  with one warning.
+  skipped as a placeholder. A read of a file that has not grown costs one open and one stat.
+  A `chat.page` reads on its own goroutine, never on the connection's read loop, and stops
+  between 1 MiB chunks when its call times out or its connection ends; the next read goes on
+  from there.
+- **Replacement.** A file that shrinks or is replaced (another inode) is read again from the
+  start. So is a file truncated and written again past the old size: each time the file grows,
+  the reader checks that its first 4 KiB are unchanged and that the byte before the next line
+  is still a newline. A rewrite that keeps both is not seen. Each replacement is logged with a
+  count. A subscriber gets one `chat.message` event of kind `event`, event `reset`, id
+  `reset-<count>`, and none for the messages read again: its messages may be gone or moved, so
+  it takes the tail again. A `reset` message is never in a page. A client that does not know
+  the word shows it as a plain event line that says the transcript was replaced.
 - **Pinned versions.** The parser follows Claude Code 2.1.296 to 2.1.316. A record whose
   `version` is outside that range still reads; the reader logs the drift once per version.
+  Drift follows the newest record that names a version: a later record inside the range clears
+  it, and so does a replacement.
 - **Records to messages.**
 
   | Record | Chat message |
   |---|---|
   | `user`, text (string or text blocks; images as `[image]`) | kind `user` |
   | `user`, `<command-name>` or `<local-command-stdout>` text | kind `event`, event `command` |
+  | `user` with no `message` | kind `event`, event `unknown`, plus one warning |
   | `user`, `[Request interrupted by user…` | kind `event`, event `interrupt` |
   | `user` with `isMeta` or `isCompactSummary`, `<local-command-caveat>` | left out: context for the model |
   | `user`, `tool_result` block | changes its call in place: status `done`, `error` (`is_error`) or `denied` (`permissionDecision.decision` is `reject`); the first 4 KiB of the output |
   | `user`, `tool_result` whose `permissionDecision.source` starts with `user` | also kind `event`, event `permission`: the owner answered a permission prompt ("Allowed Edit (once)", "Denied Bash") |
   | `assistant`, `text` block | kind `agent` |
-  | `assistant`, `tool_use` block | kind `tool`, status `running`; target from `file_path`, `path`, `command`, `pattern`, `url`, `query` or `description`; input when at most 64 KiB |
+  | `assistant`, `tool_use` block | kind `tool`, status `running`; target from `file_path`, `path`, `command`, `pattern`, `url`, `query` or `description`; input when at most 64 KiB; a larger input is left out with no flag (the target still shows) |
   | `assistant`, `thinking` and `redacted_thinking` | left out |
   | `system` `compact_boundary` | kind `event`, event `compaction` |
   | `system` `informational`, `api_error` | kind `event`, event `notice` |
-  | `system` `local_command` | kind `event`, event `command` |
+  | `system` `local_command` | kind `event`, event `command`; left out when it printed nothing or is the caveat |
+  | `system` `informational`, `api_error`, `local_command` whose content is not text; `informational` or `api_error` with no text | kind `event`, event `unknown`, plus one warning per subtype |
   | `system` `turn_duration`, `stop_hook_summary`, `scheduled_task_fire` | left out |
   | `attachment`, titles, modes, request and file-history records (the list in `claude.go`) | left out |
   | records with `isSidechain` | left out (subagent transcripts are a later feature) |
@@ -430,10 +446,16 @@ Built choices for the transcript reader (`internal/transcript`, `cmd/gff-hab/cha
   call that got its result) comes again with its new content; a client replaces by id and
   appends new ids. A cursor from other file contents, or past the end, answers `conflict`: the
   client takes the tail again. Byte offsets do not change when gff-hab restarts, so a cursor
-  survives a restart.
+  survives a restart, and a reader closed for idleness. An empty `cursor` means the file holds
+  no complete line yet: there is nothing to resume from, and the client takes a page again.
 - **Events.** gff-hab reads each open transcript once a second and sends one `chat.message`
-  event per added or changed message. The first read of a file sends none: the client takes a
-  page. A reader stays open until its session record is removed.
+  event per added or changed message. The first read of a file that existed at the first page
+  sends none: the client takes a page. A `chat.message` carries no revision on the wire.
+- **Closing readers.** A `chat.page` opens a reader; it holds the whole conversation in memory.
+  The poll closes it when its session record is removed, or when no `chat.page` came for 10
+  minutes and either no subscription gets the session's events, or the session's agent is gone
+  and the file has not grown for 10 minutes. A reader waiting for a file not written yet
+  follows the same rule. The next `chat.page` opens a new one.
 
 ## Codex
 

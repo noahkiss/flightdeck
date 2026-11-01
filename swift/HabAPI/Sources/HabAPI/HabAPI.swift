@@ -240,6 +240,7 @@ public struct ChatEvent: RawRepresentable, Codable, Sendable, Hashable {
     public static let interrupt = ChatEvent(rawValue: "interrupt")
     public static let command = ChatEvent(rawValue: "command")
     public static let notice = ChatEvent(rawValue: "notice")
+    public static let reset = ChatEvent(rawValue: "reset")
     public static let unknown = ChatEvent(rawValue: "unknown")
 }
 
@@ -259,7 +260,7 @@ public struct ChatMessage: Codable, Sendable, Hashable {
     public var at: String
     /// Attachment ids shown on the message.
     public var attachments: [String]?
-    /// With kind event: what the line marks. unknown marks a transcript record the reader does not know; text names it.
+    /// With kind event: what the line marks. unknown marks a transcript record the reader does not know; text names it. reset, sent only as an event, says the transcript was replaced: take the tail again.
     public var event: ChatEvent?
     /// Stable within the session; an update carries the same id.
     public var id: String
