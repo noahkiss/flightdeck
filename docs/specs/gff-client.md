@@ -809,7 +809,7 @@ put the app's SSH on `swift-nio-ssh` with a Secure Enclave key, which Go cannot 
 Recommendation: **A.** The library owns hello, seq, events, tickets, offsets, credit and reconnect.
 It asks its host for "a new control stream" and "a new data stream" to a hab.
 
-### 15.3 In-process SSH or the system `ssh`
+### 15.3 In-process SSH or the system `ssh`. **Decision: B (coordinator)**
 
 | Option | For | Against |
 |---|---|---|
@@ -821,7 +821,13 @@ Recommendation: **A**, with a config option to run a given command per host inst
 
 Built: **B**, the system `ssh`, behind the transport seam, with optional connection sharing
 (11.7). Reasons: every OpenSSH feature and the user's own setup with no new dependency, and tests
-that swap the command. A stays possible as one more transport. Decision: open, for the owner.
+that swap the command. A stays possible as one more transport.
+
+**Decision: B (coordinator), A later as a transport if needed.** herdr also runs the system `ssh`
+with connection sharing. No new dependency, the user's own ssh config, and keys never touch our
+code. gff turns connection sharing on by default, with a short socket directory so the socket
+path stays under macOS's 104-byte limit. The app supplies its own SSH (swift-nio-ssh) through the
+same seam.
 
 ### 15.4 Several windows on one workspace
 
