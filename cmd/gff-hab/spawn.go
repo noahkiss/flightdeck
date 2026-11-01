@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/noahkiss/flightdeck/internal/holderclient"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
@@ -27,6 +28,39 @@ type spawner struct {
 	// nil asks the link and its holders (paneExists). Unit tests replace both.
 	run func(context.Context, hp.Spawn) (link.PaneStatus, error)
 	has func(hp.UUID) bool
+	// current reports whether the current holder lists the pane; nil asks the link.
+	current func(hp.UUID) bool
+}
+
+// followTimeout bounds the spawn retry that attaches a pane whose first answer was lost.
+const followTimeout = 10 * time.Second
+
+// follow makes the link follow pane sp.UUID after a spawn whose answer was lost while the
+// holder started the pane. It sends the same spawn again, with its own deadline: on the holder
+// that lists the pane that is a retry, which starts nothing and answers the existing pane, and
+// the link then follows it (output, exit, token). It retries only on the current holder, the one
+// a spawn goes to; a pane on another holder stays unfollowed until gff-hab restarts. It reports
+// whether the link follows the pane.
+func (s *spawner) follow(ctx context.Context, sp hp.Spawn) bool {
+	if s.lk != nil {
+		if _, ok := s.lk.Pane(sp.UUID); ok {
+			return true
+		}
+	}
+	onCurrent := s.current
+	if onCurrent == nil {
+		if s.lk == nil {
+			return false
+		}
+		onCurrent = s.lk.CurrentHolderHas
+	}
+	if !onCurrent(sp.UUID) {
+		return false
+	}
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), followTimeout)
+	defer cancel()
+	_, err := s.spawn(fctx, sp)
+	return err == nil
 }
 
 // spawn starts sp.Argv in a new pane on the current holder. A zero sp.UUID gets a random one.

@@ -53,12 +53,43 @@ type Holders interface {
 	Subscribe(fn func(Notice)) (cancel func())
 }
 
+// Completer is a Holders that can tell whether its pane list holds every holder on the host.
+// The holder link is complete only once it has reached every registered holder; until then a
+// pane missing from Panes may run on a holder it has not reached.
+type Completer interface {
+	Complete() bool
+}
+
+// Complete reports whether h's pane list holds every holder on the host. A Holders that is not
+// a Completer always answers for every holder.
+func Complete(h Holders) bool {
+	if c, ok := h.(Completer); ok {
+		return c.Complete()
+	}
+	return true
+}
+
 // FakeHolder is an in-memory Holders for tests. It never runs a program.
 type FakeHolder struct {
-	mu    sync.Mutex
-	panes map[string]HolderPane
-	subs  map[int]func(Notice)
-	next  int
+	mu      sync.Mutex
+	panes   map[string]HolderPane
+	subs    map[int]func(Notice)
+	next    int
+	partial bool
+}
+
+// Complete implements Completer: true unless SetPartial made the list partial.
+func (f *FakeHolder) Complete() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.partial
+}
+
+// SetPartial makes the fake's pane list partial (a holder not reached) or complete again.
+func (f *FakeHolder) SetPartial(partial bool) {
+	f.mu.Lock()
+	f.partial = partial
+	f.mu.Unlock()
 }
 
 // NewFakeHolder returns a holder with the given panes.

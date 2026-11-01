@@ -547,3 +547,42 @@ func TestStartHolderOnDemand(t *testing.T) {
 		return h != nil && h.Instance() == "s3"
 	})
 }
+
+// TestSpawnAttachesAfterLostAnswer: the holder started a pane, but the link never took the
+// spawn's answer (a timeout or a closed connection in gff-hab). The holder lists the pane and
+// the link does not follow it. The same spawn again is a retry: the holder starts nothing and
+// answers the existing pane, and the link follows it from there, with its earlier output and
+// its exit.
+func TestSpawnAttachesAfterLostAnswer(t *testing.T) {
+	hdir := shortDir(t)
+	startHolder(t, hdir, "one", 0)
+	l := openLink(t, Config{HolderDir: hdir})
+	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
+	u := uuidN(60)
+	sp := hp.Spawn{UUID: u, Cols: 80, Rows: 24, Cwd: "/", Env: testEnv,
+		Argv: []string{"/bin/sh", "-c", "echo lost-answer; while [ ! -e \"$END\" ]; do sleep 0.02; done; exit 3"}}
+	end := filepath.Join(shortDir(t), "end")
+	sp.Env = append(append([]string{}, testEnv...), "END="+end)
+	ctx, cancel := context.WithTimeout(context.Background(), waitLong)
+	defer cancel()
+	first, err := l.client.Current().Spawn(ctx, sp) // the answer the link never sees
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the holder lists the pane", func() bool { return l.CurrentHolderHas(u) && l.HolderHas(u) })
+	if _, ok := l.Pane(u); ok {
+		t.Fatal("the link follows a pane whose answer it never took")
+	}
+	again, err := l.Spawn(ctx, sp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Handle != first.Handle || again.Lost || again.Gone {
+		t.Fatalf("the retry: handle %d (first %d), lost %v gone %v", again.Handle, first.Handle, again.Lost, again.Gone)
+	}
+	waitFor(t, "the pane's earlier output", func() bool { return screenHas(t, l, u, "lost-answer") })
+	if err := os.WriteFile(end, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the pane's exit", func() bool { st, _ := paneStatus(l, u); return st.Exited && st.Exit.Code == 3 })
+}

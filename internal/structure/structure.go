@@ -190,6 +190,9 @@ func Open(cfg Config) (*Store, error) {
 	// Subscribe before listing so no notice falls between the list and the subscription.
 	// Notices that arrive before reconcile wait in pending and apply after it, in order.
 	cancel := cfg.Holders.Subscribe(s.handle)
+	// Asked before the list: a holder reached after it is then not in the list, but the list
+	// already counts as partial.
+	complete := Complete(cfg.Holders)
 	live, err := cfg.Holders.Panes()
 	if err != nil {
 		cancel()
@@ -199,7 +202,7 @@ func Open(cfg Config) (*Store, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cancel = cancel
-	s.reconcile(&st, live)
+	s.reconcile(&st, live, complete)
 	for _, n := range s.pending {
 		s.apply(n)
 	}
@@ -237,8 +240,9 @@ func (s *Store) Health() Health {
 //   - a live pane no session links is unfiled;
 //   - a stored pane that is gone emits pane.deleted with a final revision, kept as a tombstone;
 //   - a running session whose pane is gone, or whose child exited, is marked exited;
-//   - an exited session with no exit status whose pane is live again runs again.
-func (s *Store) reconcile(st *stateFile, live []HolderPane) {
+//   - an exited session with no exit status whose pane is live again runs again;
+//   - a session still marked spawning whose pane is not live goes, when the list is complete.
+func (s *Store) reconcile(st *stateFile, live []HolderPane, complete bool) {
 	var events []Event
 	for i := range st.Projects {
 		p := st.Projects[i]
@@ -284,14 +288,27 @@ func (s *Store) reconcile(st *stateFile, live []HolderPane) {
 			events = append(events, Event{PaneDeleted, id, final, api.Deleted{}})
 		}
 	}
-	// A session whose pane was never live here (not live, never saved, no tombstone) was filed
-	// for a spawn that never ran: gff-hab stopped between the record and the spawn
-	// (SessionSpec.NewPane). It goes, and its name is free again.
+	// A session still marked spawning was filed for a pane the holders never reported: gff-hab
+	// stopped between the record and the spawn (SessionSpec.NewPane). When the holder list is
+	// complete and no notice waiting in pending adds the pane, the spawn never ran: the session
+	// goes, and its name is free again. With a partial list the program may run on a holder not
+	// reached yet, so the session stays (exited with no status, below) and keeps its mark: the
+	// pane's first sight revives it, and a later start with a complete list drops it.
+	adding := map[string]bool{}
+	for _, n := range s.pending {
+		if n.Kind == PaneAdded {
+			adding[n.Pane.ID] = true
+		}
+	}
 	for _, ss := range slices.Clone(s.sessions) {
-		if ss.Pane == "" || s.panes[ss.Pane] != nil || s.buried(ss.Pane) {
+		if !ss.Spawning {
 			continue
 		}
-		if _, ok := stored[ss.Pane]; ok {
+		if s.panes[ss.Pane] != nil {
+			ss.Spawning = false
+			continue
+		}
+		if !complete || adding[ss.Pane] {
 			continue
 		}
 		s.sessions = slices.DeleteFunc(s.sessions, func(x *sessionRecord) bool { return x == ss })
@@ -543,7 +560,8 @@ func (s *Store) CreateSession(spec SessionSpec) (api.Session, error) {
 	if other := s.sessionByPane(spec.Pane); other != nil {
 		return api.Session{}, fmt.Errorf("%w: pane %s belongs to session %s", ErrConflict, spec.Pane, other.ID)
 	}
-	ss := &sessionRecord{ID: newID("s"), Revision: 1, Name: spec.Name, Project: spec.Project, Pane: spec.Pane, State: stateRunning}
+	ss := &sessionRecord{ID: newID("s"), Revision: 1, Name: spec.Name, Project: spec.Project, Pane: spec.Pane, State: stateRunning,
+		Spawning: spec.NewPane}
 	if ps != nil && ps.exit != nil {
 		ss.State = stateExited
 		ss.Exit = copyExit(ps.exit)
@@ -756,6 +774,9 @@ func (s *Store) paneSeen(hp HolderPane) {
 		}
 		s.panes[hp.ID] = ps
 		var events []Event
+		if ss := s.sessionByPane(hp.ID); ss != nil {
+			ss.Spawning = false // the pane ran; the commit below saves that
+		}
 		// A session marked exited with no status lost its pane to a holder that dropped out.
 		// The pane is back, so the program still runs.
 		if ss := s.sessionByPane(hp.ID); ss != nil && ss.State == stateExited && ss.Exit == nil && ps.exit == nil {

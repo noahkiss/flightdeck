@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/holderreg"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
@@ -213,13 +215,48 @@ func TestNeverSpawnedSessionDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.Close()
-	e.serve()
-	var got api.StructureResult
-	if err := json.Unmarshal([]byte(run(t, "api", "call", "-socket", e.sock, "structure.get")), &got); err != nil {
+	sessions := func() []api.Session {
+		var got api.StructureResult
+		if err := json.Unmarshal([]byte(run(t, "api", "call", "-socket", e.sock, "structure.get")), &got); err != nil {
+			t.Fatal(err)
+		}
+		return got.Sessions
+	}
+
+	// A registered holder gff-hab cannot reach (a live pid, a socket that hangs up on every
+	// hello) may run the program, so the first start keeps the session, exited with no status.
+	ln, err := net.Listen("unix", filepath.Join(e.hdir, "slow.sock"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Sessions) != 0 {
-		t.Fatalf("sessions after start: %+v", got.Sessions)
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	slow := holderreg.Entry{Instance: "slow", Build: "test", Protocol: holderreg.Protocol{Min: 1, Max: 1},
+		Pid: os.Getpid(), Socket: filepath.Join(e.hdir, "slow.sock"), Started: time.Now()}
+	if err := holderreg.Write(e.hdir, slow); err != nil {
+		t.Fatal(err)
+	}
+	e.serve()
+	if ss := sessions(); len(ss) != 1 || ss[0].Name != "ghost" || ss[0].State != api.SessionStateExited || ss[0].Exit != nil {
+		t.Fatalf("sessions with a holder not reached: %+v", ss)
+	}
+	e.stopHab(false)
+
+	// Every holder reached: the session goes.
+	if err := os.Remove(holderreg.Path(e.hdir, "slow")); err != nil {
+		t.Fatal(err)
+	}
+	e.serve()
+	if ss := sessions(); len(ss) != 0 {
+		t.Fatalf("sessions after start: %+v", ss)
 	}
 	t.Cleanup(func() { writeFile(t, filepath.Join(e.work, "end"), "") })
 	createSession(t, e.sock, api.SessionCreateParams{Name: "ghost", Argv: []string{"/bin/sh", "-c", `while [ ! -e "$DIR/end" ]; do sleep 0.05; done`},

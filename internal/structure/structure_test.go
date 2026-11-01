@@ -287,12 +287,14 @@ func TestSessionForNewPane(t *testing.T) {
 }
 
 // TestRestartDropsNeverSpawned: gff-hab stopped between filing a session (NewPane) and its
-// spawn. At the next start the pane is not live, was never saved and has no tombstone, so the
-// session goes and its name is free. A session whose pane was live once and is gone now stays,
-// exited.
+// spawn, so the session is still marked spawning. A start whose holder list is partial keeps it
+// (exited, no status, still marked): its program may run on a holder not reached yet, and when
+// its pane shows up it runs again. A start with a complete list drops it, and its name is free.
+// A session whose mark was cleared, or never set, is never dropped: its pane not being live
+// makes it exited, as before.
 func TestRestartDropsNeverSpawned(t *testing.T) {
 	dir := t.TempDir()
-	h := NewFakeHolder(pane("pa"))
+	h := NewFakeHolder(pane("pa"), pane("pb"))
 	s, _ := open(t, dir, h)
 	p, _ := s.CreateProject("app", "r", "")
 	kept, _ := s.CreateSession(SessionSpec{Name: "kept", Project: p.ID, Pane: "pa", Index: -1})
@@ -300,28 +302,89 @@ func TestRestartDropsNeverSpawned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	late, _ := s.CreateSession(SessionSpec{Name: "late", Pane: "late", NewPane: true})
+	seen, _ := s.CreateSession(SessionSpec{Name: "seen", Pane: "pc", NewPane: true})
+	h.Add(pane("pc")) // the pane ran: the mark goes
+	legacy, _ := s.CreateSession(SessionSpec{Name: "legacy", Pane: "old", NewPane: true})
 	s.Close()
+	// A record with no mark whose pane was never saved, as a file from an older build may hold.
+	path := filepath.Join(dir, StateFile)
+	st, err := loadState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range st.Sessions {
+		if st.Sessions[i].ID == legacy.ID {
+			st.Sessions[i].Spawning = false
+		}
+	}
+	if err := writeState(path, &st); err != nil {
+		t.Fatal(err)
+	}
+	marked := func(id string) bool {
+		t.Helper()
+		st, err := loadState(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, ss := range st.Sessions {
+			if ss.ID == id {
+				return ss.Spawning
+			}
+		}
+		t.Fatalf("no session %s in the state file", id)
+		return false
+	}
+	if marked(seen.ID) || !marked(ghost.ID) {
+		t.Fatalf("marks: seen %v, ghost %v", marked(seen.ID), marked(ghost.ID))
+	}
 
+	// A holder not reached yet: nothing is dropped.
 	h.RemoveQuietly("pa")
+	h.RemoveQuietly("pc")
+	h.SetPartial(true)
 	s2, rec := open(t, dir, h)
-	evs := rec.take()
-	want := []string{"session.deleted:" + ghost.ID, "project.updated:" + p.ID, "session.updated:" + kept.ID, "pane.deleted:pa"}
-	got := types(evs)
-	for _, w := range want {
+	if got := types(rec.take()); slices.ContainsFunc(got, func(e string) bool { return strings.HasPrefix(e, "session.deleted") }) {
+		t.Fatalf("a partial list dropped a session: %v", got)
+	}
+	for _, id := range []string{ghost.ID, late.ID, seen.ID, legacy.ID, kept.ID} {
+		if ss, ok := s2.Session(id); !ok || ss.State != "exited" || ss.Exit != nil {
+			t.Fatalf("session %s with a partial list: %+v %v", id, ss, ok)
+		}
+	}
+	h.Add(pane("late")) // its holder is reached: the program runs
+	if ss, _ := s2.Session(late.ID); ss.State != "running" {
+		t.Fatalf("the late pane's session: %+v", ss)
+	}
+	s2.Close()
+	if !marked(ghost.ID) || marked(late.ID) {
+		t.Fatalf("marks after a partial start: ghost %v, late %v", marked(ghost.ID), marked(late.ID))
+	}
+
+	// Every holder reached: only the marked session whose pane is not live goes.
+	h.SetPartial(false)
+	s3, rec := open(t, dir, h)
+	got := types(rec.take())
+	for _, w := range []string{"session.deleted:" + ghost.ID, "project.updated:" + p.ID} {
 		if !slices.Contains(got, w) {
 			t.Fatalf("events %v lack %s", got, w)
 		}
 	}
-	if _, ok := s2.Session(ghost.ID); ok {
+	if _, ok := s3.Session(ghost.ID); ok {
 		t.Fatal("the never-spawned session is still there")
 	}
-	if k, ok := s2.Session(kept.ID); !ok || k.State != "exited" {
-		t.Fatalf("the session of a gone pane: %+v %v", k, ok)
+	for _, id := range []string{kept.ID, seen.ID, legacy.ID} {
+		if ss, ok := s3.Session(id); !ok || ss.State != "exited" {
+			t.Fatalf("session %s: %+v %v", id, ss, ok)
+		}
 	}
-	if pr, _ := s2.Project(p.ID); !reflect.DeepEqual(pr.Sessions, []string{kept.ID}) {
+	if ss, ok := s3.Session(late.ID); !ok || ss.State != "running" {
+		t.Fatalf("the late session: %+v %v", ss, ok)
+	}
+	if pr, _ := s3.Project(p.ID); !reflect.DeepEqual(pr.Sessions, []string{kept.ID}) {
 		t.Fatalf("project sessions %v", pr.Sessions)
 	}
-	if _, err := s2.CreateSession(SessionSpec{Name: "ghost", Pane: "new", NewPane: true}); err != nil {
+	if _, err := s3.CreateSession(SessionSpec{Name: "ghost", Pane: "new", NewPane: true}); err != nil {
 		t.Fatalf("the name after the restart: %v", err)
 	}
 }

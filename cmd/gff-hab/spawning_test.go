@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -82,34 +83,57 @@ func spawned(_ context.Context, s hp.Spawn) (link.PaneStatus, error) {
 
 // TestCreateSpawnErrors: after a spawn error the session stays only when the program may run:
 // the answer was lost (a timeout, a closed link) and the pane exists. A definite refusal closes
-// it even then, and a lost answer with no pane closes it too.
+// it even then, and a lost answer with no pane closes it too. A kept session's pane is attached
+// by the same spawn again, with a deadline of its own, when the current holder lists it; a pane
+// on another holder is not spawned again (that would start a second program).
 func TestCreateSpawnErrors(t *testing.T) {
 	refused := &holderclient.RequestError{Ref: hp.KindSpawn, Code: hp.CodeDraining, Message: "holder is draining"}
 	for _, c := range []struct {
-		name   string
-		err    error
-		exists bool
-		keep   bool
+		name      string
+		err       error
+		exists    bool
+		onCurrent bool
+		keep      bool
+		calls     int
 	}{
-		{"timeout, pane exists", context.DeadlineExceeded, true, true},
-		{"link closed, pane exists", link.ErrClosed, true, true},
-		{"timeout, no pane", context.DeadlineExceeded, false, false},
-		{"spawn-failed", refused, true, false},
-		{"no holder", holderclient.ErrNoHolder, true, false},
-		{"uuid used", link.ErrUUIDUsed, true, false},
+		{"timeout, pane exists", context.DeadlineExceeded, true, true, true, 2},
+		{"link closed, pane exists", link.ErrClosed, true, true, true, 2},
+		{"timeout, pane on another holder", context.DeadlineExceeded, true, false, true, 1},
+		{"timeout, no pane", context.DeadlineExceeded, false, false, false, 1},
+		{"spawn-failed", refused, true, true, false, 1},
+		{"no holder", holderclient.ErrNoHolder, true, true, false, 1},
+		{"uuid used", link.ErrUUIDUsed, true, true, false, 1},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			var asked hp.UUID
+			// The caller's context is over by the time the first answer is lost.
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var calls []hp.Spawn
+			var retryErr error
+			retryDeadline := false
 			a, st := fakeActions(t,
-				func(_ context.Context, s hp.Spawn) (link.PaneStatus, error) {
-					asked = s.UUID
-					return link.PaneStatus{}, c.err
+				func(x context.Context, s hp.Spawn) (link.PaneStatus, error) {
+					calls = append(calls, s)
+					if len(calls) == 1 {
+						cancel()
+						return link.PaneStatus{}, c.err
+					}
+					_, retryDeadline = x.Deadline()
+					retryErr = x.Err()
+					return link.PaneStatus{UUID: s.UUID}, nil
 				},
-				func(u hp.UUID) bool { return c.exists && u == asked })
-			session, pane, err := a.CreateSession(context.Background(), api.SessionCreateParams{Name: "s", Argv: []string{"/bin/true"}})
+				func(u hp.UUID) bool { return c.exists && len(calls) > 0 && u == calls[0].UUID })
+			a.sp.current = func(u hp.UUID) bool { return c.onCurrent && len(calls) > 0 && u == calls[0].UUID }
+			session, pane, err := a.CreateSession(ctx, api.SessionCreateParams{Name: "s", Argv: []string{"/bin/true"}})
 			_, have := st.SessionByName("s")
+			if len(calls) != c.calls {
+				t.Fatalf("%d spawns, want %d", len(calls), c.calls)
+			}
+			if c.calls == 2 && (calls[1].UUID != calls[0].UUID || !slices.Equal(calls[1].Argv, calls[0].Argv) || retryErr != nil || !retryDeadline) {
+				t.Fatalf("the retry: %+v after %+v, its context %v, deadline %v", calls[1], calls[0], retryErr, retryDeadline)
+			}
 			if c.keep {
-				if err != nil || session == "" || pane != asked.String() || !have {
+				if err != nil || session == "" || pane != calls[0].UUID.String() || !have {
 					t.Fatalf("kept: %q %q %v, session there %v", session, pane, err, have)
 				}
 				return

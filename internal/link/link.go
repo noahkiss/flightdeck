@@ -1171,6 +1171,21 @@ func (l *Link) HolderHas(u hp.UUID) bool {
 	return false
 }
 
+// CurrentHolderHas reports whether the current holder lists pane u. Spawn of u then attaches
+// that pane, starting nothing, even when the link lost the first spawn's answer.
+func (l *Link) CurrentHolderHas(u hp.UUID) bool {
+	h := l.client.Current()
+	if h == nil {
+		return false
+	}
+	for _, st := range l.client.Panes() {
+		if st.UUID == u && st.Instance == h.Instance() {
+			return true
+		}
+	}
+	return false
+}
+
 func (l *Link) pane(u hp.UUID) *pane {
 	l.mu.Lock()
 	defer l.mu.Unlock()

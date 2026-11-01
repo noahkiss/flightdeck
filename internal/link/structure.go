@@ -23,6 +23,10 @@ func (s structureHolders) Panes() ([]structure.HolderPane, error) {
 	return out, nil
 }
 
+// Complete implements structure.Completer: the link has reached every registered holder and
+// none is unreachable, so Panes lists every pane on the host.
+func (s structureHolders) Complete() bool { return s.l.complete() }
+
 // Subscribe passes pane notices on. A lost pane is reported gone: its holder died, so its
 // program did too (holder spec 6.6).
 func (s structureHolders) Subscribe(fn func(structure.Notice)) func() {

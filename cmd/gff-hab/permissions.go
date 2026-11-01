@@ -219,6 +219,9 @@ func (h hidingHolders) Panes() ([]structure.HolderPane, error) {
 	return out, nil
 }
 
+// Complete passes the inner holders' answer on (structure.Completer).
+func (h hidingHolders) Complete() bool { return structure.Complete(h.inner) }
+
 func (h hidingHolders) Subscribe(fn func(structure.Notice)) func() {
 	return h.inner.Subscribe(func(n structure.Notice) {
 		switch {

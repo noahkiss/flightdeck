@@ -66,6 +66,10 @@ type sessionRecord struct {
 	Pane     string          `json:"pane,omitempty"`
 	State    string          `json:"state"`
 	Exit     *api.ExitStatus `json:"exit,omitempty"`
+	// Spawning marks a session filed for a pane about to be spawned (SessionSpec.NewPane) that
+	// the holders have not reported yet. The first sight of the pane clears it. Only a marked
+	// session can be dropped at start as never spawned. Not in the API.
+	Spawning bool `json:"spawning,omitempty"`
 }
 
 // paneRecord keeps what gff-hab owns about a pane: its revision, plus the last size and build it

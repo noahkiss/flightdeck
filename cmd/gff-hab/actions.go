@@ -165,7 +165,8 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 	if err != nil {
 		return "", "", storeErr(err)
 	}
-	if _, err := a.sp.spawn(ctx, hp.Spawn{UUID: paneID, Cols: uint16(cols), Rows: uint16(rows), Cwd: cwd, Argv: argv, Env: env}); err != nil {
+	spawn := hp.Spawn{UUID: paneID, Cols: uint16(cols), Rows: uint16(rows), Cwd: cwd, Argv: argv, Env: env}
+	if _, err := a.sp.spawn(ctx, spawn); err != nil {
 		if spawnRefused(err) || !a.sp.exists(paneID) {
 			// The program never ran: session.deleted follows the record's session.updated. Its
 			// only error is not_found, when a client closed the session meanwhile.
@@ -176,7 +177,9 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 			return "", "", control.Errorf(api.ErrorKindUnavailable, "spawn: %v", err)
 		}
 		// The answer was lost (a timeout, a closed link), but the holder started the pane:
-		// the program runs, so its session stays and the create succeeds.
+		// the program runs, so its session stays and the create succeeds. The same spawn
+		// again attaches the pane, so the link follows it: its output, exit and token work.
+		a.sp.follow(ctx, spawn)
 	}
 	if ocStarted {
 		if err := a.opencode.register(pane, paneID); err != nil {
