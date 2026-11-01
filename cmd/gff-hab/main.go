@@ -11,6 +11,8 @@
 //	gff-hab peers    [-socket path] [-json]
 //	gff-hab peers accept [-socket path] <label>
 //	gff-hab notify   [-socket path | -via command] [-level l] [-session id] <title> [body]
+//	gff-hab send     [-socket path | -via command] [-from session] [-reply-to id] [-wait d] <address> <text... | ->
+//	gff-hab wait     [-socket path | -via command] [-session name] [-agent name] [-for states] [-timeout d] [-json]
 //	gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
 //	gff-hab manifests list    [-state dir]
 //	gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
@@ -76,6 +78,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/catalog"
+	"github.com/noahkiss/flightdeck/internal/channels"
 	"github.com/noahkiss/flightdeck/internal/content"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/datastream"
@@ -109,6 +112,8 @@ const usage = `usage:
   gff-hab peers accept [-socket path] <label>
   gff-hab notify   [-socket path | -via command] [-level passive|active|time-sensitive] [-session id] <title> [body]
   gff-hab show     [-socket path | -via command] [-session id] [-kind k] [-title t] <path>
+  gff-hab send     [-socket path | -via command] [-from session] [-reply-to id] [-wait d] <label/name | name> <text... | ->
+  gff-hab wait     [-socket path | -via command] [-session name] [-agent name] [-for state,...] [-timeout d] [-json]
   gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
   gff-hab manifests list    [-state dir]
   gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
@@ -162,6 +167,10 @@ func main() {
 		err = notifyCmd(os.Args[2:])
 	case "show":
 		err = showCmd(os.Args[2:])
+	case "send":
+		err = sendCmd(os.Args[2:], os.Stdin, os.Stdout)
+	case "wait":
+		err = waitCmd(os.Args[2:], os.Stdout)
 	case "manifests":
 		err = manifests(os.Args[2:], os.Stdout)
 	case "detect":
@@ -314,10 +323,14 @@ func serve(args []string) error {
 		hs = hidingHolders{inner: lk.Structure(), hide: hidden}
 	}
 	var srv atomic.Pointer[control.Server]
-	var cat atomic.Pointer[catalog.Service] // set once the catalog runs; a change pokes it
+	var cat atomic.Pointer[catalog.Service]  // set once the catalog runs; a change pokes it
+	var chs atomic.Pointer[channels.Service] // set once channels run; a state change pokes them
 	pokeCatalog := func() {
 		if c := cat.Load(); c != nil {
 			c.Poke()
+		}
+		if c := chs.Load(); c != nil {
+			c.Poke() // a session may have exited or been renamed
 		}
 	}
 	var contentRef atomic.Pointer[content.Service] // set once the content service exists
@@ -363,7 +376,7 @@ func serve(args []string) error {
 				pushes.notifier.State(st) // never blocks
 			}
 			if e.Type == api.EventAgentState {
-				pokeCatalog()
+				pokeCatalog() // pokes channels too
 			}
 		},
 		Logf: debugf,
@@ -446,6 +459,12 @@ func serve(args []string) error {
 			home:     home,
 			refresh:  repos.Refresh,
 			opencode: ocs,
+			peerName: func(name string) string {
+				if c := cat.Load(); c != nil {
+					return channels.ClashLabel(c.List(), key.Fingerprint(), name)
+				}
+				return ""
+			},
 		}
 		if exe, err := os.Executable(); err == nil {
 			acts.(*actions).exe = exe
@@ -567,6 +586,9 @@ func serve(args []string) error {
 				c.Poke() // the peer ids in the catalog
 				c.Kick() // a link that came up pulls and puts now
 			}
+			if c := chs.Load(); c != nil {
+				c.Kick() // a link that came up hands over mail now
+			}
 		},
 		Logf: logger.Printf,
 	})
@@ -608,6 +630,24 @@ func serve(args []string) error {
 	defer cs.Close()
 	cat.Store(cs)
 	caps = append(caps, catalog.Capability)
+	// Channels (mesh.md 6): agent messages by name, the outboxes and the inbox.
+	cl := &channelLocal{store: store, agents: agents, send: agentSvc}
+	chSvc, err := channels.New(channels.Config{
+		Self: key.Fingerprint(), Host: *hostID, State: dir,
+		Peers: channelPeers{pm}, Catalog: cs.List, Local: cl,
+		Publish: func(r api.ChannelRecord) {
+			if s := srv.Load(); s != nil {
+				s.Publish(structure.Event{Type: control.EventChannelMessage, ID: r.ID, Data: r})
+			}
+		},
+		Logf: logger.Printf,
+	})
+	if err != nil {
+		return err
+	}
+	defer chSvc.Close()
+	chs.Store(chSvc)
+	caps = append(caps, channels.Capability)
 	if pushes.Enabled() {
 		caps = append(caps, "push")
 	}
@@ -637,6 +677,7 @@ func serve(args []string) error {
 		Push:        pushes,
 		Usage:       usageStore,
 		Content:     contents,
+		Channels:    chSvc,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)
@@ -693,6 +734,7 @@ func serve(args []string) error {
 		repos.Refresh(store.ProjectOfPane(pane))
 		return opened
 	}, logger.Printf)
+	hooks.SetChannels(channelHook(store, chSvc))
 	if agentSvc != nil {
 		hooks.SetHolder(agentSvc.holdPermission(s.Approvers))
 		if pwait > 0 {

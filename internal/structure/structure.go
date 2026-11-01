@@ -534,6 +534,17 @@ func (s *Store) SessionByName(name string) (api.Session, bool) {
 	return sessionAPI(ss), true
 }
 
+// SessionByPane returns the session record whose pane is pane.
+func (s *Store) SessionByPane(pane string) (api.Session, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ss := s.sessionByPane(pane)
+	if ss == nil {
+		return api.Session{}, false
+	}
+	return sessionAPI(ss), true
+}
+
 // Session returns the session record with id, exited ones included.
 func (s *Store) Session(id string) (api.Session, bool) {
 	s.mu.Lock()

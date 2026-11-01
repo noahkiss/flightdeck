@@ -40,6 +40,17 @@ type actions struct {
 	opencode *opencodeServers
 	// exe is gff-hab's own executable, which an opencode pane runs as its wrapper.
 	exe string
+	// peerName returns where a name is in use on a peer, from the catalog copies, or ""
+	// (mesh.md 6.5: names unique across peers). nil checks nothing.
+	peerName func(name string) string
+}
+
+// onPeer returns where name is in use on a peer, or "".
+func (a *actions) onPeer(name string) string {
+	if a.peerName == nil {
+		return ""
+	}
+	return a.peerName(name)
 }
 
 var _ control.Actions = (*actions)(nil)
@@ -128,6 +139,8 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 		name = a.freeName(filepath.Base(argv[0]))
 	} else if _, taken := a.store.SessionByName(name); taken {
 		return "", "", control.Errorf(api.ErrorKindConflict, "a session named %q exists", name)
+	} else if label := a.onPeer(name); label != "" {
+		return "", "", control.Errorf(api.ErrorKindConflict, "name %q in use on %s", name, label)
 	}
 
 	st, err := a.sp.spawn(ctx, hp.Spawn{UUID: paneID, Cols: uint16(cols), Rows: uint16(rows), Cwd: cwd, Argv: argv, Env: env})
@@ -254,6 +267,9 @@ var _ control.SessionRecords = (*actions)(nil)
 // RenameSession renames a session record (session.rename). A name another session holds is a
 // conflict.
 func (a *actions) RenameSession(session, name string) error {
+	if label := a.onPeer(name); label != "" {
+		return control.Errorf(api.ErrorKindConflict, "name %q in use on %s", name, label)
+	}
 	if _, err := a.store.RenameSession(session, name); err != nil {
 		return storeErr(err)
 	}
@@ -296,7 +312,7 @@ func (a *actions) freeName(base string) string {
 	}
 	name := base
 	for i := 2; ; i++ {
-		if _, taken := a.store.SessionByName(name); !taken {
+		if _, taken := a.store.SessionByName(name); !taken && a.onPeer(name) == "" {
 			return name
 		}
 		name = fmt.Sprintf("%s-%d", base, i)

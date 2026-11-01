@@ -236,7 +236,7 @@ its hooks and tool commands, so anything inside the pane can find `gff-hab`.
 
 | Variable | Set by | Value | Who reads it |
 |---|---|---|---|
-| `GFF_HAB` | gff-hab, at spawn | The hook endpoint URL for this pane, with a per-pane token (see below) | `gff-hab hook`, the agent kit, any agent that wants to name itself |
+| `GFF_HAB` | gff-hab, at spawn | The hook endpoint URL for this pane, with a per-pane token (see below) | `gff-hab hook`, `gff-hab send` and `gff-hab wait` (`mesh.md` 6.5), the agent kit, any agent that wants to name itself |
 | `AGENT_KIND` | holder when it starts a known harness; else the harness's own start hook | `claude`, `codex` or `opencode` | hooks, tools, the agent kit |
 | `AGENT_SESSION_ID` | the harness, through its start hook, where the harness allows it | The harness's native session id | tools and child processes that must name their session |
 
@@ -1015,8 +1015,11 @@ Built choices (`session.send`, `internal/harness`, `cmd/gff-hab`):
   newline and tab, so it can neither end the paste early nor press keys; CR LF and CR become
   LF. Codex gets the same bytes. opencode takes the text through its server (see opencode). Other harnesses answer `unavailable` until their stage.
 - After delivery, `done` becomes `idle` (`Store.Seen`).
-- Not built yet: the two-second typing pause, agent envelopes, the read back and its "not
-  delivered" event, and attachments (`unavailable`).
+- Agent messages (channels, `mesh.md` 6.5) take this same path, wrapped in their envelope.
+  Unlike `session.send`, the hab queues them: a busy agent holds a message until it is idle,
+  done or stopped on an error.
+- Not built yet: the two-second typing pause, the read back and its "not delivered" event, and
+  attachments (`unavailable`).
 
 ## Permission answers
 

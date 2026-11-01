@@ -38,6 +38,14 @@ type habEnv struct {
 
 func newHabEnv(t *testing.T, ring int) *habEnv {
 	t.Helper()
+	e := newHolderEnv(t, ring)
+	e.serve()
+	return e
+}
+
+// newHolderEnv is newHabEnv with the holder running and no gff-hab started yet.
+func newHolderEnv(t *testing.T, ring int) *habEnv {
+	t.Helper()
 	d := shortDir(t)
 	e := &habEnv{t: t, hdir: filepath.Join(d, "h"), state: filepath.Join(d, "state"),
 		sock: filepath.Join(d, "run", "hab.sock"), work: filepath.Join(d, "w")}
@@ -71,7 +79,6 @@ func newHabEnv(t *testing.T, ring int) *habEnv {
 		m, _ := filepath.Glob(filepath.Join(e.hdir, "*.json"))
 		return len(m) > 0
 	})
-	e.serve()
 	return e
 }
 
