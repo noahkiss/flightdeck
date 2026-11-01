@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -212,5 +213,120 @@ sleep 30`)
 	if !p.ansRefused || p.ansDropped != 1 || p.ansN != 0 || len(p.inq) != 0 {
 		t.Errorf("refused %v, dropped %d, %d answers and %d writes queued; want the answer dropped",
 			p.ansRefused, p.ansDropped, p.ansN, len(p.inq))
+	}
+}
+
+// floodScript prints without end, always at the top left corner, so the screen never scrolls and
+// the parser's scrollback stays empty.
+const floodScript = `yes "$(printf '\033[Hx')" | tr -d '\n'`
+
+// stallEventLoop stops the link's event loop until release, and waits until the holder client's
+// event channel is full. From then on the client reads no frame from the holder: the holder's
+// answers to requests wait behind output nobody reads.
+func stallEventLoop(t *testing.T, l *Link) (release func()) {
+	t.Helper()
+	stop := make(chan struct{})
+	var once sync.Once
+	release = func() { once.Do(func() { close(stop) }) }
+	t.Cleanup(release) // before the link's own cleanup closes it
+	select {
+	case l.tasks <- func() { <-stop }:
+	case <-time.After(waitLong):
+		t.Fatal("the event loop took no task")
+	}
+	waitFor(t, "a full event channel", func() bool {
+		ev := l.client.Events()
+		return len(ev) == cap(ev)
+	})
+	return release
+}
+
+// TestInputPipelined: a write to a pane goes out without waiting for the holder's answer to the
+// write before it. The holder answers behind the pane's output, so under heavy output an answer
+// comes long after its write landed. Here the answers never come while the event loop is
+// stalled, yet both writes land.
+func TestInputPipelined(t *testing.T) {
+	hdir := shortDir(t)
+	out := filepath.Join(shortDir(t), "seen")
+	startHolder(t, hdir, "one", 0)
+	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond})
+	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
+	u := uuidN(85)
+	spawn(t, l, u, `stty raw -echo
+`+floodScript+` &
+exec cat > `+out)
+	waitFor(t, "output", func() bool { return screenHas(t, l, u, "x") })
+	release := stallEventLoop(t, l)
+
+	ctx, cancel := context.WithTimeout(context.Background(), waitLong)
+	defer cancel()
+	seen := func(s string) func() bool {
+		return func() bool { b, _ := os.ReadFile(out); return string(b) == s }
+	}
+	results := make(chan error, 2)
+	go func() { results <- l.Input(ctx, u, []byte("one")) }()
+	waitFor(t, "the first write", seen("one"))
+	go func() { results <- l.Input(ctx, u, []byte("two")) }()
+	waitFor(t, "the second write, while the first is unanswered", seen("onetwo"))
+	release()
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestInputAbortedResent: writes sent behind a write the holder refuses fail on their offset, as
+// aborted. The link sends them again, in order, at the offset the holder expects. The program
+// reads no input, so the holder's input queue (1 MiB) fills.
+func TestInputAbortedResent(t *testing.T) {
+	hdir := shortDir(t)
+	startHolder(t, hdir, "one", 0)
+	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond})
+	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
+	u := uuidN(86)
+	spawn(t, l, u, "stty raw -echo; "+floodScript)
+	waitFor(t, "output", func() bool { return screenHas(t, l, u, "x") })
+	start := time.Now()
+	release := stallEventLoop(t, l)
+	t.Logf("event loop stalled after %v", time.Since(start))
+
+	// Queue three writes at once. All three go out before any answer is read: the first fits,
+	// the second overflows the queue, the third is small but sent behind the refusal.
+	p := l.pane(u)
+	reqs := []*inputReq{
+		{data: make([]byte, 900<<10), done: make(chan error, 1)},
+		{data: make([]byte, 200<<10), done: make(chan error, 1)},
+		{data: []byte("x"), done: make(chan error, 1)},
+	}
+	p.mu.Lock()
+	for _, r := range reqs {
+		p.queueInputLocked(l, r)
+	}
+	p.mu.Unlock()
+	waitFor(t, "all three sent", func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return len(p.inq) == 0
+	})
+	t.Logf("all sent after %v", time.Since(start))
+	release()
+
+	if err := <-reqs[0].done; err != nil {
+		t.Errorf("first write: %v", err)
+	}
+	var re *holderclient.RequestError
+	if err := <-reqs[1].done; !errors.As(err, &re) || re.Code != hp.CodeQueueFull {
+		t.Errorf("second write: %v, want queue full", err)
+	}
+	if err := <-reqs[2].done; err != nil {
+		t.Errorf("third write, sent again: %v", err)
+	}
+	t.Logf("all answered after %v", time.Since(start))
+	// The client's input offset follows the holder's: the next write lands at once.
+	ctx, cancel := context.WithTimeout(context.Background(), waitLong)
+	defer cancel()
+	if err := l.Input(ctx, u, []byte("y")); err != nil {
+		t.Errorf("a later write: %v", err)
 	}
 }

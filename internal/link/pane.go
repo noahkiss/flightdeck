@@ -201,7 +201,8 @@ type pane struct {
 	// inBusy is true while a writer goroutine drains it.
 	inq    []*inputReq
 	inBusy bool
-	// ansN and ansBytes count the answers in inq; past maxAnswers or maxAnswerBytes a new
+	inWake chan struct{} // wakes a writer that waits for an answer: a write was queued
+	// ansN and ansBytes count the answers in inq or sent and not yet answered; past maxAnswers or maxAnswerBytes a new
 	// answer is dropped. ansRefused is set while the holder refuses input as queue full:
 	// answers are dropped until it is ready again. ansDropped counts the answers dropped in
 	// the current burst, which ends when no answer waits and the holder takes input.
@@ -224,6 +225,9 @@ type inputReq struct {
 	data   []byte
 	done   chan error // buffered; nil for an answer
 	answer bool
+	n      int // answers in data; 0 for client input
+	// retried is set once the write was sent again after a wrong offset.
+	retried bool
 	// taken is set when the writer takes the request; cancelled when its caller gave up
 	// first, so the writer skips it and it is never written.
 	taken, cancelled bool
@@ -231,7 +235,7 @@ type inputReq struct {
 
 func newPane(u hp.UUID, snapRows int) *pane {
 	return &pane{uuid: u, ready: make(chan struct{}), subs: map[*Subscription]struct{}{}, snapRows: snapRows,
-		queries: termq.NewScanner(0)}
+		queries: termq.NewScanner(0), inWake: make(chan struct{}, 1)}
 }
 
 func (p *pane) markReady() {
@@ -430,12 +434,17 @@ func (p *pane) factsLocked(l *Link) termq.Facts {
 }
 
 // queueInputLocked queues a write to the program's input and starts a writer when none runs.
-// Writes reach the holder one at a time, in queue order. The caller holds p.mu.
+// Writes reach the holder in queue order. The caller holds p.mu.
 func (p *pane) queueInputLocked(l *Link, r *inputReq) {
 	p.inq = append(p.inq, r)
 	if !p.inBusy {
 		p.inBusy = true
 		go p.inputWriter(l)
+		return
+	}
+	select {
+	case p.inWake <- struct{}{}:
+	default:
 	}
 }
 
@@ -456,7 +465,7 @@ func (p *pane) queueAnswerLocked(l *Link, ans []byte) {
 	}
 	p.ansN++
 	p.ansBytes += len(ans)
-	p.queueInputLocked(l, &inputReq{data: ans, answer: true})
+	p.queueInputLocked(l, &inputReq{data: ans, answer: true, n: 1})
 }
 
 // endBurstLocked logs the end of a burst of dropped answers once answers flow again. The
@@ -468,19 +477,20 @@ func (p *pane) endBurstLocked(l *Link) {
 	}
 }
 
-// dropAnswersLocked removes the answers waiting in the queue. The caller holds p.mu.
+// dropAnswersLocked removes the answers waiting in the queue. Answers already sent stay counted
+// until the holder answers them. The caller holds p.mu.
 func (p *pane) dropAnswersLocked() {
 	kept := p.inq[:0]
 	for _, r := range p.inq {
 		if r.answer {
-			p.ansDropped++
+			p.ansDropped += r.n
+			p.ansN, p.ansBytes = p.ansN-r.n, p.ansBytes-len(r.data)
 			continue
 		}
 		kept = append(kept, r)
 	}
 	clear(p.inq[len(kept):])
 	p.inq = kept
-	p.ansN, p.ansBytes = 0, 0
 }
 
 // inputReady is the holder's word that it takes input again after refusing it.
@@ -491,51 +501,126 @@ func (p *pane) inputReady(l *Link) {
 	p.endBurstLocked(l)
 }
 
-// inputWriter drains the input queue. Answers next to each other go in one write. Client input
-// gets its error back; a failed answer is logged. A refusal for a full queue drops the waiting
-// answers until the holder is ready again.
+// inputWriter drains the input queue. It sends each write as soon as it is queued and reads
+// the holder's answers in order behind them: the holder answers behind the pane's output, so
+// under heavy output an answer comes seconds after the write reached the program, and input must
+// not wait for the answer to the write before it. Answers next to each other go in one write.
+// Client input gets its error back; a failed answer is logged. A refusal for a full queue drops
+// the waiting answers until the holder is ready again.
+//
+// A failed write makes the writes sent after it fail as aborted, unwritten. The writer then
+// sends nothing new until every sent write is answered, and sends the aborted ones again, in
+// order, before anything queued after them.
 func (p *pane) inputWriter(l *Link) {
+	type sentWrite struct {
+		r   *inputReq
+		res chan error // the holder's answer
+	}
+	var (
+		sent    []sentWrite
+		redo    []*inputReq // aborted writes, oldest first
+		stalled bool        // a write failed: send nothing new until sent is empty
+	)
 	for {
 		p.mu.Lock()
-		for len(p.inq) > 0 && p.inq[0].cancelled {
-			p.inq = p.inq[1:]
-		}
-		if len(p.inq) == 0 {
-			p.inq = nil
-			p.inBusy = false
-			p.endBurstLocked(l)
-			p.mu.Unlock()
-			return
-		}
-		r := p.inq[0]
-		p.inq = p.inq[1:]
-		r.taken = true
-		data, n, nb := r.data, 0, 0
-		if r.answer {
-			n, nb = 1, len(data)
-			for len(p.inq) > 0 && p.inq[0].answer && len(data)+len(p.inq[0].data) <= maxAnswerBytes {
-				data = append(data[:len(data):len(data)], p.inq[0].data...)
-				n, nb = n+1, nb+len(p.inq[0].data)
+		if !stalled {
+			for len(p.inq) > 0 && p.inq[0].cancelled {
 				p.inq = p.inq[1:]
 			}
 		}
-		h, hd, lost := p.holder, p.handle, p.lost
-		p.mu.Unlock()
-		var err error
-		switch {
-		case lost != nil:
-			err = lost
-		case h == nil:
-			err = ErrClosed
-		default:
-			ctx, cancel := context.WithTimeout(l.ctx, inputTimeout)
-			err = h.Input(ctx, hd, data)
-			cancel()
+		if !stalled && len(p.inq) > 0 {
+			r := p.inq[0]
+			p.inq = p.inq[1:]
+			r.taken = true
+			if r.answer && len(p.inq) > 0 && p.inq[0].answer && len(r.data)+len(p.inq[0].data) <= maxAnswerBytes {
+				c := &inputReq{data: append([]byte{}, r.data...), answer: true, n: r.n, taken: true}
+				for len(p.inq) > 0 && p.inq[0].answer && len(c.data)+len(p.inq[0].data) <= maxAnswerBytes {
+					c.data = append(c.data, p.inq[0].data...)
+					c.n += p.inq[0].n
+					p.inq = p.inq[1:]
+				}
+				r = c
+			}
+			h, hd, lost := p.holder, p.handle, p.lost
+			p.mu.Unlock()
+			w := sentWrite{r: r, res: make(chan error, 1)}
+			switch {
+			case lost != nil:
+				w.res <- lost
+			case h == nil:
+				w.res <- ErrClosed
+			default:
+				if ic, err := h.SendInput(hd, r.data); err != nil {
+					w.res <- err
+				} else {
+					go func() {
+						ctx, cancel := context.WithTimeout(l.ctx, inputTimeout)
+						defer cancel()
+						w.res <- ic.Wait(ctx)
+					}()
+				}
+			}
+			sent = append(sent, w)
+			continue
 		}
+		if len(sent) == 0 {
+			stalled = false
+			if len(redo) > 0 {
+				keep := redo[:0]
+				for _, r := range redo {
+					if r.answer && p.ansRefused {
+						p.ansN, p.ansBytes = p.ansN-r.n, p.ansBytes-len(r.data)
+						p.ansDropped += r.n
+						continue
+					}
+					keep = append(keep, r)
+				}
+				p.inq = append(keep, p.inq...)
+				redo = nil
+				p.endBurstLocked(l)
+				p.mu.Unlock()
+				continue
+			}
+			if len(p.inq) == 0 {
+				p.inq = nil
+				p.inBusy = false
+				p.endBurstLocked(l)
+				p.mu.Unlock()
+				return
+			}
+			p.mu.Unlock()
+			continue
+		}
+		p.mu.Unlock()
+
+		// Wait for the oldest answer, or for a new write to send.
+		var err error
+		select {
+		case err = <-sent[0].res:
+		case <-p.inWake:
+			continue
+		}
+		r := sent[0].r
+		sent = sent[1:]
 		var re *holderclient.RequestError
 		refused := errors.As(err, &re) && re.Code == hp.CodeQueueFull
+		// Aborted writes never reached the program; send them again. So is a write refused for
+		// its offset, which another gff-hab moved, once.
+		again := errors.Is(err, holderclient.ErrInputAborted) ||
+			errors.As(err, &re) && re.Code == hp.CodeInputOffset && !r.retried
 		p.mu.Lock()
-		p.ansN, p.ansBytes = p.ansN-n, p.ansBytes-nb
+		if err != nil {
+			stalled = true
+		}
+		if again {
+			r.retried = r.retried || !errors.Is(err, holderclient.ErrInputAborted)
+			redo = append(redo, r)
+			p.mu.Unlock()
+			continue
+		}
+		if r.answer {
+			p.ansN, p.ansBytes = p.ansN-r.n, p.ansBytes-len(r.data)
+		}
 		first := refused && !p.ansRefused
 		switch {
 		case refused:

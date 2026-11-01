@@ -62,6 +62,11 @@ var ErrNoHolder = errors.New("holderclient: no current holder")
 // ErrClosed means the holder connection has ended.
 var ErrClosed = errors.New("holderclient: holder connection closed")
 
+// ErrInputAborted means an input frame was not written because an input frame sent before it,
+// to the same pane, failed. The holder takes input frames in order, so the later ones fail on
+// their offset; nothing of them reached the program. Sending the input again is safe.
+var ErrInputAborted = errors.New("holderclient: input aborted: an earlier input to the pane failed")
+
 // RequestError is a holder's error or spawn failed answer to a request.
 type RequestError struct {
 	Ref     hp.Kind
@@ -296,6 +301,7 @@ func (c *Client) connect(ctx context.Context, e holderreg.Entry) error {
 		done:     make(chan struct{}),
 		byeC:     make(chan struct{}),
 		waits:    map[uint32]chan hp.Frame{},
+		inputs:   map[uint32]*InputCall{},
 		panes:    map[hp.Handle]*pane{},
 	}
 	for _, p := range w.Panes {

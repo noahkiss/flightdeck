@@ -299,8 +299,11 @@ const dumpRing = 2048
 
 // tuiScript is a full-screen program: alternate screen, colours, absolute and relative cursor
 // moves, a terminal query, and an erase. It prints a few KiB of padding, so the ring loses its
-// first bytes, draws phase one, waits for the file $GO, draws phase two, then sleeps.
-const tuiScript = `
+// first bytes, draws phase one, waits for the file $GO, draws phase two, then sleeps. Echo is
+// off: the link answers the query, and an echoed answer would reach the screen whenever the line
+// discipline gets to it, so the output would not stop at "ready-1" and the checkpoint taken there
+// would not cover it.
+const tuiScript = `stty -echo
 printf '\033[?1049h'
 i=0
 while [ $i -lt 60 ]; do

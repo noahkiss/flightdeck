@@ -838,9 +838,10 @@ func (l *Link) ClosePane(ctx context.Context, u hp.UUID) error {
 }
 
 // Input writes data to pane u's program as one write (spec 3.8). Writes to one pane, client input
-// and the link's own answers to terminal queries alike, reach the holder one at a time in the
-// order they were queued. When ctx ends while the write still waits in the queue, it is never
-// written; when it is already being written, Input returns that write's result.
+// and the link's own answers to terminal queries alike, reach the holder in the order they were
+// queued; none waits for the holder's answer to the one before (see inputWriter). When ctx ends
+// while the write still waits in the queue, it is never written; when it is already being
+// written, Input returns that write's result.
 func (l *Link) Input(ctx context.Context, u hp.UUID, data []byte) error {
 	p := l.pane(u)
 	if p == nil {

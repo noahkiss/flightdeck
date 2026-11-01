@@ -30,13 +30,19 @@ type Holder struct {
 	closed   bool
 	token    uint32
 	waits    map[uint32]chan hp.Frame
+	inputs   map[uint32]*InputCall // input frames in flight, by token
 	panes    map[hp.Handle]*pane
+
+	sendMu sync.Mutex // input frames go out in the order of their offsets
 }
 
 // pane is the client's record of one pane on a holder.
 type pane struct {
 	info  hp.PaneInfo
 	input uint64 // the input offset the next input frame carries
+	// gen counts the input failures that moved input back to the holder's count. An input frame
+	// carries the gen it was sent in; only the first failure of a gen resyncs (see track).
+	gen uint64
 }
 
 // Pane names a pane and the holder it lives on.
@@ -150,6 +156,24 @@ func (h *Holder) track(f hp.Frame) {
 	case *hp.Exited:
 		if p := h.panes[f.Handle]; p != nil {
 			p.info.Exited, p.info.Exit = true, f.Status
+		}
+	case *hp.Error:
+		// An input frame refused with an offset leaves the holder's count where it was, so every
+		// input frame sent after it fails on its offset. The first failure of a gen moves the
+		// next offset back to the holder's count; the later ones are aborted. The reader sees
+		// the errors in the order the holder sent them, so the first one is always the cause.
+		ic := h.inputs[f.Token]
+		if ic == nil || f.Ref != hp.KindInput {
+			break
+		}
+		p := h.panes[ic.hd]
+		if p == nil || p.gen != ic.gen {
+			ic.aborted = f.Code == hp.CodeInputOffset
+			break
+		}
+		if f.Code == hp.CodeInputOffset || f.Code == hp.CodeQueueFull {
+			p.input = f.Offset
+			p.gen++
 		}
 	case *hp.Bye:
 		if !h.bye {
@@ -376,38 +400,126 @@ func (h *Holder) ReplayRange(ctx context.Context, hd hp.Handle, from, to uint64)
 	return data, fs[len(fs)-1].(*hp.ReplayEnd), nil
 }
 
-// Input writes data to the pane's PTY at the input offset the client tracks. After a wrong
-// offset (another gff-hab wrote meanwhile) it resends once at the offset the holder expects.
+// Input writes data to the pane's PTY and waits until the holder took it. After a wrong offset
+// (another gff-hab wrote meanwhile) it resends once at the offset the holder expects.
 func (h *Holder) Input(ctx context.Context, hd hp.Handle, data []byte) error {
 	for try := 0; ; try++ {
-		h.mu.Lock()
-		p := h.panes[hd]
-		if p == nil {
-			h.mu.Unlock()
-			return &RequestError{Ref: hp.KindInput, Code: hp.CodeNoPane, Message: "no such pane"}
+		ic, err := h.SendInput(hd, data)
+		if err == nil {
+			err = ic.Wait(ctx)
 		}
-		off := p.input
-		h.mu.Unlock()
-		err := h.do(ctx, func(tok uint32) hp.Frame {
-			return &hp.Input{Handle: hd, Token: tok, Offset: off, Data: data}
-		})
 		var re *RequestError
-		if errors.As(err, &re) && re.Code == hp.CodeInputOffset && try == 0 {
-			h.mu.Lock()
-			if p := h.panes[hd]; p != nil {
-				p.input = re.Offset
-			}
-			h.mu.Unlock()
+		if try == 0 && (errors.Is(err, ErrInputAborted) || errors.As(err, &re) && re.Code == hp.CodeInputOffset) {
 			continue
 		}
-		if err == nil {
-			h.mu.Lock()
-			if p := h.panes[hd]; p != nil {
-				p.input = off + uint64(len(data))
-			}
-			h.mu.Unlock()
-		}
 		return err
+	}
+}
+
+// InputCall is an input frame in flight; Wait returns its result.
+type InputCall struct {
+	h         *Holder
+	hd        hp.Handle
+	tok, ping uint32
+	gen       uint64
+	w         chan hp.Frame
+	aborted   bool // set by the reader, under h.mu: an earlier input frame of the gen failed
+}
+
+// SendInput writes data to the pane's PTY without waiting for the holder's answer, so a caller
+// may send the next input at once. Input frames reach the program in the order SendInput is
+// called. A frame refused for a full queue or a wrong offset makes every frame sent after it, up
+// to the next SendInput after the refusal is read, fail with ErrInputAborted; none of those
+// reached the program.
+//
+// The holder answers in order with its output, so under heavy output Wait returns well after
+// the input reached the program.
+func (h *Holder) SendInput(hd hp.Handle, data []byte) (*InputCall, error) {
+	h.sendMu.Lock()
+	defer h.sendMu.Unlock()
+	ic := &InputCall{h: h, hd: hd, tok: h.nextToken(), ping: h.nextToken(), w: make(chan hp.Frame, 4)}
+	h.mu.Lock()
+	if h.closed || h.bye {
+		h.mu.Unlock()
+		return nil, ErrClosed
+	}
+	p := h.panes[hd]
+	if p == nil {
+		h.mu.Unlock()
+		return nil, &RequestError{Ref: hp.KindInput, Code: hp.CodeNoPane, Message: "no such pane"}
+	}
+	off := p.input
+	ic.gen = p.gen
+	p.input += uint64(len(data))
+	h.waits[ic.tok], h.waits[ic.ping] = ic.w, ic.w
+	h.inputs[ic.tok] = ic
+	h.mu.Unlock()
+	err := h.pc.WriteFrame(&hp.Input{Handle: hd, Token: ic.tok, Offset: off, Data: data})
+	if err == nil {
+		err = h.pc.WriteFrame(&hp.Ping{Token: ic.ping})
+	}
+	if err != nil {
+		ic.forget()
+		return nil, h.writeFailed(err)
+	}
+	return ic, nil
+}
+
+func (ic *InputCall) forget() {
+	h := ic.h
+	h.mu.Lock()
+	delete(h.waits, ic.tok)
+	delete(h.waits, ic.ping)
+	delete(h.inputs, ic.tok)
+	h.mu.Unlock()
+}
+
+// Wait waits for the holder's answer to the input frame: nil once the holder took it, a
+// *RequestError when it refused it, ErrInputAborted when an earlier input frame failed. When ctx
+// ends first, the input may still reach the program.
+func (ic *InputCall) Wait(ctx context.Context) error {
+	defer ic.forget()
+	h := ic.h
+	// handle takes one answer; done reports whether the call is over. The holder sends an
+	// error for the input before the pong.
+	handle := func(f hp.Frame) (done bool, err error) {
+		e, ok := f.(*hp.Error)
+		switch {
+		case ok && e.Token == ic.tok:
+			h.mu.Lock()
+			aborted := ic.aborted
+			h.mu.Unlock()
+			if aborted {
+				return true, ErrInputAborted
+			}
+			return true, &RequestError{Ref: e.Ref, Code: e.Code, Offset: e.Offset, Message: e.Message}
+		case ok:
+			return true, &RequestError{Ref: e.Ref, Code: e.Code, Offset: e.Offset, Message: e.Message}
+		}
+		return isPong(f), nil
+	}
+	for {
+		select {
+		case f := <-ic.w:
+			if done, err := handle(f); done {
+				return err
+			}
+		case <-h.byeC:
+			for {
+				select {
+				case f := <-ic.w:
+					if done, err := handle(f); done {
+						return err
+					}
+				default:
+					return ErrClosed
+				}
+			}
+		case <-h.done:
+			return ErrClosed
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 }
 

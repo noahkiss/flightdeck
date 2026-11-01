@@ -530,8 +530,11 @@ Clients branch on `kind`, never on `message`.
 - gff-hab never writes to a program's input on its own, except for answers to terminal queries (5.6).
 
 Built (stage 7, `internal/link`): `pane.input` writes through the holder link. Each pane has one
-input queue: client input and gff-hab's answers to terminal queries reach the holder one write at
-a time, in the order they were queued. A pane that is gone or unknown answers `not_found`; a lost
+input queue: client input and gff-hab's answers to terminal queries reach the holder in the order
+they were queued. gff-hab sends each write without waiting for the holder's answer to the one
+before: the holder answers behind the pane's output, so under heavy output an answer comes seconds
+after its write reached the program. A refused write makes the writes sent behind it fail on their
+offset; gff-hab sends those again, in order, at the offset the holder expects. A pane that is gone or unknown answers `not_found`; a lost
 pane answers `unavailable`. Input as activity for size ownership (6.2) is stage 8.
 
 - The control connection runs `pane.input` off its read loop, in one lane per pane: calls to one
