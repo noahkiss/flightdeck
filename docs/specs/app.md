@@ -889,10 +889,11 @@ relies on:
 - **Withdrawal.** An answer through `approval.answer` replaces the banner at once, same collapse
   id, passive, "Answered on <label>", where the label is the answering client's hello `label`.
   The Live Activity loses its buttons in the same step. A request closed in the TUI is replaced
-  with "Answered in the terminal".
+  with "Answered in the terminal"; one whose pane's program exited with "Session ended".
 - **Categories.** `approval` (Approve, Deny), `approval-deny` (Deny, Open on iPhone) and `open`
   (Open on iPhone). The app registers all three. Question banners use `open` until answering a
-  question through `approval.answer` is built.
+  question through `approval.answer` is built. A permission request with no request id uses
+  `open`: no answer can name it.
 - **Expiry text.** The hab leaves the expiry out of the body and sends `expires_at` in the
   payload's `flightdeck` object, with `mutable-content` set. The notification service extension
   appends " · Expires 14:05" in local time.

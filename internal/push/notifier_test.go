@@ -155,6 +155,49 @@ func TestNotifierPermissionAndWithdraw(t *testing.T) {
 	}
 }
 
+// TestNotifierPermissionNoRequestID: a permission request with no request id cannot be
+// answered through approval.answer, so its banner offers no Approve or Deny, only Open.
+func TestNotifierPermissionNoRequestID(t *testing.T) {
+	r := newNotifierRig(t)
+	r.store.Register("dev-phone", phone, Production, allKinds, false)
+	st := blocked("", "make test")
+	r.n.State(st)
+	r.n.Sync()
+	pa := alerts(r.prod.requests(), phone)
+	if len(pa) != 1 {
+		t.Fatalf("banners: %d", len(pa))
+	}
+	if aps := pa[0].Body["aps"].(map[string]any); aps["category"] != CategoryOpen {
+		t.Fatalf("category %v, want %q", aps["category"], CategoryOpen)
+	}
+	hidden := PermissionBanner(Where{Hab: "laptop"}, st.Request, true)
+	if hidden.Category != CategoryOpen {
+		t.Fatalf("hidden commands: category %q, want %q", hidden.Category, CategoryOpen)
+	}
+}
+
+// TestNotifierExitWithdrawal: a pane whose program exits with an approval banner open has the
+// banner replaced with "Session ended", not "Answered in the terminal".
+func TestNotifierExitWithdrawal(t *testing.T) {
+	r := newNotifierRig(t)
+	r.store.Register("dev-phone", phone, Production, allKinds, false)
+	r.n.State(blocked("req-1", "make test"))
+	r.n.Sync()
+	r.n.State(state(api.AgentStatusExited))
+	r.n.Sync()
+	pa := alerts(r.prod.requests(), phone)
+	if len(pa) != 2 {
+		t.Fatalf("alerts: %d", len(pa))
+	}
+	w := pa[1]
+	if w.Header.Get("apns-collapse-id") != "r-req-1" || alertField(w, "title") != "Session ended" {
+		t.Fatalf("exit withdrawal %v %v", w.Header, w.Body)
+	}
+	if aps := w.Body["aps"].(map[string]any); aps["interruption-level"] != "passive" || aps["category"] != nil {
+		t.Errorf("exit withdrawal aps %v", aps)
+	}
+}
+
 // TestNotifierPresence: a session a connected client focused within 60 s gets no banner; a
 // device whose client was in the foreground within 180 s gets none either (the app shows its
 // own notice), while other devices still do; stale or disconnected presence pushes.

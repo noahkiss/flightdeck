@@ -135,9 +135,13 @@ func permissionTitle(r *api.PermissionRequest) string {
 }
 
 // PermissionBanner is the banner for blocked:permission (16.2). Approve is offered only when
-// the whole command fits after the safe drops, and never when commands are hidden.
+// the whole command fits after the safe drops, and never when commands are hidden. A request
+// with no id cannot be answered through approval.answer, so its banner only opens the app.
 func PermissionBanner(w Where, r *api.PermissionRequest, hide bool) Banner {
 	b := Banner{Kind: KindPermission, Subtitle: w.place(), Level: LevelTimeSensitive, Category: CategoryDeny}
+	if r == nil || r.ID == "" {
+		b.Category = CategoryOpen
+	}
 	if hide {
 		b.Title = "Approval needed"
 		b.Body = w.place()
@@ -146,7 +150,7 @@ func PermissionBanner(w Where, r *api.PermissionRequest, hide bool) Banner {
 	b.Title = permissionTitle(r)
 	text, whole := requestText(r)
 	b.Body = text
-	if whole {
+	if whole && b.Category == CategoryDeny {
 		b.Category = CategoryApproval
 	}
 	return b
@@ -220,6 +224,14 @@ func AnsweredBanner(w Where, by string, allow *bool, r *api.PermissionRequest, h
 func ClosedBanner(w Where, r *api.PermissionRequest, hide bool) Banner {
 	b := AnsweredBanner(w, "", nil, r, hide)
 	b.Title = "Pane closed"
+	return b
+}
+
+// EndedBanner replaces an open approval banner whose pane's program exited: the session
+// ended, so nobody answered the request.
+func EndedBanner(w Where, r *api.PermissionRequest, hide bool) Banner {
+	b := AnsweredBanner(w, "", nil, r, hide)
+	b.Title = "Session ended"
 	return b
 }
 

@@ -1015,7 +1015,7 @@ a key it sends the same call again, and the hab runs it at most once. Built choi
   <program>" or "Denied: …". It does this at once: Claude Code keeps the request open until
   the tool has run. The same blocked state arriving afterwards raises nothing. A request that
   closes with no answer through the hab (the TUI) is replaced with "Answered in the terminal".
-  A pane that closes with a banner open has it replaced with "Pane closed", and the notifier
+  A request whose pane's program exits is replaced with "Session ended". A pane that closes with a banner open has it replaced with "Pane closed", and the notifier
   forgets the pane: it no longer counts in `others`.
   A second answer to one request stays refused with `conflict` (harness-adapters.md,
   Permission answers).
@@ -1035,7 +1035,8 @@ a key it sends the same call again, and the hab runs it at most once. Built choi
   The command is shortened (leading `cd`, environment assignments, the working directory part
   of paths, the middle of long quoted strings) and gets 13 words and 84 characters, leaving
   room for the phone's " · Expires 14:05". Approve is offered only when the whole shortened
-  command fits. The agent state carries no question or error text yet, so those bodies are
+  command fits. A permission request with no request id cannot be answered through
+  `approval.answer`, so its banner uses `open`. The agent state carries no question or error text yet, so those bodies are
   fixed: "Open to answer." and "The agent stopped on an error."
 - **Not built here.** Push-to-start of a Live Activity, actions on question banners (answering
   a question through `approval.answer` is not built), "push broken" in a status the app can

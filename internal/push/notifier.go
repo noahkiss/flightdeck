@@ -510,6 +510,9 @@ func (n *Notifier) process(st api.AgentState) {
 		}
 		for _, t := range ob.to {
 			b := AnsweredBanner(w, by, allow, ob.req, t.hide)
+			if st.State == api.AgentStatusExited && by == "" {
+				b = EndedBanner(w, ob.req, t.hide)
+			}
 			payload := AlertPayload(b, Meta{Hab: n.cfg.Hab, Session: w.Session, Pane: st.Pane, State: string(st.State), Request: ob.request}, w.Session)
 			n.send(Message{Token: t.token, Environment: t.env, Type: TypeAlert, Priority: 5, CollapseID: ob.collapse, Expiration: ob.expires, Payload: payload}, true)
 		}
