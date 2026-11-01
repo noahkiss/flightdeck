@@ -27,3 +27,15 @@ health = "http://localhost:2799/health"
 [[catalog.actions]]
 name = "update"
 command = "make update"
+
+# The [speech] section: the hab speech engine (docs/specs/voice.md, Hab speech engine).
+[speech]
+# On or off. Leave it out for the default: on when the host has at least 4 GB of memory.
+enabled = true
+# The helper program. Leave it out to use $GFF_HAB_SPEECH_HELPER, gff-hab-speech beside gff-hab,
+# or gff-hab-speech on PATH.
+helper = "/usr/local/bin/gff-hab-speech"
+# A mirror of the model archive. The checksum is still checked.
+# model_url = "https://mirror.example.com/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2"
+# Decode threads. Leave it out for the CPU count, at most 4.
+threads = 4

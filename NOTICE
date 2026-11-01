@@ -94,3 +94,25 @@ bundles under their own licences.
 
 MSDisplayLink, https://github.com/Lakr233/MSDisplayLink
 MIT License (text above). Copyright (c) 2024 Lakr Aream
+
+------------------------------------------------------------------------------
+The gff-hab-speech binary (the speech helper, built with `make speech-helper`) links the static
+C library of sherpa-onnx 2.0.1 and the system's libopus. Neither is in this repository.
+
+sherpa-onnx, https://github.com/k2-fsa/sherpa-onnx
+Apache License 2.0. Its static release also contains:
+- onnxruntime (Microsoft): MIT License
+- kaldi-native-fbank, kaldi-decoder (k2-fsa): Apache License 2.0
+- OpenFst (as sherpa-onnx-fst, -fstfar, -kaldifst-core): Apache License 2.0
+- sentencepiece (Google): Apache License 2.0
+- kissfft: BSD 3-Clause License
+- utf8proc: MIT License
+- PortAudio: MIT License
+
+libopus (Xiph.Org Foundation and contributors), https://opus-codec.org
+BSD 3-Clause License.
+
+The speech model is not part of any binary. gff-hab downloads it on first use:
+
+Parakeet TDT 0.6B v2 (NVIDIA), https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2
+Creative Commons Attribution 4.0 (CC-BY-4.0). ONNX conversion by the sherpa-onnx project.

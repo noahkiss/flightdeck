@@ -47,6 +47,10 @@ One Go module, `github.com/noahkiss/flightdeck`, at the repo root. Swift package
 | `internal/push/` | Push straight to APNs with the user's own key: the push config, the ES256 provider token, the HTTP/2 client, the owner-only token store, banner words fitted to the Watch budgets, the payloads, and the notifier that turns agent state into banners and Live Activity updates under the presence tiers. Tests use an HTTP/2 fake APNs. Pure Go. Spec: `docs/specs/app.md` 8, `docs/specs/hab-logic-api.md` 3.9, Push; setup: `docs/push.md` |
 | `internal/link/` | gff-hab's holder link: one parsed screen per pane on every holder, checkpoints in `<state>/checkpoints`, rebuild after a planned restart or a crash, panes marked lost when a holder dies, a holder started through the injected `Start` when none of this build is connected and `Retired` told when one says bye, ended panes released on a draining holder, panes released when a client closes them (`pane.close`), a subscriber API (output with absolute offsets, a snapshot, resizes tagged with the size owner from `SetOwner`), one ordered input queue per pane (`Input`, `Resize`), the answers to terminal queries in live output, bounded per pane, and each pane's commands from OSC 133 marks (`commands.go`: fed from the byte path, trimmed with the ring, a command's bytes by a bounded replay). The parser is injected, so it is pure Go. Spec: `docs/specs/hab-logic-api.md` 2.3 |
 | `cmd/gff-hab/` | The logic binary: `serve`, `connect`, `api call`, `events`, `manifests`, `hook`, `instructions` (`instructions.go`), `install`, `uninstall` (`install.go`; `serve -init` picks the holder starter). `serve` runs the holder link; the parser is libghostty with `-tags ghostty`, else `vt.Fake` (`parser_*.go`), and the log says which. `spawn.go` starts panes through the link with `GFF_HAB` in their environment; `paneenv.go` builds the environment every pane starts from (TERM, COLORTERM, a UTF-8 locale, no init system job variables). `actions.go` serves `session.create` (spawn, then file the session) and `pane.close` (release through the link). `data.go` connects the data streams, `pane.input` and the pane size manager to the link. `commands.go` serves `command.list` and `command.output` and sends `command.updated`; `activity.go` sends `pane.output` and `pane.bell` at most once a second per pane, from its own link subscription per pane; `testdata/marks` holds the test shells' mark snippets |
+| `internal/speech/` | gff-hab's side of the hab speech engine: the `[speech]` settings, the memory default and the helper lookup (`config.go`), the model download with its checksum (`model.go`), the helper process, one decode at a time in arrival order and the idle exit (`engine.go`, `helper.go`), and the session vocabulary fix-up (`vocab.go`). `speechtest/` is the fake helper the tests run. Pure Go. Spec: `docs/specs/voice.md`, Hab speech engine |
+| `internal/speechproto/` | The gff-hab to speech helper wire protocol: frames over the helper's stdio. Pure Go. Spec: `docs/protocol/speech-helper.md` |
+| `internal/oggopus/` | Reads an Ogg Opus file (RFC 7845) into its packets: pages, CRCs, the Opus header, the length from the granule position. No audio decoding. Pure Go |
+| `cmd/gff-hab-speech/` | The speech helper: sherpa-onnx's C API and libopus through cgo. Builds only with the `speech` tag (`make speech-helper`) |
 | `internal/vt/` | The terminal parser interface gff-hab and gff keep per pane (screen, snapshots, the cursor, modes and keyboard flags that answer queries, and the screen as cells for gff's composed view), and `Fake`, a pure-Go stand-in for tests |
 | `cmd/gff/` | The terminal client: flags, the workspace's hosts (config file and `-host`), the single-hab transport (local socket, `-via`, `-ssh`), new panes through `session.create`, raw mode and SIGWINCH (`tty*.go`), then `internal/gffclient`. The parser is libghostty with `-tags ghostty`, else `vt.Fake` (`parser_*.go`) |
 | `internal/vt/ghostty/` | The libghostty-vt parser through cgo. Builds only with the `ghostty` build tag |
@@ -62,7 +66,7 @@ One Go module, `github.com/noahkiss/flightdeck`, at the repo root. Swift package
 | `apple/scripts/` | `generate.sh` (XcodeGen), `build.sh` (Mac Release build), `testflight.sh` and `notarize.sh` (release steps, from the app template), `ssh-live-check.sh` (the SSH carrier against a throwaway sshd), `gen-blowfish-tables.py` (Blowfish's tables from pi, for the key reader), `gen-key-fixtures.sh` (throwaway `ssh-keygen` keys for `KeyImportTests`) |
 | `design/icons/AppIcon.icon` | The app icon (Icon Composer bundle); both app targets use it in place |
 | `spikes/` | Throwaway host-side spikes (scripts, no Go module changes), each with its own README. `hab-parakeet/` measures Parakeet through the sherpa-onnx CLI on a hab host (`docs/specs/voice.md`). Models and binaries are downloaded outside the repo |
-| `cmd/` | Binaries, as they land: `gff`, `gff-hab`, `gff-hab-holder` |
+| `cmd/` | Binaries, as they land: `gff`, `gff-hab`, `gff-hab-holder`, `gff-hab-speech` |
 | `docs/specs/` | Behaviour specs |
 | `docs/protocol/` | Wire protocol documents |
 
@@ -125,3 +129,27 @@ gff's release builds therefore need the libghostty build too (`gff-client.md` 15
   prebuilt Ghostty XCFramework for Apple platforms, pinned to one exact version in
   `apple/FlightdeckKit/Package.swift` (app.md 5.3).
 - **Licences.** Ghostty and the bindings are MIT. `NOTICE` carries their notices for binaries.
+
+## The speech helper (sherpa-onnx)
+
+gff-hab transcribes speech through a separate helper, `gff-hab-speech`, because sherpa-onnx needs
+cgo and gff-hab builds with `CGO_ENABLED=0` (`voice.md`, Hab speech engine).
+
+- **Its own build tag.** Every file in `cmd/gff-hab-speech` carries the `speech` tag, the way
+  `internal/vt/ghostty` carries `ghostty`. Without the tag the package has no files, so
+  `make check-pure`, `make build`, `make vet` and `make test-pure` skip it. It stays in the one
+  module: it adds nothing to `go.mod`, because it calls the C API directly, not sherpa-onnx's Go
+  bindings.
+- **Pinned, not vendored.** `make sherpa-onnx` downloads the static C library of sherpa-onnx 2.0.1
+  for this platform (macOS arm64 and x86_64, Linux x86_64 and aarch64) and its `c-api.h` from the
+  same tag into `build/sherpa-onnx`, checks both SHA-256 sums from the Makefile, and writes a
+  pkg-config file for them. onnxruntime is linked into that library.
+- **libopus** comes from the system: `pkg-config opus` (Homebrew `opus`, Debian `libopus-dev`).
+- **Build and test.** `make speech-helper` writes `build/gff-hab-speech`. `make test-speech` runs
+  its tests; set `$GFF_SPEECH_MODEL_DIR` to the extracted model archive to include real
+  recognition. gff-hab finds the helper as `voice.md`, Built choices says.
+- **The model** is never in the repo or a release: gff-hab downloads it on first use into its
+  state folder.
+- **Licences.** sherpa-onnx Apache-2.0, onnxruntime MIT, libopus BSD-3-Clause, and the libraries
+  in sherpa-onnx's static release; `NOTICE` lists them. The Parakeet model is CC-BY-4.0, with the
+  attribution line in the download log and in `ATTRIBUTION.txt` beside the model files.

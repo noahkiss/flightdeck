@@ -636,6 +636,13 @@ func TestSettings(t *testing.T) {
 	}
 }
 
+func TestExampleSettings(t *testing.T) {
+	s, err := LoadSettings(filepath.Join("..", "..", "docs", "examples", "hab.toml"))
+	if err != nil || s.Enabled == nil || !*s.Enabled || s.Threads != 4 || s.Helper != "/usr/local/bin/gff-hab-speech" || s.ModelURL != "" {
+		t.Fatalf("example: %+v %v", s, err)
+	}
+}
+
 func TestFindHelper(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, HelperName)

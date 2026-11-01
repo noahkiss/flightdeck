@@ -623,7 +623,9 @@ The schema lives in `api/` (layout and commands: `docs/layout.md`). Built choice
 ### 3.4 Capabilities
 
 Capability strings name optional features: `data-streams`, `snapshot-vt`, `snapshot-ghostty`,
-`agent-state`, `transcripts`, `devices`, `push`, `host-stats`, `mesh`, `idempotency-keys`, `usage`, `catalog`, `channels`.
+`agent-state`, `transcripts`, `devices`, `push`, `host-stats`, `mesh`, `idempotency-keys`, `usage`, `catalog`, `channels`,
+`speech`. `speech` means the hab's speech engine is installed and turned on, so `speech.prepare`
+and `speech.transcribe` work, though the model may still need its download (`voice.md`).
 `idempotency-keys` means the hab honours `idempotency_key` on `session.create` and
 `session.send` (3.9). `mesh` means the hab keeps
 a peer list and serves peer links, `peers.list`, `peers.accept` and `peer.updated` (`mesh.md` 4).
@@ -640,7 +642,8 @@ Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `sn
 `transcripts` and `detect-explain` (`detect.explain` works). It always sends `mesh`, `idempotency-keys`,
 `catalog`, `channels` and `usage` (`usage.list` and `usage.updated` work; readings arrive only through panes with the
 holder link). It sends `push` only when its push config loads and validates
-(3.9, Push).
+(3.9, Push), and `speech` only when the speech helper is found and the host setting leaves the
+engine on (`voice.md`, Built choices).
 
 ### 3.5 Events, seq and epoch
 
@@ -799,6 +802,8 @@ names the stage, and an event is defined but never sent.
 | `command.output` | A run of one command's output, from a bounded replay of the holder's ring (capability `commands`, 2.5) | Yes (task-m845kpi9) |
 | `detect.explain` | Why a pane shows its agent state: the source that won, the process match, and each screen rule's region and result (capability `detect-explain`; `harness-adapters.md`, Detection) | Yes (task-bgjbr5rn) |
 | `worktree.list`, `worktree.create`, `worktree.setup`, `worktree.remove` | A project's git worktrees: list, make one and run its setup script, run a pending setup, remove one (3.10) | Yes (task-wvbuz085) |
+| `speech.prepare` | Load the speech engine and start the model download if needed; returns the engine state at once (capability `speech`; `voice.md`, API addition) | Yes (task-h011ghy9) |
+| `speech.transcribe` | Turn one recorded clip into text, one decode at a time in arrival order (capability `speech`; `voice.md`, API addition) | Yes (task-h011ghy9) |
 
 | Event | Purpose | Id | Sent from |
 |---|---|---|---|

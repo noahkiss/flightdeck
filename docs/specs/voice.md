@@ -84,7 +84,8 @@ recent iPhones; the hab engine stays the default. No iPad run yet.
 - Linux: the same release has static CLI builds for linux-x64 and linux-aarch64 (CPU, with
   onnxruntime linked in), and CUDA builds. A Linux run is still to do.
 - Licences: sherpa-onnx Apache-2.0, onnxruntime MIT, Silero VAD MIT, the Parakeet model
-  CC-BY-4.0 (an attribution line wherever the model is downloaded).
+  CC-BY-4.0 (an attribution line wherever the model is downloaded). The helper's full list is in
+  `NOTICE`.
 
 ### Design
 
@@ -105,20 +106,22 @@ recent iPhones; the hab engine stays the default. No iPad run yet.
 - **Any client.** `gff` and the Mac app can call the same method, so dictation gives the same
   text everywhere.
 
-### API addition (proposal, not yet in the schema)
+### API addition
 
 In the style of `hab-logic-api.md` 3.9. A new capability `speech` says the hab runs the engine:
-it is installed and turned on, though the model may still need its download.
+it is installed and turned on, though the model may still need its download. In the revision 1
+schema since 2026-11-01.
 
 | Method | Purpose | Built |
 |---|---|---|
-| `speech.prepare` | Load the engine now, and start the model download if needed; returns the engine state | Part 6 (voice mode) |
-| `speech.transcribe` | Turn one recorded clip into text | Part 6 (voice mode) |
+| `speech.prepare` | Load the engine now, and start the model download if needed; returns the engine state | Yes (Part 6, voice mode) |
+| `speech.transcribe` | Turn one recorded clip into text | Yes (Part 6, voice mode) |
 
 - **`speech.prepare`** takes `{}` and returns `state` (`absent`, `downloading`, `loading`,
   `ready`; open), `progress` (whole percent, while downloading), `model` (its name) and `formats`
-  (the audio formats the hab accepts: `opus`, `pcm16`; open). It returns at once and does not wait
-  for the load.
+  (the audio formats the hab accepts: `opus`, `pcm16`; open). It also returns `error`, why the
+  last download or load failed, until one succeeds. It returns at once and does not wait for the
+  load.
 - **`speech.transcribe`** takes `audio` (the clip, base64) and `format` (`opus` or `pcm16`), and
   the optional `sample_rate` (for `pcm16`; default 16000), `session` (whose vocabulary to apply)
   and `language` (default `en`). It returns `text`, `audio_ms` and `decode_ms`, and `raw` (the
@@ -134,6 +137,74 @@ it is installed and turned on, though the model may still need its download.
   (`speech`, opened with a ticket as in `hab-logic-api.md` 5.2), with audio frames in, partial
   text out, and Silero voice detection on the hab. Apple's live words make it unnecessary for the
   first build.
+
+### Built choices (2026-11-01)
+
+The code: `internal/speech` (gff-hab's side), `internal/speechproto` (the helper protocol,
+`docs/protocol/speech-helper.md`), `internal/oggopus` (the Ogg reader), `cmd/gff-hab-speech` (the
+helper), `internal/control/speech.go` (the methods). Layout and build: `layout.md`, The speech
+helper.
+
+- **The helper.** `gff-hab-speech` links sherpa-onnx's C API from its pinned static release
+  (2.0.1) and libopus from the system, through cgo. It builds only with the `speech` tag
+  (`make speech-helper`), so `make check-pure`, `make build` and `make test-pure` never compile it.
+  It decodes `pcm16` and Ogg Opus; both are in `formats`. First run (Apple M1 Pro, busy, 4
+  threads): the model loads in 1.2 to 1.4 s; a 3 s spoken clip decodes in about 0.3 s, with the
+  same text from `pcm16` and from Opus at 24 kbit/s.
+- **Finding it.** gff-hab looks for the helper at `[speech] helper` in the hab's config file, then
+  `$GFF_HAB_SPEECH_HELPER`, then beside the gff-hab binary, then on PATH. A path named in the file
+  or the variable that is not an executable file means no helper: gff-hab does not fall back.
+- **On or off.** `[speech] enabled` turns the engine on or off. With no setting it is on when the
+  host has at least 3.5 GiB of memory: a host sold as 4 GB reports a little less (Linux keeps
+  some back from `MemTotal`). The capability is on when the engine is on and the helper is found.
+  gff-hab reads the section at start only.
+- **Formats.** gff-hab runs `gff-hab-speech -info` once, on the first speech call, and reports
+  the formats it prints. A helper that does not run makes both methods `unavailable`.
+- **The model.** Parakeet TDT 0.6B v2 int8 from the sherpa-onnx `asr-models` release (482 MB
+  archive, SHA-256 `157c157b...61e1ad`), into `<state>/speech/parakeet-tdt-0.6b-v2-int8`. One
+  pass: the bytes go through the checksum and the extractor together into a temporary folder,
+  renamed into place only when the size and checksum match. Only the four model files are kept,
+  by base name, so no archive path can leave the folder. `ATTRIBUTION.txt` beside them holds the
+  CC-BY-4.0 line, and the log line that starts each download carries it too. `[speech] model_url`
+  names a mirror; the checksum still applies.
+- **Retries.** A failed download or load leaves `error` set until one succeeds. The next
+  `speech.prepare` or `speech.transcribe` tries again. An idle exit or a stop is not an error.
+- **Queue.** One decode at a time across all connections, in arrival order. At most 16 clips wait;
+  one more is `unavailable`. A clip whose caller gives up (timeout, closed connection) keeps the
+  decoder until the helper answers, so two decodes never overlap. One connection may run 8 speech
+  calls at once; each call has 5 minutes.
+- **Limits.** gff-hab checks the clip before the helper sees it: 1 MiB, 120 s (from the byte count
+  for `pcm16`, from the last granule position for Opus), `sample_rate` 8000 to 48000, `language`
+  absent or `en`. A pcm16 clip of 1 MiB lasts at most 65 s, so only Opus can reach the 120 s
+  limit.
+- **Vocabulary.** With `session`, gff-hab lists the files git knows in the session's project
+  folder (the newest one that exists): tracked, plus untracked files that are not ignored. Each path
+  element and each file name without its extension is a term. The list is kept for one minute;
+  git has 3 s. A term replaces a run of up to 6 words when the words, joined and lowercased,
+  spell the term with its separators and case taken out ("link test dot go" to `link_test.go`,
+  "holder reg" to `holderreg`). "dot", "underscore", "dash", "hyphen" and "slash" inside a run
+  count as separators. A term must have 5 letters or digits. A single word changes only to a term
+  that looks like code (a separator, or a capital after the first letter), so "server" never
+  becomes `Server`. Two terms with the same spelling leave the words alone. A session with no
+  project, or an unknown session, gets no fix-up rather than an error.
+- **Nothing kept.** gff-hab and the helper keep no audio and no text, and log neither. The
+  helper's stderr reaches gff-hab's log; the helper writes only load messages there.
+
+### Open items
+
+- **Linux.** The helper builds from the `linux-x64` and `linux-aarch64` static releases (the
+  Makefile pins both, and links the archives as a group), but no Linux build or run has happened.
+  The dev box does it next: build, `make test-speech`, the speed and memory figures.
+- **Shipping the helper.** `gff-hab install` does not copy the helper yet, and the macOS helper
+  bundles do not include it. It is a manual install for now (owner steps in the report). The
+  helper links libopus dynamically from the system package; a release build should link it
+  statically.
+- **Symbols.** The vocabulary holds file and folder names only. Symbols (function and type names)
+  need a source the hab can read cheaply, such as the agent's transcript; not built.
+- **Small hosts.** Parakeet TDT-CTC 110M for hosts under 4 GB is not measured.
+- **Hotwords.** sherpa-onnx can bias a transducer towards a word list (modified beam search with
+  hotwords). The text fix-up is enough for now; hotwords may help where the engine mishears a
+  term beyond what the fix-up can join.
 
 ## Speech-to-text
 
