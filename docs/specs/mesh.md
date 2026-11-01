@@ -823,23 +823,28 @@ the rest of client kind `hab`.
   closed and its name taken by a new one, or the session was renamed, the message is `refused`
   "session <name> was replaced or renamed since the message arrived".
 - It delivers through `session.send`'s own path (`harness-adapters.md`, Input delivery):
-  bracketed paste, then Enter; only while `idle`, `done` or `error`; never with a permission
+  bracketed paste, then Enter, or for opencode one prompt through the pane's server; only while
+  `idle`, `done` or `error`; never with a permission
   request open; one message per turn. Busy (`working`, `blocked`, an open request, a message
   still starting its turn, a pane whose holder is away) holds the message. `error` delivers, as
   `session.send` does: the turn stopped and the harness is at its prompt again.
 - **Write once.** The hab first checks, writing nothing, that the agent may take the message.
-  Then it saves an `attempting` mark on the message, then writes to the PTY, then saves the
-  final state. A message found marked with no write in flight (the hab stopped between the
+  Then it saves an `attempting` mark on the message, then writes to the PTY (or posts the
+  prompt to opencode's server), then saves the final state. A message found marked with no write in flight (the hab stopped between the
   write and the save) finishes `not_delivered` "the hab stopped while writing it to the agent;
   not retried". So a message is never pasted twice.
 - **Refused:** the session is gone or exited, the pane shows `none` or `exited`, or the harness
-  takes no messages yet (opencode). A pane with no agent state at all is held for 30 s after the
+  takes no messages: opencode in a pane whose server gff-hab does not follow (one it did not
+  start), or a harness with no input path yet. A pane with no agent state at all is held for 30 s after the
   message arrived or the hab started, whichever is later, so a hab that just restarted can
   learn the state again; after that it is refused "agent not running".
 - **`expired`:** a message still held 7 days after it arrived.
-- **`not_delivered`:** the paste reached the prompt but Enter was not sent, or the hab stopped
-  during the write. It is not retried.
-- **`delivered`** means both writes reached the program. The read back (a `working` signal
+- **`not_delivered`:** the paste reached the prompt but Enter was not sent, an opencode server
+  may have queued the prompt but gave no answer (none within 5 s, a dropped connection, a 5xx),
+  or the hab stopped during the write. It is not retried. A prompt the server never got (no
+  connection) or refused (another 4xx) holds the message for a later round.
+- **`delivered`** means both writes reached the program, or opencode's server accepted the
+  prompt. The read back (a `working` signal
   within a few seconds) is Part 4's and is not built yet.
 - **`channel.wait` also delivers.** An agent that runs `gff-hab wait` is `working`, so the PTY
   path would hold its messages until the wait ends. So a wait takes the oldest held message for

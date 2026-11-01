@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -125,7 +127,7 @@ func (a *agentService) Send(ctx context.Context, client string, p api.SessionSen
 	if err != nil {
 		return agentErr(err)
 	}
-	if c, ok := a.opencode.Client(ss.Pane); ok && st.Harness == detect.KindOpencode {
+	if c, ok := a.opencodeClient(ss.Pane, st.Harness); ok {
 		if err := a.promptOpencode(ctx, c, st, p.Text); err != nil {
 			return err
 		}
@@ -265,6 +267,15 @@ func (a *agentService) Answer(ctx context.Context, client string, p api.Approval
 	return err
 }
 
+// opencodeClient returns the client of the pane's opencode server when the pane runs opencode
+// and gff-hab follows its server: messages to it go through the server, not the terminal.
+func (a *agentService) opencodeClient(pane, harnessKind string) (*opencode.Client, bool) {
+	if harnessKind != detect.KindOpencode {
+		return nil, false
+	}
+	return a.opencode.Client(pane)
+}
+
 // opencodeTimeout bounds one call to an opencode server. Tests shorten it.
 var opencodeTimeout = 5 * time.Second
 
@@ -284,9 +295,29 @@ func (a *agentService) promptOpencode(ctx context.Context, c *opencode.Client, s
 		if opencode.NotFound(err, opencode.TagSessionNotFound) {
 			return control.Errorf(api.ErrorKindConflict, "opencode session %s is gone: %v", st.Session, err)
 		}
+		if promptMayHaveLanded(err) {
+			// The server may have queued it: a retry must not send it again.
+			e := control.Errorf(api.ErrorKindUnavailable, "the message may have reached opencode session %s, but its server gave no answer (%v); check the session before sending again with a new key", st.Session, err)
+			return control.Partial(e)
+		}
 		return opencodeUnavailable(err)
 	}
 	return nil
+}
+
+// promptMayHaveLanded reports whether a failed prompt call may still have reached the server:
+// anything but a connection that was never made, or an answer that refused the call (4xx).
+func promptMayHaveLanded(err error) bool {
+	var ae *opencode.APIError
+	if errors.As(err, &ae) {
+		return ae.Status >= 500
+	}
+	var oe *net.OpError
+	if errors.As(err, &oe) && oe.Op == "dial" {
+		return false
+	}
+	var ue *url.Error
+	return errors.As(err, &ue) // the request went out, or may have; no answer came back
 }
 
 // replyOpencode answers a permission request through the pane's opencode server: once for

@@ -928,7 +928,12 @@ Built choices (`internal/opencode`, `internal/harness/opencode.go`,
 - **Input.** `session.send` posts the text to `/api/session/:id/prompt` under the same gates
   as the other harnesses (idle, done or error; no open request; one send at a time). No session
   yet (a fresh TUI) answers `unavailable`: type the first message in the terminal. A
-  `SessionNotFoundError` 404 is `conflict`.
+  `SessionNotFoundError` 404 is `conflict`. A call the server may have taken (no answer within
+  5 s, a dropped connection, a 5xx) is a partial `unavailable`, so a retry under the same key
+  gets that answer and never sends the message twice. A call the server never got (no
+  connection) or refused (another 4xx) is a plain `unavailable`. Only a pane whose server
+  gff-hab follows (one it started) takes messages; an opencode in a plain pane answers
+  `unavailable`.
 - **Permission answers.** `approval.answer` posts `once` (allow) or `reject` (deny, with a
   message) to `/api/session/:id/permission/:request/reply`, under the request's own session for
   a child's request. A `PermissionNotFoundError` or `SessionNotFoundError` 404 means it was
@@ -1017,7 +1022,7 @@ Built choices (`session.send`, `internal/harness`, `cmd/gff-hab`):
 - After delivery, `done` becomes `idle` (`Store.Seen`).
 - Agent messages (channels, `mesh.md` 6.5) take this same path, wrapped in their envelope.
   Unlike `session.send`, the hab queues them: a busy agent holds a message until it is idle,
-  done or stopped on an error.
+  done or stopped on an error. To opencode they go through its server, as one prompt.
 - Not built yet: the two-second typing pause, the read back and its "not delivered" event, and
   attachments (`unavailable`).
 

@@ -14,6 +14,7 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/channels"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/detect"
 	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/peers"
@@ -71,8 +72,15 @@ func (l *channelLocal) ready(sessionID string) (api.Session, error) {
 	case api.AgentStatusNone, api.AgentStatusExited:
 		return ss, fmt.Errorf("agent not running: the pane shows %s", st.State)
 	}
-	if _, err := harness.MessageWrites(st.Harness, "x"); errors.Is(err, harness.ErrUnsupported) {
-		return ss, fmt.Errorf("%s takes no messages yet", st.Harness)
+	// opencode takes messages through its server (agentService.Send), only when gff-hab follows
+	// the pane's server; the terminal path takes none.
+	if _, ok := l.send.opencodeClient(ss.Pane, st.Harness); !ok {
+		if _, err := harness.MessageWrites(st.Harness, "x"); errors.Is(err, harness.ErrUnsupported) {
+			if st.Harness == detect.KindOpencode {
+				return ss, errors.New("opencode takes messages only through its server, and gff-hab follows no opencode server for this pane; start opencode from Flightdeck")
+			}
+			return ss, fmt.Errorf("%s takes no messages yet", st.Harness)
+		}
 	}
 	if _, err := l.agents.CheckSend(ss.Pane); err != nil {
 		return ss, fmt.Errorf("%w: %v", channels.ErrBusy, err)
@@ -90,7 +98,13 @@ func (l *channelLocal) Deliver(ctx context.Context, sessionID, text string) erro
 	if err != nil {
 		return err
 	}
-	err = l.send.Send(ctx, "channels", api.SessionSendParams{Session: ss.ID, Text: text})
+	return deliverErr(l.send.Send(ctx, "channels", api.SessionSendParams{Session: ss.ID, Text: text}))
+}
+
+// deliverErr maps a session.send error to a channel outcome. A partial error (the paste is in
+// the prompt but Enter was not sent, or an opencode server may have queued the prompt) is not
+// delivered and not retried; busy or away holds the message; any other error refuses it.
+func deliverErr(err error) error {
 	if err == nil {
 		return nil
 	}
