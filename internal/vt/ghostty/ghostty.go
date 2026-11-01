@@ -81,6 +81,10 @@ func checkSize(cols, rows int) error {
 
 type terminal struct {
 	t *libghostty.Terminal
+	// The render state and its iterators, made on the first ReadScreen and kept for the next.
+	rs *libghostty.RenderState
+	ri *libghostty.RenderStateRowIterator
+	rc *libghostty.RenderStateRowCells
 }
 
 func (t *terminal) Write(p []byte) (int, error) {
@@ -326,7 +330,120 @@ func (t *terminal) MemoryUsage() (resident, virtual uint64, err error) {
 	return uint64(tot.ResidentBytes), uint64(tot.VirtualBytes), nil
 }
 
+// ReadScreen reads the active screen through libghostty's render state.
+func (t *terminal) ReadScreen(dst *vt.Screen) error {
+	if t.t == nil {
+		return vt.ErrClosed
+	}
+	if t.rs == nil {
+		rs, err := libghostty.NewRenderState()
+		if err != nil {
+			return fmt.Errorf("ghostty: render state: %w", err)
+		}
+		ri, err := libghostty.NewRenderStateRowIterator()
+		if err != nil {
+			rs.Close()
+			return fmt.Errorf("ghostty: row iterator: %w", err)
+		}
+		rc, err := libghostty.NewRenderStateRowCells()
+		if err != nil {
+			ri.Close()
+			rs.Close()
+			return fmt.Errorf("ghostty: row cells: %w", err)
+		}
+		t.rs, t.ri, t.rc = rs, ri, rc
+	}
+	if err := t.rs.Update(t.t); err != nil {
+		return fmt.Errorf("ghostty: render update: %w", err)
+	}
+	cols, err := t.rs.Cols()
+	if err != nil {
+		return err
+	}
+	rows, err := t.rs.Rows()
+	if err != nil {
+		return err
+	}
+	dst.Reset(int(cols), int(rows))
+	if err := t.rs.RowIterator(t.ri); err != nil {
+		return fmt.Errorf("ghostty: rows: %w", err)
+	}
+	var text []byte
+	for y := 0; y < int(rows) && t.ri.Next(); y++ {
+		if err := t.ri.Cells(t.rc); err != nil {
+			return fmt.Errorf("ghostty: cells: %w", err)
+		}
+		for x := 0; x < int(cols) && t.rc.Next(); x++ {
+			c := &dst.Cells[y*int(cols)+x]
+			raw, err := t.rc.Raw()
+			if err != nil {
+				return err
+			}
+			switch w, _ := raw.Wide(); w {
+			case libghostty.CellWideWide:
+				c.Wide = true
+			case libghostty.CellWideSpacerTail, libghostty.CellWideSpacerHead:
+				c.Spacer = true
+				continue
+			}
+			if text, err = t.rc.AppendGraphemes(text[:0]); err != nil {
+				return err
+			}
+			c.Text = string(text)
+			if styled, _ := raw.HasStyling(); styled {
+				st, err := t.rc.Style()
+				if err != nil {
+					return err
+				}
+				c.Style = vtStyle(st)
+			}
+		}
+	}
+	cur, err := t.rs.Cursor()
+	if err != nil {
+		return err
+	}
+	dst.CursorVisible = cur.Visible && cur.ViewportHasValue
+	if cur.ViewportHasValue {
+		dst.CursorX, dst.CursorY = int(cur.ViewportX), int(cur.ViewportY)
+	}
+	return nil
+}
+
+func vtStyle(s *libghostty.Style) vt.Style {
+	return vt.Style{
+		Fg:             vtColor(s.FgColor()),
+		Bg:             vtColor(s.BgColor()),
+		UnderlineColor: vtColor(s.UnderlineColor()),
+		Underline:      uint8(s.Underline()),
+		Bold:           s.Bold(),
+		Faint:          s.Faint(),
+		Italic:         s.Italic(),
+		Blink:          s.Blink(),
+		Inverse:        s.Inverse(),
+		Invisible:      s.Invisible(),
+		Strike:         s.Strikethrough(),
+		Overline:       s.Overline(),
+	}
+}
+
+func vtColor(c libghostty.StyleColor) vt.Color {
+	switch c.Tag {
+	case libghostty.StyleColorPalette:
+		return vt.Color{Kind: vt.ColorPalette, Index: c.Palette}
+	case libghostty.StyleColorRGB:
+		return vt.Color{Kind: vt.ColorRGB, R: c.RGB.R, G: c.RGB.G, B: c.RGB.B}
+	}
+	return vt.Color{}
+}
+
 func (t *terminal) Close() error {
+	if t.rc != nil {
+		t.rc.Close()
+		t.ri.Close()
+		t.rs.Close()
+		t.rc, t.ri, t.rs = nil, nil, nil
+	}
 	if t.t != nil {
 		t.t.Close()
 		t.t = nil

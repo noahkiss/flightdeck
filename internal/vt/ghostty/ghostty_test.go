@@ -49,3 +49,30 @@ func TestGhosttySnapshotKeepsStyles(t *testing.T) {
 		t.Errorf("VT rendering differs after ghostty restore\n got %q\nwant %q", got, want)
 	}
 }
+
+// ReadScreen keeps palette colours as indexes, true colours as RGB, and attributes.
+func TestReadScreenStyles(t *testing.T) {
+	term, err := Parser{}.New(vt.Config{Cols: 20, Rows: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer term.Close()
+	term.Write([]byte("\x1b[1;31ma\x1b[0;38;2;10;20;30;4mb\x1b[0mc\x1b[?25l"))
+	var s vt.Screen
+	if err := term.ReadScreen(&s); err != nil {
+		t.Fatal(err)
+	}
+	a, b, c := s.Cells[0].Style, s.Cells[1].Style, s.Cells[2].Style
+	if !a.Bold || a.Fg != (vt.Color{Kind: vt.ColorPalette, Index: 1}) {
+		t.Errorf("a style = %+v, want bold palette 1", a)
+	}
+	if b.Bold || b.Underline != vt.UnderlineSingle || b.Fg != (vt.Color{Kind: vt.ColorRGB, R: 10, G: 20, B: 30}) {
+		t.Errorf("b style = %+v, want underlined rgb 10,20,30", b)
+	}
+	if c != (vt.Style{}) {
+		t.Errorf("c style = %+v, want default", c)
+	}
+	if s.CursorVisible {
+		t.Error("cursor visible after DECTCEM reset")
+	}
+}

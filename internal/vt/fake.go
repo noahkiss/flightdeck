@@ -400,6 +400,29 @@ func (t *fakeTerm) PlainText() (string, error) {
 	return strings.Join(t.lines(), "\n"), nil
 }
 
+// ReadScreen returns the text of the active screen in the default style; the fake keeps no
+// colours. The cursor is always visible.
+func (t *fakeTerm) ReadScreen(dst *Screen) error {
+	if t.closed {
+		return ErrClosed
+	}
+	dst.Reset(t.cols, t.rows)
+	for y, row := range t.grid() {
+		for x, r := range row {
+			c := &dst.Cells[y*t.cols+x]
+			switch {
+			case r == 0:
+				c.Spacer = true
+			case r != ' ':
+				c.Text = string(r)
+				c.Wide = runeWidth(r) == 2
+			}
+		}
+	}
+	dst.CursorX, dst.CursorY = t.x, t.y
+	return nil
+}
+
 func (t *fakeTerm) Snapshot(enc Encoding, opts SnapshotOptions) ([]byte, error) {
 	if t.closed {
 		return nil, ErrClosed

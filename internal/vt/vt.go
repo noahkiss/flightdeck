@@ -1,8 +1,8 @@
-// Package vt defines the terminal parser that gff-hab keeps for each pane.
+// Package vt defines the terminal parser that gff-hab and gff keep for each pane.
 //
 // A Terminal takes the pane's output bytes in order and keeps the screen, the scrollback and the
 // modes. gff-hab reads a snapshot from it when a client opens a data stream (spec 5.5) and when it
-// writes a checkpoint (spec 2.3).
+// writes a checkpoint (spec 2.3). gff reads its cells to compose split panes (gff-client.md 3.4).
 //
 // This package is pure Go. The libghostty implementation lives in internal/vt/ghostty, the only
 // package that needs cgo. Fake is a small implementation for tests.
@@ -84,11 +84,85 @@ type Terminal interface {
 	Mode(n int, ansi bool) (set, known bool)
 	// KeyboardFlags returns the keyboard protocol flags the program set (CSI > u), 0 for none.
 	KeyboardFlags() int
+	// ReadScreen fills dst with the active screen's cells and the cursor, for a client that
+	// draws the screen into part of its own (gff's composed view, gff-client.md 3.2). dst's
+	// slices are reused when they are large enough.
+	ReadScreen(dst *Screen) error
 	// PlainText returns the active screen with its scrollback as text, one line per row, with
 	// trailing spaces and trailing blank lines removed. Tests compare it with golden files.
 	PlainText() (string, error)
 	// Close frees the terminal. Close is safe to call more than once.
 	Close() error
+}
+
+// ColorKind says how a Color is given.
+type ColorKind uint8
+
+const (
+	ColorDefault ColorKind = iota // the terminal's default foreground or background
+	ColorPalette                  // an index into the 256-colour palette
+	ColorRGB                      // a true colour
+)
+
+// Color is a cell colour as the program set it. A palette colour stays an index, so a client
+// draws it in its own terminal's theme.
+type Color struct {
+	Kind    ColorKind
+	Index   uint8 // for ColorPalette
+	R, G, B uint8 // for ColorRGB
+}
+
+// Underline styles, as SGR 4:n sets them.
+const (
+	UnderlineNone uint8 = iota
+	UnderlineSingle
+	UnderlineDouble
+	UnderlineCurly
+	UnderlineDotted
+	UnderlineDashed
+)
+
+// Style is a cell's colours and attributes.
+type Style struct {
+	Fg, Bg, UnderlineColor Color
+	Underline              uint8 // one of the Underline constants
+	Bold, Faint, Italic    bool
+	Blink, Inverse         bool
+	Invisible, Strike      bool
+	Overline               bool
+}
+
+// Cell is one screen cell.
+type Cell struct {
+	// Text is the cell's grapheme cluster as UTF-8; empty for a blank cell.
+	Text string
+	// Wide marks a character that takes this cell and the next. Spacer marks that next cell,
+	// which a client skips when it draws.
+	Wide, Spacer bool
+	Style        Style
+}
+
+// Screen is the active screen as cells, row by row: the cell at column x of row y is
+// Cells[y*Cols+x].
+type Screen struct {
+	Cols, Rows int
+	Cells      []Cell
+	// CursorX and CursorY are the cursor's 0-based cell; CursorVisible is false when the
+	// program hid it (DECTCEM).
+	CursorX, CursorY int
+	CursorVisible    bool
+}
+
+// Reset sizes s for cols x rows and blanks every cell.
+func (s *Screen) Reset(cols, rows int) {
+	n := cols * rows
+	if cap(s.Cells) < n {
+		s.Cells = make([]Cell, n)
+	}
+	s.Cells = s.Cells[:n]
+	clear(s.Cells)
+	s.Cols, s.Rows = cols, rows
+	s.CursorX, s.CursorY, s.CursorVisible = 0, 0, true
 }
 
 // Parser makes terminals.

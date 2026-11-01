@@ -149,6 +149,33 @@ func Run(t *testing.T, p vt.Parser, golden string) {
 		}
 	})
 
+	t.Run("read screen", func(t *testing.T) {
+		// gff's composed view draws panes from these cells (gff-client.md 3.2).
+		term := newTerm(t)
+		term.Write([]byte("ab\r\n界x\x1b[?1049h\x1b[H\x1b[2Jalt"))
+		var s vt.Screen
+		if err := term.ReadScreen(&s); err != nil {
+			t.Fatal(err)
+		}
+		if s.Cols != FixtureCols || s.Rows != FixtureRows || len(s.Cells) != s.Cols*s.Rows {
+			t.Fatalf("screen %dx%d with %d cells", s.Cols, s.Rows, len(s.Cells))
+		}
+		if got := s.Cells[0].Text + s.Cells[1].Text + s.Cells[2].Text; got != "alt" {
+			t.Errorf("alternate screen row 0 = %q, want alt", got)
+		}
+		if s.CursorX != 3 || s.CursorY != 0 || !s.CursorVisible {
+			t.Errorf("cursor = %d,%d visible %v, want 3,0 visible", s.CursorX, s.CursorY, s.CursorVisible)
+		}
+		term.Write([]byte("\x1b[?1049l"))
+		if err := term.ReadScreen(&s); err != nil {
+			t.Fatal(err)
+		}
+		row1 := s.Cells[s.Cols : 2*s.Cols]
+		if row1[0].Text != "界" || !row1[0].Wide || !row1[1].Spacer || row1[2].Text != "x" || row1[3].Text != "" {
+			t.Errorf("row 1 = %+v, want a wide 界, its spacer, x, blank", row1[:4])
+		}
+	})
+
 	for _, enc := range p.Encodings() {
 		t.Run("restore "+string(enc), func(t *testing.T) {
 			term := newTerm(t)
