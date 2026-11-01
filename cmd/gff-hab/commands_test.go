@@ -113,13 +113,15 @@ func testCommandMarks(t *testing.T, shell string) {
 	cc := e.control()
 	pane := e.markedShell(cc, shell)
 	evs := commandEventsFor(t, e.control(), pane)
+	// Builtins only: a forked job can get the shell's own text in its output
+	// (TestCommandMarksRing says when).
 	steps := []struct {
 		line, output string
 		exit         int
 	}{
 		{"echo one", "one\r\n", 0},
 		{"false", "", 1},
-		{"printf 'two\\nthree\\n'; (exit 3)", "two\r\nthree\r\n", 3},
+		{"printf 'two\\nthree\\n'; f() { return 3; }; f", "two\r\nthree\r\n", 3},
 	}
 	for i, s := range steps {
 		// Type the next line only once the command before has ended: a line typed while a
@@ -317,20 +319,36 @@ func TestCommandEventsDropped(t *testing.T) {
 
 // TestCommandMarksRing:a command whose output has left the holder's ring is dropped from the
 // list, and a read of a command whose first bytes left the ring says gap and starts later.
+//
+// Both commands are bash builtins, so bash forks nothing. A forked job can get bash's own text in
+// its output: under load on macOS, bash prints "child setpgid (...): Operation not permitted"
+// when a job's child fails to set its process group. Those bytes are rightly the command's
+// output, but they change its length.
 func TestCommandMarksRing(t *testing.T) {
 	e := newHabEnv(t, 64<<10)
 	cc := e.control()
 	pane := e.markedShell(cc, "bash")
-	for _, step := range []struct {
+	var prev uint64 // the id of the command before: ids are offsets, so a newer one is larger
+	for i, step := range []struct {
 		line string
 		size uint64 // the output's length
-	}{{"echo first", uint64(len("first\r\n"))}, {"head -c 100000 /dev/zero | tr '\\0' x", 100000}} {
+	}{{"echo first", uint64(len("first\r\n"))}, {"printf 'x%.0s' {1..100000}", 100000}} {
 		call(t, cc, "pane.input", api.InputParams{Pane: pane, Text: step.line + "\r"}, nil)
+		// Wait for the command to end, whatever its length, then check the length: a wrong
+		// length fails at once and says so, rather than waiting out the deadline.
+		var c api.Command
 		waitUntil(t, fmt.Sprintf("command %q to end", step.line), func() bool {
 			cs := listCommands(t, cc, pane)
-			last := cs[max(len(cs)-1, 0):]
-			return len(last) == 1 && last[0].End != nil && *last[0].End-last[0].Output == step.size
+			if len(cs) == 0 {
+				return false
+			}
+			c = cs[len(cs)-1]
+			return c.End != nil && (i == 0 || c.ID > prev)
 		})
+		if n := *c.End - c.Output; n != step.size {
+			t.Fatalf("command %q: %d bytes of output, want %d", step.line, n, step.size)
+		}
+		prev = c.ID
 	}
 	cs := listCommands(t, cc, pane)
 	if len(cs) != 1 || *cs[0].End-cs[0].Output != 100000 {
