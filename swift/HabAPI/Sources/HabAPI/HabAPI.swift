@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -138,42 +138,61 @@ public struct ApprovalChoice: RawRepresentable, Codable, Sendable, Hashable {
 
 public struct AttachmentData: Codable, Sendable, Hashable {
     public var data: Data
+    /// True when data reaches the end.
+    public var eof: Bool?
     public var id: String
     public var name: String
+    public var offset: Int?
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
+    /// The file's size; with thumbnail, the thumbnail's.
+    public var size: Int?
     /// Media type of data.
     public var type: String
 
     enum CodingKeys: String, CodingKey {
         case data = "data"
+        case eof = "eof"
         case id = "id"
         case name = "name"
+        case offset = "offset"
         case seq = "seq"
+        case size = "size"
         case type = "type"
     }
 
-    public init(data: Data, id: String, name: String, seq: UInt64, type: String) {
+    public init(data: Data, eof: Bool? = nil, id: String, name: String, offset: Int? = nil, seq: UInt64, size: Int? = nil, type: String) {
         self.data = data
+        self.eof = eof
         self.id = id
         self.name = name
+        self.offset = offset
         self.seq = seq
+        self.size = size
         self.type = type
     }
 }
 
 public struct AttachmentGetParams: Codable, Sendable, Hashable {
     public var id: String
+    /// Most bytes to return. Default 256 KiB, at most 1 MiB. Not with thumbnail.
+    public var limit: Int?
+    /// Where the run starts. Not with thumbnail.
+    public var offset: Int?
     /// Return a small preview image instead of the file.
     public var thumbnail: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id = "id"
+        case limit = "limit"
+        case offset = "offset"
         case thumbnail = "thumbnail"
     }
 
-    public init(id: String, thumbnail: Bool? = nil) {
+    public init(id: String, limit: Int? = nil, offset: Int? = nil, thumbnail: Bool? = nil) {
         self.id = id
+        self.limit = limit
+        self.offset = offset
         self.thumbnail = thumbnail
     }
 }
@@ -207,6 +226,10 @@ public struct AttachmentPutParams: Codable, Sendable, Hashable {
 }
 
 public struct AttachmentStored: Codable, Sendable, Hashable {
+    /// Most bytes one attachment.write takes.
+    public var chunk: Int?
+    /// True when the file is already whole (an empty file): send no attachment.write.
+    public var done: Bool?
     public var id: String
     /// Where the hab stored the file, inside the project's attachment folder.
     public var path: String
@@ -214,14 +237,63 @@ public struct AttachmentStored: Codable, Sendable, Hashable {
     public var seq: UInt64
 
     enum CodingKeys: String, CodingKey {
+        case chunk = "chunk"
+        case done = "done"
         case id = "id"
         case path = "path"
         case seq = "seq"
     }
 
-    public init(id: String, path: String, seq: UInt64) {
+    public init(chunk: Int? = nil, done: Bool? = nil, id: String, path: String, seq: UInt64) {
+        self.chunk = chunk
+        self.done = done
         self.id = id
         self.path = path
+        self.seq = seq
+    }
+}
+
+public struct AttachmentWriteParams: Codable, Sendable, Hashable {
+    /// At most chunk bytes from attachment.put.
+    public var data: Data
+    /// The id from attachment.put.
+    public var id: String
+    /// Where data starts: the bytes received so far.
+    public var offset: Int
+
+    enum CodingKeys: String, CodingKey {
+        case data = "data"
+        case id = "id"
+        case offset = "offset"
+    }
+
+    public init(data: Data, id: String, offset: Int) {
+        self.data = data
+        self.id = id
+        self.offset = offset
+    }
+}
+
+public struct AttachmentWritten: Codable, Sendable, Hashable {
+    /// True once every byte arrived and the hash matched: the file is at its path and session.send takes the id.
+    public var done: Bool
+    public var id: String
+    /// Bytes the hab holds.
+    public var received: Int
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case done = "done"
+        case id = "id"
+        case received = "received"
+        case seq = "seq"
+    }
+
+    public init(done: Bool, id: String, received: Int, seq: UInt64) {
+        self.done = done
+        self.id = id
+        self.received = received
         self.seq = seq
     }
 }
@@ -4098,9 +4170,11 @@ public enum HabMethods {
     public static let approvalAnswer = HabMethod<ApprovalAnswerParams, Empty>(name: "approval.answer")
     /// Read a page of the session's chat messages from the transcript reader. Needs the transcripts capability.
     public static let chatPage = HabMethod<ChatPageParams, ChatMessages>(name: "chat.page")
-    /// Start an upload of a file for a session; the bytes follow on their own channel.
+    /// Start an upload of a file for a session; the bytes follow in attachment.write runs (app.md 4.4). Needs the attachments capability.
     public static let attachmentPut = HabMethod<AttachmentPutParams, AttachmentStored>(name: "attachment.put")
-    /// Fetch an attachment or its thumbnail.
+    /// Send the next run of an upload's bytes; the last run checks the hash and puts the file in place (app.md 4.4). Needs the attachments capability.
+    public static let attachmentWrite = HabMethod<AttachmentWriteParams, AttachmentWritten>(name: "attachment.write")
+    /// Fetch a run of an attachment's bytes, or its thumbnail (app.md 4.4). Needs the attachments capability.
     public static let attachmentGet = HabMethod<AttachmentGetParams, AttachmentData>(name: "attachment.get")
     /// Store a reference to a file on the hab's host for a session to show (app.md 4.7). Needs the content capability.
     public static let contentShow = HabMethod<ContentShowParams, ContentShown>(name: "content.show")

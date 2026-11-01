@@ -789,8 +789,9 @@ names the stage, and an event is defined but never sent.
 | `session.send` | Send a message through the adapter, under the input rules | Yes, Claude Code (Part 4 stage 4) |
 | `approval.answer` | Answer a pending request by id; a closed or expired id is refused with `conflict` | Yes, Claude Code permissions (Part 4 stage 4) |
 | `chat.page` | Read a page of chat messages from the transcript reader (capability `transcripts`) | Yes, Claude Code (Part 4 stage 5) |
-| `attachment.put` | Start an upload of a file for a session | Part 6 stage 5 |
-| `attachment.get` | Fetch an attachment or its thumbnail | Part 6 stage 5 |
+| `attachment.put` | Start an upload of a file for a session (capability `attachments`; `app.md` 4.4) | Yes (task-mthck7r4) |
+| `attachment.write` | Send the next run of an upload's bytes; the last run checks the hash (capability `attachments`; API addition) | Yes (task-mthck7r4) |
+| `attachment.get` | Fetch a run of an attachment's bytes, or its thumbnail (capability `attachments`) | Yes (task-mthck7r4) |
 | `content.show` | Store a reference to a file on the hab's host for a session to show (capability `content`; `app.md` 4.7) | Yes (task-btkd1ekc) |
 | `content.list` | A session's shown files, images from tool calls and changed files (capability `content`) | Yes (task-btkd1ekc) |
 | `content.read` | A run of one listed file's bytes, in bounded chunks (capability `content`) | Yes (task-btkd1ekc) |
@@ -914,9 +915,26 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   unknown `before` answers `not_found`. The rules are in `harness-adapters.md`, Claude Code,
   built choices for the transcript reader. Golden files: `result.chat.page@2.json` and
   `event.chat.message@2.json`.
-- **`attachment.put`** returns `id` and `path`. The channel the bytes take is designed in its
-  stage; it may add an optional field to the result. **`attachment.get`** returns the bytes in
-  `data`, with `name` and `type`.
+- **`attachment.*`** (`app.md` 4.4, capability `attachments`). The bytes take the control
+  connection in runs, as `content.read` serves them: one message is at most 16 MiB and the
+  file limit is 25 MB, so one message cannot carry a file. `attachment.put {session, name, type,
+  size, sha256}` checks the session, the size (at most 25 MB, else `invalid` naming the limit)
+  and the hash's form, then returns `id`, the final `path`, `chunk` (1 MiB, the most one write
+  takes) and `done` (true only for an empty file). `attachment.write {id, offset, data}` takes
+  the runs in order: `offset` must equal the bytes received (else `conflict`, with the count in
+  the message), and data more than `chunk` or past `size` is `invalid`. It returns `received`
+  and `done`. The run that reaches `size` checks the SHA-256: a mismatch drops the upload
+  (`invalid`); a match moves the file to `path`. A write for an id that is already done answers
+  `done` again, so a retried last run is harmless. An upload with no write for 2 minutes is
+  dropped with its partial file, as is every partial file when gff-hab starts; at most 8
+  uploads are open at once. `attachment.get {id, thumbnail?, offset?, limit?}` returns `name`,
+  `type`, `size`, `offset`, `data` and `eof`: a run of at most 1 MiB (default 256 KiB) of the
+  file, or with `thumbnail` a JPEG of at most 320 px on its longest side (PNG, JPEG and GIF
+  sources; any other type is `invalid`). `session.send` takes the ids of done uploads for that
+  session (else `not_found`; an open upload is `conflict`) and the adapter delivers each path
+  in the message text (`harness-adapters.md`, Input delivery). Where the files live, and the
+  ids in `chat.page`, are in `app.md` 4.4. Golden files: `result.attachment.put@2.json`,
+  `result.attachment.write.json`, `result.attachment.get@2.json`.
 - **`content.*`** (`app.md` 4.7). `content.show` takes `path` (absolute, a regular file) and
   `session` or `pane_token` (the token in the calling pane's `GFF_HAB`), with the optional `kind`
   (`image`, `markdown`, `pdf`, `html`, `text`, `diff`, `file`; else from the file name) and

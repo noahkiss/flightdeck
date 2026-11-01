@@ -84,6 +84,7 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.commandList)
         result(HabMethods.commandOutput)
         result(HabMethods.attachmentPut)
+        result(HabMethods.attachmentWrite)
         result(HabMethods.attachmentGet)
         result(HabMethods.contentShow)
         result(HabMethods.contentList)

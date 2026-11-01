@@ -161,12 +161,35 @@ type AttachmentStored struct {
 	Seq
 	ID   string `json:"id"`
 	Path string `json:"path" doc:"Where the hab stored the file, inside the project's attachment folder."`
+	// Chunk and Done are added by the upload (app.md 4.4). Optional, so a newer client reads an
+	// older revision 1 hab.
+	Chunk int  `json:"chunk,omitempty" doc:"Most bytes one attachment.write takes."`
+	Done  bool `json:"done,omitempty" doc:"True when the file is already whole (an empty file): send no attachment.write."`
+}
+
+// AttachmentWriteParams carries one run of an upload's bytes, in order.
+type AttachmentWriteParams struct {
+	ID     string `json:"id" doc:"The id from attachment.put."`
+	Offset int64  `json:"offset" doc:"Where data starts: the bytes received so far."`
+	Data   []byte `json:"data" doc:"At most chunk bytes from attachment.put."`
+}
+
+// AttachmentWritten says how much of an upload the hab holds.
+type AttachmentWritten struct {
+	Seq
+	ID       string `json:"id"`
+	Received int64  `json:"received" doc:"Bytes the hab holds."`
+	Done     bool   `json:"done" doc:"True once every byte arrived and the hash matched: the file is at its path and session.send takes the id."`
 }
 
 // AttachmentGetParams fetches an attachment or its thumbnail.
 type AttachmentGetParams struct {
 	ID        string `json:"id"`
 	Thumbnail bool   `json:"thumbnail,omitempty" doc:"Return a small preview image instead of the file."`
+	// Offset and Limit are added by the upload (app.md 4.4): the file comes in runs, as
+	// content.read serves them.
+	Offset int64 `json:"offset,omitempty" doc:"Where the run starts. Not with thumbnail."`
+	Limit  int   `json:"limit,omitempty" doc:"Most bytes to return. Default 256 KiB, at most 1 MiB. Not with thumbnail."`
 }
 
 // AttachmentData is an attachment's bytes.
@@ -176,6 +199,10 @@ type AttachmentData struct {
 	Name string `json:"name"`
 	Type string `json:"type" doc:"Media type of data."`
 	Data []byte `json:"data"`
+	// Size, Offset and EOF are added by the upload (app.md 4.4).
+	Size   int64 `json:"size,omitempty" doc:"The file's size; with thumbnail, the thumbnail's."`
+	Offset int64 `json:"offset,omitempty"`
+	EOF    bool  `json:"eof,omitempty" doc:"True when data reaches the end."`
 }
 
 // --- Rich content (app.md 4.7) ---

@@ -566,14 +566,21 @@ func (c Client) ChatPage(ctx context.Context, params ChatPageParams) (ChatMessag
 	return result, err
 }
 
-// AttachmentPut calls attachment.put. Start an upload of a file for a session; the bytes follow on their own channel.
+// AttachmentPut calls attachment.put. Start an upload of a file for a session; the bytes follow in attachment.write runs (app.md 4.4). Needs the attachments capability.
 func (c Client) AttachmentPut(ctx context.Context, params AttachmentPutParams) (AttachmentStored, error) {
 	var result AttachmentStored
 	err := c.Caller.Call(ctx, "attachment.put", params, &result)
 	return result, err
 }
 
-// AttachmentGet calls attachment.get. Fetch an attachment or its thumbnail.
+// AttachmentWrite calls attachment.write. Send the next run of an upload's bytes; the last run checks the hash and puts the file in place (app.md 4.4). Needs the attachments capability.
+func (c Client) AttachmentWrite(ctx context.Context, params AttachmentWriteParams) (AttachmentWritten, error) {
+	var result AttachmentWritten
+	err := c.Caller.Call(ctx, "attachment.write", params, &result)
+	return result, err
+}
+
+// AttachmentGet calls attachment.get. Fetch a run of an attachment's bytes, or its thumbnail (app.md 4.4). Needs the attachments capability.
 func (c Client) AttachmentGet(ctx context.Context, params AttachmentGetParams) (AttachmentData, error) {
 	var result AttachmentData
 	err := c.Caller.Call(ctx, "attachment.get", params, &result)

@@ -88,8 +88,9 @@ var Methods = []Method{
 	{"session.send", "Send a message to the session's agent through its adapter, under the input rules.", SessionSendParams{}, Empty{}},
 	{"approval.answer", "Answer a pending request by id. A closed or expired id is refused with conflict.", ApprovalAnswerParams{}, Empty{}},
 	{"chat.page", "Read a page of the session's chat messages from the transcript reader. Needs the transcripts capability.", ChatPageParams{}, ChatMessages{}},
-	{"attachment.put", "Start an upload of a file for a session; the bytes follow on their own channel.", AttachmentPutParams{}, AttachmentStored{}},
-	{"attachment.get", "Fetch an attachment or its thumbnail.", AttachmentGetParams{}, AttachmentData{}},
+	{"attachment.put", "Start an upload of a file for a session; the bytes follow in attachment.write runs (app.md 4.4). Needs the attachments capability.", AttachmentPutParams{}, AttachmentStored{}},
+	{"attachment.write", "Send the next run of an upload's bytes; the last run checks the hash and puts the file in place (app.md 4.4). Needs the attachments capability.", AttachmentWriteParams{}, AttachmentWritten{}},
+	{"attachment.get", "Fetch a run of an attachment's bytes, or its thumbnail (app.md 4.4). Needs the attachments capability.", AttachmentGetParams{}, AttachmentData{}},
 	{"content.show", "Store a reference to a file on the hab's host for a session to show (app.md 4.7). Needs the content capability.", ContentShowParams{}, ContentShown{}},
 	{"content.list", "The files a session showed or touched: shown files, images from tool calls and files it changed (app.md 4.7). Needs the content capability.", ContentListParams{}, ContentList{}},
 	{"content.read", "Read a run of one listed file's bytes, in bounded chunks (app.md 4.7). Needs the content capability.", ContentReadParams{}, ContentData{}},
@@ -244,4 +245,6 @@ var Translators = map[int]Translator{}
 // means the channel.* and mail.* methods and the channel.message event work (mesh.md 6.5).
 // "speech" means the hab's speech engine is installed and turned on, so speech.prepare and
 // speech.transcribe work, though the model may still need its download (voice.md).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech"}
+// "attachments" means the attachment.* methods work and session.send takes attachment ids
+// (app.md 4.4).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments"}

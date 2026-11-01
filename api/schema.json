@@ -29,7 +29,8 @@
     "usage",
     "content",
     "channels",
-    "speech"
+    "speech",
+    "attachments"
   ],
   "methods": [
     {
@@ -829,7 +830,7 @@
     },
     {
       "name": "attachment.put",
-      "summary": "Start an upload of a file for a session; the bytes follow on their own channel.",
+      "summary": "Start an upload of a file for a session; the bytes follow in attachment.write runs (app.md 4.4). Needs the attachments capability.",
       "paramStructure": "by-name",
       "params": [
         {
@@ -884,8 +885,50 @@
       }
     },
     {
+      "name": "attachment.write",
+      "summary": "Send the next run of an upload's bytes; the last run checks the hash and puts the file in place (app.md 4.4). Needs the attachments capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "data",
+          "description": "At most chunk bytes from attachment.put.",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "contentEncoding": "base64"
+          }
+        },
+        {
+          "name": "id",
+          "description": "The id from attachment.put.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "offset",
+          "description": "Where data starts: the bytes received so far.",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/AttachmentWritten"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/AttachmentWriteParams"
+      }
+    },
+    {
       "name": "attachment.get",
-      "summary": "Fetch an attachment or its thumbnail.",
+      "summary": "Fetch a run of an attachment's bytes, or its thumbnail (app.md 4.4). Needs the attachments capability.",
       "paramStructure": "by-name",
       "params": [
         {
@@ -893,6 +936,22 @@
           "required": true,
           "schema": {
             "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "description": "Most bytes to return. Default 256 KiB, at most 1 MiB. Not with thumbnail.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "offset",
+          "description": "Where the run starts. Not with thumbnail.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
           }
         },
         {
@@ -2295,16 +2354,29 @@
             "type": "string",
             "contentEncoding": "base64"
           },
+          "eof": {
+            "type": "boolean",
+            "description": "True when data reaches the end."
+          },
           "id": {
             "type": "string"
           },
           "name": {
             "type": "string"
           },
+          "offset": {
+            "type": "integer",
+            "format": "int64"
+          },
           "seq": {
             "type": "integer",
             "format": "uint64",
             "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The file's size; with thumbnail, the thumbnail's."
           },
           "type": {
             "type": "string",
@@ -2324,6 +2396,16 @@
         "properties": {
           "id": {
             "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Most bytes to return. Default 256 KiB, at most 1 MiB. Not with thumbnail."
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Where the run starts. Not with thumbnail."
           },
           "thumbnail": {
             "type": "boolean",
@@ -2369,6 +2451,15 @@
       "AttachmentStored": {
         "type": "object",
         "properties": {
+          "chunk": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Most bytes one attachment.write takes."
+          },
+          "done": {
+            "type": "boolean",
+            "description": "True when the file is already whole (an empty file): send no attachment.write."
+          },
           "id": {
             "type": "string"
           },
@@ -2386,6 +2477,58 @@
           "seq",
           "id",
           "path"
+        ]
+      },
+      "AttachmentWriteParams": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "string",
+            "contentEncoding": "base64",
+            "description": "At most chunk bytes from attachment.put."
+          },
+          "id": {
+            "type": "string",
+            "description": "The id from attachment.put."
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Where data starts: the bytes received so far."
+          }
+        },
+        "required": [
+          "id",
+          "offset",
+          "data"
+        ]
+      },
+      "AttachmentWritten": {
+        "type": "object",
+        "properties": {
+          "done": {
+            "type": "boolean",
+            "description": "True once every byte arrived and the hash matched: the file is at its path and session.send takes the id."
+          },
+          "id": {
+            "type": "string"
+          },
+          "received": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes the hab holds."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "id",
+          "received",
+          "done"
         ]
       },
       "BlockedKind": {
