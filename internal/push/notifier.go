@@ -247,6 +247,29 @@ func (n *Notifier) Answered(pane, request string, allow bool) {
 	n.signal()
 }
 
+// Forget drops a pane that is gone. An open approval banner is replaced with "Pane closed",
+// same collapse id, and the pane's records go.
+func (n *Notifier) Forget(pane string) {
+	n.mu.Lock()
+	delete(n.answers, pane)
+	n.jobs = append(n.jobs, func() {
+		if ob := n.open[pane]; ob != nil {
+			w := n.cfg.Where(pane, "")
+			w.Hab = n.cfg.Hab
+			for _, t := range ob.to {
+				b := ClosedBanner(w, ob.req, t.hide)
+				payload := AlertPayload(b, Meta{Hab: n.cfg.Hab, Session: w.Session, Pane: pane, State: string(api.AgentStatusExited), Request: ob.request}, w.Session)
+				n.send(Message{Token: t.token, Environment: t.env, Type: TypeAlert, Priority: 5, CollapseID: ob.collapse, Expiration: ob.expires, Payload: payload}, true)
+			}
+		}
+		delete(n.open, pane)
+		delete(n.last, pane)
+		delete(n.settled, pane)
+	})
+	n.mu.Unlock()
+	n.signal()
+}
+
 // effective reads a state whose permission request an answer already resolved as the state the
 // answer leads to: working after an allow, idle after a deny.
 func (n *Notifier) effective(st api.AgentState) api.AgentState {

@@ -459,3 +459,39 @@ func TestNotifierExpiration(t *testing.T) {
 		}
 	}
 }
+
+// TestNotifierForget: a pane that closes with an approval banner open gets it replaced with
+// "Pane closed", same collapse id, and stops counting as blocked in other panes' Live
+// Activity.
+func TestNotifierForget(t *testing.T) {
+	r := newNotifierRig(t)
+	r.store.Register("dev-phone", phone, Production, allKinds, false)
+	r.store.RegisterActivity("dev-phone", "s1", phoneLA)
+	r.n.State(blocked("r1", "make test"))
+	r.n.Sync()
+	r.n.Forget("p1")
+	r.n.Sync()
+	pa := alerts(r.prod.requests(), phone)
+	if len(pa) != 2 || alertField(pa[1], "title") != "Pane closed" || pa[1].Header.Get("apns-collapse-id") != "r-r1" {
+		t.Fatalf("withdrawal on close: %d alerts", len(pa))
+	}
+	// A second forget sends nothing more.
+	r.n.Forget("p1")
+	r.n.Sync()
+	if n := len(alerts(r.prod.requests(), phone)); n != 2 {
+		t.Fatalf("a second forget pushed: %d alerts", n)
+	}
+	w := state(api.AgentStatusWorking)
+	w.Pane = "p2"
+	r.n.State(w)
+	r.n.Sync()
+	var last fakeReq
+	for _, q := range r.prod.requests() {
+		if q.Token == phoneLA {
+			last = q
+		}
+	}
+	if cs := last.Body["aps"].(map[string]any)["content-state"].(map[string]any); cs["pane"] != "p2" || cs["others"] != nil && cs["others"] != float64(0) {
+		t.Errorf("Live Activity after the close: %v", cs)
+	}
+}

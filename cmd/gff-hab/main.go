@@ -514,6 +514,7 @@ func serve(args []string) error {
 			switch n.Kind {
 			case link.PaneGone:
 				agents.Forget(n.Pane.UUID.String())
+				pushes.forget(n.Pane.UUID.String())
 				mgr.Forget(n.Pane.UUID.String())
 			case link.PaneExited:
 				agents.Exited(n.Pane.UUID.String())

@@ -215,6 +215,14 @@ func AnsweredBanner(w Where, by string, allow *bool, r *api.PermissionRequest, h
 	return b
 }
 
+// ClosedBanner replaces an open approval banner whose pane closed: the request can no longer
+// be answered.
+func ClosedBanner(w Where, r *api.PermissionRequest, hide bool) Banner {
+	b := AnsweredBanner(w, "", nil, r, hide)
+	b.Title = "Pane closed"
+	return b
+}
+
 // NoticeBanner is a notice from notice.raise, fitted to the question budgets (16.2).
 func NoticeBanner(w Where, title, body string, level Level) Banner {
 	if level == "" {

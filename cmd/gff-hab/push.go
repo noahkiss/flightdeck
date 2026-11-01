@@ -95,6 +95,13 @@ func (s *pushService) Close() {
 	}
 }
 
+// forget tells the notifier a pane is gone.
+func (s *pushService) forget(pane string) {
+	if s != nil && s.notifier != nil {
+		s.notifier.Forget(pane)
+	}
+}
+
 // whereOf names the session and project of a pane, or of a session when pane is empty.
 func whereOf(store *structure.Store, pane, session string) push.Where {
 	var ss api.Session
