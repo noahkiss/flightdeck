@@ -514,10 +514,13 @@ func (c *Client) Close() {
 	}
 }
 
+// forget drops h from the connected holders. h.mu must not be held: Scan writes h.entry under
+// it.
 func (c *Client) forget(h *Holder) {
+	id := h.Entry().Instance
 	c.mu.Lock()
-	if c.holders[h.entry.Instance] == h {
-		delete(c.holders, h.entry.Instance)
+	if c.holders[id] == h {
+		delete(c.holders, id)
 	}
 	c.mu.Unlock()
 }
