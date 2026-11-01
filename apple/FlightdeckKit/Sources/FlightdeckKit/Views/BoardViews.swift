@@ -100,6 +100,21 @@ public struct BoardScreen: View {
         #endif
     }
 
+    /// Opens the usage sheet, closing the Connections sheet first when it is up.
+    private func showUsage(_ account: String?) {
+        guard let book = fleet?.usage?.book else { return }
+        guard showConnections else {
+            book.present(account: account)
+            return
+        }
+        showConnections = false
+        book.presented = nil
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            book.present(account: account)
+        }
+    }
+
     public var body: some View {
         Group {
             if compact {
@@ -122,7 +137,7 @@ public struct BoardScreen: View {
                 }
                 .sheet(isPresented: $showConnections) {
                     NavigationStack {
-                        ConnectionsList(board: board, push: fleet?.push, usage: fleet?.usage)
+                        ConnectionsList(board: board, push: fleet?.push, usage: fleet?.usage, openUsage: { showUsage(nil) })
                             .navigationTitle("Connections")
                             .toolbar {
                                 ToolbarItem(placement: .confirmationAction) {
@@ -166,6 +181,11 @@ public struct BoardScreen: View {
         }
         .modifier(ApprovalSheetHost(center: fleet?.approvals, openChat: openChat))
         .usageSheet(fleet?.usage)
+        // A usage notification or widget tap while the Connections sheet is
+        // up: close it first, since a second sheet cannot present over it.
+        .onChange(of: fleet?.usage?.book.presented) { _, p in
+            if let p, showConnections { showUsage(p.account) }
+        }
         #if os(macOS)
         .frame(minWidth: fleet != nil && opened != nil ? 960 : 680, minHeight: 420)
         #endif
@@ -266,9 +286,10 @@ struct ConnectionsList: View {
     let board: Board
     var push: PushRegistrar?
     var usage: UsageCenter?
+    /// Opens the usage sheet; the board closes this list first when it is a sheet.
+    var openUsage: (() -> Void)?
     @Environment(\.sshSetup) private var ssh
     @State private var showSSH = false
-    @State private var showUsage = false
     @State private var showNotifications = false
 
     var body: some View {
@@ -307,13 +328,10 @@ struct ConnectionsList: View {
                     Button("Notifications") { showNotifications = true }
                 }
                 if usage != nil {
-                    Button("Usage") { showUsage = true }
+                    Button("Usage") {
+                        if let openUsage { openUsage() } else { usage?.book.present(account: nil) }
+                    }
                 }
-            }
-        }
-        .sheet(isPresented: $showUsage) {
-            if let usage {
-                UsageSheet(center: usage, focus: nil) { showUsage = false }
             }
         }
         .sheet(isPresented: $showNotifications) {
