@@ -962,8 +962,9 @@ the context bar, the title, then the command on one line in the accent colour, t
   a per-host setting, off by default, about 30 s).
   After that, only a keystroke answer or the terminal can resolve it.
 - **The hab's limit.** A setting on the hab (`approval.max_age`, 20.3), default 60 minutes, none
-  at Bypass permissions. A request older than this takes no remote Allow. The owner must open the session and answer there. A stale approval is easy to
-  grant by habit, and the context may have changed.
+  at Bypass permissions. A request older than this takes no remote Allow. The owner must open
+  the session and answer there. A stale approval is easy to grant by habit, and the context may
+  have changed.
 - When the countdown reaches zero, Allow and Deny turn off on every surface. The card says
   "Expired: answer in the terminal" and opens the terminal view on tap. The hab refuses a late
   answer with `conflict`.

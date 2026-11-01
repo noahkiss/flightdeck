@@ -307,9 +307,9 @@ produces several, and a list is faster to judge than a string of interruptions.
 ### 6.1 Confirmations
 
 - **The setting.** `confirm.start_elsewhere`, default on, a hab-side setting (`app.md` 20.5):
-  the app writes it, and a value in the hab's config file locks it. It covers every session start and project set-up an agent asks for on a
-  host other than its own, and every start Capcom asks for, since Capcom never works in a
-  project folder. Off: the hab runs the action at once and shows the card as a record. It is a
+  the app writes it, and a value in the hab's config file locks it. It covers every session
+  start and project set-up an agent asks for on a host other than its own, and every start
+  Capcom asks for, since Capcom never works in a project folder. Off: the hab runs the action at once and shows the card as a record. It is a
   levelled setting: on at Safe and Balanced, off at Bypass permissions (`app.md` 20.3). The
   app writes it to every hab through `settings.set` (`app.md` 20.5).
 - With the setting on, a start or set-up tool does not act. It asks the hab for a confirmation

@@ -635,8 +635,8 @@ a peer list and serves peer links, `peers.list`, `peers.accept` and `peer.update
 `devices` means the embedded SSH
 server is on and the `devices.*` methods work. `push` means the hab has working push config;
 `host-stats` means `hab.stats` works (3.9). Planned: `settings`, for hab-side settings
-(`settings.get`, `settings.set`, `settings.updated`; `app.md` 20.5). A client checks for a capability before it uses the
-feature. Capabilities are for features that a host may
+(`settings.get`, `settings.set`, `settings.updated`; `app.md` 20.5). A client checks for a
+capability before it uses the feature. Capabilities are for features that a host may
 lack. They are not a second versioning scheme.
 
 Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt`,
