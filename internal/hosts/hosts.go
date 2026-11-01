@@ -17,6 +17,7 @@ package hosts
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"sync"
 	"time"
@@ -162,9 +163,20 @@ type Set struct {
 
 type entry struct {
 	conn    *habconn.Conn
+	spec    Spec
 	model   Host
-	gone    bool // removed by Reload; its pump drops what is left
+	gone    bool // removed or replaced by Reload; its pump drops what is left
 	wrapped bool
+}
+
+// ErrSpecChanged is the Err of the update that reports a host replaced by Reload: its endpoints,
+// pin or transport changed, so its old connection closed and a new one starts.
+var ErrSpecChanged = errors.New("hosts: the host's settings changed; connecting again")
+
+// sameSpec reports whether two specs reach the same hab under the same pin.
+func sameSpec(a, b Spec) bool {
+	return a.Label == b.Label && a.DeviceID == b.DeviceID && slices.Equal(a.Endpoints, b.Endpoints) &&
+		reflect.DeepEqual(a.Transport, b.Transport)
 }
 
 // Open starts one Conn per host and returns at once: every host starts Connecting. A host
@@ -233,13 +245,33 @@ func check(specs []Spec) error {
 	return nil
 }
 
-// add starts the Conn of one host. The caller holds no lock.
+// add starts the Conn of one host and appends it to the order. The caller holds no lock.
 func (s *Set) add(sp Spec) error {
+	e, err := s.start(sp)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		e.conn.Close()
+		return errors.New("hosts: closed")
+	}
+	s.order = append(s.order, sp.Label)
+	s.hosts[sp.Label] = e
+	s.wg.Add(1)
+	s.mu.Unlock()
+	go s.pump(sp.Label, e)
+	return nil
+}
+
+// start makes the entry of one host with its Conn started, not yet in the Set.
+func (s *Set) start(sp Spec) (*entry, error) {
 	tr := sp.Transport
 	if tr == nil {
 		var err error
 		if tr, err = sp.Endpoints[0].Transport(); err != nil {
-			return fmt.Errorf("hosts: %s: %w", sp.Label, err)
+			return nil, fmt.Errorf("hosts: %s: %w", sp.Label, err)
 		}
 	}
 	hc := habconn.Config{Transport: tr, Client: s.cfg.Client, Label: s.cfg.Label, DeviceID: sp.DeviceID,
@@ -249,21 +281,9 @@ func (s *Set) add(sp Spec) error {
 	}
 	c, err := habconn.Start(hc)
 	if err != nil {
-		return fmt.Errorf("hosts: %s: %w", sp.Label, err)
+		return nil, fmt.Errorf("hosts: %s: %w", sp.Label, err)
 	}
-	e := &entry{conn: c, model: Host{Label: sp.Label, Status: Connecting, Since: s.cfg.Now(), Conn: c}}
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		c.Close()
-		return errors.New("hosts: closed")
-	}
-	s.order = append(s.order, sp.Label)
-	s.hosts[sp.Label] = e
-	s.wg.Add(1)
-	s.mu.Unlock()
-	go s.pump(sp.Label, e)
-	return nil
+	return &entry{conn: c, spec: sp, model: Host{Label: sp.Label, Status: Connecting, Since: s.cfg.Now(), Conn: c}}, nil
 }
 
 // pump applies one host's updates to its model, then hands them on.
@@ -338,7 +358,10 @@ func (s *Set) Retry() {
 }
 
 // Reload reads the Source again: new hosts start, hosts no longer listed close and report
-// Removed. A host whose spec is unchanged in name keeps its connection.
+// Removed. A host whose spec is unchanged keeps its connection. A host listed under the same
+// label with other endpoints, another pin or another transport is replaced in place: its old
+// Conn closes, a new one starts Connecting, and one update with Kind UpdateOffline and Err
+// ErrSpecChanged reports it.
 func (s *Set) Reload() error {
 	specs, err := s.cfg.Source.Hosts()
 	if err != nil {
@@ -363,21 +386,54 @@ func (s *Set) Reload() error {
 		}
 	}
 	s.order = slices.DeleteFunc(s.order, func(n string) bool { return !want[n] })
-	var add []Spec
+	var add, replace []Spec
 	for _, sp := range specs {
-		if _, ok := s.hosts[sp.Label]; !ok {
+		e, ok := s.hosts[sp.Label]
+		switch {
+		case !ok:
 			add = append(add, sp)
+		case !e.wrapped && !sameSpec(e.spec, sp):
+			replace = append(replace, sp)
 		}
 	}
 	s.mu.Unlock()
 	for _, e := range drop {
 		e.conn.Close()
 	}
+	for _, sp := range replace {
+		if err := s.replace(sp); err != nil {
+			return err
+		}
+	}
 	for _, sp := range add {
 		if err := s.add(sp); err != nil {
 			return err
 		}
 	}
+	return nil
+}
+
+// replace starts a new Conn for a listed host whose spec changed and closes the old one. The
+// host keeps its place in the order.
+func (s *Set) replace(sp Spec) error {
+	e, err := s.start(sp)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	old, ok := s.hosts[sp.Label]
+	if s.closed || !ok {
+		s.mu.Unlock()
+		e.conn.Close()
+		return nil
+	}
+	old.gone = true
+	s.hosts[sp.Label] = e
+	s.wg.Add(1)
+	s.updates.push(Update{Host: sp.Label, Update: habconn.Update{Kind: habconn.UpdateOffline, Err: ErrSpecChanged}})
+	s.mu.Unlock()
+	old.conn.Close()
+	go s.pump(sp.Label, e)
 	return nil
 }
 

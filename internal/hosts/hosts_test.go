@@ -287,6 +287,48 @@ func TestReload(t *testing.T) {
 	}
 }
 
+// TestReloadChangedSpec: a host kept under its label but with a new pin or a new endpoint gets
+// a new connection. A failed pin is accepted by a Reload with the right id, and an endpoint edit
+// reaches the other hab, with no restart of the Set (workspace review S4).
+func TestReloadChangedSpec(t *testing.T) {
+	d := shortDir(t)
+	a := startHab(t, d, "a")
+	b := startHab(t, d, "b")
+	src := &listSource{specs: []hosts.Spec{{Label: "one", DeviceID: "SHA256:not-this-hab", Transport: habconn.UnixTransport{Path: a.Sock}}}}
+	s, err := hosts.Open(hosts.Config{Source: src, Client: api.ClientInfo{Name: "test", Kind: api.ClientKindTerminal},
+		Conn: func(c *habconn.Config) { c.MinBackoff, c.MaxBackoff = 10*time.Millisecond, 50*time.Millisecond }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	waitHosts(t, s, "one refused", func(hs []hosts.Host) bool { return hs[0].Problem() == "host key changed" })
+
+	src.specs = []hosts.Spec{{Label: "one", DeviceID: a.DeviceID, Transport: habconn.UnixTransport{Path: a.Sock}}}
+	if err := s.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	waitHosts(t, s, "one online under the new pin", func(hs []hosts.Host) bool {
+		return len(hs) == 1 && hs[0].Online() && hs[0].Welcome.Host.ID == "a"
+	})
+
+	src.specs = []hosts.Spec{{Label: "one", Transport: habconn.UnixTransport{Path: b.Sock}}}
+	if err := s.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	waitHosts(t, s, "one online at the new endpoint", func(hs []hosts.Host) bool {
+		return len(hs) == 1 && hs[0].Online() && hs[0].Welcome.Host.ID == "b"
+	})
+
+	// An unchanged spec keeps its connection.
+	c := s.Hosts()[0].Conn
+	if err := s.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if s.Hosts()[0].Conn != c {
+		t.Fatal("an unchanged spec got a new connection")
+	}
+}
+
 type listSource struct{ specs []hosts.Spec }
 
 func (l *listSource) Hosts() ([]hosts.Spec, error) { return l.specs, nil }
