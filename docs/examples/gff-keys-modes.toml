@@ -1,0 +1,97 @@
+# Sample gff keymap: modes with Ctrl leaders (docs/specs/gff-client.md 15.5, option A).
+#
+# gff's default keymap is one prefix key, Ctrl+\, that leads to every command (option B).
+# This file replaces it with direct Ctrl leaders, close to zellij's defaults. To use it, copy
+# the tables below into gff's config file (-config, else $GFF_CONFIG, else gff/config.toml in
+# your config directory), beside any [[hosts]] tables.
+#
+# Leaders in normal mode:
+#   Ctrl+\  pane mode     (zellij: Ctrl+P)
+#   Ctrl+T  tab mode      (as zellij)
+#   Ctrl+]  command mode: sidebar, board, bars, warnings, detach (zellij: Ctrl+O session mode)
+#   Ctrl+G  lock; Ctrl+G again unlocks (as zellij)
+#
+# Ctrl+O, Ctrl+S, Ctrl+P and Ctrl+N stay with programs: shells and harnesses use them, and
+# gff-client.md 8.1 leaves Ctrl+S to programs. Ctrl+\ and Ctrl+] are rarely bound by programs.
+# Ctrl+T and Ctrl+G are taken from programs here, as in zellij: Ctrl+T is readline's
+# transpose-chars and some harnesses' task list; Ctrl+G is readline's abort and some harnesses'
+# editor key. Locked mode gives both back. A leader pressed twice sends it to the program.
+#
+# Resize, move and session modes are not built yet, so this file has none.
+
+[keys]
+defaults = false # these tables are the whole keymap
+
+[keys.normal]
+'ctrl-\' = "pane-mode"
+"ctrl-t" = "tab-mode"
+"ctrl-]" = "prefix"
+"ctrl-g" = "lock"
+
+[keys.locked]
+"ctrl-g" = "unlock"
+
+[keys.prefix]
+w = "sidebar"
+g = "board"
+b = "bars"
+"!" = "warnings"
+d = "detach"
+"ctrl-]" = "send"
+esc = "back"
+
+[keys.pane]
+o = "focus-next"
+tab = "focus-next"
+z = "zoom"
+s = "split"
+x = "close-view"
+r = "redraw"
+n = "nudge"
+f = "fit"
+'ctrl-\' = "send"
+esc = "back"
+enter = "back"
+
+[keys.tab]
+c = "new-tab"
+"]" = "next-tab"
+"[" = "prev-tab"
+1 = "tab-1"
+2 = "tab-2"
+3 = "tab-3"
+4 = "tab-4"
+5 = "tab-5"
+6 = "tab-6"
+7 = "tab-7"
+8 = "tab-8"
+9 = "tab-9"
+x = "close-view"
+"ctrl-t" = "send"
+esc = "back"
+enter = "back"
+
+[keys.sidebar]
+up = "up"
+k = "up"
+down = "down"
+j = "down"
+enter = "open"
+t = "open-tab"
+n = "new-session"
+r = "rename"
+x = "close-session"
+"/" = "filter"
+p = "group"
+esc = "back"
+q = "back"
+
+[keys.board]
+up = "up"
+k = "up"
+down = "down"
+j = "down"
+enter = "open"
+t = "open-tab"
+esc = "back"
+q = "back"

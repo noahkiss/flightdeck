@@ -3,6 +3,7 @@ package gffclient
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -159,6 +160,72 @@ info = ["cpu", "temp"]
 	}
 	if _, _, err := LoadSettings(filepath.Join(t.TempDir(), "none.toml")); err != nil {
 		t.Errorf("missing file: %v", err)
+	}
+}
+
+// reachable lists the modes a keymap reaches from normal through its mode keys, and reports a
+// mode other than normal that has no key back.
+func reachable(t *testing.T, km *Keymap) map[Mode]bool {
+	t.Helper()
+	to := map[string]Mode{actPrefix: ModePrefix, actPaneMode: ModePane, actTabMode: ModeTab, actLock: ModeLocked,
+		actSidebar: ModeSidebar, actBoard: ModeBoard}
+	seen := map[Mode]bool{ModeNormal: true}
+	queue := []Mode{ModeNormal}
+	for len(queue) > 0 {
+		m := queue[0]
+		queue = queue[1:]
+		out := false
+		for _, b := range km.Bindings(m) {
+			if b.Action == actBack || b.Action == actUnlock {
+				out = true
+			}
+			if n, ok := to[b.Action]; ok && !seen[n] {
+				seen[n] = true
+				queue = append(queue, n)
+			}
+		}
+		if m != ModeNormal && !out {
+			t.Errorf("%s mode has no key back", m)
+		}
+	}
+	return seen
+}
+
+// The sample keymap of modes with Ctrl leaders (15.5, A) loads with no problems, reaches every
+// mode, keeps the keys 8.1 and 15.5 leave to programs, and replaces the default keymap: using it
+// is a config change only. The default keymap reaches every mode too.
+func TestSampleKeymapModes(t *testing.T) {
+	s, problems, err := LoadSettings(filepath.Join("..", "..", "docs", "examples", "gff-keys-modes.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(problems) > 0 {
+		t.Errorf("problems: %q", problems)
+	}
+	for name, km := range map[string]*Keymap{"sample": s.Keymap, "default": DefaultKeymap()} {
+		if got := reachable(t, km); len(got) != len(Modes) {
+			t.Errorf("%s keymap reaches %v, want every mode", name, got)
+		}
+	}
+	for _, k := range []string{"ctrl-o", "ctrl-s", "ctrl-p", "ctrl-n", "ctrl-b"} {
+		if a := s.Keymap.lookup(ModeNormal, k); a != "" {
+			t.Errorf("sample binds %s to %s in normal mode", k, a)
+		}
+	}
+	if a := s.Keymap.lookup(ModeNormal, `ctrl-\`); a != actPaneMode {
+		t.Errorf(`sample ctrl-\ = %q, want pane-mode: the default keymap leaked in`, a)
+	}
+	if h := s.Keymap.hints(ModeNormal); len(h) != 4 {
+		t.Errorf("sample normal hints %v, want the four leaders", h)
+	}
+	// The leaders drive the reader: Ctrl+T enters tab mode, 3 goes to tab 3, Esc leaves; Ctrl+G
+	// locks, and the pane leader then reaches the program.
+	k := newKeyReader(s.Keymap)
+	evs := k.feed([]byte("\x143\x1b\x07\x1cz\x07"))
+	want := []keyEvent{{act: actTabMode, key: "ctrl-t"}, {act: actTabN + "3", key: "3"}, {act: actBack, key: "esc"},
+		{act: actLock, key: "ctrl-g"}, {data: []byte("\x1cz")}, {act: actUnlock, key: "ctrl-g"}}
+	if !reflect.DeepEqual(evs, want) {
+		t.Errorf("sample keys: %q, want %q", evs, want)
 	}
 }
 

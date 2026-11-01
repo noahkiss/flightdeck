@@ -751,13 +751,16 @@ twice sends it to the pane. Pane mode repeats the pane keys (focus, zoom, split,
 redraw, nudge, fit); tab mode repeats the tab keys (new, next, previous, 1 to 9, close view).
 Locked mode's unlock key is Ctrl+G.
 
-Decided (implementer, 2026-11-01): the default keeps the one leader the client core shipped,
-and reaches the modes through it. 15.5 chose "modes with leaders" (A) as the default. A's Ctrl
-leaders are not chosen: zellij's (Ctrl+P, Ctrl+T, Ctrl+O, Ctrl+N, Ctrl+H, Ctrl+S) take keys that
-shells and harnesses use, and 8.1 leaves Ctrl+S to programs. The owner picks A's leaders; until
-then a user binds them in `[keys.normal]`, which takes any action, so one chord can enter a mode
-or run a command. The unlock key differs from the prefix, so locking gets the prefix through
-(8.3).
+Built (coordinator, 2026-11-01): B, one leader, is the provisional default, pending the
+owner's choice (15.5). It keeps the leader the client core shipped and reaches the modes
+through it. The unlock key differs from the prefix, so locking gets the prefix through (8.3).
+
+A ships as a sample config, `docs/examples/gff-keys-modes.toml`: Ctrl+\ pane mode, Ctrl+T tab
+mode, Ctrl+] command mode (sidebar, board, bars, warnings, detach), Ctrl+G lock and unlock.
+These are zellij's leaders with Ctrl+P, Ctrl+O, Ctrl+N and Ctrl+S swapped away, since shells
+and harnesses use them. The sample sets `defaults = false`, so it is the whole keymap: using it
+is a config change only, and so is making either keymap a user's default. `[keys.normal]`
+takes any action, so one chord can also run a command directly.
 
 **Config.** gff's config file (4.3) holds the keymap in `[keys.<mode>]` tables, `key =
 "action"` per line, over the default keymap:
@@ -805,6 +808,7 @@ replaces the row.
 | `TestKeymapConfig` | An unbound key leaves the hints; a new key joins its action's hint; each bad line is a problem with its file and line; `defaults = false`; another prefix; `SetPrefix`; `max_hints` |
 | `TestKeyReader` | The reader's modes: prefix one-shot, cancel, send, pane and tab modes that stay, locked mode passing the prefix, unlock in legacy and kitty forms; the prefix in legacy, kitty and modifyOtherKeys forms across split reads, releases and modifier keys skipped |
 | `TestFitHints` | Hints drop by priority, then show keys alone |
+| `TestSampleKeymapModes` | The A sample loads with no problems, reaches every mode (as the default does), each mode but normal has a key back, it binds none of Ctrl+O, Ctrl+S, Ctrl+P, Ctrl+N, Ctrl+B, nothing of the default leaks in, and its leaders drive the reader |
 
 **Limits (not built).**
 
@@ -1387,6 +1391,8 @@ Recommendation: **A** as the default, with B as a shipped alternative keymap.
 
 Decision: A as the default, B shipped as an alternative (coordinator, 2026-11-01). Both ship, and
 the keymap lives in `gff`'s config file, so a user picks either.
+
+Built: provisional B as the default, pending the owner's choice (bm task 'Owner: pick gff's default keymap'). A ships as a sample config.
 
 ### 15.6 Agent usage budgets
 
