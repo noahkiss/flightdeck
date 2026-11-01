@@ -323,7 +323,9 @@ func TestCheckVersion(t *testing.T) {
 		{KindCodex, "1.0", VersionNewer},
 		{KindCodex, "nightly", VersionUnreadable},
 		{KindCodex, "", ""},
-		{KindOpencode, "99.0.0", ""}, // no tested range recorded
+		{KindOpencode, "2.2.5", ""},
+		{KindOpencode, "2.3.0", VersionNewer},
+		{"pi", "99.0.0", ""}, // no tested range recorded
 	}
 	for _, tt := range tests {
 		w := CheckVersion(tt.kind, tt.version)

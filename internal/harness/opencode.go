@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/detect"
 )
 
 // OpencodeStateEvents lists the opencode 2.x server events that carry agent state
@@ -24,6 +25,8 @@ type OpencodeSession struct {
 	Child bool
 	// Running: the session's agent loop runs now, as far as the adapter saw.
 	Running bool
+	// Bound: the pane is bound to this session now, with a state.
+	Bound bool
 }
 
 // ServerEvent is one opencode server event: its type, its data, and the folder it names.
@@ -65,6 +68,11 @@ func NormaliseOpencodeServer(e ServerEvent, s OpencodeSession) (Update, error) {
 	case "session.created":
 		u.Bind, u.State, u.Version = true, api.AgentStatusIdle, d.Version
 	case "session.viewed":
+		if s.Bound {
+			// The TUI marks the session it shows as viewed, also right after each turn. That
+			// is not the owner looking: the bound session keeps its state (done stays done).
+			return Update{}, fmt.Errorf("%w opencode session.viewed of the bound session", ErrUnknownEvent)
+		}
 		u.Bind, u.State = true, api.AgentStatusIdle
 		if s.Running {
 			u.State = api.AgentStatusWorking
@@ -90,6 +98,14 @@ func NormaliseOpencodeServer(e ServerEvent, s OpencodeSession) (Update, error) {
 		return Update{}, fmt.Errorf("%w opencode %s", ErrUnknownEvent, e.Type)
 	}
 	return u, nil
+}
+
+// OpencodeBound reports whether the pane is bound to an opencode session, with a state other
+// than none or exited.
+func (s *Store) OpencodeBound(paneID, session string) bool {
+	st, ok := s.Get(paneID)
+	return ok && session != "" && st.Harness == detect.KindOpencode && st.Session == session &&
+		st.State != api.AgentStatusNone && st.State != api.AgentStatusExited
 }
 
 // OpencodeRequest copies a permission request from a permission.asked event. The action names

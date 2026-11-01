@@ -1,0 +1,37 @@
+{
+  "note": "Written by hand. Events as opencode 2.2.5's server streams them on GET /api/event, after the adapter looked up each session's parent. A session created in the TUI, a turn with a shell permission request and its reply, a turn that fails, one the owner interrupts, a late duplicate of the answered request, and the session deleted.",
+  "harness_version": "2.2.5",
+  "events": [
+    {"type": "session.created", "t": 1000, "dir": "/work/app", "data": {"sessionID": "ses_a", "slug": "calm-river", "version": "2.2.5", "projectID": "p1", "location": {"directory": "/work/app"}}},
+    {"type": "session.execution.started", "t": 1100, "data": {"sessionID": "ses_a"}},
+    {"type": "permission.asked", "t": 1200, "dir": "/work/app", "data": {"id": "per_1", "sessionID": "ses_a", "action": "shell", "resources": ["go test ./..."], "save": ["go test *"], "source": {"type": "tool", "messageID": "msg_2", "id": "call_1"}}},
+    {"type": "permission.replied", "t": 1300, "dir": "/work/app", "data": {"sessionID": "ses_a", "requestID": "per_1", "reply": "once"}},
+    {"type": "permission.asked", "t": 1250, "dir": "/work/app", "data": {"id": "per_1", "sessionID": "ses_a", "action": "shell", "resources": ["go test ./..."]}},
+    {"type": "session.execution.succeeded", "t": 1400, "data": {"sessionID": "ses_a"}},
+    {"type": "session.viewed", "t": 1450, "data": {"sessionID": "ses_a"}},
+    {"type": "session.execution.started", "t": 2000, "data": {"sessionID": "ses_a"}},
+    {"type": "session.retry.scheduled", "t": 2050, "data": {"sessionID": "ses_a"}},
+    {"type": "permission.asked", "t": 2100, "dir": "/work/app", "data": {"id": "per_2", "sessionID": "ses_a", "action": "edit", "resources": ["/work/app/main.go"]}},
+    {"type": "permission.replied", "t": 2200, "data": {"sessionID": "ses_a", "requestID": "per_2", "reply": "reject"}},
+    {"type": "session.execution.failed", "t": 2300, "data": {"sessionID": "ses_a"}},
+    {"type": "session.execution.started", "t": 3000, "data": {"sessionID": "ses_a"}},
+    {"type": "session.execution.interrupted", "t": 3100, "data": {"sessionID": "ses_a"}},
+    {"type": "session.tool.called", "t": 3150, "data": {"sessionID": "ses_a"}},
+    {"type": "session.deleted", "t": 3200, "data": {"sessionID": "ses_a"}}
+  ],
+  "expect": [
+    {"harness": "opencode", "session": "ses_a", "state": "idle", "version": "2.2.5"},
+    {"harness": "opencode", "session": "ses_a", "state": "working", "version": "2.2.5"},
+    {"harness": "opencode", "session": "ses_a", "state": "blocked", "kind": "permission", "version": "2.2.5",
+     "request": {"id": "per_1", "tool": "shell", "command": "go test ./...", "cwd": "/work/app"}},
+    {"harness": "opencode", "session": "ses_a", "state": "working", "version": "2.2.5"},
+    {"harness": "opencode", "session": "ses_a", "state": "done", "version": "2.2.5"},
+    {"harness": "opencode", "session": "ses_a", "state": "working", "version": "2.2.5"},
+    {"harness": "opencode", "session": "ses_a", "state": "blocked", "kind": "permission", "version": "2.2.5",
+     "request": {"id": "per_2", "tool": "edit", "files": ["/work/app/main.go"], "cwd": "/work/app"}},
+    {"harness": "opencode", "session": "ses_a", "state": "working", "version": "2.2.5"},
+    {"harness": "opencode", "session": "ses_a", "state": "error", "version": "2.2.5"},
+    {"harness": "opencode", "session": "ses_a", "state": "working", "version": "2.2.5"},
+    {"harness": "opencode", "session": "ses_a", "state": "idle", "version": "2.2.5"}
+  ]
+}

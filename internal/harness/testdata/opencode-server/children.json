@@ -1,0 +1,25 @@
+{
+  "note": "Written by hand. Events as opencode 2.2.5's server streams them, after the adapter looked up each session's parent (child: true for a session with a parent). A turn starts a subagent (opencode's task tool) in a child session, which runs and asks permission; the pane shows the child's request and its reply, never binds the child. Another top-level session viewed while the request is open is dropped; viewed after the turn, it takes the pane.",
+  "harness_version": "2.2.5",
+  "events": [
+    {"type": "session.execution.started", "t": 1000, "data": {"sessionID": "ses_p"}},
+    {"type": "session.created", "t": 1100, "child": true, "data": {"sessionID": "ses_c", "parentID": "ses_p", "version": "2.2.5"}},
+    {"type": "session.execution.started", "t": 1150, "child": true, "data": {"sessionID": "ses_c"}},
+    {"type": "permission.asked", "t": 1200, "child": true, "dir": "/work/app", "data": {"id": "per_c", "sessionID": "ses_c", "action": "shell", "resources": ["make build"]}},
+    {"type": "session.viewed", "t": 1250, "data": {"sessionID": "ses_other"}},
+    {"type": "session.execution.succeeded", "t": 1260, "child": true, "data": {"sessionID": "ses_c"}},
+    {"type": "permission.replied", "t": 1300, "child": true, "data": {"sessionID": "ses_c", "requestID": "per_c", "reply": "once"}},
+    {"type": "session.execution.succeeded", "t": 1400, "data": {"sessionID": "ses_p"}},
+    {"type": "session.viewed", "t": 1500, "data": {"sessionID": "ses_other"}},
+    {"type": "session.viewed", "t": 1600, "running": true, "data": {"sessionID": "ses_p"}}
+  ],
+  "expect": [
+    {"harness": "opencode", "session": "ses_p", "state": "working"},
+    {"harness": "opencode", "session": "ses_p", "state": "blocked", "kind": "permission",
+     "request": {"id": "per_c", "tool": "shell", "command": "make build", "cwd": "/work/app"}},
+    {"harness": "opencode", "session": "ses_p", "state": "working"},
+    {"harness": "opencode", "session": "ses_p", "state": "done"},
+    {"harness": "opencode", "session": "ses_other", "state": "idle"},
+    {"harness": "opencode", "session": "ses_p", "state": "working"}
+  ]
+}

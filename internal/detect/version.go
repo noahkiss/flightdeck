@@ -10,8 +10,9 @@ import (
 // has, compare above the prefix. Raise an entry only after the adapter's fixtures pass on the
 // newer version. A harness with no entry is never flagged.
 var Tested = map[string]string{
-	KindClaude: "2.1",
-	KindCodex:  "0.166",
+	KindClaude:   "2.1",
+	KindCodex:    "0.166",
+	KindOpencode: "2.2",
 }
 
 // Reasons a VersionWarning gives.

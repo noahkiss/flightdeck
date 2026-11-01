@@ -1,0 +1,193 @@
+[
+  {
+    "id": "msg_01",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-11-01T16:20:00Z",
+    "text": "Model: example/small-model",
+    "event": "notice"
+  },
+  {
+    "id": "msg_02",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-11-01T16:20:00.1Z",
+    "text": "Agent: build",
+    "event": "notice"
+  },
+  {
+    "id": "msg_03",
+    "session": "s1",
+    "kind": "user",
+    "at": "2026-11-01T16:20:01Z",
+    "text": "Run the tests and fix the first failure.\n\n[file notes.md]"
+  },
+  {
+    "id": "msg_06.1",
+    "session": "s1",
+    "kind": "agent",
+    "at": "2026-11-01T16:20:02Z",
+    "text": "I will run the tests first."
+  },
+  {
+    "id": "call_01",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-11-01T16:20:02Z",
+    "tool": {
+      "name": "shell",
+      "target": "go test ./...",
+      "status": "done",
+      "input": {
+        "command": "go test ./...\ngo vet ./..."
+      },
+      "output": "FAIL example/app 0.01s\n"
+    }
+  },
+  {
+    "id": "call_02",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-11-01T16:20:02Z",
+    "tool": {
+      "name": "read",
+      "target": "/work/app/main.go",
+      "status": "done",
+      "input": {
+        "filePath": "/work/app/main.go"
+      },
+      "output": "package main\n"
+    }
+  },
+  {
+    "id": "call_03",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-11-01T16:20:02Z",
+    "tool": {
+      "name": "edit",
+      "target": "/work/app/main.go",
+      "status": "denied",
+      "input": {
+        "filePath": "/work/app/main.go",
+        "oldString": "a",
+        "newString": "b"
+      },
+      "output": "The user rejected permission to use this tool"
+    }
+  },
+  {
+    "id": "call_04",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-11-01T16:20:02Z",
+    "tool": {
+      "name": "webfetch",
+      "target": "https://example.com/docs",
+      "status": "error",
+      "input": {
+        "url": "https://example.com/docs"
+      },
+      "output": "fetch failed: timeout"
+    }
+  },
+  {
+    "id": "msg_06.6",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-11-01T16:20:02Z",
+    "text": "Unsupported opencode content: future-block",
+    "event": "unknown"
+  },
+  {
+    "id": "msg_08",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-11-01T16:20:05Z",
+    "tool": {
+      "name": "shell",
+      "target": "ls",
+      "status": "done",
+      "input": {
+        "command": "ls"
+      },
+      "output": "main.go\n"
+    }
+  },
+  {
+    "id": "msg_09",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-11-01T16:20:05.6Z",
+    "tool": {
+      "name": "shell",
+      "target": "sleep 100",
+      "status": "running",
+      "input": {
+        "command": "sleep 100"
+      }
+    }
+  },
+  {
+    "id": "msg_10",
+    "session": "s1",
+    "kind": "user",
+    "at": "2026-11-01T16:20:06Z",
+    "text": "Try again."
+  },
+  {
+    "id": "msg_11.error",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-11-01T16:20:06.1Z",
+    "text": "rate limited",
+    "event": "notice"
+  },
+  {
+    "id": "msg_12",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-11-01T16:20:06.3Z",
+    "text": "The turn failed: rate limited",
+    "event": "notice"
+  },
+  {
+    "id": "msg_13",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-11-01T16:20:07Z",
+    "text": "Conversation compacted",
+    "event": "compaction"
+  },
+  {
+    "id": "msg_14",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-11-01T16:20:07.1Z",
+    "text": "Skill release-notes",
+    "event": "notice"
+  },
+  {
+    "id": "msg_16",
+    "session": "s1",
+    "kind": "user",
+    "at": "2026-11-01T16:20:08Z",
+    "text": "Stop."
+  },
+  {
+    "id": "msg_17",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-11-01T16:20:08.1Z",
+    "text": "Interrupted by the owner",
+    "event": "interrupt"
+  },
+  {
+    "id": "msg_18",
+    "session": "s1",
+    "kind": "event",
+    "at": "2026-11-01T16:20:09Z",
+    "text": "Unsupported opencode message: future-message",
+    "event": "unknown"
+  }
+]

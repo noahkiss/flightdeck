@@ -350,12 +350,15 @@ func (o *opencodeServers) resync(ctx context.Context, pane string, p *ocPane) {
 	if target == "" {
 		target, state = firstNonEmpty(bound, recorded), api.AgentStatusIdle
 	}
+	p.mu.Lock()
+	version := p.version
+	p.mu.Unlock()
 	if target != "" && (target != bound || state == api.AgentStatusWorking) {
-		o.apply(pane, p, now, harness.Update{Session: target, Bind: target != bound, State: state})
+		o.apply(pane, p, now, harness.Update{Session: target, Bind: target != bound, State: state, Version: version})
 	} else if target != "" && bound == target {
 		// The stream was down: a turn may have ended meanwhile.
 		if st, _ := o.agents.Get(pane); st.State == api.AgentStatusWorking {
-			o.apply(pane, p, now, harness.Update{Session: target, State: api.AgentStatusIdle})
+			o.apply(pane, p, now, harness.Update{Session: target, State: api.AgentStatusIdle, Version: version})
 		}
 	}
 	perms, err := p.client.Permissions(ctx)
@@ -429,6 +432,7 @@ func (o *opencodeServers) event(ctx context.Context, pane string, p *ocPane, e o
 	}
 	s.Running = p.running[sid]
 	p.mu.Unlock()
+	s.Bound = o.agents.OpencodeBound(pane, sid)
 	u, err := harness.NormaliseOpencodeServer(harness.ServerEvent{Type: e.Type, Data: e.Data, Dir: e.Location.Directory}, s)
 	if err != nil {
 		if !errors.Is(err, harness.ErrUnknownEvent) {

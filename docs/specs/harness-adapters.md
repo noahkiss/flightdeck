@@ -135,7 +135,7 @@ Built choices (`internal/detect`, `gff-hab manifests`):
   `gff-hab manifests list` prints the active set and exits 1 on drift. `gff-hab serve` logs
   drift at start. A scheduled refresh inside gff-hab is later work; it calls the same code.
 - **Tested versions.** `detect.Tested` records the newest harness version each adapter was
-  tested on, as a prefix (`claude` 2.1, `codex` 0.166; opencode has none yet). A reported
+  tested on, as a prefix (`claude` 2.1, `codex` 0.166, `opencode` 2.2). A reported
   version above it, or one with no number in it, gives a version warning. The warning rides on
   the pane's `agent.state` (see [State event model](#state-event-model)); it does not stop the
   adapter.
@@ -690,6 +690,9 @@ Built choices for the rollout reader (`internal/transcript/codex.go`, `cmd/gff-h
 
 ## opencode
 
+The table and notes below follow the opencode 1.x documentation the study read. opencode 2.x,
+which the adapter is built on, differs; see the 2.x notes and built choices after them.
+
 | Channel | Behaviour |
 |---|---|
 | Detection | Process name `opencode` (manifest id `opencode`, aliases `open-code`). |
@@ -708,7 +711,7 @@ Notes:
   allocated per pane, and sets `OPENCODE_SERVER_PASSWORD` from a per-pane secret so other local
   users cannot drive it. A pane started by hand has no known port; the adapter falls back to
   plugin hooks and the PTY.
-- The OpenAPI document lives at `/doc` on that server. The adapter records the document's
+- The OpenAPI document lives at `/doc` on that server (opencode 1.x; 2.x serves it at `/openapi.json`, below). The adapter records the document's
   version and fails visibly on an unknown one.
 - `opencode serve` or `opencode attach` would start or attach a second front end. The adapter
   never starts a second server for a session a TUI already owns.
@@ -787,6 +790,103 @@ Built choices (`internal/usage`, `cmd/gff-hab/usage.go`, `cmd/gff-hab/statusline
   length) is left out and logged once, up to 256 distinct lines per gff-hab run. A harness version outside the tested range is logged once. A wrong number is never
   shown; the last good reading ages instead. The API has no degraded flag for usage yet.
 
+opencode 2 changed the ground under the notes above (seen live on 2.2.5, 2026-11-01):
+
+- By default the TUI attaches to a shared per-user background service on a fixed port, like
+  the Codex daemon: the agent loop and its tools run outside the pane, with the service's
+  environment. `--standalone` starts a private child server with a password it makes up itself.
+  `--server <url>` attaches the TUI to a given server. The TUI and `opencode serve` both read
+  the password from `OPENCODE_PASSWORD` (HTTP basic auth, user `opencode`). There is no
+  `--hostname`/`--port` on the TUI any more.
+- The API lives under `/api/`. The OpenAPI document is at `/openapi.json`; `/doc` now serves the
+  web app. The document's own version says `0.0.1`; `/api/info` gives the real one. The document
+  does not type the event stream's payloads.
+- There are no `/tui/*` control endpoints. A message sent with `POST /api/session/:id/prompt`
+  shows in the TUI as the owner's own turn (checked live), so the prompt API is the input path.
+- A server's event stream carries only its own process's events, even when other opencode
+  processes share its database.
+
+Built choices (`internal/opencode`, `internal/harness/opencode.go`,
+`internal/transcript/opencode.go`, `cmd/gff-hab/opencode.go`, `cmd/gff-hab/opencodepane.go`):
+
+- **Start.** `session.create` with `harness: opencode` runs `argv`, else `opencode`, through
+  `gff-hab opencode-pane -port <p> -- <argv>`. The wrapper starts a private
+  `opencode serve --stdio --hostname 127.0.0.1 --port <p>` in its own process group, with a pipe
+  as its stdin, waits until the port takes a connection (30 s at most), then runs the TUI as
+  `opencode --server http://127.0.0.1:<p> <argv[1:]>` in the foreground. Both stay under the
+  holder, so tools see the pane's environment. When the TUI exits, the wrapper closes the pipe,
+  sends SIGTERM to the server's group, and SIGKILL after 3 s; it exits with the TUI's status.
+  When the wrapper dies, the closed pipe ends the server. `argv` with `--server` is refused.
+- **Port and password.** gff-hab picks a free loopback port. The password is
+  HMAC-SHA256(hook secret, `"gff-hab opencode password v1\0"` + pane uuid) in hex, so it
+  needs no storage and survives a gff-hab restart. It reaches the wrapper as
+  `GFF_OPENCODE_PASSWORD`; the wrapper removes that variable and gives opencode
+  `OPENCODE_PASSWORD`, which opencode strips from its tools' environment. Known limit: another
+  program may take the port between the pick and the server's bind; the wrapper then fails in
+  the pane with the server's last output.
+- **Record.** `<state>/opencode/<pane uuid>.json` holds the server URL and the session last
+  bound (mode 0600 directory, written by rename). At start gff-hab follows the server of every
+  recorded pane the link still follows and removes the other records; a pane that goes away
+  loses its record.
+- **Client.** Typed by hand for the eight operations in `opencode.Operations`, pinned to 2.2.5.
+  A generator buys little, since the document does not type events. On its first connection to
+  a server gff-hab checks the document has each operation under the same method and path, and
+  logs an error naming each missing one. A server version other than the tested one is logged;
+  the adapter goes on. `detect.Tested` has opencode 2.2.
+- **State.** One event stream per pane (`GET /api/event`, filtered by `types`), source
+  `server`, stamped with the event's `created`. It reconnects after 250 ms, doubling to 10 s.
+  On each connect it reads `/api/session/active` and `/api/permission/request`: a running
+  top-level session binds the pane as `working`, else the recorded session binds as `idle`, and
+  each pending request opens as `blocked:permission`.
+
+  | Server event | Agent state |
+  |---|---|
+  | `session.created` | binds, `idle`, sets `version` |
+  | `session.viewed` | binds, `idle` (`working` if it runs); ignored for the session already bound, since the TUI posts it after every turn |
+  | `session.execution.started` | binds, new turn, `working` |
+  | `session.retry.scheduled` | `working` |
+  | `session.execution.succeeded`, `failed`, `interrupted` | `done`, `error`, `idle` |
+  | `permission.asked` | `blocked:permission`; request id, tool from `action`, `resources` as the exact command (`shell`, `bash`) or files (`edit`, `write`, `read`, `patch`, `apply_patch`, `external_directory`), cwd from the event's folder, the data as input |
+  | `permission.replied` | resolves `requestID`, `working` |
+  | `session.deleted` | unbinds |
+
+  A session with a parent (a subagent from opencode's task tool) never binds: only its
+  permission requests and replies apply, as a subagent's. Parents come from `session.created`,
+  else from `GET /api/session/:id`.
+- **Input.** `session.send` posts the text to `/api/session/:id/prompt` under the same gates
+  as the other harnesses (idle, done or error; no open request; one send at a time). No session
+  yet (a fresh TUI) answers `unavailable`: type the first message in the terminal. 404 is
+  `conflict`.
+- **Permission answers.** `approval.answer` posts `once` (allow) or `reject` (deny, with a
+  message) to `/api/session/:id/permission/:request/reply`, under the request's own session for
+  a child's request. 404 means it was answered in the terminal or ended: `conflict`. The usual
+  read-back then waits for `permission.replied`.
+- **Chat view.** `chat.page` reads `GET /api/session/:id/message` through the pane's server;
+  gff-hab never opens opencode's database. A read fetches pages of 100, newest first, back to
+  the first message already held in a form that no longer changes. It fetches only after a
+  message event marked the session changed, or 15 s after the last fetch. Cursors count the
+  changes this reader saw under a name random per reader, so a cursor from before a gff-hab
+  restart is stale. Version range 2.2.0 to 2.2.5.
+
+  | Message | Chat message |
+  |---|---|
+  | `user` | kind `user`; files as `[file <name>]` |
+  | `assistant` text block | kind `agent`, id `<message id>.<index>` |
+  | `assistant` tool block | kind `tool`, id the call id; target from `filePath`, `path`, `command`, `pattern`, `url`, `query` or `description`; status `running`, `done` or `error` (`denied` when the error says rejected); first 4 KiB of the text output |
+  | `assistant` reasoning block | left out |
+  | `assistant` error | kind `event`, event `notice` |
+  | `idle` | `failed`: event `notice`; `interrupted`: event `interrupt`; `succeeded`: left out |
+  | `compaction` | `completed`: event `compaction`; `failed`: event `notice` |
+  | `shell` (the owner's `!` command) | kind `tool`, name `shell` |
+  | `skill`, `agent-switched`, `model-switched` | event `notice` |
+  | `synthetic`, `system`, `location-switched` | left out |
+  | any other type or block, an unreadable message | event `unknown`, one warning per kind |
+
+- **Panes opencode was not started in by gff-hab** have no server gff-hab knows: chat, sends
+  and answers are `unavailable`. The plugin hook path (above) still gives state where the
+  plugin runs with the pane's environment; with opencode 2's shared service it does not, and its
+  event shapes were not checked on 2.x.
+
 ## Input delivery
 
 The owner's text reaches the agent only through the paths in each harness table.
@@ -829,7 +929,7 @@ Built choices (`session.send`, `internal/harness`, `cmd/gff-hab`):
   queued after it with it, so the Enter never goes out without its paste. The text loses every
   control character except
   newline and tab, so it can neither end the paste early nor press keys; CR LF and CR become
-  LF. Codex gets the same bytes. Other harnesses answer `unavailable` until their stage.
+  LF. Codex gets the same bytes. opencode takes the text through its server (see opencode). Other harnesses answer `unavailable` until their stage.
 - After delivery, `done` becomes `idle` (`Store.Seen`).
 - Not built yet: the two-second typing pause, agent envelopes, the read back and its "not
   delivered" event, and attachments (`unavailable`).
@@ -928,6 +1028,12 @@ Built: the usage fixtures are `internal/usage/testdata/`: Claude Code status-lin
 (`claude-2.1.316.json`, `claude-spend.json`, `claude-none.json`, `claude-drift.json`) and Codex
 rollout ends (`codex-0.166.0.jsonl`, `codex-older.jsonl`, `codex-drift.jsonl`), with the expected
 reading, version and drift beside each as `.usage.json`.
+
+Built: the opencode server fixtures are `internal/harness/testdata/opencode-server/*.json`
+(server events and the expected `agent.state` stream: a turn with requests, a failure and an
+interrupt; a subagent's request), and `internal/transcript/testdata/opencode-2.2.5.json` (the
+message list) with `.chat.json` beside it. `cmd/gff-hab/testdata/fakeopencode` stands in for
+opencode in the end-to-end test.
 
 ## Open decisions
 

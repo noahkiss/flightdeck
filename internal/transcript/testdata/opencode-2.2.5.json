@@ -1,0 +1,34 @@
+{
+  "note": "Written by hand. Messages as opencode 2.2.5's server returns them from GET /api/session/{id}/message (Session.Message.Info in its OpenAPI document), oldest first. One of each message type and content block, a denied and a failed tool, a running shell, a failed and an interrupted turn, and one unknown type.",
+  "version": "2.2.5",
+  "messages": [
+    {"id": "msg_01", "type": "model-switched", "time": {"created": 1793550000000}, "model": {"id": "small-model", "providerID": "example"}},
+    {"id": "msg_02", "type": "agent-switched", "time": {"created": 1793550000100}, "agent": "build"},
+    {"id": "msg_03", "type": "user", "time": {"created": 1793550001000}, "text": "Run the tests and fix the first failure.", "files": [{"uri": "file:///work/app/notes.md", "name": "notes.md"}]},
+    {"id": "msg_04", "type": "synthetic", "time": {"created": 1793550001100}, "text": "Context the agent loop adds for the model."},
+    {"id": "msg_05", "type": "system", "time": {"created": 1793550001200}, "text": "System text."},
+    {"id": "msg_06", "type": "assistant", "time": {"created": 1793550002000, "streamed": 1793550003000, "completed": 1793550004000}, "agent": "build", "model": {"id": "small-model", "providerID": "example"},
+     "content": [
+       {"type": "reasoning", "text": "Thinking about the tests."},
+       {"type": "text", "text": "I will run the tests first."},
+       {"type": "tool", "id": "call_01", "name": "shell", "executed": true, "state": {"status": "completed", "input": {"command": "go test ./...\ngo vet ./..."}, "content": [{"type": "text", "text": "FAIL example/app 0.01s\n"}], "metadata": {"exit": 1}}, "time": {"created": 1793550002500, "completed": 1793550003500}},
+       {"type": "tool", "id": "call_02", "name": "read", "state": {"status": "completed", "input": {"filePath": "/work/app/main.go"}, "content": [{"type": "text", "text": "package main\n"}]}, "time": {"created": 1793550003600}},
+       {"type": "tool", "id": "call_03", "name": "edit", "state": {"status": "error", "input": {"filePath": "/work/app/main.go", "oldString": "a", "newString": "b"}, "error": {"type": "PermissionRejectedError", "message": "The user rejected permission to use this tool"}}, "time": {"created": 1793550003700}},
+       {"type": "tool", "id": "call_04", "name": "webfetch", "state": {"status": "error", "input": {"url": "https://example.com/docs"}, "error": {"type": "ToolError", "message": "fetch failed: timeout"}}, "time": {"created": 1793550003800}},
+       {"type": "future-block", "text": "?"}
+     ],
+     "finish": "stop"},
+    {"id": "msg_07", "type": "idle", "time": {"created": 1793550004100}, "outcome": "succeeded"},
+    {"id": "msg_08", "type": "shell", "time": {"created": 1793550005000, "completed": 1793550005500}, "shellID": "sh_01", "command": "ls", "status": "exited", "exit": 0, "output": {"output": "main.go\n", "cursor": 8, "size": 8}},
+    {"id": "msg_09", "type": "shell", "time": {"created": 1793550005600}, "shellID": "sh_02", "command": "sleep 100", "status": "running", "output": {"output": "", "cursor": 0, "size": 0}},
+    {"id": "msg_10", "type": "user", "time": {"created": 1793550006000}, "text": "Try again."},
+    {"id": "msg_11", "type": "assistant", "time": {"created": 1793550006100, "completed": 1793550006200}, "content": [], "error": {"type": "ProviderError", "message": "rate limited"}},
+    {"id": "msg_12", "type": "idle", "time": {"created": 1793550006300}, "outcome": "failed", "error": {"type": "ProviderError", "message": "rate limited"}},
+    {"id": "msg_13", "type": "compaction", "time": {"created": 1793550007000}, "status": "completed"},
+    {"id": "msg_14", "type": "skill", "time": {"created": 1793550007100}, "skill": "skl_01", "name": "release-notes", "text": "Skill body."},
+    {"id": "msg_15", "type": "location-switched", "time": {"created": 1793550007200}},
+    {"id": "msg_16", "type": "user", "time": {"created": 1793550008000}, "text": "Stop."},
+    {"id": "msg_17", "type": "idle", "time": {"created": 1793550008100}, "outcome": "interrupted"},
+    {"id": "msg_18", "type": "future-message", "time": {"created": 1793550009000}}
+  ]
+}
