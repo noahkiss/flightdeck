@@ -569,11 +569,26 @@ func TestSpawnAttachesAfterLostAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "the holder lists the pane", func() bool { return l.CurrentHolderHas(u) && l.HolderHas(u) })
+	var instance string
+	waitFor(t, "the holder lists the pane", func() bool {
+		var ok bool
+		instance, ok = l.CurrentHolderWith(u)
+		return ok && l.HolderHas(u)
+	})
 	if _, ok := l.Pane(u); ok {
 		t.Fatal("the link follows a pane whose answer it never took")
 	}
-	again, err := l.Spawn(ctx, sp)
+	// The current holder changed since the check (an upgrade): the retry must not start the
+	// program again on the new one.
+	other := uuidN(61)
+	if _, err := l.SpawnOn(ctx, "not-current", hp.Spawn{UUID: other, Cols: 80, Rows: 24, Cwd: "/", Env: testEnv,
+		Argv: []string{"/bin/sh", "-c", "exec sleep 1000"}}); !errors.Is(err, ErrHolderChanged) {
+		t.Fatalf("spawn on a holder that is not current: %v, want ErrHolderChanged", err)
+	}
+	if l.HolderHas(other) {
+		t.Fatal("a spawn on a holder that is not current started a program")
+	}
+	again, err := l.SpawnOn(ctx, instance, sp)
 	if err != nil {
 		t.Fatal(err)
 	}

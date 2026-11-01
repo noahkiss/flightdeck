@@ -860,17 +860,22 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   the pane, the hab sends the same spawn again with a deadline of its own: the holder starts
   nothing and answers the existing pane, and the link follows it (its output, exit and token). A
   pane on another holder is not spawned again, which would start a second program; the link
-  follows it after the next gff-hab start. A picked name (no `name`) that another create filed
+  follows it after the next gff-hab start. The retry names the holder it checked and is refused
+  when another holder became current meanwhile; a pane left unfollowed is logged once. Output
+  the program wrote while its answer was lost reaches the link only through the frames it holds
+  for a pane it does not follow yet, which are bounded: bytes past that bound are lost, and the
+  screen marks the gap. A picked name (no `name`) that another create filed
   first is picked again, at most twice, before the call answers `conflict`. A `session.close`
   that lands during the spawn closes the record as usual: the create still answers success with
   the closed session's id, and the new pane is unfiled. The record carries a spawning mark,
   saved in the state file and not in the API, which the pane's first sight clears. A gff-hab
   that stops between the record and the spawn leaves a session still marked. The next start
   drops it (`session.deleted`, and the project's `project.updated`, so its name is free) only
-  when the link has reached every registered holder and the pane is on none of them. With a
-  holder not reached, the session stays, exited with no status, and keeps its mark: its pane
-  showing up makes it run again, and a later start with every holder reached drops it. A
-  session without the mark is never dropped. `gff-client.md`
+  when the link has attached every registered holder and the pane is on none of them. A
+  holder counts once the link has attached its panes, not when it connects. With a holder not
+  reached, the session stays, exited with no status, and keeps its mark: its pane showing up
+  makes it run again, and a later start with every holder reached drops it. A session without
+  the mark is never dropped. `gff-client.md`
   proposed `command`; `argv` is that command, unparsed. The optional `idempotency_key` makes a
   retried create start one session (Idempotency keys, below).
 - **`session.resume`** takes `{session}` and returns the same ids as `session.create`.

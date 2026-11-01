@@ -24,12 +24,14 @@ type spawner struct {
 	tokens   *hook.Tokens
 	hookSock string    // absolute
 	spawning *spawning // the tokens' known set includes it (livePane)
-	// run starts the pane; nil is lk.Spawn. has reports whether a pane with the uuid exists;
-	// nil asks the link and its holders (paneExists). Unit tests replace both.
-	run func(context.Context, hp.Spawn) (link.PaneStatus, error)
-	has func(hp.UUID) bool
-	// current reports whether the current holder lists the pane; nil asks the link.
-	current func(hp.UUID) bool
+	// run starts the pane on the holder named instance ("" is the current one); nil is
+	// lk.SpawnOn. has reports whether a pane with the uuid exists; nil asks the link and its
+	// holders (exists). current returns the current holder when it lists the pane; nil asks the
+	// link. Unit tests replace all three.
+	run     func(ctx context.Context, instance string, sp hp.Spawn) (link.PaneStatus, error)
+	has     func(hp.UUID) bool
+	current func(hp.UUID) (instance string, ok bool)
+	logf    func(format string, args ...any) // nil logs nothing
 }
 
 // followTimeout bounds the spawn retry that attaches a pane whose first answer was lost.
@@ -39,27 +41,30 @@ const followTimeout = 10 * time.Second
 // holder started the pane. It sends the same spawn again, with its own deadline: on the holder
 // that lists the pane that is a retry, which starts nothing and answers the existing pane, and
 // the link then follows it (output, exit, token). It retries only on the current holder, the one
-// a spawn goes to; a pane on another holder stays unfollowed until gff-hab restarts. It reports
-// whether the link follows the pane.
+// a spawn goes to, and only while that holder stays current (SpawnOn); a pane on another holder
+// stays unfollowed until gff-hab restarts. It reports whether the link follows the pane, and logs
+// once when it does not.
 func (s *spawner) follow(ctx context.Context, sp hp.Spawn) bool {
 	if s.lk != nil {
 		if _, ok := s.lk.Pane(sp.UUID); ok {
 			return true
 		}
 	}
-	onCurrent := s.current
-	if onCurrent == nil {
-		if s.lk == nil {
-			return false
+	current := s.current
+	if current == nil && s.lk != nil {
+		current = s.lk.CurrentHolderWith
+	}
+	err := errors.New("no current holder lists it")
+	if current != nil {
+		if instance, ok := current(sp.UUID); ok {
+			fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), followTimeout)
+			_, err = s.spawnOn(fctx, instance, sp)
+			cancel()
 		}
-		onCurrent = s.lk.CurrentHolderHas
 	}
-	if !onCurrent(sp.UUID) {
-		return false
+	if err != nil && s.logf != nil {
+		s.logf("session.create: pane %s runs but is not followed until gff-hab restarts: %v", sp.UUID, err)
 	}
-	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), followTimeout)
-	defer cancel()
-	_, err := s.spawn(fctx, sp)
 	return err == nil
 }
 
@@ -67,6 +72,11 @@ func (s *spawner) follow(ctx context.Context, sp hp.Spawn) bool {
 // Any GFF_HAB in sp.Env is replaced. While the spawn runs, the pane's token is known, so a
 // program that calls back before the link has the holder's answer is not refused.
 func (s *spawner) spawn(ctx context.Context, sp hp.Spawn) (link.PaneStatus, error) {
+	return s.spawnOn(ctx, "", sp)
+}
+
+// spawnOn is spawn on the holder named instance, which must still be current ("" is any).
+func (s *spawner) spawnOn(ctx context.Context, instance string, sp hp.Spawn) (link.PaneStatus, error) {
 	if sp.UUID == (hp.UUID{}) {
 		sp.UUID = newUUID()
 	}
@@ -76,9 +86,9 @@ func (s *spawner) spawn(ctx context.Context, sp hp.Spawn) (link.PaneStatus, erro
 		defer s.spawning.done(sp.UUID)
 	}
 	if s.run != nil {
-		return s.run(ctx, sp)
+		return s.run(ctx, instance, sp)
 	}
-	return s.lk.Spawn(ctx, sp)
+	return s.lk.SpawnOn(ctx, instance, sp)
 }
 
 // exists reports whether a pane with uuid u exists after a spawn error: the link follows it,

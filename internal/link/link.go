@@ -134,6 +134,8 @@ var (
 	ErrUUIDUsed = errors.New("link: uuid belongs to another pane; a new pane needs a new uuid")
 	// ErrReleasing refuses a close while a release of the same pane is in flight.
 	ErrReleasing = errors.New("link: a release of this pane is in flight")
+	// ErrHolderChanged refuses a SpawnOn whose holder is no longer the current one.
+	ErrHolderChanged = errors.New("link: the current holder is not the one named")
 )
 
 type paneKey struct {
@@ -163,6 +165,9 @@ type Link struct {
 	panes    map[hp.UUID]*pane
 	byHandle map[paneKey]*pane
 	holders  map[*holderclient.Holder]bool
+	// attached holds the holders whose welcome panes the link has attached, so Panes lists
+	// them. A holder is in holders a moment before it is in attached (complete).
+	attached map[*holderclient.Holder]bool
 	orphans  map[paneKey][]hp.Frame // frames for a pane not attached yet (a spawn in flight)
 
 	// retired holds the uuids of panes that went gone or that the link dropped, with the time
@@ -254,6 +259,7 @@ func Open(cfg Config) (*Link, error) {
 		panes:        map[hp.UUID]*pane{},
 		byHandle:     map[paneKey]*pane{},
 		holders:      map[*holderclient.Holder]bool{},
+		attached:     map[*holderclient.Holder]bool{},
 		orphans:      map[paneKey][]hp.Frame{},
 		retired:      retired,
 		saveRetiredC: make(chan struct{}, 1),
@@ -369,6 +375,14 @@ func (l *Link) scanWith(force bool) {
 			for _, pi := range w.Panes {
 				l.attach(h, pi)
 			}
+			if attachedSeam != nil {
+				attachedSeam(h.Instance())
+			}
+			l.mu.Lock()
+			if l.holders[h] {
+				l.attached[h] = true
+			}
+			l.mu.Unlock()
 		})
 	}
 	l.run(func() {
@@ -464,12 +478,16 @@ func (l *Link) complete() bool {
 	if len(errs) > 0 {
 		return false
 	}
+	// A holder counts once the link has attached its panes, not when the client connects:
+	// in between, Panes lacks them.
 	live := map[string]bool{}
-	for _, h := range l.client.Holders() {
+	l.mu.Lock()
+	for h := range l.attached {
 		if !h.Closed() {
 			live[h.Instance()] = true
 		}
 	}
+	l.mu.Unlock()
 	for _, e := range entries {
 		if !live[e.Instance] {
 			return false
@@ -648,6 +666,7 @@ func (l *Link) apply(p *pane, f hp.Frame) {
 func (l *Link) holderEnded(h *holderclient.Holder, err error) {
 	l.mu.Lock()
 	delete(l.holders, h)
+	delete(l.attached, h)
 	var ps []*pane
 	for k, p := range l.byHandle {
 		if k.h == h {
@@ -748,13 +767,24 @@ func (l *Link) attach(h *holderclient.Holder, pi hp.PaneInfo) {
 // knew, unless it names a live pane on the current holder, which makes the call a retry of a
 // spawn that already ran (the holder starts nothing then).
 func (l *Link) Spawn(ctx context.Context, s hp.Spawn) (PaneStatus, error) {
+	return l.SpawnOn(ctx, "", s)
+}
+
+// SpawnOn is Spawn on the holder named instance, which must be the current one: it refuses with
+// ErrHolderChanged, starting nothing, when another holder became current. Attaching a pane a
+// holder already lists (a retry) needs that holder; on any other holder the same spawn would
+// start a second program. An empty instance is Spawn.
+func (l *Link) SpawnOn(ctx context.Context, instance string, s hp.Spawn) (PaneStatus, error) {
 	h := l.client.Current()
-	if h == nil && l.cfg.Start != nil {
+	if h == nil && l.cfg.Start != nil && instance == "" {
 		l.scanWith(true) // starts a holder and attaches it
 		h = l.client.Current()
 	}
 	if h == nil {
 		return PaneStatus{}, holderclient.ErrNoHolder
+	}
+	if instance != "" && h.Instance() != instance {
+		return PaneStatus{}, ErrHolderChanged
 	}
 	if !l.spawnable(s.UUID, h) {
 		return PaneStatus{}, ErrUUIDUsed
@@ -1171,19 +1201,20 @@ func (l *Link) HolderHas(u hp.UUID) bool {
 	return false
 }
 
-// CurrentHolderHas reports whether the current holder lists pane u. Spawn of u then attaches
-// that pane, starting nothing, even when the link lost the first spawn's answer.
-func (l *Link) CurrentHolderHas(u hp.UUID) bool {
+// CurrentHolderWith returns the current holder's instance when that holder lists pane u.
+// SpawnOn of u on that instance then attaches the pane, starting nothing, even when the link
+// lost the first spawn's answer.
+func (l *Link) CurrentHolderWith(u hp.UUID) (instance string, ok bool) {
 	h := l.client.Current()
 	if h == nil {
-		return false
+		return "", false
 	}
 	for _, st := range l.client.Panes() {
 		if st.UUID == u && st.Instance == h.Instance() {
-			return true
+			return h.Instance(), true
 		}
 	}
-	return false
+	return "", false
 }
 
 func (l *Link) pane(u hp.UUID) *pane {

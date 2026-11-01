@@ -467,7 +467,7 @@ func serve(args []string) error {
 			home = "/"
 		}
 		sessionActs := &actions{
-			sp:       &spawner{lk: lk, tokens: tokens, hookSock: hpath, spawning: spawning},
+			sp:       &spawner{lk: lk, tokens: tokens, hookSock: hpath, spawning: spawning, logf: logger.Printf},
 			store:    store,
 			getenv:   os.Getenv,
 			environ:  func() []string { return basePaneEnv(os.Environ(), runtime.GOOS) },

@@ -66,7 +66,7 @@ func TestPaneLiveSpawning(t *testing.T) {
 }
 
 // fakeActions returns actions over a real store with a fake holder, whose spawns run is.
-func fakeActions(t *testing.T, run func(context.Context, hp.Spawn) (link.PaneStatus, error), has func(hp.UUID) bool) (*actions, *structure.Store) {
+func fakeActions(t *testing.T, run func(context.Context, string, hp.Spawn) (link.PaneStatus, error), has func(hp.UUID) bool) (*actions, *structure.Store) {
 	t.Helper()
 	st, err := structure.Open(structure.Config{Dir: filepath.Join(t.TempDir(), "structure"), Holders: structure.NewFakeHolder()})
 	if err != nil {
@@ -77,7 +77,7 @@ func fakeActions(t *testing.T, run func(context.Context, hp.Spawn) (link.PaneSta
 	return &actions{sp: sp, store: st, getenv: func(string) string { return "" }, environ: func() []string { return nil }, home: t.TempDir()}, st
 }
 
-func spawned(_ context.Context, s hp.Spawn) (link.PaneStatus, error) {
+func spawned(_ context.Context, _ string, s hp.Spawn) (link.PaneStatus, error) {
 	return link.PaneStatus{UUID: s.UUID}, nil
 }
 
@@ -109,11 +109,12 @@ func TestCreateSpawnErrors(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			var calls []hp.Spawn
+			var on []string
 			var retryErr error
 			retryDeadline := false
 			a, st := fakeActions(t,
-				func(x context.Context, s hp.Spawn) (link.PaneStatus, error) {
-					calls = append(calls, s)
+				func(x context.Context, instance string, s hp.Spawn) (link.PaneStatus, error) {
+					calls, on = append(calls, s), append(on, instance)
 					if len(calls) == 1 {
 						cancel()
 						return link.PaneStatus{}, c.err
@@ -123,14 +124,25 @@ func TestCreateSpawnErrors(t *testing.T) {
 					return link.PaneStatus{UUID: s.UUID}, nil
 				},
 				func(u hp.UUID) bool { return c.exists && len(calls) > 0 && u == calls[0].UUID })
-			a.sp.current = func(u hp.UUID) bool { return c.onCurrent && len(calls) > 0 && u == calls[0].UUID }
+			a.sp.current = func(u hp.UUID) (string, bool) {
+				return "one", c.onCurrent && len(calls) > 0 && u == calls[0].UUID
+			}
+			var logs []string
+			a.sp.logf = func(f string, args ...any) { logs = append(logs, fmt.Sprintf(f, args...)) }
 			session, pane, err := a.CreateSession(ctx, api.SessionCreateParams{Name: "s", Argv: []string{"/bin/true"}})
 			_, have := st.SessionByName("s")
 			if len(calls) != c.calls {
 				t.Fatalf("%d spawns, want %d", len(calls), c.calls)
 			}
-			if c.calls == 2 && (calls[1].UUID != calls[0].UUID || !slices.Equal(calls[1].Argv, calls[0].Argv) || retryErr != nil || !retryDeadline) {
-				t.Fatalf("the retry: %+v after %+v, its context %v, deadline %v", calls[1], calls[0], retryErr, retryDeadline)
+			if on[0] != "" {
+				t.Fatalf("the first spawn named holder %q, want the current one", on[0])
+			}
+			if c.calls == 2 && (calls[1].UUID != calls[0].UUID || !slices.Equal(calls[1].Argv, calls[0].Argv) || retryErr != nil || !retryDeadline || on[1] != "one") {
+				t.Fatalf("the retry: %+v on %q after %+v, its context %v, deadline %v", calls[1], on[1], calls[0], retryErr, retryDeadline)
+			}
+			// A kept pane that is not followed is logged once; any other outcome logs nothing.
+			if wantLog := c.keep && c.calls == 1; (len(logs) == 1) != wantLog || len(logs) > 1 {
+				t.Fatalf("logs %q, want one: %v", logs, wantLog)
 			}
 			if c.keep {
 				if err != nil || session == "" || pane != calls[0].UUID.String() || !have {

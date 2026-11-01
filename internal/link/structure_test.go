@@ -86,3 +86,39 @@ func TestStructureComplete(t *testing.T) {
 		t.Fatal("partial after the unreached holder left the registry")
 	}
 }
+
+// TestStructureCompleteWaitsForAttach: the client connects to a holder before the link attaches
+// its panes, and Panes lists only attached panes. The list counts as complete only once the
+// holder is attached, so a pane on a holder connected a moment ago is never taken as missing.
+func TestStructureCompleteWaitsForAttach(t *testing.T) {
+	hdir := shortDir(t)
+	startHolder(t, hdir, "one", 0)
+	held, release := make(chan struct{}), make(chan struct{})
+	attachedSeam = func(instance string) {
+		if instance == "two" {
+			close(held)
+			<-release
+		}
+	}
+	t.Cleanup(func() { attachedSeam = nil }) // runs after the link closes
+	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond})
+	waitFor(t, "holder one attached", func() bool { return structure.Complete(l.Structure()) })
+	startHolder(t, hdir, "two", 0)
+	select {
+	case <-held:
+	case <-time.After(waitLong):
+		t.Fatal("holder two was never attached")
+	}
+	connected := false
+	for _, h := range l.client.Holders() {
+		connected = connected || h.Instance() == "two"
+	}
+	if !connected {
+		t.Fatal("holder two is not connected")
+	}
+	if structure.Complete(l.Structure()) {
+		t.Error("complete while holder two is connected but its panes are not attached")
+	}
+	close(release)
+	waitFor(t, "holder two attached", func() bool { return structure.Complete(l.Structure()) })
+}
