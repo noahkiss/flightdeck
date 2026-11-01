@@ -616,7 +616,8 @@ feature. Capabilities are for features that a host may
 lack. They are not a second versioning scheme.
 
 Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt` and
-`transcripts`. It always sends `mesh`.
+`transcripts`. It always sends `mesh`. It sends `push` only when its push config loads and validates
+(3.9, Push).
 
 ### 3.5 Events, seq and epoch
 
@@ -760,10 +761,11 @@ names the stage, and an event is defined but never sent.
 | `chat.page` | Read a page of chat messages from the transcript reader (capability `transcripts`) | Yes, Claude Code (Part 4 stage 5) |
 | `attachment.put` | Start an upload of a file for a session | Part 6 stage 5 |
 | `attachment.get` | Fetch an attachment or its thumbnail | Part 6 stage 5 |
-| `session.focus` | Report focus: marks `done` seen, and holds pushes while watched | Part 6 stage 7 |
-| `push.register` | Store an APNs device token with the kinds the device wants (capability `push`) | Part 6 stage 7 |
-| `push.register_activity` | Store a Live Activity token for the tracked session (capability `push`) | Part 6 stage 7 |
-| `push.unregister` | Drop a token (capability `push`) | Part 6 stage 7 |
+| `session.focus` | Report focus: marks `done` seen, and holds pushes while watched | Yes (task-oe7ioczy) |
+| `push.register` | Store an APNs device token with the kinds the device wants (capability `push`) | Yes (task-oe7ioczy) |
+| `push.register_activity` | Store a Live Activity token for the tracked session (capability `push`) | Yes (task-oe7ioczy) |
+| `push.unregister` | Drop a token (capability `push`) | Yes (task-oe7ioczy) |
+| `notice.raise` | Raise a Flightdeck notification from a hab event or a local script: a `notice.raised` event, and a push where push is set up | Yes (task-oe7ioczy) |
 | `usage.list` | The latest usage reading of each harness account | Part 4 (usage readings) |
 | `hab.stats` | CPU, memory, disk, battery and uptime of the host (capability `host-stats`) | Part 5 stage 5 |
 | `command.list` | A page of a pane's shell commands, found by OSC 133 marks (capability `commands`, 2.5) | Yes (task-m845kpi9) |
@@ -777,8 +779,9 @@ names the stage, and an event is defined but never sent.
 | `session.turn_end` | The agent's turn ended; names the final message | Session | Part 4 stage 4 |
 | `usage.updated` | An account's usage reading changed | Account key | Part 4 (usage readings) |
 | `command.updated` | A pane's command started or ended (2.5) | Pane | Yes (task-m845kpi9) |
+| `notice.raised` | A notice was raised (`notice.raise`) | Notice | Yes (task-oe7ioczy) |
 
-All six events are ephemeral (3.5): they carry no revision, and a client applies them in seq
+All seven events are ephemeral (3.5): they carry no revision, and a client applies them in seq
 order. A chat message lives in the transcript, not in gff-hab, so it has no stored revision
 either; an update repeats the message id and replaces the message. A scoped subscription gets a
 `chat.message` when the message's `session` is in its scope.
@@ -837,7 +840,14 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   stage; it may add an optional field to the result. **`attachment.get`** returns the bytes in
   `data`, with `name` and `type`.
 - **`push.register`** `environment` is `development` or `production`; `kinds` are `permission`,
-  `question`, `auth`, `error`, `done` and `usage`.
+  `question`, `auth`, `error`, `done` and `usage`. Added by the push stage, optional:
+  `hide_commands`, the app's "show commands in notifications" turned off (`app.md` 8.3).
+- **`notice.raise`** takes `title`, and the optional `body`, `level` (`passive`, `active`, the
+  default, or `time-sensitive`) and `session`. It returns the notice `id` and `pushed`, the
+  number of devices the push goes to (0 without push). A `script` or `cli` client may call it;
+  `gff-hab notify` is its command line. `notice.raised` carries `id`, `title`, `body`, `level`,
+  `session` and `at`; a scoped subscription gets it when the notice names no session or a
+  session in its scope.
 - **`hab.stats`** is a method, not an event: a client asks while it shows the numbers. Sizes are
   bytes; `cpu_pct` is over all cores; `battery_pct` is absent with no battery.
 - **`usage.list`** returns `accounts`, each with `key`, `label`, `harness` and `windows` (`name`,
@@ -893,6 +903,77 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   The approval request is `PermissionRequest`, which `AgentState.request` carries. The other
   `app.md` 17 rows were already in place: chat kind `plan`, `approval.answer` field `via`, and
   push kind `usage`.
+
+**Push** (task-oe7ioczy; `internal/push`, `cmd/gff-hab/push.go`). Built choices:
+
+- **Config.** `-push-config`, else `<state>/push.json`, with `GFF_HAB_PUSH_KEY_FILE`,
+  `GFF_HAB_PUSH_KEY_ID`, `GFF_HAB_PUSH_TEAM_ID`, `GFF_HAB_PUSH_TOPIC` and
+  `GFF_HAB_PUSH_ENVIRONMENT` over it, field by field. The file names the key's path, never the
+  key. The key file passes the owner-only checks of the hook key (`internal/secretfile`). Key id
+  and team id are 10 capital letters and digits; the topic is the app's bundle id. Nothing set:
+  push is not set up. Set but wrong: gff-hab logs why and runs without push. Either way it
+  leaves `push` out of the capabilities, and the `push.*` methods answer `unavailable` with a
+  hint that names `docs/push.md`. `session.focus` and `notice.raise` work without push.
+- **APNs.** HTTP/2 to `api.push.apple.com` or `api.sandbox.push.apple.com`, chosen by each
+  token's environment. Token auth: an ES256 JWT with the key id and team id, reused for 40
+  minutes (APNs refuses one older than an hour or refreshed within 20 minutes), signed again
+  at once when APNs calls it expired. `apns-topic` is the bundle id, plus
+  `.push-type.liveactivity` for a Live Activity. `apns-expiration` is 0: a push for a host
+  that went quiet is not stored. Alerts go at priority 10, passive ones and Live Activity
+  progress at 5.
+- **Tokens.** `<state>/push/tokens.json`, mode 0600 in a 0700 directory, written whole and
+  renamed into place. One device token and one Live Activity token per device id: a second
+  registration replaces the first. At most 64 devices; the oldest registration goes first.
+  A token must be hex. `push.register_activity` needs a known session. `push.unregister` of a
+  token the hab does not hold succeeds. APNs answering `BadDeviceToken`, `Unregistered`,
+  `DeviceTokenNotForTopic`, `ExpiredToken` or 410 drops the token and logs once. A refused key
+  or topic (`InvalidProviderToken`, `TopicDisallowed` and the like) is logged once as "push
+  broken" until a push succeeds. A 429 backs off from 1 s, doubling to a minute: an urgent push
+  waits once and retries, a progress update is dropped.
+- **What pushes.** The notifier reads every `agent.state` change, keeping only the latest
+  unsent state per pane. A new `blocked:permission`, `blocked:question`, `blocked:auth`,
+  `error` or `done` (by state and request id) raises a banner to each device whose `kinds`
+  hold it; `done` is opt-in by its kind. A repeat of the same state raises nothing. Collapse
+  ids: `r-<request id>` (a hash past 64 bytes), else `q-`, `a-`, `e-`, `d-` plus the pane id,
+  and `n-<notice id>`.
+- **Presence tiers** (`app.md` 8.3, `landscape.md` 4.1). A device hears of an event by push
+  unless (1) some connected client reported the session in focus (`session.focus`, `active`
+  true) within the last 60 s: then no device gets a banner; or (2) a connected client of that
+  device sent `session.focus` with `active` true, for any session, within the last 180 s: the
+  app is in use and shows its own notice from the live event. `active` false ends both at once.
+  A client speaks for a device once it called `push.register` or `push.register_activity`
+  with that device id. The app re-sends `active` true at least every 30 s while a session is
+  on screen in an active window, and sends `active` false when it leaves or goes to the
+  background. Live Activity updates ignore presence.
+- **Answered elsewhere** (`app.md` 7.5). When an `approval.answer` reaches the harness, the
+  notifier replaces the banner on every device that got it, same collapse id, passive, with
+  "Answered on <label>" (the answering client's hello label, else its name) and "Allowed:
+  <program>" or "Denied: …". It does this at once: Claude Code keeps the request open until
+  the tool has run. The same blocked state arriving afterwards raises nothing. A request that
+  closes with no answer through the hab (the TUI) is replaced with "Answered in the terminal".
+  A second answer to one request stays refused with `conflict` (harness-adapters.md,
+  Permission answers).
+- **Live Activity** (`app.md` 9). Each device's activity token tracks one session. Every change
+  of state goes out at once; repeated `working` at most every 30 s; other repeats not at all.
+  An answer drops the buttons at once (state `working` after allow, `idle` after deny).
+  `done`, `error` and `exited` end the activity with a dismissal ten minutes later, and the
+  token is dropped. The content state is `state`, `kind`, `title`, `request`, `pane`,
+  `buttons`, `since`, `others` (other blocked panes on this hab), `hab` and `harness`.
+- **Payload.** `aps` holds `alert` (`title`, `subtitle`, `body`), `interruption-level`,
+  `category` (`approval`: Approve and Deny; `approval-deny`: Deny and Open; `open`),
+  `thread-id` (the session), `sound` except when passive, and `mutable-content` 1, so the
+  notification service extension can add the expiry as a local clock time. A `flightdeck`
+  object carries `v` (1), `kind`, `hab`, `session`, `pane`, `state`, `request`, `expires_at`
+  and `notice`. Payloads stay under 4 KB.
+- **Words** (`app.md` 16). Each field is fitted to its budget on word boundaries, with "…".
+  The command is shortened (leading `cd`, environment assignments, the working directory part
+  of paths, the middle of long quoted strings) and gets 13 words and 84 characters, leaving
+  room for the phone's " · Expires 14:05". Approve is offered only when the whole shortened
+  command fits. The agent state carries no question or error text yet, so those bodies are
+  fixed: "Open to answer." and "The agent stopped on an error."
+- **Not built here.** Push-to-start of a Live Activity, actions on question banners (answering
+  a question through `approval.answer` is not built), "push broken" in a status the app can
+  read, and dropping tokens when a device is revoked (the `devices` methods are not built).
 
 **`pane.close` on a running pane.** gff-hab asks the pane's holder to release it. The holder
 hangs up the pane's session (SIGHUP) and closes the terminal; it keeps the child's waiter, so

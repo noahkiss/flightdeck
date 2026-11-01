@@ -49,14 +49,14 @@ test-pure:
 	CGO_ENABLED=0 $(GO) test ./...
 
 # Run the holder, structure, link, control, data stream, connection library, gff client core, pane size, command
-# marks, peers, harness, hook, git status, transcript and service tests three times under the race
+# marks, peers, harness, hook, git status, transcript, service and push tests three times under the race
 # detector. No libghostty needed.
 RACE_PKGS := ./internal/holder/... ./internal/holderproto/... ./internal/holderclient/... \
 	./internal/holderreg/... ./internal/structure/... ./internal/link/... \
 	./internal/control/... ./internal/datastream/... ./internal/habconn/... ./internal/hosts/... ./internal/merge/... ./internal/peers/... ./internal/board/... ./internal/gffclient/... ./internal/panesize/... ./internal/termq/... \
 	./internal/cmdmarks/... \
 	./internal/harness/... ./internal/hook/... ./internal/gitstatus/... ./internal/transcript/... \
-	./internal/service/... ./internal/grants/... \
+	./internal/service/... ./internal/grants/... ./internal/push/... \
 	./cmd/...
 race:
 	$(GO) test -race -count=3 $(RACE_PKGS)

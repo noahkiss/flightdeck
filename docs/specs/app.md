@@ -875,6 +875,36 @@ service.
 | The app is a TestFlight build signed by another team | The user's key cannot push to it (1.5). See 18.3 |
 | A sandbox build and a production build | Each token is tagged with its environment. The hab uses the matching APNs host |
 
+### 8.6 Built choices (task-oe7ioczy, hab side)
+
+The hab half is built: `internal/push` and `cmd/gff-hab/push.go`. The setup guide is
+`docs/push.md`; the full list is in `hab-logic-api.md` 3.9, Push. Settled behaviour the app
+relies on:
+
+- **Presence tiers.** No banner while a connected client has the session in focus (reported
+  within 60 s). No banner to a device whose app reported itself in the foreground within 180 s;
+  the app shows its own notice from the live event. Otherwise a push. The app keeps the hab
+  informed with `session.focus`: `active` true at least every 30 s while a session is on screen
+  in an active window, `active` false when it leaves or goes to the background.
+- **Withdrawal.** An answer through `approval.answer` replaces the banner at once, same collapse
+  id, passive, "Answered on <label>", where the label is the answering client's hello `label`.
+  The Live Activity loses its buttons in the same step. A request closed in the TUI is replaced
+  with "Answered in the terminal".
+- **Categories.** `approval` (Approve, Deny), `approval-deny` (Deny, Open on iPhone) and `open`
+  (Open on iPhone). The app registers all three. Question banners use `open` until answering a
+  question through `approval.answer` is built.
+- **Expiry text.** The hab leaves the expiry out of the body and sends `expires_at` in the
+  payload's `flightdeck` object, with `mutable-content` set. The notification service extension
+  appends " · Expires 14:05" in local time.
+- **Opt-ins.** `done` banners go only to devices that registered the `done` kind. Notices from
+  `notice.raise` go to every registered device. `hide_commands` on `push.register` is the
+  "show commands in notifications" setting turned off.
+- **Live Activity content.** The content state keys are listed in `hab-logic-api.md` 3.9, Push.
+  `done`, `error` and an exit end the activity with a ten-minute dismissal; the app starts a new
+  one for the next turn.
+- **Left for the app half.** Registration, the notification service extension, the categories,
+  the widget, push-to-start, and showing "push broken" (the hab logs it; no API field yet).
+
 Sources: owner decision (each user brings their own APNs setup; fail gracefully without it); Moshi
 docs, hooks and notifications (which events raise a banner, never drop an approval silently,
 summary limits); Heeler README (push only when blocked or done); `transport.md` 6.6; platform facts
@@ -1561,6 +1591,8 @@ stage that fills it.
 | `push.register {device_id, token, environment, kinds}` | Store an APNs device token for this device |
 | `push.register_activity {device_id, session, token}` | Store a Live Activity token for the tracked session |
 | `push.unregister {device_id, token}` | Drop a token |
+| `push.register` field `hide_commands` | "Show commands in notifications" off: banners carry no command (8.3) |
+| `notice.raise {title, body?, level?, session?}` | Raise a notice from a hab event or a local script; event `notice.raised` |
 | capability `push` | The hab has push config that works |
 | `session.focus {session, active}` | Report focus: marks `done` seen, and feeds hold-while-watched (8.3) |
 | `approval.answer {pane, request, choice, text?}` | Answer a pending request by id; refuses a closed id with `conflict` |
