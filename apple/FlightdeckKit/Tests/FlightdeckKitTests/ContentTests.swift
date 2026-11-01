@@ -394,6 +394,30 @@ final class ContentLimitTests: XCTestCase {
         XCTAssertEqual(m.chunkSplits, 1)
     }
 
+    /// M1: while a same-size rewrite loads, the old bytes show under the version they were
+    /// loaded for, so the new version's parse comes from the new bytes. Bytes that changed while
+    /// loading get a key of their own.
+    func testCachesKeyOnTheLoadedVersion() {
+        let m = ContentModel(target: SessionTarget(habID: "h", session: "s1", pane: "%1"), items: [], context: ChatContext())
+        let a = Data("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n".utf8)
+        let b = Data("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-c\n+d\n".utf8)
+        XCTAssertEqual(a.count, b.count)
+        let v1 = item("d", size: a.count), v2 = item("d", size: a.count, modified: "v2")
+        // The loader asked for v1 and got a; the list then moves to v2 before b arrives.
+        let shownWhileLoading = ContentModel.version(v1, of: .data(a, changedWhileLoading: false))
+        XCTAssertEqual(shownWhileLoading, v1)
+        XCTAssertEqual(m.parsedDiff(for: shownWhileLoading, data: a).files.first?.hunks.first?.lines.last?.text, "b")
+        XCTAssertEqual(m.markdown(for: shownWhileLoading, data: a).isEmpty, false)
+        let loaded = ContentModel.version(v2, of: .data(b, changedWhileLoading: false))
+        XCTAssertEqual(m.parsedDiff(for: loaded, data: b).files.first?.hunks.first?.lines.last?.text, "d", "v2 shows v2's bytes")
+        // A Markdown parse keys on the byte count too.
+        let mdOld = Data("# old\n".utf8), mdNew = Data("# newer\n".utf8)
+        _ = m.markdown(for: v1, data: mdOld)
+        XCTAssertNotEqual(m.markdown(for: v1, data: mdNew), m.markdown(for: v1, data: mdOld))
+        let changed = ContentModel.version(v2, of: .data(b, changedWhileLoading: true))
+        XCTAssertNotEqual(ByteCache.Key(changed), ByteCache.Key(v2), "bytes that changed while loading never answer for v2")
+    }
+
     /// R5: Markdown past the preview limit renders cut, and says so; the whole file is there as
     /// text runs for "Show all as text".
     func testLargeMarkdownMarkedCut() {

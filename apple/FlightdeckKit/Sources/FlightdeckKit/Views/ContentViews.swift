@@ -26,11 +26,14 @@ struct ContentPlaceholder: View {
 }
 
 /// Loads an item's bytes once per appearance, and again when the item or the hab's state changes.
+/// The content closure gets the item as it was when its bytes were asked for: while a new
+/// version loads, the old bytes show with the old version, so no cache files them under the new.
 struct ContentLoader<Content: View>: View {
     let model: ContentModel
     let item: ContentItem
-    @ViewBuilder let content: (Data, Bool) -> Content
+    @ViewBuilder let content: (ContentItem, Data, Bool) -> Content
     @State private var load: ContentBytes?
+    @State private var loadedFor: ContentItem?
 
     var body: some View {
         Group {
@@ -38,7 +41,7 @@ struct ContentLoader<Content: View>: View {
             case nil:
                 ProgressView().frame(maxWidth: .infinity, minHeight: 60)
             case .data(let d, let changed)?:
-                content(d, changed)
+                content(loadedFor ?? item, d, changed)
             case .offline(let t)?:
                 ContentPlaceholder(text: t)
             case .gone?:
@@ -50,7 +53,10 @@ struct ContentLoader<Content: View>: View {
             }
         }
         .task(id: LoadKey(id: item.id, size: item.size, modified: item.modified, online: model.context.online)) {
-            load = await model.bytes(for: item)
+            let asked = item
+            let got = await model.bytes(for: asked)
+            load = got
+            loadedFor = ContentModel.version(asked, of: got)
         }
     }
 
@@ -111,9 +117,9 @@ struct InlineImageView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ContentLoader(model: model, item: item) { data, _ in
+            ContentLoader(model: model, item: item) { version, data, _ in
                 // About 3x the 360 pt frame: sharp on a phone, a fraction of a full decode.
-                DecodedImage(model: model, item: item, data: data, maxPixel: 1080) { img in
+                DecodedImage(model: model, item: version, data: data, maxPixel: 1080) { img in
                     Button { zoomed = true } label: {
                         img.resizable().scaledToFit()
                             .frame(maxWidth: 360, maxHeight: 260, alignment: .leading)
@@ -124,9 +130,9 @@ struct InlineImageView: View {
                     .accessibilityHint("Opens it full size")
                 }
                 #if os(iOS)
-                .fullScreenCover(isPresented: $zoomed) { ZoomedImage(model: model, item: item, data: data) }
+                .fullScreenCover(isPresented: $zoomed) { ZoomedImage(model: model, item: version, data: data) }
                 #else
-                .sheet(isPresented: $zoomed) { ZoomedImage(model: model, item: item, data: data).frame(minWidth: 640, minHeight: 480) }
+                .sheet(isPresented: $zoomed) { ZoomedImage(model: model, item: version, data: data).frame(minWidth: 640, minHeight: 480) }
                 #endif
             }
             Text(item.title ?? item.name)
@@ -265,9 +271,9 @@ struct DocumentCard: View {
                     .buttonStyle(.borderless)
                     .accessibilityLabel("Open \(item.title ?? item.name) full size")
             }
-            ContentLoader(model: model, item: item) { data, changed in
+            ContentLoader(model: model, item: item) { version, data, changed in
                 VStack(alignment: .leading, spacing: 4) {
-                    DocumentBody(item: item, data: data, folded: !open, model: model)
+                    DocumentBody(item: version, data: data, folded: !open, model: model)
                     if changed {
                         Text("The file changed while loading.").font(.caption2).foregroundStyle(.tertiary)
                     }
@@ -430,8 +436,8 @@ struct ContentDetail: View {
             if item.change != nil && item.shown != true {
                 DiffView(model: model, item: item)
             } else {
-                ContentLoader(model: model, item: item) { data, _ in
-                    DocumentBody(item: item, data: data, model: model)
+                ContentLoader(model: model, item: item) { version, data, _ in
+                    DocumentBody(item: version, data: data, model: model)
                 }
                 if item.change != nil {
                     Divider()

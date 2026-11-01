@@ -648,7 +648,10 @@ What carries over:
   lazy list of 200-line runs. Markdown renders its first 256 KiB; past that a line under it says
   "Showing the first 256 KB of <size>" with "Show all as text", the same lazy list (a whole
   large file as Markdown would stall the view). Markdown, a diff file's parse and a text file's runs are made
-  once per file version (the list's version and the byte count); a redraw reuses them. A PDF view loads a new
+  once per file version (the list's version and the byte count); a redraw reuses them. The
+  version is the one the shown bytes were loaded for, not the list's newest: while a new version
+  loads, the old bytes stay on screen under the old key. Bytes that changed while loading get a
+  key of their own. A PDF view loads a new
   document only when its bytes change, so a redraw keeps its scroll position and zoom.
 
 ---

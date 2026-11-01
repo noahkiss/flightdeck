@@ -91,7 +91,7 @@ public final class ContentModel {
     /// Decoded images, by item, version and pixel size, bounded by bitmap bytes.
     @ObservationIgnored let decoded = ImageCache()
     /// Parsed Markdown, by item and version.
-    @ObservationIgnored private var markdownCache: [ByteCache.Key: [MarkdownBlock]] = [:]
+    @ObservationIgnored private var markdownCache: [VersionKey: [MarkdownBlock]] = [:]
     /// A diff file's parse and a text file's line runs, by item, version and byte count, so a
     /// redraw does not parse or split the bytes again.
     @ObservationIgnored private var diffCache: [VersionKey: ParsedDiff] = [:]
@@ -348,7 +348,7 @@ public final class ContentModel {
 
     /// An image decoded once, off the main actor, no larger than `maxPixel` on its long side.
     public func image(for it: ContentItem, data: Data, maxPixel: Int) async -> CGImage? {
-        let k = "\(it.id)|\(it.size ?? -1)|\(it.modified ?? "")|\(maxPixel)"
+        let k = "\(it.id)|\(it.size ?? -1)|\(it.modified ?? "")|\(data.count)|\(maxPixel)"
         if let img = decoded.get(k) { return img }
         let img = await Task.detached(priority: .userInitiated) { ImageDecode.thumbnail(data, maxPixel: maxPixel) }.value
         guard let img else { return nil }
@@ -358,7 +358,7 @@ public final class ContentModel {
 
     /// An item's Markdown, parsed once per version.
     public func markdown(for it: ContentItem, data: Data) -> [MarkdownBlock] {
-        let key = ByteCache.Key(it)
+        let key = VersionKey(key: ByteCache.Key(it), count: data.count)
         if let b = markdownCache[key] { return b }
         let blocks = MarkdownBlock.parse(ContentText.preview(data).text)
         if markdownCache.count > 32 { markdownCache.removeAll() }
@@ -370,6 +370,18 @@ public final class ContentModel {
     /// are parsed.
     nonisolated static func markdownCut(_ data: Data) -> Bool {
         data.count > ContentText.previewLimit
+    }
+
+    /// The version a load's bytes belong to, for the caches that derive from them. Views pass
+    /// this, not the item as the list has it now: while a new version loads, the old bytes
+    /// still show, and must not be parsed under the new version's key. Bytes that changed
+    /// while loading are of a version the list has not named yet, so they get a key of their
+    /// own.
+    nonisolated static func version(_ asked: ContentItem, of got: ContentBytes) -> ContentItem {
+        guard case .data(_, true) = got else { return asked }
+        var v = asked
+        v.modified = (v.modified ?? "") + "|changed while loading"
+        return v
     }
 
     /// A version of an item's bytes: the list's version and the byte count, so bytes that
