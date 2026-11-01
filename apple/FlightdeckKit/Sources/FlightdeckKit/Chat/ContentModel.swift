@@ -92,6 +92,13 @@ public final class ContentModel {
     @ObservationIgnored let decoded = ImageCache()
     /// Parsed Markdown, by item and version.
     @ObservationIgnored private var markdownCache: [ByteCache.Key: [MarkdownBlock]] = [:]
+    /// A diff file's parse and a text file's line runs, by item, version and byte count, so a
+    /// redraw does not parse or split the bytes again.
+    @ObservationIgnored private var diffCache: [VersionKey: ParsedDiff] = [:]
+    @ObservationIgnored private var chunkCache: [VersionKey: [String]] = [:]
+    /// How many times a diff file was parsed and a text file split (tests read them).
+    @ObservationIgnored private(set) var diffParses = 0
+    @ObservationIgnored private(set) var chunkSplits = 0
     /// Each list call's number; a reply older than the last one applied is dropped.
     @ObservationIgnored private var listGen = 0
     @ObservationIgnored private var appliedGen = 0
@@ -357,6 +364,36 @@ public final class ContentModel {
         if markdownCache.count > 32 { markdownCache.removeAll() }
         markdownCache[key] = blocks
         return blocks
+    }
+
+    /// A version of an item's bytes: the list's version and the byte count, so bytes that
+    /// arrive under a version the list did not name never reuse another parse.
+    struct VersionKey: Hashable {
+        var key: ByteCache.Key
+        var count: Int
+    }
+
+    /// A diff file's parse, once per version.
+    func parsedDiff(for it: ContentItem, data: Data) -> ParsedDiff {
+        let k = VersionKey(key: ByteCache.Key(it), count: data.count)
+        if let d = diffCache[k] { return d }
+        diffParses += 1
+        let d = DiffParser.parse(String(decoding: data, as: UTF8.self))
+        if diffCache.count > 32 { diffCache.removeAll() }
+        diffCache[k] = d
+        return d
+    }
+
+    /// A text file's line runs for the lazy "Show all" list, once per version.
+    func textChunks(for it: ContentItem, data: Data) -> [String] {
+        let k = VersionKey(key: ByteCache.Key(it), count: data.count)
+        if let c = chunkCache[k] { return c }
+        chunkSplits += 1
+        let c = ContentText.chunks(data)
+        // Runs of a large file hold a copy of it as strings: keep few.
+        if chunkCache.count >= 4 { chunkCache.removeAll() }
+        chunkCache[k] = c
+        return c
     }
 
     nonisolated static func date(_ s: String) -> Date? {

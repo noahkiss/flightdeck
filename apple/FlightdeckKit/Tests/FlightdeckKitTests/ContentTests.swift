@@ -379,6 +379,21 @@ final class ContentLimitTests: XCTestCase {
         XCTAssertEqual(ImageCache.budget(physicalMemory: 64 << 30), 256 << 20)
     }
 
+    /// R6: a diff file is parsed, and a text file split into runs, once per version: redraws
+    /// reuse them, and a new version parses again.
+    func testDiffAndRunsParsedOncePerVersion() {
+        let m = ContentModel(target: SessionTarget(habID: "h", session: "s1", pane: "%1"), items: [], context: ChatContext())
+        let diff = Data("--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n".utf8)
+        let v1 = item("d", size: diff.count)
+        for _ in 0..<5 { XCTAssertEqual(m.parsedDiff(for: v1, data: diff).files.first?.added, 1) }
+        XCTAssertEqual(m.diffParses, 1)
+        _ = m.parsedDiff(for: item("d", size: diff.count, modified: "v2"), data: diff)
+        XCTAssertEqual(m.diffParses, 2, "a new version parses again")
+        let text = Data("a\nb\nc".utf8)
+        for _ in 0..<5 { XCTAssertEqual(m.textChunks(for: item("t", size: text.count), data: text), ["a\nb\nc"]) }
+        XCTAssertEqual(m.chunkSplits, 1)
+    }
+
     /// S3: a large image decodes to the asked bound, not to its full size.
     func testImageDecodesToBound() throws {
         let w = 3000, h = 1200

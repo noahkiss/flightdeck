@@ -316,7 +316,7 @@ struct DocumentBody: View {
                 }
             }
         case .diff:
-            DiffBody(diff: DiffParser.parse(String(decoding: data, as: UTF8.self)), maxLines: folded ? Self.foldedLines : nil)
+            DiffBody(diff: model.parsedDiff(for: item, data: data), maxLines: folded ? Self.foldedLines : nil)
         case .image:
             DecodedImage(model: model, item: item, data: data, maxPixel: 2048) { $0.resizable().scaledToFit() }
         default:
@@ -325,7 +325,7 @@ struct DocumentBody: View {
             } else if showAll && !folded {
                 // The whole file as a lazy list of line runs: one huge Text would stall the view.
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(ContentText.chunks(data).enumerated()), id: \.offset) { _, run in
+                    ForEach(Array(model.textChunks(for: item, data: data).enumerated()), id: \.offset) { _, run in
                         Text(run).font(.caption.monospaced())
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
