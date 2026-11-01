@@ -88,9 +88,8 @@ public final class ContentModel {
     @ObservationIgnored let cache = ByteCache(limit: ContentModel.cacheLimit)
     /// Loads in flight, by item and version: the inline card, the panel and a sheet share one.
     @ObservationIgnored private var inflight: [ByteCache.Key: Task<ContentBytes, Never>] = [:]
-    /// Decoded images, by item, version and pixel size.
-    @ObservationIgnored private var decoded: [String: CGImage] = [:]
-    @ObservationIgnored private var decodedOrder: [String] = []
+    /// Decoded images, by item, version and pixel size, bounded by bitmap bytes.
+    @ObservationIgnored let decoded = ImageCache()
     /// Parsed Markdown, by item and version.
     @ObservationIgnored private var markdownCache: [ByteCache.Key: [MarkdownBlock]] = [:]
     /// Each list call's number; a reply older than the last one applied is dropped.
@@ -101,8 +100,6 @@ public final class ContentModel {
 
     /// The byte cache's bound: about 64 MiB of file bytes.
     public static let cacheLimit = 64 << 20
-    /// Decoded images kept at once.
-    static let imageLimit = 24
     /// Tries of a content call the hab turned away as busy (`unavailable`).
     static let busyTries = 4
     /// The first wait after a busy answer; it doubles each try.
@@ -345,12 +342,10 @@ public final class ContentModel {
     /// An image decoded once, off the main actor, no larger than `maxPixel` on its long side.
     public func image(for it: ContentItem, data: Data, maxPixel: Int) async -> CGImage? {
         let k = "\(it.id)|\(it.size ?? -1)|\(it.modified ?? "")|\(maxPixel)"
-        if let img = decoded[k] { return img }
+        if let img = decoded.get(k) { return img }
         let img = await Task.detached(priority: .userInitiated) { ImageDecode.thumbnail(data, maxPixel: maxPixel) }.value
         guard let img else { return nil }
-        decoded[k] = img
-        decodedOrder.append(k)
-        if decodedOrder.count > Self.imageLimit { decoded[decodedOrder.removeFirst()] = nil }
+        decoded.put(k, img)
         return img
     }
 

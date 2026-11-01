@@ -72,6 +72,57 @@ final class ByteCache {
     var count: Int { entries.count }
 }
 
+/// Decoded images for the chat view (app.md 4.7), bounded by their bitmap bytes first and by
+/// count second, the least recently used out first. The newest image always stays, even past
+/// the byte bound, so a view never decodes it again on each draw.
+final class ImageCache {
+    let byteLimit: Int
+    let countLimit: Int
+    private(set) var total = 0
+    private var entries: [String: CGImage] = [:]
+    /// Keys, least recently used first.
+    private var order: [String] = []
+
+    init(byteLimit: Int = ImageCache.defaultByteLimit, countLimit: Int = 24) {
+        self.byteLimit = byteLimit
+        self.countLimit = countLimit
+    }
+
+    /// A 32nd of the device's memory, from 64 to 256 MiB: 128 MiB on a 4 GiB phone, room for
+    /// two 4096 px zoomed images and the inline ones.
+    static let defaultByteLimit = budget(physicalMemory: ProcessInfo.processInfo.physicalMemory)
+
+    static func budget(physicalMemory: UInt64) -> Int {
+        Int(min(max(physicalMemory / 32, 64 << 20), 256 << 20))
+    }
+
+    /// The decoded size of an image.
+    static func cost(_ img: CGImage) -> Int { img.bytesPerRow * img.height }
+
+    func get(_ key: String) -> CGImage? {
+        guard let img = entries[key] else { return nil }
+        order.removeAll { $0 == key }
+        order.append(key)
+        return img
+    }
+
+    func put(_ key: String, _ img: CGImage) {
+        if let old = entries.removeValue(forKey: key) {
+            total -= Self.cost(old)
+            order.removeAll { $0 == key }
+        }
+        entries[key] = img
+        order.append(key)
+        total += Self.cost(img)
+        while order.count > 1, total > byteLimit || order.count > countLimit {
+            let oldest = order.removeFirst()
+            if let e = entries.removeValue(forKey: oldest) { total -= Self.cost(e) }
+        }
+    }
+
+    var count: Int { entries.count }
+}
+
 /// Image decoding that never builds the full-size bitmap.
 enum ImageDecode {
     /// The image scaled so its long side is at most `maxPixel`, with its orientation applied.

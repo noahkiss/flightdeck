@@ -349,6 +349,36 @@ final class ContentLimitTests: XCTestCase {
         XCTAssertNil(c.get(id: "a", key: k1), "a list that names a new version drops the old bytes")
     }
 
+    /// R3: decoded images are bounded by bitmap bytes, then by count; the least recently used
+    /// goes first, and the newest stays even when it alone passes the byte bound.
+    func testImageCacheBoundByBytes() throws {
+        func image(_ side: Int) throws -> CGImage {
+            let ctx = try XCTUnwrap(CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
+                                              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            return try XCTUnwrap(ctx.makeImage())
+        }
+        let small = try image(10) // 400 bytes
+        let c = ImageCache(byteLimit: 1000, countLimit: 3)
+        c.put("a", small)
+        c.put("b", small)
+        XCTAssertEqual(c.total, 800)
+        _ = c.get("a") // a is now the most recent
+        c.put("c", small)
+        XCTAssertLessThanOrEqual(c.total, 1000)
+        XCTAssertNil(c.get("b"), "the least recently used went first")
+        XCTAssertNotNil(c.get("a"))
+        let big = try image(20) // 1600 bytes, past the whole bound
+        c.put("z", big)
+        XCTAssertEqual(c.count, 1, "the newest stays alone")
+        XCTAssertNotNil(c.get("z"))
+        let counted = ImageCache(byteLimit: 1 << 30, countLimit: 2)
+        for k in ["a", "b", "c"] { counted.put(k, small) }
+        XCTAssertEqual(counted.count, 2, "count is the second bound")
+        XCTAssertEqual(ImageCache.budget(physicalMemory: 4 << 30), 128 << 20)
+        XCTAssertEqual(ImageCache.budget(physicalMemory: 1 << 30), 64 << 20)
+        XCTAssertEqual(ImageCache.budget(physicalMemory: 64 << 30), 256 << 20)
+    }
+
     /// S3: a large image decodes to the asked bound, not to its full size.
     func testImageDecodesToBound() throws {
         let w = 3000, h = 1200

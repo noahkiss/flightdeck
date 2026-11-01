@@ -640,7 +640,10 @@ What carries over:
   at most 64 MiB, the least recently used out first. A list that names a new version drops the
   old bytes.
 - **Rendering.** Images decode once, off the main thread, with ImageIO thumbnails: at most 1080
-  px on the long side inline, 2048 in a document view, 4096 zoomed; 24 decoded images are kept.
+  px on the long side inline, 2048 in a document view, 4096 zoomed. Decoded images are kept by
+  bitmap bytes: a 32nd of the device's memory, from 64 to 256 MiB (128 MiB on a 4 GiB phone, two
+  zoomed images and the inline ones), and at most 24 of them; the least recently used goes
+  first, and the newest always stays.
   Text shows its first 256 KiB, cut at a line end, with "Show all", which renders the file as a
   lazy list of 200-line runs. Markdown is parsed once per file version. A PDF view loads a new
   document only when its bytes change, so a redraw keeps its scroll position and zoom.
