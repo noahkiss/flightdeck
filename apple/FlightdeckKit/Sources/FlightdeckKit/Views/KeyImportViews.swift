@@ -133,6 +133,8 @@ struct KeyImportView: View {
     @State private var working = false
     @State private var picking = false
     @State private var result: (key: ImportedKey, replaced: Bool)?
+    /// The running import, cancelled when the sheet goes away.
+    @State private var importTask: Task<Void, Never>?
 
     var body: some View {
         Form {
@@ -160,9 +162,9 @@ struct KeyImportView: View {
                     }
                     if f.isEncrypted {
                         SecureField("Passphrase", text: $passphrase)
-                            .onSubmit { Task { await store() } }
+                            .onSubmit { startImport() }
                     }
-                    Button("Import") { Task { await store() } }
+                    Button("Import") { startImport() }
                         .disabled(working || (f.isEncrypted && passphrase.isEmpty))
                     Button("Choose another key") { reset() }
                 } header: {
@@ -210,15 +212,30 @@ struct KeyImportView: View {
             case .success(let url):
                 let scoped = url.startAccessingSecurityScopedResource()
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                do { read(try Data(contentsOf: url)) } catch { self.error = "Could not read the file: \(error.localizedDescription)" }
+                do {
+                    read(try OpenSSHKeyFile.read(contentsOf: url))
+                } catch let e as KeyImportError {
+                    self.error = e.description
+                } catch {
+                    self.error = "Could not read the file: \(error.localizedDescription)"
+                }
             case .failure(let e):
                 error = e.localizedDescription
             }
         }
         .onAppear {
             if let p = pending, file == nil, result == nil {
-                read(p.data)
+                if let e = p.error { error = e } else { read(p.data) }
             }
+        }
+        .onDisappear { importTask?.cancel() }
+    }
+
+    private func startImport() {
+        guard importTask == nil else { return }
+        importTask = Task {
+            await store()
+            importTask = nil
         }
     }
 
@@ -244,6 +261,8 @@ struct KeyImportView: View {
         } catch let e as KeyImportError where e == .wrongPassphrase {
             passphrase = ""
             error = "\(e)"
+        } catch is CancellationError {
+            return
         } catch {
             self.error = "\(error)"
         }
@@ -256,6 +275,7 @@ struct KeyImportView: View {
     }
 
     private func finish() {
+        importTask?.cancel()
         text = ""
         passphrase = ""
         file = nil
@@ -289,10 +309,13 @@ struct HabKeyMenu: View {
                 Button(setup.keyName(k.id)) { choose(k.id) }
             }
         } label: {
-            if setup.hasKey(entry) {
+            switch setup.keyState(entry) {
+            case .present:
                 Text("Key: " + setup.keyName(entry.keyID)).font(.caption)
-            } else {
+            case .missing:
                 Text("No key: choose one").font(.caption).foregroundStyle(.red)
+            case .unavailable(let why):
+                Text("Key: " + setup.keyName(entry.keyID) + " (" + why + ")").font(.caption).foregroundStyle(.secondary)
             }
         }
         .menuStyle(.borderlessButton)

@@ -348,4 +348,155 @@ final class KeyImportTests: XCTestCase {
             XCTFail("the generated key was accepted")
         } catch is SSHKeyRefused {}
     }
+
+    // MARK: - Guards (fix round)
+
+    /// The encrypted Ed25519 fixture with its bcrypt round count replaced.
+    private func withRounds(_ rounds: UInt32) throws -> String {
+        var (b, _) = try container(KeyFixtures.ed25519_enc)
+        var r = SSHWireReader(b, at: OpenSSHKeyFile.magic.count)
+        _ = try r.string(); _ = try r.string() // cipher, kdf
+        let options = try r.string()
+        let end = r.offset // the options end with the round count
+        XCTAssertEqual(options.count, 4 + 16 + 4)
+        b[end - 4] = UInt8(rounds >> 24); b[end - 3] = UInt8((rounds >> 16) & 0xFF)
+        b[end - 2] = UInt8((rounds >> 8) & 0xFF); b[end - 1] = UInt8(rounds & 0xFF)
+        return armor(b)
+    }
+
+    /// A crafted round count is refused when the file is read, before the
+    /// passphrase and any work (review M1).
+    func testTooManyRoundsRefusedAtOnce() throws {
+        let start = Date()
+        XCTAssertThrowsError(try OpenSSHKeyFile.parse(withRounds(1 << 20))) { e in
+            XCTAssertEqual(e as? KeyImportError, .tooManyRounds(1 << 20))
+            XCTAssertTrue("\(e)".contains("ssh-keygen -p -a 100"))
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(start), 1)
+        XCTAssertTrue(try OpenSSHKeyFile.parse(withRounds(OpenSSHKeyFile.maxRounds)).isEncrypted)
+    }
+
+    /// A cancelled derivation stops between rounds (review M1).
+    func testDerivationStopsWhenCancelled() async throws {
+        let start = Date()
+        let t = Task.detached { try BcryptPBKDF.derive(passphrase: [1], salt: [2], rounds: 1024, length: 48) }
+        try await Task.sleep(for: .milliseconds(50))
+        t.cancel()
+        do {
+            _ = try await t.value
+            XCTFail("the derivation ran to the end")
+        } catch is CancellationError {}
+        XCTAssertLessThan(Date().timeIntervalSince(start), 3)
+    }
+
+    /// Cancelling the import (the sheet went away) stops the detached
+    /// decryption too (review M1).
+    @MainActor
+    func testImportCancelStopsTheDerivation() async throws {
+        let setup = SSHSetup(keys: DeviceKeys(store: MemorySecretStore(), preferEnclave: false), listURL: nil, fleet: nil)
+        let file = try OpenSSHKeyFile.parse(withRounds(OpenSSHKeyFile.maxRounds))
+        let start = Date()
+        let t = Task { try await setup.importKey(file, passphrase: "anything") }
+        try await Task.sleep(for: .milliseconds(100))
+        t.cancel()
+        do {
+            _ = try await t.value
+            XCTFail("the import finished")
+        } catch is CancellationError {}
+        XCTAssertLessThan(Date().timeIntervalSince(start), 3)
+        XCTAssertTrue(setup.importedKeys.isEmpty)
+    }
+
+    /// Input over 64 KiB is refused without reading it all (review M2).
+    func testOversizeInputRefused() throws {
+        XCTAssertThrowsError(try OpenSSHKeyFile.parse(Data(count: OpenSSHKeyFile.maxSize + 1))) { XCTAssertEqual($0 as? KeyImportError, .tooLarge) }
+        XCTAssertThrowsError(try OpenSSHKeyFile.parse(String(repeating: "a", count: OpenSSHKeyFile.maxSize + 1))) { XCTAssertEqual($0 as? KeyImportError, .tooLarge) }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("keyimport-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let big = dir.appendingPathComponent("video.mov")
+        try Data(count: 4 << 20).write(to: big)
+        XCTAssertThrowsError(try OpenSSHKeyFile.read(contentsOf: big)) { XCTAssertEqual($0 as? KeyImportError, .tooLarge) }
+        let small = dir.appendingPathComponent("id_test")
+        try Data(KeyFixtures.ed25519.utf8).write(to: small)
+        XCTAssertEqual(try OpenSSHKeyFile.parse(OpenSSHKeyFile.read(contentsOf: small)).type, .ed25519)
+    }
+
+    /// A file that cannot be read says why, not "not a key" (review S1), and
+    /// a large one is refused (review M2).
+    @MainActor
+    func testOpenKeyFileErrors() throws {
+        let setup = SSHSetup(keys: DeviceKeys(store: MemorySecretStore(), preferEnclave: false), listURL: nil, fleet: nil)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("keyimport-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        setup.openKeyFile(dir.appendingPathComponent("gone"))
+        let e = try XCTUnwrap(setup.pendingKeyFile?.error)
+        XCTAssertTrue(e.hasPrefix("Could not read the file"), e)
+        let big = dir.appendingPathComponent("video.mov")
+        try Data(count: 1 << 20).write(to: big)
+        setup.openKeyFile(big)
+        XCTAssertEqual(setup.pendingKeyFile?.error, KeyImportError.tooLarge.description)
+        let ok = dir.appendingPathComponent("id_test")
+        try Data(KeyFixtures.ed25519.utf8).write(to: ok)
+        setup.openKeyFile(ok)
+        XCTAssertNil(setup.pendingKeyFile?.error)
+        XCTAssertFalse(setup.pendingKeyFile?.data.isEmpty ?? true)
+    }
+
+    /// One item that does not decode leaves the others listed (review S2).
+    func testBadItemDoesNotHideOtherKeys() throws {
+        let store = MemorySecretStore()
+        let keys = DeviceKeys(store: store, preferEnclave: false)
+        let good = try keys.importKey(try OpenSSHKeyFile.parse(KeyFixtures.ed25519).decrypt(passphrase: nil)).key
+        try store.write(account: DeviceKeys.importedPrefix + "broken", data: Data("not json".utf8))
+        let fresh = DeviceKeys(store: store, preferEnclave: false)
+        XCTAssertEqual(try fresh.importedKeys().map(\.id), [good.id])
+    }
+
+    /// A locked device reads as locked, not as a missing key (review S3).
+    @MainActor
+    func testLockedKeyIsNotMissing() async throws {
+        let store = LockedStore()
+        let keys = DeviceKeys(store: store, preferEnclave: false)
+        let setup = SSHSetup(keys: keys, listURL: nil, fleet: nil)
+        let locked = SSHHabEntry(user: "u", endpoints: [SSHEndpoint(host: "h")], hostKeyFingerprint: KeyFixtures.ed25519_fp, keyID: DeviceKeys.importedPrefix + "present")
+        guard case .unavailable(let why) = setup.keyState(locked) else { return XCTFail("\(setup.keyState(locked))") }
+        XCTAssertTrue(why.contains("locked"), why)
+        let gone = SSHHabEntry(user: "u", endpoints: [SSHEndpoint(host: "h")], hostKeyFingerprint: KeyFixtures.ed25519_fp, keyID: DeviceKeys.importedPrefix + "gone")
+        XCTAssertEqual(setup.keyState(gone), .missing)
+        do {
+            _ = try await setup.probe(SSHDestination(user: "u", endpoint: SSHEndpoint(host: "127.0.0.1", port: 1)), keyID: locked.keyID)
+            XCTFail("the probe ran with a locked key")
+        } catch {
+            XCTAssertTrue("\(error)".contains("locked"), "\(error)")
+        }
+        // The real Keychain's error keeps its status, so explain names the lock.
+        XCTAssertTrue(DeviceKeys.explain(KeychainStore.error("read", errSecInteractionNotAllowed)).description.contains("locked"))
+    }
+
+    /// A pairing link and a key file arriving together are shown in turn
+    /// (review N2).
+    @MainActor
+    func testPairingAndKeyFileShownInTurn() throws {
+        let setup = SSHSetup(keys: DeviceKeys(store: MemorySecretStore(), preferEnclave: false), listURL: nil, fleet: nil)
+        setup.pendingKeyFile = PendingKeyFile(name: "k", data: Data())
+        setup.pendingCodeError = "bad code"
+        guard case .pairing = SSHSheets.item(setup) else { return XCTFail("pairing first") }
+        setup.pendingCodeError = nil
+        guard case .keyFile = SSHSheets.item(setup) else { return XCTFail("then the key file") }
+        setup.pendingKeyFile = nil
+        XCTAssertNil(SSHSheets.item(setup))
+    }
+}
+
+/// A store whose items exist but cannot be read: a locked device.
+private final class LockedStore: SecretStore, @unchecked Sendable {
+    func read(account: String) throws -> Data? {
+        guard account.hasSuffix("present") else { return nil }
+        throw NSError(domain: NSOSStatusErrorDomain, code: Int(errSecInteractionNotAllowed))
+    }
+    func write(account: String, data: Data) throws {}
+    func delete(account: String) throws {}
+    func accounts() throws -> [String] { [DeviceKeys.importedPrefix + "present"] }
 }

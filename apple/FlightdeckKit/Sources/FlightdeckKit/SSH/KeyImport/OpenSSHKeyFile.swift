@@ -21,6 +21,8 @@ public enum KeyImportError: Error, Equatable, CustomStringConvertible {
     case truncated
     case malformed(String)
     case severalKeys
+    case tooManyRounds(UInt32)
+    case tooLarge
 
     public var description: String {
         switch self {
@@ -54,6 +56,10 @@ public enum KeyImportError: Error, Equatable, CustomStringConvertible {
             return "The key file is damaged: \(what)."
         case .severalKeys:
             return "The file holds more than one key. Import a file with one key."
+        case .tooManyRounds(let n):
+            return "The key asks for \(n) key derivation rounds; Flightdeck reads at most \(OpenSSHKeyFile.maxRounds). Re-encrypt it with ssh-keygen -p -a 100 -f <file>."
+        case .tooLarge:
+            return "This file is too large to be a key."
         }
     }
 }
@@ -154,10 +160,30 @@ public struct OpenSSHKeyFile: Sendable {
     static let begin = "-----BEGIN OPENSSH " + "PRIVATE KEY-----"
     static let end = "-----END OPENSSH " + "PRIVATE KEY-----"
     static let magic = Array("openssh-key-v1".utf8) + [0]
+    /// The largest input read: an OpenSSH key file is a few kilobytes.
+    public static let maxSize = 64 * 1024
+    /// The most bcrypt rounds accepted: far above ssh-keygen's default 16
+    /// and the common 100 or 256, low enough that a crafted file cannot keep
+    /// the CPU busy for hours.
+    public static let maxRounds: UInt32 = 1024
+
+    /// Reads at most `maxSize` bytes of a file, refusing a larger one without
+    /// reading it all.
+    public static func read(contentsOf url: URL) throws -> Data {
+        if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > maxSize {
+            throw KeyImportError.tooLarge
+        }
+        let h = try FileHandle(forReadingFrom: url)
+        defer { try? h.close() }
+        let data = try h.read(upToCount: maxSize + 1) ?? Data()
+        guard data.count <= maxSize else { throw KeyImportError.tooLarge }
+        return data
+    }
 
     /// Reads a key file, or text with a key block in it: the first private
     /// key block counts and text around it is ignored.
     public static func parse(_ data: Data) throws -> OpenSSHKeyFile {
+        guard data.count <= maxSize else { throw KeyImportError.tooLarge }
         guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
             throw KeyImportError.notAKey
         }
@@ -165,6 +191,7 @@ public struct OpenSSHKeyFile: Sendable {
     }
 
     public static func parse(_ text: String) throws -> OpenSSHKeyFile {
+        guard text.utf8.count <= maxSize else { throw KeyImportError.tooLarge }
         let text = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         if let b = text.range(of: begin) {
             guard let e = text.range(of: end, range: b.upperBound..<text.endIndex) else { throw KeyImportError.truncated }
@@ -230,6 +257,8 @@ public struct OpenSSHKeyFile: Sendable {
         } else {
             guard let s = CipherSpec.named(cipher) else { throw KeyImportError.unsupportedCipher(cipher) }
             guard kdf == "bcrypt" else { throw KeyImportError.unsupportedKDF(kdf) }
+            // Checked here, before the passphrase prompt and any work.
+            _ = try kdfParameters(kdfOptions)
             spec = s
         }
         let tagLength = spec?.tagLength ?? 0
@@ -256,23 +285,31 @@ public struct OpenSSHKeyFile: Sendable {
             var plain: [UInt8]
             if let spec = CipherSpec.named(cipher) {
                 guard let passphrase, !passphrase.isEmpty else { throw KeyImportError.passphraseNeeded }
-                var o = SSHWireReader(kdfOptions)
-                let salt = try o.string()
-                let rounds = try o.u32()
-                guard !salt.isEmpty, rounds >= 1, rounds <= 1 << 20 else {
-                    throw KeyImportError.malformed("the key derivation's options are not valid")
-                }
+                let (salt, rounds) = try Self.kdfParameters(kdfOptions)
                 var pass = Array(passphrase.utf8)
                 defer { for i in pass.indices { pass[i] = 0 } }
                 var km = try BcryptPBKDF.derive(passphrase: pass, salt: salt, rounds: Int(rounds), length: spec.keyLength + spec.ivLength)
                 defer { for i in km.indices { km[i] = 0 } }
                 plain = try spec.decrypt(section, key: Array(km[0..<spec.keyLength]), iv: Array(km[spec.keyLength...]), tag: tag)
             } else {
+                // A copy: `body` keeps the file's bytes while the sheet holds the file.
                 plain = section
             }
             defer { for i in plain.indices { plain[i] = 0 } }
             return try Self.readPrivate(plain, publicBlob: publicBlob, type: type, encrypted: isEncrypted)
         }
+    }
+
+    /// The bcrypt options: a salt and a round count within `maxRounds`.
+    static func kdfParameters(_ options: [UInt8]) throws -> (salt: [UInt8], rounds: UInt32) {
+        var o = SSHWireReader(options)
+        let salt = try o.string()
+        let rounds = try o.u32()
+        guard !salt.isEmpty, rounds >= 1 else {
+            throw KeyImportError.malformed("the key derivation's options are not valid")
+        }
+        guard rounds <= maxRounds else { throw KeyImportError.tooManyRounds(rounds) }
+        return (salt, rounds)
     }
 
     /// The private section: two equal check words, the key, its comment,
@@ -287,7 +324,8 @@ public struct OpenSSHKeyFile: Sendable {
         switch type {
         case .ed25519:
             let pub = try r.string()
-            let priv = try r.string()
+            var priv = try r.string()
+            defer { for i in priv.indices { priv[i] = 0 } }
             guard pub.count == 32, priv.count == 64, Array(priv[32...]) == pub else {
                 throw KeyImportError.malformed("the Ed25519 key has wrong lengths")
             }
@@ -297,6 +335,7 @@ public struct OpenSSHKeyFile: Sendable {
             guard type.sshName.hasSuffix(curve) else { throw KeyImportError.malformed("the curve name does not fit the key type") }
             _ = try r.string() // the public point, checked below against the public key
             var d = try r.string()
+            defer { for i in d.indices { d[i] = 0 } }
             while d.first == 0 { d.removeFirst() }
             guard !d.isEmpty, d.count <= type.scalarLength else { throw KeyImportError.malformed("the ECDSA private value has a wrong length") }
             raw = Data(repeating: 0, count: type.scalarLength - d.count) + Data(d)
@@ -360,12 +399,12 @@ struct CipherSpec {
                 mode == .ctr ? CCModeOptions(kCCModeOptionCTR_BE) : 0,
                 &ref
             )
-            guard rc == kCCSuccess, let ref else { throw KeyImportError.malformed("the cipher could not start (\(rc))") }
+            guard rc == kCCSuccess, let ref else { throw KeyImportError.malformed("the cipher could not start") }
             defer { CCCryptorRelease(ref) }
             var out = [UInt8](repeating: 0, count: data.count)
             var moved = 0
             let rc2 = CCCryptorUpdate(ref, data, data.count, &out, out.count, &moved)
-            guard rc2 == kCCSuccess, moved == data.count else { throw KeyImportError.malformed("the cipher failed (\(rc2))") }
+            guard rc2 == kCCSuccess, moved == data.count else { throw KeyImportError.malformed("the cipher failed") }
             return out
         }
     }

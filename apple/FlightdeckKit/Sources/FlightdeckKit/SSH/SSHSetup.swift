@@ -96,7 +96,14 @@ public final class SSHSetup {
     /// Connects with nothing pinned and returns the host key to confirm.
     /// The probe never signs, so any key will do.
     public func probe(_ dest: SSHDestination, keyID: String = DeviceKeys.defaultID) async throws -> NIOSSHPublicKey {
-        guard let key = key(keyID) else { throw TransportError(keyError ?? "no device key") }
+        let key: any SSHKeySource
+        do {
+            key = try self.key(keyID)
+        } catch let e as MissingKey {
+            throw e
+        } catch {
+            throw DeviceKeys.explain(error)
+        }
         return try await NIOSSHTransport.probeHostKey(dest.endpoint, user: dest.user, key: key, timing: timing)
     }
 
@@ -154,10 +161,17 @@ public final class SSHSetup {
     /// the Keychain. Decryption runs off the main actor.
     public func importKey(_ file: OpenSSHKeyFile, passphrase: String?) async throws -> (key: ImportedKey, replaced: Bool) {
         let keys = self.keys
-        let r = try await Task.detached(priority: .userInitiated) {
+        let work = Task.detached(priority: .userInitiated) { () throws -> (key: ImportedKey, replaced: Bool) in
             let m = try file.decrypt(passphrase: passphrase)
+            try Task.checkCancellation()
             return try keys.importKey(m)
-        }.value
+        }
+        // A dismissed sheet cancels its task; pass that on to the derivation.
+        let r = try await withTaskCancellationHandler {
+            try await work.value
+        } onCancel: {
+            work.cancel()
+        }
         // The fingerprint only: the key never goes to a log.
         log.notice("imported key \(r.key.type.rawValue, privacy: .public) \(r.key.fingerprint, privacy: .public)")
         loadImportedKeys()
@@ -184,10 +198,17 @@ public final class SSHSetup {
         entries.filter { $0.keyID == keyID }
     }
 
-    /// Whether the key an entry names exists on this device. False after a
-    /// restore from a backup, which carries no keys.
-    public func hasKey(_ e: SSHHabEntry) -> Bool {
-        (try? keys.key(e.keyID)) != nil
+    /// Whether the key an entry names is usable: missing after a restore from
+    /// a backup (which carries no keys), unavailable while the device is locked.
+    public func keyState(_ e: SSHHabEntry) -> KeyState {
+        do {
+            _ = try key(e.keyID)
+            return .present
+        } catch is MissingKey {
+            return .missing
+        } catch {
+            return .unavailable(DeviceKeys.explain(error).description)
+        }
     }
 
     /// Points an entry at another key and reconnects it.
@@ -200,10 +221,15 @@ public final class SSHSetup {
         reconnect { $0.id == e.id }
     }
 
-    /// The key with this id: the generated one or an imported one.
-    public func key(_ id: String) -> (any SSHKeySource)? {
-        if id == DeviceKeys.defaultID { return loadKey() }
-        return try? keys.key(id)
+    /// The key with this id: the generated one or an imported one. Throws
+    /// `MissingKey` when there is none, and the store's error otherwise.
+    public func key(_ id: String) throws -> any SSHKeySource {
+        if id == DeviceKeys.defaultID {
+            if let k = loadKey() { return k }
+            throw TransportError(keyError ?? "no device key")
+        }
+        guard let k = try keys.key(id) else { throw MissingKey() }
+        return k
     }
 
     /// Takes a key file opened from another app, for the import sheet. A
@@ -212,10 +238,13 @@ public final class SSHSetup {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         do {
-            let data = try Data(contentsOf: url)
+            // At most 64 KiB: "Open in" may hand over any file, a video too.
+            let data = try OpenSSHKeyFile.read(contentsOf: url)
             pendingKeyFile = PendingKeyFile(name: url.lastPathComponent, data: data)
+        } catch let e as KeyImportError {
+            pendingKeyFile = PendingKeyFile(name: url.lastPathComponent, error: e.description)
         } catch {
-            pendingKeyFile = PendingKeyFile(name: url.lastPathComponent, data: Data())
+            pendingKeyFile = PendingKeyFile(name: url.lastPathComponent, error: "Could not read the file: \(error.localizedDescription)")
         }
         #if os(iOS)
         // "Open in" copies the file into this app's own Inbox; drop that copy.
@@ -274,6 +303,34 @@ public struct PendingKeyFile: Identifiable, Sendable {
     public let id = UUID()
     public let name: String
     public let data: Data
+    /// Why the file could not be read; the sheet shows it instead of parsing.
+    public let error: String?
+
+    public init(name: String, data: Data) {
+        self.name = name
+        self.data = data
+        self.error = nil
+    }
+
+    public init(name: String, error: String) {
+        self.name = name
+        self.data = Data()
+        self.error = error
+    }
+}
+
+/// Whether the key a hab entry names can be used now.
+public enum KeyState: Equatable, Sendable {
+    case present
+    /// No such key on this device: deleted, or not carried by a backup.
+    case missing
+    /// The key exists but cannot be read now, with the reason (a locked device).
+    case unavailable(String)
+}
+
+/// No key with the id an entry names.
+public struct MissingKey: Error, CustomStringConvertible {
+    public var description: String { "no key: pair again or choose a key" }
 }
 
 /// A transport that always fails with one message: an entry whose key is gone.

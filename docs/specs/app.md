@@ -1390,6 +1390,11 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH/KeyImport` and `Views/Key
   ECDSA P-256, P-384 or P-521. The key type and public key come from the unencrypted part, so
   RSA, `sk-` keys, other types and unknown ciphers are refused before the passphrase prompt. It
   takes the first private key block in the text and ignores the rest; CRLF line ends are fine.
+- **Limits.** Input over 64 KiB is refused ("This file is too large to be a key"); a file is
+  read through `OpenSSHKeyFile.read`, which stops past that size, so "Open in" on a video
+  never loads it. More than 1024 bcrypt rounds is refused when the file is read, with the
+  `ssh-keygen -p -a 100` command (ssh-keygen writes 16; 100 and 256 are common). The
+  derivation checks for cancellation between rounds, and closing the import sheet cancels it.
 - **Ciphers.** `none`, and with the `bcrypt` key derivation: `aes128/192/256-ctr` (the
   `ssh-keygen` default is `aes256-ctr`), `aes128/192/256-cbc` and `aes128/256-gcm@openssh.com`.
   CTR and CBC use CommonCrypto, GCM uses CryptoKit. `chacha20-poly1305@openssh.com` and 3DES are
@@ -1413,8 +1418,10 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH/KeyImport` and `Views/Key
   Face ID flag and date go to the same Keychain service as the generated key, account
   `imported-` plus the first 12 bytes of the public key's SHA-256 in hex. The same key imported
   twice lands on the same item, and the app says it kept one. The passphrase and the file never
-  reach the store or a log; the log gets the type and fingerprint. The passphrase buffer and the
-  derived key are zeroed after use; Swift strings cannot be, so the import sheet drops them.
+  reach the store or a log; the log gets the type and fingerprint. The passphrase buffer, the
+  derived key, the decrypted section and the copies of the seed or scalar are zeroed after use.
+  Swift cannot promise more: strings are not zeroed, and an unencrypted file's bytes stay in
+  memory while the import sheet holds the file. The sheet drops them when it closes.
 - **Storage class.** Every write sets `WhenUnlockedThisDeviceOnly` and not synchronisable. A test
   checks the query and, on the real Keychain, the stored item. On the Mac the login keychain
   keeps no accessibility class (10.6), so there the test checks only the sync flag.
@@ -1425,11 +1432,16 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH/KeyImport` and `Views/Key
 - **Choosing a key.** Each hab entry names its key (`keyID`). "Add a hab by address" shows a key
   picker once an imported key exists; the generated key is preselected. Each row in Habs over
   SSH has a key menu. An entry whose key is gone (deleted, or a restore from a backup) says "No
-  key: choose one" and its connection fails with "no key: pair again or choose a key".
+  key: choose one" and its connection fails with "no key: pair again or choose a key". A key
+  that exists but cannot be read (a locked device) shows the reason instead, so the user is not
+  led to repoint the entry. Keychain errors keep their status code for this. A stored item
+  that does not decode is skipped and logged; the other keys still list.
 - **Import.** Settings › SSH › Imported keys › Import a key: paste into the field, Paste from the
   clipboard, or Choose a file. iOS also opens key files from the share sheet and Files: the app
   declares `public.data` and `public.text` as a viewer with rank Alternate (OpenSSH key files
-  have no extension), and removes the copy iOS puts in its Inbox once read. The sheet shows the
+  have no extension), and removes the copy iOS puts in its Inbox once read. A file that
+  cannot be read opens the sheet with the read error. A pairing link and a key file that
+  arrive together share one sheet and show in turn, the pairing link first. The sheet shows the
   type and fingerprint, asks for the passphrase when needed (a wrong one clears the field; no
   limit on tries), then shows the public line with Copy and Share. The trade-off line sits under
   the paste field.

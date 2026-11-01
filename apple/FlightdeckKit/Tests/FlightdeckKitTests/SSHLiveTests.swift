@@ -122,6 +122,9 @@ final class SSHLiveTests: XCTestCase {
     }
 
     private func appendLine(_ line: String, to path: String) throws {
+        if !FileManager.default.fileExists(atPath: path) {
+            FileManager.default.createFile(atPath: path, contents: nil, attributes: [.posixPermissions: 0o600])
+        }
         let h = try FileHandle(forWritingTo: URL(fileURLWithPath: path))
         defer { try? h.close() }
         try h.seekToEnd()

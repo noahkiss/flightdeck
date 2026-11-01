@@ -125,6 +125,8 @@ enum BcryptPBKDF {
             var out = tmp
             if rounds > 1 {
                 for _ in 1..<rounds {
+                    // A dismissed import sheet stops the work between rounds.
+                    if Task.isCancelled { throw CancellationError() }
                     tmp = hash(pass: passHash, salt: Array(SHA512.hash(data: tmp)))
                     for k in 0..<out.count { out[k] ^= tmp[k] }
                 }

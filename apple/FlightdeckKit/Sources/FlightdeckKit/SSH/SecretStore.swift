@@ -104,9 +104,11 @@ public struct KeychainStore: SecretStore {
         guard rc == errSecSuccess || rc == errSecItemNotFound else { throw Self.error("delete", rc) }
     }
 
-    static func error(_ op: String, _ rc: OSStatus) -> TransportError {
+    /// An error that keeps its OSStatus, so `DeviceKeys.explain` can name a
+    /// locked device.
+    static func error(_ op: String, _ rc: OSStatus) -> NSError {
         let msg = SecCopyErrorMessageString(rc, nil) as String? ?? "OSStatus \(rc)"
-        return TransportError("keychain \(op): \(msg)")
+        return NSError(domain: NSOSStatusErrorDomain, code: Int(rc), userInfo: [NSLocalizedDescriptionKey: "keychain \(op): \(msg)"])
     }
 }
 

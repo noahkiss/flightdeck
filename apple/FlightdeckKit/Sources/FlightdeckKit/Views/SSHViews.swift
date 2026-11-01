@@ -440,31 +440,58 @@ struct SSHSheets: ViewModifier {
         }
     }
 
+    /// What the one sheet shows. A pairing link and a key file can arrive
+    /// together; one sheet shows them in turn, the pairing link first.
+    enum Item: Identifiable {
+        case pairing
+        case keyFile(PendingKeyFile)
+        var id: String {
+            switch self {
+            case .pairing: return "pairing"
+            case .keyFile(let p): return "key-" + p.id.uuidString
+            }
+        }
+    }
+
+    /// The sheet's item: the pairing link while one waits, else the key file.
+    @MainActor
+    static func item(_ setup: SSHSetup) -> Item? {
+        if setup.pendingCode != nil || setup.pendingCodeError != nil { return .pairing }
+        return setup.pendingKeyFile.map { .keyFile($0) }
+    }
+
     private struct Present: ViewModifier {
         @Bindable var setup: SSHSetup
 
         func body(content: Content) -> some View {
-            content
-            .sheet(item: $setup.pendingKeyFile) { p in
-                NavigationStack {
-                    KeyImportView(setup: setup, pending: p) { setup.pendingKeyFile = nil }
+            content.sheet(item: Binding(
+                get: { SSHSheets.item(setup) },
+                set: { new in
+                    guard new == nil else { return }
+                    // Clear only what was showing; the other one follows.
+                    switch SSHSheets.item(setup) {
+                    case .pairing: setup.pendingCode = nil; setup.pendingCodeError = nil
+                    case .keyFile: setup.pendingKeyFile = nil
+                    case nil: break
+                    }
                 }
-            }
-            .sheet(isPresented: Binding(
-                get: { setup.pendingCode != nil || setup.pendingCodeError != nil },
-                set: { if !$0 { setup.pendingCode = nil; setup.pendingCodeError = nil } }
-            )) {
+            )) { item in
                 NavigationStack {
-                    if let o = setup.pendingCode {
-                        PairingView(setup: setup, offer: o) { setup.pendingCode = nil }
-                    } else {
-                        Form { Text(setup.pendingCodeError ?? "") }
-                            .navigationTitle("Pair with a code")
-                            .toolbar {
-                                ToolbarItem(placement: .cancellationAction) {
-                                    Button("Close") { setup.pendingCodeError = nil }
+                    switch item {
+                    case .keyFile(let p):
+                        KeyImportView(setup: setup, pending: p) { setup.pendingKeyFile = nil }
+                    case .pairing:
+                        if let o = setup.pendingCode {
+                            PairingView(setup: setup, offer: o) { setup.pendingCode = nil }
+                        } else {
+                            Form { Text(setup.pendingCodeError ?? "") }
+                                .navigationTitle("Pair with a code")
+                                .toolbar {
+                                    ToolbarItem(placement: .cancellationAction) {
+                                        Button("Close") { setup.pendingCodeError = nil }
+                                    }
                                 }
-                            }
+                        }
                     }
                 }
             }
