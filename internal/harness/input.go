@@ -149,7 +149,9 @@ func (s *Store) EndAnswer(paneID, request string, sent bool) {
 
 // Shown reports whether the pane's display still shows request as its permission dialog, as a
 // hook or server reported it, with no OSC 7501 report since that says otherwise. Only then may
-// keys answer it: a key typed after the dialog closed lands in the prompt.
+// keys answer it: a key typed after the dialog closed lands in the prompt. A request that
+// replaced another still open and unanswered is never shown: the harness may still show the
+// first dialog (parallel tool calls), and a key would answer that one.
 func (s *Store) Shown(paneID, request string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -159,7 +161,7 @@ func (s *Store) Shown(paneID, request string) bool {
 	}
 	st := p.st
 	return st.State == api.AgentStatusBlocked && st.Kind == api.BlockedKindPermission && gateSource(st.Source) &&
-		st.Request != nil && st.Request.ID == request && p.open == request
+		st.Request != nil && st.Request.ID == request && p.open == request && !p.stacked
 }
 
 // Outcome is what became of a permission request after an answer was sent (Store.Outcome).

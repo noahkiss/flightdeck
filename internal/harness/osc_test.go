@@ -514,6 +514,18 @@ func TestHooksMissing(t *testing.T) {
 	if st, _ := s.Get("p"); st.Hooks != "" {
 		t.Fatalf("marked although a hook arrived: %+v", st)
 	}
+	// A turn that passes precedence after a hook arrived: the owner's interrupt key resets the
+	// turn, so the next OSC turn is not dropped. The hook that arrived still counts.
+	s3 := newTestStore(&events)
+	s3.Hook("r", Envelope{Harness: "claude", Event: "UserPromptSubmit", T: 1000, Payload: []byte(`{"session_id":"c1"}`)})
+	if !s3.Interrupt("r", []byte("\x1b")) {
+		t.Fatal("the interrupt key changed nothing")
+	}
+	s3.Report("r", progstatus.Report{State: "working", App: "claude"}, 2000, true)
+	s3.Report("r", progstatus.Report{State: "done", App: "claude"}, 3000, true)
+	if st, _ := s3.Get("r"); st.State != api.AgentStatusDone || st.Hooks != "" {
+		t.Fatalf("an OSC turn after a hook marked the pane: %+v", st)
+	}
 	// Replayed reports (screen) never mark a pane.
 	s2 := newTestStore(&events)
 	s2.Report("q", progstatus.Report{State: "working", App: "codex"}, 1, false)
@@ -533,5 +545,90 @@ func TestHooksStartupNotMissing(t *testing.T) {
 	}
 	if st, _ := s.Get("p"); st.Hooks != "" {
 		t.Fatalf("startup marked hooks missing: %+v", st)
+	}
+}
+
+// TestHarnessAfterHookedSession: a hooked session ends in a shell pane (its end hook, or the
+// pane's program exits), then another harness starts there and reports over OSC 7501 alone, as
+// an untrusted Codex does. Its reports must show, and its hookless turn must mark the hooks
+// missing: the ended session's hook turn and hooks say nothing about it.
+func TestHarnessAfterHookedSession(t *testing.T) {
+	for _, end := range []string{"SessionEnd", "exit"} {
+		for _, next := range []string{"codex", "claude"} {
+			t.Run(end+"-"+next, func(t *testing.T) {
+				var events []structure.Event
+				s := newTestStore(&events)
+				hook := func(ev string, t0 int64) {
+					s.Hook("p", Envelope{Harness: "claude", Event: ev, T: t0, Payload: []byte(`{"session_id":"c1"}`)})
+				}
+				hook("SessionStart", 1000)
+				hook("UserPromptSubmit", 1100)
+				hook("Stop", 1200)
+				if end == "SessionEnd" {
+					hook("SessionEnd", 1300)
+				} else {
+					s.Exited("p")
+				}
+				for i, st := range []string{"idle", "working", "done"} {
+					s.Report("p", progstatus.Report{State: st, App: next}, int64(2000+1000*i), true)
+				}
+				st, _ := s.Get("p")
+				if st.Harness != next || st.State != api.AgentStatusDone || st.Source != api.StateSourceOsc {
+					t.Fatalf("the new program's reports did not show: %+v", st)
+				}
+				if st.Hooks != api.HookHealthMissing {
+					t.Fatalf("a hookless turn after the hooked session did not mark the hooks: %+v", st)
+				}
+			})
+		}
+	}
+}
+
+// TestStackedRequest: a second permission request opens while the first is still open and
+// unanswered (Codex may ask for parallel tool calls). The harness may still show the first
+// dialog, so keys never answer the second; a waiting hook still may (CheckAnswer). A request
+// that opens after the first was answered, or with none open, is shown.
+func TestStackedRequest(t *testing.T) {
+	var events []structure.Event
+	s := newTestStore(&events)
+	hook := func(ev, payload string) string {
+		_, opened := s.Hook("p", Envelope{Harness: "codex", Event: ev, T: int64(1000 + len(events)), Payload: []byte(payload)})
+		return opened
+	}
+	ask := func(cmd string) string {
+		return hook("PermissionRequest", `{"session_id":"x","turn_id":"t1","tool_name":"Bash","tool_input":{"command":"`+cmd+`"}}`)
+	}
+	hook("SessionStart", `{"session_id":"x"}`)
+	hook("UserPromptSubmit", `{"session_id":"x","turn_id":"t1"}`)
+	a := ask("make a")
+	if a == "" || !s.Shown("p", a) {
+		t.Fatalf("the first request %q is not shown", a)
+	}
+	b := ask("make b")
+	if b == "" || b == a {
+		t.Fatalf("second request id %q, first %q", b, a)
+	}
+	if s.Shown("p", b) {
+		t.Fatal("keys may answer a request that replaced an unanswered one")
+	}
+	if _, err := s.CheckAnswer("p", b); err != nil {
+		t.Fatalf("a waiting hook can no longer answer the second request: %v", err)
+	}
+	// Answer the open request, then a third comes: the harness moved on to it.
+	if _, err := s.BeginAnswer("p", b); err != nil {
+		t.Fatal(err)
+	}
+	s.Sent("p", b)
+	s.EndAnswer("p", b, true)
+	c := ask("make c")
+	if !s.Shown("p", c) {
+		t.Fatal("a request after an answered one is not shown")
+	}
+	// A new turn: a request with none open is shown.
+	hook("Stop", `{"session_id":"x","turn_id":"t1"}`)
+	hook("UserPromptSubmit", `{"session_id":"x","turn_id":"t2"}`)
+	d := hook("PermissionRequest", `{"session_id":"x","turn_id":"t2","tool_name":"Bash","tool_input":{"command":"make d"}}`)
+	if !s.Shown("p", d) {
+		t.Fatal("a request in a new turn is not shown")
 	}
 }

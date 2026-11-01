@@ -78,9 +78,14 @@ type pane struct {
 	// at its prompt. Any accepted report or hook clears it.
 	ownerStop bool
 
-	// hooked is the harness whose hook last reached gff-hab for this pane, in this gff-hab run.
-	// A turn its OSC 7501 reports show finishing with no such hook marks the hooks missing.
+	// hooked is the harness whose hook last reached gff-hab for this pane, in this gff-hab run,
+	// since its session last ended. A turn its OSC 7501 reports show finishing with no such hook
+	// marks the hooks missing.
 	hooked string
+	// stacked is set when the open request replaced another that was still open and
+	// unanswered. The harness may still show the first one's dialog, so keys never answer the
+	// open request (Shown); a waiting hook, keyed by request id, still may.
+	stacked bool
 }
 
 // gateSource reports whether src may open or close a permission request: a hook or a server,
@@ -287,10 +292,12 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 			if u.Kind == api.BlockedKindPermission {
 				next.Request = u.Request
 			}
+			prev := p.open
 			if gateSource(src) {
 				p.resolve(p.open, src, u.State) // a new prompt replaces the open one
 			}
 			if next.Request != nil {
+				p.stacked = prev != "" && p.took != prev
 				if next.Request.ID == "" {
 					r := *next.Request
 					s.reqN++
@@ -306,7 +313,9 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 		next.State = u.State
 	}
 	if u.Unbind {
-		p.bound = false
+		// The session ended: its turn and its hooks say nothing about the next program in the
+		// pane, which may report over OSC 7501 alone (an untrusted Codex).
+		p.bound, p.turnSource, p.hooked = false, "", ""
 	}
 
 	if same(p.st, next) {
@@ -481,7 +490,7 @@ func (s *Store) Exited(paneID string) {
 // exitLocked marks the pane's harness gone. The caller holds s.mu.
 func (s *Store) exitLocked(p *pane) {
 	p.resolve(p.open, "", api.AgentStatusExited)
-	p.bound = false
+	p.bound, p.turnSource, p.hooked = false, "", ""
 	p.oscLast, p.answering, p.answered, p.took, p.ownerStop = "", "", "", "", false
 	if p.st.State == api.AgentStatusNone || p.st.State == api.AgentStatusExited {
 		return // an OSC clear may have shown the exit already

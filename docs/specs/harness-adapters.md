@@ -375,6 +375,10 @@ When sources disagree inside one turn, the stronger one wins:
   the shell. The binding stays, and the session's next hook takes the pane back. A state a hook
   set stays, and so does a request nobody answered. Claude Code 2.1.316 writes no OSC 133
   marks of its own, so the mark comes from the shell around it.
+- Built reset, for a session's end: `SessionEnd`, or the exit of the pane's program, resets
+  precedence. The next program in the pane may report over OSC 7501 alone (an untrusted Codex
+  after a Claude session); without the reset, the ended session's hook turn would drop every
+  report it sends.
 
 ### Ordering
 
@@ -575,8 +579,10 @@ Built choices (`cmd/gff-hab/actions.go`, `internal/harness`, `internal/hook`):
   (`gff-hab hook -print <harness>`), and for Codex, trust it with `/hooks`. Any hook clears the
   field. `idle` does not count as a turn end, because Codex reports `idle` at start, before its
   first hook. The field is for display and health only: it never gates `session.send` or an
-  answer. A gff-hab restart forgets which hooks arrived, so the field can show again after a
-  restart until the next hook.
+  answer. Which hooks arrived counts from the session's start: `SessionEnd` or the exit of the
+  pane's program forgets them, so a hookless program started next in the pane is marked. A
+  gff-hab restart forgets them too, so the field can show again after a restart until the next
+  hook.
 - **Input.** `session.send` writes the same bytes as for Claude Code: bracketed paste, then CR
   as its own write, under the same send rules (see [Input delivery](#input-delivery)).
 - **Permission keys.** Codex's dialog lists "1. Yes, proceed" first: `1` allows. Esc chooses
@@ -586,6 +592,11 @@ Built choices (`cmd/gff-hab/actions.go`, `internal/harness`, `internal/hook`):
   with a 130 second timeout. Codex's hook output has Claude's shape, so the wait, the switch
   and the output are the ones in [Open decisions](#open-decisions), Claude: blocking
   `PermissionRequest` hook. One switch covers both harnesses; it is off by default.
+  Known limit: the output shape comes from the Codex hooks documentation. Nobody has run it
+  live with the switch on, nor checked that Codex accepts a 130 second hook timeout. If Codex
+  reads the output differently, the hook takes the app's answer, Codex shows its own dialog
+  anyway, and the call fails after the 3 second read-back. Check it live before the switch
+  goes on for Codex.
 
 Built choices for the rollout reader (`internal/transcript/codex.go`, `cmd/gff-hab/chat.go`):
 
@@ -735,6 +746,19 @@ Built choices (`approval.answer`, Claude Code and Codex):
   the answer is `conflict`, so keys never land in a shell. A waiting hook still takes it.
   When a blocking hook for the request gave up with no decision less than 1 second ago, the
   keys wait out that second, so they do not land in the prompt before the dialog is drawn.
+- **Stacked requests.** A request that opened while another was still open and unanswered
+  takes no keys: the answer is `conflict`, with a hint to answer in the terminal. Codex may ask
+  for parallel tool calls one after the other, and the store keeps only the newest request,
+  while the harness may still show the first dialog; `1` would allow that one. A waiting hook
+  still takes the answer, since it is keyed by request id. A request that opens after the
+  previous one was answered, or with none open, takes keys as usual. Known limit: a hook past
+  the first request (its `PostToolUse`) closes the open one, so the pane can show `working`
+  while the second dialog waits. Nobody has seen two Codex requests at once live yet.
+- **Known limit: an answer in the terminal.** When the owner answers the dialog in the
+  terminal, the request stays open until the next hook (`PostToolUse` once the tool ends), and
+  the app still offers allow and deny. Esc then interrupts the running tool, and `1` lands in
+  the prompt. The harness reports `working` over OSC 7501 once the dialog closes; refusing keys
+  after such a report is the planned fix. This applies to Claude Code and Codex alike.
 - Either way the call then reads back for up to 3 seconds and succeeds only on a real
   resolution: a hook or server closes the request (`PostToolUse`, a new prompt, the turn's end),
   Claude reports `working` over OSC 7501 (the tool runs), or, for a deny, an OSC `idle` after
@@ -778,7 +802,7 @@ Built: the Codex rollout fixtures are `internal/transcript/testdata/codex-0.166.
 `internal/harness/testdata/<harness>-*.json`: `codex-turn.json` covers a turn, a late duplicate
 request, a nested agent, an interrupt and the end; `codex-permission-no-id.json` covers
 `PermissionRequest` with no `tool_use_id`, as Codex sends it. In a hook fixture, a request id of
-`*` stands for one gff-hab made.
+`*1`, `*2` and so on stands for each distinct one gff-hab made, in order of appearance.
 
 ## Open decisions
 
@@ -847,7 +871,8 @@ Built (option B, off until the owner turns it on):
   at once and sends the body later: `{"behavior":"allow"}`, `{"behavior":"deny","message":...}`
   or `{}` when the wait ends with no decision. The answer's header must come within the hook's
   900 ms budget, so a hung gff-hab still costs a turn no more than that.
-- **Output.** With a decision, the command prints Claude's hook output,
+- **Output.** With a decision, the command prints the harness's hook output (Claude Code and
+  Codex share one shape),
   `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{...}}}`. With none it
   prints nothing, and Claude shows its own dialog. The command never prints for any other event.
 - **Answer.** `approval.answer` hands the decision to the waiting hook when one waits on that

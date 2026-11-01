@@ -206,8 +206,9 @@ func (a *agentService) Answer(ctx context.Context, client string, p api.Approval
 		}
 		if !a.agents.Shown(p.Pane, p.Request) {
 			// The request is open by its hooks, but the terminal says the harness is gone (an
-			// OSC clear, perhaps forged): keys would land in a shell.
-			return control.Errorf(api.ErrorKindConflict, "pane %s no longer shows request %s, though no hook closed it; answer it in the terminal", p.Pane, p.Request)
+			// OSC clear, perhaps forged): keys would land in a shell. Or it replaced a request
+			// nobody answered, whose dialog may still be on screen: keys would answer that one.
+			return control.Errorf(api.ErrorKindConflict, "pane %s may not show request %s on screen (the terminal said otherwise, or it came while another request was open); answer it in the terminal", p.Pane, p.Request)
 		}
 		keys, err := harness.PermissionKeys(st.Harness, allow)
 		if err != nil {

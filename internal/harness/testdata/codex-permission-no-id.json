@@ -1,5 +1,5 @@
 {
-  "note": "Written by hand. Shapes follow the Codex hooks documentation for version 0.166, and a live 0.166 run: PermissionRequest carries no tool_use_id, so gff-hab names each request itself (an id of \"*\" stands for one gff-hab made). Two requests in two turns; PostToolUse leaves blocked, and Stop ends each turn.",
+  "note": "Written by hand. Shapes follow the Codex hooks documentation for version 0.166, and a live 0.166 run: PermissionRequest carries no tool_use_id, so gff-hab names each request itself (an id of \"*1\", \"*2\" stands for each distinct one gff-hab made). Two requests in two turns; PostToolUse leaves blocked, and Stop ends each turn.",
   "harness_version": "0.166",
   "events": [
     {"harness": "codex", "event": "SessionStart", "t": 7000, "n": 1, "payload": {"session_id": "019a-codex-2", "transcript_path": "/home/user/.codex/sessions/2026/10/31/rollout-2026-10-31T11-00-00-019a-codex-2.jsonl", "cwd": "/work/app", "hook_event_name": "SessionStart", "model": "gpt-5", "source": "startup"}},
@@ -15,11 +15,11 @@
   "expect": [
     {"harness": "codex", "session": "019a-codex-2", "state": "idle"},
     {"harness": "codex", "session": "019a-codex-2", "state": "working", "turn": "turn-1"},
-    {"harness": "codex", "session": "019a-codex-2", "state": "blocked", "kind": "permission", "turn": "turn-1", "request": {"id": "*", "tool": "Bash", "command": "touch stamp.txt", "cwd": "/work/app"}},
+    {"harness": "codex", "session": "019a-codex-2", "state": "blocked", "kind": "permission", "turn": "turn-1", "request": {"id": "*1", "tool": "Bash", "command": "touch stamp.txt", "cwd": "/work/app"}},
     {"harness": "codex", "session": "019a-codex-2", "state": "working", "turn": "turn-1"},
     {"harness": "codex", "session": "019a-codex-2", "state": "done", "turn": "turn-1"},
     {"harness": "codex", "session": "019a-codex-2", "state": "working", "turn": "turn-2"},
-    {"harness": "codex", "session": "019a-codex-2", "state": "blocked", "kind": "permission", "turn": "turn-2", "request": {"id": "*", "tool": "Bash", "command": "rm stamp.txt", "cwd": "/work/app"}},
+    {"harness": "codex", "session": "019a-codex-2", "state": "blocked", "kind": "permission", "turn": "turn-2", "request": {"id": "*2", "tool": "Bash", "command": "rm stamp.txt", "cwd": "/work/app"}},
     {"harness": "codex", "session": "019a-codex-2", "state": "done", "turn": "turn-2"}
   ]
 }

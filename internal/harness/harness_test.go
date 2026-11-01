@@ -2,6 +2,7 @@ package harness
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -62,7 +63,7 @@ func newTestStore(events *[]structure.Event) *Store {
 }
 
 // TestFixtures feeds each hand-written hook sequence to one pane and asserts the exact
-// agent.state stream (testing.md #11). A request id of "*" stands for one gff-hab made.
+// agent.state stream (testing.md #11). A request id of "*1", "*2" and so on stands for one gff-hab made, numbered in order of appearance.
 func TestFixtures(t *testing.T) {
 	files, _ := filepath.Glob("testdata/*.json")
 	if len(files) == 0 {
@@ -87,6 +88,7 @@ func TestFixtures(t *testing.T) {
 				s.Hook("pane-1", env)
 			}
 			var got []expected
+			made := map[string]string{} // ids gff-hab made, as *1, *2, ... in order of appearance
 			for i, e := range events {
 				st := e.Data.(api.AgentState)
 				if e.Type != EventAgentState || e.ID != "pane-1" || e.Revision != uint64(i+1) || st.Revision != e.Revision || st.Source != api.StateSourceHook || st.At == "" {
@@ -94,7 +96,12 @@ func TestFixtures(t *testing.T) {
 				}
 				g := project(st)
 				if g.Request != nil && strings.HasPrefix(g.Request.ID, s.reqPrefix+"-") {
-					g.Request.ID = "*" // an id gff-hab made: the payload carried none
+					// An id gff-hab made: the payload carried none. Each distinct one gets its
+					// own name, so two requests that share an id fail the fixture.
+					if made[g.Request.ID] == "" {
+						made[g.Request.ID] = fmt.Sprintf("*%d", len(made)+1)
+					}
+					g.Request.ID = made[g.Request.ID]
 				}
 				got = append(got, g)
 			}
