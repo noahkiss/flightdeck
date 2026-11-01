@@ -209,7 +209,7 @@ public actor PaneStream {
                     if !data.isEmpty {
                         await apply(.bytes(offset: start, data: data))
                     }
-                    offset = start + UInt64(data.count)
+                    offset = max(offset ?? 0, start + UInt64(data.count))
                 case .resize:
                     await apply(.resize(try f.decode(ResizeFrame.self)))
                 case .exited:

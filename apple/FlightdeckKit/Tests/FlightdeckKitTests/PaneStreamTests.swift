@@ -187,6 +187,14 @@ final class PaneStreamTests: XCTestCase {
         await eventually("snapshot") { await got.snapshots == 1 }
         await hab.terminals.write("%1", Data(repeating: 0x41, count: 100 << 10))
         await eventually("credit") { await hab.terminals.creditReturned >= 96 << 10 }
+        // The fake holds output past the 256 KiB window until credit returns,
+        // as the hab does: 1 MiB more arrives whole, and the window was hit.
+        // One write queues every frame at once, so the window is reached.
+        await hab.terminals.write("%1", Data(repeating: 0x42, count: 1 << 20))
+        let want = (100 << 10) + (1 << 20)
+        await eventually("all output", timeout: 10) { await got.screen.count == want }
+        let waits = await hab.terminals.creditWaits
+        XCTAssertGreaterThan(waits, 0, "the window was reached at least once")
         await stream.close()
     }
 
@@ -223,6 +231,48 @@ final class PaneStreamTests: XCTestCase {
         XCTAssertEqual(keep("\u{1B}"), "\u{1B}")
         XCTAssertEqual(keep("ls\r"), "ls\r")
         XCTAssertEqual(keep("\u{1B}[1;5D"), "\u{1B}[1;5D")
+
+        // Replies to queries the hab left in the stream.
+        let e = "\u{1B}"
+        for reply in ["\(e)[?62;22c", "\(e)[>1;10;0c", "\(e)[?2004;1$y", "\(e)[4;2$y", "\(e)[?5u", "\(e)[0n",
+                      "\(e)[8;24;80t", "\(e)[?12;40R", "\(e)]11;rgb:1e1e/1e1e/1e1e\(e)\\", "\(e)]4;1;rgb:cd/00/00\u{07}",
+                      "\(e)P1$r0m\(e)\\", "\(e)P>|ghostty 1.2\(e)\\", "\(e)P1+r544e\(e)\\"] {
+            XCTAssertEqual(keep(reply), "", reply.debugDescription)
+            XCTAssertEqual(keep(reply, owner: true), "", reply.debugDescription)
+        }
+        // A cursor position report and a modified F3 look alike: only the owner's passes.
+        XCTAssertEqual(keep("\(e)[12;40R"), "")
+        XCTAssertEqual(keep("\(e)[1;2R", owner: true), "\(e)[1;2R")
+        // Alt+Shift+P passes.
+        XCTAssertEqual(keep("\(e)P"), "\(e)P")
+        XCTAssertEqual(keep("\(e)Pq"), "\(e)Pq")
+
+        // Mouse: clicks pass; motion and the wheel only for the owner.
+        XCTAssertEqual(keep("\(e)[<0;10;5M"), "\(e)[<0;10;5M")
+        XCTAssertEqual(keep("\(e)[<0;10;5m"), "\(e)[<0;10;5m")
+        XCTAssertEqual(keep("\(e)[<35;10;5M"), "")
+        XCTAssertEqual(keep("\(e)[<64;10;5M"), "")
+        XCTAssertEqual(keep("\(e)[<65;10;5M", owner: true), "\(e)[<65;10;5M")
+        XCTAssertEqual(keep("\(e)[M\u{43}!!"), "") // legacy motion: 32 + 35
+        XCTAssertEqual(keep("\(e)[M\u{20}!!"), "\(e)[M\u{20}!!") // legacy press
+    }
+
+    /// A large paste goes out in calls of at most 1 MiB, in order.
+    func testLargePasteIsSplit() async throws {
+        let hab = FakeHab(hostID: "box")
+        await hab.terminals.add("%1")
+        let conn = HabConnection(id: "h", transport: hab.transport(), timing: fastTiming(), clientLabel: "test")
+        await conn.start()
+        await eventually("online") { await conn.state.status == .online }
+        let pump = PaneInputPump(pane: "%1", connection: conn)
+        var want = Data()
+        for i in 0..<5 { want.append(Data(repeating: UInt8(0x41 + i), count: 500_000)) }
+        pump.enqueue(want)
+        await eventually("all", timeout: 10) { await hab.terminals.inputs.reduce(0) { $0 + $1.data.count } == want.count }
+        let inputs = await hab.terminals.inputs
+        XCTAssertEqual(inputs.reduce(into: Data()) { $0.append($1.data) }, want)
+        XCTAssertTrue(inputs.allSatisfy { $0.data.count <= 1 << 20 })
+        XCTAssertEqual(inputs.count, 3)
     }
 
     func testFrameBufferSplitsAnywhere() throws {

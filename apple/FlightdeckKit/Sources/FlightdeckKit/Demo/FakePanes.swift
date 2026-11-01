@@ -43,6 +43,35 @@ public actor FakePanes {
             }
         }
         func queue(_ d: Data) { out.yield(d) }
+
+        /// Credit as the real hab keeps it (hab-logic-api.md 5.7, 5.8): 256 KiB
+        /// to start, at most 4 MiB. Output past it waits for the client's credit.
+        var credit = 256 << 10
+        var backlog: [(frame: Data, cost: Int)] = []
+        /// How many times output had to wait for credit.
+        var waits = 0
+
+        func send(_ f: DataFrame) {
+            let cost = FakePanes.cost(f)
+            let d = f.encoded()
+            // A snapshot cannot be split: it may take the credit below zero once.
+            if backlog.isEmpty, cost <= credit || (f.kind == FrameKind.snapshot.rawValue && credit > 0) || cost == 0 {
+                credit -= cost
+                queue(d)
+            } else {
+                if backlog.isEmpty { waits += 1 }
+                backlog.append((d, cost))
+            }
+        }
+
+        func returned(_ n: Int) {
+            credit = min(credit + n, 4 << 20)
+            while let first = backlog.first, first.cost <= credit || first.cost == 0 {
+                credit -= first.cost
+                queue(first.frame)
+                backlog.removeFirst()
+            }
+        }
         func finish() { out.finish() }
     }
 
@@ -63,6 +92,8 @@ public actor FakePanes {
     public private(set) var resizes: [(pane: String, cols: Int, rows: Int)] = []
     /// Credit frames received, in bytes.
     public private(set) var creditReturned: UInt64 = 0
+    /// How many times a stream's output had to wait for credit.
+    public private(set) var creditWaits = 0
     public private(set) var redraws: [RedrawMode] = []
     /// Data hellos received, with their offsets.
     public private(set) var hellos: [UInt64?] = []
@@ -125,7 +156,7 @@ public actor FakePanes {
     public func exit(_ id: String, code: Int) async {
         panes[id]?.exited = ExitedFrame(code: code)
         for c in conns.values where c.pane == id {
-            c.queue((try? DataFrame.json(.exited, ExitedFrame(code: code)).encoded()) ?? Data())
+            if let f = try? DataFrame.json(.exited, ExitedFrame(code: code)) { c.send(f) }
             c.finish()
             // The writer drains, then the stream closes.
             let s = c.stream
@@ -217,8 +248,8 @@ public actor FakePanes {
         guard let p = panes[pane] else { throw FakeFailure(kind: .notFound, hint: "no pane \(pane)") }
         redraws.append(mode)
         for c in conns.values where c.pane == pane && c.client == client {
-            c.queue(snapshotFrame(p).encoded())
-            c.queue(resizeFrame(p).encoded())
+            c.send(snapshotFrame(p))
+            c.send(resizeFrame(p))
         }
         if mode == .nudge {
             await apply(pane: pane, cols: max(1, p.cols - 1), rows: p.rows)
@@ -293,27 +324,40 @@ public actor FakePanes {
                     // between them, so no output is missed or sent twice.
                     let c = DataConn(stream: stream, pane: t.pane, client: t.client)
                     c.queue((try? DataFrame.json(.welcome, DataWelcome(cols: p.cols, owner: p.owner, rows: p.rows, stream: "s" + FakeHab.randomID())).encoded()) ?? Data())
-                    c.queue(catchUp(p, from: h.offset))
+                    for f in catchUp(p, from: h.offset) { c.send(f) }
                     conns[ObjectIdentifier(c)] = c
                     conn = c
                 } else if f.kind == FrameKind.credit.rawValue, let cr = try? f.decode(CreditFrame.self) {
                     creditReturned += cr.bytes
+                    conn?.returned(Int(cr.bytes))
+                    creditWaits = conns.values.reduce(0) { $0 + $1.waits }
                 }
             }
         }
     }
 
     /// Bytes from `offset` when they are kept, else a snapshot.
-    private func catchUp(_ p: PaneState, from offset: UInt64?) -> Data {
+    private func catchUp(_ p: PaneState, from offset: UInt64?) -> [DataFrame] {
         guard let off = offset, off >= p.kept, off <= p.end else {
-            return snapshotFrame(p).encoded()
+            return [snapshotFrame(p)]
         }
-        var out = Data()
+        var out: [DataFrame] = []
         for ch in p.chunks where ch.offset + UInt64(ch.data.count) > off {
             let cut = off > ch.offset ? Int(off - ch.offset) : 0
-            out.append(DataFrame.bytes(offset: ch.offset + UInt64(cut), ch.data.subdata(in: cut..<ch.data.count)).encoded())
+            out.append(DataFrame.bytes(offset: ch.offset + UInt64(cut), ch.data.subdata(in: cut..<ch.data.count)))
         }
         return out
+    }
+
+    /// What a frame costs in credit: the screen bytes of a snapshot and the
+    /// output of a bytes frame; other frames cost nothing.
+    static func cost(_ f: DataFrame) -> Int {
+        if f.kind == FrameKind.bytes.rawValue { return max(0, f.payload.count - 8) }
+        if f.kind == FrameKind.snapshot.rawValue, f.payload.count > 8 {
+            let n = Int(f.payload[f.payload.startIndex + 8])
+            return max(0, f.payload.count - 9 - n)
+        }
+        return 0
     }
 
     private func snapshotFrame(_ p: PaneState) -> DataFrame {
@@ -326,10 +370,10 @@ public actor FakePanes {
     }
 
     private func send(pane: String, _ f: DataFrame) {
-        let d = f.encoded()
         for c in conns.values where c.pane == pane {
-            c.queue(d)
+            c.send(f)
         }
+        creditWaits = conns.values.reduce(0) { $0 + $1.waits }
     }
 }
 

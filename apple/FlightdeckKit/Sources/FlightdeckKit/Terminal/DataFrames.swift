@@ -96,7 +96,9 @@ public struct FrameBuffer: Sendable {
             out.append(DataFrame(kind: b[0], payload: Data(pending[body..<end])))
             start = end
         }
-        pending = Data(pending[start...])
+        // Copy the rest only when a frame was taken, so a large frame that
+        // arrives in many small reads is not copied on every read.
+        if start != pending.startIndex { pending = Data(pending[start...]) }
         return out
     }
 }

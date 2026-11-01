@@ -13,6 +13,8 @@ public final class PaneInputPump: @unchecked Sendable {
     private var running = false
     private let send: Send
     private let onError: @Sendable (Error) -> Void
+    /// Bytes per `pane.input` call at most.
+    static let maxBatch = 1 << 20
 
     public init(send: @escaping Send, onError: @escaping @Sendable (Error) -> Void = { _ in }) {
         self.send = send
@@ -44,9 +46,12 @@ public final class PaneInputPump: @unchecked Sendable {
                     running = false
                     return nil
                 }
-                let b = pending
-                pending = Data()
-                return b
+                // A batch stays far below the hab's 16 MiB message limit,
+                // after base64.
+                let n = min(pending.count, Self.maxBatch)
+                let b = pending.prefix(n)
+                pending = Data(pending.dropFirst(n))
+                return Data(b)
             }
             guard let batch else { return }
             do {
@@ -59,28 +64,87 @@ public final class PaneInputPump: @unchecked Sendable {
     }
 }
 
-/// Removes the terminal's own replies from what it writes, so only keys reach
-/// the pane (hab-logic-api.md 5.6). The hab answers and removes every query it
-/// knows; libghostty still answers the few it leaves (OSC 52 clipboard reads,
-/// CSI 14 t and CSI 16 t), and those replies must not reach the program.
-/// Focus reports are dropped unless this client owns the pane's size.
+/// Decides what of the terminal's writes reaches the pane (hab-logic-api.md
+/// 5.6, 6.2).
+///
+/// - libghostty answers the queries the hab left in the stream (OSC 52
+///   clipboard reads, pixel size reports, a query with a control byte inside or
+///   cut by a gap). Those answers must not reach the program, so anything shaped
+///   like a reply is dropped.
+/// - A cursor position report looks like a modified F3 key (`CSI 1;2R`). It is
+///   dropped while this client does not own the pane; the owner's F3 passes.
+/// - Focus reports, mouse motion and the mouse wheel pass only while this
+///   client owns the pane: any input from a client that does not own the pane
+///   takes the size after the debounce, and hovering or scrolling a viewed
+///   pane must not. Clicks pass: a click is meant as input.
 enum TerminalReplyFilter {
     static func keep(_ data: Data, owner: Bool) -> Data {
         guard data.first == 0x1B, data.count >= 3 else { return data }
         let b = [UInt8](data)
-        if b[1] == 0x5D {
-            // OSC 52 ; ... : a clipboard reply.
-            if b.starts(with: Array("\u{1B}]52;".utf8)) { return Data() }
-            return data
+        switch b[1] {
+        case 0x5D: return osc(b) ? Data() : data
+        case 0x50: return dcsReply(b) ? Data() : data
+        case 0x5B: return csiKeep(b, owner: owner) ? data : Data()
+        default: return data
         }
-        guard b[1] == 0x5B else { return data }
-        // Focus in and out: CSI I, CSI O.
-        if b.count == 3 && (b[2] == 0x49 || b[2] == 0x4F) { return owner ? data : Data() }
-        // Pixel size reports: CSI 4 ; h ; w t and CSI 6 ; h ; w t.
-        if b.last == 0x74, b[2] == 0x34 || b[2] == 0x36, b.count > 4, b[3] == 0x3B,
-           b[4..<(b.count - 1)].allSatisfy({ ($0 >= 0x30 && $0 <= 0x39) || $0 == 0x3B }) {
-            return Data()
+    }
+
+    /// OSC replies: a clipboard read, and colour answers (OSC 4, 10, 11, 12 with `rgb:`).
+    private static func osc(_ b: [UInt8]) -> Bool {
+        let s = String(decoding: b.dropFirst(2), as: UTF8.self)
+        if s.hasPrefix("52;") { return true }
+        for p in ["4;", "10;", "11;", "12;"] where s.hasPrefix(p) && s.contains("rgb:") {
+            return true
         }
-        return data
+        return false
+    }
+
+    /// DCS replies (DECRQSS `P1$r`, XTGETTCAP `P1+r`, XTVERSION `P>|`). Alt+Shift+P
+    /// alone is `ESC P` and passes.
+    private static func dcsReply(_ b: [UInt8]) -> Bool {
+        guard b.count >= 4 else { return false }
+        let c = b[2]
+        return (c >= 0x30 && c <= 0x39) || c == 0x3E
+    }
+
+    private static func csiKeep(_ b: [UInt8], owner: Bool) -> Bool {
+        guard let final = b.last else { return true }
+        let body = String(decoding: b[2..<(b.count - 1)], as: UTF8.self)
+        // Focus in and out.
+        if b.count == 3 && (final == 0x49 || final == 0x4F) { return owner }
+        // Legacy mouse: CSI M, then three bytes.
+        if b.count == 6 && b[2] == 0x4D {
+            return owner || !motionOrWheel(Int(b[3]) - 32)
+        }
+        // SGR mouse: CSI < b ; x ; y M or m.
+        if body.hasPrefix("<"), final == 0x4D || final == 0x6D {
+            let code = Int(body.dropFirst().split(separator: ";").first ?? "") ?? 0
+            return owner || !motionOrWheel(code)
+        }
+        let digits = body.allSatisfy { $0.isNumber || $0 == ";" }
+        switch final {
+        case 0x63: // c: device attributes replies, CSI ? ... c and CSI > ... c
+            if body.hasPrefix("?") || body.hasPrefix(">") { return false }
+        case 0x79: // y: mode reports, CSI ? ... $ y and CSI ... $ y
+            if body.hasSuffix("$") { return false }
+        case 0x75: // u: keyboard protocol flags, CSI ? flags u
+            if body.hasPrefix("?") { return false }
+        case 0x6E: // n: device status, CSI 0 n
+            if body == "0" || body == "3" { return false }
+        case 0x52: // R: cursor position, CSI row ; col R (also a modified F3)
+            if digits, body.contains(";"), !owner { return false }
+            if body.hasPrefix("?") { return false }
+        case 0x74: // t: size reports, CSI 4|6|8 ; a ; b t
+            let parts = body.split(separator: ";")
+            if digits, parts.count == 3, ["4", "6", "8"].contains(String(parts[0])) { return false }
+        default:
+            break
+        }
+        return true
+    }
+
+    /// Mouse button code: motion sets 32, the wheel sets 64.
+    private static func motionOrWheel(_ code: Int) -> Bool {
+        code & 32 != 0 || code & 64 != 0
     }
 }
