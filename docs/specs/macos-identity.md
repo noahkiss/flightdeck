@@ -561,6 +561,14 @@ Steps that need nothing (P0, P2, P8) can run at any time. The others wait for ap
 
 ### 8.1 Results so far
 
+**P0 and P2 (macOS 27.2), passed.** A holder installed by `gff-hab install` as a launch agent in
+`gui/<uid>`, with gff-hab started the same way; the commands ran in a pane made by
+`session.create`, and the install was set up and removed over SSH:
+
+- `launchctl managername` printed `Aqua` in the pane, and `Background` in the SSH shell.
+- `pbcopy` of a random token, then `pbpaste`, returned the token at once, so no prompt held it
+  (nobody watched the screen). The holder was an unsigned local build.
+
 **P8, static part (macOS 27.2).** Checked on disk, without opening System Settings:
 
 - The extension ids `com.apple.LoginItems-Settings.extension` and
@@ -630,7 +638,7 @@ them, as terminals do; the user still answers each prompt, and `--check` never r
 
 ## 10. Proposed change to hab-holder.md
 
-Proposed for the coordinator to apply. Replace the **Decision: open** block in 5.3 (from
+Applied: `hab-holder.md` 5.3 and Q2 now carry this decision. Proposed for the coordinator to apply. Replace the **Decision: open** block in 5.3 (from
 "**Decision: open — how the holder keeps one TCC identity across builds.**" through
 "Recommendation: **option 1**, ... before stage 5 relies on it.") and the body of Q2 with:
 

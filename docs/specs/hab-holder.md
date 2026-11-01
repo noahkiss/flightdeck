@@ -456,9 +456,10 @@ consequences:
 - The holder, not gff-hab, must be the job launchd starts. A holder spawned by gff-hab would make
   gff-hab's binary responsible, and gff-hab's binary changes at every update.
 - Drain runs two holder builds at once, from two paths. If TCC keys the holder by path, every
-  holder build re-asks for every grant (1.3). See **Decision: open** below.
+  holder build re-asks for every grant (1.3). See the decision below.
 
-**Decision: open — how the holder keeps one TCC identity across builds.**
+**Decision: option 1, signed helper bundles (coordinator), pending Mac proof P3 — how the holder
+keeps one TCC identity across builds.**
 
 | Option | How | For | Against |
 |---|---|---|---|
@@ -466,14 +467,20 @@ consequences:
 | 2. Pinned path, replaced between builds | One stable path for the newest holder; older builds run from copies | Simple, no signing | Older drained holders run from other paths; any new grant they need re-prompts. The pinned binary changes content at every upgrade, and TCC may reject the changed code for a path client |
 | 3. Disclaim responsibility per child | The holder starts each child as responsible for itself | Grants follow each program, as in a terminal app | Needs private, undocumented macOS spawn attributes; not reachable from pure Go without cgo |
 
-Recommendation: **option 1**, with option 2 as the fallback for unsigned local builds. Why: it is
-the only option where drain and grants do not fight. Stage 6 must prove it with the check below
-before stage 5 relies on it.
+The holder ships as a helper bundle with the fixed bundle id `<prefix>.hab-holder`, and gff-hab
+as one with `<prefix>.hab`, both signed in CI with Developer ID, hardened runtime and a constant
+identifier, then notarized and stapled. Each holder build runs from its own bundle copy under the
+state directory (4.4); TCC keys bundled code on its bundle id and requirement, not its path, so a
+drained older build keeps every grant. Local dev builds use `.dev` bundle ids and hold grants only
+until their next rebuild. Path pinning (option 2) is dropped, because drain runs builds from
+different paths. Grants per process, the signing pipeline, `gff setup` and the Mac proof steps P0
+to P12 are in `macos-identity.md`; stage 6 runs P0, P2 and P3 before stage 5 relies on this.
 
 **The permission check stage 6 runs**, from a program inside a holder pane:
 
-1. `launchctl managername` prints `Aqua` (it prints `Background` over SSH).
-2. A pasteboard round trip works: `pbcopy` then `pbpaste` returns the same text.
+1. `launchctl managername` prints `Aqua` (it prints `Background` over SSH). Passed (P0,
+   `macos-identity.md` 8.1).
+2. A pasteboard round trip works: `pbcopy` then `pbpaste` returns the same text. Passed (P2).
 3. After granting Desktop access once, listing `~/Desktop` succeeds, then still succeeds from a
    pane of a second holder build started by drain (tests option 1).
 
@@ -661,9 +668,9 @@ Ruling (coordinator, not an owner decision): option 2. gff-hab finds the marks; 
 them. The holder only serves replay with an upper bound. Stage 7 moves its detection and command
 list into gff-hab (Part 2), and the holder protocol has no mark frames.
 
-### Q2. TCC identity for holder builds on macOS. **Decision: open**
+### Q2. TCC identity for holder builds on macOS. **Decision: option 1 (coordinator), pending Mac proof P3**
 
-See 5.3. Recommendation: a signed helper bundle with a fixed bundle identifier.
+See 5.3 and `macos-identity.md`: signed helper bundles with fixed bundle ids.
 
 ### Q3. Should the holder restart a crashed gff-hab? **Decision: no (coordinator)**
 
