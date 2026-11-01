@@ -9,7 +9,8 @@
 # Usage: ssh-live-check.sh            run the test against 127.0.0.1
 #        ssh-live-check.sh serve      start everything and wait (Ctrl-C ends it), for a
 #                                     device run: add the device's public key line with
-#                                     FLIGHTDECK_SSH_LIVE_PUBKEY=<file>
+#                                     FLIGHTDECK_SSH_LIVE_PUBKEY=<file>, or append it to the
+#                                     authorized_keys file it prints
 # Env:   FLIGHTDECK_SSH_LIVE_PORT     port for the sshd (default 2745)
 #        FLIGHTDECK_SSH_LIVE_ADDR     address it binds (default 127.0.0.1); serve mode may name
 #                                     one LAN address of this machine. Never 0.0.0.0
@@ -91,6 +92,7 @@ if [ "$MODE" = serve ]; then
 	echo "host key: $(ssh-keygen -lf "$DIR/host_ed25519.pub" | awk '{print $2}')"
 	echo "address:  $(id -un)@$ADDR:$PORT"
 	echo "command:  $CMD"
+	echo "keys:     $DIR/authorized_keys (sshd reads it at each login; append a device's key line)"
 	echo "Ctrl-C stops everything and removes $DIR."
 	tail -f "$DIR/sshd.log" | grep --line-buffered -E 'Accepted|Failed|refused|Connection from' &
 	PIDS="$PIDS $!"

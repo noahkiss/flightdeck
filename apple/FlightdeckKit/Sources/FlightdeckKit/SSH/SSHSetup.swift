@@ -50,6 +50,12 @@ public final class SSHSetup {
             let k = try keys.defaultKey()
             deviceKey = k
             keyError = nil
+            // The public key only, so a host can be set up from the log too.
+            let line = k.authorizedKeysLine(comment: DeviceKeys.comment)
+            log.notice("device key \(k.kind.rawValue, privacy: .public): \(line, privacy: .public)")
+            #if DEBUG
+            print("flightdeck: device key: \(line)")
+            #endif
             return k
         } catch {
             keyError = DeviceKeys.explain(error).description

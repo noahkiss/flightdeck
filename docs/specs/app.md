@@ -1047,7 +1047,7 @@ The first app stage: the connection to every hab and the status board. Code in
 - **Transport.** `Transport.open(kind)` returns one byte stream; `kind` is `control` or `data`, so
   a data stream per pane opens on the same carrier later (`hab-logic-api.md` 4.2, option A). The
   iOS SSH carrier (task-iv89iwd8) implements the same protocol. `reset()` drops a shared
-  connection; today no carrier shares one.
+  connection; the in-app SSH carrier shares one (10.6).
 - **Mac carriers.** The local Unix socket uses gff-hab's default path rule (`$GFF_HAB_SOCKET`,
   else `gff/hab.sock` under Application Support). The ssh carrier runs the system `ssh -T -o
   BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -- <host> gff-hab connect` with
@@ -1106,6 +1106,78 @@ The first app stage: the connection to every hab and the status board. Code in
   (hello and the revision rule, tokens per epoch, subscribe, seq, heartbeat, ping) for tests and
   demo mode. `-FlightdeckDemo YES` loads two invented hosts with sessions in every rank and
   replays a short script.
+
+### 10.6 Built choices: the iOS SSH transport (task-iv89iwd8)
+
+The in-app SSH carrier, the device key, hab entries, pairing codes and the background action.
+Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH`.
+
+- **Carrier.** `NIOSSHTransport` implements `Transport` on `swift-nio-ssh` 0.15.1 (pinned
+  exactly) over NIOPosix sockets. It works on iOS and macOS. One SSH connection per hab carries
+  the control stream and one session channel per data stream; each channel runs the entry's
+  command, `gff-hab connect` by default (`hab-logic-api.md` Q2). The hello timeout is 25 s, as on
+  the ssh subprocess carrier. A dial has its own limits: 10 s for TCP per endpoint, 15 s from
+  TCP to authenticated. A TCP connection where SSH never starts reports "the network may block
+  SSH" (10.3).
+- **Connection reuse.** Each new control stream dials a fresh SSH connection. Data streams use the
+  connection of the newest control stream. An older connection takes no new channels and closes
+  with its last channel, so a dead TCP connection after a network change never catches a new
+  stream. A connection with no channel closes at once, so nothing stays open in the background.
+- **Session limit.** When the host refuses a data channel (OpenSSH's `MaxSessions`, 10), the
+  carrier dials one more connection for it (`transport.md` 7.6).
+- **Channel flow control.** A channel reads only when its stream's reader asks, so the SSH window
+  opens as fast as the app takes bytes (`transport.md` 4.4).
+- **Endpoints.** An entry lists endpoints in order. The next one starts 300 ms after the previous
+  one, or at once when the previous one failed; the first to authenticate wins and the rest
+  close. When all fail, a host key or key refusal is reported before a timeout.
+- **Host key.** Pinned by SHA-256 fingerprint per entry and checked before authentication. A
+  different key fails with both fingerprints and "re-pair the hab, or remove it and add it again
+  if you trust the new key". The connection retries with backoff like any failure and shows the
+  error under the hab; it never accepts the new key on its own. First contact over the fallback
+  path probes the host key (the handshake stops before auth), shows the fingerprint and asks the
+  user to trust it.
+- **Device key.** `DeviceKeys` makes a P-256 key in the Secure Enclave when the device has one
+  (iPhone, iPad, Apple silicon Mac), else in software (the simulator, unit tests). It has no
+  biometric flag unless the user turns on "Require Face ID for the key", which makes a new key
+  with `.biometryCurrentSet` (every host must get the new public key). The key blob is a Keychain
+  item, usable only when unlocked, this device only, not synchronisable. On iOS it is in the data
+  protection Keychain; the unsandboxed, possibly ad hoc signed Mac app uses the login keychain.
+  iPhone and iPad make the key on first start; the Mac makes it when Settings › SSH first opens,
+  so a Mac that never uses the carrier never touches the keychain. A locked device gives "the device is locked: its SSH key works only while
+  it is unlocked". The key source is the `SSHKeySource` protocol, so an imported OpenSSH key
+  (task-1csglxtc) plugs in beside the generated one.
+- **Settings › SSH.** Opened from the connections list. It shows the key's type, fingerprint and
+  OpenSSH line with Copy and Share, the Face ID option (Secure Enclave keys), the SSH habs, and a
+  test notification per hab.
+- **Hab entries.** `Flightdeck/ssh-habs.json` under Application Support (or `$FLIGHTDECK_SSH_HABS`),
+  mode 0600: id, label, user, endpoints in order, the pinned host key fingerprint and line, the key
+  id, an optional command, and the hab's device id when the entry came from a pairing code. Keys
+  stay in the Keychain. Entries load on every platform; the Mac keeps `habs.json` and the system
+  ssh as its default, so the nio carrier is there for testing the phone's path.
+- **Add a hab by address** (18.8). The user types `user@host[:port]`, copies the device key line
+  to the host's `authorized_keys`, presses Connect, compares and trusts the host key, and the app
+  tests with one `hab.ping` before it stores the entry and adds it to the board. A refused key says
+  which fingerprint and user to add. An optional command covers a `gff-hab` that is not on the
+  remote PATH.
+- **Pairing codes.** `PairingCode` parses the `flightdeck://pair` link (`transport.md` 6.1) from
+  the camera, pasted text or an opened link (the iOS app registers the `flightdeck` URL scheme).
+  It shows the hab id and endpoints, then says the hab cannot pair yet and offers "Add the key by
+  hand" with the label and device id filled in. `PairingCode(offer:)` builds the link from a
+  `devices.pair` result for the hab side later.
+- **Background action.** `HabActions` registers a notification category with a "Ping hab" action
+  that needs unlock, and is the notification delegate from launch. The action loads the entry and
+  key, runs one `hab.ping` on its own connection (`HabOneShot`: open, hello, call, close, 20 s
+  deadline, no retry) and posts the result or "could not reach" (18.7). `SSHSetup.perform` is the
+  call site `approval.answer` reuses. Push replaces the local notification later (task-oe7ioczy).
+- **Cold start.** `ColdStart` logs the time from process start (from the kernel) to the first byte
+  any hab sent, once per process; Settings › SSH shows it.
+- **Tests.** `SSHTransportTests` run the carrier against an in-process `swift-nio-ssh` server on
+  loopback that bridges each channel to the fake hab: online over SSH, a changed host key refused
+  before auth (also through `HabConnection`), the probe, a refused key, control and data on one
+  connection, the session limit, a fresh connection per control stream, staggered endpoints, the
+  one-shot call and a pane stream over a data channel. `SSHPairingTests` cover the code parser,
+  endpoints, fingerprints against `ssh-keygen`, keys and the entry file. `SSHLiveTests` run
+  against a real sshd through `apple/scripts/ssh-live-check.sh`.
 
 ---
 
