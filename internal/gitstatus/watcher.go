@@ -36,6 +36,8 @@ type Config struct {
 	Timeout     time.Duration // the limit for one read, all its git runs together
 	Concurrency int           // reads at once over all projects
 	Logf        func(string, ...any)
+
+	afterRead func(error) // tests: called after each read with its error
 }
 
 // Watcher keeps each project's repository state fresh in the store. Each project has at most
@@ -276,6 +278,9 @@ func (w *Watcher) read(id string, p *project) {
 		}()
 		res, err = w.cfg.Reader.Read(ctx, dir)
 		cancel()
+	}
+	if w.cfg.afterRead != nil {
+		w.cfg.afterRead(err)
 	}
 	w.mu.Lock()
 	if err != nil {

@@ -2,9 +2,11 @@ package gitstatus
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -303,13 +305,20 @@ func TestReadEdges(t *testing.T) {
 func TestHungGit(t *testing.T) {
 	needGit(t)
 	bin := t.TempDir()
-	script := "#!/bin/sh\necho x >> \"$0.calls\"\nsleep 30\n"
+	script := "#!/bin/sh\nsleep 30\n"
 	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	dir := t.TempDir()
-	f := newFixture(t, dir, Config{Timeout: 200 * time.Millisecond, Interval: time.Hour})
+	var rmu sync.Mutex
+	var reads []error
+	f := newFixture(t, dir, Config{Timeout: 200 * time.Millisecond, Interval: time.Hour,
+		afterRead: func(err error) {
+			rmu.Lock()
+			defer rmu.Unlock()
+			reads = append(reads, err)
+		}})
 	ahead := 3
 	if _, err := f.store.SetProjectRepo(f.id, structure.RepoState{Branch: "main", Head: "abc", Ahead: &ahead, Behind: &ahead}); err != nil {
 		t.Fatal(err)
@@ -334,13 +343,23 @@ func TestHungGit(t *testing.T) {
 		defer f.mu.Unlock()
 		return len(f.logs) == 1
 	})
+	// At least one more read starts after the log: this one, or the one RefreshNow queued
+	// behind the first. Which one depends on timing: a request that lands after the first read
+	// logs but before the queued read starts folds into it, so there may be two reads or three.
+	// Only the hung git gives a timeout; a real git here fails at once.
 	f.w.RefreshNow(f.id)
-	calls := func() int {
-		b, _ := os.ReadFile(filepath.Join(bin, "git.calls"))
-		return strings.Count(string(b), "x")
+	waitFor(t, "the reads to end", f.w.idle)
+	rmu.Lock()
+	got := slices.Clone(reads)
+	rmu.Unlock()
+	if len(got) < 2 {
+		t.Fatalf("%d reads, want at least 2", len(got))
 	}
-	// The first read, the one RefreshNow queued behind it, and this one: all time out.
-	waitFor(t, "three timed-out reads", func() bool { return calls() >= 3 && f.w.idle() })
+	for i, err := range got {
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("read %d: %v, want a timeout", i, err)
+		}
+	}
 	f.mu.Lock()
 	logs := len(f.logs)
 	f.mu.Unlock()
