@@ -13,14 +13,14 @@ public struct FlightdeckRoot: View {
 
     public var body: some View {
         #if os(macOS)
-        BoardScreen(board: fleet.board)
+        BoardScreen(fleet: fleet)
             .environment(\.habConnections, fleet.lookup)
             .environment(\.terminals, fleet.terminals)
             .openPaneOnLaunch(fleet)
             .onAppear { fleet.windowOpened() }
             .onDisappear { fleet.windowClosed() }
         #else
-        BoardScreen(board: fleet.board)
+        BoardScreen(fleet: fleet)
             .environment(\.habConnections, fleet.lookup)
             .environment(\.terminals, fleet.terminals)
             .openPaneOnLaunch(fleet)
@@ -44,6 +44,8 @@ extension Fleet {
 /// second column with session cards and connections (app.md 3.3).
 public struct BoardScreen: View {
     private let board: Board
+    /// With a fleet, a row opens its session view; without, a sheet of its fields.
+    private let fleet: Fleet?
     @State private var opened: BoardRow?
     @State private var showConnections = false
     #if os(iOS)
@@ -52,6 +54,18 @@ public struct BoardScreen: View {
 
     public init(board: Board) {
         self.board = board
+        self.fleet = nil
+    }
+
+    public init(fleet: Fleet) {
+        self.board = fleet.board
+        self.fleet = fleet
+    }
+
+    /// The opened row's session view, when a fleet supplies chat models.
+    private func session(_ row: BoardRow, compact: Bool) -> some View {
+        SessionView(model: fleet!.chat(for: row.target), compact: compact, close: { opened = nil })
+            .id(row.target)
     }
 
     private var compact: Bool {
@@ -68,6 +82,9 @@ public struct BoardScreen: View {
                 NavigationStack {
                     BoardList(board: board, opened: $opened)
                         .navigationTitle("Flightdeck")
+                        .navigationDestination(item: fleet == nil ? .constant(nil) : $opened) { row in
+                            session(row, compact: true)
+                        }
                         .toolbar {
                             ToolbarItem {
                                 Button {
@@ -89,6 +106,17 @@ public struct BoardScreen: View {
                             }
                     }
                 }
+            } else if fleet != nil, let row = opened {
+                HStack(spacing: 0) {
+                    NavigationStack {
+                        BoardList(board: board, opened: $opened)
+                            .navigationTitle("Flightdeck")
+                    }
+                    .frame(minWidth: 300, idealWidth: 340, maxWidth: 380)
+                    Divider()
+                    session(row, compact: false)
+                        .frame(minWidth: 640)
+                }
             } else {
                 HStack(spacing: 0) {
                     NavigationStack {
@@ -106,7 +134,7 @@ public struct BoardScreen: View {
                 }
             }
         }
-        .sheet(item: $opened) { row in
+        .sheet(item: fleet == nil ? $opened : .constant(nil)) { row in
             SessionPlaceholder(row: row) { opened = nil }
         }
         #if os(macOS)

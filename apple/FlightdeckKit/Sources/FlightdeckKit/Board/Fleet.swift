@@ -41,9 +41,10 @@ public final class Fleet {
         connections.append(conn)
         board.register(id: conn.id, label: label, endpoint: conn.transport.endpoint)
         let b = board
-        consumers.append(Task { @MainActor in
+        consumers.append(Task { @MainActor [weak self] in
             for await s in conn.updates {
                 b.update(conn.id, s)
+                self?.refreshChats(habID: conn.id)
             }
         })
         if isActive {
@@ -116,6 +117,36 @@ public final class Fleet {
     /// Finds a hab's connection by id, for views opened from a board row.
     public var lookup: HabConnectionLookup {
         HabConnectionLookup { [weak self] id in self?.connections.first { $0.id == id } }
+    }
+
+    // MARK: - Chat
+
+    private final class WeakChat {
+        weak var model: ChatModel?
+        init(_ m: ChatModel) { model = m }
+    }
+
+    private var chats: [WeakChat] = []
+
+    /// The chat model of a session, shared while any view holds it.
+    public func chat(for target: SessionTarget) -> ChatModel {
+        chats.removeAll { $0.model == nil }
+        if let m = chats.first(where: { $0.model?.target == target })?.model { return m }
+        let conn = connections.first { $0.id == target.habID }
+        let m = ChatModel(target: target, connection: conn)
+        if let h = board.habs.first(where: { $0.id == target.habID }) {
+            m.update(ChatContext.of(target, hab: h))
+        }
+        chats.append(WeakChat(m))
+        return m
+    }
+
+    private func refreshChats(habID: String) {
+        guard let h = board.habs.first(where: { $0.id == habID }) else { return }
+        for w in chats {
+            guard let m = w.model, m.target.habID == habID else { continue }
+            m.update(ChatContext.of(m.target, hab: h))
+        }
     }
 
     /// Streams still open: real carriers (sockets and pipes) plus fake ones.

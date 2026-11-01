@@ -37,6 +37,23 @@ public actor FakeHab {
     private var silent = false
     private var heartbeatEvery: Duration?
 
+    /// Chat messages by session, oldest first; a session with none has no reader.
+    private var chats: [String: [ChatMessage]] = [:]
+    /// Change counter per session: the counter value each message last changed at.
+    private var chatChanges: [String: [String: Int]] = [:]
+    private var chatClock = 0
+    /// Whether `session.send` works. The real hab answers `unavailable` until
+    /// its adapter stage; tests and demo mode turn it on.
+    private var sendWorks = false
+    private var onSend: (@Sendable (SessionSendParams) async -> Void)?
+
+    /// Every `pane.input` received, oldest first.
+    public private(set) var inputs: [InputParams] = []
+    /// Every `session.send` received, oldest first.
+    public private(set) var sends: [SessionSendParams] = []
+    /// How many `chat.page` calls were answered.
+    public private(set) var chatPages = 0
+
     /// Every hello received, oldest first.
     public private(set) var hellos: [HelloParams] = []
     /// How many `events.subscribe` calls were answered.
@@ -117,6 +134,71 @@ public actor FakeHab {
     }
 
     public func session(_ id: String) -> Session? { sessions[id] }
+
+    // MARK: - Chat
+
+    /// Loads a session's chat messages without events.
+    public func setChat(session: String, _ messages: [ChatMessage]) {
+        chats[session] = messages
+        chatClock += 1
+        chatChanges[session] = Dictionary(messages.map { ($0.id, chatClock) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// Appends a message, or replaces the one with its id, and sends `chat.message`.
+    public func putChat(_ m: ChatMessage) async {
+        var list = chats[m.session] ?? []
+        if let i = list.firstIndex(where: { $0.id == m.id }) { list[i] = m } else { list.append(m) }
+        chats[m.session] = list
+        chatClock += 1
+        chatChanges[m.session, default: [:]][m.id] = chatClock
+        await emit(type: "chat.message", id: m.id, revision: nil, data: m)
+    }
+
+    /// Replaces a session's transcript and sends the `reset` event.
+    public func resetChat(session: String, _ messages: [ChatMessage]) async {
+        setChat(session: session, messages)
+        await emit(type: "chat.message", id: "reset-\(chatClock)", revision: nil,
+                   data: ChatMessage(at: Fixture.stamp(Date()), event: .reset, id: "reset-\(chatClock)", kind: .event, session: session))
+    }
+
+    public func chat(_ session: String) -> [ChatMessage] { chats[session] ?? [] }
+
+    /// Turns `session.send` on, with an optional hook that runs for each send.
+    public func setSend(works: Bool, onSend: (@Sendable (SessionSendParams) async -> Void)? = nil) {
+        sendWorks = works
+        self.onSend = onSend
+    }
+
+    private func chatPage(_ p: ChatPageParams, seq: UInt64) throws -> ChatMessages {
+        guard sessions[p.session] != nil || chats[p.session] != nil else {
+            throw Failure(kind: .notFound, hint: "no session \(p.session)")
+        }
+        guard let list = chats[p.session] else {
+            throw Failure(kind: .unavailable, hint: "session \(p.session) has no transcript reader")
+        }
+        let limit = min(max(p.limit ?? 50, 1), 200)
+        if let after = p.after {
+            guard let since = Int(after), since <= chatClock else { throw Failure(kind: .conflict, hint: "stale cursor") }
+            let changes = chatChanges[p.session] ?? [:]
+            let changed = list.filter { (changes[$0.id] ?? 0) > since }
+            let page = Array(changed.prefix(limit))
+            let next = page.count < changed.count ? (page.last.flatMap { changes[$0.id] } ?? since) : chatClock
+            return ChatMessages(cursor: String(next), messages: page, more: page.count < changed.count, seq: seq)
+        }
+        var end = list.count
+        if let before = p.before {
+            guard let i = list.firstIndex(where: { $0.id == before }) else { throw Failure(kind: .notFound, hint: "no message \(before)") }
+            end = i
+        }
+        let start = max(0, end - limit)
+        // An empty transcript has no cursor yet, as when the real file is not written.
+        return ChatMessages(cursor: list.isEmpty ? "" : String(chatClock), messages: Array(list[start..<end]), more: start > 0, seq: seq)
+    }
+
+    private struct Failure: Error {
+        var kind: ErrorKind
+        var hint: String
+    }
     public func agent(_ pane: String) -> AgentState? { agents[pane] }
 
     // MARK: - Faults and lifecycle
@@ -270,6 +352,28 @@ public actor FakeHab {
         case HabMethods.dataTicket.name, HabMethods.paneInput.name, HabMethods.paneSetDesiredSize.name,
              HabMethods.paneTake.name, HabMethods.paneRedraw.name:
             await terminalCall(method, params, c, id: id)
+        case HabMethods.chatPage.name:
+            do {
+                let p = try params.decode(ChatPageParams.self)
+                chatPages += 1
+                await reply(c, id: id, result: try chatPage(p, seq: c.seq))
+            } catch let f as Failure {
+                await fail(c, id: id, kind: f.kind, hint: f.hint)
+            } catch {
+                await fail(c, id: id, kind: .invalid, hint: "bad chat.page params")
+            }
+        case HabMethods.sessionSend.name:
+            guard sendWorks else {
+                await fail(c, id: id, kind: .unavailable, hint: "session.send is not built (fake hab)")
+                break
+            }
+            guard let p = try? params.decode(SessionSendParams.self) else {
+                await fail(c, id: id, kind: .invalid, hint: "bad session.send params")
+                break
+            }
+            sends.append(p)
+            await reply(c, id: id, result: Empty(seq: c.seq))
+            if let hook = onSend { Task { await hook(p) } }
         default:
             await fail(c, id: id, kind: .unavailable, hint: "the fake hab does not serve \(method)")
         }
@@ -285,7 +389,13 @@ public actor FakeHab {
                 await reply(c, id: id, result: try await terminals.ticket(pane: p.pane, client: c.clientID))
             case HabMethods.paneInput.name:
                 let p = try params.decode(InputParams.self)
-                try await terminals.input(pane: p.pane, client: c.clientID, data: p.data ?? Data((p.text ?? "").utf8))
+                inputs.append(p)
+                do {
+                    try await terminals.input(pane: p.pane, client: c.clientID, data: p.data ?? Data((p.text ?? "").utf8))
+                } catch {
+                    // A pane the hab lists but the fake terminals do not run still takes input.
+                    guard panes[p.pane] != nil else { throw error }
+                }
                 await reply(c, id: id, result: Empty(seq: c.seq))
             case HabMethods.paneSetDesiredSize.name:
                 let p = try params.decode(DesiredSizeParams.self)

@@ -1,0 +1,5 @@
+USER
+    Hello from a newer build.
+AGENT
+    Hello.
+EVENT unknown: An unreadable transcript record

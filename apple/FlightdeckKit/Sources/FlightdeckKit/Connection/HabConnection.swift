@@ -22,6 +22,14 @@ public enum HabStatus: Sendable, Equatable {
 }
 
 /// Everything the board needs from one hab. Published whole on each change.
+/// One `chat.message` event: the message, its seq, and which connection
+/// (generation) carried it. Seqs compare only within one generation.
+public struct ChatUpdate: Sendable {
+    public var message: ChatMessage
+    public var seq: UInt64
+    public var generation: Int
+}
+
 public struct HabState: Sendable, Equatable {
     public var status: HabStatus = .stopped
     public var store = HabStore()
@@ -101,6 +109,11 @@ public actor HabConnection {
     private var onlineSince: ContinuousClock.Instant?
     private var wake: CheckedContinuation<Void, Never>?
     private var wakeGen = 0
+    /// Listeners for `chat.message` events (app.md 4.1), by listener id.
+    private var chatTaps: [Int: AsyncStream<ChatUpdate>.Continuation] = [:]
+    private var nextTap = 1
+    /// Counts live connections, so a chat listener can tell its seq apart.
+    private var generation = 0
 
     public init(id: String, transport: Transport, timing: HabTiming = HabTiming(), clientLabel: String? = nil, clientVersion: String = "0") {
         self.id = id
@@ -150,6 +163,31 @@ public actor HabConnection {
             throw ConnectionClosed(detail: "hab \(id) is not online")
         }
         return try await r.call(method, params, timeout: timing.callTimeout)
+    }
+
+    /// `chat.message` events of this hab, in seq order, from now until the
+    /// stream is dropped. Every hab session's messages come; the listener filters.
+    public func chatUpdates() -> AsyncStream<ChatUpdate> {
+        let (stream, sink) = AsyncStream.makeStream(of: ChatUpdate.self)
+        let id = nextTap
+        nextTap += 1
+        chatTaps[id] = sink
+        sink.onTermination = { [weak self] _ in
+            Task { await self?.dropTap(id) }
+        }
+        return stream
+    }
+
+    /// Calls a method on the live connection and says which connection
+    /// answered, so a result's seq can be matched with `chatUpdates`.
+    public func callTagged<P, R>(_ method: HabMethod<P, R>, _ params: P) async throws -> (R, Int) {
+        let g = generation
+        let r = try await call(method, params)
+        return (r, g)
+    }
+
+    private func dropTap(_ id: Int) {
+        chatTaps[id] = nil
     }
 
     // MARK: - Run loop
@@ -210,6 +248,7 @@ public actor HabConnection {
         }
         let r = RPCClient(stream: stream)
         rpc = r
+        generation += 1
         lastSeq = 0
         snapshotApplied = false
         buffered = []
@@ -340,6 +379,10 @@ public actor HabConnection {
             return
         }
         lastSeq = e.seq
+        if e.type == "chat.message", !chatTaps.isEmpty, let m = try? e.data.decode(ChatMessage.self) {
+            let u = ChatUpdate(message: m, seq: e.seq, generation: generation)
+            for (_, t) in chatTaps { t.yield(u) }
+        }
         if state.store.apply(e) { publish() }
     }
 

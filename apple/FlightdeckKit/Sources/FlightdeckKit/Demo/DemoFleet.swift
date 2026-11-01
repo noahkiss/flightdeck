@@ -19,6 +19,7 @@ public enum DemoFleet {
     public static func populate(_ fleet: Fleet, script: Bool = true) async {
         let workbench = await makeWorkbench()
         let attic = await makeAttic()
+        await DemoChat.populate(workbench: workbench, attic: attic)
         fleet.keepAlive += [workbench, attic]
         fleet.add(HabConnection(id: "demo-workbench", transport: workbench.transport(endpoint: "demo")), label: nil)
         fleet.add(HabConnection(id: "demo-attic", transport: attic.transport(endpoint: "demo")), label: nil)

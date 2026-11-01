@@ -1,0 +1,124 @@
+import HabAPI
+import SwiftUI
+
+/// The view that fills the terminal half of a session. The terminal view
+/// stage sets it with `.terminalSlot { target in ... }`; until then a
+/// placeholder holds the place.
+public struct TerminalSlot {
+    public var make: @MainActor (SessionTarget) -> AnyView
+
+    public init(make: @escaping @MainActor (SessionTarget) -> AnyView) {
+        self.make = make
+    }
+
+    public static let placeholder = TerminalSlot { target in AnyView(TerminalPlaceholder(target: target)) }
+}
+
+private struct TerminalSlotKey: EnvironmentKey {
+    static let defaultValue = TerminalSlot.placeholder
+}
+
+extension EnvironmentValues {
+    public var terminalSlot: TerminalSlot {
+        get { self[TerminalSlotKey.self] }
+        set { self[TerminalSlotKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// Sets the view that fills a session's terminal half.
+    public func terminalSlot<V: View>(@ViewBuilder _ make: @escaping @MainActor (SessionTarget) -> V) -> some View {
+        environment(\.terminalSlot, TerminalSlot { AnyView(make($0)) })
+    }
+}
+
+struct TerminalPlaceholder: View {
+    let target: SessionTarget
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("Terminal", systemImage: "terminal")
+        } description: {
+            Text("The terminal view is not built yet.")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.background.secondary)
+    }
+}
+
+/// One session: chat first on the phone with a switch to the terminal; chat
+/// beside the terminal, about 50/50, on iPad and Mac (app.md 11).
+public struct SessionView: View {
+    @State private var model: ChatModel
+    private let compact: Bool
+    private let close: (() -> Void)?
+    @State private var mode: Mode
+    @Environment(\.terminalSlot) private var terminal
+
+    enum Mode: String, CaseIterable, Identifiable {
+        case chat = "Chat"
+        case terminal = "Terminal"
+        var id: String { rawValue }
+    }
+
+    public init(model: ChatModel, compact: Bool, close: (() -> Void)? = nil) {
+        _model = State(initialValue: model)
+        self.compact = compact
+        self.close = close
+        // A session with no agent (a plain shell) opens in the terminal (app.md 11.1).
+        _mode = State(initialValue: model.context.harness == nil && model.target.session != nil ? .terminal : .chat)
+    }
+
+    public var body: some View {
+        Group {
+            if compact {
+                Group {
+                    switch mode {
+                    case .chat: ChatView(model: model) { mode = .terminal }
+                    case .terminal: terminal.make(model.target)
+                    }
+                }
+                .toolbar {
+                    ToolbarItem(placement: .principal) {
+                        ChatHeader(context: model.context)
+                    }
+                    ToolbarItem(placement: .primaryAction) {
+                        Picker("View", selection: $mode) {
+                            ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .fixedSize()
+                    }
+                }
+            } else {
+                VStack(spacing: 0) {
+                    HStack {
+                        ChatHeader(context: model.context)
+                        Spacer()
+                        if let close {
+                            Button("Close", systemImage: "xmark", action: close)
+                                .labelStyle(.iconOnly)
+                                .buttonStyle(.borderless)
+                                .keyboardShortcut(.cancelAction)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    Divider()
+                    GeometryReader { geo in
+                        HStack(spacing: 0) {
+                            ChatView(model: model)
+                                .frame(width: geo.size.width / 2)
+                            Divider()
+                            terminal.make(model.target)
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                }
+            }
+        }
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+    }
+}
