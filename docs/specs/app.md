@@ -526,6 +526,93 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
   the same model. Runs on 2026-11-01, first by `pane.input`, then by the hab's `session.send`:
   the message reached the TUI, the user record and the reply came back as events, and
   `claude --resume` from a plain terminal recalled the turn.
+
+### 4.7 Rich content (task-btkd1ekc)
+
+The agent shows the owner something instead of describing it: a screenshot, a rendered
+document, the files it changed.
+
+**Study.** From public docs, release notes and general knowledge *(gk)*; nothing installed.
+
+| Tool | Images | Documents | Diffs | Side panel | On a phone |
+|---|---|---|---|---|---|
+| Claude apps | Inline in the message; tap opens a full-size viewer | An artifact is a card in the chat; open shows it rendered, with versions, copy and download | Claude Code on desktop lists the changed files and shows a diff per file | Artifacts open in a panel to the right of the chat; the chat stays usable | The card opens the artifact full screen |
+| ChatGPT apps | Generated images inline; tap opens a viewer with zoom and save | Canvas holds a document or code beside the chat | Codex tasks list changed files with `+n -m` counts and a unified diff per file | Canvas takes the right side; the chat narrows | Canvas and diffs open full screen; one thing at a time |
+| Happy | Images the owner sends show as thumbnails | Tool cards only; no document viewer | Edit and Write tool cards draw a diff; a files screen lists git status and opens a file's diff | None; a mobile-first stack | Push to a files screen, then to one file |
+| Paseo | Attachments in the composer | A sandboxed HTML preview (`landscape.md` 2.11) | A diff and PR panel per workspace (`landscape.md` 2.13) | The diff panel sits beside the agent on desktop | The panel becomes its own screen |
+
+What carries over:
+
+- **Inline stays small.** Every tool keeps the chat a column of cards. A big thing opens
+  somewhere else: a panel on a wide screen, full screen on a phone.
+- **Images inline, tap to zoom.** All four do it. Pinch and double tap zoom on a phone.
+- **Documents fold.** A card with the title and the first lines; open renders the whole thing.
+- **Changed files are a list first,** each with its change and counts, then a unified diff per
+  file. Side-by-side diffs are a desktop extra; nobody uses them on a phone.
+- **Paseo reads any path the daemon can read** (`landscape.md` 2.17). Our cheap guard: the hab
+  reads only files a session referenced.
+
+**Behaviour.**
+
+- **Shown content.** The agent calls `content.show` (the agent kit wraps it later; today
+  `gff-hab show` is its command line). The hab stores a reference to the file on its host: the
+  path, a kind, a title and the time. It never copies the file into its own format. A show of
+  the same path again replaces the reference and moves it to the end.
+- **Derived content.** The hab also lists what the session touched without a show: images a
+  tool call read, wrote or viewed (Claude `Read`/`Write` of an image, Codex `view_image` and
+  `image_gen`), files the session wrote or edited (Claude `Write`, `Edit`, `MultiEdit`,
+  `NotebookEdit`; Codex `apply_patch`), and the git status of the session's folder.
+- **Inline in the chat.** An image shows under the tool call that touched it, or at the time it
+  was shown. A shown document is a card: title, kind, the first lines (Markdown rendered).
+  Tap expands it in place; a second control opens it full size (the panel on Mac and iPad, a
+  sheet on iPhone). A PDF renders with PDFKit. HTML shows as text, or in a web view with
+  JavaScript off.
+- **Modified files.** One card in the chat lists them, folded, with each file's change. A file
+  opens its diff.
+- **Side panel.** On Mac and iPad a panel to the right of the session lists the session's
+  documents, images and modified files. Selecting one shows it in the panel. On iPhone the same
+  list opens as a sheet from the session header.
+- **Offline host.** Content from a hab that is offline shows a plain placeholder ("Not
+  available while <hab> is offline"), never an error. It loads when the hab returns.
+
+| Case | Behaviour |
+|---|---|
+| The file was deleted or moved after the show | The card says "File no longer on the host"; the reference stays until the session ends |
+| A file over the read limit (32 MiB) | The card names the size and offers nothing to load |
+| A file that changes between chunks | The app starts the read again once; then shows what it has with "changed while loading" |
+| A binary file the app cannot render | A file chip with name and size |
+| A modified file outside a repository | The diff comes from the transcript's edit calls |
+| A path in git status that leads out of the folder through a symlink | Left out of the list |
+
+**Built choices.**
+
+- **API.** `content.show`, `content.list`, `content.read`, `content.diff` and the event
+  `content.updated`, under the capability `content` (`hab-logic-api.md` 3.9). An item's id is a
+  hash of the session and the path, so a shown file that the session also modified is one item
+  with both marks.
+- **Which session.** `content.show` takes `session`, or `pane_token`: the token in the calling
+  pane's `GFF_HAB`, which the hab maps to the pane and then to its session. `gff-hab show` sends
+  the token when `-session` is absent, so an agent needs no id.
+- **The folder.** The session's folder is the `cwd` its transcript records (Claude Code's
+  records, Codex's session meta), else the most recently used folder of its project.
+- **Reads are bounded.** `content.read` serves only ids `content.list` would return for that
+  session; any other id is `not_found`. Chunks are at most 1 MiB (default 256 KiB), files at most
+  32 MiB. The hab opens the path again on each chunk and refuses a path that is not a regular
+  file. Each chunk carries the file's size and modification time, so the app sees a change.
+- **Git status paths** are resolved through symlinks and must stay inside the repository's top
+  folder; one that leads out is left out. The list holds at most 500 items.
+- **Diffs.** A tracked file: `git diff HEAD -- <path>` with the same restricted environment as
+  project git status. An untracked or added file: every line added. Outside a repository: the
+  transcript's edit calls in order, as hunks. At most 512 KiB, then `truncated`.
+- **Events.** The hab sends `content.updated` for a show. Derived items change with tool calls;
+  the app lists again, debounced, after a tool `chat.message` that is done.
+- **Stored references** live in the state directory (`content.json`), at most 200 per session,
+  and go when the session record goes.
+- **App.** `ContentModel` per session merges `content.list` with `content.updated` by id, keeps
+  the last list while offline (and marks it), and loads bytes on demand in chunks, with a cache
+  per item keyed by size and modification time. `DiffParser` splits a unified diff into files,
+  hunks and lines.
+
 ---
 
 ## 5. Terminal view
