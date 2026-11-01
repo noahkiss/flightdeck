@@ -14,6 +14,7 @@
 //	gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
 //	gff-hab manifests list    [-state dir]
 //	gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
+//	gff-hab instructions render -config file [-state dir] [-host-id id] [-dry-run | -write target]
 //	gff-hab hook [-t ms] <harness> [event] < payload
 //	gff-hab hook -print <harness> [-command name]
 //	gff-hab probe -nonce n -checks grant,... [-request grant]
@@ -105,6 +106,7 @@ const usage = `usage:
   gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
   gff-hab manifests list    [-state dir]
   gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
+  gff-hab instructions render -config file [-state dir] [-host-id id] [-dry-run | -write target]
   gff-hab hook [-t ms] <harness> [event] < payload
   gff-hab hook -print <harness> [-command name]
   gff-hab statusline claude [-timeout d] [-- command...] < status-line input
@@ -152,6 +154,8 @@ func main() {
 		err = manifests(os.Args[2:], os.Stdout)
 	case "detect":
 		err = detectCmd(os.Args[2:], os.Stdout)
+	case "instructions":
+		err = instructionsCmd(os.Args[2:], os.Stdout)
 	case "install":
 		err = install(os.Args[2:], os.Stdout)
 	case "uninstall":

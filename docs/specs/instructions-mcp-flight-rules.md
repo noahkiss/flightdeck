@@ -252,6 +252,49 @@ expansion visited, its real path, a marker (`read`, `missing`, `cycle`, `depth`,
   may hold private text. The user decides.
 - The renderer refuses to overwrite a file that carries no Flightdeck header, and says why.
 
+### 6.6 Built
+
+Built (`internal/instructions`, `gff-hab instructions render`):
+
+- **Config.** Sources and the opt-in list live in an `[instructions]` table of a TOML file named
+  by `-config` or `$GFF_CONFIG`: `[[instructions.source]]` with `path`, `scope`, `project`,
+  `hosts`, `harnesses` and `order`, and `write = [...]` with the harness names whose target may
+  be written. `~/` resolves against the home directory, a relative path against the config
+  file's directory. An unknown key in the table is an error. Project sources are accepted and
+  never rendered (D3).
+- **Opt-in is two steps.** `-write <target>` writes only when the `write` list names that
+  target. The default run is the dry run.
+- **Imports.** Section 5 as written. A link is resolved before the cycle and duplicate checks,
+  so a loop through a link is a cycle. One render shares its seen set across its sources: a file
+  two sources import is included once. The imports-only mode (5.9) exists in the expander; no
+  current target uses it, because each target that a native file already reaches is
+  "already loaded by the user's setup".
+- **Digest.** Each field is length-prefixed before hashing, so two different file lists cannot
+  run together into one byte stream.
+- **Claude.** A source that is Claude's global `CLAUDE.md`, or a file in its user rules
+  directory, is left out of the Claude render: Claude loads it and its imports itself. Other
+  harnesses still get it flattened. The Claude directory is `$CLAUDE_CONFIG_DIR`, else
+  `~/.claude`.
+- **Loader check.** A native file Flightdeck did not write blocks the target (Codex:
+  `AGENTS.override.md` or `AGENTS.md`; opencode: its global `AGENTS.md`; pi: any of its three
+  names). So does a config, hook, plugin or extension file that names a source by its absolute,
+  real or `~/` path: Claude `settings.json` and `hooks/`; Codex `config.toml` and `hooks.json`;
+  opencode `opencode.json(c)`, `plugin/` and `plugins/`; pi `settings.json` and `extensions/`.
+  Directories are read one level deep, files up to 1 MiB.
+- **opencode.** The renderer writes only the state file `<state>/instructions/opencode.md`. It
+  does not patch the `instructions` array or probe the installed version yet. The dry run warns
+  until the global config lists the file. The fallback to `~/.config/opencode/AGENTS.md` is not
+  built.
+- **Write.** A symbolic link at the target is refused, so a dotfiles link is never replaced by
+  a plain file. The temporary file is owner-only (0600) and synced before the rename. The state
+  record `<state>/instructions/<harness>.json` holds the digest, the target and every visited
+  file with its marker, depth and importer.
+- **Git work tree.** The warning walks up from the target's directory looking for a `.git`
+  entry, so it needs no git binary. A repository whose git directory sits elsewhere (a bare
+  repository with a separate work tree) is not seen.
+- **Diff.** A file pair too large for the line diff table (past about four million cells) is
+  reported as differing, with both line counts, instead of a diff.
+
 ---
 
 ## 7. MCP per harness
