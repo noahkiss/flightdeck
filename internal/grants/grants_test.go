@@ -554,14 +554,14 @@ func TestServiceKeepsWalkAnswers(t *testing.T) {
 	h := newHarness(t)
 	// The walk's request sees the network; a later check reports it.
 	res := h.check(api.PermissionsParams{Grants: []string{LocalNetwork}, Request: LocalNetwork})
-	if r, _ := find(res, api.PermissionProcessHolder, LocalNetwork); r.State != api.PermissionStateGranted {
+	if r, _ := find(res, api.PermissionProcessHolder, LocalNetwork); r.State != api.PermissionStateGranted || r.Remembered {
 		t.Fatalf("request: %+v", r)
 	}
 	if h.request[0] != LocalNetwork {
 		t.Error("request not passed to the probe")
 	}
 	res = h.check(api.PermissionsParams{})
-	if r, _ := find(res, api.PermissionProcessHolder, LocalNetwork); r.State != api.PermissionStateGranted || !strings.Contains(r.Detail, "seen by gff setup") {
+	if r, _ := find(res, api.PermissionProcessHolder, LocalNetwork); r.State != api.PermissionStateGranted || !strings.Contains(r.Detail, "seen by gff setup") || !r.Remembered {
 		t.Errorf("kept answer: %+v", r)
 	}
 	if got := failing(res); len(got) != 0 {

@@ -243,6 +243,43 @@ func TestWalkRequestsFirst(t *testing.T) {
 	}
 }
 
+// TestWalkReasksRemembered: a Local Network grant the last walk saw, since turned off. The check
+// can only report the kept answer; the walk must ask again, find it off and open Settings.
+func TestWalkReasksRemembered(t *testing.T) {
+	lan := r(H, grants.LocalNetwork, api.PermissionStateGranted, true, "seen by gff setup on 2026-10-30")
+	lan.Remembered = true
+	f := &fakeHab{os: "darwin", rows: []api.PermissionRow{lan, r(H, grants.FullDiskAccess, api.PermissionStateGranted, true, "")}}
+	f.onCall = func(n int, p api.PermissionsParams) {
+		if p.Request == grants.LocalNetwork {
+			f.rows[0] = r(H, grants.LocalNetwork, api.PermissionStateDenied, true, "the connection was refused")
+		}
+	}
+	w, out := newWalker(f, setupOptions{timeout: 50 * time.Millisecond, noOpen: true}, nil)
+	if code := w.run(context.Background()); code != 1 {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	if len(f.calls) < 2 || f.calls[1].Request != grants.LocalNetwork {
+		t.Errorf("calls %+v: the walk must ask for a remembered grant again", f.calls)
+	}
+	for _, s := range []string{"asking again", "Open System Settings > Privacy & Security > Local Network.", "1 missing."} {
+		if !strings.Contains(out.String(), s) {
+			t.Errorf("output lacks %q:\n%s", s, out)
+		}
+	}
+
+	// Still on: the request says so, nothing opens, and the walk passes.
+	f = &fakeHab{os: "darwin", rows: []api.PermissionRow{lan}}
+	f.onCall = func(n int, p api.PermissionsParams) {
+		if p.Request == grants.LocalNetwork {
+			f.rows[0] = r(H, grants.LocalNetwork, api.PermissionStateGranted, true, "")
+		}
+	}
+	w, out = newWalker(f, setupOptions{}, nil)
+	if code := w.run(context.Background()); code != 0 || len(f.opened) != 0 || !strings.Contains(out.String(), "lan: ok") {
+		t.Errorf("still granted: exit %d, opened %v\n%s", code, f.opened, out)
+	}
+}
+
 func TestWalkSkipAndTimeout(t *testing.T) {
 	f := &fakeHab{os: "darwin", rows: []api.PermissionRow{
 		r(H, grants.FullDiskAccess, api.PermissionStateDenied, true, ""),

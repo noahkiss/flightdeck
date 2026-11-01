@@ -2694,6 +2694,10 @@
           "process": {
             "$ref": "#/components/schemas/PermissionProcess"
           },
+          "remembered": {
+            "type": "boolean",
+            "description": "The state is the answer the setup walk's last request saw, kept because no check can read this grant without a dialog. The grant may have changed since; the walk asks again."
+          },
           "required": {
             "type": "boolean",
             "description": "The check fails unless the state is granted."

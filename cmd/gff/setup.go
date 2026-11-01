@@ -221,7 +221,8 @@ func (w *walker) run(ctx context.Context) int {
 }
 
 // todo lists the rows the walk visits: required rows not granted, and the rows --grant names.
-// One row per process and grant.
+// A remembered row counts as not granted: only a new request shows whether the grant is still
+// on. One row per process and grant.
 func (w *walker) todo(res api.Permissions) []api.PermissionRow {
 	var out []api.PermissionRow
 	seen := map[string]bool{}
@@ -230,7 +231,7 @@ func (w *walker) todo(res api.Permissions) []api.PermissionRow {
 		if len(w.opts.grants) > 0 && !named {
 			continue
 		}
-		if r.State == api.PermissionStateGranted || r.State == api.PermissionStateNote || r.Draining {
+		if r.State == api.PermissionStateGranted && !r.Remembered || r.State == api.PermissionStateNote || r.Draining {
 			continue
 		}
 		if !r.Required && !named {
@@ -271,6 +272,9 @@ func (w *walker) walkOne(ctx context.Context, r api.PermissionRow) error {
 	fmt.Fprintf(w.out, "%s %s: %s.", r.Process, grants.Label(r.Grant), stateWord(r.State))
 	if r.Detail != "" {
 		fmt.Fprintf(w.out, " %s.", r.Detail)
+	}
+	if r.Remembered {
+		fmt.Fprint(w.out, " It may have changed since; asking again.")
 	}
 	fmt.Fprintln(w.out)
 	switch r.Grant {
@@ -346,6 +350,9 @@ func (w *walker) recheck(ctx context.Context, r api.PermissionRow, request strin
 	}
 	for _, x := range res.Rows {
 		if x.Process == r.Process && x.Grant == r.Grant && !x.Draining {
+			if x.Remembered && request == "" {
+				return api.PermissionStateUnknown, true // an old answer proves nothing now
+			}
 			return x.State, true
 		}
 	}

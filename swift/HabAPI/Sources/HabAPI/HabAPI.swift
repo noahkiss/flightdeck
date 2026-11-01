@@ -1278,6 +1278,8 @@ public struct PermissionRow: Codable, Sendable, Hashable {
     /// The holder instance a holder row is about.
     public var instance: String?
     public var process: PermissionProcess
+    /// The state is the answer the setup walk's last request saw, kept because no check can read this grant without a dialog. The grant may have changed since; the walk asks again.
+    public var remembered: Bool?
     /// The check fails unless the state is granted.
     public var required: Bool?
     /// A path to show in Finder, so the user can drag it into the Settings list.
@@ -1292,18 +1294,20 @@ public struct PermissionRow: Codable, Sendable, Hashable {
         case grant = "grant"
         case instance = "instance"
         case process = "process"
+        case remembered = "remembered"
         case required = "required"
         case reveal = "reveal"
         case settings = "settings"
         case state = "state"
     }
 
-    public init(detail: String? = nil, draining: Bool? = nil, grant: String, instance: String? = nil, process: PermissionProcess, required: Bool? = nil, reveal: String? = nil, settings: String? = nil, state: PermissionState) {
+    public init(detail: String? = nil, draining: Bool? = nil, grant: String, instance: String? = nil, process: PermissionProcess, remembered: Bool? = nil, required: Bool? = nil, reveal: String? = nil, settings: String? = nil, state: PermissionState) {
         self.detail = detail
         self.draining = draining
         self.grant = grant
         self.instance = instance
         self.process = process
+        self.remembered = remembered
         self.required = required
         self.reveal = reveal
         self.settings = settings

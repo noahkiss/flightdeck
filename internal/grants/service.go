@@ -258,10 +258,12 @@ func (s *Service) darwin(ctx context.Context, p api.PermissionsParams, want func
 			if g == FullDiskAccess && s.fdaDropped() && c.State != api.PermissionStateGranted {
 				c.State, c.Detail = api.PermissionStateOff, "dropped in macos.grants; Files and Folders is checked instead"
 			}
+			remembered := false
 			if (g == LocalNetwork || g == FilesAndFolders) && curSig != nil {
-				c = s.seen(api.PermissionProcessHolder, curSig.Requirement, c, g == p.Request)
+				c, remembered = s.seen(api.PermissionProcessHolder, curSig.Requirement, c, g == p.Request)
 			}
 			r := row(api.PermissionProcessHolder, current, c, required[g])
+			r.Remembered = remembered
 			if g == FullDiskAccess && c.State != api.PermissionStateGranted && cur != nil && cur.Bundle != "" {
 				r.Reveal = cur.Bundle
 			}

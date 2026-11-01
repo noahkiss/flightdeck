@@ -615,8 +615,9 @@ beyond the paper spec:
   macOS for first (accessibility, screen-recording, local-network, files-and-folders,
   pasteboard). Only the walk sends `request`. The result is one row per grant and process:
   `process` (holder or hab), `instance`, `draining`, `grant`, `state` (granted, denied, unknown,
-  unanswered, off, note, error), `required`, `detail`, `settings` (the URL) and `reveal` (the
-  bundle to show in Finder). The Mac app's Permissions screen reads the same rows (7.8).
+  unanswered, off, note, error), `required`, `detail`, `remembered` (the state is a kept
+  answer; see Local Network below), `settings` (the URL) and `reveal` (the bundle to show in
+  Finder). The Mac app's Permissions screen reads the same rows (7.8).
 - **The client decides the exit code from the rows.** `error` on any row is exit 2; a required
   row that is not `granted` is exit 1. gff setup prints `ok`, `missing` (denied or unanswered),
   `unknown`, `off`, `note` or `error`. A draining holder's rows say `draining` in the first
@@ -652,7 +653,11 @@ beyond the paper spec:
   the requirement follows TCC: an update with the same requirement keeps it (P12 needs exit 0),
   a dev rebuild or a new team loses it. The paper spec said "since start"; that would fail every
   check after an update. Files and Folders answers (when Full Disk Access is dropped) are kept
-  the same way.
+  the same way. A row that reports a kept answer carries `remembered`: the user may have turned
+  the grant off since, and no check sees that. `--check` still passes on a remembered `granted`
+  (P12). The walk treats a remembered row as not granted and requests it again. A grant that is
+  still on answers at once, with no dialog, and nothing opens; a grant that is gone is found and
+  walked like any missing row, and the new answer replaces the kept one.
 - **Pasteboard is not checked by default.** The round trip replaces the clipboard for a moment
   (the old text is put back; other content is lost), so it runs only on request or `--grant
   pasteboard`, and is never required.

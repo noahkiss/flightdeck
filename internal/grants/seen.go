@@ -16,7 +16,8 @@ import (
 // process and its designated requirement, because TCC keys the grant the same way. A later
 // --check reports the kept answer, with its date, instead of unknown, so an update to a build
 // with the same requirement keeps a passing check (P12). A new requirement (a dev rebuild, a
-// new team) finds no answer, as TCC finds no grant.
+// new team) finds no answer, as TCC finds no grant. A kept answer is marked remembered, because
+// the user may have changed the grant since; the walk asks again.
 
 const seenFile = "seen.json"
 
@@ -43,10 +44,11 @@ func (s *Service) loadSeen() map[string]seenEntry {
 
 // seen merges a probe's answer for a grant that needs a dialog with the kept answers. A
 // request's answer that is granted or denied is kept; an unknown answer is replaced by the kept
-// one, when there is one.
-func (s *Service) seen(proc api.PermissionProcess, requirement string, c Check, requested bool) Check {
+// one, when there is one, and remembered is true. The user may have changed the grant since, so
+// the walk asks again for each remembered row (7.5).
+func (s *Service) seen(proc api.PermissionProcess, requirement string, c Check, requested bool) (_ Check, remembered bool) {
 	if s.cfg.StateDir == "" || requirement == "" {
-		return c
+		return c, false
 	}
 	key := seenKey(proc, requirement, c.Grant)
 	m := s.loadSeen()
@@ -57,14 +59,14 @@ func (s *Service) seen(proc api.PermissionProcess, requirement string, c Check, 
 				writeFileAtomic(s.seenPath(), append(b, '\n'))
 			}
 		}
-		return c
+		return c, false
 	}
 	if c.State != api.PermissionStateUnknown {
-		return c
+		return c, false
 	}
 	e, ok := m[key]
 	if !ok {
-		return c
+		return c, false
 	}
 	at := e.At
 	if t, err := time.Parse(time.RFC3339, e.At); err == nil {
@@ -74,5 +76,5 @@ func (s *Service) seen(proc api.PermissionProcess, requirement string, c Check, 
 	if e.Detail != "" {
 		out.Detail += ": " + e.Detail
 	}
-	return out
+	return out, true
 }

@@ -346,6 +346,9 @@ type PermissionRow struct {
 	State    PermissionState   `json:"state"`
 	Required bool              `json:"required,omitempty" doc:"The check fails unless the state is granted."`
 	Detail   string            `json:"detail,omitempty" doc:"One line for the user: what was found, or what to do."`
-	Settings string            `json:"settings,omitempty" doc:"The System Settings URL that changes this grant."`
-	Reveal   string            `json:"reveal,omitempty" doc:"A path to show in Finder, so the user can drag it into the Settings list."`
+	// Remembered is set on a grant no check can read without a dialog: the state is the one the
+	// setup walk's last request saw, not one read now.
+	Remembered bool   `json:"remembered,omitempty" doc:"The state is the answer the setup walk's last request saw, kept because no check can read this grant without a dialog. The grant may have changed since; the walk asks again."`
+	Settings   string `json:"settings,omitempty" doc:"The System Settings URL that changes this grant."`
+	Reveal     string `json:"reveal,omitempty" doc:"A path to show in Finder, so the user can drag it into the Settings list."`
 }
