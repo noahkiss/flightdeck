@@ -107,7 +107,7 @@ const usage = `usage:
   gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
   gff-hab hook [-t ms] <harness> [event] < payload
   gff-hab hook -print <harness> [-command name]
-  gff-hab statusline claude [-- command] < status-line input
+  gff-hab statusline claude [-timeout d] [-- command...] < status-line input
   gff-hab statusline -print claude [-command name] [-wrap command]
   gff-hab probe -nonce n -checks grant,... [-request grant]
   gff-hab install   [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
