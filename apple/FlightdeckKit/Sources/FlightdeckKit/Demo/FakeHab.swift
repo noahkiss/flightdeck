@@ -43,6 +43,8 @@ public actor FakeHab {
     public private(set) var subscribes = 0
     /// How many `hab.ping` calls were answered.
     public private(set) var pings = 0
+    /// Panes with data streams, input and size ownership (`FakePanes`).
+    public nonisolated let terminals = FakePanes()
 
     public init(hostID: String, revisions: ClosedRange<Int> = HabAPI.minRevision...HabAPI.revision, capabilities: [String] = ["agent-state", "data-streams", "snapshot-vt", "transcripts"]) {
         self.hostID = hostID
@@ -53,8 +55,12 @@ public actor FakeHab {
 
     /// A transport that reaches this hab. Every open is a new connection.
     public nonisolated func transport(endpoint: String? = nil) -> FakeTransport {
-        FakeTransport(endpoint: endpoint ?? "demo") { [self] stream, _ in
-            Task { await self.serve(stream) }
+        FakeTransport(endpoint: endpoint ?? "demo") { [self] stream, kind in
+            if kind == .data {
+                Task { await self.terminals.serve(stream) }
+            } else {
+                Task { await self.serve(stream) }
+            }
         }
     }
 
@@ -193,6 +199,9 @@ public actor FakeHab {
         c.heartbeat?.cancel()
         stream.close()
         if conns[id] === c { conns[id] = nil }
+        if c.welcomed, !conns.values.contains(where: { $0.clientID == c.clientID }) {
+            await terminals.disconnected(client: c.clientID)
+        }
     }
 
     private struct Head: Decodable {
@@ -258,10 +267,44 @@ public actor FakeHab {
                 subscribes += 1
             }
             await reply(c, id: id, result: snapshot(seq: c.seq))
+        case HabMethods.dataTicket.name, HabMethods.paneInput.name, HabMethods.paneSetDesiredSize.name,
+             HabMethods.paneTake.name, HabMethods.paneRedraw.name:
+            await terminalCall(method, params, c, id: id)
         default:
             await fail(c, id: id, kind: .unavailable, hint: "the fake hab does not serve \(method)")
         }
         return true
+    }
+
+    /// The pane methods, answered by `terminals`.
+    private func terminalCall(_ method: String, _ params: JSONValue, _ c: Conn, id: Int) async {
+        do {
+            switch method {
+            case HabMethods.dataTicket.name:
+                let p = try params.decode(TicketParams.self)
+                await reply(c, id: id, result: try await terminals.ticket(pane: p.pane, client: c.clientID))
+            case HabMethods.paneInput.name:
+                let p = try params.decode(InputParams.self)
+                try await terminals.input(pane: p.pane, client: c.clientID, data: p.data ?? Data((p.text ?? "").utf8))
+                await reply(c, id: id, result: Empty(seq: c.seq))
+            case HabMethods.paneSetDesiredSize.name:
+                let p = try params.decode(DesiredSizeParams.self)
+                let applied = try await terminals.setDesired(pane: p.pane, client: c.clientID, cols: p.cols, rows: p.rows)
+                await reply(c, id: id, result: DesiredSizeResult(applied: applied, seq: c.seq))
+            case HabMethods.paneTake.name:
+                let p = try params.decode(PaneRef.self)
+                let owner = try await terminals.take(pane: p.pane, client: c.clientID)
+                await reply(c, id: id, result: OwnerResult(owner: owner, seq: c.seq))
+            default:
+                let p = try params.decode(RedrawParams.self)
+                try await terminals.redraw(pane: p.pane, client: c.clientID, mode: p.mode ?? .snapshot)
+                await reply(c, id: id, result: Empty(seq: c.seq))
+            }
+        } catch let f as FakeFailure {
+            await fail(c, id: id, kind: f.kind, hint: f.hint)
+        } catch {
+            await fail(c, id: id, kind: .invalid, hint: String(describing: error))
+        }
     }
 
     private func snapshot(seq: UInt64) -> StructureResult {
