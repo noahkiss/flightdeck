@@ -2,9 +2,11 @@ package control
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/structure"
@@ -74,8 +76,85 @@ func TestChatMessageScope(t *testing.T) {
 	if !newFilter(api.Scope{Kind: api.ScopeKindHost}).pass(e) {
 		t.Error("scope host dropped a chat message")
 	}
-	ev, err := e.API(7)
-	if err != nil || ev.Revision != nil {
-		t.Errorf("chat.message on the wire: %+v %v", ev, err)
+}
+
+// TestChatMessageNoRevision: over a real subscription, a chat.message notification has no
+// revision key, while a stored object's event keeps its revision. Watching sees the
+// subscription.
+func TestChatMessageNoRevision(t *testing.T) {
+	srv := New(testConfig(&fakeSource{}))
+	t.Cleanup(srv.Close)
+	c := NewClient(pipeServe(t, srv))
+	hello(t, c, "")
+	if srv.Watching("s1") {
+		t.Error("Watching with no subscription")
+	}
+	if _, err := (api.Client{Caller: c}).EventsSubscribe(ctx(t), api.SubscribeParams{Scope: api.Scope{Kind: api.ScopeKindHost}}); err != nil {
+		t.Fatal(err)
+	}
+	if !srv.Watching("s1") {
+		t.Error("a host subscription does not count as Watching")
+	}
+	srv.Publish(structure.Event{Type: EventChatMessage, ID: "m1", Revision: 0, Data: api.ChatMessage{ID: "m1", Session: "s1"}})
+	srv.Publish(structure.Event{Type: structure.ProjectUpdated, ID: "p1", Revision: 3, Data: api.Project{ID: "p1"}})
+	for _, want := range []struct {
+		typ string
+		rev bool
+	}{{"chat.message", false}, {"project.updated", true}} {
+		select {
+		case n := <-c.Notifications():
+			var params map[string]json.RawMessage
+			if err := json.Unmarshal(n.Params, &params); err != nil || n.Method != "event" {
+				t.Fatalf("%s %s: %v", n.Method, n.Params, err)
+			}
+			_, has := params["revision"]
+			if string(params["type"]) != `"`+want.typ+`"` || has != want.rev {
+				t.Errorf("event %s: revision key present %v, want %v", n.Params, has, want.rev)
+			}
+		case <-ctx(t).Done():
+			t.Fatal("no event")
+		}
+	}
+}
+
+// slowChat holds each chat.page until its context ends, and reports that it ended.
+type slowChat struct {
+	started chan struct{}
+	ended   chan error
+}
+
+func (f *slowChat) ChatPage(ctx context.Context, _ api.ChatPageParams) (api.ChatMessages, error) {
+	f.started <- struct{}{}
+	<-ctx.Done()
+	f.ended <- ctx.Err()
+	return api.ChatMessages{}, ctx.Err()
+}
+
+// TestChatPageOffReadLoop: a slow chat.page holds up no other call on its connection, and it
+// stops when the connection ends.
+func TestChatPageOffReadLoop(t *testing.T) {
+	cfg := testConfig(&fakeSource{})
+	sc := &slowChat{started: make(chan struct{}, 1), ended: make(chan error, 1)}
+	cfg.Chat, cfg.ActionTimeout = sc, time.Minute
+	srv := New(cfg)
+	t.Cleanup(srv.Close)
+	nc := pipeServe(t, srv)
+	c := NewClient(nc)
+	hello(t, c, "")
+	go c.Call(context.Background(), "chat.page", api.ChatPageParams{Session: "s1"}, nil)
+	<-sc.started
+	pctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := c.Call(pctx, "hab.ping", nil, nil); err != nil {
+		t.Fatalf("hab.ping behind a running chat.page: %v", err)
+	}
+	nc.Close()
+	select {
+	case err := <-sc.ended:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("chat.page ended with %v, want canceled by the connection", err)
+		}
+	case <-ctx(t).Done():
+		t.Fatal("chat.page kept running after its connection ended")
 	}
 }

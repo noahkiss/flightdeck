@@ -51,6 +51,11 @@ type conn struct {
 	// so calls to one pane keep their order and a stuck pane holds up nothing else.
 	lanes   map[string]*lane
 	waiting int // pane.input calls in lanes, until their reply
+	chats   int // chat.page calls running, until their reply
+
+	// ctx ends when the connection's read loop ends: calls running off the loop stop with it.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // lane holds one pane's pane.input calls that are read and not yet queued to Input.
@@ -71,13 +76,19 @@ type inputCall struct {
 // maxWaitingInput bounds the pane.input calls one connection may have waiting.
 const maxWaitingInput = 256
 
+// maxRunningChat bounds the chat.page calls one connection may have running.
+const maxRunningChat = 16
+
 func newConn(s *Server, nc net.Conn, br *bufio.Reader) *conn {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &conn{
-		s:    s,
-		nc:   nc,
-		br:   br,
-		wake: make(chan struct{}, 1),
-		done: make(chan struct{}),
+		s:      s,
+		nc:     nc,
+		br:     br,
+		wake:   make(chan struct{}, 1),
+		done:   make(chan struct{}),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 }
 
@@ -221,14 +232,23 @@ func (c *conn) publish(pe pubEvent) {
 	c.deliverLocked(pe)
 }
 
+// watching reports whether this connection's subscription gets the events of session id.
+func (c *conn) watching(session string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sub != nil && !c.closing && (c.sub.kind == api.ScopeKindHost || c.sub.sessions[session])
+}
+
 // deliverLocked gives an in-scope event the next seq and queues it.
 func (c *conn) deliverLocked(pe pubEvent) {
 	if !c.sub.pass(pe.ev) {
 		return
 	}
 	e := api.Event{Seq: c.seq + 1, Type: pe.ev.Type, ID: pe.ev.ID, Data: pe.data}
-	rev := pe.ev.Revision
-	e.Revision = &rev
+	if !structure.Ephemeral(pe.ev.Type) { // an ephemeral event carries no revision (spec 3.9)
+		rev := pe.ev.Revision
+		e.Revision = &rev
+	}
 	e, ok, err := downEvent(c.revision, e)
 	if err != nil {
 		c.s.cfg.Logf("translate event %s: %v", e.Type, err)
@@ -392,6 +412,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleInput(m)
 		return
 	}
+	if m.Method == "chat.page" {
+		c.handleChat(m)
+		return
+	}
 	seq := c.currentSeq()
 	result, e := c.dispatch(m, seq)
 	c.reply(m, seq, result, e)
@@ -451,6 +475,54 @@ func (c *conn) handleInput(m message) {
 	case ln.wake <- struct{}{}:
 	default:
 	}
+}
+
+// handleChat checks a chat.page call and runs it on its own goroutine. The first page of a long
+// transcript reads the whole file; the read loop goes on meanwhile, so pings and other calls are
+// answered. The call stops when its timeout passes or the connection ends.
+func (c *conn) handleChat(m message) {
+	seq := c.currentSeq()
+	var p api.ChatPageParams
+	if e := c.decodeUp(m, &p); e != nil {
+		c.reply(m, seq, nil, e)
+		return
+	}
+	switch {
+	case p.Session == "":
+		c.reply(m, seq, nil, appErr(api.ErrorKindInvalid, "chat.page needs a session"))
+		return
+	case p.Before != "" && p.After != "":
+		c.reply(m, seq, nil, appErr(api.ErrorKindInvalid, "chat.page takes before or after, not both"))
+		return
+	case c.s.cfg.Chat == nil:
+		c.reply(m, seq, nil, appErr(api.ErrorKindUnavailable, hintNoChat, m.Method))
+		return
+	}
+	c.mu.Lock()
+	if c.chats >= maxRunningChat {
+		c.mu.Unlock()
+		c.reply(m, seq, nil, appErr(api.ErrorKindUnavailable, "%d chat.page calls already run on this connection", maxRunningChat))
+		return
+	}
+	c.chats++
+	c.mu.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(c.ctx, c.s.cfg.ActionTimeout)
+		defer cancel()
+		page, err := c.s.cfg.Chat.ChatPage(ctx, p)
+		c.mu.Lock()
+		c.chats--
+		c.mu.Unlock()
+		if err != nil {
+			c.reply(m, seq, nil, actionErr(m.Method, err))
+			return
+		}
+		if page.Messages == nil {
+			page.Messages = []api.ChatMessage{}
+		}
+		page.Seq = api.Seq{Seq: seq}
+		c.reply(m, seq, page, nil)
+	}()
 }
 
 // runLane queues one pane's pane.input calls to Input in order, each as soon as it is read, and
@@ -826,31 +898,6 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 			return nil, actionErr(m.Method, err)
 		}
 		return api.Empty{Seq: s}, nil
-	case "chat.page":
-		var p api.ChatPageParams
-		if e := c.decodeUp(m, &p); e != nil {
-			return nil, e
-		}
-		if p.Session == "" {
-			return nil, appErr(api.ErrorKindInvalid, "chat.page needs a session")
-		}
-		if p.Before != "" && p.After != "" {
-			return nil, appErr(api.ErrorKindInvalid, "chat.page takes before or after, not both")
-		}
-		if c.s.cfg.Chat == nil {
-			return nil, appErr(api.ErrorKindUnavailable, hintNoChat, m.Method)
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
-		defer cancel()
-		page, err := c.s.cfg.Chat.ChatPage(ctx, p)
-		if err != nil {
-			return nil, actionErr(m.Method, err)
-		}
-		if page.Messages == nil {
-			page.Messages = []api.ChatMessage{}
-		}
-		page.Seq = s
-		return page, nil
 	}
 	if stage, ok := later[m.Method]; ok {
 		return nil, appErr(api.ErrorKindUnavailable, "%s is not built yet; %s builds it", m.Method, stage)

@@ -248,6 +248,7 @@ func (s *Server) ServeConn(nc net.Conn) {
 
 	go c.writeLoop()
 	c.readLoop()
+	c.cancel()
 	c.finish(nil)
 	<-c.done
 	if c.hello && s.cfg.Size != nil {
@@ -277,6 +278,19 @@ func (s *Server) Publish(e structure.Event) {
 	for c := range s.conns {
 		c.publish(pe)
 	}
+}
+
+// Watching reports whether a subscription on some connection gets the events of session id:
+// its scope is the host, or holds the session.
+func (s *Server) Watching(session string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for c := range s.conns {
+		if c.watching(session) {
+			return true
+		}
+	}
+	return false
 }
 
 // Close sends closing {reason: shutdown} to every connection, closes the listeners and waits a

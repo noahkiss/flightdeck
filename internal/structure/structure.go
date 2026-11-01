@@ -65,6 +65,9 @@ var ephemeral = map[api.EventType]bool{
 	"usage.updated": true,
 }
 
+// Ephemeral reports whether events of type t carry no revision on the wire (spec 3.5, 3.9).
+func Ephemeral(t api.EventType) bool { return ephemeral[t] }
+
 // API turns the event into the wire form with the given seq. An ephemeral event type gets no
 // revision.
 func (e Event) API(seq uint64) (api.Event, error) {
