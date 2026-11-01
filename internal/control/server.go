@@ -21,6 +21,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -138,6 +139,19 @@ type Permissions interface {
 	Permissions(ctx context.Context, p api.PermissionsParams) (api.Permissions, error)
 }
 
+// Peers keeps the hab's peer list and its links (mesh.md 3, 4). gff-hab implements it with
+// internal/peers. An error that is an *Error keeps its kind.
+type Peers interface {
+	// List returns the peers with their link state.
+	List() api.PeerList
+	// Accept pins the device id the peer presented in place of the pinned one.
+	Accept(label string) (api.PeerAccepted, error)
+	// Linked reports a peer link that said hello with its peer field: another hab dialed this
+	// one. id is unique to the connection. Unlinked reports its end.
+	Linked(id uint64, p api.PeerHello)
+	Unlinked(id uint64)
+}
+
 // Config is what New needs. Source is required.
 type Config struct {
 	Build        string
@@ -153,6 +167,7 @@ type Config struct {
 	Commands     Commands    // nil: command.list and command.output answer unavailable
 	Agents       Agents      // nil: session.send and approval.answer answer unavailable
 	Permissions  Permissions // nil: hab.permissions answers unavailable
+	Peers        Peers       // nil: peers.list and peers.accept answer unavailable
 	// ApproversChanged, if set, is called with no lock held after a connection closes or
 	// changes its subscription, so Approvers may have dropped.
 	ApproversChanged func()
@@ -186,6 +201,9 @@ type token struct {
 	live     *conn     // the connection using it; nil once it closed
 	expires  time.Time // when live is nil: the end of the grace period
 }
+
+// linkIDs numbers peer links for Peers.Linked.
+var linkIDs atomic.Uint64
 
 // New returns a server with a fresh random epoch.
 func New(cfg Config) *Server {
@@ -299,6 +317,9 @@ func (s *Server) ServeConn(nc net.Conn) {
 	<-c.done
 	if c.hello && s.cfg.Size != nil {
 		s.cfg.Size.Disconnected(c.clientID)
+	}
+	if c.linked {
+		s.cfg.Peers.Unlinked(c.linkID)
 	}
 
 	s.mu.Lock()

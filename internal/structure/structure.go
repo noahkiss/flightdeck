@@ -62,7 +62,7 @@ type Event struct {
 // not stored by gff-hab.
 var ephemeral = map[api.EventType]bool{
 	"chat.message": true, "session.turn_end": true, "pane.bell": true, "pane.output": true,
-	"usage.updated": true, "command.updated": true,
+	"usage.updated": true, "command.updated": true, "peer.updated": true,
 }
 
 // Ephemeral reports whether events of type t carry no revision on the wire (spec 3.5, 3.9).

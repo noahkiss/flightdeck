@@ -329,6 +329,20 @@ func TestReloadChangedSpec(t *testing.T) {
 	}
 }
 
+// TestEndpointsInTurn: a host's endpoints are tried in order, one per attempt; the one that
+// answers is the one in use.
+func TestEndpointsInTurn(t *testing.T) {
+	d := shortDir(t)
+	a := startHab(t, d, "a")
+	s := open(t, hosts.Spec{Label: "one", Endpoints: []hosts.Endpoint{
+		{Kind: hosts.EndpointSocket, Value: filepath.Join(d, "gone.sock")},
+		{Kind: hosts.EndpointSocket, Value: a.Sock},
+	}})
+	waitHosts(t, s, "one online at its second endpoint", func(hs []hosts.Host) bool {
+		return hs[0].Online() && hs[0].Endpoint == a.Sock
+	})
+}
+
 type listSource struct{ specs []hosts.Spec }
 
 func (l *listSource) Hosts() ([]hosts.Spec, error) { return l.specs, nil }

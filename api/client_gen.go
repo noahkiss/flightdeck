@@ -60,6 +60,7 @@ const (
 	ClientKindTerminal ClientKind = "terminal"
 	ClientKindCli      ClientKind = "cli"
 	ClientKindScript   ClientKind = "script"
+	ClientKindHab      ClientKind = "hab"
 )
 
 const (
@@ -108,6 +109,14 @@ const (
 	OwnerReasonLost       OwnerReason = "lost"
 	OwnerReasonDisconnect OwnerReason = "disconnect"
 	OwnerReasonRestore    OwnerReason = "restore"
+)
+
+const (
+	PeerStateOnline       PeerState = "online"
+	PeerStateConnecting   PeerState = "connecting"
+	PeerStateOffline      PeerState = "offline"
+	PeerStateRefused      PeerState = "refused"
+	PeerStateUpdateNeeded PeerState = "update_needed"
 )
 
 const (
@@ -199,6 +208,7 @@ const (
 	EventSessionTurnEnd EventType = "session.turn_end"
 	EventUsageUpdated   EventType = "usage.updated"
 	EventCommandUpdated EventType = "command.updated"
+	EventPeerUpdated    EventType = "peer.updated"
 )
 
 // DecodeData decodes e.Data into the type its event type names. It returns
@@ -263,6 +273,10 @@ func (e Event) DecodeData() (any, error) {
 		return v, err
 	case EventCommandUpdated:
 		var v Command
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventPeerUpdated:
+		var v Peer
 		err := json.Unmarshal(e.Data, &v)
 		return v, err
 	}
@@ -514,6 +528,20 @@ func (c Client) CommandList(ctx context.Context, params CommandListParams) (Comm
 func (c Client) CommandOutput(ctx context.Context, params CommandOutputParams) (CommandOutput, error) {
 	var result CommandOutput
 	err := c.Caller.Call(ctx, "command.output", params, &result)
+	return result, err
+}
+
+// PeersList calls peers.list. This hab's peers with their link state, and habs linked to it that it does not list (mesh.md 3, 4.3). Needs the mesh capability.
+func (c Client) PeersList(ctx context.Context, params PeersListParams) (PeerList, error) {
+	var result PeerList
+	err := c.Caller.Call(ctx, "peers.list", params, &result)
+	return result, err
+}
+
+// PeersAccept calls peers.accept. Pin the device id a peer presented in place of the pinned one (transport.md 6.3). Needs the mesh capability.
+func (c Client) PeersAccept(ctx context.Context, params PeersAcceptParams) (PeerAccepted, error) {
+	var result PeerAccepted
+	err := c.Caller.Call(ctx, "peers.accept", params, &result)
 	return result, err
 }
 

@@ -90,6 +90,8 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.pushUnregister)
         result(HabMethods.usageList)
         result(HabMethods.habStats)
+        result(HabMethods.peersList)
+        result(HabMethods.peersAccept)
         result(HabMethods.habPermissions)
         add("notification." + HabNotification.heartbeat, Heartbeat.self)
         add("notification." + HabNotification.closing, Closing.self)

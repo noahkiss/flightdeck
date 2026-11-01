@@ -35,6 +35,11 @@ type Config struct {
 	// DeviceID, when set, is the pinned device id: a welcome with another id stops the Conn
 	// with a *DeviceChangedError. Empty: the first welcome's id is pinned for the Conn's life.
 	DeviceID string
+	// Peer, when set, goes in the hello: this Conn is a peer link from that hab (mesh.md 3.2).
+	Peer *api.PeerHello
+	// NoSubscribe skips events.subscribe: the Conn goes online after the hello, with an empty
+	// structure, and makes calls only. A peer link subscribes to nothing (mesh.md 4.2).
+	NoSubscribe bool
 
 	PingInterval time.Duration // hab.ping after this long with nothing sent
 	DeadAfter    time.Duration // a connection that delivers nothing for this long is dead
@@ -310,7 +315,7 @@ func (c *Conn) open(ctx context.Context) (*session, error) {
 	c.mu.Lock()
 	token := c.token
 	c.mu.Unlock()
-	w, err := cl.Hello(ctx, c.cfg.Client, c.cfg.Label, token)
+	w, err := cl.HelloAs(ctx, api.HelloParams{Client: c.cfg.Client, Label: c.cfg.Label, ReconnectToken: token, Peer: c.cfg.Peer})
 	if err != nil {
 		cl.Close()
 		var ce *control.Error
@@ -332,6 +337,10 @@ func (c *Conn) open(ctx context.Context) (*session, error) {
 		return nil, errPermanent{&DeviceChangedError{Pinned: pinned, Got: w.DeviceID}}
 	}
 	cl.KeepAlive(c.cfg.PingInterval)
+	if c.cfg.NoSubscribe {
+		c.goOnline(s, w, api.Structure{})
+		return s, nil
+	}
 
 	// Subscribe while collecting notifications: the response and the events travel on
 	// different paths inside the client, so events above the response's seq may be read
@@ -482,6 +491,9 @@ func (c *Conn) reconnect(reset bool) (*session, error) {
 			return nil, p.error
 		}
 		c.cfg.Logf("habconn: reconnect: %v", err)
+		if f, ok := c.cfg.Transport.(Failover); ok {
+			f.Failed()
+		}
 		select {
 		case <-c.closed:
 			return nil, ErrClosed

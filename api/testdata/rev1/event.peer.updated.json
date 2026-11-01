@@ -1,0 +1,27 @@
+{
+  "data": {
+    "device_id": "device_id-5",
+    "endpoint": "endpoint-4",
+    "host": "host-7",
+    "inbound": true,
+    "label": "label-3",
+    "last_seen": "last_seen-8",
+    "offered_id": "offered_id-6",
+    "reason": "reason-9",
+    "state": "update_needed",
+    "x_unknown_field": "later"
+  },
+  "id": "id-12",
+  "revision": 10,
+  "seq": 11,
+  "type": "peer.updated",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

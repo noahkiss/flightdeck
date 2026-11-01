@@ -97,6 +97,8 @@ var Methods = []Method{
 	{"hab.stats", "CPU, memory, disk, battery and uptime of the host. Needs the host-stats capability.", HabStatsParams{}, HostStats{}},
 	{"command.list", "Read a page of a pane's shell commands, found by OSC 133 marks (spec 2.5). Needs the commands capability.", CommandListParams{}, CommandList{}},
 	{"command.output", "Read a run of one command's output from the holder's ring (spec 2.5). Needs the commands capability.", CommandOutputParams{}, CommandOutput{}},
+	{"peers.list", "This hab's peers with their link state, and habs linked to it that it does not list (mesh.md 3, 4.3). Needs the mesh capability.", PeersListParams{}, PeerList{}},
+	{"peers.accept", "Pin the device id a peer presented in place of the pinned one (transport.md 6.3). Needs the mesh capability.", PeersAcceptParams{}, PeerAccepted{}},
 	{"hab.permissions", "Check the permission grants of the holders, from a probe pane, and of gff-hab (macos-identity.md 7.2). Needs the permissions capability.", PermissionsParams{}, Permissions{}},
 }
 
@@ -124,6 +126,7 @@ var Events = []EventDef{
 	{"session.turn_end", "The agent's turn ended; the id is the session id. Ephemeral.", TurnEnd{}},
 	{"usage.updated", "An account's usage reading changed; the id is the account key. Ephemeral.", UsageAccount{}},
 	{"command.updated", "A pane's command started or ended; the id is the pane id (spec 2.5). Ephemeral.", Command{}},
+	{"peer.updated", "A peer's link state changed; the id is the peer's label (mesh.md 4.3). Host scope only. Ephemeral.", Peer{}},
 }
 
 // Frames is every data connection frame kind. A frame is the kind byte, a 4-byte big-endian
@@ -142,7 +145,7 @@ var Frames = []FrameDef{
 // Enums lists the known words of each word set. A set the server sends is open: a client maps an
 // unknown word to a fallback. A set the client sends is closed: the server refuses unknown words.
 var Enums = map[string][]string{
-	"ClientKind":    {"app", "terminal", "cli", "script"},
+	"ClientKind":    {"app", "terminal", "cli", "script", "hab"},
 	"SessionState":  {"running", "exited"},
 	"ScopeKind":     {"host", "projects", "sessions"},
 	"OwnerReason":   {"create", "take", "request", "typed", "disown", "lost", "disconnect", "restore"},
@@ -169,6 +172,8 @@ var Enums = map[string][]string{
 	// Sets added for the permission check (macos-identity.md 7).
 	"PermissionProcess": {"holder", "hab"},
 	"PermissionState":   {"granted", "denied", "unknown", "unanswered", "off", "note", "error"},
+	// Sets added for the mesh (mesh.md 4.3).
+	"PeerState": {"online", "connecting", "offline", "refused", "update_needed"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per
@@ -189,5 +194,6 @@ var Translators = map[int]Translator{}
 // SSH server is on and the devices.* methods work (transport.md 9.4). "push" means the hab has
 // working push config (app.md 8.4). "host-stats" means hab.stats works. "commands" means the
 // command.* methods and the command.updated event work (spec 2.5). "permissions" means
-// hab.permissions works (macos-identity.md 7.2).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions"}
+// hab.permissions works (macos-identity.md 7.2). "mesh" means the hab keeps a peer list and
+// serves peer links, the peers.* methods and the peer.updated event (mesh.md 4.2).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh"}

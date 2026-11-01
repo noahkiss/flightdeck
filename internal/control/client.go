@@ -134,6 +134,15 @@ func (c *Client) Hello(ctx context.Context, client api.ClientInfo, label, reconn
 	})
 }
 
+// HelloAs is Hello with the hello's other fields set, such as a peer link's peer. Revision and
+// MinRevision are this build's when zero.
+func (c *Client) HelloAs(ctx context.Context, p api.HelloParams) (api.Welcome, error) {
+	if p.Revision == 0 {
+		p.Revision, p.MinRevision = api.Revision, api.MinRevision
+	}
+	return api.Client{Caller: c}.HabHello(ctx, p)
+}
+
 // Call sends one request and decodes its result into result (which may be nil, or a
 // *json.RawMessage to keep it raw). An error result is an *Error.
 func (c *Client) Call(ctx context.Context, method string, params, result any) error {

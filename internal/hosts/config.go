@@ -72,11 +72,15 @@ func (e Endpoint) Transport() (habconn.Transport, error) {
 
 // fileConfig is gff's config file. Its hosts take the shape of mesh peer entries.
 type fileConfig struct {
-	Hosts []struct {
-		Label     string   `toml:"label"`
-		Endpoints []string `toml:"endpoints"`
-		DeviceID  string   `toml:"device_id"`
-	} `toml:"hosts"`
+	Hosts []Entry `toml:"hosts"`
+}
+
+// Entry is one host as a config file writes it. gff's [[hosts]] and the hab's [[peers]]
+// (mesh.md 3.1) share it.
+type Entry struct {
+	Label     string   `toml:"label"`
+	Endpoints []string `toml:"endpoints"`
+	DeviceID  string   `toml:"device_id"`
 }
 
 // ConfigPath is gff's config file: $GFF_CONFIG, else gff/config.toml under the user config
@@ -124,11 +128,23 @@ func LoadConfig(path string) (specs []Spec, problems []string, err error) {
 	for _, k := range md.Undecoded() {
 		problems = append(problems, fmt.Sprintf("%s: unknown key %s", path, k))
 	}
+	specs, more := ParseEntries(path, "host", fc.Hosts, HeaderLines(b, "hosts"))
+	return specs, append(problems, more...), nil
+}
+
+// ParseEntries checks config entries and makes their specs. path names the file, what names
+// an entry ("host", "peer"), and lines[i], when known, is the line of entry i's table header.
+// An entry with no label, a label given twice, no endpoints or a bad endpoint is a problem, by
+// line, and the good entries still load (mesh.md 3.1, bad lines).
+func ParseEntries(path, what string, entries []Entry, lines []int) (specs []Spec, problems []string) {
 	seen := map[string]bool{}
-	for i, h := range fc.Hosts {
-		where := fmt.Sprintf("%s: host %d", path, i+1)
+	for i, h := range entries {
+		where := fmt.Sprintf("%s: %s %d", path, what, i+1)
+		if len(lines) == len(entries) {
+			where = fmt.Sprintf("%s:%d: %s", path, lines[i], what)
+		}
 		if h.Label != "" {
-			where = fmt.Sprintf("%s: host %q", path, h.Label)
+			where += fmt.Sprintf(" %q", h.Label)
 		}
 		switch {
 		case h.Label == "":
@@ -158,5 +174,23 @@ func LoadConfig(path string) (specs []Spec, problems []string, err error) {
 		seen[h.Label] = true
 		specs = append(specs, sp)
 	}
-	return specs, problems, nil
+	return specs, problems
+}
+
+// HeaderLines returns the 1-based line of each [[table]] header in a TOML file, in order. It
+// reads headers written on a line of their own, as people and gff-hab write them. ParseEntries
+// uses the lines only when there is one per entry.
+func HeaderLines(b []byte, table string) []int {
+	var lines []int
+	for i, l := range strings.Split(string(b), "\n") {
+		if c := strings.IndexByte(l, '#'); c >= 0 {
+			l = l[:c]
+		}
+		l = strings.TrimSpace(l)
+		if strings.HasPrefix(l, "[[") && strings.HasSuffix(l, "]]") &&
+			strings.TrimSpace(l[2:len(l)-2]) == table {
+			lines = append(lines, i+1)
+		}
+	}
+	return lines
 }

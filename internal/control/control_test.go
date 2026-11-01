@@ -382,7 +382,7 @@ func TestNoNullsAndWelcomeFields(t *testing.T) {
 	if d["result"].(map[string]any)["openrpc"] == nil || d["result"].(map[string]any)["seq"] != nil {
 		t.Fatalf("rpc.discover %v", d)
 	}
-	for _, method := range []string{"devices.list", "devices.pair", "devices.revoke", "pane.input", "data.ticket"} {
+	for _, method := range []string{"devices.list", "devices.pair", "devices.revoke", "pane.input", "data.ticket", "peers.list", "peers.accept"} {
 		e := send(`{"jsonrpc":"2.0","id":4,"method":"` + method + `","params":{}}`)["error"].(map[string]any)
 		data := e["data"].(map[string]any)
 		if data["kind"] != "unavailable" || data["seq"] == nil || e["code"].(float64) != api.ErrorCode {

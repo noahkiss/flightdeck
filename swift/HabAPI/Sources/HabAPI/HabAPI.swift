@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -415,6 +415,7 @@ public struct ClientKind: RawRepresentable, Codable, Sendable, Hashable {
     public static let terminal = ClientKind(rawValue: "terminal")
     public static let cli = ClientKind(rawValue: "cli")
     public static let script = ClientKind(rawValue: "script")
+    public static let hab = ClientKind(rawValue: "hab")
 }
 
 public struct Closing: Codable, Sendable, Hashable {
@@ -945,6 +946,8 @@ public struct HelloParams: Codable, Sendable, Hashable {
     public var label: String?
     /// Oldest API revision the client accepts.
     public var minRevision: Int
+    /// Set by a hab that dials another hab (client.kind hab): who is calling (mesh.md 3.2).
+    public var peer: PeerHello?
     /// Token from an earlier welcome (spec 3.7).
     public var reconnectToken: String?
     /// Newest API revision the client speaks.
@@ -954,14 +957,16 @@ public struct HelloParams: Codable, Sendable, Hashable {
         case client = "client"
         case label = "label"
         case minRevision = "min_revision"
+        case peer = "peer"
         case reconnectToken = "reconnect_token"
         case revision = "revision"
     }
 
-    public init(client: ClientInfo, label: String? = nil, minRevision: Int, reconnectToken: String? = nil, revision: Int) {
+    public init(client: ClientInfo, label: String? = nil, minRevision: Int, peer: PeerHello? = nil, reconnectToken: String? = nil, revision: Int) {
         self.client = client
         self.label = label
         self.minRevision = minRevision
+        self.peer = peer
         self.reconnectToken = reconnectToken
         self.revision = revision
     }
@@ -1049,6 +1054,21 @@ public struct InputParams: Codable, Sendable, Hashable {
         self.data = data
         self.pane = pane
         self.text = text
+    }
+}
+
+public struct LinkedPeer: Codable, Sendable, Hashable {
+    public var deviceId: String
+    public var host: String
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case host = "host"
+    }
+
+    public init(deviceId: String, host: String) {
+        self.deviceId = deviceId
+        self.host = host
     }
 }
 
@@ -1217,6 +1237,145 @@ public struct PaneRef: Codable, Sendable, Hashable {
 
     public init(pane: String) {
         self.pane = pane
+    }
+}
+
+public struct Peer: Codable, Sendable, Hashable {
+    /// The pinned device id. Absent before the first link.
+    public var deviceId: String?
+    /// The endpoint in use while online, else the one tried last.
+    public var endpoint: String?
+    /// The peer's host id from its last welcome or hello.
+    public var host: String?
+    /// The peer has a link to this hab open.
+    public var inbound: Bool?
+    /// This hab's name for the peer, from its peer list.
+    public var label: String
+    /// RFC 3339 time the peer was last online. Absent if never.
+    public var lastSeen: String?
+    /// State refused: the different device id the endpoint presented.
+    public var offeredId: String?
+    /// Why the peer is not online, in a few words.
+    public var reason: String?
+    public var state: PeerState
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case endpoint = "endpoint"
+        case host = "host"
+        case inbound = "inbound"
+        case label = "label"
+        case lastSeen = "last_seen"
+        case offeredId = "offered_id"
+        case reason = "reason"
+        case state = "state"
+    }
+
+    public init(deviceId: String? = nil, endpoint: String? = nil, host: String? = nil, inbound: Bool? = nil, label: String, lastSeen: String? = nil, offeredId: String? = nil, reason: String? = nil, state: PeerState) {
+        self.deviceId = deviceId
+        self.endpoint = endpoint
+        self.host = host
+        self.inbound = inbound
+        self.label = label
+        self.lastSeen = lastSeen
+        self.offeredId = offeredId
+        self.reason = reason
+        self.state = state
+    }
+}
+
+public struct PeerAccepted: Codable, Sendable, Hashable {
+    public var label: String
+    /// The device id pinned now.
+    public var new: String
+    /// The device id pinned before.
+    public var old: String?
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case label = "label"
+        case new = "new"
+        case old = "old"
+        case seq = "seq"
+    }
+
+    public init(label: String, new: String, old: String? = nil, seq: UInt64) {
+        self.label = label
+        self.new = new
+        self.old = old
+        self.seq = seq
+    }
+}
+
+public struct PeerHello: Codable, Sendable, Hashable {
+    /// The dialing hab's device id.
+    public var deviceId: String
+    /// The dialing hab's host id.
+    public var host: String
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case host = "host"
+    }
+
+    public init(deviceId: String, host: String) {
+        self.deviceId = deviceId
+        self.host = host
+    }
+}
+
+public struct PeerList: Codable, Sendable, Hashable {
+    /// The peer list, in file order. This hab's own entry is left out.
+    public var peers: [Peer]
+    /// Entries of the peer file that could not be used, and why.
+    public var problems: [String]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// Habs linked to this one that are not in its peer list.
+    public var unlisted: [LinkedPeer]
+
+    enum CodingKeys: String, CodingKey {
+        case peers = "peers"
+        case problems = "problems"
+        case seq = "seq"
+        case unlisted = "unlisted"
+    }
+
+    public init(peers: [Peer], problems: [String], seq: UInt64, unlisted: [LinkedPeer]) {
+        self.peers = peers
+        self.problems = problems
+        self.seq = seq
+        self.unlisted = unlisted
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct PeerState: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let online = PeerState(rawValue: "online")
+    public static let connecting = PeerState(rawValue: "connecting")
+    public static let offline = PeerState(rawValue: "offline")
+    public static let refused = PeerState(rawValue: "refused")
+    public static let updateNeeded = PeerState(rawValue: "update_needed")
+}
+
+public struct PeersAcceptParams: Codable, Sendable, Hashable {
+    /// The peer whose new device id to accept.
+    public var label: String
+
+    enum CodingKeys: String, CodingKey {
+        case label = "label"
+    }
+
+    public init(label: String) {
+        self.label = label
+    }
+}
+
+public struct PeersListParams: Codable, Sendable, Hashable {
+    public init() {
     }
 }
 
@@ -2135,6 +2294,10 @@ public enum HabMethods {
     public static let commandList = HabMethod<CommandListParams, CommandList>(name: "command.list")
     /// Read a run of one command's output from the holder's ring (spec 2.5). Needs the commands capability.
     public static let commandOutput = HabMethod<CommandOutputParams, CommandOutput>(name: "command.output")
+    /// This hab's peers with their link state, and habs linked to it that it does not list (mesh.md 3, 4.3). Needs the mesh capability.
+    public static let peersList = HabMethod<PeersListParams, PeerList>(name: "peers.list")
+    /// Pin the device id a peer presented in place of the pinned one (transport.md 6.3). Needs the mesh capability.
+    public static let peersAccept = HabMethod<PeersAcceptParams, PeerAccepted>(name: "peers.accept")
     /// Check the permission grants of the holders, from a probe pane, and of gff-hab (macos-identity.md 7.2). Needs the permissions capability.
     public static let habPermissions = HabMethod<PermissionsParams, Permissions>(name: "hab.permissions")
 }
@@ -2177,6 +2340,8 @@ public enum HabEvent: Sendable, Hashable {
     case usageUpdated(UsageAccount)
     /// A pane's command started or ended; the id is the pane id (spec 2.5). Ephemeral.
     case commandUpdated(Command)
+    /// A peer's link state changed; the id is the peer's label (mesh.md 4.3). Host scope only. Ephemeral.
+    case peerUpdated(Peer)
     case unknown(type: String, data: JSONValue)
 
     public init(_ event: Event) throws {
@@ -2196,6 +2361,7 @@ public enum HabEvent: Sendable, Hashable {
         case "session.turn_end": self = .sessionTurnEnd(try event.data.decode(TurnEnd.self))
         case "usage.updated": self = .usageUpdated(try event.data.decode(UsageAccount.self))
         case "command.updated": self = .commandUpdated(try event.data.decode(Command.self))
+        case "peer.updated": self = .peerUpdated(try event.data.decode(Peer.self))
         default: self = .unknown(type: event.type, data: event.data)
         }
     }

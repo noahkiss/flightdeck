@@ -99,6 +99,9 @@ type Host struct {
 	// Conn reaches the hab: calls, data streams. Calls fail with habconn.ErrOffline while the
 	// host is not online.
 	Conn *habconn.Conn
+	// Endpoint is the endpoint in use while online, else the one tried last. Empty when the
+	// spec gave a Transport.
+	Endpoint string
 }
 
 // Online reports whether the host has a live control connection.
@@ -164,6 +167,7 @@ type Set struct {
 type entry struct {
 	conn    *habconn.Conn
 	spec    Spec
+	eps     *endpoints // nil when the spec gave a Transport
 	model   Host
 	gone    bool // removed or replaced by Reload; its pump drops what is left
 	wrapped bool
@@ -268,11 +272,13 @@ func (s *Set) add(sp Spec) error {
 // start makes the entry of one host with its Conn started, not yet in the Set.
 func (s *Set) start(sp Spec) (*entry, error) {
 	tr := sp.Transport
+	var eps *endpoints
 	if tr == nil {
 		var err error
-		if tr, err = sp.Endpoints[0].Transport(); err != nil {
+		if eps, err = newEndpoints(sp.Endpoints); err != nil {
 			return nil, fmt.Errorf("hosts: %s: %w", sp.Label, err)
 		}
+		tr = eps
 	}
 	hc := habconn.Config{Transport: tr, Client: s.cfg.Client, Label: s.cfg.Label, DeviceID: sp.DeviceID,
 		Logf: func(f string, a ...any) { s.cfg.Logf(sp.Label+": "+f, a...) }}
@@ -283,7 +289,7 @@ func (s *Set) start(sp Spec) (*entry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("hosts: %s: %w", sp.Label, err)
 	}
-	return &entry{conn: c, spec: sp, model: Host{Label: sp.Label, Status: Connecting, Since: s.cfg.Now(), Conn: c}}, nil
+	return &entry{conn: c, spec: sp, eps: eps, model: Host{Label: sp.Label, Status: Connecting, Since: s.cfg.Now(), Conn: c}}, nil
 }
 
 // pump applies one host's updates to its model, then hands them on.
@@ -297,6 +303,9 @@ func (s *Set) pump(name string, e *entry) {
 		}
 		m := &e.model
 		now := s.cfg.Now()
+		if e.eps != nil {
+			m.Endpoint = e.eps.current().String()
+		}
 		switch u.Kind {
 		case habconn.UpdateOnline:
 			m.Status, m.Since, m.Err = Online, now, nil

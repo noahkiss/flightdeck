@@ -36,6 +36,8 @@ type conn struct {
 	hello    bool
 	token    string
 	clientID string
+	linked   bool   // a peer link reported to Peers.Linked
+	linkID   uint64 // its id
 
 	mu       sync.Mutex
 	queue    [][]byte
@@ -816,10 +818,16 @@ func (c *conn) handleHello(m message) {
 		DeviceID:       c.s.cfg.DeviceID,
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.revision = chosen
 	c.kind = p.Client.Kind
 	c.enqueueLocked(c.encodeReply(m, 0, w, nil))
+	c.mu.Unlock()
+	// A hab that dials this one says who it is (mesh.md 3.2). It counts as a link from that
+	// device for as long as the connection lasts.
+	if p.Client.Kind == api.ClientKindHab && p.Peer != nil && p.Peer.DeviceID != "" && c.s.cfg.Peers != nil {
+		c.linked, c.linkID = true, linkIDs.Add(1)
+		c.s.cfg.Peers.Linked(c.linkID, *p.Peer)
+	}
 }
 
 // handleSubscribe answers events.subscribe (spec 3.5). It marks the connection subscribed and
@@ -891,6 +899,7 @@ const (
 	hintNoDevices = "%s needs pairing, which this build does not have yet; the devices capability is absent"
 	hintNoActions = "%s needs the holder link, which this hab is running without"
 	hintNoChat    = "%s needs the transcript reader, which this hab is running without"
+	hintNoPeers   = "%s needs the peer list, which this hab is running without; the mesh capability is absent"
 )
 
 // later names the stage that builds each method this build defines but does not serve yet
@@ -1008,6 +1017,34 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		return api.Empty{Seq: s}, nil
 	case "devices.pair", "devices.list", "devices.revoke":
 		return nil, appErr(api.ErrorKindUnavailable, hintNoDevices, m.Method)
+	case "peers.list":
+		var p api.PeersListParams
+		if e := c.decodeUp(m, &p); e != nil {
+			return nil, e
+		}
+		if c.s.cfg.Peers == nil {
+			return nil, appErr(api.ErrorKindUnavailable, hintNoPeers, m.Method)
+		}
+		res := c.s.cfg.Peers.List()
+		res.Seq = s
+		return api.NonNil(res), nil
+	case "peers.accept":
+		var p api.PeersAcceptParams
+		if e := c.decodeUp(m, &p); e != nil {
+			return nil, e
+		}
+		if c.s.cfg.Peers == nil {
+			return nil, appErr(api.ErrorKindUnavailable, hintNoPeers, m.Method)
+		}
+		if p.Label == "" {
+			return nil, appErr(api.ErrorKindInvalid, "peers.accept needs a label")
+		}
+		res, err := c.s.cfg.Peers.Accept(p.Label)
+		if err != nil {
+			return nil, actionErr(m.Method, err)
+		}
+		res.Seq = s
+		return res, nil
 	case "session.create":
 		var p api.SessionCreateParams
 		if e := c.decodeUp(m, &p); e != nil {

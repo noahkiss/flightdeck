@@ -42,6 +42,14 @@ type HelloParams struct {
 	Client         ClientInfo `json:"client"`
 	Label          string     `json:"label,omitempty" doc:"Human label, such as phone or desk."`
 	ReconnectToken string     `json:"reconnect_token,omitempty" doc:"Token from an earlier welcome (spec 3.7)."`
+	Peer           *PeerHello `json:"peer,omitempty" doc:"Set by a hab that dials another hab (client.kind hab): who is calling (mesh.md 3.2)."`
+}
+
+// PeerHello is the dialing hab's identity in a peer link's hello. Over the system sshd it is a
+// claim, not a proof; the caller already passed SSH as the owner (mesh.md 3.2).
+type PeerHello struct {
+	DeviceID string `json:"device_id" doc:"The dialing hab's device id."`
+	Host     string `json:"host" doc:"The dialing hab's host id."`
 }
 
 type HostInfo struct {
@@ -324,6 +332,51 @@ type DeviceList struct {
 
 type DevicesRevokeParams struct {
 	ID string `json:"id" doc:"Device id to revoke."`
+}
+
+// --- Peers (mesh.md 3, 4.3) ---
+
+// PeerState is where a peer stands, as this hab sees it.
+type PeerState string
+
+// Peer is one entry of this hab's peer list with its link state.
+type Peer struct {
+	Label     string    `json:"label" doc:"This hab's name for the peer, from its peer list."`
+	State     PeerState `json:"state"`
+	Endpoint  string    `json:"endpoint,omitempty" doc:"The endpoint in use while online, else the one tried last."`
+	DeviceID  string    `json:"device_id,omitempty" doc:"The pinned device id. Absent before the first link."`
+	OfferedID string    `json:"offered_id,omitempty" doc:"State refused: the different device id the endpoint presented."`
+	Host      string    `json:"host,omitempty" doc:"The peer's host id from its last welcome or hello."`
+	LastSeen  string    `json:"last_seen,omitempty" doc:"RFC 3339 time the peer was last online. Absent if never."`
+	Reason    string    `json:"reason,omitempty" doc:"Why the peer is not online, in a few words."`
+	Inbound   bool      `json:"inbound,omitempty" doc:"The peer has a link to this hab open."`
+}
+
+// LinkedPeer is a hab with a link to this hab that is not in this hab's peer list.
+type LinkedPeer struct {
+	DeviceID string `json:"device_id"`
+	Host     string `json:"host"`
+}
+
+type PeersListParams struct{}
+
+type PeerList struct {
+	Seq
+	Peers    []Peer       `json:"peers" doc:"The peer list, in file order. This hab's own entry is left out."`
+	Unlisted []LinkedPeer `json:"unlisted" doc:"Habs linked to this one that are not in its peer list."`
+	Problems []string     `json:"problems" doc:"Entries of the peer file that could not be used, and why."`
+}
+
+type PeersAcceptParams struct {
+	Label string `json:"label" doc:"The peer whose new device id to accept."`
+}
+
+// PeerAccepted is the result of peers.accept: the pin moved from Old to New.
+type PeerAccepted struct {
+	Seq
+	Label string `json:"label"`
+	Old   string `json:"old,omitempty" doc:"The device id pinned before."`
+	New   string `json:"new" doc:"The device id pinned now."`
 }
 
 // --- Discovery ---

@@ -1,0 +1,15 @@
+{
+  "label": "label-4",
+  "new": "new-6",
+  "old": "old-5",
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

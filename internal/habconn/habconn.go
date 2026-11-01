@@ -53,6 +53,13 @@ type Resetter interface {
 	Reset(ctx context.Context) error
 }
 
+// Failover is a Transport with several endpoints. After an attempt to connect fails, the Conn
+// calls Failed so the next attempt tries the next endpoint. A Dial cannot tell a dead endpoint
+// on its own: an ssh process starts fine and fails only at the hello.
+type Failover interface {
+	Failed()
+}
+
 // Errors the package returns.
 var (
 	// ErrClosed: the Conn or PaneStream was closed by its owner.

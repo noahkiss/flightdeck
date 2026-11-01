@@ -1,0 +1,36 @@
+{
+  "peers": [
+    {
+      "device_id": "device_id-6",
+      "endpoint": "endpoint-5",
+      "host": "host-8",
+      "inbound": true,
+      "label": "label-4",
+      "last_seen": "last_seen-9",
+      "offered_id": "offered_id-7",
+      "reason": "reason-10",
+      "state": "update_needed",
+      "x_unknown_field": "later"
+    }
+  ],
+  "problems": [
+    "problems-13"
+  ],
+  "seq": 3,
+  "unlisted": [
+    {
+      "device_id": "device_id-11",
+      "host": "host-12",
+      "x_unknown_field": "later"
+    }
+  ],
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

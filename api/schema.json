@@ -21,7 +21,8 @@
     "push",
     "host-stats",
     "commands",
-    "permissions"
+    "permissions",
+    "mesh"
   ],
   "methods": [
     {
@@ -50,6 +51,13 @@
           "schema": {
             "type": "integer",
             "format": "int64"
+          }
+        },
+        {
+          "name": "peer",
+          "description": "Set by a hab that dials another hab (client.kind hab): who is calling (mesh.md 3.2).",
+          "schema": {
+            "$ref": "#/components/schemas/PeerHello"
           }
         },
         {
@@ -1120,6 +1128,45 @@
       }
     },
     {
+      "name": "peers.list",
+      "summary": "This hab's peers with their link state, and habs linked to it that it does not list (mesh.md 3, 4.3). Needs the mesh capability.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PeerList"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PeersListParams"
+      }
+    },
+    {
+      "name": "peers.accept",
+      "summary": "Pin the device id a peer presented in place of the pinned one (transport.md 6.3). Needs the mesh capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "label",
+          "description": "The peer whose new device id to accept.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PeerAccepted"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/PeersAcceptParams"
+      }
+    },
+    {
       "name": "hab.permissions",
       "summary": "Check the permission grants of the holders, from a probe pane, and of gff-hab (macos-identity.md 7.2). Needs the permissions capability.",
       "paramStructure": "by-name",
@@ -1280,6 +1327,13 @@
       "summary": "A pane's command started or ended; the id is the pane id (spec 2.5). Ephemeral.",
       "data": {
         "$ref": "#/components/schemas/Command"
+      }
+    },
+    {
+      "type": "peer.updated",
+      "summary": "A peer's link state changed; the id is the peer's label (mesh.md 4.3). Host scope only. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/Peer"
       }
     }
   ],
@@ -1770,7 +1824,8 @@
           "app",
           "terminal",
           "cli",
-          "script"
+          "script",
+          "hab"
         ]
       },
       "Closing": {
@@ -2329,6 +2384,10 @@
             "format": "int64",
             "description": "Oldest API revision the client accepts."
           },
+          "peer": {
+            "$ref": "#/components/schemas/PeerHello",
+            "description": "Set by a hab that dials another hab (client.kind hab): who is calling (mesh.md 3.2)."
+          },
           "reconnect_token": {
             "type": "string",
             "description": "Token from an earlier welcome (spec 3.7)."
@@ -2440,6 +2499,21 @@
         },
         "required": [
           "pane"
+        ]
+      },
+      "LinkedPeer": {
+        "type": "object",
+        "properties": {
+          "device_id": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "host"
         ]
       },
       "OwnerReason": {
@@ -2625,6 +2699,155 @@
         "required": [
           "pane"
         ]
+      },
+      "Peer": {
+        "type": "object",
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "description": "The pinned device id. Absent before the first link."
+          },
+          "endpoint": {
+            "type": "string",
+            "description": "The endpoint in use while online, else the one tried last."
+          },
+          "host": {
+            "type": "string",
+            "description": "The peer's host id from its last welcome or hello."
+          },
+          "inbound": {
+            "type": "boolean",
+            "description": "The peer has a link to this hab open."
+          },
+          "label": {
+            "type": "string",
+            "description": "This hab's name for the peer, from its peer list."
+          },
+          "last_seen": {
+            "type": "string",
+            "description": "RFC 3339 time the peer was last online. Absent if never."
+          },
+          "offered_id": {
+            "type": "string",
+            "description": "State refused: the different device id the endpoint presented."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the peer is not online, in a few words."
+          },
+          "state": {
+            "$ref": "#/components/schemas/PeerState"
+          }
+        },
+        "required": [
+          "label",
+          "state"
+        ]
+      },
+      "PeerAccepted": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "new": {
+            "type": "string",
+            "description": "The device id pinned now."
+          },
+          "old": {
+            "type": "string",
+            "description": "The device id pinned before."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "label",
+          "new"
+        ]
+      },
+      "PeerHello": {
+        "type": "object",
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "description": "The dialing hab's device id."
+          },
+          "host": {
+            "type": "string",
+            "description": "The dialing hab's host id."
+          }
+        },
+        "required": [
+          "device_id",
+          "host"
+        ]
+      },
+      "PeerList": {
+        "type": "object",
+        "properties": {
+          "peers": {
+            "type": "array",
+            "description": "The peer list, in file order. This hab's own entry is left out.",
+            "items": {
+              "$ref": "#/components/schemas/Peer"
+            }
+          },
+          "problems": {
+            "type": "array",
+            "description": "Entries of the peer file that could not be used, and why.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "unlisted": {
+            "type": "array",
+            "description": "Habs linked to this one that are not in its peer list.",
+            "items": {
+              "$ref": "#/components/schemas/LinkedPeer"
+            }
+          }
+        },
+        "required": [
+          "seq",
+          "peers",
+          "unlisted",
+          "problems"
+        ]
+      },
+      "PeerState": {
+        "type": "string",
+        "x-known-values": [
+          "online",
+          "connecting",
+          "offline",
+          "refused",
+          "update_needed"
+        ]
+      },
+      "PeersAcceptParams": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "The peer whose new device id to accept."
+          }
+        },
+        "required": [
+          "label"
+        ]
+      },
+      "PeersListParams": {
+        "type": "object"
       },
       "PermissionProcess": {
         "type": "string",
