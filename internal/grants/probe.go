@@ -184,8 +184,9 @@ type System interface {
 	Automation(target string) (int32, error)
 	// Gateway is the default route's gateway address.
 	Gateway(ctx context.Context) (string, error)
-	// Dial connects to addr over TCP and closes the connection.
-	Dial(ctx context.Context, addr string) error
+	// SendUDP connects a UDP socket to addr, sends one byte and closes the socket. The error
+	// names the step that failed (connect or write).
+	SendUDP(ctx context.Context, addr string) error
 	// Clipboard reads the pasteboard's text; SetClipboard writes it.
 	Clipboard(ctx context.Context) (string, error)
 	SetClipboard(ctx context.Context, s string) error
@@ -395,9 +396,19 @@ func automation(g string, sys System) Check {
 	return c
 }
 
-// localNetwork connects to the default gateway (7.3). A connection, or a refusal from the
-// gateway, means packets reach the LAN. No route means Local Network may be off. The probe stays
-// alive up to LANKeepAlive, trying every 2 s, so macOS can show its alert.
+// lanPort is the discard service, the port TN3179's example uses: a packet that reaches the
+// gateway there is dropped.
+const lanPort = "9"
+
+// localNetwork sends one UDP packet to the default gateway (7.3). TN3179 names a UDP connect to
+// a local network address as the way to raise the Local Network alert, and documents no error
+// for a blocked operation. The probe connects and then sends one byte, so a block at either
+// step shows: a packet that leaves is `granted`. On macOS 27.2 the connect succeeds and the send
+// fails with EPIPE while Local Network is undecided (8.1); EHOSTUNREACH, ENETUNREACH and EPERM,
+// what a blocked TCP connect gets, read the same. macOS blocks while Local Network is off and
+// while its alert waits for an answer, and no API tells the two apart, so a probe blocked for
+// its whole window reads `denied`. It tries every 2 s and stays alive up to LANKeepAlive: a
+// short-lived process gets no alert.
 func localNetwork(ctx context.Context, sys System) Check {
 	c := Check{Grant: LocalNetwork}
 	gw, err := sys.Gateway(ctx)
@@ -406,28 +417,30 @@ func localNetwork(ctx context.Context, sys System) Check {
 		return c
 	}
 	// A gateway outside the private and link-local ranges is not on the LAN: the default route
-	// goes through a VPN or an exit node, and a connection to it would not need the grant.
+	// goes through a VPN or an exit node, and a packet to it would not need the grant.
 	if ip := net.ParseIP(gw); ip == nil || !ip.IsPrivate() && !ip.IsLinkLocalUnicast() {
 		c.State, c.Detail = api.PermissionStateUnknown, "the default gateway "+gw+" is not a local address (a VPN?): check again without it"
 		return c
 	}
-	addr := net.JoinHostPort(gw, "443")
+	addr := net.JoinHostPort(gw, lanPort)
 	deadline := time.Now().Add(lanWindow)
 	for {
 		dctx, cancel := context.WithTimeout(ctx, dialTimeout)
-		err := sys.Dial(dctx, addr)
+		err := sys.SendUDP(dctx, addr)
 		cancel()
 		switch {
 		case err == nil:
-			c.State, c.Detail = api.PermissionStateGranted, "connected to the gateway "+gw
+			c.State, c.Detail = api.PermissionStateGranted, "sent a packet to the gateway "+gw
 			return c
 		case errors.Is(err, syscall.ECONNREFUSED):
+			// The gateway answered an earlier packet with port unreachable: packets reach it.
 			c.State, c.Detail = api.PermissionStateGranted, "the gateway "+gw+" answered"
 			return c
-		case errors.Is(err, syscall.EHOSTUNREACH), errors.Is(err, syscall.ENETUNREACH), errors.Is(err, syscall.EPERM):
-			c.State, c.Detail = api.PermissionStateDenied, "no route to the gateway "+gw+": Local Network may be off"
+		case errors.Is(err, syscall.EPIPE), errors.Is(err, syscall.EHOSTUNREACH),
+			errors.Is(err, syscall.ENETUNREACH), errors.Is(err, syscall.EPERM):
+			c.State, c.Detail = api.PermissionStateDenied, "macOS blocked a packet to the gateway "+gw+": Local Network is off, or its alert has no answer yet"
 		default:
-			c.State, c.Detail = api.PermissionStateUnknown, "the gateway "+gw+" did not answer"
+			c.State, c.Detail = api.PermissionStateUnknown, "a packet to the gateway "+gw+" failed: "+err.Error()
 		}
 		if !time.Now().Add(lanRetry).Before(deadline) {
 			return c
@@ -438,6 +451,20 @@ func localNetwork(ctx context.Context, sys System) Check {
 		case <-time.After(lanRetry):
 		}
 	}
+}
+
+// SendUDP connects a UDP socket to addr, sends one byte and closes the socket: the darwin
+// System's SendUDP. Go's errors name the step, "connect: ..." or "write: ...".
+func SendUDP(ctx context.Context, addr string) error {
+	var d net.Dialer
+	c, err := d.DialContext(ctx, "udp", addr)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	c.SetWriteDeadline(time.Now().Add(time.Second))
+	_, err = c.Write([]byte{0})
+	return err
 }
 
 // pasteboard writes a random token and reads it back, then puts the old text back (7.3). Only a

@@ -530,7 +530,7 @@ A check is about the process that will be responsible, so it must run as that pr
 | Background item | `launchctl print gui/<uid>/<label>` succeeds for every job | Yes | `x-apple.systempreferences:com.apple.LoginItems-Settings.extension` (**needs Mac proof**) |
 | Full Disk Access | `opendir("/Library/Application Support/com.apple.TCC")`; 10 s deadline; no answer reads `unanswered`, counted as missing | Yes | `x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles` |
 | Files and Folders | If FDA is granted: `granted` without probing. Else **cannot be checked without risking a prompt**: an `open` of an undecided folder raises the dialog. `--check` reports `unknown`. The walk probes each folder on its own thread while the user watches | **No** | `...?Privacy_FilesAndFolders` |
-| Local Network | No preflight API is known. `--check` reports `unknown` unless a connection gff-hab made to a LAN address has succeeded or failed with the local-network error since start. The walk makes one connection to a LAN peer (or the gateway) from the probe and keeps the probe alive 30 s, because a short-lived process gets no alert (TN3179) | **No** | No anchor exists (8.1): open `x-apple.systempreferences:com.apple.preference.security` and name the Local Network row in words |
+| Local Network | No preflight API is known. `--check` reports `unknown` unless a connection gff-hab made to a LAN address has succeeded or failed with the local-network error since start. The walk sends one UDP packet to the gateway from the probe (a UDP connect, as TN3179 suggests, then one byte) and keeps the probe alive 30 s, because a short-lived process gets no alert (TN3179) | **No** | No anchor exists (8.1): open `x-apple.systempreferences:com.apple.preference.security` and name the Local Network row in words |
 | Accessibility | `AXIsProcessTrusted()` in the probe | Yes | `...?Privacy_Accessibility`. The walk first calls `AXIsProcessTrustedWithOptions` with the prompt option once, which lists the holder in the pane, so the user only toggles it |
 | Screen Recording | `CGPreflightScreenCaptureAccess()` in the probe | Yes | `...?Privacy_ScreenCapture`. The walk first calls `CGRequestScreenCaptureAccess()` once, which lists the holder |
 | Automation | `AEDeterminePermissionToAutomateTarget(target, any, any, false)` per configured target. -1744 reads `unknown` (it means undecided or denied), -600 reads `unknown` (target not running) | Yes, but cannot tell undecided from denied | `...?Privacy_Automation` |
@@ -664,14 +664,34 @@ beyond the paper spec:
   CoreServices and CoreFoundation) in `system_darwin.go`. `AEDesc` is passed as an opaque
   buffer, so its packing never matters. `AXIsProcessTrustedWithOptions` gets a one-key
   CFDictionary with the prompt key.
-- **Local Network.** `--check` cannot connect without risking the alert, so it reports `unknown`
-  until a walk's request ran: the probe connects to the default gateway's port 443. A connection,
-  or a refusal from the gateway, is `granted`; no route is `denied`; it retries every 2 s and
-  stays alive up to 30 s. A gateway outside the private and link-local ranges (a VPN or an exit
-  node as the default route, public or CGNAT) is `unknown` with no connection, because reaching
-  it needs no grant. **Limits:** a full-tunnel VPN whose gateway has a private address still
-  reads as `granted` without the grant. An undecided grant gives no route, so it reads `denied`
-  ("may be off"), not `unknown`. **The answer is kept** in `<state>/macos/seen.json`, keyed by process
+- **Local Network.** `--check` cannot send without risking the alert, so it reports `unknown`
+  until a walk's request ran. The request follows TN3179's "Trigger the local network alert":
+  the probe connects a UDP socket to the default gateway's port 9 (discard), then sends one
+  byte, on a fresh socket each try. It retries every 2 s and stays alive up to 30 s.
+  - A send that leaves is `granted`. So is `ECONNREFUSED` (the gateway answered an earlier
+    packet with port unreachable).
+  - A block at the connect or the send is `denied`. TN3179 documents no error for a blocked
+    operation; the errors come from the Mac (8.1). On macOS 27.2 the connect succeeds and the
+    send fails with `EPIPE`. `EHOSTUNREACH`, `ENETUNREACH` and `EPERM` (what a blocked TCP connect
+    got) read the same.
+  - Any other error is `unknown`, with the error.
+  - A gateway outside the private and link-local ranges (a VPN or an exit node as the default
+    route, public or CGNAT) is `unknown` with no packet, because reaching it needs no grant.
+  - A denied row on macOS 27.2 or later says how to reset it: `--check` prints "To be asked
+    again, select GFF Holder under Local Network, click -, then run gff setup." under the row,
+    and the walk prints "Or select GFF Holder, click - and click Allow when macOS asks again."
+    The walk's re-checks send the request again, so a removed row gets the alert again. The
+    version comes from `os_version`; an unknown version prints neither line.
+
+  **Limits:** a full-tunnel VPN whose gateway has a private address still reads as `granted`
+  without the grant. TN3179 says traffic to a DNS server or a proxy on the local network needs
+  no grant, so a gateway that is also the DNS server or proxy may read `granted` without the
+  grant (not seen: on the proof Mac the gateway is not the DNS server). macOS blocks while the
+  grant is off and while its alert waits for an answer, and no API tells the two apart, so an
+  undecided grant reads `denied`, not `unknown`; the detail says "Local Network is off, or its
+  alert has no answer yet". A third-party network filter that drops the packet would also read
+  `denied`. The UDP send removes one limit of the TCP connection: a gateway that drops TCP on
+  port 443 read `unknown` ("did not answer"); a UDP send needs no answer. **The answer is kept** in `<state>/macos/seen.json`, keyed by process
   and a hash of the designated requirement, and later checks report it with its date. Keying on
   the requirement follows TCC: an update with the same requirement keeps it (P12 needs exit 0),
   a dev rebuild or a new team loses it. The paper spec said "since start"; that would fail every
@@ -753,6 +773,14 @@ that Mac (`tccutil reset` included); **Account** means creating a fresh macOS us
 Steps that need nothing (P0, P2, P8) can run at any time. The owner approved P1, P3 to P7 and
 P9 to P12 (2026-11-01): Developer ID signing, TCC changes on a test Mac and a fresh user account.
 They are approved; 8.1 says which ran.
+
+**Local Network proofs never make the request from under Terminal or SSH.** TN3179 ("macOS
+considerations"): macOS allows local network access to command-line tools run from Terminal or
+over SSH, and to every child they spawn. A request from an SSH shell, or from a program it
+started, proves nothing about the holder or gff-hab. For P6, P7 and P11 the request must come
+from a holder pane or gff-hab started by launchd: for example `gff setup`, or `hab.permissions`
+with `request`, against an installed build. Driving that over SSH is fine; the SSH shell only
+asks the hab, and the probe runs in a holder pane.
 
 ### 8.1 Results so far
 
@@ -848,6 +876,27 @@ pane of the signed holder, Local Network undecided) got "no route to host" from 
 every 2 s for 30 s. Part A's `nc` from the same kind of pane connected at once. So the probe is
 blocked where an Apple tool is not, which suggests macOS exempts its own tools, or that an alert
 was waiting on the screen. **Waits for the owner:** was there an alert, naming what.
+
+TN3179's Terminal and SSH rule (8) explains part of this only if the `nc` ran under the SSH
+session. A pane's program is the holder's child, not the SSH session's, so the rule does not
+cover a real pane. Why `nc` in a pane connected stays open for P6.
+
+**Local Network request over UDP (macOS 27.2).** The probe now sends a UDP packet (7.9). Run
+with ad-hoc dev bundles (`.dev` ids, own job prefix, state under `~/Library/Application
+Support`), Local Network undecided, nobody at the screen. The SSH shell only called
+`hab.permissions` with `request`; the probe ran in a holder pane started by launchd.
+
+- The UDP connect succeeded and the one-byte send failed with `EPIPE` ("broken pipe"), on every
+  try for the whole 30 s. With the TCP probe it was "no route to host". The first UDP build did
+  not know `EPIPE` and read `unknown`; `EPIPE` now reads `denied`.
+- With `EPIPE` known: the row read `denied`, "macOS blocked a packet to the gateway ...: Local
+  Network is off, or its alert has no answer yet". The kept answer then showed in `--check` as
+  `lan missing`, with the - button line under it, and the walk printed its - button line. Exit 1.
+- The same probe binary, run straight from a live SSH shell, sent at once (`granted`), as TN3179
+  says. Run from a script left running after its SSH session closed (`nohup`), it got `EPIPE`.
+  So the exemption follows the live SSH session, and a detached job is not exempt either.
+- On that Mac the gateway is not a DNS server, so TN3179's DNS-server exception did not apply.
+- Whether an alert appeared, and its name, waits for the owner.
 
 **P9, partly.** `launchctl disable gui/<uid>/<logic label>` made the logic job's row read
 `login missing` ("switched off in Login Items") and the check exit 1; `launchctl enable` cleared
@@ -1145,8 +1194,10 @@ Cheap gains that need no Accessibility, worth adding to the walk now:
 
 - Raise the Local Network alert with a UDP connect to a LAN address, as TN3179 suggests, instead
   of a TCP connection to the gateway (7.9). It sends no traffic. The probe already stays alive 30 s.
+  **Built (7.9).** The probe also sends one byte: on macOS 27.2 the connect succeeds while the
+  grant is missing, and only the send fails (8.1).
 - On macOS 27.2 and later, a user can remove a denied Local Network row with the new - button. The
-  walk can say so.
+  walk can say so. **Built (7.9):** `--check` and the walk both say so.
 - Keep `open -R` and the printed path for the Full Disk Access drag (7.4).
 
 If this is revisited, three points **need Mac proof**: whether `UserNotificationCenter` refuses an

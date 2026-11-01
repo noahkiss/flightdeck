@@ -135,6 +135,7 @@ func TestNoHabExits2(t *testing.T) {
 type fakeHab struct {
 	mu     sync.Mutex
 	os     string
+	osVer  string // "" means 27.2
 	rows   []api.PermissionRow
 	calls  []api.PermissionsParams
 	onCall func(n int, p api.PermissionsParams) // may change rows
@@ -154,7 +155,11 @@ func (f *fakeHab) call(_ context.Context, p api.PermissionsParams) (api.Permissi
 			rows = append(rows, row)
 		}
 	}
-	return api.Permissions{OS: f.os, OSVersion: "27.2", Rows: rows}, nil
+	ver := f.osVer
+	if ver == "" {
+		ver = "27.2"
+	}
+	return api.Permissions{OS: f.os, OSVersion: ver, Rows: rows}, nil
 }
 
 func (f *fakeHab) set(proc api.PermissionProcess, g string, st api.PermissionState) {
@@ -277,6 +282,51 @@ func TestWalkReasksRemembered(t *testing.T) {
 	w, out = newWalker(f, setupOptions{}, nil)
 	if code := w.run(context.Background()); code != 0 || len(f.opened) != 0 || !strings.Contains(out.String(), "lan: ok") {
 		t.Errorf("still granted: exit %d, opened %v\n%s", code, f.opened, out)
+	}
+}
+
+// TestLANRemoveHint: a denied Local Network row says how to be asked again, only on a macOS
+// with the - button in the Local Network list (27.2 and later).
+func TestLANRemoveHint(t *testing.T) {
+	for v, want := range map[string]bool{"27.2": true, "27.2.1": true, "27.10": true, "28.0": true, "28": true,
+		"27.1": false, "27.1.9": false, "26.4": false, "": false, "x": false} {
+		if got := canRemoveLANRow(v); got != want {
+			t.Errorf("canRemoveLANRow(%q) = %v", v, got)
+		}
+	}
+	const hint = "select GFF Holder under Local Network, click -"
+	for _, tc := range []struct {
+		ver  string
+		st   api.PermissionState
+		want bool
+	}{
+		{"27.2", api.PermissionStateDenied, true},
+		{"27.1", api.PermissionStateDenied, false},
+		{"", api.PermissionStateDenied, false},
+		{"27.2", api.PermissionStateUnknown, false},
+	} {
+		res := api.Permissions{OS: "darwin", OSVersion: tc.ver, Rows: []api.PermissionRow{r(H, grants.LocalNetwork, tc.st, true, "")}}
+		var out bytes.Buffer
+		code, why := exitCode(res)
+		printCheck(&out, "this Mac", res, code, why)
+		if got := strings.Contains(out.String(), hint); got != tc.want {
+			t.Errorf("--check, macOS %q, %s: hint %v\n%s", tc.ver, tc.st, got, out.String())
+		}
+	}
+
+	// The walk: the request answers denied, so the walk names the - button with Settings.
+	for ver, want := range map[string]bool{"27.2": true, "27.1": false} {
+		f := &fakeHab{os: "darwin", osVer: ver, rows: []api.PermissionRow{r(H, grants.LocalNetwork, api.PermissionStateUnknown, true, "")}}
+		f.onCall = func(n int, p api.PermissionsParams) {
+			if p.Request == grants.LocalNetwork {
+				f.rows[0].State = api.PermissionStateDenied
+			}
+		}
+		w, out := newWalker(f, setupOptions{timeout: 30 * time.Millisecond, noOpen: true}, nil)
+		w.run(context.Background())
+		if got := strings.Contains(out.String(), "Or select GFF Holder, click - and click Allow"); got != want {
+			t.Errorf("walk, macOS %s: hint %v\n%s", ver, got, out)
+		}
 	}
 }
 

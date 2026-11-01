@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -177,6 +178,8 @@ type walker struct {
 	open  func(args ...string) error
 	lines <-chan string
 	tick  time.Duration
+	// osVersion is the hab's macOS version from the first check.
+	osVersion string
 	// stopWait bounds the final check after a stop; 0 means the stopWait constant.
 	stopWait time.Duration
 }
@@ -201,6 +204,7 @@ func (w *walker) run(ctx context.Context) int {
 		return code
 	}
 	printCheck(w.out, w.where, res, code, why)
+	w.osVersion = res.OSVersion
 	todo := w.todo(res)
 	switch {
 	case code == exitCannot:
@@ -316,11 +320,12 @@ func (w *walker) walkOne(ctx context.Context, r api.PermissionRow) error {
 		return nil
 	}
 	request := ""
+	state := r.State
 	if grants.Requestable(r.Grant) && r.Process == api.PermissionProcessHolder {
 		request = r.Grant
 		switch r.Grant {
 		case grants.LocalNetwork:
-			fmt.Fprintln(w.out, "  A pane connects to your router now. If macOS asks whether GFF Holder may find devices on the local network, click Allow.")
+			fmt.Fprintln(w.out, "  A pane sends a packet to your router now. If macOS asks whether GFF Holder may find devices on the local network, click Allow.")
 		case grants.FilesAndFolders:
 			fmt.Fprintln(w.out, "  A pane opens Desktop, Documents and Downloads now. Click Allow on each dialog that names GFF Holder.")
 		default:
@@ -331,6 +336,9 @@ func (w *walker) walkOne(ctx context.Context, r api.PermissionRow) error {
 			fmt.Fprintf(w.out, "  %s: ok\n", grants.Label(r.Grant))
 			return nil
 		}
+		if ok {
+			state = got
+		}
 	}
 	w.openSettings(r)
 	switch r.Grant {
@@ -340,6 +348,10 @@ func (w *walker) walkOne(ctx context.Context, r api.PermissionRow) error {
 		fmt.Fprintln(w.out, "  Turn on the Flightdeck items under Allow in the Background.")
 	case grants.LocalNetwork:
 		fmt.Fprintf(w.out, "  Open the Local Network row and turn on %s.\n", who)
+		if state == api.PermissionStateDenied && canRemoveLANRow(w.osVersion) {
+			// The wait below sends the request again, so a removed row gets the alert again.
+			fmt.Fprintf(w.out, "  Or select %s, click - and click Allow when macOS asks again.\n", who)
+		}
 	case grants.DeveloperTools:
 		fmt.Fprintf(w.out, "  Add %s and turn it on. No check can confirm this grant.\n", who)
 		return nil
@@ -462,6 +474,29 @@ func stateWord(s api.PermissionState) string {
 	return string(s)
 }
 
+// canRemoveLANRow says whether this macOS version has the - button in the Local Network list,
+// which resets a decision (macOS 27.2, TN3179). An unknown version says no.
+func canRemoveLANRow(version string) bool {
+	parts := strings.SplitN(version, ".", 3)
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return false
+	}
+	minor := 0
+	if len(parts) > 1 {
+		if minor, err = strconv.Atoi(parts[1]); err != nil {
+			return false
+		}
+	}
+	return major > 27 || major == 27 && minor >= 2
+}
+
+// lanRemoveHint is the --check line under a denied Local Network row on a macOS with the -
+// button.
+func lanRemoveHint(who string) string {
+	return "To be asked again, select " + who + " under Local Network, click -, then run gff setup."
+}
+
 // processWord is the first column: a draining holder is named apart from the current one.
 func processWord(r api.PermissionRow) string {
 	if r.Draining {
@@ -519,6 +554,14 @@ func printCheck(out io.Writer, where string, res api.Permissions, code int, why 
 		}
 		line := fmt.Sprintf("%-8s  %-*s  %-7s  %s", processWord(r), width, grants.Label(r.Grant), stateWord(r.State), detail)
 		fmt.Fprintln(out, strings.TrimRight(line, " "))
+		if r.Grant == grants.LocalNetwork && r.State == api.PermissionStateDenied && !r.Draining &&
+			res.OS == "darwin" && canRemoveLANRow(res.OSVersion) {
+			who := "GFF Holder"
+			if r.Process == api.PermissionProcessHab {
+				who = "GFF Hab"
+			}
+			fmt.Fprintf(out, "%-8s  %-*s  %-7s  %s\n", "", width, "", "", lanRemoveHint(who))
+		}
 		if r.Required {
 			switch r.State {
 			case api.PermissionStateGranted:

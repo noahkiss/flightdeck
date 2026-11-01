@@ -33,6 +33,6 @@ func (otherSystem) ScreenPreflight() (bool, error)             { return false, e
 func (otherSystem) ScreenRequest() error                       { return errNotMac }
 func (otherSystem) Automation(string) (int32, error)           { return 0, errNotMac }
 func (otherSystem) Gateway(context.Context) (string, error)    { return "", errNotMac }
-func (otherSystem) Dial(context.Context, string) error         { return errNotMac }
+func (otherSystem) SendUDP(context.Context, string) error      { return errNotMac }
 func (otherSystem) Clipboard(context.Context) (string, error)  { return "", errNotMac }
 func (otherSystem) SetClipboard(context.Context, string) error { return errNotMac }

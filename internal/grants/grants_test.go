@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -114,6 +115,7 @@ type fakeSys struct {
 	gw         string
 	dial       []error // one per call; the last repeats
 	dials      int
+	sentTo     string
 	clip       string
 	clipErr    error
 	home       string
@@ -148,9 +150,10 @@ func (f *fakeSys) Gateway(context.Context) (string, error) {
 	}
 	return f.gw, nil
 }
-func (f *fakeSys) Dial(context.Context, string) error {
+func (f *fakeSys) SendUDP(_ context.Context, addr string) error {
 	i := min(f.dials, len(f.dial)-1)
 	f.dials++
+	f.sentTo = addr
 	return f.dial[i]
 }
 func (f *fakeSys) Clipboard(context.Context) (string, error) { return f.clip, f.clipErr }
@@ -260,11 +263,17 @@ func TestLocalNetworkRequest(t *testing.T) {
 		gw   string
 		want api.PermissionState
 	}{
-		{"connected", []error{nil}, "192.168.1.1", api.PermissionStateGranted},
+		{"sent", []error{nil}, "192.168.1.1", api.PermissionStateGranted},
 		{"refused by the gateway", []error{syscall.ECONNREFUSED}, "192.168.1.1", api.PermissionStateGranted},
 		{"no route, then allowed", []error{syscall.EHOSTUNREACH, syscall.EHOSTUNREACH, nil}, "192.168.1.1", api.PermissionStateGranted},
 		{"no route", []error{syscall.EHOSTUNREACH}, "192.168.1.1", api.PermissionStateDenied},
-		{"silence", []error{context.DeadlineExceeded}, "192.168.1.1", api.PermissionStateUnknown},
+		// macOS may block at the connect or at the send; Go names the step.
+		// What macOS 27.2 gave a holder pane with Local Network undecided: connect, then EPIPE.
+		{"send blocked (macOS 27.2)", []error{lanErr("write", syscall.EPIPE)}, "192.168.1.1", api.PermissionStateDenied},
+		{"connect blocked", []error{lanErr("connect", syscall.EHOSTUNREACH)}, "192.168.1.1", api.PermissionStateDenied},
+		{"send blocked", []error{lanErr("write", syscall.EHOSTUNREACH)}, "192.168.1.1", api.PermissionStateDenied},
+		{"send not permitted", []error{lanErr("write", syscall.EPERM)}, "192.168.1.1", api.PermissionStateDenied},
+		{"other failure", []error{lanErr("write", syscall.ENOBUFS)}, "192.168.1.1", api.PermissionStateUnknown},
 		{"no gateway", []error{nil}, "", api.PermissionStateUnknown},
 		{"link-local gateway", []error{nil}, "169.254.1.1", api.PermissionStateGranted},
 		// A VPN or an exit node as the default route: a connection needs no Local Network grant.
@@ -276,12 +285,42 @@ func TestLocalNetworkRequest(t *testing.T) {
 		if c.State != tc.want {
 			t.Errorf("%s: %s (%s), want %s", tc.name, c.State, c.Detail, tc.want)
 		}
+		// The packet goes to the gateway's discard port, as in TN3179's example.
+		if sys.dials > 0 && sys.sentTo != net.JoinHostPort(tc.gw, "9") {
+			t.Errorf("%s: sent to %q", tc.name, sys.sentTo)
+		}
+		if strings.Contains(tc.name, "gateway (") && sys.dials != 0 {
+			t.Errorf("%s: %d packets to a gateway off the LAN", tc.name, sys.dials)
+		}
 	}
 	// A denial keeps trying until the window ends: the alert needs a live process.
 	sys := &fakeSys{gw: "192.168.1.1", dial: []error{syscall.EHOSTUNREACH}}
 	Probe(ctx, sys, ProbeOptions{Checks: []string{LocalNetwork}, Request: LocalNetwork})
 	if sys.dials < 5 {
 		t.Errorf("%d dials in the window", sys.dials)
+	}
+}
+
+// lanErr is the error Go returns when a UDP connect or write fails with errno.
+func lanErr(op string, errno syscall.Errno) error {
+	return &net.OpError{Op: op, Net: "udp", Err: os.NewSyscallError(op, errno)}
+}
+
+// TestSendUDP: the probe's packet is UDP, connected, one byte, and it reaches the address.
+func TestSendUDP(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip(err)
+	}
+	defer pc.Close()
+	if err := SendUDP(context.Background(), pc.LocalAddr().String()); err != nil {
+		t.Fatal(err)
+	}
+	pc.SetReadDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, 16)
+	n, _, err := pc.ReadFrom(buf)
+	if err != nil || n != 1 {
+		t.Fatalf("read %d bytes: %v", n, err)
 	}
 }
 

@@ -215,14 +215,7 @@ func (darwinSystem) Gateway(ctx context.Context) (string, error) {
 	return "", errors.New("route printed no gateway")
 }
 
-func (darwinSystem) Dial(ctx context.Context, addr string) error {
-	var d net.Dialer
-	c, err := d.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return err
-	}
-	return c.Close()
-}
+func (darwinSystem) SendUDP(ctx context.Context, addr string) error { return SendUDP(ctx, addr) }
 
 func (darwinSystem) Clipboard(ctx context.Context) (string, error) {
 	out, err := exec.CommandContext(ctx, "/usr/bin/pbpaste").Output()
