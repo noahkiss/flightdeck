@@ -2982,6 +2982,10 @@
             "type": "string",
             "description": "The chat message id of the tool call that touched it last."
           },
+          "modified": {
+            "type": "string",
+            "description": "RFC 3339 time with nanoseconds the file last changed, as content.read reports it. Absent with size."
+          },
           "name": {
             "type": "string",
             "description": "The file name."

@@ -207,18 +207,20 @@ type ContentShown struct {
 
 // ContentItem is one file a session showed or touched. The hab stores a reference, never a copy.
 type ContentItem struct {
-	ID      string        `json:"id" doc:"Stable for the session and path."`
-	Session string        `json:"session"`
-	Kind    ContentKind   `json:"kind"`
-	Path    string        `json:"path" doc:"Absolute path on the hab's host."`
-	Name    string        `json:"name" doc:"The file name."`
-	Title   string        `json:"title,omitempty" doc:"From content.show."`
-	Type    string        `json:"type" doc:"Media type, from the file name."`
-	Size    *int64        `json:"size,omitempty" doc:"Bytes, when the file exists. Absent: the file is gone or unreadable."`
-	At      string        `json:"at" doc:"RFC 3339 time it was shown, or of the tool call that touched it last. Empty for a file only git status lists."`
-	Shown   bool          `json:"shown,omitempty" doc:"True when the agent showed it with content.show."`
-	Change  ContentChange `json:"change,omitempty" doc:"Set when the session changed the file: added, modified, deleted, renamed or untracked."`
-	Message string        `json:"message,omitempty" doc:"The chat message id of the tool call that touched it last."`
+	ID      string      `json:"id" doc:"Stable for the session and path."`
+	Session string      `json:"session"`
+	Kind    ContentKind `json:"kind"`
+	Path    string      `json:"path" doc:"Absolute path on the hab's host."`
+	Name    string      `json:"name" doc:"The file name."`
+	Title   string      `json:"title,omitempty" doc:"From content.show."`
+	Type    string      `json:"type" doc:"Media type, from the file name."`
+	Size    *int64      `json:"size,omitempty" doc:"Bytes, when the file exists. Absent: the file is gone or unreadable."`
+	// Modified lets a client tell a rewritten file of the same size from the one it holds.
+	Modified string        `json:"modified,omitempty" doc:"RFC 3339 time with nanoseconds the file last changed, as content.read reports it. Absent with size."`
+	At       string        `json:"at" doc:"RFC 3339 time it was shown, or of the tool call that touched it last. Empty for a file only git status lists."`
+	Shown    bool          `json:"shown,omitempty" doc:"True when the agent showed it with content.show."`
+	Change   ContentChange `json:"change,omitempty" doc:"Set when the session changed the file: added, modified, deleted, renamed or untracked."`
+	Message  string        `json:"message,omitempty" doc:"The chat message id of the tool call that touched it last."`
 }
 
 // ContentListParams lists a session's content.

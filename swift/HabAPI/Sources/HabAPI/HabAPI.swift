@@ -1132,6 +1132,8 @@ public struct ContentItem: Codable, Sendable, Hashable {
     public var kind: ContentKind
     /// The chat message id of the tool call that touched it last.
     public var message: String?
+    /// RFC 3339 time with nanoseconds the file last changed, as content.read reports it. Absent with size.
+    public var modified: String?
     /// The file name.
     public var name: String
     /// Absolute path on the hab's host.
@@ -1152,6 +1154,7 @@ public struct ContentItem: Codable, Sendable, Hashable {
         case id = "id"
         case kind = "kind"
         case message = "message"
+        case modified = "modified"
         case name = "name"
         case path = "path"
         case session = "session"
@@ -1161,12 +1164,13 @@ public struct ContentItem: Codable, Sendable, Hashable {
         case type = "type"
     }
 
-    public init(at: String, change: ContentChange? = nil, id: String, kind: ContentKind, message: String? = nil, name: String, path: String, session: String, shown: Bool? = nil, size: Int? = nil, title: String? = nil, type: String) {
+    public init(at: String, change: ContentChange? = nil, id: String, kind: ContentKind, message: String? = nil, modified: String? = nil, name: String, path: String, session: String, shown: Bool? = nil, size: Int? = nil, title: String? = nil, type: String) {
         self.at = at
         self.change = change
         self.id = id
         self.kind = kind
         self.message = message
+        self.modified = modified
         self.name = name
         self.path = path
         self.session = session

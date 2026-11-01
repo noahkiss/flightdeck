@@ -1,0 +1,31 @@
+{
+  "data": {
+    "at": "at-11",
+    "change": "untracked",
+    "id": "id-3",
+    "kind": "file",
+    "message": "message-12",
+    "modified": "modified-10",
+    "name": "name-6",
+    "path": "path-5",
+    "session": "session-4",
+    "shown": true,
+    "size": 9,
+    "title": "title-7",
+    "type": "type-8",
+    "x_unknown_field": "later"
+  },
+  "id": "id-15",
+  "revision": 13,
+  "seq": 14,
+  "type": "content.updated",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}
