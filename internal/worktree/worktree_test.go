@@ -6,8 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -683,6 +686,34 @@ func TestRunScript(t *testing.T) {
 	code, _, err = RunScript(ctx, dir, "sleep 30", nil)
 	if err == nil || code != -1 || time.Since(start) > 10*time.Second {
 		t.Fatalf("timeout: code %d err %v after %v", code, err, time.Since(start))
+	}
+}
+
+// TestRunScriptKillsChildren: at the deadline the script's background children end too.
+func TestRunScriptKillsChildren(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no process groups")
+	}
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "pid")
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	RunScript(ctx, dir, `sleep 30 & echo $! > pid; wait`, nil)
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for syscall.Kill(pid, 0) == nil {
+		if time.Now().After(deadline) {
+			syscall.Kill(pid, syscall.SIGKILL)
+			t.Fatal("the script's child outlived the deadline")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

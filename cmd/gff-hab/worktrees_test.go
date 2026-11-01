@@ -142,7 +142,8 @@ func TestWorktrees(t *testing.T) {
 	git(repo, "update-ref", "refs/remotes/fork/patch", "HEAD")
 	var f api.WorktreeCreated
 	call("worktree.create", api.WorktreeCreateParams{WorktreeProject: api.WorktreeProject{Project: c.Project}, Branch: "try", Base: "fork/patch"}, &f)
-	if f.Setup.State != "pending" || f.Setup.Session != "" || !strings.Contains(f.Setup.Reason, "fork") {
+	if f.Setup.State != "pending" || f.Setup.Session != "" || !strings.Contains(f.Setup.Reason, "fork") ||
+		!strings.Contains(f.Setup.Script, "setup.ran") || !strings.Contains(f.Setup.TeardownScript, "teardown.ran") {
 		t.Fatalf("foreign create %+v", f)
 	}
 	if _, err := os.Stat(filepath.Join(f.Worktree.Path, "setup.ran")); err == nil {
@@ -189,6 +190,73 @@ func TestWorktrees(t *testing.T) {
 	}
 	if kind := callErr(t, sock, "worktree.create", api.WorktreeCreateParams{WorktreeProject: p, Setup: "maybe"}); kind != "invalid" {
 		t.Errorf("unknown setup mode: %s, want invalid", kind)
+	}
+
+	// The teardown gate. No teardown.ran may appear until feat/x goes below.
+	teardownRan := func(what string) {
+		t.Helper()
+		if _, err := os.Stat(filepath.Join(repo, "teardown.ran")); err == nil {
+			t.Fatalf("%s: the teardown ran", what)
+		}
+	}
+	removeGate := func(what, path string, managed bool, why string) {
+		t.Helper()
+		var r api.WorktreeRemoved
+		call("worktree.remove", api.WorktreeRemoveParams{WorktreeProject: p, Path: path}, &r)
+		if r.Teardown != "skipped" || r.Managed != managed || !strings.Contains(r.TeardownOutput, why) {
+			t.Fatalf("%s: removed %+v", what, r)
+		}
+		teardownRan(what)
+		if _, err := os.Stat(path); err == nil {
+			t.Fatalf("%s: the folder is still there", what)
+		}
+	}
+	// Foreign and never approved: no teardown.
+	var g api.WorktreeCreated
+	call("worktree.create", api.WorktreeCreateParams{WorktreeProject: p, Branch: "gate", Base: "fork/patch"}, &g)
+	if g.Setup.State != "pending" {
+		t.Fatalf("gate %+v", g)
+	}
+	removeGate("a worktree with no yes", g.Worktree.Path, true, "never said yes")
+	// Approved, then its scripts changed (a pull from somewhere, say): no teardown.
+	commitConfig := func(wt, teardown string) {
+		t.Helper()
+		write(filepath.Join(wt, "flightdeck.json"), `{"worktree": {"teardown": "`+teardown+`"}}`)
+		git(wt, "commit", "-q", "-am", "change the scripts")
+	}
+	var ch api.WorktreeCreated
+	call("worktree.create", api.WorktreeCreateParams{WorktreeProject: p, Branch: "changed"}, &ch)
+	waitSetup(ch.Setup)
+	commitConfig(ch.Worktree.Path, `echo changed > \"$GFF_SOURCE_CHECKOUT/teardown.ran\"`)
+	removeGate("changed scripts", ch.Worktree.Path, true, "changed since")
+	// A worktree made by hand: managed false, its scripts never approved.
+	hand := filepath.Join(d, "hand")
+	git(repo, "worktree", "add", "-q", "-b", "hand", hand)
+	removeGate("a hand-made worktree", hand, false, "never said yes")
+
+	// A teardown that leaves files: the removal stops with the worktree whole and says why.
+	var lv api.WorktreeCreated
+	call("worktree.create", api.WorktreeCreateParams{WorktreeProject: p, Branch: "leaves"}, &lv)
+	waitSetup(lv.Setup)
+	commitConfig(lv.Worktree.Path, "echo x > left.log")
+	var yes api.WorktreeSetupResult
+	call("worktree.setup", api.WorktreeSetupParams{WorktreeProject: p, Path: lv.Worktree.Path}, &yes)
+	if yes.Setup.State != "none" {
+		t.Fatalf("setup with no setup script %+v", yes)
+	}
+	out, err := exec.Command(bin, "api", "call", "-socket", sock, "worktree.remove",
+		`{"project_dir":"`+repo+`","path":"`+lv.Worktree.Path+`"}`).CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "(conflict)") || !strings.Contains(string(out), "teardown") ||
+		!strings.Contains(string(out), "left.log") {
+		t.Fatalf("a teardown that leaves files: %v %s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(lv.Worktree.Path, "flightdeck.json")); err != nil {
+		t.Fatal("the stopped removal left the worktree half gone")
+	}
+	var lr api.WorktreeRemoved
+	call("worktree.remove", api.WorktreeRemoveParams{WorktreeProject: p, Path: lv.Worktree.Path, Force: true}, &lr)
+	if lr.Teardown != "ran" || !lr.Managed {
+		t.Fatalf("forced removal %+v", lr)
 	}
 
 	// Clean, it goes: teardown runs, the branch stays.

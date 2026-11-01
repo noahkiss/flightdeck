@@ -3458,6 +3458,7 @@ public struct TeardownState: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
     public static let none = TeardownState(rawValue: "none")
+    public static let skipped = TeardownState(rawValue: "skipped")
     public static let ran = TeardownState(rawValue: "ran")
     public static let failed = TeardownState(rawValue: "failed")
 }
@@ -3815,9 +3816,11 @@ public struct WorktreeRemoveParams: Codable, Sendable, Hashable {
 }
 
 public struct WorktreeRemoved: Codable, Sendable, Hashable {
+    /// The worktree was made by worktree.create on this hab. False: a worktree made by hand or by another tool.
+    public var managed: Bool
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
-    /// none: no teardown ran (no script, or the worktree was not made and approved by this hab); ran: it exited 0; failed: it exited non-zero, timed out or could not start. The worktree is removed either way.
+    /// none: no teardown script; skipped: there is one, but the user never said yes to it, or it changed since the yes (teardown_output says which); ran: it exited 0; failed: it exited non-zero, timed out or could not start. The worktree is removed in each case.
     public var teardown: TeardownState
     /// The teardown script's exit code, when it exited.
     public var teardownExit: Int?
@@ -3825,13 +3828,15 @@ public struct WorktreeRemoved: Codable, Sendable, Hashable {
     public var teardownOutput: String?
 
     enum CodingKeys: String, CodingKey {
+        case managed = "managed"
         case seq = "seq"
         case teardown = "teardown"
         case teardownExit = "teardown_exit"
         case teardownOutput = "teardown_output"
     }
 
-    public init(seq: UInt64, teardown: TeardownState, teardownExit: Int? = nil, teardownOutput: String? = nil) {
+    public init(managed: Bool, seq: UInt64, teardown: TeardownState, teardownExit: Int? = nil, teardownOutput: String? = nil) {
+        self.managed = managed
         self.seq = seq
         self.teardown = teardown
         self.teardownExit = teardownExit
@@ -3844,23 +3849,31 @@ public struct WorktreeSetup: Codable, Sendable, Hashable {
     public var pane: String?
     /// Why setup is pending or could not start, in one line.
     public var reason: String?
+    /// The setup script a yes would run. Set when the state is pending.
+    public var script: String?
     /// The session that runs the setup script. Its exit status says how setup ended.
     public var session: String?
     /// none: the project file names no setup; started: it runs in the session below; pending: it waits for a yes (worktree.setup); skipped: the call said skip; error: it could not start.
     public var state: SetupState
+    /// The teardown script a yes would also allow. Set when the state is pending.
+    public var teardownScript: String?
 
     enum CodingKeys: String, CodingKey {
         case pane = "pane"
         case reason = "reason"
+        case script = "script"
         case session = "session"
         case state = "state"
+        case teardownScript = "teardown_script"
     }
 
-    public init(pane: String? = nil, reason: String? = nil, session: String? = nil, state: SetupState) {
+    public init(pane: String? = nil, reason: String? = nil, script: String? = nil, session: String? = nil, state: SetupState, teardownScript: String? = nil) {
         self.pane = pane
         self.reason = reason
+        self.script = script
         self.session = session
         self.state = state
+        self.teardownScript = teardownScript
     }
 }
 

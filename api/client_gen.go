@@ -244,9 +244,10 @@ const (
 )
 
 const (
-	TeardownStateNone   TeardownState = "none"
-	TeardownStateRan    TeardownState = "ran"
-	TeardownStateFailed TeardownState = "failed"
+	TeardownStateNone    TeardownState = "none"
+	TeardownStateSkipped TeardownState = "skipped"
+	TeardownStateRan     TeardownState = "ran"
+	TeardownStateFailed  TeardownState = "failed"
 )
 
 const (

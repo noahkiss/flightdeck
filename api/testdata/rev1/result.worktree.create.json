@@ -5,10 +5,12 @@
   "project": "project-4",
   "seq": 3,
   "setup": {
-    "pane": "pane-11",
+    "pane": "pane-13",
     "reason": "reason-9",
-    "session": "session-10",
+    "script": "script-10",
+    "session": "session-12",
     "state": "error",
+    "teardown_script": "teardown_script-11",
     "x_unknown_field": "later"
   },
   "worktree": {

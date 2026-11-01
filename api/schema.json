@@ -5785,6 +5785,7 @@
         "type": "string",
         "x-known-values": [
           "none",
+          "skipped",
           "ran",
           "failed"
         ]
@@ -6166,6 +6167,10 @@
       "WorktreeRemoved": {
         "type": "object",
         "properties": {
+          "managed": {
+            "type": "boolean",
+            "description": "The worktree was made by worktree.create on this hab. False: a worktree made by hand or by another tool."
+          },
           "seq": {
             "type": "integer",
             "format": "uint64",
@@ -6173,7 +6178,7 @@
           },
           "teardown": {
             "$ref": "#/components/schemas/TeardownState",
-            "description": "none: no teardown ran (no script, or the worktree was not made and approved by this hab); ran: it exited 0; failed: it exited non-zero, timed out or could not start. The worktree is removed either way."
+            "description": "none: no teardown script; skipped: there is one, but the user never said yes to it, or it changed since the yes (teardown_output says which); ran: it exited 0; failed: it exited non-zero, timed out or could not start. The worktree is removed in each case."
           },
           "teardown_exit": {
             "type": "integer",
@@ -6187,6 +6192,7 @@
         },
         "required": [
           "seq",
+          "managed",
           "teardown"
         ]
       },
@@ -6201,6 +6207,10 @@
             "type": "string",
             "description": "Why setup is pending or could not start, in one line."
           },
+          "script": {
+            "type": "string",
+            "description": "The setup script a yes would run. Set when the state is pending."
+          },
           "session": {
             "type": "string",
             "description": "The session that runs the setup script. Its exit status says how setup ended."
@@ -6208,6 +6218,10 @@
           "state": {
             "$ref": "#/components/schemas/SetupState",
             "description": "none: the project file names no setup; started: it runs in the session below; pending: it waits for a yes (worktree.setup); skipped: the call said skip; error: it could not start."
+          },
+          "teardown_script": {
+            "type": "string",
+            "description": "The teardown script a yes would also allow. Set when the state is pending."
           }
         },
         "required": [

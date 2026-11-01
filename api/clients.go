@@ -608,10 +608,13 @@ type SetupState string
 
 // WorktreeSetup is what became of a worktree's setup script.
 type WorktreeSetup struct {
-	State   SetupState `json:"state" doc:"none: the project file names no setup; started: it runs in the session below; pending: it waits for a yes (worktree.setup); skipped: the call said skip; error: it could not start."`
-	Reason  string     `json:"reason,omitempty" doc:"Why setup is pending or could not start, in one line."`
-	Session string     `json:"session,omitempty" doc:"The session that runs the setup script. Its exit status says how setup ended."`
-	Pane    string     `json:"pane,omitempty" doc:"The pane that runs the setup script."`
+	State  SetupState `json:"state" doc:"none: the project file names no setup; started: it runs in the session below; pending: it waits for a yes (worktree.setup); skipped: the call said skip; error: it could not start."`
+	Reason string     `json:"reason,omitempty" doc:"Why setup is pending or could not start, in one line."`
+	// The scripts a yes covers, so the client can show them. Set when the state is pending.
+	Script         string `json:"script,omitempty" doc:"The setup script a yes would run. Set when the state is pending."`
+	TeardownScript string `json:"teardown_script,omitempty" doc:"The teardown script a yes would also allow. Set when the state is pending."`
+	Session        string `json:"session,omitempty" doc:"The session that runs the setup script. Its exit status says how setup ended."`
+	Pane           string `json:"pane,omitempty" doc:"The pane that runs the setup script."`
 }
 
 // WorktreeCreated is a new worktree.
@@ -648,7 +651,8 @@ type TeardownState string
 // WorktreeRemoved says how the removal went.
 type WorktreeRemoved struct {
 	Seq
-	Teardown       TeardownState `json:"teardown" doc:"none: no teardown ran (no script, or the worktree was not made and approved by this hab); ran: it exited 0; failed: it exited non-zero, timed out or could not start. The worktree is removed either way."`
+	Managed        bool          `json:"managed" doc:"The worktree was made by worktree.create on this hab. False: a worktree made by hand or by another tool."`
+	Teardown       TeardownState `json:"teardown" doc:"none: no teardown script; skipped: there is one, but the user never said yes to it, or it changed since the yes (teardown_output says which); ran: it exited 0; failed: it exited non-zero, timed out or could not start. The worktree is removed in each case."`
 	TeardownExit   *int          `json:"teardown_exit,omitempty" doc:"The teardown script's exit code, when it exited."`
 	TeardownOutput string        `json:"teardown_output,omitempty" doc:"The last 4 KiB of the teardown script's output, when it failed."`
 }

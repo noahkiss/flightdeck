@@ -205,11 +205,23 @@ func canon(p string) string {
 // Dirty reports whether the working tree at path has changes git would lose on removal: modified,
 // staged or untracked files. Ignored files do not count.
 func (g Git) Dirty(ctx context.Context, path string) (bool, error) {
+	files, err := g.DirtyFiles(ctx, path)
+	return len(files) > 0, err
+}
+
+// DirtyFiles lists what Dirty counts, one `git status --porcelain` line each.
+func (g Git) DirtyFiles(ctx context.Context, path string) ([]string, error) {
 	out, err := g.run(ctx, path, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none")
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	return strings.TrimSpace(out) != "", nil
+	var files []string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.TrimSpace(l) != "" {
+			files = append(files, l)
+		}
+	}
+	return files, nil
 }
 
 // GitDir returns the absolute private git folder of the working tree at path: .git/worktrees/<name>

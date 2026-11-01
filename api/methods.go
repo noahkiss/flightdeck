@@ -207,7 +207,7 @@ var Enums = map[string][]string{
 	// Sets added for worktrees (spec 3.10).
 	"SetupMode":     {"auto", "run", "skip"},
 	"SetupState":    {"none", "started", "pending", "skipped", "error"},
-	"TeardownState": {"none", "ran", "failed"},
+	"TeardownState": {"none", "skipped", "ran", "failed"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per

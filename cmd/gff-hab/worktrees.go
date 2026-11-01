@@ -159,8 +159,12 @@ func (w *worktrees) CreateWorktree(ctx context.Context, client string, p api.Wor
 	}
 	out := api.WorktreeCreated{Project: project, Copied: c.Copied}
 	cfg, cfgErr := worktree.ReadConfig(c.Worktree.Path)
+	if cfgErr == nil && mark.Approved {
+		mark.Digest = cfg.Digest() // the approval covers these scripts only
+	}
 	switch {
 	case cfgErr != nil:
+		mark.Approved = false
 		out.Setup = api.WorktreeSetup{State: "error", Reason: cfgErr.Error()}
 	case cfg.Setup == "":
 		out.Setup = api.WorktreeSetup{State: "none"}
@@ -168,7 +172,9 @@ func (w *worktrees) CreateWorktree(ctx context.Context, client string, p api.Wor
 		out.Setup = api.WorktreeSetup{State: "skipped"}
 	case !mark.Approved:
 		out.Setup = api.WorktreeSetup{State: "pending",
-			Reason: c.Foreign + "; worktree.setup runs it once the user says yes"}
+			Reason:         c.Foreign + "; worktree.setup runs it once the user says yes",
+			Script:         cfg.Setup,
+			TeardownScript: cfg.Teardown}
 	default:
 		out.Setup = w.startSetup(ctx, project, c.Worktree, c.Source, cfg.Setup)
 		if out.Setup.State == "started" {
@@ -211,7 +217,7 @@ func (w *worktrees) SetupWorktree(ctx context.Context, client string, p api.Work
 	if !ok {
 		mark = worktree.Mark{Source: w.mainPath(ctx, dir), Created: w.now().UTC()}
 	}
-	mark.Approved = true
+	mark.Approved, mark.Digest = true, cfg.Digest() // the yes covers the scripts as they are now
 	res := api.WorktreeSetup{State: "none"}
 	if cfg.Setup != "" {
 		res = w.startSetup(ctx, project, wt, mark.Source, cfg.Setup)
@@ -266,24 +272,52 @@ func (w *worktrees) RemoveWorktree(ctx context.Context, p api.WorktreeRemovePara
 	}
 	out := api.WorktreeRemoved{Teardown: "none"}
 	if !wt.Prunable {
-		if mark, ok, _ := w.git.ReadMark(ctx, wt.Path); ok && mark.Approved {
-			if cfg, err := worktree.ReadConfig(wt.Path); err != nil {
-				out.Teardown, out.TeardownOutput = "failed", err.Error()
-			} else if cfg.Teardown != "" {
-				tctx, cancel := context.WithTimeout(ctx, teardownTime)
-				code, tail, err := worktree.RunScript(tctx, wt.Path, cfg.Teardown, worktree.Env(mark.Source, wt.Path, wt.Branch))
-				cancel()
-				switch {
-				case err != nil:
-					out.Teardown, out.TeardownOutput = "failed", tail+"\n"+err.Error()
-				case code != 0:
-					out.Teardown, out.TeardownExit, out.TeardownOutput = "failed", &code, tail
-				default:
-					out.Teardown, out.TeardownExit = "ran", &code
+		mark, ok, _ := w.git.ReadMark(ctx, wt.Path)
+		out.Managed = ok
+		cfg, cfgErr := worktree.ReadConfig(wt.Path)
+		ran := false
+		switch {
+		case cfgErr != nil:
+			out.Teardown, out.TeardownOutput = "failed", cfgErr.Error()
+		case cfg.Teardown == "":
+		case !ok || !mark.Approved:
+			out.Teardown, out.TeardownOutput = "skipped", "the user never said yes to this worktree's scripts"
+		case !mark.Allows(cfg):
+			out.Teardown, out.TeardownOutput = "skipped", "the scripts changed since the user said yes"
+		default:
+			ran = true
+			tctx, cancel := context.WithTimeout(ctx, teardownTime)
+			code, tail, err := worktree.RunScript(tctx, wt.Path, cfg.Teardown, worktree.Env(mark.Source, wt.Path, wt.Branch))
+			cancel()
+			switch {
+			case err != nil:
+				out.Teardown, out.TeardownOutput = "failed", tail+"\n"+err.Error()
+			case code != 0:
+				out.Teardown, out.TeardownExit, out.TeardownOutput = "failed", &code, tail
+			default:
+				out.Teardown, out.TeardownExit = "ran", &code
+			}
+			if out.Teardown == "failed" {
+				w.logf("worktree %s: teardown failed; removing it anyway", wt.Path)
+			}
+		}
+		if out.Teardown == "skipped" {
+			w.logf("worktree %s: teardown skipped: %s", wt.Path, out.TeardownOutput)
+		}
+		// The worktree was clean before teardown; a teardown that left files (a log, say) would
+		// make git refuse halfway. Say so now, with the worktree whole.
+		if ran && !p.Force {
+			files, err := w.git.DirtyFiles(ctx, wt.Path)
+			if err != nil {
+				return api.WorktreeRemoved{}, worktreeErr(err)
+			}
+			if len(files) > 0 {
+				if len(files) > 5 {
+					files = append(files[:5], "...")
 				}
-				if out.Teardown == "failed" {
-					w.logf("worktree %s: teardown failed; removing it anyway", wt.Path)
-				}
+				return api.WorktreeRemoved{}, control.Errorf(api.ErrorKindConflict,
+					"the teardown script %s and left uncommitted or untracked files in %s (%s); the worktree stays; remove it with force",
+					teardownWord(out.Teardown), wt.Path, strings.Join(files, ", "))
 			}
 		}
 	}
@@ -294,6 +328,14 @@ func (w *worktrees) RemoveWorktree(ctx context.Context, p api.WorktreeRemovePara
 		w.a.refresh(project)
 	}
 	return out, nil
+}
+
+// teardownWord says how a teardown ended, for an error message.
+func teardownWord(s api.TeardownState) string {
+	if s == "ran" {
+		return "ran"
+	}
+	return "failed"
 }
 
 // worktreeCmd runs `gff-hab worktree list|create|setup|remove`: one worktree.* call, its result

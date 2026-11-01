@@ -3,6 +3,8 @@ package worktree
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -168,6 +170,17 @@ type Config struct {
 	Teardown string // shell script run in a worktree before it is removed; "" for none
 }
 
+// Digest identifies the pair of scripts, so an approval covers these scripts and no others.
+func (c Config) Digest() string {
+	h := sha256.Sum256([]byte(c.Setup + "\x00" + c.Teardown))
+	return hex.EncodeToString(h[:])
+}
+
+// Allows reports whether the mark lets cfg's scripts run: approved, for exactly these scripts.
+func (m Mark) Allows(cfg Config) bool {
+	return m.Approved && m.Digest == cfg.Digest()
+}
+
 // script is a shell script, or a list of commands run one after another.
 type script string
 
@@ -210,7 +223,8 @@ func ReadConfig(dir string) (Config, error) {
 // Mark is what gff-hab records about a worktree it made.
 type Mark struct {
 	Source   string    `json:"source"`             // top folder of the source checkout
-	Approved bool      `json:"approved"`           // its setup and teardown may run
+	Approved bool      `json:"approved"`           // the scripts with Digest may run
+	Digest   string    `json:"digest,omitempty"`   // Config.Digest of the scripts approved
 	Created  time.Time `json:"created"`            // when gff-hab made it
 	Foreign  string    `json:"foreign,omitempty"`  // why setup waited for a yes
 	SetupRun time.Time `json:"setup_run,omitzero"` // when setup last started
@@ -294,6 +308,7 @@ func RunScript(ctx context.Context, dir, s string, env []string) (int, string, e
 	cmd.Stdout, cmd.Stderr = &tail, &tail
 	cmd.Stdin = bytes.NewReader(nil)
 	cmd.WaitDelay = time.Second
+	ownGroup(cmd) // at the deadline the script's children go with it
 	err := cmd.Run()
 	out := string(tail.b)
 	if err == nil {

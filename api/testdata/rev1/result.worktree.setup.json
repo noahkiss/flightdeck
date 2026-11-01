@@ -1,10 +1,12 @@
 {
   "seq": 3,
   "setup": {
-    "pane": "pane-6",
+    "pane": "pane-8",
     "reason": "reason-4",
-    "session": "session-5",
+    "script": "script-5",
+    "session": "session-7",
     "state": "error",
+    "teardown_script": "teardown_script-6",
     "x_unknown_field": "later"
   },
   "x_unknown_field": "later",
