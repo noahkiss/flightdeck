@@ -303,6 +303,51 @@ Limits, at the bar of herdr, Rex and Paseo:
 - The pin protects the dialer only. A hab that dials a refused peer sends it nothing beyond the
   hello and closes.
 
+### 4.5 Built choices: the client merge (task-kbvoirca)
+
+Package `internal/merge`, on top of `internal/hosts` (one `habconn.Conn` per hab, each with its
+own seq, epoch, resync and backoff). Pure Go, so the app's Go library and gff share it. This is
+the client side: a client connects to every hab itself; no hab relays (`hab-logic-api.md` 7.9).
+
+- **The model.** `merge.Build` turns the hosts' models into one `Model`: every host with its
+  status, projects, sessions and unfiled panes. Each session and pane carries a `Ref`: the host
+  label plus its id on that hab, since ids are unique on one hab only.
+- **Projects match by identity.** The key is the remote, else the root commit
+  (`hab-logic-api.md` 2.2). A project with neither stays its own on its host. A merged project
+  lists one location per host, in host order, each with that hab's own project record. The
+  board's grouping uses the same key (`merge.ProjectKey`).
+- **One hab, two labels.** Shown once, under the first online label, else the first label
+  (`merge.Shown`, which the board also uses). The other label stays in the host list, not shown.
+- **Stale.** A host that is not online but has held a snapshot keeps its last structure, marked
+  stale on every session, pane and project location. A client shows it dimmed. A host that never
+  connected has nothing to show. A host that failed for good (revision, changed device id) shows
+  nothing: hidden, not stale, as the board already did.
+- **Input off until fresh.** `Host.Input` is true only while the host is online, which is only
+  after its snapshot is applied: habconn reports online and the snapshot in one update. Calls to
+  a stale host already fail with `habconn.ErrOffline`; they are never queued.
+- **One ordered stream.** A `Merger` takes over the Set's updates and hands them on as `Event`s
+  with a client-side `Seq` from 1 with no gaps, which is never compared with a hab's seq. Each
+  event has a `Key`: host label, object kind (`project`, `session`, `pane`, `agent`, or the
+  event type for one the client keeps no copy of) and the object id. Within one host the
+  stream keeps the hab's order.
+- **Resync per host.** A host that comes online sends one `resync` event for that host alone,
+  with `NewEpoch` set when the hab restarted. Only that host's objects are replaced; the others
+  keep their values. A host added by `hosts.Set.Reload` joins the same way, with no reload of
+  the others.
+- **The model may run ahead.** `Merger.Model` is rebuilt from the Set's per-host copies, which
+  can already hold a later change than the event just read. A client redraws from the model on
+  each event; the next event says what changed again. An event that changed no copy
+  (`pane.output`, an old revision) keeps the model as it was.
+- **iOS.** `scripts/ios-build-check.sh` builds the package and its imports as a C archive for
+  iOS on a Mac (device, or `-sim`). The app links no Go yet; this only proves the build.
+
+Limits, at the bar of herdr, Rex and Paseo:
+
+- The model is rebuilt whole on each change: fine for a handful of hosts and hundreds of
+  sessions, not tuned past that.
+- gff's workspace still reads `hosts.Set` and `board` directly; it already dims offline rows and
+  refuses their actions. Moving it onto `merge.Merger` is a later step.
+
 ---
 
 ## 5. Catalog

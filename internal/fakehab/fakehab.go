@@ -124,10 +124,27 @@ func (h *Hab) Epoch() string {
 // AddSession starts a fake pane and files it as a session named name. It returns the session
 // and pane ids.
 func (h *Hab) AddSession(name string) (session, pane string, err error) {
-	return h.create(name)
+	return h.create(name, "")
 }
 
-func (h *Hab) create(name string) (string, string, error) {
+// AddProject makes a project identified by a git remote and returns its id.
+func (h *Hab) AddProject(name, remote string) (string, error) {
+	h.mu.Lock()
+	st := h.store
+	h.mu.Unlock()
+	if st == nil {
+		return "", errors.New("fakehab: down")
+	}
+	p, err := st.CreateProject(name, remote, "")
+	return p.ID, err
+}
+
+// AddSessionIn is AddSession with the session filed in a project.
+func (h *Hab) AddSessionIn(project, name string) (session, pane string, err error) {
+	return h.create(name, project)
+}
+
+func (h *Hab) create(name, project string) (string, string, error) {
 	h.mu.Lock()
 	st := h.store
 	h.next++
@@ -149,7 +166,7 @@ func (h *Hab) create(name string) (string, string, error) {
 	var s api.Session
 	err := waitFor(func() error {
 		var err error
-		s, err = st.CreateSession(structure.SessionSpec{Name: name, Pane: pane, Index: -1})
+		s, err = st.CreateSession(structure.SessionSpec{Name: name, Project: project, Pane: pane, Index: -1})
 		return err
 	})
 	if err != nil {
@@ -267,7 +284,7 @@ func (a actions) CreateSession(ctx context.Context, p api.SessionCreateParams) (
 			return "", "", ctx.Err()
 		}
 	}
-	return a.h.create(p.Name)
+	return a.h.create(p.Name, p.Project)
 }
 
 func (a actions) ClosePane(_ context.Context, pane string) error {

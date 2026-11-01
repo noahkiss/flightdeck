@@ -6,7 +6,7 @@
 // hab does, with no restart of the client. The Set reports every update of every host on one
 // channel, in order per host, and keeps a model of each host: its status, since when, the last
 // error, the last welcome and the structure copy the Conn holds. Structure stays per host and
-// is merged by host id only where it is shown (package board); seq is never compared across
+// is merged by device id above it (packages merge and board); seq is never compared across
 // hosts (hab-logic-api.md 7.9).
 //
 // Which hosts to connect to comes from a Source. This stage reads gff's own config file and

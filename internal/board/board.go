@@ -15,6 +15,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/hosts"
+	"github.com/noahkiss/flightdeck/internal/merge"
 )
 
 // Rank is a row's group, top to bottom (app.md 3.1).
@@ -147,23 +148,9 @@ type Seen func(host, pane string, a *api.AgentState) bool
 // unordered; Order sorts them.
 func Rows(hs []hosts.Host, seen Seen) []Row {
 	var rows []Row
-	// The device id is the host's identity (mesh.md 2): two labels that reach one hab show its
-	// rows once, under the first online label, else the first label.
-	devices := map[string]int{}
+	shown := merge.Shown(hs) // one hab reached by two labels shows once (mesh.md 2)
 	for i, h := range hs {
-		d := h.DeviceID()
-		if d == "" || h.Status == hosts.Failed {
-			continue
-		}
-		if j, ok := devices[d]; !ok || hs[j].Status != hosts.Online && h.Status == hosts.Online {
-			devices[d] = i
-		}
-	}
-	for i, h := range hs {
-		if h.Status == hosts.Failed {
-			continue
-		}
-		if d := h.DeviceID(); d != "" && devices[d] != i {
+		if !shown[i] {
 			continue
 		}
 		st := h.Structure
@@ -322,20 +309,8 @@ func Groups(rows []Row, by GroupBy) []Group {
 	return out
 }
 
-// projectKey is a project's identity across hosts: its remote, else its root commit
-// (hab-logic-api.md 2.2). A project with neither is its own on its host.
-func projectKey(r Row) string {
-	p := r.Project
-	switch {
-	case p.ID == "":
-		return ""
-	case p.Remote != "":
-		return "remote:" + p.Remote
-	case p.RootCommit != "":
-		return "root:" + p.RootCommit
-	}
-	return "host:" + r.Host + "/" + p.ID
-}
+// projectKey is a project's identity across hosts (merge.ProjectKey).
+func projectKey(r Row) string { return merge.ProjectKey(r.Host, r.Project) }
 
 // NeedsYou counts the rows that need the owner on hosts that are online.
 func NeedsYou(rows []Row) int {
