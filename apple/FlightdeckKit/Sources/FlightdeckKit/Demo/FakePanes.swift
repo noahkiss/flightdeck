@@ -53,6 +53,8 @@ public actor FakePanes {
     /// Debounce before typing takes ownership (6.2).
     public var typingDebounce: Duration = .milliseconds(300)
 
+    public func setTypingDebounce(_ d: Duration) { typingDebounce = d }
+
     /// Every `pane.input` received: (client, pane, bytes).
     public private(set) var inputs: [(client: String, pane: String, data: Data)] = []
     /// Every desired size received: (client, cols, rows).

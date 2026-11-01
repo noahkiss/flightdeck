@@ -109,6 +109,11 @@ public final class Fleet {
         if windows == 0 { Task { await setActive(false) } }
     }
 
+    /// Finds a hab's connection by id, for views opened from a board row.
+    public var lookup: HabConnectionLookup {
+        HabConnectionLookup { [weak self] id in self?.connections.first { $0.id == id } }
+    }
+
     /// Streams still open: real carriers (sockets and pipes) plus fake ones.
     public func openStreams() -> Int {
         var n = OpenStreams.live

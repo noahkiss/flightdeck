@@ -24,6 +24,7 @@ public enum DemoFleet {
         fleet.add(HabConnection(id: "demo-attic", transport: attic.transport(endpoint: "demo")), label: nil)
         if script {
             fleet.keepAlive.append(ScriptBox(Task { await run(workbench: workbench, attic: attic) }))
+            fleet.keepAlive.append(ScriptBox(await DemoTerminal.populate(workbench: workbench, attic: attic)))
         }
     }
 

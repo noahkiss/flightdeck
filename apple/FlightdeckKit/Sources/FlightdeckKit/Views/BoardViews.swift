@@ -14,10 +14,12 @@ public struct FlightdeckRoot: View {
     public var body: some View {
         #if os(macOS)
         BoardScreen(board: fleet.board)
+            .environment(\.habConnections, fleet.lookup)
             .onAppear { fleet.windowOpened() }
             .onDisappear { fleet.windowClosed() }
         #else
         BoardScreen(board: fleet.board)
+            .environment(\.habConnections, fleet.lookup)
         #endif
     }
 }
@@ -250,10 +252,17 @@ struct SessionCardsPlaceholder: View {
 struct SessionPlaceholder: View {
     let row: BoardRow
     let close: () -> Void
+    @Environment(\.habConnections) private var habs
 
     var body: some View {
         NavigationStack {
             Form {
+                if let pane = row.target.pane, let conn = habs.find(row.target.habID) {
+                    NavigationLink("Terminal") {
+                        TerminalScreen(pane: pane, connection: conn)
+                            .navigationTitle(row.title)
+                    }
+                }
                 LabeledContent("Hab", value: row.host)
                 if let p = row.project { LabeledContent("Project", value: p) }
                 if let h = row.harness { LabeledContent("Harness", value: h) }

@@ -1,0 +1,126 @@
+import CoreGraphics
+import Foundation
+import HabAPI
+import XCTest
+@testable import FlightdeckKit
+
+@MainActor
+final class TerminalModelTests: XCTestCase {
+    private func online(_ hab: FakeHab, _ label: String) async -> HabConnection {
+        let conn = HabConnection(id: label, transport: hab.transport(), timing: fastTiming(), clientLabel: label)
+        await conn.start()
+        await eventually("online") { await conn.state.status == .online }
+        return conn
+    }
+
+    private func model(_ pane: String, _ conn: HabConnection) -> TerminalModel {
+        let m = TerminalModel(pane: pane, connection: conn)
+        m.sizeDelay = .milliseconds(10)
+        return m
+    }
+
+    /// Viewing never resizes. Typing takes the size after the debounce, and
+    /// the PTY then follows this view's space. Another client typing takes it
+    /// back, and this view stops sending sizes.
+    func testTypingTakesTheSizeAndViewingNeverDoes() async throws {
+        let hab = FakeHab(hostID: "box")
+        await hab.terminals.add("%1", cols: 80, rows: 24)
+        let conn = await online(hab, "mac")
+        let m = model("%1", conn)
+        m.containerChanged(CGSize(width: 800, height: 600))
+        m.start()
+        await eventually("live") { m.status == .live }
+        let want = m.sizing.desired
+        XCTAssertNotEqual(want.cols, 80)
+
+        // Viewing, a window resize, a new cell size: nothing reaches the hab.
+        m.containerChanged(CGSize(width: 900, height: 640))
+        try await Task.sleep(for: .milliseconds(400))
+        var sizes = await hab.terminals.desiredSizes
+        var resizes = await hab.terminals.resizes
+        XCTAssertTrue(sizes.isEmpty)
+        XCTAssertTrue(resizes.isEmpty)
+        XCTAssertEqual(m.sizing.cols, 80)
+        XCTAssertEqual(m.sizing.scale, 1)
+
+        // Typing: the same path the terminal's key output takes.
+        let me = await conn.state.welcome?.clientId
+        await hab.terminals.setTypingDebounce(.milliseconds(300))
+        let typed = Date()
+        TerminalModelTests.type(m, "ls\r")
+        await eventually("owner") { m.sizing.isOwner }
+        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(typed), 0.25, "ownership waits for the debounce")
+        let mine = m.sizing.desired
+        await eventually("resized") { m.sizing.cols == mine.cols && m.sizing.rows == mine.rows }
+        let owner = await hab.terminals.owner("%1")
+        XCTAssertEqual(owner, me)
+        resizes = await hab.terminals.resizes
+        XCTAssertEqual(resizes.count, 1, "one resize per change, not per key")
+
+        // The owner's window grows: the PTY follows.
+        m.containerChanged(CGSize(width: 1000, height: 700))
+        let grown = m.sizing.desired
+        await eventually("grown") { m.sizing.cols == grown.cols && m.sizing.rows == grown.rows }
+
+        // Another client types and takes the pane; this view sends nothing more.
+        let phone = await online(hab, "phone")
+        _ = try await phone.call(HabMethods.paneInput, InputParams(data: Data("x".utf8), pane: "%1"))
+        await eventually("lost") { !m.sizing.isOwner }
+        sizes = await hab.terminals.desiredSizes
+        let before = sizes.count
+        m.containerChanged(CGSize(width: 500, height: 400))
+        try await Task.sleep(for: .milliseconds(200))
+        sizes = await hab.terminals.desiredSizes
+        XCTAssertEqual(sizes.count, before)
+        XCTAssertLessThan(m.sizing.scale, 1, "not the owner: the pane is scaled to fit")
+        m.stop()
+    }
+
+    /// Redraw is a snapshot and a nudge; it writes nothing to the program.
+    func testRedrawIsANudgeAndNeverCtrlL() async throws {
+        let hab = FakeHab(hostID: "box")
+        await hab.terminals.add("%1")
+        let conn = await online(hab, "mac")
+        let m = model("%1", conn)
+        m.start()
+        await eventually("live") { m.status == .live }
+        m.redraw()
+        await eventually("redraw") { await hab.terminals.redraws == [.nudge] }
+        let inputs = await hab.terminals.inputs
+        XCTAssertTrue(inputs.isEmpty)
+        m.stop()
+    }
+
+    func testExitShowsStatus() async throws {
+        let hab = FakeHab(hostID: "box")
+        await hab.terminals.add("%1")
+        let conn = await online(hab, "mac")
+        let m = model("%1", conn)
+        m.start()
+        await eventually("live") { m.status == .live }
+        await hab.terminals.exit("%1", code: 2)
+        await eventually("exited") { m.status == .exited(ExitedFrame(code: 2)) }
+        XCTAssertEqual(TerminalScreen.exitText(ExitedFrame(code: 2)), "Exited with status 2")
+    }
+
+    func testSizingRule() {
+        var s = PaneSizing()
+        s.cell = CGSize(width: 8, height: 16)
+        s.cols = 100
+        s.rows = 30
+        s.container = CGSize(width: 402, height: 800)
+        XCTAssertEqual(s.surface.width, 804)
+        XCTAssertEqual(s.scale, 0.5, accuracy: 0.001)
+        // The desired grid never needs a scale: its surface fits.
+        let d = s.desired
+        s.cols = d.cols
+        s.rows = d.rows
+        XCTAssertEqual(s.scale, 1)
+        XCTAssertEqual(d.cols, 49)
+        XCTAssertEqual(d.rows, 49)
+    }
+
+    static func type(_ m: TerminalModel, _ s: String) {
+        m.inputPumpForTests.enqueue(Data(s.utf8))
+    }
+}
