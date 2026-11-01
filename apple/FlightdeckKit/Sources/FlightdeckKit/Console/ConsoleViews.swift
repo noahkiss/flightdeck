@@ -316,6 +316,9 @@ struct ConsoleSetupSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Add these lines to the shell's startup file on the hab's host, then start a new shell.")
+                    Text("A prompt theme that rebuilds the prompt on every command, or a bash PROMPT_COMMAND array, drops the prompt marks.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                     snippet("zsh (~/.zshrc)", ConsoleShellSetup.zsh)
                     snippet("bash 4.4 or newer (~/.bashrc)", ConsoleShellSetup.bash)
                 }
@@ -357,18 +360,23 @@ struct ConsoleSetupSheet: View {
 public enum ConsoleShellSetup {
     public static let zsh = #"""
     # Flightdeck console: prompt marks (OSC 133) and the folder (OSC 7).
-    _fd_precmd() {
-      local s=$?
-      print -rn -- $'\e]133;D;'$s$'\a\e]7;file://'${HOST}${PWD// /%20}$'\a'
-    }
-    _fd_preexec() {
-      local s=$1 out= c
+    _fd_enc() {
+      local LC_ALL=C s=$1 out= c
       local -i i
       for (( i = 1; i <= ${#s}; i++ )); do
         c=$s[i]
-        if [[ $c == [A-Za-z0-9._~-] ]]; then out+=$c; else out+=$(printf '%%%02X' "'$c"); fi
+        if [[ $c == [A-Za-z0-9._~/-] ]]; then out+=$c; else printf -v c '%%%02X' "'$c"; out+=$c; fi
       done
-      print -rn -- $'\e]133;C;cmdline_url='$out$'\a'
+      REPLY=$out
+    }
+    _fd_precmd() {
+      local s=$?
+      _fd_enc "$PWD"
+      print -rn -- $'\e]133;D;'$s$'\a\e]7;file://'${HOST}${REPLY}$'\a'
+    }
+    _fd_preexec() {
+      _fd_enc "$1"
+      print -rn -- $'\e]133;C;cmdline_url='$REPLY$'\a'
     }
     typeset -ga precmd_functions preexec_functions
     precmd_functions=(_fd_precmd $precmd_functions)
@@ -378,7 +386,20 @@ public enum ConsoleShellSetup {
 
     public static let bash = #"""
     # Flightdeck console: prompt marks (OSC 133) and the folder (OSC 7).
-    PROMPT_COMMAND='printf "\033]133;D;%s\007\033]7;file://%s%s\007" "$?" "$HOSTNAME" "${PWD// /%20}"'"${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+    _fd_enc() {
+      local LC_ALL=C s=$1 out= c i
+      for (( i = 0; i < ${#s}; i++ )); do
+        c=${s:i:1}
+        case $c in [A-Za-z0-9._~/-]) out+=$c ;; *) printf -v c '%%%02X' "'$c"; out+=$c ;; esac
+      done
+      REPLY=$out
+    }
+    _fd_precmd() {
+      local s=$?
+      _fd_enc "$PWD"
+      printf '\033]133;D;%s\007\033]7;file://%s%s\007' "$s" "$HOSTNAME" "$REPLY"
+    }
+    PROMPT_COMMAND="_fd_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
     PS1='\[\033]133;A\007\]'"$PS1"'\[\033]133;B\007\]'
     PS0='\033]133;C\007'
     """#

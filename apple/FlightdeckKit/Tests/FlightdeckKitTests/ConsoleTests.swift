@@ -351,6 +351,66 @@ final class ConsoleTests: XCTestCase {
         XCTAssertTrue(console.showsTerminal)
     }
 
+    /// A snapshot taken while a full-screen program runs (a reconnect mid-vim)
+    /// carries `?1049h`: the console shows the terminal. A later snapshot of
+    /// the main screen hands back to the cards.
+    func testSnapshotCarriesTheAlternateScreen() async throws {
+        let hab = FakeHab(hostID: "box")
+        let conn = HabConnection(id: "mac", transport: hab.transport(), timing: fastTiming(), clientLabel: "mac")
+        let t = TerminalModel(pane: "%1", connection: conn)
+        let console = ConsoleModel(pane: "%1", calls: FakeCalls([]).calls, terminal: t)
+        await t.apply(.snapshot(offset: 100, encoding: "vt", data: Data("\u{1B}[?1049h\u{1B}[H~\r\n~".utf8)), generation: 0)
+        XCTAssertTrue(t.alternateScreen)
+        XCTAssertTrue(console.showsTerminal)
+        await t.apply(.snapshot(offset: 200, encoding: "vt", data: Data("$ ".utf8)), generation: 0)
+        XCTAssertFalse(t.alternateScreen, "a snapshot starts a new terminal on the main screen")
+        XCTAssertFalse(console.showsTerminal)
+    }
+
+    // MARK: - Shell setup
+
+    /// The shipped zsh and bash lines encode the folder and the command line
+    /// byte by byte, so `#`, `%`, `?`, spaces and non-ASCII text survive.
+    func testShellSetupEncodesFolderAndCommand() throws {
+        #if os(macOS)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fd \(UUID().uuidString.prefix(6))#%?é")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let rc = dir.appendingPathComponent("rc")
+        let shells: [(path: String, setup: String, args: [String])] = [
+            ("/bin/zsh", ConsoleShellSetup.zsh, ["-f", "-c"]),
+            ("/opt/homebrew/bin/bash", ConsoleShellSetup.bash, ["--norc", "-c"]),
+            ("/usr/local/bin/bash", ConsoleShellSetup.bash, ["--norc", "-c"]),
+        ]
+        var ran = 0
+        for sh in shells where FileManager.default.isExecutableFile(atPath: sh.path) {
+            try ("PS1='$ '\n" + sh.setup + "\n").write(to: rc, atomically: true, encoding: .utf8)
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: sh.path)
+            p.arguments = sh.args + [#"source "$1"; cd "$2" || exit 9; _fd_precmd; type _fd_preexec >/dev/null 2>&1 && _fd_preexec 'echo é #1'; true"#, sh.path, rc.path, dir.path]
+            p.environment = ["PATH": "/usr/bin:/bin", "LANG": "en_US.UTF-8", "HOME": dir.path]
+            let out = Pipe()
+            p.standardOutput = out
+            try p.run()
+            p.waitUntilExit()
+            XCTAssertEqual(p.terminationStatus, 0, sh.path)
+            let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            let osc7 = try XCTUnwrap(text.components(separatedBy: "\u{1B}]7;file://").dropFirst().first?.components(separatedBy: "\u{07}").first, sh.path)
+            let path = String(osc7.drop { $0 != "/" })
+            XCTAssertEqual(path.removingPercentEncoding.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path },
+                           dir.resolvingSymlinksInPath().path, "\(sh.path): \(path)")
+            XCTAssertFalse(path.contains("#") || path.contains("?") || path.contains(" "), path)
+            if sh.path.hasSuffix("zsh") {
+                // Swift compares strings by canonical equivalence: é may arrive decomposed.
+                let line = text.components(separatedBy: "cmdline_url=").dropFirst().first?.components(separatedBy: "\u{07}").first
+                XCTAssertEqual(line?.removingPercentEncoding, "echo é #1", "\(sh.path): \(text.debugDescription)")
+            }
+            ran += 1
+        }
+        XCTAssertGreaterThan(ran, 0)
+        #endif
+    }
+
     // MARK: - Output text
 
     func testTerminalText() {

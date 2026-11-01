@@ -688,12 +688,21 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/Console`.
 
 - **The console is a session.** The session view's Console button finds or starts a session
   named `<session> console`: `session.create` with the session's project and no argv, so the
-  hab starts its `$SHELL`. With a project and no cwd the hab starts it in the project's most
-  recently used folder (`hab-logic-api.md` 3.9); an unfiled session's console starts in the hab's
-  home. A running console of that name is reused, from any device. An exited one's record is
-  removed (`session.close`) before a new shell starts, so the name stays free. The hab has no
-  link from a console to its session beyond the name; closing a session does not yet ask about
-  its console.
+  hab starts its `$SHELL`.
+- **Its folder** (app lead's call, fix round): the app sends `cwd` = the folder of the session
+  pane's newest command (`command.list` limit 1, `Command.cwd`) when the shell reported one.
+  The API exposes no spawn folder of a session, so there is no second choice. Otherwise, or when
+  that folder is gone (`invalid`, retried once without `cwd`), the hab picks: the project's
+  most recently used folder that still exists, else its home (`hab-logic-api.md` 3.9). An agent
+  session sends no marks, so its console starts in the project's last folder, which can be
+  another worktree of the same repository.
+- **Reuse.** A running console of that name is reused, from any device, even before its pane's
+  event arrived; a running one is never closed. A running one with no pane yet answers "still
+  starting". Only a console that no longer runs has its record removed (`session.close`) so the
+  name is free. Two opens at once: the second `session.create` meets `conflict`, and the app
+  takes the console the first one started. The link from a console to its session is the name
+  only: a renamed session gets a new console, and closing a session does not yet ask about its
+  console. A console's own session view has no Console button.
 - **Where it shows.** A sheet over the session on every device, for now. The drawer under the
   terminal on iPad and Mac (11) is not built.
 - **Cards.** `command.list` (newest page, then older pages on demand) and `command.updated`
@@ -708,7 +717,9 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/Console`.
   text: escape sequences dropped, carriage return, backspace, tab and erase-to-end-of-line
   applied on the line, trailing blank lines dropped, at most the last 500 lines, with "Earlier
   output not shown" when cut. What a program drew on the alternate screen is left out. An open
-  card of a running command reads again every 2 s, and again when it ends.
+  card of a running command reads on every 2 s from where its last read stopped, keeping the
+  last 256 KiB; when it ends, the card reads its whole range again. A read that comes back
+  after the command went on or ended is dropped and made again.
 - **Alternate screen.** The console keeps the pane's terminal model running while it is open.
   The model follows `CSI ?1049h`, `?1047h`, `?47h` and their `l` forms, and RIS, in its stream
   and snapshots (`ScreenModeScanner`). While the alternate screen is on, the view shows the
@@ -716,12 +727,15 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/Console`.
   also choose the terminal by hand.
 - **No marks.** With no command yet, the console says commands show once the shell sends prompt
   marks, and offers "Shell setup" (the zsh and bash lines, `ConsoleShellSetup`: OSC 133 A to D
-  and OSC 7) and "Show terminal". The app cannot tell "no marks" from "no command yet": the
+  and OSC 7, each encoded byte by byte; bash 4.4 or newer) and "Show terminal". A prompt
+  theme that rebuilds the prompt on every command, or a bash `PROMPT_COMMAND` array, drops
+  the marks; the sheet says so. The app cannot tell "no marks" from "no command yet": the
   hab's API does not say whether a pane ever sent a mark. The shipped zsh lines leave
   `PROMPT_SP` on; its mark lands in the output before `D`, and the card text drops the blank
   line it leaves.
 - **Input line.** Enter sends the line and a carriage return through `pane.input`, as typed
-  text. A stop button sends Ctrl+C. Typing in the console takes the pane's size like any input
+  text, with control characters other than tab dropped. Pasted text with a newline goes as one
+  bracketed paste, so the shell does not run each line on its own. A stop button sends Ctrl+C. Typing in the console takes the pane's size like any input
   (5.3). The keyboard bar is the terminal view's, only while the terminal shows.
 - **Quick actions per host: none.** The hab serves no catalog yet (`mesh.md` 5, `catalog.get` is
   not built), so there are no declared facts to read. The console shows no quick actions until
