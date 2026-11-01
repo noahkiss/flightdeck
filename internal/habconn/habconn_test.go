@@ -24,6 +24,16 @@ import (
 // then runs the remote command here, with its stdio, in place of a remote shell.
 const fakeSSHEnv = "GFF_HABCONN_FAKE_SSH"
 
+// fakeSSHLogEnv names a file the fake ssh appends its arguments to, one line per run.
+const fakeSSHLogEnv = "GFF_HABCONN_FAKE_SSH_LOG"
+
+// fakeSSHNoKeyEnv makes the fake ssh fail as ssh does with no usable key: it closes its
+// stdout, waits for its stdin to close, then prints the error and exits 255. The message
+// comes only after the client gave up on the stream, as a slow ssh's does.
+const fakeSSHNoKeyEnv = "GFF_HABCONN_FAKE_SSH_NOKEY"
+
+const noKeyMessage = "hab-test: Permission denied (publickey)."
+
 func TestMain(m *testing.M) {
 	if os.Getenv(fakeSSHEnv) == "1" {
 		os.Exit(fakeSSH(os.Args[1:]))
@@ -36,6 +46,24 @@ func TestMain(m *testing.M) {
 }
 
 func fakeSSH(args []string) int {
+	if log := os.Getenv(fakeSSHLogEnv); log != "" {
+		f, err := os.OpenFile(log, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "fake ssh: %v\n", err)
+			return 255
+		}
+		fmt.Fprintln(f, strings.Join(args, " "))
+		f.Close()
+	}
+	if os.Getenv(fakeSSHNoKeyEnv) == "1" {
+		os.Stdout.Close()
+		io.Copy(io.Discard, os.Stdin)
+		fmt.Fprintln(os.Stderr, noKeyMessage)
+		return 255
+	}
+	if slices.Contains(args, "-O") {
+		return 0 // a control command such as -O exit: no master runs here
+	}
 	i := slices.Index(args, "--")
 	if i < 0 || len(args) < i+3 || !slices.Contains(args[:i], "-T") || !slices.Contains(args[:i], "BatchMode=yes") {
 		fmt.Fprintf(os.Stderr, "fake ssh: unexpected arguments %q\n", args)
@@ -628,5 +656,19 @@ func TestFrames(t *testing.T) {
 	}
 	if err := p.Err(); !errors.Is(err, ErrClosed) {
 		t.Fatalf("frames ended with %v, want ErrClosed", err)
+	}
+}
+
+// TestSSHErrorShown: when ssh fails, the error carries what ssh printed, even when ssh prints
+// it only as it exits, after the stream already ended.
+func TestSSHErrorShown(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := SSHTransport{SSH: self, Host: "hab-test", Env: append(os.Environ(), fakeSSHEnv+"=1", fakeSSHNoKeyEnv+"=1")}
+	_, err = Connect(testCtx(t), Config{Transport: tr, Client: testClient})
+	if err == nil || !strings.Contains(err.Error(), noKeyMessage) {
+		t.Fatalf("connect error %v, want ssh's message %q", err, noKeyMessage)
 	}
 }

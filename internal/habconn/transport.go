@@ -104,8 +104,21 @@ func (s *commandStream) Close() error {
 	return nil
 }
 
-// Stderr returns the last lines the command wrote to its standard error.
-func (s *commandStream) Stderr() string { return strings.TrimSpace(s.stderr.String()) }
+// stderrWait bounds how long Stderr waits for the command to exit.
+const stderrWait = 500 * time.Millisecond
+
+// Stderr returns the last lines the command wrote to its standard error. It waits up to
+// stderrWait for the command to exit first: ssh prints why it failed as it exits, and the
+// copy from its stderr ends only then.
+func (s *commandStream) Stderr() string {
+	t := time.NewTimer(stderrWait)
+	defer t.Stop()
+	select {
+	case <-s.done:
+	case <-t.C:
+	}
+	return strings.TrimSpace(s.stderr.String())
+}
 
 // tail keeps the last 4 KiB written to it.
 type tail struct {
