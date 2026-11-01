@@ -175,6 +175,43 @@ func TestInputTimeoutNeverWritten(t *testing.T) {
 	}
 }
 
+// TestQueueInputsCancelGroup: when the caller gives up on a queued write, the writes queued
+// after it in the same QueueInputs go with it, even before their own waits run: a message's
+// Enter never goes out without its paste.
+func TestQueueInputsCancelGroup(t *testing.T) {
+	hdir := shortDir(t)
+	startHolder(t, hdir, "one", 0)
+	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond})
+	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
+	u := uuidN(84)
+	spawn(t, l, u, "stty -echo; echo ready; cat")
+	waitFor(t, "the program", func() bool { return screenHas(t, l, u, "ready") })
+	p := l.pane(u)
+
+	p.mu.Lock()
+	p.inBusy = true // a stuck writer: nothing drains the queue
+	p.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	waits := l.QueueInputs(ctx, u, []byte("paste"), []byte("enter\n"))
+	if err := waits[0](); err != context.DeadlineExceeded {
+		t.Fatalf("first write to a stuck queue: %v", err)
+	}
+	cancel()
+
+	p.mu.Lock()
+	p.inBusy = false
+	p.mu.Unlock()
+	ctx, cancel = context.WithTimeout(context.Background(), waitLong)
+	defer cancel()
+	if err := l.Input(ctx, u, []byte("after\n")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the later input", func() bool { return screenHas(t, l, u, "after") })
+	if screenHas(t, l, u, "enter") {
+		t.Error("the write after a cancelled one was written")
+	}
+}
+
 // TestAnswersDroppedWhileRefused: once the holder refuses a pane's input as queue full (the
 // program reads none), the link drops answers to its queries instead of queueing them.
 func TestAnswersDroppedWhileRefused(t *testing.T) {

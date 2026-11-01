@@ -957,7 +957,12 @@ func (l *Link) QueueInputs(ctx context.Context, u hp.UUID, data ...[]byte) []fun
 			p.mu.Lock()
 			if !r.taken {
 				// Still queued: it is never written, so a client that tries again types it once.
-				r.cancelled = true
+				// The writes queued after it go with it: a message's Enter never goes out alone.
+				for _, later := range reqs[i:] {
+					if !later.taken {
+						later.cancelled = true
+					}
+				}
 				p.mu.Unlock()
 				return ctx.Err()
 			}
