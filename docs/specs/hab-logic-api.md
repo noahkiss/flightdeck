@@ -1220,7 +1220,8 @@ project's identity, so the session files into the same project. No method of its
   for it; a client that wants an agent after setup starts it once the session exits. Scripts
   get `GFF_SOURCE_CHECKOUT`, `GFF_WORKTREE` and `GFF_BRANCH`.
 - **Setup from someone else waits for a yes.** A false alarm costs one yes; a miss runs a
-  stranger's script. So the check leans to foreign. In `auto`, setup does not run when any of
+  stranger's script. So the check leans to foreign. No setting or level turns this off, not even
+  Bypass permissions (`app.md` 20.1). In `auto`, setup does not run when any of
   these holds:
   - the start ref, or a local branch's `branch.<b>.merge`, has a pull request segment: `pull`,
     `pr`, `pull-request`, `pull-requests`, `merge-requests`, `mr` or `changes`, in any case

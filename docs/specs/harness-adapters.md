@@ -1213,7 +1213,9 @@ inform the choice.
 
 Decision: B, keep the blocking hook as a per-host setting, off by default, with about a 30-second
 wait (owner, 2026-11-01).
-Built: option B, off by default.
+Built: option B, off by default. The setting is `hab.permission_wait`, a preference with no level
+that the app writes to one hab (`app.md` 20.4); today only `-permission-wait` and
+`$GFF_HAB_PERMISSION_WAIT` set it.
 
 | | A. Fire-and-forget (today) | B. Blocking hook with timeout |
 |---|---|---|

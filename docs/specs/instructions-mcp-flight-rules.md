@@ -490,8 +490,9 @@ file this came from").
 ## 12. Memory writes as proposals
 
 Memories are auto-added by default: the harness writes them the native way. A setting, "Require
-approval for memories", turns proposals on per harness (owner, 2026-11-01; section 15). When the
-user turns it on for a harness:
+approval for memories", turns proposals on (owner, 2026-11-01; section 15). It is one switch for
+every harness, `logbook.approval` (`logbook.md` 9.1), on at the Safe level (`app.md` 20.3). When
+the user turns it on:
 
 ### 12.1 Claude Code
 
@@ -572,7 +573,7 @@ The owner settled both user-visible questions on 2026-11-01.
 
 | # | Question | Decision |
 |---|---|---|
-| O1 | Memory proposals default | Memories are auto-added by default, the native way. A setting, "Require approval for memories", turns proposals on per harness (section 12). The setting follows the general rule that a confirmation that adds friction can be turned off (owner, 2026-11-01) |
+| O1 | Memory proposals default | Memories are auto-added by default, the native way. A setting, "Require approval for memories", turns proposals on (section 12): one switch for every harness, `logbook.approval`, on at Safe (`app.md` 20.3; owner, 2026-11-01) |
 | O2 | Ledger text on the phone | The phone may show instruction and hook text on tap, like any client. The list itself still shows sources, sizes and digests; text loads only on a tap (owner, 2026-11-01) |
 
 ## 16. Sources

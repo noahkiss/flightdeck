@@ -563,8 +563,11 @@ general case with no peers.
   reaches, and `gff lb status` shows a hab whose value differs.
 - Under `agents`, an agent's write returns `proposed` and a proposal id. The agent is told the
   record waits for the user's approval and should not ask again.
-- Harness memory proposals (`instructions-mcp-flight-rules.md` 12) follow their own per-harness
-  setting, off by default (owner decision). They are stored as proposal records here.
+- `logbook.approval` also covers harness memory: under `agents`, each harness's native memory
+  writes become proposals too (`instructions-mcp-flight-rules.md` 12). They are stored as
+  proposal records here. One switch replaces the per-harness switches (`app.md` 20.3).
+- It is a levelled setting: `agents` at Safe, `off` at Balanced and Bypass permissions
+  (`app.md` 20.3). The app writes it through `settings.set` (`app.md` 20.5).
 - Capcom files proposals by its own rule (`capcom.md` 6.2), whatever this setting says. See open
   question 15.1.
 

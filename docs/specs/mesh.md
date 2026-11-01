@@ -936,9 +936,9 @@ Limits, at the bar of herdr, Rex and Paseo (hc has no outbox and no dedup):
   starting a session there (`session.create` on that hab) are separate agent kit actions. Each
   raises a Flightdeck confirmation card before it runs: the same card, expiry and
   first-answer-wins rules as Capcom's (`capcom.md` 6.1). The harness's own tool-permission prompt
-  still applies to the command. The setting `confirm.start_elsewhere` (default on) turns the card
-  off; the action then runs at once and its card shows as a record (owner, 2026-11-01;
-  section 11).
+  still applies to the command. The setting `confirm.start_elsewhere` (default on; off at Bypass
+  permissions, `app.md` 20.3) turns the card off; the action then runs at once and its card
+  shows as a record (owner, 2026-11-01; section 11).
 - **No scoring, no automatic choice.** Flightdeck ranks nothing. `gff hosts --has <capability>`
   filters; the agent reasons.
 - **A running agent stays on its host.** Nothing moves a session.
@@ -1049,8 +1049,7 @@ The study recommended no extra gate (the harness's own tool prompt only, as in P
   raises a confirmation card. It uses Capcom's mechanism (`capcom.md` 6.1, 6.3).
 - `confirm.start_elsewhere` in Flightdeck's config, default on, also in the app's settings,
   turns the card off. Off, the action runs at once and the card shows as a record.
-- The owner's general rule: a confirmation that adds friction gets a setting to turn it off
-  (`app.md`, owner rules).
+- The level picker sets it: on at Safe and Balanced, off at Bypass permissions (`app.md` 20.3).
 - Handing work to an agent already on a project needs no card (owner, 2026-11-01).
 
 ---
