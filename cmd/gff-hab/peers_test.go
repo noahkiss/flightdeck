@@ -92,6 +92,23 @@ func waitPeer(t *testing.T, sock, label, what string, ok func(api.Peer) bool) ap
 	}
 }
 
+// waitPin waits for id to be pinned in the peer file and returns the file. A peer's row is
+// online, with its device id from the welcome, before the hab has written the pin.
+func waitPin(t *testing.T, path, id string) string {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		b, _ := os.ReadFile(path)
+		if strings.Contains(string(b), `device_id = "`+id+`"`) {
+			return string(b)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no pin of %s in %s:\n%s", id, path, b)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func writePeers(t *testing.T, path, label, endpoint string) {
 	t.Helper()
 	s := fmt.Sprintf("# test peers\n[[peers]]\nlabel = %q\nendpoints = [%q]\n", label, endpoint)
@@ -123,8 +140,7 @@ func TestPeersOverSSH(t *testing.T) {
 		t.Fatalf("rows: a has %+v, b has %+v", pb, pa)
 	}
 	for f, id := range map[string]string{filesA: idB, filesB: idA} {
-		b, _ := os.ReadFile(f)
-		if !strings.HasPrefix(string(b), "# test peers\n") || !strings.Contains(string(b), `device_id = "`+id+`"`) {
+		if b := waitPin(t, f, id); !strings.HasPrefix(b, "# test peers\n") {
 			t.Fatalf("%s after the first link:\n%s", f, b)
 		}
 	}
@@ -150,7 +166,8 @@ func TestPeerRefusedKey(t *testing.T) {
 	peerHab(t, sockA, filepath.Join(d, "sa"), filesA, standIn, "host-a")
 	b := peerHab(t, sockB, filepath.Join(d, "sb1"), emptyB, standIn, "host-b")
 	oldID := welcome(t, sockB).DeviceID
-	waitPeer(t, sockA, "bee", "b pinned and online", func(p api.Peer) bool { return p.State == api.PeerStateOnline && p.DeviceID == oldID })
+	waitPeer(t, sockA, "bee", "b online", func(p api.Peer) bool { return p.State == api.PeerStateOnline && p.DeviceID == oldID })
+	waitPin(t, filesA, oldID)
 
 	b.stop(t)
 	peerHab(t, sockB, filepath.Join(d, "sb2"), emptyB, standIn, "host-b") // a new host key

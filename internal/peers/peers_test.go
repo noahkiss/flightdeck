@@ -1,6 +1,7 @@
 package peers
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,6 +144,19 @@ label = "laptop"
 	if got := read(t, p); !strings.HasSuffix(got, "label = \"end\"\ndevice_id = \"SHA256:e\"\n") {
 		t.Fatalf("pin after a last line with no newline:\n%s", got)
 	}
+
+	// A save that lands while the pin is written wins: the pin's file is not renamed over it.
+	saved := "[[peers]]\nlabel = \"saved\"\n"
+	write(t, p, saved)
+	if err := replaceFile(p, []byte("pinned"), []byte("what the pin was made from")); !errors.Is(err, errChanged) {
+		t.Fatalf("replace over a changed file: %v", err)
+	}
+	if got := read(t, p); got != saved {
+		t.Fatalf("the save went: %q", got)
+	}
+	if m, _ := filepath.Glob(filepath.Join(filepath.Dir(p), ".peers-*")); len(m) != 0 {
+		t.Fatalf("temporary files left: %v", m)
+	}
 }
 
 // TestExampleConfig: the example in docs/examples loads with no problems.
@@ -255,21 +269,24 @@ endpoints = ["` + filepath.Join(d, "missing.sock") + `", "` + filepath.Join(d, "
 			pa.DeviceID == b.id && pb.DeviceID == a.id
 	})
 	wait(t, "each skips its own entry", func() bool { return len(a.m.List().Peers) == 1 && len(b.m.List().Peers) == 1 })
-	pa, _ := peer(a.m.List(), "b")
-	if pa.Endpoint != filepath.Join(d, "b.sock") || pa.Host != "b" || pa.LastSeen == "" {
-		t.Fatalf("a's row for b: %+v", pa)
-	}
 	wait(t, "pins in the files", func() bool {
 		return strings.Contains(read(t, a.file), `device_id = "`+b.id+`"`) && strings.Contains(read(t, b.file), `device_id = "`+a.id+`"`)
 	})
 	if !strings.HasPrefix(read(t, a.file), "# one file for both\n") {
 		t.Fatal("the comment went")
 	}
-	wait(t, "b online again after the pin", func() bool {
-		p, _ := peer(a.m.List(), "b")
+	// The first pin reconnects once (mesh.md 4.4). Until a's new link is up, b's inbound link
+	// alone keeps the row online, with no endpoint in use or the missing one being tried. So the
+	// endpoint is awaited with a's own link up, not read once.
+	var pa api.Peer
+	wait(t, "b online again after the pin, over a's own link to b.sock", func() bool {
 		h, _ := a.m.set.Host("b")
-		return p.State == api.PeerStateOnline && p.Inbound && h.Online()
+		pa, _ = peer(a.m.List(), "b")
+		return h.Online() && pa.State == api.PeerStateOnline && pa.Inbound && pa.Endpoint == filepath.Join(d, "b.sock")
 	})
+	if pa.Host != "b" || pa.LastSeen == "" || pa.DeviceID != b.id {
+		t.Fatalf("a's row for b: %+v", pa)
+	}
 
 	b.stop()
 	wait(t, "a sees b offline", func() bool {
@@ -356,6 +373,9 @@ endpoints = ["`+a.sock+`"]
 		l := old.m.List()
 		return len(l.Unlisted) == 1 && l.Unlisted[0].DeviceID == a.id && l.Unlisted[0].Host == "a"
 	})
+	// old's hello reaches old before a has pinned old in its file. Wait for the pin, so the edit
+	// below tests the reload, not an edit that lands while a writes its pin.
+	wait(t, "a pins old", func() bool { return strings.Contains(read(t, a.file), `device_id = "`+old.id+`"`) })
 	write(t, a.file, "[[peers]]\nlabel = \n")
 	wait(t, "a parse problem", func() bool {
 		l := a.m.List()

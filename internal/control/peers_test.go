@@ -64,8 +64,17 @@ func TestPeerLink(t *testing.T) {
 	if _, err := bare.HelloAs(ctx(t), api.HelloParams{Client: api.ClientInfo{Name: "x", Version: "0", Kind: api.ClientKindHab}}); err != nil {
 		t.Fatal(err)
 	}
-	if live, _ := fp.count(); live != 1 {
-		t.Fatalf("%d links, want 1", live)
+	// The hello's reply is queued before Linked runs, so the link is awaited, not read once.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		live, _ := fp.count()
+		if live == 1 {
+			break
+		}
+		if live > 1 || time.Now().After(deadline) {
+			t.Fatalf("%d links, want 1", live)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	fp.mu.Lock()
 	for _, p := range fp.links {
@@ -90,7 +99,7 @@ func TestPeerLink(t *testing.T) {
 	}
 
 	c.Close()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline = time.Now().Add(5 * time.Second)
 	for {
 		if live, ended := fp.count(); live == 0 && ended == 1 {
 			break
