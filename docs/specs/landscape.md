@@ -213,9 +213,9 @@ match it.
 | Paseo | Cron schedules start a fresh agent in a fresh workspace and archive it after. Heartbeats re-prompt an existing agent. A missed run fires once, then skips ahead *(inferred from code)* |
 | herdr | None |
 | Rex | Lua timers (`after`, `every`) |
-| Ours | Part 13, rounds (plan-vtsaeon9; study task-226cqosp) |
+| Ours | Part 13, rounds (`rounds.md`): `fresh`, `resume` and `fork` modes; catch up once |
 | Bar | Match Paseo: both kinds; catch up once |
-| Flag | **Below** for now: not built. Add heartbeats (idea 4.6) |
+| Flag | **Below** for now: specified, not built. Idea 4.6 is `resume` mode |
 
 ### 2.15 Install, update and service management
 

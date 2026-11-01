@@ -1,0 +1,647 @@
+# Rounds: behaviour spec
+
+Status: study for review. Part 13, study stage. Written 2026-11-01.
+
+A round is a scheduled agent job. Each run is an ordinary visible session: you can watch it,
+type into it and take it over. This spec covers the job definition, triggers, session modes,
+the lock that keeps a run out of a session you are using, catch-up after sleep, where rounds run,
+failure and notification behaviour, and the later stages with their acceptance checks. It
+describes behaviour in our own words and copies no code from the reference tools.
+
+Rules this spec works within (owner decisions in the master plan):
+
+- Rounds are a product feature (Part 13), built after core.
+- Each run is a visible session. Nothing runs headless and out of sight.
+- A laptop that sleeps is normal. A round catches up once at wake, never once per missed slot.
+- No hub and no leader election. One machine alone runs its own rounds (`mesh.md`).
+- Notifications go through Flightdeck's own path (`app.md` 8). No outside service.
+- The bar is Paseo, herdr and Rex (`landscape.md` 2.14). We match Paseo's two kinds of
+  schedule and add only cheap guards.
+- A confirmation that adds friction gets a setting to turn it off.
+
+Sections that settle a question end with a **Decision** line and its reason. The owner decides
+only user-visible questions; those are in [section 12](#12-open-questions).
+
+## Contents
+
+1. [References](#1-references)
+2. [Model](#2-model)
+3. [The round definition](#3-the-round-definition)
+4. [Triggers](#4-triggers)
+5. [Session modes](#5-session-modes)
+6. [The lock: never type into a session in use](#6-the-lock-never-type-into-a-session-in-use)
+7. [A run from start to end](#7-a-run-from-start-to-end)
+8. [Sleep, wake and catch-up](#8-sleep-wake-and-catch-up)
+9. [Where rounds run](#9-where-rounds-run)
+10. [Failure and notifications](#10-failure-and-notifications)
+11. [Edge cases](#11-edge-cases)
+12. [Open questions](#12-open-questions)
+13. [API and CLI additions](#13-api-and-cli-additions)
+14. [Later stages](#14-later-stages)
+15. [Sources](#15-sources)
+
+---
+
+## 1. References
+
+### 1.1 Paseo schedules (the bar)
+
+Read from its public docs and its schedule service (repository HEAD, 2026-11-01).
+
+- **Two kinds on one engine.** A *schedule* starts a fresh agent each run. A *heartbeat* sends a
+  recurring prompt into one existing agent, so the same conversation continues.
+- **Cadence.** A 5-field cron expression with an optional IANA time zone; UTC by default. Presets
+  such as `5m` compile to cron; there is no rolling interval anchored to creation time. The next
+  run is stored as a UTC instant, so local times hold across daylight saving changes.
+- **Limits.** `max-runs`, an expiry time, and `run-now` for one run at creation.
+- **Missed slots.** A 1 s tick runs a schedule whose next run is due. After the run it moves the
+  next run past now, so a long sleep gives one run, not one per slot. After a daemon restart it
+  skips overdue slots and marks a run that was in flight as failed.
+- **Overlap.** A schedule never runs twice at once.
+- **Busy target.** A heartbeat whose agent already has a turn running fails that run. A run that
+  stops on a permission request counts as failed.
+- **Target gone.** A deleted agent or a missing folder completes the schedule instead of retrying.
+- **Clean-up.** "Archive on finish" is on by default: a schedule's run workspace and agent are
+  archived when the run ends. The app can turn it off.
+- **Surfaces.** An app view, chat (the agent creates it through MCP), a CLI, and MCP. A heartbeat
+  has a deliberately small surface: create, delete, and change the cadence only, "so a heartbeat
+  cannot silently become a different job".
+
+What we take: both kinds, cron with a zone, presets that compile to cron, run limits, run once
+on wake, no overlap, target gone ends the round, clean-up on finish. What we change: a hab restart
+does not skip a due slot (our hab restarts on every update, 8.4); a busy target waits a short
+while before it skips (6.3); a run blocked on a permission stays a live, answerable session
+(7.4).
+
+### 1.2 herdr and Rex
+
+- herdr has no scheduler.
+- Rex has Lua timers (`after`, `every`) inside its scripts. They run in the server process and
+  have no catch-up rules we could find.
+
+### 1.3 System schedulers
+
+| Tool | Missed while asleep or off | Notes |
+|---|---|---|
+| cron | Lost | anacron runs a daily or weekly job once after boot when its period passed |
+| launchd `StartCalendarInterval` | Asleep: runs once at wake, missed slots coalesced. Off: lost | A model for our wake rule |
+| systemd timers | `Persistent=true` runs a missed calendar slot once at the next start | `RandomizedDelaySec` spreads load |
+| GitHub schedules | Lost; runs may be late or dropped under load | UTC only, 5-minute floor, off after 60 days without repo activity |
+
+The common shape: missed slots are coalesced into one run, or dropped. Nothing replays each slot.
+
+### 1.4 An earlier private scheduler
+
+The plan also studied a personal scheduler: one timer tick per machine, a cursor per job, and
+catch-up once. We take the three ideas, not the tool. Nothing in Flightdeck reads its files or
+runs beside it.
+
+---
+
+## 2. Model
+
+| Thing | What it is | Identity |
+|---|---|---|
+| round | A job definition: what to run, where, when, with which limits | Random id; a name unique on its hab |
+| runner | The one hab that owns a round and starts its runs | The hab's device id (`mesh.md` 2) |
+| slot | One time the trigger asks for a run | A UTC instant |
+| run | One attempt to serve a slot, an event or a manual request | Random id, plus a run number per round |
+| run session | The session a run starts or uses | An ordinary session id (`hab-logic-api.md` 2.2) |
+| target | For `resume` and `fork`: the existing session a round works on | Session id |
+
+Words. One word per concept:
+
+- **round**: the definition. Never "schedule" or "job" in the product.
+- **run**: one execution of a round.
+- **mode**: `fresh`, `resume` or `fork` (5).
+- **trigger**: what asks for a run: `cron`, `once`, `event` or `manual` (4).
+- **take over**: the user types into a run session; the round stops treating it as automatic
+  (7.5).
+
+Decision: landscape idea 4.6 ("heartbeats") is `resume` mode, not a new word. Reason: "heartbeat"
+already means the API's keepalive notification (`hab-logic-api.md` 3.5). Two meanings for one
+word would break the one-word rule.
+
+---
+
+## 3. The round definition
+
+| Field | Required | Meaning |
+|---|---|---|
+| `name` | Yes | Unique on the runner. Letters, digits, `-` and `_` |
+| `mode` | Yes | `fresh`, `resume` or `fork` (5) |
+| `trigger` | Yes | One trigger (4) |
+| `prompt` | Yes, unless `command` | Text the agent receives each run |
+| `harness` | `fresh` with a prompt | `claude`, `codex`, `opencode`, or a later adapter |
+| `model`, `harness_args` | No | Passed to the harness at start, as `session.create` does. Permission modes go here; the hab adds none of its own |
+| `command` | No | `fresh` only: a plain program (`argv`) instead of a harness and a prompt. Success is exit status 0 |
+| `project` | `fresh` | The project, by id. The folder is the project's most recent folder on the runner (`hab-logic-api.md` 3.9, project folders) |
+| `cwd` | No | A folder inside the project, instead of its most recent one |
+| `target` | `resume`, `fork` | The session to resume or fork |
+| `max_runs` | No | The round completes after this many finished runs |
+| `expires_at` | No | The round completes at this time |
+| `timeout` | No | Longest run, default 60 minutes (7.3) |
+| `wait` | No | `resume` only: how long a run may wait for the lock (6.3), default 10 minutes |
+| `catch_up` | No | `once` (default) or `skip` (8.2) |
+| `on_finish` | No | `close` or `keep`, for `fresh` and `fork` (7.6). Default: see open question 2 |
+| `notify` | No | `failures` (default), `always` or `never` (10.2) |
+| `paused` | No | A paused round keeps its definition and starts no runs |
+
+Rules:
+
+- **Where rounds are stored.** In the runner hab's state directory, saved on every change, so a
+  restart loses nothing. They are edited through the API: the app, `gff round`, and the agent
+  kit's tools all call the same methods (13).
+- **A file for version control.** `gff round export` prints a hab's rounds as TOML.
+  `gff round apply <file>` makes the hab's rounds match the file, after it prints the diff and
+  the user confirms (`-yes` skips the prompt). The file names projects by their remote, so it
+  works on any host that has them.
+- **Secrets.** A round holds no secrets. The run inherits the runner hab's environment, as any
+  session does. A secret the job needs comes from the harness's own login or the host's
+  environment.
+- **Edits.** An edit takes effect from the next run. A run already in flight keeps the values it
+  started with. Changing the trigger recomputes the next slot from now.
+
+Decision: rounds live in the runner's state and are edited by the API, with export and apply for
+a file. Reason: the app and agents must create and edit rounds, as in Paseo, and a store the hab
+writes has no merge problem. Export and apply keep the "rounds in a config file" option open for
+users who want it in git.
+
+---
+
+## 4. Triggers
+
+| Trigger | Meaning |
+|---|---|
+| `cron` | A 5-field cron expression and an IANA time zone |
+| `once` | One instant. The round completes after that run |
+| `event` | A hab event that matches a filter (4.3). Later stage |
+| `manual` | Only `gff round run`, the app's Run now, or the API. Any round can also be run by hand |
+
+### 4.1 Cron
+
+- **Expression.** Standard 5 fields: minute, hour, day of month, month, day of week. Lists,
+  ranges, steps and the names `MON` and `JAN` are accepted. Seconds and `@reboot` are not.
+- **Presets.** `--every 5m`, `1h`, `1d` and the like compile to cron, as in Paseo: `5m` is
+  `*/5 * * * *`. A preset that cron cannot express (`7m` does not divide the hour) is refused
+  with the nearest presets that work. There is no rolling interval anchored to creation time.
+- **Time zone.** Stored with the round. The default is the runner host's zone at creation time,
+  written out as an IANA name, so a laptop that travels keeps the time the user meant. The UI
+  shows the next run in the viewer's zone and the round's zone.
+- **Daylight saving.** The next slot is computed in the round's zone and stored as a UTC instant.
+  A local time that does not exist (the hour skipped in spring) runs at the first valid minute
+  after it. A local time that happens twice (the hour repeated in autumn) runs once, at its first
+  occurrence.
+- **Floor.** One minute, the cron granularity. Paseo allows the same.
+- **Run on create.** `--run-now` starts one run at creation, as Paseo's flag does. It does not
+  move the next slot.
+
+Decision: the default zone is the runner's zone, stored by name. Reason: users write "9 am" in
+their own time; Paseo's UTC default surprises everyone who is not in UTC. Storing the name keeps a
+travelling laptop's rounds on home time until the user changes them.
+
+### 4.2 Once
+
+- One instant, in the round's zone. Past instants are refused at creation.
+- An instant missed while the runner slept runs at wake (8.2), unless `catch_up = skip`.
+
+### 4.3 Events (later stage)
+
+Events come from the runner's own hab only. No hab triggers a round on another hab.
+
+| Event | Filter | Example |
+|---|---|---|
+| `project.updated` | Project; which field changed: `head`, `branch`, `behind` | Review each new commit pulled into a branch |
+| `agent.state` | Project or session; the new state: `done`, `error` | Summarise when any agent in a project finishes |
+| `command.updated` | Session; command ended with a non-zero status | Explain a failed build in the console |
+| `hab.woke` | None | A morning sweep after the laptop opens |
+
+- **Debounce.** Events that match within 30 s make one run.
+- **Cooldown.** At least 5 minutes between event runs of one round, by default. Events in the
+  cooldown are coalesced into one run at its end.
+- **No loops.** An event caused by the round's own run session never triggers that round.
+- **No webhooks.** The hab listens on no TCP port (`hab-logic-api.md` 4). An outside system
+  triggers a round with `gff-hab api call round.run` over SSH.
+
+Decision: events in a later stage, with this fixed list. Reason: Paseo's event triggers live in its
+paid Hub; cron covers the bar. The list uses events the hab already sends, so each is cheap.
+
+---
+
+## 5. Session modes
+
+| Mode | What a run does | Native call |
+|---|---|---|
+| `fresh` | Starts a new session in the project with the harness, the model and the prompt. Or runs `command` | `session.create` |
+| `resume` | Sends the prompt into the target session. A live target gets it under the lock (6). An exited target is resumed first, then gets it | `session.send`; `session.resume` when exited |
+| `fork` | Starts a new session that branches from the target's conversation, then sends the prompt. The target is untouched | Claude Code `--resume <id> --fork-session`; Codex `codex fork <id>`; opencode *(unverified)* |
+
+- **`fresh`** suits daily triage, reports and sweeps: each run starts clean (Paseo's schedule).
+- **`resume`** suits "check the deploy every hour in this conversation": context carries over
+  (Paseo's heartbeat, landscape idea 4.6).
+- **`fork`** suits "each morning, start from the planning conversation and do the next step,
+  without growing that conversation".
+- **Adapters say what they can do.** Fork needs a harness that forks natively. A round whose mode
+  the target's adapter cannot serve is refused at creation, with the reason.
+- **One owner per session.** No mode starts a second process on a live session's id
+  (`harness-adapters.md`, rule 1). `fork` makes a new session id; `resume` of an exited session
+  starts the harness again in a new pane, as `session.resume` does.
+- **The prompt is marked.** In `resume` and `fork`, the prompt arrives in a short envelope: it
+  says the text is from round `<name>`, run `<n>`, for slot `<time>`. Part 4 owns the exact text,
+  as for agent messages. The chat view marks it as from Flightdeck.
+
+### 5.1 What a run's agent can read
+
+The run session's environment carries these variables, beside the `GFF_HAB` contract
+(`harness-adapters.md`, environment contract):
+
+| Variable | Value |
+|---|---|
+| `GFF_ROUND` | The round id |
+| `GFF_ROUND_RUN` | The run id |
+| `GFF_ROUND_SLOT` | The slot this run serves, RFC 3339; absent for a manual or event run |
+| `GFF_ROUND_LAST_OK` | When the last successful run started, RFC 3339; absent before the first |
+
+`GFF_ROUND_LAST_OK` is the round's cursor. A prompt can say "triage what changed since
+`$GFF_ROUND_LAST_OK`", so a run after a long sleep covers the whole gap and a repeated run does
+no harm. In `resume` mode the variables are in the envelope, because a live session's environment
+cannot change.
+
+Decision: give the agent the last success time, not a stored cursor of its own. Reason: a time
+covers most sweeps, needs no new storage, and makes catch-up once safe: one run sees every missed
+change.
+
+---
+
+## 6. The lock: never type into a session in use
+
+The lock matters in `resume` mode, the only mode that writes into an existing live session.
+
+### 6.1 When a session is in use
+
+A live target is in use when any of these hold:
+
+| Signal | Source |
+|---|---|
+| The agent is `working` or `blocked`, or has an open permission request | Agent state (`harness-adapters.md`, input delivery) |
+| A client typed into the pane in the last 2 minutes | `pane.input` and `session.send` from any client |
+| A client reported the session in focus in an active window in the last 60 s | `session.focus` (`app.md` 8.3) |
+| Another round's prompt is still starting its turn | The one-send-at-a-time rule (`harness-adapters.md`, built choices) |
+
+### 6.2 What the lock does
+
+- **A run never writes while the target is in use.** It waits.
+- **It writes only through `session.send`.** So every input delivery rule applies too: paste,
+  then Enter; never into a live dialog.
+- **It never answers a dialog.** A `blocked` target stays blocked.
+
+### 6.3 Waiting, then skipping
+
+- A run waits up to `wait` (default 10 minutes) for a moment when the target is not in use.
+- If the moment never comes, the run ends as `skipped` with the reason ("in use", "working",
+  "blocked"). A skip is not a failure (10.1).
+- At most one run per round waits. A slot that comes due while a run waits is coalesced into it.
+- The next slot is unaffected.
+
+Decision: wait 10 minutes, then skip. Reason: Paseo fails a heartbeat on a busy agent at once; a
+short wait catches the common case of a turn that is about to end, and skipping is the safe end
+state. The owner's rule wins over the bar here because typing into a session in use is the one
+thing this feature must never do.
+
+---
+
+## 7. A run from start to end
+
+### 7.1 States
+
+| State | Meaning |
+|---|---|
+| `queued` | Due, waiting for a run slot on the host (7.2) or the wake settle (8.3) |
+| `waiting` | `resume` only: waiting for the lock (6.3) |
+| `running` | The session is live and the agent works on the run's turn |
+| `blocked` | The agent waits for the user: a permission, a question or a sign-in |
+| `succeeded` | The turn ended `done`, or `command` exited 0 |
+| `failed` | Spawn failed, the turn ended `error`, the harness exited before the turn ended, or `command` exited non-zero |
+| `timed_out` | The run passed `timeout` |
+| `skipped` | The lock never cleared, or the project folder is missing for one run |
+| `taken_over` | The user typed into the run session (7.5) |
+
+### 7.2 Start
+
+- **One run per round at a time.** A slot that comes due while a run is live is coalesced into
+  the next run after it ends, at most one.
+- **Host limit.** At most 2 runs start at once per host (`rounds.max_running` in the hab's
+  config). Others wait as `queued`, oldest slot first.
+- **Session name.** `fresh` and `fork` sessions are named after the round, with the hab's usual
+  `-2`, `-3` suffix rule. The session carries a `round` field (round id and run id) so every client
+  can badge and filter it.
+- **Readiness.** The prompt goes in as the first message once the adapter reports `idle`, under
+  the input delivery rules. A harness that never reaches `idle` within 2 minutes fails the run.
+
+### 7.3 End
+
+- **A harness run ends** at the first `session.turn_end` after the run's prompt was delivered and
+  read back. `done` is a success; `error` is a failure.
+- **A command run ends** when the program exits.
+- **Timeout.** At `timeout` the hab interrupts the turn (`session.interrupt`) and marks the run
+  `timed_out`. A command run gets a hang-up, as `pane.close` does.
+- **Result.** The run keeps the final agent message (first 4 KiB), the session id and the
+  times. The full conversation stays in the harness's own transcript.
+
+### 7.4 Blocked runs
+
+- A run that stops on a permission, question or sign-in becomes `blocked`. It is a normal session
+  with a normal request: the usual approval card and push go out (`app.md` 7, 8). The round adds
+  no second notification.
+- The timeout keeps counting. A run still blocked at its timeout ends as `timed_out`; the request
+  stays open in the session for the user to answer later.
+- Rounds never answer permissions. A round that should run without prompts says so in
+  `harness_args`, with the harness's own permission mode, chosen by the user.
+
+Decision: a blocked run stays live and answerable. Reason: Paseo fails such a run, but our runs
+are visible sessions; an approval from the phone lets the job finish, which is the point of
+running it where the user can see it.
+
+### 7.5 Take over
+
+- When any client types into a run session, or sends it a message, the run ends as `taken_over`.
+- From then on the session is the user's: the round never closes it, never times it out and never
+  sends it another prompt from this run.
+- A taken-over run counts as finished for `max_runs`. It is neither a success nor a failure.
+- In `resume` mode the target is already the user's session; typing there after the prompt went in
+  marks the run `taken_over` too, and nothing else changes.
+
+### 7.6 After the run
+
+- **`on_finish = close`.** After a `succeeded` run, the hab closes the run session's pane
+  (`pane.close`). The session record stays as exited, so the conversation can be resumed from the
+  app or a plain terminal, and the transcript stays where the harness wrote it.
+- **Never closed:** a run that failed, timed out, is blocked, or was taken over. The user should
+  see what happened.
+- **`on_finish = keep`.** The session stays open at the harness's prompt until the user closes it.
+- **Retention.** Each round keeps its last 200 runs or 90 days, whichever is more. Exited run
+  sessions older than that are removed from the structure; their transcripts are not touched.
+- `resume` mode never closes its target.
+
+---
+
+## 8. Sleep, wake and catch-up
+
+### 8.1 The tick
+
+- The scheduler in `gff-hab` ticks every 30 s and compares **wall-clock** time with each round's
+  next slot.
+- **Wake detection.** At each tick it compares the wall-clock gap since the last tick with the
+  monotonic gap. The monotonic clock Go uses stops during sleep on macOS and Linux *(verify in the
+  core stage)*; a wall-clock gap more than 60 s longer means the host slept. This needs no cgo, so
+  it keeps the `check-pure` rule (`AGENTS.md`).
+- A timer set for "one hour from now" would fire an hour of awake time later on a sleeping
+  laptop. Wall-clock comparison avoids that.
+
+### 8.2 Catch-up once
+
+- When a tick finds a round's next slot in the past, it starts **one** run for the latest missed
+  slot, then sets the next slot to the first slot strictly after now.
+- The run records how many slots it covered (`missed`), so the history shows "ran once for 9
+  slots".
+- `catch_up = skip` drops the missed slots instead: the next slot moves past now and no run
+  starts. Use it for jobs that only make sense on time.
+- A `once` round missed while asleep runs at wake, or completes unrun with `skip`.
+
+### 8.3 Settle after wake
+
+- After a detected wake, due runs wait 30 s (`rounds.wake_settle`) before they start. A network
+  that returns a few seconds after wake is then up.
+- Runs due at wake start oldest slot first, within the host limit (7.2).
+- A run that fails in the first 2 minutes after a wake, with a harness that reports a network or
+  sign-in error, is tried once more 2 minutes later. Other failures are not retried (10.1).
+
+### 8.4 Restarts
+
+- **gff-hab restarts** (an update, a crash). Rounds, next slots and run records are on disk. A
+  live run's session survives in the holder; the new gff-hab finds the run by its session id and
+  goes on watching it. A slot that came due during the restart runs once, as after a sleep.
+- **Host reboot.** Run sessions end with the holder. A run that was live is marked `failed`, "host
+  restarted". Due slots run once after start, under the settle rule.
+
+Decision: a hab restart catches up instead of skipping. Reason: Paseo skips overdue slots after a
+daemon restart, but our gff-hab restarts on every update and on purpose any time; skipping would
+lose runs for reasons the user never sees. A restart is treated like a short sleep.
+
+### 8.5 Clock changes
+
+- **The clock jumps forward** (manual change, a long NTP fix): treated as a sleep. One catch-up
+  run at most.
+- **The clock jumps back.** The next slot stays. A slot at or before the last served slot never
+  runs again, so no slot runs twice.
+- **The time zone database changes.** Next slots are recomputed at start.
+
+---
+
+## 9. Where rounds run
+
+- **Each round has one runner.** By default, the hab where it was created. The runner must have
+  the project checked out (`fresh`) or hold the target session (`resume`, `fork`).
+- **Choose a runner.** At creation the user may pick any peer that has the project
+  (`gff round add --host <label>`). The round is created on that hab through its API. To get a
+  project onto another host first, use project set-up (task-j600w23a).
+- **Move a round.** `gff round move <name> --host <label>` creates the round on the new runner
+  and deletes it on the old one, after the user confirms. A `resume` or `fork` round cannot move,
+  because its target lives on one host.
+- **No failover.** While the runner is offline, its rounds do not run anywhere. No other hab picks
+  them up. When the runner wakes, catch-up applies.
+- **The always-on host.** A hab marked `always_on` (`mesh.md` 8) is the natural runner for rounds
+  that must not miss a slot. When the user creates a round on a laptop, the app suggests an
+  always-on peer that has the project, in one line. It never moves a round on its own.
+- **Peers see every round.** Each hab publishes its rounds in its catalog (a `rounds` section:
+  name, mode, trigger, project, next slot, last run state). Clients and agents read the merged
+  view, so one list shows every round on every host, with "host asleep since <time>" for an
+  offline runner.
+
+Decision: one runner per round, chosen by the user, with no failover. Reason: the mesh has no
+election and no shared state (`mesh.md`); two habs running one round would need both. Paseo runs a
+schedule only on its own daemon too. The always-on suggestion covers the need without a
+coordinator.
+
+---
+
+## 10. Failure and notifications
+
+### 10.1 Failure rules
+
+- **No automatic retry,** apart from the one network retry after a wake (8.3). A failed run waits
+  for the next slot. Paseo does the same.
+- **Pause after repeated failures.** After 5 failed or timed-out runs in a row, the round pauses
+  itself and says why. One notification goes out. `gff round unpause` clears the count.
+- **Skips are not failures.** But 5 skips in a row raise one notification ("round `<name>` has
+  not run since <time>: the session is in use").
+- **Target gone.** A `resume` or `fork` round whose target session was closed (its record
+  removed) completes, as in Paseo, with one notification. A `fresh` round whose project folder is
+  missing skips that run; after 5 such skips it pauses.
+- **Limits reached.** A round that hits `max_runs` or `expires_at` completes quietly.
+
+Decision: pause after 5 failures in a row. Reason: a broken unattended job costs tokens each slot;
+this is a cheap guard. Paseo has none, but the owner allows cheap guards.
+
+### 10.2 Notifications
+
+Rounds use the Part 6 notification path (`app.md` 8): push from the runner hab to the user's
+devices, and the app's in-app notices. A new push kind `round` is added to `push.register`.
+
+| Event | Banner | Level |
+|---|---|---|
+| Run `failed` or `timed_out` | Yes, with the round name, the reason and "Open" | Active |
+| Run `blocked` | No extra banner: the session's own approval push covers it | — |
+| Run `succeeded` | Only with `notify = always`; shows the first line of the final message | Passive |
+| Round paused after failures | Yes | Active |
+| 5 skips in a row | Yes | Passive |
+| Round completed because its target is gone | Yes | Passive |
+
+- `notify = never` silences every row except the self-pause.
+- Each round's notifications collapse by round id, so a failing hourly round shows one banner,
+  updated.
+- "Ask an agent" on a round notification works as for any notification (`capcom.md` 8.2): the
+  event, with the run's result, is attached to the Capcom conversation.
+
+### 10.3 The status board
+
+- A **Rounds** list per host: name, mode, trigger, next run in the viewer's zone, last run state,
+  paused or completed.
+- Run sessions carry a round badge on their cards. A filter hides or shows them.
+- A round's page shows its run history: slot, state, `missed`, duration, the first line of the
+  result, and a link to the session.
+- Actions: Run now, Pause or Unpause, Edit, Delete. Delete asks first.
+
+---
+
+## 11. Edge cases
+
+| Case | Behaviour |
+|---|---|
+| The laptop sleeps through 9 slots of an hourly round | One run at wake after the 30 s settle; history shows `missed = 9` (8.2) |
+| The laptop sleeps through a daily 09:00 round and wakes at 22:00 | One run at 22:00, unless `catch_up = skip` |
+| A run is live when the laptop sleeps | The session freezes with the host. At wake the run goes on; `timeout` counts wall-clock time, so a long sleep may time it out |
+| Two rounds target the same session | They take turns: one send at a time per pane; the second waits under the lock |
+| The user deletes a round during a run | The run goes on to its end; its session follows the normal rules; no further runs |
+| The user pauses a round while a run waits for the lock | The waiting run ends as `skipped`, "paused" |
+| A `fresh` run in a folder where the user's own agent works | Allowed: two sessions, one folder, as Paseo's default "local" isolation. Worktree isolation comes with idea 4.5 (14) |
+| The harness needs a sign-in | The run is `blocked` with kind `auth`; the usual push goes out |
+| The harness's usage window is full | The run fails with the harness's message. A usage-aware skip is a later stage (14) |
+| A round's harness is not installed on the runner | Refused at creation; if it disappears later, each run fails with "harness not found", then the round pauses |
+| The runner hab is offline when a client edits a round | The edit is refused with "host offline"; edits never queue for a sleeping host |
+| A peer shows a round from a stale catalog | Marked stale with the catalog's age (`mesh.md` 5) |
+| A run session's pane is closed by the user | The run ends as `taken_over` |
+| The prompt is longer than 64 KiB | Refused at creation, the channel message limit (`mesh.md` 6.3) |
+| An agent creates a round that triggers itself every minute | Allowed within the 1-minute floor; the agent can stop it with `gff round rm "$GFF_ROUND"`. Open question 1 covers whether the user confirms first |
+| A cron expression that never matches (`0 0 31 2 *`) | Refused at creation: "never runs" |
+
+---
+
+## 12. Open questions
+
+Only user-visible questions are listed. Every internal call above is decided.
+
+### Q1. Does a round that an agent creates need the user's confirmation?
+
+| Option | For | Against |
+|---|---|---|
+| A. No confirmation. The harness's own tool permission covers the command | Matches Paseo; chat-created rounds just work | An agent with broad permissions can set up recurring, token-spending jobs unseen |
+| B. A confirmation card for every agent-created round, with a setting to turn it off | The user sees every recurring job before it costs anything | One tap per round |
+| C. A card for `fresh` and `fork` rounds; none for a `resume` round on the agent's own session ("wake yourself in 20 minutes") | Keeps the low-risk self-check frictionless; gates new sessions | Two rules to learn |
+
+Recommendation: **C**, with one setting that turns the card off. It matches the owner's answer for
+work on another host (a card, with a setting to turn it off), and leaves Paseo's "wake yourself"
+flow as easy as in Paseo. The card shows mode, trigger in plain words, next three run times,
+project, harness, model and the prompt (`capcom.md` 6.3).
+
+### Q2. What happens to a fresh run's session after a successful run?
+
+| Option | For | Against |
+|---|---|---|
+| A. Close the pane by default (`on_finish = close`); keep it on failure, block or take over | Matches Paseo's "archive on finish" default; hosts do not fill with idle harnesses | To read a finished run, the user opens its transcript or resumes it |
+| B. Keep it open by default | The result sits in a live session | Daily rounds leave a pile of idle panes |
+
+Recommendation: **A**. The session record and transcript stay, so the chat view still shows the
+run, and resume is one tap.
+
+### Q3. Notify on success?
+
+Recommendation: off by default (`notify = failures`), on per round. A successful run is visible on
+the status board and in the round's history; the bar's `done` banner is off by default too
+(`app.md` 8.2).
+
+---
+
+## 13. API and CLI additions
+
+All are additive under `hab-logic-api.md` 3.3. Each answers `unavailable` until its stage builds
+it.
+
+| Item | Kind | Purpose |
+|---|---|---|
+| `rounds` | Capability | The hab runs rounds |
+| `round.list` | Method | This hab's rounds, with next slot and last run state |
+| `round.get` | Method | One round with its definition |
+| `round.create` | Method | Create a round; validates the trigger, mode and target; returns the round. Takes `run_now` |
+| `round.update` | Method | Change fields; recomputes the next slot when the trigger changes |
+| `round.delete` | Method | Delete a round; a live run goes on to its end |
+| `round.pause`, `round.unpause` | Method | Pause or unpause; unpause clears the failure count |
+| `round.run` | Method | Start a run now, outside the trigger; `conflict` while a run is live |
+| `round.runs` | Method | A page of a round's runs, newest first |
+| `round.updated` | Event | A round was created, changed, paused, completed or deleted. Stored, with a revision |
+| `round.run_updated` | Event | A run changed state. Ephemeral |
+| `Session.round` | Optional field | Round id and run id for a run session |
+| catalog `rounds` | Catalog section | Name, mode, trigger, project, next slot, last run state (`mesh.md` 5) |
+| push kind `round` | Word | Round notifications (10.2) |
+
+CLI (`gff round`, also the agent kit's MCP tools with the same verbs):
+
+| Command | What it does |
+|---|---|
+| `gff round ls [--host <label>\|--all]` | List rounds on one host or every connected host |
+| `gff round show <name>` | The definition, next three slots, last runs |
+| `gff round add <name> --mode fresh\|resume\|fork (--cron <expr> [--tz <zone>] \| --every <preset> \| --at <time> \| --manual) [--project <dir>] [--target <session>] [--harness h] [--model m] [--host <label>] [--run-now] [limits] <prompt>` | Create a round. Inside a session, `--target self` names the calling session |
+| `gff round edit <name> [fields]` | Change fields |
+| `gff round rm <name>` | Delete, after a prompt (`-yes` skips it) |
+| `gff round pause\|unpause <name>` | Pause or unpause |
+| `gff round run <name>` | Run now |
+| `gff round runs <name>` | Run history |
+| `gff round move <name> --host <label>` | Move a `fresh` round to another runner (9) |
+| `gff round export`, `gff round apply <file>` | Print as TOML, or make the hab match a file (3) |
+
+---
+
+## 14. Later stages
+
+Each stage is sized for one subagent. Core stages (2 and 4) get a fresh-eyes reviewer before they
+close.
+
+| # | Stage | Builds | Acceptance checks |
+|---|---|---|---|
+| 1 | Study and spec | This document | Owner answers Q1 to Q3 |
+| 2 | Scheduler core | The round store; cron with zones, presets and DST rules; the wall-clock tick and wake detection; catch-up once and skip; one run per round and the host limit; `fresh` mode with `command`; run states, history and retention; re-adopting a live run after a gff-hab restart; `round.*` methods and events; `gff round` for these | Fake-clock unit tests: an hourly round across a 10-hour sleep runs once with `missed = 10`; `skip` runs none; a spring-forward slot runs once at the first valid minute; an autumn repeated hour runs once; a clock moved back runs no slot twice; a slot due during a restart runs once. On a real host: a `command` round runs in a visible pane, survives 3 gff-hab restarts mid-run and ends `succeeded`; a wall-clock jump of 2 h is seen as a wake. Golden messages for every new type |
+| 3 | Harness fresh runs | `fresh` with a harness and a prompt through the adapter; run end on `turn_end`; timeout by interrupt; blocked runs; `on_finish`; the `GFF_ROUND_*` variables; failure pause | With a fake harness that speaks the hook protocol: success, error, a permission that blocks then is answered, a timeout that interrupts, a take over by typing, close on success and keep on failure. One real Claude Code run against a scratch project, on a Mac and on Linux |
+| 4 | Resume and fork with the lock | `resume` into live and exited targets; the four in-use signals; wait then skip; coalescing; the envelope; target gone; `fork` for Claude Code and Codex | A target `working` for 3 minutes gets the prompt after `done`; a target with typing in the last 2 minutes waits; a focused target waits; a target busy past `wait` ends `skipped`; a blocked target is never written to; an exited target is resumed then prompted; a forked run leaves the target's transcript unchanged |
+| 5 | Notifications and the status board data | Push kind `round`, collapse by round, the rows in 10.2, skip and pause notices; catalog `rounds` section | Push payload tests per row; a failing round shows one collapsed banner; a peer lists another hab's rounds with stale marks |
+| 6 | Agent kit and confirmation | MCP tools and `gff round` from inside a session; `--target self`; the confirmation card per Q1 and its setting | An agent creates a round through MCP; the card shows the fields; a declined card creates nothing; with the setting off no card appears; an agent stops its own round with `$GFF_ROUND` |
+| 7 | App and gff views | Rounds list, round page, run history, badges, Run now, edit; the gff client's rounds pane | UI tests in the app; `gff round ls --all` matches the app's list |
+| 8 | Event triggers | The four events in 4.3, debounce, cooldown, no self-loops | Each event triggers once per debounce window; a burst in cooldown makes one run; a round's own session never triggers it |
+| 9 | Later ideas | Worktree isolation for `fresh` runs (with idea 4.5); skip when a harness usage window is above a threshold; file a run's result as a Logbook record (Part 12) | Each gets its own acceptance list when planned |
+
+---
+
+## 15. Sources
+
+- Paseo, github.com/getpaseo/paseo, read 2026-11-01: `public-docs/schedules.md`,
+  `public-docs/schedules-cli.md`, `public-docs/schedules-chat.md`,
+  `packages/protocol/src/schedule/types.ts`, `packages/server/src/server/schedule/service.ts`
+  (read to confirm the tick, missed-slot, restart, busy-target and target-gone rules).
+- herdr and Rex: `landscape.md` 2.14.
+- launchd: `launchd.plist(5)`, `StartCalendarInterval` (missed intervals coalesced at wake).
+  systemd: `systemd.timer(5)`, `Persistent=`, `RandomizedDelaySec=`. cron and anacron man pages.
+  GitHub Actions docs, the `schedule` event.
+- Claude Code `--resume` and `--fork-session`, and Codex `resume` and `fork`: each CLI's `--help`,
+  read 2026-11-01. opencode fork: not checked *(unverified)*.
+- Ours: `AGENTS.md`; `landscape.md` 2.14 and idea 4.6; `mesh.md` 2, 5, 6.3, 8;
+  `hab-logic-api.md` 2.2, 3.3, 3.5, 3.9, 4; `harness-adapters.md` (rules, environment contract,
+  input delivery); `capcom.md` 6 and 8.2; `app.md` 7 and 8.
