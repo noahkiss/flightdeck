@@ -1,6 +1,15 @@
 {
-  "originHash" : "5647ddb367e2040807a99deedd6904480a25fdb01cc7650d69c68001304ceeed",
+  "originHash" : "95229f7949b86652114e599514e111d8e92f691f9abbe1f8dabb5e5094ce6d97",
   "pins" : [
+    {
+      "identity" : "fluidaudio",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/FluidInference/FluidAudio.git",
+      "state" : {
+        "revision" : "503b4bd1bbf7220882de39fe8ae6716aae4132da",
+        "version" : "0.17.7"
+      }
+    },
     {
       "identity" : "libghostty-spm",
       "kind" : "remoteSourceControl",

@@ -28,5 +28,9 @@
 	<string>public.app-category.productivity</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Hears what you say in voice mode and dictation.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Shows your words on screen as you speak.</string>
 </dict>
 </plist>

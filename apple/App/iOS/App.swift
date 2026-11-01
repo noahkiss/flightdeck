@@ -1,4 +1,5 @@
 import FlightdeckKit
+import FlightdeckParakeet
 import SwiftUI
 
 @main
@@ -25,6 +26,8 @@ struct FlightdeckApp: App {
                     // answer on a locked phone says "Unlock to answer".
                     fleet.approvals?.isUnlocked = { UIApplication.shared.isProtectedDataAvailable }
                     pushDelegate.start(fleet.push)
+                    // On-device Parakeet for voice mode; loaded only while voice mode or dictation runs.
+                    fleet.voice.parakeet.install(FluidParakeetRuntime())
                 }
         }
         .onChange(of: phase, initial: true) { _, p in

@@ -65,6 +65,14 @@
 	<string>Scans a hab's pairing code.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connects to habs on your network over SSH.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Hears what you say in voice mode and dictation.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Shows your words on screen as you speak.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -52,6 +52,9 @@ targets:
         product: FlightdeckKit
       - package: FlightdeckKit
         product: FlightdeckShared
+      # On-device Parakeet for voice mode (voice.md); iPhone and iPad only.
+      - package: FlightdeckKit
+        product: FlightdeckParakeet
       - target: NotificationService
         embed: true
         codeSign: true

@@ -14,6 +14,9 @@ let package = Package(
         // expiry text, Live Activity attributes and intent): Foundation,
         // ActivityKit and AppIntents only, so an extension stays light.
         .library(name: "FlightdeckShared", targets: ["FlightdeckShared"]),
+        // On-device Parakeet for voice mode (voice.md): the Core ML runtime.
+        // Only the iOS app links it, so the Mac app and the tests stay light.
+        .library(name: "FlightdeckParakeet", targets: ["FlightdeckParakeet"]),
     ],
     dependencies: [
         .package(path: "../../swift/HabAPI"),
@@ -26,6 +29,9 @@ let package = Package(
         // so pin it exactly; swift-nio follows semver.
         .package(url: "https://github.com/apple/swift-nio-ssh.git", exact: "0.15.1"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.104.0"),
+        // Parakeet TDT on Core ML, as the on-device spike measured it. Pre-1.0:
+        // pin it exactly.
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.7"),
     ],
     targets: [
         .target(
@@ -41,6 +47,14 @@ let package = Package(
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .target(
+            name: "FlightdeckParakeet",
+            dependencies: [
+                "FlightdeckKit",
+                .product(name: "FluidAudio", package: "FluidAudio"),
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
