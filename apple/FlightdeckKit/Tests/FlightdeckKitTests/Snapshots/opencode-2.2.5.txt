@@ -1,0 +1,47 @@
+EVENT notice: Model: example/small-model
+EVENT notice: Agent: build
+USER
+    Run the tests and fix the first failure.
+    
+    [file notes.md]
+AGENT
+    I will run the tests first.
+TOOL shell [done] go test ./... (folded)
+    $ go test ./...
+      go vet ./...
+    output:
+    FAIL example/app 0.01s
+TOOL read [done] /work/app/main.go (one line) (folded)
+    input: {
+      "filePath" : "/work/app/main.go"
+    }
+    output:
+    package main
+TOOL edit [denied] /work/app/main.go (folded)
+    - a
+    + b
+    output:
+    The user rejected permission to use this tool
+TOOL webfetch [error] https://example.com/docs (one line) (folded)
+    input: {
+      "url" : "https://example.com/docs"
+    }
+    output:
+    fetch failed: timeout
+EVENT unknown: Unsupported opencode content: future-block
+TOOL shell [done] ls (folded)
+    $ ls
+    output:
+    main.go
+TOOL shell [running] sleep 100 (folded)
+    $ sleep 100
+USER
+    Try again.
+EVENT notice: rate limited
+EVENT notice: The turn failed: rate limited
+EVENT compaction: Conversation compacted
+EVENT notice: Skill release-notes
+USER
+    Stop.
+EVENT interrupt: Interrupted by the owner
+EVENT unknown: Unsupported opencode message: future-message
