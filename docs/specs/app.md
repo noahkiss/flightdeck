@@ -1648,14 +1648,18 @@ widget snapshot), `FlightdeckKit/Usage/` (book, alerts, center, views), `apple/W
   capability gets no call. Readings stay across reconnects.
 - **Merge.** The book keys accounts by account key. The newer reading wins, by its newest
   `read_at`; an account with no windows counts as read when it arrived. The same reading from two
-  connections (one hab reached two ways) stays with the connection that has it, and moves only
-  from an offline connection to an online one. A hab that stops reporting an account leaves its
+  connections (one hab reached two ways) stays with the connection that has it. When that
+  connection goes offline, the account moves at once to an online connection that holds the same
+  reading. A read time that does not parse keeps the time held for the same values, so the same
+  reading again is no change. A hab that stops reporting an account leaves its
   last reading. Removing a hab removes its accounts.
 - **Last known values.** The book starts from the widget snapshot, so cards, footer and widget show
   the last readings with their age before any hab connects. An account whose hab is not online
   shows "<hab> offline · as of <time>" and grey bars. Seeded accounts keep the connection id they
   came from, which includes the config index: after a reorder of the hab list, a seeded account
-  shows the label and online state of the hab now at that index until a new reading arrives.
+  shows the label and online state of the hab now at that index until a new reading arrives. Once
+  the config and SSH habs are added at launch, seeded accounts of a hab no longer in the app go,
+  from the book and the widget.
 - **Demo mode** posts no notification and keeps its readings and alert marks in a defaults suite
   of its own, emptied at each start. The widget never sees demo accounts.
 - **Window length** comes from the window name (`5h`, `7d`, `30m`, `2w`, `7d opus`,
@@ -1669,25 +1673,28 @@ widget snapshot), `FlightdeckKit/Usage/` (book, alerts, center, views), `apple/W
   full window, else the first window over pace, else says "On pace" when any window has a pace.
 - **Warnings** are local notifications, posted by the app when a reading arrives (the hab sends no
   usage push yet). Thresholds default to 80 and 95, kept per device; the sheet holds the switch
-  and the thresholds (50 to 100 in steps of 5). One warning per account, window, reset time and
+  and the thresholds (50 to 100 in steps of 5, each stopping 5 short of its neighbour, so two
+  thresholds never merge). One warning per account, window, reset time and
   threshold: reset times within ten minutes are one window (Codex derives them). A jump past two
   thresholds posts the higher one. A stale reading, or one whose reset passed, warns about
   nothing. The marks persist, so a restart does not warn again. A window with no reset time is
   one window forever; its marks clear when usage falls below them, so the next climb warns again. The notification id is the
   account and window, so 95 replaces 80 in Notification Center.
-- **Alert me when free** uses a calendar trigger at the reset time, with the time zone, so it fires
-  at that instant across sleep and a time-zone change. A request whose reset time passed ends
+- **Alert me when free** uses a calendar trigger at the reset time, as UTC components, so it fires
+  at that instant across sleep and a time-zone change, and a reset on the night clocks go back is
+  not ambiguous. A reset time that moves by less than a minute keeps the scheduled notification. A request whose reset time passed ends
   quietly; the scheduled notification already fired. A reading that is still full keeps the
   request, with or without a reset time. A reading that lacks the window keeps it too: a missing
   window says nothing about room. Posts and cancels reach the notification center one at a time,
   in call order.
 - **Taps.** A usage notification, a widget and the footer open the sheet at the account
-  (`flightdeck://usage?account=<key>`). Settings (Connections) opens it too.
+  (`flightdeck://usage?account=<key>`). Settings (Connections) opens it too; on iPhone the
+  Connections sheet closes first, also when a notification or widget tap arrives while it is up.
 - **Debug.** `-FlightdeckOpenUsage <key|all>` opens the sheet at launch (Debug builds).
 - **Tests.** `UsageTests.swift` (math, merge, warnings, alert when free, snapshot, the feed from a
-  fake hab). `LiveTests.testLiveUsage` runs against a real gff-hab (`FLIGHTDECK_LIVE_SOCKET`, and
-  `FLIGHTDECK_LIVE_USAGE`: a file the test creates so a script in a hab pane posts a full reading,
-  then one with room through `gff-hab statusline claude`).
+  fake hab). `apple/scripts/usage-live-check.sh` runs `LiveTests.testLiveUsage` against a real
+  gff-hab: a hab pane pipes hand-written status lines (full, then with room) into
+  `gff-hab statusline claude` once the test creates its trigger file.
 - **Not built.** The hab clock offset (14.5): the welcome carries no hab time (task-bw97v7dk 5).
   "Usage unavailable" (14.5): no degraded mark in the API (task-bw97v7dk 3).
 
@@ -1746,6 +1753,8 @@ never from private files).
   stale, so "Reset" and "as of" appear with no app run. With no such moment ahead, the timeline
   never asks again; the app reloads it on new readings. The countdown is relative timer text.
 - **Age.** "as of <time>" and "No recent reading" follow the reading's age, not the snapshot's.
+- **A chosen account the snapshot no longer holds** (its hab was removed) shows "Account not
+  reporting", never another account.
 - **Mac.** No Mac widget: the Mac app has no App Group or widget extension yet. Adding one means a
   sandboxed macOS widget extension and the group entitlement on the Mac app.
 
