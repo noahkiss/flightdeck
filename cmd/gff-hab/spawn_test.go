@@ -359,14 +359,13 @@ func TestSessionCreateAndClose(t *testing.T) {
 	// A session filed by project id with no cwd starts in the project's most recently used
 	// folder, as a console beside a project's session does (app.md 6.1).
 	pwdFile := filepath.Join(work, "pwd")
-	inProject := createSession(t, sock, api.SessionCreateParams{Project: st.Projects[0].ID,
+	createSession(t, sock, api.SessionCreateParams{Project: st.Projects[0].ID,
 		Argv: []string{"/bin/sh", "-c", `pwd -P > "$OUT.tmp" && mv "$OUT.tmp" "$OUT"`}, Env: []string{"OUT=" + pwdFile, noRaceExitSleep}})
 	waitUntil(t, "the project session's pwd", func() bool { _, err := os.Stat(pwdFile); return err == nil })
 	wantDir, _ := filepath.EvalSymlinks(repo)
 	if b, _ := os.ReadFile(pwdFile); strings.TrimSpace(string(b)) != wantDir {
 		t.Errorf("a session by project id started in %q, want %q", strings.TrimSpace(string(b)), wantDir)
 	}
-	_ = inProject
 	if s := session(st, ended.Session); s.Name != "sh" || s.Project != "" {
 		t.Errorf("the default-named session: %+v", s)
 	}
