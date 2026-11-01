@@ -103,6 +103,7 @@ The repo layout and the libghostty build are in `docs/layout.md`.
 | `apple/scripts/build.sh [--install]` | Generate, then build the Mac app (Release) into `apple/build/`, and verify its signature |
 | `cd apple/FlightdeckKit && swift test` | Test the app's shared package (it links `swift/HabAPI`) |
 | `FLIGHTDECK_LIVE_SOCKET=<sock> [FLIGHTDECK_LIVE_SSH_HOST=<host> FLIGHTDECK_LIVE_SSH_COMMAND=... FLIGHTDECK_LIVE_SSH_OPTIONS=...] swift test --filter LiveTests` (in `apple/FlightdeckKit`) | Live check against a real hab: hello, subscribe, ping and a clean close over the Unix socket, and over `ssh <host> gff-hab connect`. Skipped when unset |
+| `FLIGHTDECK_LIVE_SOCKET=<sock> [FLIGHTDECK_LIVE_PROGRAM='vim -u NONE -N'] swift test --filter LiveTerminalTests` (in `apple/FlightdeckKit`) | Live terminal check against a real hab with a holder (`-tags ghostty` for real snapshots): starts the program in a new pane, views it without a resize, types to take the size, drops and resumes the data connection with no snapshot, redraws, quits. Skipped when unset |
 | `go test ./api -run TestGoldens -update` | Rewrite the golden messages of the current API revision in `api/testdata/` |
 
 ## Delegation

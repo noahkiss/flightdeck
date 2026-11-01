@@ -483,6 +483,63 @@ a plan checklist in chat); `harness-adapters.md` (Conversation, Input delivery);
 Sources: rootshell README (keyboard bar, sticky modifiers); Heeler README (tools keyboard);
 `hab-logic-api.md` 5 and 6.
 
+### 5.3 Built choices (task-29y4k1ih)
+
+The terminal view and its data-stream client. Code in `apple/FlightdeckKit/Sources/FlightdeckKit/Terminal`.
+
+- **A Swift data-stream client** (app lead decision). The app reads data streams in Swift, over the
+  same `Transport` as its control connection. It does not use the Go library built for Apple
+  platforms: the app already speaks the control protocol in Swift, and this keeps the Go runtime
+  and gomobile out of the iOS app. Swift's libghostty is the only parser the app carries.
+- **libghostty-spm**, `GhosttyTerminal` product, pinned exactly to 1.6.20260909 (commit
+  7e45d271, Ghostty 82938b633ba6), as Heeler and herdrm pin it. The version scheme has a date, so
+  a range would drift; each bump needs a review of the binary checksum. Its in-memory backend
+  takes the hab's bytes and hands back what the terminal writes.
+- **`PaneStream`**, one per open terminal view: `data.ticket`, then `transport.open(.data)` (a
+  socket connection, or one more `ssh <host> gff-hab connect` process), then a hello with the held
+  offset. Frames follow `hab-logic-api.md` 5.3. The consumer applies each frame before the next is
+  read, and credit goes back for applied bytes once 16 KiB is owed, so a slow view slows the hab.
+- **Resume.** The stream keeps the holder offset after the last applied byte. A dropped data
+  connection or a reject other than `not_found` opens a new connection with a new ticket and that
+  offset, after 0.25 s doubling to 5 s. A frame that starts above the held offset is a removed
+  query; one that starts below is trimmed and counted (the hab never sends one). `not_found`
+  ends the stream ("This pane is gone"); `exited` ends it with the exit status and a Close button.
+  Proof: a scripted byte stream with four drops ends with the exact output, one snapshot and
+  nothing trimmed (`PaneStreamTests`), and the same over a real hab (`LiveTerminalTests`).
+- **Snapshot.** The view resets libghostty (RIS, then the scrollback cleared) and feeds the
+  `snapshot-vt` bytes. One surface lives as long as the view.
+- **Grid equals the PTY.** The surface is laid out at the pane's size in cells, plus half a cell
+  so rounding never loses a column, then scaled to fit the view. Output waits until libghostty
+  reports that grid and it has held still for 100 ms: libghostty reports a new grid before its
+  parser has resized. More than 4 MiB of held output is dropped and a `pane.redraw` snapshot asked
+  for instead.
+- **Size rule.** The view's space only gives the size this client wants. It goes out with
+  `pane.set_desired_size` only while this client owns the pane, 120 ms after the last change.
+  Typing takes ownership through the hab's 300 ms debounce, so the app sends nothing extra
+  before it. Viewing, rotating and window resizes never send a size. "Fit to this screen" sends
+  `pane.take`. Pinch zoom with horizontal pan is not built yet.
+- **Input.** Everything libghostty writes goes to `pane.input` through one pump: one call in
+  flight, keys typed meanwhile sent together in the next call, in order. libghostty's replies to
+  queries the hab leaves in the stream (OSC 52 clipboard, `CSI 14 t`, `CSI 16 t`) are dropped,
+  and focus reports pass only while this client owns the pane.
+- **Keyboard.** Hardware keys reach libghostty's view directly on iPad and Mac; the app adds no
+  key shortcuts in the terminal. The phone uses libghostty-spm's keyboard bar: Esc, Tab, Ctrl and
+  Alt (one tap for one key, a double tap locks), arrows, a few symbols and Paste. Owner-added keys,
+  the drawer and the dictation key are not built yet.
+- **Redraw** sends `pane.redraw` with mode `nudge`: a fresh snapshot, then the PTY one column
+  narrower and back. Never Ctrl+L.
+- **One dark scheme** for the terminal, so the space around a scaled pane matches it.
+- **Route.** For now the session sheet from a board row has a "Terminal" link, through
+  `EnvironmentValues.habConnections`. `TerminalScreen(pane:connection:)` is self-contained, for
+  the session view to host beside the chat. Debug builds open a pane at launch with
+  `-FlightdeckOpenPane <pane>`.
+- **Demo mode.** The fake hab serves tickets, data connections, input, ownership and redraw.
+  Every demo pane has an invented shell screen that echoes typing; the dev server pane prints a
+  request log every 2 s.
+- **Not built:** selection and links, exit "Restart", `pane.activity` markers, thumbnails, more
+  scrollback on demand, and closing and resuming data streams when the control connection comes
+  back.
+
 ---
 
 ## 6. Console
