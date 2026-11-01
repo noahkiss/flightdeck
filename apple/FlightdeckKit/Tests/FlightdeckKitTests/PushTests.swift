@@ -5,12 +5,35 @@ import UserNotifications
 import XCTest
 @testable import FlightdeckKit
 
-/// A UserDefaults of its own per test, so settings and the device id never leak.
-func testDefaults(_ name: String = #function) -> UserDefaults {
-    let suite = "flightdeck.tests." + name + "." + UUID().uuidString
-    let d = UserDefaults(suiteName: suite)!
-    d.removePersistentDomain(forName: suite)
-    return d
+/// Empty UserDefaults for a test, so settings and the device id never leak.
+/// The suites are a fixed set reused by every test: the n-th call in a test
+/// gets slot n, emptied first. A suite name used once leaves a preferences
+/// file behind even after `removePersistentDomain`, so names never vary per
+/// run. Tests run one at a time (`swift test` without `--parallel`).
+extension XCTestCase {
+    func emptyDefaults() -> UserDefaults {
+        TestDefaultsSlots.next(for: name)
+    }
+}
+
+private enum TestDefaultsSlots {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var test: String?
+    nonisolated(unsafe) private static var used = 0
+
+    static func next(for current: String) -> UserDefaults {
+        lock.lock()
+        if current != test {
+            test = current
+            used = 0
+        }
+        let name = "flightdeck.tests.defaults.\(used)"
+        used += 1
+        lock.unlock()
+        let d = UserDefaults(suiteName: name)!
+        d.removePersistentDomain(forName: name)
+        return d
+    }
 }
 
 /// A hab with one Claude session blocked on a permission request.
@@ -39,7 +62,7 @@ final class PushRegistrationTests: XCTestCase {
     private func rig(push: Bool = true) async -> (FakeHab, Fleet, PushRegistrar) {
         let hab = await blockedHab(push: push)
         let fleet = Fleet()
-        let reg = PushRegistrar(defaults: testDefaults(), environment: .development)
+        let reg = PushRegistrar(defaults: emptyDefaults(), environment: .development)
         fleet.push = reg
         fleet.add(HabConnection(id: "h", transport: hab.transport(), timing: fastTiming(), clientLabel: "phone"), label: "desk")
         return (hab, fleet, reg)
@@ -105,7 +128,7 @@ final class PushRegistrationTests: XCTestCase {
 
     /// The device id survives a restart; Debug test builds are development.
     func testDeviceIDPersistsAndEnvironment() {
-        let d = testDefaults()
+        let d = emptyDefaults()
         let a = PushRegistrar(defaults: d)
         let b = PushRegistrar(defaults: d)
         XCTAssertEqual(a.deviceID, b.deviceID)
@@ -237,7 +260,7 @@ final class ApprovalAnswerTests: XCTestCase {
 
     private func center(answerer: ApprovalAnswerer, board: Board? = nil) -> (ApprovalCenter, Recorder) {
         let rec = Recorder()
-        let c = ApprovalCenter(board: board ?? Board(), answerer: answerer, defaults: testDefaults())
+        let c = ApprovalCenter(board: board ?? Board(), answerer: answerer, defaults: emptyDefaults())
         c.post = { t, b, m in rec.posts.append((t, b, m)) }
         return (c, rec)
     }
@@ -589,7 +612,7 @@ final class LiveActivityTests: XCTestCase {
         let hab = await blockedHab()
         let fleet = Fleet()
         fleet.add(HabConnection(id: "h", transport: hab.transport(), timing: fastTiming()), label: "desk")
-        let reg = PushRegistrar(defaults: testDefaults())
+        let reg = PushRegistrar(defaults: emptyDefaults())
         let tracker = LiveActivityTracker(board: fleet.board, push: reg, caller: ApprovalAnswerer(live: { _ in nil }, oneShot: { _ in throw TransportError("x") }, clientLabel: "phone"), host: nil)
         fleet.activities = tracker
         await fleet.setActive(true)
@@ -607,7 +630,7 @@ final class LiveActivityTests: XCTestCase {
         let hab = await blockedHab()
         let fleet = Fleet()
         fleet.add(HabConnection(id: "h", transport: hab.transport(), timing: fastTiming()), label: "desk")
-        let c = ApprovalCenter(board: fleet.board, answerer: ApprovalAnswerer(live: { _ in nil }, oneShot: { _ in throw TransportError("x") }, clientLabel: "phone"), defaults: testDefaults())
+        let c = ApprovalCenter(board: fleet.board, answerer: ApprovalAnswerer(live: { _ in nil }, oneShot: { _ in throw TransportError("x") }, clientLabel: "phone"), defaults: emptyDefaults())
         fleet.approvals = c
         await fleet.setActive(true)
         await eventually("online") { fleet.board.onlineCount == 1 }

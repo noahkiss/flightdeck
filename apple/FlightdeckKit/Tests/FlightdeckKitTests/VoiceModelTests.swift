@@ -90,7 +90,7 @@ final class VoiceModelTests: XCTestCase {
         let chat = fleet.chat(for: SessionTarget(habID: "h", session: "s1", pane: "%1"))
         chat.readBackWindow = .seconds(5)
         let io = FakeVoiceIO()
-        let store = VoiceSettingsStore(defaults: UserDefaults(suiteName: "voice-test-\(UUID().uuidString)")!)
+        let store = VoiceSettingsStore(defaults: emptyDefaults())
         store.value = settings
         let kit = VoiceKit(settings: store, parakeet: parakeet ?? ParakeetHost(runtime: nil), liveWords: true)
         kit.makeAudio = { _ in io }

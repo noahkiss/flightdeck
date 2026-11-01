@@ -47,7 +47,7 @@ final class LiveActivityFixTests: XCTestCase {
     private func rig() async -> (FakeHab, Fleet, LiveActivityTracker, FakeActivities) {
         let hab = await blockedHab()
         let fleet = Fleet()
-        let reg = PushRegistrar(defaults: testDefaults(), environment: .development)
+        let reg = PushRegistrar(defaults: emptyDefaults(), environment: .development)
         fleet.push = reg
         fleet.add(HabConnection(id: "h", transport: hab.transport(), timing: fastTiming()), label: "desk")
         let host = FakeActivities()
@@ -132,7 +132,7 @@ final class ApprovalFixTests: XCTestCase {
     func testLockedActivityAnswerRefused() async {
         let hab = await blockedHab()
         let answerer = ApprovalAnswerer(live: { _ in nil }, oneShot: { _ in hab.transport() }, clientLabel: "phone")
-        let c = ApprovalCenter(board: Board(), answerer: answerer, defaults: testDefaults())
+        let c = ApprovalCenter(board: Board(), answerer: answerer, defaults: emptyDefaults())
         var posts: [String] = []
         c.post = { t, _, _ in posts.append(t) }
         c.isUnlocked = { false }
@@ -171,7 +171,7 @@ final class ApprovalFixTests: XCTestCase {
         let hab = await blockedHab()
         let fleet = Fleet()
         fleet.add(HabConnection(id: "h", transport: hab.transport(), timing: fastTiming()), label: "desk")
-        let c = ApprovalCenter(board: fleet.board, answerer: ApprovalAnswerer(live: { _ in nil }, oneShot: { _ in throw TransportError("x") }, clientLabel: "phone"), defaults: testDefaults())
+        let c = ApprovalCenter(board: fleet.board, answerer: ApprovalAnswerer(live: { _ in nil }, oneShot: { _ in throw TransportError("x") }, clientLabel: "phone"), defaults: emptyDefaults())
         var withdrawn: [Set<String>] = []
         c.withdraw = { ids in withdrawn.append(ids) }
         fleet.approvals = c
