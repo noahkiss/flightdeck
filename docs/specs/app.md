@@ -2516,6 +2516,10 @@ flag on the generated key.
   - A hab-side setting matches a column when every online hab with `settings` holds that value.
     A locked row (20.5) and an offline hab do not break the match; such a row shows "Set in the
     hab's config" or "Differs on <hab>". A hab without `settings` is left out too.
+  - **Exceptions.** When a locked or offline row holds a value other than the matched column's,
+    the picker shows the level with a count: "Safe, 1 exception". A tap on the count scrolls to
+    the first such row. So Safe never shows bare while a hab's config enforces a weaker value.
+    Design call: a count, not Custom, because the user cannot change a locked row from the app.
   - Changing one levelled setting by hand shows Custom at once; setting it back shows the level
     again. A write from another device to a hab-side setting can also flip this device's picker
     to Custom, since levels are per device and hab-side values are shared.
@@ -2535,9 +2539,10 @@ flag on the generated key.
 - **Levels are per device.** The app keeps the last picked level in its defaults. A phone at Safe
   and a Mac at Balanced is fine for app-side settings. Hab-side settings are shared: the last
   write wins (20.5).
-- **A new hab.** On the first `settings.get` after hello, the app checks each levelled hab-side
-  setting. One whose `source` is `default` (no client wrote it, no config set it) takes the
-  picked level's value; a locked one is skipped. Any other value stands, and the row shows
+- **A new hab.** On every connect, at the first snapshot or `settings.get` after hello, the app
+  checks each levelled hab-side setting. One whose `source` is still `default` (no client wrote
+  it, no config set it) takes the picked level's value, written with the revision read there; a
+  locked one is skipped. Any other value stands, and the row shows
   "Differs on <hab>" when it does not match, as `logbook.md` 9.1 does.
 - **What Bypass never touches.**
   - Harness permissions: permission modes, allow and deny rules, the harness's own prompts.
@@ -2630,7 +2635,8 @@ A hab-side setting lives on the hab that enforces it. The app writes it through 
   relaunch. It holds the value, the revision the app last saw and that hab's epoch. A later
   write to the same id on the same hab replaces the queued one. When the hab connects:
   - Same epoch: the app sends the write with its revision. A `conflict` (another device wrote
-    since) drops it; the hab's value stands, and the level notice names the row.
+    since) or `locked` drops that row by the error's `data.id`, as for a level pick (below); the
+    hab's value stands, and the level notice names the row.
   - New epoch: revisions are not compared across epochs (`hab-logic-api.md` 3.5), and a lost
     `settings.json` can restart them. The app reads the snapshot first. When the value there is
     not the one the app last saw, another write won and the queued write drops. Otherwise the app
@@ -2647,6 +2653,7 @@ with the build stage:
 | `settings.set {values: [{id, value, revision}]}` | → `{settings: [{id, value, default, revision, source}], seq}` | Write one or more values, all or nothing on this hab. A level pick is one call per hab |
 | event `settings.updated` | `type` `settings.updated`, `id` the setting id, `revision` the new revision, `data {value, source}` | A value changed: by a client, or by a config read. Sent to `host` scope subscribers only |
 | error kind `locked` | `data.kind` `locked`, `data.id` the setting | The setting is set in the hab's config; the client shows it read-only |
+| error field `data.id` | the id of the first refused row, on every `settings.set` error | Tells the client which row refused the call |
 
 - **`source`** is a server-sent word set, so it is open: `default` (no client wrote it, no config
   set it), `client` (a client wrote it), `config` (locked by the config, a flag or the
@@ -2657,7 +2664,11 @@ with the build stage:
 - **Errors, by `kind`.** A `revision` that is not the current one is `conflict`. A locked id is
   `locked`. An unknown id is `not_found`, so a newer app can show "not on this hab" for a
   setting an older hab lacks. A value outside the setting's type is `invalid`. Any error refuses
-  the whole call.
+  the whole call, and every `settings.set` error carries `data.id`, the first refused row.
+- **A refused level pick.** On `conflict` or `locked`, the app drops the row `data.id` names and
+  sends the rest once more, with their revisions unchanged. A second refusal ends the try on
+  that hab; the rows left show their hab's value. A `not_found` or `invalid` drops that row the
+  same way. The level notice names each dropped row.
 - **`settings.updated` is not ephemeral:** the settings are in the `host` snapshot, so the event
   carries a revision and a client orders it against the snapshot like any other object.
 - **The hab applies a change at once:** to the next start elsewhere, the next request's expiry,
