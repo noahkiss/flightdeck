@@ -408,6 +408,35 @@ func TestOwnerSizeThrottled(t *testing.T) {
 	r.wantResizes("p 81x24", "p 90x24")
 }
 
+// TestNoOwnerDropsPendingSize: a size the owner wanted that still waits in the throttle never
+// reaches the PTY once the pane has no owner: the pane keeps the size it has (spec 6.5), after a
+// disconnect and after a disown alike.
+func TestNoOwnerDropsPendingSize(t *testing.T) {
+	for _, leave := range []string{"disconnect", "disown"} {
+		t.Run(leave, func(t *testing.T) {
+			r := newRig(t)
+			r.m.Connected("A")
+			r.m.Created("A", "p")
+			r.m.SetDesired("A", "p", 81, 24)
+			r.waitSize(81, 24)
+			r.m.SetDesired("A", "p", 90, 24) // held by the throttle
+			r.waitFor("the throttle timer", func() bool { return r.clock.pending() > 0 })
+			if leave == "disconnect" {
+				r.m.Disconnected("A")
+			} else if _, err := r.m.Disown("A", "p"); err != nil {
+				t.Fatal(err)
+			}
+			r.clock.advance(DefaultThrottle)
+			r.idle()
+			r.wantResizes("p 81x24")
+			r.wantEvents("p A create 80x24", "p  "+leave+" 81x24")
+			if got := r.size("p"); got != (size{81, 24}) {
+				t.Fatalf("size after %s: %v, want 81x24", leave, got)
+			}
+		})
+	}
+}
+
 // TestRedraw: snapshot mode asks for a snapshot and touches no size; nudge mode resizes one
 // column narrower and back after the gap.
 func TestRedraw(t *testing.T) {

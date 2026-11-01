@@ -58,6 +58,9 @@ type fakeSource struct {
 	snap []byte // the snapshot's screen; "SNAP" when nil
 	fail error  // when set, Subscribe fails with it
 	n    int    // Subscribe calls
+	// entered and gate, when set, make Subscribe say it was called, then wait for gate.
+	entered chan struct{}
+	gate    chan struct{}
 }
 
 func newFakeSource() *fakeSource { return &fakeSource{new: make(chan *fakeSub, 16)} }
@@ -65,6 +68,10 @@ func newFakeSource() *fakeSource { return &fakeSource{new: make(chan *fakeSub, 1
 func (f *fakeSource) Subscribe(_ context.Context, pane string, from uint64) (Sub, error) {
 	if pane != "p" {
 		return nil, link.ErrNoPane
+	}
+	if f.gate != nil {
+		f.entered <- struct{}{}
+		<-f.gate
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -143,9 +150,72 @@ func TestTickets(t *testing.T) {
 		t.Error("a ticket worked twice")
 	}
 	tok, _ = tk.Issue("c1", "p", false)
+	if o, f := tk.Held("c1", "p"); o || !f {
+		t.Errorf("held with one full ticket: observe %v, full %v", o, f)
+	}
+	tk.Issue("c1", "p", true)
+	if o, f := tk.Held("c1", "p"); !o || !f {
+		t.Errorf("held with a full and an observer ticket: observe %v, full %v", o, f)
+	}
+	if o, f := tk.Held("c2", "p"); o || f {
+		t.Errorf("another client holds: observe %v, full %v", o, f)
+	}
 	now = now.Add(30 * time.Second)
+	if o, f := tk.Held("c1", "p"); o || f {
+		t.Errorf("expired tickets still held: observe %v, full %v", o, f)
+	}
 	if _, ok := tk.Redeem(tok); ok {
 		t.Error("an expired ticket worked")
+	}
+}
+
+// TestObserverFromTicket: a client is an observer of a pane from the moment it holds an observer
+// ticket for it, through the stream's opening, to its open stream (spec 6.8). A full ticket or
+// stream makes it not an observer.
+func TestObserverFromTicket(t *testing.T) {
+	src := newFakeSource()
+	src.entered, src.gate = make(chan struct{}, 1), make(chan struct{})
+	srv := New(Config{Source: src})
+	defer srv.Close()
+	if srv.Observer("thumb", "p") {
+		t.Fatal("observer with no ticket and no stream")
+	}
+	tok, _, err := srv.Ticket("thumb", "p", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !srv.Observer("thumb", "p") {
+		t.Fatal("not an observer while it holds an observer ticket")
+	}
+	type opened struct {
+		c   *Client
+		err error
+	}
+	done := make(chan opened, 1)
+	go func() {
+		c, _, err := open(t, srv, api.DataHello{Ticket: tok})
+		done <- opened{c, err}
+	}()
+	<-src.entered // the ticket is redeemed and the stream not yet open
+	if !srv.Observer("thumb", "p") {
+		t.Error("not an observer while its stream opens")
+	}
+	close(src.gate)
+	o := <-done
+	if o.err != nil {
+		t.Fatal(o.err)
+	}
+	if !srv.Observer("thumb", "p") {
+		t.Error("not an observer with an open observer stream")
+	}
+	if _, _, err := srv.Ticket("thumb", "p", false); err != nil {
+		t.Fatal(err)
+	}
+	if srv.Observer("thumb", "p") {
+		t.Error("an observer while it holds a full ticket")
+	}
+	if srv.Observer("other", "p") {
+		t.Error("another client is an observer")
 	}
 }
 

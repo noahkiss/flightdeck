@@ -230,7 +230,8 @@ func (st *paneState) setDesired(client string, s size) {
 }
 
 // setOwnerLocked makes owner (empty for none) the pane's owner for reason, sends the one owner
-// event, and applies the new owner's desired size. The caller holds m.mu.
+// event, and applies the new owner's desired size, or with no owner drops any size waiting to
+// be applied. The caller holds m.mu.
 func (m *Manager) setOwnerLocked(st *paneState, owner string, reason api.OwnerReason) {
 	st.owner, st.reason, st.restore = owner, reason, ""
 	if st.cand == owner && owner != "" {
@@ -240,6 +241,10 @@ func (m *Manager) setOwnerLocked(st *paneState, owner string, reason api.OwnerRe
 		if d := st.desiredOf(owner); d != nil {
 			st.want = d
 		}
+	} else {
+		// No owner: the pane keeps the size it has (spec 6.5). A size the old owner wanted and
+		// the throttle still holds is dropped, so it never lands after a disconnect or disown.
+		st.want = nil
 	}
 	target := st.want
 	if target == nil {

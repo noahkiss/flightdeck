@@ -453,3 +453,34 @@ func TestConcurrentUse(t *testing.T) {
 		t.Fatalf("snapshot %d sessions, %d panes", len(snap.Sessions), len(snap.Panes))
 	}
 }
+
+// TestSetOwnerDoesNotSave: an owner change emits its event and raises the pane's revision, but
+// never writes the state file, so a caller holding a lock never waits on the disk (spec 6.8).
+func TestSetOwnerDoesNotSave(t *testing.T) {
+	s, rec := open(t, t.TempDir(), NewFakeHolder(pane("pa")))
+	rec.take()
+	path := s.Health().StatePath
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("state file after open: %v", err)
+	}
+	rev := s.Snapshot(api.HostInfo{ID: "host"}).Panes[0].Revision
+	if !s.SetOwner("pa", api.PaneOwner{Owner: "client-a", Reason: api.OwnerReasonTake, Cols: 80, Rows: 24}) {
+		t.Fatal("SetOwner of a known pane reported false")
+	}
+	evs := rec.take()
+	mustEvents(t, evs, "pane.owner:pa")
+	if evs[0].Revision != rev+1 {
+		t.Fatalf("pane.owner revision %d, want %d", evs[0].Revision, rev+1)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("an owner change wrote the state file:\nbefore %s\nafter  %s", before, after)
+	}
+	if p := s.Snapshot(api.HostInfo{ID: "host"}).Panes[0]; p.Owner != "client-a" || p.Revision != rev+1 {
+		t.Fatalf("pane after SetOwner: owner %q revision %d", p.Owner, p.Revision)
+	}
+}

@@ -68,6 +68,7 @@ type Server struct {
 	mu      sync.Mutex
 	conns   map[net.Conn]struct{}
 	streams map[*stream]struct{} // streams past their welcome, for Observer and Redraw
+	opening map[Ticket]int       // tickets redeemed by streams not yet in streams, for Observer
 	closed  bool
 	wg      sync.WaitGroup
 }
@@ -86,7 +87,8 @@ func New(cfg Config) *Server {
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
 	}
-	s := &Server{cfg: cfg, tickets: NewTickets(nil), conns: map[net.Conn]struct{}{}, streams: map[*stream]struct{}{}}
+	s := &Server{cfg: cfg, tickets: NewTickets(nil), conns: map[net.Conn]struct{}{}, streams: map[*stream]struct{}{},
+		opening: map[Ticket]int{}}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	return s
 }
@@ -109,23 +111,45 @@ func (s *Server) Ticket(client, pane string, observe bool) (string, time.Duratio
 	return tok, ttl, nil
 }
 
-// Observer reports whether client follows pane only through observer streams: it has at least
-// one open observer stream on the pane and no other (spec 6.4). Such a client's size never
-// reaches the PTY.
+// Observer reports whether client follows pane only through observer streams (spec 6.4, 6.8).
+// Its open streams on the pane, the streams it is opening and its unexpired tickets for the
+// pane count: at least one is an observer and none is full. So a thumbnail is an observer from
+// its ticket on, not only once its stream is open. Such a client's size never reaches the PTY.
 func (s *Server) Observer(client, pane string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	observer := false
-	for st := range s.streams {
-		if st.t.Client != client || st.t.Pane != pane {
-			continue
+	observe, full := s.tickets.Held(client, pane)
+	note := func(t Ticket) {
+		if t.Client != client || t.Pane != pane {
+			return
 		}
-		if !st.t.Observe {
-			return false
+		if t.Observe {
+			observe = true
+		} else {
+			full = true
 		}
-		observer = true
 	}
-	return observer
+	for st := range s.streams {
+		note(st.t)
+	}
+	for t := range s.opening {
+		note(t)
+	}
+	return observe && !full
+}
+
+// opened moves t from the redeemed tickets that are opening a stream to the open stream st, or
+// only drops it when st is nil (the open failed). It holds s.mu across both, so Observer never
+// sees the client in neither.
+func (s *Server) opened(t Ticket, st *stream) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if st != nil {
+		s.streams[st] = struct{}{}
+	}
+	if s.opening[t]--; s.opening[t] <= 0 {
+		delete(s.opening, t)
+	}
 }
 
 // Redraw sends a fresh snapshot on every open stream client has on pane, and on no other
@@ -181,7 +205,10 @@ func (s *Server) ServeConn(nc net.Conn, br *bufio.Reader) {
 	if br == nil {
 		br = bufio.NewReaderSize(nc, 64<<10)
 	}
-	st, err := s.open(nc, br)
+	st, t, err := s.open(nc, br)
+	if t != nil {
+		s.opened(*t, st)
+	}
 	if err != nil {
 		var re *RefusedError
 		if !errors.As(err, &re) {
@@ -192,9 +219,6 @@ func (s *Server) ServeConn(nc net.Conn, br *bufio.Reader) {
 		nc.Write(AppendFrame(nil, api.FrameReject, payload))
 		return
 	}
-	s.mu.Lock()
-	s.streams[st] = struct{}{}
-	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
 		delete(s.streams, st)
@@ -203,24 +227,31 @@ func (s *Server) ServeConn(nc net.Conn, br *bufio.Reader) {
 	st.run(br)
 }
 
-// open reads the hello, redeems the ticket, subscribes and sends the welcome.
-func (s *Server) open(nc net.Conn, br *bufio.Reader) (*stream, error) {
+// open reads the hello, redeems the ticket, subscribes and sends the welcome. Once the ticket is
+// redeemed, it is returned too: it stays in s.opening until the caller passes it to opened.
+func (s *Server) open(nc net.Conn, br *bufio.Reader) (*stream, *Ticket, error) {
 	nc.SetReadDeadline(time.Now().Add(s.cfg.HelloTimeout))
 	f, err := ReadFrame(br)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	nc.SetReadDeadline(time.Time{})
 	if f.Kind != api.FrameHello {
-		return nil, errors.New("the first frame on a data connection must be a hello")
+		return nil, nil, errors.New("the first frame on a data connection must be a hello")
 	}
 	var h api.DataHello
 	if err := json.Unmarshal(f.Payload, &h); err != nil {
-		return nil, errors.New("hello: " + err.Error())
+		return nil, nil, errors.New("hello: " + err.Error())
 	}
+	// Redeemed under s.mu and counted as opening at once, so Observer always sees the ticket.
+	s.mu.Lock()
 	t, ok := s.tickets.Redeem(h.Ticket)
+	if ok {
+		s.opening[t]++
+	}
+	s.mu.Unlock()
 	if !ok {
-		return nil, &RefusedError{Kind: api.ErrorKindTicketInvalid, Hint: "the ticket is unknown, used or expired"}
+		return nil, nil, &RefusedError{Kind: api.ErrorKindTicketInvalid, Hint: "the ticket is unknown, used or expired"}
 	}
 	from := link.FromNow
 	if h.Offset != nil {
@@ -234,7 +265,7 @@ func (s *Server) open(nc net.Conn, br *bufio.Reader) (*stream, error) {
 		sub, err = s.cfg.Source.Subscribe(ctx, t.Pane, link.FromNow)
 	}
 	if err != nil {
-		return nil, refusal(t.Pane, err)
+		return nil, &t, refusal(t.Pane, err)
 	}
 	cols, rows, _ := s.cfg.Source.Size(t.Pane)
 	id := make([]byte, 8)
@@ -248,7 +279,7 @@ func (s *Server) open(nc net.Conn, br *bufio.Reader) (*stream, error) {
 		done:   make(chan struct{}),
 	}
 	st.out = append(st.out, AppendFrame(nil, api.FrameWelcome, payload))
-	return st, nil
+	return st, &t, nil
 }
 
 // refusal names why pane cannot be followed: not_found for a pane that is gone or unknown,
@@ -434,7 +465,7 @@ func (st *stream) chunk(ch link.Chunk) {
 		st.scan = termq.NewScanner(ch.Offset)
 		p := SnapshotPayload(ch.Offset, string(ch.Encoding), ch.Data)
 		st.add(item{kind: api.FrameSnapshot, data: p, cost: len(ch.Data)})
-		if st.snapped && ch.Cols > 0 && !st.resync {
+		if st.snapped && ch.Cols > 0 {
 			st.add(resizeItem(ch))
 		}
 		st.snapped = true

@@ -655,9 +655,6 @@ func (c *conn) handleHello(m message) {
 	}
 	c.clientID, c.token = c.s.claimToken(c, p.ReconnectToken)
 	c.hello = true
-	if c.s.cfg.Size != nil {
-		c.s.cfg.Size.Connected(c.clientID)
-	}
 	caps := c.s.cfg.Capabilities
 	if caps == nil {
 		caps = []string{}

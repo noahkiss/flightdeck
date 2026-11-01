@@ -67,3 +67,22 @@ func (t *Tickets) Redeem(tok string) (Ticket, bool) {
 	}
 	return v, true
 }
+
+// Held reports the tickets client holds for pane that are neither redeemed nor expired: whether
+// any is for an observer stream, and whether any is for a full one.
+func (t *Tickets) Held(client, pane string) (observe, full bool) {
+	now := t.now()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, v := range t.m {
+		if v.Client != client || v.Pane != pane || !now.Before(v.expires) {
+			continue
+		}
+		if v.Observe {
+			observe = true
+		} else {
+			full = true
+		}
+	}
+	return observe, full
+}

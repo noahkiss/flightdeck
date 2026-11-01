@@ -800,6 +800,9 @@ func (p *pane) lose(why error) (Notice, bool) {
 		return Notice{}, false
 	}
 	p.lost, p.lostAt = why, time.Now()
+	// The hab forgets a lost pane's owner (PaneGone), so the pane keeps none: if it comes back,
+	// its frames and welcome name no owner until the hab sets one (spec 6.5).
+	p.owner, p.reason = "", ""
 	for s := range p.subs {
 		s.end(why)
 		delete(p.subs, s)

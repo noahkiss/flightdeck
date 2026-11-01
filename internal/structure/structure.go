@@ -783,6 +783,15 @@ func (s *Store) commit(events []Event) {
 			s.health.SaveError = ""
 		}
 	}
+	s.emit(events)
+}
+
+// emit hands events to OnEvent without saving the state: for a change that is not saved, such
+// as a size owner, whose caller must not wait on the disk.
+func (s *Store) emit(events []Event) {
+	if s.closed {
+		return
+	}
 	for _, e := range events {
 		s.onEvent(e)
 	}

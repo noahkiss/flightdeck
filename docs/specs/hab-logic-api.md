@@ -996,17 +996,20 @@ This spec uses `disown` throughout, following Rex, not "release". One word per c
 
 ### 6.4 Observers
 
-- A data connection opened with `observe: true` (a thumbnail, a dashboard) never takes ownership,
-  never sets a desired size and never sends input.
+- A data connection opened with `observe: true` (a thumbnail, a dashboard) never takes ownership
+  and never sets a desired size.
+- Input from a client that follows a pane through observer streams only is written to the
+  program like any input, but it never counts toward ownership (6.2).
 - An observer's own view size never reaches the PTY.
 
 ### 6.5 Owner changes
 
 - Reasons: `create` (the client that created the pane), `take`, `request`, `typed` (the debounce in
-  6.2), `disown`, `lost` (another client took it), `disconnect` (the owner's connection closed),
-  `restore` (the owner reconnected within the grace period).
+  6.2), `disown`, `lost` (reserved: in the word set, never sent; see 6.8), `disconnect` (the
+  owner's connection closed), `restore` (the owner reconnected within the grace period).
 - **On disconnect** the pane keeps its size and has no owner. No resize happens, so the program does
-  not reflow because a phone dropped.
+  not reflow because a phone dropped. A size the owner wanted that is still waiting in the
+  throttle (6.6) is dropped too; the same holds for `disown`.
 - **On restore** the owner gets the pane back, unless another client took it meanwhile.
 - gff-hab keeps each client's last desired size, newest first.
 - Every owner change emits one event with the reason. Every size change also reaches every data
@@ -1043,30 +1046,36 @@ data streams in `cmd/gff-hab/data.go`:
   pane's revision; `Pane.owner` carries the owner in the structure. The event's `reason` names
   how the change came about (`create`, `take`, `request`, `typed`, `disown`, `disconnect`,
   `restore`); its size is the size the pane gets. A takeover is one event with the new owner,
-  so `lost` stays in the word set and is never sent: the client that lost the pane sees another
-  owner in the event. The owner is not saved; a new gff-hab starts a new epoch with no owners.
+  so `lost` is reserved: it stays in the word set and is never sent. The client that lost the
+  pane sees another owner in the event. The owner is not saved; a new gff-hab starts a new epoch with no owners.
 - **Creator.** The client whose `session.create` made the pane owns it (`create`), with the
   pane's size as its desired size.
 - **Debounce.** The 300 ms starts at the first input from a client that is not the owner;
   further input from that client does not restart it. Input from the owner stops it. Input
-  from a third client starts that client's own debounce. Input counts when the connection reads
-  the `pane.input` call.
+  from a third client starts that client's own debounce, so the 300 ms restarts from that
+  input: while two clients other than the owner take turns typing, neither takes the pane.
+  Input counts when the connection reads the `pane.input` call.
 - **Explicit control.** `pane.take` and `pane.request` return the owner after the call; a take
   by the owner and a request while another client owns change nothing and emit nothing.
   `pane.disown` from a client that is not the owner answers `not_owner`.
 - **Desired size.** `pane.set_desired_size` stores the size (1 to 65535) and answers
   `applied: true` when this client owns the pane or the pane has none: the PTY gets this size,
   or a newer one, within the throttle. Sizes go to the holder at most once per 50 ms, trailing.
-- **Observers.** A client whose open data streams on a pane are all observers (at least one)
-  is an observer of that pane. Its input does not count, `pane.set_desired_size` stores
-  nothing and answers `applied: false`, and `pane.take`, `pane.request` and a nudge answer
-  `invalid`. A client with a full stream on the pane, or with no stream, is not an observer.
+- **Observers.** A client is an observer of a pane when its open data streams on the pane, the
+  streams it is opening and its unexpired data tickets for the pane (5.2) are all observers
+  (at least one). So a thumbnail is an observer from its `data.ticket` call on, not only once
+  its stream is open. Its input is written to the program but does not count toward ownership,
+  `pane.set_desired_size` stores nothing and answers `applied: false`, and `pane.take`,
+  `pane.request` and a nudge answer `invalid`. A client with a full stream or full ticket for
+  the pane, or with neither stream nor ticket, is not an observer.
 - **Disconnect and restore.** A client's connections are counted, so an old connection closed
-  by a reconnect token (3.7) does not end its ownership. When its last connection closes, each
-  pane it owns keeps its size and has no owner (`disconnect`). A client that says hello again
-  with its token within the grace period (60 s, the reconnect grace) gets each such pane back
-  (`restore`), unless any owner change happened on the pane meanwhile. After the grace period
-  its desired sizes are dropped.
+  by a reconnect token (3.7) does not end its ownership: the new connection is counted before
+  the old one is closed. When its last connection closes, each pane it owns keeps its size and
+  has no owner (`disconnect`). A client that says hello again with its token within the grace
+  period (60 s, the reconnect grace) gets each such pane back (`restore`), unless any owner
+  change happened on the pane meanwhile. After the grace period its desired sizes are dropped. A size waiting in the throttle when the pane loses its owner
+  is dropped, so it never lands after a disconnect or a disown. A pane the holder link loses
+  forgets its owner; when it comes back, it has none until a client takes it.
 - **Resize frames.** Every resize frame carries the owner and the reason of the last owner
   change (`disown` for a pane that never had an owner). An owner change also sends a resize
   frame at the current size, so every stream learns the owner in band even when the size
@@ -1081,6 +1090,10 @@ data streams in `cmd/gff-hab/data.go`:
   same throttle as the owner's sizes. Neither writes to the program's input.
 - **Not built here:** `pane.activity` (7.1), focus reports from the owner only (5.6), the
   owner's display facts for colour answers (5.8), and the nudge after a crash rebuild (6.7).
+  The nudge after a crash rebuild is the first follow-up.
+- **Not saved.** An owner change raises the pane's revision in memory and never writes the
+  state file, so no caller waits on the disk; the revision reaches the file with the next
+  saved change.
 
 ---
 

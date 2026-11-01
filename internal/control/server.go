@@ -324,7 +324,8 @@ func (s *Server) Close() {
 	}
 }
 
-// claimToken finds the client id for a reconnect token and issues a new token for c. A valid
+// claimToken finds the client id for a reconnect token, issues a new token for c and counts c
+// as connected (Size.Connected). A valid
 // token is one from this epoch whose connection closed less than the grace period ago, or whose
 // connection is still open (then that connection is presumed dead and is closed).
 func (s *Server) claimToken(c *conn, presented string) (clientID, tok string) {
@@ -349,6 +350,11 @@ func (s *Server) claimToken(c *conn, presented string) (clientID, tok string) {
 	tok = randomID(16)
 	s.tokens[tok] = &token{clientID: clientID, live: c}
 	s.mu.Unlock()
+	// Count c before the old connection closes: the old one's Disconnected may run as soon as
+	// it is finished, and if c were not counted yet the client would leave ownership (spec 6.5).
+	if s.cfg.Size != nil {
+		s.cfg.Size.Connected(clientID)
+	}
 	if old != nil {
 		old.finish(nil)
 	}
