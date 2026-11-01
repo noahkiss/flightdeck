@@ -79,6 +79,8 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.sessionSend)
         result(HabMethods.approvalAnswer)
         result(HabMethods.chatPage)
+        result(HabMethods.commandList)
+        result(HabMethods.commandOutput)
         result(HabMethods.attachmentPut)
         result(HabMethods.attachmentGet)
         result(HabMethods.pushRegister)

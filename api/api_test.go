@@ -598,3 +598,31 @@ func TestGoldensFillEveryField(t *testing.T) {
 		walk("", tree)
 	}
 }
+
+// TestSwiftGoldensReadEveryResult: the Swift golden test keeps a hand-written list of result
+// types. Every result golden must be on it, or `swift test` fails on the Mac; this catches the
+// gap on any machine.
+func TestSwiftGoldensReadEveryResult(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "swift", "HabAPI", "Tests", "HabAPITests", "GoldenTests.swift"))
+	if err != nil {
+		t.Skip("no Swift golden test:", err)
+	}
+	files, err := filepath.Glob(filepath.Join("testdata", "rev*", "result.*.json"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no result goldens: %v", err)
+	}
+	for _, f := range files {
+		name := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), "result."), ".json")
+		name, _, _ = strings.Cut(name, "@")
+		var b strings.Builder
+		for i, part := range strings.FieldsFunc(name, func(r rune) bool { return r == '.' || r == '_' }) {
+			if i > 0 && part != "" {
+				part = strings.ToUpper(part[:1]) + part[1:]
+			}
+			b.WriteString(part)
+		}
+		if want := "result(HabMethods." + b.String() + ")"; !strings.Contains(string(src), want) {
+			t.Errorf("%s: GoldenTests.swift has no %s", f, want)
+		}
+	}
+}
