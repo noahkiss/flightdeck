@@ -64,15 +64,53 @@ final class LiveActivityFixTests: XCTestCase {
     /// The scene turning inactive starts the activity while the app is still
     /// in front; going to the background alone starts nothing.
     func testStartsOnInactiveNotBackground() async {
-        let (_, fleet, _, host) = await rig()
+        let (hab, fleet, _, host) = await rig()
+        fleet.scene(active: false)
+        // setActive queues behind the scene's own call: this returns once the
+        // background transition has run.
         await fleet.setActive(false)
-        try? await Task.sleep(for: .milliseconds(100))
         XCTAssertTrue(host.started.isEmpty, "no start from the background")
         await fleet.setActive(true)
-        await eventually("registered again") { fleet.push?.status["h"] == .registered }
+        // The new connection registers again; wait for the hab to see it,
+        // since the status still says registered from the last connection.
+        await eventually("registered again") { await hab.pushRegisters.count == 2 }
         fleet.scene(active: nil)
         await eventually("started") { host.started.count == 1 }
         XCTAssertEqual(host.started.first?.0.session, "s1")
+        await fleet.setActive(false)
+    }
+
+    /// The scene can turn inactive while a new connection registers again:
+    /// the hab already holds the device, so the activity still starts.
+    func testStartsWhileRegisteringAgain() async {
+        let (_, fleet, tracker, host) = await rig()
+        let reg = fleet.push!
+        reg.setDeviceToken(Data([2]))
+        XCTAssertEqual(reg.status["h"], .registering)
+        await tracker.start()
+        XCTAssertEqual(host.started.count, 1)
+        await fleet.setActive(false)
+    }
+
+    /// A first registration still in flight is not enough to start one.
+    func testNoStartBeforeFirstRegistration() async {
+        let hab = await blockedHab()
+        let fleet = Fleet()
+        let reg = PushRegistrar(defaults: emptyDefaults(), environment: .development)
+        fleet.push = reg
+        let conn = HabConnection(id: "h", transport: hab.transport(), timing: fastTiming())
+        fleet.add(conn, label: "desk")
+        let host = FakeActivities()
+        let tracker = LiveActivityTracker(board: fleet.board, push: reg, caller: ApprovalAnswerer(live: { _ in nil }, oneShot: { _ in hab.transport() }, clientLabel: "phone"), host: host)
+        fleet.activities = tracker
+        await fleet.setActive(true)
+        await eventually("tracked") { tracker.pick.tracked?.session == "s1" }
+        await eventually("waiting for a token") { reg.status["h"] == .waiting }
+        await tracker.start()
+        reg.setDeviceToken(Data([1]))
+        XCTAssertEqual(reg.status["h"], .registering)
+        await tracker.start()
+        XCTAssertTrue(host.started.isEmpty)
         await fleet.setActive(false)
     }
 

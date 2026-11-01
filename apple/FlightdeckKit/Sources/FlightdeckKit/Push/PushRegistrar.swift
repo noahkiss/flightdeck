@@ -66,6 +66,10 @@ public final class PushRegistrar {
     @ObservationIgnored private var online: [String: HabConnection] = [:]
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var inFlight: [String: Task<Void, Never>] = [:]
+    /// Habs whose last `push.register` succeeded. A hab keeps the device's
+    /// registration across connections, so a repeat in flight after a new
+    /// connection does not undo it.
+    @ObservationIgnored private var accepted: Set<String> = []
     @ObservationIgnored private let log = Logger(subsystem: "com.flightdeck.app", category: "push")
 
     enum Keys {
@@ -140,9 +144,22 @@ public final class PushRegistrar {
         tokenError = e
     }
 
+    /// Whether a hab can push to this device: its last registration
+    /// succeeded, and a repeat may be in flight (each new connection and each
+    /// settings change registers again). The Live Activity checks this as the
+    /// scene turns inactive, which can fall in the middle of that repeat.
+    public func canPush(_ id: String) -> Bool {
+        switch status[id] {
+        case .registered: true
+        case .registering: accepted.contains(id)
+        default: false
+        }
+    }
+
     /// A connection reached online with a new welcome: register there.
     public func connectionOnline(_ conn: HabConnection, welcome: Welcome) {
         guard welcome.capabilities.contains("push") else {
+            accepted.remove(conn.id)
             online[conn.id] = nil
             status[conn.id] = .notSetUp
             return
@@ -162,6 +179,7 @@ public final class PushRegistrar {
     public func forget(id: String) {
         connectionOffline(id: id)
         status[id] = nil
+        accepted.remove(id)
     }
 
     /// Waits for every registration in flight; for tests and for ordering the
@@ -197,8 +215,10 @@ public final class PushRegistrar {
                 _ = try await conn.call(HabMethods.pushRegister, p)
                 guard let self, !Task.isCancelled else { return }
                 self.status[id] = .registered
+                self.accepted.insert(id)
             } catch {
                 guard let self, !Task.isCancelled else { return }
+                self.accepted.remove(id)
                 if let e = error as? RPCError, e.kind == .unavailable {
                     // The hab lost its push config since the welcome.
                     self.status[id] = .notSetUp

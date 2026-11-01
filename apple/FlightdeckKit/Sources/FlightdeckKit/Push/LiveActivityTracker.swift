@@ -99,7 +99,7 @@ public final class LiveActivityTracker {
     public func start() async {
         guard let host, host.enabled, let t = pick.tracked, let session = t.session else { return }
         let row = board.rows.first { $0.target == t }
-        guard ActivityPick.shouldStart(row: row, pushRegistered: push.status[t.habID] == .registered, running: host.running().contains(session)),
+        guard ActivityPick.shouldStart(row: row, pushRegistered: push.canPush(t.habID), running: host.running().contains(session)),
               let row, let hab = board.habs.first(where: { $0.id == t.habID }),
               let habHost = hab.state.welcome?.host.id
         else { return }

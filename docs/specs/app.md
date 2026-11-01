@@ -1180,7 +1180,10 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
   or the one that last entered `blocked`, whichever came later. ActivityKit starts an activity
   only while the app is in front, so the tracker starts it when the scene turns inactive on its
   way out, not in the background: for that session, if it is working or blocked and its hab has
-  push registered (without push nothing could update it after suspension, 9.2). One activity at
+  push registered (without push nothing could update it after suspension, 9.2). Registered
+  means the hab's last `push.register` succeeded: each new connection registers again, and the
+  scene can turn inactive while that repeat is in flight, so a repeat counts as registered. A
+  first registration still in flight does not. One activity at
   a time: any other is ended first, and its token dropped on its hab with `push.unregister`.
   The first content of a session blocked on an answerable permission carries its request with
   Allow and Deny, since the hab sends nothing until the state changes. The activity's push
