@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
-	"net/url"
+	"net/http"
+	"net/http/httptrace"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -291,14 +292,21 @@ func (a *agentService) promptOpencode(ctx context.Context, c *opencode.Client, s
 	}
 	ctx, cancel := context.WithTimeout(ctx, opencodeTimeout)
 	defer cancel()
+	// wrote turns true once any of the request reached the transport's writer: before that, the
+	// server cannot have it.
+	var wrote atomic.Bool
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{WroteHeaders: func() { wrote.Store(true) }})
 	if err := c.Prompt(ctx, st.Session, text); err != nil {
 		if opencode.NotFound(err, opencode.TagSessionNotFound) {
-			return control.Errorf(api.ErrorKindConflict, "opencode session %s is gone: %v", st.Session, err)
+			return permanent(control.Errorf(api.ErrorKindConflict, "opencode session %s is gone: %v", st.Session, err))
 		}
-		if promptMayHaveLanded(err) {
+		if promptMayHaveLanded(err, wrote.Load()) {
 			// The server may have queued it: a retry must not send it again.
 			e := control.Errorf(api.ErrorKindUnavailable, "the message may have reached opencode session %s, but its server gave no answer (%v); check the session before sending again with a new key", st.Session, err)
 			return control.Partial(e)
+		}
+		if promptRefusedForGood(err) {
+			return permanent(opencodeUnavailable(err))
 		}
 		return opencodeUnavailable(err)
 	}
@@ -306,19 +314,40 @@ func (a *agentService) promptOpencode(ctx context.Context, c *opencode.Client, s
 }
 
 // promptMayHaveLanded reports whether a failed prompt call may still have reached the server:
-// anything but a connection that was never made, or an answer that refused the call (4xx).
-func promptMayHaveLanded(err error) bool {
+// a 5xx answer, or no answer to a request that was written, in part or whole. A 4xx refused it;
+// a request never written (no connection, or a context that ended first) cannot have landed.
+func promptMayHaveLanded(err error, wrote bool) bool {
 	var ae *opencode.APIError
 	if errors.As(err, &ae) {
 		return ae.Status >= 500
 	}
-	var oe *net.OpError
-	if errors.As(err, &oe) && oe.Op == "dial" {
+	return wrote
+}
+
+// promptRefusedForGood reports whether the server refused a prompt in a way a retry cannot fix:
+// a 4xx other than 408, 409 and 429 (a 404 here is API drift; a gone session is handled first).
+func promptRefusedForGood(err error) bool {
+	var ae *opencode.APIError
+	if !errors.As(err, &ae) || ae.Status < 400 || ae.Status >= 500 {
 		return false
 	}
-	var ue *url.Error
-	return errors.As(err, &ue) // the request went out, or may have; no answer came back
+	switch ae.Status {
+	case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooManyRequests:
+		return false
+	}
+	return true
 }
+
+// errPermanent marks a failure that sending again cannot fix. It rides beside the API error, so
+// session.send answers the same kind; channel delivery refuses the message rather than hold it.
+var errPermanent = errors.New("permanent")
+
+type permanentError struct{ e error }
+
+func (p permanentError) Error() string   { return p.e.Error() }
+func (p permanentError) Unwrap() []error { return []error{p.e, errPermanent} }
+
+func permanent(err error) error { return permanentError{err} }
 
 // replyOpencode answers a permission request through the pane's opencode server: once for
 // allow, reject for deny. A request a child session asked is answered under that session. A

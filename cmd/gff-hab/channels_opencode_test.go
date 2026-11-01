@@ -15,6 +15,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/channels"
+	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/opencode"
 )
 
@@ -97,9 +98,11 @@ func TestChannelsOpencodeNoServer(t *testing.T) {
 	}
 }
 
-// TestChannelsOpencodePromptFailure: a prompt the server never got holds the channel message
-// for a later round; a prompt the server may have queued (no answer, a dropped connection, a
-// 5xx) is not_delivered and never sent again, as a paste without its Enter is.
+// TestChannelsOpencodePromptFailure: a prompt the server never got (no server, a context that
+// ended before the dial) or refused for now (429) holds the channel message for a later round;
+// one it refused for good (400, 401, a route it lacks, a gone session) refuses the message; a
+// prompt the server may have queued (no answer, a dropped connection, a 5xx) is not_delivered
+// and never sent again, as a paste without its Enter is.
 func TestChannelsOpencodePromptFailure(t *testing.T) {
 	saved := opencodeTimeout
 	opencodeTimeout = 300 * time.Millisecond
@@ -110,6 +113,15 @@ func TestChannelsOpencodePromptFailure(t *testing.T) {
 		switch {
 		case strings.Contains(r.URL.Path, "ses_400"):
 			w.WriteHeader(http.StatusBadRequest)
+		case strings.Contains(r.URL.Path, "ses_401"):
+			w.WriteHeader(http.StatusUnauthorized)
+		case strings.Contains(r.URL.Path, "ses_429"):
+			w.WriteHeader(http.StatusTooManyRequests)
+		case strings.Contains(r.URL.Path, "ses_drift"):
+			w.WriteHeader(http.StatusNotFound)
+		case strings.Contains(r.URL.Path, "ses_gone"):
+			w.WriteHeader(http.StatusNotFound)
+			io.WriteString(w, `{"_tag":"SessionNotFoundError","message":"no session"}`)
 		case strings.Contains(r.URL.Path, "ses_500"):
 			w.WriteHeader(http.StatusInternalServerError)
 		case strings.Contains(r.URL.Path, "ses_hang"):
@@ -136,7 +148,11 @@ func TestChannelsOpencodePromptFailure(t *testing.T) {
 		want                error
 	}{
 		{"no server listening", closed, "ses_1", channels.ErrBusy},
-		{"refused with 400", srv.URL, "ses_400", channels.ErrBusy},
+		{"refused with 400", srv.URL, "ses_400", errPermanent},
+		{"refused with 401", srv.URL, "ses_401", errPermanent},
+		{"route missing (API drift)", srv.URL, "ses_drift", errPermanent},
+		{"session gone", srv.URL, "ses_gone", errPermanent},
+		{"rate limited", srv.URL, "ses_429", channels.ErrBusy},
 		{"failed with 500", srv.URL, "ses_500", channels.ErrNotDelivered},
 		{"no answer in time", srv.URL, "ses_hang", channels.ErrNotDelivered},
 		{"connection dropped", srv.URL, "ses_drop", channels.ErrNotDelivered},
@@ -145,9 +161,27 @@ func TestChannelsOpencodePromptFailure(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got := deliverErr(a.promptOpencode(context.Background(), oc, api.AgentState{Session: c.session}, "hi"))
+		raw := a.promptOpencode(context.Background(), oc, api.AgentState{Session: c.session}, "hi")
+		got := deliverErr(raw)
 		if !errors.Is(got, c.want) {
 			t.Errorf("%s: %v, want %v", c.what, got, c.want)
 		}
+		// A permanent failure refuses the channel message; session.send's answer keeps its kind.
+		var ce *control.Error
+		if c.want == errPermanent && (errors.Is(got, channels.ErrBusy) || errors.Is(got, channels.ErrNotDelivered) || !errors.As(raw, &ce)) {
+			t.Errorf("%s: %v held or not an API error", c.what, got)
+		}
+	}
+
+	// A context that ends before the dial sends nothing: the message is held, not ended
+	// not_delivered.
+	oc, err := opencode.New(srv.URL, "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	if got := deliverErr(a.promptOpencode(ctx, oc, api.AgentState{Session: "ses_ok"}, "hi")); !errors.Is(got, channels.ErrBusy) {
+		t.Errorf("a context that ended before the dial: %v, want %v", got, channels.ErrBusy)
 	}
 }

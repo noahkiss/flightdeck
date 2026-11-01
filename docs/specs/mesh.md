@@ -851,8 +851,10 @@ the rest of client kind `hab`.
 - **`expired`:** a message still held 7 days after it arrived.
 - **`not_delivered`:** the paste reached the prompt but Enter was not sent, an opencode server
   may have queued the prompt but gave no answer (none within 5 s, a dropped connection, a 5xx),
-  or the hab stopped during the write. It is not retried. A prompt the server never got (no
-  connection) or refused (another 4xx) holds the message for a later round.
+  or the hab stopped during the write. It is not retried. A prompt never written (no
+  connection, or the time ran out before the dial) or refused for now (408, 409, 429) holds the
+  message for a later round. A prompt refused for good (any other 4xx, a route the server lacks,
+  or a gone opencode session) is `refused` with the server's answer.
 - **`delivered`** means both writes reached the program, or opencode's server accepted the
   prompt. The read back (a `working` signal
   within a few seconds) is Part 4's and is not built yet.

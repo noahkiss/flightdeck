@@ -103,10 +103,15 @@ func (l *channelLocal) Deliver(ctx context.Context, sessionID, text string) erro
 
 // deliverErr maps a session.send error to a channel outcome. A partial error (the paste is in
 // the prompt but Enter was not sent, or an opencode server may have queued the prompt) is not
-// delivered and not retried; busy or away holds the message; any other error refuses it.
+// delivered and not retried; a permanent one (an opencode server refused the prompt for good,
+// or its session is gone) refuses the message; busy or away holds it; any other error refuses
+// it.
 func deliverErr(err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, errPermanent) {
+		return err
 	}
 	var ce *control.Error
 	if errors.As(err, &ce) {

@@ -930,8 +930,11 @@ Built choices (`internal/opencode`, `internal/harness/opencode.go`,
   yet (a fresh TUI) answers `unavailable`: type the first message in the terminal. A
   `SessionNotFoundError` 404 is `conflict`. A call the server may have taken (no answer within
   5 s, a dropped connection, a 5xx) is a partial `unavailable`, so a retry under the same key
-  gets that answer and never sends the message twice. A call the server never got (no
-  connection) or refused (another 4xx) is a plain `unavailable`. Only a pane whose server
+  gets that answer and never sends the message twice. A call never written (no connection, or
+  a context that ended before the dial) or refused (another 4xx) is a plain `unavailable`.
+  "Written" means the request's headers reached the transport's writer (`httptrace`). A refusal
+  no retry can fix (a 4xx other than 408, 409 and 429, API drift, a gone session) keeps its kind
+  for `session.send`, and channel delivery refuses the message rather than hold it. Only a pane whose server
   gff-hab follows (one it started) takes messages; an opencode in a plain pane answers
   `unavailable`.
 - **Permission answers.** `approval.answer` posts `once` (allow) or `reject` (deny, with a
