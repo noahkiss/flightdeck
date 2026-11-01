@@ -1,0 +1,665 @@
+# Modules: behaviour spec
+
+Status: study for review. Part 7, stage 1. Researched 2026-11-01.
+
+This spec says how modules behave, and recommends when to build them. A module is the third tier
+of Flightdeck, after core and features. It is JavaScript that returns a tree of native building
+blocks. The Flightdeck app draws the tree in SwiftUI. The `gff` terminal client draws it as
+terminal widgets.
+
+It describes behaviour in our own words. It copies no code. Facts marked *(gk)* come from general
+knowledge, not from a page opened for this spec. Facts marked *(unverified)* come from a secondary
+source.
+
+Owner rules this spec works within:
+
+- Modules come after the first release. Native views keep a building-block shape so modules slot
+  in later (owner decision, 2026-10-31).
+- The index of a module source is a **catalog**. The file inside each module is its **manifest**.
+- iPhone and iPad ship through internal TestFlight. The Mac app ships with Developer ID.
+- The bar is herdr, Paseo and Rex. Flightdeck matches them and adds only cheap guards.
+
+## Contents
+
+1. [Decisions](#1-decisions)
+2. [References](#2-references)
+3. [Tiers](#3-tiers)
+4. [Where modules run](#4-where-modules-run)
+5. [Bundle and manifest](#5-bundle-and-manifest)
+6. [Block tree](#6-block-tree)
+7. [Bridge](#7-bridge)
+8. [Limits](#8-limits)
+9. [Versioning](#9-versioning)
+10. [Sources](#10-sources)
+11. [Guidelines](#11-guidelines)
+12. [Edge cases](#12-edge-cases)
+13. [Cost](#13-cost)
+14. [Recommendation](#14-recommendation)
+15. [Sources read](#15-sources-read)
+
+---
+
+## 1. Decisions
+
+Internal calls, made by this study. Each has its reason in the section named.
+
+| Question | Decision | Section |
+|---|---|---|
+| Where module code runs | In the hab, not in the clients. Clients receive block trees as data and draw them. This changes the plan, which ran the same bundle in JavaScriptCore in the app and in goja in `gff` | 4 |
+| Which engine | goja, in Go: pure Go, so `make check-pure` holds, and it can be interrupted | 4 |
+| Which process | One module host process per hab, started and watched by `gff-hab`. One goja runtime per module inside it | 4 |
+| How a module is shaped | `refresh` gathers data and may wait; `render` only builds the tree from state and must be fast; `act` handles a tap | 5 |
+| Trust | Modules are trusted code, as in herdr and Paseo. The cheap guard: a module declares its powers in its manifest, the install shows them, and an undeclared call fails | 7 |
+| Compatibility | A whole-number block vocabulary version. A module names the lowest it needs; a client that is older shows a placeholder | 9 |
+| Who fetches sources | The hab, with the system `git` | 10 |
+| Updates | Never automatic. An update shows what changed and asks, as Paseo does. A failed update keeps the old version running | 10 |
+| Authoring | A local folder reloads on save. `gff-hab modules check` loads a module and renders it once. A generated guide and type file let an agent write modules, as in herdr | 10 |
+| File names | `manifest.toml` in each module, `catalog.toml` at a source's root (TOML, as the detection manifests are) | 5, 10 |
+| Colours | Blocks name colours by meaning (`working`, `blocked`, `accent`); a raw colour is allowed but discouraged, so the terminal can map meanings to its own palette | 6 |
+
+The owner questions are in section 14.
+
+---
+
+## 2. References
+
+For each tool: how code arrives, what it may call, how it is versioned, how it fails.
+
+### 2.1 herdr app (JS mods)
+
+- **What.** The herdr desktop app draws its own chrome from mods: the sidebar, the tab bar,
+  menus, dialogs and toasts are all mods. A mod is a folder with `main.js`, a small placement
+  file, and icons.
+- **Code arrives** as plain files in the app's home folder. The app writes an agent guide
+  (`AGENTS.md`) and API type files into that folder on every start. The person asks their agent
+  for a change, and the agent edits the files. Shared mods live in public GitHub repos with a
+  topic tag and a `RECIPE.md`: a brief from which another agent could build the mod from an empty
+  folder. The guide tells the agent to read every file and to tell the person when a mod reaches
+  the network, runs programs or reads files outside its folder.
+- **It may call** almost anything. A mod is a class whose `render` describes native GPU elements
+  with chained builders (rows, columns, text, buttons, editors, live terminals). The host module
+  gives live data (spaces, agents, terminals, focus, theme), runs any app command, runs programs
+  on this machine or a connected one, fetches URLs, reads files, and keeps state per mod or
+  shared between mods. There is no permission prompt. The security doc says: treat a mod like a
+  shell script you would run yourself.
+- **Versioned** loosely. The type files are rewritten each start to match the app version. There
+  is no compatibility field.
+- **It fails** softly. Saving a file reloads every copy at once. A broken save keeps the old
+  version running and reports the error in a status command. A `check` command loads a mod and
+  renders it once. A fixed key combination always resets to the default layout.
+- **Engine.** QuickJS, through a Rust binding (bundle inspection, 2026-10-30).
+
+### 2.2 Paseo (plugins)
+
+- **What.** A plugin adds daemon calls, agent providers, usage sources, sidebar items, panels,
+  buttons, timeline items, slash commands, settings screens and themes.
+- **Code arrives** from a local folder, a Git repository (with an optional subfolder and ref), an
+  npm package, or a reviewed registry that pins an approved version. The daemon fetches and
+  compiles. Optional build steps are argument lists, never shell strings.
+- **It may call.** Server code runs in a subprocess of the daemon, with full Node access, the
+  daemon user's files and processes. Client code is compiled TSX that the daemon ships to every
+  connected app, including the App Store iOS app, where it runs inside the React Native runtime.
+  The app caches each bundle by its SHA-256. Plugins are unsandboxed; installing one means "I
+  trust this codebase".
+- **Versioned** by a manifest (`paseo-plugin.json`) with an id and a semver range of Paseo
+  versions. The daemon advertises feature flags; a client that predates a contribution type
+  skips it.
+- **It fails** without harm to the running copy. A failed install or update discards the
+  candidate and keeps the installed version running. A failed reload stays failed and shows its
+  error. Each client surface sits inside an error boundary. A log tail per plugin survives
+  reloads.
+
+### 2.3 Rex (Lua)
+
+- **What.** Configuration and scripts in Lua 5.1: key bindings, named actions, event handlers,
+  timers, layouts, and calls to the server API.
+- **Code arrives** as `init.lua` and files beside it, or as a script run from the CLI. There is
+  no shared catalog.
+- **It may call** the server API (the Lua API is derived from it), run commands without a shell,
+  and the Lua standard library minus `io.popen` and `os.execute`. Lua builds no UI beyond
+  layouts, menus and the command palette.
+- **Versioned** by the server it talks to. A call the server lacks returns an error.
+- **It fails** per call. A bad API call is skipped and the rest of the file loads. A syntax error
+  fails the load and the last working bindings stay. An action has 30 seconds. A script may hold
+  at most 1,024 timers. Reload is manual.
+
+### 2.4 Scriptable (iOS)
+
+- **What.** An App Store app that runs user-written JavaScript in JavaScriptCore.
+- **Code arrives** from the user: typed in the app, imported as files, or shared on a forum.
+- **It may call** a wide native bridge: files, network, location, calendar, reminders, contacts,
+  photos, notifications, speech, a web view, tables, and a widget builder whose JS assembles
+  native widget elements.
+- **Versioned** with the app. **It fails** with an error shown to the user who wrote the script.
+
+### 2.5 Obsidian (mobile plugins)
+
+- **What.** Community plugins run on iOS inside the app's web view. Node and Electron APIs are
+  absent there.
+- **Code arrives** from GitHub releases. A plugin is submitted once to a directory with an
+  automatic review; later releases download from GitHub, matched by tag to the manifest version.
+- **Versioned** by a manifest with `version`, `minAppVersion`, and `isDesktopOnly`, which keeps
+  a plugin that needs Node off mobile.
+- **It fails** inside the plugin. A call to a missing API can crash that plugin.
+
+### 2.6 Expo updates (and Happy)
+
+- **What.** A React Native app downloads new JavaScript without an App Store release. Happy, an
+  App Store agent client, checks for new JS on every launch (bundle inspection, 2026-10-30).
+- **Versioned** by a runtime version that names the native code a build contains. An update
+  reaches only builds with the same runtime version. A `fingerprint` policy changes the runtime
+  version whenever native code may have changed.
+- **It fails** with a rollback. An error before the first screen marks the update failed on that
+  device and falls back to the last good update. After the first screen there is no rollback,
+  because the newer code may have changed stored state.
+
+### 2.7 Airbnb's server-driven UI
+
+- **What.** The server sends one response with the screen's layout, its sections and its
+  actions. iOS, Android and the web render the same section types from a shared schema. A client
+  skips a section type it does not know. (Read through earlier research notes; the post refused
+  a fetch on 2026-11-01.)
+
+### 2.8 What we take
+
+| Idea | From | Where here |
+|---|---|---|
+| An agent writes modules from a generated guide and type file | herdr | 10.5 |
+| `check` loads and renders once; a broken save keeps the old version | herdr | 10.5, 12 |
+| Tell the person about network and program use before install | herdr | 7.2, 10.3 |
+| Server code in a subprocess; a failed update keeps the running copy | Paseo | 4, 10.4 |
+| A manifest with an id and a compatibility range; feature flags | Paseo, Obsidian | 5, 9 |
+| Build steps as argument lists, never shell strings | Paseo | 10.2 |
+| A time limit per action; a bad call returns an error, not a crash | Rex | 7, 8 |
+| A runtime version gate; roll back a failed first launch | Expo | 9, 10.4 |
+| The server sends data; clients render a shared vocabulary and skip unknown types | Airbnb | 4, 6 |
+
+---
+
+## 3. Tiers
+
+| Tier | What | Ships through | Off switch |
+|---|---|---|---|
+| Core | Connections, sessions, the terminal view, the chat view | App and hab releases | No |
+| Features | First-party: approvals, the status board, Capcom, the console, usage | App and hab releases | Yes |
+| Modules | Experiments and tweaks, written by the user or an agent, or installed from a source | Git sources, installed on a hab | Yes |
+
+- An idea starts as a module. It becomes a feature when it earns native code.
+- A feature view keeps a building-block shape: its data could be expressed as a block tree. Then
+  a module can sit beside it, and a feature can start life as a module.
+- Modules never replace core. A module that fails never blocks a core or feature view.
+
+---
+
+## 4. Where modules run
+
+**Decision: modules run in the hab. Clients draw block trees and send taps back.**
+
+The plan ran one bundle in two engines: JavaScriptCore in the app and goja in `gff`. This study
+moves execution to the hab. The module still returns data; only the place where it runs changes.
+
+| | In each client (the plan) | In the hab (this spec) |
+|---|---|---|
+| Engines | Two: JavaScriptCore and goja. Their language support differs, so a module can work in one and fail in the other | One: goja |
+| Time limit in the app | No public API. The iOS 27.2 SDK's public JavaScriptCore headers have no execution time limit and no memory limit (checked 2026-11-01). A runaway module could spin a thread until the app quits | `Interrupt` from another goroutine, documented by goja |
+| Memory limit | None in either engine | The module host is a process; `gff-hab` kills and restarts it |
+| What the app downloads | JavaScript, so guideline 4.7 applies directly (section 11) | Data only |
+| Bridge | Built twice, in Swift and in Go, and kept equal | Built once, in Go, in the same binary as the hab API |
+| Data the module needs | Comes from the hab anyway, over the network | Next to it |
+| Latency of a tap | Local | One round trip to the hab. On a LAN or SSH link this is tens of milliseconds |
+| With the hab unreachable | The module runs but has no data | The client shows the last tree, greyed, marked offline |
+| Stages | 3 (goja), 4, 5 (JavaScriptCore), 6 | 3 (goja in the hab), 4, 6. Stage 5 becomes the module host and its limits |
+
+Why the hab:
+
+- Every useful module reads hab data: sessions, agents, usage, git status, the host's catalog.
+  Running next to that data costs nothing; running in the client costs a bridge on each side.
+- One engine and one bridge are half the work and cannot drift.
+- Limits are enforceable with public APIs.
+- The app downloads no code, which keeps it far from guideline 2.5.2 and 4.7.
+- Paseo runs plugin server code beside its daemon for the same reasons. Airbnb's clients render
+  server data.
+
+What the client still owns:
+
+- Drawing each block natively, and view state that is per device: which section is expanded,
+  scroll position, text typed into a field before it is sent. The client keys this by block id.
+- Optimistic feedback on a tap. A toggle flips at once and settles when the next tree arrives.
+- Ticking time. A block can carry an end time; the client counts down without a new tree.
+
+**The module host.** `gff-hab` starts one child process, the module host, when at least one
+module is enabled. The host runs one goja runtime per module, so modules share no globals. It
+talks to `gff-hab` over a pipe. `gff-hab` restarts it with backoff if it exits. Restarting
+`gff-hab` restarts the host; no session is affected, because modules own no PTYs.
+
+**Rejected: in the client after all.** A later reason could bring client execution back: a module
+that must run with no hab, or must read device data. Neither exists. If one appears, the block
+tree stays the same; only a second engine is added.
+
+---
+
+## 5. Bundle and manifest
+
+A module is a folder:
+
+| File | Required | What |
+|---|---|---|
+| `manifest.toml` | Yes | Identity, needs, powers, places |
+| `main.js` | Yes | The module. Other `.js` files beside it may be imported by relative path |
+| `README.md` | No | What it shows, for the person installing it |
+| `RECIPE.md` | No | A brief another agent could build the module from (herdr's idea) |
+| `preview.png` | No | A picture for a source's catalog |
+
+Manifest fields:
+
+| Field | Meaning |
+|---|---|
+| `id` | Lowercase letters, digits and hyphens. Unique on a hab |
+| `name`, `summary` | Shown in the app and in `gff` |
+| `version` | Semver. Shown; not used for gating |
+| `blocks` | The lowest block vocabulary version the module needs (9) |
+| `bridge` | The lowest bridge version the module needs (9) |
+| `powers` | Any of `act`, `exec`, `fetch` (7.2). Reading hab data and keeping state need no power |
+| `places` | Where it appears: `board` (a card on the status board), `host` (a section on a host's page), `session` (a panel beside a session), `sheet` (a full view opened from the module list) |
+| `refresh` | Seconds between scheduled refreshes, at least 5. Absent: refresh only on events and taps |
+| `events` | Hab event types that trigger a refresh, for example `agent.state` |
+| `settings` | Optional fields the person may set (text, number, toggle, choice), shown by the client as a form |
+
+**The module's shape.** `main.js` exports three functions. All three are optional except
+`render`.
+
+| Function | When | Limit | May use |
+|---|---|---|---|
+| `refresh(ctx)` | On install, on its schedule, on a listed event, after an action | 30 s | All declared powers; writes state |
+| `render(ctx)` | After each refresh, and when a client with another vocabulary version subscribes | 250 ms | Reads state and context only. Returns the tree |
+| `act(name, args, ctx)` | A tap on a block with an action | 10 s | All declared powers; writes state |
+
+Splitting slow work (`refresh`) from drawing (`render`) keeps every tree fast to produce. It also
+means a tree can always be rebuilt from state after a restart, with no network.
+
+---
+
+## 6. Block tree
+
+A tree is JSON. Each block has a `type`, an optional `id`, and its own fields. An `id` must be
+stable across renders when the block has view state or an action.
+
+### 6.1 Vocabulary 1
+
+Field names match the ones a Live Activity or widget would use, so a module's data can feed a
+widget later.
+
+| Block | Fields | SwiftUI | Terminal |
+|---|---|---|---|
+| `stack` | `axis` (`vertical`, `horizontal`), `children`, `gap` | VStack or HStack | Rows or columns |
+| `section` | `title`, `children`, `collapsed` | A section with a header | A heading and indented lines |
+| `row` | `symbol`, `title`, `body`, `trailing`, `tint`, `action` | A list row | One line, `trailing` right-aligned |
+| `text` | `text`, `style` (`body`, `caption`, `mono`, `title`) | Text | Text; `mono` unchanged |
+| `badge` | `text`, `tint` | A capsule | `[text]` in the tint |
+| `metric` | `label`, `value`, `unit`, `tint` | A tile | `label value unit` |
+| `metrics` | Up to 6 `metric` children | A grid of tiles | One line, separated |
+| `progress` | `value` (0 to 1) or `steps` `{total, current}`, `ends_at` | A progress view | A bar or `3/7` |
+| `button` | `title`, `symbol`, `action`, `role` (`normal`, `destructive`), `confirm` | A button | A key hint; Enter on focus |
+| `toggle` | `title`, `value`, `action` | A toggle | `[x]` or `[ ]` |
+| `field` | `placeholder`, `action` | A text field; Return sends | A prompt line |
+| `list` | `children`, `empty` | A list | Lines; `empty` when none |
+| `log` | `lines`, `follow` | A monospaced scroll view | A pager |
+
+Common fields on any block: `id`, `fallback` (text shown by a client that does not know the
+type), `stale_after` (seconds after which the client greys the block).
+
+Field limits suit widget-sized text: `title` 120 characters, `body` 300, `trailing` and badge
+`text` 40. Longer text is cut with an ellipsis by the hab before it sends the tree.
+
+A live terminal block (`terminal {pane}`) is left for vocabulary 2: it needs a data stream inside a
+module view, and both clients already have a terminal view.
+
+### 6.2 Actions
+
+An `action` is `{name, args}`.
+
+- A name the module defines goes to the module's `act`.
+- A name with a `client.` prefix is handled by the client and never reaches the module:
+  `client.open_session {id}`, `client.open_pane {id}`, `client.copy {text}`, `client.open_url
+  {url}` (https only; the client asks before it opens).
+- `confirm` on a button makes the client ask first. `role: destructive` colours it.
+
+### 6.3 Colours and symbols
+
+- `tint` takes a meaning: `accent`, `muted`, `working`, `blocked`, `done`, `idle`, `error`,
+  `warning`. The app maps these to its theme; `gff` maps them to theme tokens that default to the
+  host terminal's ANSI colours. A raw `#RRGGBB` is accepted; `gff` picks the nearest colour.
+- `symbol` is an SF Symbol name. `gff` keeps a small table of symbol names to Unicode characters
+  and shows nothing for a name it does not know.
+
+### 6.4 Rendering rules
+
+- The hab sends the whole tree on each change. Trees are small (8.1), so no diff is needed in
+  version 1.
+- Unknown block type: show `fallback`, else a one-line placeholder "Needs a newer Flightdeck".
+- Unknown field: ignore it.
+- A block over a limit, or a tree over the size limit: the hab replaces the tree with an error
+  block and logs why.
+
+---
+
+## 7. Bridge
+
+The bridge is what a module's JavaScript may call. It is the global `fd` object, generated with a
+type file for authors.
+
+### 7.1 Calls
+
+| Call | Power | What |
+|---|---|---|
+| `fd.hab.get(method, params)` | none | A read-only hab API call at the module's bridge version: the structure, sessions, agent states, usage, git status, host stats, and the machine catalog once it exists |
+| `fd.hab.act(method, params)` | `act` | A hab call that changes something: start a session in a project, send text to a pane, stop a session |
+| `fd.exec(argv, {cwd, timeout})` | `exec` | Run a program on the hab's host, without a shell, as the hab's user. Returns exit code, stdout and stderr |
+| `fd.fetch(url, {method, headers, body})` | `fetch` | An HTTP or HTTPS request. Returns status, headers and body text |
+| `fd.state.get(key)`, `fd.state.set(key, value)` | none | Per-module storage on the hab, kept across restarts, shared by every client |
+| `fd.settings` | none | The person's settings for this module |
+| `fd.log(...)` | none | A line in the module's log tail |
+| `ctx` | none | The host's name and OS, the time, the place being drawn, the client vocabulary version |
+
+Nothing else exists: no native platform API, no file API, no timers. A module that needs a file
+reads it with `exec`, which declares that it runs programs.
+
+All bridge calls are synchronous from the module's point of view. The host blocks the module's
+runtime while a call runs, within the time limit of the current function. That keeps modules
+simple to write and avoids depending on goja's promise support (stage 3 checks it).
+
+### 7.2 Powers
+
+The guard is cheap and visible:
+
+- The manifest lists powers. The install and every update show them, and show a change in them
+  clearly ("now runs programs").
+- A call that needs an undeclared power throws an error the module can catch.
+- There is no sandbox beyond that. A module with `exec` can do anything the hab's user can do.
+  The install text says so in one line, as herdr and Paseo do.
+
+---
+
+## 8. Limits
+
+Cheap guards only. herdr and Paseo set no limits; Rex sets a 30-second action limit and a timer
+cap.
+
+### 8.1 Per call and per tree
+
+| Limit | Value | On overrun |
+|---|---|---|
+| `render` time | 250 ms | Interrupted; counts as a failure |
+| `refresh` time | 30 s | Interrupted; counts as a failure |
+| `act` time | 10 s | Interrupted; the client shows "Did not finish" |
+| Tree size | 500 blocks, depth 12, 64 KiB as JSON | The tree is replaced by an error block |
+| State | 256 KiB per module | `set` throws |
+| `exec` output | 1 MiB per stream | Cut, with a flag in the result |
+| `fetch` body | 1 MiB | Cut, with a flag in the result |
+| Scheduled refresh | At least 5 s apart | The manifest value is raised to 5 |
+| Event refresh | At most one per second per module | Events are coalesced |
+
+### 8.2 Memory
+
+- goja has no memory limit. The module host is a separate process, so a module cannot take
+  `gff-hab` down with it.
+- The host sets a soft Go memory limit of 256 MiB. `gff-hab` checks the host's resident memory
+  and kills it above 512 MiB.
+- After a kill or crash, `gff-hab` restarts the host. The module that was running at the time
+  counts one failure.
+
+### 8.3 Failures
+
+- A failure keeps the last good tree on screen, with an error mark and the message.
+- Three failures in a row pause the module. The client shows "Paused after errors" and a Retry
+  button. A success resets the count.
+- The log tail keeps the last 200 lines per module, across reloads. `gff-hab modules logs <id>`
+  prints it.
+
+---
+
+## 9. Versioning
+
+Three numbers, each a whole number that only rises.
+
+| Number | Owned by | Gates |
+|---|---|---|
+| Block vocabulary version | The block schema in `api/` | A client advertises the newest version it draws, in its hello. A module names the lowest it needs in `blocks` |
+| Bridge version | `gff-hab` | A module names the lowest it needs in `bridge`. An older hab refuses to install it |
+| Hab API revision | `hab-logic-api.md` 3.3 | `fd.hab.*` calls use the module's bridge version, which maps to an API revision |
+
+Rules:
+
+- **A new block type raises the vocabulary version.** A new optional field does not. So a
+  module knows from `ctx` whether the client draws a type, and can choose another.
+- **The hab renders per vocabulary version.** If two clients with different versions view the
+  same module, the hab calls `render` once for each version and caches the result.
+- **A client older than a module's `blocks`** shows the module's name and "Needs a newer
+  Flightdeck", like Obsidian's `minAppVersion` and Expo's runtime version.
+- **The bridge is additive.** A new call or field needs no new version. A removed or changed call
+  raises it, and the hab keeps the old behaviour for modules that name the older version, until
+  the API revision floor (`hab-logic-api.md` 3.3) drops it.
+- **The schema is generated.** The block vocabulary lives in `api/` with the rest of the schema,
+  so `make gen` produces the Go and Swift types, and the compat test covers it.
+
+---
+
+## 10. Sources
+
+### 10.1 What a source is
+
+- A source is a Git repository. Its root holds `catalog.toml`, which lists the modules it offers:
+  id, folder, summary. Each module is a folder in the repository with its own manifest.
+- A local folder is a source too, for development.
+- Flightdeck runs no registry and reviews nothing. A user adds the sources they trust.
+
+### 10.2 Install
+
+1. `gff-hab modules source add <git url>` clones the source into the hab's state folder with the
+   system `git`, so the user's Git config and credentials apply (the same reason the client uses
+   the system `ssh`, `gff-client.md`).
+2. `gff-hab modules install <source>/<id>` shows the manifest, the powers in one line each, and
+   the file list. On yes, it pins the current commit.
+3. The hab loads the module, runs `refresh`, then `render`. If either fails on this first run,
+   the install stops and nothing changes.
+4. The app's module list offers the same install, with the same text.
+
+A module needs no build step in version 1: the host loads plain JavaScript files. A module that
+wants TypeScript or bundling builds before it commits. (Paseo's argument-list build steps are a
+later addition if a real module needs one.)
+
+### 10.3 Agents install too
+
+The generated guide (10.5) tells an agent installing a module to read every file first and to
+tell the person when it declares `exec`, `fetch` or `act`. This is herdr's flow, and it suits a
+system whose users work through agents.
+
+### 10.4 Update and roll back
+
+- `gff-hab modules update [id]` fetches each source and lists modules with a newer commit. For
+  each, it shows the change in version, powers and files, and asks.
+- The hab loads the new commit beside the old one and runs its first `refresh` and `render`. On
+  success it switches. On failure it keeps the old version running and reports why (Paseo's
+  rule, and Expo's rollback before first launch).
+- `gff-hab modules rollback <id>` returns to the previous commit. The hab keeps one previous
+  commit per module.
+- No update is automatic. The app shows a count of available updates on the module list.
+
+### 10.5 Writing a module
+
+- `gff-hab modules guide` writes a guide and a type file for the bridge and the vocabulary into a
+  folder, for an agent to read. The hab rewrites them when its version changes.
+- A local module folder reloads on save. A broken save keeps the old version running and shows
+  the error.
+- `gff-hab modules check <folder>` loads the module, runs `refresh` with the real bridge, runs
+  `render` for each vocabulary version, validates the tree against the schema, and exits non-zero
+  with the error. An agent runs it before it calls a module done.
+
+### 10.6 Several hosts
+
+Modules install per hab. The app lists each hab's modules under that hab. Installing the same
+module on another hab is a separate install; copying a module's source and commit to another hab
+in one step is a later feature that fits the machine catalog work.
+
+---
+
+## 11. Guidelines
+
+Apple App Review Guidelines, read 2026-11-01:
+
+- **2.5.2:** apps may not "download, install, or execute code which introduces or changes
+  features or functionality of the app". (The older exception for code run by WebKit or
+  JavaScriptCore no longer appears in the text.)
+- **4.7:** apps may offer "HTML5 and JavaScript mini apps and mini games, streaming games,
+  chatbots, and plug-ins". The developer is responsible for that software.
+- **4.7.1 to 4.7.5:** that software must follow the privacy rules, filter objectionable content
+  with report and block tools, follow the payment rules; the app "may not extend or expose native
+  platform APIs or technologies to the software without prior permission from Apple" (4.7.2);
+  must not share data or permissions without consent each time (4.7.3); must provide an index
+  with universal links (4.7.4); and must gate software above the app's age rating (4.7.5).
+- **2.2:** TestFlight builds "should comply". External testers need a build approved by App
+  Review. Internal testers, up to 100 team members, get builds automatically. Internal builds
+  are not reviewed *(gk: the TestFlight page states the limits but not the review rule)*.
+
+### 11.1 Internal TestFlight build (the owner's plan)
+
+- No review happens, so no guideline is enforced. The design still keeps to them, so the same
+  build could go public.
+- With modules in the hab, the app downloads no code. It receives JSON trees over its existing
+  hab connection and draws them from a vocabulary compiled into the binary. Every action maps to a
+  hab call the app already makes, or to a fixed client action.
+
+### 11.2 A possible public build
+
+- **2.5.2.** Server-driven UI is data, not code. The set of things the app can draw and do is
+  fixed in the binary. Many App Store apps work this way (Airbnb's is the documented example).
+- **4.7.** The app offers no software: modules run on the user's own host and are installed by the
+  user. If a reviewer still treats modules as plug-ins: 4.7.2 holds (modules reach no device API);
+  4.7.3 holds (modules see hab data, never device data or permissions); 4.7.4 could be met by the
+  per-hab module list with each source's URL; 4.7.5 and 4.7.1's content tools fit poorly, because
+  Flightdeck runs no shared catalog. That is the main risk, and it is a risk for any public build
+  with modules.
+- **Precedents in the App Store today:** Paseo's iOS app runs plugin UI code shipped from the
+  user's daemon; Happy downloads new JavaScript on every launch; Obsidian runs community plugins;
+  Scriptable runs user scripts with a wide native bridge.
+- **If execution moved into the app** (section 4, rejected): the app would download JavaScript,
+  4.7 would apply directly, and 4.7.2 would forbid any bridge to native APIs. The bridge in
+  section 7 would still pass, because it reaches only the hab.
+
+### 11.3 The Mac app
+
+The Mac app ships with Developer ID, outside the Mac App Store. The App Review Guidelines do not
+apply to it.
+
+---
+
+## 12. Edge cases
+
+| Case | Behaviour |
+|---|---|
+| The hab is unreachable | The client shows the last tree it received, greyed, with "Offline since <time>". Taps are disabled |
+| The module host crashes | `gff-hab` restarts it with backoff. Clients see the last trees with an error mark until new ones arrive |
+| `gff-hab` restarts | The host restarts with it. Each module renders from stored state at once, then refreshes |
+| A module loops forever in `render` | Interrupted at 250 ms. The last good tree stays. Three in a row pause it |
+| A module allocates without end | The host passes 512 MiB and is killed. The module counts a failure; the others reload |
+| Two clients with different vocabulary versions | The hab renders once per version (9) |
+| A tap on a stale tree | The action carries the tree's revision. The module receives it in `args` and may ignore an action from an old tree. A `client.*` action always runs |
+| Two clients tap at once | Actions run one at a time per module, in arrival order |
+| A module's source is gone | The installed commit keeps running. `update` reports the source as unreachable |
+| A source changes history (force-push) | `update` finds the pinned commit missing, says so, and offers the new head as an update with the full file list |
+| An update adds a power | The update text leads with the new power. Declining keeps the old version |
+| A module declares a place the client does not support | The client omits it from that place; the module still appears in the module list |
+| A module emits a block over a field limit | The hab cuts the text with an ellipsis |
+| A module emits an unknown block type | The client shows `fallback` or "Needs a newer Flightdeck" for that block only |
+| Settings change | The module refreshes |
+| A module is disabled | It stops refreshing. Its state stays until it is removed |
+| A module is removed | Its folder, state and log are deleted after a confirmation |
+
+---
+
+## 13. Cost
+
+Estimates in subagent sessions of the size the plan uses ("one subagent, one session"). They
+assume Parts 2, 5 and 6 have their connection, widget and view code in place.
+
+| Stage | Work | Plan (client engines) | This spec (hab engine) |
+|---|---|---|---|
+| 2 | Block vocabulary 1 as a schema in `api/`, generated Go and Swift types, golden trees | 1 | 1 |
+| 3 | goja runtime, bridge, powers, refresh, render and act | 2 (in `gff`) | 2 (in the module host) |
+| 4 | Terminal renderer in `gff` | 1 to 2 | 1 to 2 |
+| 5 | JavaScriptCore runtime and Swift bridge in the app, with a time-limit workaround | 2 | 1: the module host process, memory watch, restart, failure counts |
+| 6 | SwiftUI renderer, with device tests on iPhone, iPad and Mac | 2 | 2 |
+| 7 | Sources, catalog, install, update, rollback, guide, `check` | 2 | 2 |
+| 8 | First module end to end on both clients | 1 | 1 |
+| | Fresh-eyes review of stages 3 and 7 | 1 | 1 |
+| | **Total** | **12 to 13** | **11 to 12** |
+
+The hab engine saves one stage. Its larger gain is risk: one engine, enforceable limits, and an
+app that downloads no code.
+
+---
+
+## 14. Recommendation
+
+**Recommendation: build later, after the first release. Do not drop.** This confirms the owner's
+decision of 2026-10-31.
+
+Evidence:
+
+- **Not now.** The tier costs 11 to 12 sessions, about the size of a whole part. It depends on
+  the app's and `gff`'s views being settled, and on the hab API covering what modules read. A
+  vocabulary designed before the first-party views exist will be wrong: Airbnb built its schema
+  from existing screens.
+- **Not drop.** Two of the three reference tools ship an extension tier, and treat it as central:
+  herdr's whole desktop UI is mods, and Paseo's plugins reach its App Store phone app. Our design
+  gives one module both a native and a terminal view, which neither of them has. The guideline
+  risk for the internal TestFlight build is nil, and modest for a public build.
+- **Cheap preparation now.** Feature views in the app and in `gff` keep a building-block shape
+  (owner decision 3). Concretely: where a first-party card is mostly rows, metrics, badges and
+  progress, the hab sends it as data the client draws generically. Stage 2 (the vocabulary
+  schema) could then run early, from those real views, at a cost of one session.
+
+### Owner questions
+
+1. **Build later, as decided?** Recommended: yes, after the first release, with no drop. The
+   alternative is to pull stage 2 forward now so that first-party cards use the vocabulary from
+   the start (one session, no JavaScript, no sources).
+2. **What may a module do on its host?** Recommended: declared `exec`, `fetch` and `act`, shown at
+   install, as herdr and Paseo allow. The alternative is hab data and state only: safer, but a
+   module could not run a program or reach a web service, so most useful modules could not be
+   written.
+
+### For the coordinator (plan changes this spec implies)
+
+- Stage 3 becomes "goja runtime and bridge in the hab's module host". Stage 5 becomes "module
+  host process, limits and failures" instead of a JavaScriptCore runtime.
+- The `/consensus` on who fetches sources is settled by section 4: the hab runs modules, so the
+  hab fetches. Running modules in the hab rather than the clients is itself a key decision with
+  no ground truth; it is a fair candidate for `/consensus` before stage 3.
+- First-module candidates for stage 8 that use only hab data: a host card from the machine
+  catalog (OS, tools, projects, load), or a board card summarising agents that wait, per project.
+
+---
+
+## 15. Sources read
+
+Opened 2026-11-01 unless noted:
+
+- Apple: App Review Guidelines (developer.apple.com/app-store/review/guidelines), sections 2.2,
+  2.5.2, 4.7 to 4.7.5; TestFlight (developer.apple.com/testflight). The iOS 27.2 SDK's public
+  JavaScriptCore headers, searched for time and memory limit calls.
+- herdr app (github.com/herdrdev/herdr-app): `docs/mods.md`, `docs/security.md`,
+  `defaults/AGENTS.md`; herdr.dev and herdr.dev/mods. Bundle inspection of the app, 2026-10-30.
+- Paseo (github.com/getpaseo/paseo): `docs/plugins.md`, `public-docs/plugins/index.md`,
+  `publishing.md`, `reference.md`, `plugins/claude-usage-source/paseo-plugin.json`; paseo.sh.
+- Rex: superlogical.com/rex/docs `llms-full.txt` (configuration, Lua API, scripts, custom
+  actions, events).
+- Scriptable: docs.scriptable.app.
+- Obsidian: docs.obsidian.md (mobile development, manifest, submitting a plugin).
+- Expo: docs.expo.dev/eas-update (runtime versions, error recovery). Happy's bundle inspection,
+  2026-10-30.
+- goja: github.com/dop251/goja README.
+- Airbnb, "A deep dive into Airbnb's server-driven UI system" (medium.com/airbnb-engineering),
+  through earlier research notes; the page refused a fetch on 2026-11-01.
+- Ours: `AGENTS.md`; `docs/specs/landscape.md`, `app.md`, `gff-client.md`,
+  `hab-logic-api.md`; the design notes, Part 7.
