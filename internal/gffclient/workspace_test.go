@@ -138,7 +138,10 @@ func TestSidebarStartRenameClose(t *testing.T) {
 	a := fakeHab(t, d, "a")
 	hst := newHost(t, 120, 30, false)
 	startWorkspace(t, hst, a.Sock)
-	hst.waitScreen("the empty sidebar", func(s string) bool { return strings.Contains(s, "no sessions") })
+	// The sidebar says "no sessions" while the host is still connecting; n starts nothing then.
+	hst.waitScreen("the empty sidebar, the host online", func(s string) bool {
+		return strings.Contains(s, "no sessions") && strings.Contains(s, "1/1 hosts")
+	})
 
 	hst.typ("n")
 	hst.waitScreen("the directory prompt", func(s string) bool { return strings.Contains(s, "[one] new session") })
@@ -167,7 +170,15 @@ func TestSidebarStartRenameClose(t *testing.T) {
 		ss := a.Sessions()
 		return len(ss) == 1 && ss[0].State == api.SessionStateExited
 	})
-	hst.waitScreen("the exited row", func(s string) bool { return line(s, "renamed") > 0 })
+	// A sidebar row looks the same running or exited, and x asks to end until gff has the
+	// exited state. The board names the state: wait for it there, then go back to the sidebar.
+	hst.typ(prefix + "g")
+	hst.waitScreen("the exited row on the board", func(s string) bool {
+		r := line(s, "renamed")
+		return r > 0 && strings.Contains(strings.Split(s, "\n")[r], "exited")
+	})
+	hst.typ(prefix + "w")
+	hst.waitScreen("the sidebar again", func(s string) bool { return !strings.Contains(s, "status board") })
 	hst.typ("x")
 	hst.waitScreen("the remove question", func(s string) bool { return strings.Contains(s, "remove renamed from one?") })
 	hst.typ("y")

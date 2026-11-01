@@ -581,11 +581,14 @@ func (u *workspaceUI) newSession() {
 
 func (u *workspaceUI) create(host, dir, cmd string) {
 	c := u.c
-	hs := c.hosts[host]
-	if hs == nil || !hs.online {
+	// The same source as the tab bar and the host prompt: the host set's model. The client's
+	// own hostState can trail it by one queued update.
+	hm, ok := c.cfg.Hosts.Host(host)
+	if !ok || !hm.Online() {
 		u.msg = host + " is offline"
 		return
 	}
+	hs := c.host(hm)
 	t := c.tab()
 	r := c.paneArea()
 	sizes := ViewSizes(len(t.views)+1, t.split, r.w, r.h)
