@@ -790,6 +790,46 @@ a launch agent's pane. **Waits for the owner:** whether an alert appeared, under
 whether Privacy & Security > Local Network lists GFF Holder. gff-hab makes no LAN connection of
 its own yet (peer habs are not built), so that half is owed.
 
+**`gff setup --check` on a notarized install (macOS 27.2), passed.** Two notarized release
+builds (A, B) and two ad-hoc dev builds, all under a proof prefix, installed and checked over SSH
+with no grant given:
+
+- Every row the paper spec names appeared: `sig ok` with "Developer ID, notarized" on both
+  bundles, `login ok` for each job, Aqua on the host line, holder `fda missing` with the Settings
+  pane named, `lan unknown`, opt-ins `off`. Exit 1. A check took 0 to 1 s. `--json` gave the
+  same rows.
+- The probe pane never appeared in `structure.get` (0 panes before a session, 1 after).
+- The first run found a bug that the Linux fakes hid: `codesign -dv` prints `flags=` inside the
+  `CodeDirectory` line, so every release read as "no hardened runtime". Fixed and re-run.
+- Over `--via` the walk printed the check and said to run it on that Mac; nothing opened.
+
+**Local Network request: a finding for P6.** The walk's request (the probe, a Go program in a
+pane of the signed holder, Local Network undecided) got "no route to host" from the gateway,
+every 2 s for 30 s. Part A's `nc` from the same kind of pane connected at once. So the probe is
+blocked where an Apple tool is not, which suggests macOS exempts its own tools, or that an alert
+was waiting on the screen. **Waits for the owner:** was there an alert, naming what.
+
+**P9, partly.** `launchctl disable gui/<uid>/<logic label>` made the logic job's row read
+`login missing` ("switched off in Login Items") and the check exit 1; `launchctl enable` cleared
+it. **Waits for the owner:** the real Login Items toggle, and whether gff-hab keeps running
+after it (exit 2 if it stops).
+
+**P10, the part without a grant, passed.** Dev build 1 (ad-hoc, `.dev` ids, its own job prefix)
+next to the release: `sig ok ... ad-hoc signature (dev build)` and the `dev` note on both
+processes. After a rebuild (dev build 2) installed over it, the drained dev-1 holder read
+`draining sig missing: another signing identity than the current holder`, which is the lost dev
+grant in requirement form. The release's check did not change. **Waits for the owner:** the
+grant itself (P10 kit step).
+
+**P12, the part without a grant, passed.** Release B installed over A: holder B started from its
+own build directory, A's pane stayed on A, and `--check` gave a `draining sig ok` row "same
+identity as the current holder, so it shares its grants". The kept Local Network answer carried
+over to B (same requirement). **Waits for the owner:** the grants and "no prompt; exit 0; the
+drained holder's pane still reads the protected folder" (P12 kit steps).
+
+**P7 and P11 wait for the owner** and a fresh account. The kit runs each step inside that
+account.
+
 **Restoring TCC needs a bundle LaunchServices can see.** `tccutil reset All <bundle-id>` failed
 with OSStatus -10814 (`kLSApplicationNotFoundErr`) while the only copies of the bundle were under
 `/tmp`, even after `lsregister -f`. With a copy under the home directory registered, it worked.
