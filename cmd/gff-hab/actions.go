@@ -47,6 +47,9 @@ type actions struct {
 	// peerName returns where a name is in use on a peer, from the catalog copies, or ""
 	// (mesh.md 6.5: names unique across peers). nil checks nothing.
 	peerName func(name string) string
+	// startedIn hears the folder a new session started in (content and attachments, app.md
+	// 4.4 and 4.7). nil: none.
+	startedIn func(session, dir string)
 }
 
 // onPeer returns where name is in use on a peer, or "".
@@ -188,6 +191,9 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 		}
 	}
 	a.noteDir(ctx, project, projectTop, p.Project != "" && p.Cwd != "", cwd)
+	if a.startedIn != nil {
+		a.startedIn(ss.ID, cwd)
+	}
 	return ss.ID, pane, nil
 }
 

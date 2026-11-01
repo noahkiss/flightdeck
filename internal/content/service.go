@@ -160,6 +160,32 @@ func (s *Service) Show(ctx context.Context, p api.ContentShowParams) (api.Conten
 	return api.ContentShown{ID: it.ID, Session: session}, nil
 }
 
+// NoteFolder records the folder a session started in, so its content and attachments have a
+// folder before its transcript records one.
+func (s *Service) NoteFolder(session, folder string) {
+	if err := s.cfg.Store.SetFolder(session, folder); err != nil {
+		s.cfg.Logf("content: %v", err)
+	}
+}
+
+// Folder returns the folder a session works in: the one recorded last (from its transcript or
+// its start), else its transcript's, else its project's most recently used one, else "".
+func (s *Service) Folder(ctx context.Context, session string) string {
+	if f := s.cfg.Store.Folder(session); f != "" {
+		return f
+	}
+	if s.cfg.Conversation != nil {
+		if _, cwd, err := s.cfg.Conversation(ctx, session); err == nil && cwd != "" {
+			s.NoteFolder(session, cwd)
+			return cwd
+		}
+	}
+	if s.cfg.ProjectDir != nil {
+		return s.cfg.ProjectDir(session)
+	}
+	return ""
+}
+
 // Forget drops a session's stored references and folder: its record is gone.
 // It runs inside the structure store's event callback, so the file write happens off this path.
 func (s *Service) Forget(session string) {

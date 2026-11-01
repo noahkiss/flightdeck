@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/attach"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/detect"
 	"github.com/noahkiss/flightdeck/internal/opencode"
@@ -60,6 +62,9 @@ type chatConfig struct {
 	// opencode returns the client of an opencode pane's server, and its version; nil: none.
 	// An opencode session's conversation is read through that server, never from a file.
 	opencode func(pane string) (c *opencode.Client, version string, ok bool)
+	// attachment reports whether an id names a file this hab stored (app.md 4.4): a user
+	// message's trailing attachment paths become its attachments. nil: none do.
+	attachment func(id string) bool
 }
 
 // chatSource is a conversation a chat.page reads: a transcript file, or an opencode server.
@@ -316,7 +321,7 @@ func (c *chatService) dirty(pane string, relist bool) {
 
 // changed sends one chat.message event per added or changed message.
 func (c *chatService) changed(msgs []api.ChatMessage) {
-	for _, m := range msgs {
+	for _, m := range c.withAttachments(msgs) {
 		c.publish(structure.Event{Type: control.EventChatMessage, ID: m.ID, Data: api.NonNil(m)})
 	}
 }
@@ -354,5 +359,34 @@ func (c *chatService) ChatPage(ctx context.Context, p api.ChatPageParams) (api.C
 	case err != nil:
 		return api.ChatMessages{}, control.Errorf(api.ErrorKindUnavailable, "session %s: %v", p.Session, err)
 	}
+	out.Messages = c.withAttachments(out.Messages)
 	return out, nil
+}
+
+// withAttachments takes the attachment paths session.send put at the end of each user message
+// off its text and lists their ids, so the chat view shows thumbnails, not paths (app.md 4.4).
+// The slice it is given may be a reader's own: a change goes into a copy.
+func (c *chatService) withAttachments(msgs []api.ChatMessage) []api.ChatMessage {
+	if c.attachment == nil {
+		return msgs
+	}
+	var out []api.ChatMessage
+	for i, m := range msgs {
+		if m.Kind != api.ChatKindUser || !strings.Contains(m.Text, attach.Folder) {
+			continue
+		}
+		text, ids := attach.SplitMessage(m.Text, c.attachment)
+		if len(ids) == 0 {
+			continue
+		}
+		if out == nil {
+			out = append([]api.ChatMessage(nil), msgs...)
+		}
+		m.Text, m.Attachments = text, append(append([]string(nil), m.Attachments...), ids...)
+		out[i] = m
+	}
+	if out == nil {
+		return msgs
+	}
+	return out
 }

@@ -18,6 +18,9 @@ import (
 // contentFile holds the shown references in the state directory (app.md 4.7).
 const contentFile = "content.json"
 
+// attachmentsFile indexes the files the owner sent (app.md 4.4).
+const attachmentsFile = "attachments.json"
+
 // conversation returns a session's chat messages and the folder its transcript records, for
 // rich content. A session with no transcript (no agent yet, a harness with no reader) has none.
 func (c *chatService) conversation(ctx context.Context, id string) ([]api.ChatMessage, string, error) {

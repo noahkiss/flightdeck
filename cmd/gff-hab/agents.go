@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/attach"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/detect"
 	"github.com/noahkiss/flightdeck/internal/harness"
@@ -69,6 +70,9 @@ type agentService struct {
 	// opencode reaches the private server of an opencode pane gff-hab started: sends and
 	// answers go through its API, not the terminal. Nil: none.
 	opencode *opencodeServers
+	// attachments returns the stored paths of a send's attachment ids (app.md 4.4). Nil: a send
+	// with attachments answers unavailable.
+	attachments func(session string, ids []string) ([]string, error)
 
 	mu      sync.Mutex
 	sending map[string]bool // panes a session.send holds until the turn starts
@@ -106,7 +110,16 @@ func (a *agentService) unclaim(pane string) {
 // has not started its turn (sendStart) is refused with conflict too.
 func (a *agentService) Send(ctx context.Context, client string, p api.SessionSendParams) error {
 	if len(p.Attachments) > 0 {
-		return control.Errorf(api.ErrorKindUnavailable, "session.send with attachments is not built yet; Part 6 stage 5 builds it")
+		// Each stored path goes into the text, which every supported harness reads with its
+		// own file tools (harness-adapters.md, Input delivery).
+		if a.attachments == nil {
+			return control.Errorf(api.ErrorKindUnavailable, "session.send with attachments needs the attachment store, which this hab is running without")
+		}
+		paths, err := a.attachments(p.Session, p.Attachments)
+		if err != nil {
+			return err
+		}
+		p.Text = attach.MessageText(p.Text, paths)
 	}
 	ss, ok := a.store.Session(p.Session)
 	if !ok {

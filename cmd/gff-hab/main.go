@@ -80,6 +80,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/attach"
 	"github.com/noahkiss/flightdeck/internal/catalog"
 	"github.com/noahkiss/flightdeck/internal/channels"
 	"github.com/noahkiss/flightdeck/internal/content"
@@ -345,6 +346,7 @@ func serve(args []string) error {
 		}
 	}
 	var contentRef atomic.Pointer[content.Service] // set once the content service exists
+	var attachRef atomic.Pointer[attach.Service]   // set once the attachment store exists
 	store, err := structure.Open(structure.Config{
 		Dir:     dir,
 		Holders: hs,
@@ -452,6 +454,7 @@ func serve(args []string) error {
 	var agentSvc *agentService
 	var explain control.Detect
 	var contents control.Content
+	var attachments control.Attachments
 	var ds *datastream.Server
 	var mgr *panesize.Manager
 	if lk != nil {
@@ -520,6 +523,10 @@ func serve(args []string) error {
 				c, ok := ocs.Client(pane)
 				return c, ocs.version(pane), ok
 			},
+			attachment: func(id string) bool {
+				a := attachRef.Load()
+				return a != nil && a.Known(id)
+			},
 		})
 		defer chats.Close()
 		ocs.dirty = chats.dirty
@@ -549,6 +556,19 @@ func serve(args []string) error {
 		contents = contentSvc
 		contentRef.Store(contentSvc)
 		caps = append(caps, "content")
+		// Files the owner sends to a session (app.md 4.4), stored in the session's folder.
+		attachSvc := attach.New(attach.Config{
+			StatePath: filepath.Join(dir, attachmentsFile),
+			Session:   func(id string) bool { _, ok := store.Session(id); return ok },
+			Folder:    contentSvc.Folder,
+			Fallback:  filepath.Join(dir, "attachments"),
+			Logf:      logger.Printf,
+		})
+		defer attachSvc.Close()
+		attachments = attachSvc
+		attachRef.Store(attachSvc)
+		sessionActs.startedIn = contentSvc.NoteFolder
+		caps = append(caps, "attachments")
 		// Commands from OSC 133 marks (hab-logic-api.md 2.5): command.updated events are read
 		// from the link and sent at a bounded rate.
 		cmdEvents := newCommandEvents(lk.CommandChanges, func(e structure.Event) {
@@ -562,7 +582,7 @@ func serve(args []string) error {
 		commands = commandService{lk}
 		caps = append(caps, "commands")
 		agentSvc = &agentService{store: store, agents: agents, gate: harness.NewGate(pwait), input: linkQueuer{lk}, logf: logger.Printf,
-			answering: pushes.answering, opencode: ocs}
+			answering: pushes.answering, opencode: ocs, attachments: attachSvc.Paths}
 		agentCalls = agentSvc
 		// Why a pane shows its state (harness-adapters.md, Detection): read only.
 		// The manifests are parsed now, off the start path, and again only when the data
@@ -717,6 +737,7 @@ func serve(args []string) error {
 		Channels:    chSvc,
 		Worktrees:   wts,
 		Speech:      speechSvc,
+		Attachments: attachments,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)

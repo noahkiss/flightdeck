@@ -1070,8 +1070,16 @@ Built choices (`session.send`, `internal/harness`, `cmd/gff-hab`):
 - Agent messages (channels, `mesh.md` 6.5) take this same path, wrapped in their envelope.
   Unlike `session.send`, the hab queues them: a busy agent holds a message until it is idle,
   done or stopped on an error. To opencode they go through its server, as one prompt.
-- Not built yet: the two-second typing pause, the read back and its "not delivered" event, and
-  attachments (`unavailable`).
+- Attachments (`app.md` 4.4). `session.send` with attachment ids appends each stored file's
+  absolute path to the text, after a blank line, one path per line, and the message then takes
+  the same path as plain text: one paste and its Enter for Claude Code and Codex, one prompt
+  through the server for opencode. A path is the one input all three harnesses take: each
+  reads the file with its own tools, and Claude Code also shows an image path as an image. No
+  harness here offers a structured image input through the terminal, so no adapter uses one.
+  The stored names hold no spaces or shell characters, so a path needs no quoting. A message
+  may be paths alone. `chat.page` and `chat.message` take the trailing paths of stored files
+  off a user message's text again and list their ids in `attachments`.
+- Not built yet: the two-second typing pause, the read back and its "not delivered" event.
 
 ## Permission answers
 
