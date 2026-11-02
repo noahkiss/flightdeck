@@ -104,7 +104,7 @@ load (rule 2: never ignore a file the build or tests use). So `ci.yml` lists `pa
 order (a later pattern wins):
 
 ```yaml
-paths: ['**', '!**/*.md', '!docs/**', 'docs/examples/**', '!apple/**', '!design/**', '!LICENSE', '!NOTICE']
+paths: ['**', '!**/*.md', '!docs/**', 'docs/examples/**', '!apple/**', 'apple/App/Acknowledgements.txt', 'apple/FlightdeckKit/Package.resolved', '!design/**', '!LICENSE']
 ```
 
 **Required checks.** No check is required on `main` (the default). `ci.yml`, `apple.yml` and
@@ -130,8 +130,8 @@ spec reserves its secret names in section 6 only.
 
 | Group | Paths | Why |
 |---|---|---|
-| Docs | `**/*.md`, `docs/**` except `docs/examples/**`, `LICENSE`, `NOTICE` | Nothing builds them. Only the hygiene scan runs |
-| Go | everything not in Docs, `apple/` or `design/`; `docs/examples/**` included | `ci.yml`. Go tests load the example config files in `docs/examples/` |
+| Docs | `**/*.md`, `docs/**` except `docs/examples/**`, `LICENSE` | Nothing builds them. Only the hygiene scan runs |
+| Go | everything not in Docs, `apple/` or `design/`; `docs/examples/**`, `NOTICE`, `apple/App/Acknowledgements.txt` and `apple/FlightdeckKit/Package.resolved` included | `ci.yml`. Go tests load the example config files in `docs/examples/`; `make check-notices` compares the two notice files with what `Package.resolved` and the rest produce (7.8) |
 | Apple | `apple/**`, `swift/HabAPI/**`, `api/**`, `design/icons/**`, `api/testdata/**`, `internal/transcript/testdata/**`, `cmd/gff-hab/testdata/console/**`, `.github/workflows/apple.yml` | The Swift package is generated from `api/`. `GoldenTests`, `ChatSnapshotTests` and `ConsoleTests` read those Go testdata folders. The project uses the app icon in `design/icons/` |
 | Holder | `internal/holder/**`, `internal/holderproto/**`, `internal/holderclient/**`, `internal/holderreg/**`, `internal/link/**`, `internal/service/**`, `internal/grants/**`, `cmd/gff-hab-holder/**`, `scripts/service-check.sh`, `scripts/macos-bundle.sh`, `.github/workflows/macos-go.yml` | macOS PTYs and launchd differ from Linux (`testing.md`, Layers) |
 
@@ -444,11 +444,12 @@ both halves, and the App Store version must rise with every hab fix.
 |---|---|
 | `gff_<version>_linux_amd64.tar.gz` | `gff`, `gff-hab`, `gff-hab-holder`, `LICENSE`, `NOTICE` |
 | `gff_<version>_linux_arm64.tar.gz` | The same |
-| `gff_<version>_darwin_arm64.tar.gz` | `GFF Hab.app`, `GFF Holder.app` (signed, notarized, stapled), `gff` (signed, notarized), `LICENSE`, `NOTICE` |
+| `gff_<version>_darwin_arm64.tar.gz` | `GFF Hab.app`, `GFF Holder.app` (signed, notarized, stapled; each holds `LICENSE` and `NOTICE` in `Contents/Resources`), `gff` (signed, notarized), `LICENSE`, `NOTICE` |
 | `<asset>.sha256` for each | One line, `sha256sum` format. The tap reads these (8.2) |
 | `SHA256SUMS` | Every asset's line |
 
-Each archive holds one folder named as the archive without `.tar.gz`, and the files inside it.
+`NOTICE` is the generated third-party notice file (7.8). Each archive holds one folder named as
+the archive without `.tar.gz`, and the files inside it.
 Homebrew strips a single top folder, so the formula sees the files directly. The darwin archive
 is written with `--no-xattrs --no-mac-metadata` and `COPYFILE_DISABLE=1`, so it carries no
 extended attribute headers and no `._` files.
@@ -677,6 +678,54 @@ bundle's short version or the app's marketing version. It stays in the tag, the 
   tap, so its bundles carrying `1.2.3` collide with nothing a user installs.
 - Stage 6 adjusts the script's version check if a later need breaks this table. This spec does
   not change the script.
+
+### 7.8 Third-party notices
+
+Every artifact we publish carries the notices of the third-party code inside it. One generator,
+`internal/notices` (`make notices`), writes two committed files:
+
+| File | Covers | Ships in |
+|---|---|---|
+| `NOTICE` | The Go standard library; every Go module `gff`, `gff-hab`, `gff-hab-holder` or `gff-hab-speech` links on linux/amd64, linux/arm64 or darwin/arm64 (from `go list -deps` with each binary's tags); libghostty-vt and what it contains (Ghostty, the Zig standard library, uucode, simdutf, Highway, Wuffs); herdr's detection manifests; and the speech helper's sherpa-onnx static library with what it contains (ONNX Runtime with its own notices, kaldi-native-fbank, KISS FFT, kaldi-decoder, OpenFst, simple-sentencepiece, utf8proc, PortAudio, nlohmann/json, hclust-cpp) and libopus | Each release archive, beside the binaries, and `Contents/Resources` of `GFF Hab.app` and `GFF Holder.app` |
+| `apple/App/Acknowledgements.txt` | Every Swift package pinned in `apple/FlightdeckKit/Package.resolved`, and what GhosttyKit contains (Ghostty, the Zig standard library, uucode, simdutf, Highway, Wuffs, Oniguruma, libxev, zig-objc, z2d, JetBrains Mono, Nerd Fonts) | The Flightdeck app on iPhone, iPad and Mac (10.5) |
+
+Inputs, all pinned:
+
+- `third_party/notices.toml`: one `[[component]]` per piece that is not a Go module or a Swift
+  package, with its URL, licence, licence files and where it sits in each set; its version comes
+  from the Makefile (`make:GHOSTTY_COMMIT`, `make:SHERPA_VERSION`), `mise.toml` (`mise:zig`) or
+  is written out. One `[[swift]]` entry per pinned Swift package, with its licence.
+- `third_party/licenses/`: the licence texts of each component, copied from the source at the
+  pinned version; `third_party/licenses/swift/<identity>/` holds each Swift package's
+  `LICENSE`, `NOTICE` and third-party licence files at the pinned revision.
+- `go.mod` and the module cache: each Go module's top-level `LICENSE`, `COPYING`, `NOTICE` and
+  `PATENTS` files, read where `go mod download` puts them. Only the module path names them in the
+  output, never a local path. The standard library's text comes from GOROOT; its version is the
+  `toolchain` line.
+
+Each entry prints its name, version, source URL, licence and the artifacts that hold it, then its
+licence files. A text identical (ignoring whitespace) to one printed earlier is named instead of
+repeated.
+
+**What keeps it current.** The generator fails when a Go module has no licence file, a pinned
+Swift package has no `[[swift]]` entry or no texts, or an entry names a package that is no longer
+pinned. `make check-notices`, part of `make check-gen`, regenerates both files in memory and
+fails when either differs from the committed copy; `ci.yml` runs it, and its path filter includes
+both files and `Package.resolved` (2). `go test ./internal/notices/` checks the app file against
+the repository too, and `AcknowledgementsTests` in the Kit (`apple.yml`) checks that it names
+every pinned package. A Renovate bump of a Go module or a Swift package therefore fails CI until
+someone runs `make notices` and commits the result.
+
+**Where it is checked in an artifact.** `make release-build` copies `LICENSE` and `NOTICE` into
+the release folder; `scripts/macos-bundle.sh` puts both in each bundle's `Contents/Resources`
+before signing and beside the bundles; `scripts/release-smoke.sh` fails when either is missing
+beside the binaries or in a bundle, or when `NOTICE` has no entry for libghostty, Ghostty and
+`golang.org/x/sys`.
+
+**Adding a dependency.** A new Go module needs nothing by hand unless it has no licence file. A
+new Swift package needs its texts under `third_party/licenses/swift/<identity>/` and a
+`[[swift]]` entry. A new C library, Zig package, font or data set needs its texts and a
+`[[component]]` entry. Then `make notices`.
 
 ---
 
@@ -1157,6 +1206,12 @@ decision). The workflow has no switch for this: pushing the first non-dry `app-v
 approval. Before it, prove the pipeline with an `app-v<version>-dry.<n>` tag (7.6), which signs
 and exports everything and uploads nothing. The manual path (`apple/scripts/testflight.sh`, the
 README) stays as the fallback, for a build that must go out while CI is down.
+
+### 10.5 The app's acknowledgements
+
+`apple/App/Acknowledgements.txt` (7.8) is a resource of both app targets (`apple/project.yml`),
+so it sits in `Contents/Resources` of the Mac app and at the top of the iOS app. Settings ends
+with an Acknowledgements row that opens the file as text.
 
 ---
 

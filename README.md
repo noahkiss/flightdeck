@@ -76,4 +76,4 @@ the matched text. `scripts/hygiene-scan.sh --tree` checks every tracked file.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). Third-party notices for what the releases and the app contain are in [NOTICE](NOTICE) and [apple/App/Acknowledgements.txt](apple/App/Acknowledgements.txt).
