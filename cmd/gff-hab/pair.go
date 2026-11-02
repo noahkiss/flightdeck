@@ -26,6 +26,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/habkey"
 	"github.com/noahkiss/flightdeck/internal/pairing"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/sys/unix"
 )
 
 // listFlag collects a repeatable flag.
@@ -49,12 +50,16 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 	sock := socketFlag(fs)
 	sshPort := fs.Int("ssh-port", 22, "the system sshd's port, told to the device")
 	sshdKeys := fs.String("sshd-keys", "/etc/ssh", "folder with the system sshd's ssh_host_*_key.pub files")
+	noTTY := fs.Bool("no-tty", false, "read the confirmation from a stdin that is not a terminal")
 	fs.Parse(args)
 	if fs.NArg() != 0 {
 		return errors.New("usage: gff-hab pair [-label name] [-listen addr]... [-port n] [-timeout d] [-authorized-keys path] [-command cmd]")
 	}
 	if *timeout <= 0 || *timeout > pairing.MaxLifetime {
 		return fmt.Errorf("-timeout %v: the window stays open at most %v", *timeout, pairing.MaxLifetime)
+	}
+	if !*noTTY && !stdinIsTerminal(in) {
+		return errors.New("stdin is not a terminal: the owner confirms each device at the terminal (-no-tty reads the answer from a pipe)")
 	}
 	dir, err := stateDir(*state)
 	if err != nil {
@@ -107,18 +112,7 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 		Lifetime: *timeout,
 		Logf:     func(f string, a ...any) { fmt.Fprintf(out, f+"\n", a...) },
 		Confirm: func(ctx context.Context, d pairing.Device) (bool, error) {
-			fmt.Fprintf(out, "\nPair %s (%s)?\n  key  %s %s\n  from %s\nAdd it to %s? [y/N] ", pairing.Printable(d.Name), d.Kind, d.Key.Type(), d.Fingerprint, hostOf(d.Remote), *authKeys)
-			select {
-			case l, ok := <-lines:
-				if !ok {
-					return false, nil
-				}
-				a := strings.ToLower(strings.TrimSpace(l))
-				return a == "y" || a == "yes", nil
-			case <-ctx.Done():
-				fmt.Fprintln(out)
-				return false, ctx.Err()
-			}
+			return confirmDevice(ctx, d, lines, out, *authKeys)
 		},
 		Admit: func(d pairing.Device) (pairing.Paired, error) {
 			now := time.Now()
@@ -180,17 +174,83 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 	return fmt.Errorf("%v; the pairing window is closed", err)
 }
 
-// lineReader hands lines from r to one channel, closed at the end of r.
-func lineReader(r io.Reader) <-chan string {
-	ch := make(chan string)
+// codeLen is how many characters of the key fingerprint the owner types to confirm.
+const codeLen = 4
+
+// confirmTries is how many codes the owner may type before the device is declined.
+const confirmTries = 3
+
+// confirmDevice asks the owner about d. The owner confirms by typing the last codeLen characters
+// of the key fingerprint the phone shows; the terminal never prints them, so the owner must read
+// them off the phone, which proves the device asking is the one in hand. Enter alone, or
+// confirmTries wrong codes, declines. Lines typed before the question are thrown away.
+func confirmDevice(ctx context.Context, d pairing.Device, lines <-chan stampedLine, out io.Writer, authKeys string) (bool, error) {
+	asked := time.Now()
+	fp := d.Fingerprint
+	code := fp[len(fp)-codeLen:]
+	fmt.Fprintf(out, "\nPair %s (%s)?\n  key  %s %s%s\n  from %s\nTo add it to %s, type the last %d characters of the key fingerprint the phone shows (Enter alone declines): ",
+		pairing.Printable(d.Name), d.Kind, d.Key.Type(), fp[:len(fp)-codeLen], strings.Repeat("?", codeLen), hostOf(d.Remote), authKeys, codeLen)
+	for tries := 0; ; {
+		select {
+		case l, ok := <-lines:
+			if !ok {
+				fmt.Fprintln(out)
+				return false, nil
+			}
+			if l.at.Before(asked) {
+				continue // typed before the question: drained, never an answer
+			}
+			a := strings.TrimSpace(l.text)
+			switch {
+			case a == "":
+				return false, nil
+			case a == code:
+				return true, nil
+			}
+			if tries++; tries == confirmTries {
+				fmt.Fprintln(out, "That does not match the phone's key; declined.")
+				return false, nil
+			}
+			fmt.Fprintf(out, "That does not match the phone's key. Type the last %d characters the phone shows: ", codeLen)
+		case <-ctx.Done():
+			fmt.Fprintln(out)
+			return false, ctx.Err()
+		}
+	}
+}
+
+// stampedLine is one line of input and when it was read.
+type stampedLine struct {
+	text string
+	at   time.Time
+}
+
+// lineReader hands lines from r to one channel, each stamped when read, closed at the end of r.
+// It keeps reading while nobody asks, so input typed early is stamped early; past 16 waiting
+// lines it drops the newest.
+func lineReader(r io.Reader) <-chan stampedLine {
+	ch := make(chan stampedLine, 16)
 	go func() {
 		defer close(ch)
 		sc := bufio.NewScanner(r)
 		for sc.Scan() {
-			ch <- sc.Text()
+			select {
+			case ch <- stampedLine{sc.Text(), time.Now()}:
+			default:
+			}
 		}
 	}()
 	return ch
+}
+
+// stdinIsTerminal says whether r is a terminal.
+func stdinIsTerminal(r io.Reader) bool {
+	f, ok := r.(*os.File)
+	if !ok {
+		return false
+	}
+	_, err := unix.IoctlGetTermios(int(f.Fd()), ioctlGetTermios)
+	return err == nil
 }
 
 func hostOf(a net.Addr) string {

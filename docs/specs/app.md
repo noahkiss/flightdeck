@@ -2914,7 +2914,10 @@ What the app builds for QR pairing:
    key, and authenticates with the chosen device key (the generated key by default).
 3. **Exchange.** It opens a session channel with `SubsystemRequest("flightdeck-pair")` and sends
    one line: `v`, `token`, `name` (the device name, `UIDevice.name` or the Mac's name) and `kind`.
-   On `waiting` it shows "Confirm on <label>: check the key ends in <last 6 of its fingerprint>".
+   On `waiting` it shows the last four characters of its own key fingerprint (SHA-256, unpadded
+   base64, as `ssh-keygen -l` prints it) prominently, large and in a monospaced face, with "Type
+   these on <label> to confirm" (`transport.md` 6.1.5). The hab's terminal never prints them, so
+   the owner reads them here.
 4. **Store.** On `paired` it writes the hab entry (10.6): label, user, the `ssh` endpoints in
    order, the first `ssh-ed25519` host key from `host_keys` (else the first one) as the pinned
    key, the key id, the hab's device id from the code, and no command (the line forces

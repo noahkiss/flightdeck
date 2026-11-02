@@ -386,8 +386,11 @@ pairing window is built now. The phone works today through the system sshd.
 5. The phone authenticates with its own key (public-key auth proves it holds the key), opens the
    pairing subsystem, and sends the token and its device name (6.1.2).
 6. The hab checks the token. On a match, the terminal shows the device name, kind, key fingerprint
-   and source address, and asks `[y/N]`. Scanning proves the phone saw the screen; the confirm step
-   stops a photo of the code from being enough.
+   (its last four characters hidden) and source address. The owner confirms by typing those last
+   four characters, which the phone shows while it waits. Scanning proves the phone saw the
+   screen; the confirm step stops a photo of the code from being enough, and the four characters
+   prove the device asking is the phone in the owner's hand, not another device that raced it
+   with a leaked code.
 7. On yes, the hab admits the key (6.1.4), records the device, burns the token, logs the pairing,
    and answers with what the phone needs to connect: the user, the system sshd's endpoints and its
    host keys. Then the window closes.
@@ -443,8 +446,9 @@ the key without trusting a value the phone could copy.
   `tablet` or `desktop`; another value is read as `phone`. `name` is 1 to 64 characters after
   cleaning: control and format characters (bidi marks among them) are dropped, runs of spaces
   become one.
-- **Answers.** One JSON line each. After a good token: `{"v":1,"state":"waiting"}`, so the app can
-  say "Confirm on the hab". Then one final line, and the channel closes with exit status 0 on
+- **Answers.** One JSON line each. After a good token: `{"v":1,"state":"waiting"}`. The app then
+  shows the last four characters of its own key fingerprint, large, for the owner to type at the
+  hab (6.1.5). Then one final line, and the channel closes with exit status 0 on
   paired, 1 otherwise:
   - `{"v":1,"state":"paired","hab":{"id":"SHA256:...","label":"..."},"device_id":"SHA256:...",
     "user":"<login>","ssh":{"endpoints":["host:22",...],"host_keys":["ssh-ed25519 AAAA...",...]},
@@ -532,10 +536,20 @@ flightdeck://pair?v=1&id=SHA256:...&ep=...&t=...&l=devbox
 Scan it in Flightdeck, or paste the link. Ctrl-C closes the window.
 
 Pair "Owner's iPhone" (phone)?
-  key  ecdsa-sha2-nistp256 SHA256:...
+  key  ecdsa-sha2-nistp256 SHA256:...????
   from 192.0.2.44
-Add it to /home/user/.ssh/authorized_keys? [y/N]
+To add it to /home/user/.ssh/authorized_keys, type the last 4 characters of the key fingerprint the phone shows (Enter alone declines):
 ```
+
+- **The confirmation.** The owner types the last four characters of the device's key
+  fingerprint (`SHA256:` and unpadded base64, as `ssh-keygen -l` prints it), case and all. The
+  terminal never prints them, so the owner must read them off the phone. `y` is not an answer.
+  Enter alone declines. A wrong code asks again; the third wrong code declines.
+- **Early input.** Lines typed before the question are drained, never taken as the answer: a `y`
+  or a code typed while the QR code shows answers nothing.
+- **A terminal only.** `pair` refuses to start when stdin is not a terminal, so a script, a pipe
+  or anything that types into a pane without a terminal cannot answer. `-no-tty` allows a pipe,
+  for tests and the owner's own scripts.
 
 On yes: one line naming the device and the file, exit 0. On no, expiry or Ctrl-C: one line saying
 why, exit 1. The device name is printed after cleaning and through the
