@@ -874,7 +874,8 @@ and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row a
   (`capcom.md` 7.6), so the own catalog is enough. Design call: events for peers' copies read
   nothing; the own catalog already carries any assignment they bring. The own catalog also
   changes with every agent state change on that hab, so the re-read is bounded: an event whose
-  generation is not above the last one read reads nothing, at most one read runs per hab, and
+  generation is not above the last one read reads nothing (the first read on each connection
+  sets that floor anew, so a clock stepped back cannot stall it), at most one read runs per hab, and
   changes during a read give one more read after it, not one per event. Design call: this
   re-read does not count as loading, so the entry does not flash; a failed re-read keeps the
   last belief, and a re-read never lowers the counter a hab's belief holds (an answer sent
@@ -913,6 +914,10 @@ and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row a
   tries the new home once. A home that moves while an open is on its way gets its own open
   after it. An open that failed because the link dropped is tried once more by itself when the
   home is online again, instead of holding "Could not open Capcom" until Try again.
+  Design call: no open goes out while a hab's catalog read is on its way. That read may name a
+  higher home, and a lower-counter home that has not heard of it yet would start a standing
+  conversation on the wrong host. The end of each read checks again and opens at once; a hab
+  still connecting does not hold the open.
 - **One open per view.** Each Capcom view has its own token, so views count per window. The
   appear and disappear hooks sit on a container that does not change when the content swaps
   between a state and the conversation, and a repeated appear of the same view opens nothing.
@@ -948,6 +953,10 @@ Limits, at the bar of herdr, Rex and Paseo:
 
 - The picker lists only the habs in this app. A hab the app does not connect to is assigned
   from a peer with `gff-hab capcom assign <peer label>`.
+- While one hab has named a home and another hab's first read is still on its way, the row can
+  show the lower-counter home for that moment; the read that follows corrects it.
+- A picker refusal is shared by every window: a picker that appears in one window clears a
+  refusal still shown in another.
 
 ---
 

@@ -105,7 +105,9 @@ extension CapcomCenter {
         guard habs.connection(habID) === conn else { return }
         // A failed quiet read keeps what the last read found.
         if quiet, r == nil { return }
-        if let r { catalogRead[habID] = max(catalogRead[habID] ?? 0, r.generation) }
+        // The first read on each connection sets the floor anew, so a hab whose clock stepped
+        // back, or another machine behind the same entry, is not skipped until it reconnects.
+        if let r { catalogRead[habID] = quiet ? max(catalogRead[habID] ?? 0, r.generation) : r.generation }
         let cat = r?.catalog
         var next = CapcomBelief.none
         if let c = cat?.capcom, let home = c.home, !home.isEmpty {
@@ -168,6 +170,12 @@ extension CapcomCenter {
     /// tries the new home once.
     public func openStanding() async {
         guard case .ready(let id) = entry, !opening else { return }
+        // Another hab's read may name a higher home: wait for it. The read's end checks again,
+        // and a cleared last entry makes that check open.
+        guard reading.isEmpty else {
+            lastEntry = nil
+            return
+        }
         opening = true
         let dropped = await openStanding(on: id)
         opening = false
@@ -311,7 +319,8 @@ extension CapcomCenter {
     /// read call it. Returns whether it started an open.
     @discardableResult
     func standingCheck() -> Bool {
-        guard !viewers.isEmpty else { return false }
+        // While a read is on its way, open nothing: each read's end checks again.
+        guard !viewers.isEmpty, reading.isEmpty else { return false }
         let e = entry
         if e != lastEntry {
             lastEntry = e

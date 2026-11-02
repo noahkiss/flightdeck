@@ -302,4 +302,43 @@ final class CapcomPickerTests: XCTestCase {
         XCTAssertEqual(f.capcom.standingTarget?.session, s)
         await f.setActive(false)
     }
+
+    func testFirstReadOnAConnectionSetsTheGenerationFloorAnew() async throws {
+        let a = await hab("bench")
+        let f = await fleet([a])
+        // A floor from a clock that stepped back, or another machine behind the same entry.
+        f.capcom.catalogRead["bench"] = 1_000_000
+        await f.capcom.habOnline("bench")
+        XCTAssertEqual(f.capcom.catalogRead["bench"], 1, "the hab's own generation, not the old floor")
+        let gets = await a.catalogGets
+        await a.announceCatalog()
+        await eventually("generation 2 read") { await a.catalogGets > gets }
+        await f.setActive(false)
+    }
+
+    func testNoOpenWhileAnotherHabsReadIsOnItsWay() async throws {
+        let a = await hab("bench")
+        let b = await hab("attic")
+        let aID = a.deviceID, bID = b.deviceID
+        await a.setCapcomHome(assignment: 1, home: aID)
+        await b.setCapcomHome(assignment: 1, home: aID)
+        let f = await fleet([a, b])
+        // attic took a later assignment that bench has not heard of; its read is slow.
+        await b.setCapcomHome(assignment: 2, home: bID)
+        await b.setCatalogDelay(.milliseconds(300))
+        let refresh = Task { await f.capcom.refreshHome() }
+        await eventually("attic reading") { f.capcom.reading["attic"] != nil && f.capcom.reading["bench"] == nil }
+        XCTAssertEqual(f.capcom.entry, .ready(habID: "bench"), "the lower home shows meanwhile")
+        let view = UUID()
+        f.capcom.viewAppeared(view)
+        await f.capcom.openStanding()
+        let early = await a.capcomOpens
+        XCTAssertTrue(early.isEmpty, "no open to the lower-counter home")
+        await refresh.value
+        await eventually("opened on attic") { f.capcom.standing?.target.habID == "attic" }
+        let aOpens = await a.capcomOpens
+        XCTAssertTrue(aOpens.isEmpty)
+        f.capcom.viewDisappeared(view)
+        await f.setActive(false)
+    }
 }
