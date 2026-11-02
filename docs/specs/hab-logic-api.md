@@ -636,8 +636,9 @@ The schema lives in `api/` (layout and commands: `docs/layout.md`). Built choice
 
 Capability strings name optional features: `data-streams`, `snapshot-vt`, `snapshot-ghostty`,
 `agent-state`, `transcripts`, `devices`, `push`, `host-stats`, `mesh`, `idempotency-keys`, `usage`, `catalog`, `channels`,
-`speech`, `capcom`. `capcom` means `capcom.open`, `capcom.assign` and `session.resume` of a
-Capcom session work, and the catalog carries the `capcom` section (`capcom.md` 7.6). `speech` means the hab's speech engine is installed and turned on, so `speech.prepare`
+`speech`, `capcom`. `capcom` means `capcom.open`, `capcom.attach`, `capcom.assign` and
+`session.resume` of a Capcom session work, and the catalog carries the `capcom` section
+(`capcom.md` 7.6, 8.4). `speech` means the hab's speech engine is installed and turned on, so `speech.prepare`
 and `speech.transcribe` work, though the model may still need its download (`voice.md`).
 `idempotency-keys` means the hab honours `idempotency_key` on `session.create` and
 `session.send` (3.9). `confirm` means `confirm.request`, `confirm.answer`, `confirm.list`,
@@ -841,6 +842,7 @@ names the stage, and an event is defined but never sent.
 | `speech.transcribe` | Turn one recorded clip into text, one decode at a time in arrival order (capability `speech`; `voice.md`, API addition) | Yes (task-h011ghy9) |
 | `settings.get`, `settings.set` | Read hab-side settings, and write them all or nothing with a revision check; event `settings.updated` (capability `settings`; `app.md` 20.5) | Yes (task-yfmrj6yc) |
 | `capcom.open`, `capcom.assign` | Return or start the standing Capcom session; make a host the Capcom home host (capability `capcom`; `capcom.md` 7, 8.3) | Yes (task-aqw4iowl) |
+| `capcom.attach`, `capcom.open`'s `context` | Attach a notification, session, file, console command or Logbook record to a Capcom session's next message; the next `session.send` delivers it as blocks before the owner's text (capability `capcom`; `capcom.md` 8.1, 8.4) | Yes (task-ilse43i7) |
 
 | Event | Purpose | Id | Sent from |
 |---|---|---|---|
