@@ -92,14 +92,15 @@ concurrency:
 `go-ci-<repo>-<working-directory>-<ref>`, with `cancel-in-progress: true` fixed. That group has no
 workflow name, so `ci.yml` on `main`, `nightly.yml` (a schedule runs on `main`) and
 `macos-go.yml` all land in the same group and cancel each other's go-ci jobs, `main` included.
-Extension E4 (11.2) fixes this: the group gains the calling workflow's name and the runner OS,
+Within one workflow the caller's own group queues runs on `main`, so two pushes never meet in
+go-ci's group; the cancel is between workflows. Extension E4 (11.2) fixes this: the group gains the calling workflow's name and the runner OS,
 and a `cancel-in-progress` input (default `true`, today's behaviour) lets a caller pass
 `${{ github.ref != 'refs/heads/main' }}`. Every go-ci caller here passes that expression. Until E4
 merges, these workflows run go-ci's steps inline instead.
 
 **The `ci.yml` path filter.** A plain `paths-ignore: docs/**` would skip runs that change
-`docs/examples/hab.toml`, which `internal/settings` and `internal/catalog` tests read (rule 2:
-never ignore a file the build or tests use). So `ci.yml` lists `paths` with negations, in this
+`docs/examples/`, whose config files the settings, catalog, peers, speech and gff client tests
+load (rule 2: never ignore a file the build or tests use). So `ci.yml` lists `paths` with negations, in this
 order (a later pattern wins):
 
 ```yaml
@@ -130,7 +131,7 @@ spec reserves its secret names in section 6 only.
 | Group | Paths | Why |
 |---|---|---|
 | Docs | `**/*.md`, `docs/**` except `docs/examples/**`, `LICENSE`, `NOTICE` | Nothing builds them. Only the hygiene scan runs |
-| Go | everything not in Docs, `apple/` or `design/`; `docs/examples/**` included | `ci.yml`. Tests read `docs/examples/hab.toml` |
+| Go | everything not in Docs, `apple/` or `design/`; `docs/examples/**` included | `ci.yml`. Go tests load the example config files in `docs/examples/` |
 | Apple | `apple/**`, `swift/**`, `api/**`, `design/icons/**`, `api/testdata/**`, `internal/transcript/testdata/**`, `cmd/gff-hab/testdata/console/**`, `.github/workflows/apple.yml` | The Swift package is generated from `api/`. `GoldenTests`, `ChatSnapshotTests` and `ConsoleTests` read those Go testdata folders. The project uses the app icon in `design/icons/` |
 | Holder | `internal/holder/**`, `internal/holderproto/**`, `internal/holderclient/**`, `internal/holderreg/**`, `internal/link/**`, `internal/service/**`, `internal/grants/**`, `cmd/gff-hab-holder/**`, `scripts/service-check.sh`, `scripts/macos-bundle.sh`, `.github/workflows/macos-go.yml` | macOS PTYs and launchd differ from Linux (`testing.md`, Layers) |
 
@@ -143,7 +144,9 @@ Two jobs.
 
 1. **`plan`** (ubuntu, inline, a few seconds). Decides `full` or `fast` (3.3). Reads
    `GHOSTTY_COMMIT` from the Makefile and the zig version from `mise.toml`. Outputs: `full`, and
-   `ghostty_key`, `libghostty-<GHOSTTY_COMMIT>-zig<version>`.
+   `ghostty_key`, `libghostty-<GHOSTTY_COMMIT>-zig<version>`. The `go` job's make commands pass
+   the platform's release `GHOSTTY_ZIGFLAGS` (7.3), so the cached library is the one a release
+   links.
 2. **`go`** calls `go-ci.yml` with the extensions of section 11 (`mise`, `cache-path`,
    `cache-key`):
 
@@ -153,7 +156,7 @@ Two jobs.
 | `generate-check` | `true` (the same check as `make check-gen`) |
 | `mise` | `true`: installs zig from `mise.toml` |
 | `cache-path` | `build/libghostty-vt` |
-| `cache-key` | `${{ needs.plan.outputs.ghostty_key }}-Linux-X64` (section 5) |
+| `cache-key` | `${{ needs.plan.outputs.ghostty_key }}-Linux-X64-baseline` (section 5) |
 | `cancel-in-progress` | `${{ github.ref != 'refs/heads/main' }}` (E4) |
 | `commands`, full | `make check-pure`, `make vet`, `make test`, `make race` |
 | `commands`, fast | `make check-pure`, `make build` |
@@ -181,7 +184,7 @@ steps in the same order.
 
 ### 3.3 Fast and full runs
 
-- A **pull request** runs the full set.
+- A **pull request** runs the full set. So does a **dispatch**, on any ref.
 - A **push to `main`** runs the full set, unless the pushed head is the merge of a pull request
   whose own run passed. Then it runs the fast set. The `plan` job asks
   `GET /repos/{repo}/commits/{sha}/pulls` and looks for a merged pull request whose `ci.yml` run
@@ -215,7 +218,7 @@ not run in CI: they need a real hab or an sshd, and they skip when unset.
 ### 3.5 `macos-go.yml`: Go on macOS (owner decision, Q2)
 
 A `plan` job as in `ci.yml` (the guard and the cache key), then `go-ci.yml` with the `runner`
-extension set to the macOS label, `mise`, and the libghostty cache keyed `<ghostty_key>-macOS-ARM64`. Commands on a holder change:
+extension set to the macOS label, `mise`, and the libghostty cache keyed `<ghostty_key>-macOS-ARM64-baseline`. Commands on a holder change:
 `go test -race -count=3` over the holder group's packages, then `make test`. The nightly leg adds
 `scripts/service-check.sh` (core tests 2 and 13 under launchd). A hosted macOS runner has a GUI
 login, which launchd user agents need; stage 2 proves this before it relies on it.
@@ -225,11 +228,17 @@ login, which launchd user agents need; stage 2 proves this before it relies on i
 One Linux job (go-ci with `mise` and the cache), after the guard:
 
 - `make fuzz FUZZTIME=30s`
-- `make libghostty`, then
+- `make libghostty GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'`, then
   `PKG_CONFIG_PATH="$PWD/build/libghostty-vt/share/pkgconfig" CGO_ENABLED=1 GFF_RESTART_LOOP=200 go test -tags ghostty -run TestRestartLoop ./internal/link/`
-  (3.2: a bare `-tags ghostty` command cannot find the library)
+  (3.2: a bare `-tags ghostty` command cannot find the library). On a cache hit the stamp file
+  makes `make libghostty` a no-op; on a miss it builds the library, so the test never runs
+  without it
 - `scripts/service-check.sh` under systemd. The runner user needs a user manager:
   `sudo loginctl enable-linger "$USER"` first. Stage 2 proves it on the hosted image.
+
+A second small job on `ubuntu-24.04-arm` runs only
+`make libghostty GHOSTTY_ZIGFLAGS='-Dtarget=aarch64-linux-gnu.2.31 -Dcpu=baseline'` with the
+cache, so the linux arm64 release leg starts warm (5).
 
 Timeout 30 minutes. Budget about 10 minutes (`testing.md`, Layers).
 
@@ -249,6 +258,7 @@ holds: macOS runs only what needs it.
 | `release.yml` linux arm64 leg | `ubuntu-24.04-arm` | Native cgo build; free on a public repo |
 | `release.yml` darwin arm64 leg | `macos-26` | Native cgo build, then sign and notarize; no Xcode project |
 | `app-release.yml` | `xcode-27` | Archive, sign, upload, notarize |
+| Tap bump | `ubuntu-latest` (the dispatch); the tap's own runners verify | `dispatch-and-wait.yml` |
 
 **Which Xcode.** The project builds with Xcode 27 (the dev Macs run 27.2). GitHub's `macos-26`
 image carries Xcode 26.x only. The `xcode-27` image (GitHub-hosted, macOS 27, a public preview)
@@ -258,7 +268,6 @@ job runs on `xcode-27` and selects `/Applications/Xcode_27.1.app` by path; it mo
 the image carries the final release, after a dry run (7.6). The Go-only macOS jobs stay on the GA
 `macos-26` image. If GitHub ends the preview label, the Xcode jobs move to the GA image that
 carries Xcode 27.
-| Tap bump | `ubuntu-latest` (the dispatch); the tap's own runners verify | `dispatch-and-wait.yml` |
 
 Pinned labels, not `-latest`, on every release leg: a new image must not change a release
 unannounced. Renovate does not bump runner labels; a person does, with a dry run (7.6).
@@ -273,23 +282,23 @@ build.
 | Cache | Key | Where | Note |
 |---|---|---|---|
 | Go modules and build cache | `go.sum` | Built into go-ci (`setup-go`) | go-ci saves it on every run |
-| libghostty-vt | `libghostty-<GHOSTTY_COMMIT>-zig<version>-<os>-<arch>`, built by a `plan` step | `build/libghostty-vt` | Keyed on the two pins, not on a hash of the whole Makefile, which changes often. A pin change misses the cache, as it should. Needs the go-ci `cache-path` and `cache-key` inputs (11.2) |
+| libghostty-vt | `libghostty-<GHOSTTY_COMMIT>-zig<version>-<os>-<arch>-baseline`, built by a `plan` step | `build/libghostty-vt` | Keyed on the two pins, not on a hash of the whole Makefile, which changes often. A pin change misses the cache, as it should. Needs the go-ci `cache-path` and `cache-key` inputs (11.2) |
 | zig | `mise.toml` | `jdx/mise-action` cache | Needs the go-ci `mise` input |
 | SwiftPM | `hashFiles('apple/FlightdeckKit/Package.resolved')` | `-clonedSourcePackagesDirPath` folder | Restore key without the hash, as the reference does |
 | XcodeGen | Its pinned version in `generate.sh` | The download folder | Small; optional |
 | fastlane gems | `Gemfile.lock` | `ruby/setup-ruby` `bundler-cache` | Release jobs only. The Gemfile lives under `.github/fastlane/` |
 
-**Release libghostty is a different build.** CI tests use a libghostty built for the runner's own
-CPU. Release legs build it for a fixed target and baseline CPU (7.3), so they use their own key,
-`libghostty-<GHOSTTY_COMMIT>-zig<version>-release-<target>`, and never share an entry with the test
-build.
+**Tests and releases share one libghostty build.** Every CI job builds libghostty with its
+platform's release `GHOSTTY_ZIGFLAGS` (7.3), so one cache entry per platform serves the tests and
+the release, and the tests run the library that ships. The `-baseline` suffix keeps the entry
+apart from a native build. Design call: a separate release build, with its own prefix and keys,
+would double the entries and still test a library that never ships.
 
-**Caches saved on a tag are visible to that tag only.** A release leg restores its release entry
-saved from the default branch and never saves its own. The nightly runs keep the three release
-entries warm, each on its own runner: `nightly.yml` builds the linux amd64 one in its main job and
-the linux arm64 one in a small job on `ubuntu-24.04-arm`; the nightly leg of `macos-go.yml`
-builds the darwin one. Each is a few minutes when cold and nothing when warm, so a release starts
-warm. This is a design call: the alternative is a cold build on every release.
+**Caches saved on a tag are visible to that tag only.** A release leg restores its platform's
+entry saved from the default branch and never saves its own. `ci.yml` on `main` keeps the linux
+amd64 entry warm, and `macos-go.yml` the darwin one. `nightly.yml` keeps the linux arm64 entry
+warm with a small job on `ubuntu-24.04-arm` that only runs `make libghostty` with its flags. A
+cold entry costs a few minutes and a warm one nothing, so a release starts warm.
 
 ---
 
@@ -414,25 +423,30 @@ library at run time. `gff-hab-holder` is pure Go.
 | linux/arm64 | `ubuntu-24.04-arm` | The same | The same |
 | darwin/arm64 | `macos-26` | The same, with the command line clang | `CGO_ENABLED=0 go build` |
 
-**`make release-build`** (stage 6 adds it) builds the release libghostty, then `gff-hab` and `gff`
-with the Makefile's `GHOSTTY_ENV`, so cgo finds the library (3.2). It takes the target from two
-new Makefile variables, with the release values below:
+**`make release-build`** (stage 6 adds it) runs `make libghostty`, then builds `gff-hab` and
+`gff` with the Makefile's `GHOSTTY_ENV`, so cgo finds the library (3.2). Stage 6 also adds one
+Makefile variable, `GHOSTTY_ZIGFLAGS`, empty by default, passed to `zig build` in the libghostty
+rule. The release values:
 
-| Target | `GHOSTTY_TARGET` (zig `-Dtarget`) | `GHOSTTY_CPU` (zig `-Dcpu`) | Go side |
-|---|---|---|---|
-| linux/amd64 | `x86_64-linux-gnu.2.31` | `baseline` | `CC="zig cc -target x86_64-linux-gnu.2.31"` |
-| linux/arm64 | `aarch64-linux-gnu.2.31` | `baseline` | `CC="zig cc -target aarch64-linux-gnu.2.31"` |
-| darwin/arm64 | `aarch64-macos.12.0` | `baseline` | `MACOSX_DEPLOYMENT_TARGET=12.0` |
+| Target | `GHOSTTY_ZIGFLAGS` | Go side |
+|---|---|---|
+| linux/amd64 | `-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline` | `CC="zig cc -target x86_64-linux-gnu.2.31"` |
+| linux/arm64 | `-Dtarget=aarch64-linux-gnu.2.31 -Dcpu=baseline` | `CC="zig cc -target aarch64-linux-gnu.2.31"` |
+| darwin/arm64 | none | `MACOSX_DEPLOYMENT_TARGET=13.0` |
 
 - **Why fixed targets.** With no `-Dtarget`, zig builds for the host, CPU features included. A
   release built on a new runner CPU could then crash with an illegal instruction on an older
-  machine. `baseline` keeps to the architecture's base instruction set.
-- **Why these floors.** glibc 2.31 is Ubuntu 20.04 and Debian 11. macOS 12.0 matches the
-  helper bundles' `LSMinimumSystemVersion` (`scripts/macos-bundle.sh`); the tap verifies on a newer
-  macOS. Both the libghostty objects and the Go link follow the same floor; a floor set on `CC`
-  alone would leave libghostty built for the runner's glibc.
-- The release build writes to its own prefix, `build/libghostty-vt-release-<target>`, so it never
-  replaces the test build in `build/libghostty-vt`.
+  machine. `baseline` keeps to the architecture's base instruction set. Ghostty's build reads the
+  standard zig `-Dtarget` and `-Dcpu` options.
+- **The Linux floor.** glibc 2.31 is Ubuntu 20.04 and Debian 11. The libghostty objects and the Go
+  link follow the same floor; a floor set on `CC` alone would leave libghostty built for the
+  runner's glibc.
+- **The macOS floor is 13.0.** When Ghostty's build targets macOS on a Mac, it replaces the target
+  with its own: a generic CPU and macOS 13.0 as the minimum, the oldest macOS Apple still
+  supports. A `-Dtarget=aarch64-macos.12.0` would be replaced the same way, so the darwin leg
+  passes no flags, and 13.0 is the true floor. The leg sets `MACOSX_DEPLOYMENT_TARGET=13.0` for
+  cgo and the link. `scripts/macos-bundle.sh` declares `LSMinimumSystemVersion` 12.0 today; stage
+  6 raises it to 13.0 to match. The tap verifies on a newer macOS.
 
 - **Release binaries carry the `ghostty` tag.** Without it gff-hab runs `vt.Fake`, which is for
   tests only. Each leg checks the tag took: `go version -m <binary>` must list `-tags=ghostty`.
@@ -465,7 +479,8 @@ new Makefile variables, with the release values below:
    `fastlane match developer_id --readonly --skip_provisioning_profiles` with the store flags of
    10.2 (`--git_url`, `--git_branch main`, `--skip_docs`) installs the Developer ID certificate
    into it. Store a notary profile in the same keychain. Run
-   `scripts/macos-bundle.sh -bin-dir <dir> -version <version> -build <short sha> -o <out>` with
+   `scripts/macos-bundle.sh -bin-dir <dir> -version <x.y.z> -build <short sha> -o <out>` (the
+   bundle version of 7.7, no suffix) with
    `GFF_BUNDLE_PREFIX`, `GFF_SIGN_IDENTITY`, `GFF_TEAM_ID`, `GFF_NOTARY_PROFILE`,
    `GFF_SIGN_KEYCHAIN` and `GFF_NOTARY_KEYCHAIN` from the job. The script signs inside out,
    notarizes one zip, staples, and runs every check of `macos-identity.md` 5.3, including the
@@ -480,13 +495,31 @@ new Makefile variables, with the release values below:
    `dispatch-and-wait.yml` (section 8).
 
 **The CI rule.** Path filters often leave the tagged commit with no run of its own (a docs-only
-commit gets no `ci.yml` run; most commits get no `apple.yml` run). So `verify` accepts a
-successful run of the workflow on commit C when C is an ancestor of the tag and
-`git diff --quiet C <tag> -- <the workflow's paths>` holds: nothing the workflow tests changed
-since C. It looks through the workflow's recent successful runs on `main` (`gh run list
---workflow <file> --branch main --status success --json headSha`), newest first. With none,
-`verify` dispatches the workflow on the tag (`gh workflow run <file> --ref <tag>`; the job token
-may start a `workflow_dispatch` run), waits for it, and fails unless it succeeds.
+commit gets no `ci.yml` run; most commits get no `apple.yml` run). So `verify` accepts either:
+
+- A successful **full** run of the workflow on `main` (a push or a dispatch) on commit C, when C
+  is an ancestor of the tag and no file in `git diff --name-only C <tag>` falls in the
+  workflow's path group (3.1): nothing the workflow tests changed since C. It looks through the
+  workflow's recent successful runs (`gh run list --workflow <file> --branch main --status
+  success --json headSha,databaseId`), newest first.
+- A successful full run dispatched on the tag ref itself.
+
+**Only a full run counts.** The fast run of 3.3 (`make check-pure`, `make build`) runs no tests.
+`ci.yml` names its go job `go (full)` or `go (fast)` from the `plan` output, and `verify` reads a
+run's jobs (`gh run view <id> --json jobs`) and requires a successful `go (full)`. A dispatch
+always runs the full set. Every `apple.yml` run is full.
+
+**The path test needs its own matcher** for GitHub's path patterns. A git pathspec cannot do it:
+it cannot take `docs/examples/**` back in after it excludes `docs/**`. `verify` reads the group
+from the workflow file's own `paths` list, so the two never drift, and matches each changed file
+against the globs in order, last match wins, as GitHub does. `verify` checks out the full history
+(`fetch-depth: 0`), so the ancestor test and the diff see every commit.
+
+With no qualifying run, `verify` dispatches the workflow on the tag (`gh workflow run <file>
+--ref <tag>`; the job token may start a `workflow_dispatch` run), waits for it, and fails unless
+it succeeds. On a failure it prints that command, so a person can run it again by hand and then
+dispatch the release. That costs seconds when a run qualifies; the other way, always running the
+checks inside the release, costs a full Go run or up to an hour of macOS.
 
 **Re-running a release.** Dispatch `release.yml` on the tag (`--ref v<version>`, input `tag`). The
 `release` environment refuses `main`. The run uses the workflow file as it was at that tag.
@@ -513,6 +546,30 @@ signing jobs need its secrets. Two ways:
   excludes these tags (`tags: ['v*', '!v*-dry.*']`), so the push starts nothing. `verify` accepts
   a `-dry.` tag only with `dry_run: true`, and then skips the on-`main` and CI checks.
 
+Design call: dry runs use `-dry.` tags, not a branch the `release` environment admits. The
+environment stays limited to tags, so a dry run reaches the signing secrets only the way a release
+does. A dry run still signs and notarizes, so it proves a signing change. The cost is a tag pushed
+and deleted by hand.
+
+### 7.7 Version forms
+
+`scripts/macos-bundle.sh` accepts `-version` as `x`, `x.y` or `x.y.z` only (its version check),
+and Apple's `CFBundleShortVersionString` is up to three integers. So a suffix never reaches a
+bundle's short version or the app's marketing version. It stays in the tag, the Go binaries'
+`version` and the asset names.
+
+| Tag | Go `version`, asset names | Bundle `-version` | App marketing version | App build number |
+|---|---|---|---|---|
+| `v1.2.3`, `app-v1.2.3` | `1.2.3` | `1.2.3` | `1.2.3` | UTC minute (10.3) |
+| `v1.2.3-rc.<n>`, `app-v1.2.3-rc.<n>` | `1.2.3-rc.<n>` | `1.2.3` | `1.2.3` | UTC minute |
+| `v1.2.3-dry.<n>`, `app-v1.2.3-dry.<n>` | `1.2.3-dry.<n>` | `1.2.3` | `1.2.3` | UTC minute |
+
+- An `-rc` and its final share the marketing version. TestFlight takes several builds of one
+  version, and the build number keeps them apart. An `-rc` or dry-run Go build never reaches the
+  tap, so its bundles carrying `1.2.3` collide with nothing a user installs.
+- Stage 6 adjusts the script's version check if a later need breaks this table. This spec does
+  not change the script.
+
 ---
 
 ## 8. Tap bump
@@ -537,29 +594,36 @@ commits. Its contract with `dispatch-and-wait.yml` is the `request_id` echoed in
 | Entry | Fits as it is? | Gap |
 |---|---|---|
 | Cask `flightdeck` | Yes, for the url and sha | The tag `app-v<version>` gives the version `app-v<version>` (it strips `v` only) |
-| Formula `gff` | No | Three urls, one per platform (`on_macos`, `on_linux` with `on_arm` and `on_intel`); bump.yml handles exactly one |
+| Formula `gff` | No | Three urls, one per platform (the shape below); bump.yml handles exactly one |
+
+**The formula's shape.** Homebrew 7 loads every formula for every OS and arch, and the tap's
+verify runs `brew readall`. A formula with no `url` for one of them fails to load ("formula
+requires at least a URL") and takes the whole tap down with it. We ship no macOS Intel build
+(section 4), so `gff` needs a `url` that holds everywhere. An existing tap formula with
+per-platform urls solves this the same way. `gff` takes this shape:
+
+- A top-level `version`, then a top-level `url` and `sha256`: the `linux_amd64` asset.
+- `on_macos` → `on_arm`: the `darwin_arm64` asset's `url` and `sha256`.
+- `on_linux` → `on_arm`: the `linux_arm64` asset's `url` and `sha256`.
+- `on_macos`: `depends_on arch: :arm64`, so `brew install` on an Intel Mac stops with Homebrew's
+  own message instead of pouring Linux binaries. The formula only loads there.
+
+Every `url` interpolates only `#{version}` and is a release asset with its own `.sha256` (7.2),
+the top-level one included. Design call: a top-level source archive with an `install` that stops
+would work too, but needs a hash of a GitHub-generated archive and a stop message of our own.
+`depends_on arch:` alone is not enough: it gives the formula no `url`. The tap's verify legs run
+macOS arm64 and Linux amd64; the Linux arm64 branch is loaded, not installed.
 
 **Extension 1: `tag_prefix`.** A new optional input, default `v`. bump.yml strips it from the tag
 to get the version. Existing callers pass nothing and see no change. `app-release.yml` passes
 `app-v`.
 
 **Extension 2: per-platform formula.** When a formula holds several `url` lines, each interpolating
-only `#{version}`, bump.yml rewrites the one `version` line and every `sha256`:
-
-- **The top-level source url.** Homebrew 7 loads every formula for every OS and arch, and the
-  tap's verify runs `brew readall`. A formula whose only urls sit in `on_macos` and `on_linux`
-  blocks has no url on an Intel Mac, fails to load there, and takes the whole tap down with it.
-  So the formula keeps a top-level `url` that is valid everywhere: the tag's source archive
-  (`https://github.com/noahkiss/flightdeck/archive/refs/tags/v#{version}.tar.gz`), as the tap's
-  `zellij-nkmk` formula does. No `.sha256` asset exists for it, so bump.yml downloads and hashes
-  it directly, as it does for a single-url formula today.
-- **The per-platform urls** (`on_macos` `on_arm`; `on_linux` `on_intel` and `on_arm`) override the
-  source url where a prebuilt asset exists. Their shas come from the matching published
-  `<asset>.sha256` (as `bump-zellij.yml` already reads its shas). bump.yml checks that every asset
-  and its `.sha256` are attached before it rewrites anything.
-- **The formula's `install`** stops with a clear message when the source archive poured (no
-  prebuilt asset for this platform, such as an Intel Mac): building needs zig and libghostty,
-  which a formula does not set up.
+only `#{version}`, bump.yml rewrites the one `version` line and every `sha256`, the top-level
+one and those inside `on_*` blocks, from the matching published `<asset>.sha256` (as
+`bump-zellij.yml` already reads its shas). It checks that every asset and its `.sha256` are
+attached before it rewrites anything. A url with no `.sha256` asset, such as a source archive
+fallback in another formula, is downloaded and hashed directly, as a single-url formula is today.
 
 A formula with one `url` takes today's path unchanged. The verify legs stay as they are:
 `brew readall`, then `brew install` and `brew test` on both platforms.
@@ -772,7 +836,8 @@ signed bundles from the matching `v*` release's darwin asset, unchanged, and sig
 
 ### 10.3 Version and build number
 
-- The marketing version comes from the tag. `verify` refuses a tag whose version is lower than
+- The marketing version comes from the tag, without an `-rc.` or `-dry.` suffix (7.7). `verify`
+  refuses a tag whose version is lower than
   the last `app-v*` tag's.
 - The build number is the UTC time to the minute, `YYYYMMDDHHMM`, the same rule as
   `apple/scripts/testflight.sh`. A CI upload and a hand upload therefore never collide, and each
@@ -817,7 +882,7 @@ keeps today's behaviour, so no existing caller changes. The owner reviews each b
 | E5 | new `xcode-ci.yml` | Reusable workflow: Xcode by path (`xcode-app`), optional `generate` command, `swift-test-dirs` (one per line), `builds` (scheme and destination per line), `spm-cache-key-file`, `runner` (default `macos-26`; this repo passes `xcode-27`), `timeout-minutes`. No secrets | New file |
 | E6 | new composite actions | `actions/xcode-match-keychain` (throwaway keychain, API key file, match read-only per type and id list, cleanup outputs) and `actions/xcode-archive-export` (archive with a generated manual-signing xcconfig, export for `app-store-connect` upload or `developer-id`, optional notarize and staple). Composite, run as steps in the caller's job, because environment secrets do not reach a reusable workflow from another repo | New files |
 | E7 | tap `bump.yml` | `tag_prefix` input (8.2) | `v` |
-| E8 | tap `bump.yml` | Per-platform formula: the top-level source fallback url hashed directly, the per-platform urls from their `.sha256` assets (8.2) | Single-url path unchanged |
+| E8 | tap `bump.yml` | Per-platform formula: every url's sha from its `.sha256` asset, the top-level fallback included; a url with no such asset hashed directly (8.2) | Single-url path unchanged |
 
 E4 is needed for `ci.yml`, `nightly.yml` and `macos-go.yml` alike: without it they cancel each
 other's go-ci jobs on `main` (2). E5 and E6 are plan stage 4. All eight are approved (section 14).
@@ -931,7 +996,10 @@ a shared workflow, check it against one existing caller of that workflow (`noahk
 Design calls this spec makes (not owner questions): a native runner per release target (7.3);
 the glibc floor through `zig cc` (7.3); `MATCH_GIT_URL` as a secret (6.1); the tap token as a
 repo secret (6.2); the UTC-minute build number (10.3); the nightly skip when `main` has not
-moved (2); the hygiene rule names printed but never the match (9.6).
+moved (2); the hygiene rule names printed but never the match (9.6); one baseline libghostty
+build shared by tests and releases, and the macOS 13.0 floor (5, 7.3); the release CI rule
+that accepts a full ancestor run (7.4); dry runs on `-dry.` tags (7.6); suffix-free bundle and
+marketing versions (7.7); the formula's top-level asset url (8.2).
 
 ---
 
