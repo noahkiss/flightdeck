@@ -549,3 +549,73 @@ func TestAdoptedTurnMarker(t *testing.T) {
 		}
 	}
 }
+
+// TestLockTimeoutKeepsUsersTurn (M13): a resume run past its timeout before its prompt went in
+// never interrupts the target's turn: that turn is the user's.
+func TestLockTimeoutKeepsUsersTurn(t *testing.T) {
+	interrupts := 0
+	k := newLockRig(t, func(c *roundsConfig) {
+		c.interrupt = func(context.Context, string) error { interrupts++; return nil }
+	})
+	ss := k.session(t, "target", "pane-1")
+	r := k.round(t, "r", ss.ID)
+	r.Timeout = rounds.Duration(500 * time.Millisecond)
+	k.agent("pane-1", api.AgentStatusWorking, "n1")
+	h := &harnessWatch{kind: "claude", native: "n1", prompt: "x", resume: true, marker: envelopeMarker("run-1"), phase: phaseStarting}
+	k.svc.watchHarness(rounds.Run{ID: "run-1", RoundID: r.ID, Created: time.Now()}, r, ss.ID, "pane-1", h)
+	if u := k.next(t, "run-1"); u.State != rounds.RunTimedOut {
+		t.Fatalf("update %+v", u)
+	}
+	time.Sleep(200 * time.Millisecond)
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if interrupts != 0 || len(k.sends) != 0 {
+		t.Errorf("interrupts %d, sends %v", interrupts, k.sends)
+	}
+}
+
+// TestLockPauseFirst (M15): a waiting run whose move to running the scheduler refuses (a pause
+// ended it first) sends nothing.
+func TestLockPauseFirst(t *testing.T) {
+	k := newLockRig(t, nil)
+	ss := k.session(t, "target", "pane-1")
+	k.agent("pane-1", api.AgentStatusIdle, "n1")
+	k.held["pane-1"] = true
+	k.svc.updateRun = func(id string, u rounds.RunUpdate) error {
+		k.ups <- runUp{id, u}
+		if u.State == rounds.RunRunning {
+			return rounds.ErrNoRun
+		}
+		return nil
+	}
+	k.start(t, k.round(t, "r", ss.ID), "run-1")
+	if u := k.next(t, "run-1"); u.State != rounds.RunWaiting {
+		t.Fatalf("update %+v", u)
+	}
+	k.mu.Lock()
+	k.held["pane-1"] = false
+	k.mu.Unlock()
+	if u := k.next(t, "run-1"); u.State != rounds.RunRunning {
+		t.Fatalf("update %+v", u)
+	}
+	time.Sleep(4 * roundLockPoll)
+	if got := k.sent(); len(got) != 0 {
+		t.Errorf("sent %v after the run ended", got)
+	}
+}
+
+// TestAdoptResumeNotDelivered (M17): a resume run adopted after a restart whose envelope is not
+// in its target's conversation waits for the lock again; it does not wait for the next idle as
+// a fresh run would.
+func TestAdoptResumeNotDelivered(t *testing.T) {
+	k := newLockRig(t, func(c *roundsConfig) {
+		c.messages = func(context.Context, string, string, string) ([]api.ChatMessage, error) {
+			return []api.ChatMessage{{Kind: api.ChatKindUser, Text: "fix the bug"}, {Kind: api.ChatKindAgent, Text: "Fixed."}}, nil
+		}
+	})
+	h := &harnessWatch{kind: "claude", native: "n1", prompt: "x", resume: true, marker: envelopeMarker("run-1"), phase: phaseTurn, blocked: true}
+	k.svc.adoptHarness("s-1", 0, h)
+	if h.phase != phaseLock || h.blocked {
+		t.Errorf("phase %d blocked %v, want the lock", h.phase, h.blocked)
+	}
+}
