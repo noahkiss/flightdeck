@@ -443,7 +443,7 @@ func (u *workspaceUI) paste(text []byte) {
 
 // key names one key of host input.
 type key struct {
-	name string // up, down, enter, esc, tab, backspace, or "" for a rune
+	name string // up, down, left, right, enter, esc, tab, backspace, or "" for a rune
 	r    rune
 }
 
@@ -470,6 +470,10 @@ func readKey(p []byte) (key, int) {
 					return key{name: "up"}, i + 1
 				case 'B':
 					return key{name: "down"}, i + 1
+				case 'C':
+					return key{name: "right"}, i + 1
+				case 'D':
+					return key{name: "left"}, i + 1
 				}
 				return key{name: "other"}, i + 1
 			}

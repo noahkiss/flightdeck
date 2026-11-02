@@ -117,6 +117,8 @@ func (k *keyReader) act(name string) (keyEvent, bool) {
 		next = ModeNormal
 	case a == "" && k.mode.sticky() && (name == "esc" || name == "enter"):
 		next = ModeNormal // a way out of a mode always works
+	case k.mode.sticky() && a != "" && !stays(a):
+		next = ModeNormal // as zellij: a command ends pane or tab mode, a focus or tab move does not
 	case k.mode == ModePrefix:
 		next = ModeNormal // one key, then back; an unbound key cancels
 	}
@@ -538,6 +540,10 @@ func arrowName(f byte) string {
 		return "up"
 	case 'B':
 		return "down"
+	case 'C':
+		return "right"
+	case 'D':
+		return "left"
 	}
 	return ""
 }

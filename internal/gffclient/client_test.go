@@ -76,7 +76,7 @@ func TestObserverNeverResizes(t *testing.T) {
 	waitUntil(t, "the first size for the full view", func() bool { return len(g.rec.calls("pane.set_desired_size", mine)) == 1 })
 
 	// Typing into the observer (focused first) and the fit key send nothing.
-	hst.typ("typed\r\x1cf")
+	hst.typ("typed\r\x0ff")
 	hst.resize(100, 30)
 	waitUntil(t, "the debounce armed", func() bool { return g.timer.count() == 1 })
 	g.timer.fire(t)
@@ -85,7 +85,7 @@ func TestObserverNeverResizes(t *testing.T) {
 		t.Errorf("full view asked for %dx%d, want 49x29", got.Cols, got.Rows)
 	}
 	// Focus the full view and type, so the observer's input lane would have run by now.
-	hst.typ("\x1co" + "x")
+	hst.typ("\x10p\x1b" + "x") // Ctrl+P p focuses the next pane; Esc leaves pane mode
 	waitUntil(t, "input to the full view", func() bool { return len(g.rec.calls("pane.input", mine)) > 0 })
 
 	for _, m := range []string{"pane.set_desired_size", "pane.take", "pane.request", "pane.input", "pane.redraw"} {
@@ -249,7 +249,7 @@ func TestDetach(t *testing.T) {
 	hst := newHost(t, 80, 24, false)
 	g := startGFF(t, h, hst, SplitColumns, PaneSpec{ID: a}, PaneSpec{ID: b})
 	hst.waitScreen("both panes", func(s string) bool { return strings.Contains(s, "left") && strings.Contains(s, "right") })
-	hst.typ("\x1cd")
+	hst.typ("\x0fd")
 	select {
 	case err := <-g.done:
 		g.done <- err // for the cleanup
@@ -291,7 +291,7 @@ func TestTypeaheadKept(t *testing.T) {
 	hst.waitScreen("the typeahead in the program", func(s string) bool { return strings.Contains(s, "got[abc]") })
 }
 
-// A start that hangs (the hab never answers the data dial) still ends with the prefix and d,
+// A start that hangs (the hab never answers the data dial) still ends with Ctrl+O and d,
 // with nothing sent to the pane.
 func TestDetachWhileOpening(t *testing.T) {
 	h := startHab(t)
@@ -300,7 +300,7 @@ func TestDetachWhileOpening(t *testing.T) {
 	hst := newHost(t, 80, 24, false)
 	g := startGFFHeld(t, h, hst, SplitColumns, PaneSpec{ID: pane})
 	waitUntil(t, "the data dial", func() bool { return g.rec.dials() == 1 })
-	go hst.inW.Write([]byte("\x1cd"))
+	go hst.inW.Write([]byte("\x0fd"))
 	select {
 	case err := <-g.done:
 		g.done <- err // for the cleanup

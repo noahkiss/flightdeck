@@ -17,7 +17,11 @@ import (
 // server and structure store, agent states the test sets) and read the fake host terminal's
 // screen. Every wait is on the screen or the hab reaching a state, never on time alone.
 
-const prefix = "\x1c"
+// The default keymap's leaders: Ctrl+O the command mode, Ctrl+T tab mode.
+const (
+	cmdKey = "\x0f"
+	tabKey = "\x14"
+)
 
 func fakeHab(t *testing.T, dir, id string) *fakehab.Hab {
 	t.Helper()
@@ -117,7 +121,7 @@ func TestBoardBlockedAboveWorking(t *testing.T) {
 	hst := newHost(t, 140, 30, false)
 	startWorkspace(t, hst, a.Sock, b.Sock)
 	hst.waitScreen("the working session", func(s string) bool { return line(s, "busy") > 0 })
-	hst.typ(prefix + "g")
+	hst.typ(cmdKey + "g")
 	hst.waitScreen("the board", func(s string) bool { return strings.Contains(s, "status board") })
 	b.SetAgent(stuck, api.AgentStatusBlocked, api.BlockedKindPermission)
 	hst.waitScreen("blocked above working", func(s string) bool {
@@ -153,7 +157,7 @@ func TestSidebarStartRenameClose(t *testing.T) {
 		return line(s, "▸~ sh") > 0 || line(s, "▸  sh") > 0
 	})
 
-	hst.typ(prefix + "w")
+	hst.typ(cmdKey + "w")
 	hst.typ("r")
 	hst.waitScreen("the rename prompt", func(s string) bool { return strings.Contains(s, "rename sh on one: sh") })
 	hst.typ("\x7f\x7frenamed\r")
@@ -233,7 +237,7 @@ func TestStartOpensInItsTab(t *testing.T) {
 	hst.waitScreen("the command prompt", func(s string) bool { return strings.Contains(s, "command on one") })
 	hst.typ("\r")
 	hst.waitScreen("the start in flight", func(s string) bool { return strings.Contains(s, "starting on one") })
-	hst.typ(prefix + "c")
+	hst.typ(tabKey + "n")
 	hst.waitScreen("tab two", func(s string) bool { return strings.Contains(s, " 2:2 ") })
 	release()
 	hst.waitScreen("the pane in tab one", func(s string) bool {

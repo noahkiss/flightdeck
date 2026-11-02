@@ -25,26 +25,22 @@
 // host (-ssh).
 //
 // Keys go to the focused pane. The keymap has modes (docs/specs/gff-client.md 8); the bottom
-// row shows the keys of the current one. The default keymap: the prefix key, Ctrl+\ unless
-// -prefix names another, then one of
+// row shows the keys of the current one. The default keymap, as zellij's:
 //
-//	o or Tab  focus the next pane        z  zoom the focused pane, and back
-//	s         side by side or stacked    r  redraw: a fresh snapshot from the hab
-//	n         nudge: snapshot, and the program redraws after a one-column resize
-//	f         fit: make the pane this window's size (pane.take)
-//	d         detach: quit gff; the programs keep running
-//	p         pane mode: those pane keys until Esc or Enter
-//	l         lock: every key goes to the pane until Ctrl+G
-//	the prefix again sends it to the pane; Esc cancels
+//	Ctrl+G  lock: every key goes to the pane until Ctrl+G again
+//	Ctrl+P  pane mode: p or Tab focus the next pane, f zoom, s side by side or stacked,
+//	        x close the focused view (the program keeps running)
+//	Ctrl+T  tab mode: n new tab, h/l or the arrows previous and next, 1-9 go to a tab
+//	Ctrl+O  command mode, one key: w the sidebar, g the status board, b hide or show the bars,
+//	        ! the warnings, r redraw (a fresh snapshot from the hab), n nudge (the program
+//	        redraws after a one-column resize), f fit (pane.take), d detach (quit gff; the
+//	        programs keep running)
 //
-// In the workspace, also:
-//
-//	w  the sidebar (j/k move, Enter open, t open in a new tab, n new session, r rename,
-//	   x end or remove, / filter, p grouping, Esc back)
-//	g  the status board          c  a new tab        ] [ 1-9  tabs
-//	t  tab mode: those tab keys until Esc or Enter
-//	x  close the focused view; the program keeps running
-//	b  hide or show the bars     !  list the warnings
+// A focus or tab move keeps pane or tab mode; another command, Esc or Enter ends it. Each
+// leader switches modes from the others, and the current mode's leader pressed again sends it
+// to the pane. -prefix moves the command-mode leader. The sidebar (Ctrl+O w): j/k move, Enter
+// open, t open in a new tab, n new session, r rename, x end or remove, / filter, p grouping,
+// Esc back. docs/examples/gff-keys-prefix.toml is a one-prefix keymap instead (Ctrl+\).
 //
 // The config file's [keys.<mode>] tables change the keymap and [bar] the bars (LoadSettings in
 // internal/gffclient).
@@ -112,7 +108,7 @@ func run(args []string) error {
 	fs.Var(&news, "new", "start this command in a new pane (repeatable)")
 	split := fs.String("split", "columns", "how panes share the screen: columns (side by side) or rows (stacked)")
 	observe := fs.Bool("observe", false, "open every pane as an observer: no input, no size")
-	prefixFlag := fs.String("prefix", "", "the prefix key, as ctrl-<key> (default the config's, else ctrl-\\)")
+	prefixFlag := fs.String("prefix", "", "the key that enters command (prefix) mode, as ctrl-<key> (default the config's, else ctrl-o)")
 	configPath := fs.String("config", "", "gff's config file (default $GFF_CONFIG, else gff/config.toml in the user config directory)")
 	var hostFlags multi
 	fs.Var(&hostFlags, "host", "a host for the workspace, as label=endpoint[,endpoint...] (repeatable)")

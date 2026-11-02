@@ -208,9 +208,9 @@ func TestModeShownOutsideWorkspace(t *testing.T) {
 		t.Fatal("the pane does not pass through")
 	}
 	for _, step := range []struct{ keys, note string }{
-		{"\x1cp", "pane · Esc/Enter back"},
+		{"\x10", "pane · Esc/Enter back"},
 		{"\x1b", ""},
-		{"\x1cl", "locked · Ctrl+G unlock"},
+		{"\x07", "locked · Ctrl+G unlock"},
 		{"\x07", ""},
 	} {
 		if err := c.input([]byte(step.keys)); err != nil {

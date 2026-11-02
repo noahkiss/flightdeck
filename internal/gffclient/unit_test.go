@@ -2,6 +2,7 @@ package gffclient
 
 import (
 	"bytes"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -66,10 +67,23 @@ func TestPassFilterLongString(t *testing.T) {
 	}
 }
 
+// prefixKeymap is the one-prefix keymap of docs/examples/gff-keys-prefix.toml (15.5, B): Ctrl+\
+// then one command key.
+func prefixKeymap(t *testing.T) *Keymap {
+	t.Helper()
+	s, problems, err := LoadSettings(filepath.Join("..", "..", "docs", "examples", "gff-keys-prefix.toml"))
+	if err != nil || len(problems) > 0 {
+		t.Fatalf("prefix keymap: %v %q", err, problems)
+	}
+	return s.Keymap
+}
+
+// The key reader's mechanics, over the one-prefix keymap.
 func TestKeyReader(t *testing.T) {
 	d := func(data string) keyEvent { return keyEvent{data: []byte(data)} }
 	a := func(act, key string) keyEvent { return keyEvent{act: act, key: key} }
 	pre := a(actPrefix, `ctrl-\`)
+	km := prefixKeymap(t)
 	for _, tc := range []struct {
 		name   string
 		chunks []string
@@ -98,11 +112,13 @@ func TestKeyReader(t *testing.T) {
 		{"modifyOtherKeys prefix split", []string{"x\x1b[2", "7;5;9", "2~", "\x1b[27;5;92~"}, []keyEvent{d("x"), pre, a(actSend, `ctrl-\`)}},
 		{"modifyOtherKeys other key passes", []string{"\x1b[27;5;99~"}, []keyEvent{d("\x1b[27;5;99~")}},
 		{"lone esc passes at once", []string{"\x1b"}, []keyEvent{d("\x1b")}},
-		// Pane mode stays until Esc or Enter; keys it does not bind go nowhere.
-		{"pane mode stays", []string{"\x1cpzqo\rab"}, []keyEvent{pre, a(actPaneMode, "p"), a(actZoom, "z"),
+		// Pane mode stays through focus moves until Esc or Enter; keys it does not bind go
+		// nowhere. Another command ends it, as in zellij.
+		{"pane mode stays", []string{"\x1cpoqo\rab"}, []keyEvent{pre, a(actPaneMode, "p"), a(actFocusNext, "o"),
 			a(actFocusNext, "o"), a(actBack, "enter"), d("ab")}},
-		{"tab mode arrows and digits", []string{"\x1ct3\x1b[A]\x1b"}, []keyEvent{pre, a(actTabMode, "t"), a(actTabN+"3", "3"),
-			a(actNextTab, "]"), a(actBack, "esc")}},
+		{"pane command ends the mode", []string{"\x1cpzab"}, []keyEvent{pre, a(actPaneMode, "p"), a(actZoom, "z"), d("ab")}},
+		{"tab moves stay, a digit ends the mode", []string{"\x1ct]\x1b[A[3x"}, []keyEvent{pre, a(actTabMode, "t"),
+			a(actNextTab, "]"), a(actPrevTab, "["), a(actTabN+"3", "3"), d("x")}},
 		// Locked: the prefix reaches the pane; only Ctrl+G, the unlock key, does not.
 		{"locked passes the prefix", []string{"\x1cl\x1cz\x07\x1cz"}, []keyEvent{pre, a(actLock, "l"), d("\x1cz"),
 			a(actUnlock, "ctrl-g"), pre, a(actZoom, "z")}},
@@ -146,7 +162,7 @@ func TestKeyReader(t *testing.T) {
 		{"kitty ctrl shift passes", []string{"\x1b[92;6u"}, []keyEvent{d("\x1b[92;6u")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			k := newKeyReader(DefaultKeymap())
+			k := newKeyReader(km)
 			var got []keyEvent
 			for _, c := range tc.chunks {
 				got = append(got, k.feed([]byte(c))...)

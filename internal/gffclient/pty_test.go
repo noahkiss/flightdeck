@@ -82,7 +82,7 @@ while :; do sleep 0.1; done
 		return strings.Contains(s, "tui 39 49") && rowStarts(s, 38, "~")
 	})
 
-	ptmx.Write([]byte("\x1cd"))
+	ptmx.Write([]byte("\x0fd"))
 	select {
 	case err := <-done:
 		done <- err

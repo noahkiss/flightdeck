@@ -24,7 +24,7 @@ func TestKeymapNoTraps(t *testing.T) {
 	if !hasProblem(problems, "no key leaves locked mode; Ctrl+G now does") || s.Keymap.lookup(ModeLocked, "ctrl-g") != actUnlock {
 		t.Errorf("locked with no unlock: %q, ctrl-g = %q", problems, s.Keymap.lookup(ModeLocked, "ctrl-g"))
 	}
-	if evs := newKeyReader(s.Keymap).feed([]byte("\x1cl\x07\x1cz")); len(evs) != 5 || evs[4].act != actZoom {
+	if evs := newKeyReader(s.Keymap).feed([]byte("\x07\x07\x0fr")); len(evs) != 4 || evs[3].act != actRedraw {
 		t.Errorf("no way out of locked mode: %q", evs)
 	}
 
@@ -34,13 +34,13 @@ func TestKeymapNoTraps(t *testing.T) {
 	if !hasProblem(problems, "no key leaves pane mode; Esc now does") {
 		t.Errorf("pane with Esc and Enter bound: %q", problems)
 	}
-	if evs := newKeyReader(s.Keymap).feed([]byte("\x1cp\x1bx")); !reflect.DeepEqual(evs, []keyEvent{
-		{act: actPrefix, key: `ctrl-\`}, {act: actPaneMode, key: "p"}, {act: actBack, key: "esc"}, {data: []byte("x")}}) {
+	if evs := newKeyReader(s.Keymap).feed([]byte("\x10\x1bx")); !reflect.DeepEqual(evs, []keyEvent{
+		{act: actPaneMode, key: "ctrl-p"}, {act: actBack, key: "esc"}, {data: []byte("x")}}) {
 		t.Errorf("no way out of pane mode: %q", evs)
 	}
 
-	// defaults = false with a lock key and no locked table, and no sidebar keys.
-	p = writeConfig(t, "[keys]\ndefaults = false\n[keys.normal]\n\"ctrl-g\" = \"lock\"\n")
+	// clear-defaults with a lock key and no locked table, and no sidebar keys.
+	p = writeConfig(t, "[keys]\nclear-defaults = true\n[keys.normal]\n\"ctrl-g\" = \"lock\"\n")
 	s, problems, _ = LoadSettings(p)
 	for _, want := range []string{"no key leaves locked mode", "no key leaves sidebar mode", "no mode binds detach"} {
 		if !hasProblem(problems, want) {
@@ -52,7 +52,7 @@ func TestKeymapNoTraps(t *testing.T) {
 	}
 
 	// A mode the keymap does not reach is no trap, and the shipped keymap has none.
-	p = writeConfig(t, "[keys]\ndefaults = false\n[keys.normal]\n\"ctrl-a\" = \"prefix\"\n[keys.prefix]\nd = \"detach\"\n[keys.sidebar]\nq = \"back\"\n")
+	p = writeConfig(t, "[keys]\nclear-defaults = true\n[keys.normal]\n\"ctrl-a\" = \"prefix\"\n[keys.prefix]\nd = \"detach\"\n[keys.sidebar]\nq = \"back\"\n")
 	if _, problems, _ = LoadSettings(p); len(problems) != 0 {
 		t.Errorf("problems for modes not reached: %q", problems)
 	}
@@ -68,9 +68,9 @@ func TestEscLeavesWhenUnbound(t *testing.T) {
 	if len(problems) != 0 {
 		t.Errorf("problems %q", problems)
 	}
-	evs := newKeyReader(s.Keymap).feed([]byte("\x1cp\x1bx\x1ct\rx"))
-	want := []keyEvent{{act: actPrefix, key: `ctrl-\`}, {act: actPaneMode, key: "p"}, {data: []byte("x")},
-		{act: actPrefix, key: `ctrl-\`}, {act: actTabMode, key: "t"}, {data: []byte("x")}}
+	evs := newKeyReader(s.Keymap).feed([]byte("\x10\x1bx\x14\rx"))
+	want := []keyEvent{{act: actPaneMode, key: "ctrl-p"}, {data: []byte("x")},
+		{act: actTabMode, key: "ctrl-t"}, {data: []byte("x")}}
 	if !reflect.DeepEqual(evs, want) {
 		t.Errorf("got %q, want %q", evs, want)
 	}
@@ -79,12 +79,12 @@ func TestEscLeavesWhenUnbound(t *testing.T) {
 // The key that entered a command mode, pressed again, sends itself, so a moved prefix and its
 // send key cannot drift apart (S3); the old prefix sends nothing.
 func TestPrefixSendFollowsTheKey(t *testing.T) {
-	p := writeConfig(t, "[keys.normal]\n'ctrl-\\' = \"none\"\n\"ctrl-a\" = \"prefix\"\n")
+	p := writeConfig(t, "[keys.normal]\n\"ctrl-o\" = \"none\"\n\"ctrl-a\" = \"prefix\"\n")
 	s, problems, _ := LoadSettings(p)
 	if len(problems) != 0 {
 		t.Errorf("problems %q", problems)
 	}
-	evs := newKeyReader(s.Keymap).feed([]byte("\x01\x01\x01\x1cx"))
+	evs := newKeyReader(s.Keymap).feed([]byte("\x01\x01\x01\x0fx"))
 	want := []keyEvent{{act: actPrefix, key: "ctrl-a"}, {act: actSend, key: "ctrl-a"}, {act: actPrefix, key: "ctrl-a"},
 		{data: []byte("x")}}
 	if !reflect.DeepEqual(evs, want) {
@@ -97,11 +97,11 @@ func TestPrefixSendFollowsTheKey(t *testing.T) {
 	if !hasProblem(problems, `-prefix ctrl-a replaces [keys.normal] ctrl-a = "zoom"`) {
 		t.Errorf("problems %q", problems)
 	}
-	if bs := s.Keymap.Bindings(ModeNormal); len(bs) != 1 || bs[0] != (Binding{"ctrl-a", actPrefix}) {
-		t.Errorf("normal bindings %v", bs)
+	if a, o := s.Keymap.lookup(ModeNormal, "ctrl-a"), s.Keymap.lookup(ModeNormal, "ctrl-o"); a != actPrefix || o != "" {
+		t.Errorf("normal ctrl-a = %q, ctrl-o = %q", a, o)
 	}
-	if h := s.Keymap.hints(ModeNormal); len(h) != 1 || h[0].full() != "Ctrl+A commands" {
-		t.Errorf("normal hints %v", h)
+	if h := barHints(s.Keymap, ModeNormal); h != "Ctrl+G lock  Ctrl+P pane  Ctrl+T tab  Ctrl+A commands" {
+		t.Errorf("normal hints %q", h)
 	}
 }
 

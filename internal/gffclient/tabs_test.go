@@ -26,7 +26,7 @@ func TestTabsKeepPanes(t *testing.T) {
 
 	hst.typ("\r")
 	hst.waitScreen("sh in tab 1", func(s string) bool { return strings.Contains(s, "hello-one") })
-	hst.typ(prefix + "c")
+	hst.typ(tabKey + "n")
 	hst.waitScreen("the empty tab 2", func(s string) bool {
 		return strings.Contains(s, "2:2") && strings.Contains(s, "empty tab") && !strings.Contains(s, "hello-one")
 	})
@@ -39,13 +39,13 @@ func TestTabsKeepPanes(t *testing.T) {
 	call(t, other, "pane.input", api.InputParams{Pane: first, Data: []byte("zz\n")}, &empty)
 	// The hidden tab gets the activity mark from the hab's pane.output event, with no stream.
 	hst.waitScreen("tab 1 marked as printed", func(s string) bool { return strings.Contains(s, "1:1~") })
-	hst.typ(prefix + "1")
+	hst.typ(tabKey + "1")
 	hst.waitScreen("tab 1 with what sh printed while hidden", func(s string) bool {
 		return strings.Contains(s, "hello-one") && strings.Contains(s, "after-zz") && !strings.Contains(s, "hello-two")
 	})
 
 	// Open sh from the sidebar while it is on screen: focus, not a second view.
-	hst.typ(prefix + "w")
+	hst.typ(cmdKey + "w")
 	hst.typ("k\r")
 	hst.waitScreen("one view of sh", func(s string) bool {
 		return strings.Count(s, "hello-one") == 1 && strings.Contains(s, "1:1")
