@@ -85,12 +85,4 @@ public enum SharedSettings {
     public static var defaults: UserDefaults {
         groupID.flatMap { UserDefaults(suiteName: $0) } ?? .standard
     }
-
-    /// "Approve from the lock screen without unlocking"; off by default. When
-    /// off, the Live Activity's Allow asks for Face ID or the passcode first.
-    public static let allowWithoutUnlockKey = "flightdeck.activity.allow-without-unlock"
-
-    public static func allowWithoutUnlock(_ d: UserDefaults = defaults) -> Bool {
-        d.bool(forKey: allowWithoutUnlockKey)
-    }
 }

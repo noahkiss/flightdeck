@@ -1292,10 +1292,9 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
   asks for Face ID or the passcode (`authenticationPolicy` `requiresAuthentication`); Deny runs
   without it. The device key signs only while the device is unlocked (transport.md 7.2), so an
   answer while protected data is unavailable sends nothing: the app posts "Unlock to answer" and
-  raises the request in the foreground. This holds for Deny too. The built setting "Approve from
-  the lock screen without unlocking" (Settings › Notifications, in the App Group) swaps Allow
-  for an intent with no authentication. With today's key class that changes nothing, so the
-  setting goes (20.6); the build that removes it keeps the authenticated Allow.
+  raises the request in the foreground. This holds for Deny too. The setting "Approve from the lock
+  screen without unlocking" is gone (20.6, task-yfmrj6yc): with today's key class it changed
+  nothing, so Allow always uses the authenticated intent.
   Push-to-start and the "hab offline" end are not built.
 - **Mac.** The Mac app answers banners and reports focus, but asks for no APNs token: its
   entitlements have no `aps-environment` until a Developer ID profile with push exists.
@@ -2831,7 +2830,8 @@ The page is `Views/SettingsViews.swift`.
   through the SSH setup's Face ID switch, which asks before it turns off.
 - **A queued value counts.** An offline hab's row shows, and matches, the value queued for it.
 - **A tie.** When the rows match two columns (every hab-side row locked, say), the picker shows
-  the last picked level.
+  the last picked level. With no level picked, or one that does not match, it shows the matching
+  level with the fewest exceptions; an equal count goes to the safer level.
 - **A level pick writes only rows that differ.** A row already at the level's value is left as
   it is, so its source stays `default` and the new-hab check can still move it. The notice counts
   settings, not habs: "Safe: 3 settings changed".
@@ -2844,7 +2844,11 @@ The page is `Views/SettingsViews.swift`.
   offline hab. Any other refusal without a row id ends the try and names every row.
 - **The connect step.** At the first snapshot after each hello: the queued writes for that hab
   and the new-hab rows go in one `settings.set`, with drop-and-resend-once. A queued write whose
-  value is already in place is cleared with nothing sent.
+  value is already in place is cleared with nothing sent, whatever its revision. A queued write
+  leaves the saved queue only once the hab answered it.
+- **One step at a time per hab.** Writes and connect steps to one hab run in order, and each
+  write's answer updates the row at once, so fast taps on a stepper send fresh revisions. A
+  connect that arrives during a step runs after it, with the view current then.
 - **The exception count** is a button under the picker; it scrolls to the first exception's row.
 - **The entry point.** The connections list has one Settings button, which opens the page. The
   old Notifications, Voice and SSH buttons show only when there is no settings center.
@@ -2863,9 +2867,6 @@ The page is `Views/SettingsViews.swift`.
 - **Rows with no control yet:** `notify.command_done`, `notify.tap`, `widget.hide_titles`,
   `mac.keep_connected` and `voice.language` are in the registry, marked not built, and the page
   leaves them out until their controls exist.
-- **The lock screen switch.** "Approve from the lock screen without unlocking" still shows on
-  the Notifications page, and the Live Activity still reads it, though 20.6 drops it. Removing
-  it takes the second Allow intent out of the widget too, so it waits for its own change.
 - **`gff lb status`** waits for Logbook.
 - **Pushed preferences** (20.4) still reach each hab through `push.register` as before; the
   usage thresholds are not sent yet.

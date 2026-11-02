@@ -110,8 +110,7 @@ struct LockScreenView: View {
 
 /// Deny and Allow, equal size, Allow on the right (app.md 7.2). Each runs its
 /// intent in the app's process; the hab drops the buttons once the request
-/// resolves anywhere (7.5). Allow asks for Face ID or the passcode unless the
-/// owner turned on "Approve from the lock screen without unlocking".
+/// resolves anywhere (7.5). Allow asks for Face ID or the passcode (app.md 20.6).
 struct AnswerButtons: View {
     let attributes: SessionActivityAttributes
     let state: SessionActivityAttributes.ContentState
@@ -123,17 +122,10 @@ struct AnswerButtons: View {
                     Text("Deny").frame(maxWidth: .infinity)
                 }
                 .tint(.red)
-                if SharedSettings.allowWithoutUnlock() {
-                    Button(intent: ActivityAllowLockedIntent(hab: attributes.hab, pane: pane, request: request)) {
-                        Text("Allow").frame(maxWidth: .infinity)
-                    }
-                    .tint(.green)
-                } else {
-                    Button(intent: ActivityAllowIntent(hab: attributes.hab, pane: pane, request: request)) {
-                        Text("Allow").frame(maxWidth: .infinity)
-                    }
-                    .tint(.green)
+                Button(intent: ActivityAllowIntent(hab: attributes.hab, pane: pane, request: request)) {
+                    Text("Allow").frame(maxWidth: .infinity)
                 }
+                .tint(.green)
             }
             .buttonStyle(.borderedProminent)
         }

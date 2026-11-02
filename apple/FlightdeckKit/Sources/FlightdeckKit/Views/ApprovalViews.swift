@@ -282,8 +282,6 @@ public struct ApprovalSheet: View {
 public struct NotificationSettingsView: View {
     @Bindable var push: PushRegistrar
     let board: Board
-    /// Shared with the widget through the App Group (app.md 8.7).
-    @AppStorage(SharedSettings.allowWithoutUnlockKey, store: SharedSettings.defaults) private var allowWithoutUnlock = false
 
     public init(push: PushRegistrar, board: Board) {
         self.push = push
@@ -295,9 +293,6 @@ public struct NotificationSettingsView: View {
             Section {
                 Toggle("Show commands in notifications", isOn: $push.showCommands)
                 Toggle("Notify when a turn finishes", isOn: $push.doneBanners)
-                #if os(iOS)
-                Toggle("Approve from the lock screen without unlocking", isOn: $allowWithoutUnlock)
-                #endif
             }
             if push.permission == .denied {
                 Section {
