@@ -3290,6 +3290,10 @@
             "type": "string",
             "description": "RFC 3339 time gff-hab accepted the change."
           },
+          "error": {
+            "type": "string",
+            "description": "With state error: the harness's own kind of failure, where it gives one, such as Claude Code's rate_limit or authentication_failed."
+          },
           "harness": {
             "type": "string",
             "description": "claude, codex, opencode, or another detection manifest id."

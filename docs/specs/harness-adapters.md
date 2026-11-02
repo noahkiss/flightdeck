@@ -396,6 +396,7 @@ Each `agent.state` event carries (built as `api.AgentState`; the event's id is t
 | `version` | string, optional | The harness version, once reported (envelope `version`, or a `version` or `cli_version` field in the payload). |
 | `warning` | object, optional | Set while `version` is above the adapter's tested range, or unreadable (see Detection). |
 | `hooks` | enum, optional | `missing`: the harness finished a turn and none of its hooks reached `gff-hab` (see [Codex](#codex), built choices). Absent once a hook arrives. |
+| `error` | string, optional | With `error`: the harness's own kind of failure, where it gives one. Claude Code: the `error` of `StopFailure` (`rate_limit`, `authentication_failed`, `server_error` and the like). Codex and opencode give none yet. A round tries a run that failed with `authentication_failed`, `cloud_credential_error`, `server_error` or `unknown` once more after a wake (`rounds.md` 8.3; `harness.NetworkFailure`). |
 
 Built choices:
 

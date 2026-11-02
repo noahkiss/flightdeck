@@ -197,6 +197,8 @@ type AgentState struct {
 	Warning  *VersionWarning    `json:"warning,omitempty" doc:"Set while the harness version is outside the adapter's tested range."`
 	// Hooks is added by the Codex adapter. Optional, so a newer client reads an older hab.
 	Hooks HookHealth `json:"hooks,omitempty" doc:"missing: the harness finished a turn and none of its hooks reached gff-hab. Its hook config is not installed, or (Codex) not trusted. Absent once a hook arrives."`
+	// Error is added by rounds stage 4. Optional, so a newer client reads an older hab.
+	Error string `json:"error,omitempty" doc:"With state error: the harness's own kind of failure, where it gives one, such as Claude Code's rate_limit or authentication_failed."`
 }
 
 type StructureGetParams struct{}

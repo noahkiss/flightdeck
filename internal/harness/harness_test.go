@@ -31,6 +31,7 @@ type expected struct {
 	Turn    string           `json:"turn,omitempty"`
 	Version string           `json:"version,omitempty"`
 	Warning string           `json:"warning,omitempty"`
+	Error   string           `json:"error,omitempty"`
 	Request *expectedRequest `json:"request,omitempty"`
 }
 
@@ -44,7 +45,7 @@ type expectedRequest struct {
 
 func project(st api.AgentState) expected {
 	e := expected{Harness: st.Harness, Session: st.Session, State: string(st.State), Last: string(st.Last),
-		Kind: string(st.Kind), Turn: st.Turn, Version: st.Version}
+		Kind: string(st.Kind), Turn: st.Turn, Version: st.Version, Error: st.Error}
 	if st.Warning != nil {
 		e.Warning = st.Warning.Reason
 	}
@@ -261,5 +262,26 @@ func TestSameHarnessSessionStartRebinds(t *testing.T) {
 	}
 	if st, _ := s.Get("p"); st.Session != "new" || st.State != api.AgentStatusIdle {
 		t.Fatalf("state %+v", st)
+	}
+}
+
+// TestNetworkFailure: the failure kinds a run is tried again for after a wake (rounds.md 8.3).
+func TestNetworkFailure(t *testing.T) {
+	for _, c := range []struct {
+		harness, kind string
+		want          bool
+	}{
+		{"claude", "authentication_failed", true},
+		{"claude", "server_error", true},
+		{"claude", "unknown", true},
+		{"claude", "cloud_credential_error", true},
+		{"claude", "rate_limit", false},
+		{"claude", "overloaded", false},
+		{"claude", "", false},
+		{"codex", "server_error", false},
+	} {
+		if got := NetworkFailure(c.harness, c.kind); got != c.want {
+			t.Errorf("NetworkFailure(%s, %q) = %v", c.harness, c.kind, got)
+		}
 	}
 }

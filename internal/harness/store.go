@@ -310,6 +310,10 @@ func (s *Store) apply(paneID, harness string, src api.StateSource, t int64, u Up
 		default:
 			next.Last, next.Kind, next.Request = "", "", nil
 		}
+		next.Error = ""
+		if u.State == api.AgentStatusError {
+			next.Error = u.Failure
+		}
 		next.State = u.State
 	}
 	if u.Unbind {
@@ -500,7 +504,7 @@ func (s *Store) exitLocked(p *pane) {
 	if next.State == api.AgentStatusDone || next.State == api.AgentStatusError {
 		next.Last = next.State
 	}
-	next.State, next.Kind, next.Request = api.AgentStatusExited, "", nil
+	next.State, next.Kind, next.Request, next.Error = api.AgentStatusExited, "", nil, ""
 	s.commitLocked(p, next)
 }
 
@@ -569,7 +573,7 @@ func (s *Store) Snapshot() []api.AgentState {
 // same compares the visible fields, ignoring source, revision and time.
 func same(a, b api.AgentState) bool {
 	if a.Harness != b.Harness || a.Session != b.Session || a.State != b.State || a.Last != b.Last ||
-		a.Kind != b.Kind || a.Turn != b.Turn || a.Version != b.Version || a.Hooks != b.Hooks {
+		a.Kind != b.Kind || a.Turn != b.Turn || a.Version != b.Version || a.Hooks != b.Hooks || a.Error != b.Error {
 		return false
 	}
 	if (a.Warning == nil) != (b.Warning == nil) || (a.Warning != nil && *a.Warning != *b.Warning) {

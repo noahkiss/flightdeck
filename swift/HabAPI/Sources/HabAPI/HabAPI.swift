@@ -16,6 +16,8 @@ public enum HabAPI {
 public struct AgentState: Codable, Sendable, Hashable {
     /// RFC 3339 time gff-hab accepted the change.
     public var at: String
+    /// With state error: the harness's own kind of failure, where it gives one, such as Claude Code's rate_limit or authentication_failed.
+    public var error: String?
     /// claude, codex, opencode, or another detection manifest id.
     public var harness: String
     /// missing: the harness finished a turn and none of its hooks reached gff-hab. Its hook config is not installed, or (Codex) not trusted. Absent once a hook arrives.
@@ -43,6 +45,7 @@ public struct AgentState: Codable, Sendable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case at = "at"
+        case error = "error"
         case harness = "harness"
         case hooks = "hooks"
         case kind = "kind"
@@ -58,8 +61,9 @@ public struct AgentState: Codable, Sendable, Hashable {
         case warning = "warning"
     }
 
-    public init(at: String, harness: String, hooks: HookHealth? = nil, kind: BlockedKind? = nil, last: AgentStatus? = nil, pane: String, request: PermissionRequest? = nil, revision: UInt64, session: String? = nil, source: StateSource, state: AgentStatus, turn: String? = nil, version: String? = nil, warning: VersionWarning? = nil) {
+    public init(at: String, error: String? = nil, harness: String, hooks: HookHealth? = nil, kind: BlockedKind? = nil, last: AgentStatus? = nil, pane: String, request: PermissionRequest? = nil, revision: UInt64, session: String? = nil, source: StateSource, state: AgentStatus, turn: String? = nil, version: String? = nil, warning: VersionWarning? = nil) {
         self.at = at
+        self.error = error
         self.harness = harness
         self.hooks = hooks
         self.kind = kind

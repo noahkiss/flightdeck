@@ -40,6 +40,9 @@ type Update struct {
 
 	Resolves string // the permission request id this event resolves
 	Version  string // the harness version, where the payload carries one
+	// Failure is the harness's own kind of failure, with state error, where it gives one
+	// (Claude Code's StopFailure error: rate_limit, authentication_failed and the like).
+	Failure string
 }
 
 var (
@@ -85,6 +88,7 @@ type hookPayload struct {
 	ToolInput        json.RawMessage `json:"tool_input"`        // tool events
 	ToolUseID        string          `json:"tool_use_id"`       // tool events
 	NotificationType string          `json:"notification_type"` // Claude Notification
+	Error            string          `json:"error"`             // Claude StopFailure: the failure kind
 	Version          string          `json:"version"`
 	CliVersion       string          `json:"cli_version"`
 }
@@ -133,7 +137,7 @@ func normaliseHookJSON(env Envelope) (Update, error) {
 		if !claude {
 			return Update{}, fmt.Errorf("%w %s %s", ErrUnknownEvent, env.Harness, env.Event)
 		}
-		u.State = api.AgentStatusError
+		u.State, u.Failure = api.AgentStatusError, p.Error
 	case "Interrupt":
 		if claude {
 			return Update{}, fmt.Errorf("%w %s %s", ErrUnknownEvent, env.Harness, env.Event)
@@ -264,4 +268,20 @@ func firstNonEmpty(s ...string) string {
 		}
 	}
 	return ""
+}
+
+// NetworkFailure reports whether a failure kind (AgentState.Error) is one the harness may get
+// over once the network or a sign-in is back: a run that failed so right after a wake is tried
+// once more (rounds.md 8.3). Claude Code: a sign-in that failed or lapsed, cloud credentials it
+// could not load, a server error, and an unknown error, which is how a request that never
+// reached the API ends. Other harnesses give no failure kind yet.
+func NetworkFailure(harness, kind string) bool {
+	if harness != detect.KindClaude {
+		return false
+	}
+	switch kind {
+	case "authentication_failed", "cloud_credential_error", "server_error", "unknown":
+		return true
+	}
+	return false
 }

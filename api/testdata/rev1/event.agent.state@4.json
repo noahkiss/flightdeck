@@ -1,0 +1,56 @@
+{
+  "data": {
+    "at": "at-18",
+    "error": "error-23",
+    "harness": "harness-5",
+    "hooks": "missing",
+    "kind": "auth",
+    "last": "exited",
+    "pane": "pane-3",
+    "request": {
+      "command": "command-9",
+      "context_line": "context_line-15",
+      "cwd": "cwd-11",
+      "description": "description-14",
+      "expires_at": "expires_at-16",
+      "files": [
+        "files-10"
+      ],
+      "id": "id-7",
+      "input": {
+        "input": 12,
+        "x_unknown_field": "later"
+      },
+      "input_truncated": true,
+      "title": "title-13",
+      "tool": "tool-8",
+      "x_unknown_field": "later"
+    },
+    "revision": 4,
+    "session": "session-6",
+    "source": "spawn",
+    "state": "exited",
+    "turn": "turn-17",
+    "version": "version-19",
+    "warning": {
+      "reason": "reason-22",
+      "tested": "tested-21",
+      "version": "version-20",
+      "x_unknown_field": "later"
+    },
+    "x_unknown_field": "later"
+  },
+  "id": "id-26",
+  "revision": 24,
+  "seq": 25,
+  "type": "agent.state",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

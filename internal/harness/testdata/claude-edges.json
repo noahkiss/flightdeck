@@ -19,7 +19,7 @@
     {"harness": "claude", "session": "s-one", "state": "working", "turn": "prompt-7", "version": "2.1.312"},
     {"harness": "claude", "session": "s-one", "state": "blocked", "kind": "question", "turn": "prompt-7", "version": "2.1.312"},
     {"harness": "claude", "session": "s-one", "state": "blocked", "kind": "permission", "turn": "prompt-7", "version": "2.1.312"},
-    {"harness": "claude", "session": "s-one", "state": "error", "turn": "prompt-7", "version": "2.1.312"},
+    {"harness": "claude", "session": "s-one", "state": "error", "turn": "prompt-7", "version": "2.1.312", "error": "overloaded"},
     {"harness": "claude", "session": "s-one", "state": "idle", "turn": "prompt-7", "version": "2.1.312"},
     {"harness": "claude", "session": "s-two", "state": "idle"}
   ]
