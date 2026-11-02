@@ -66,6 +66,21 @@ func TestChannelRoute(t *testing.T) {
 	if err := Call(ctx, Addr(sock, "forged"), "channel.wait", api.ChannelWaitParams{}, nil); err == nil {
 		t.Fatal("an unknown token was served")
 	}
+	// Confirmations: a request reaches the confirm handler with its pane; with none set it is
+	// unavailable; confirm.answer is never on the route.
+	if err := Call(ctx, addr, "confirm.request", api.ConfirmRequestParams{Kind: "start"}, nil); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindUnavailable {
+		t.Fatalf("confirm with no handler: %v", err)
+	}
+	s.SetConfirm(func(_ context.Context, pane, method string, _ json.RawMessage) (any, func(error), error) {
+		return api.ConfirmRequested{Confirmation: api.Confirmation{ID: pane, From: method}}, nil, nil
+	})
+	var cr api.ConfirmRequested
+	if err := Call(ctx, addr, "confirm.request", api.ConfirmRequestParams{Kind: "start"}, &cr); err != nil || cr.Confirmation.ID != "pane-3" || cr.Confirmation.From != "confirm.request" {
+		t.Fatalf("confirm.request: %+v %v", cr, err)
+	}
+	if err := Call(ctx, addr, "confirm.answer", api.ConfirmAnswerParams{ID: "x", Choice: "confirm"}, nil); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindInvalid {
+		t.Fatalf("confirm.answer on the route: %v", err)
+	}
 }
 
 // TestChannelRouteWriteFails: when the caller is gone before the answer, written hears the
