@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,12 +24,17 @@ import (
 )
 
 // markedShell starts an interactive shell with the test mark snippet and returns the pane id. It
-// skips the test when the shell is not installed.
+// skips the test when the shell is not installed, or when no bash is new enough (markedBash).
 func (e *habEnv) markedShell(c *control.Client, shell string) string {
 	e.t.Helper()
-	path, err := exec.LookPath(shell)
-	if err != nil {
-		e.t.Skipf("%s is not installed", shell)
+	var path string
+	if shell == "bash" {
+		path = markedBash(e.t)
+	} else {
+		var err error
+		if path, err = exec.LookPath(shell); err != nil {
+			e.t.Skipf("%s is not installed", shell)
+		}
 	}
 	fix, err := filepath.Abs(filepath.Join("testdata", "marks"))
 	if err != nil {
@@ -50,6 +56,73 @@ func (e *habEnv) markedShell(c *control.Client, shell string) string {
 		e.t.Fatal(err)
 	}
 	return res.Pane
+}
+
+// minBash is the oldest bash the mark snippets support: bash sends C from PS0, new in 4.4
+// (hab-logic-api.md 2.5, Shells).
+var minBash = [2]int{4, 4}
+
+// markedBash picks the bash for the marked shell tests and logs its path and version. With
+// $GFF_TEST_BASH set, that bash, and the test fails when it is older than minBash. Otherwise the
+// first of: bash on PATH, /opt/homebrew/bin/bash, /usr/local/bin/bash, /bin/bash that is minBash
+// or newer. macOS ships bash 3.2 as /bin/bash: with no newer bash the test skips and says so.
+func markedBash(t *testing.T) string {
+	t.Helper()
+	if p := os.Getenv("GFF_TEST_BASH"); p != "" {
+		v, ok := bashVersion(p)
+		if !ok {
+			t.Fatalf("GFF_TEST_BASH=%s: not a bash that runs", p)
+		}
+		if !bashAtLeast(v, minBash) {
+			t.Fatalf("GFF_TEST_BASH=%s is bash %d.%d; the marks need bash %d.%d or newer (PS0)", p, v[0], v[1], minBash[0], minBash[1])
+		}
+		t.Logf("bash: %s (%d.%d, from GFF_TEST_BASH)", p, v[0], v[1])
+		return p
+	}
+	var cands []string
+	if p, err := exec.LookPath("bash"); err == nil {
+		cands = append(cands, p)
+	}
+	cands = append(cands, "/opt/homebrew/bin/bash", "/usr/local/bin/bash", "/bin/bash")
+	seen := map[string]bool{}
+	var found []string
+	for _, p := range cands {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		v, ok := bashVersion(p)
+		if !ok {
+			continue
+		}
+		if bashAtLeast(v, minBash) {
+			t.Logf("bash: %s (%d.%d)", p, v[0], v[1])
+			return p
+		}
+		found = append(found, fmt.Sprintf("%s is %d.%d", p, v[0], v[1]))
+	}
+	if len(found) == 0 {
+		t.Skip("bash is not installed")
+	}
+	t.Skipf("the marks need bash %d.%d or newer (PS0 sends the C mark); %s. Set GFF_TEST_BASH to a newer bash", minBash[0], minBash[1], strings.Join(found, ", "))
+	return ""
+}
+
+// bashVersion runs the bash at path and returns its major and minor version.
+func bashVersion(path string) ([2]int, bool) {
+	out, err := exec.Command(path, "--norc", "--noprofile", "-c", `echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"`).Output()
+	if err != nil {
+		return [2]int{}, false
+	}
+	var v [2]int
+	if n, _ := fmt.Sscan(string(out), &v[0], &v[1]); n != 2 {
+		return [2]int{}, false
+	}
+	return v, true
+}
+
+func bashAtLeast(v, want [2]int) bool {
+	return v[0] > want[0] || v[0] == want[0] && v[1] >= want[1]
 }
 
 func listCommands(t *testing.T, c *control.Client, pane string) []api.Command {

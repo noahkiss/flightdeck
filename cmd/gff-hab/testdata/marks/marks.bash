@@ -1,6 +1,6 @@
 # Test fixture: makes an interactive bash emit OSC 133 prompt marks (hab-logic-api.md 2.5).
 # Not the console's shipped snippet. Run: bash --noprofile --rcfile marks.bash -i
-# Needs bash 4.4 or newer (PS0).
+# Needs bash 4.4 or newer (PS0): commands_test.go skips below that (minBash).
 HISTFILE=
 bind 'set enable-bracketed-paste off' 2>/dev/null
 # D with the last status, before every prompt (and once before the first: the hab ignores it).
