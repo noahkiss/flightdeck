@@ -108,6 +108,52 @@ func TestBannerBudgets(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
+// TestToolBanners: plans, questions, MCP tools and fetches read in plain words on a Watch
+// (app.md 16.1): no tool ids, the question and its numbered options, Approve only for a plan
+// shown whole, and never for a question.
+func TestToolBanners(t *testing.T) {
+	w := Where{Hab: "laptop", Session: "s1", SessionName: "fix-login", Project: "web-app", Harness: "claude"}
+	in := func(s string) api.RawJSON { return api.RawJSON(s) }
+	cases := []struct {
+		name            string
+		r               *api.PermissionRequest
+		title, body     string
+		cat, answeredTo string
+	}{
+		{"short plan", &api.PermissionRequest{ID: "p1", Tool: "ExitPlanMode", Input: in(`{"plan":"## Plan\n\n- Add **rate limit** to ` + "`login`" + `\n"}`)},
+			"Approve plan?", "Add rate limit to login", CategoryApproval, "Allowed: plan"},
+		{"long plan", &api.PermissionRequest{ID: "p2", Tool: "ExitPlanMode", Input: in(`{"plan":"# Plan\n1. Move the session store to Redis so restarts keep users signed in\n2. Add a migration\n3. Update the tests"}`)},
+			"Approve plan?", "Move the session store to Redis so restarts keep users signed in…", CategoryDeny, "Allowed: plan"},
+		{"question", &api.PermissionRequest{ID: "q1", Tool: "AskUserQuestion", Input: in(`{"questions":[{"question":"Which auth library should we use?","header":"Auth","options":[{"label":"Clerk","description":"hosted"},{"label":"Auth.js"}],"multiSelect":false}]}`)},
+			"Which auth library should we use?", "1 Clerk · 2 Auth.js", CategoryOpen, "Allowed: question"},
+		{"question, no input", &api.PermissionRequest{ID: "q2", Tool: "AskUserQuestion"},
+			"Question waiting", "", CategoryOpen, "Allowed: question"},
+		{"mcp tool", &api.PermissionRequest{ID: "m1", Tool: "mcp__github__create_issue"},
+			"Allow github create issue?", "", CategoryDeny, "Allowed:"},
+		{"fetch", &api.PermissionRequest{ID: "f1", Tool: "WebFetch", Input: in(`{"url":"https://docs.example.com/guide/","prompt":"summarise"}`)},
+			"Fetch docs.example.com?", "docs.example.com/guide", CategoryApproval, "Allowed:"},
+	}
+	for _, c := range cases {
+		b := PermissionBanner(w, c.r, false)
+		if b.Title != c.title || b.Body != c.body || b.Category != c.cat {
+			t.Errorf("%s: %q / %q / %q, want %q / %q / %q", c.name, b.Title, b.Body, b.Category, c.title, c.body, c.cat)
+		}
+		if strings.Contains(b.Title, "ExitPlanMode") || strings.Contains(b.Title, "AskUserQuestion") || strings.Contains(b.Title, "mcp__") {
+			t.Errorf("%s: tool id in title %q", c.name, b.Title)
+		}
+		if Words(b.Body) > 16 || utf8.RuneCountInString(b.Body) > commandChars || utf8.RuneCountInString(b.Title) > 50 {
+			t.Errorf("%s: over budget %q / %q", c.name, b.Title, b.Body)
+		}
+		if a := AnsweredBanner(w, "phone", ptr(true), c.r, false); a.Body != c.answeredTo {
+			t.Errorf("%s: answered body %q, want %q", c.name, a.Body, c.answeredTo)
+		}
+	}
+	// Hidden commands hide the plan and the question too.
+	if b := PermissionBanner(w, cases[2].r, true); b.Title != "Approval needed" || strings.Contains(b.Body, "Clerk") {
+		t.Errorf("hidden question leaked: %+v", b)
+	}
+}
+
 // TestPayloads: the alert and Live Activity payloads carry the fields the app reads, under
 // the APNs size limit.
 func TestPayloads(t *testing.T) {

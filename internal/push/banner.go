@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"regexp"
 	"strings"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -125,6 +126,13 @@ func requestText(r *api.PermissionRequest) (text string, whole bool) {
 	switch {
 	case r == nil:
 		return "", false
+	case r.Tool == toolPlan:
+		s := planText(r)
+		return Fit(s, commandWords, commandChars), s != "" && Fits(s, commandWords, commandChars)
+	case r.Tool == toolQuestion:
+		// The options are shown, never answered from the banner: whole stays false.
+		_, opts := questionText(r)
+		return Fit(opts, commandWords, commandChars), false
 	case r.Command != "":
 		s := ShortCommand(r.Command, r.Cwd)
 		return Fit(s, commandWords, commandChars), Fits(s, commandWords, commandChars)
@@ -135,8 +143,95 @@ func requestText(r *api.PermissionRequest) (text string, whole bool) {
 		}
 		s := strings.Join(names, ", ")
 		return Fit(s, commandWords, commandChars), Fits(s, commandWords, commandChars)
+	case inputURL(r) != "":
+		s := inputURL(r)
+		return Fit(s, commandWords, commandChars), Fits(s, commandWords, commandChars)
 	}
 	return "", false
+}
+
+// Claude Code tools whose banners read as a plan or a question, not as a tool call
+// (landscape.md 4.4).
+const (
+	toolPlan     = "ExitPlanMode"
+	toolQuestion = "AskUserQuestion"
+)
+
+// inputField is a string field of the request's tool input, or "".
+func inputField(r *api.PermissionRequest, key string) string {
+	if r == nil || len(r.Input) == 0 {
+		return ""
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(r.Input, &m) != nil {
+		return ""
+	}
+	var v string
+	if json.Unmarshal(m[key], &v) != nil {
+		return ""
+	}
+	return v
+}
+
+// inputURL is the tool input's url without its scheme or a trailing slash, for a fetch tool.
+func inputURL(r *api.PermissionRequest) string {
+	u := inputField(r, "url")
+	for _, p := range []string{"https://", "http://"} {
+		u = strings.TrimPrefix(u, p)
+	}
+	return strings.TrimRight(u, "/")
+}
+
+var listNumber = regexp.MustCompile(`^\d+[.)]\s+`)
+
+// planText is the plan of an ExitPlanMode request in plain words: Markdown heading, quote,
+// list and emphasis marks dropped, a heading that only says "Plan" left out, lines joined
+// with " · ".
+func planText(r *api.PermissionRequest) string {
+	var out []string
+	for _, line := range strings.Split(inputField(r, "plan"), "\n") {
+		line = strings.TrimLeft(strings.TrimSpace(line), "#>-*+ ")
+		line = listNumber.ReplaceAllString(line, "")
+		line = strings.NewReplacer("**", "", "__", "", "`", "").Replace(line)
+		if line != "" && !strings.EqualFold(strings.TrimRight(line, ":"), "plan") {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, " · ")
+}
+
+// questionText is the first question of an AskUserQuestion request and its options, numbered:
+// "1 Clerk · 2 Auth.js" (app.md 16.2).
+func questionText(r *api.PermissionRequest) (question, options string) {
+	if r == nil || len(r.Input) == 0 {
+		return "", ""
+	}
+	var in struct {
+		Questions []struct {
+			Question string `json:"question"`
+			Options  []struct {
+				Label string `json:"label"`
+			} `json:"options"`
+		} `json:"questions"`
+	}
+	if json.Unmarshal(r.Input, &in) != nil || len(in.Questions) == 0 {
+		return "", ""
+	}
+	q := in.Questions[0]
+	opts := make([]string, 0, len(q.Options))
+	for i, o := range q.Options {
+		opts = append(opts, fmt.Sprintf("%d %s", i+1, strings.Join(strings.Fields(o.Label), " ")))
+	}
+	return q.Question, strings.Join(opts, " · ")
+}
+
+// toolName is a tool's name in plain words: the MCP tool "mcp__github__create_issue" reads
+// "github create issue".
+func toolName(tool string) string {
+	if rest, ok := strings.CutPrefix(tool, "mcp__"); ok {
+		tool = strings.NewReplacer("__", " ", "_", " ").Replace(rest)
+	}
+	return tool
 }
 
 // permissionTitle is a verb and object in 4 words and 28 characters: the harness's own title
@@ -144,6 +239,16 @@ func requestText(r *api.PermissionRequest) (text string, whole bool) {
 func permissionTitle(r *api.PermissionRequest) string {
 	if r == nil {
 		return "Approval needed"
+	}
+	switch r.Tool {
+	case toolPlan:
+		return "Approve plan?"
+	case toolQuestion:
+		// A question gets the question budget: 8 words, 50 characters (16.2).
+		if q, _ := questionText(r); q != "" {
+			return Fit(q, 8, 50)
+		}
+		return "Question waiting"
 	}
 	if r.Title != "" && Fits(r.Title, 4, 28) {
 		return r.Title
@@ -158,8 +263,11 @@ func permissionTitle(r *api.PermissionRequest) string {
 	case len(r.Files) > 1:
 		return fmt.Sprintf("Edit %d files?", len(r.Files))
 	}
+	if u := inputURL(r); u != "" {
+		return Fit("Fetch "+strings.SplitN(u, "/", 2)[0], 2, 27) + "?"
+	}
 	if r.Tool != "" {
-		return Fit("Allow "+r.Tool, 3, 27) + "?"
+		return Fit("Allow "+toolName(r.Tool), 4, 27) + "?"
 	}
 	return "Approval needed"
 }
@@ -169,7 +277,9 @@ func permissionTitle(r *api.PermissionRequest) string {
 // with no id cannot be answered through approval.answer, so its banner only opens the app.
 func PermissionBanner(w Where, r *api.PermissionRequest, hide bool) Banner {
 	b := Banner{Kind: KindPermission, Subtitle: w.place(), Level: LevelTimeSensitive, Category: CategoryDeny}
-	if r == nil || r.ID == "" {
+	// A question is answered with its options in the app: Deny would read as a refusal to
+	// answer, and the hab takes no option from a banner yet.
+	if r == nil || r.ID == "" || r.Tool == toolQuestion {
 		b.Category = CategoryOpen
 	}
 	if hide {
@@ -236,6 +346,10 @@ func AnsweredBanner(w Where, by string, allow *bool, r *api.PermissionRequest, h
 			if len(r.Files) > 1 {
 				obj = fmt.Sprintf("%d files", len(r.Files))
 			}
+		} else if r.Tool == toolPlan {
+			obj = "plan"
+		} else if r.Tool == toolQuestion {
+			obj = "question"
 		}
 	}
 	switch {
