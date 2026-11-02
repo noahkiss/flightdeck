@@ -2,7 +2,7 @@
 // its own goja runtime with the bridge of docs/specs/modules.md 7, under the limits of 8, and
 // returns block trees checked by modules.ValidateTree. The module host process (modules.md 4,
 // stage 5) holds one Module per enabled module; the backends the bridge reaches (the hab API,
-// programs, HTTP, state storage) are injected. Pure Go. Spec: docs/specs/modules.md 5, 7, 8, 16.
+// programs, HTTP, state storage) are injected. Pure Go. Spec: docs/specs/modules.md 5.1, 7.3, 8.4.
 package modhost
 
 import (
@@ -19,7 +19,7 @@ import (
 // MainFile is the module's entry file (modules.md 5).
 const MainFile = "main.js"
 
-// Bundle limits (modules.md 16.2).
+// Bundle limits (modules.md 5.1).
 const (
 	MaxSourceFiles = 64
 	MaxSourceBytes = 1 << 20

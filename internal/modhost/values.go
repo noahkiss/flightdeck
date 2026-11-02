@@ -10,8 +10,8 @@ import (
 	"github.com/dop251/goja"
 )
 
-// Bounds on a value that crosses the bridge (modules.md 7.3). The walk is iterative in depth
-// only as far as maxValueDepth, so a module cannot make the host recurse without end.
+// Bounds on a value that crosses the bridge (modules.md 7.3). The walk recurses at most
+// maxValueDepth deep, so a module cannot make the host recurse without end.
 const (
 	maxValueDepth = 64
 	maxValueNodes = 20000
