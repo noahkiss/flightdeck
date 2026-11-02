@@ -55,6 +55,7 @@ is in `docs/specs/ci-release.md`. Run the same commands locally before you push;
 | `macos-go.yml` | Holder package changes on macOS, plus nightly: the holder packages under `-race`, every test, and nightly the service check | `go test -race -count=3` over the holder packages, `make test`, `scripts/service-check.sh` |
 | `nightly.yml` | Linux, nightly when `main` moved: the full set, fuzz, the 200-cycle restart loop, the service check under systemd; also warms the arm64 libghostty cache | `make ci-full`, `make fuzz`, `GFF_RESTART_LOOP=200 go test -tags ghostty -run TestRestartLoop ./internal/link/` (with the Makefile's `PKG_CONFIG_PATH`), `scripts/service-check.sh` |
 | `hygiene.yml` | Every push and pull request, docs included | `scripts/hygiene-scan.sh --staged`, or its hooks |
+| `release.yml` | A `v<x.y.z>` or `v<x.y.z>-rc.<n>` tag, or a dispatch on the tag (`-f tag=`, `-f dry_run=true` for a dry run): checks the tag and that CI passed, builds linux amd64 and arm64 and darwin arm64 on native runners, signs and notarizes the darwin bundles, smoke-tests each archive, publishes the release with `SHA256SUMS`, bumps the `gff` formula | `make release-build RELEASE_VERSION=<x.y.z>`, then `scripts/release-smoke.sh <dir> <x.y.z>` on the build laid out as the archive; `scripts/macos-bundle.sh` for the bundles |
 
 Dependency updates come from Renovate with the shared preset (`renovate.json`); the libghostty
 module and zig move only by hand, with `GHOSTTY_COMMIT`.
