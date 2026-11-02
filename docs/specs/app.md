@@ -842,13 +842,20 @@ gets the chips, in the Capcom view (4.10).
 
 The dedicated Capcom view (`capcom.md` 7.2, 8.2). Code: `Chat/CapcomStanding.swift` (the home
 and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row and the screen),
-`Views/SessionViews.swift` (the Capcom style), `Views/BoardViews.swift` (navigation). Tests:
-`CapcomViewTests`.
+`Views/SessionViews.swift` (the Capcom style), `Views/BoardViews.swift` (navigation),
+`Views/SettingsViews.swift` (the host picker's link). Tests: `CapcomViewTests`,
+`CapcomPickerTests`.
 
 - **Entry row.** A "Capcom" row heads the status board, above the Confirm section and every
   rank, on iPhone, iPad and Mac. Its second line says where Capcom stands: the home hab's
   label, "<hab> · offline", "Looking for the Capcom host", "No Capcom host assigned", "No hab
-  online", or "The Capcom host is not in this app". It shows whenever the app has a hab.
+  online", or "The Capcom host is not in this app". It shows whenever the app has a hab. Beside
+  "Capcom" it shows the standing conversation's agent state as the board shows a session's: the
+  same dot colour and word ("Working", "Permission", "Idle" and so on) with its age. The
+  standing conversation is the last open's session when it ran on the home, else the session
+  the home's catalog marks standing; with neither, or no board row for it, the row shows no
+  state. Design call: the board row of that session is the one source, so the two never
+  disagree.
   Design call: the board is the app's one top-level list (3.1, 11), so a pinned row there is
   one tap from home on every device; the sidebar and tabs of 3.3 and 3.5 are not built yet.
 - **Finding the home.** When a hab comes online, the app reads its catalog (`catalog.get`) and
@@ -857,9 +864,30 @@ and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row a
   the highest counter, a tie going to the lower device id, as on the habs (`capcom.md` 7.6). Its
   device id maps to a hab as "Ask an agent" maps it (8.8): a live welcome, else the hab book.
   Design call: the catalog is where clients find Capcom (`capcom.md` 7.3); one read per
-  connection is cheap. The app does not follow `catalog.updated`, so a re-assignment made while
-  the app runs shows at the next connection, at "Check again", or when the old home refuses
-  the open (below).
+  connection is cheap.
+- **Following the home.** A `catalog.updated` event (host scope) that names the hab's own
+  device id reads that hab's catalog again, so a re-assignment from the command line or another
+  device shows without reconnecting. Every hab adopts a higher assignment into its own catalog
+  (`capcom.md` 7.6), so the own catalog is enough. Design call: events for peers' copies read
+  nothing; they change far more often and the hab's own catalog follows them. Design call: this
+  re-read does not count as loading, so the entry does not flash; a failed re-read keeps the
+  last belief; changes during a read give one more read after it, not one per event.
+- **Host picker.** Settings, Agents, "Capcom host" lists every hab in the app, in the app's
+  order, with a check mark on the current home. An online hab whose welcome lists `capcom` can
+  be chosen; any other shows "Offline" or "No Capcom" and is disabled. Choosing one calls
+  `capcom.assign {host: "self", assignment: <highest counter the app has seen + 1>}` on that hab
+  directly. The result's home and counter become that hab's belief at once, so the entry and
+  the check mark move before any catalog read; an open Capcom view then opens the new home's
+  standing conversation. A refusal shows the hab's text under the list. Re-assigning moves no
+  conversation (`capcom.md` 7.3). Design call: assigning `self` on the chosen hab needs no peer
+  link between habs, and the counter floor keeps it above every assignment the app has seen;
+  the hab still takes the higher of that and its own.
+- **First run.** The "No Capcom host" state shows the same choice inline: a menu of the habs
+  that can be chosen, the suggestion preselected, and Assign, with Check again below. The
+  suggestion is the first hab marked always on in its catalog (`always_on`), else the first hab
+  in the app's order. Design call: no modal; the state the user already sees asks. Design call:
+  the first hab in the app's order stands for the hab paired first (habs are kept in the order
+  they were added).
 - **States.** Loading: a hab is connecting, or a catalog read is on its way, and no home is
   known. No Capcom host: every online hab answered and none names a home; "Check again" reads
   every online hab's catalog again. No hab online: no hab is online or connecting, and no kept
@@ -908,10 +936,8 @@ and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row a
 
 Limits, at the bar of herdr, Rex and Paseo:
 
-- No host picker yet: with no home, the view says to run `gff-hab capcom assign`
-  (`capcom.md` 7.3 names a picker in the app's Capcom settings).
-- The row shows where Capcom runs, not the standing conversation's agent state; that session's
-  own row on the board shows it.
+- The picker lists only the habs in this app. A hab the app does not connect to is assigned
+  from a peer with `gff-hab capcom assign <peer label>`.
 
 ---
 
