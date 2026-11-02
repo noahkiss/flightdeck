@@ -2767,7 +2767,8 @@ Built choices on the hab (task-yfmrj6yc, `internal/settings`):
   over the config file.
 - **The config file.** An entry of `[settings]` that names no hab-side setting, or holds a value
   outside its type, is logged and left out; it locks nothing. A file that does not parse stops
-  gff-hab at start, since it cannot enforce what it cannot read (owner, 2026-11-01). At a later
+  gff-hab at start, since it cannot enforce what it cannot read. Design call: it matches tools
+  that refuse to start on a bad config. At a later
   read it keeps the locks from the last good read and raises one notice, "hab.toml does not
   parse", since the next start will fail; a good read clears it. A lock that appeared, changed or
   went while gff-hab was stopped raises the revision at the next start (`settings.json` keeps the
