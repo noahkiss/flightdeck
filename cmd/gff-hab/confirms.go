@@ -121,8 +121,10 @@ func (r *confirmRunner) folderFacts(host string, self bool, folder string) (proj
 func (r *confirmRunner) RunStart(ctx context.Context, id, from string, s api.ConfirmStart) (api.ConfirmResult, error) {
 	p := api.SessionCreateParams{Name: s.Name, ProjectDir: s.Folder, Harness: s.Harness, Model: s.Model,
 		Seed: s.Seed, IdempotencyKey: id}
-	if s.Seed != "" && from != "" {
-		p.SeedFrom = r.host + "/" + from
+	if sf := r.host + "/" + from; s.Seed != "" && from != "" && validSeedFrom(sf) {
+		// A host id the envelope cannot carry leaves the writer out ("an agent") rather than
+		// failing the start after the owner confirmed it.
+		p.SeedFrom = sf
 	}
 	if r.self(s.Host) {
 		made, err := r.local(ctx, p)

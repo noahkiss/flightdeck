@@ -121,7 +121,7 @@ func TestConfirmStart(t *testing.T) {
 	var notes []string
 	var notesMu sync.Mutex
 	asker, err := confirm.New(confirm.Config{
-		Runner: &confirmRunner{host: "asker", links: func() []confirmLink {
+		Runner: &confirmRunner{host: "SHA256:q3+Zk/9xW2pLm7", links: func() []confirmLink {
 			return []confirmLink{{Label: "target", Online: true, Caps: []string{"confirm"}, Caller: link}}
 		}},
 		Enabled: func() bool { return true },
@@ -156,7 +156,7 @@ func TestConfirmStart(t *testing.T) {
 	}
 	waitUntil(t, "the edited seed, from the requesting hab's session", func() bool {
 		s := pastedAll(e.work, "in")
-		return strings.Contains(s, "Write the docs, then the tests.") && strings.Contains(s, "gff-hab send 'asker/capcom'")
+		return strings.Contains(s, "Write the docs, then the tests.") && strings.Contains(s, "gff-hab send 'SHA256:q3+Zk/9xW2pLm7/capcom'")
 	})
 	if strings.Contains(pastedAll(e.work, "in"), "Write the docs.\n") {
 		t.Fatal("the seed as first asked ran, not the edited one")

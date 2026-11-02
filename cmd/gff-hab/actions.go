@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/channels"
@@ -82,7 +83,7 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 	case strings.HasPrefix(p.Model, "-"):
 		return "", "", control.Errorf(api.ErrorKindInvalid, "model %q is not a model name", p.Model)
 	case p.SeedFrom != "" && !validSeedFrom(p.SeedFrom):
-		return "", "", control.Errorf(api.ErrorKindInvalid, "seed_from %q is not host/session: use %s on each side", p.SeedFrom, channels.NameRule)
+		return "", "", control.Errorf(api.ErrorKindInvalid, "seed_from %q is not host/session: a host id of printable characters with no space, quote or bracket, then a session name of %s", p.SeedFrom, channels.NameRule)
 	}
 	if p.Seed != "" {
 		if err := confirm.CheckSeed(p.Seed); err != nil {
@@ -225,11 +226,21 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 	return ss.ID, pane, nil
 }
 
-// validSeedFrom reports whether seed_from is host/session with both in the channel charset, so
-// it cannot forge the seed envelope's header.
+// validSeedFrom reports whether seed_from is host/session, so it cannot forge the seed
+// envelope's header. The session is the part after the last slash, in the channel charset. The
+// host is a host id as -host-id or the hostname gives it, which may hold ':', '/' or '+': at
+// most 255 bytes of printable characters with no space, quote, backslash or bracket.
 func validSeedFrom(s string) bool {
-	host, session, ok := strings.Cut(s, "/")
-	return ok && channels.ValidName(host) && channels.ValidName(session)
+	i := strings.LastIndexByte(s, '/')
+	if i <= 0 || len(s[:i]) > 255 || !channels.ValidName(s[i+1:]) {
+		return false
+	}
+	for _, r := range s[:i] {
+		if r <= ' ' || r == 0x7f || !unicode.IsPrint(r) || strings.ContainsRune("'\"\\[]`", r) {
+			return false
+		}
+	}
+	return true
 }
 
 // recentDir returns the project's most recently used folder that is still a directory, or "".

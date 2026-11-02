@@ -89,12 +89,28 @@ func TestConfirmRunnerPeers(t *testing.T) {
 		t.Fatalf("offline at run: %v", err)
 	}
 	links[0].Online = true
+	link.deny = false
 	ts := confirmTargets("mac", func() []confirmLink { return links })()
 	if len(ts) != 4 || !ts[0].Ready || ts[0].Host != "mac" || !ts[1].Ready || ts[2].Ready || !strings.Contains(ts[3].Reason, "confirm capability") {
 		t.Fatalf("targets: %+v", ts)
 	}
-	if !validSeedFrom("mac/capcom") || validSeedFrom("mac/cap com") || validSeedFrom("capcom") || validSeedFrom("a]/b") {
+	if !validSeedFrom("mac/capcom") || validSeedFrom("mac/cap com") || validSeedFrom("capcom") || validSeedFrom("a]/b") ||
+		!validSeedFrom("SHA256:q3+Zk/9xW2pLm7/capcom") || !validSeedFrom("box.example.com:2/capcom") || validSeedFrom("my mac/capcom") {
 		t.Fatal("validSeedFrom")
+	}
+	// A host id shaped like a device id (':', '/', '+') goes through as seed_from; one the
+	// envelope cannot carry is left out, and the start still runs.
+	link.calls = nil
+	r.host = "SHA256:q3+Zk/9xW2pLm7"
+	if _, err := r.RunStart(context.Background(), "id-5", "capcom", s); err != nil {
+		t.Fatal(err)
+	}
+	if got := link.calls[0].SeedFrom; got != "SHA256:q3+Zk/9xW2pLm7/capcom" {
+		t.Fatalf("seed_from %q", got)
+	}
+	r.host = "my mac"
+	if _, err := r.RunStart(context.Background(), "id-6", "capcom", s); err != nil || link.calls[1].SeedFrom != "" {
+		t.Fatalf("a host id with a space: %v %+v", err, link.calls[1])
 	}
 }
 

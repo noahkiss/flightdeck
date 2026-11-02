@@ -231,6 +231,40 @@ func TestConcurrentAnswers(t *testing.T) {
 	}
 }
 
+// An answer that lands while confirm.requested is still being published: its confirm.closed
+// waits for the requested event, so a client never sees a confirmation close before it opened.
+func TestRequestedBeforeClosed(t *testing.T) {
+	r := newRig(t, true, time.Hour)
+	inPublish, release := make(chan string, 1), make(chan struct{})
+	r.svc.cfg.Publish = func(e structure.Event) {
+		if e.Type == EventRequested {
+			inPublish <- e.ID
+			select {
+			case <-release:
+			case <-time.After(5 * time.Second):
+			}
+		}
+		r.mu.Lock()
+		r.events = append(r.events, e)
+		r.mu.Unlock()
+	}
+	go r.svc.Request(context.Background(), api.ConfirmRequestParams{Kind: "start", Start: start("beta")})
+	id := <-inPublish
+	answered := make(chan error)
+	go func() {
+		_, err := r.svc.Answer(context.Background(), "phone", api.ConfirmAnswerParams{ID: id, Choice: "cancel"})
+		answered <- err
+	}()
+	time.Sleep(100 * time.Millisecond) // the cancel closes the confirmation meanwhile
+	close(release)
+	if err := <-answered; err != nil {
+		t.Fatal(err)
+	}
+	if ts := r.types(); strings.Join(ts, ",") != "confirm.requested,confirm.closed" {
+		t.Fatalf("events out of order: %v", ts)
+	}
+}
+
 // An answer racing the expiry: either it wins and runs once, or it gets conflict and nothing runs.
 func TestAnswerRacesExpiry(t *testing.T) {
 	for i := 0; i < 30; i++ {
@@ -270,6 +304,11 @@ func TestWaitClampRenameAndNoteByID(t *testing.T) {
 			id = open[0].ID
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+	select { // clamped to 120 s, the request still waits; an overflowed wait would return at once
+	case c := <-done:
+		t.Fatalf("the request returned at once: %+v", c)
+	case <-time.After(150 * time.Millisecond):
 	}
 	cancel() // the tool call was cancelled: the wait ends, the note will go
 	if c := <-done; c.State != "open" || c.Start.Name != "claude-"+id[:6] {

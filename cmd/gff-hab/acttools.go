@@ -11,9 +11,9 @@ import (
 	"github.com/noahkiss/flightdeck/internal/suggest"
 )
 
-// startWait is how long start_session waits for the owner's answer: under the shortest default
-// MCP tool timeout of the supported harnesses, so the call returns "still waiting" before the
-// harness gives up on it (capcom.md 6.4). confirm.request itself takes up to 120 s.
+// startWait is how long start_session waits for the owner's answer. A design call: a margin
+// under the tool timeouts MCP clients commonly use, so the call returns "still waiting" before
+// the client gives up on it (capcom.md 6.4). confirm.request itself takes up to 120 s.
 const startWait = 45 * time.Second
 
 // actionCallTime bounds one action tool call: the longest wait for the user, then a start's run.
