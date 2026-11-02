@@ -93,6 +93,15 @@ func (c *capcomService) Detach(p api.CapcomDetachParams) (api.CapcomAttached, er
 	host := p.Host
 	if c.ownHost(host) {
 		host = c.host
+	} else if c.links != nil {
+		// A peer's notice was attached by its device id, as a push names it (8.5); the item
+		// holds the label notice.get answered with.
+		for _, l := range c.links() {
+			if l.DeviceID != "" && l.DeviceID == host {
+				host = l.Label
+				break
+			}
+		}
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()

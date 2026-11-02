@@ -484,8 +484,18 @@ func serve(args []string) error {
 		Logf: debugf,
 	})
 	// Push (app.md 8): the hab sends to APNs with the user's own key, when it is set up.
+	// The Capcom home host, once the session host below exists: banners carry the Ask action
+	// while some host runs Capcom (capcom.md 8.5).
+	var capcomRef atomic.Pointer[capcomService]
 	pushes = newPushService(pushSetup{
 		configPath: *pushConfig, state: dir, hab: *hostID, getenv: os.Getenv, logf: logger.Printf,
+		self: key.Fingerprint(),
+		capcom: func() string {
+			if c := capcomRef.Load(); c != nil {
+				return c.Home()
+			}
+			return ""
+		},
 		connected: func(c string) bool { s := srv.Load(); return s != nil && s.Connected(c) },
 		label: func(c string) string {
 			if s := srv.Load(); s != nil {
@@ -500,7 +510,8 @@ func serve(args []string) error {
 		},
 	}, store, agents)
 	defer pushes.Close()
-	pushes.notices = &noticeLog{}
+	// Recent notices, saved in the state directory, for notice.get and Capcom (capcom.md 8.5).
+	pushes.notices = openNoticeLog(dir, nil, logger.Printf)
 	// A pane's hook token is a keyed hash of its uuid under the secret in the state directory, so
 	// it outlives a gff-hab restart. A token resolves only while the link follows the pane: a
 	// pane the link reports gone loses its token and its agent state.
@@ -811,6 +822,7 @@ func serve(args []string) error {
 			agentCalls = capcomSender{Agents: agentCalls, cc: capcomSvc}
 		}
 		capcomCtl = capcomSvc
+		capcomRef.Store(capcomSvc)
 		caps = append(caps, capcom.Capability)
 	}
 	// Hab-side settings (app.md 20.5): client writes in <state>/settings.json, locks from the

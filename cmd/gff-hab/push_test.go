@@ -152,6 +152,77 @@ func TestAnswerWithdrawsBanner(t *testing.T) {
 	}
 }
 
+// TestPushAskContext: while Capcom runs on another host, a notice.raise banner carries the
+// notice id as capcom_context with this hab's device id as the host, and the ask category; a
+// permission banner carries the id of the notice gff-hab kept it as, with approval-ask. Both
+// notices read back from the saved store, also after it is opened again (a restart).
+func TestPushAskContext(t *testing.T) {
+	state := t.TempDir()
+	writePushConfig(t, state)
+	st, err := structure.Open(structure.Config{Dir: filepath.Join(state, "structure"), Holders: structure.NewFakeHolder()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	sent := &sentLog{}
+	var pushes *pushService
+	agents := harness.NewStore(harness.Config{Publish: func(e structure.Event) {
+		if s, ok := e.Data.(api.AgentState); ok && pushes != nil {
+			pushes.notifier.State(s)
+		}
+	}})
+	pushes = newPushService(pushSetup{
+		state: state, hab: "laptop", self: "dev-self", capcom: func() string { return "dev-home" },
+		getenv: func(string) string { return "" }, logf: t.Logf, sender: sent,
+		connected: func(string) bool { return false }, label: func(string) string { return "" }, publish: func(structure.Event) {},
+	}, st, agents)
+	defer pushes.Close()
+	pushes.notices = openNoticeLog(state, nil, t.Logf)
+	if err := pushes.Register("c-phone", api.PushRegisterParams{DeviceID: "dev1", Token: strings.Repeat("ab", 32), Environment: "development", Kinds: []api.PushKind{"permission"}}); err != nil {
+		t.Fatal(err)
+	}
+	ask := func(v map[string]any) (category any, ctx map[string]any, home any) {
+		fd := v["flightdeck"].(map[string]any)
+		c, _ := fd["capcom_context"].(map[string]any)
+		return v["aps"].(map[string]any)["category"], c, fd["capcom_home"]
+	}
+
+	raised, err := pushes.Raise("c-script", api.NoticeRaiseParams{Title: "Deploy failed", Body: "exit 2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pushes.notifier.Sync()
+	al := sent.alerts()
+	if len(al) != 1 {
+		t.Fatalf("alerts %v", al)
+	}
+	cat, c, home := ask(al[0])
+	if cat != push.CategoryAsk || home != "dev-home" || c["kind"] != "notification" || c["ref"] != raised.ID || c["host"] != "dev-self" {
+		t.Fatalf("notice banner: category %v, context %v, home %v", cat, c, home)
+	}
+
+	agents.Hook("p", claudeEnv("SessionStart", `{"session_id":"a","hook_event_name":"SessionStart"}`, 1))
+	agents.Hook("p", claudeEnv("PermissionRequest", `{"session_id":"a","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"make test"}}`, 2))
+	pushes.notifier.Sync()
+	al = sent.alerts()
+	if len(al) != 2 || title(al[1]) != "Run make test?" {
+		t.Fatalf("permission banner: %v", al)
+	}
+	cat, c, _ = ask(al[1])
+	kept, _ := c["ref"].(string)
+	if cat != push.CategoryApprovalAsk || c["kind"] != "notification" || kept == "" || kept == raised.ID || c["host"] != "dev-self" {
+		t.Fatalf("permission banner: category %v, context %v", cat, c)
+	}
+	for _, l := range []*noticeLog{pushes.notices, openNoticeLog(state, nil, t.Logf)} {
+		if n, ok := l.get(raised.ID); !ok || n.Title != "Deploy failed" || n.Body != "exit 2" {
+			t.Errorf("raised notice: %v %+v", ok, n)
+		}
+		if n, ok := l.get(kept); !ok || n.Title != "Run make test?" || n.Body != "make test" || n.Level != "time-sensitive" {
+			t.Errorf("kept notice: %v %+v", ok, n)
+		}
+	}
+}
+
 // TestServePush: with no push config the welcome has no push capability, push.register
 // answers unavailable, and `gff-hab notify` still raises a notice for live clients. With a
 // valid config the capability is on and tokens register. Nothing contacts Apple: no push is

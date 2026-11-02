@@ -156,6 +156,13 @@ func (c *capcomService) Observe(cat api.Catalog) {
 	}
 }
 
+// Home returns the device id of the host this hab believes runs Capcom, or "" when none does.
+func (c *capcomService) Home() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.st.Home
+}
+
 // maxSeen is the highest assignment counter in the belief held and in every peer copy.
 func (c *capcomService) maxSeen() uint64 {
 	var copies []api.Catalog

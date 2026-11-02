@@ -433,3 +433,54 @@ func TestCapcomContextSaveFails(t *testing.T) {
 		t.Fatalf("attach after the disk came back: %v %+v", err, p)
 	}
 }
+
+// TestCapcomAskAfterRestart: "Ask" on a banner after a gff-hab restart (capcom.md 8.5). A
+// notice raised before the restart reads back with notice.get, and capcom.open with the
+// banner's context item (the notice id, this hab's device id as the host) resolves it into a
+// block that a context-only send delivers to the stub Capcom.
+func TestCapcomAskAfterRestart(t *testing.T) {
+	e := newHolderEnv(t, 0)
+	binDir := filepath.Join(e.work, "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(binDir, "claude"), fakeCapcomClaude)
+	if err := os.Chmod(filepath.Join(binDir, "claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	e.env = []string{"PATH=" + binDir + ":/usr/bin:/bin", "CLAUDE_CONFIG_DIR=" + shortDir(t)}
+	e.serve()
+	run(t, "capcom", "assign", "-socket", e.sock, "self")
+	notice := raiseNotice(t, e.sock, "Nightly backup failed", "rsync exited 23")
+
+	e.restart(false)
+	var rec api.NoticeRecord
+	q, _ := json.Marshal(api.NoticeGetParams{ID: notice})
+	if err := json.Unmarshal([]byte(run(t, "api", "call", "-socket", e.sock, "notice.get", string(q))), &rec); err != nil || rec.Notice.Body != "rsync exited 23" {
+		t.Fatalf("notice.get after a restart: %v %+v", err, rec)
+	}
+	c := e.control()
+	ref := api.CapcomContextRef{Kind: "notification", Ref: notice, Host: welcome(t, e.sock).DeviceID}
+	op, err := capcomOpenWith(t, c, api.CapcomOpenParams{Context: []api.CapcomContextRef{ref}})
+	if err != nil {
+		t.Fatalf("open with the banner's context after a restart: %v", err)
+	}
+	if len(op.Pending) != 1 || op.Pending[0].Title != "Nightly backup failed" {
+		t.Fatalf("pending %+v", op.Pending)
+	}
+	waitUntil(t, "the stub reported idle", func() bool {
+		st, ok := agentStates(t, e.sock)[op.Pane]
+		return ok && st.State == api.AgentStatusIdle
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(20*time.Second))
+	defer cancel()
+	if err := c.Call(ctx, "session.send", api.SessionSendParams{Session: op.Session}, nil); err != nil {
+		t.Fatalf("context-only send: %v", err)
+	}
+	waitUntil(t, "the context block", func() bool {
+		b, _ := os.ReadFile(filepath.Join(op.Dir, "in.log"))
+		s := string(b)
+		return strings.Contains(s, "[begin context notification "+notice+" on ") && strings.Contains(s, "body: rsync exited 23") &&
+			strings.Contains(s, "[end context notification "+notice+"]")
+	})
+}

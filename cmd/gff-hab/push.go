@@ -37,11 +37,15 @@ type pushSetup struct {
 	configPath string // the push config file; "" means <state>/push.json
 	state      string
 	hab        string // the hab's label
-	getenv     func(string) string
-	connected  func(client string) bool
-	label      func(client string) string
-	publish    func(structure.Event)
-	logf       func(string, ...any)
+	self       string // the hab's device id
+	// capcom returns the device id of the host that runs Capcom, or ""; nil: no Ask action
+	// (capcom.md 8.5).
+	capcom    func() string
+	getenv    func(string) string
+	connected func(client string) bool
+	label     func(client string) string
+	publish   func(structure.Event)
+	logf      func(string, ...any)
 	// sender replaces the APNs client; for tests.
 	sender push.Sender
 }
@@ -84,6 +88,9 @@ func newPushService(ps pushSetup, store *structure.Store, agents *harness.Store)
 		Where:     func(pane, session string) push.Where { return whereOf(store, pane, session) },
 		Connected: ps.connected,
 		Logf:      ps.logf,
+		Capcom:    ps.capcom,
+		Self:      ps.self,
+		Keep:      s.keep,
 	})
 	ps.logf("push is on: topic %s, %s gateway for tokens with no environment", cfg.Topic, cfg.Environment)
 	return s
@@ -193,9 +200,7 @@ func (s *pushService) Raise(client string, p api.NoticeRaiseParams) (api.NoticeR
 	if level == "" {
 		level = "active"
 	}
-	var b [8]byte
-	rand.Read(b[:])
-	id := hex.EncodeToString(b[:])
+	id := noticeID()
 	n := api.Notice{ID: id, Title: p.Title, Body: p.Body, Level: level, Session: p.Session, At: s.now().UTC().Format(time.RFC3339)}
 	if s.notices != nil {
 		s.notices.add(n)
@@ -206,6 +211,26 @@ func (s *pushService) Raise(client string, p api.NoticeRaiseParams) (api.NoticeR
 		pushed = s.notifier.Raise(push.Notice{ID: id, Title: p.Title, Body: p.Body, Level: push.Level(level), Session: p.Session})
 	}
 	return api.NoticeRaised{ID: id, Pushed: pushed}, nil
+}
+
+// noticeID is a new notice id: 16 hex digits.
+func noticeID() string {
+	var b [8]byte
+	rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+// keep records an agent-state banner as a notice, so its Ask action names a notice that
+// notice.get and Capcom's notification context resolve (capcom.md 8.5). It raises no
+// notice.raised event and no push of its own: the banner is the push, and clients have the
+// agent state. It returns the notice id, or "" with no store.
+func (s *pushService) keep(no push.Notice) string {
+	if s.notices == nil {
+		return ""
+	}
+	id := noticeID()
+	s.notices.add(api.Notice{ID: id, Title: no.Title, Body: no.Body, Level: api.NoticeLevel(no.Level), Session: no.Session, At: s.now().UTC().Format(time.RFC3339)})
+	return id
 }
 
 // answering tells the notifier an approval.answer is on its way, so the banner it withdraws
