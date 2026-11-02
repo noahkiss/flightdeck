@@ -331,7 +331,8 @@ HLC, written in one transaction. A batch is applied all or nothing on every repl
 
 - **gff-hab** writes for the API, the MCP server and the hook endpoint.
 - **The CLI fallback.** When gff-hab is down or restarting, the CLI opens `logbook.db` itself and
-  writes with the same package. So memory keeps working through a hab restart or update.
+  writes with the same package. So memory keeps working through a hab restart or update. Inside a
+  pane, only reads use the file; a write waits for gff-hab (10.5).
 - **Two writers, one file.** A write takes SQLite's write lock (`BEGIN IMMEDIATE`), reads the next
   seq and the last HLC from `meta`, writes its batch and moves both on, then commits. A busy file
   waits up to 5 s. gff-hab notices ops it did not write (a WAL change) and emits events for them.
@@ -766,14 +767,17 @@ the full verb set for people and scripts.
 
 ### 10.5 Built (stage 4)
 
-Task-0m8zy1we. Package `internal/lbsvc` serves the verbs over one store; gff-hab opens the replica
-in `cmd/gff-hab/logbook_open.go`; `internal/lbcli` is the CLI. The shapes are in `api/logbook.go`.
+Task-0m8zy1we. Package `internal/lbsvc` serves the verbs over one store. gff-hab opens the replica
+once (`openLogbook` in `cmd/gff-hab/logbook.go`, 7.6), and that one store serves sync and the
+verbs (`startLogbookVerbs` in `cmd/gff-hab/logbook_open.go`). `internal/lbcli` is the CLI. The
+shapes are in `api/logbook.go`.
 
 | Item | Built |
 |---|---|
-| Methods | `logbook.find`, `.get`, `.list`, `.ready`, `.history`, `.write`, `.resolve`, `.projects`, `.status`. `logbook.brief` (stage 6), `logbook.decide` (stage 7) and `logbook.pull`, `logbook.push` (stage 3) are not in the schema yet |
+| Methods | `logbook.find`, `.get`, `.list`, `.ready`, `.history`, `.write`, `.resolve`, `.projects`, `.status`. `logbook.pull` and `logbook.push` are stage 3's (7.6). `logbook.brief` (stage 6) and `logbook.decide` (stage 7) are not in the schema yet |
 | Events | `logbook.updated {id, revision, type, project, deleted}` and `logbook.conflict {id, revision, flags}`, host scope only, not in the snapshot. The revision is the record's count of folded ops |
-| Capability | `logbook`, sent when `<state>/logbook.db` opens with the hab's device id as origin. A file that does not open leaves the hab without Logbook and logs why |
+| Capability | `logbook`, one capability for sync and the verbs, sent when `<state>/logbook.db` opens with the hab's device id as origin. A corrupt file, or one of another origin, is set aside first (7.6); a file that still does not open stops gff-hab with the reason |
+| Sync | Each write through the verbs nudges sync, which sends the new ops at once (7.2). Writes wait out the start hold, and a restored file refuses them with `unavailable` (7.6); the CLI's own store honours both, since both live in the file |
 | Pane route | Every method above. `logbook.find` and `logbook.get` moved from the read methods to `hook.LogbookMethods`, whose handler knows the pane |
 | CLI | `gff lb` (long form `gff logbook`), and `gff-hab lb`, the same code. Verbs of 10.2 that later stages own (`brief`, `approve`, `reject`, `project join`, `project rename`, `export`, `import`) say which stage builds them |
 | MCP | `logbook_search` and `logbook_read` (read tools, built with Capcom's tools), `logbook_write` (an action tool). `logbook_brief` waits for stage 6 |
@@ -784,17 +788,24 @@ Where this spec was silent, stage 4 decided:
 |---|---|
 | Which binary | Both `gff lb` and `gff-hab lb`. The spec names `gff lb`; every pane already has `gff-hab` on its path (its hooks run it), and a Linux install copies only gff-hab and the holder. One package, two entry words |
 | Write shape | `logbook.write {idempotency_key, propose, changes, source}`. A change is `{op: create\|set\|add\|remove\|note\|forget, id, ...}`: a create takes the record fields and tags and links added in the same batch; set takes `field` and `value`; add and remove take `tag` or `link`; note takes `text`; forget takes `op_id`. The answer is `{state: applied\|proposed, ids, ops, proposal, repeated}`. Capcom's `file_record` shape is a subset |
-| Idempotency keys | In a `keys` table of the same file, written in the write's transaction, so a key holds across gff-hab and the CLI fallback. A repeat returns the first write's ids and ops with `repeated`; the same key with another request is `conflict`; a refused write keeps no key. Keys stay 90 days, for a phone that queued writes offline (14). At most 128 bytes, as on `session.create`. Keys never sync. The CLI sends a fresh key with each write, so a write the hab took just before it went away is not applied again from the file |
-| Actor | Pane route: `{agent, harness, session, pane, host}`: the Flightdeck session id, the harness from the pane's agent state, this hab's host id. The source's session is always set to the pane's. Control connection: `{person, device}` with the hello's label (else the client name), until pairing gives clients device ids. CLI fallback: an agent with `$AGENT_KIND` as harness inside a pane, else `{person, device: cli}`, with `$GFF_HAB_HOST_ID` or the system host name; nothing can vouch for a pane's session while gff-hab is down |
+| Idempotency keys | In a `keys` table of the same file, written in the write's transaction, so a key holds across gff-hab and the CLI fallback. A repeat returns the first write's ids and ops with `repeated`; the same key with another request is `conflict`; a refused write keeps no key. Keys stay 90 days, for a phone that queued writes offline (14). At most 128 bytes, as on `session.create`. Keys never sync. The CLI sends a fresh key with each write, so a write the hab took just before it went away is not applied again from the file. `logbook_write` sends a fresh key with each call, so mark doing, mark blocked, mark doing are three writes; a caller that retries a call whose answer it lost passes the same `key` argument. A key older than 90 days is not found, though no write has dropped it from the table yet. The key's hash is of the request as its writer sent it, before gff-hab fills in the pane's session, so a key means one request whichever door it came through |
+| Actor | Pane route: `{agent, harness, session, pane, host}`: the Flightdeck session id, the harness from the pane's agent state, this hab's host id. The source's session is always set to the pane's. Control connection: `{person, device}` with the hello's label (else the client name), until pairing gives clients device ids. CLI fallback: always `{person, device: cli}`, with `$GFF_HAB_HOST_ID` or the system host name, since a pane never writes the file |
+| Which door the CLI takes | In a pane (`$GFF_HAB` set), the pane route; else the control socket. The CLI opens the file only when the socket does not answer: nothing listens on it (`ECONNREFUSED`) or no socket file is there (`ENOENT`). Any other error is the hab's answer and the CLI reports it: an HTTP status from the pane route (an unknown token, a body over 1 MiB) exits 3; a `$GFF_HAB` that does not parse exits 1 |
+| The file from a pane | A pane never writes the file. Its reads may use it. A write tries gff-hab again for up to 15 s (a gff-hab restart is short, and the holder keeps the pane running), then fails with an error that says nothing was written. Outside a pane the CLI writes to the file as a person. Reason: nothing can vouch for a pane's session or its Capcom rule while gff-hab is down, and a file write from a Capcom pane would skip review |
+| `--socket` in a pane | Reads only. A write over the control socket would land as a person, so the CLI refuses it while `$GFF_HAB` is set, as `confirm answer` does. Unsetting `$GFF_HAB` is outside what the CLI can see |
+| The state folder in a pane | gff-hab sets `$GFF_HAB_STATE` in every pane it starts to its own state folder, `-state` included, so the CLI's reads find the file while gff-hab is down. Outside a pane the CLI looks at `--state`, then `$GFF_HAB_STATE`, then the default; a hab installed with another `-state` needs one of the first two |
+| Proposals from a pane | An agent never decides a proposal: the pane route refuses a create of type `proposal` (a pane files one with `propose: true`), a set of `decided_by`, and a set or resolve of a proposal's `status`, with `invalid`. A person decides through the control connection or the CLI outside a pane |
+| Forget from a pane | A pane forgets only ops its own session wrote; a pane outside a session forgets nothing. Any other forget is refused with `invalid` and a hint that a person can forget it. A default the owner may revisit (5.7) |
 | Writes over a peer link | Refused with `invalid`: a client writes on the hab it talks to, and sync carries the ops (2.5, D3). Reads over a peer link work |
 | Proposals | `propose: true` stores one pending proposal record: target `record`, the write's changes and source as its `draft`, the first create's project, and a title made from the first change. Nothing else lands. Stage 7 applies the draft on approve |
 | Capcom | A write from a Capcom session's pane is stored as a proposal even without `propose`, and `logbook.resolve` from it is refused: Capcom's records wait for review (`capcom.md` D3, D14) |
-| `claim` | Sets `assignee` to the word `self` and status `doing`; the hab replaces `self` with the writer's session, else its device |
-| Pane write limit | 60 writes (`logbook.write` and `logbook.resolve`) per pane in a sliding minute; the 61st answers `invalid` with a hint and writes nothing; gff-hab logs it once a minute per pane. A person is never limited. Not built yet: raising it in the hab's config, and the status board mark (14), which waits for the app's Logbook views (stage 8) |
+| `claim` | Sets `assignee` to the word `self` and status `doing`; the hab replaces `self` with the writer's session, else its device. A writer with neither, such as a pane outside a session, is refused with `invalid` |
+| Change caps | One `logbook.write` takes at most 200 changes, from any writer; more answers `invalid` with a hint to split it |
+| Pane write limit | 60 writes (`logbook.write` and `logbook.resolve`) and 600 changes per pane in a sliding minute; the write past either answers `invalid` with a hint and writes nothing; gff-hab logs it once a minute per pane. A person is never limited. Not built yet: raising it in the hab's config, and the status board mark (14), which waits for the app's Logbook views (stage 8) |
 | Lists | `logbook.list` and `find` without words go newest change first; `find` with words best match first. Filters: type, status, project (through joins), tag, host (the actor's host or the create's origin), author (the actor's session, device or harness), session (the actor's or the source's: Capcom lists one conversation's proposals with it), since, general, flagged, deleted. Default 50, at most 500, with `more` |
 | Events for other writers | gff-hab reads `Changes` after each of its own writes and every second, so the CLI's writes to the file reach clients within a second. Events start from the file's end at gff-hab's start: a client takes a fresh read on a new epoch |
 | `logbook.conflict` | Sent when a record's set of flag kinds changes, any kind; an empty list means the last one went |
-| Not built | A corrupt `logbook.db` moved aside (14); `--host <label>` over SSH (10.1); the current project from the pane's session or the folder (10.2), which needs stage 5's identities |
+| Not built | `--host <label>` over SSH (10.1); the current project from the pane's session or the folder (10.2), which needs stage 5's identities |
 
 ---
 
@@ -916,13 +927,13 @@ twice; an export or an index is not, and the user knows which machine should hol
 | Case | Behaviour |
 |---|---|
 | gff-hab restarts during a write from the API | The write commits or it does not; SQLite gives one or the other. A client retries with its idempotency key |
-| gff-hab is down and an agent writes | The CLI writes to the file (4.3). gff-hab sees the new ops on start and syncs them |
+| gff-hab is down and an agent writes | The CLI in the agent's pane tries gff-hab for 15 s, then fails and writes nothing (10.5). A person's CLI outside a pane writes to the file (4.3); gff-hab sees the new ops on start and syncs them |
 | Two agents on one host write at once | SQLite's lock orders them. Each gets its own seq |
 | A laptop writes for a week offline | Every write lands locally. On its next link, sync sends them; conflicts, if any, are flagged |
 | A record is linked to an id the replica lacks | Shown as "not here yet"; resolves when the op arrives |
 | An agent sets a finding's body | Refused with `invalid` and a hint to supersede |
 | An agent writes a secret into a note | `forget` redacts it on every replica; older backups keep it (5.7) |
-| An agent floods writes (a loop) | Writes from one pane above 60 a minute are refused with `invalid` and a hint, and the status board shows it. A cheap guard; the user can raise it |
+| An agent floods writes (a loop) | Writes from one pane above 60 a minute, or above 600 changes a minute, are refused with `invalid` and a hint, and the status board shows it. A cheap guard; the user can raise it |
 | A body over 256 KiB | Refused; the hint suggests a file in the repo and a link |
 | The brief would be larger than 8 KB | Cut by rank (11.2) |
 | A session runs in a folder with no project identity | Its records go to a folder project (3.1). Moving them later is a `project` field change |

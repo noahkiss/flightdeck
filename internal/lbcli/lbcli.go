@@ -1,7 +1,8 @@
 // Package lbcli is the Logbook CLI, `gff lb` (docs/specs/logbook.md 10.2). It reaches the hab
 // through the pane's route when it runs in a pane (GFF_HAB), else through the control socket.
 // When gff-hab is down it opens logbook.db in the hab's state directory itself and runs the same
-// verbs with the same package (4.3), so memory keeps working through a hab restart or update.
+// verbs with the same package (4.3), so memory keeps working through a hab restart or update. A
+// write from a pane never takes that path: it waits for gff-hab (10.5).
 package lbcli
 
 import (
@@ -70,10 +71,11 @@ const usage = `usage: %[1]s [--json] [--socket path] [--state dir] <verb> [args]
   status                          replica size, version vector, waiting ops
 
 filters: --type t --status s --project p --tag t --host h --author a --session s
-         --since <RFC 3339 time> --general --deleted --limit n
+         --since <RFC 3339 time> --general --flagged --deleted --limit n
 In a pane the hab records the pane's harness, session and host as the writer.
-When gff-hab is down, the verbs open logbook.db in the state directory
-(--state, else $GFF_HAB_STATE, else the default) and say so.
+When gff-hab is down, reads open logbook.db in the state directory
+(--state, else $GFF_HAB_STATE, else the default) and say so; so do writes
+outside a pane. A write from a pane waits up to 15 s for gff-hab, then fails.
 `
 
 // later names the verbs of later stages (logbook.md 18).

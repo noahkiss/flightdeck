@@ -639,7 +639,9 @@ change: `hand_off` uses `catalog.list`, `channel.send` and `channel.status`; `fi
   route takes `logbook.write` (Logbook stage 4). The answer also carries `ops` and `repeated`.
   A hab that answers `applied` despite `propose` is reported as such, plainly. A write from a
   Capcom session's pane is stored as a proposal even without `propose`, so `logbook_write`
-  cannot bypass review (D3, D14).
+  cannot bypass review (D3, D14). The CLI in a pane never writes `logbook.db` itself, so a
+  Capcom write while gff-hab is down fails instead of landing unreviewed; and no pane decides a
+  proposal (`logbook.md` 10.5).
 - **The idempotency key** is the first 32 hex digits of a SHA-256 over the calling pane's
   `GFF_HAB` address, the type, project key, title, body and quote. A retry of the same draft
   from the same pane, such as a model that calls again after a timeout, is one proposal; a
