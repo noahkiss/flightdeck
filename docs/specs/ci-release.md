@@ -224,7 +224,10 @@ not run in CI: they need a real hab or an sshd, and they skip when unset.
 
 A `plan` job as in `ci.yml` (the guard and the cache key), then `go-ci.yml` with the `runner`
 extension set to the macOS label, `mise`, and the libghostty cache keyed `<ghostty_key>-macOS-ARM64-baseline`. Commands on a holder change:
-`go test -race -count=3` over the holder group's packages, then `make test`. The nightly leg and a
+`go test -race -count=3` over the holder group's packages, then `make test`. First the job runs
+`brew install bash` and sets `GFF_TEST_BASH` to it: the image's `/bin/bash` is 3.2 and it ships
+no Homebrew bash, while the marked shell tests need bash 4.4 (`hab-logic-api.md` 2.5). With
+`GFF_TEST_BASH` set, those tests fail on an old bash instead of skipping. The nightly leg and a
 dispatch add `scripts/service-check.sh` (core tests 2 and 13 under launchd). The darwin build
 passes no `GHOSTTY_ZIGFLAGS` (7.3: Ghostty's build sets its own macOS target). The holder group's
 paths also cover `internal/vt/**`, `Makefile`, `go.mod`, `go.sum` and `mise.toml`, so a parser or
