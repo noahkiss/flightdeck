@@ -153,6 +153,7 @@ RACE_PKGS := ./internal/holder/... ./internal/holderproto/... ./internal/holderc
 	./internal/harness/... ./internal/hook/... ./internal/opencode/... ./internal/gitstatus/... ./internal/worktree/... ./internal/transcript/... ./internal/usage/... \
 	./internal/service/... ./internal/grants/... ./internal/push/... ./internal/settings/... ./internal/rounds/... \
 	./internal/speech/... ./internal/speechproto/... ./internal/oggopus/... ./internal/attach/... ./internal/logbook/... ./internal/lbsync/... ./internal/modhost/... ./internal/modview/... \
+	./internal/pairing/... ./internal/devicestore/... \
 	./cmd/...
 # cmd/gff-hab under -race -count=3 runs past go test's 10-minute default on a loaded machine.
 RACE_TIMEOUT ?= 30m
