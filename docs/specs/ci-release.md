@@ -158,8 +158,13 @@ Two jobs.
 | `cache-path` | `build/libghostty-vt` |
 | `cache-key` | `${{ needs.plan.outputs.ghostty_key }}-Linux-X64-baseline` (section 5) |
 | `cancel-in-progress` | `${{ github.ref != 'refs/heads/main' }}` (E4) |
-| `commands`, full | `make ci-full` (`check-pure`, `vet`, `test`, `race`) |
-| `commands`, fast | `make ci-fast` (`check-pure`, `build`) |
+| `commands`, full | `GFF_TEST_TIMEOUT_SCALE=3 make ci-full GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'` (`check-pure`, `vet`, `test`, `race`) |
+| `commands`, fast | `GFF_TEST_TIMEOUT_SCALE=3 make ci-fast GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'` (`check-pure`, `build`) |
+| job name | `go (full)` or `go (fast)`, from the `plan` output (7.4) |
+
+**`GHOSTTY_ZIGFLAGS` sits inline in every command that can build libghostty.** go-ci has no `env`
+input. Without the flags, a cache miss would build a native-CPU libghostty and save it under the
+`-baseline` key, and every later run and release would restore the wrong build.
 | `timeout-minutes` | `30` |
 
 `make test` runs every Go test with `-tags ghostty`, including the end-to-end tests over real
@@ -219,28 +224,36 @@ not run in CI: they need a real hab or an sshd, and they skip when unset.
 
 A `plan` job as in `ci.yml` (the guard and the cache key), then `go-ci.yml` with the `runner`
 extension set to the macOS label, `mise`, and the libghostty cache keyed `<ghostty_key>-macOS-ARM64-baseline`. Commands on a holder change:
-`go test -race -count=3` over the holder group's packages, then `make test`. The nightly leg adds
-`scripts/service-check.sh` (core tests 2 and 13 under launchd). A hosted macOS runner has a GUI
+`go test -race -count=3` over the holder group's packages, then `make test`. The nightly leg and a
+dispatch add `scripts/service-check.sh` (core tests 2 and 13 under launchd). The darwin build
+passes no `GHOSTTY_ZIGFLAGS` (7.3: Ghostty's build sets its own macOS target). The holder group's
+paths also cover `internal/vt/**`, `Makefile`, `go.mod`, `go.sum` and `mise.toml`, so a parser or
+pin change runs here the same day. A hosted macOS runner has a GUI
 login, which launchd user agents need; stage 2 proves this before it relies on it.
 
 ### 3.6 `nightly.yml`
 
 One Linux job (go-ci with `mise` and the cache), after the guard:
 
+- `make ci-full GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'`: the full set on
+  `main` as it stands. The push that merges a passed pull request runs only the fast set (3.3),
+  and that pull request ran against an older `main`; this catches a break from merge skew by the
+  next morning. It also builds the baseline libghostty on a cache miss, for the commands below.
 - `make fuzz FUZZTIME=30s`
-- `make libghostty GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'`, then
-  `PKG_CONFIG_PATH="$PWD/build/libghostty-vt/share/pkgconfig" CGO_ENABLED=1 GFF_RESTART_LOOP=200 go test -tags ghostty -run TestRestartLoop ./internal/link/`
-  (3.2: a bare `-tags ghostty` command cannot find the library). On a cache hit the stamp file
-  makes `make libghostty` a no-op; on a miss it builds the library, so the test never runs
-  without it
+- `PKG_CONFIG_PATH="$PWD/build/libghostty-vt/share/pkgconfig" CGO_ENABLED=1 GFF_RESTART_LOOP=200 go test -tags ghostty -run TestRestartLoop ./internal/link/`
+  (3.2: a bare `-tags ghostty` command cannot find the library)
 - `scripts/service-check.sh` under systemd. The runner user needs a user manager:
-  `sudo loginctl enable-linger "$USER"` first. Stage 2 proves it on the hosted image.
+  `sudo loginctl enable-linger "$USER"` first; the job waits up to 30 s for the user bus and fails
+  with an error when it never appears. Stage 2 proves it on the hosted image.
+
+A scheduled run skips everything when `main` has not moved since the last passing run; a
+dispatch always runs everything.
 
 A second small job on `ubuntu-24.04-arm` runs only
 `make libghostty GHOSTTY_ZIGFLAGS='-Dtarget=aarch64-linux-gnu.2.31 -Dcpu=baseline'` with the
 cache, so the linux arm64 release leg starts warm (5).
 
-Timeout 30 minutes. Budget about 10 minutes (`testing.md`, Layers).
+Timeout 75 minutes: the full set takes most of it. The slow suites themselves budget about 10 minutes (`testing.md`, Layers).
 
 ---
 

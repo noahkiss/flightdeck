@@ -53,7 +53,7 @@ is in `docs/specs/ci-release.md`. Run the same commands locally before you push;
 |---|---|---|
 | `ci.yml` | Pull requests and pushes to `main` that touch more than docs, on Linux: gofmt, the generate check, then the full or fast set | `gofmt -l .`, `make check-gen`, `make ci-full` (or `make ci-fast`) |
 | `macos-go.yml` | Holder package changes on macOS, plus nightly: the holder packages under `-race`, every test, and nightly the service check | `go test -race -count=3` over the holder packages, `make test`, `scripts/service-check.sh` |
-| `nightly.yml` | Linux, nightly: fuzz, the 200-cycle restart loop, the service check under systemd | `make fuzz`, `GFF_RESTART_LOOP=200 go test -tags ghostty -run TestRestartLoop ./internal/link/` (with the Makefile's `PKG_CONFIG_PATH`), `scripts/service-check.sh` |
+| `nightly.yml` | Linux, nightly when `main` moved: the full set, fuzz, the 200-cycle restart loop, the service check under systemd; also warms the arm64 libghostty cache | `make ci-full`, `make fuzz`, `GFF_RESTART_LOOP=200 go test -tags ghostty -run TestRestartLoop ./internal/link/` (with the Makefile's `PKG_CONFIG_PATH`), `scripts/service-check.sh` |
 | `hygiene.yml` | Every push and pull request, docs included | `scripts/hygiene-scan.sh --staged`, or its hooks |
 
 Dependency updates come from Renovate with the shared preset (`renovate.json`); the libghostty
@@ -68,7 +68,8 @@ The repo layout and the libghostty build are in `docs/layout.md`.
 | Command | What it does |
 |---|---|
 | `make gen` | Regenerate the API schema, Go client and Swift package from `api/` |
-| `make libghostty` | Fetch the pinned Ghostty commit and build libghostty-vt into `build/` (needs zig) |
+| `make libghostty [GHOSTTY_ZIGFLAGS='-Dtarget=... -Dcpu=baseline']` | Fetch the pinned Ghostty commit and build libghostty-vt into `build/` (needs zig). CI and releases pass a fixed target and the baseline CPU (`docs/specs/ci-release.md` 7.3); empty builds for this machine. Run `make clean-libghostty` before switching flags |
+| `make ci-full`, `make ci-fast` | What `ci.yml` runs after its gofmt and generate checks: `check-pure vet test race`, or `check-pure build` |
 | `make test` | Build libghostty, then run every Go test with `-tags ghostty` |
 | `make build`, `make vet` | Build or vet every package with `-tags ghostty` |
 | `make test-pure` | Run the Go tests without cgo or libghostty |
