@@ -532,7 +532,11 @@ func show(ctx context.Context, c *cli) (any, string, error) {
 	}
 	x := r.Record
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s  %s  %s\n%s\n", x.ID, x.Type, x.Status, x.Title)
+	fmt.Fprintf(&b, "%s  %s", x.ID, x.Type)
+	if x.Status != "" {
+		fmt.Fprintf(&b, "  %s", x.Status)
+	}
+	fmt.Fprintf(&b, "\n%s\n", x.Title)
 	field := func(name, v string) {
 		if v != "" {
 			fmt.Fprintf(&b, "%s: %s\n", name, v)
