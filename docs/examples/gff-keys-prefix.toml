@@ -11,6 +11,10 @@
 #   Ctrl+\ w  sidebar        Ctrl+\ p  pane mode     Ctrl+\ l  lock (Ctrl+G unlocks)
 #   Ctrl+\ g  board          Ctrl+\ t  tab mode      Ctrl+\ d  detach
 #   Ctrl+\ c  new tab        Ctrl+\ ]  next tab      Ctrl+\ [  previous tab
+#   Ctrl+\ R  hide or show run sessions
+#
+# On the board, r runs the selected round now and p pauses or unpauses it; R in the sidebar
+# and on the board hides or shows run sessions.
 #
 # Ctrl+\ pressed twice sends Ctrl+\ to the program. Locked mode sends Ctrl+\ as it is.
 # In pane and tab mode, a focus or tab move keeps the mode; another command ends it.
@@ -44,6 +48,7 @@ r = "redraw"
 n = "nudge"
 f = "fit"
 d = "detach"
+R = "run-sessions"
 esc = "back"
 1 = "tab-1"
 2 = "tab-2"
@@ -96,6 +101,7 @@ r = "rename"
 x = "close-session"
 "/" = "filter"
 p = "group"
+R = "run-sessions"
 esc = "back"
 q = "back"
 
@@ -106,5 +112,8 @@ down = "down"
 j = "down"
 enter = "open"
 t = "open-tab"
+r = "run-now"
+p = "pause"
+R = "run-sessions"
 esc = "back"
 q = "back"

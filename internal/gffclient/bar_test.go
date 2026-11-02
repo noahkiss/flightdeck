@@ -224,6 +224,17 @@ func TestPrefixKeymapSample(t *testing.T) {
 			}
 		}
 	}
+	// The rounds keys (7.5) are bound where the default keymap binds them.
+	for _, c := range []struct {
+		m   Mode
+		key string
+		act string
+	}{{ModeSession, "R", actRunSessions}, {ModeSidebar, "R", actRunSessions}, {ModeBoard, "R", actRunSessions},
+		{ModeBoard, "r", actRunNow}, {ModeBoard, "p", actPause}} {
+		if !slices.Contains(km.Bindings(c.m), Binding{c.key, c.act}) {
+			t.Errorf("sample %s mode lacks %s = %s", c.m, c.key, c.act)
+		}
+	}
 	// What its header says: the prefix takes one key and returns; pressed twice it sends
 	// itself; tab mode stays through a tab move and a digit ends it; locked passes the prefix.
 	evs := newKeyReader(km).feed([]byte("\x1cw\x1c\x1c\x1ct][3x\x1cl\x1cz\x07"))
