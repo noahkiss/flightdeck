@@ -86,7 +86,8 @@ extension ChatModel {
 
     /// Reads what waits with `capcom.pending`, which starts and resumes nothing, so any Capcom
     /// session, running or exited, standing or older, reads its own chips. A hab from before
-    /// that call answers `unavailable` and the chips stay as the app last saw them.
+    /// that call answers kind `invalid` (method not found). Any error leaves the chips as the
+    /// app last saw them.
     public func refreshPending() async {
         guard let conn = connection, let session = target.session, context.isCapcom, context.online,
               await conn.has(capability: CapcomChip.capability) else { return }

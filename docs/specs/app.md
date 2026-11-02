@@ -822,8 +822,9 @@ Capcom session's chat view is the Capcom view: a session with kind `capcom` gets
   after a send that carried chips, the model reads the list with `capcom.pending {session}`.
   That call starts, resumes and changes nothing, so viewing any Capcom session, running or
   exited, standing or older, never resumes one. The model never refreshes with `capcom.open`
-  (coordinator, 2026-11-02). A hab from before `capcom.pending` answers `unavailable`, and the
-  chips stay as the app last saw them.
+  (coordinator, 2026-11-02). A hab from before `capcom.pending` answers kind `invalid` (method
+  not found, code -32601). The model ignores any error from this read, so the chips stay as the
+  app last saw them.
 - **Transcript records.** A user record to Capcom starts with the hab's context blocks. The
   chat view shows each block as a chip (its kind's symbol and first field: the notice title,
   session name, file path or command line), then the user's own text. The text after the last
