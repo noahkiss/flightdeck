@@ -134,7 +134,9 @@ func Clean(s string) string {
 			return r
 		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f), unicode.Is(unicode.Cf, r):
 			return -1
-		case r == '[', r > 0x7f && unicode.Is(unicode.Ps, r) && !unicode.Is(unicode.Quotation_Mark, r):
+		case r == '[', r > 0x7f && unicode.Is(unicode.Ps, r) && !unicode.Is(unicode.Quotation_Mark, r),
+			// Bracket pieces outside Ps: ceilings and floors, corners, square bracket pieces.
+			r >= 0x2308 && r <= 0x230b, r >= 0x231c && r <= 0x231f, r >= 0x23a1 && r <= 0x23a3, r >= 0x23a7 && r <= 0x23a9:
 			return '('
 		}
 		return r
