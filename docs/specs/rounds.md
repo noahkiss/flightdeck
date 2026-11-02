@@ -1,11 +1,12 @@
 # Rounds: behaviour spec
 
-Status: study for review. Part 13, study stage. Written 2026-11-01.
+Status: accepted for build. Part 13. Written 2026-11-01; questions settled and build stages
+planned 2026-11-01 (section 12, section 14).
 
 A round is a scheduled agent job. Each run is an ordinary visible session: you can watch it,
 type into it and take it over. This spec covers the job definition, triggers, session modes,
 the lock that keeps a run out of a session you are using, catch-up after sleep, where rounds run,
-failure and notification behaviour, and the later stages with their acceptance checks. It
+failure and notification behaviour, and the build stages. It
 describes behaviour in our own words and copies no code from the reference tools.
 
 Rules this spec works within (owner decisions in the master plan):
@@ -19,8 +20,9 @@ Rules this spec works within (owner decisions in the master plan):
   schedule and add only cheap guards.
 - A confirmation that adds friction gets a setting to turn it off.
 
-Sections that settle a question end with a **Decision** line and its reason. The owner decides
-only user-visible questions; those are in [section 12](#12-open-questions).
+Sections that settle a question end with a **Decision** line and its reason. The three
+user-visible questions were settled with defaults under the owner's power-user rule; they are in
+[section 12](#12-settled-questions).
 
 ## Contents
 
@@ -35,9 +37,9 @@ only user-visible questions; those are in [section 12](#12-open-questions).
 9. [Where rounds run](#9-where-rounds-run)
 10. [Failure and notifications](#10-failure-and-notifications)
 11. [Edge cases](#11-edge-cases)
-12. [Open questions](#12-open-questions)
+12. [Settled questions](#12-settled-questions)
 13. [API and CLI additions](#13-api-and-cli-additions)
-14. [Later stages](#14-later-stages)
+14. [Build stages](#14-build-stages)
 15. [Sources](#15-sources)
 
 ---
@@ -143,9 +145,10 @@ word would break the one-word rule.
 | `timeout` | No | Longest run, default 60 minutes (7.3) |
 | `wait` | No | `resume` only: how long a run may wait for the lock (6.3), default 10 minutes |
 | `catch_up` | No | `once` (default) or `skip` (8.2) |
-| `on_finish` | No | `close` or `keep`, for `fresh` and `fork` (7.6). Default: see open question 2 |
+| `on_finish` | No | `close` (default) or `keep`, for `fresh` and `fork` (7.6, Q2) |
 | `notify` | No | `failures` (default), `always` or `never` (10.2) |
 | `paused` | No | A paused round keeps its definition and starts no runs |
+| `created_by` | Set by the hab | The session that created the round, when an agent did; absent for a user. Read only |
 
 Rules:
 
@@ -383,6 +386,30 @@ running it where the user can see it.
   sessions older than that are removed from the structure; their transcripts are not touched.
 - `resume` mode never closes its target.
 
+### 7.7 Where round and run state lives, and the Logbook seam
+
+The plan has rounds use Logbook (Part 12) for job state and results. Logbook is built after
+rounds, so rounds keep their own state now.
+
+- **Own store.** `<state>/rounds/state.json` holds every round, its next slot, its last served
+  slot, its failure and skip counts, and its run records. It is saved whole through a synced
+  temporary file and one rename, as the channels state is (`mesh.md` 6.5). A file that does not
+  parse is set aside as `.bad`, and the hab starts with no rounds and raises one notice.
+- **Two parts, one seam.** The scheduler owns the definitions and slots. Run records go through
+  a small run log interface: append a run, update its state, page a round's runs, prune by the
+  retention rule (7.6). The first implementation writes to the rounds store.
+- **What Logbook takes over later.** When Logbook exists, a second run log implementation files
+  each finished run as a Logbook record (the later ideas in section 14), and `round.runs` reads from it.
+  The scheduler, the definitions and `GFF_ROUND_LAST_OK` stay in the rounds store: a slot
+  decision must never wait on a store that syncs between hosts.
+- **The run record.** Run id, run number, round id, slot, trigger kind, `missed`, state, reason,
+  session id, start and end times, and the first 4 KiB of the final agent message. Logbook gets
+  the same fields.
+
+Decision: rounds keep their own state behind a run log interface. Reason: Logbook comes after
+rounds; a narrow seam lets it take over the run history with no change to the scheduler or the
+API.
+
 ---
 
 ## 8. Sleep, wake and catch-up
@@ -401,7 +428,8 @@ running it where the user can see it.
 ### 8.2 Catch-up once
 
 - When a tick finds a round's next slot in the past, it starts **one** run for the latest missed
-  slot, then sets the next slot to the first slot strictly after now.
+  slot, then sets the next slot to the first slot strictly after now. A missed round never runs
+  once per missed slot, whatever the gap.
 - The run records how many slots it covered (`missed`), so the history shows "ran once for 9
   slots".
 - `catch_up = skip` drops the missed slots instead: the next slot moves past now and no run
@@ -532,14 +560,25 @@ devices, and the app's in-app notices. A new push kind `round` is added to `push
 | A peer shows a round from a stale catalog | Marked stale with the catalog's age (`mesh.md` 5) |
 | A run session's pane is closed by the user | The run ends as `taken_over` |
 | The prompt is longer than 64 KiB | Refused at creation, the channel message limit (`mesh.md` 6.3) |
-| An agent creates a round that triggers itself every minute | Allowed within the 1-minute floor; the agent can stop it with `gff round rm "$GFF_ROUND"`. Open question 1 covers whether the user confirms first |
+| An agent creates a round that triggers itself every minute | Allowed within the 1-minute floor, with no card (Q1); the agent can stop it with `gff round rm "$GFF_ROUND"`, and the failure pause (10.1) caps a broken one |
 | A cron expression that never matches (`0 0 31 2 *`) | Refused at creation: "never runs" |
 
 ---
 
-## 12. Open questions
+## 12. Settled questions
 
-Only user-visible questions are listed. Every internal call above is decided.
+The study left three user-visible questions open. The owner asked for them to be settled with
+defaults under the power-user rule (master plan, 2026-11-01): default to no extra confirmation,
+drop a confirmation when the harness already asks, and add a setting only where people really
+differ. These are the coordinator's calls on that rule, not owner decisions.
+
+| Question | Decision | Reason |
+|---|---|---|
+| Q1. Does an agent-created round need a confirmation card? | No card, for any mode. A round an agent creates on another host goes through `confirm.start_elsewhere`, as every start on another host does (`capcom.md` 6.1). The hab records `created_by` | The harness already asks before the agent runs the round command; a card would be double permission. The failure pause and the round badge cap the risk |
+| Q2. Does a successful fresh or fork run close its pane? | Yes: `on_finish = close` by default. Failed, timed-out, blocked and taken-over runs stay open | Matches Paseo; daily rounds would leave idle harnesses. The session record and transcript stay, so the chat view shows the run and resume is one tap |
+| Q3. Does a successful run notify? | No: `notify = failures` by default, `always` per round | Success shows on the status board and in the history; the `done` banner is off by default too (`app.md` 8.2) |
+
+The study's options and recommendations follow, for the record.
 
 ### Q1. Does a round that an agent creates need the user's confirmation?
 
@@ -594,7 +633,15 @@ it.
 | catalog `rounds` | Catalog section | Name, mode, trigger, project, next slot, last run state (`mesh.md` 5) |
 | push kind `round` | Word | Round notifications (10.2) |
 
-CLI (`gff round`, also the agent kit's MCP tools with the same verbs):
+CLI (`gff round`, also the agent kit's MCP tools with the same verbs). Until the agent kit
+(Part 4) gives agents the `gff` verbs, the same commands ship as `gff-hab round`, beside
+`gff-hab send` and `gff-hab show`, with the same doors: `-socket` or `-via` for the control
+connection, and from a pane the hook endpoint named by `$GFF_HAB`, which names the calling
+session for `--target self` and `created_by`.
+
+Decision: build the CLI as `gff-hab round` first. Reason: the agent-facing commands that exist
+today live in gff-hab and reach the hab from a pane through `$GFF_HAB`; the agent kit renames
+them all at once (`mesh.md` 6.5 did the same for channels).
 
 | Command | What it does |
 |---|---|
@@ -611,22 +658,30 @@ CLI (`gff round`, also the agent kit's MCP tools with the same verbs):
 
 ---
 
-## 14. Later stages
+## 14. Build stages
 
-Each stage is sized for one subagent. Core stages (2 and 4) get a fresh-eyes reviewer before they
-close.
+The study proposed eight build stages. The plan splits the scheduler core in three, so each
+stage is one outcome a single helper can build and test. Each stage is a task in the Part 13
+plan; the task holds the work and the acceptance checks. Core stages (2, 3 and 5) get a
+fresh-eyes reviewer before they close.
 
-| # | Stage | Builds | Acceptance checks |
+| # | Stage | Builds | Task |
 |---|---|---|---|
-| 1 | Study and spec | This document | Owner answers Q1 to Q3 |
-| 2 | Scheduler core | The round store; cron with zones, presets and DST rules; the wall-clock tick and wake detection; catch-up once and skip; one run per round and the host limit; `fresh` mode with `command`; run states, history and retention; re-adopting a live run after a gff-hab restart; `round.*` methods and events; `gff round` for these | Fake-clock unit tests: an hourly round across a 10-hour sleep runs once with `missed = 10`; `skip` runs none; a spring-forward slot runs once at the first valid minute; an autumn repeated hour runs once; a clock moved back runs no slot twice; a slot due during a restart runs once. On a real host: a `command` round runs in a visible pane, survives 3 gff-hab restarts mid-run and ends `succeeded`; a wall-clock jump of 2 h is seen as a wake. Golden messages for every new type |
-| 3 | Harness fresh runs | `fresh` with a harness and a prompt through the adapter; run end on `turn_end`; timeout by interrupt; blocked runs; `on_finish`; the `GFF_ROUND_*` variables; failure pause | With a fake harness that speaks the hook protocol: success, error, a permission that blocks then is answered, a timeout that interrupts, a take over by typing, close on success and keep on failure. One real Claude Code run against a scratch project, on a Mac and on Linux |
-| 4 | Resume and fork with the lock | `resume` into live and exited targets; the four in-use signals; wait then skip; coalescing; the envelope; target gone; `fork` for Claude Code and Codex | A target `working` for 3 minutes gets the prompt after `done`; a target with typing in the last 2 minutes waits; a focused target waits; a target busy past `wait` ends `skipped`; a blocked target is never written to; an exited target is resumed then prompted; a forked run leaves the target's transcript unchanged |
-| 5 | Notifications and the status board data | Push kind `round`, collapse by round, the rows in 10.2, skip and pause notices; catalog `rounds` section | Push payload tests per row; a failing round shows one collapsed banner; a peer lists another hab's rounds with stale marks |
-| 6 | Agent kit and confirmation | MCP tools and `gff round` from inside a session; `--target self`; the confirmation card per Q1 and its setting | An agent creates a round through MCP; the card shows the fields; a declined card creates nothing; with the setting off no card appears; an agent stops its own round with `$GFF_ROUND` |
-| 7 | App and gff views | Rounds list, round page, run history, badges, Run now, edit; the gff client's rounds pane | UI tests in the app; `gff round ls --all` matches the app's list |
-| 8 | Event triggers | The four events in 4.3, debounce, cooldown, no self-loops | Each event triggers once per debounce window; a burst in cooldown makes one run; a round's own session never triggers it |
-| 9 | Later ideas | Worktree isolation for `fresh` runs (on `worktree.create`, `hab-logic-api.md` 3.10); skip when a harness usage window is above a threshold; file a run's result as a Logbook record (Part 12) | Each gets its own acceptance list when planned |
+| 1 | Definition and store | Round and run types and checks; cron, presets, zones and the DST rules; the rounds store and the run log seam (7.7); retention | task-e22g2ajs |
+| 2 | Scheduler | The wall-clock tick and wake detection; catch-up once and skip; restarts and clock jumps; one run per round; the host limit; the wake settle; failure and skip counts, pause and completion. Fake-clock tests | task-tt1ysbq2 |
+| 3 | API, CLI and command runs | `round.*` methods and events, `Session.round`, the `rounds` capability; `gff-hab round`, export and apply; `fresh` runs with `command` in a real pane; re-adopting a live run after a gff-hab restart | task-ams092is |
+| 4 | Harness fresh runs | `fresh` with a harness and a prompt; end on `turn_end`; timeout by interrupt; blocked runs; take over; `on_finish` | task-kt363fw0 |
+| 5 | Resume and fork under the lock | The four in-use signals; wait then skip; the envelope; exited targets; `fork` for Claude Code and Codex; target gone | task-21rifvi9 |
+| 6 | Notifications, catalog, other hosts | Push kind `round` and the rows in 10.2; the catalog `rounds` section; `--host`, `move` and `ls --all` | task-00cqxbrf |
+| 7 | App | Rounds list, round page, history, badges, actions, round notifications (Swift; the app lead) | task-xhpsgzkr |
+| 8 | gff client | Badges, the filter and the board's Rounds list | task-cpazgcsj |
+| 9 | Event triggers | The four events in 4.3, debounce, cooldown, no self-loops | task-awkgh5h1 |
+| 10 | Agent kit | `gff round` verbs and MCP tools; a round on another host under `confirm.start_elsewhere` | task-ybb4c3ed |
+| — | Later ideas | Worktree isolation for `fresh` runs (on `worktree.create`, `hab-logic-api.md` 3.10); skip when a harness usage window is above a threshold; a Logbook run log (7.7) that files each run as a Logbook record (Part 12) | Planned when Logbook is built |
+
+Stages 1 to 3 run in order. Stages 4 and 6 can run side by side after 3; 5 follows 4. Stages 7
+and 8 need 3 and 6. Stage 9 waits for 5 and 6; stage 10 waits for the agent kit and Capcom's
+confirmation cards.
 
 ---
 
