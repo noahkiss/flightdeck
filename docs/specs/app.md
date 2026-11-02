@@ -852,10 +852,13 @@ and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row a
   online", or "The Capcom host is not in this app". It shows whenever the app has a hab. Beside
   "Capcom" it shows the standing conversation's agent state as the board shows a session's: the
   same dot colour and word ("Working", "Permission", "Idle" and so on) with its age. The
-  standing conversation is the last open's session when it ran on the home, else the session
-  the home's catalog marks standing; with neither, or no board row for it, the row shows no
-  state. Design call: the board row of that session is the one source, so the two never
-  disagree.
+  standing conversation is the session the home's catalog marks standing, else the last open's
+  session when it ran on the home; with neither, or no board row for it, the row shows no
+  state. A hab the picker just made home has no fallback until its next open: its old
+  conversation is no longer standing (`capcom.md` 7.3). Design call: the hab pokes its catalog
+  when it sets a new standing conversation, so the mark is the newer fact, and it covers
+  `gff-hab capcom open -new` and other devices. Design call: the board row of that session is
+  the one source, so the two never disagree.
   Design call: the board is the app's one top-level list (3.1, 11), so a pinned row there is
   one tap from home on every device; the sidebar and tabs of 3.3 and 3.5 are not built yet.
 - **Finding the home.** When a hab comes online, the app reads its catalog (`catalog.get`) and
@@ -869,25 +872,32 @@ and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row a
   device id reads that hab's catalog again, so a re-assignment from the command line or another
   device shows without reconnecting. Every hab adopts a higher assignment into its own catalog
   (`capcom.md` 7.6), so the own catalog is enough. Design call: events for peers' copies read
-  nothing; they change far more often and the hab's own catalog follows them. Design call: this
+  nothing; the own catalog already carries any assignment they bring. The own catalog also
+  changes with every agent state change on that hab, so the re-read is bounded: an event whose
+  generation is not above the last one read reads nothing, at most one read runs per hab, and
+  changes during a read give one more read after it, not one per event. Design call: this
   re-read does not count as loading, so the entry does not flash; a failed re-read keeps the
-  last belief; changes during a read give one more read after it, not one per event.
+  last belief, and a re-read never lowers the counter a hab's belief holds (an answer sent
+  before an assign the hab already answered).
 - **Host picker.** Settings, Agents, "Capcom host" lists every hab in the app, in the app's
   order, with a check mark on the current home. An online hab whose welcome lists `capcom` can
-  be chosen; any other shows "Offline" or "No Capcom" and is disabled. Choosing one calls
+  be chosen; any other shows "Connecting", "Offline" or "No Capcom" and is disabled. When no
+  hab in the list is home, the page says where Capcom stands, in the entry row's words. Choosing one calls
   `capcom.assign {host: "self", assignment: <highest counter the app has seen + 1>}` on that hab
   directly. The result's home and counter become that hab's belief at once, so the entry and
   the check mark move before any catalog read; an open Capcom view then opens the new home's
-  standing conversation. A refusal shows the hab's text under the list. Re-assigning moves no
+  standing conversation. A refusal shows the hab's text under the list. It goes when a picker
+  appears again, when an assign succeeds, or when the home changes another way. Re-assigning moves no
   conversation (`capcom.md` 7.3). Design call: assigning `self` on the chosen hab needs no peer
   link between habs, and the counter floor keeps it above every assignment the app has seen;
   the hab still takes the higher of that and its own.
 - **First run.** The "No Capcom host" state shows the same choice inline: a menu of the habs
   that can be chosen, the suggestion preselected, and Assign, with Check again below. The
   suggestion is the first hab marked always on in its catalog (`always_on`), else the first hab
-  in the app's order. Design call: no modal; the state the user already sees asks. Design call:
-  the first hab in the app's order stands for the hab paired first (habs are kept in the order
-  they were added).
+  in the app's order: the config file's habs, then SSH habs in the order they were added (a
+  re-added SSH hab moves to the end). Design call: no modal; the state the user already sees
+  asks. Design call: that order stands in for "the hab paired first" of `capcom.md` 7.3; the app
+  keeps no pairing time.
 - **States.** Loading: a hab is connecting, or a catalog read is on its way, and no home is
   known. No Capcom host: every online hab answered and none names a home; "Check again" reads
   every online hab's catalog again. No hab online: no hab is online or connecting, and no kept
@@ -3222,8 +3232,9 @@ Each candidate below is a fixed behaviour now.
 
 ### 20.7 The Settings page
 
-- **One page, grouped by area:** Agents, Approvals, Notifications, Voice, Usage, Widgets,
-  Connection, Security, and Habs (each hab's push status, keys and the Capcom host picker).
+- **One page, grouped by area:** Agents (with the Capcom host picker, 4.10), Approvals,
+  Notifications, Voice, Usage, Widgets, Connection, Security, and Habs (each hab's push status
+  and keys).
 - **The level picker** heads the page, above the groups.
 - **Search** filters rows by title and id across groups. Each row shows its id in small type, so
   a doc or an issue can name it.
@@ -3276,7 +3287,7 @@ The page is `Views/SettingsViews.swift`.
   expiry of 7.4) and `logbook.approval` (Logbook). The hab stores and serves both, and the app
   writes them.
 - **The Habs group** shows only the SSH page link. Each hab's push status stays on the
-  Notifications page; the Capcom host picker waits for Capcom.
+  Notifications page.
 - **Rows with no control yet:** `notify.command_done`, `notify.tap`, `widget.hide_titles`,
   `mac.keep_connected` and `voice.language` are in the registry, marked not built, and the page
   leaves them out until their controls exist.
