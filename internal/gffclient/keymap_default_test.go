@@ -73,6 +73,10 @@ func TestDefaultKeymap(t *testing.T) {
 			a(actFocusDown, "alt-j"), a(actFocusUp, "alt-k"), a(actMoveTabLeft, "alt-i"), a(actMoveTabRight, "alt-o")}, ModeNormal},
 		{"alt-f and alt-b reach the shell", "\x1bf\x1bb\x1b", []keyEvent{d("\x1bf\x1bb\x1b")}, ModeNormal},
 		{"kitty and modifyOtherKeys alt", "\x1b[104;3u\x1b[27;3;108~", []keyEvent{a(actFocusLeft, "alt-h"), a(actFocusRight, "alt-l")}, ModeNormal},
+		// A legacy Alt key sends no release, so the reader records nothing: a later kitty press
+		// and release of the plain letter both reach the pane.
+		{"legacy alt takes no release", "\x1bl\x1b[108u\x1b[108;1:3u", []keyEvent{a(actFocusRight, "alt-l"),
+			d("\x1b[108u\x1b[108;1:3u")}, ModeNormal},
 		{"kitty alt release dropped", "\x1b[104;3u\x1b[104;3:3ua", []keyEvent{a(actFocusLeft, "alt-h"), d("a")}, ModeNormal},
 		{"kitty alt shift passes", "\x1b[104;4u", []keyEvent{d("\x1b[104;4u")}, ModeNormal},
 		{"alt keys keep pane mode", "\x10\x1bl\x1b[107;3ux", []keyEvent{a(actPaneMode, "ctrl-p"), a(actFocusRight, "alt-l"),

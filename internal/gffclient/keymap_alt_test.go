@@ -131,28 +131,42 @@ func TestAltFocusAndTabMoves(t *testing.T) {
 		t.Errorf("zoomed Alt+l: focus %d, canvas valid %v; want 1 and a repaint", a.focus, c.canvas.valid)
 	}
 
-	// While the sidebar, the board or a prompt has the keys, the Alt keys change nothing.
+	// While the sidebar, the board or a prompt has the keys, the Alt keys change nothing. One
+	// key at a time, so a move and its reverse cannot cancel out. Focus is on the middle view,
+	// so Alt+l and Alt+h would each move it; the tab is first, so Alt+o would move it.
+	a.zoom, a.focus = false, 1
 	for _, m := range []uiMode{modeSidebar, modeBoard, modePrompt} {
-		c.ui.mode = m
-		before, o := at(), order()
-		if err := c.input([]byte("\x1bl\x1bh\x1bo\x1bi")); err != nil {
-			t.Fatal(err)
-		}
-		if at() != before || order() != o {
-			t.Errorf("mode %v: Alt keys moved focus or tabs: %+v %s, was %+v %s", m, at(), order(), before, o)
+		for _, key := range []string{"\x1bl", "\x1bh", "\x1bo"} {
+			c.ui.mode = m
+			before, o := at(), order()
+			if err := c.input([]byte(key)); err != nil {
+				t.Fatal(err)
+			}
+			if at() != before || order() != o {
+				t.Errorf("mode %v: %q moved focus or tabs: %+v %s, was %+v %s", m, key, at(), order(), before, o)
+			}
 		}
 	}
 }
 
-// A kitty Alt key cut between two reads is held and read whole, never passed to the pane.
+// A kitty Alt key cut between two reads is held and read whole, never passed to the pane. The
+// cuts are where only an Alt key's code matches: no Ctrl leader's code starts 105 or is 104.
 func TestAltKeySplitRead(t *testing.T) {
-	k := newKeyReader(DefaultKeymap())
-	var evs []keyEvent
-	for _, chunk := range []string{"\x1b[10", "4;3u"} {
-		evs = append(evs, k.feed([]byte(chunk))...)
-	}
-	if len(evs) != 1 || evs[0].act != actFocusLeft || evs[0].key != "alt-h" {
-		t.Errorf("split kitty Alt+h: %q", evs)
+	for _, tc := range []struct {
+		chunks   []string
+		act, key string
+	}{
+		{[]string{"\x1b[105;", "3u"}, actMoveTabLeft, "alt-i"},
+		{[]string{"\x1b[104", ";3u"}, actFocusLeft, "alt-h"},
+	} {
+		k := newKeyReader(DefaultKeymap())
+		var evs []keyEvent
+		for _, chunk := range tc.chunks {
+			evs = append(evs, k.feed([]byte(chunk))...)
+		}
+		if len(evs) != 1 || evs[0].act != tc.act || evs[0].key != tc.key {
+			t.Errorf("split %q: %q, want %s", tc.chunks, evs, tc.key)
+		}
 	}
 }
 
