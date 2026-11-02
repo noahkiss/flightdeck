@@ -423,6 +423,9 @@ both halves, and the App Store version must rise with every hab fix.
 | `<asset>.sha256` for each | One line, `sha256sum` format. The tap reads these (8.2) |
 | `SHA256SUMS` | Every asset's line |
 
+Each archive holds one folder named as the archive without `.tar.gz`, and the files inside it.
+Homebrew strips a single top folder, so the formula sees the files directly.
+
 The speech helper (`gff-hab-speech`) is not in a release yet. `gff-hab install` does not copy it,
 and its libopus link is dynamic (`voice.md`). It joins when that is settled.
 
@@ -441,16 +444,18 @@ library at run time. `gff-hab-holder` is pure Go.
 | linux/arm64 | `ubuntu-24.04-arm` | The same | The same |
 | darwin/arm64 | `macos-26` | The same, with the command line clang | `CGO_ENABLED=0 go build` |
 
-**`make release-build`** (stage 6 adds it) runs `make libghostty`, then builds `gff-hab` and
-`gff` with the Makefile's `GHOSTTY_ENV`, so cgo finds the library (3.2). Stage 6 also adds one
-Makefile variable, `GHOSTTY_ZIGFLAGS`, empty by default, passed to `zig build` in the libghostty
-rule. The release values:
+**`make release-build`** runs `make libghostty`, then builds `gff-hab` and `gff` with the
+Makefile's `GHOSTTY_ENV` and `-tags ghostty`, so cgo finds the library (3.2), and
+`gff-hab-holder` with `CGO_ENABLED=0`. It writes all three into `RELEASE_DIR` (default
+`build/release`), and links in `RELEASE_VERSION` (default `dev`) and `RELEASE_BUILD` (default the
+short commit id). The Makefile variable `GHOSTTY_ZIGFLAGS`, empty by default, goes to `zig build`
+in the libghostty rule. The release values:
 
 | Target | `GHOSTTY_ZIGFLAGS` | Go side |
 |---|---|---|
 | linux/amd64 | `-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline` | `CC="zig cc -target x86_64-linux-gnu.2.31"` |
 | linux/arm64 | `-Dtarget=aarch64-linux-gnu.2.31 -Dcpu=baseline` | `CC="zig cc -target aarch64-linux-gnu.2.31"` |
-| darwin/arm64 | none | `MACOSX_DEPLOYMENT_TARGET=13.0` |
+| darwin/arm64 | none | `MACOSX_DEPLOYMENT_TARGET=13.0`, and `-mmacosx-version-min=13.0` in `CGO_CFLAGS` and `CGO_LDFLAGS` |
 
 - **Why fixed targets.** With no `-Dtarget`, zig builds for the host, CPU features included. A
   release built on a new runner CPU could then crash with an illegal instruction on an older
@@ -463,13 +468,22 @@ rule. The release values:
   with its own: a generic CPU and macOS 13.0 as the minimum, the oldest macOS Apple still
   supports. A `-Dtarget=aarch64-macos.12.0` would be replaced the same way, so the darwin leg
   passes no flags, and 13.0 is the true floor. The leg sets `MACOSX_DEPLOYMENT_TARGET=13.0` for
-  cgo and the link. `scripts/macos-bundle.sh` declares `LSMinimumSystemVersion` 12.0 today; stage
-  6 raises it to 13.0 to match. The tap verifies on a newer macOS.
+  cgo and the link, and the same minimum in `CGO_CFLAGS` and `CGO_LDFLAGS`. Found while building:
+  the Go build cache does not key on `MACOSX_DEPLOYMENT_TARGET`, so cgo objects compiled earlier
+  for the host's macOS were linked in, and the linker warned that they were built for a newer
+  macOS. The `CGO_` flags are part of the cache key. `scripts/macos-bundle.sh` declares
+  `LSMinimumSystemVersion` 13.0 to match. The tap verifies on a newer macOS.
 
 - **Release binaries carry the `ghostty` tag.** Without it gff-hab runs `vt.Fake`, which is for
   tests only. Each leg checks the tag took: `go version -m <binary>` must list `-tags=ghostty`.
-- **Every leg uses** `-trimpath` and `-ldflags "-s -w -X main.version=<version>"`. The binaries
-  have no version flag yet; stage 6 adds a `version` subcommand to each and the `-X` target.
+- **Every leg uses** `-trimpath` and `-ldflags "-s -w -X main.version=<version> -X
+  main.build=<build>"`. `<build>` is the tagged commit's 12-character id; `main.build` is the
+  build id a holder and gff-hab already report. Each binary answers `version`, `-version` and
+  `--version` with one line, `<name> <version>` (`internal/version`); an unset version reads
+  `dev`.
+- **Release jobs use no Go build cache** (`setup-go` with `cache: false`). A release compiles
+  every package from scratch, so nothing a branch or a test run cached reaches it. libghostty
+  still comes from the cache that `main` saves (5).
 - **The Linux glibc floor.** A cgo binary links glibc dynamically, so it needs a glibc at least as
   new as the build image's (2.39 on Ubuntu 24.04). Older distributions then fail to start it.
   Design call: the Linux legs set the 2.31 floor for libghostty and for the Go link (the table
@@ -490,9 +504,12 @@ rule. The release values:
    is recorded. Outputs `version` and `tap_inputs`. Each failure says which check failed and what
    to do.
 2. **`linux`** (matrix: amd64, arm64; `needs: verify`). Restore the libghostty cache, build (7.3),
-   smoke: each binary's `version` prints `<version>`; `ldd gff-hab` lists no libghostty; a holder
-   and gff-hab start in a temporary directory and `gff-hab api call hab.hello` answers. Pack the
-   tarball and its `.sha256`. Upload as a workflow artifact. Timeout 30 minutes.
+   pack the tarball and its `.sha256`, then smoke-test the unpacked tarball with
+   `scripts/release-smoke.sh <dir> <version>`: each binary's `version` prints `<name> <version>`;
+   `go version -m` lists `-tags=ghostty` for `gff-hab` and `gff`; `ldd gff-hab` lists no
+   libghostty; no glibc symbol version above 2.31 (`objdump -T`); `gff-hab-holder` is static; a
+   holder and gff-hab start in a temporary directory and `gff-hab api call hab.hello` answers.
+   Upload as a workflow artifact. Timeout 30 minutes.
 3. **`darwin`** (`needs: verify`, environment `release`). Build (7.3). Throwaway keychain;
    `fastlane match developer_id --readonly --skip_provisioning_profiles` with the store flags of
    10.2 (`--git_url`, `--git_branch main`, `--skip_docs`) installs the Developer ID certificate
@@ -502,12 +519,24 @@ rule. The release values:
    `GFF_BUNDLE_PREFIX`, `GFF_SIGN_IDENTITY`, `GFF_TEAM_ID`, `GFF_NOTARY_PROFILE`,
    `GFF_SIGN_KEYCHAIN` and `GFF_NOTARY_KEYCHAIN` from the job. The script signs inside out,
    notarizes one zip, staples, and runs every check of `macos-identity.md` 5.3, including the
-   requirement comparison that refuses a release which would drop every grant. Smoke as on Linux.
-   Pack, `.sha256`, upload as an artifact. Delete the keychain and keys in an `always()` step.
-   Timeout 45 minutes.
+   requirement comparison that refuses a release which would drop every grant. Pack, `.sha256`,
+   then smoke the unpacked tarball: `codesign --verify --strict`, `stapler validate` and `spctl`
+   on each bundle, then `scripts/release-smoke.sh`, which on macOS checks that `gff-hab` and `gff`
+   link only system libraries and name macOS 13.0 as their minimum. Upload as an artifact. Delete
+   the keychain and keys in an `always()` step. Timeout 45 minutes.
+
+   Details the build settled: fastlane comes from `.github/fastlane/Gemfile` (pinned, with its
+   `Gemfile.lock`) through `ruby/setup-ruby` with the bundler cache. match gets `--app_identifier
+   <prefix>.hab`, `--team_id`, and `--keychain_name` and `--keychain_password` for the throwaway
+   keychain; it clones the store with `GIT_SSH_COMMAND` naming the deploy key and GitHub's
+   published host key, and the key file is removed right after. `GFF_SIGN_IDENTITY` is the
+   identity's SHA-1 hash from `security find-identity`, so no certificate name reaches the log.
+   The notary profile is `gff-release`, stored in the throwaway keychain. The bundle prefix comes
+   from `apple/Config/Names.xcconfig`.
 4. **`publish`** (ubuntu, `needs: [linux, darwin]`, `contents: write`; skipped on a dry run). Download the artifacts,
-   write `SHA256SUMS`, create the GitHub release as a draft, attach every asset (never clobber an
-   existing asset), then publish it. An `-rc.` tag publishes as a prerelease. Release notes come
+   check each `.sha256`, write `SHA256SUMS`, create the GitHub release as a draft, attach every
+   asset, then publish it. When a release for the tag already exists, draft or not, `publish`
+   fails and touches nothing, so no asset is ever replaced. An `-rc.` tag publishes as a prerelease. Release notes come
    from `--generate-notes`.
 5. **`bump-tap`** (`needs: [verify, publish]`, not on an `-rc.` tag or a dry run):
    `dispatch-and-wait.yml` (section 8).
@@ -531,7 +560,11 @@ always runs the full set. Every `apple.yml` run is full.
 **The path test needs its own matcher** for GitHub's path patterns. A git pathspec cannot do it:
 it cannot take `docs/examples/**` back in after it excludes `docs/**`. `verify` reads the group
 from the workflow file's own `paths` list, so the two never drift, and matches each changed file
-against the globs in order, last match wins, as GitHub does. `verify` checks out the full history
+against the globs in order, last match wins, as GitHub does. The matcher is
+`internal/pathfilter` (run as `go run ./internal/pathfilter/cmd -patterns <file>`); `verify`
+reads the list with `yq '.on.push.paths[]'` and diffs with `--no-renames`, so a moved file counts
+at both its old and its new path. `verify` has a 75-minute timeout, room for one dispatched full
+run. `verify` checks out the full history
 (`fetch-depth: 0`), so the ancestor test and the diff see every commit.
 
 With no qualifying run, `verify` dispatches the workflow on the tag (`gh workflow run <file>
