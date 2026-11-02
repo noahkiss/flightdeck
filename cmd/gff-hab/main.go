@@ -23,7 +23,7 @@
 //	gff-hab probe -nonce n -checks grant,... [-request grant]
 //	gff-hab opencode-pane -report path [--] [opencode argv]
 //	gff-hab install   [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
-//	                  [-unit-dir dir] [-hab-bin path] [-holder-bin path] [-dry-run]
+//	                  [-unit-dir dir] [-hab-bin path] [-holder-bin path] [-gff-bin path] [-dry-run]
 //	gff-hab uninstall [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
 //	                  [-unit-dir dir] [-yes]
 //
@@ -136,7 +136,7 @@ const usage = `usage:
   gff-hab probe -nonce n -checks grant,... [-request grant]
   gff-hab opencode-pane -report path [--] [opencode argv]
   gff-hab install   [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
-                    [-unit-dir dir] [-hab-bin path] [-holder-bin path] [-dry-run]
+                    [-unit-dir dir] [-hab-bin path] [-holder-bin path] [-gff-bin path] [-dry-run]
   gff-hab uninstall [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
                     [-unit-dir dir] [-yes]
 `

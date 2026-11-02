@@ -566,6 +566,22 @@ Built (stage 6):
 - On Linux, install checks `loginctl show-user <uid> --property=Linger` and prints
   `loginctl enable-linger` when it is off. It never runs sudo.
 - On macOS, install and each holder start refuse when `launchctl print gui/<uid>` fails (Q5).
+- **The socket folder.** gff-hab refuses a socket folder other users can open (4.1 of
+  `hab-logic-api.md`). A folder made for `hab.toml` with a plain `mkdir` is 0755, and the logic
+  job would exit and be restarted every second. So install makes a missing socket folder with mode
+  0700 and records it. It sets an existing folder to 0700, and says so, when it is the default
+  socket's folder or one an earlier install made. A folder the user named (`-socket` or
+  `$GFF_HAB_SOCKET`) that install did not make is never changed: install fails before it writes
+  anything, with the `chmod 700` that fixes it. A folder the user made stays at uninstall.
+- **gff-hab waits for a private socket folder.** At start, before anything else runs, gff-hab
+  checks the folders of its two sockets. While one is open to other users it logs one line, with
+  the folder, its mode and the `chmod 700` to run, then checks again every 2 s and logs nothing
+  more. It starts once the folder is private, and SIGTERM or SIGINT ends the wait with exit 0.
+  Waiting, not a distinct exit status, because launchd's `KeepAlive` true restarts on any exit
+  and a longer `ThrottleInterval` would slow every real crash recovery; the wait works the same
+  under systemd and by hand.
+- On macOS, install copies `gff` into `<state>/bin` and prints one PATH line
+  (`macos-identity.md` 6.1).
 - Uninstall asks once when any holder job runs; `-yes` skips the question, and with no terminal
   and no `-yes` it changes nothing. Shutdown is the init system's stop: SIGTERM, which runs the
   holder's shutdown (2.8). Uninstall leaves gff-hab's own state (structure, keys, checkpoints).

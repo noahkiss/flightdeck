@@ -205,7 +205,9 @@ helper), `internal/control/speech.go` (the methods). Layout and build: `layout.m
 helper.
 
 - **The helper.** `gff-hab-speech` links sherpa-onnx's C API from its pinned static release
-  (2.0.1) and libopus from the system, through cgo. It builds only with the `speech` tag
+  (2.0.1) and libopus from the system, through cgo. On macOS libopus is linked statically (the
+  system's `libopus.a`): under the hardened runtime, library validation refuses a library signed
+  by another team or ad hoc, so a signed helper may load system libraries only. It builds only with the `speech` tag
   (`make speech-helper`), so `make check-pure`, `make build` and `make test-pure` never compile it.
   It decodes `pcm16` and Ogg Opus; both are in `formats`. First run (Apple M1 Pro, busy, 4
   threads): the model loads in 1.2 to 1.4 s; a 3 s spoken clip decodes in about 0.3 s, with the
@@ -213,6 +215,9 @@ helper.
 - **Finding it.** gff-hab looks for the helper at `[speech] helper` in the hab's config file, then
   `$GFF_HAB_SPEECH_HELPER`, then beside the gff-hab binary, then on PATH. A path named in the file
   or the variable that is not an executable file means no helper: gff-hab does not fall back.
+  "Beside" is the folder of the path gff-hab runs from, then, for a link, the folder of its
+  target. On macOS that is `GFF Hab.app/Contents/MacOS`, where `scripts/macos-bundle.sh` puts the
+  helper, so an installed hab finds it with no config entry.
 - **On or off.** `[speech] enabled` turns the engine on or off. With no setting it is on for a
   host sold as 4 GB or more: the code's line is 3.5 GiB, since such a host reports a little less
   (Linux keeps some back from `MemTotal`). The capability is on when the engine is on and the helper is found.
@@ -281,11 +286,14 @@ helper.
 
 - **Linux.** The helper builds and runs on linux-x64 (Linux run, above). linux-aarch64 is pinned
   in the Makefile but not built yet: it needs an arm64 host or a GNU cross toolchain.
-- **Shipping the helper.** `gff-hab install` does not copy the helper yet, and the macOS helper
-  bundles do not include it. For now it is installed by hand: install libopus (Homebrew `opus`,
-  Debian `libopus-dev`), run `make speech-helper`, then copy `build/gff-hab-speech` beside
-  gff-hab or name it in `[speech] helper`, and restart gff-hab. The helper links libopus
-  dynamically from the system package; a release build should link it statically.
+- **Shipping the helper.** On macOS `scripts/macos-bundle.sh` nests the helper beside gff-hab in
+  `GFF Hab.app` when one is built (`make speech-helper`) or given (`-speech-helper`), signed with
+  the identifier `<prefix>.hab-speech` before the bundle; `gff-hab install` copies it with the
+  bundle (`macos-identity.md` 3.3). The script checks that the signed helper starts, and refuses
+  a release helper that links a library outside the system. On Linux `gff-hab install` does not
+  copy the helper yet: install libopus (Debian `libopus-dev`), run `make speech-helper`, copy
+  `build/gff-hab-speech` beside gff-hab in `<state>/bin` or name it in `[speech] helper`, and
+  restart gff-hab. The Linux helper links libopus dynamically from the system package.
 - **Symbols.** The vocabulary holds file and folder names only. Symbols (function and type names)
   need a source the hab can read cheaply, such as the agent's transcript; not built.
 - **Small hosts.** Parakeet TDT-CTC 110M for hosts under 4 GB is not measured.

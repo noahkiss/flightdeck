@@ -146,11 +146,17 @@ cgo and gff-hab builds with `CGO_ENABLED=0` (`voice.md`, Hab speech engine).
   same tag into `build/sherpa-onnx`, checks both SHA-256 sums from the Makefile, and writes a
   pkg-config file for them. onnxruntime is linked into that library.
 - **libopus** comes from the system: `pkg-config opus` (Homebrew `opus`, Debian `libopus-dev`).
+  On macOS `make opus-static` (run by `make speech-helper` and `make test-speech`) writes
+  `build/opus-static/opus.pc`, which names the system's `libopus.a`, so the helper links it
+  statically and loads only system libraries under the hardened runtime. `make speech-helper`
+  builds with `-a`, because the Go build cache does not see a pkg-config change.
 - **Build and test.** `make speech-helper` writes `build/gff-hab-speech`. `make test-speech` runs
   its tests; set `$GFF_SPEECH_MODEL_DIR` to the extracted model archive to include real
   recognition. The clip comes from macOS `say`; with no `say` (Linux), set `$GFF_SPEECH_TEST_WAV`
   to a 16 kHz mono 16-bit WAV of "Please run the tests again and then open the pull request."
-  gff-hab finds the helper as `voice.md`, Built choices says.
+  gff-hab finds the helper as `voice.md`, Built choices says. On macOS
+  `scripts/macos-bundle.sh` nests `build/gff-hab-speech` beside gff-hab in `GFF Hab.app`
+  (`macos-identity.md` 3.3).
 - **The model** is never in the repo or a release: gff-hab downloads it on first use into its
   state folder.
 - **Licences.** sherpa-onnx Apache-2.0, onnxruntime MIT, libopus BSD-3-Clause, and the libraries

@@ -221,8 +221,15 @@ Built: `scripts/macos-bundle.sh` writes the bundles. Choices it made beyond the 
   resource, nothing else.
 - The prefix comes from `$GFF_BUNDLE_PREFIX`, with no default. The script refuses a prefix that
   is not reverse-DNS.
-- The bare `gff` is signed only when `cmd/gff` exists. It does not exist yet, so a release today
-  holds the two bundles only.
+- The bare `gff` is signed when `cmd/gff` exists, and `gff-hab install` copies it into
+  `<state>/bin` (6.1).
+- **The speech helper sits in `GFF Hab.app`.** When a helper is built (`build/gff-hab-speech`
+  from `make speech-helper`, or `gff-hab-speech` in `-bin-dir`) or given (`-speech-helper`), the
+  script puts it at `GFF Hab.app/Contents/MacOS/gff-hab-speech`, beside gff-hab, where gff-hab
+  looks for it (`voice.md`). It is nested code with the identifier `<prefix>.hab-speech` and no
+  entitlements, signed before the bundle (5.1). It runs as gff-hab's child, so gff-hab stays the
+  responsible process; the helper needs no grant of its own. With no helper the bundle holds
+  gff-hab alone.
 
 ### 3.4 Where the bundles come from
 
@@ -317,10 +324,13 @@ Release builds sign on a macOS CI runner, once. Nothing on a user's Mac signs an
 1. `gff-hab-holder`, `gff-hab` and `gff` are built for `darwin/arm64` with `-tags ghostty`.
 2. The holder and gff-hab binaries are placed into their bundles, with `Info.plist` filled in from
    the build (`<prefix>`, version).
-3. Sign each helper bundle (inside out, no `--deep`):
+3. Sign each helper bundle (inside out, no `--deep`), the speech helper in `GFF Hab.app` first
+   when there is one:
    ```
    codesign --force --timestamp --options runtime \
      --entitlements holder.entitlements --sign "<identity>" "GFF Holder.app"
+   codesign --force --timestamp --options runtime -i <prefix>.hab-speech \
+     --sign "<identity>" "GFF Hab.app/Contents/MacOS/gff-hab-speech"
    codesign --force --timestamp --options runtime \
      --sign "<identity>" "GFF Hab.app"
    ```
@@ -385,6 +395,14 @@ The script runs 5.1 to 5.3 in one pass. Settings come from the environment only:
 - An ad-hoc dev signature uses `--timestamp=none`; a release uses `--timestamp`.
 - The bundles are zipped from one folder, `gff-macos/`, so the notary sees the same layout the
   release archive has. After stapling, the script zips that folder again as `gff-macos.zip`.
+- **The speech helper gets the 5.3 signature rows** (identifier, runtime flag, requirement; no
+  Gatekeeper row: it is assessed with its bundle). Then the script runs the signed helper with
+  `-info` from inside the bundle, which fails if a library it loads is refused. Under the hardened
+  runtime library validation refuses a library signed by another team, ad hoc included: a dev
+  build of the helper against Homebrew's `libopus.dylib` does not start (proof on macOS 27.2). So
+  `make speech-helper` links libopus statically on macOS (`layout.md`), and the script refuses a
+  release helper that links any library outside `/usr/lib` and `/System/Library`; a dev build
+  only warns.
 
 ### 5.3 Verification
 
@@ -462,7 +480,13 @@ Built (`internal/service`, `bundle.go`). Choices beyond the paper spec:
   bundle id, not by a copy, and the two builds share one id and one requirement. So the drain
   keeps one row per bundle id, and the draining holder keeps its grant. Install registers every
   build it copies. An early unregister of the draining build would remove no row (8.1).
-- **Linux is unchanged**: one copy of each binary in `<state>/bin` (`hab-holder.md` 4.4).
+- **`gff` goes into `<state>/bin`.** Install copies the bare client from `-gff-bin`, else the
+  `gff` beside `GFF Hab.app` (the `gff-macos/` layout), records it, and prints one line: where
+  `gff` is and, when the jobs' PATH (the installing shell's) lacks that folder, the `export PATH`
+  line to add, quoted for the space in `Application Support`. A plain copy keeps its signature,
+  and `gff` needs no bundle (3.2). With no `gff` install says so and installs the hab alone.
+- **Linux is unchanged**: one copy of each binary in `<state>/bin` (`hab-holder.md` 4.4), and no
+  `gff` copy.
 
 ### 6.2 Drain keeps grants
 

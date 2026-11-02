@@ -1413,7 +1413,8 @@ Decision: proposed.
 
 Built: the socket is `gff/hab.sock` under the user config directory on macOS and under
 `$XDG_RUNTIME_DIR` elsewhere (`$GFF_HAB_SOCKET` or `-socket` override it). Its directory must be
-mode 0700 and owned by the user. gff-hab peeks at the first byte of each connection: the hello
+mode 0700 and owned by the user; while it is open to other users, gff-hab waits and logs the fix
+once (`hab-holder.md` 5.5). gff-hab peeks at the first byte of each connection: the hello
 frame's kind byte (1) makes it a data connection, anything else a control connection. With the
 holder link off, a data hello gets a reject frame (`unavailable`).
 
