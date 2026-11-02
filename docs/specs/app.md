@@ -788,6 +788,45 @@ rows, not as tool cards. Code: `Chat/CapcomCards.swift` (parsing), `Views/Capcom
 - **Snapshot.** `internal/transcript/testdata/claude-handoff.jsonl` is a hand-written Claude Code
   transcript with each case; its rows are in `Snapshots/claude-handoff.txt`.
 
+### 4.9 Capcom context chips (task-ilse43i7, app side)
+
+The app side of the entry API (`capcom.md` 8.1, 8.4). Code: `Chat/CapcomChips.swift` (the
+model's chip calls), `Chat/CapcomCenter.swift` (opening Capcom with context from outside its
+view), `Views/CapcomChipViews.swift`. Tests: `CapcomEntryTests`. Until a Capcom view exists, the
+Capcom session's chat view is the Capcom view: a session with kind `capcom` gets the chips.
+
+- **Chips.** The chat model holds `pending` as the hab listed it last, in delivery order: from
+  each `capcom.open`, `capcom.attach` and `capcom.detach` result. A chip shows the kind's symbol,
+  the title, and the host label when the item came from another hab, with a remove button.
+- **Send.** A plain `session.send`. Send works with no text while chips wait; the context goes
+  alone. On success the model drops exactly the chips that waited when the send went out, as
+  the hab does; one attached meanwhile stays. On any error the chips stay, and a retry carries
+  them. The sent message shows the chips it carried above its text. Design call: a Capcom send
+  never falls back to typing through `pane.input`, which would drop the context.
+- **Files.** In a Capcom composer the file button and files from the send sheet become chips:
+  `attachment.put` for the Capcom session, then `capcom.attach` with the attachment id. Design
+  call: a file is context (`capcom.md` 8.1), so it waits with the other chips rather than riding
+  the next send as an attachment. The model keeps the bytes of the files it attached, so "New
+  conversation" (8.6) can attach them again.
+- **Commands.** A console command card's context menu has "Attach to Capcom": `capcom.open`
+  with `{kind: command, ref: "<pane>:<command id>"}` on the console's hab, then the board opens
+  the Capcom session. A hab that is not the Capcom home answers `unavailable` naming the home;
+  the alert shows that text. Design call: the action is offered on every console; the hab's
+  answer says when it cannot work, which costs one tap and no capability check in the app.
+- **Remove.** `capcom.detach` with the chip's kind and ref, and its host label when it came from
+  another hab. `not_found` means the hab no longer holds it, so the chip goes too.
+- **What already waits.** When a Capcom chat view starts, or its hab comes back online, the
+  model calls `capcom.open` with no context and takes `pending` when the answer names this
+  session; any other answer changes nothing. It skips an exited session, so viewing never
+  resumes one. Limit: if the standing conversation's record was closed, this open starts a new
+  standing conversation, as any client's open would.
+- **Refusals.** Any refused chip call shows the hab's text (the error hint) under the composer
+  and keeps the chips: `invalid`, `not_found`, `conflict` (8 items wait), `unavailable` (Logbook,
+  no Capcom). A refused open from outside the view shows the same text in a "Could not open
+  Capcom" alert and opens nothing.
+- **One model per session.** `Fleet.chat(for:)` matches a session by hab and session id, so the
+  model that took the chips is the one the board's row opens, whatever pane each names.
+
 ---
 
 ## 5. Terminal view
