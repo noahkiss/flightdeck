@@ -138,10 +138,26 @@ final class ConfirmTests: XCTestCase {
         XCTAssertEqual(c.approvals.map(\.confirmation.id), ["agent", "outside"])
         XCTAssertEqual(c.capcom.map(\.confirmation.id), ["capcom"])
         XCTAssertEqual(c.waitingCount, 3)
-        // No Capcom marker: Capcom's card is an ordinary agent's card.
+        // Without a marker, Capcom's card is an ordinary agent's card.
         c.isCapcom = { _, _ in false }
         XCTAssertEqual(c.approvals.map(\.confirmation.id), ["agent", "capcom", "outside"])
         XCTAssertEqual(c.cards(for: SessionTarget(habID: "a", session: "s9", pane: "%9")).map(\.confirmation.id), ["capcom"])
+    }
+
+    /// A session the hab files with kind capcom puts its cards in the Capcom view.
+    @MainActor
+    func testCapcomKindRoutesToCapcom() throws {
+        let b = try book([Self.confirmation("capcom", from: "capcom"), Self.confirmation("agent")])
+        let (c, board) = center(b)
+        var st = habState(b)
+        var cap = Fixture.session("s9", name: "capcom", pane: "%9", project: nil)
+        cap.kind = .capcom
+        st.store.reset(StructureResult(host: HostInfo(id: "boxa"), panes: [], projects: [], seq: 0, sessions: [
+            Fixture.session("s1", name: "claude", pane: "%1", project: nil), cap,
+        ]))
+        board.update("a", st)
+        XCTAssertEqual(c.capcom.map(\.confirmation.id), ["capcom"])
+        XCTAssertEqual(c.approvals.map(\.confirmation.id), ["agent"])
     }
 
     @MainActor

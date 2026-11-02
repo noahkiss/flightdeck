@@ -135,8 +135,8 @@ public final class ConfirmCenter {
     @ObservationIgnored private let lister: List?
     @ObservationIgnored private let now: () -> Date
 
-    /// Whether a session on a hab is Capcom, by its name. No hab marks a Capcom
-    /// session yet (capcom.md 7.2), so the default says no.
+    /// Marks more sessions as Capcom, by hab and name, beside the sessions the
+    /// hab files with kind `capcom` (capcom.md 7.2). The default adds none.
     @ObservationIgnored public var isCapcom: @MainActor (_ habID: String, _ session: String) -> Bool = { _, _ in false }
 
     private var drafts: [String: ConfirmDraft] = [:]
@@ -172,7 +172,7 @@ public final class ConfirmCenter {
                 return ConfirmCard(
                     habID: h.id, habLabel: h.label, confirmation: c,
                     session: s.map { SessionTarget(habID: h.id, session: $0.id, pane: $0.pane) },
-                    capcom: c.from.map { isCapcom(h.id, $0) } ?? false,
+                    capcom: s?.kind == .capcom || (c.from.map { isCapcom(h.id, $0) } ?? false),
                     offline: offline, clockOffset: h.state.clockOffset)
             }
             open += book.open.map(card)

@@ -1130,9 +1130,9 @@ The cards of `capcom.md` 6.1 and 6.3: a start an agent asks for on another host,
 - **Where a card shows.** Capcom's cards show in the Capcom view. Another agent's card shows in
   its session view, above the chat, and in the approvals area: a "Confirm" section at the top
   of the status board. A card from outside a pane names no session and shows in the approvals
-  area only. Design call: no hab marks a Capcom session yet (`capcom.md` 7.2), so until one
-  does, the center sees no Capcom session and Capcom's cards show as any agent's. The Capcom
-  view embeds `ConfirmCardList` when it exists.
+  area only. A card is Capcom's when its requesting session has kind `capcom` on that hab
+  (`capcom.md` 7.2). The Capcom view embeds `ConfirmCardList` once that view exists; until
+  then Capcom's cards show in Capcom's session view.
 - **What a start card shows.** Host, project, folder, branch, harness, model when set, name,
   then the seed. The byline names the requesting session and the hab.
 - **Edits.** Edit opens fields for host, folder, harness, model and seed. Host is a picker of
