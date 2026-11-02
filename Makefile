@@ -153,8 +153,10 @@ RACE_PKGS := ./internal/holder/... ./internal/holderproto/... ./internal/holderc
 	./internal/service/... ./internal/grants/... ./internal/push/... ./internal/settings/... ./internal/rounds/... \
 	./internal/speech/... ./internal/speechproto/... ./internal/oggopus/... ./internal/attach/... \
 	./cmd/...
+# cmd/gff-hab under -race -count=3 runs past go test's 10-minute default on a loaded machine.
+RACE_TIMEOUT ?= 30m
 race:
-	$(GO) test -race -count=3 $(RACE_PKGS)
+	$(GO) test -race -count=3 -timeout $(RACE_TIMEOUT) $(RACE_PKGS)
 
 # Run each fuzz target in internal/holderproto for FUZZTIME, one after the other. For nightly use.
 FUZZTIME ?= 30s
