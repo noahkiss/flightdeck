@@ -76,6 +76,26 @@ final class AttachmentTests: XCTestCase {
         await fleet.setActive(false)
     }
 
+    /// Uploads and downloads go in runs of at most 256 KiB, though the hab allows 1 MiB, so
+    /// each call stays short over a slow link.
+    func testRunsAreCappedBothWays() async throws {
+        let hab = await sampleHab()
+        await hab.setCapability("attachments", true)
+        let conn = HabConnection(id: "h", transport: hab.transport(), timing: fastTiming())
+        await conn.start()
+        await eventually("online") { await conn.state.status == .online }
+        let data = Data((0..<600_000).map { UInt8($0 % 251) })
+        let up = try await AttachmentUpload.run(DraftAttachment(name: "big.bin", type: "application/octet-stream", data: data),
+                                                session: "s1", connection: conn)
+        let writes = await hab.attachmentWrites
+        XCTAssertEqual(writes, 3, "600 000 bytes in 256 KiB runs")
+        let got = try await AttachmentUpload.fetch(up.id, connection: conn)
+        XCTAssertEqual(got.data, data)
+        let limits = await hab.attachmentGetLimits
+        XCTAssertEqual(limits, [256 << 10, 256 << 10, 256 << 10])
+        await conn.stop()
+    }
+
     /// Files alone, with no text, are a message.
     func testFilesWithNoText() async {
         let (fleet, hab, model) = await setup()

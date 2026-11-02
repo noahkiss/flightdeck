@@ -84,6 +84,8 @@ public actor FakeHab {
     private var uploads: [String: (put: AttachmentPutParams, data: Data)] = [:]
     public private(set) var storedFiles: [String: (put: AttachmentPutParams, data: Data)] = [:]
     public private(set) var attachmentWrites = 0
+    /// The `limit` of each `attachment.get` for file bytes, in order.
+    public private(set) var attachmentGetLimits: [Int?] = []
     /// The run size a put names; tests make it small to see several writes.
     private var attachmentChunk = 1 << 20
     /// Writes to refuse with `unavailable` before taking them again.
@@ -913,6 +915,7 @@ public actor FakeHab {
                 // The fake's thumbnail is the file itself.
                 return await reply(c, id: id, result: AttachmentData(data: f.data, eof: true, id: p.id, name: f.put.name, seq: c.seq, size: f.data.count, type: "image/jpeg"))
             }
+            attachmentGetLimits.append(p.limit)
             let off = min(p.offset ?? 0, f.data.count)
             let end = min(off + min(p.limit ?? 256 << 10, 1 << 20), f.data.count)
             await reply(c, id: id, result: AttachmentData(data: f.data.subdata(in: off..<end), eof: end == f.data.count, id: p.id,

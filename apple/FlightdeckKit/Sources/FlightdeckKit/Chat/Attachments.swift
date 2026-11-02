@@ -49,11 +49,10 @@ public struct UploadedAttachment: Equatable, Sendable {
 /// Uploads one file: `attachment.put`, then `attachment.write` runs of the size the hab names,
 /// in order (`hab-logic-api.md`, `attachment.*`).
 public enum AttachmentUpload {
-    /// A run when the hab names none.
-    static let defaultChunk = 1 << 20
-    /// The most bytes one `attachment.write` carries, whatever the hab allows (app.md 4.4):
-    /// each run's reply keeps the connection's liveness check fed over a slow uplink.
-    static let maxWrite = 256 << 10
+    /// The most bytes one `attachment.write` carries or one `attachment.get` asks for,
+    /// whatever the hab allows (app.md 4.4, 10.5): each write's reply keeps liveness fed
+    /// over a slow uplink, and each get stays inside the call timeout on a slow downlink.
+    static let maxRun = 256 << 10
 
     public static func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
@@ -67,7 +66,7 @@ public enum AttachmentUpload {
         if put.done == true || a.data.isEmpty {
             return UploadedAttachment(id: put.id, path: put.path)
         }
-        let chunk = max(1, min(put.chunk ?? maxWrite, maxWrite))
+        let chunk = max(1, min(put.chunk ?? maxRun, maxRun))
         var offset = 0
         while offset < a.data.count {
             let end = min(offset + chunk, a.data.count)
@@ -84,10 +83,10 @@ public enum AttachmentUpload {
 
     /// The whole of a stored file, read in runs.
     public static func fetch(_ id: String, connection: HabConnection) async throws -> AttachmentData {
-        var first = try await connection.call(HabMethods.attachmentGet, AttachmentGetParams(id: id, limit: defaultChunk))
+        var first = try await connection.call(HabMethods.attachmentGet, AttachmentGetParams(id: id, limit: maxRun))
         var data = first.data
         while first.eof != true, !first.data.isEmpty, data.count < AttachmentLimits.maxBytes {
-            let next = try await connection.call(HabMethods.attachmentGet, AttachmentGetParams(id: id, limit: defaultChunk, offset: data.count))
+            let next = try await connection.call(HabMethods.attachmentGet, AttachmentGetParams(id: id, limit: maxRun, offset: data.count))
             data.append(next.data)
             first.eof = next.eof
             if next.data.isEmpty { break }
