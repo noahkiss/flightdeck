@@ -207,10 +207,9 @@ steps from its inputs:
 1. Check out. Select `/Applications/Xcode_27.1.app` by path (`xcode-app`, through
    `DEVELOPER_DIR`); fail when it is missing (never the image default, never a beta or release
    candidate). The runner is `xcode-27` (4).
-2. No `~/.netrc` (`netrc` stays off). That input writes one for `api.github.com` only, which
-   SwiftPM calls for package collection metadata. It does not cover git clones or the binary
-   targets' downloads from `github.com` release URLs (libghostty-spm, FluidAudio), and release
-   asset downloads are not under the API rate limit.
+2. Write a `~/.netrc` for `api.github.com` with the job token (`netrc`, on by default). Callers
+   with SwiftPM binary targets from GitHub (here libghostty-spm and FluidAudio) saw 403s from the
+   anonymous rate limit without it. Removed at the end.
 3. Restore the SwiftPM cache (section 5).
 4. `cd swift/HabAPI && swift test` (the Swift half of core test 5).
 5. `cd apple/FlightdeckKit && swift test`.
@@ -409,7 +408,7 @@ token's narrow scope makes that acceptable. A pull request from a fork never rec
 | Bundle id prefix | `apple/Config/Names.xcconfig` (`APP_BUNDLE_PREFIX`), already public |
 | Signing identity names | Constants: `Apple Distribution`, `Developer ID Application`; the keychain picks the one certificate of each kind |
 | Notary credentials for `macos-bundle.sh` | A `notarytool store-credentials` profile written into the job's throwaway keychain from the three upload values |
-| `GITHUB_TOKEN` | The job token: release create and upload, run lookups |
+| `GITHUB_TOKEN` | The job token: release create and upload, the SwiftPM netrc, run lookups |
 
 ---
 
@@ -1011,7 +1010,7 @@ The `ios` job:
 
 1. Check out the tag. Select `/Applications/Xcode_27.1.app` by path (4); fail when missing.
 2. Ruby and fastlane from `.github/fastlane/Gemfile` (bundler cache).
-3. Restore the SwiftPM cache. No `~/.netrc` (3.4, step 2).
+3. `~/.netrc` for SwiftPM (3.4, step 2); restore the SwiftPM cache.
 4. A throwaway keychain with a random password. The API key goes to a `0600` file under
    `$RUNNER_TEMP` only for the export step, which deletes it.
 5. `fastlane match appstore --readonly --git_url "$MATCH_GIT_URL" --git_branch main --skip_docs
@@ -1034,7 +1033,7 @@ The `ios` job:
 9. Export with `method` `app-store-connect`, `destination` `upload`, manual signing and a
    `provisioningProfiles` map per bundle id; authenticate with the API key. With the dispatch
    input `upload: false`, export with `destination` `export` instead and upload nothing.
-10. Always: delete the keychain and the key files; upload the logs (the action's
+10. Always: delete the keychain, the key files and `~/.netrc`; upload the logs (the action's
     `log-dir`) as an artifact.
 
 The internal TestFlight group receives every build without a step here. Its setup is a one-off
@@ -1107,7 +1106,7 @@ keeps today's behaviour, so no existing caller changes. The owner reviews each b
 | E2 | `go-ci.yml` | `cache-path` and `cache-key` (strings): an `actions/cache` restore before the commands and a save after, on the default branch only (as `rust-ci` saves) | `''` (no step) |
 | E3 | `go-ci.yml` | `runner` (string), as `rust-ci` has | `ubuntu-latest` |
 | E4 | `go-ci.yml` | The job's concurrency group gains `${{ github.workflow }}` and the runner OS, so two workflows (or a Linux and a macOS call) on one ref no longer cancel each other; and a `cancel-in-progress` input (boolean expression), so a caller keeps `main` and scheduled runs from being cancelled (2) | `cancel-in-progress: true`, today's behaviour. The group name changes for every caller, but each caller's runs still share one group, so nothing else changes |
-| E5 | new `xcode-ci.yml` | Reusable workflow: Xcode by path (`xcode-app`), optional `generate` command, `project`, `swift-test-dirs` (one per line), `builds` and `tests` (`scheme \| destination [\| package folder]` per line; the destination `ios-simulator` picks an iPhone), `xcodebuild-args`, `spm-cache-key-file`, `netrc` (default off), `logs-name`, `runner` (default `macos-26`; this repo passes `xcode-27`), `timeout-minutes`, `cancel-in-progress`. No secrets | New file |
+| E5 | new `xcode-ci.yml` | Reusable workflow: Xcode by path (`xcode-app`), optional `generate` command, `project`, `swift-test-dirs` (one per line), `builds` and `tests` (`scheme \| destination [\| package folder]` per line; the destination `ios-simulator` picks an iPhone), `xcodebuild-args`, `spm-cache-key-file`, `netrc` (default on), `logs-name`, `runner` (default `macos-26`; this repo passes `xcode-27`), `timeout-minutes`, `cancel-in-progress`. No secrets | New file |
 | E6 | new composite actions | `actions/xcode-match-signing` (throwaway keychain, match read-only per type, platform and id list, a check that each profile arrived, a manual-signing xcconfig that looks up each target's profile by bundle id, outputs `xcconfig` and `profiles`; `cleanup: 'true'` in an `if: always()` step deletes the keychain and keys, since a composite action has no post step) and `actions/xcode-archive-upload` (archive with that xcconfig and the versions, export with a `provisioningProfiles` map for `app-store-connect` upload or export, or for `developer-id` with notarize and staple; it writes and deletes the API key file itself). Composite, run as steps in the caller's job, because environment secrets do not reach a reusable workflow from another repo | New files |
 | E7 | tap `bump.yml` | `tag_prefix` input (8.2) | `v` |
 | E8 | tap `bump.yml` | Per-platform formula: every url's sha from its `.sha256` asset, the top-level fallback included; a url with no such asset hashed directly (8.2) | Single-url path unchanged |
