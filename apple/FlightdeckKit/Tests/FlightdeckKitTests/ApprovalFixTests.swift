@@ -211,6 +211,27 @@ final class ApprovalFixTests: XCTestCase {
         XCTAssertEqual(o2, .answered)
     }
 
+    /// A banner answer on a locked phone, the usual case for a Watch action
+    /// (app.md 16.4), sends nothing either: one notice that opens the
+    /// request, and the request waits for the foreground. Deny too.
+    func testLockedBannerAnswerRefused() async {
+        let hab = await blockedHab()
+        let answerer = ApprovalAnswerer(live: { _ in nil }, oneShot: { _ in hab.transport() }, clientLabel: "phone")
+        let c = ApprovalCenter(board: Board(), answerer: answerer, defaults: emptyDefaults())
+        var posts: [(String, String, PushMeta?)] = []
+        c.post = { t, b, m in posts.append((t, b, m)) }
+        c.isUnlocked = { false }
+        let meta = PushMeta(kind: "permission", hab: "testhost", pane: "%1", request: "req-1")
+        let o = await c.answer(host: "testhost", ApprovalAnswerParams(choice: .deny, pane: "%1", request: "req-1", via: .banner), meta: meta)
+        XCTAssertNil(o)
+        XCTAssertEqual(posts.map(\.0), ["Unlock to answer"])
+        XCTAssertEqual(posts.first?.1, "testhost")
+        XCTAssertEqual(posts.first?.2, meta, "the notice opens the request")
+        XCTAssertEqual(c.pending, [meta])
+        let n = await hab.answers.count
+        XCTAssertEqual(n, 0)
+    }
+
     /// A tap on a banner whose request is gone never opens another request
     /// under Allow: the sheet shows that request as answered elsewhere.
     func testStaleTapOpensPlaceholder() async {

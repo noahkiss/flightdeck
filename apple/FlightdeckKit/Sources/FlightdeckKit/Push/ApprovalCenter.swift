@@ -3,6 +3,9 @@ import FlightdeckShared
 import HabAPI
 import Observation
 import os
+#if os(iOS)
+import UIKit
+#endif
 
 /// Where approvals meet the app: the sheet and when it shows, the answers from
 /// notifications and the Live Activity, and the foreground prompt that a
@@ -91,7 +94,21 @@ public final class ApprovalCenter {
     /// Answers from a notification action or the Live Activity. A failure
     /// posts a notice and raises the request again in the foreground; a
     /// refusal says it was already answered or expired.
-    public func answer(host: String, _ params: ApprovalAnswerParams, meta: PushMeta?) async -> AnswerOutcome {
+    ///
+    /// A locked device cannot sign with its key (transport.md 7.2), so the
+    /// answer is refused at once with "Unlock iPhone to answer", the request
+    /// is raised again in the foreground, and nothing is sent. Returns nil
+    /// when it was refused that way. This is the usual case for a Watch
+    /// answer: iOS mirrors a banner to the Watch only while the phone is
+    /// locked (app.md 16.4).
+    @discardableResult
+    public func answer(host: String, _ params: ApprovalAnswerParams, meta: PushMeta?) async -> AnswerOutcome? {
+        guard isUnlocked() else {
+            log.notice("background answer \(params.choice.rawValue, privacy: .public): locked")
+            await post?(Self.lockedTitle, habLabel(host: host), meta)
+            if let meta { addPending(meta) }
+            return nil
+        }
         let o = await answerer.answer(host: host, params)
         // The case is public; the hab's hint or the dial error may name hosts or commands.
         log.notice("background answer \(params.choice.rawValue, privacy: .public): \(o.caseName, privacy: .public) \(o.detail, privacy: .private)")
@@ -105,21 +122,33 @@ public final class ApprovalCenter {
         return o
     }
 
-    /// Whether the device is unlocked (protected data available); the iOS app
-    /// sets it. The device key signs only while unlocked (transport.md 7.2).
-    @ObservationIgnored public var isUnlocked: @MainActor () -> Bool = { true }
+    /// Whether the device is unlocked (protected data available). The device
+    /// key signs only while unlocked (transport.md 7.2). The default reads
+    /// UIKit on iOS, so it holds on a background launch for a notification
+    /// action, before any scene exists; tests replace it.
+    @ObservationIgnored public var isUnlocked: @MainActor () -> Bool = ApprovalCenter.protectedDataAvailable
 
-    /// Allow or Deny from the Live Activity. A locked device cannot sign with
-    /// its key, so the answer is refused at once with "Unlock to answer" and
-    /// the request is raised again in the foreground; nothing is sent.
-    /// Returns nil when it was refused that way.
+    static func protectedDataAvailable() -> Bool {
+        #if os(iOS)
+        return UIApplication.shared.isProtectedDataAvailable
+        #else
+        return true
+        #endif
+    }
+
+    /// The notice a locked device posts. It names the device to unlock, since
+    /// the Watch that shows it is already unlocked.
+    static var lockedTitle: String {
+        #if os(iOS)
+        return UIDevice.current.userInterfaceIdiom == .pad ? "Unlock iPad to answer" : "Unlock iPhone to answer"
+        #else
+        return "Unlock to answer"
+        #endif
+    }
+
+    /// Allow or Deny from the Live Activity, with the unlock rule of `answer`.
     public func answerFromActivity(host: String, pane: String, request: String, allow: Bool) async -> AnswerOutcome? {
         let meta = PushMeta(kind: "permission", hab: host, pane: pane, request: request)
-        guard isUnlocked() else {
-            await post?("Unlock to answer", habLabel(host: host), meta)
-            addPending(meta)
-            return nil
-        }
         return await answer(host: host, ApprovalAnswerParams(choice: allow ? .allow : .deny, pane: pane, request: request, via: .banner), meta: meta)
     }
 

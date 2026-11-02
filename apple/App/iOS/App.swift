@@ -23,9 +23,6 @@ struct FlightdeckApp: App {
                     if fleet.approvals?.open(url: url) != true { fleet.ssh?.open(url: url) }
                 }
                 .task {
-                    // The device key signs only while unlocked: a Live Activity
-                    // answer on a locked phone says "Unlock to answer".
-                    fleet.approvals?.isUnlocked = { UIApplication.shared.isProtectedDataAvailable }
                     pushDelegate.start(fleet.push)
                     if fleet.badge == nil {
                         fleet.badge = AppBadge { n in await PushDelegate.setBadge(n) }
