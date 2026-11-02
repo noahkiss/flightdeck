@@ -799,27 +799,37 @@ Capcom session's chat view is the Capcom view: a session with kind `capcom` gets
   each `capcom.open`, `capcom.attach` and `capcom.detach` result. A chip shows the kind's symbol,
   the title, and the host label when the item came from another hab, with a remove button.
 - **Send.** A plain `session.send`. Send works with no text while chips wait; the context goes
-  alone. On success the model drops exactly the chips that waited when the send went out, as
-  the hab does; one attached meanwhile stays. On any error the chips stay, and a retry carries
-  them. The sent message shows the chips it carried above its text. Design call: a Capcom send
+  alone. On success the model drops the chips that waited when the send went out, then reads
+  what still waits with `capcom.pending`: the hab delivers its own list, which can hold an item
+  attached meanwhile. On any error the chips stay, and a retry carries them. The sent message shows the chips it carried above its text. Design call: a Capcom send
   never falls back to typing through `pane.input`, which would drop the context.
 - **Files.** In a Capcom composer the file button and files from the send sheet become chips:
   `attachment.put` for the Capcom session, then `capcom.attach` with the attachment id. Design
   call: a file is context (`capcom.md` 8.1), so it waits with the other chips rather than riding
   the next send as an attachment. The model keeps the bytes of the files it attached, so "New
-  conversation" (8.8) can attach them again.
+  conversation" (8.8) can attach them again. A file the hab refuses (8 items wait, too large,
+  a failed upload) goes back to the draft, with the hab's reason under the composer.
+  Coordinator call (2026-11-02): files in a Capcom composer are chips.
 - **Commands.** A console command card's context menu has "Attach to Capcom": `capcom.open`
   with `{kind: command, ref: "<pane>:<command id>"}` on the console's hab, then the board opens
   the Capcom session. A hab that is not the Capcom home answers `unavailable` naming the home;
   the alert shows that text. Design call: the action is offered on every console; the hab's
   answer says when it cannot work, which costs one tap and no capability check in the app.
+  Coordinator call (2026-11-02): the action is on every console.
 - **Remove.** `capcom.detach` with the chip's kind and ref, and its host label when it came from
   another hab. `not_found` means the hab no longer holds it, so the chip goes too.
-- **What already waits.** When a Capcom chat view starts, or its hab comes back online, the
-  model calls `capcom.open` with no context and takes `pending` when the answer names this
-  session; any other answer changes nothing. It skips an exited session, so viewing never
-  resumes one. Limit: if the standing conversation's record was closed, this open starts a new
-  standing conversation, as any client's open would.
+- **What already waits.** When a Capcom chat view starts, when its hab comes back online, and
+  after a send that carried chips, the model reads the list with `capcom.pending {session}`.
+  That call starts, resumes and changes nothing, so viewing any Capcom session, running or
+  exited, standing or older, never resumes one. The model never refreshes with `capcom.open`
+  (coordinator, 2026-11-02). A hab from before `capcom.pending` answers `unavailable`, and the
+  chips stay as the app last saw them.
+- **Transcript records.** A user record to Capcom starts with the hab's context blocks. The
+  chat view shows each block as a chip (its kind's symbol and first field: the notice title,
+  session name, file path or command line), then the user's own text. The text after the last
+  block also matches the outgoing message, so a send with chips clears its bubble when the
+  record arrives (empty text for context alone). The parser reads only the hab's own markers at
+  column 0, in order; the user's text after the last block is never read as a block.
 - **Refusals.** Any refused chip call shows the hab's text (the error hint) under the composer
   and keeps the chips: `invalid`, `not_found`, `conflict` (8 items wait), `unavailable` (Logbook,
   no Capcom). A refused open from outside the view shows the same text in a "Could not open
@@ -1509,21 +1519,29 @@ ids). Tests: `CapcomAskTests`; the chips themselves are 4.9.
   hab's device id beside its host id, written as each hab comes online. Design call: a cold
   launch from a banner has no welcomes yet, and the book already maps ids to connections.
 - **Waiting.** The action foregrounds the app, which connects every hab. When the Capcom host
-  is not online yet, the Ask waits up to 20 s for it, then shows "Could not reach <hab> to ask
-  an agent." Nothing retries after that. Design call: 20 s matches the one-shot answer's limit
-  (8.7).
+  is not online yet, or no hab is known by that device id while some hab is still connecting
+  (a hab book from before device ids, on the first launch after the update), the Ask waits up
+  to 20 s. It looks the device id up again at each board change and goes once that hab is
+  online. With every hab online and none with the device id, it fails at once. Past 20 s it
+  shows "Could not reach <hab> to ask an agent." (or "not in this app"). Nothing retries after
+  that. Design call: 20 s matches the one-shot answer's limit (8.7).
+- **Opening.** The board opens the Capcom session once its row exists. A request the board has
+  not shown after 20 s lapses, so the session never opens much later, and the model the center
+  held for the view is let go.
+- **Title.** Coordinator call (2026-11-02): the action reads "Ask an agent".
 - **Failures.** One alert, "Could not open Capcom", with: "The hab that runs Capcom is not in this
   app." (no hab with that device id), "This notification names no Capcom host." (no context in
   the payload), "Could not reach <hab> to ask an agent." (not online in time, or the connection
   dropped), or the hab's own text for a refusal (`unavailable` naming the new home after a
   re-assignment, `not_found` for a notice the home cannot read).
-- **New conversation.** Beside the chips. It calls `capcom.open {new: true}` with the chips that
-  can move (a file chip cannot: its ref names the old session's attachment), detaches each moved
-  chip from the old conversation, opens the new one with the typed draft in its composer, and
-  uploads and attaches the moved files again there. A refused open changes nothing and shows the
-  hab's text under the composer. Design call: the old conversation's chips are detached after
-  the new open succeeds, so a refusal never loses context; a failed detach leaves that chip in
-  both.
+- **New conversation.** A text button beside the chips (coordinator call, 2026-11-02). It calls
+  `capcom.open {new: true}` with the chips that can move (a file chip cannot: its ref names the
+  old session's attachment), opens the new one with the typed draft in its composer, uploads and
+  attaches the moved files again there, and only then detaches from the old conversation what
+  reached the new one. A file that could not go up again stays on the old one. A refused open
+  changes nothing and shows the hab's text under the composer. Design call: nothing leaves the
+  old conversation before it is in the new one, so a failure never loses context; a failed
+  detach leaves that chip in both.
 
 Sources: owner decision (each user brings their own APNs setup; fail gracefully without it); Moshi
 docs, hooks and notifications (which events raise a banner, never drop an approval silently,
