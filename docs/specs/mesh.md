@@ -744,6 +744,9 @@ the rest of client kind `hab`.
 - A message is: id (128 random bits, 32 hex digits), `from` (device id, host id, session name),
   `to` (device id, session name), text, optional `reply_to`, and the sender hab's time.
 - Text is at most 64 KiB, on send and on receipt. Empty text is refused with `invalid`.
+- A session cannot send to itself, by its name or by this hab's own address: `invalid`, "a
+  session cannot send channel mail to itself" (`channels.SelfRefusal`, which `hand_off` matches
+  to skip the caller, `capcom.md` 6.5).
 - `channel.send` returns the id, the resolved address and the state: `handed` for a target on
   this hab, else `queued`. The sender hab keeps one record per message for 7 days
   (`channel.status`), with its state, a reason for a refusal, and the time of the last change.

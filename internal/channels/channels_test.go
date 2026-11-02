@@ -429,6 +429,15 @@ func TestLocalSend(t *testing.T) {
 	if sent := send(t, a.s, "alice", "hosta/bob", "x"); sent.To != "bob" {
 		t.Fatalf("hosta/bob: %+v", sent)
 	}
+	// A session never sends to itself, by name or by this hab's own address.
+	for _, to := range []string{"alice", "hosta/alice"} {
+		if _, err := a.s.Send(context.Background(), api.ChannelSendParams{From: "alice", To: to, Text: "x"}); kind(err) != api.ErrorKindInvalid || !strings.Contains(err.Error(), SelfRefusal) {
+			t.Errorf("alice to %s: %v", to, err)
+		}
+	}
+	if got := a.local.got("alice"); len(got) != 0 {
+		t.Fatalf("alice got her own message: %q", got)
+	}
 }
 
 // TestNameRule: a session name outside the rule can neither send nor receive (S2).

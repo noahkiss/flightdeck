@@ -589,6 +589,11 @@ change: `hand_off` uses `catalog.list`, `channel.send` and `channel.status`; `fi
   target sees the agent envelope with that address (`mesh.md` 6.5). Outside a pane the hab
   refuses the send for lack of `from`; the tool takes no `from`, since an MCP server always runs
   in a pane. No confirmation (owner, 2026-11-01).
+- **Never the caller.** `hand_off` is in every agent's kit, and an agent on the project that
+  calls it is busy, so it would often be the newest busy candidate. Channels refuse a session's
+  message to itself (`mesh.md` 6.5); the tool takes that refusal as "this is the caller", drops
+  the candidate and picks again. With no other agent it says "no agent other than you"; a
+  caller that named itself is told so. Nothing is sent in either case.
 - **What it reports.** For a target that looked ready and online, the tool waits up to 5 s
   (`channel.status`) for a final state, so an idle agent shows `delivered`. Then one of:
   delivered; queued, "working; it gets the message when idle"; queued, "blocked on a permission

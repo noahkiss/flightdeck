@@ -210,25 +210,47 @@ func runHandOff(ctx context.Context, c caller, a toolArgs) (any, string, error) 
 		fmt.Fprintf(&b, "No agent is running on %s: nothing was sent. To start one, run suggest_host for the project, then start_session on the host it suggests.\n", on)
 		return res, b.String(), nil
 	}
-	i, why := pickTarget(ts, a.str("agent"))
-	if i < 0 {
-		fmt.Fprintf(&b, "No agent named %s is running on %s: nothing was sent. Running there:\n", a.str("agent"), on)
-		for _, t := range ts {
-			fmt.Fprintf(&b, "  %s: %s, %s, since %s\n", t.Address, t.Harness, t.State, t.Since)
+	named := a.str("agent")
+	var (
+		t    handOffTarget
+		why  string
+		sent api.ChannelSent
+	)
+	for {
+		i, w := pickTarget(ts, named)
+		if i < 0 {
+			fmt.Fprintf(&b, "No agent named %s is running on %s: nothing was sent. Running there:\n", named, on)
+			for _, t := range ts {
+				fmt.Fprintf(&b, "  %s: %s, %s, since %s\n", t.Address, t.Harness, t.State, t.Since)
+			}
+			return res, b.String(), nil
 		}
-		return res, b.String(), nil
+		t, why = ts[i], w
+		err := c.Call(ctx, "channel.send", api.ChannelSendParams{To: t.Address, Text: text}, &sent)
+		if err != nil && strings.Contains(err.Error(), channels.SelfRefusal) {
+			// The pick is the calling session itself: it never hands off to itself.
+			ts = slices.Delete(ts, i, i+1)
+			if named != "" {
+				fmt.Fprintf(&b, "%s is your own session: nothing was sent.\n", named)
+				return res, b.String(), nil
+			}
+			if len(ts) == 0 {
+				fmt.Fprintf(&b, "No agent other than you is running on %s: nothing was sent. To start one, run suggest_host for the project, then start_session on the host it suggests.\n", on)
+				return res, b.String(), nil
+			}
+			continue
+		}
+		if err != nil {
+			return nil, "", fmt.Errorf("hand_off to %s: %w", t.Address, err)
+		}
+		for _, o := range ts {
+			if o.Address != t.Address {
+				res.Others = append(res.Others, o)
+			}
+		}
+		break
 	}
-	t := ts[i]
 	res.Agent, res.Why = &t, why
-	for j, o := range ts {
-		if j != i {
-			res.Others = append(res.Others, o)
-		}
-	}
-	var sent api.ChannelSent
-	if err := c.Call(ctx, "channel.send", api.ChannelSendParams{To: t.Address, Text: text}, &sent); err != nil {
-		return nil, "", fmt.Errorf("hand_off to %s: %w", t.Address, err)
-	}
 	res.Sent = true
 	rec := api.ChannelRecord{ID: sent.ID, To: sent.To, State: sent.State}
 	if ready(t.State) && !t.Offline {

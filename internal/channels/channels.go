@@ -55,6 +55,10 @@ const (
 // (mesh.md 6.5). gff-hab gives every new or renamed session a name that fits it.
 const NameRule = "1 to 64 of A-Z a-z 0-9 . _ -"
 
+// SelfRefusal is the message of channel.send's refusal of a message from a session to itself.
+// Callers that pick a target (hand_off, capcom.md 6.5) match it to skip the caller.
+const SelfRefusal = "a session cannot send channel mail to itself"
+
 var (
 	validName = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 	validID   = regexp.MustCompile(`^[0-9a-f]{32}$`)
@@ -363,6 +367,9 @@ func (s *Service) Send(ctx context.Context, p api.ChannelSendParams) (api.Channe
 	}
 	if !ValidName(t.session) {
 		return api.ChannelSent{}, control.Errorf(api.ErrorKindInvalid, "%q is not a session name: use %s", t.session, NameRule)
+	}
+	if t.device == s.cfg.Self && t.session == p.From {
+		return api.ChannelSent{}, control.Errorf(api.ErrorKindInvalid, "%s", SelfRefusal)
 	}
 	now := s.cfg.Now()
 	msg := api.ChannelMessage{

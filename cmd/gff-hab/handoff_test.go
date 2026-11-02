@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/channels"
 	"github.com/noahkiss/flightdeck/internal/control"
 )
 
@@ -22,12 +23,16 @@ import (
 type fakeChannelHab struct {
 	*fakeReadHab
 	sends []api.ChannelSendParams
+	self  string // the calling pane's session: a send to it is refused, as channels does
 }
 
 func (f *fakeChannelHab) Call(ctx context.Context, method string, params, result any) error {
 	switch method {
 	case "channel.send":
 		p := params.(api.ChannelSendParams)
+		if f.self != "" && p.To == f.self {
+			return control.Errorf(api.ErrorKindInvalid, "%s", channels.SelfRefusal)
+		}
 		f.sends = append(f.sends, p)
 		st := api.ChannelStateHanded
 		if strings.Contains(p.To, "/") {
@@ -180,6 +185,36 @@ func TestHandOffProjectIdentity(t *testing.T) {
 	if err != nil || res.(handOffResult).Sent || len(f.sends) != 0 || !strings.Contains(text, "tools names 2 projects: nothing was sent") ||
 		!strings.Contains(text, "remote:example.com/tools-fork") {
 		t.Fatalf("shared name: %v %v\n%s", err, f.sends, text)
+	}
+}
+
+// TestHandOffSkipsSelf: the calling session is never the pick, though it is the newest busy
+// agent on the project; the next one gets the message, and with no other agent nothing is sent.
+func TestHandOffSkipsSelf(t *testing.T) {
+	f := &fakeChannelHab{fakeReadHab: twoHosts(), self: "app-ui"}
+	cl := &f.catalog
+	withHostProjects(cl)
+	cl.Hosts[1].Catalog.Agents = append(cl.Hosts[1].Catalog.Agents,
+		api.CatalogAgent{Session: "app-api", Harness: "codex", Project: "app", State: api.AgentStatusWorking, Since: "2026-03-01T09:00:00Z"})
+	res, text, err := runAction(t, f, "hand_off", toolArgs{"project": "app", "message": "check the cache"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := res.(handOffResult)
+	if !r.Sent || r.Agent.Address != "devbox/app-api" || len(r.Others) != 0 || strings.Contains(text, "app-ui") {
+		t.Fatalf("pick: %+v\n%s", r, text)
+	}
+	// Only the caller runs on the project.
+	cl.Hosts[1].Catalog.Agents = nil
+	f.sends = nil
+	res, text, err = runAction(t, f, "hand_off", toolArgs{"project": "app", "message": "x"})
+	if err != nil || res.(handOffResult).Sent || !strings.Contains(text, "No agent other than you is running on app: nothing was sent") {
+		t.Fatalf("only self: %v\n%s", err, text)
+	}
+	// The caller named itself.
+	_, text, err = runAction(t, f, "hand_off", toolArgs{"project": "app", "agent": "app-ui", "message": "x"})
+	if err != nil || !strings.Contains(text, "app-ui is your own session: nothing was sent") {
+		t.Fatalf("named self: %v\n%s", err, text)
 	}
 }
 
