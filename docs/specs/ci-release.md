@@ -668,23 +668,33 @@ bundle's short version or the app's marketing version. It stays in the tag, the 
 
 | Tap entry | Installs | Bumped by |
 |---|---|---|
-| Formula `gff` (Q4) | Linux: the three binaries into `bin`. macOS: `GFF Hab.app`, `GFF Holder.app` and `gff` into `libexec`, and links `gff`, `gff-hab` and `gff-hab-holder` in `bin` | `release.yml`, on a final `v*` tag |
+| Formula `gff` (Q4) | Linux: the three binaries into `bin`. macOS: `GFF Hab.app`, `GFF Holder.app` and `gff` into `libexec`, and links `gff` and `gff-hab` in `bin` | `release.yml`, on a final `v*` tag |
 | Cask `flightdeck` | The Mac app | `app-release.yml`, on a final `app-v*` tag |
 
 On macOS the hab installs from the formula's bundles: `gff-hab install` copies them into
 `<state>/builds` and never runs them from the Homebrew prefix (`macos-identity.md` 3.4). The
-formula's `test do` block runs `--version` on all three binaries and requires
-`<name> <version>`, so a release whose binaries report another version fails the tap's verify.
+formula's `test do` block runs `--version` on all three binaries (on macOS, the holder inside
+its bundle) and requires `<name> <version>`, so a release whose binaries report another version
+fails the tap's verify.
 
 **As built (macOS layout).** `gff-hab install` resolves its own executable through links
 (`filepath.EvalSymlinks`), takes `GFF Holder.app` beside the `GFF Hab.app` it is in, and takes
 the `gff` beside `GFF Hab.app` as the client to copy (`cmd/gff-hab/install.go`, `sources` and
 `clientSource`). So the formula keeps the darwin archive's three items together in `libexec`,
-as the archive holds them, and `bin` holds links only: `gff` to `libexec/gff`, `gff-hab` and
-`gff-hab-holder` to the executables inside the bundles. `gff` installed straight into `bin`
-would leave install with no client to copy. Homebrew changes nothing inside the bundles: their
-signatures still verify after `brew install` (proved with dev-signed bundles, 8.4). The formula's
-caveats name `gff-hab install` as the next step.
+as the archive holds them, and `bin` holds links only: `gff` to `libexec/gff`, and `gff-hab` to
+the executable inside its bundle. `gff` installed straight into `bin` would leave install with no
+client to copy. The holder gets no link: on macOS install always uses launchd and takes the
+holder bundle beside `GFF Hab.app`, and only the systemd path looks for `gff-hab-holder` on PATH.
+Homebrew changes nothing inside the bundles: their signatures still verify after `brew install`
+(proved with dev-signed bundles, 8.4).
+
+**Upgrade and removal.** The service runs the copies in the state directory, not the keg. So
+after `brew upgrade gff` the hab keeps running the old build until `gff-hab install` runs again.
+That reinstall copies the new build, restarts the logic job, and drains the old holder
+(`scripts/service-check.sh` covers it). `brew uninstall gff` leaves the jobs running, so
+`gff-hab uninstall` goes first. The formula's caveats say all three: run `gff-hab install`, run
+it again after each upgrade, and run `gff-hab uninstall` before `brew uninstall gff`. A
+`post_install` cannot do the reinstall: it runs sandboxed and cannot reach launchd.
 
 ### 8.2 `bump.yml` and the formula's shape
 
@@ -741,6 +751,10 @@ audit --strict` called for:
   --strict` refuses a `version` line that repeats it.
 - **No version in a comment.** `bump.yml` refuses a rewrite that leaves the old version anywhere
   in the file. The local proof (8.4) caught a comment that named it.
+- **Whole-version swap and check** (noahkiss/homebrew-tap#12, not yet merged). `bump.yml`
+  swapped the old version everywhere after swapping the tag, so `v0.0.0` to `v10.0.0` gave
+  `v110.0.0`. Its old-version check also matched substrings (`0.0.0` inside `10.0.0`). #12 fixes
+  both. A first tag of `v0.x` bumps correctly without it.
 
 The tap had no rule for a formula with no release yet. The formula went in with `v0.0.0` urls and
 zero shas, so `brew install` fails until the first bump rewrites it. `bump.yml` downloads the new
@@ -790,6 +804,8 @@ local stand-in of a `v0.1.0` release:
    on the rewritten one. Then `codesign --verify --strict` on both bundles and `gff` inside the
    keg, and `gff-hab install -dry-run` through the `bin` link, which resolved the keg's bundles
    and wrote nothing.
+5. The same rewrite step from #12, with `TAG=v10.0.0`: today's `bump.yml` fails (url
+   `v110.0.0`) and #12 passes. #12 still refuses a leftover `0.0.0` in a comment.
 
 One stand-in difference: Homebrew reads the version from a `github.com` release url, but from a
 `127.0.0.1` url it reads `64` (from `arm64`). The stand-in copy alone carried a `version` line.
