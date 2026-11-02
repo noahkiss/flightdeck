@@ -433,7 +433,8 @@ public actor FakeHab {
     public func roundRun(_ id: String) -> RoundRun? { roundBook.run(id) }
 
     /// Moves a run to a new state and sends `round.run_updated`. A final state stamps the
-    /// end; a succeeded run of a round with `on_finish` close exits its session.
+    /// end and then, as the hab does, sends `round.updated` with the round at its next
+    /// revision; a succeeded run of a round with `on_finish` close exits its session.
     public func setRunState(_ id: String, _ state: RoundRunState, reason: String? = nil, result: String? = nil) async {
         guard var run = roundBook.run(id) else { return }
         run.state = state
@@ -442,6 +443,7 @@ public actor FakeHab {
         if state.isFinal { run.endedAt = Fixture.stamp(Date()) }
         roundBook.put(run)
         await emit(type: "round.run_updated", id: run.id, revision: nil, data: run)
+        if state.isFinal, let r = roundBook.bump(run.round) { await roundUpdated(r) }
         if state == .succeeded, roundBook.rounds[run.round]?.onFinish ?? .close == .close, let sid = run.session, var sess = sessions[sid] {
             sess.state = .exited
             sess.revision += 1

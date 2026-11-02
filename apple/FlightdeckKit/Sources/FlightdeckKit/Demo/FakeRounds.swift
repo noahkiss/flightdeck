@@ -141,6 +141,15 @@ struct FakeRounds {
         return run
     }
 
+    /// The round at its next revision, as the hab publishes it when a run ends (its counts
+    /// and `last_run` changed); nil when the round is gone.
+    mutating func bump(_ id: String) -> Round? {
+        guard var r = rounds[id] else { return nil }
+        r.revision += 1
+        rounds[id] = r
+        return r
+    }
+
     /// Stores a run's new state and the round's `lastRun`.
     mutating func put(_ run: RoundRun) {
         var list = runs[run.round] ?? []
