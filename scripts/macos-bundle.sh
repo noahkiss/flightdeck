@@ -2,12 +2,14 @@
 # Wrap gff-hab-holder and gff-hab into minimal app bundles, sign them, notarize, staple and verify
 # (docs/specs/macos-identity.md 3.3, 4.2, 5.1 to 5.3). Runs on macOS only.
 #
-#   scripts/macos-bundle.sh [-dev] [-bin-dir dir] [-build id] [-version x.y.z] [-no-notarize] -o out
+#   scripts/macos-bundle.sh [-dev] [-bin-dir dir] [-speech-helper path] [-build id] [-version x.y.z] [-no-notarize] -o out
 #
 # Output, in <out>/gff-macos/:
 #
 #   GFF Holder.app   bundle id <prefix>.hab-holder, executable Contents/MacOS/gff-hab-holder
-#   GFF Hab.app      bundle id <prefix>.hab, executable Contents/MacOS/gff-hab
+#   GFF Hab.app      bundle id <prefix>.hab, executable Contents/MacOS/gff-hab, and the speech
+#                    helper Contents/MacOS/gff-hab-speech (identifier <prefix>.hab-speech) when
+#                    there is one
 #   gff              the bare client, identifier <prefix>.gff (only when cmd/gff exists)
 #
 # and <out>/gff-macos.zip, the stapled set for distribution.
@@ -20,6 +22,9 @@
 #
 # The binaries come from -bin-dir (gff-hab and gff-hab-holder, and gff when present), else this
 # script builds them for this Mac with libghostty (make libghostty, go build -tags ghostty).
+# The speech helper comes from -speech-helper, else gff-hab-speech in -bin-dir, else
+# build/gff-hab-speech when `make speech-helper` made it; with none, GFF Hab.app holds gff-hab
+# alone. The script never builds the helper: it needs sherpa-onnx and libopus.
 #
 # Settings come from the environment. Nothing names a person, a team or a key:
 #
@@ -38,6 +43,7 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 gocmd=${GO:-go}
 dev=0
 bindir=
+speech=
 build=
 version=0.0.0
 notarize=1
@@ -57,6 +63,7 @@ while [ $# -gt 0 ]; do
 	case $1 in
 	-dev) dev=1 ;;
 	-bin-dir) bindir=${2:?}; shift ;;
+	-speech-helper) speech=${2:?}; shift ;;
 	-build) build=${2:?}; shift ;;
 	-version) version=${2:?}; shift ;;
 	-no-notarize) notarize=0 ;;
@@ -92,6 +99,7 @@ fi
 holder_id=$prefix.hab-holder$suffix
 hab_id=$prefix.hab$suffix
 gff_id=$prefix.gff$suffix
+speech_id=$prefix.hab-speech$suffix
 [ -n "$build" ] || build=$(git -C "$repo" describe --always --dirty 2>/dev/null || echo dev)
 
 mkdir -p "$out"
@@ -117,6 +125,13 @@ fi
 for b in gff-hab gff-hab-holder; do
 	[ -x "$bindir/$b" ] || fail "no $b in $bindir"
 done
+if [ -n "$speech" ]; then
+	[ -f "$speech" ] && [ -x "$speech" ] || fail "-speech-helper $speech is not an executable file"
+elif [ -x "$bindir/gff-hab-speech" ]; then
+	speech=$bindir/gff-hab-speech
+elif [ -x "$repo/build/gff-hab-speech" ]; then
+	speech=$repo/build/gff-hab-speech
+fi
 
 # 2. The bundles (3.3): Info.plist, the executable, nothing else.
 plist_string() { printf '\t<key>%s</key>\n\t<string>%s</string>\n' "$1" "$2"; }
@@ -172,6 +187,24 @@ write_bundle "GFF Holder" gff-hab-holder "$holder_id" \
 	NSCameraUsageDescription NSContactsUsageDescription NSCalendarsUsageDescription \
 	NSRemindersUsageDescription NSLocationUsageDescription NSPhotoLibraryUsageDescription
 write_bundle "GFF Hab" gff-hab "$hab_id" NSLocalNetworkUsageDescription
+# The speech helper sits beside gff-hab, where gff-hab looks for it (voice.md). It is nested
+# code, signed before the bundle that seals it.
+helper=
+if [ -n "$speech" ]; then
+	helper="$dist/GFF Hab.app/Contents/MacOS/gff-hab-speech"
+	cp "$speech" "$helper"
+	chmod 755 "$helper"
+	# Under the hardened runtime a release helper may load only system libraries: library
+	# validation refuses one signed by anyone else, and another Mac has no such file anyway.
+	libs=$(otool -L "$helper" | tail -n +2 | awk '{print $1}' | grep -Ev '^(/usr/lib/|/System/Library/)' || true)
+	if [ -n "$libs" ]; then
+		if [ "$dev" = 1 ]; then
+			say "warning: the speech helper links libraries outside the system, so this bundle runs on this Mac only: $(echo $libs)"
+		else
+			fail "the speech helper links libraries outside the system ($(echo $libs)); link them statically for a release"
+		fi
+	fi
+fi
 has_gff=0
 if [ -x "$bindir/gff" ]; then
 	cp "$bindir/gff" "$dist/gff"
@@ -179,7 +212,7 @@ if [ -x "$bindir/gff" ]; then
 fi
 
 # The holder's entitlements (4.2): what a terminal app carries, so a program in a pane can ask.
-# Full Disk Access needs no entitlement. gff-hab and gff carry none.
+# Full Disk Access needs no entitlement. gff-hab, the speech helper and gff carry none.
 cat >"$work/holder.entitlements" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -204,8 +237,8 @@ cat >"$work/holder.entitlements" <<'EOF'
 EOF
 plutil -lint -s "$work/holder.entitlements" || fail "holder entitlements do not lint"
 
-# 3. Sign inside out (5.1): each bundle, then the bare client. No --deep. The bundle identifier is
-# the signing identifier.
+# 3. Sign inside out (5.1): the speech helper, each bundle, then the bare client. No --deep. The
+# bundle identifier is the signing identifier.
 sign_args=(--force --options runtime)
 if [ "$identity" = - ]; then
 	sign_args+=(--timestamp=none)
@@ -214,6 +247,9 @@ else
 fi
 [ -n "${GFF_SIGN_KEYCHAIN:-}" ] && sign_args+=(--keychain "$GFF_SIGN_KEYCHAIN")
 codesign "${sign_args[@]}" --entitlements "$work/holder.entitlements" --sign "$identity" "$dist/GFF Holder.app"
+if [ -n "$helper" ]; then
+	codesign "${sign_args[@]}" -i "$speech_id" --sign "$identity" "$helper"
+fi
 codesign "${sign_args[@]}" --sign "$identity" "$dist/GFF Hab.app"
 if [ "$has_gff" = 1 ]; then
 	codesign "${sign_args[@]}" -i "$gff_id" --sign "$identity" "$dist/gff"
@@ -282,8 +318,9 @@ verify() {
 			grep -q 'source=Notarized Developer ID' "$work/s.txt" || fail "$item: Gatekeeper source is not Notarized Developer ID"
 			xcrun stapler validate -q "$item" || fail "$item: no stapled ticket"
 		fi
-	elif [ "$notarize" = 1 ]; then
-		# Printed, not gated (5.3): a bare binary carries no ticket.
+	elif [ "$kind" = bare ] && [ "$notarize" = 1 ]; then
+		# Printed, not gated (5.3): a bare binary carries no ticket. Nested code is assessed
+		# with its bundle.
 		spctl --assess --type install -vv "$item" 2>&1 | sed 's/^/  spctl: /' || true
 	fi
 	say "verified $(basename "$item") ($id)"
@@ -291,6 +328,15 @@ verify() {
 
 verify "$dist/GFF Holder.app" "$holder_id" bundle
 verify "$dist/GFF Hab.app" "$hab_id" bundle
+if [ -n "$helper" ]; then
+	verify "$helper" "$speech_id" nested
+	# The signed helper starts from the bundle: no library refused, no signature fault.
+	"$helper" -info >"$work/speech.json" 2>&1 || {
+		cat "$work/speech.json" >&2
+		fail "the signed speech helper does not start (gff-hab-speech -info)"
+	}
+	say "speech helper starts from GFF Hab.app"
+fi
 [ "$has_gff" = 1 ] && verify "$dist/gff" "$gff_id" bare
 
 ditto -c -k --keepParent "$dist" "$out/gff-macos.zip"
