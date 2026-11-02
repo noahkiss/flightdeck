@@ -225,6 +225,13 @@ func TestTreeLimits(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "bytes; the limit is") {
 		t.Errorf("a %d byte tree: %v", len(long), err)
 	}
+	// Over the limit, the tree is refused before it is parsed: broken JSON past the limit
+	// reports the size alone.
+	huge := append([]byte(`{"type":"text","text":"`), bytes.Repeat([]byte("x"), MaxTreeBytes)...)
+	var ps Problems
+	if err := ValidateTree(huge, Version); !errors.As(err, &ps) || len(ps) != 1 || !strings.Contains(ps[0].Message, "bytes; the limit is") {
+		t.Errorf("an unparsed tree over the limit: %v", err)
+	}
 	for _, v := range []int{0, Version + 1} {
 		if err := ValidateTree([]byte(`{"type":"text","text":"x"}`), v); err == nil {
 			t.Errorf("vocabulary %d accepted", v)

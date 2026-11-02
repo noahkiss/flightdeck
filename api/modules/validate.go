@@ -53,10 +53,11 @@ func ValidateTree(data []byte, v int) error {
 	if v < 1 || v > Version {
 		return Problems{{"", fmt.Sprintf("vocabulary %d is not known (this build knows 1 to %d)", v, Version)}}
 	}
-	t := &treeCheck{version: v, ids: map[string]string{}}
 	if len(data) > MaxTreeBytes {
-		t.fail("", "tree is %d bytes; the limit is %d", len(data), MaxTreeBytes)
+		// Refused before it is parsed: a large tree costs nothing to turn away.
+		return Problems{{"", fmt.Sprintf("tree is %d bytes; the limit is %d", len(data), MaxTreeBytes)}}
 	}
+	t := &treeCheck{version: v, ids: map[string]string{}}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	var root any
