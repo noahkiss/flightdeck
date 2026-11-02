@@ -224,8 +224,9 @@ the phone, with QR pairing and pinned host keys.**
    default (`app.md` 18.2). An imported key trades the generated key's containment for reach: if
    the device is compromised, the key opens every host that trusts it, and revoking it means
    replacing it everywhere. The generated key stays the default.
-10. **QR pairing** (6.1) admits the phone's key to one hab's authorized-keys file. After pairing,
-    the phone connects with plain key auth.
+10. **QR pairing** (6.1) admits the phone's key to one hab: today a restricted line in the user's
+    `~/.ssh/authorized_keys` for the system sshd, and gff-hab's own device list for the embedded
+    server later. After pairing, the phone connects with plain key auth.
 11. **One QR per hab.** Introduction between habs stays an owner choice, off by default (6.2).
 
 ### 4.4 Per-pane data
@@ -344,7 +345,7 @@ app's `NIOSSHTransport` (`app.md` 10.6). What the spike left open:
 | Live check on a Mac | `apple/scripts/ssh-live-check.sh`: a throwaway loopback sshd running a fresh `gff-hab connect` with a holder. Host key probe, changed key refused, one-shot ping 213 ms, connect to online (hello and subscribe) 271 ms, a live pane's output over a second channel on the same connection 120 ms. An imported passphrase-protected Ed25519 key (`app.md` 10.7): one-shot ping 136 ms. an Apple silicon laptop under load; software key, because the screen was locked |
 | iOS build | The same path runs in the iOS simulator (software key, NIOPosix sockets) against the same sshd: process start to the first hab reply 552 to 625 ms over four cold starts, load average near 25 |
 | iPhone device run | Not run yet. The phone was locked and the Mac had no iOS development signing (no Xcode account, no development profile for the bundle id). Cold start on a real network is still to measure |
-| QR pairing | The code format is fixed (6.1) and parsed; the hab side (`devices.pair`, task-99pfhjlg) is not built, so the app stops after reading the code and offers the by-hand path |
+| QR pairing | The code format is fixed (6.1) and parsed. The hab side is built as `gff-hab pair` (6.1, task-99pfhjlg, 2026-11-02); the app's half of the exchange (6.1.2) is not, so the app still stops after reading the code and offers the by-hand path |
 | Background action | A local notification action runs one `hab.ping` over the carrier and disconnects (`app.md` 10.6). Not yet run on a device |
 
 ---
@@ -371,25 +372,39 @@ Decision: proposed.
 
 ### 6.1 First pairing: a phone and a hab
 
-1. The owner enables the embedded server on the hab (owner approval, see 8).
-2. The owner runs `gff-hab pair` on the hab, or presses "Pair a device" in the Mac app.
-3. The hab makes a pairing offer: its host-key fingerprint, its embedded server endpoints, and a
-   one-time token (128 bits). The token expires after five minutes or one use.
-4. The hab shows the offer as a QR code, and as text for a device with no camera.
-5. The phone scans it. It opens SSH to an endpoint and pins the hab's host key from the code. A
-   different host key fails the connection.
-6. The phone presents the token and its public key (see the open note below).
-7. The hab checks the token. It shows the phone's short fingerprint and label and asks the owner to
-   confirm. Scanning proves the phone saw the screen; the confirm step stops a photo of the code
-   from being enough.
-8. The hab adds the phone's key to its authorized-keys file, burns the token, and logs the pairing.
-9. The phone stores the hab: device id, label, endpoints. From then on it uses plain key auth,
-   usable only while the device is unlocked.
+Owner decisions (2026-11-02): the first device is set up by a QR scan. Pairing needs no password,
+and normal use never uses password SSH. The full embedded server (4.2) stays off; only a short
+pairing window is built now. The phone works today through the system sshd.
 
-If the embedded server is off, `gff-hab pair` says so and stops.
+1. The owner runs `gff-hab pair` on the hab.
+2. gff-hab opens a **pairing window**: an SSH listener on `golang.org/x/crypto/ssh`, with the hab's
+   own host key (5), bound to the host's LAN and tailnet addresses only (6.1.3).
+3. It prints the offer as a QR code and as the link in text (6.1.1): the window's endpoints, the
+   hab's device id, and a one-time 128-bit token.
+4. The phone scans the code, opens SSH to an endpoint and pins the hab's host key from the code. A
+   different host key fails the connection before authentication.
+5. The phone authenticates with its own key (public-key auth proves it holds the key), opens the
+   pairing subsystem, and sends the token and its device name (6.1.2).
+6. The hab checks the token. On a match, the terminal shows the device name, kind, key fingerprint
+   and source address, and asks `[y/N]`. Scanning proves the phone saw the screen; the confirm step
+   stops a photo of the code from being enough.
+7. On yes, the hab admits the key (6.1.4), records the device, burns the token, logs the pairing,
+   and answers with what the phone needs to connect: the user, the system sshd's endpoints and its
+   host keys. Then the window closes.
+8. The phone stores the hab: device id, label, user, endpoints, the pinned sshd host key. From then
+   on it runs `gff-hab connect` over the system sshd with plain key auth, usable only while the
+   device is unlocked.
 
-**The code.** The QR code, the pairing link and the text form carry the same string: the fields of
-the API's `PairingOffer` (`devices.pair`) plus a label.
+Why the answer carries the sshd host keys: the system sshd's host key is not the hab's key. The
+phone learns it over the pairing channel, which the code pinned, so it never trusts a host key on
+first sight.
+
+The Mac app's "Pair a device" (`devices.pair` over a paired connection) is not built yet; the
+method answers `unavailable`. It will open the same window in the running gff-hab.
+
+#### 6.1.1 The code
+
+The QR code, the pairing link and the text form carry the same string.
 
 ```
 flightdeck://pair?v=1&id=SHA256:<43 chars>&ep=<host:port>&ep=...&t=<token>&l=<label>
@@ -399,21 +414,134 @@ flightdeck://pair?v=1&id=SHA256:<43 chars>&ep=<host:port>&ep=...&t=<token>&l=<la
 |---|---|
 | `v` | Format version, 1. A higher version tells the user to update the app |
 | `id` | The hab's device id: the SHA-256 fingerprint of its host key, as `ssh-keygen -l` prints it |
-| `ep` | One per endpoint, in the order to try: `host`, `host:port` or `[v6]:port`; the port defaults to 22. One to eight |
+| `ep` | One per endpoint of the pairing window, in the order to try: `host`, `host:port` or `[v6]:port`; the port defaults to 22. One to eight |
 | `t` | The one-time token: 128 bits as unpadded base64url (22 characters) |
-| `l` | The hab's label, optional |
+| `l` | The hab's label, optional. `gff-hab pair` uses `-label`, else the host name up to the first dot |
 
 Values are percent-encoded as in any URL query. Unknown keys are ignored, so a later hab can add
 some. The app refuses a code that repeats `v`, `id`, `t` or `l`. It finds the link inside pasted
-text. The iOS app opens `flightdeck:` links.
+text. The iOS app opens `flightdeck:` links. The terminal prints the QR code with error correction
+level M in half-block characters, with a quiet zone, then the link on its own line.
 
-Built: the app's parser (`PairingCode`, task-iv89iwd8). The hab side follows it when
-`devices.pair` is built (task-99pfhjlg).
+Built: the app's parser (`PairingCode`, task-iv89iwd8) and the hab's encoder (`internal/pairing`).
 
-Open note: how the phone presents the token is undecided (split 1/3 and 1/3). Either SSH
-keyboard-interactive auth carries the token before any channel opens, or a pair request runs in a
-pairing-only subsystem. The build stage picks one. Both refuse every other request until the owner
-confirms.
+#### 6.1.2 The token exchange
+
+The phone presents the token in a **pairing-only subsystem**, `flightdeck-pair`. Not
+keyboard-interactive: `swift-nio-ssh` offers only public-key, password and host-based auth on the
+client. Public-key auth carries the phone's key and proves the phone holds it, so the window learns
+the key without trusting a value the phone could copy.
+
+- **Auth.** The window takes public-key auth only: `ssh-ed25519` and `ecdsa-sha2-nistp256`, `384`
+  and `521`. It refuses RSA and DSA (the app cannot use them, 1.8), passwords, keyboard-interactive
+  and none. Any key of an allowed type passes auth; the token decides.
+- **Channels.** One `session` channel per connection. Every other channel type (forwarding,
+  `direct-tcpip`) is refused, and so is every request but `subsystem flightdeck-pair`: shell, exec,
+  PTY, env, agent and X11 forwarding. Global requests are refused.
+- **Request.** The phone sends one JSON object on one line, at most 4 KiB:
+  `{"v":1,"token":"<22 chars>","name":"<device name>","kind":"phone"}`. `kind` is `phone`,
+  `tablet` or `desktop`; another value is read as `phone`. `name` is 1 to 64 characters after
+  cleaning: control and format characters (bidi marks among them) are dropped, runs of spaces
+  become one.
+- **Answers.** One JSON line each. After a good token: `{"v":1,"state":"waiting"}`, so the app can
+  say "Confirm on the hab". Then one final line, and the channel closes with exit status 0 on
+  paired, 1 otherwise:
+  - `{"v":1,"state":"paired","hab":{"id":"SHA256:...","label":"..."},"device_id":"SHA256:...",
+    "user":"<login>","ssh":{"endpoints":["host:22",...],"host_keys":["ssh-ed25519 AAAA...",...]},
+    "forced_command":true}`
+  - `{"v":1,"state":"refused","reason":"<word>"}`, with `reason` one of `version` (an unknown `v`),
+    `request` (bad JSON, too long, a bad name), `token`, `declined`, `expired`, `busy` (another
+    device is waiting for the owner) or `failed` (the key could not be written; the terminal says
+    why).
+- **Token check.** The token is compared in constant time on its decoded 16 bytes. The token never
+  appears in a log or an answer.
+- **sshd endpoints and host keys.** The endpoints are the window's addresses with port 22
+  (`-ssh-port` changes it). The host keys are the `ssh-ed25519` and `ecdsa-sha2-nistp*` lines of
+  `/etc/ssh/ssh_host_*_key.pub` (`-sshd-keys` names another folder). With none readable, the answer
+  has no host keys and the app falls back to comparing the key by hand.
+
+#### 6.1.3 The window
+
+| Rule | Value |
+|---|---|
+| Bind addresses | Every address of an up interface that is private IPv4 (10/8, 172.16/12, 192.168/16), the CGNAT range a tailnet uses (100.64/10), or IPv6 unique local (fc00::/7, the tailnet's range among them). Never loopback (unless named with `-listen`), link-local, multicast, a public address, or an unspecified address (`0.0.0.0`, `::`). One listener per address, eight at most |
+| `-listen addr` | Replaces the list; repeatable. An unspecified or public address is refused, even here |
+| Port | `-port`, else one free port the system picks for the first address, reused for the others where it is free |
+| Lifetime | At most five minutes (`-timeout`, capped at five). Closed after one pairing, a `declined` answer, Ctrl-C, or ten refused tokens |
+| One use | The token pairs one device. A no at the prompt burns it too: someone else may have scanned the code, so the owner runs `gff-hab pair` again |
+| Limits | At most four connections at once; 10 s to finish the SSH handshake; 20 s from auth to the request; one request per connection; one device waits for the owner at a time (another gets `busy`); the owner has until the window closes |
+| Refusals | Each refusal is one stderr line with the source address, the key fingerprint when known, and the reason. After 20 lines they stop and the window counts them; the closing line prints the count |
+
+When no address qualifies, `gff-hab pair` says so and names `-listen`.
+
+The window is a short, owner-started listener on LAN and tailnet addresses, which the owner
+approved for pairing (2026-11-02). Enabling the embedded server for normal traffic stays a
+discuss-first item (8).
+
+#### 6.1.4 Where the key lands
+
+The key lands in two places:
+
+1. **The system sshd: the user's `~/.ssh/authorized_keys`** (`-authorized-keys` names another
+   file). This is what makes the phone work today. One line is appended:
+
+   ```
+   restrict,command="<gff-hab path> connect" ecdsa-sha2-nistp256 AAAA... flightdeck: <device name> (paired 2026-11-02)
+   ```
+
+   - `restrict` turns off port, agent and X11 forwarding, PTYs and `~/.ssh/rc`.
+   - `command=` forces `gff-hab connect`. The app runs only that command over SSH: the control
+     connection, each data connection and the one-shot ping are all `gff-hab connect` on an exec
+     channel (`app.md` 10.6), so the forced command covers every use. The path is the `gff-hab`
+     found on `PATH` when it is the binary running `pair`, else the running binary's own path.
+     `-command` replaces the whole command; a `-socket` given to `pair` is passed on.
+   - The comment starts with `flightdeck:` and names the device. `gff-hab devices revoke` finds the
+     line by its key and that prefix.
+   - Other lines are never changed or reordered. The file gets one line at its end, with a newline
+     added first when the last line had none. A key already in the file is not added again.
+   - The write goes through a temporary file in the same folder and a rename. The file ends at mode
+     0600. A missing `~/.ssh` is made at 0700. A symbolic link is followed, and the rename replaces
+     the file it points to. If the file changed between the read and the rename, the write starts
+     again, at most three times.
+2. **gff-hab's own device list**, `<state>/devices.json` (0600): id, label, kind, paired at, the key
+   line, the file the key was written to, state. This is the trust store the embedded server will
+   read (4.2, 5); it never reads `~/.ssh`.
+
+`gff-hab devices list` prints the list. `gff-hab devices revoke <id|label>` removes the device's
+line from `authorized_keys` (other lines byte for byte) and keeps the record as a revoked tombstone.
+Over the system sshd a revoke stops new logins; a session already open runs until it drops. The
+fan-out to peers (6.6) and the `devices.*` API methods come with the embedded server.
+
+#### 6.1.5 The terminal
+
+```
+Pairing window open for 5:00 on 192.0.2.10:47213, 198.51.100.7:47213.
+<QR code>
+flightdeck://pair?v=1&id=SHA256:...&ep=...&t=...&l=devbox
+Scan it in Flightdeck, or paste the link. Ctrl-C closes the window.
+
+Pair "Owner's iPhone" (phone)?
+  key  ecdsa-sha2-nistp256 SHA256:...
+  from 192.0.2.44
+Add it to /home/user/.ssh/authorized_keys? [y/N]
+```
+
+On yes: one line naming the device and the file, exit 0. On no, expiry, Ctrl-C or too many
+refusals: one line saying why, exit 1. The device name is printed after cleaning, so a name cannot
+move the cursor or change colours.
+
+#### 6.1.6 The password fallback (app side, not built)
+
+For a host where gff-hab cannot run the window (no gff-hab yet, or a host that is not a hab), the
+app keeps a hidden fallback, like `ssh-copy-id`: Add a hab by address, then "Set up with a
+password". The app connects with the account password once, has the owner compare and trust the
+host key, appends its key line to `~/.ssh/authorized_keys` with the rules of 6.1.4 (comment
+prefix, `restrict`, append only, mode 0600), checks a key login, and forgets the password. It never
+stores the password and never uses password auth again. A host with password auth off (the owner's
+choice for his machines) cannot use it; it pairs by QR or takes the key by hand (`app.md` 18.8).
+
+Decision: settled for the first build (owner decisions 2026-11-02). The subsystem, not
+keyboard-interactive, because the app's SSH library has no keyboard-interactive client.
 
 ### 6.2 The phone and the other habs
 
@@ -539,6 +667,7 @@ authenticates.
 | Item | Why it is discuss-first | Proposed default |
 |---|---|---|
 | Enabling the embedded SSH server on any hab | A new listening port | Off. The owner enables it per hab, after the security review |
+| The pairing window of `gff-hab pair` (6.1.3) | A short-lived listening port | Approved by the owner (2026-11-02): LAN and tailnet addresses only, five minutes at most, one use, started by the owner in a terminal |
 | The bind address: LAN, tailnet address, or both | Decides who can reach the port | One address per hab, never all interfaces |
 | The port number | A new port on each host | One fixed default in the 2700-9999 range, checked against ports in use, overridable by config |
 | Device keys in gff-hab's authorized-keys file | A new credential that authenticates to a hab | Yes, for the embedded server only; the system sshd and `~/.ssh` unchanged |
@@ -589,7 +718,8 @@ enable)"**:
 Status 2026-11-01: the spike (4.8), the carrier, the Secure Enclave key with its fingerprint in
 Settings, the by-hand path (`app.md` 18.8), the code parser and scanner, and the background action
 are built (`app.md` 10.6). Left: the iPhone device run with the cold-start time on a real network,
-pairing itself once `devices.pair` exists (task-99pfhjlg), and key import (task-1csglxtc).
+the app's half of pairing (6.1.2) against `gff-hab pair` (built 2026-11-02, task-99pfhjlg), and
+key import (task-1csglxtc).
 
 ### 9.4 `hab-logic-api.md`
 

@@ -1506,6 +1506,9 @@ holder link off, a data hello gets a reject frame (`unavailable`).
 - It carries the same connections as 4.2: the control connection and each data connection are
   channels on one SSH connection, as in option A. It serves the API subsystems only.
 - It sets its own channel limit, so one connection carries one channel per visible pane.
+- Built so far: only the pairing window of `gff-hab pair` (`transport.md` 6.1), a separate
+  short-lived listener that serves the `flightdeck-pair` subsystem and nothing else. The
+  `devices.*` methods still answer `unavailable`.
 - The transport reports the authenticated device id to gff-hab, so events and input record who
   sent them. Data tickets are bound to that device.
 - WebSocket stays possible only as a later carrier for a client that cannot speak SSH. If it comes,

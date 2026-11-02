@@ -1738,9 +1738,10 @@ The connection follows `transport.md`. This section says what the app does.
   `host`. Data streams open per visible pane on the same SSH connection (`transport.md` 4.4).
 - **The Mac app on its own host** uses the local socket. No pairing (`transport.md` 7.1). On other
   hosts it uses the system sshd with the user's keys, or pairs as the phone does.
-- **Before the embedded server is on.** A hab without the embedded SSH server cannot pair. The app
-  offers a fallback: it shows its public key to copy, and the owner adds it to the system sshd's
-  authorized keys on that host. The app then runs `gff-hab connect` over SSH. (Decided in 18.8.)
+- **Before the embedded server is on.** A hab pairs by QR through `gff-hab pair`, which writes the
+  device's key to the system sshd's authorized keys as a restricted line (`transport.md` 6.1). The
+  app then runs `gff-hab connect` over SSH. The fallback stays: the app shows its public key to
+  copy, and the owner adds it by hand. (Decided in 18.8.)
 
 ### 10.2 Reconnect
 
@@ -1976,7 +1977,8 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH`.
   the camera, pasted text or an opened link (the iOS app registers the `flightdeck` URL scheme).
   It shows the hab id and endpoints, then says the hab cannot pair yet and offers "Add the key by
   hand" with the label and device id filled in. `PairingCode(offer:)` builds the link from a
-  `devices.pair` result for the hab side later.
+  `devices.pair` result for the hab side later. The hab side now exists as `gff-hab pair`; the
+  exchange the app still needs is in 18.8.
 - **Background action.** `HabActions` registers a notification category with a "Ping hab" action
   that needs unlock, and is the notification delegate from launch. The action loads the entry and
   key, runs one `hab.ping` on its own connection (`HabOneShot`: open, hello, call, close, 20 s
@@ -2898,6 +2900,36 @@ adds it to the host's authorized keys by hand. This needs no new listener, and i
 
 Decision: as recommended (coordinator, 2026-11-01). It is the same path as the owner's decision to import an
 existing SSH key (10.4).
+
+Update (owner decisions, 2026-11-02): QR pairing comes first, through the system sshd, with no
+embedded server. `gff-hab pair` opens a five-minute pairing window and writes the phone's key to
+`~/.ssh/authorized_keys` as a restricted line (`transport.md` 6.1). The by-hand path stays for
+hosts that cannot run gff-hab, with a hidden password setup beside it (`transport.md` 6.1.6).
+
+What the app builds for QR pairing:
+
+1. **Scan.** The scanner, paste and link paths already give a `PairingCode`. The app shows the
+   hab label, the device id, and "Pair this device".
+2. **Connect.** It tries the code's endpoints in order (10.1), pins the code's `id` as the host
+   key, and authenticates with the chosen device key (the generated key by default).
+3. **Exchange.** It opens a session channel with `SubsystemRequest("flightdeck-pair")` and sends
+   one line: `v`, `token`, `name` (the device name, `UIDevice.name` or the Mac's name) and `kind`.
+   On `waiting` it shows "Confirm on <label>: check the key ends in <last 6 of its fingerprint>".
+4. **Store.** On `paired` it writes the hab entry (10.6): label, user, the `ssh` endpoints in
+   order, the first `ssh-ed25519` host key from `host_keys` (else the first one) as the pinned
+   key, the key id, the hab's device id from the code, and no command (the line forces
+   `gff-hab connect`). Then it connects and runs one `hab.ping` before it adds the hab to the
+   board, as Add a hab by address does.
+5. **Refused.** Each `reason` gets one line: `token` "This code is not valid on this hab";
+   `expired` "The code expired: run gff-hab pair again"; `declined` "Declined on the hab";
+   `busy` "Another device is pairing: try again"; `version` "Update Flightdeck"; `failed` "The
+   hab could not save the key: see its terminal"; `request` "Pairing failed". A host-key mismatch
+   says the code does not match the hab at that address.
+6. **No host keys** in the answer: the app falls back to the compare-and-trust step of Add a hab
+   by address.
+
+The hidden password setup (`transport.md` 6.1.6) sits under Add a hab by address as "Set up with
+a password". Not built in this stage.
 
 ### 18.9 Sealed push payloads
 
