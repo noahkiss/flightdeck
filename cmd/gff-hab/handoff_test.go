@@ -233,6 +233,19 @@ func TestHandOffPickOrder(t *testing.T) {
 	if i, _ := pickTarget(ts, ""); ts[i].Address != "d" {
 		t.Fatalf("picked %s, want the done agent", ts[i].Address)
 	}
+	// Times as the hab writes them, trailing zeros of the fraction trimmed: 10:00:05.5 is later
+	// than 10:00:05, though it sorts first as a string. One that does not parse goes last.
+	ts = []handOffTarget{
+		{Address: "bad", CatalogAgent: api.CatalogAgent{State: api.AgentStatusIdle, Since: "yesterday"}},
+		{Address: "whole", CatalogAgent: api.CatalogAgent{State: api.AgentStatusIdle, Since: "2026-03-01T10:00:05Z"}},
+		{Address: "half", CatalogAgent: api.CatalogAgent{State: api.AgentStatusIdle, Since: "2026-03-01T10:00:05.5Z"}},
+	}
+	if i, _ := pickTarget(ts, ""); ts[i].Address != "half" {
+		t.Fatalf("picked %s, want the later half second", ts[i].Address)
+	}
+	if i, _ := pickTarget(ts[:2], ""); ts[i].Address != "whole" {
+		t.Fatalf("picked %s over a time that parses", ts[i].Address)
+	}
 }
 
 // fakeLogbookHab is a hab with Logbook: it keeps records and proposals apart, as Part 12 will.

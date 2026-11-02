@@ -152,7 +152,7 @@ func pickTarget(ts []handOffTarget, named string) (int, string) {
 		if c := cmp.Compare(tier(ts[a]), tier(ts[b])); c != 0 {
 			return c
 		}
-		return -strings.Compare(ts[a].Since, ts[b].Since) // RFC 3339 in UTC: later sorts higher
+		return laterFirst(ts[a].Since, ts[b].Since)
 	})
 	i := order[0]
 	if len(ts) == 1 {
@@ -165,6 +165,29 @@ func pickTarget(ts []handOffTarget, named string) (int, string) {
 		return i, fmt.Sprintf("no agent on the project is idle; the most recently active of %d busy agents", len(ts)-countTier(ts, tier, 2))
 	}
 	return i, "every agent on the project is on an offline host; the most recently active"
+}
+
+// laterFirst orders two RFC 3339 times, the later first, as times: the hab trims trailing zeros
+// of the fraction, so the strings do not sort. A time that does not parse goes last.
+func laterFirst(a, b string) int {
+	ta, ea := time.Parse(time.RFC3339Nano, a)
+	tb, eb := time.Parse(time.RFC3339Nano, b)
+	switch {
+	case ea != nil || eb != nil:
+		return cmp.Compare(boolInt(ea != nil), boolInt(eb != nil))
+	case ta.After(tb):
+		return -1
+	case tb.After(ta):
+		return 1
+	}
+	return 0
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func countTier(ts []handOffTarget, tier func(handOffTarget) int, n int) int {
