@@ -28,6 +28,24 @@ final class PushDelegate: NSObject, UIApplicationDelegate {
         }
     }
 
+    /// Sets the app icon badge (app.md 7.9). Returns false without permission
+    /// for badges, so the next count tries again.
+    static func setBadge(_ count: Int) async -> Bool {
+        let center = UNUserNotificationCenter.current()
+        let s = await center.notificationSettings()
+        guard s.badgeSetting == .enabled else { return false }
+        switch s.authorizationStatus {
+        case .authorized, .provisional, .ephemeral: break
+        default: return false
+        }
+        do {
+            try await center.setBadgeCount(count)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         MainActor.assumeIsolated { push?.setDeviceToken(deviceToken) }
     }

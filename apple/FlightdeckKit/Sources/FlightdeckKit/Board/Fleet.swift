@@ -34,6 +34,15 @@ public final class Fleet {
     public var settings: SettingsCenter?
     /// Confirmation cards (capcom.md 6.1).
     public var confirms: ConfirmCenter?
+    /// The app icon or Dock tile badge (app.md 7.9); nil sets none.
+    public var badge: AppBadge? {
+        didSet { badgeChanged() }
+    }
+
+    /// Hands the board's needs-you count to the badge.
+    public func badgeChanged() {
+        badge?.update(board.needsYouCount, active: isActive, online: board.onlineCount, habs: board.habs.count)
+    }
     /// `session.focus` reports for the session views on screen (app.md 8.6).
     public private(set) lazy var focus = FocusReporter { [weak self] habID, params in
         guard let conn = self?.connections.first(where: { $0.id == habID }) else { return }
@@ -105,6 +114,7 @@ public final class Fleet {
                 self?.approvals?.boardChanged()
                 self?.confirms?.boardChanged()
                 self?.activities?.boardChanged()
+                self?.badgeChanged()
             }
         })
         if isActive {
@@ -123,6 +133,7 @@ public final class Fleet {
         book?.forget(connection: id)
         usage?.book.forget(habID: id)
         settings?.forget(habID: id)
+        badgeChanged()
     }
 
     /// A connection reached online: note its host id for background answers,

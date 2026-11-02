@@ -27,6 +27,9 @@ struct FlightdeckApp: App {
                     // answer on a locked phone says "Unlock to answer".
                     fleet.approvals?.isUnlocked = { UIApplication.shared.isProtectedDataAvailable }
                     pushDelegate.start(fleet.push)
+                    if fleet.badge == nil {
+                        fleet.badge = AppBadge { n in await PushDelegate.setBadge(n) }
+                    }
                     // On-device Parakeet for voice mode; loaded only while voice mode or dictation runs.
                     fleet.voice.parakeet.install(FluidParakeetRuntime())
                 }

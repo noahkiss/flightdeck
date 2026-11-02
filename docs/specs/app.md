@@ -217,7 +217,8 @@ focus is stored on a hab.
   Working, Done (rank 5), and Other.
 - **Seen.** Opening a session marks it seen. The hab turns `done` into `idle` when a client focuses
   the pane (`harness-adapters.md`, States). The app reports focus (17).
-- **Badge.** The app icon badge counts sessions that need you, across all online habs.
+- **Badge.** The app icon badge counts sessions that need you, across all online habs, plus
+  confirmations that wait for an answer. On the Mac the Dock tile shows it (7.9).
 - **Offline habs.** Their rows stay, dimmed, with "offline since" and the last known state. No
   action that needs the hab is offered.
 - **Actions from a row:** open, answer an approval (7), start or resume the harness when the pane
@@ -1180,6 +1181,16 @@ The cards of `capcom.md` 6.1 and 6.3: a start an agent asks for on another host,
   (2026-11-02).
 - **Needs-you count.** Open questions (not records) on online habs count in the board's
   needs-you count, the number the app badge shows.
+- **App badge (built).** `AppBadge` (`Push/AppBadge.swift`) writes the needs-you count to the
+  app icon badge on iPhone and iPad (`setBadgeCount`, only while notification permission
+  allows badges) and to the Dock tile on the Mac (`badgeLabel`, empty at 0). The fleet hands
+  it the count after each hab state change and when a hab is removed; it writes only on a
+  change. Design call: it writes only while the app is in front with at least one hab online
+  (or with no habs). In the background every connection closes (12.1) and the count would
+  read 0, so the badge keeps the count from the last time the app was in front. Design call:
+  the app is the badge's only writer. The hab's pushes carry no `badge` field and the
+  notification service extension sets none, so the two never fight. A badge that follows
+  the count in the background would need the hab to send it in each push; not built.
 - **Not built.** No push or Live Activity for a confirmation. The set-up card shows its
   fields; the hab refuses set-ups until the mesh stage builds them.
 
@@ -1326,7 +1337,8 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
 - **Notification service extension.** Built: the hab leaves the expiry out of the body, so the
   extension appends " · Expires 14:05" in the device's time zone and clock style to a permission
   banner whose `expires_at` is still ahead (with the date when it is over 20 hours away). Every
-  other push passes through unchanged. The Mac has no extension yet.
+  other push passes through unchanged. The Mac has no extension yet. No push carries a badge:
+  the app alone sets it (7.9).
 - **Withdrawal while the app runs.** When a request closes on the board, the app removes
   delivered permission banners for that request id (18.6, B where iOS allows).
 - **Focus.** `FocusReporter` sends `session.focus` `active` true when a session view appears in
