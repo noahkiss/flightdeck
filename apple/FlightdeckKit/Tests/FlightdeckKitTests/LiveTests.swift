@@ -10,6 +10,10 @@ import XCTest
 /// - `FLIGHTDECK_LIVE_CHAT_SESSION` with `FLIGHTDECK_LIVE_SOCKET`: a hab session that runs
 ///   Claude Code with the hab's hooks. The test sends `FLIGHTDECK_LIVE_CHAT_TEXT` (default: a
 ///   one-word request) through the chat model and waits for the reply in the chat.
+/// - `FLIGHTDECK_LIVE_ROUNDS` with `FLIGHTDECK_LIVE_SOCKET`: the path of a `gff-hab` binary.
+///   The hab must run rounds and hold at least one round. The test reads the app model's Rounds
+///   list and compares it with `gff-hab round ls -json -socket <socket>`, runs the first
+///   round by hand through the app, and compares again once the run is in the list.
 /// - `FLIGHTDECK_LIVE_SSH_HOST`: an ssh destination that runs `gff-hab connect`.
 ///   `FLIGHTDECK_LIVE_SSH_COMMAND` (words split on spaces) and
 ///   `FLIGHTDECK_LIVE_SSH_OPTIONS` (the same) adjust the command and options.
@@ -140,6 +144,67 @@ final class LiveTests: XCTestCase {
             print("live chat: \(m.kind.rawValue) \(m.tool?.name ?? "") \((m.text ?? "").prefix(80))")
         }
         print("live chat: native session \(model.context.agent?.session ?? "-")")
+        await fleet.setActive(false)
+    }
+
+    /// The app's Rounds list against `gff-hab round ls` on a real hab (rounds.md 13, app.md 21).
+    @MainActor
+    func testLiveRounds() async throws {
+        guard let path = env["FLIGHTDECK_LIVE_SOCKET"], !path.isEmpty,
+              let bin = env["FLIGHTDECK_LIVE_ROUNDS"], !bin.isEmpty else {
+            throw XCTSkip("FLIGHTDECK_LIVE_SOCKET and FLIGHTDECK_LIVE_ROUNDS not set")
+        }
+        let fleet = Fleet()
+        fleet.roundDefaults = UserDefaults(suiteName: "LiveRounds-\(UUID().uuidString)")!
+        fleet.add(HabConnection(id: "live", transport: UnixSocketTransport(path: path), clientLabel: "test"), label: nil)
+        await fleet.setActive(true)
+        await eventually("online", timeout: 20) { fleet.board.habs.first?.state.status == .online }
+        XCTAssertTrue(fleet.rounds.any, "the hab's welcome lists rounds")
+
+        func cli() throws -> [Round] {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: bin)
+            p.arguments = ["round", "ls", "-json", "-socket", path]
+            let out = Pipe()
+            p.standardOutput = out
+            try p.run()
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
+            XCTAssertEqual(p.terminationStatus, 0, "gff-hab round ls")
+            return try JSONDecoder().decode(RoundList.self, from: data).rounds
+        }
+        /// What both lists must agree on, by round id.
+        func key(_ r: Round) -> String {
+            [r.id, r.name, r.mode.rawValue, r.trigger.cron ?? "", r.trigger.zone ?? "", r.nextSlot ?? "-",
+             r.paused == true ? "paused" : "", r.lastRun.map { "\($0.number) \($0.state.rawValue)" } ?? "-"].joined(separator: "|")
+        }
+        func app() -> [String] { (fleet.rounds.habs.first?.rows ?? []).map { key($0.round) }.sorted() }
+        func compare(_ what: String) async throws {
+            // A slot may pass between the two reads; read both again until they agree.
+            var want: [String] = []
+            for _ in 0..<20 {
+                want = try cli().map(key).sorted()
+                if app() == want { break }
+                try await Task.sleep(for: .milliseconds(250))
+            }
+            XCTAssertFalse(want.isEmpty, "the hab holds a round")
+            XCTAssertEqual(app(), want, what)
+            for line in app() { print("live rounds: \(line)") }
+        }
+        try await compare("the app's list matches gff-hab round ls")
+
+        let row = try XCTUnwrap(fleet.rounds.habs.first?.rows.first)
+        let before = row.round.lastRun?.number ?? 0
+        await fleet.rounds.runNow(row)
+        XCTAssertNil(fleet.rounds.errors[row.id], fleet.rounds.errors[row.id] ?? "")
+        await eventually("the run in the list", timeout: 30) {
+            (fleet.rounds.row(habID: "live", round: row.round.id)?.round.lastRun?.number ?? 0) > before
+        }
+        await eventually("the run session opens", timeout: 30) { fleet.rounds.openRequest != nil }
+        if let s = fleet.rounds.openRequest?.session {
+            XCTAssertEqual(fleet.board.rows.first { $0.target.session == s }?.round, row.round.name, "the badge")
+        }
+        try await compare("after Run now")
         await fleet.setActive(false)
     }
 
