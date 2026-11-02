@@ -485,6 +485,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleChannels(m)
 		return
 	}
+	if isReadMethod(m.Method) {
+		c.handleReads(m)
+		return
+	}
 	if strings.HasPrefix(m.Method, "worktree.") {
 		c.handleWorktree(m)
 		return
