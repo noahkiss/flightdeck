@@ -18,6 +18,7 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/board"
 	"github.com/noahkiss/flightdeck/internal/habconn"
+	"github.com/noahkiss/flightdeck/internal/modview"
 	"github.com/noahkiss/flightdeck/internal/vt"
 )
 
@@ -81,6 +82,11 @@ type workspaceUI struct {
 	cats     map[string]catCopy // device id -> the newest catalog copy
 	catBusy  map[string]int     // host -> 1 a catalog read is out, 2 and another is due
 	pendRun  pendingRun
+
+	// Modules (modules.go).
+	onMod   bool             // the board's selection is on a module target
+	selMod  modStop          // that target
+	modFold map[modStop]bool // sections the owner folded or unfolded, by card and ref
 }
 
 func (u *workspaceUI) init(c *client) {
@@ -552,7 +558,11 @@ func (u *workspaceUI) key(k key) {
 	if u.mode == modeBoard {
 		m = ModeBoard
 	}
-	switch act := u.c.cfg.Keymap.lookup(m, name); act {
+	act := u.c.cfg.Keymap.lookup(m, name)
+	if u.mode == modeBoard && act != actUp && act != actDown && act != actBack && u.modKey(k, act) {
+		return
+	}
+	switch act {
 	case actUp:
 		u.move(-1)
 	case actDown:
@@ -966,8 +976,9 @@ func (u *workspaceUI) drawBoard(a rect) {
 	// The rest scrolls under the head so the selected row stays on screen: an action on the
 	// board always acts on a row the owner can see.
 	type boardLine struct {
-		s  string
-		st vt.Style
+		s     string
+		st    vt.Style
+		spans []modview.Span // a module line: drawn span by span
 	}
 	var lines []boardLine
 	selLine := -1
@@ -975,7 +986,13 @@ func (u *workspaceUI) drawBoard(a rect) {
 		if st == selStyle {
 			selLine = len(lines)
 		}
-		lines = append(lines, boardLine{s, st})
+		lines = append(lines, boardLine{s: s, st: st})
+	}
+	spans := func(ss []modview.Span, sel bool) {
+		if sel {
+			selLine = len(lines)
+		}
+		lines = append(lines, boardLine{spans: ss})
 	}
 	defer func() {
 		avail := a.h - 1
@@ -990,7 +1007,17 @@ func (u *workspaceUI) drawBoard(a rect) {
 		u.boardTop = max(0, min(u.boardTop, len(lines)-avail))
 		for i := 0; i < avail && u.boardTop+i < len(lines); i++ {
 			l := lines[u.boardTop+i]
-			c.canvas.text(a.x, a.y+1+i, a.w, l.s, l.st)
+			if l.spans == nil {
+				c.canvas.text(a.x, a.y+1+i, a.w, l.s, l.st)
+				continue
+			}
+			x := a.x
+			for _, s := range l.spans {
+				n := min(len([]rune(s.Text)), a.x+a.w-x)
+				c.canvas.text(x, a.y+1+i, n, s.Text, modStyle(s.Style))
+				x += n
+			}
+			c.canvas.text(x, a.y+1+i, a.x+a.w-x, "", vt.Style{})
 		}
 	}()
 	u.fixBoardSel()
@@ -1028,7 +1055,7 @@ func (u *workspaceUI) drawBoard(a rect) {
 			if r.Offline() {
 				st = dimStyle
 			}
-			if r.Key == sel.Key && !u.onRound {
+			if r.Key == sel.Key && !u.onRound && !u.onMod {
 				st = selStyle
 			}
 			line(text, st)
@@ -1050,6 +1077,7 @@ func (u *workspaceUI) drawBoard(a rect) {
 			line(roundText(now, r), st)
 		}
 	}
+	u.drawCards(a.w, line, spans)
 }
 
 // middle shortens s to n columns, cutting the middle so the end stays readable (4.1).

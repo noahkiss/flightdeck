@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -118,6 +119,12 @@ func (u *workspaceUI) visibleRounds() []board.RoundRow {
 // fixBoardSel keeps the board's selection on a row that shows: a gone round moves it to the
 // first round, and with no session row it moves to the rounds.
 func (u *workspaceUI) fixBoardSel() {
+	stops := u.modStops()
+	u.fixModSel(stops)
+	if u.onMod {
+		u.onRound = false
+		return
+	}
 	rounds := u.visibleRounds()
 	if u.onRound {
 		for _, r := range rounds {
@@ -133,6 +140,9 @@ func (u *workspaceUI) fixBoardSel() {
 	}
 	if len(u.flat()) == 0 && len(rounds) > 0 {
 		u.onRound, u.selRound = true, rounds[0].RoundKey
+	}
+	if !u.onRound && len(u.flat()) == 0 && len(stops) > 0 {
+		u.onMod, u.selMod = true, stops[0]
 	}
 }
 
@@ -153,16 +163,19 @@ func (u *workspaceUI) selectedRound() (board.RoundRow, bool) {
 	return board.RoundRow{}, false
 }
 
-// moveBoard moves the board's selection over its session rows, then its round rows.
+// moveBoard moves the board's selection over its session rows, then its round rows, then the
+// module cards' targets.
 func (u *workspaceUI) moveBoard(d int) {
 	u.fixBoardSel()
-	rows, rounds := u.flat(), u.visibleRounds()
-	n := len(rows) + len(rounds)
+	rows, rounds, stops := u.flat(), u.visibleRounds(), u.modStops()
+	n := len(rows) + len(rounds) + len(stops)
 	if n == 0 {
 		return
 	}
 	i := 0
-	if u.onRound {
+	if u.onMod {
+		i = len(rows) + len(rounds) + max(0, slices.Index(stops, u.selMod))
+	} else if u.onRound {
 		for j, r := range rounds {
 			if r.RoundKey == u.selRound {
 				i = len(rows) + j
@@ -172,10 +185,14 @@ func (u *workspaceUI) moveBoard(d int) {
 		i = j
 	}
 	i = min(max(i+d, 0), n-1)
-	if i < len(rows) {
+	u.onMod = false
+	switch {
+	case i < len(rows):
 		u.onRound, u.sel = false, rows[i].Key
-	} else {
+	case i < len(rows)+len(rounds):
 		u.onRound, u.selRound = true, rounds[i-len(rows)].RoundKey
+	default:
+		u.onRound, u.onMod, u.selMod = false, true, stops[i-len(rows)-len(rounds)]
 	}
 }
 

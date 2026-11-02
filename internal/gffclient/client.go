@@ -90,6 +90,10 @@ type Config struct {
 	// marks). Tests send on it.
 	Tick <-chan time.Time
 	Logf func(format string, args ...any)
+
+	// Modules gives the status board its module cards (gff-client.md 7.6). Nil: no module
+	// section; the hab does not serve module trees yet.
+	Modules ModuleSource
 }
 
 // ErrDetached is Run's result when the owner detaches (session mode, then d).
@@ -306,6 +310,10 @@ func Run(ctx context.Context, cfg Config) (err error) {
 		tick = t.C
 	}
 	updates := cfg.Hosts.Updates()
+	var modChanged <-chan struct{}
+	if cfg.Modules != nil && ws {
+		modChanged = cfg.Modules.Changed()
+	}
 	for {
 		c.render()
 		if c.out.Len() > 0 {
@@ -356,6 +364,8 @@ func Run(ctx context.Context, cfg Config) (err error) {
 			c.ui.tick()
 		case f := <-c.later:
 			f()
+		case <-modChanged:
+			c.ui.changed()
 		case u, ok := <-updates:
 			if !ok {
 				updates = nil

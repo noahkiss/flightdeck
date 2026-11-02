@@ -47,6 +47,13 @@ func startWorkspace(t *testing.T, hst *host, socks ...string) {
 // startWorkspaceSpecs runs gff's workspace over the given hosts.
 func startWorkspaceSpecs(t *testing.T, hst *host, specs ...hosts.Spec) {
 	t.Helper()
+	startWorkspaceWith(t, hst, nil, specs...)
+}
+
+// startWorkspaceWith runs gff's workspace over the given hosts, with more of its Config set by
+// more (nil: none).
+func startWorkspaceWith(t *testing.T, hst *host, more func(*Config), specs ...hosts.Spec) {
+	t.Helper()
 	set, err := hosts.Open(hosts.Config{
 		Source: hosts.Static(specs),
 		Client: api.ClientInfo{Name: "gff", Version: "test", Kind: api.ClientKindTerminal},
@@ -58,9 +65,13 @@ func startWorkspaceSpecs(t *testing.T, hst *host, specs ...hosts.Spec) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	timer := &fakeTimer{c: make(chan time.Time)}
+	cfg := Config{Hosts: set, Parser: vt.Fake{}, In: hst.inR, Out: hst, Size: hst.size,
+		Resized: hst.resized, NewTimer: func() Timer { return timer }, Logf: t.Logf}
+	if more != nil {
+		more(&cfg)
+	}
 	go func() {
-		done <- Run(ctx, Config{Hosts: set, Parser: vt.Fake{}, In: hst.inR, Out: hst, Size: hst.size,
-			Resized: hst.resized, NewTimer: func() Timer { return timer }, Logf: t.Logf})
+		done <- Run(ctx, cfg)
 	}()
 	t.Cleanup(func() {
 		cancel()

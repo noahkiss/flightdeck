@@ -1,0 +1,7 @@
+id = "counter"
+name = "Counter"
+summary = "A count, a switch and a note, to drive the board's module cards in tests."
+version = "0.1.0"
+blocks = 1
+bridge = 1
+places = ["board"]
