@@ -1066,6 +1066,30 @@ func serve(args []string) error {
 					return roundMessages(ctx, chats, findTranscript, session, kind, native)
 				})
 			},
+			messages: func(ctx context.Context, session, kind, native string) ([]api.ChatMessage, error) {
+				return roundMessages(ctx, chats, findTranscript, session, kind, native)
+			},
+			argv: func(ctx context.Context, pid int) ([]string, error) {
+				fg, err := detect.GroupProcesses(ctx, pid)
+				if err != nil {
+					return nil, err
+				}
+				if fg.Leader.PID != pid {
+					return nil, fmt.Errorf("process %d is not its group's leader", pid)
+				}
+				return fg.Leader.Args, nil
+			},
+			screen: func(pane string) (string, bool) {
+				u, ok := parseUUID(pane)
+				if !ok {
+					return "", false
+				}
+				rows, _, err := lk.VisibleRows(u)
+				if err != nil {
+					return "", false
+				}
+				return detect.ScreenText(rows), true
+			},
 			ready: roundReadySeam,
 		})
 		if err != nil {

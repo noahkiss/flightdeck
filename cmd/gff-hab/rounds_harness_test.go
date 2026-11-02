@@ -20,17 +20,27 @@ import (
 )
 
 // fakeRoundHarness stands in for a harness in a round's pane; it is named after the harness it
-// plays (claude or codex). Its arguments pick what it does after the prompt: --fake <mode>
-// and --len <bytes of the prompt as delivered>. It saves what it was started with, reports
-// working over OSC 7501, then idle by the SessionStart hook, reads the prompt, reports working
-// by UserPromptSubmit, then by mode:
+// plays (claude or codex). Its arguments pick what it does: --fake <mode> and --len <bytes of
+// the prompt as delivered>. It saves what it was started with, then by mode before the prompt:
+//
+//	trust, trustwait: draws Claude Code's workspace trust dialog and reads one key: "y" goes
+//	  on, any other exits 1 (trustwait's key must never come)
+//	mute: reports nothing, ever
+//	restart-start: waits for its gate file before it reports anything
+//
+// It then reports working over OSC 7501, idle by the SessionStart hook, reads the prompt, writes
+// the user record of its transcript, reports working by UserPromptSubmit, then by mode:
 //
 //	success, keep: writes its transcript and runs Stop
 //	error: writes its transcript and runs StopFailure with error server_error
 //	permission: runs PermissionRequest, reads one key, runs PostToolUse, then as success
 //	timeout: reads one key (the interrupt), then reports idle over OSC 7501
 //	blocked: runs PermissionRequest and reads one key, which must never come
-//	takeover: runs Notification idle_prompt, then reads the client's message, "x" as delivered
+//	takeover: waits for its gate file, runs Notification idle_prompt, then reads the client's message, "x" as delivered
+//	exit: exits 3
+//	trail: runs Stop, and writes its transcript 1.5 s later
+//	restart-turn: waits for its gate file, then as success
+//	restart-end: waits for its gate file, writes its transcript, reports idle over OSC 7501
 //
 // It then waits until its pane is closed.
 const fakeRoundHarness = `#!/bin/sh
@@ -51,41 +61,72 @@ echo "$sid" > "$D/sid-$mode"
 pwd -P > "$D/cwd-$mode"
 p() { printf '{"session_id":"%s","cwd":"/work/app","hook_event_name":"%s"%s}' "$sid" "$1" "$2"; }
 hook() { p "$1" "$2" | "$GFF_HAB_BIN" hook "$app" "$1"; }
+forever() { while :; do sleep 0.05; done; }
+gate() { while [ ! -e "$D/gate-$mode" ]; do sleep 0.05; done; }
+key() { head -c 1 > "$D/key-$mode.tmp" && mv "$D/key-$mode.tmp" "$D/key-$mode"; }
+if [ "$app" = codex ]; then
+  out="$CODEX_HOME/sessions/2026/01/01/rollout-2026-01-01T10-00-00-$sid.jsonl"; head=2
+else
+  out="$CLAUDE_CONFIG_DIR/projects/-work-app/$sid.jsonl"; head=1
+fi
+transcript() {
+  mkdir -p "$(dirname "$out")"
+  sed -n "1,${1}p" "$D/transcript-$app-$mode.jsonl" | sed "s/@SID@/$sid/g" > "$out.tmp" && mv "$out.tmp" "$out"
+}
 stty raw -echo
+case $mode in
+  trust|trustwait)
+    printf '\033[2J\033[H Accessing workspace:\r\n\r\n /work/app\r\n\r\n Quick safety check: Is this a project you created or one you trust?\r\n\r\n \342\235\257 1. Yes, I trust this folder\r\n   2. No, exit\r\n\r\n Enter to confirm \302\267 Esc to cancel\r\n'
+    key
+    [ "$(cat "$D/key-$mode")" = y ] || exit 1
+    printf '\033[2J\033[H'
+    ;;
+  mute) forever ;;
+  restart-start) gate ;;
+esac
 printf '\033]7501;state=working:app=%s\033\\' "$app"
 hook SessionStart ',"source":"startup"'
 head -c "$len" > "$D/prompt-$mode.tmp" && mv "$D/prompt-$mode.tmp" "$D/prompt-$mode"
+transcript $head
 hook UserPromptSubmit ',"prompt":"x"'
-forever() { while :; do sleep 0.05; done; }
 case $mode in
   permission)
     hook PermissionRequest ',"tool_name":"Bash","tool_input":{"command":"make test"}'
-    head -c 1 > "$D/key-$mode.tmp" && mv "$D/key-$mode.tmp" "$D/key-$mode"
+    key
     hook PostToolUse ',"tool_name":"Bash","tool_input":{"command":"make test"},"tool_use_id":"toolu_1","tool_response":{"stdout":"ok"}'
     ;;
   timeout)
-    head -c 1 > "$D/key-$mode.tmp" && mv "$D/key-$mode.tmp" "$D/key-$mode"
+    key
     printf '\033]7501;state=idle:app=%s\033\\' "$app"
     forever
     ;;
   blocked)
     hook PermissionRequest ',"tool_name":"Bash","tool_input":{"command":"make test"}'
-    head -c 1 > "$D/key-$mode.tmp" && mv "$D/key-$mode.tmp" "$D/key-$mode"
+    key
     forever
     ;;
   takeover)
+    gate
     hook Notification ',"notification_type":"idle_prompt"'
     head -c 14 > "$D/msg-$mode.tmp" && mv "$D/msg-$mode.tmp" "$D/msg-$mode"
     forever
     ;;
+  exit) exit 3 ;;
+  trail)
+    hook Stop ''
+    sleep 1.5
+    transcript '$'
+    forever
+    ;;
+  restart-turn) gate ;;
+  restart-end)
+    gate
+    transcript '$'
+    printf '\033]7501;state=idle:app=%s\033\\' "$app"
+    forever
+    ;;
 esac
-if [ "$app" = codex ]; then
-  out="$CODEX_HOME/sessions/2026/01/01/rollout-2026-01-01T10-00-00-$sid.jsonl"
-else
-  out="$CLAUDE_CONFIG_DIR/projects/-work-app/$sid.jsonl"
-fi
-mkdir -p "$(dirname "$out")"
-sed "s/@SID@/$sid/g" "$D/transcript-$app-$mode.jsonl" > "$out.tmp" && mv "$out.tmp" "$out"
+transcript '$'
 if [ "$mode" = error ]; then
   hook StopFailure ',"error":"server_error"'
 else
@@ -125,8 +166,8 @@ func jsonString(s string) (string, error) {
 
 // harnessRoundEnv is newRoundEnv with fake claude and codex programs on a PATH of their folder
 // and the system's (so no real harness is found), their config folders in the test's own
-// directories, and a short readiness limit.
-func harnessRoundEnv(t *testing.T) (*habEnv, string, string) {
+// directories, and a short readiness limit; env adds to gff-hab's environment, over those.
+func harnessRoundEnv(t *testing.T, env ...string) (*habEnv, string, string) {
 	t.Helper()
 	fake := shortDir(t)
 	work := shortDir(t)
@@ -136,11 +177,11 @@ func harnessRoundEnv(t *testing.T) (*habEnv, string, string) {
 			t.Fatal(err)
 		}
 	}
-	e, repo := newRoundEnvWith(t,
-		"PATH="+fake+":/usr/bin:/bin",
-		"CLAUDE_CONFIG_DIR="+filepath.Join(work, "claude"),
-		"CODEX_HOME="+filepath.Join(work, "codex"),
-		"GFF_HAB_BIN="+bin, noRaceExitSleep, "GFF_TEST_ROUND_READY=5s")
+	e, repo := newRoundEnvWith(t, append([]string{
+		"PATH=" + fake + ":/usr/bin:/bin",
+		"CLAUDE_CONFIG_DIR=" + filepath.Join(work, "claude"),
+		"CODEX_HOME=" + filepath.Join(work, "codex"),
+		"GFF_HAB_BIN=" + bin, noRaceExitSleep, "GFF_TEST_ROUND_READY=5s"}, env...)...)
 	return e, repo, work
 }
 
@@ -296,7 +337,10 @@ func TestRoundHarnessTimeout(t *testing.T) {
 	c := e.control()
 	short := func(s *api.RoundSpec) { s.TimeoutMS = scaleTimeout(3 * time.Second).Milliseconds() }
 	addHarnessRound(t, c, repo, work, "slow", "claude", "timeout", short)
-	addHarnessRound(t, c, repo, work, "stuck", "claude", "blocked", short)
+	// The stuck run must spawn, start and ask before its timeout, so it gets longer.
+	addHarnessRound(t, c, repo, work, "stuck", "claude", "blocked", func(s *api.RoundSpec) {
+		s.TimeoutMS = scaleTimeout(8 * time.Second).Milliseconds()
+	})
 
 	runRound(t, c, "slow")
 	slow := waitRun(t, e, c, "slow", api.RoundRunStateTimedOut)
@@ -331,7 +375,14 @@ func TestRoundHarnessTakeOver(t *testing.T) {
 	waitUntil(t, "the prompt", func() bool { _, err := os.Stat(filepath.Join(work, "prompt-takeover")); return err == nil })
 	run := roundRuns(t, c, "mine")[0]
 	pane := runPane(t, c, run)
-	waitState(t, e.sock, pane, "idle after the prompt", func(s api.AgentState) bool { return s.State == api.AgentStatusIdle })
+	// The prompt is in, so the agent's idle before it has passed: working is the turn's, and
+	// an idle above its revision is mid-turn.
+	turn := waitState(t, e.sock, pane, "working after the prompt", func(s api.AgentState) bool { return s.State == api.AgentStatusWorking })
+	writeFile(t, filepath.Join(work, "gate-takeover"), "")
+	waitState(t, e.sock, pane, "idle mid-turn", func(s api.AgentState) bool {
+		return s.State == api.AgentStatusIdle && s.Revision > turn.Revision
+	})
+	time.Sleep(300 * time.Millisecond)
 	if r := roundRuns(t, c, "mine")[0]; r.State != api.RoundRunStateRunning {
 		t.Fatalf("idle mid-turn ended the run: %+v", r)
 	}
@@ -398,4 +449,139 @@ func lookFake(t *testing.T, e *habEnv) string {
 	}
 	t.Fatal("no PATH in the hab's environment")
 	return ""
+}
+
+// TestRoundHarnessTypedAfterDone: a client typing into the pane right after the turn's done,
+// while the final message is still being read (the transcript trails the Stop), leaves the run
+// succeeded, with the message read once the transcript has it.
+func TestRoundHarnessTypedAfterDone(t *testing.T) {
+	e, repo, work := harnessRoundEnv(t)
+	c := e.control()
+	addHarnessRound(t, c, repo, work, "trail", "claude", "trail", nil)
+	runRound(t, c, "trail")
+	waitUntil(t, "the prompt", func() bool { _, err := os.Stat(filepath.Join(work, "prompt-trail")); return err == nil })
+	run := roundRuns(t, c, "trail")[0]
+	pane := runPane(t, c, run)
+	waitState(t, e.sock, pane, "done", func(s api.AgentState) bool { return s.State == api.AgentStatusDone })
+	call(t, c, "pane.input", api.InputParams{Pane: pane, Text: "z"}, nil)
+	got := waitRun(t, e, c, "trail", api.RoundRunStateSucceeded)
+	if got.Result != "Done: trail." {
+		t.Errorf("result %q", got.Result)
+	}
+}
+
+// TestRoundHarnessNeverReady: a harness that never reaches idle fails at the readiness limit.
+func TestRoundHarnessNeverReady(t *testing.T) {
+	e, repo, work := harnessRoundEnv(t, "GFF_TEST_ROUND_READY=1s")
+	c := e.control()
+	addHarnessRound(t, c, repo, work, "mute", "claude", "mute", nil)
+	runRound(t, c, "mute")
+	if got := waitRun(t, e, c, "mute", api.RoundRunStateFailed); got.Reason != "the harness did not reach idle within 1s" {
+		t.Errorf("reason %q", got.Reason)
+	}
+}
+
+// TestRoundHarnessExits: a harness that exits before its turn ends fails the run with its exit
+// status.
+func TestRoundHarnessExits(t *testing.T) {
+	e, repo, work := harnessRoundEnv(t)
+	c := e.control()
+	addHarnessRound(t, c, repo, work, "quits", "claude", "exit", nil)
+	runRound(t, c, "quits")
+	if got := waitRun(t, e, c, "quits", api.RoundRunStateFailed); got.Reason != reasonHarnessExited+" (exit status 3)" {
+		t.Errorf("reason %q", got.Reason)
+	}
+}
+
+// TestRoundHarnessTrust: Claude Code's workspace trust dialog shows the run blocked with a
+// reason that names it, and the readiness limit waits. The user's answer in the pane is not a
+// take over: the run goes on and succeeds. Unanswered, the run ends timed_out with that reason,
+// and no key ever reaches the dialog from the round.
+func TestRoundHarnessTrust(t *testing.T) {
+	e, repo, work := harnessRoundEnv(t, "GFF_TEST_ROUND_READY=1s")
+	c := e.control()
+	addHarnessRound(t, c, repo, work, "asks", "claude", "trust", nil)
+	addHarnessRound(t, c, repo, work, "waits", "claude", "trustwait", func(s *api.RoundSpec) {
+		s.TimeoutMS = scaleTimeout(4 * time.Second).Milliseconds()
+	})
+
+	runRound(t, c, "asks")
+	run := waitRun(t, e, c, "asks", api.RoundRunStateBlocked)
+	if run.Reason != reasonTrust {
+		t.Errorf("blocked reason %q", run.Reason)
+	}
+	time.Sleep(1500 * time.Millisecond) // past the readiness limit
+	if r := roundRuns(t, c, "asks")[0]; r.State != api.RoundRunStateBlocked {
+		t.Fatalf("the readiness limit ran while the dialog showed: %+v", r)
+	}
+	call(t, c, "pane.input", api.InputParams{Pane: runPane(t, c, run), Text: "y"}, nil)
+	done := waitRun(t, e, c, "asks", api.RoundRunStateSucceeded)
+	if done.Result != "Done: trust." {
+		t.Errorf("result %q", done.Result)
+	}
+
+	runRound(t, c, "waits")
+	waitRun(t, e, c, "waits", api.RoundRunStateBlocked)
+	late := waitRun(t, e, c, "waits", api.RoundRunStateTimedOut)
+	if !strings.Contains(late.Reason, reasonTrust) {
+		t.Errorf("timed out reason %q", late.Reason)
+	}
+	if _, err := os.Stat(filepath.Join(work, "key-trustwait")); err == nil {
+		t.Error("a key reached the trust dialog")
+	}
+	if !paneOpen(t, c, late.Session) {
+		t.Error("the timed-out run's pane must stay, its dialog open")
+	}
+}
+
+// TestRoundHarnessAdopt: harness runs adopted after a gff-hab restart. One whose prompt never
+// went in gets it once the agent is idle; one in its turn ends at the turn's end; one whose
+// turn ended while gff-hab was down (idle, the transcript holding the answer) ends succeeded
+// at once. Claude Code's session id comes back from the program's arguments.
+func TestRoundHarnessAdopt(t *testing.T) {
+	e, repo, work := harnessRoundEnv(t)
+	c := e.control()
+	for _, m := range []string{"restart-turn", "restart-end", "restart-start"} {
+		addHarnessRound(t, c, repo, work, m, "claude", m, nil)
+	}
+	for _, m := range []string{"restart-turn", "restart-end"} {
+		runRound(t, c, m)
+		waitUntil(t, m+": the prompt", func() bool { _, err := os.Stat(filepath.Join(work, "prompt-"+m)); return err == nil })
+		pane := runPane(t, c, roundRuns(t, c, m)[0])
+		waitState(t, e.sock, pane, m+": working", func(s api.AgentState) bool { return s.State == api.AgentStatusWorking })
+	}
+	runRound(t, c, "restart-start")
+	waitUntil(t, "restart-start: its session", func() bool {
+		r := roundRuns(t, c, "restart-start")
+		return len(r) > 0 && r[0].Session != ""
+	})
+
+	e.stopHab(false)
+	writeFile(t, filepath.Join(work, "gate-restart-end"), "")
+	sid, _ := os.ReadFile(filepath.Join(work, "sid-restart-end"))
+	tr := filepath.Join(work, "claude", "projects", "-work-app", strings.TrimSpace(string(sid))+".jsonl")
+	waitUntil(t, "the turn ended while gff-hab was down", func() bool {
+		b, _ := os.ReadFile(tr)
+		return strings.Count(string(b), "\n") == 3
+	})
+	time.Sleep(300 * time.Millisecond) // the OSC idle after the transcript
+	e.serve()
+	c = e.control()
+
+	if got := waitRun(t, e, c, "restart-end", api.RoundRunStateSucceeded); got.Result != "Done: restart-end." {
+		t.Errorf("restart-end: result %q", got.Result)
+	}
+	writeFile(t, filepath.Join(work, "gate-restart-start"), "")
+	if got := waitRun(t, e, c, "restart-start", api.RoundRunStateSucceeded); got.Result != "Done: restart-start." {
+		t.Errorf("restart-start: result %q", got.Result)
+	}
+	writeFile(t, filepath.Join(work, "gate-restart-turn"), "")
+	if got := waitRun(t, e, c, "restart-turn", api.RoundRunStateSucceeded); got.Result != "Done: restart-turn." {
+		t.Errorf("restart-turn: result %q", got.Result)
+	}
+	for _, m := range []string{"restart-turn", "restart-end", "restart-start"} {
+		if runs := roundRuns(t, c, m); len(runs) != 1 {
+			t.Errorf("%s: runs %+v", m, runs)
+		}
+	}
 }

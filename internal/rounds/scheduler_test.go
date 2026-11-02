@@ -1065,6 +1065,34 @@ func TestSchedulerBlockedHoldsAPlace(t *testing.T) {
 	}
 }
 
+// TestSchedulerLiveReason: a live update keeps its reason (a blocked run's dialog); the next
+// live update replaces it, and an end writes its own.
+func TestSchedulerLiveReason(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:59:50Z")
+	a := h.round("a", "0 10 * * *", nil)
+	h.s.Tick()
+	h.awake("2026-03-02T10:00:30Z")
+	id := h.runs(a.Round.ID)[0].ID
+	if err := h.s.UpdateRun(id, RunUpdate{State: RunBlocked, Reason: "a dialog"}); err != nil {
+		t.Fatal(err)
+	}
+	if r := h.runs(a.Round.ID)[0]; r.State != RunBlocked || r.Reason != "a dialog" {
+		t.Fatalf("blocked: %+v", r)
+	}
+	if err := h.s.UpdateRun(id, RunUpdate{State: RunRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if r := h.runs(a.Round.ID)[0]; r.State != RunRunning || r.Reason != "" {
+		t.Fatalf("running again: %+v", r)
+	}
+	if err := h.s.UpdateRun(id, RunUpdate{State: RunTimedOut, Reason: "late"}); err != nil {
+		t.Fatal(err)
+	}
+	if r := h.runs(a.Round.ID)[0]; r.State != RunTimedOut || r.Reason != "late" {
+		t.Fatalf("ended: %+v", r)
+	}
+}
+
 func TestDueSlots(t *testing.T) {
 	sched, err := Trigger{Kind: TriggerCron, Cron: "0 * * * *", Zone: "UTC"}.Schedule()
 	if err != nil {

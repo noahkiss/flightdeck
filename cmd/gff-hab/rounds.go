@@ -122,11 +122,14 @@ type runWatch struct {
 	h       *harnessWatch // nil for a command run
 }
 
-// stopLocked stops the watch's timers. The caller holds s.mu.
+// stopLocked stops the watch's timers and, for a harness run, a prompt send in flight. The
+// caller holds s.mu.
 func (w *runWatch) stopLocked() {
-	w.timer.Stop()
-	if w.h != nil && w.h.ready != nil {
-		w.h.ready.Stop()
+	if w.timer != nil {
+		w.timer.Stop()
+	}
+	if w.h != nil {
+		w.h.stop()
 	}
 }
 
@@ -155,13 +158,17 @@ type roundsConfig struct {
 	// Harness runs (roundharness.go). agent reads a pane's agent state; send delivers a prompt
 	// as session.send does, but as the hab, not as a client: no take over; interrupt stops a
 	// working turn through its adapter; result reads a run's final agent message from its
-	// session's conversation (native: the harness's own session id, when known); lookHarness
-	// finds a harness's program (default exec.LookPath). ready is the readiness limit
-	// (default roundReady).
+	// session's conversation (native: the harness's own session id, when known); messages
+	// reads that conversation once, for a run adopted after a restart; argv reads a process's
+	// arguments; screen reads a pane's visible text; lookHarness finds a harness's program
+	// (default exec.LookPath). ready is the readiness limit (default roundReady).
 	agent       func(pane string) (api.AgentState, bool)
 	send        func(ctx context.Context, session, text string) error
 	interrupt   func(ctx context.Context, pane string) error
 	result      func(ctx context.Context, session, harness, native string) (string, error)
+	messages    func(ctx context.Context, session, harness, native string) ([]api.ChatMessage, error)
+	argv        func(ctx context.Context, pid int) ([]string, error)
+	screen      func(pane string) (string, bool)
 	lookHarness func(name string) (string, error)
 	ready       time.Duration
 }
@@ -186,6 +193,8 @@ type roundsService struct {
 
 	cancel context.CancelFunc
 	done   chan struct{}
+	// updateRun is the scheduler's UpdateRun; tests replace it.
+	updateRun func(runID string, u rounds.RunUpdate) error
 	// bg holds the work handed off the caller's goroutine: run ends, prunes and pane closes.
 	// Close waits for it, so nothing writes the state after Close returns.
 	bg sync.WaitGroup
@@ -216,6 +225,11 @@ func newRounds(cfg roundsConfig) (*roundsService, error) {
 	if cfg.result == nil {
 		cfg.result = func(context.Context, string, string, string) (string, error) { return "", nil }
 	}
+	if cfg.messages == nil {
+		cfg.messages = func(context.Context, string, string, string) ([]api.ChatMessage, error) {
+			return nil, errors.New("this hab reads no transcripts")
+		}
+	}
 	st, aside, err := rounds.Open(cfg.state, rounds.Options{Logf: cfg.logf})
 	if err != nil {
 		return nil, err
@@ -241,6 +255,7 @@ func newRounds(cfg roundsConfig) (*roundsService, error) {
 	if s.sched, err = rounds.NewScheduler(sc); err != nil {
 		return nil, err
 	}
+	s.updateRun = s.sched.UpdateRun
 	return s, nil
 }
 
@@ -353,8 +368,9 @@ func (s *roundsService) watch(run rounds.Run, r rounds.Round, session, pane stri
 	s.watchWith(run, r, session, pane, nil)
 }
 
-// watchWith is watch, with h for a harness run.
-func (s *roundsService) watchWith(run rounds.Run, r rounds.Round, session, pane string, h *harnessWatch) {
+// watchWith is watch, with h for a harness run. It reports false when the service is closed:
+// nothing is watched.
+func (s *roundsService) watchWith(run rounds.Run, r rounds.Round, session, pane string, h *harnessWatch) bool {
 	run.SessionID = session
 	w := &runWatch{run: run, round: r, session: session, pane: pane, h: h}
 	started := run.Created
@@ -364,37 +380,50 @@ func (s *roundsService) watchWith(run rounds.Run, r rounds.Round, session, pane 
 	left := time.Until(started.Add(time.Duration(r.Timeout)))
 	s.mu.Lock()
 	if s.closed {
-		if h != nil && h.ready != nil {
-			h.ready.Stop()
+		if h != nil {
+			h.stop()
 		}
 		s.mu.Unlock()
-		return
+		return false
 	}
 	s.watches[run.ID] = w
 	s.byPane[pane] = run.ID
-	w.timer = time.AfterFunc(max(left, 0), func() { s.timedOut(run.ID) })
+	w.timer = time.AfterFunc(max(left, 0), func() { s.goBg(func() { s.timedOut(run.ID) }) })
 	s.mu.Unlock()
 	if st, ok := s.cfg.pane(pane); ok && st.Exited {
 		s.exited(pane, st.Exit)
 	}
+	return true
 }
 
 // finish ends a watched run once: the first end wins, and later ones (an exit after a hang-up)
-// find no watch. The scheduler hears the end off the caller's goroutine, so a link watcher or
-// a client call never waits for the next run's spawn.
+// find no watch. A harness run whose turn ended keeps that end: finish then does nothing while
+// its final message is read (finishTurn). The scheduler hears the end off the caller's
+// goroutine, so a link watcher or a client call never waits for the next run's spawn. After
+// Close nothing ends: the run stays live on disk for the next gff-hab.
 func (s *roundsService) finish(runID string, u rounds.RunUpdate) bool {
+	return s.endRun(runID, u, false)
+}
+
+// finishTurn is finish for the end of a harness run's turn.
+func (s *roundsService) finishTurn(runID string, u rounds.RunUpdate) bool {
+	return s.endRun(runID, u, true)
+}
+
+func (s *roundsService) endRun(runID string, u rounds.RunUpdate, turn bool) bool {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	w := s.watches[runID]
-	if w == nil {
-		s.mu.Unlock()
+	if w == nil || (!turn && w.h != nil && w.h.end != nil) {
+		return false
+	}
+	u.SessionID = w.session
+	if !s.goLocked(func() { s.update(runID, u) }) {
 		return false
 	}
 	delete(s.watches, runID)
 	delete(s.byPane, w.pane)
 	w.stopLocked()
-	s.mu.Unlock()
-	u.SessionID = w.session
-	s.bg.Go(func() { s.update(runID, u) })
 	return true
 }
 
@@ -410,7 +439,7 @@ func (s *roundsService) unwatch(w *runWatch) {
 }
 
 func (s *roundsService) update(runID string, u rounds.RunUpdate) {
-	if err := s.sched.UpdateRun(runID, u); err != nil {
+	if err := s.updateRun(runID, u); err != nil {
 		s.cfg.logf("rounds: run %s: %v", runID, err)
 	}
 }
@@ -517,10 +546,16 @@ func (s *roundsService) notice(n link.Notice) {
 
 // takeOver ends the run of a pane as taken over (7.5): a client typed into it, sent it a
 // message, or closed it. The session is the user's from then on: never closed or timed out by
-// the round.
+// the round. Input that answers Claude Code's trust dialog is not a take over, as an
+// approval.answer is not; a run whose turn already ended keeps that end.
 func (s *roundsService) takeOver(pane, reason string) {
-	if w, ok := s.runOf(pane); ok {
-		s.finish(w.run.ID, rounds.RunUpdate{State: rounds.RunTakenOver, Reason: reason})
+	s.mu.Lock()
+	id, ok := s.byPane[pane]
+	w := s.watches[id]
+	answer := ok && w != nil && reason == reasonTyped && w.trustAnswerLocked()
+	s.mu.Unlock()
+	if ok && !answer {
+		s.finish(id, rounds.RunUpdate{State: rounds.RunTakenOver, Reason: reason})
 	}
 }
 
@@ -546,12 +581,13 @@ func (s *roundsService) adopt(run rounds.Run) {
 	run.SessionID = ss.ID
 	var h *harnessWatch
 	if r.Mode == rounds.ModeFresh && len(r.Command) == 0 && r.Harness != "" {
-		// Whether the prompt went in before the restart is not kept: the run is taken to be in
-		// its turn, and ends at the next turn end, the exit, a take over or the timeout.
+		// Whether the prompt went in before the restart is not kept: adoptHarness reads the
+		// run's conversation for it.
 		h = &harnessWatch{kind: r.Harness, prompt: r.Prompt, phase: phaseTurn, blocked: run.State == rounds.RunBlocked}
 	}
 	if st, ok := s.cfg.pane(ss.Pane); ok && !st.Lost {
 		if h != nil {
+			s.adoptHarness(ss.ID, int(st.Pid), h)
 			s.watchHarness(run, r, ss.ID, ss.Pane, h)
 		} else {
 			s.watch(run, r, ss.ID, ss.Pane)

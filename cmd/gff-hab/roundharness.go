@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -27,14 +28,30 @@ const roundReady = 2 * time.Minute
 // roundSendRetry is the pause before a refused prompt is tried again.
 const roundSendRetry = 500 * time.Millisecond
 
+// roundSendWait bounds one send of a run's prompt.
+const roundSendWait = 30 * time.Second
+
 // roundResultWait bounds the read of a run's final agent message from its transcript: the
 // harness may report the turn's end a moment before the transcript holds its last message.
 const roundResultWait = 5 * time.Second
+
+// roundExitGrace is how long an exited agent state waits for the pane's own exit, which carries
+// the exit status, before it ends the run itself.
+const roundExitGrace = 2 * time.Second
+
+// roundTrustPoll is how often the screen of a Claude Code run that waits for its first idle is
+// read for the workspace trust dialog.
+const roundTrustPoll = 500 * time.Millisecond
+
+// roundTrustGrace is how long after the trust dialog went a client's input still counts as its
+// answer, not as a take over: the poll may see the dialog go before the input's take over check.
+const roundTrustGrace = 2 * time.Second
 
 // Reasons gff-hab writes on harness runs.
 const (
 	reasonHarnessExited = "the harness exited before its turn ended"
 	reasonTurnError     = "the turn ended with an error"
+	reasonTrust         = `Claude Code asks whether to trust the run's folder ("Yes, I trust this folder"); answer it in the run's pane`
 )
 
 // harnessPhase is where a harness run is between its spawn and its end.
@@ -53,20 +70,165 @@ const (
 	phaseEnding
 )
 
-// harnessWatch is the part of a run watch that only a harness run has.
+// harnessWatch is the part of a run watch that only a harness run has. s.mu guards it.
 type harnessWatch struct {
 	kind   string // claude, codex or opencode
 	native string // the harness's own session id, when gff-hab chose it (claude --session-id)
 	prompt string
 	phase  harnessPhase
-	// rev is the newest agent.state revision applied; older ones are stale.
-	rev     uint64
-	blocked bool
-	kindOf  api.BlockedKind // with blocked: what the agent waits for
-	working bool            // the last state was working: a timeout interrupts it
+	// rev is the newest agent.state revision applied; older ones are stale. state and turn are
+	// that state's status and turn id.
+	rev   uint64
+	state api.AgentStatus
+	turn  string
+	// blocked: the agent reports blocked, on kindOf. trust: the screen shows Claude Code's
+	// workspace trust dialog, which Claude reports no state for; trustGone is when it went.
+	blocked   bool
+	kindOf    api.BlockedKind
+	trust     bool
+	trustGone time.Time
+	working   bool // the last state was working: a timeout interrupts it
+	// adoptDone: the run was adopted after a restart, and its transcript held an agent message
+	// after the prompt. The first idle then ends the turn: it ended while gff-hab was down.
+	adoptDone bool
+	// end is the run's end once its turn ended (phaseEnding). It wins over any end that comes
+	// while the final message is read: a pane exit, the timeout, a take over.
+	end *rounds.RunUpdate
 	// ready fails the run when the harness does not reach idle in time. It runs while the
 	// prompt has not gone in, and stops while the run is blocked (a sign-in at start).
 	ready *time.Timer
+	exit  *time.Timer // the grace after an exited state (roundExitGrace)
+	poll  *time.Timer // the next trust dialog check
+	// cancel ends the send of the prompt in flight, so a run that ended never pastes it.
+	cancel context.CancelFunc
+}
+
+// isBlocked says whether the run shows blocked.
+func (h *harnessWatch) isBlocked() bool { return h.blocked || h.trust }
+
+// stop stops the watch's timers and the send in flight.
+func (h *harnessWatch) stop() {
+	for _, t := range []*time.Timer{h.ready, h.exit, h.poll} {
+		if t != nil {
+			t.Stop()
+		}
+	}
+	if h.cancel != nil {
+		h.cancel()
+	}
+}
+
+// readyAct is what a step does to the readiness timer.
+type readyAct int
+
+const (
+	readyKeep readyAct = iota
+	readyStop
+	readyRestart // start again, whole
+)
+
+// stepOut is what one agent state asks of the service; step makes no other change outside h.
+type stepOut struct {
+	live         rounds.RunState // RunBlocked or RunRunning to report; empty: no change
+	ready        readyAct
+	trustCleared bool              // the agent reported after the trust dialog: it was answered
+	deliver      bool              // send the prompt
+	end          *rounds.RunUpdate // the turn ended: end the run once the final message is read
+	native       string            // with end: the session id the state reported
+	exited       bool              // the harness reported its exit
+}
+
+// step applies one agent state to a harness run (rounds.md 13, Built (stage 4)).
+//
+//   - A revision at or below the last one applied is stale and does nothing. retry applies
+//     the agent's current state again after a refused send: only while the run waits for its
+//     prompt, and only a revision not older than the last one applied.
+//   - idle (or done or error) before the prompt: the prompt goes in.
+//   - working or blocked after the prompt went in: the harness took it (read back).
+//   - done or error after the prompt went in: the turn ended. A turn end while the send is
+//     still in flight counts: the agent was idle when the send began, so the turn is the
+//     prompt's. But before the read back, only a change of state or of turn ends it: a
+//     republish of a done the agent showed when the send began changes other fields only.
+//   - idle in the turn ends nothing: the owner's interrupt key shows idle before the input
+//     that carried it takes the run over, and that run must end taken over. Only an adopted
+//     run whose transcript showed the turn's end takes idle as its end.
+//   - blocked: the run shows blocked until the agent goes on; working or idle shows running.
+//   - exited: the harness ended before its turn did.
+//   - Once the turn ended (phaseEnding), nothing changes the run's end.
+func (h *harnessWatch) step(st api.AgentState, retry bool) stepOut {
+	var out stepOut
+	if retry {
+		if h.phase != phaseStarting || st.Revision < h.rev {
+			return out
+		}
+	} else if st.Revision <= h.rev {
+		return out
+	}
+	h.rev = st.Revision
+	prev, prevTurn := h.state, h.turn
+	h.state, h.turn = st.State, st.Turn
+	if h.phase == phaseEnding {
+		return out
+	}
+	h.working = st.State == api.AgentStatusWorking
+	switch st.State {
+	case api.AgentStatusBlocked:
+		if h.phase == phaseSent || h.phase == phaseDelivering {
+			h.phase = phaseTurn
+		}
+		h.kindOf = st.Kind
+		if !h.blocked {
+			was := h.isBlocked()
+			h.blocked = true
+			if !was {
+				out.live, out.ready = rounds.RunBlocked, readyStop
+			}
+		}
+		return out
+	case api.AgentStatusExited:
+		out.exited = true
+		return out
+	case api.AgentStatusNone, "":
+		return out
+	}
+	if h.blocked || h.trust {
+		out.trustCleared = h.trust
+		h.blocked, h.kindOf, h.trust = false, "", false
+		out.live = rounds.RunRunning
+		if h.phase == phaseStarting {
+			out.ready = readyRestart
+		}
+	}
+	switch st.State {
+	case api.AgentStatusWorking:
+		if h.phase == phaseSent || h.phase == phaseDelivering {
+			h.phase = phaseTurn
+		}
+		h.adoptDone = false
+	case api.AgentStatusIdle, api.AgentStatusDone, api.AgentStatusError:
+		switch {
+		case h.phase == phaseStarting:
+			h.phase = phaseDelivering
+			out.deliver, out.ready = true, readyStop
+		case st.State == api.AgentStatusIdle && !(h.phase == phaseTurn && h.adoptDone):
+			// No end: see above.
+		case (h.phase == phaseDelivering || h.phase == phaseSent) && st.State == prev && st.Turn == prevTurn:
+			// A republish of the state the agent had: no new turn end.
+		default:
+			h.phase = phaseEnding
+			u := rounds.RunUpdate{State: rounds.RunSucceeded}
+			if st.State == api.AgentStatusError {
+				u = rounds.RunUpdate{State: rounds.RunFailed, Reason: reasonTurnError, Network: harness.NetworkFailure(st.Harness, st.Error)}
+				if st.Error != "" {
+					u.Reason += ": " + st.Error
+				}
+			}
+			h.end = &u
+			end := u
+			out.end, out.native, out.ready = &end, st.Session, readyStop
+		}
+	}
+	return out
 }
 
 // harnessNotFound is the start error of a run whose harness this host does not have.
@@ -124,166 +286,150 @@ func (s *roundsService) startHarness(r rounds.Round, run rounds.Run, env []strin
 	return made.Session, nil
 }
 
-// watchHarness watches a harness run: its pane as watch does, its agent's states, and the
-// readiness limit. The pane's current state is applied at once: the harness may have reported
-// before the spawn returned.
+// watchHarness watches a harness run: its pane as watch does, its agent's states, the
+// readiness limit and, for Claude Code, the trust dialog. The pane's current state is applied
+// at once: the harness may have reported before the spawn returned.
 func (s *roundsService) watchHarness(run rounds.Run, r rounds.Round, session, pane string, h *harnessWatch) {
+	id := run.ID
 	if h.phase == phaseStarting {
 		s.mu.Lock()
-		h.ready = time.AfterFunc(s.cfg.ready, func() { s.notReady(run.ID) })
+		h.ready = time.AfterFunc(s.cfg.ready, func() { s.goBg(func() { s.notReady(id) }) })
 		s.mu.Unlock()
 	}
-	s.watchWith(run, r, session, pane, h)
+	if !s.watchWith(run, r, session, pane, h) {
+		return
+	}
+	s.mu.Lock()
+	if w := s.watches[id]; w != nil && w.h == h {
+		s.armTrustLocked(w)
+		if run.State == rounds.RunBlocked && !h.isBlocked() {
+			s.liveLocked(w, rounds.RunRunning) // adopted blocked before its prompt
+		}
+	}
+	s.mu.Unlock()
 	if st, ok := s.cfg.agent(pane); ok {
 		s.agentState(st)
 	}
+}
+
+// goLocked runs f in the background work Close waits for, unless the service is closed. The
+// caller holds s.mu, so Close cannot begin its wait between the check and the start: nothing
+// runs, and no prompt is pasted, after Close.
+func (s *roundsService) goLocked(f func()) bool {
+	if s.closed {
+		return false
+	}
+	s.bg.Go(f)
+	return true
+}
+
+// goBg is goLocked for a caller that does not hold s.mu: a timer, a link watcher.
+func (s *roundsService) goBg(f func()) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.goLocked(f)
 }
 
 // agentState takes one agent.state of any pane. The harness store calls it with its lock held,
 // so it only takes s.mu and hands any work off its goroutine.
 func (s *roundsService) agentState(st api.AgentState) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	w := s.watches[s.byPane[st.Pane]]
-	if s.closed || w == nil || w.h == nil || st.Revision <= w.h.rev {
-		s.mu.Unlock()
+	if s.closed || w == nil || w.h == nil {
 		return
 	}
-	w.h.rev = st.Revision
-	act := s.stepLocked(w, st)
-	s.mu.Unlock()
-	if act != nil {
-		act()
-	}
+	s.applyLocked(w, st, false)
 }
 
-// stepLocked applies one state to a harness run and returns what to do after s.mu is released.
-//
-//   - idle (or done or error) before the prompt: the prompt goes in.
-//   - working or blocked after the prompt went in: the harness took it (read back).
-//   - done or error after the prompt went in: the turn ended; the run ends with its final
-//     message. A turn end while the send is still in flight counts: the agent was idle when
-//     the send began, so the turn is the prompt's.
-//   - blocked: the run shows blocked until the agent goes on; working or idle shows running.
-//   - exited: the harness ended before its turn did.
-//
-// idle after the prompt went in ends nothing: the owner's interrupt key shows idle before the
-// input that carried it takes the run over, and a run must end taken over then, not failed.
-func (s *roundsService) stepLocked(w *runWatch, st api.AgentState) func() {
+// applyLocked steps a harness run with one state and starts what the step asks for. The
+// revision check and the step are one critical section with the change they make.
+func (s *roundsService) applyLocked(w *runWatch, st api.AgentState, retry bool) {
 	h := w.h
-	if h.phase == phaseEnding {
-		return nil
+	out := h.step(st, retry)
+	if out.trustCleared {
+		h.trustGone = time.Now()
 	}
-	var acts []func()
-	h.working = st.State == api.AgentStatusWorking
-	switch st.State {
-	case api.AgentStatusBlocked:
-		if h.phase == phaseSent || h.phase == phaseDelivering {
-			h.phase = phaseTurn
+	switch out.ready {
+	case readyStop:
+		if h.ready != nil {
+			h.ready.Stop()
 		}
-		h.kindOf = st.Kind
-		if !h.blocked {
-			h.blocked = true
-			if h.ready != nil {
-				h.ready.Stop()
-			}
-			acts = append(acts, s.liveLater(w, rounds.RunBlocked))
-		}
-		return join(acts)
-	case api.AgentStatusExited:
-		id := w.run.ID
-		return func() { s.finish(id, rounds.RunUpdate{State: rounds.RunFailed, Reason: reasonHarnessExited}) }
-	case api.AgentStatusNone, "":
-		return nil
-	}
-	if h.blocked {
-		h.blocked, h.kindOf = false, ""
-		if h.ready != nil && h.phase <= phaseDelivering {
+	case readyRestart:
+		if h.ready != nil {
 			h.ready.Reset(s.cfg.ready)
 		}
-		acts = append(acts, s.liveLater(w, rounds.RunRunning))
 	}
-	switch st.State {
-	case api.AgentStatusWorking:
-		if h.phase == phaseSent || h.phase == phaseDelivering {
-			h.phase = phaseTurn
-		}
-	case api.AgentStatusIdle, api.AgentStatusDone, api.AgentStatusError:
-		switch {
-		case h.phase == phaseStarting:
-			h.phase = phaseDelivering
-			id, session := w.run.ID, w.session
-			acts = append(acts, func() { s.bg.Go(func() { s.deliver(id, session) }) })
-		case st.State == api.AgentStatusIdle:
-			// No end: see above.
-		default:
-			h.phase = phaseEnding
-			if h.ready != nil {
-				h.ready.Stop()
-			}
-			id, session, kind, native := w.run.ID, w.session, h.kind, h.native
-			if native == "" {
-				native = st.Session
-			}
-			u := rounds.RunUpdate{State: rounds.RunSucceeded}
-			if st.State == api.AgentStatusError {
-				u = rounds.RunUpdate{State: rounds.RunFailed, Reason: reasonTurnError, Network: harness.NetworkFailure(st.Harness, st.Error)}
-				if st.Error != "" {
-					u.Reason += ": " + st.Error
-				}
-			}
-			acts = append(acts, func() { s.bg.Go(func() { s.endTurn(id, session, kind, native, u) }) })
+	if out.live != "" {
+		s.liveLocked(w, out.live)
+	}
+	id, session := w.run.ID, w.session
+	if out.deliver {
+		ctx, cancel := context.WithTimeout(context.Background(), roundSendWait)
+		h.cancel = cancel
+		if !s.goLocked(func() {
+			defer cancel()
+			s.deliver(ctx, id, session)
+		}) {
+			cancel()
 		}
 	}
-	return join(acts)
-}
-
-func join(acts []func()) func() {
-	if len(acts) == 0 {
-		return nil
-	}
-	return func() {
-		for _, a := range acts {
-			a()
+	if out.end != nil {
+		kind, native, u := h.kind, h.native, *out.end
+		if native == "" {
+			native = out.native
 		}
+		s.goLocked(func() { s.endTurn(id, session, kind, native, u) })
 	}
-}
-
-// liveLater reports a live state of a harness run to the scheduler, off the caller's goroutine.
-// The reports go out one at a time, and each only while the run still shows that state, so a
-// late report never overwrites a newer one.
-func (s *roundsService) liveLater(w *runWatch, state rounds.RunState) func() {
-	id := w.run.ID
-	return func() {
-		s.bg.Go(func() {
-			s.liveMu.Lock()
-			defer s.liveMu.Unlock()
-			s.mu.Lock()
-			cur := s.watches[id]
-			now := cur != nil && cur.h != nil && cur.h.blocked == (state == rounds.RunBlocked)
-			s.mu.Unlock()
-			if now {
-				s.update(id, rounds.RunUpdate{State: state})
-			}
+	if out.exited && h.exit == nil {
+		h.exit = time.AfterFunc(roundExitGrace, func() {
+			s.goBg(func() { s.finish(id, rounds.RunUpdate{State: rounds.RunFailed, Reason: reasonHarnessExited}) })
 		})
 	}
 }
 
+// liveLocked reports a live state of a harness run to the scheduler, off the caller's
+// goroutine. The reports go out one at a time, and each only while the run still shows that
+// state, so a late report never overwrites a newer one. A blocked run waiting on the trust
+// dialog says so in its reason.
+func (s *roundsService) liveLocked(w *runWatch, state rounds.RunState) {
+	id := w.run.ID
+	s.goLocked(func() {
+		s.liveMu.Lock()
+		defer s.liveMu.Unlock()
+		s.mu.Lock()
+		cur := s.watches[id]
+		now := cur != nil && cur.h != nil && cur.h.isBlocked() == (state == rounds.RunBlocked)
+		reason := ""
+		if now && state == rounds.RunBlocked && cur.h.trust {
+			reason = reasonTrust
+		}
+		s.mu.Unlock()
+		if !now {
+			return
+		}
+		// A run that ended meanwhile is not live: nothing to say.
+		if err := s.updateRun(id, rounds.RunUpdate{State: state, Reason: reason}); err != nil && !errors.Is(err, rounds.ErrNoRun) {
+			s.cfg.logf("rounds: run %s: %v", id, err)
+		}
+	})
+}
+
 // deliver sends a harness run's prompt through the session.send path: a paste, then Enter,
-// under the input rules. It is not a take over. A send the agent refuses now (busy, or another
-// send starting its turn) waits for the next idle, within the readiness limit; a prompt that
-// may have reached the pane in part, or any other refusal, fails the run.
-func (s *roundsService) deliver(runID, session string) {
+// under the input rules. It is not a take over. ctx ends when the run does, so a run that
+// ended never pastes its prompt. A send the agent refuses now (busy, or another send starting
+// its turn) waits for the next idle, within the readiness limit; a prompt that may have
+// reached the pane in part, or any other refusal, fails the run.
+func (s *roundsService) deliver(ctx context.Context, runID, session string) {
 	s.mu.Lock()
 	w := s.watches[runID]
-	if w == nil || w.h == nil || w.h.phase != phaseDelivering {
+	if w == nil || w.h == nil || w.h.phase != phaseDelivering || ctx.Err() != nil {
 		s.mu.Unlock()
 		return
 	}
 	prompt, pane := w.h.prompt, w.pane
 	s.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	err := s.cfg.send(ctx, session, prompt)
-	cancel()
 	var ce *control.Error
 	retry := err != nil && errors.As(err, &ce) && ce.Data.Kind == api.ErrorKindConflict && !ce.IsPartial()
 	s.mu.Lock()
@@ -292,31 +438,37 @@ func (s *roundsService) deliver(runID, session string) {
 		s.mu.Unlock()
 		return
 	}
+	h := w.h
 	switch {
 	case err == nil:
-		if w.h.phase == phaseDelivering {
-			w.h.phase = phaseSent
-		}
-		if w.h.ready != nil {
-			w.h.ready.Stop()
+		if h.phase == phaseDelivering {
+			h.phase = phaseSent
 		}
 		s.mu.Unlock()
 		return
-	case retry && w.h.phase == phaseDelivering:
-		w.h.phase = phaseStarting
+	case retry && h.phase == phaseDelivering:
+		h.phase = phaseStarting
+		if h.ready != nil && !h.isBlocked() {
+			h.ready.Reset(s.cfg.ready)
+		}
 		s.mu.Unlock()
 		s.cfg.logf("rounds: run %s: the prompt waits: %v", runID, err)
-		// The agent may be idle again already: its state is applied as if new, after a pause,
-		// so a refusal that lasts (an owner's stop) does not spin until the readiness limit.
-		time.Sleep(roundSendRetry)
-		if st, ok := s.cfg.agent(pane); ok {
-			s.mu.Lock()
-			if cur := s.watches[runID]; cur != nil && cur.h != nil && cur.h.rev >= st.Revision {
-				cur.h.rev = st.Revision - 1
-			}
-			s.mu.Unlock()
-			s.agentState(st)
+		// The agent may be idle again already: its state is applied again, after a pause, so
+		// a refusal that lasts (an owner's stop) does not spin until the readiness limit.
+		select {
+		case <-time.After(roundSendRetry):
+		case <-ctx.Done():
+			return
 		}
+		st, ok := s.cfg.agent(pane)
+		if !ok {
+			return
+		}
+		s.mu.Lock()
+		if cur := s.watches[runID]; cur == w && !s.closed {
+			s.applyLocked(cur, st, true)
+		}
+		s.mu.Unlock()
 		return
 	}
 	s.mu.Unlock()
@@ -329,7 +481,7 @@ func (s *roundsService) deliver(runID, session string) {
 func (s *roundsService) notReady(runID string) {
 	s.mu.Lock()
 	w := s.watches[runID]
-	late := w != nil && w.h != nil && !w.h.blocked && w.h.phase <= phaseDelivering
+	late := w != nil && w.h != nil && !w.h.isBlocked() && w.h.phase == phaseStarting
 	s.mu.Unlock()
 	if late {
 		s.finish(runID, rounds.RunUpdate{State: rounds.RunFailed,
@@ -348,24 +500,27 @@ func (s *roundsService) endTurn(runID, session, kind, native string, u rounds.Ru
 		s.cfg.logf("rounds: run %s: final message: %v", runID, err)
 	}
 	u.Result = msg
-	s.finish(runID, u)
+	s.finishTurn(runID, u)
 }
 
 // harnessTimedOut ends a harness run past its timeout (rounds.md 7.3, 7.4): a working turn is
-// interrupted through its adapter; a blocked run keeps its request open for the user. The pane
-// stays either way.
+// interrupted through its adapter; a blocked run keeps its request open for the user, and the
+// trust dialog stays for the user to answer. The pane stays either way. A turn that already
+// ended keeps its end.
 func (s *roundsService) harnessTimedOut(w *runWatch) {
 	s.mu.Lock()
-	blocked, kind, working := w.h.blocked, w.h.kindOf, w.h.working
+	blocked, trust, kind, working := w.h.blocked, w.h.trust, w.h.kindOf, w.h.working
 	s.mu.Unlock()
 	reason := "ran past its timeout of " + time.Duration(w.round.Timeout).String()
-	if blocked {
+	switch {
+	case trust:
+		reason += "; " + reasonTrust
+	case blocked && kind != "":
 		reason += "; the agent still waits for its " + string(kind) + " request, which stays open"
-		if kind == "" {
-			reason = "ran past its timeout of " + time.Duration(w.round.Timeout).String() + " while blocked"
-		}
+	case blocked:
+		reason += " while blocked"
 	}
-	if !s.finish(w.run.ID, rounds.RunUpdate{State: rounds.RunTimedOut, Reason: reason}) || blocked || !working {
+	if !s.finish(w.run.ID, rounds.RunUpdate{State: rounds.RunTimedOut, Reason: reason}) || blocked || trust || !working {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -374,6 +529,107 @@ func (s *roundsService) harnessTimedOut(w *runWatch) {
 		s.cfg.logf("rounds: run %s: interrupt pane %s: %v", w.run.ID, w.pane, err)
 	}
 }
+
+// --- Claude Code's workspace trust dialog ---
+
+// roundScreenRules are Flightdeck's own screen rules for harness runs, in the detection
+// manifest format. Claude Code asks whether to trust a folder it has not seen before it reports
+// any state; its vendored manifest has no rule for that dialog, and a refresh replaces the
+// vendored files, so the rule lives here.
+const roundScreenRules = `id = "flightdeck-rounds"
+version = "2026.11.2.1"
+min_engine_version = 2
+updated_at = "2026-11-02T00:00:00Z"
+
+[[rules]]
+id = "claude_trust_folder"
+state = "blocked"
+priority = 1000
+region = "whole_recent"
+visible_blocker = true
+contains = ["yes, i trust this folder"]
+any = [
+  { contains = ["quick safety check"] },
+  { contains = ["do you trust the files in this folder"] },
+]
+`
+
+var roundRules = sync.OnceValue(func() *detect.Manifest {
+	m, err := detect.Parse([]byte(roundScreenRules))
+	if err != nil {
+		panic("rounds: screen rules: " + err.Error())
+	}
+	return m
+})
+
+// trustDialog says whether screen shows Claude Code's workspace trust dialog.
+func trustDialog(screen string) bool {
+	r := roundRules().Screen(detect.Input{Screen: screen})
+	return r.Matched && r.Rule == "claude_trust_folder"
+}
+
+// armTrustLocked schedules the next trust dialog check of a Claude Code run that waits for its
+// first idle.
+func (s *roundsService) armTrustLocked(w *runWatch) {
+	h := w.h
+	if s.cfg.screen == nil || h.kind != detect.KindClaude || h.phase != phaseStarting || s.closed {
+		return
+	}
+	id := w.run.ID
+	h.poll = time.AfterFunc(roundTrustPoll, func() { s.goBg(func() { s.checkTrust(id) }) })
+}
+
+// checkTrust reads a starting run's screen for the trust dialog. While it shows, the run is
+// blocked with a reason that names it, and the readiness limit waits; the user answers it in
+// the pane, which is not a take over. Rounds never answer it: trusting a folder is the user's
+// call.
+func (s *roundsService) checkTrust(runID string) {
+	s.mu.Lock()
+	w := s.watches[runID]
+	if w == nil || w.h == nil || w.h.phase != phaseStarting {
+		s.mu.Unlock()
+		return
+	}
+	pane := w.pane
+	s.mu.Unlock()
+	text, ok := s.cfg.screen(pane)
+	shown := ok && trustDialog(text)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.watches[runID] != w || w.h.phase != phaseStarting {
+		return
+	}
+	h := w.h
+	if shown != h.trust {
+		was := h.isBlocked()
+		h.trust = shown
+		if !shown {
+			h.trustGone = time.Now()
+		}
+		switch {
+		case was == h.isBlocked():
+		case shown:
+			if h.ready != nil {
+				h.ready.Stop()
+			}
+			s.liveLocked(w, rounds.RunBlocked)
+		default:
+			if h.ready != nil {
+				h.ready.Reset(s.cfg.ready)
+			}
+			s.liveLocked(w, rounds.RunRunning)
+		}
+	}
+	s.armTrustLocked(w)
+}
+
+// trustAnswer says whether a client's input to a run's pane answers the trust dialog: it shows,
+// or went a moment ago. The caller holds s.mu.
+func (w *runWatch) trustAnswerLocked() bool {
+	return w.h != nil && (w.h.trust || (!w.h.trustGone.IsZero() && time.Since(w.h.trustGone) < roundTrustGrace))
+}
+
+// --- Final message, and adoption after a restart ---
 
 // finalMessage picks a run's result from its conversation: the last agent message after the
 // last user message, which is the run's prompt; with no user message, the last agent message.
@@ -434,4 +690,63 @@ func roundMessages(ctx context.Context, chats *chatService, find func(harness, n
 	}
 	page, err := chats.ChatPage(ctx, api.ChatPageParams{Session: session, Limit: 50})
 	return page.Messages, err
+}
+
+// adoptedTurn reads where an adopted run was from its conversation: delivered, the prompt
+// went in (a user message); ended, an agent message follows it.
+func adoptedTurn(msgs []api.ChatMessage) (delivered, ended bool) {
+	if !slices.ContainsFunc(msgs, func(m api.ChatMessage) bool { return m.Kind == api.ChatKindUser }) {
+		return false, false
+	}
+	_, ended = finalMessage(msgs)
+	return true, ended
+}
+
+// sessionIDArg returns the value of --session-id in a Claude Code argv.
+func sessionIDArg(argv []string) string {
+	for i, a := range argv {
+		if a == "--session-id" && i+1 < len(argv) {
+			return argv[i+1]
+		}
+		if v, ok := strings.CutPrefix(a, "--session-id="); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+// adoptHarness sets where a harness run adopted after a gff-hab restart is (rounds.md 8.4).
+// Whether the prompt went in is not stored; the run's conversation says. Claude Code's session
+// id comes back from the program's argv (--session-id). With no user message the prompt never
+// went in: the run waits for its first idle again, under the readiness limit. With an agent
+// message after it, the turn may have ended while gff-hab was down: the first idle (or done)
+// ends the run. Otherwise, or when the conversation cannot be read, the run is in its turn.
+func (s *roundsService) adoptHarness(session string, pid int, h *harnessWatch) {
+	if h.kind == detect.KindClaude && s.cfg.argv != nil && pid > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		argv, err := s.cfg.argv(ctx, pid)
+		cancel()
+		if err != nil {
+			s.cfg.logf("rounds: session %s: harness arguments: %v", session, err)
+		}
+		h.native = sessionIDArg(argv)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), roundResultWait)
+	defer cancel()
+	msgs, err := s.cfg.messages(ctx, session, h.kind, h.native)
+	if errors.Is(err, transcript.ErrNoTranscript) {
+		msgs, err = nil, nil // the harness writes its transcript at the first message
+	}
+	if err != nil {
+		s.cfg.logf("rounds: session %s: conversation at adoption: %v; the run is taken to be in its turn", session, err)
+		return
+	}
+	switch delivered, ended := adoptedTurn(msgs); {
+	case !delivered:
+		// A run blocked before its prompt waited on a sign-in or the trust dialog; the
+		// agent's next state, or the screen, says again.
+		h.phase, h.blocked = phaseStarting, false
+	case ended:
+		h.adoptDone = true
+	}
 }

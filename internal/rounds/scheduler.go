@@ -110,7 +110,9 @@ type Sink interface {
 
 // RunUpdate reports a run's new state to the scheduler. A final state ends the run.
 type RunUpdate struct {
-	State     RunState
+	State RunState
+	// Reason says why the run ended, or, on a live state, why it is in it (a blocked run's
+	// dialog).
 	Reason    string
 	SessionID string
 	// Result is the final agent message; the scheduler keeps its first MaxResultBytes.
@@ -354,7 +356,9 @@ func (s *Scheduler) UpdateRun(runID string, u RunUpdate) error {
 		if u.SessionID != "" {
 			run.SessionID = u.SessionID
 		}
-		run.State = u.State
+		// A live run's reason says why it is in its state (a blocked run's dialog); the next
+		// live update replaces it, and an empty one clears it.
+		run.State, run.Reason = u.State, u.Reason
 		s.saveRun(run)
 	} else {
 		s.endLocked(run, u, now, false)

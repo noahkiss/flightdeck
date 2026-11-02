@@ -852,17 +852,35 @@ Built (stage 4, task-kt363fw0): `fresh` runs with a harness and a prompt
   started in the home folder).
 - **Readiness.** The prompt goes in at the agent's first `idle` (or `done`, or `error`) after
   the spawn. The 2-minute limit stops while the run is `blocked` (a sign-in at start) and
-  starts again, whole, when it goes on. A first-run dialog the harness reports no state for
-  fails the run at the limit: Claude Code's workspace trust dialog in a folder it does not
-  trust yet. Answer it once in that folder; later runs start at once.
+  starts again, whole, when it goes on. It also stops while the prompt is being sent: the send
+  has its own 30 s limit.
+- **Trust dialog.** In a folder it has not trusted yet, Claude Code asks "Quick safety check
+  ... Yes, I trust this folder" before it reports any state. While a Claude Code run waits
+  for its first `idle`, gff-hab reads the pane's screen every 0.5 s with its own screen rule
+  (the detection manifest format; the vendored Claude manifest has no rule for the dialog).
+  While the dialog shows, the run is `blocked` with a reason that names it, and the readiness
+  limit waits. The user answers it in the pane: that input is not a take over, as an
+  `approval.answer` is not, and neither is input up to 2 s after the dialog went. Rounds never
+  answer it: trusting a folder is the user's call. Unanswered at the timeout, the run ends
+  `timed_out` with that reason. The default option, "No, exit", ends Claude: the run fails,
+  the harness exited.
 - **Delivery.** The prompt goes through `session.send`'s path (paste, then Enter, under the
   input rules) as the hab, so it is not a take over. A refusal for a busy agent waits for its
-  next `idle`, within the readiness limit. A prompt that may have reached the pane in part,
-  or any other refusal, fails the run, "the prompt was not delivered".
+  next `idle`: the agent's current state is applied again after 0.5 s, and the readiness
+  limit starts again, whole. A prompt that may have reached the pane in part, or any other
+  refusal, fails the run, "the prompt was not delivered". A run that ends while its prompt is
+  being sent (the timeout, a take over) cancels the send, so it never pastes the prompt
+  later.
 - **Turn end.** No `session.turn_end` event is sent yet, so the agent state is the turn end:
   the first `done` or `error` after the send began. Read back is `working` or `blocked` after
-  the send. An `idle` in the turn ends nothing: the owner's interrupt key shows `idle` before
-  the input that carried it takes the run over, and that run must end `taken_over`.
+  the send. Before the read back, only a change of state or of turn ends the turn: a
+  republish of a `done` the agent already showed when the send began changes other fields
+  only. An `idle` in the turn ends nothing: the owner's interrupt key shows `idle` before
+  the input that carried it takes the run over, and that run must end `taken_over`. Once the
+  turn's end is seen, it wins: a pane exit, the timeout or a take over that comes while the
+  final message is read leaves the run as the turn ended it (a client typing right after
+  `done` does not take the run over). Agent states are applied with their revision check in
+  one critical section, so a stale state never applies after a newer one.
 - **Result.** The last agent message after the last user message (the prompt), from the
   Claude Code transcript by the session id gff-hab chose, else through the chat view's
   reader. It is read before the run ends, so before `on_finish close` closes the pane
@@ -873,16 +891,26 @@ Built (stage 4, task-kt363fw0): `fresh` runs with a harness and a prompt
   Claude Code's `StopFailure`. The kinds `harness.NetworkFailure` lists (`authentication_failed`,
   `cloud_credential_error`, `server_error`, `unknown`) set the network flag for the retry
   after a wake (8.3). The harness's program exiting before the turn end, whatever its status,
-  fails the run, "the harness exited before its turn ended (exit status N)".
-- **Blocked.** Any `blocked` kind shows the run `blocked`; the agent going on shows it
-  `running` again. The round adds no notice.
+  fails the run, "the harness exited before its turn ended (exit status N)". An `exited`
+  agent state waits 2 s for the pane's exit, which carries the status, and ends the run
+  without it only when the pane does not exit.
+- **Blocked.** Any `blocked` kind, or the trust dialog, shows the run `blocked`; the agent
+  going on shows it `running` again. A live run update now keeps its reason (the trust
+  dialog's), and the next one replaces or clears it. The round adds no notice.
 - **Timeout.** The run ends `timed_out` at once. A turn that is `working` then gets Esc,
   Claude Code's and Codex's interrupt key, through the adapter (the `session.interrupt`
   method itself is still not served). A `blocked` run gets nothing: the reason names the
   request kind, which stays open. opencode has no interrupt yet.
-- **Restarts.** A harness run adopted after a gff-hab restart is taken to be in its turn: it
-  ends at the next turn end, the exit, a take over or the timeout. Whether its prompt went in
-  is not stored.
+- **Restarts.** Whether a run's prompt went in is not stored; an adopted harness run reads
+  its conversation once. Claude Code's session id comes back from the program's arguments
+  (`--session-id`). No user message: the prompt never went in, so the run waits for its first
+  `idle` again, under the readiness limit. An agent message after the user message: the turn
+  may have ended while gff-hab was down, so the first `idle` (or `done`) ends the run
+  `succeeded` with that message. Otherwise, or when the conversation cannot be read (a Codex
+  run before its first hook), the run is taken to be in its turn and ends at the next turn
+  end, the exit, a take over or the timeout.
+- **Close.** gff-hab starts no background work after its rounds close: no prompt is sent and
+  no run ends. Runs stay live on disk for the next gff-hab.
 - **Tests.** `$GFF_TEST_ROUND_READY` (testseam builds only) shortens the readiness limit.
 
 ---
