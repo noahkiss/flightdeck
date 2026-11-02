@@ -39,3 +39,17 @@ helper = "/usr/local/bin/gff-hab-speech"
 # model_url = "https://mirror.example.com/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2"
 # Decode threads. Leave it out for the CPU count, at most 4.
 threads = 4
+
+# The [settings] table: hab-side settings this host locks (docs/specs/app.md 20.5). A setting
+# named here is set by this file: the hab enforces the value and refuses writes from the app,
+# which shows the row read-only. Leave a setting out to let the app set it. Keys are quoted.
+# gff-hab reads this table again a few seconds after the file changes.
+[settings]
+# Confirm before an agent starts work on another host: true or false.
+"confirm.start_elsewhere" = true
+# Remote answers expire after this many minutes: 0 for never, else 1 to 1440.
+# "approval.max_age" = 60
+# Require approval for memories: "off" or "agents".
+# "logbook.approval" = "off"
+# Wait this many seconds for the app's answer to a permission hook: 0 for off, else 1 to 120.
+# "hab.permission_wait" = 30

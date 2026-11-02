@@ -123,7 +123,7 @@ RACE_PKGS := ./internal/holder/... ./internal/holderproto/... ./internal/holderc
 	./internal/control/... ./internal/datastream/... ./internal/habconn/... ./internal/hosts/... ./internal/merge/... ./internal/peers/... ./internal/catalog/... ./internal/channels/... ./internal/board/... ./internal/gffclient/... ./internal/panesize/... ./internal/termq/... \
 	./internal/cmdmarks/... \
 	./internal/harness/... ./internal/hook/... ./internal/opencode/... ./internal/gitstatus/... ./internal/worktree/... ./internal/transcript/... ./internal/usage/... \
-	./internal/service/... ./internal/grants/... ./internal/push/... \
+	./internal/service/... ./internal/grants/... ./internal/push/... ./internal/settings/... \
 	./internal/speech/... ./internal/speechproto/... ./internal/oggopus/... ./internal/attach/... \
 	./cmd/...
 race:

@@ -13,6 +13,7 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/hook"
+	"github.com/noahkiss/flightdeck/internal/settings"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
@@ -83,13 +84,17 @@ func hookSocketPath(flagValue, controlSocket string) (string, error) {
 
 // agentSource adds the agent state of every pane to the structure snapshot.
 type agentSource struct {
-	store  *structure.Store
-	agents *harness.Store
+	store    *structure.Store
+	agents   *harness.Store
+	settings *settings.Service // nil: no settings in the snapshot
 }
 
 func (a agentSource) Snapshot(host api.HostInfo) api.Structure {
 	st := a.store.Snapshot(host)
 	st.Agents = a.agents.Snapshot()
+	if a.settings != nil {
+		st.Settings = a.settings.List()
+	}
 	return st
 }
 

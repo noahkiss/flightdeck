@@ -98,6 +98,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/panesize"
 	"github.com/noahkiss/flightdeck/internal/peers"
 	"github.com/noahkiss/flightdeck/internal/service"
+	"github.com/noahkiss/flightdeck/internal/settings"
 	"github.com/noahkiss/flightdeck/internal/speech"
 	"github.com/noahkiss/flightdeck/internal/structure"
 	"github.com/noahkiss/flightdeck/internal/transcript"
@@ -316,10 +317,14 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
-	pwait, err := permissionWait(*permWait, os.Getenv)
+	permWaitGiven := false
+	fs.Visit(func(f *flag.Flag) { permWaitGiven = permWaitGiven || f.Name == "permission-wait" })
+	pwaitLock, err := permissionWaitLock(*permWait, permWaitGiven, os.Getenv)
 	if err != nil {
 		return err
 	}
+	// The blocking permission hook's gate: its wait is the hab-side setting hab.permission_wait.
+	gate := harness.NewGate(0)
 	starter, err := serveStarter(sf, logger.Printf)
 	if err != nil {
 		return err
@@ -588,7 +593,7 @@ func serve(args []string) error {
 		defer stopCmds()
 		commands = commandService{lk}
 		caps = append(caps, "commands")
-		agentSvc = &agentService{store: store, agents: agents, gate: harness.NewGate(pwait), input: linkQueuer{lk}, logf: logger.Printf,
+		agentSvc = &agentService{store: store, agents: agents, gate: gate, input: linkQueuer{lk}, logf: logger.Printf,
 			answering: pushes.answering, opencode: ocs, attachments: attachSvc}
 		agentCalls = agentSvc
 		// Why a pane shows its state (harness-adapters.md, Detection): read only.
@@ -665,6 +670,32 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Hab-side settings (app.md 20.5): client writes in <state>/settings.json, locks from the
+	// config file's [settings] table and from -permission-wait or $GFF_HAB_PERMISSION_WAIT.
+	overrides := map[string]json.RawMessage{}
+	if pwaitLock != nil {
+		overrides[settings.PermissionWait] = pwaitLock
+	}
+	setSvc, err := settings.Open(settings.Config{
+		State: dir, ConfigPath: cpath, Overrides: overrides,
+		Publish: func(e structure.Event) {
+			if s := srv.Load(); s != nil {
+				s.Publish(e)
+			}
+		},
+		Apply: func(id string, v json.RawMessage) {
+			applySetting(gate, id, v)
+			if id == settings.PermissionWait {
+				logger.Printf("settings: %s = %s", id, v)
+			}
+		},
+		Logf: logger.Printf,
+	})
+	if err != nil {
+		return err
+	}
+	defer setSvc.Close()
+	caps = append(caps, settings.Capability)
 	detectFacts, err := catalog.DetectFor(os.Getenv("GFF_HAB_DETECT"))
 	if err != nil {
 		return err
@@ -733,7 +764,7 @@ func serve(args []string) error {
 		Build:        build,
 		Host:         api.HostInfo{ID: *hostID},
 		DeviceID:     key.Fingerprint(),
-		Source:       agentSource{store: store, agents: agents},
+		Source:       agentSource{store: store, agents: agents, settings: setSvc},
 		Capabilities: caps,
 		Actions:      acts,
 		Data:         data,
@@ -759,6 +790,7 @@ func serve(args []string) error {
 		Worktrees:   wts,
 		Speech:      speechSvc,
 		Attachments: attachments,
+		Settings:    setSvc,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)
@@ -818,9 +850,6 @@ func serve(args []string) error {
 	hooks.SetChannels(channelHook(store, chSvc))
 	if agentSvc != nil {
 		hooks.SetHolder(agentSvc.holdPermission(s.Approvers))
-		if pwait > 0 {
-			logger.Printf("blocking permission hook on: Claude's PermissionRequest waits up to %v for the app's answer", pwait)
-		}
 	}
 	go func() {
 		if err := hooks.Serve(hl); err != nil {

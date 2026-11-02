@@ -1257,6 +1257,8 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		return api.NonNil(res), nil
 	case "catalog.get", "catalog.put", "catalog.list":
 		return c.dispatchCatalog(m, s)
+	case "settings.get", "settings.set":
+		return c.dispatchSettings(m, s)
 	case "peers.list":
 		var p api.PeersListParams
 		if e := c.decodeUp(m, &p); e != nil {

@@ -137,6 +137,9 @@ func (f *filter) pass(e structure.Event) bool {
 		// A notice about a session goes where the session goes; any other goes to everyone.
 		n, ok := e.Data.(api.Notice)
 		return ok && (n.Session == "" || f.sessions[n.Session])
+	case api.EventSettingsUpdated:
+		// The settings are in the host snapshot only (app.md 20.5).
+		return false
 	case api.EventUsageUpdated:
 		// An account's reading is about no session: every subscription gets it.
 		return true

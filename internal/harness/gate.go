@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,9 +22,10 @@ type Decision struct {
 
 // Gate holds the blocking permission hooks that wait for the app's answer (harness-adapters.md,
 // Open decisions: Claude blocking PermissionRequest hook). It is the owner's switch: a Gate
-// made with a zero wait is off, and no hook ever waits. It is safe for concurrent use.
+// made with a zero wait is off, and no hook ever waits. SetWait changes the wait for the next
+// hook (the hab-side setting hab.permission_wait, app.md 20.4). It is safe for concurrent use.
 type Gate struct {
-	wait  time.Duration
+	wait  atomic.Int64 // a time.Duration
 	now   func() time.Time
 	mu    sync.Mutex
 	waits map[gateKey]chan delivery
@@ -42,11 +44,19 @@ type delivery struct {
 // NewGate returns a gate whose hooks wait at most wait, capped at MaxPermissionWait. Zero or
 // less turns it off.
 func NewGate(wait time.Duration) *Gate {
-	return &Gate{wait: min(wait, MaxPermissionWait), now: time.Now, waits: map[gateKey]chan delivery{}, ended: map[gateKey]time.Time{}}
+	g := &Gate{now: time.Now, waits: map[gateKey]chan delivery{}, ended: map[gateKey]time.Time{}}
+	g.SetWait(wait)
+	return g
+}
+
+// SetWait sets how long the next hook waits, capped at MaxPermissionWait. Zero or less turns
+// the gate off. A hook already waiting keeps its wait.
+func (g *Gate) SetWait(wait time.Duration) {
+	g.wait.Store(int64(max(0, min(wait, MaxPermissionWait))))
 }
 
 // Enabled reports whether hooks may wait.
-func (g *Gate) Enabled() bool { return g != nil && g.wait > 0 }
+func (g *Gate) Enabled() bool { return g != nil && g.wait.Load() > 0 }
 
 // Wait is Hold, then the hold's Wait.
 func (g *Gate) Wait(ctx context.Context, pane, request string) (d Decision, written func(error), ok bool) {
@@ -57,7 +67,11 @@ func (g *Gate) Wait(ctx context.Context, pane, request string) (d Decision, writ
 // even before the hook starts waiting. The caller must call the hold's Wait. A second hold for
 // the same request replaces the first, which ends with no decision.
 func (g *Gate) Hold(pane, request string) *Hold {
-	if !g.Enabled() {
+	wait := time.Duration(0)
+	if g != nil {
+		wait = time.Duration(g.wait.Load())
+	}
+	if wait <= 0 {
 		return &Hold{}
 	}
 	k := gateKey{pane, request}
@@ -68,14 +82,15 @@ func (g *Gate) Hold(pane, request string) *Hold {
 	}
 	g.waits[k] = ch
 	g.mu.Unlock()
-	return &Hold{g: g, k: k, ch: ch}
+	return &Hold{g: g, k: k, ch: ch, wait: wait}
 }
 
 // Hold is one registered wait (Gate.Hold).
 type Hold struct {
-	g  *Gate
-	k  gateKey
-	ch chan delivery
+	g    *Gate
+	k    gateKey
+	ch   chan delivery
+	wait time.Duration // the gate's wait when the hold was made
 }
 
 // Wait blocks until Answer delivers a decision for the hold's request, the wait runs out,
@@ -88,7 +103,7 @@ func (h *Hold) Wait(ctx context.Context) (d Decision, written func(error), ok bo
 		return Decision{}, nil, false
 	}
 	k, ch := h.k, h.ch
-	t := time.NewTimer(g.wait)
+	t := time.NewTimer(h.wait)
 	defer t.Stop()
 	var dl delivery
 	select {

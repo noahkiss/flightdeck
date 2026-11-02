@@ -636,15 +636,15 @@ its dialer (`mesh.md` 6.5). `mesh.changed` is the one event a connection gets wi
 `events.subscribe`: it goes only to a peer link, from the hab that link dialed.
 `devices` means the embedded SSH
 server is on and the `devices.*` methods work. `push` means the hab has working push config;
-`host-stats` means `hab.stats` works (3.9). Planned: `settings`, for hab-side settings
-(`settings.get`, `settings.set`, `settings.updated`; `app.md` 20.5). A client checks for a
-capability before it uses the feature. Capabilities are for features that a host may
-lack. They are not a second versioning scheme.
+`host-stats` means `hab.stats` works (3.9). `settings` means the hab-side settings work:
+`settings.get`, `settings.set`, `settings.updated`, and `settings` in a `host` snapshot
+(`app.md` 20.5). A client checks for a capability before it uses the feature. Capabilities are
+for features that a host may lack. They are not a second versioning scheme.
 
 Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt`,
 `transcripts` and `detect-explain` (`detect.explain` works). It always sends `mesh`, `idempotency-keys`,
 `catalog`, `channels` and `usage` (`usage.list` and `usage.updated` work; readings arrive only through panes with the
-holder link). It sends `push` only when its push config loads and validates
+holder link), and `settings`. It sends `push` only when its push config loads and validates
 (3.9, Push), and `speech` only when the speech helper is found and the host setting leaves the
 engine on (`voice.md`, Built choices).
 
@@ -719,8 +719,10 @@ JSON-RPC error objects with code `-32000` for application errors. `data` always 
 
 Clients branch on `kind`, never on `message`.
 
-Planned with the `settings` capability: kind `locked`, a setting set in the hab's config, with
-`data.id` (`app.md` 20.5). Kinds are a server-sent word set, so adding one needs no revision.
+With the `settings` capability: kind `locked`, a setting set in the hab's config. `data.id`
+names the first refused row on every `settings.set` error the settings service raises; a
+`settings.set` refused before any row is read (params that do not decode, no `settings`
+capability) carries none. Kinds are a server-sent word set, so adding one needs no revision.
 
 ### 3.7 Reconnect
 
@@ -811,7 +813,7 @@ names the stage, and an event is defined but never sent.
 | `worktree.list`, `worktree.create`, `worktree.setup`, `worktree.remove` | A project's git worktrees: list, make one and run its setup script, run a pending setup, remove one (3.10) | Yes (task-wvbuz085) |
 | `speech.prepare` | Load the speech engine and start the model download if needed; returns the engine state at once (capability `speech`; `voice.md`, API addition) | Yes (task-h011ghy9) |
 | `speech.transcribe` | Turn one recorded clip into text, one decode at a time in arrival order (capability `speech`; `voice.md`, API addition) | Yes (task-h011ghy9) |
-| `settings.get`, `settings.set` | Read hab-side settings, and write them all or nothing with a revision check; event `settings.updated` (capability `settings`; `app.md` 20.5) | Planned (task-yfmrj6yc) |
+| `settings.get`, `settings.set` | Read hab-side settings, and write them all or nothing with a revision check; event `settings.updated` (capability `settings`; `app.md` 20.5) | Yes (task-yfmrj6yc) |
 
 | Event | Purpose | Id | Sent from |
 |---|---|---|---|

@@ -203,6 +203,7 @@ type Config struct {
 	Worktrees    Worktrees   // nil: the worktree.* methods answer unavailable
 	Speech       Speech      // nil: speech.prepare and speech.transcribe answer unavailable
 	Attachments  Attachments // nil: the attachment.* methods answer unavailable
+	Settings     Settings    // nil: settings.get and settings.set answer unavailable
 	// ApproversChanged, if set, is called with no lock held after a connection closes or
 	// changes its subscription, so Approvers may have dropped.
 	ApproversChanged func()

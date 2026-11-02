@@ -21,6 +21,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/link"
 	"github.com/noahkiss/flightdeck/internal/opencode"
+	"github.com/noahkiss/flightdeck/internal/settings"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
@@ -515,31 +516,41 @@ func agentErr(err error) error {
 	return control.Errorf(api.ErrorKindInvalid, "%v", err)
 }
 
-// permissionWait picks how long a blocking permission hook waits for the app's answer:
-// -permission-wait, else $GFF_HAB_PERMISSION_WAIT (a Go duration, or seconds), else 0, which
-// keeps the hook off. The owner turns it on (harness-adapters.md, Open decisions).
-func permissionWait(flagValue time.Duration, getenv func(string) string) (time.Duration, error) {
+// permissionWaitLock reads -permission-wait, else $GFF_HAB_PERMISSION_WAIT (a Go duration, or
+// seconds). Either one, when given, locks the hab-side setting hab.permission_wait (app.md 20.4,
+// 20.5): the result is its value in whole seconds, rounded. Neither given: nil, and the setting
+// takes the app's value, else 0, which keeps the hook off (harness-adapters.md, Open decisions).
+func permissionWaitLock(flagValue time.Duration, flagGiven bool, getenv func(string) string) (json.RawMessage, error) {
 	d, from := flagValue, "-permission-wait"
-	if d == 0 {
+	if !flagGiven {
 		v := getenv("GFF_HAB_PERMISSION_WAIT")
 		if v == "" {
-			return 0, nil
+			return nil, nil
 		}
 		from = "GFF_HAB_PERMISSION_WAIT"
 		var err error
 		if d, err = time.ParseDuration(v); err != nil {
 			n, nerr := strconv.Atoi(v)
 			if nerr != nil {
-				return 0, fmt.Errorf("%s=%q: want a duration such as 30s", from, v)
+				return nil, fmt.Errorf("%s=%q: want a duration such as 30s", from, v)
 			}
 			d = time.Duration(n) * time.Second
 		}
-		if d == 0 {
-			return 0, nil
+	}
+	if d != 0 && (d < time.Second || d > harness.MaxPermissionWait) {
+		return nil, fmt.Errorf("%s %v: must be 1s to %v, or 0 for off", from, d, harness.MaxPermissionWait)
+	}
+	return json.RawMessage(strconv.Itoa(int(d.Round(time.Second) / time.Second))), nil
+}
+
+// applySetting hands a hab-side setting's value to the code that enforces it (app.md 20.5).
+// Only hab.permission_wait has a consumer today; confirm.start_elsewhere (Capcom),
+// approval.max_age (request expiry) and logbook.approval (Logbook) are stored and served only.
+func applySetting(gate *harness.Gate, id string, v json.RawMessage) {
+	if id == settings.PermissionWait {
+		var secs int
+		if json.Unmarshal(v, &secs) == nil {
+			gate.SetWait(time.Duration(secs) * time.Second)
 		}
 	}
-	if d < time.Second || d > harness.MaxPermissionWait {
-		return 0, fmt.Errorf("%s %v: must be 1s to %v, or 0 for off", from, d, harness.MaxPermissionWait)
-	}
-	return d, nil
 }

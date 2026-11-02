@@ -2756,8 +2756,33 @@ with the build stage:
   carries a revision and a client orders it against the snapshot like any other object.
 - **The hab applies a change at once:** to the next start elsewhere, the next request's expiry,
   the next memory write, the next permission hook.
-- **Until it is built**, a hab without `settings` keeps the values from its config and flags, and
-  the app shows its rows read-only. `hab-logic-api.md` 3.4, 3.6 and 3.9 point here as planned.
+- **A hab without `settings`** keeps the values from its config and flags, and the app shows its
+  rows read-only.
+
+Built choices on the hab (task-yfmrj6yc, `internal/settings`):
+
+- **What each setting drives.** `hab.permission_wait` sets the blocking hook's wait for the next
+  hook; a hook already waiting keeps its wait. The other three are stored and served only: their
+  consumers are not built (`confirm.start_elsewhere` waits for Capcom, `approval.max_age` for the
+  request expiry of 7.4, `logbook.approval` for Logbook).
+- **The flag lock.** `-permission-wait` given on the command line, even as 0, or a non-empty
+  `$GFF_HAB_PERMISSION_WAIT`, locks `hab.permission_wait` in whole seconds, rounded. A flag wins
+  over the config file.
+- **The config file.** An entry of `[settings]` that names no hab-side setting, or holds a value
+  outside its type, is logged and left out; it locks nothing. A file that does not parse stops
+  gff-hab at start, since it cannot enforce what it cannot read; at a later read it keeps the
+  locks from the last good read. A lock that appeared, changed or went while gff-hab was stopped
+  raises the revision at the next start (`settings.json` keeps the last lock it saw).
+- **Checks, in order per row:** unknown id, lock, revision, value. A row named twice in one call
+  is `invalid`. A save that fails is `unavailable`, names the first row and changes nothing. A
+  written row's source becomes `client` even when its value did not change, so the new-hab check
+  leaves it alone. The result lists the written rows. Params that do not decode carry no
+  `data.id`: no row was read.
+- **`settings.get` with `ids`** leaves out an id the hab does not know, so a newer app reads
+  absence as "not on this hab" without a failed call.
+- **A `settings.json` that does not parse** is logged and the settings start from the defaults at
+  revision 1; a new epoch orders nothing across it.
+- **Integers** are whole JSON numbers in range; `30.0` and `1.5` are refused.
 
 ### 20.6 Dropped, not settings
 
