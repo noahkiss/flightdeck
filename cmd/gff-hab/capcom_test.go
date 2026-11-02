@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -280,6 +281,53 @@ func TestCapcomHost(t *testing.T) {
 	if _, err := capcomOpen(t, c, false); errKind(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "holder is not connected") {
 		t.Fatalf("open with the standing pane lost: %v", err)
 	}
+}
+
+// TestCapcomHolderNotReached: gff-hab starts while the holder is stopped (SIGSTOP), so the link
+// has not reached it and the standing session shows exited with no status. capcom.open and
+// session.resume refuse, since its harness may still run. Once the holder runs again, the
+// session runs again in the same pane, and no second harness started.
+func TestCapcomHolderNotReached(t *testing.T) {
+	e := newHolderEnv(t, 0)
+	e.env = []string{"PATH=" + fakeHarnessBin(t) + string(os.PathListSeparator) + os.Getenv("PATH"), "CLAUDE_CONFIG_DIR=" + shortDir(t)}
+	e.serve()
+	c := e.control()
+	run(t, "capcom", "assign", "-socket", e.sock, "self")
+	first := mustOpen(t, c, false)
+	argvLog := filepath.Join(first.Dir, "argv.log")
+	waitUntil(t, "the harness started", func() bool { _, err := os.Stat(argvLog); return err == nil })
+
+	e.stopHab(false)
+	if err := e.holder.Process.Signal(syscall.SIGSTOP); err != nil {
+		t.Fatal(err)
+	}
+	resumed := false
+	t.Cleanup(func() {
+		if !resumed {
+			e.holder.Process.Signal(syscall.SIGCONT)
+		}
+	})
+	e.serve()
+	c = e.control()
+	waitSession(t, c, first.Session, "exited with no status", func(s api.Session) bool { return s.State == api.SessionStateExited && s.Exit == nil })
+	if _, err := capcomOpen(t, c, false); errKind(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "holder is not connected") {
+		t.Fatalf("open with the holder not reached: %v", err)
+	}
+	if _, err := resume(t, c, first.Session); errKind(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "holder is not connected") {
+		t.Fatalf("resume with the holder not reached: %v", err)
+	}
+
+	if err := e.holder.Process.Signal(syscall.SIGCONT); err != nil {
+		t.Fatal(err)
+	}
+	resumed = true
+	waitSession(t, c, first.Session, "running again", func(s api.Session) bool {
+		return s.State == api.SessionStateRunning && s.Pane == first.Pane
+	})
+	if got := readLines(t, argvLog); len(got) != 1 {
+		t.Fatalf("harness starts %q, want one", got)
+	}
+	writeFile(t, filepath.Join(first.Dir, "stop"), "")
 }
 
 // TestCapcomResumeAfterHolderLoss: the holder dies for good (a crash or a reboot: its registry
