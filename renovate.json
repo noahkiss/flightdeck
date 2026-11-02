@@ -1,0 +1,17 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["github>noahkiss/renovate-config"],
+  "packageRules": [
+    {
+      "description": "Moves only with GHOSTTY_COMMIT in the Makefile, by hand (docs/layout.md, The terminal parser)",
+      "matchPackageNames": ["go.mitchellh.com/libghostty"],
+      "enabled": false
+    },
+    {
+      "description": "zig must match the pinned Ghostty commit's minimum_zig_version; bumped with it, by hand",
+      "matchManagers": ["mise"],
+      "matchPackageNames": ["zig"],
+      "enabled": false
+    }
+  ]
+}
