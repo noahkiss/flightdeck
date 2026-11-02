@@ -159,6 +159,7 @@ type confirmService interface {
 	Request(ctx context.Context, p api.ConfirmRequestParams) (api.Confirmation, error)
 	List(all bool) []api.Confirmation
 	Get(id string) (api.Confirmation, error)
+	Targets() []api.ConfirmTarget
 }
 
 // confirmHook answers the confirmation methods from a pane (capcom.md 6.1): the pane's session
@@ -191,19 +192,30 @@ func confirmHook(store *structure.Store, svc confirmService) hook.ChannelHandler
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, nil, bad(err)
 			}
-			return api.ConfirmList{Confirmations: svc.List(p.All)}, nil, nil
+			return api.ConfirmList{Confirmations: svc.List(p.All), Targets: svc.Targets()}, nil, nil
 		}
 	}
 }
 
-// inCapcomFolder reports whether a folder lies under the hab's Capcom folders (capcom.md 7.1):
-// until sessions carry kind capcom, a session working there is Capcom.
-func inCapcomFolder(state, folder string) bool {
-	if folder == "" {
-		return false
+// confirmTargets lists the hosts a start can go to now (confirm.list): this hab, and each peer
+// with its reason when a start there would be refused.
+func confirmTargets(host string, links func() []confirmLink) func() []api.ConfirmTarget {
+	return func() []api.ConfirmTarget {
+		out := []api.ConfirmTarget{{Host: host, Ready: true}}
+		for _, l := range links() {
+			t := api.ConfirmTarget{Host: l.Label}
+			switch {
+			case !l.Online || l.Caller == nil:
+				t.Reason = "offline, or only its own link to this hab is up"
+			case !slices.Contains(l.Caps, confirm.Capability):
+				t.Reason = "its gff-hab lacks the confirm capability; update it"
+			default:
+				t.Ready = true
+			}
+			out = append(out, t)
+		}
+		return out
 	}
-	rel, err := filepath.Rel(filepath.Join(state, capcomDir), folder)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // confirmLinks lists the peer links for the runner.

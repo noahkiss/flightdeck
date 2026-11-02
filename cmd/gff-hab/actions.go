@@ -81,6 +81,8 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 		return "", "", control.Errorf(api.ErrorKindUnavailable, "this hab cannot queue a seed: it runs without channels")
 	case strings.HasPrefix(p.Model, "-"):
 		return "", "", control.Errorf(api.ErrorKindInvalid, "model %q is not a model name", p.Model)
+	case p.SeedFrom != "" && !validSeedFrom(p.SeedFrom):
+		return "", "", control.Errorf(api.ErrorKindInvalid, "seed_from %q is not host/session: use %s on each side", p.SeedFrom, channels.NameRule)
 	}
 	if p.Seed != "" {
 		if err := confirm.CheckSeed(p.Seed); err != nil {
@@ -221,6 +223,13 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 		}
 	}
 	return ss.ID, pane, nil
+}
+
+// validSeedFrom reports whether seed_from is host/session with both in the channel charset, so
+// it cannot forge the seed envelope's header.
+func validSeedFrom(s string) bool {
+	host, session, ok := strings.Cut(s, "/")
+	return ok && channels.ValidName(host) && channels.ValidName(session)
 }
 
 // recentDir returns the project's most recently used folder that is still a directory, or "".

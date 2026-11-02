@@ -170,7 +170,7 @@ var readTools = []kitTool{
 
 // actionTools is every action tool, in the order the manual lists them.
 var actionTools = []kitTool{
-	{Name: "start_session", Action: true, Doc: "Start an agent session in a project folder on a host, seeded with your brief as its first message. With the owner's confirmation setting on, the owner confirms it in Flightdeck first, and may edit it; the tool waits up to 120 s and then says it is still waiting. Returns the new session's name and host, or why it did not start.",
+	{Name: "start_session", Action: true, Doc: "Start an agent session in a project folder on a host, seeded with your brief as its first message. With the owner's confirmation setting on, the owner confirms it in Flightdeck first, and may edit it; the tool waits up to 45 s and then says it is still waiting; the answer then reaches you as a message from Flightdeck. Returns the new session's name and host, or why it did not start.",
 		Args: []toolArg{{Name: "folder", Type: "string", Doc: "The absolute project folder on that host, from projects or suggest_host.", Required: true},
 			{Name: "harness", Type: "string", Doc: "claude, codex or opencode.", Required: true},
 			{Name: "host", Type: "string", Doc: "A host's label from the hosts tool. Absent: this host."},

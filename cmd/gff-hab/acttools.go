@@ -11,7 +11,12 @@ import (
 	"github.com/noahkiss/flightdeck/internal/suggest"
 )
 
-// actionCallTime bounds one action tool call: the 120 s wait for the user, then a start's run.
+// startWait is how long start_session waits for the owner's answer: under the shortest default
+// MCP tool timeout of the supported harnesses, so the call returns "still waiting" before the
+// harness gives up on it (capcom.md 6.4). confirm.request itself takes up to 120 s.
+const startWait = 45 * time.Second
+
+// actionCallTime bounds one action tool call: the longest wait for the user, then a start's run.
 const actionCallTime = confirm.MaxWait + confirm.RunTime + 10*time.Second
 
 // runSuggest ranks the hosts from the merged catalog (capcom.md 3.3). It reads only.
@@ -26,8 +31,19 @@ func runSuggest(ctx context.Context, c caller, a toolArgs) (any, string, error) 
 			needs = append(needs, n)
 		}
 	}
-	r := suggest.Rank(cl, suggest.Request{Project: a.str("project"), Branch: a.str("branch"), Needs: needs,
-		Harness: a.str("harness"), Host: a.str("host")})
+	req := suggest.Request{Project: a.str("project"), Branch: a.str("branch"), Needs: needs,
+		Harness: a.str("harness"), Host: a.str("host")}
+	// Hosts a start would be refused on (a hab without confirm answers unavailable: no filter).
+	var tl api.ConfirmList
+	if err := c.Call(ctx, "confirm.list", api.ConfirmListParams{}, &tl); err == nil {
+		req.Refused = map[string]string{}
+		for _, t := range tl.Targets {
+			if !t.Ready {
+				req.Refused[t.Host] = t.Reason
+			}
+		}
+	}
+	r := suggest.Rank(cl, req)
 	var b strings.Builder
 	line := func(prefix string, c suggest.Candidate) {
 		fmt.Fprintf(&b, "%s %s", prefix, c.Host)
@@ -64,7 +80,7 @@ func runConfirmationRead(ctx context.Context, c caller, a toolArgs) (any, string
 
 // runStart asks the hab for a start and waits up to 120 s for the answer (capcom.md 6.1).
 func runStart(ctx context.Context, c caller, a toolArgs) (any, string, error) {
-	p := api.ConfirmRequestParams{Kind: "start", WaitMS: int(confirm.MaxWait / time.Millisecond), Start: &api.ConfirmStart{
+	p := api.ConfirmRequestParams{Kind: "start", WaitMS: int(startWait / time.Millisecond), Start: &api.ConfirmStart{
 		Host: a.str("host"), Folder: a.str("folder"), Harness: a.str("harness"), Model: a.str("model"),
 		Name: a.str("name"), Seed: a.str("seed")}}
 	var r api.ConfirmRequested

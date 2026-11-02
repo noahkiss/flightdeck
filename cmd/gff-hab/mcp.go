@@ -63,6 +63,16 @@ type mcpServer struct {
 	mu  sync.Mutex // one message written at a time
 	out io.Writer
 	wg  sync.WaitGroup
+
+	callMu  sync.Mutex
+	running map[string]*mcpCall // tool calls in flight, by request id
+}
+
+// mcpCall is one tool call in flight. notifications/cancelled cancels it: its hab call ends,
+// so a start's wait ends and the answer comes later as a message (capcom.md 6.1).
+type mcpCall struct {
+	cancel    context.CancelFunc
+	cancelled bool
 }
 
 type mcpMessage struct {
@@ -133,6 +143,19 @@ func (m *mcpServer) handle(line []byte) {
 		return
 	}
 	if msg.ID == nil { // a notification: nothing to answer
+		if msg.Method == "notifications/cancelled" {
+			var p struct {
+				RequestID json.RawMessage `json:"requestId"`
+			}
+			if json.Unmarshal(msg.Params, &p) == nil {
+				m.callMu.Lock()
+				if c := m.running[string(p.RequestID)]; c != nil {
+					c.cancelled = true
+					c.cancel()
+				}
+				m.callMu.Unlock()
+			}
+		}
 		return
 	}
 	switch msg.Method {
@@ -182,10 +205,31 @@ func (m *mcpServer) handle(line []byte) {
 			m.reply(msg.ID, toolError(err))
 			return
 		}
+		wait := mcpCallTime
+		if t.Action {
+			wait = actionCallTime
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), wait)
+		call := &mcpCall{cancel: cancel}
+		key := string(msg.ID)
+		m.callMu.Lock()
+		if m.running == nil {
+			m.running = map[string]*mcpCall{}
+		}
+		m.running[key] = call
+		m.callMu.Unlock()
 		m.wg.Add(1)
 		go func() {
 			defer m.wg.Done()
-			m.reply(msg.ID, m.call(t, a))
+			defer cancel()
+			res := m.call(ctx, t, a)
+			m.callMu.Lock()
+			delete(m.running, key)
+			gone := call.cancelled
+			m.callMu.Unlock()
+			if !gone { // a cancelled request gets no answer (MCP, cancellation)
+				m.reply(msg.ID, res)
+			}
 		}()
 	default:
 		if msg.Method == "" {
@@ -197,13 +241,7 @@ func (m *mcpServer) handle(line []byte) {
 }
 
 // call runs one tool and returns its MCP result.
-func (m *mcpServer) call(t kitTool, a toolArgs) map[string]any {
-	wait := mcpCallTime
-	if t.Action {
-		wait = actionCallTime
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), wait)
-	defer cancel()
+func (m *mcpServer) call(ctx context.Context, t kitTool, a toolArgs) map[string]any {
 	c, done, err := m.dial(ctx)
 	if err != nil {
 		return toolError(fmt.Errorf("cannot reach the hab: %w", err))

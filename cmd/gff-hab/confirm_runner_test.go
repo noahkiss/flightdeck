@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/confirm"
@@ -85,9 +88,68 @@ func TestConfirmRunnerPeers(t *testing.T) {
 	if _, err := r.RunStart(context.Background(), "id-4", "capcom", s); err == nil || errors.Is(err, confirm.ErrUnknown) {
 		t.Fatalf("offline at run: %v", err)
 	}
-	if !inCapcomFolder("/st", "/st/capcom/c1") || inCapcomFolder("/st", "/st/capcomx") || inCapcomFolder("/st", "") {
-		t.Fatal("inCapcomFolder")
+	links[0].Online = true
+	ts := confirmTargets("mac", func() []confirmLink { return links })()
+	if len(ts) != 4 || !ts[0].Ready || ts[0].Host != "mac" || !ts[1].Ready || ts[2].Ready || !strings.Contains(ts[3].Reason, "confirm capability") {
+		t.Fatalf("targets: %+v", ts)
 	}
+	if !validSeedFrom("mac/capcom") || validSeedFrom("mac/cap com") || validSeedFrom("capcom") || validSeedFrom("a]/b") {
+		t.Fatal("validSeedFrom")
+	}
+}
+
+// TestMCPCancelled: notifications/cancelled ends that call's hab call, and the cancelled
+// request gets no answer.
+func TestMCPCancelled(t *testing.T) {
+	entered := make(chan struct{})
+	ended := make(chan error, 1)
+	blocking := callerFunc(func(ctx context.Context, method string, _, _ any) error {
+		if method != "confirm.request" {
+			return errors.New("unexpected " + method)
+		}
+		close(entered)
+		<-ctx.Done()
+		ended <- ctx.Err()
+		return ctx.Err()
+	})
+	m := &mcpServer{dial: func(context.Context) (caller, func(), error) { return blocking, func() {}, nil }}
+	r, w := io.Pipe()
+	var out bytes.Buffer
+	done := make(chan error)
+	go func() { done <- m.serve(r, &out) }()
+	io.WriteString(w, `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"start_session","arguments":{"folder":"/a","harness":"claude"}}}`+"\n")
+	<-entered
+	io.WriteString(w, `{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":7,"reason":"timeout"}}`+"\n")
+	select {
+	case err := <-ended:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("hab call ended with %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the cancel did not reach the hab call")
+	}
+	w.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("a cancelled request was answered: %s", out.String())
+	}
+}
+
+// TestSnapshotOpenOnly: the host snapshot carries only open confirmations; a running one has
+// its answer already.
+func TestSnapshotOpenOnly(t *testing.T) {
+	got := openOnly([]api.Confirmation{{ID: "a", State: "open"}, {ID: "b", State: "running"}, {ID: "c", State: "open"}})
+	if len(got) != 2 || got[0].ID != "a" || got[1].ID != "c" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+type callerFunc func(ctx context.Context, method string, params, result any) error
+
+func (f callerFunc) Call(ctx context.Context, method string, params, result any) error {
+	return f(ctx, method, params, result)
 }
 
 // TestActionToolText: the start tool's text tells the agent to wait for the message, never to

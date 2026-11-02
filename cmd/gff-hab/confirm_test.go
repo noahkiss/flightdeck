@@ -6,12 +6,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/confirm"
 	"github.com/noahkiss/flightdeck/internal/control"
 )
 
@@ -47,9 +48,9 @@ func sessionCount(t *testing.T, c *control.Client) int {
 // TestConfirmStart: confirmations end to end with the real holder and gff-hab. With
 // confirm.start_elsewhere off (the default), a start runs at once, its card a record, and the
 // seed reaches the new agent in its start envelope; a repeat create with the confirmation id
-// starts nothing new. With it on, a start Capcom asks for opens a confirmation, shown in the
-// host snapshot and as confirm.requested, and starts nothing until confirm.answer; the second
-// answer gets conflict; Capcom hears the outcome as a note from Flightdeck.
+// starts nothing new. With it on, a start on this hab still runs at once; a start another hab
+// asks for over its link opens a confirmation there and starts nothing here until the answer;
+// the edited seed runs, the second answer gets conflict, and the requester hears the outcome.
 func TestConfirmStart(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
@@ -103,92 +104,66 @@ func TestConfirmStart(t *testing.T) {
 		t.Fatalf("a repeat with the confirmation id started another session: %+v vs %+v", again, cf.Result)
 	}
 
-	// On: a Capcom session's start waits for the user.
+	// On, as seen from another hab: a requesting hab whose peer link reaches this one opens a
+	// confirmation, and nothing starts here until the user confirms it.
 	var set api.SettingsResult
 	if err := c.Call(ctx, "settings.set", api.SettingsSetParams{Values: []api.SettingWrite{
 		{ID: "confirm.start_elsewhere", Value: json.RawMessage(`true`), Revision: 1}}}, &set); err != nil {
 		t.Fatal(err)
 	}
-	capDir := filepath.Join(e.state, capcomDir, "c1")
-	if err := os.MkdirAll(capDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	var capcom api.SessionCreated
-	if err := c.Call(ctx, "session.create", api.SessionCreateParams{Name: "capcom", Harness: "claude", Cwd: capDir}, &capcom); err != nil {
-		t.Fatal(err)
-	}
-	sub := e.control()
-	var snap api.StructureResult
-	if err := sub.Call(ctx, "events.subscribe", api.SubscribeParams{Scope: api.Scope{Kind: api.ScopeKindHost}}, &snap); err != nil {
-		t.Fatal(err)
-	}
-	n = sessionCount(t, c)
+	// On this hab itself a start never asks, the setting on or not.
 	r = api.ConfirmRequested{}
-	if err := c.Call(ctx, "confirm.request", api.ConfirmRequestParams{Kind: "start", From: "capcom",
-		Start: &api.ConfirmStart{Folder: repo, Harness: "claude", Seed: "Write the docs."}}, &r); err != nil {
+	if err := c.Call(ctx, "confirm.request", api.ConfirmRequestParams{Kind: "start",
+		Start: &api.ConfirmStart{Folder: repo, Harness: "claude", Name: "own"}}, &r); err != nil || !r.Confirmation.Record {
+		t.Fatalf("own host with the setting on: %+v %v", r.Confirmation, err)
+	}
+	link := e.control()
+	var notes []string
+	var notesMu sync.Mutex
+	asker, err := confirm.New(confirm.Config{
+		Runner: &confirmRunner{host: "asker", links: func() []confirmLink {
+			return []confirmLink{{Label: "target", Online: true, Caps: []string{"confirm"}, Caller: link}}
+		}},
+		Enabled: func() bool { return true },
+		Notify: func(session, text string) error {
+			notesMu.Lock()
+			notes = append(notes, session+": "+text)
+			notesMu.Unlock()
+			return nil
+		},
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	cf = r.Confirmation
-	if cf.State != "open" || cf.Record || cf.ExpiresAt == "" {
-		t.Fatalf("open: %+v", cf)
-	}
-	waitEvent(t, sub, "confirm.requested", cf.ID)
-	var st api.StructureResult
-	if err := c.Call(ctx, "events.subscribe", api.SubscribeParams{Scope: api.Scope{Kind: api.ScopeKindHost}}, &st); err != nil {
-		t.Fatal(err)
-	}
-	if !slices.ContainsFunc(st.Confirmations, func(x api.Confirmation) bool { return x.ID == cf.ID }) {
-		t.Fatalf("the snapshot lacks the open confirmation: %+v", st.Confirmations)
+	defer asker.Close()
+	n = sessionCount(t, c)
+	cf, err = asker.Request(ctx, api.ConfirmRequestParams{Kind: "start", From: "capcom",
+		Start: &api.ConfirmStart{Host: "target", Folder: repo, Harness: "claude", Seed: "Write the docs."}})
+	if err != nil || cf.State != "open" || cf.Record || cf.ExpiresAt == "" {
+		t.Fatalf("open: %+v %v", cf, err)
 	}
 	time.Sleep(200 * time.Millisecond)
 	if sessionCount(t, c) != n {
 		t.Fatal("a session started before the confirm")
 	}
-	var ans api.ConfirmationResult
-	if err := c.Call(ctx, "confirm.answer", api.ConfirmAnswerParams{ID: cf.ID, Choice: "confirm",
-		Edits: &api.ConfirmEdits{Seed: "Write the docs, then the tests."}}, &ans); err != nil {
-		t.Fatal(err)
+	ans, err := asker.Answer(ctx, "phone", api.ConfirmAnswerParams{ID: cf.ID, Choice: "confirm",
+		Edits: &api.ConfirmEdits{Seed: "Write the docs, then the tests."}})
+	if err != nil || ans.State != "done" || !ans.Edited || sessionCount(t, c) != n+1 {
+		t.Fatalf("answer: %+v %v", ans, err)
 	}
-	if ans.Confirmation.State != "done" || !ans.Confirmation.Edited || sessionCount(t, c) != n+1 {
-		t.Fatalf("answer: %+v", ans.Confirmation)
-	}
-	waitEvent(t, sub, "confirm.closed", cf.ID)
-	err := c.Call(ctx, "confirm.answer", api.ConfirmAnswerParams{ID: cf.ID, Choice: "cancel"}, &ans)
-	if errKind(err) != api.ErrorKindConflict {
+	if _, err := asker.Answer(ctx, "mac", api.ConfirmAnswerParams{ID: cf.ID, Choice: "cancel"}); errKind(err) != api.ErrorKindConflict {
 		t.Fatalf("second answer: %v", err)
 	}
-	waitUntil(t, "the edited seed and Capcom's note", func() bool {
+	waitUntil(t, "the edited seed, from the requesting hab's session", func() bool {
 		s := pastedAll(e.work, "in")
-		return strings.Contains(s, "Write the docs, then the tests.") && strings.Contains(s, "[Flightdeck: a message from Flightdeck itself") &&
-			strings.Contains(s, "Confirmation "+cf.ID+": the owner confirmed")
+		return strings.Contains(s, "Write the docs, then the tests.") && strings.Contains(s, "gff-hab send 'asker/capcom'")
 	})
 	if strings.Contains(pastedAll(e.work, "in"), "Write the docs.\n") {
 		t.Fatal("the seed as first asked ran, not the edited one")
 	}
-}
-
-// waitEvent waits for an event of the type and id on a subscribed connection.
-func waitEvent(t *testing.T, c *control.Client, typ api.EventType, id string) api.Event {
-	t.Helper()
-	deadline := time.After(scaleTimeout(15 * time.Second))
-	for {
-		select {
-		case n := <-c.Notifications():
-			if n.Method != "event" {
-				continue
-			}
-			e, err := n.Event()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if e.Type == typ && e.ID == id {
-				if e.Revision != nil {
-					t.Fatalf("%s carries a revision", typ)
-				}
-				return e
-			}
-		case <-deadline:
-			t.Fatalf("no %s for %s", typ, id)
-		}
+	notesMu.Lock()
+	defer notesMu.Unlock()
+	if len(notes) != 1 || !strings.Contains(notes[0], "the owner confirmed") {
+		t.Fatalf("notes: %v", notes)
 	}
 }

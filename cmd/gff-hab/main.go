@@ -841,26 +841,27 @@ func serve(args []string) error {
 				return ""
 			}},
 		Enabled: func() bool { return string(setSvc.Value(settings.StartElsewhere)) == "true" },
-		Capcom: func(session string) bool {
-			c := contentRef.Load()
-			ss, ok := store.SessionByName(session)
-			if c == nil || !ok {
-				return false
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			return inCapcomFolder(dir, c.Folder(ctx, ss.ID))
-		},
 		Publish: func(e structure.Event) {
 			if s := srv.Load(); s != nil {
 				s.Publish(e)
 			}
 		},
-		Notify: func(session, text string) error {
-			_, err := chSvc.Note(session, text)
+		SessionID: func(name string) string {
+			if ss, ok := store.SessionByName(name); ok {
+				return ss.ID
+			}
+			return ""
+		},
+		Notify: func(id, text string) error {
+			ss, ok := store.Session(id)
+			if !ok {
+				return fmt.Errorf("session %s is gone", id)
+			}
+			_, err := chSvc.Note(ss.Name, text)
 			return err
 		},
-		Logf: logger.Printf,
+		Targets: confirmTargets(*hostID, confirmLinks(pm)),
+		Logf:    logger.Printf,
 	})
 	if err != nil {
 		return err
@@ -1101,6 +1102,10 @@ func apiCall(args []string) error {
 		return errors.New("api call needs a method and optional JSON params")
 	}
 	method := fs.Arg(0)
+	if method == "confirm.answer" && os.Getenv(hook.Env) != "" {
+		// The same cheap guard as gff-hab confirm answer (capcom.md 6.4).
+		return errors.New("confirm.answer is the owner's answer; it does not run in an agent's pane")
+	}
 	var params any = struct{}{}
 	if fs.NArg() == 2 {
 		var raw json.RawMessage

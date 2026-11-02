@@ -92,6 +92,19 @@ func TestProjectNotSetUp(t *testing.T) {
 	}
 }
 
+// A hab not in the peer list and a peer a start would be refused on are left out, with why.
+func TestUnlistedAndRefusedHosts(t *testing.T) {
+	cl := fleet()
+	cl.Hosts = append(cl.Hosts, api.CatalogEntry{Catalog: api.Catalog{DeviceID: "d-x", Host: "stray", Harnesses: claude}})
+	r := Rank(cl, Request{Project: "app", Harness: "claude", Refused: map[string]string{"devbox": "its gff-hab lacks the confirm capability; update it"}})
+	if r.Top == nil || r.Top.Host != "mac" {
+		t.Fatalf("top: %+v", r.Top)
+	}
+	if !strings.Contains(excluded(r, "stray"), "not in this hab's peer list") || !strings.Contains(excluded(r, "devbox"), "confirm capability") {
+		t.Fatalf("excluded: %+v", r.Excluded)
+	}
+}
+
 func TestNamedHostBreaksTies(t *testing.T) {
 	cl := fleet()
 	cl.Projects = nil

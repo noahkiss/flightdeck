@@ -22,6 +22,9 @@ type Request struct {
 	Needs   []string // capability words the host must have
 	Harness string   // a harness the host must have installed; "" for any
 	Host    string   // the host the user named; "" for none
+	// Refused names the hosts a start would be refused on, with why (confirm.list targets):
+	// a peer offline or without the confirm capability. Nil: the hab gave no targets.
+	Refused map[string]string
 }
 
 // Candidate is one host that fits, with its reasons.
@@ -68,6 +71,14 @@ func Rank(cl api.CatalogList, r Request) Result {
 	for i, h := range cl.Hosts {
 		name := label(h)
 		c := h.Catalog
+		if !h.Own && h.Label == "" {
+			res.Excluded = append(res.Excluded, Excluded{name, "not in this hab's peer list; cannot start there"})
+			continue
+		}
+		if why, ok := r.Refused[name]; ok && !h.Own {
+			res.Excluded = append(res.Excluded, Excluded{name, "cannot start there: " + why})
+			continue
+		}
 		var lacks []string
 		for _, n := range r.Needs {
 			if !slices.ContainsFunc(c.Capabilities, func(x api.CatalogCapability) bool { return strings.EqualFold(x.Name, n) }) {
