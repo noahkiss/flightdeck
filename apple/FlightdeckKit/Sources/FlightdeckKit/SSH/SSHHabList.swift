@@ -38,6 +38,10 @@ public struct SSHHabEntry: Codable, Sendable, Equatable, Identifiable {
     /// The connection id on the board.
     public var connectionID: String { "nio:" + id }
 
+    /// What a key move records for this entry (transport.md 7.2): the id
+    /// and the host key, so an entry pointed at another host waits again.
+    public var moveMark: String { id + " " + hostKeyFingerprint }
+
     /// `user@first-endpoint`.
     public var destination: String {
         user + "@" + (endpoints.first?.description ?? "-")
@@ -45,7 +49,7 @@ public struct SSHHabEntry: Codable, Sendable, Equatable, Identifiable {
 
     /// The carrier for this entry, with the key it names.
     public func transport(keys: DeviceKeys, timing: SSHTiming = SSHTiming()) throws -> Transport {
-        guard let key = try keys.signingSource(keyID: keyID, entry: id) else {
+        guard let key = try keys.signingSource(keyID: keyID, entry: moveMark) else {
             throw TransportError("no key: pair again or choose a key")
         }
         return NIOSSHTransport(user: user, endpoints: endpoints, hostKeyFingerprint: hostKeyFingerprint, key: key, command: command, timing: timing)

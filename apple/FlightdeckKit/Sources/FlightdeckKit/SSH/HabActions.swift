@@ -162,7 +162,7 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
             return
         }
         let name = entry.label ?? entry.destination
-        if (try? keys.key(entry.keyID))?.requiresBiometry == true {
+        if (try? keys.signingSource(keyID: entry.keyID, entry: entry.moveMark))?.requiresBiometry == true {
             // No Face ID prompt in the background: fail fast, never hang.
             await notify(name, "Open Flightdeck to retry: the SSH key needs Face ID.")
             return

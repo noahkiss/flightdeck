@@ -233,6 +233,10 @@ public final class DeviceKeys: @unchecked Sendable {
     private let setting: FaceIDState
     private var upgraded = false
     private var moveObserver: (@Sendable () -> Void)?
+    /// Serialises the move record's read and write: hosts dial in parallel.
+    private let moveLock = NSLock()
+    private var unlockedCheck: @Sendable () async -> Bool = { await ApprovalCenter.protectedDataAvailable() }
+    private var faceIDAsk: @Sendable () async throws -> LAContext = { try await GeneratedKey.faceIDContext() }
 
     public init(store: SecretStore, preferEnclave: Bool = true) {
         self.store = store
@@ -340,6 +344,20 @@ public final class DeviceKeys: @unchecked Sendable {
         var accepted: [String]
     }
 
+    /// Whether the device is unlocked now. The default reads UIKit on iOS;
+    /// tests replace it, so they never read the simulator's lock.
+    public var isUnlocked: @Sendable () async -> Bool {
+        get { lock.withLock { unlockedCheck } }
+        set { lock.withLock { unlockedCheck = newValue } }
+    }
+
+    /// Asks for Face ID once and returns the context that then signs with
+    /// no prompt. Tests replace it.
+    var askFaceID: @Sendable () async throws -> LAContext {
+        get { lock.withLock { faceIDAsk } }
+        set { lock.withLock { faceIDAsk = newValue } }
+    }
+
     /// Called after a host takes the new key, on any thread.
     public var onKeyMove: (@Sendable () -> Void)? {
         get { lock.withLock { moveObserver } }
@@ -368,19 +386,24 @@ public final class DeviceKeys: @unchecked Sendable {
         return n
     }
 
-    /// The hab entries whose host took the new key.
+    /// The hab entries whose host took the new key, by `SSHHabEntry.moveMark`.
     public func movedEntries() throws -> Set<String> {
         guard let d = try store.read(account: Self.moveAccount) else { return [] }
         return Set(try JSONDecoder().decode(MoveRecord.self, from: d).accepted)
     }
 
-    /// Records that this entry's host took the new key.
+    /// Records that this entry's host took the new key. `entry` is the
+    /// entry's `moveMark`, so an entry pointed at another host waits again.
     public func noteMoved(entry: String) {
         do {
-            var s = try movedEntries()
-            guard !s.contains(entry) else { return }
-            s.insert(entry)
-            try store.write(account: Self.moveAccount, data: JSONEncoder().encode(MoveRecord(accepted: s.sorted())))
+            let added = try moveLock.withLock {
+                var s = try movedEntries()
+                guard !s.contains(entry) else { return false }
+                s.insert(entry)
+                try store.write(account: Self.moveAccount, data: JSONEncoder().encode(MoveRecord(accepted: s.sorted())))
+                return true
+            }
+            guard added else { return }
         } catch {
             Self.log.error("key move record: \(String(describing: error), privacy: .public)")
             return
@@ -407,7 +430,7 @@ public final class DeviceKeys: @unchecked Sendable {
     }
 
     /// The key an entry signs with: during a move, the default key offers
-    /// the new key first, then the old one.
+    /// the new key first, then the old one. `entry` is the entry's `moveMark`.
     public func signingSource(keyID: String, entry: String) throws -> (any SSHKeySource)? {
         guard let k = try key(keyID) else { return nil }
         guard keyID == Self.defaultID, let d = k as? GeneratedKey, !d.signsWhileLocked, let n = try nextKey() else { return k }
@@ -416,12 +439,14 @@ public final class DeviceKeys: @unchecked Sendable {
 
     /// Whether an answer from a notification can sign while the device is
     /// locked (app.md 16.4). A key that cannot be read means the device has
-    /// not been unlocked since it started. A missing key is not a lock
-    /// problem: the dial reports it.
+    /// not been unlocked since it started. A key that needs Face ID cannot
+    /// sign either: no prompt shows over the lock screen. A missing key is
+    /// not a lock problem: the dial reports it.
     public func lockedSigning(keyID: String, entry: String) -> LockedSigning {
         do {
             guard let k = try signingSource(keyID: keyID, entry: entry) else { return .ready }
-            return k.signsWhileLocked ? .ready : .keyLocked
+            if !k.signsWhileLocked { return .keyLocked }
+            return k.requiresBiometry ? .faceIDRequired : .ready
         } catch {
             return .beforeFirstUnlock
         }
@@ -478,6 +503,9 @@ public enum LockedSigning: Equatable, Sendable {
     /// The key signs only while the device is unlocked: an earlier build's
     /// key, while the host has not taken the new one yet.
     case keyLocked
+    /// The key needs Face ID, which cannot show over the lock screen: an
+    /// earlier build's key made with it, or "Require Face ID for SSH keys" on.
+    case faceIDRequired
 }
 
 /// The default key during a key move: offers the new key, then the old one,
@@ -491,32 +519,39 @@ struct MovingKey: SSHKeySource {
     var id: String { DeviceKeys.defaultID }
     var kind: SSHKeyKind { next.kind }
     var publicKey: NIOSSHPublicKey { next.publicKey }
-    var requiresBiometry: Bool { next.requiresBiometry || old.requiresBiometry }
+    /// Once this host took the new key, the old one is never offered, so
+    /// only the new key's Face ID rule counts.
+    var requiresBiometry: Bool { next.requiresBiometry || (!moved && old.requiresBiometry) }
     func privateKey() throws -> NIOSSHPrivateKey { try next.privateKey() }
 
-    /// Locked, only the new key signs; it helps once this host took it.
-    var signsWhileLocked: Bool {
-        (try? keys.movedEntries().contains(entry)) ?? false
-    }
+    /// Whether this host took the new key.
+    var moved: Bool { (try? keys.movedEntries().contains(entry)) ?? false }
 
-    /// Face ID at most once for both keys. The old key may fail (the device
-    /// is locked); the new one alone is offered then.
+    /// Locked, only the new key signs; it helps once this host took it.
+    var signsWhileLocked: Bool { moved }
+
+    /// The new key, then the old one while this host has not taken the new
+    /// one and the device is unlocked. Face ID is asked at most once, and
+    /// only for a key that needs it. An enclave key loads with no check of
+    /// its access rule and fails only when it signs, inside the handshake;
+    /// so the old key is left out while the device is locked, and the host
+    /// refuses the new key alone with a clean SSH refusal. A failed Face ID
+    /// for the old key alone leaves it out the same way.
     func signingKeys() async throws -> [(fingerprint: String, key: NIOSSHPrivateKey)] {
-        let ctx: LAContext? = requiresBiometry ? try await GeneratedKey.faceIDContext() : nil
-        func load(_ k: GeneratedKey) throws -> NIOSSHPrivateKey {
-            if let ctx { return try k.privateKey(authenticated: ctx) }
-            return try k.privateKey()
-        }
-        var out: [(fingerprint: String, key: NIOSSHPrivateKey)] = []
-        var firstError: Error?
-        for k in [next, old] {
-            do {
-                out.append((k.fingerprint, try load(k)))
-            } catch {
-                if firstError == nil { firstError = error }
+        var ctx: LAContext? = next.requiresBiometry ? try await keys.askFaceID() : nil
+        let first = try ctx.map { try next.privateKey(authenticated: $0) } ?? next.privateKey()
+        var out: [(fingerprint: String, key: NIOSSHPrivateKey)] = [(next.fingerprint, first)]
+        guard !moved, await keys.isUnlocked() else { return out }
+        do {
+            if old.requiresBiometry && ctx == nil { ctx = try await keys.askFaceID() }
+            if old.requiresBiometry, let ctx {
+                out.append((old.fingerprint, try old.privateKey(authenticated: ctx)))
+            } else {
+                out.append((old.fingerprint, try old.privateKey()))
             }
+        } catch {
+            DeviceKeys.log.notice("key move: old key left out: \(String(describing: error), privacy: .public)")
         }
-        if out.isEmpty, let firstError { throw firstError }
         return out
     }
 

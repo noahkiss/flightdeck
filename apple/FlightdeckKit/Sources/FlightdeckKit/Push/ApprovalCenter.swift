@@ -144,11 +144,12 @@ public final class ApprovalCenter {
     /// A locked device signs once it has been unlocked after a restart
     /// (transport.md 7.2), so a Watch answer goes through: iOS mirrors a
     /// banner to the Watch only while the phone is locked (app.md 16.4).
-    /// Two cases cannot sign and are refused at once, with nothing sent and
+    /// Three cases cannot sign and are refused at once, with nothing sent and
     /// the request raised again in the foreground: the device has not been
-    /// unlocked since it started, or the hab's key is an earlier build's key
+    /// unlocked since it started; the hab's key is an earlier build's key
     /// that signs only while unlocked and the host has not taken the new
-    /// one yet. Returns nil when it was refused that way.
+    /// one yet; or the key needs Face ID, which cannot show over the lock
+    /// screen. Returns nil when it was refused that way.
     @discardableResult
     public func answer(host: String, _ params: ApprovalAnswerParams, meta: PushMeta?) async -> AnswerOutcome? {
         if !isUnlocked() {
@@ -216,6 +217,8 @@ public final class ApprovalCenter {
         switch state {
         case .beforeFirstUnlock:
             return (lockedTitle, "\(deviceName) restarted and has not been unlocked yet · \(hab)")
+        case .faceIDRequired:
+            return (lockedTitle, "Face ID is required to use the SSH key · \(hab)")
         case .keyLocked, .ready:
             return (lockedTitle, "\(hab) does not have this device's new key yet")
         }

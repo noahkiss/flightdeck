@@ -43,6 +43,10 @@ public final class SSHSetup {
     }()
 
     @ObservationIgnored private let listURL: URL?
+    /// Whether the hab list read cleanly when this setup was made. A key
+    /// move finishes only then: an unreadable list says nothing about which
+    /// hosts still need the old key (transport.md 7.2).
+    @ObservationIgnored private var listLoaded = false
     @ObservationIgnored private weak var fleet: Fleet?
     @ObservationIgnored private let timing: SSHTiming
     @ObservationIgnored private let clientLabel: String
@@ -63,6 +67,7 @@ public final class SSHSetup {
         self.clientVersion = clientVersion
         do {
             entries = try SSHHabList.load(from: listURL).habs
+            listLoaded = true
         } catch {
             log.error("ssh hab list unreadable: \(String(describing: error), privacy: .public)")
         }
@@ -76,7 +81,10 @@ public final class SSHSetup {
     @discardableResult
     public func loadKey() -> GeneratedKey? {
         if let k = deviceKey { return k }
+        // Only iOS signs while locked; the Mac keeps its items as they are.
+        #if os(iOS)
         keys.upgradeStore()
+        #endif
         do {
             let k = try keys.defaultKey()
             deviceKey = k
@@ -114,16 +122,26 @@ public final class SSHSetup {
 
     /// Reads the move's state. Once every entry on the default key has
     /// signed in with the new key, the new key becomes the default key and
-    /// those entries reconnect with it alone.
+    /// those entries reconnect with it alone. That needs the hab list read
+    /// from its file now, and read cleanly at start too: when either read
+    /// fails, both keys stay and a later call tries again.
     public func refreshKeyMove() {
         guard let next = try? keys.nextKey() else {
             keyMove = nil
             return
         }
         let moved = (try? keys.movedEntries()) ?? []
-        let waiting = entries(using: DeviceKeys.defaultID).filter { !moved.contains($0.id) }
-        guard waiting.isEmpty else {
-            keyMove = KeyMove(line: next.authorizedKeysLine(comment: DeviceKeys.comment), fingerprint: next.fingerprint, waiting: waiting)
+        var fresh: [SSHHabEntry]?
+        if listLoaded {
+            do {
+                fresh = try SSHHabList.load(from: listURL).habs
+            } catch {
+                log.error("key move: hab list unreadable, both keys kept: \(String(describing: error), privacy: .public)")
+            }
+        }
+        let waiting = (fresh ?? entries).filter { $0.keyID == DeviceKeys.defaultID && !moved.contains($0.moveMark) }
+        guard fresh != nil, waiting.isEmpty else {
+            keyMove = KeyMove(line: next.authorizedKeysLine(comment: DeviceKeys.comment), fingerprint: next.fingerprint, kind: next.kind, waiting: waiting)
             return
         }
         do {
@@ -407,7 +425,6 @@ public struct PendingKeyFile: Identifiable, Sendable {
     }
 }
 
-/// Whether the key a hab entry names can be used now.
 /// A key move in progress (transport.md 7.2): an earlier build's key signs
 /// only while the device is unlocked, so the app made a new one. Each host
 /// on the default key needs the new line; the old key works until then.
@@ -415,10 +432,12 @@ public struct KeyMove: Equatable, Sendable {
     /// The new key's line for a host's authorized keys.
     public let line: String
     public let fingerprint: String
+    public let kind: SSHKeyKind
     /// The entries whose host has not signed in with the new key yet.
     public let waiting: [SSHHabEntry]
 }
 
+/// Whether the key a hab entry names can be used now.
 public enum KeyState: Equatable, Sendable {
     case present
     /// No such key on this device: deleted, or not carried by a backup.

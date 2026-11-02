@@ -185,7 +185,7 @@ public enum AppFleet {
         guard e.connection.hasPrefix("nio:") else { return .ready }
         let id = String(e.connection.dropFirst(4))
         guard let entry = list.habs.first(where: { $0.id == id }) else { return .ready }
-        return keys.lockedSigning(keyID: entry.keyID, entry: entry.id)
+        return keys.lockedSigning(keyID: entry.keyID, entry: entry.moveMark)
     }
 
     /// A transport for one call to the hab a push named, from the hab book.
@@ -198,7 +198,7 @@ public enum AppFleet {
             guard let keys, let entry = try SSHHabList.load(from: listURL).habs.first(where: { $0.id == id }) else {
                 throw TransportError("that hab is no longer in the app")
             }
-            if (try? keys.key(entry.keyID))?.requiresBiometry == true {
+            if (try? keys.signingSource(keyID: entry.keyID, entry: entry.moveMark))?.requiresBiometry == true {
                 // No Face ID prompt in the background: fail fast, never hang.
                 throw TransportError("the SSH key needs Face ID: open Flightdeck to answer")
             }
