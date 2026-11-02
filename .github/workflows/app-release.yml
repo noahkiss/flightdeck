@@ -483,7 +483,6 @@ jobs:
           done < <(find "$APP" -type f -print0)
           xcrun stapler validate "$APP" || { echo "::error::The app has no valid stapled ticket."; exit 1; }
           assessment=$(spctl -a -vv "$APP" 2>&1) || { echo "::error::Gatekeeper rejects the app: $assessment"; exit 1; }
-          echo "$assessment"
           grep -q '^source=Notarized Developer ID$' <<< "$assessment" || { echo "::error::spctl does not say source=Notarized Developer ID."; exit 1; }
           echo "Flightdeck $VERSION ($BUILD): Developer ID, notarized and stapled, hardened runtime, timestamp, $n Mach-O files, arm64 only." | tee -a "$GITHUB_STEP_SUMMARY"
 
