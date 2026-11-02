@@ -14,6 +14,8 @@
 //	gff-hab send     [-socket path | -via command] [-from session] [-reply-to id] [-wait d] <address> <text... | ->
 //	gff-hab wait     [-socket path | -via command] [-session name] [-agent name] [-for states] [-timeout d] [-json]
 //	gff-hab worktree list|create|setup|remove [-socket path | -via command] [-project id | -dir path] ...
+//	gff-hab capcom assign [-socket path | -via command] <peer label|self>
+//	gff-hab capcom open   [-socket path | -via command] [-new]
 //	gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
 //	gff-hab manifests list    [-state dir]
 //	gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
@@ -84,6 +86,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/attach"
+	"github.com/noahkiss/flightdeck/internal/capcom"
 	"github.com/noahkiss/flightdeck/internal/catalog"
 	"github.com/noahkiss/flightdeck/internal/channels"
 	"github.com/noahkiss/flightdeck/internal/confirm"
@@ -133,6 +136,8 @@ const usage = `usage:
   gff-hab worktree create [-socket path | -via command] [-project id | -dir path] [-branch b] [-base ref] [-path dir] [-setup auto|run|skip]
   gff-hab worktree setup  [-socket path | -via command] [-project id | -dir path] <worktree>
   gff-hab worktree remove [-socket path | -via command] [-project id | -dir path] [-force] <worktree>
+  gff-hab capcom assign [-socket path | -via command] <peer label|self>
+  gff-hab capcom open   [-socket path | -via command] [-new]
   gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
   gff-hab manifests list    [-state dir]
   gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
@@ -203,6 +208,8 @@ func main() {
 		err = waitCmd(os.Args[2:], os.Stdout)
 	case "worktree":
 		err = worktreeCmd(os.Args[2:])
+	case "capcom":
+		err = capcomCmd(os.Args[2:], os.Stdout)
 	case "manifests":
 		err = manifests(os.Args[2:], os.Stdout)
 	case "detect":
@@ -531,6 +538,7 @@ func serve(args []string) error {
 	var attachments control.Attachments
 	var ds *datastream.Server
 	var mgr *panesize.Manager
+	var sessionActs *actions
 	if lk != nil {
 		caps = append(caps, "agent-state") // panes gff-hab spawns post hooks
 		caps = append(caps, "data-streams", "snapshot-vt")
@@ -543,7 +551,7 @@ func serve(args []string) error {
 		if err != nil {
 			home = "/"
 		}
-		sessionActs := &actions{
+		sessionActs = &actions{
 			sp:       &spawner{lk: lk, tokens: tokens, hookSock: hpath, spawning: spawning, logf: logger.Printf},
 			store:    store,
 			getenv:   os.Getenv,
@@ -744,6 +752,34 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	// The Capcom session host (capcom.md 7): with the holder link, this hab can run Capcom.
+	var capcomSvc *capcomService
+	var capcomCtl control.Capcom
+	if sessionActs != nil {
+		exe, err := osExecutable()
+		if err != nil {
+			return fmt.Errorf("capcom: gff-hab's own path: %w", err)
+		}
+		capcomSvc = newCapcomService(&capcomService{
+			self: key.Fingerprint(), state: dir, configPath: cpath, exe: exe,
+			acts: sessionActs, store: store, links: catalogPeers{pm}.Links,
+			native: func(pane string) string {
+				if st, ok := agents.Get(pane); ok {
+					return st.Session
+				}
+				return ""
+			},
+			poke: func() {
+				if c := cat.Load(); c != nil {
+					c.Poke()
+				}
+			},
+			logf: logger.Printf,
+		})
+		sessionActs.resume = capcomSvc.Resume
+		capcomCtl = capcomSvc
+		caps = append(caps, capcom.Capability)
+	}
 	// Hab-side settings (app.md 20.5): client writes in <state>/settings.json, locks from the
 	// config file's [settings] table and from -permission-wait or $GFF_HAB_PERMISSION_WAIT.
 	overrides := map[string]json.RawMessage{}
@@ -795,6 +831,17 @@ func serve(args []string) error {
 				s.Publish(structure.Event{Type: control.EventCatalogUpdated, ID: u.DeviceID, Data: u})
 			}
 		},
+		Capcom: func() *api.CatalogCapcom {
+			if capcomSvc == nil {
+				return nil
+			}
+			return capcomSvc.Section()
+		},
+		OnCopy: func(c api.Catalog) {
+			if capcomSvc != nil {
+				capcomSvc.Observe(c)
+			}
+		},
 		Logf: logger.Printf,
 	})
 	if err != nil {
@@ -802,6 +849,13 @@ func serve(args []string) error {
 	}
 	defer cs.Close()
 	cat.Store(cs)
+	if capcomSvc != nil {
+		capcomSvc.copies = cs.Copies
+		// The copies saved by the last run may carry a later assignment than this hab's own.
+		for _, c := range cs.Copies() {
+			capcomSvc.Observe(c)
+		}
+	}
 	caps = append(caps, catalog.Capability)
 	// Channels (mesh.md 6): agent messages by name, the outboxes and the inbox.
 	cl := &channelLocal{store: store, agents: agents, send: agentSvc}
@@ -921,6 +975,7 @@ func serve(args []string) error {
 		Settings:    setSvc,
 		Reads:       reads,
 		Confirm:     cfSvc,
+		Capcom:      capcomCtl,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)

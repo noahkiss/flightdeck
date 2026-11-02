@@ -55,6 +55,26 @@ type actions struct {
 	// seed queues a new session's first message in the channels inbox (capcom.md 3.3). nil: a
 	// create with a seed answers unavailable.
 	seed func(session, from, text string) (string, error)
+	// resume serves session.resume for the sessions it knows (Capcom's); ok false for others.
+	// nil: none.
+	resume func(ctx context.Context, session string) (pane string, ok bool, err error)
+}
+
+var _ control.Resumer = (*actions)(nil)
+
+// ResumeSession serves session.resume. Only Capcom sessions resume yet (capcom.md 7.4).
+func (a *actions) ResumeSession(ctx context.Context, session string) (string, error) {
+	if a.resume != nil {
+		pane, ok, err := a.resume(ctx, session)
+		if ok {
+			return pane, err
+		}
+	}
+	if _, ok := a.store.Session(session); !ok {
+		return "", control.Errorf(api.ErrorKindNotFound, "session %s does not exist", session)
+	}
+	return "", control.Errorf(api.ErrorKindUnavailable,
+		"session.resume is built for Capcom sessions only; Part 4 stage 4 (harness adapters: state and input) builds it for the rest")
 }
 
 // onPeer returns where name is in use on a peer, or "".
@@ -73,6 +93,11 @@ var _ control.Actions = (*actions)(nil)
 // once (gff-hab show, send, wait) finds its session. If the spawn fails, it closes the session
 // again, so no session is left that never ran.
 func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) (string, string, error) {
+	return a.createSession(ctx, p, "", "")
+}
+
+// createSession is CreateSession with a kind and a folder for the record (a Capcom session).
+func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, kind, dir string) (string, string, error) {
 	switch {
 	case p.Model != "" && p.Harness == "":
 		return "", "", control.Errorf(api.ErrorKindInvalid, "model needs harness")
@@ -90,43 +115,7 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 			return "", "", err
 		}
 	}
-	if p.Harness != "" {
-		var err error
-		if p, err = harnessStart(p); err != nil {
-			return "", "", err
-		}
-	}
-	var paneID hp.UUID
-	ocStarted := false
-	if p.Harness == detect.KindOpencode {
-		var err error
-		if paneID, p, err = a.opencodeStart(p); err != nil {
-			return "", "", err
-		}
-		ocStarted = true
-	}
-	cols, rows := p.Cols, p.Rows
-	if cols == 0 {
-		cols = defaultCols
-	}
-	if rows == 0 {
-		rows = defaultRows
-	}
-	if cols < 1 || rows < 1 || cols > 0xffff || rows > 0xffff {
-		return "", "", control.Errorf(api.ErrorKindInvalid, "size %dx%d: cols and rows must be 1 to 65535", cols, rows)
-	}
-	argv := p.Argv
-	if len(argv) == 0 {
-		sh := a.getenv("SHELL")
-		if sh == "" {
-			sh = "/bin/sh"
-		}
-		argv = []string{sh}
-	}
-	if argv[0] == "" {
-		return "", "", control.Errorf(api.ErrorKindInvalid, "argv[0] is empty")
-	}
-	env, err := mergeEnv(a.environ(), p.Env)
+	p, l, err := a.prepare(p)
 	if err != nil {
 		return "", "", err
 	}
@@ -158,13 +147,11 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 	if cwd == "" {
 		cwd = a.home
 	}
-	if !filepath.IsAbs(cwd) {
-		return "", "", control.Errorf(api.ErrorKindInvalid, "cwd %q is not an absolute path", cwd)
-	}
-	if fi, err := os.Stat(cwd); err != nil || !fi.IsDir() {
-		return "", "", control.Errorf(api.ErrorKindInvalid, "cwd %q is not a directory", cwd)
+	if err := checkCwd(cwd); err != nil {
+		return "", "", err
 	}
 
+	argv := l.spawn.Argv
 	name := p.Name
 	if name == "" {
 		name = a.freeName(filepath.Base(argv[0]))
@@ -176,11 +163,8 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 		return "", "", control.Errorf(api.ErrorKindConflict, "name %q in use on %s", name, label)
 	}
 
-	if paneID == (hp.UUID{}) {
-		paneID = newUUID()
-	}
-	pane := paneID.String()
-	spec := structure.SessionSpec{Name: name, Project: project, Pane: pane, Index: -1, NewPane: true}
+	pane := l.spawn.UUID.String()
+	spec := structure.SessionSpec{Name: name, Project: project, Pane: pane, Index: -1, NewPane: true, Kind: kind, Dir: dir}
 	ss, err := a.store.CreateSession(spec)
 	// A picked name another create took between freeName and the record: pick again.
 	for try := 0; try < freeNameRetries && p.Name == "" && errors.Is(err, structure.ErrConflict); try++ {
@@ -190,27 +174,11 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 	if err != nil {
 		return "", "", storeErr(err)
 	}
-	spawn := hp.Spawn{UUID: paneID, Cols: uint16(cols), Rows: uint16(rows), Cwd: cwd, Argv: argv, Env: env}
-	if _, err := a.sp.spawn(ctx, spawn); err != nil {
-		if spawnRefused(err) || !a.sp.exists(paneID) {
-			// The program never ran: session.deleted follows the record's session.updated. Its
-			// only error is not_found, when a client closed the session meanwhile.
-			_ = a.store.CloseSession(ss.ID)
-			if errors.Is(err, holderclient.ErrNoHolder) {
-				return "", "", control.Errorf(api.ErrorKindUnavailable, "no holder is running on this host")
-			}
-			return "", "", control.Errorf(api.ErrorKindUnavailable, "spawn: %v", err)
-		}
-		// The answer was lost (a timeout, a closed link), but the holder started the pane:
-		// the program runs, so its session stays and the create succeeds. The same spawn
-		// again attaches the pane, so the link follows it: its output, exit and token work.
-		a.sp.follow(ctx, spawn)
-	}
-	if ocStarted {
-		if err := a.opencode.register(pane, paneID); err != nil {
-			// The pane runs; only the server path is missing: state, sends and answers wait.
-			a.opencode.logf("opencode: pane %s: %v", pane, err)
-		}
+	l.spawn.Cwd = cwd
+	// The program never ran: session.deleted follows the record's session.updated. Its only
+	// error is not_found, when a client closed the session meanwhile.
+	if err := a.launch(ctx, l, func() { _ = a.store.CloseSession(ss.ID) }); err != nil {
+		return "", "", err
 	}
 	a.noteDir(ctx, project, projectTop, p.Project != "" && p.Cwd != "", cwd)
 	if a.startedIn != nil {
@@ -224,6 +192,123 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 		}
 	}
 	return ss.ID, pane, nil
+}
+
+// resumeSession starts an exited session's program again in a new pane, in the folder cwd
+// (session.resume). p gives the harness and argv; its name, project and cwd fields are not
+// read. The session keeps its id. If the spawn fails, the session is exited again.
+func (a *actions) resumeSession(ctx context.Context, session string, p api.SessionCreateParams, cwd string) (string, error) {
+	p, l, err := a.prepare(p)
+	if err != nil {
+		return "", err
+	}
+	if err := checkCwd(cwd); err != nil {
+		return "", err
+	}
+	pane := l.spawn.UUID.String()
+	if _, err := a.store.ResumeSession(session, pane); err != nil {
+		return "", storeErr(err)
+	}
+	l.spawn.Cwd = cwd
+	if err := a.launch(ctx, l, func() { a.store.ResumeFailed(session, pane) }); err != nil {
+		return "", err
+	}
+	if a.startedIn != nil {
+		a.startedIn(session, cwd)
+	}
+	return pane, nil
+}
+
+// checkCwd refuses a working folder that is not an absolute path to a directory.
+func checkCwd(cwd string) error {
+	if !filepath.IsAbs(cwd) {
+		return control.Errorf(api.ErrorKindInvalid, "cwd %q is not an absolute path", cwd)
+	}
+	if fi, err := os.Stat(cwd); err != nil || !fi.IsDir() {
+		return control.Errorf(api.ErrorKindInvalid, "cwd %q is not a directory", cwd)
+	}
+	return nil
+}
+
+// launchPlan is a checked spawn, before the record: the pane's uuid, argv, environment and size.
+type launchPlan struct {
+	spawn hp.Spawn
+	oc    bool // an opencode pane: register its server after the spawn
+}
+
+// prepare fills in the harness's start, the default argv and size, and the environment, and
+// checks them. The spawn's Cwd is left for the caller.
+func (a *actions) prepare(p api.SessionCreateParams) (api.SessionCreateParams, launchPlan, error) {
+	if p.Harness != "" {
+		var err error
+		if p, err = harnessStart(p); err != nil {
+			return p, launchPlan{}, err
+		}
+	}
+	var paneID hp.UUID
+	ocStarted := false
+	if p.Harness == detect.KindOpencode {
+		var err error
+		if paneID, p, err = a.opencodeStart(p); err != nil {
+			return p, launchPlan{}, err
+		}
+		ocStarted = true
+	}
+	cols, rows := p.Cols, p.Rows
+	if cols == 0 {
+		cols = defaultCols
+	}
+	if rows == 0 {
+		rows = defaultRows
+	}
+	if cols < 1 || rows < 1 || cols > 0xffff || rows > 0xffff {
+		return p, launchPlan{}, control.Errorf(api.ErrorKindInvalid, "size %dx%d: cols and rows must be 1 to 65535", cols, rows)
+	}
+	argv := p.Argv
+	if len(argv) == 0 {
+		sh := a.getenv("SHELL")
+		if sh == "" {
+			sh = "/bin/sh"
+		}
+		argv = []string{sh}
+	}
+	if argv[0] == "" {
+		return p, launchPlan{}, control.Errorf(api.ErrorKindInvalid, "argv[0] is empty")
+	}
+	env, err := mergeEnv(a.environ(), p.Env)
+	if err != nil {
+		return p, launchPlan{}, err
+	}
+	if paneID == (hp.UUID{}) {
+		paneID = newUUID()
+	}
+	return p, launchPlan{spawn: hp.Spawn{UUID: paneID, Cols: uint16(cols), Rows: uint16(rows), Argv: argv, Env: env}, oc: ocStarted}, nil
+}
+
+// launch spawns a filed session's pane. When the program never ran, undo runs and launch
+// returns the error.
+func (a *actions) launch(ctx context.Context, l launchPlan, undo func()) error {
+	if _, err := a.sp.spawn(ctx, l.spawn); err != nil {
+		if spawnRefused(err) || !a.sp.exists(l.spawn.UUID) {
+			undo()
+			if errors.Is(err, holderclient.ErrNoHolder) {
+				return control.Errorf(api.ErrorKindUnavailable, "no holder is running on this host")
+			}
+			return control.Errorf(api.ErrorKindUnavailable, "spawn: %v", err)
+		}
+		// The answer was lost (a timeout, a closed link), but the holder started the pane:
+		// the program runs, so its session stays and the call succeeds. The same spawn
+		// again attaches the pane, so the link follows it: its output, exit and token work.
+		a.sp.follow(ctx, l.spawn)
+	}
+	if l.oc {
+		pane := l.spawn.UUID.String()
+		if err := a.opencode.register(pane, l.spawn.UUID); err != nil {
+			// The pane runs; only the server path is missing: state, sends and answers wait.
+			a.opencode.logf("opencode: pane %s: %v", pane, err)
+		}
+	}
+	return nil
 }
 
 // validSeedFrom reports whether seed_from is host/session, so it cannot forge the seed

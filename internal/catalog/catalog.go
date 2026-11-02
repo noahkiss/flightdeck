@@ -76,6 +76,11 @@ type Config struct {
 	Notify func(api.NoticeRaiseParams)
 	// Publish gets each catalog.updated. Nil: none.
 	Publish func(api.CatalogUpdated)
+	// Capcom returns the own catalog's capcom section (capcom.md 7.3). Nil, or a nil result:
+	// no section.
+	Capcom func() *api.CatalogCapcom
+	// OnCopy hears each peer copy that changed, after it is stored. Nil: none.
+	OnCopy func(api.Catalog)
 	// Detect reads the host's facts. Default Detect.
 	Detect func(context.Context) Facts
 	// ReadFolder reads one repository folder. Default ReadFolder.
@@ -286,9 +291,23 @@ func (s *Service) store(c api.Catalog) {
 	if changed && s.cfg.Publish != nil {
 		s.cfg.Publish(api.CatalogUpdated{DeviceID: c.DeviceID, Generation: c.Generation})
 	}
+	if changed && s.cfg.OnCopy != nil {
+		s.cfg.OnCopy(cloneCatalog(c))
+	}
 	if mark {
 		s.Poke() // the hosts this hab watches changed
 	}
+}
+
+// Copies returns every peer copy this hab holds, stale ones included.
+func (s *Service) Copies() []api.Catalog {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]api.Catalog, 0, len(s.copies))
+	for _, c := range s.copies {
+		out = append(out, cloneCatalog(c.Catalog))
+	}
+	return out
 }
 
 // seen records that a peer confirmed its copy unchanged.
@@ -530,6 +549,10 @@ func (s *Service) build(first bool) {
 		}
 	}
 	slices.Sort(peerIDs)
+	var capcom *api.CatalogCapcom
+	if s.cfg.Capcom != nil {
+		capcom = s.cfg.Capcom()
+	}
 	s.mu.Lock()
 	var watches []string
 	for _, id := range peerIDs {
@@ -551,6 +574,7 @@ func (s *Service) build(first bool) {
 		AlwaysOn:     s.declared.AlwaysOn,
 		Peers:        peerIDs,
 		Watches:      watches,
+		Capcom:       capcom,
 	}
 	c = api.NonNil(c)
 	prev := s.own
