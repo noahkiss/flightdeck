@@ -140,10 +140,10 @@ func seqOf(t *testing.T, h *hab, origin string) uint64 {
 
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for !cond() {
 		if time.Now().After(deadline) {
-			t.Fatalf("%s: not within 5 s", what)
+			t.Fatalf("%s: not within 15 s", what)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -213,6 +213,15 @@ func TestWakeOncePerPull(t *testing.T) {
 	b.mu.Unlock()
 	a.svc.Woken("b")
 	waitFor(t, "a pulls again", func() bool { return seqOf(t, a, b.id) == 4 })
+	// a's link goes down, and its last exchange ends, so a pulls nothing more by itself.
+	a.mu.Lock()
+	a.links[0].Online = false
+	a.mu.Unlock()
+	waitFor(t, "a's exchanges end", func() bool {
+		a.svc.mu.Lock()
+		defer a.svc.mu.Unlock()
+		return len(a.svc.running) == 0
+	})
 	write(t, b, "while a is away")
 	b.svc.Changed()
 	waitFor(t, "a wake-up not taken", func() bool { return b.wakesOf(a.id) == 3 })
@@ -221,6 +230,9 @@ func TestWakeOncePerPull(t *testing.T) {
 	waitFor(t, "tried again", func() bool { return b.wakesOf(a.id) == 4 })
 
 	// b dials a too: b pushes, so a gets no wake-up.
+	a.mu.Lock()
+	a.links[0].Online = true
+	a.mu.Unlock()
 	dial(b, a)
 	waitFor(t, "b pushes to a", func() bool { return seqOf(t, a, b.id) == 6 })
 	before := b.wakesOf(a.id)

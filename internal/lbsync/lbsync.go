@@ -77,12 +77,13 @@ type Service struct {
 	running map[string]bool           // links with an exchange in flight
 	again   map[string]bool           // links whose exchange runs once more when it ends
 	stats   map[string]Stats          // by link label
+	wanted  map[string]bool           // links whose peer sent mesh.changed with logbook
 
-	kick, changed chan struct{}
-	done          chan struct{}
-	ctx           context.Context
-	stop          context.CancelFunc
-	wg            sync.WaitGroup
+	kick, changed, wake chan struct{}
+	done                chan struct{}
+	ctx                 context.Context
+	stop                context.CancelFunc
+	wg                  sync.WaitGroup
 }
 
 type failure struct {
@@ -121,12 +122,13 @@ func New(cfg Config) (*Service, error) {
 	}
 	s := &Service{cfg: cfg, last: v,
 		have: map[string]logbook.Vector{}, woken: map[string]bool{}, fails: map[string]*failure{},
-		online: map[string]bool{}, running: map[string]bool{}, again: map[string]bool{}, stats: map[string]Stats{},
-		kick: make(chan struct{}, 1), changed: make(chan struct{}, 1), done: make(chan struct{})}
+		online: map[string]bool{}, running: map[string]bool{}, again: map[string]bool{}, stats: map[string]Stats{}, wanted: map[string]bool{},
+		kick: make(chan struct{}, 1), changed: make(chan struct{}, 1), wake: make(chan struct{}, 1), done: make(chan struct{})}
 	s.ctx, s.stop = context.WithCancel(context.Background())
-	s.wg.Add(2)
+	s.wg.Add(3)
 	go s.roundLoop()
 	go s.changeLoop()
+	go s.wakeLoop()
 	return s, nil
 }
 
@@ -150,14 +152,35 @@ func (s *Service) Kick() { signal(s.kick) }
 func (s *Service) Changed() { signal(s.changed) }
 
 // Woken takes mesh.changed with the logbook reason from the link labelled label: ops wait there,
-// so this hab exchanges over it now, past any backoff.
+// so this hab exchanges over it now, past any backoff. It never blocks: the peer manager calls it
+// from its update loop, and the exchange starts from the wake loop.
 func (s *Service) Woken(label string) {
-	if s.cfg.Peers == nil {
-		return
-	}
-	for _, l := range s.cfg.Peers.Links() {
-		if l.Label == label && s.up(l) {
-			s.start(l)
+	s.mu.Lock()
+	s.wanted[label] = true
+	s.mu.Unlock()
+	signal(s.wake)
+}
+
+// wakeLoop starts an exchange over each link whose peer said ops wait.
+func (s *Service) wakeLoop() {
+	defer s.wg.Done()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-s.wake:
+		}
+		s.mu.Lock()
+		wanted := maps.Clone(s.wanted)
+		clear(s.wanted)
+		s.mu.Unlock()
+		if s.cfg.Peers == nil {
+			continue
+		}
+		for _, l := range s.cfg.Peers.Links() {
+			if wanted[l.Label] && s.up(l) {
+				s.start(l)
+			}
 		}
 	}
 }
