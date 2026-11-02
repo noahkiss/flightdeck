@@ -248,6 +248,15 @@ public actor FakeHab {
     public func setAlwaysOn(_ on: Bool) { alwaysOn = on }
     /// The catalog's generation, raised by `announceCatalog`.
     private var catalogGeneration: UInt64 = 1
+    /// While on, `capcom.assign` sends no `catalog.updated` after its answer.
+    private var holdAssignAnnounce = false
+    public func setHoldAssignAnnounce(_ on: Bool) { holdAssignAnnounce = on }
+    /// How long each `catalog.get` waits before it answers; nil answers at once.
+    private var catalogDelay: Duration?
+    public func setCatalogDelay(_ d: Duration?) { catalogDelay = d }
+    /// The next `catalog.get` calls that fail with `unavailable`.
+    private var catalogFailures = 0
+    public func failNextCatalogGets(_ n: Int) { catalogFailures = n }
     /// Sends `catalog.updated` for this hab's own catalog, as the real hab does when it changes.
     public func announceCatalog() async {
         catalogGeneration += 1
@@ -876,7 +885,20 @@ public actor FakeHab {
             await capcomCall(method, params, c, id: id)
         case HabMethods.catalogGet.name where capabilities.contains("catalog") || capabilities.contains("capcom"):
             catalogGets += 1
-            await reply(c, id: id, result: CatalogGetResult(catalog: catalog(), generation: catalogGeneration, seq: c.seq))
+            if catalogFailures > 0 {
+                catalogFailures -= 1
+                await fail(c, id: id, kind: .unavailable, hint: "the catalog could not be read")
+                break
+            }
+            if let d = catalogDelay {
+                // Answer later, off this connection's read loop, with the catalog as it is then.
+                Task {
+                    try? await Task.sleep(for: d)
+                    await self.replyCatalog(c, id: id)
+                }
+                break
+            }
+            await replyCatalog(c, id: id)
         case HabMethods.confirmAnswer.name where capabilities.contains(ConfirmBook.capability):
             guard let p = try? params.decode(ConfirmAnswerParams.self) else {
                 await fail(c, id: id, kind: .invalid, hint: "bad confirm.answer params")
@@ -986,7 +1008,7 @@ public actor FakeHab {
                 if capcomHome.home != deviceID { capcomStanding = nil } // a new home starts fresh
                 capcomHomeSet = (n, deviceID)
                 await reply(c, id: id, result: CapcomAssigned(assignment: n, home: deviceID, seq: c.seq))
-                await announceCatalog()
+                if !holdAssignAnnounce { await announceCatalog() }
             case HabMethods.capcomOpen.name:
                 let p = try decode(CapcomOpenParams.self, params, method)
                 capcomOpens.append(p)
@@ -1061,6 +1083,10 @@ public actor FakeHab {
         } catch {
             await fail(c, id: id, kind: .invalid, hint: "bad \(method) params")
         }
+    }
+
+    private func replyCatalog(_ c: Conn, id: Int) async {
+        await reply(c, id: id, result: CatalogGetResult(catalog: catalog(), generation: catalogGeneration, seq: c.seq))
     }
 
     /// A minimal catalog: the host, its device id and, with the capability `capcom`, the

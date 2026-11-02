@@ -77,6 +77,8 @@ public struct HabState: Sendable, Equatable {
     public var confirmations = ConfirmBook()
     /// How many `catalog.updated` events named the hab's own catalog, over all connections.
     public var catalogChanges = 0
+    /// The generation the last of those events carried.
+    public var catalogGeneration: UInt64 = 0
 }
 
 /// Timings of the control connection. The defaults follow hab-logic-api.md 3.5
@@ -553,6 +555,7 @@ public actor HabConnection {
         if e.type == "catalog.updated" {
             if let c = try? e.data.decode(CatalogUpdated.self), c.deviceId == state.welcome?.deviceId {
                 state.catalogChanges += 1
+                state.catalogGeneration = c.generation
                 publish()
             }
             return

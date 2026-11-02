@@ -52,6 +52,11 @@ public final class CapcomCenter {
     /// Habs whose catalog is read again after `catalog.updated`, and those changed again since.
     @ObservationIgnored var rereading: Set<String> = []
     @ObservationIgnored var rereadAgain: Set<String> = []
+    /// The highest own-catalog generation read from each hab, by hab id.
+    @ObservationIgnored var catalogRead: [String: UInt64] = [:]
+    /// Habs made home by the picker that have not opened a standing conversation since; the
+    /// last open's session there is no longer standing.
+    var fresh: Set<String> = []
 
     /// The hooks into the fleet.
     public struct Habs {
@@ -128,6 +133,7 @@ public final class CapcomCenter {
         // so the Capcom view follows it.
         let m = model(habID: habID, opened: r)
         standing = m
+        fresh.remove(habID)
         guard request else { return m }
         return show(habID: habID, opened: r)
     }

@@ -103,12 +103,18 @@ struct CapcomHostSettingsView: View {
             } header: {
                 Text("Runs Capcom")
             } footer: {
-                if let f = center.assignFailure {
-                    Text(f)
-                        .foregroundStyle(.red)
+                VStack(alignment: .leading, spacing: 4) {
+                    if !center.hostChoices.contains(where: \.isHome) {
+                        Text(center.entryText(center.entry))
+                    }
+                    if let f = center.assignFailure {
+                        Text(f)
+                            .foregroundStyle(.red)
+                    }
                 }
             }
         }
+        .onAppear { center.pickerAppeared() }
     }
 }
 
@@ -152,7 +158,10 @@ struct CapcomAssignInline: View {
             Button("Check again") { Task { await center.refreshHome() } }
                 .buttonStyle(.borderless)
         }
-        .onAppear { if choice == nil { choice = center.suggestedHost } }
+        .onAppear {
+            center.pickerAppeared()
+            if choice == nil { choice = center.suggestedHost }
+        }
         .onChange(of: options.map(\.id)) { _, ids in
             if choice == nil || !ids.contains(choice!) { choice = center.suggestedHost }
         }

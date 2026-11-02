@@ -28,7 +28,10 @@ final class CapcomViewTests: XCTestCase {
         guard start else { return f }
         await f.setActive(true)
         await eventually("online") { f.board.habs.allSatisfy { $0.state.status == .online } }
-        await eventually("home read") { f.capcom.entry != .loading }
+        // Every hab answered: a home known from one hab shows before the others read.
+        await eventually("home read") {
+            f.capcom.entry != .loading && f.capcom.reading.isEmpty && habs.allSatisfy { f.capcom.beliefs[$0.hostID] != nil }
+        }
         return f
     }
 

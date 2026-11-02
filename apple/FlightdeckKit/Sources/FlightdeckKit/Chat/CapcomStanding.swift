@@ -105,20 +105,33 @@ extension CapcomCenter {
         guard habs.connection(habID) === conn else { return }
         // A failed quiet read keeps what the last read found.
         if quiet, r == nil { return }
+        if let r { catalogRead[habID] = max(catalogRead[habID] ?? 0, r.generation) }
         let cat = r?.catalog
+        var next = CapcomBelief.none
+        if let c = cat?.capcom, let home = c.home, !home.isEmpty {
+            next = .home(assignment: c.assignment, device: home)
+        }
+        // A quiet read answered before an assign the hab already answered never lowers the
+        // counter this hab's belief holds.
+        if quiet, case .home(let held, _) = beliefs[habID] {
+            let got: UInt64
+            if case .home(let a, _) = next { got = a } else { got = 0 }
+            if got < held { return }
+        }
         if cat?.alwaysOn == true { alwaysOn.insert(habID) } else if cat != nil { alwaysOn.remove(habID) }
         standingSessions[habID] = cat?.capcom?.sessions.first { $0.standing == true }?.session
-        if let c = cat?.capcom, let home = c.home, !home.isEmpty {
-            beliefs[habID] = .home(assignment: c.assignment, device: home)
-        } else {
-            beliefs[habID] = CapcomBelief.none
-        }
+        let before = homeDevice
+        beliefs[habID] = next
+        // The home changed another way: an earlier picker refusal no longer applies.
+        if homeDevice != before { assignFailure = nil }
     }
 
     /// The hab's own catalog changed (`catalog.updated`): read it again, so a re-assignment
     /// from the command line or another device shows at once. Changes that arrive during a
     /// read give one more read after it.
-    public func catalogChanged(_ habID: String) async {
+    public func catalogChanged(_ habID: String, generation: UInt64? = nil) async {
+        // A generation already read changes nothing.
+        if let g = generation, let read = catalogRead[habID], g <= read { return }
         guard rereading.insert(habID).inserted else {
             rereadAgain.insert(habID)
             return
@@ -136,6 +149,8 @@ extension CapcomCenter {
         reading[habID] = nil
         standingSessions[habID] = nil
         alwaysOn.remove(habID)
+        catalogRead[habID] = nil
+        fresh.remove(habID)
     }
 
     /// Reads every online hab's catalog again: "Check again", and an open the old home
@@ -194,13 +209,14 @@ extension CapcomCenter {
 
     // MARK: - The standing conversation's row state
 
-    /// The standing conversation on the home, for the entry row's agent state: the last
-    /// open's session when it ran on the home, else the session the home's catalog marks.
+    /// The standing conversation on the home, for the entry row's agent state: the session
+    /// the home's catalog marks standing, the newer fact, else the last open's session when it
+    /// ran on the home. A hab just made home has none until its next open.
     public var standingTarget: SessionTarget? {
         guard case .ready(let id) = entry else { return nil }
-        if let m = standing, m.target.habID == id, m.target.session != nil { return m.target }
-        guard let s = standingSessions[id] else { return nil }
-        return SessionTarget(habID: id, session: s, pane: nil)
+        if let s = standingSessions[id] { return SessionTarget(habID: id, session: s, pane: nil) }
+        guard !fresh.contains(id), let m = standing, m.target.habID == id, m.target.session != nil else { return nil }
+        return m.target
     }
 
     /// The board row of the standing conversation, if the board lists it.
@@ -225,7 +241,8 @@ extension CapcomCenter {
         let home = homeDevice.flatMap { habs.device($0) }
         return habs.statuses().map { h in
             let why: String?
-            if h.status != .online { why = "Offline" }
+            if h.status == .connecting { why = "Connecting" }
+            else if h.status != .online { why = "Offline" }
             else if !habs.hasCapcom(h.id) { why = "No Capcom" }
             else { why = nil }
             return CapcomHostChoice(id: h.id, label: habs.label(h.id), isHome: h.id == home, unavailable: why)
@@ -244,15 +261,19 @@ extension CapcomCenter {
     /// becomes that hab's belief at once. Returns whether it succeeded.
     @discardableResult
     public func assign(habID: String) async -> Bool {
-        guard assigning == nil, hostChoices.first(where: { $0.id == habID })?.choosable == true,
+        guard assigning == nil, let choice = hostChoices.first(where: { $0.id == habID }), choice.choosable,
               let conn = habs.connection(habID) else { return false }
         assigning = habID
         defer { assigning = nil }
         do {
             let r = try await conn.call(HabMethods.capcomAssign, CapcomAssignParams(assignment: highestAssignment + 1, host: "self"))
             beliefs[habID] = .home(assignment: r.assignment, device: r.home)
-            // A new home starts a fresh standing conversation (capcom.md 7.3).
-            standingSessions[habID] = nil
+            if !choice.isHome {
+                // A new home starts a fresh standing conversation (capcom.md 7.3): its old one
+                // is no longer standing.
+                standingSessions[habID] = nil
+                fresh.insert(habID)
+            }
             assignFailure = nil
             standingCheck()
             return true
@@ -260,6 +281,11 @@ extension CapcomCenter {
             assignFailure = Self.message(error, label: habs.label(habID), doing: nil)
             return false
         }
+    }
+
+    /// A host picker appeared: an earlier refusal is not shown again.
+    public func pickerAppeared() {
+        assignFailure = nil
     }
 
     // MARK: - While a Capcom view is on screen

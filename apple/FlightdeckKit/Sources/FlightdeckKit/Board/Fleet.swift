@@ -135,8 +135,8 @@ public final class Fleet {
                 if s.catalogChanges != lastCatalog {
                     lastCatalog = s.catalogChanges
                     if s.status == .online {
-                        let id = conn.id
-                        Task { @MainActor [weak self] in await self?.capcom.catalogChanged(id) }
+                        let id = conn.id, g = s.catalogGeneration
+                        Task { @MainActor [weak self] in await self?.capcom.catalogChanged(id, generation: g) }
                     }
                 }
                 self?.approvals?.boardChanged()
