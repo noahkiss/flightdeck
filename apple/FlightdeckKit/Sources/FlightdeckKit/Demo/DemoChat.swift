@@ -66,6 +66,16 @@ enum DemoChat {
         ]
     }
 
+    /// The standing Capcom conversation: a question answered from the habs' state.
+    static func capcom(_ s: String) -> [ChatMessage] {
+        [
+            msg(s, 1, .user, 50, text: "Which sessions need me right now?"),
+            msg(s, 2, .agent, 49, text: "Two do:\n\n- **tide-tables** on workbench asks to run the database migration.\n- **paper-lantern** on attic asks which palette to apply.\n\nThe rest are working or done."),
+            msg(s, 3, .user, 30, text: "Is anyone already on seed-catalog?"),
+            msg(s, 4, .agent, 29, text: "Yes. A Claude Code session on attic is speeding up search, and a Codex session on workbench is fixing the CSV import."),
+        ]
+    }
+
     /// Loads the demo conversations and makes `session.send` answer with a short invented reply.
     static func populate(workbench: FakeHab, attic: FakeHab) async {
         await workbench.setChat(session: "s1", tide("s1"))
@@ -75,13 +85,14 @@ enum DemoChat {
             msg("s4", 1, .user, 5, text: "Split the layout engine into measure and place passes."),
             msg("s4", 2, .agent, 4, text: "Working on it. The measure pass is done; the place pass is next."),
         ])
+        await workbench.setChat(session: "capcom-s1", capcom("capcom-s1"))
         await attic.setChat(session: "s11", palette("s11"))
         await attic.setChat(session: "s12", search("s12"))
         await attic.setChat(session: "s13", [
             msg("s13", 1, .user, 40, text: "Update the dependencies and run the tests."),
             msg("s13", 2, .agent, 26, text: "All dependencies are current. The tests pass."),
         ])
-        for (hab, panes) in [(workbench, ["s1": "%1", "s3": "%3", "s4": "%4"]), (attic, ["s11": "%11", "s12": "%12", "s13": "%13"])] {
+        for (hab, panes) in [(workbench, ["s1": "%1", "s3": "%3", "s4": "%4", "capcom-s1": "%c1"]), (attic, ["s11": "%11", "s12": "%12", "s13": "%13"])] {
             let panes = panes
             await hab.setSend(works: true, anyHarness: true) { [weak hab] p in
                 guard let hab else { return }

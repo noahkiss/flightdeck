@@ -67,6 +67,7 @@ public enum DemoFleet {
         )
         await hab.setUsage(demoUsage(Date()))
         await addConfirmations(hab)
+        await addCapcom(hab)
         return hab
     }
 
@@ -82,6 +83,15 @@ public enum DemoFleet {
                                 name: "claude-3fa9c2", project: "tide-tables",
                                 seed: "Run the full test suite on this host and report which tests fail."),
             state: .open))
+    }
+
+    /// Capcom runs on workbench (capcom.md 7): the standing conversation, with one notice
+    /// waiting as a chip.
+    static func addCapcom(_ hab: FakeHab) async {
+        await hab.setCapability("capcom", true)
+        await hab.loadCapcomSession("capcom-s1", name: "capcom", pane: "%c1", standing: true)
+        await hab.addNotice(id: "n-demo1", title: "Tests failed in seed-catalog")
+        try? await hab.attachElsewhere(session: "capcom-s1", notice: "n-demo1")
     }
 
     static func makeAttic() async -> FakeHab {
@@ -110,6 +120,9 @@ public enum DemoFleet {
                 Fixture.agent(pane: "%13", harness: "codex", state: .idle, at: ago(25)),
             ]
         )
+        // attic knows Capcom runs on workbench.
+        await hab.setCapability("capcom", true)
+        await hab.setCapcomHome(assignment: 1, home: FakeHab.deviceID(host: "workbench"))
         return hab
     }
 
