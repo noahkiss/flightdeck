@@ -183,7 +183,7 @@ github.com/dustin/go-humanize
 Version: v1.0.1
 Source: https://pkg.go.dev/github.com/dustin/go-humanize
 Licence: see the text below
-In: gff-hab
+In: gff, gff-hab
 
 --- github.com/dustin/go-humanize/LICENSE
 
@@ -425,7 +425,7 @@ github.com/google/uuid
 Version: v1.6.0
 Source: https://pkg.go.dev/github.com/google/uuid
 Licence: see the text below
-In: gff-hab
+In: gff, gff-hab
 
 --- github.com/google/uuid/LICENSE
 
@@ -462,7 +462,7 @@ github.com/mattn/go-isatty
 Version: v0.0.24
 Source: https://pkg.go.dev/github.com/mattn/go-isatty
 Licence: see the text below
-In: gff-hab
+In: gff, gff-hab
 
 --- github.com/mattn/go-isatty/LICENSE
 
@@ -481,7 +481,7 @@ github.com/ncruces/go-strftime
 Version: v1.0.0
 Source: https://pkg.go.dev/github.com/ncruces/go-strftime
 Licence: see the text below
-In: gff-hab
+In: gff, gff-hab
 
 --- github.com/ncruces/go-strftime/LICENSE
 
@@ -512,7 +512,7 @@ github.com/remyoudompheng/bigfft
 Version: v0.0.0-20230129092748-24d4a6f8daec
 Source: https://pkg.go.dev/github.com/remyoudompheng/bigfft
 Licence: see the text below
-In: gff-hab
+In: gff, gff-hab
 
 --- github.com/remyoudompheng/bigfft/LICENSE
 
@@ -619,7 +619,7 @@ modernc.org/libc
 Version: v1.77.1
 Source: https://pkg.go.dev/modernc.org/libc
 Licence: see the text below
-In: gff-hab
+In: gff, gff-hab
 
 --- modernc.org/libc/LICENSE
 
@@ -964,7 +964,7 @@ modernc.org/mathutil
 Version: v1.7.1
 Source: https://pkg.go.dev/modernc.org/mathutil
 Licence: see the text below
-In: gff-hab
+In: gff, gff-hab
 
 --- modernc.org/mathutil/LICENSE
 
@@ -1001,7 +1001,7 @@ modernc.org/memory
 Version: v1.12.1
 Source: https://pkg.go.dev/modernc.org/memory
 Licence: see the text below
-In: gff-hab
+In: gff, gff-hab
 
 --- modernc.org/memory/LICENSE
 
@@ -1099,7 +1099,7 @@ modernc.org/sqlite
 Version: v1.60.1
 Source: https://pkg.go.dev/modernc.org/sqlite
 Licence: see the text below
-In: gff-hab
+In: gff, gff-hab
 
 --- modernc.org/sqlite/LICENSE
 
