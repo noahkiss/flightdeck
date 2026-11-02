@@ -616,7 +616,8 @@ change: `hand_off` uses `catalog.list`, `channel.send` and `channel.status`; `fi
   plain answers, not errors.
 - **The hand-off card.** Design call: the card is the `hand_off` tool call in Capcom's own
   transcript. Its arguments hold the exact text sent and the target; its answer holds the
-  delivery. The chat view renders that tool call as the card (6.3). No hab record is added.
+  delivery. The chat view renders that tool call as the card (6.3; built as `app.md` 4.8). No
+  hab record is added. The `file_record` call renders as a proposal line (`app.md` 4.8).
 - **`file_record`.** Arguments: `type` (task, finding, issue, plan or guide), `title` (one line,
   at most 200 characters), `quote` (required: the user's words), `body` (at most 256 KiB),
   `project`, `source_message`. A project resolves through the catalog to its key (`logbook.md`

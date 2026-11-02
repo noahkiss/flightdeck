@@ -312,6 +312,9 @@ func runHandOff(ctx context.Context, c caller, a toolArgs) (any, string, error) 
 		}
 	}
 	res.Message = &rec
+	// The app's hand-off card reads this answer (app.md 4.8): the first line's lead word
+	// (Delivered, Queued, Held, Not delivered) and "who", then the "Why this agent:", "Also on"
+	// and "Message" lines. Change them together with apple/FlightdeckKit Chat/CapcomCards.swift.
 	who := fmt.Sprintf("%s (%s, %s, on %s)", t.Address, t.Harness, t.State, t.Host)
 	switch {
 	case rec.State == api.ChannelStateDelivered:
@@ -449,6 +452,8 @@ func runFileRecord(ctx context.Context, c caller, a toolArgs) (any, string, erro
 		return nil, "", fmt.Errorf("file_record: the hab did not take the proposal, so nothing was filed: %w", err)
 	}
 	res := fileRecordResult{Filed: true, State: r.State, Proposal: r.Proposal}
+	// The app's proposal line reads the lead words "Proposed:" and "The hab filed", and the
+	// proposal id after "as proposal" (app.md 4.8).
 	if r.State != "proposed" {
 		// A hab that ignored propose: say what happened, plainly.
 		return res, fmt.Sprintf("The hab filed the %s %q at once (state %s), not as a proposal: %s. Tell the user it is in Logbook already.\n", typ, title, r.State, strings.Join(r.IDs, ", ")), nil

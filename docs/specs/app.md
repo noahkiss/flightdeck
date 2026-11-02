@@ -338,6 +338,7 @@ rows; search field; usage bars in the footer); `hab-logic-api.md` 5, 6.4; `harne
   line. Edits show a diff. Shell commands show the exact command.
 - **Subagents** show as one card with their own nested messages, folded by default.
 - **Plans** render as a checklist (4.5), not as a tool card.
+- **Capcom's hand-offs and proposals** render as a hand-off card and a proposal line (4.8).
 - **Paging.** The view opens at the tail. Older messages load in pages as the owner scrolls up.
 - **Live updates.** New messages append while the session is visible. A running tool card updates
   in place.
@@ -750,6 +751,38 @@ What carries over:
   loads, the old bytes stay on screen under the old key. Bytes that changed while loading get a
   key of their own. A PDF view loads a new
   document only when its bytes change, so a redraw keeps its scroll position and zoom.
+
+### 4.8 Hand-off card and proposal line (Capcom)
+
+Capcom's `hand_off` and `file_record` calls (`capcom.md` 3.2, 3.4, 6.3, 6.5) render as their own
+rows, not as tool cards. Code: `Chat/CapcomCards.swift` (parsing), `Views/CapcomCardViews.swift`.
+
+- **Which calls.** A tool call named `mcp__flightdeck__hand_off` (Claude Code, Codex) or
+  `flightdeck_hand_off` (opencode), and the same for `file_record`. A bare `hand_off`, or the
+  name under another MCP server, stays a plain tool card. A call with nested messages stays a
+  tool card.
+- **What the card reads.** The tools answer in text only (`gff-hab mcp` sends no structured
+  result), and the hab adds no record (`capcom.md` 6.5). So the card reads the call's arguments
+  (`project`, `message`, `agent`, `host`) and the lead words of the answer. Design call: the
+  card parses the hab's own answer text, which `cmd/gff-hab/handoff.go` marks as read by the
+  app. A new hab record or API field for this was not worth it while the answer is ours.
+- **Hand-off card.** Header: "Hand-off" and the delivery: Sending (the call runs), Delivered,
+  Queued, Held, Not delivered, Not sent, Failed. Below: the target's address, host, harness and
+  state from the answer's first line; that line itself; "Why:" and the pick reason; the other
+  running agents on the project ("Also on the project"); and the exact text sent, its first 3
+  lines with "Show full message" (also past 280 characters). The channel message id and state
+  are parsed but not shown.
+- **Nothing sent, or an error.** An answer that does not start with a delivery word (no agent,
+  a name on two hosts, the caller itself, an ambiguous project) shows as Not sent with the
+  whole answer as plain text. A failed or refused call shows as Failed, with the error text in
+  red. Both still show the text the call would have sent.
+- **Proposal line.** One folded line: "Proposal", the record's type and title, and its state:
+  Filing (the call runs), Waits for review (`Proposed:`, with the proposal id), Filed (the hab
+  ignored `propose`), Not filed (an error, such as no Logbook on the host). Open, it shows the
+  project, the source quote, the body as Markdown and any answer text. No buttons: review is an
+  approval (`logbook.md` 9), a later stage.
+- **Snapshot.** `internal/transcript/testdata/claude-handoff.jsonl` is a hand-written Claude Code
+  transcript with each case; its rows are in `Snapshots/claude-handoff.txt`.
 
 ---
 
