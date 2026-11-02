@@ -87,6 +87,28 @@ the log says to set `key_command`.
   status and at most the first line of stderr, cut to 120 bytes. A line that looks like key
   material (a `-----` marker or a long base64 run) is left out.
 
+### Under the installed service
+
+`gff-hab install` runs gff-hab as a launchd or systemd user job. That job gets a bare
+environment: `PATH` (the installing shell's), the locale and `$GFF_MACOS_GRANTS`, nothing
+else. So:
+
+- `GFF_HAB_PUSH_KEY_COMMAND` set in your shell never reaches the job. Use `push.json`.
+- A password manager's CLI may lack the variables or the agent it needs, such as a session
+  token, `GNUPGHOME`, `PASSWORD_STORE_DIR`, `DBUS_SESSION_BUS_ADDRESS` or an agent socket.
+- Give the program as an absolute path, or point `key_command` at a wrapper script of your own
+  that sets those variables and then runs the store's command.
+
+Test the command the way the job runs it, with an empty environment:
+
+```sh
+env -i PATH="$PATH" LANG="$LANG" pass show flightdeck/apns-key </dev/null
+```
+
+It must print the key with no prompt.
+
+### When the command fails
+
 A failure leaves push off and logs one line. gff-hab tries again after 30 seconds, then waits
 twice as long after each failure, up to 30 minutes. A password manager that is locked at boot
 only delays push: unlock it, and push turns on at the next try.
@@ -103,7 +125,8 @@ gff-hab reads the config at start. Its log says which way it went:
   again, as above.
 
 A client that connected before push turned on sees the `push` capability at its next
-connection.
+connection. An agent that was already waiting on an approval or a question before push turned
+on gets no banner for it; the next change of its state pushes as usual.
 
 Then open the app. It registers its push token with each paired hab, every time it connects.
 Connections › Notifications shows each hab's push status. A Debug build from Xcode registers

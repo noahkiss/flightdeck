@@ -1141,8 +1141,12 @@ a key it sends the same call again, and the hab runs it at most once. Built choi
   Push is on, and the welcome lists `push` (checked at each hello), only once a key parsed. A
   failure logs one line per failure streak and retries after 30 s, doubling to 30 minutes, so a
   password manager locked at boot delays push only. APNs answering `InvalidProviderToken`, or a
-  token that cannot be signed, runs the command again, at most once per 5 minutes; a new key
-  sends the message once more, a failure keeps the old key.
+  token that cannot be signed, starts the command again, at most once per 5 minutes, in the
+  keyring's own context with the full 30 s (never the send's 15 s); a new key that arrives while
+  the send still has time sends the message once more, a failure keeps the old key. The signer
+  reads the keyring's key at each token, so racing sends never restore an older key. A program
+  that exits 0 while a child it started holds stdout keeps its output. Closing gff-hab ends a
+  run without a log line.
 - **APNs.** HTTP/2 to `api.push.apple.com` or `api.sandbox.push.apple.com`, chosen by each
   token's environment. Token auth: an ES256 JWT with the key id and team id, reused for 40
   minutes (APNs refuses one older than an hour or refreshed within 20 minutes), signed again
