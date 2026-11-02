@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,10 +28,26 @@ type fixture struct {
 	done    chan struct{}
 	dev     *Device
 	err     error
+
+	mu   sync.Mutex
+	logs []string
+}
+
+// lines is every line the window printed so far.
+func (f *fixture) lines() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.logs...)
 }
 
 // open starts a window on loopback with confirm as the owner.
 func open(t *testing.T, life time.Duration, confirm func(context.Context, Device) (bool, error)) *fixture {
+	t.Helper()
+	return openWith(t, life, confirm, nil)
+}
+
+// openWith is open with admit run inside the window's Admit, when not nil.
+func openWith(t *testing.T, life time.Duration, confirm func(context.Context, Device) (bool, error), admit func(Device)) *fixture {
 	t.Helper()
 	_, hk, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -45,9 +62,18 @@ func open(t *testing.T, life time.Duration, confirm func(context.Context, Device
 		Confirm:  confirm,
 		Admit: func(d Device) (Paired, error) {
 			f.admits.Add(1)
+			if admit != nil {
+				admit(d)
+			}
 			return Paired{User: "user", SSH: SSHInfo{Endpoints: []string{"192.0.2.10:22"}, HostKeys: []string{"ssh-ed25519 AAAA"}}, ForcedCommand: true}, nil
 		},
-		Logf: func(format string, a ...any) { t.Logf("window: "+format, a...) },
+		Logf: func(format string, a ...any) {
+			l := fmt.Sprintf(format, a...)
+			f.mu.Lock()
+			f.logs = append(f.logs, l)
+			f.mu.Unlock()
+			t.Logf("window: %s", l)
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -385,4 +411,70 @@ func TestOpenRefusesEveryInterface(t *testing.T) {
 	}
 	pairWith(t, f, phoneKey(t), request(EncodeToken(f.w.Offer().Token), "phone"), nil)
 	f.wait(t)
+}
+
+// TestRefusalLinesArePrintable: a client's channel type, request type and device name never
+// reach the owner's terminal raw (no ESC, CSI, OSC or BEL), and each refusal line stays short.
+func TestRefusalLinesArePrintable(t *testing.T) {
+	f := open(t, time.Minute, yes)
+	evil := "\x1b[2J\x1b[H\x1b]0;owned\x07\x9b31m" + strings.Repeat("\x1b[41m#", 500)
+	c, err := dial(f, phoneKey(t), f.hostPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.OpenChannel(evil, nil); err == nil {
+		t.Fatal("a channel of another type was accepted")
+	}
+	ch, reqs, err := c.OpenChannel("session", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go ssh.DiscardRequests(reqs)
+	if ok, _ := ch.SendRequest(evil, true, nil); ok {
+		t.Fatal("a request of another type was accepted")
+	}
+	if _, _, err := c.OpenChannel(evil, nil); err == nil {
+		t.Fatal("a second channel was accepted")
+	}
+	c.Close()
+	pairWith(t, f, phoneKey(t), request(EncodeToken(f.w.Offer().Token), evil[:24]), nil)
+	f.wait(t)
+	lines := f.lines()
+	refusals := 0
+	for _, l := range lines {
+		if strings.HasPrefix(l, "refused ") {
+			refusals++
+		}
+		if len(l) > 200 {
+			t.Errorf("a line of %d bytes: %.80q", len(l), l)
+		}
+		for _, r := range l {
+			if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+				t.Errorf("a control character %U reached the terminal: %q", r, l)
+				break
+			}
+		}
+		if strings.Contains(l, "owned") {
+			t.Errorf("the client's string was printed: %q", l)
+		}
+	}
+	if refusals < 3 {
+		t.Fatalf("%d refusal lines, want 3: %q", refusals, lines)
+	}
+}
+
+func TestPrintable(t *testing.T) {
+	for in, want := range map[string]string{
+		"iPhone":                `"iPhone"`,
+		"Owner\u2019s iPhone":   `"Owner’s iPhone"`,
+		"a\x1b[2Jb\x07":         `"a\x1b[2Jb\a"`,
+		"\u202eevil":            `"\u202eevil"`,
+		"\xff":                  `"\xff"`,
+		strings.Repeat("x", 70): `"` + strings.Repeat("x", 64) + `"...`,
+		strings.Repeat("é", 40): `"` + strings.Repeat("é", 32) + `"...`,
+	} {
+		if got := Printable(in); got != want {
+			t.Errorf("Printable(%q) = %s, want %s", in, got, want)
+		}
+	}
 }

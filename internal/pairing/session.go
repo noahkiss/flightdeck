@@ -43,7 +43,8 @@ func (w *Window) session(conn *ssh.ServerConn, c net.Conn, key ssh.PublicKey, ch
 				r.Reply(false, nil)
 			}
 			if !started {
-				w.refuse(conn.RemoteAddr(), fp, "request "+r.Type+" refused")
+				// A fixed reason: the request type is the client's string.
+				w.refuse(conn.RemoteAddr(), fp, "request refused: only the "+Subsystem+" subsystem")
 			}
 		}
 	}
@@ -67,7 +68,7 @@ func (w *Window) pair(conn *ssh.ServerConn, c net.Conn, key ssh.PublicKey, fp st
 	}
 	line, err := readLine(ch, MaxRequest)
 	if err != nil {
-		w.refuse(remote, fp, "request: "+err.Error())
+		w.refuse(remote, fp, "request not read")
 		end(refused(ReasonRequest))
 		return
 	}

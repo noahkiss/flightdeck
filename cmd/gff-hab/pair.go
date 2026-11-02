@@ -107,7 +107,7 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 		Lifetime: *timeout,
 		Logf:     func(f string, a ...any) { fmt.Fprintf(out, f+"\n", a...) },
 		Confirm: func(ctx context.Context, d pairing.Device) (bool, error) {
-			fmt.Fprintf(out, "\nPair %q (%s)?\n  key  %s %s\n  from %s\nAdd it to %s? [y/N] ", d.Name, d.Kind, d.Key.Type(), d.Fingerprint, hostOf(d.Remote), *authKeys)
+			fmt.Fprintf(out, "\nPair %s (%s)?\n  key  %s %s\n  from %s\nAdd it to %s? [y/N] ", pairing.Printable(d.Name), d.Kind, d.Key.Type(), d.Fingerprint, hostOf(d.Remote), *authKeys)
 			select {
 			case l, ok := <-lines:
 				if !ok {
@@ -164,7 +164,7 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 	dev, err := w.Wait(ctx)
 	switch {
 	case err == nil:
-		fmt.Fprintf(out, "Paired %q: its key is in %s and in the hab's device list.\n", dev.Name, *authKeys)
+		fmt.Fprintf(out, "Paired %s: its key is in %s and in the hab's device list.\n", pairing.Printable(dev.Name), *authKeys)
 		return nil
 	case errors.Is(err, context.Canceled):
 		return errors.New("pairing window closed")

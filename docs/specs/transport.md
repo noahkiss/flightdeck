@@ -470,7 +470,8 @@ the key without trusting a value the phone could copy.
 | Lifetime | At most five minutes (`-timeout`, capped at five). Closed after one pairing, a `declined` answer, Ctrl-C, or ten refused tokens |
 | One use | The token pairs one device. A no at the prompt burns it too: someone else may have scanned the code, so the owner runs `gff-hab pair` again |
 | Limits | At most four connections at once; 10 s to finish the SSH handshake; 20 s from auth to the request; one request per connection; one device waits for the owner at a time (another gets `busy`); the owner has until the window closes |
-| Refusals | Each refusal is one stderr line with the source address, the key fingerprint when known, and the reason. After 20 lines they stop and the window counts them; the closing line prints the count |
+| Refusals | Each refusal is one stderr line with the source address, the key fingerprint when known, and a fixed reason. A refused channel or request prints its fixed reason only, never the type the client sent. After 20 lines they stop and the window counts them; the closing line prints the count |
+| Client strings | Every string a client sent that reaches the terminal (the device name, a key type, a handshake error) goes through one sanitiser: cut to 64 bytes, then quoted, so control, format and invalid bytes print as escapes. A string the client sends can never move the cursor, draw, or retitle the terminal |
 
 When no address qualifies, `gff-hab pair` says so and names `-listen`.
 
@@ -527,8 +528,8 @@ Add it to /home/user/.ssh/authorized_keys? [y/N]
 ```
 
 On yes: one line naming the device and the file, exit 0. On no, expiry, Ctrl-C or too many
-refusals: one line saying why, exit 1. The device name is printed after cleaning, so a name cannot
-move the cursor or change colours.
+refusals: one line saying why, exit 1. The device name is printed after cleaning and through the
+sanitiser of 6.1.3, so a name cannot move the cursor or change colours.
 
 #### 6.1.6 The password fallback (app side, not built)
 

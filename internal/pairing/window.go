@@ -24,6 +24,8 @@ const (
 	maxRefusalLines  = 20
 )
 
+var errKeyType = errors.New("key type not accepted")
+
 // Errors Wait returns when no device paired.
 var (
 	ErrExpired   = errors.New("the pairing window expired")
@@ -127,7 +129,7 @@ func Open(cfg Config) (*Window, error) {
 				// x/crypto hands the connection the Permissions of the key that authenticated.
 				return &ssh.Permissions{Extensions: map[string]string{"key": string(key.Marshal())}}, nil
 			}
-			return nil, fmt.Errorf("key type %s is not accepted", key.Type())
+			return nil, errKeyType
 		},
 		MaxAuthTries:  3,
 		ServerVersion: "SSH-2.0-gff-hab-pair",
@@ -274,14 +276,14 @@ func (w *Window) serve(c net.Conn) {
 	srv.PublicKeyCallback = func(m ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 		p, err := w.srv.PublicKeyCallback(m, key)
 		if err != nil {
-			w.refuse(m.RemoteAddr(), ssh.FingerprintSHA256(key), err.Error())
+			w.refuse(m.RemoteAddr(), ssh.FingerprintSHA256(key), "key type "+Printable(key.Type())+" not accepted")
 		}
 		return p, err
 	}
 	conn, chans, reqs, err := ssh.NewServerConn(c, &srv)
 	if err != nil {
 		if w.ctx.Err() == nil {
-			w.refuse(c.RemoteAddr(), "", "handshake: "+err.Error())
+			w.refuse(c.RemoteAddr(), "", "handshake failed: "+Printable(err.Error()))
 		}
 		return
 	}
@@ -303,7 +305,8 @@ func (w *Window) serve(c net.Conn) {
 				first <- nc
 				continue
 			}
-			w.refuse(conn.RemoteAddr(), ssh.FingerprintSHA256(key), "channel "+nc.ChannelType()+" refused")
+			// A fixed reason: the channel type is the client's string.
+			w.refuse(conn.RemoteAddr(), ssh.FingerprintSHA256(key), "channel refused: only one session channel")
 			nc.Reject(ssh.Prohibited, "only one session channel")
 		}
 		close(first)
