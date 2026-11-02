@@ -86,6 +86,7 @@ public struct ChatHeader: View {
                 .font(.headline)
                 .lineLimit(1)
             HStack(spacing: 4) {
+                if let r = context.round { RoundBadge(name: r) }
                 Image(systemName: harnessSymbol(context.harness))
                     .accessibilityHidden(true)
                 Text(subtitle)

@@ -14,14 +14,20 @@ public struct TerminalScreen: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.terminals) private var terminals
 
-    public init(pane: String, connection: HabConnection) {
+    /// The pane runs a round's live run: focus reports, mouse motion and the wheel stay
+    /// here, so watching never takes the run over (app.md 21.4).
+    private let liveRun: Bool
+
+    public init(pane: String, connection: HabConnection, liveRun: Bool = false) {
         _model = State(initialValue: TerminalModel(pane: pane, connection: connection))
         self.connection = connection
+        self.liveRun = liveRun
     }
 
     public init(model: TerminalModel, connection: HabConnection? = nil) {
         _model = State(initialValue: model)
         self.connection = connection
+        liveRun = false
     }
 
     public var body: some View {
@@ -41,6 +47,7 @@ public struct TerminalScreen: View {
         .background(Color(red: 0x1e / 255, green: 0x1e / 255, blue: 0x1e / 255))
         .overlay(alignment: .center) { statusOverlay }
         .overlay(alignment: .bottom) { inputNotice }
+        .onChange(of: liveRun, initial: true) { _, on in model.liveRun = on }
         .onReceive(model.view.$surfaceSize) { m in
             model.surfaceChanged(m, displayScale: displayScale)
         }

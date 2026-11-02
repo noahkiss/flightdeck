@@ -22,6 +22,7 @@ public struct FlightdeckRoot: View {
             .environment(\.sendFiles, fleet.files)
             .environment(\.confirmations, fleet.confirms)
             .environment(\.capcom, fleet.capcom)
+            .environment(\.rounds, fleet.rounds)
             .sshSheets(fleet.ssh)
             .onAppear { fleet.windowOpened() }
             .onDisappear { fleet.windowClosed() }
@@ -35,6 +36,7 @@ public struct FlightdeckRoot: View {
             .environment(\.sendFiles, fleet.files)
             .environment(\.confirmations, fleet.confirms)
             .environment(\.capcom, fleet.capcom)
+            .environment(\.rounds, fleet.rounds)
             .sshSheets(fleet.ssh)
         #endif
     }
@@ -210,6 +212,12 @@ public struct BoardScreen: View {
         // One detail at a time: a session or the Capcom view.
         .onChange(of: opened) { _, r in if r != nil { capcomShown = false } }
         .onChange(of: capcomShown) { _, on in if on { opened = nil } }
+        // A round's run session: Run now, a run in the history, or a round notification (app.md 21).
+        .onChange(of: fleet?.rounds.openRequest) { _, t in
+            guard let t else { return }
+            fleet?.rounds.openRequest = nil
+            if let row = board.rows.first(where: { $0.target.habID == t.habID && $0.target.session == t.session }) { opened = row }
+        }
         // A file sent to a session from the send sheet opens that session (app.md 4.4).
         .onChange(of: fleet?.files.openRequest) { _, t in
             guard let t else { return }
@@ -289,6 +297,13 @@ struct BoardList: View {
     var heading: String? = nil
     @Environment(\.confirmations) private var confirms
     @Environment(\.capcom) private var capcom
+    @Environment(\.rounds) private var rounds
+
+    /// The board's sections with run sessions left out when the filter hides them. A run
+    /// session that needs the owner always shows (app.md 21.2).
+    private var sections: [BoardSection] {
+        RoundCenter.filter(board.sections, showRunSessions: rounds?.showRunSessions ?? true)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -331,7 +346,7 @@ struct BoardList: View {
                         ForEach(cards) { ConfirmCardView(center: confirms, card: $0) }
                     }
                 }
-                ForEach(board.sections) { section in
+                ForEach(sections) { section in
                     Section(section.kind.rawValue) {
                         ForEach(section.rows) { row in
                             Button {
@@ -345,9 +360,16 @@ struct BoardList: View {
                         }
                     }
                 }
+                // The Rounds list per hab (rounds.md 10.3), below the sessions.
+                if let rounds, rounds.any {
+                    BoardRoundsSections(center: rounds, now: ctx.date)
+                }
+            }
+            .navigationDestination(for: RoundRow.self) { row in
+                if let rounds { RoundPage(center: rounds, habID: row.habID, roundID: row.round.id) }
             }
             .overlay {
-                if board.sections.isEmpty, confirms?.approvals.isEmpty ?? true, !showsCapcom {
+                if board.sections.isEmpty, confirms?.approvals.isEmpty ?? true, !showsCapcom, !(rounds?.any ?? false) {
                     ContentUnavailableView("No sessions", systemImage: "rectangle.stack",
                                            description: Text(board.habs.isEmpty ? "No habs configured." : "Sessions on your habs show here."))
                 }
@@ -384,6 +406,7 @@ struct BoardRowView: View {
                         .lineLimit(1)
                 }
                 HStack(spacing: 5) {
+                    if let r = row.round { RoundBadge(name: r) }
                     Image(systemName: row.harnessSymbol)
                         .accessibilityLabel(row.harness ?? "shell")
                     Text(row.detailLine)

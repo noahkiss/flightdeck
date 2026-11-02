@@ -21,10 +21,11 @@ public struct TerminalSlot {
 struct PaneTerminal: View {
     let target: SessionTarget
     @Environment(\.habConnections) private var habs
+    @Environment(\.rounds) private var rounds
 
     var body: some View {
         if let pane = target.pane, let conn = habs.find(target.habID) {
-            TerminalScreen(pane: pane, connection: conn)
+            TerminalScreen(pane: pane, connection: conn, liveRun: rounds?.liveRun(habID: target.habID, pane: pane) ?? false)
         } else {
             TerminalPlaceholder(target: target)
         }
