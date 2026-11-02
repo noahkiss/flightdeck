@@ -1,7 +1,5 @@
 # Built-in hygiene rule hits that are meant: "<path><TAB><rule>" per line (scripts/hygiene-scan.sh).
 # A private rule hit is never allowed here.
-docs/specs/ci-release.md	private-ipv4
-docs/specs/ci-release.md	cgnat-ipv4
 internal/grants/grants_test.go	private-ipv4
 internal/grants/grants_test.go	cgnat-ipv4
 internal/opencode/client_test.go	private-ipv4

@@ -26,9 +26,10 @@ ignores that file.
 
 ## Check for leaks before you commit
 
-The repo is public. `scripts/hygiene-scan.sh` refuses private addresses, home paths and any
-private patterns you give it. CI runs it on every push and pull request. To run it on each
-commit, install its hooks:
+The repo is public. `scripts/hygiene-scan.sh` refuses private addresses, tailnet addresses and
+names, home paths, and any private patterns you give it. CI runs it with gawk on every push and
+pull request, commit by commit. It uses your `awk` locally; set `GFF_HYGIENE_AWK=gawk` to match
+CI. To run it on each commit, install its hooks:
 
 ```sh
 scripts/hygiene-scan.sh --install-hooks

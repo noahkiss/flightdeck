@@ -50,7 +50,7 @@ These are decided. This spec states them; it does not reopen them.
   schema changes (the Swift package is generated from it), or on a tag. They also run when holder
   packages change, plus one nightly macOS end-to-end run: that is the owner's test strategy
   decision of 2026-10-31 (section 14, Q2). Section 3 lists the exact paths.
-- **The hygiene scan** has generic checks built in (private IPv4, CGNAT `100.64.0.0/10`,
+- **The hygiene scan** has generic checks built in (private IPv4, the CGNAT range `100.64/10`,
   `/Users/<name>` and `/home/<name>` paths). Real patterns come from a repo secret, or from a
   private file that an environment variable names. They are never in the repo. On a hit the scan
   prints the file, the line and the rule name, never the matched text.
@@ -661,8 +661,13 @@ request, docs included.
 
 ### 9.2 Where it runs
 
-- **CI:** `hygiene.yml`, one ubuntu job, timeout 5 minutes. It runs `scripts/hygiene-scan.sh`
-  on what the event adds (9.3), with the private rules from the secret.
+- **CI:** `hygiene.yml`, one ubuntu job, timeout 5 minutes. It installs gawk and runs
+  `scripts/hygiene-scan.sh` with it (`$GFF_HYGIENE_AWK`) on what the event adds (9.3), with the
+  private rules from the secret. gawk, not the image's default awk, so a private rule behaves the
+  same in CI as on a dev box with gawk; the script's tests require BSD awk, gawk and dash to agree.
+  On a push it never cancels a running scan, so no pushed range goes unscanned; a newer push to a
+  pull request may cancel the older run, because every run scans the pull request's whole range.
+  It also runs when a pull request's title or body is edited.
 - **Locally:** the same script, from a pre-commit and a commit-msg hook that
   `scripts/hygiene-scan.sh --install-hooks` installs (the README says how). Rule 10 says the
   checks pass on the dev machine before a push.
@@ -675,20 +680,22 @@ On a public repo the extra job costs no minutes, and it runs in parallel.
 
 | Mode | Scans | Used by |
 |---|---|---|
-| `--range <base>..<head>` | Lines the range adds (the diff from the merge base, so not what the base gained meanwhile), every commit message in the range, and `$GFF_HYGIENE_PR_TITLE` and `$GFF_HYGIENE_PR_BODY` when set | CI |
-| `--staged` | Lines the index adds | The pre-commit hook |
-| `--message <file>` | One commit message, git's comment lines dropped | The commit-msg hook |
-| `--tree` | Every tracked text file at `HEAD` | A full check by hand, and CI on a new branch or tag |
+| `--range <base>..<head>` | Every commit in the range on its own (`git log -p`, merges left out): the lines and file paths it adds, its message, its author and committer (name and email); then `$GFF_HYGIENE_REF`, `$GFF_HYGIENE_PR_TITLE` and `$GFF_HYGIENE_PR_BODY` when set | CI |
+| `--staged` | Lines and file paths the index adds | The pre-commit hook |
+| `--message <file>` | One commit message: git's comment lines (by `core.commentChar`) dropped, and nothing below the scissors line of `git commit -v` | The commit-msg hook |
+| `--tree` | Every tracked text file and every tracked path at `HEAD`, then `$GFF_HYGIENE_REF` | A full check by hand, and CI on a new branch or tag |
 
-Deleted lines and binary files are never scanned. Commit messages and pull request text are
-pushed text too, so they are scanned like files.
+Per commit, not the net diff: a leak one commit adds and a later commit removes is still public
+in the pushed history, so the range fails on it. Deleted lines and binary contents are never
+scanned; a binary file's path is. Commit messages, identities, ref names and pull request text
+are pushed text too, so they are scanned like files.
 
 The CI job picks the range from the event:
 
 | Event | Range | Pull request text |
 |---|---|---|
-| `pull_request` | `<base sha>..<head sha>` | Title and body, passed through `env` (never interpolated into the script) |
-| `push` to a branch | `<before>..<after>` | None |
+| `pull_request` (opened, synchronize, reopened, edited) | `<base sha>..<head sha>` | Title and body, passed through `env` (never interpolated into the script) |
+| `push` to a branch | `<before>..<after>`, and the branch name | None |
 | `push` that creates a branch or a tag (`before` is all zeros) | `--tree`, then the commits not on `main` with `--range origin/main..<after>` | None |
 
 ### 9.4 Rules
@@ -697,9 +704,14 @@ Built-in rules, public, in the script:
 
 | Rule name | Matches |
 |---|---|
-| `private-ipv4` | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` as dotted quads |
-| `cgnat-ipv4` | `100.64.0.0/10` as dotted quads (the tailnet range) |
+| `private-ipv4` | `10/8`, `172.16/12` and `192.168/16`, as dotted quads |
+| `cgnat-ipv4` | `100.64/10` as dotted quads (the range a tailnet uses) |
+| `tailnet-ipv6` | An address in the Tailscale IPv6 /48 that starts `fd7a`, `115c`, `a1e0`, any case |
+| `tailnet-name` | A `<label>.ts.net` name |
 | `home-path` | `/Users/<name>` and `/home/<name>`, where `<name>` is not a placeholder |
+
+This spec writes the ranges in prefix form (`10/8`), not as dotted quads, so it needs no entry in
+the allow file (9.5).
 
 A placeholder name is any name the `[A-Za-z0-9._-]` class cannot start (`<user>`, `$USER`), or one
 of `user`, `u`, `x`, `other`, `runner`, `you`, `linuxbrew`, `Shared`. Today's tree uses
@@ -713,18 +725,26 @@ Private rules come from outside the repo, in this order:
 3. Else none: the script says so on one line and runs the built-in rules only.
 
 The format is one rule per line: `<rule name><TAB><extended regex>`, matched by POSIX `awk`
-(so no `\b` and no Perl classes). Lines starting with `#` are comments; a malformed line is
-skipped with a count on stderr. **A rule name must say nothing private by itself** (for example
-`host-name`, `vault`, `tailnet`), because the log prints it. The rules reach `awk` through the
-environment only: never a command-line argument (visible in the process list), never a file the
-script writes.
+(so no `\b` and no Perl classes). Lines starting with `#` are comments. **A rule name must say
+nothing private by itself** (for example `host-name`, `vault`, `tailnet`), because the log prints
+it; it holds letters, digits, dots, dashes and underscores only. The rules reach `awk` through
+the environment only: never a command-line argument (visible in the process list), never a file
+the script writes.
+
+**A bad rule stops the scan.** Before scanning, the script checks each rule in its own `awk` run
+with stderr silenced: a line with no tab, a name outside the set above, a regex that does not
+compile, or one that matches an empty line (it would hit every line). Any such rule exits 2 with
+an error that names only the rule's number, never its text: `awk` prints a regex that fails to
+compile in its own message, so that message must never reach a log. A silently skipped rule
+would weaken the scan, so none is skipped. The scanner itself also runs with stderr silenced.
 
 ### 9.5 Allowed hits
 
 Some fixtures need a private address on purpose: today, `internal/grants/grants_test.go`
-(a gateway address and the CGNAT edge cases) and `internal/opencode/client_test.go`. This spec
-names the ranges too. The script's own regexes and its tests hold no dotted quad (the tests build
-theirs from parts), so they need no entry. The file `.github/hygiene-allow` lists
+(a gateway address and the CGNAT edge cases) and `internal/opencode/client_test.go`. An entry
+covers a whole file, so it is kept for test fixtures only; prose, such as this spec, writes ranges
+in prefix form instead. The script's own regexes and its tests hold no dotted quad (the tests
+build theirs from parts), so they need no entry. The file `.github/hygiene-allow` lists
 `<path><TAB><rule name>` pairs. It holds no matched text. A
 built-in rule only may be allowed this way; a private rule hit is never allowed by a file in the
 repo.
@@ -735,12 +755,17 @@ On a hit the script prints one line per hit and exits 1:
 
 ```
 internal/example.go:42: private-ipv4
+internal/example.go (commit 1a2b3c4):42: private-ipv4
 commit 1a2b3c4:1: host-name
+commit 1a2b3c4 author:1: host-name
+<path withheld>: host-name (file path)
 pull request body:3: host-name
 ```
 
 - Never the matched text, never the line's content, never the pattern. One line per rule per
-  scanned line. Exit 0 clean, 1 on a hit, 2 on a usage or setup error.
+  scanned line. Exit 0 clean, 1 on a hit, 2 on a usage or setup error (a bad rule included).
+- A file path that itself hits prints as `<path withheld>`, on the path's own hit and on every
+  hit inside that file.
 - The scanner (`awk`) prints only the source name, the line number and the rule name. `set -x` is
   off.
 - Git output goes to files in a private temporary directory, removed at exit, and each git
@@ -749,8 +774,8 @@ pull request body:3: host-name
   not rely on that.
 - The script's tests (`scripts/hygiene/`, a Go test that runs the script in temporary
   repositories) plant invented values, check each hit's file, line and rule, and check that the
-  output holds none of the planted text. Where dash is installed they run the script under dash
-  too and require the same output.
+  output holds none of the planted text. Where dash or gawk is installed they run the script under
+  each too and require the same output.
 
 ### 9.7 Forks
 
