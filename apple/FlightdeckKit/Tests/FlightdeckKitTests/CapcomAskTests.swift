@@ -131,8 +131,11 @@ final class CapcomAskTests: XCTestCase {
 
     func testAskFailures() async throws {
         let (fleet, _, home) = await rig(activate: false)
-        // No hab with that device id.
+        fleet.capcom.askWait = .milliseconds(50)
+        // No hab with that device id: with welcomes still to come it waits, then says so.
         await fleet.capcom.ask(meta(home: "SHA256:someone-else"))
+        XCTAssertNil(fleet.capcom.failure)
+        await eventually("not found") { fleet.capcom.failure != nil }
         XCTAssertEqual(fleet.capcom.failure?.message, "The hab that runs Capcom is not in this app.")
         // No context in the payload.
         fleet.capcom.failure = nil
@@ -144,7 +147,6 @@ final class CapcomAskTests: XCTestCase {
         fleet.capcom.failure = nil
         fleet.book = HabBook(url: nil)
         fleet.book?.record(host: "home", connection: "c", label: "desk", device: homeDevice)
-        fleet.capcom.askWait = .milliseconds(50)
         await fleet.capcom.ask(meta())
         await eventually("unreachable") { fleet.capcom.failure != nil }
         XCTAssertEqual(fleet.capcom.failure?.message, "Could not reach desk to ask an agent.")
@@ -158,6 +160,56 @@ final class CapcomAskTests: XCTestCase {
         await fleet.capcom.ask(meta())
         XCTAssertEqual(fleet.capcom.failure?.message, "Capcom runs on laptop; open it there")
         XCTAssertNil(fleet.capcom.openRequest)
+        // Every hab online and none with the device id: at once.
+        fleet.capcom.failure = nil
+        await fleet.capcom.ask(meta(home: "SHA256:someone-else"))
+        XCTAssertEqual(fleet.capcom.failure?.message, "The hab that runs Capcom is not in this app.")
+        await fleet.setActive(false)
+    }
+
+    /// The first launch after this update: the hab book holds no device ids yet. The Ask waits
+    /// for the welcomes and finds the hab by the one that names it.
+    func testAskFindsTheHabOnceItsWelcomeArrives() async throws {
+        let (fleet, _, home) = await rig(activate: false)
+        fleet.book = HabBook(url: nil)
+        fleet.book?.record(host: "home", connection: "c", label: "desk")
+        await fleet.capcom.ask(meta())
+        XCTAssertNil(fleet.capcom.failure)
+        await fleet.setActive(true)
+        await eventually("opened") { fleet.capcom.openRequest?.habID == "c" }
+        let opens = await home.capcomOpens
+        XCTAssertEqual(opens.count, 1)
+        XCTAssertNil(fleet.capcom.failure)
+        await fleet.setActive(false)
+    }
+
+    /// A session the board never shows does not open later, and the model is let go.
+    func testOpenRequestLapses() async throws {
+        let (fleet, _, _) = await rig()
+        fleet.capcom.askWait = .milliseconds(50)
+        await fleet.capcom.ask(meta())
+        XCTAssertNotNil(fleet.capcom.openRequest)
+        XCTAssertNotNil(fleet.capcom.held)
+        await eventually("lapsed") { fleet.capcom.openRequest == nil && fleet.capcom.held == nil }
+        await fleet.setActive(false)
+    }
+
+    /// A file that cannot go up again for the new conversation stays on the old one.
+    func testNewConversationKeepsAFileThatDidNotMove() async throws {
+        let (fleet, _, home) = await rig()
+        await fleet.capcom.ask(meta())
+        let old = try XCTUnwrap(fleet.capcom.held)
+        await eventually("capcom") { old.context.isCapcom }
+        _ = await old.attachFile(DraftAttachment(name: "log.txt", type: "text/plain", data: Data("boom".utf8)))
+        XCTAssertEqual(old.pending.count, 2)
+        await home.failNextAttachmentWrites(10)
+        let ok = await fleet.capcom.newConversation(from: old, draft: "")
+        XCTAssertTrue(ok)
+        let m = try XCTUnwrap(fleet.capcom.held)
+        XCTAssertEqual(m.pending.map(\.kind), [.notification])
+        XCTAssertEqual(old.pending.map(\.kind), [.file], "the file stays where it can still be sent")
+        let detaches = await home.capcomDetaches
+        XCTAssertEqual(detaches.map(\.kind), [.notification])
         await fleet.setActive(false)
     }
 
