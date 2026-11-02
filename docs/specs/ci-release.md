@@ -77,7 +77,7 @@ One workflow file per concern. Each row is one file in `.github/workflows/`.
 | `hygiene.yml` | `push` to any branch, `pull_request`, tags | None: docs are where leaks happen most | Group per ref; cancel superseded runs |
 | `nightly.yml` | `schedule` (one daily slot, UTC), `workflow_dispatch` | None | One group; never cancels |
 | `release.yml` (Go binaries) | `push` of a `v*` tag; `workflow_dispatch` with a `tag` input | None (path filters never apply to tags) | Group per tag; never cancels |
-| `app-release.yml` (iOS and Mac app) | `push` of an `app-v*` tag; `workflow_dispatch` with `tag` and `upload` inputs | None | Group per tag; never cancels |
+| `app-release.yml` (iOS and Mac app) | `push` of an `app-v*` tag, dry-run tags included (7.6); `workflow_dispatch` with `tag` and `dry_run` inputs | None | Group per tag; never cancels |
 
 The caller block for `ci.yml` and `apple.yml` follows the shared one
 (`saving-ci-minutes.md`, "Caller block"):
@@ -645,6 +645,13 @@ is recorded. A dry run may build a revision whose schema `api/released/` does no
 release of that revision needs `make release-schema` run and `api/released/` committed on `main`
 first.
 
+**The app line differs (as built).** `app-release.yml` starts on the push of an
+`app-v<version>-dry.<n>` tag and runs it as a dry run at once: its push trigger is `app-v*`, and
+`verify` makes any `-dry.` tag a dry run whatever the dispatch says. Push the tag, watch the run,
+delete the tag. Reason: the dry run is how an app signing change is proven, and one push is one
+fewer step to get wrong. A `-dry.` tag can never upload, so starting on its push risks nothing.
+The `release.yml` behaviour above is unchanged.
+
 Design call: dry runs use `-dry.` tags, not a branch the `release` environment admits. The
 environment stays limited to tags, so a dry run reaches the signing secrets only the way a release
 does. A dry run still signs and notarizes, so it proves a signing change. The cost is a tag pushed
@@ -983,34 +990,71 @@ rewrite of a public commit, so the maintainer reviews fork pull requests with th
 
 ### 10.1 `app-release.yml` jobs
 
-1. **`verify`** (ubuntu, `actions: write`). The tag matches
-   `^app-v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$` (or the dry-run form, 7.6). The tagged commit is
-   on `main`. The tagged code has passed `apple.yml`, by the CI rule of 7.4. Outputs the marketing
-   version (`<version>` from the tag), the build number (10.3) and `tap_inputs`.
-2. **`ios`** (`xcode-27`, environment `release`, timeout 120 minutes). Steps below.
-3. **`mac`** (`xcode-27`, environment `release`, timeout 90 minutes). Steps below.
-4. **`publish`** (ubuntu, `needs: [verify, mac]`, `contents: write`; skipped on a dry run). Create
-   the GitHub release `app-v<version>` as a draft when it does not exist (`gh release create
-   --draft --verify-tag`, `--prerelease` on an `-rc.` tag, `--generate-notes`), attach the
-   notarized Mac zip and its `.sha256` (never clobber), then publish it.
-5. **`bump-tap`** (`needs: [verify, publish]`, final tags only, not on a dry run).
-   `dispatch-and-wait.yml` with `inputs_json` from `verify`:
-   `{"formula": "flightdeck", "tag": "app-v<version>", "tag_prefix": "app-v"}`.
+As built (stage 8). The jobs:
+
+1. **`verify`** (ubuntu, `contents: read`, 5 minutes). The run is on the tag it names. The tag
+   matches `^app-v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$`, or the dry-run form
+   `^app-v[0-9]+\.[0-9]+\.[0-9]+-dry\.[0-9]+$` (7.6), which makes the run a dry run. The checkout is
+   the tagged commit. Unless the tag is `-dry.`, the commit is on `main`. Unless the run is a dry
+   run, the version is not below the last non-dry `app-v*` tag's (10.3). Outputs the marketing
+   version, the build number (10.3), `dry_run` and the bundle id prefix from
+   `apple/Config/Names.xcconfig`.
+2. **`test`** (`needs: verify`). Calls `apple.yml` (3.4) through `workflow_call`, so xcode-ci
+   runs the Swift package tests, both Xcode builds and the Kit's simulator tests on the tagged
+   commit, with the same inputs as on `main`. No secrets.
+3. **`ios`** (`needs: [verify, test]`, `xcode-27`, environment `release`, 120 minutes). Steps
+   below. Uploads to TestFlight; on a dry run it exports the `.ipa` to disk and uploads nothing.
+4. **`mac`** (`needs: [verify, test]`, `xcode-27`, environment `release`, 90 minutes). Steps
+   below. Signs with Developer ID and checks the app. It does not notarize, attach or publish
+   anything yet.
 
 The `ios` and `mac` jobs run in parallel. Each fails alone: a failed TestFlight upload does not
-stop the Mac release, and the reverse.
+stop the Mac build, and the reverse.
+
+Not built yet, for the Mac distribution step: notarization in `mac` (the action's `notarize`
+input), the zip and its `.sha256`, and these two jobs:
+
+- **`publish`** (ubuntu, `needs: [verify, mac]`, `contents: write`; skipped on a dry run). Create
+  the GitHub release `app-v<version>` as a draft when it does not exist (`gh release create
+  --draft --verify-tag`, `--prerelease` on an `-rc.` tag, `--generate-notes`), attach the
+  notarized Mac zip and its `.sha256` (never clobber), then publish it.
+- **`bump-tap`** (`needs: [verify, publish]`, final tags only, not on a dry run).
+  `dispatch-and-wait.yml` with `inputs_json` from `verify`:
+  `{"formula": "flightdeck", "tag": "app-v<version>", "tag_prefix": "app-v"}`.
+
+**Design calls, as built:**
+
+- **xcode-ci's "release mode" is the two composite actions.** `xcode-ci.yml` stays build-only. A
+  job that calls a reusable workflow cannot name an environment, and environment secrets do not
+  reach a reusable workflow in another repo (11.2, E6). So the signing jobs are the caller's own
+  steps, through `actions/xcode-match-signing` and `actions/xcode-archive-upload` at `@main`.
+- **The tests run on the tag, through `apple.yml`.** This replaces the CI rule of 7.4 for the
+  app line. App tags are rare, macOS minutes are free on a public repo, and the run proves the
+  exact tagged commit with no run lookup code. `apple.yml` takes `workflow_call`, so its xcode-ci
+  inputs exist once. The cost is the test run's wall time before the archive starts.
+- **The App Store Connect key reaches the export step only when it uploads.** On a dry run the
+  three key inputs are empty, and `xcode-archive-upload` needs none of them to export to disk.
+- **No bundler cache and no SwiftPM cache save.** A tag's cache is visible to that tag only (5).
+  The signing jobs restore the SwiftPM cache that xcode-ci saves from `main`, by its key and
+  paths; a miss resolves from scratch.
+- **Logs upload on failure only.** The archive logs of a passing run hold nothing to act on, and
+  the artifacts of a public repo are public.
+- **The Mac job does not notarize.** Notarization sends the app to Apple. That waits with the
+  publish and cask steps for the Mac distribution step. The job still proves the Developer ID
+  signature and every check notarization depends on.
 
 ### 10.2 Steps of the signing jobs
 
-Steps 4 and 5 are `actions/xcode-match-signing`; steps 7 and 9 are `actions/xcode-archive-upload`,
+As built. Steps 4 and 5 are `actions/xcode-match-signing`; steps 7 and 9 are `actions/xcode-archive-upload`,
 called twice (archive only, then export from its `archive-path` output) so step 8 runs between
 them; step 10 is `xcode-match-signing` with `cleanup: 'true'` (E6, section 11.2).
 
 The `ios` job:
 
 1. Check out the tag. Select `/Applications/Xcode_27.1.app` by path (4); fail when missing.
-2. Ruby and fastlane from `.github/fastlane/Gemfile` (bundler cache).
-3. `~/.netrc` for SwiftPM (3.4, step 2); restore the SwiftPM cache.
+2. Ruby and fastlane from `.github/fastlane/Gemfile` (no bundler cache, as `release.yml`).
+3. `~/.netrc` for SwiftPM (3.4, step 2); restore the SwiftPM cache that xcode-ci saved from
+   `main`.
 4. A throwaway keychain with a random password. The API key goes to a `0600` file under
    `$RUNNER_TEMP` only for the export step, which deletes it.
 5. `fastlane match appstore --readonly --git_url "$MATCH_GIT_URL" --git_branch main --skip_docs
@@ -1029,12 +1073,15 @@ The `ios` job:
    `Local.xcconfig`. Pass `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION`. Filter the log to
    errors and signing warnings.
 8. Check the archive: the app's `ITSAppUsesNonExemptEncryption` is `false` (export compliance,
-   section 1); each bundle embeds the expected profile; `codesign -dv` shows the team.
+   section 1); each bundle embeds the profile that match installed for its bundle id, and the
+   archive signs exactly the bundles the profiles line names; `codesign -dv` shows the team; the
+   marketing version and build number are the run's.
 9. Export with `method` `app-store-connect`, `destination` `upload`, manual signing and a
-   `provisioningProfiles` map per bundle id; authenticate with the API key. With the dispatch
-   input `upload: false`, export with `destination` `export` instead and upload nothing.
-10. Always: delete the keychain, the key files and `~/.netrc`; upload the logs (the action's
-    `log-dir`) as an artifact.
+   `provisioningProfiles` map per bundle id; authenticate with the API key. On a dry run (a
+   `-dry.` tag, or the dispatch input `dry_run`), export with `destination` `export` instead,
+   pass no API key, and upload nothing.
+10. Always: delete the keychain, the key files and `~/.netrc`. On failure, upload the logs (the
+    action's `log-dir`) as an artifact.
 
 The internal TestFlight group receives every build without a step here. Its setup is a one-off
 owner step in the signing store's portal tool, outside the repo.
@@ -1048,14 +1095,19 @@ The `mac` job:
    input. A profile joins when an entitlement needs one (`Local.example.xcconfig`, step 3).
 6. Generate, then archive `FlightdeckMac` (Release) with `Developer ID Application`,
    `--timestamp` and `ARCHS=arm64`.
-7. Export with `method` `developer-id`. Verify: `codesign --verify --deep --strict`, every
-   Mach-O is arm64 only (`lipo -archs`), hardened runtime is on.
+7. Export with `method` `developer-id` and `notarize: false`. Verify:
+   `codesign --verify --deep --strict` (the action), the Developer ID authority and the team,
+   the hardened runtime, a secure timestamp, no `get-task-allow`, every Mach-O arm64 only
+   (`lipo -archs`), and the bundle id and versions.
+
+Steps 8 and 9 are not built yet (10.1); they join with the Mac distribution step.
+
 8. Notarize (`notarytool submit`, then `wait`); on any status but `Accepted`, print
    `notarytool log` and fail. Staple; `stapler validate`; `spctl -a -vv` must say
    `source=Notarized Developer ID`.
 9. Zip with `ditto -c -k --keepParent` as `Flightdeck_<version>_macos.zip`; write its `.sha256`;
    upload as an artifact.
-10. Cleanup as `ios`.
+10. Cleanup as `ios` (built).
 
 The Mac app embeds the helper bundles later (`macos-identity.md` 3.4). That job will take the
 signed bundles from the matching `v*` release's darwin asset, unchanged, and sign the app last
@@ -1064,8 +1116,9 @@ signed bundles from the matching `v*` release's darwin asset, unchanged, and sig
 ### 10.3 Version and build number
 
 - The marketing version comes from the tag, without an `-rc.` or `-dry.` suffix (7.7). `verify`
-  refuses a tag whose version is lower than
-  the last `app-v*` tag's.
+  refuses a tag whose version is lower than the last non-dry `app-v*` tag's. An `-rc` and its
+  final share a version, so equal passes. A dry run skips the check: it uploads nothing.
+- One build number per run, from `verify`, so the iOS and the Mac build of one tag match.
 - The build number is the UTC time to the minute, `YYYYMMDDHHMM`, the same rule as
   `apple/scripts/testflight.sh`. A CI upload and a hand upload therefore never collide, and each
   is higher than the last. The run number is not used: it restarts per workflow and would fall
@@ -1074,8 +1127,10 @@ signed bundles from the matching `v*` release's darwin asset, unchanged, and sig
 ### 10.4 Before the first upload
 
 The first CI upload to App Store Connect faces outward, so the owner approves it (a plan
-decision). Until then `app-release.yml` runs only with `upload: false`. The manual path
-(`apple/scripts/testflight.sh`) stays until the CI upload has passed once.
+decision). The workflow has no switch for this: pushing the first non-dry `app-v*` tag is the
+approval. Before it, prove the pipeline with an `app-v<version>-dry.<n>` tag (7.6), which signs
+and exports everything and uploads nothing. The manual path (`apple/scripts/testflight.sh`, the
+README) stays as the fallback, for a build that must go out while CI is down.
 
 ---
 
@@ -1228,7 +1283,9 @@ repo secret (6.2); the UTC-minute build number (10.3); the nightly skip when `ma
 moved (2); the hygiene rule names printed but never the match (9.6); one baseline libghostty
 build shared by tests and releases, and the macOS 13.0 floor (5, 7.3); the release CI rule
 that accepts a full ancestor run (7.4); dry runs on `-dry.` tags (7.6); suffix-free bundle and
-marketing versions (7.7); the formula's top-level asset url (8.2).
+marketing versions (7.7); the formula's top-level asset url (8.2); the app line's dry run on the
+tag push, its tests through `apple.yml` on the tag, and the Mac job without notarization (7.6,
+10.1).
 
 ---
 

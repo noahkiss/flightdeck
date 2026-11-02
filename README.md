@@ -26,9 +26,23 @@ ignores that file.
 
 ## Ship an iPhone build to TestFlight
 
-Until CI uploads app builds, a Mac uploads them. You need the Apple Distribution identity and an
-App Store profile for each iOS bundle ID (the app, the notification service, the widgets),
-installed on that Mac.
+CI uploads app builds. Push a tag `app-v<x.y.z>` (or `app-v<x.y.z>-rc.<n>`) on a commit on
+`main`. The `app-release.yml` workflow runs the app tests on that commit, then archives
+FlightdeckiOS with the tag's version and the UTC time as the build number, signs it and uploads
+it. App Store Connect processes the build in a few minutes. Testers in the internal group can
+then install it from the TestFlight app.
+
+To prove the pipeline without an upload, push `app-v<x.y.z>-dry.<n>` instead. That run signs and
+exports everything, uploads nothing, and may run on a commit off `main`. Delete the tag after.
+
+The signing jobs read their secrets from the repo's `release` environment, listed in
+`docs/specs/ci-release.md` (sections 6 and 10). On the same tag CI also builds the Mac app and
+signs it with Developer ID, but does not notarize or publish it yet.
+
+### From a Mac, when CI cannot
+
+You need the Apple Distribution identity and an App Store profile for each iOS bundle ID (the
+app, the notification service, the widgets), installed on that Mac.
 
 1. In `apple/Config/Local.xcconfig`, set `DEVELOPMENT_TEAM`, the iOS identity, and
    `APP_IOS_PROFILE`, `APP_NSE_PROFILE` and `APP_WIDGET_PROFILE` (step 2 of
@@ -37,13 +51,12 @@ installed on that Mac.
    Connect API key ID, and a command that prints each secret. Git ignores both files.
 3. Run `apple/scripts/testflight.sh`. It archives FlightdeckiOS with the UTC time as the build
    number, then uploads it.
-4. App Store Connect processes the build in a few minutes. Testers in the internal group can
-   then install it from the TestFlight app.
 
 The app declares only standard encryption (SSH and TLS), so `ITSAppUsesNonExemptEncryption`
 is `false` and no upload asks the export question. Sale on the App Store in France needs a
 French encryption declaration first. The Mac app ships outside TestFlight, signed with
-Developer ID and notarized (`apple/scripts/notarize.sh`).
+Developer ID and notarized. Until CI notarizes it, notarize a local build with
+`apple/scripts/notarize.sh`.
 
 ## Check for leaks before you commit
 
