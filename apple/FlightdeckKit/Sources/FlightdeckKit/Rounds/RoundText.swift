@@ -19,7 +19,7 @@ public enum RoundText {
 
     /// The trigger in plain words, as the hab's catalog writes it: "every 1h", "every 1d in
     /// Europe/Berlin", "cron 0 9 * * 1-5 in Europe/Berlin", "once at <time>", "by hand".
-    public static func trigger(_ t: RoundTrigger, timeZone: TimeZone = .current, locale: Locale = .current) -> String {
+    public static func trigger(_ t: RoundTrigger, now: Date = Date(), timeZone: TimeZone = .current, locale: Locale = .current) -> String {
         switch t.kind {
         case .cron:
             let cron = t.cron ?? ""
@@ -31,7 +31,7 @@ public enum RoundText {
             return zone.map { "cron \(cron) in \($0)" } ?? "cron \(cron)"
         case .once:
             guard let at = t.at, let d = parse(at) else { return "once at \(t.at ?? "?")" }
-            return "once at \(time(d, now: d, timeZone: timeZone, locale: locale))"
+            return "once at \(time(d, now: now, timeZone: timeZone, locale: locale))"
         case .manual:
             return "by hand"
         default:
@@ -61,21 +61,61 @@ public enum RoundText {
         case 1: return "tomorrow \(c)"
         case -1: return "yesterday \(c)"
         default:
-            let f = DateFormatter()
-            f.locale = locale
-            f.timeZone = timeZone
-            f.setLocalizedDateFormatFromTemplate("EEE d MMM")
-            return "\(f.string(from: d)) \(c)"
+            return "\(formatters.day(timeZone, locale).string(from: d)) \(c)"
         }
     }
 
     static func clock(_ d: Date, timeZone: TimeZone, locale: Locale) -> String {
-        let f = DateFormatter()
-        f.locale = locale
-        f.timeZone = timeZone
-        f.timeStyle = .short
-        f.dateStyle = .none
-        return f.string(from: d)
+        formatters.clock(timeZone, locale).string(from: d)
+    }
+
+    /// A time as the hab takes it: RFC 3339 in UTC with fractional seconds.
+    public static func stamp(_ d: Date) -> String { formatters.stamp(d) }
+
+    private static let formatters = Formatters()
+
+    /// The formatters the words use, made once per zone and locale: the list redraws under a
+    /// timeline. DateFormatter is safe across threads once set up; the lock guards the cache.
+    private final class Formatters: @unchecked Sendable {
+        private let lock = NSLock()
+        private var days: [String: DateFormatter] = [:]
+        private var clocks: [String: DateFormatter] = [:]
+        private let iso: ISO8601DateFormatter = {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            return f
+        }()
+
+        func day(_ z: TimeZone, _ l: Locale) -> DateFormatter {
+            cached(&days, z, l) { $0.setLocalizedDateFormatFromTemplate("EEE d MMM") }
+        }
+
+        func clock(_ z: TimeZone, _ l: Locale) -> DateFormatter {
+            cached(&clocks, z, l) {
+                $0.timeStyle = .short
+                $0.dateStyle = .none
+            }
+        }
+
+        func stamp(_ d: Date) -> String {
+            lock.lock()
+            defer { lock.unlock() }
+            return iso.string(from: d)
+        }
+
+        private func cached(_ cache: inout [String: DateFormatter], _ z: TimeZone, _ l: Locale,
+                            _ setUp: (DateFormatter) -> Void) -> DateFormatter {
+            lock.lock()
+            defer { lock.unlock() }
+            let key = "\(z.identifier)|\(l.identifier)"
+            if let f = cache[key] { return f }
+            let f = DateFormatter()
+            f.locale = l
+            f.timeZone = z
+            setUp(f)
+            cache[key] = f
+            return f
+        }
     }
 
     /// A run state as the views say it.

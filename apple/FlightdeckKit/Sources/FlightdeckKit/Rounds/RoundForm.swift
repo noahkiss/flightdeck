@@ -79,11 +79,14 @@ public struct RoundDraft: Equatable, Sendable {
         notify = r.notify ?? .failures
         onFinish = r.onFinish ?? .close
         catchUp = r.catchUp ?? .once
-        timeoutMinutes = r.timeoutMs.map { max(1, $0 / 60_000) } ?? 60
+        timeoutMinutes = Self.minutes(r.timeoutMs)
         maxRuns = r.maxRuns ?? 0
     }
 
     public var isEdit: Bool { kept != nil }
+
+    /// A timeout as the stepper shows it: whole minutes, at least 1; 60 when unset.
+    static func minutes(_ ms: Int?) -> Int { ms.map { max(1, $0 / 60_000) } ?? 60 }
 
     /// The spec the hab gets, or the first thing missing.
     public func spec() -> Result<RoundSpec, RoundActionError> {
@@ -99,7 +102,7 @@ public struct RoundDraft: Equatable, Sendable {
             guard !c.isEmpty else { return .failure(RoundActionError("Write a cron expression.")) }
             t = RoundTrigger(cron: c, kind: .cron, zone: z.isEmpty ? nil : z)
         case .once:
-            t = RoundTrigger(at: Fixture.stamp(at), kind: .once)
+            t = RoundTrigger(at: RoundText.stamp(at), kind: .once, zone: z.isEmpty ? nil : z)
         case .manual:
             break
         }
@@ -142,7 +145,13 @@ public struct RoundDraft: Equatable, Sendable {
         }
         s.notify = notify
         s.catchUp = catchUp
-        s.timeoutMs = timeoutMinutes * 60_000
+        // An edit keeps the round's own timeout, which may not be whole minutes, unless the
+        // stepper moved.
+        if let k = kept, timeoutMinutes == Self.minutes(k.timeoutMs) {
+            s.timeoutMs = k.timeoutMs ?? timeoutMinutes * 60_000
+        } else {
+            s.timeoutMs = timeoutMinutes * 60_000
+        }
         s.maxRuns = maxRuns > 0 ? maxRuns : nil
         return .success(s)
     }
