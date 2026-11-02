@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
 	"github.com/noahkiss/flightdeck/api"
@@ -156,10 +157,23 @@ func within(p, root string) bool {
 	return strings.HasPrefix(p, root+string(filepath.Separator))
 }
 
+// fold maps each rune to the smallest member of its simple case fold orbit, so every spelling a
+// case-insensitive file system treats as one name folds to one string: .ENV, .Env and .ſsh
+// (U+017F, long s) fold like .env and .ssh. Lower-casing alone misses runes such as U+017F.
+func fold(s string) string {
+	return strings.Map(func(r rune) rune {
+		least := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			least = min(least, f)
+		}
+		return least
+	}, s)
+}
+
 // denied matches the deny list in any case: macOS and Windows file systems ignore case, so
 // .ENV opens .env. On Linux the guard also refuses a .ENV that is its own file.
 func (s Scope) denied(p string) bool {
-	p = strings.ToLower(p)
+	p = fold(p)
 	parts := strings.Split(strings.TrimPrefix(p, string(filepath.Separator)), string(filepath.Separator))
 	for _, pat := range s.Deny {
 		if pat == "" {
@@ -170,12 +184,12 @@ func (s Scope) denied(p string) bool {
 			if err != nil {
 				continue
 			}
-			if anchored(p, strings.ToLower(full)) {
+			if anchored(p, fold(full)) {
 				return true
 			}
 			continue
 		}
-		if sequence(parts, strings.Split(strings.Trim(strings.ToLower(pat), "/"), "/")) {
+		if sequence(parts, strings.Split(strings.Trim(fold(pat), "/"), "/")) {
 			return true
 		}
 	}

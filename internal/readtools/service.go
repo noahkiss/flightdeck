@@ -730,7 +730,7 @@ func (s *Service) File(ctx context.Context, local bool, p api.FileReadParams) (a
 	if fi, err := os.Stat(real); err == nil && !fi.Mode().IsRegular() {
 		return api.FileData{}, control.Errorf(api.ErrorKindInvalid, "%s: %s is not a regular file", s.cfg.Host, clean)
 	}
-	f, err := os.OpenFile(real, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	f, err := os.OpenFile(real, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return api.FileData{}, control.Errorf(api.ErrorKindNotFound, "%s: no file %s", s.cfg.Host, clean)

@@ -223,6 +223,8 @@ func TestScopeAllowDeny(t *testing.T) {
 		{filepath.Join(proj, ".ENV"), false, "read.deny"},       // case-insensitive file systems open .env
 		{filepath.Join(proj, "server.PEM"), false, "read.deny"}, // and server.pem
 		{filepath.Join(home, ".SSH", "id_ed25519"), false, "read.deny"},
+		{filepath.Join(home, ".\u017fsh", "id_ed25519"), false, "read.deny"}, // U+017F folds to s
+		{filepath.Join(home, ".aw\u017f", "credentials"), false, "read.deny"},
 		{filepath.Join(proj, "server.pem"), false, "read.deny"},
 		{filepath.Join(home, ".ssh", "id_ed25519"), false, "read.deny"},
 		{filepath.Join(secret, "notes.txt"), false, "read.deny"},        // the user's own deny entry

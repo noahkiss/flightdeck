@@ -336,7 +336,8 @@ has no implementation). Error kind `denied`. Doors: `gff-hab read <tool>`, the s
   `id_ed25519*`. It cannot be turned off. A pattern with no slash matches any part of a path; one
   with a slash matches consecutive parts; one that starts with `/` or `~/` matches from the start
   of the path. Each part is a glob. Patterns match in any case: macOS and Windows file systems
-  ignore case, so `.ENV` opens `.env`.
+  ignore case, so `.ENV` opens `.env`. Both sides are case folded, not only lower-cased, so
+  `.ſsh` (long s) matches `.ssh` too.
 - **The check.** The hab cleans the path, checks the deny list, resolves every link (a missing
   tail is kept as written), checks the resolved path against each root, as written and
   resolved, then checks the deny list again. A missing path outside the scope is denied, not
