@@ -69,10 +69,14 @@ import (
 	"github.com/noahkiss/flightdeck/internal/gffclient"
 	"github.com/noahkiss/flightdeck/internal/habconn"
 	"github.com/noahkiss/flightdeck/internal/hosts"
+	gffversion "github.com/noahkiss/flightdeck/internal/version"
 )
 
-// build is the version string, set by the release build.
+// build is the build id, set by the release build.
 var build = "dev"
+
+// version is the release version, set at link time: -ldflags "-X main.version=<version>".
+var version = "dev"
 
 type multi []string
 
@@ -82,6 +86,10 @@ func (m *multi) Set(v string) error { *m = append(*m, v); return nil }
 func main() {
 	if os.Getenv(guardEnv) == "1" {
 		os.Exit(runGuard())
+	}
+	if gffversion.Requested(os.Args[1:]) {
+		gffversion.Print(os.Stdout, "gff", version)
+		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "setup" {
 		os.Exit(setupMain(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))

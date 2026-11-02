@@ -26,12 +26,20 @@ import (
 
 	"github.com/noahkiss/flightdeck/internal/holder"
 	"github.com/noahkiss/flightdeck/internal/holderreg"
+	gffversion "github.com/noahkiss/flightdeck/internal/version"
 )
 
 // build is set at link time: -ldflags "-X main.build=<id>".
 var build = "dev"
 
+// version is the release version, set at link time: -ldflags "-X main.version=<version>".
+var version = "dev"
+
 func main() {
+	if gffversion.Requested(os.Args[1:]) {
+		gffversion.Print(os.Stdout, "gff-hab-holder", version)
+		return
+	}
 	var (
 		dir      = flag.String("dir", "", "directory for the holder socket (default: see package doc)")
 		socket   = flag.String("socket", "", "socket path; overrides -dir")

@@ -107,10 +107,14 @@ import (
 	"github.com/noahkiss/flightdeck/internal/structure"
 	"github.com/noahkiss/flightdeck/internal/transcript"
 	habusage "github.com/noahkiss/flightdeck/internal/usage"
+	gffversion "github.com/noahkiss/flightdeck/internal/version"
 )
 
 // build is set at link time: -ldflags "-X main.build=<id>".
 var build = "dev"
+
+// version is the release version, set at link time: -ldflags "-X main.version=<version>".
+var version = "dev"
 
 const usage = `usage:
   gff-hab serve   [-socket path] [-hook-socket path] [-state dir] [-host-id id] [-holders dir]
@@ -149,12 +153,17 @@ const usage = `usage:
                     [-unit-dir dir] [-hab-bin path] [-holder-bin path] [-gff-bin path] [-dry-run]
   gff-hab uninstall [-init systemd|launchd] [-prefix p] [-state dir] [-holders dir] [-socket path]
                     [-unit-dir dir] [-yes]
+  gff-hab version
 `
 
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
+	}
+	if gffversion.Requested(os.Args[1:]) {
+		gffversion.Print(os.Stdout, "gff-hab", version)
+		return
 	}
 	if os.Args[1] == "hook" {
 		os.Exit(hookCmd(os.Args[2:], os.Stdin, os.Stdout))
