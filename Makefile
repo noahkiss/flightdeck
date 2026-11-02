@@ -174,7 +174,7 @@ check-pure:
 	CGO_ENABLED=0 $(GO) vet ./...
 
 # Write NOTICE and apple/App/Acknowledgements.txt from third_party/notices.toml, go.mod with the
-# module cache, and apple/FlightdeckKit/Package.resolved (docs/specs/ci-release.md 7.5). Fails when
+# module cache, and apple/FlightdeckKit/Package.resolved (docs/specs/ci-release.md 7.8). Fails when
 # a Go module has no licence file or a pinned Swift package has no entry.
 notices:
 	$(GO) run ./internal/notices/cmd -root .

@@ -8,9 +8,9 @@ name: CI
 on:
   push:
     branches: [main]
-    paths: ['**', '!**/*.md', '!docs/**', 'docs/examples/**', '!apple/**', '!design/**', '!LICENSE', '!NOTICE']
+    paths: ['**', '!**/*.md', '!docs/**', 'docs/examples/**', '!apple/**', 'apple/App/Acknowledgements.txt', 'apple/FlightdeckKit/Package.resolved', '!design/**', '!LICENSE']
   pull_request:
-    paths: ['**', '!**/*.md', '!docs/**', 'docs/examples/**', '!apple/**', '!design/**', '!LICENSE', '!NOTICE']
+    paths: ['**', '!**/*.md', '!docs/**', 'docs/examples/**', '!apple/**', 'apple/App/Acknowledgements.txt', 'apple/FlightdeckKit/Package.resolved', '!design/**', '!LICENSE']
   workflow_dispatch:
 
 concurrency:

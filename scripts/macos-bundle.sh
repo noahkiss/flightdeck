@@ -12,7 +12,7 @@
 #                    there is one
 #   gff              the bare client, identifier <prefix>.gff (only when cmd/gff exists)
 #   LICENSE, NOTICE  the repository's licence and third-party notices, also in each bundle's
-#                    Contents/Resources (docs/specs/ci-release.md 7.5)
+#                    Contents/Resources (docs/specs/ci-release.md 7.8)
 #
 # and <out>/gff-macos.zip, the stapled set for distribution.
 #

@@ -105,7 +105,11 @@ func TestCIPaths(t *testing.T) {
 		"apple/App/iOS/Info.plist":      false,
 		"design/icons/app.svg":          false,
 		"LICENSE":                       false,
-		"NOTICE":                        false,
+		// Generated notices: make check-notices compares them (ci-release.md 7.8).
+		"NOTICE":                               true,
+		"third_party/notices.toml":             true,
+		"apple/App/Acknowledgements.txt":       true,
+		"apple/FlightdeckKit/Package.resolved": true,
 	} {
 		if got := f.Match(p); got != want {
 			t.Errorf("ci.yml filter on %q = %v, want %v", p, got, want)

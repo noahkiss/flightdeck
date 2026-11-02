@@ -41,7 +41,7 @@ for b in "$hab" "$holder" "$gff"; do
 	[ -x "$b" ] || fail "no executable $b"
 done
 
-# 0. The licence and the third-party notices (7.5): beside the binaries, and in each bundle.
+# 0. The licence and the third-party notices (7.8): beside the binaries, and in each bundle.
 notice_dirs=("$dir")
 if [ "$os" = Darwin ]; then
 	notice_dirs+=("$dir/GFF Hab.app/Contents/Resources" "$dir/GFF Holder.app/Contents/Resources")
