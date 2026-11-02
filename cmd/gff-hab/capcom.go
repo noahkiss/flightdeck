@@ -204,44 +204,44 @@ func (c *capcomService) Section() *api.CatalogCapcom {
 
 // Open answers capcom.open: the standing conversation, started when there is none, resumed when
 // it exited; new starts a fresh one, which becomes the standing conversation. Context is
-// attached to the returned session (capcom.md 8.1). Every item but a file is resolved before
-// the open, so a bad ref starts nothing; a file is resolved against the returned session.
+// attached to the returned session (capcom.md 8.1). Every item is resolved, and the count with
+// what already waits is checked, before the open, so a refused open starts nothing. A file is
+// refused: its folder or attachment belongs to the session, so it is attached with
+// capcom.attach after the open.
 func (c *capcomService) Open(ctx context.Context, p api.CapcomOpenParams) (api.CapcomOpened, error) {
 	if len(p.Context) > capcom.MaxPending {
 		return api.CapcomOpened{}, control.Errorf(api.ErrorKindInvalid, "capcom.open takes at most %d context items, not %d", capcom.MaxPending, len(p.Context))
 	}
-	early := make([]*capcom.Item, len(p.Context))
+	items := make([]capcom.Item, 0, len(p.Context))
 	for i, r := range p.Context {
 		if string(r.Kind) == capcom.KindFile {
-			continue
+			return api.CapcomOpened{}, control.Errorf(api.ErrorKindInvalid,
+				"context item %d: capcom.open takes no file; attach files with capcom.attach after the open", i+1)
 		}
 		it, err := c.resolve(ctx, capcom.Session{}, r)
 		if err != nil {
 			return api.CapcomOpened{}, prefixErr(err, "context item %d", i+1)
 		}
-		early[i] = &it
+		items = append(items, it)
+	}
+	if len(items) > 0 && !p.New {
+		// The standing conversation's list, with the new items after its own.
+		c.mu.Lock()
+		var waiting []capcom.Item
+		if rec, ok := c.recordLocked(c.st.Standing); ok {
+			waiting = rec.Pending
+		}
+		c.mu.Unlock()
+		for _, it := range items {
+			var err error
+			if waiting, err = capcom.Add(waiting, it); err != nil {
+				return api.CapcomOpened{}, control.Errorf(api.ErrorKindConflict, "the standing Capcom conversation, before any open: %v", err)
+			}
+		}
 	}
 	res, err := c.open(ctx, p)
 	if err != nil {
 		return res, err
-	}
-	c.mu.Lock()
-	rec, ok := c.recordLocked(res.Session)
-	c.mu.Unlock()
-	if !ok {
-		return api.CapcomOpened{}, control.Errorf(api.ErrorKindUnavailable, "session %s has no Capcom record", res.Session)
-	}
-	items := make([]capcom.Item, 0, len(p.Context))
-	for i, r := range p.Context {
-		if early[i] != nil {
-			items = append(items, *early[i])
-			continue
-		}
-		it, err := c.resolve(ctx, *rec, r)
-		if err != nil {
-			return api.CapcomOpened{}, prefixErr(err, "Capcom session %s is open, but context item %d was not attached", res.Session, i+1)
-		}
-		items = append(items, it)
 	}
 	pending, err := c.addPending(res.Session, items)
 	if err != nil {
