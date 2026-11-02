@@ -772,6 +772,55 @@ copy), `internal/fakehab/rounds.go` (the fake hab's rounds and catalog).
 | `gffclient` `TestPrefixKeymapSample` | The one-prefix sample binds `R`, and on the board `r` and `p` |
 | `gffclient` `TestNextText` | Today, tomorrow and a date in this machine's zone; the round's clock beside it when it differs |
 
+### 7.6 Built choices: module cards (task-kgr80lau)
+
+Modules placed on the `board` (`modules.md` 5) show on the status board as cards. The drawing is
+`internal/modview` (`modules.md` 6.6); the place, the keys and the calls are
+`internal/gffclient/modules.go`.
+
+- **Where.** Below the Rounds list, under a "Modules" label: one card per module, a heading
+  `<name> · <host>`, then the tree indented four columns. Design call: the board is the one
+  place `gff` has that matches a module place; the `host`, `session` and `sheet` places wait for
+  their views.
+- **When.** Only for a host whose welcome lists `modules`. `Config.Modules`, a `ModuleSource`,
+  supplies the cards and takes the actions. Nil, the default, shows no section: the hab does not
+  serve module trees yet (`modules.md` 6.6 lists what its API must add). The tests drive a
+  module in-process through it.
+- **Offline.** A host that goes offline keeps its last cards, dimmed, with "offline" in the
+  heading; an action says "<host> is offline" and sends nothing (`modules.md` 12).
+- **Failures.** A card whose last call failed keeps its last good tree and shows the error
+  under it, in the error tint (`modules.md` 8.3). A tree that cannot be drawn is one error line.
+- **Selection.** `j` and `k` move from the session rows to the round rows, then through every
+  card's targets. With no session or round, the selection starts on the first target. The
+  focused target draws inverted, as a selected row does. `t` on a target does nothing.
+- **Keys on a card.** While the selection is in a card, a button's key hint presses it and moves
+  the selection to it. Enter presses the selected target; Space too. Key hints never take a key
+  the board binds (`j`, `k`, `t`, `r`, `p`, `R`, `q` by default, or what `[keys.board]` sets), so
+  the board's keys keep working everywhere. Design call: hints act on the card that holds the
+  selection, so two cards may use the same letter.
+- **Pressing.** A button with `confirm` asks its question on the bottom row (y/n). A field asks
+  for its text on the bottom row, labelled with its placeholder. A section with an id folds or
+  unfolds; the fold is kept for the gff process. Each module action goes to the source off the
+  loop; its failure shows on the bottom row as `<module>: <error>`, and the new tree arrives
+  through `Changed`.
+- **Client actions** (`modules.md` 6.2) never reach the module. `client.open_session` and
+  `client.open_pane` open that session or pane of the card's host, as the sidebar's Enter does.
+  `client.copy` writes OSC 52, base64-encoded, so the host terminal copies, also over ssh, and
+  says "copied". `client.open_url` shows the link on the bottom row: `gff` cannot know where a
+  browser runs, and the host terminal can open a shown link. Since nothing opens, no question is
+  asked.
+- **Colours.** Tints map to the host's ANSI palette: `accent` blue, `working` and `warning`
+  yellow, `blocked` bold red, `error` red, `done` green, `muted` faint, `idle` plain. A raw
+  `#RRGGBB` takes the nearest of the eight basic colours. Theme tokens come with the theme
+  settings.
+
+| Test | Proves |
+|---|---|
+| `gffclient` `TestModuleCard` | A sample module (`testdata/modules/counter`) run by `internal/modhost` behind a fake hab with `modules`: the card under Modules; its key hint runs `act` and the new count shows; the toggle by Enter and by Space; the field's text through the prompt; a confirm answered no sends nothing and yes sends; `client.copy` writes OSC 52 and never reaches the module; the actions reach the module in order with their added `value` and `text`; a render that fails keeps the last tree with the error under it |
+| `gffclient` `TestModuleCardHidden` | No Modules section for a hab whose welcome lacks the capability; a tree that does not decode shows one error line under its heading |
+| `gffclient` `TestModStyle` | Tints to palette colours, a raw colour to the nearest, an unknown tint plain |
+| `modview` tests | `modules.md` 6.6 |
+
 ---
 
 ## 8. Shortcut bar

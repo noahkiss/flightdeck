@@ -1,7 +1,8 @@
 # Modules: behaviour spec
 
 Status: study for review. Part 7, stage 1. Researched 2026-11-01. Stage 2 (the block vocabulary
-schema, 6.5) built 2026-11-02. Stage 3 (the runtime, 5.1, 7.3, 8.4) built 2026-11-02.
+schema, 6.5) built 2026-11-02. Stage 3 (the runtime, 5.1, 7.3, 8.4) built 2026-11-02. Stage 4 (the
+terminal renderer, 6.6) built 2026-11-02.
 
 This spec says how modules behave, and recommends when to build them. A module is the third tier
 of Flightdeck, after core and features. It is JavaScript that returns a tree of native building
@@ -66,6 +67,8 @@ Internal calls, made by this study. Each has its reason in the section named.
 | What `render` may call (stage 3) | `fd.state.get`, `fd.settings`, `fd.log` and `ctx` only. `fd.hab.*`, `exec`, `fetch` and `fd.state.set` throw there, so a tree always rebuilds from state with no network, as section 5 intends. The reason is determinism and load, not safety: `fd.hab.get` needs no power, so `refresh` reads the same data. `render` runs per client and place within 250 ms; hab calls there would multiply the hab's load on every view and tie each draw to the hab's latency, while a tree built from state alone can be cached | 7.3 |
 | Promises (stage 3) | A function may be `async`. The bridge is synchronous and there are no timers, so its promise has settled when the call returns; one still pending fails the call | 7.3 |
 | Memory in the runtime (stage 3) | A heap watch inside the call, as a backstop below the host process's resident-memory kill (8.2). goja has no memory limit of its own | 8.4 |
+| Where gff shows modules (stage 4) | The `board` place: one card per module under the status board's Rounds list, shown when the host's welcome lists `modules`. The other places wait for the views they belong to | 6.6 |
+| How a button gets its key (stage 4) | The client picks it: the first letter or digit of the title that no earlier button and no board key took, else a free digit. The vocabulary has no key field, so a module cannot take a key the client needs | 6.6 |
 
 The owner's decisions on this study are in section 14.
 
@@ -428,6 +431,78 @@ string argument (`client.open_url` an https URL).
 
 A tree is one root block. Whatever the hab sends around it (the module, the tree's revision, the
 place) belongs to the stage 3 API.
+
+### 6.6 Terminal renderer (stage 4)
+
+`internal/modview` draws a tree for `gff`; `gff-client.md` 7.6 says where the cards show and how
+keys reach them. `modview.Render(tree, options)` returns styled lines within a width and the
+targets a key can act on. It knows no screen: a span carries a tint word, and `gff` maps it.
+
+| Block | Terminal |
+|---|---|
+| `stack` vertical | Each child's lines in turn, `gap` blank lines between children |
+| `stack` horizontal | Children side by side, each as wide as its widest line, `gap` blank columns between; with no `gap`, two columns, the shortcut bar's spacing. The row is cut at the width |
+| `section` | `▾ title` in bold, children indented two columns. Folded: `▸ title (n)` with `n` the children, and nothing under it. With an `id`, Enter folds and unfolds it; the client keeps the choice by id |
+| `row` | `symbol title · body`, the body dim, `trailing` dim at the right edge. The tint colours the symbol, else the title. The left part is cut first; when the width cannot hold four of its columns beside `trailing`, `trailing` follows a space and the whole line is cut |
+| `text` | `body` plain, `caption` dim, `title` bold, `mono` unchanged. A line break starts a new line; trailing spaces go except in `mono` |
+| `badge` | `[text]` in the tint |
+| `metric` | `label` dim, `value` bold in the tint, `unit` |
+| `metrics` | The metrics on one line, ` · ` between them |
+| `progress` | A fraction: a bar of up to 20 columns (`█` in the accent, `░` dim) and the percentage. Steps: `3/7`. With `ends_at`: ` · 12m left`, counted by the client, or `ended` |
+| `button` | A key hint: the key in bold, then the title, red when `destructive`. A button with no free key shows `›`; Enter on focus still presses it. The symbol is not drawn: the key takes its place |
+| `toggle` | `[x] title` or `[ ] title` |
+| `field` | `> placeholder`, the placeholder dim (`…` when none) |
+| `list` | The children's lines; `empty` dim when there are none |
+| `log` | At most 8 lines: the newest with `follow` and a first line `… n earlier lines`, else the first with a last line `… n more lines`. Scrolling waits for the sheet place |
+| Unknown type | `fallback`, else "Needs a newer Flightdeck", dim |
+
+Rules:
+
+- **One column per character**, as `gff`'s canvas draws. The symbol table (6.3) holds only
+  characters that are one column wide in common terminal fonts; emoji are left out.
+- **Cut, never wrap.** Every line is cut at the width with "…" in its last column.
+- **No control characters.** A tab becomes a space; every other C0, DEL or C1 character becomes
+  U+FFFD. A tree is data; no byte of it reaches the host terminal as a control.
+- **Lenient.** Unknown fields are ignored; unknown words draw as the field's default through the
+  generated `Drawn<Field>()` accessors (6.4). A tree that does not decode as blocks, has a block
+  with no type, or passes the tree limits (8.1) draws as one error line, `module error: <why>`,
+  in the error tint. Every invalid fixture draws without a panic, and within the width.
+- **Targets** are buttons, toggles, fields, rows with an action, and sections with an id, in tree
+  order. Each has a ref, its id or `#<n>` by its place, which keys focus and folding. A target
+  inside a folded section is not drawn and cannot be pressed. A button there keeps its letter,
+  so the other keys do not move when a section folds.
+- **Key hints.** In tree order, each button takes the first letter or digit of its title (ASCII,
+  case-sensitive) that no earlier button and no reserved key took, else the first free digit 1 to
+  9, else none. The client passes its own keys as reserved. The same tree gets the same keys on
+  every render, so a key does not move under the owner's finger.
+- **What a target sends.** A button and a row send their action. A toggle adds `value`, the new
+  state, to a copy of the args; a field adds `text`. A `client.*` action is the client's (6.2).
+- **`stale_after`** greys a block once the tree is older than its seconds.
+- **Goldens.** `internal/modview/testdata/golden/` holds every valid fixture and the newer one at
+  80 and 40 columns: each line between bars, then the targets with their keys and actions.
+  `go test ./internal/modview/ -update` rewrites them; a person reads the diff.
+
+Not built in this stage, with the reason:
+
+| Gap | Why |
+|---|---|
+| Mouse clicks | `gff` reads no mouse input anywhere yet (`gff-client.md` 4.3). A line carries its target's index, so a click maps to a target when mouse input comes |
+| A pager for `log`, the `host`, `session` and `sheet` places | Each belongs to a view `gff` does not have yet; the board card is the place with a home |
+| Optimistic toggles | The card waits for the next tree; with the module host in-process, that is one render |
+| Width of wide characters (CJK, emoji) | `gff`'s canvas counts one column per character everywhere; a fix there fixes both |
+
+**For the hab API (stage 5 wiring).** The renderer and the board card are built and tested
+against `internal/modhost` in-process. To reach them from a hab, the API needs:
+
+| Need | Why |
+|---|---|
+| The `modules` capability in the welcome | `gff` shows the Modules section only for a hab that lists it |
+| The client's vocabulary version in its hello | The hab renders per version (9); `gff` draws vocabulary 1 |
+| A module list per host: id, name, places, and the last state (ok, failing with the message, paused, "Needs a newer Flightdeck") | The card's heading and its error line (8.3) |
+| The tree of each module for a place, in the snapshot and as an event on each change, with a per-module revision | A later render can finish before an earlier one is sent; the client keeps the tree with the higher revision. The test source had to serialize act and render for this reason |
+| The time the tree was made, by the hab's clock | `stale_after` counts from it |
+| `module.act {module, name, args, revision}`, answered when `act` returns, with the module's error in the answer | The client shows "Did not finish" or the error; the new tree arrives as an event. The revision lets a module ignore a tap on an old tree (12) |
+| Scopes: module trees in the host scope only | Cards are per host; a session scope does not need them |
 
 ---
 
