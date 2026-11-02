@@ -63,7 +63,7 @@ Internal calls, made by this study. Each has its reason in the section named.
 | Strict schema, lenient clients (stage 2) | The schema refuses an unknown type, field or word, so `check` catches typos. Clients ignore unknown fields, draw an unknown type as its fallback and treat an unknown word as the field's first word | 6.4, 6.5 |
 | Where the runtime lives (stage 3) | `internal/modhost`, a library with injected backends. The module host process and its wiring into `gff-hab` are stage 5; `gff-hab modules check` is stage 7 | 7.3 |
 | How `main.js` exports (stage 3) | CommonJS: `module.exports` or `exports.render = ...`, and `require("./file.js")` for the module's other files. goja parses no `export` statement, and a bundler's output is CommonJS anyway | 5.1 |
-| What `render` may call (stage 3) | `fd.state.get`, `fd.settings`, `fd.log` and `ctx` only. `fd.hab.*`, `exec`, `fetch` and `fd.state.set` throw there, so a tree always rebuilds from state with no network, as section 5 intends | 7.3 |
+| What `render` may call (stage 3) | `fd.state.get`, `fd.settings`, `fd.log` and `ctx` only. `fd.hab.*`, `exec`, `fetch` and `fd.state.set` throw there, so a tree always rebuilds from state with no network, as section 5 intends. The reason is determinism and load, not safety: `fd.hab.get` needs no power, so `refresh` reads the same data. `render` runs per client and place within 250 ms; hab calls there would multiply the hab's load on every view and tie each draw to the hab's latency, while a tree built from state alone can be cached | 7.3 |
 | Promises (stage 3) | A function may be `async`. The bridge is synchronous and there are no timers, so its promise has settled when the call returns; one still pending fails the call | 7.3 |
 | Memory in the runtime (stage 3) | A heap watch inside the call, as a backstop below the host process's resident-memory kill (8.2). goja has no memory limit of its own | 8.4 |
 
@@ -303,7 +303,10 @@ means a tree can always be rebuilt from state after a restart, with no network.
   hab"): the hab could not check the module's trees. Neither reads any script.
 - It reads every `.js` file in the folder and its subfolders, skipping folders whose name starts
   with a dot (`.git`). Other files are ignored. At most 64 `.js` files and 1 MiB of them.
-- It opens files through `os.Root`, so a link that leads out of the folder is refused.
+- It opens files through `os.Root`. A `.js` file or manifest that is not a regular file (a link,
+  a FIFO, a device) is refused without being read. A file's size is checked before it is read,
+  so a huge file is refused at once; the manifest may hold 64 KiB. A hard link looks like a file,
+  so the installer unpacks archives with no links or special files.
 - `main.js` is CommonJS. It sets `module.exports`, or properties of `exports`, to its functions:
 
   ```js
@@ -313,7 +316,10 @@ means a tree can always be rebuilt from state after a restart, with no network.
 
   `require("./lib/util.js")` (or `"./lib/util"`) loads another file of the folder, once; a cycle
   gets the partial exports, as in Node. A bare name (`require("fs")`) or a path out of the folder
-  throws.
+  throws. Each file is parsed as the body of `function (exports, require, module)`; a file that
+  closes that function early, to run code outside it, is a syntax error.
+- A `//# sourceMappingURL=` comment is ignored, in a bundle file and in `eval` or
+  `new Function`: goja would otherwise read the file it names from the host's disk.
 - `main.js`'s top level runs once, at load, within 1 second. It may log and read settings and
   state; every other bridge call throws there. A module that exports no `render` function is
   refused.
@@ -474,14 +480,21 @@ The bridge in detail:
 
 | Call | Arguments | Returns | Throws |
 |---|---|---|---|
-| `fd.hab.get(method, params)` | A method name; an optional params object | The result, parsed | `BridgeError` in load and render; when the hab refuses (a method that changes something, an unknown method) |
+| `fd.hab.get(method, params)` | One of the reads below; an optional params object | The result, parsed | `BridgeError` in load and render, for a method not on the list, or when the hab refuses |
 | `fd.hab.act(method, params)` | As `get` | The result | `PowerError` without `act`; as `get` |
-| `fd.exec(argv, {cwd, timeout})` | 1 to 256 strings; `timeout` in seconds, never past the call's own limit | `{code, stdout, stderr, stdout_cut, stderr_cut}` | `PowerError` without `exec`; `BridgeError` for a string instead of an array, an unknown option, in load and render, or when the program cannot start |
+| `fd.exec(argv, {cwd, timeout})` | 1 to 256 strings; `timeout` in seconds, cut to the time the call has left | `{code, stdout, stderr, stdout_cut, stderr_cut}` | `PowerError` without `exec`; `BridgeError` for a string instead of an array, an unknown option, a `timeout` above the call's own limit ("timeout is in seconds; at most 30": most likely milliseconds), in load and render, or when the program cannot start |
 | `fd.fetch(url, {method, headers, body})` | An `http` or `https` URL; headers of strings; a string body up to 1 MiB | `{status, headers, body, body_cut}`, header names in lowercase | `PowerError` without `fetch`; `BridgeError` for another scheme, a header with a line break, in load and render, or a failed request |
 | `fd.state.get(key)` | A key of 1 to 200 bytes | The stored value, or `undefined` | |
-| `fd.state.set(key, value)` | A key; any JSON value; `undefined` deletes the key | | `BridgeError` in load and render, or when the module's state would pass 256 KiB; nothing is stored then |
+| `fd.state.set(key, value)` | A key; any JSON value; `undefined` deletes the key | | `BridgeError` in load and render, or when the module's state would pass 256 KiB; nothing is stored then. The call's later reads see the write; the store saves it once, when the call ends without an error. A call that fails keeps none of its writes |
 | `fd.settings` | | Each declared setting: the person's value, else the default | |
-| `fd.log(...values)` | Strings as they are, other values as JSON | | |
+| `fd.log(...values)` | Strings as they are, other values as JSON | | At most 100 lines per call; one more line says the rest were dropped |
+
+`fd.hab.get` calls only these reads, whatever the hab backend would answer: `structure.get`
+(projects, sessions and agent states), `usage.list`, `hab.stats`, `catalog.list`,
+`command.list`, `worktree.list`, `round.list`, `round.runs` and `settings.get`. So a backend
+that forgets to refuse a write still gives no write without the `act` power. Reads of
+transcripts and files are left out: they have their own read scope (`capcom.md` 5). The list
+grows with the hab API, one judged read at a time.
 
 - `PowerError` and `BridgeError` are ordinary JS errors with that `name`. A module may catch
   them. One it does not catch fails the call with the error's name and message.
@@ -489,9 +502,13 @@ The bridge in detail:
   of `JSON.parse`, `Error` and `Object.freeze`, taken before the module's code runs, so a module
   that replaces them does not change the bridge.
 - `ctx` holds `host`, `os`, `place`, `vocabulary` and `now` (RFC 3339, UTC).
-- A value that crosses the bridge (params, state, a tree) is read as JSON is: own enumerable keys,
-  `toJSON` called, `undefined` and function members left out, `NaN` as `null`. A function, symbol
-  or BigInt in its place throws. It may nest at most 64 deep and hold at most 20,000 parts and
+- A value that crosses the bridge (params, state, a tree, options, headers) is read as JSON is:
+  own enumerable keys, `toJSON` called, `undefined` and function members left out, `NaN` as
+  `null`. A function, symbol or BigInt in its place throws. Only plain objects (from a literal, a
+  class or `Object.create`), arrays and primitives cross. A `String` object, a typed array, an
+  `ArrayBuffer`, a `Map`, a `Set`, a proxy and other built-in objects throw before their keys are
+  read, since listing them allocates in Go for every index. `fd.log` shows such a value as
+  `[object String]` and the like. It may nest at most 64 deep and hold at most 20,000 parts and
   its size limit in bytes (1 MiB for params, the state limit for state); getters run under the
   call's time limit.
 - A function may be `async`, or return a promise. Since the bridge is synchronous and there are
@@ -507,8 +524,10 @@ The bridge in detail:
   `blocks` gets `ClientTooOld`, and shows "Needs a newer Flightdeck".
 - The backends are injected: the hab API (`Get` and `Act`; `Get` refuses a method that changes
   something), programs, HTTP, and the state store. `DirStore` keeps each module's state as
-  `<dir>/<id>.json`, written to a temporary file and renamed. With no backend for a call, the
-  call throws `BridgeError`. Stage 5 supplies the real ones.
+  `<dir>/<id>.json`, written to a temporary file, synced, renamed, and the folder synced. Two
+  modules with one id would share that file: the host refuses to install or load a second
+  module with an id it already has (stage 5). With no backend for a call, the call throws
+  `BridgeError`. Stage 5 supplies the real ones.
 
 ---
 
@@ -556,20 +575,48 @@ cap.
   A bridge call in progress gets the same context, so a program or request ends with it. The
   call returns `TimeoutError`, or the caller's own cancel error. The module stays loaded and the
   next call runs normally.
+- **Stuck calls.** goja checks the interrupt between instructions only, so a long built-in (a
+  sort of a huge array, a backend that ignores its context) runs on. The call runs on its own
+  goroutine; when the runtime has not come back 250 ms after the context ended, the call returns
+  `TimeoutError` with `Stuck` set, the runtime is abandoned to finish on its own, and the module
+  is stopped (`ErrStopped`). The interrupt stays set, so the runtime stops at its next
+  instruction. Regular expressions with a backreference or lookaround run in regexp2, which
+  checks its own clock: one match is limited to 250 ms and then throws a `RangeError` the module
+  may catch.
 - **Memory.** While a call runs, the runtime samples the Go heap every 5 ms. Above the limit
   (256 MiB, the host's soft limit in 8.2), it collects garbage at most every 100 ms and samples
   again, so garbage alone never trips it. Still above, it interrupts the call with `MemoryError`
-  and stops the module: every later call returns `ErrStopped`, and the host loads it again. The
-  heap is the whole process's, so this is a backstop; one huge allocation can pass it between
-  samples, and the host's 512 MiB resident-memory kill stays the hard limit.
+  and stops the module: every later call returns `ErrStopped`, the runtime is let go so its
+  memory is freed, and the host loads it again. A call shorter than one sample is checked too:
+  at a call's end, a heap over the limit after a collection is a `MemoryError` for that call,
+  since the heap was under at its start. At a call's start, a heap over the limit after a
+  collection is no fault of the module about to run: the call returns `ErrHeapPressure`, the
+  module keeps running, and the host looks for the module that holds the memory.
+  `Module.HeapGrowth` gives the heap's change over each module's last call (garbage included),
+  the hint for that search.
+- **Attribution is approximate.** The heap is the whole process's. Calls of different modules
+  that run at the same time share it, and one native allocation can pass the limit between
+  samples. Exact blame needs one module per process, with the host's 512 MiB resident-memory
+  kill (8.2) as the hard limit.
 - **Stack.** At most 1,000 JS calls deep. Deeper recursion throws a `RangeError` instead of
   growing the goroutine's stack.
 - **Values.** The bounds of 7.3 keep a value the module builds from making the host recurse or
   allocate without end. Reading a value, a thrown error's name and message, or `module.exports`
   runs as a JS call under the limit, so a getter or proxy that throws fails the call and one
   that loops is interrupted; neither can take the host down.
-- **Failures.** The runtime returns typed errors: `TimeoutError`, `MemoryError`, `ScriptError`
-  (an exception the module did not catch, or a syntax error, with its JS name), `TreeError`,
+- **Go panics.** goja passes on a Go runtime panic (a nil pointer, an index out of range) in
+  bridge or backend code. The runtime recovers it as `InternalError` with the Go stack, and stops
+  the module, since its runtime may be half-changed. The process lives on.
+- **Known limit: native recursion.** goja's stack limit counts JS frames only. Some built-ins
+  recurse in Go: `flat(Infinity)`, `join` or `String()` of an array nested a million deep
+  overflows the goroutine's stack, a fatal error no `recover` can catch, and `JSON.stringify` of
+  it runs past any limit. Building such an array takes under a second, so any function can do
+  it. In-process this cannot be made safe short of patching goja. Running the module host as its
+  own process (stage 5, task-349z6rqz) closes it: a crash kills the module host, not `gff-hab`,
+  and the module that was running counts the failure (8.2).
+- **Failures.** The runtime returns typed errors: `TimeoutError`, `MemoryError`, `InternalError`,
+  `ErrHeapPressure`, `ScriptError` (an exception the module did not catch, or a syntax error,
+  with its JS name; message and stack cut to 2,000 and 8,000 characters), `TreeError`,
   `ClientTooOld`, `BundleError`, `NewerBridge` and `NewerBlocks`. Counting failures, pausing a
   module after three and keeping the last good tree (8.3) belong to the module host, stage 5.
 
