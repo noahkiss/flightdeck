@@ -8,10 +8,12 @@ package modhost
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
 	"strings"
+	"syscall"
 
 	"github.com/noahkiss/flightdeck/api/modules"
 )
@@ -68,7 +70,7 @@ func Load(dir string) (*Bundle, error) {
 	}
 	defer root.Close()
 	fsys := root.FS()
-	mdata, err := fs.ReadFile(fsys, modules.ManifestFile)
+	mdata, err := readRegular(root, modules.ManifestFile, maxManifestBytes)
 	if err != nil {
 		return nil, &BundleError{Path: modules.ManifestFile, Message: readMessage(err)}
 	}
@@ -97,14 +99,17 @@ func Load(dir string) (*Bundle, error) {
 		if len(b.Sources) == MaxSourceFiles {
 			return &BundleError{Message: fmt.Sprintf("more than %d .js files", MaxSourceFiles)}
 		}
-		data, err := fs.ReadFile(fsys, p)
+		if !d.Type().IsRegular() {
+			return &BundleError{Path: p, Message: "not a regular file"}
+		}
+		data, err := readRegular(root, p, MaxSourceBytes-total)
+		if errors.Is(err, errTooBig) {
+			return &BundleError{Message: fmt.Sprintf(".js files over %d bytes in all", MaxSourceBytes)}
+		}
 		if err != nil {
 			return &BundleError{Path: p, Message: readMessage(err)}
 		}
 		total += len(data)
-		if total > MaxSourceBytes {
-			return &BundleError{Message: fmt.Sprintf(".js files over %d bytes in all", MaxSourceBytes)}
-		}
 		b.Sources[p] = string(data)
 		return nil
 	})
@@ -119,6 +124,44 @@ func Load(dir string) (*Bundle, error) {
 		return nil, &BundleError{Path: MainFile, Message: "missing"}
 	}
 	return b, nil
+}
+
+// maxManifestBytes bounds manifest.toml.
+const maxManifestBytes = 64 << 10
+
+var (
+	errTooBig     = errors.New("too large")
+	errNotRegular = errors.New("not a regular file")
+)
+
+// readRegular reads a regular file of at most max bytes. It opens without blocking, so a FIFO
+// or a device cannot hold Load, checks the type and size on the open file, and reads no more
+// than max+1 bytes in case the file grows. Hard links cannot be told apart from files; the
+// installer unpacks archives with no links or special files.
+func readRegular(root *os.Root, name string, max int) ([]byte, error) {
+	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errNotRegular
+	}
+	if info.Size() > int64(max) {
+		return nil, errTooBig
+	}
+	data, err := io.ReadAll(io.LimitReader(f, int64(max)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > max {
+		return nil, errTooBig
+	}
+	return data, nil
 }
 
 func readMessage(err error) string {
