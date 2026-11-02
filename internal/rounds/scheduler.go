@@ -102,6 +102,8 @@ type Notice struct {
 // lock held, but one at a time; a sink must not call back into the scheduler from them.
 type Sink interface {
 	RoundChanged(e Entry)
+	// RoundDeleted reports a round Delete removed; e is the round as it was.
+	RoundDeleted(e Entry)
 	RunChanged(r Run)
 	Notice(n Notice)
 }
@@ -147,9 +149,10 @@ type retryPlan struct {
 }
 
 type event struct {
-	round  *Entry
-	run    *Run
-	notice *Notice
+	round   *Entry
+	deleted *Entry
+	run     *Run
+	notice  *Notice
 }
 
 // Scheduler is the rounds scheduler (rounds.md 7.2, 8, 10.1). It is safe for concurrent use.
@@ -442,6 +445,137 @@ func (s *Scheduler) pauseLocked(roundID, reason string, now time.Time) error {
 	return nil
 }
 
+// Errors of the round edits.
+var (
+	// ErrRunLive refuses a run by hand while the round has a run that has not ended (rounds.md
+	// 7.2, 13: round.run answers conflict).
+	ErrRunLive = errors.New("the round has a live run")
+	// ErrRoundPaused and ErrRoundCompleted refuse a run by hand of a round that starts no runs.
+	ErrRoundPaused    = errors.New("the round is paused")
+	ErrRoundCompleted = errors.New("the round has completed")
+)
+
+// Create checks and stores a new round (Store.Create) and reports it to the sink. With runNow
+// it also queues one run by hand, which does not move the next slot (rounds.md 4.1, Run on
+// create); the run is returned. A failed queue leaves the round created and returns its error
+// beside the entry.
+func (s *Scheduler) Create(r Round, createdBy string, runNow bool) (Entry, *Run, error) {
+	s.mu.Lock()
+	now, prev, wake := s.observeLocked()
+	e, err := s.store.Create(r, createdBy, now)
+	if err != nil {
+		s.unlockAndFlush()
+		return Entry{}, nil, err
+	}
+	c := e
+	s.events = append(s.events, event{round: &c})
+	var run *Run
+	if runNow {
+		run, err = s.manualLocked(e.Round.ID, now)
+		if ne, ok := s.store.Get(e.Round.ID); ok {
+			e = ne
+		}
+	}
+	s.evaluateLocked(now, prev, wake)
+	s.startLocked(now)
+	s.unlockAndFlush()
+	return e, run, err
+}
+
+// Update replaces a round's definition (Store.Update) and reports it to the sink. The pause
+// mark is not an edit: it stays as stored, and Pause and Unpause change it. A run in flight
+// keeps the values it started with (rounds.md 3, Edits).
+func (s *Scheduler) Update(r Round) (Entry, error) {
+	s.mu.Lock()
+	now, prev, wake := s.observeLocked()
+	old, ok := s.store.Get(r.ID)
+	if !ok {
+		s.unlockAndFlush()
+		return Entry{}, ErrNotFound
+	}
+	r.Paused = old.Round.Paused
+	e, err := s.store.Update(r, now)
+	if err == nil {
+		c := e
+		s.events = append(s.events, event{round: &c})
+	}
+	s.evaluateLocked(now, prev, wake)
+	s.startLocked(now)
+	s.unlockAndFlush()
+	return e, err
+}
+
+// Delete removes a round and its ended runs, and reports it to the sink. A live run goes on to
+// its end; a run that has not started ends skipped, "round deleted" (rounds.md 11).
+func (s *Scheduler) Delete(id string) error {
+	s.mu.Lock()
+	now, prev, wake := s.observeLocked()
+	old, ok := s.store.Get(id)
+	if !ok {
+		s.unlockAndFlush()
+		return ErrNotFound
+	}
+	err := s.store.Delete(id)
+	if err == nil {
+		s.events = append(s.events, event{deleted: &old})
+	}
+	s.evaluateLocked(now, prev, wake)
+	s.startLocked(now)
+	s.unlockAndFlush()
+	return err
+}
+
+// RunNow queues one run by hand, outside the trigger: no slot, trigger kind manual (rounds.md
+// 4, 13). A round with a live run is refused with ErrRunLive, a paused one with ErrRoundPaused
+// and a completed one with ErrRoundCompleted. The run starts under the host limit and the wake
+// settle, as any queued run.
+func (s *Scheduler) RunNow(id string) (Run, error) {
+	s.mu.Lock()
+	now, prev, wake := s.observeLocked()
+	run, err := s.manualLocked(id, now)
+	s.evaluateLocked(now, prev, wake)
+	s.startLocked(now)
+	var out Run
+	if run != nil {
+		out = *run
+		if r := s.live[run.ID]; r != nil {
+			out = *r
+		}
+	}
+	s.unlockAndFlush()
+	return out, err
+}
+
+func (s *Scheduler) manualLocked(id string, now time.Time) (*Run, error) {
+	e, ok := s.store.Get(id)
+	switch {
+	case !ok:
+		return nil, ErrNotFound
+	case s.liveFor(id) != nil:
+		return nil, ErrRunLive
+	case e.Round.Paused:
+		return nil, ErrRoundPaused
+	case e.State.Completed:
+		return nil, ErrRoundCompleted
+	}
+	run := Run{
+		ID:      NewID("run"),
+		Number:  e.State.LastRun + 1,
+		RoundID: id,
+		Trigger: TriggerManual,
+		State:   RunQueued,
+		Created: now,
+	}
+	ne, err := s.store.QueueRun(run, func(st *RoundState) { st.LastRun = run.Number })
+	if err != nil {
+		return nil, err
+	}
+	s.live[run.ID] = &run
+	c := run
+	s.events = append(s.events, event{round: &ne}, event{run: &c})
+	return &run, nil
+}
+
 // notStarted reports whether a run has not begun its work: queued for a start, or waiting for
 // the lock. The scheduler ends such a run itself when its round pauses, expires, completes or
 // goes.
@@ -460,6 +594,8 @@ func (s *Scheduler) unlockAndFlush() {
 		switch {
 		case ev.round != nil:
 			s.cfg.Sink.RoundChanged(*ev.round)
+		case ev.deleted != nil:
+			s.cfg.Sink.RoundDeleted(*ev.deleted)
 		case ev.run != nil:
 			s.cfg.Sink.RunChanged(*ev.run)
 		case ev.notice != nil:

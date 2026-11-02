@@ -64,11 +64,17 @@ type fakeSink struct {
 	rounds  []Entry
 	runs    []Run
 	notices []Notice
+	deleted []Entry
 }
 
 func (f *fakeSink) RoundChanged(e Entry) { f.mu.Lock(); f.rounds = append(f.rounds, e); f.mu.Unlock() }
-func (f *fakeSink) RunChanged(r Run)     { f.mu.Lock(); f.runs = append(f.runs, r); f.mu.Unlock() }
-func (f *fakeSink) Notice(n Notice)      { f.mu.Lock(); f.notices = append(f.notices, n); f.mu.Unlock() }
+func (f *fakeSink) RoundDeleted(e Entry) {
+	f.mu.Lock()
+	f.deleted = append(f.deleted, e)
+	f.mu.Unlock()
+}
+func (f *fakeSink) RunChanged(r Run) { f.mu.Lock(); f.runs = append(f.runs, r); f.mu.Unlock() }
+func (f *fakeSink) Notice(n Notice)  { f.mu.Lock(); f.notices = append(f.notices, n); f.mu.Unlock() }
 
 func (f *fakeSink) noticesOf(k NoticeKind) []Notice {
 	f.mu.Lock()
@@ -1427,5 +1433,96 @@ func TestSchedulerPauseDropsPlans(t *testing.T) {
 	h.awake("2026-03-02T22:06:00Z")
 	if n := len(h.runs(e.Round.ID)); n != 1 {
 		t.Errorf("retry survived a pause: %d runs", n)
+	}
+}
+
+func TestSchedulerEdits(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:00:00Z")
+	h.settle = -1
+	h.reopen()
+	h.s.Tick() // the first reading after start counts as a wake; no settle here
+	r := Round{Name: "edits", Mode: ModeFresh, Project: "proj", Command: []string{"true"},
+		Trigger: Trigger{Kind: TriggerCron, Cron: "0 * * * *", Zone: "UTC"}}
+	e, run, err := h.s.Create(r, "sess-agent", true)
+	if err != nil || run == nil {
+		t.Fatalf("create: %v %v", run, err)
+	}
+	if e.Round.CreatedBy != "sess-agent" || run.Trigger != TriggerManual || run.Slot != nil || run.Number != 1 {
+		t.Fatalf("create: %+v %+v", e.Round, run)
+	}
+	// Run on create does not move the next slot.
+	if e.State.NextSlot == nil || !e.State.NextSlot.Equal(utc("2026-03-02T10:00:00Z")) {
+		t.Errorf("next slot %v", e.State.NextSlot)
+	}
+	runs := h.runs(e.Round.ID)
+	if len(runs) != 1 || runs[0].State != RunRunning || len(h.start.list()) != 1 {
+		t.Fatalf("run on create did not start: %+v", runs)
+	}
+	if _, err := h.s.RunNow(e.Round.ID); !errors.Is(err, ErrRunLive) {
+		t.Errorf("run now with a live run: %v", err)
+	}
+	h.end(runs[0], RunSucceeded, "", false)
+	got, err := h.s.RunNow(e.Round.ID)
+	if err != nil || got.Number != 2 || got.State != RunRunning {
+		t.Fatalf("run now: %+v %v", got, err)
+	}
+	h.end(got, RunFailed, "exit status 1", false)
+
+	// An edit keeps the pause mark, and reports the round.
+	if err := h.s.Pause(e.Round.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.s.RunNow(e.Round.ID); !errors.Is(err, ErrRoundPaused) {
+		t.Errorf("run now while paused: %v", err)
+	}
+	ed := h.entry(e.Round.ID).Round
+	ed.Paused = false
+	ed.Timeout = Duration(5 * time.Minute)
+	before := len(h.sink.rounds)
+	ne, err := h.s.Update(ed)
+	if err != nil || !ne.Round.Paused || ne.Round.Timeout != Duration(5*time.Minute) {
+		t.Fatalf("update: %+v %v", ne.Round, err)
+	}
+	if len(h.sink.rounds) == before {
+		t.Error("update sent no round event")
+	}
+	if _, err := h.s.Update(Round{ID: "round-none", Name: "x"}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("update of a missing round: %v", err)
+	}
+
+	// Delete reports the round as it was and drops it.
+	if err := h.s.Delete(e.Round.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.sink.deleted) != 1 || h.sink.deleted[0].Round.ID != e.Round.ID {
+		t.Fatalf("deleted events: %+v", h.sink.deleted)
+	}
+	if err := h.s.Delete(e.Round.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("second delete: %v", err)
+	}
+	if _, err := h.s.RunNow(e.Round.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("run now of a deleted round: %v", err)
+	}
+	// A refused create changes nothing.
+	if _, _, err := h.s.Create(Round{Name: "bad name!"}, "", false); err == nil {
+		t.Error("a bad round was created")
+	}
+}
+
+func TestSchedulerRunNowCompleted(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:00:00Z")
+	h.settle = -1
+	h.reopen()
+	e := h.round("capped", "0 * * * *", func(r *Round) { r.MaxRuns = 1 })
+	run, err := h.s.RunNow(e.Round.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.end(run, RunSucceeded, "", false)
+	if !h.entry(e.Round.ID).State.Completed {
+		t.Fatal("max_runs 1 did not complete the round")
+	}
+	if _, err := h.s.RunNow(e.Round.ID); !errors.Is(err, ErrRoundCompleted) {
+		t.Errorf("run now of a completed round: %v", err)
 	}
 }
