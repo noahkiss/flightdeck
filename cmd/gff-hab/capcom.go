@@ -43,10 +43,12 @@ type capcomService struct {
 	// claudeTranscript reports whether Claude Code wrote a transcript for a session id. It
 	// writes none before the first message, and --resume of such an id fails. Nil: assume it did.
 	claudeTranscript func(id string) bool
-	poke             func() // the catalog is built again
-	scope            func() capcom.ReadScope
-	now              func() time.Time
-	logf             func(string, ...any)
+	// complete reports whether the link has reached every registered holder. Nil: it has.
+	complete func() bool
+	poke     func() // the catalog is built again
+	scope    func() capcom.ReadScope
+	now      func() time.Time
+	logf     func(string, ...any)
 
 	op sync.Mutex // one open, resume or assign at a time
 
@@ -70,20 +72,27 @@ func newCapcomService(c *capcomService) *capcomService {
 	if err != nil {
 		c.logf("capcom: %v", err)
 	}
-	kept := st.Sessions[:0]
-	for _, rec := range st.Sessions {
-		if _, ok := c.store.Session(rec.ID); ok {
-			kept = append(kept, rec)
+	// A store that could not load its state started empty: pruning against it would wipe every
+	// record a later good start still needs.
+	if c.store.Health().Problem == "" {
+		kept := make([]capcom.Session, 0, len(st.Sessions))
+		for _, rec := range st.Sessions {
+			if _, ok := c.store.Session(rec.ID); ok {
+				kept = append(kept, rec)
+			}
 		}
-	}
-	pruned := len(kept) != len(st.Sessions)
-	st.Sessions = kept
-	if _, ok := c.store.Session(st.Standing); !ok {
-		st.Standing = ""
-	}
-	c.st = st
-	if pruned {
-		c.saveLocked()
+		pruned := len(kept) != len(st.Sessions)
+		st.Sessions = kept
+		if _, ok := c.store.Session(st.Standing); !ok && st.Standing != "" {
+			st.Standing, pruned = "", true
+		}
+		c.st = st
+		if pruned {
+			c.saveLocked()
+		}
+	} else {
+		c.st = st
+		c.logf("capcom: the structure state did not load; capcom.json is kept as it is")
 	}
 	// Each folder's settings name this gff-hab's own path. An install retires the build an
 	// earlier gff-hab ran from (macOS), so every folder gets the current path at start: a
@@ -291,10 +300,12 @@ func (c *capcomService) resume(ctx context.Context, rec capcom.Session, ss api.S
 	if ss.State != api.SessionStateExited {
 		return "", control.Errorf(api.ErrorKindConflict, "session %s is running", ss.ID)
 	}
-	if ss.Pane != "" && ss.Exit == nil {
-		// Exited with no status: the pane's holder dropped out or is not reached yet, and the
-		// harness may still run there. A second one would share the conversation.
-		return "", control.Errorf(api.ErrorKindUnavailable, "session %s: its holder is not connected; its pane may still run", ss.ID)
+	lost := control.Errorf(api.ErrorKindUnavailable, "session %s: its holder is not connected; its pane may still run", ss.ID)
+	if ss.Pane != "" && ss.Exit == nil && c.complete != nil && !c.complete() {
+		// Exited with no status while a holder is not reached yet: the harness may still run
+		// there, and a second one would share the conversation. With every holder reached, the
+		// pane is gone for good (a reboot, a holder that died) and the resume goes ahead.
+		return "", lost
 	}
 	if err := capcom.WriteFolder(rec.Dir, rec.Harness, c.exe, c.readScope()); err != nil {
 		return "", control.Errorf(api.ErrorKindUnavailable, "capcom folder: %v", err)
@@ -318,7 +329,11 @@ func (c *capcomService) resume(ctx context.Context, rec capcom.Session, ss api.S
 		// only one. A pane already gone answers not_found; any other answer stops the resume.
 		if err := c.acts.ClosePane(ctx, ss.Pane); err != nil {
 			var ce *control.Error
-			if !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindNotFound {
+			switch {
+			case errors.As(err, &ce) && ce.Data.Kind == api.ErrorKindNotFound:
+			case errors.As(err, &ce) && ce.Data.Kind == api.ErrorKindUnavailable && ss.Exit == nil:
+				return "", lost // the link still follows the pane as lost
+			default:
 				return "", err
 			}
 		}

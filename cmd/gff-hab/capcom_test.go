@@ -12,6 +12,7 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/capcom"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/holderreg"
 )
 
 // fakeHarness stands in for claude in a Capcom folder: it appends its arguments to argv.log in
@@ -276,9 +277,54 @@ func TestCapcomHost(t *testing.T) {
 	if _, err := resume(t, c, fresh.Session); errKind(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "holder is not connected") {
 		t.Fatalf("resume of a lost pane: %v", err)
 	}
-	if _, err := capcomOpen(t, c, false); errKind(err) != api.ErrorKindUnavailable {
+	if _, err := capcomOpen(t, c, false); errKind(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "holder is not connected") {
 		t.Fatalf("open with the standing pane lost: %v", err)
 	}
+}
+
+// TestCapcomResumeAfterHolderLoss: the holder dies for good (a crash or a reboot: its registry
+// file goes too) and a new holder runs. A gff-hab started after that reaches every holder, so
+// the standing session, exited with no status, resumes, and capcom.open resumes it too.
+func TestCapcomResumeAfterHolderLoss(t *testing.T) {
+	e := newHolderEnv(t, 0)
+	e.env = []string{"PATH=" + fakeHarnessBin(t) + string(os.PathListSeparator) + os.Getenv("PATH"), "CLAUDE_CONFIG_DIR=" + shortDir(t)}
+	e.serve()
+	c := e.control()
+	run(t, "capcom", "assign", "-socket", e.sock, "self")
+	first := mustOpen(t, c, false)
+	argvLog := filepath.Join(first.Dir, "argv.log")
+	waitUntil(t, "the harness started", func() bool { _, err := os.Stat(argvLog); return err == nil })
+
+	e.holder.Process.Kill()
+	<-e.holderDone
+	if err := os.Remove(holderreg.Path(e.hdir, "one")); err != nil {
+		t.Fatal(err)
+	}
+	startHolder(t, e.hdir, "two")
+	e.restart(false)
+	c = e.control()
+	ss := waitSession(t, c, first.Session, "the pane lost", func(s api.Session) bool { return s.State == api.SessionStateExited && s.Exit == nil })
+	if ss.Pane != first.Pane {
+		t.Fatalf("after the holder loss: %+v", ss)
+	}
+	opened, err := capcomOpen(t, c, false)
+	if err != nil {
+		t.Fatalf("open after the holder loss: %v", err)
+	}
+	if !opened.Started || opened.Session != first.Session || opened.Pane == first.Pane {
+		t.Fatalf("open after the holder loss: %+v", opened)
+	}
+	waitSession(t, c, first.Session, "running again", func(s api.Session) bool { return s.State == api.SessionStateRunning && s.Pane == opened.Pane })
+	waitUntil(t, "the harness started again", func() bool { return len(readLines(t, argvLog)) == 2 })
+
+	// And session.resume after the next exit.
+	writeFile(t, filepath.Join(first.Dir, "stop"), "")
+	waitSession(t, c, first.Session, "exited", func(s api.Session) bool { return s.State == api.SessionStateExited })
+	if _, err := resume(t, c, first.Session); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	waitUntil(t, "the harness started a third time", func() bool { return len(readLines(t, argvLog)) == 3 })
+	writeFile(t, filepath.Join(first.Dir, "stop"), "")
 }
 
 func sessionByPane(t *testing.T, c *control.Client, pane string) (api.Session, bool) {
