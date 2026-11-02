@@ -241,6 +241,25 @@ public actor FakeHab {
     public func setCapcomHome(assignment: UInt64, home: String?) {
         capcomHomeSet = (assignment, home)
     }
+    /// Every `capcom.assign` received, oldest first.
+    public private(set) var capcomAssigns: [CapcomAssignParams] = []
+    /// The catalog's always-on mark (mesh.md 8).
+    public private(set) var alwaysOn = false
+    public func setAlwaysOn(_ on: Bool) { alwaysOn = on }
+    /// The catalog's generation, raised by `announceCatalog`.
+    private var catalogGeneration: UInt64 = 1
+    /// Sends `catalog.updated` for this hab's own catalog, as the real hab does when it changes.
+    public func announceCatalog() async {
+        catalogGeneration += 1
+        await emit(type: "catalog.updated", id: deviceID, revision: nil,
+                   data: CatalogUpdated(deviceId: deviceID, generation: catalogGeneration))
+    }
+    /// Sets the Capcom home and announces the changed catalog, as an assignment from the
+    /// command line or another device would.
+    public func reassignCapcom(assignment: UInt64, home: String?) async {
+        setCapcomHome(assignment: assignment, home: home)
+        await announceCatalog()
+    }
     /// Adds a Capcom session without an event, as a state file read at start; `standing`
     /// makes it the standing conversation.
     public func loadCapcomSession(_ id: String, name: String, pane: String, standing: Bool) {
@@ -852,11 +871,12 @@ public actor FakeHab {
             notices.append(p)
             noticeTitles["n\(notices.count)"] = p.title
             await reply(c, id: id, result: NoticeRaised(id: "n\(notices.count)", pushed: 0, seq: c.seq))
-        case HabMethods.capcomOpen.name, HabMethods.capcomAttach.name, HabMethods.capcomDetach.name, HabMethods.capcomPending.name:
+        case HabMethods.capcomOpen.name, HabMethods.capcomAttach.name, HabMethods.capcomDetach.name, HabMethods.capcomPending.name,
+             HabMethods.capcomAssign.name:
             await capcomCall(method, params, c, id: id)
         case HabMethods.catalogGet.name where capabilities.contains("catalog") || capabilities.contains("capcom"):
             catalogGets += 1
-            await reply(c, id: id, result: CatalogGetResult(catalog: catalog(), generation: 1, seq: c.seq))
+            await reply(c, id: id, result: CatalogGetResult(catalog: catalog(), generation: catalogGeneration, seq: c.seq))
         case HabMethods.confirmAnswer.name where capabilities.contains(ConfirmBook.capability):
             guard let p = try? params.decode(ConfirmAnswerParams.self) else {
                 await fail(c, id: id, kind: .invalid, hint: "bad confirm.answer params")
@@ -954,6 +974,19 @@ public actor FakeHab {
         }
         do {
             switch method {
+            case HabMethods.capcomAssign.name:
+                // The real hab's rule for `self` (capcom.md 7.3): a counter above every one seen,
+                // at least the floor given. A peer label needs a link the fake has none of.
+                let p = try decode(CapcomAssignParams.self, params, method)
+                capcomAssigns.append(p)
+                guard p.host == "self" || p.host == deviceID else {
+                    throw Failure(kind: .notFound, hint: "no peer \"\(p.host)\" in this hab's peer list")
+                }
+                let n = max(p.assignment ?? 0, capcomHome.assignment + 1)
+                if capcomHome.home != deviceID { capcomStanding = nil } // a new home starts fresh
+                capcomHomeSet = (n, deviceID)
+                await reply(c, id: id, result: CapcomAssigned(assignment: n, home: deviceID, seq: c.seq))
+                await announceCatalog()
             case HabMethods.capcomOpen.name:
                 let p = try decode(CapcomOpenParams.self, params, method)
                 capcomOpens.append(p)
@@ -1041,8 +1074,8 @@ public actor FakeHab {
                 cap = CatalogCapcom(assignment: capcomHome.home == nil ? 0 : capcomHome.assignment, home: capcomHome.home, sessions: mine)
             }
         }
-        return Catalog(actions: [], agents: [], at: Fixture.stamp(Date()), capabilities: [], capcom: cap, deviceId: deviceID,
-                       generation: 1, harnesses: [], host: hostID, peers: [], projects: [], services: [],
+        return Catalog(actions: [], agents: [], alwaysOn: alwaysOn ? true : nil, at: Fixture.stamp(Date()), capabilities: [], capcom: cap, deviceId: deviceID,
+                       generation: catalogGeneration, harnesses: [], host: hostID, peers: [], projects: [], services: [],
                        system: CatalogSystem(arch: "arm64", cores: 8, os: "darwin"), toolchains: [], watches: [])
     }
 
