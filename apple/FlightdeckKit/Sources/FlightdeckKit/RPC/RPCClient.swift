@@ -23,6 +23,12 @@ public struct ConnectionClosed: Error, Sendable, CustomStringConvertible {
     }
 }
 
+/// A call got no response within its time limit.
+public struct CallTimedOut: Error, Sendable, CustomStringConvertible {
+    public var method: String
+    public var description: String { "\(method) timed out" }
+}
+
 public struct ProtocolError: Error, Sendable, CustomStringConvertible {
     public var description: String
     public init(_ description: String) { self.description = description }
@@ -108,7 +114,7 @@ public actor RPCClient {
             timeouts[id] = Task {
                 try? await Task.sleep(for: timeout)
                 if Task.isCancelled { return }
-                await self.fail(id, ProtocolError("\(method.name) timed out"))
+                await self.fail(id, CallTimedOut(method: method.name))
             }
         }
         let resp = try decoder.decode(Response<R>.self, from: line)

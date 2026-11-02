@@ -279,15 +279,17 @@ final class PaneStreamTests: XCTestCase {
         XCTAssertEqual(inputs.count, (want.count + (64 << 10) - 1) / (64 << 10))
     }
 
-    /// A 1 MiB paste over a 1 MB/s uplink with a 600 ms liveness window. A batch (88 KB of
-    /// base64) takes about 90 ms and its reply comes back well inside the window, so the
+    /// A 1 MiB paste over a 400 KB/s uplink with a 2 s liveness window. A batch (88 KB of
+    /// base64) takes about 220 ms and its reply comes back well inside the window, so the
     /// connection stays up and the paste lands whole. One 1 MiB call (1.4 MB of base64) would
-    /// take at least 1.4 s with nothing coming back, and the link would be declared dead.
+    /// take at least 3.5 s with nothing coming back, and the link would be declared dead.
     func testSlowUplinkPasteCompletes() async throws {
         let hab = FakeHab(hostID: "box")
         await hab.terminals.add("%1")
-        let uplink = SlowUplink(hab.transport())
-        let conn = HabConnection(id: "h", transport: uplink, timing: livenessTiming(), clientLabel: "test")
+        let uplink = SlowUplink(hab.transport(), bytesPerSecond: 400_000)
+        var timing = livenessTiming()
+        timing.deadAfter = .seconds(2)
+        let conn = HabConnection(id: "h", transport: uplink, timing: timing, clientLabel: "test")
         await conn.start()
         await eventually("online") { await conn.state.status == .online }
         let errors = OSAllocatedUnfairLock<[String]>(initialState: [])
@@ -307,9 +309,32 @@ final class PaneStreamTests: XCTestCase {
         await conn.stop()
     }
 
+    /// A refused call cut through a paste's end marker: the marker is still sent next, alone,
+    /// and the report does not blame the connection.
+    func testDropKeepsEndMarkerCutByBatch() async {
+        let sent = OSAllocatedUnfairLock<[Data]>(initialState: [])
+        let drops = OSAllocatedUnfairLock<[InputDropped]>(initialState: [])
+        let pump = PaneInputPump(send: { d in
+            let first = sent.withLock { s -> Bool in
+                defer { s.append(d) }
+                return s.isEmpty
+            }
+            if first { throw RPCError(code: 1, message: "refused") }
+        }, onError: { e in drops.withLock { $0.append(e) } })
+        // The first batch ends three bytes into the end marker.
+        let filler = PaneInputPump.maxBatch - PaneInputPump.pasteStart.count - 3
+        pump.enqueue(PaneInputPump.pasteStart + Data(repeating: 0x41, count: filler) + PaneInputPump.pasteEnd)
+        await eventually("marker sent") { sent.withLock { $0.count } == 2 }
+        XCTAssertEqual(sent.withLock { $0.last }, PaneInputPump.pasteEnd)
+        XCTAssertEqual(drops.withLock { $0.map(\.dropped) }, [3])
+        XCTAssertEqual(drops.withLock { $0.first?.connectionLost }, false)
+        XCTAssertEqual(TerminalModel.inputNoticeText(drops.withLock { $0[0] }), "Some input was not sent.")
+    }
+
     /// A write that makes no progress still ends the connection after the liveness window.
-    /// The pump drops what waits behind the failed call and reports once; input typed after
-    /// the reconnect goes out alone, with no part of the dropped paste after it.
+    /// The pump drops what waits behind the failed call and reports once. The paste was
+    /// bracketed, so its end marker is kept: after the reconnect it goes out first, then the
+    /// input typed since, with no other part of the dropped paste.
     func testStalledUplinkIsDead() async throws {
         let hab = FakeHab(hostID: "box")
         await hab.terminals.add("%1")
@@ -320,17 +345,20 @@ final class PaneStreamTests: XCTestCase {
         let drops = OSAllocatedUnfairLock<[InputDropped]>(initialState: [])
         let pump = PaneInputPump(pane: "%1", connection: conn, onError: { e in drops.withLock { $0.append(e) } })
         uplink.setStalled(true)
-        let paste = Data(repeating: 0x41, count: 200_000)
+        let paste = PaneInputPump.pasteStart + Data(repeating: 0x41, count: 200_000) + PaneInputPump.pasteEnd
         pump.enqueue(paste)
         await eventually("declared dead") { await conn.state.status != .online }
         await eventually("one report") { drops.withLock { $0.count } == 1 }
         XCTAssertEqual(drops.withLock { $0.first?.dropped }, paste.count - (64 << 10))
+        XCTAssertEqual(drops.withLock { $0.first?.connectionLost }, true)
         uplink.setStalled(false)
         await eventually("online again") { await conn.state.status == .online }
         pump.enqueue(Data("after".utf8))
-        await eventually("typed input") { await hab.terminals.inputs.count == 1 }
-        let inputs = await hab.terminals.inputs
-        XCTAssertEqual(inputs.map(\.data), [Data("after".utf8)])
+        await eventually("typed input") {
+            await hab.terminals.inputs.reduce(0) { $0 + $1.data.count } == PaneInputPump.pasteEnd.count + 5
+        }
+        let got = await hab.terminals.inputs.reduce(into: Data()) { $0.append($1.data) }
+        XCTAssertEqual(got, PaneInputPump.pasteEnd + Data("after".utf8))
         XCTAssertEqual(drops.withLock { $0.count }, 1)
         await conn.stop()
     }

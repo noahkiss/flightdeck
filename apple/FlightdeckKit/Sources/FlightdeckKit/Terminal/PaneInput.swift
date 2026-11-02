@@ -7,7 +7,14 @@ public struct InputDropped: Error, CustomStringConvertible, Sendable {
     public var dropped: Int
     /// Why the call failed.
     public var cause: String
+    /// The call failed because the connection ended or the call timed out, not because
+    /// the hab refused it.
+    public var connectionLost: Bool
     public var description: String { "input not sent (\(dropped) more bytes dropped): \(cause)" }
+
+    static func isConnectionLoss(_ error: Error) -> Bool {
+        error is ConnectionClosed || error is CallTimedOut || error is TransportError
+    }
 }
 
 /// Sends a pane's input over the control connection (`pane.input`, hab-logic-api.md 3.8),
@@ -17,10 +24,14 @@ public struct InputDropped: Error, CustomStringConvertible, Sendable {
 ///
 /// A batch is at most 64 KiB (app.md 5.3). Each reply is bytes from the hab, so a
 /// large paste over a slow uplink keeps the connection's liveness check fed and
-/// each call inside its timeout, and pings go out between batches.
+/// each call inside its timeout, and pings go out between batches. Calls stay one at
+/// a time: RPCClient writes each request from its own task, so two calls in flight
+/// could reach the hab in either order.
 ///
-/// When a call fails, the pump drops everything still queued and reports once: sending
-/// the rest after a reconnect would leave a hole in the middle of the input.
+/// When a call fails, the input stops at the failed call: nothing queued behind it is
+/// sent, and the pump reports once. One exception: when the dropped bytes held the end
+/// of a bracketed paste, the end marker is kept and sent next, so the program does not
+/// stay in paste mode. A stray end marker is harmless.
 public final class PaneInputPump: @unchecked Sendable {
     public typealias Send = @Sendable (Data) async throws -> Void
     public typealias OnError = @Sendable (InputDropped) -> Void
@@ -28,10 +39,16 @@ public final class PaneInputPump: @unchecked Sendable {
     private let lock = NSLock()
     private var pending = Data()
     private var running = false
+    /// True while `pending` starts with an end marker the pump owes the pane.
+    private var owesEnd = false
     private let send: Send
     private var onError: OnError
     /// Bytes per `pane.input` call at most.
     static let maxBatch = 64 << 10
+    /// The start of a bracketed paste.
+    static let pasteStart = Data("\u{1b}[200~".utf8)
+    /// The end of a bracketed paste.
+    static let pasteEnd = Data("\u{1b}[201~".utf8)
 
     public init(send: @escaping Send, onError: @escaping OnError = { _ in }) {
         self.send = send
@@ -44,7 +61,8 @@ public final class PaneInputPump: @unchecked Sendable {
         }, onError: onError)
     }
 
-    /// Replaces the error handler; the terminal model sets it once it exists.
+    /// Replaces the error handler, including one passed to `init`: the terminal model
+    /// sets its own once it exists, over the one its `Calls` pump came with.
     public func setOnError(_ f: @escaping OnError) {
         lock.withLock { onError = f }
     }
@@ -63,28 +81,46 @@ public final class PaneInputPump: @unchecked Sendable {
 
     private func drain() async {
         while true {
-            let batch: Data? = lock.withLock {
+            let next: (batch: Data, owed: Bool)? = lock.withLock {
                 if pending.isEmpty {
                     running = false
                     return nil
                 }
-                let n = min(pending.count, Self.maxBatch)
+                let owed = owesEnd
+                owesEnd = false
+                // An owed end marker goes alone, so a failure can tell it from typed bytes.
+                let n = owed ? Self.pasteEnd.count : min(pending.count, Self.maxBatch)
                 let b = pending.prefix(n)
                 pending = Data(pending.dropFirst(n))
-                return Data(b)
+                return (Data(b), owed)
             }
-            guard let batch else { return }
+            guard let next else { return }
             do {
-                try await send(batch)
+                try await send(next.batch)
             } catch {
                 // A failed call is not sent again: whether the hab wrote it is unknown.
-                // What waits behind it goes too, so the pane never gets input with a gap.
-                let (dropped, report): (Int, OnError) = lock.withLock {
+                // What waits behind it goes too, so nothing lands after a gap.
+                let (dropped, stop, report): (Int, Bool, OnError) = lock.withLock {
+                    // A marker cut by the batch boundary still counts.
+                    let tail = next.batch.suffix(Self.pasteEnd.count - 1) + pending
                     let n = pending.count
+                    let endLost = next.owed || tail.range(of: Self.pasteEnd) != nil
                     pending = Data()
-                    return (n, onError)
+                    if endLost {
+                        pending = Self.pasteEnd
+                        owesEnd = true
+                    }
+                    // The owed marker failed again: hold it until the next input,
+                    // rather than spin on a connection that is down.
+                    let stop = next.owed
+                    if stop { running = false }
+                    return (n, stop, onError)
                 }
-                report(InputDropped(dropped: dropped, cause: String(describing: error)))
+                if dropped > 0 || !next.owed {
+                    report(InputDropped(dropped: dropped, cause: String(describing: error),
+                                        connectionLost: InputDropped.isConnectionLoss(error)))
+                }
+                if stop { return }
             }
         }
     }

@@ -199,8 +199,13 @@ public final class TerminalModel {
         inputNotice = nil
     }
 
+    /// The notice for dropped input: it names the connection only when that was the cause.
+    nonisolated static func inputNoticeText(_ e: InputDropped) -> String {
+        e.connectionLost ? "Some input was not sent. The connection dropped." : "Some input was not sent."
+    }
+
     private func inputDropped(_ e: InputDropped) {
-        inputNotice = "Some input was not sent: the connection dropped."
+        inputNotice = Self.inputNoticeText(e)
         lastError = e.description
         log.notice("pane \(self.pane, privacy: .public): \(e.description, privacy: .public)")
     }
