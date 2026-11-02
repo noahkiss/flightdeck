@@ -194,7 +194,7 @@ write_bundle() {
 		plist_string CFBundlePackageType APPL
 		plist_string CFBundleShortVersionString "$version"
 		plist_string CFBundleVersion "$version"
-		plist_string LSMinimumSystemVersion 12.0
+		plist_string LSMinimumSystemVersion 13.0
 		printf '\t<key>LSUIElement</key>\n\t<true/>\n'
 		for k in "$@"; do
 			plist_string "$k" "$(usage_text "$k")"

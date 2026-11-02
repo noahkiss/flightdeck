@@ -215,7 +215,7 @@ Built: `scripts/macos-bundle.sh` writes the bundles. Choices it made beyond the 
 
 - `Info.plist` also carries `CFBundlePackageType` `APPL`, `CFBundleName` (`GFF Holder`,
   `GFF Hab`; with `-dev`, `GFF Holder Dev` and `GFF Hab Dev`, also as `CFBundleDisplayName`), `CFBundleInfoDictionaryVersion` `6.0`, `CFBundleDevelopmentRegion` `en` and
-  `LSMinimumSystemVersion` `12.0`. `CFBundleShortVersionString` and `CFBundleVersion` are both
+  `LSMinimumSystemVersion` `13.0`, the floor libghostty builds for (`ci-release.md` 7.3). `CFBundleShortVersionString` and `CFBundleVersion` are both
   the `-version` value (numbers and dots only).
 - Each usage string says "A program running in a Flightdeck pane wants to ..." and names the
   resource, nothing else.
