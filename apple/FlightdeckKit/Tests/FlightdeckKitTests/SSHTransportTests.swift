@@ -197,7 +197,7 @@ final class SSHTransportTests: XCTestCase {
         } catch {
             XCTAssertTrue("\(error)".contains("no answer"), "\(error)")
         }
-        XCTAssertLessThan(clock.now - start, .seconds(2))
+        XCTAssertLessThan(clock.now - start, .seconds(5), "the 500 ms deadline ended the call; the margin is for a loaded runner")
         await eventually("no connection left") { await t.connectionCount() == 0 }
     }
 

@@ -157,6 +157,8 @@ final class UsageReviewFixTests: XCTestCase {
         let conn = HabConnection(id: "h1", transport: hab.transport(), timing: fastTiming())
         await conn.start()
         await eventually("list answered") { await hab.usageLists == 1 }
+        await eventually("the event applied") { await conn.state.usage["k"]?.windows.first?.usedPct == 64 }
+        // The list answer went out after the event; give it time to arrive and be dropped.
         try? await Task.sleep(for: .milliseconds(150))
         let held = await conn.state.usage["k"]?.windows.first?.usedPct
         XCTAssertEqual(held, 64)
