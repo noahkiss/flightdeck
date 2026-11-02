@@ -113,7 +113,8 @@ final class ChatTests: XCTestCase {
         XCTAssertEqual(inputs.map(\.pane), ["%1", "%1"])
         XCTAssertEqual(inputs[0].data, Data("\u{1b}[200~two\nlines\u{1b}[201~".utf8))
         XCTAssertEqual(inputs[1].data, Data("\r".utf8))
-        XCTAssertEqual(model.outgoing.first?.status, .sent)
+        // The hab holds the Enter before its reply reaches the app; Sent follows the reply.
+        await eventually("sent") { model.outgoing.first?.status == .sent }
         // The transcript's user record clears the outgoing message.
         await hab.putChat(msg(1, .user, text: "two\nlines"))
         await eventually("cleared") { model.outgoing.isEmpty }
