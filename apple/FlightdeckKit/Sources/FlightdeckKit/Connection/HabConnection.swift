@@ -75,6 +75,14 @@ public struct HabState: Sendable, Equatable {
     /// snapshot, then `confirm.requested` and `confirm.closed`. Empty from a
     /// hab without the `confirm` capability.
     public var confirmations = ConfirmBook()
+    /// The hab's rounds by id (rounds.md 13): from the host snapshot, then
+    /// `round.updated` by revision; a delete removes the round. A
+    /// `round.run_updated` for a round's newest run updates its `lastRun`.
+    /// Kept while offline; empty from a hab without the `rounds` capability.
+    public var rounds: [String: Round] = [:]
+    /// Runs from `round.run_updated` since the last snapshot, by run id, at
+    /// most `RoundRuns.keep` of them, for the round page.
+    public var roundRuns: [String: RoundRun] = [:]
     /// How many `catalog.updated` events named the hab's own catalog, over all connections.
     public var catalogChanges = 0
     /// The generation the last of those events carried.
@@ -470,6 +478,8 @@ public actor HabConnection {
         // newer than anything held; with a new epoch revisions may restart lower.
         state.store.reset(snap)
         state.settings = Dictionary((snap.settings ?? []).map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+        state.rounds = Dictionary((snap.rounds ?? []).filter { $0.deleted != true }.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+        state.roundRuns = [:]
         let confirm = state.welcome?.capabilities.contains(ConfirmBook.capability) ?? false
         state.confirmations.reset(snap.confirmations, enabled: confirm, newEpoch: confirmEpochChanged)
         confirmEpochChanged = false
@@ -562,6 +572,10 @@ public actor HabConnection {
         }
         if e.type == "settings.updated" {
             if applySetting(e) { publish() }
+            return
+        }
+        if e.type == "round.updated" || e.type == "round.run_updated" {
+            if RoundEvents.apply(e, to: &state) { publish() }
             return
         }
         if e.type == "content.updated", !contentTaps.isEmpty, let it = try? e.data.decode(ContentItem.self) {

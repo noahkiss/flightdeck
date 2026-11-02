@@ -73,7 +73,7 @@ final class PushRegistrationTests: XCTestCase {
     }
 
     /// The token goes to the hab on connect, with this build's environment,
-    /// the device id and the default kinds; done is opt-in.
+    /// the device id and the default kinds, round among them; done is opt-in.
     func testRegistersOnConnect() async {
         let (hab, fleet, reg) = await rig()
         reg.setDeviceToken(Data([0xAB, 0x01, 0xFF]))
@@ -84,7 +84,7 @@ final class PushRegistrationTests: XCTestCase {
         XCTAssertEqual(calls.first?.token, "ab01ff")
         XCTAssertEqual(calls.first?.environment, .development)
         XCTAssertEqual(calls.first?.deviceId, reg.deviceID)
-        XCTAssertEqual(calls.first?.kinds, [.permission, .question, .auth, .error])
+        XCTAssertEqual(calls.first?.kinds, [.permission, .question, .auth, .error, .round])
         XCTAssertNil(calls.first?.hideCommands)
         await fleet.setActive(false)
     }

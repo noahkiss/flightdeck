@@ -19,6 +19,8 @@ public struct ChatContext: Equatable, Sendable {
     public var isConsole = false
     /// The session is a Capcom session (capcom.md 7.2): its composer holds context chips.
     public var isCapcom = false
+    /// A run session's round name ("Round" when the round is gone), for the badge (rounds.md 10.3).
+    public var round: String?
     /// The hab's host id, which names this hab in a chip's host.
     public var hostID = ""
 
@@ -693,6 +695,7 @@ extension ChatContext {
         c.sessionExited = session?.state == .exited
         c.isConsole = session.map { ConsoleOpener.isConsole($0, in: store) } ?? false
         c.isCapcom = session?.kind == .capcom
+        if let r = session?.round { c.round = hab.state.rounds[r.round]?.name ?? "Round" }
         c.hostID = hab.state.welcome?.host.id ?? store.host ?? ""
         c.title = session.map { ($0.title?.isEmpty == false ? $0.title! : $0.name) } ?? (c.pane.map { "Pane \($0)" } ?? "Session")
         return c

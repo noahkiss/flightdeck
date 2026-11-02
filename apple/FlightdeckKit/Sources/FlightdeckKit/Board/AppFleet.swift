@@ -152,6 +152,7 @@ public enum AppFleet {
         actions.approvals = center
         actions.usage = fleet.usage?.book
         actions.capcom = fleet.capcom
+        actions.rounds = fleet.rounds
         actions.install()
         fleet.keepAlive.append(actions)
         #if os(iOS)

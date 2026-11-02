@@ -92,7 +92,7 @@ public final class Board {
         for h in habs {
             // A hab whose revision does not fit shows "update needed"; its rows are hidden, not stale.
             if case .updateNeeded = h.state.status { continue }
-            var rows = BoardRows.build(habID: h.id, host: h.label, store: h.state.store, seen: seen)
+            var rows = BoardRows.build(habID: h.id, host: h.label, store: h.state.store, seen: seen, rounds: h.state.rounds)
             if h.state.status == .offline {
                 for i in rows.indices {
                     rows[i].offline = true

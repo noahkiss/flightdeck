@@ -91,10 +91,23 @@ public final class TerminalModel {
     final class Flags: @unchecked Sendable {
         private let lock = NSLock()
         private var _owner = false
+        private var _liveRun = false
         var owner: Bool {
             get { lock.withLock { _owner } }
             set { lock.withLock { _owner = newValue } }
         }
+        var liveRun: Bool {
+            get { lock.withLock { _liveRun } }
+            set { lock.withLock { _liveRun = newValue } }
+        }
+    }
+
+    /// The pane runs a round's live run (app.md 21.4): focus reports, mouse motion and the
+    /// wheel are dropped even while this client owns the pane, so a viewer who only focuses
+    /// or scrolls never ends the run taken over.
+    public var liveRun: Bool {
+        get { flags.liveRun }
+        set { flags.liveRun = newValue }
     }
 
     public convenience init(pane: String, connection: HabConnection) {
@@ -111,7 +124,7 @@ public final class TerminalModel {
             write: { data in
                 // Keys, paste and mouse reports go to the pane; the terminal's
                 // own replies to queries do not (hab-logic-api.md 5.6).
-                input.enqueue(TerminalReplyFilter.keep(data, owner: flags.owner))
+                input.enqueue(TerminalReplyFilter.keep(data, owner: flags.owner, liveRun: flags.liveRun))
             },
             resize: { _ in
                 // The grid follows the surface, which follows the pane's size.

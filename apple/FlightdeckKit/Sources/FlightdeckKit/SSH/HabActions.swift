@@ -27,6 +27,8 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
     @MainActor public weak var usage: UsageBook?
     /// Opens Capcom from "Ask an agent" (capcom.md 8.2).
     @MainActor public weak var capcom: CapcomCenter?
+    /// Opens the session a notification names, such as a round's run session (rounds.md 10.2).
+    @MainActor public weak var rounds: RoundCenter?
 
     public init(keys: DeviceKeys?, listURL: URL?) {
         self.keys = keys
@@ -114,6 +116,7 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
             _ = await approvals.answer(host: host, params, meta: meta)
         case .open(let m):
             await approvals?.open(m)
+            await rounds?.open(m)
         case .ask(let m):
             await capcom?.ask(m)
         case .none:

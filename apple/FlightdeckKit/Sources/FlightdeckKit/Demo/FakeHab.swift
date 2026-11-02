@@ -414,6 +414,113 @@ public actor FakeHab {
         return out
     }
 
+    // MARK: - Rounds
+
+    private var roundBook = FakeRounds()
+    /// Every `round.*` method called, oldest first.
+    public private(set) var roundCalls: [String] = []
+    /// Whether a run by hand starts its session at once (true) or stays queued.
+    private var roundSpawn = true
+    public func setRoundSpawn(_ on: Bool) { roundSpawn = on }
+    public var rounds: [Round] { roundBook.list() }
+    public func round(named n: String) -> Round? { roundBook.list().first { $0.name == n } }
+    public func roundRun(_ id: String) -> RoundRun? { roundBook.run(id) }
+
+    /// Moves a run to a new state and sends `round.run_updated`. A final state stamps the
+    /// end; a succeeded run of a round with `on_finish` close exits its session.
+    public func setRunState(_ id: String, _ state: RoundRunState, reason: String? = nil, result: String? = nil) async {
+        guard var run = roundBook.run(id) else { return }
+        run.state = state
+        run.reason = reason
+        run.result = result
+        if state.isFinal { run.endedAt = Fixture.stamp(Date()) }
+        roundBook.put(run)
+        await emit(type: "round.run_updated", id: run.id, revision: nil, data: run)
+        if state == .succeeded, roundBook.rounds[run.round]?.onFinish ?? .close == .close, let sid = run.session, var sess = sessions[sid] {
+            sess.state = .exited
+            sess.revision += 1
+            await put(sess)
+        }
+    }
+
+    /// Stores a round as a state file read at start would, with no event.
+    public func loadRound(_ spec: RoundSpec) throws {
+        _ = try roundBook.create(RoundCreateParams(round: spec), projects: projects, sessions: sessions)
+    }
+
+    private func roundUpdated(_ r: Round) async {
+        await emit(type: "round.updated", id: r.id, revision: r.revision, data: r)
+    }
+
+    /// Spawns a queued run's session, named after the round with `Session.round`, as the
+    /// real hab's command runs do, then sends the run's `running`.
+    private func spawn(_ queued: RoundRun) async -> RoundRun {
+        await emit(type: "round.run_updated", id: queued.id, revision: nil, data: queued)
+        guard roundSpawn, let r = roundBook.rounds[queued.round] else { return queued }
+        let pane = "%r\(queued.round)-\(queued.number)"
+        let sid = "s-\(queued.id)"
+        let taken = Set(sessions.values.map(\.name))
+        var name = r.name
+        var n = 2
+        while taken.contains(name) { name = "\(r.name)-\(n)"; n += 1 }
+        await put(Pane(cols: 120, holderBuild: "fake", id: pane, offset: 0, revision: 1, rows: 40, session: sid))
+        await put(Session(id: sid, name: name, pane: pane, project: r.project, revision: 1,
+                          round: SessionRound(round: r.id, run: queued.id), state: .running))
+        var run = queued
+        run.state = .running
+        run.session = sid
+        run.startedAt = Fixture.stamp(Date())
+        roundBook.put(run)
+        await emit(type: "round.run_updated", id: run.id, revision: nil, data: run)
+        return run
+    }
+
+    private func roundCall(_ method: String, _ params: JSONValue, _ c: Conn, id: Int) async {
+        roundCalls.append(method)
+        do {
+            switch method {
+            case HabMethods.roundList.name:
+                await reply(c, id: id, result: RoundList(rounds: roundBook.list(), seq: c.seq))
+            case HabMethods.roundGet.name:
+                let r = try roundBook.entry(try decode(RoundRef.self, params, method))
+                await reply(c, id: id, result: RoundResult(round: r, seq: c.seq))
+            case HabMethods.roundCreate.name:
+                let p = try decode(RoundCreateParams.self, params, method)
+                let r = try roundBook.create(p, projects: projects, sessions: sessions)
+                await roundUpdated(r)
+                var run: RoundRun?
+                if p.runNow == true { run = await spawn(try roundBook.startRun(RoundRef(id: r.id))) }
+                await reply(c, id: id, result: RoundCreated(round: roundBook.rounds[r.id] ?? r, run: run, seq: c.seq))
+            case HabMethods.roundUpdate.name:
+                let r = try roundBook.update(try decode(RoundUpdateParams.self, params, method), projects: projects, sessions: sessions)
+                await roundUpdated(r)
+                await reply(c, id: id, result: RoundResult(round: r, seq: c.seq))
+            case HabMethods.roundDelete.name:
+                let r = try roundBook.delete(try decode(RoundRef.self, params, method))
+                await roundUpdated(r)
+                await reply(c, id: id, result: Empty(seq: c.seq))
+            case HabMethods.roundPause.name, HabMethods.roundUnpause.name:
+                let ref = try decode(RoundRef.self, params, method)
+                if let r = try roundBook.setPaused(ref, method == HabMethods.roundPause.name) { await roundUpdated(r) }
+                await reply(c, id: id, result: RoundResult(round: try roundBook.entry(ref), seq: c.seq))
+            case HabMethods.roundRun.name:
+                let run = await spawn(try roundBook.startRun(try decode(RoundRef.self, params, method)))
+                await reply(c, id: id, result: RoundRunResult(run: run, seq: c.seq))
+            case HabMethods.roundRuns.name:
+                let page = try roundBook.page(try decode(RoundRunsParams.self, params, method))
+                await reply(c, id: id, result: RoundRuns(more: page.more ? true : nil, runs: page.runs, seq: c.seq))
+            default:
+                await fail(c, id: id, kind: .unavailable, hint: "the fake hab does not serve \(method)")
+            }
+        } catch let f as FakeFailure {
+            await fail(c, id: id, kind: f.kind, hint: f.hint)
+        } catch let f as Failure {
+            await fail(c, id: id, kind: f.kind, hint: f.hint)
+        } catch {
+            await fail(c, id: id, kind: .invalid, hint: String(describing: error))
+        }
+    }
+
     /// Adds or drops a capability; the next hello carries the new list.
     public func setCapability(_ name: String, _ on: Bool) {
         capabilities.removeAll { $0 == name }
@@ -916,6 +1023,8 @@ public actor FakeHab {
             confirmLists += 1
             let all = (try? params.decode(ConfirmListParams.self))?.all ?? false
             await reply(c, id: id, result: ConfirmList(confirmations: all ? confirms + closedConfirms : confirms, seq: c.seq, targets: confirmTargets))
+        case let m where m.hasPrefix("round.") && capabilities.contains(RoundCenter.capability):
+            await roundCall(m, params, c, id: id)
         case HabMethods.approvalAnswer.name:
             guard let p = try? params.decode(ApprovalAnswerParams.self) else {
                 await fail(c, id: id, kind: .invalid, hint: "bad approval.answer params")
@@ -1333,6 +1442,7 @@ public actor FakeHab {
             host: HostInfo(id: hostID),
             panes: panes.values.sorted { $0.id < $1.id },
             projects: projects.values.sorted { $0.id < $1.id },
+            rounds: capabilities.contains(RoundCenter.capability) ? roundBook.list() : nil,
             seq: seq,
             sessions: sessions.values.sorted { $0.id < $1.id })
     }

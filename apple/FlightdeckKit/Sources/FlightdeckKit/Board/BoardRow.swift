@@ -75,12 +75,15 @@ public struct BoardRow: Identifiable, Hashable, Sendable {
     public var offlineSince: Date?
     /// The key that marks a `done` as seen: the pane and the state's stamp.
     public var seenKey: String?
+    /// A run session's round (rounds.md 10.3): the round's name, "Round" when the round is
+    /// gone. Nil for any other session.
+    public var round: String?
 }
 
 /// Builds and ranks rows from one hab's objects.
 public enum BoardRows {
     /// The rows of one hab, unordered.
-    public static func build(habID: String, host: String, store: HabStore, seen: Set<String>) -> [BoardRow] {
+    public static func build(habID: String, host: String, store: HabStore, seen: Set<String>, rounds: [String: Round] = [:]) -> [BoardRow] {
         var rows: [BoardRow] = []
         for s in store.sessions.values {
             let agent = s.pane.flatMap { store.agents[$0] }
@@ -102,6 +105,7 @@ public enum BoardRows {
                 seenKey: key
             )
             if s.state == .exited && agent == nil { row.state = .exited }
+            if let r = s.round { row.round = rounds[r.round]?.name ?? "Round" }
             rows.append(row)
         }
         // Unfiled panes: rank 6 under their hab, so the owner can file or close them.

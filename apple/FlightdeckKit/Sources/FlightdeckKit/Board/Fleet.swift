@@ -47,6 +47,14 @@ public final class Fleet {
             self?.board.habs.first { $0.id == id }?.state.welcome?.capabilities.contains(CapcomChip.capability) ?? false
         }))
 
+    /// Rounds on every hab (rounds.md 10, app.md 21).
+    public private(set) lazy var rounds = RoundCenter(
+        board: board, defaults: roundDefaults,
+        connection: { [weak self] id in self?.connections.first { $0.id == id } },
+        alwaysOn: { [weak self] in self?.capcom.alwaysOn ?? [] })
+    /// Where the rounds center keeps the board filter; tests set their own before first use.
+    public var roundDefaults: UserDefaults = .standard
+
     /// The hab with this device id: a live welcome's, else the hab book's.
     func habID(device: String) -> String? {
         if let h = board.habs.first(where: { $0.state.welcome?.deviceId == device }) { return h.id }
@@ -142,6 +150,7 @@ public final class Fleet {
                 self?.approvals?.boardChanged()
                 self?.confirms?.boardChanged()
                 self?.capcom.boardChanged()
+                self?.rounds.boardChanged()
                 self?.activities?.boardChanged()
                 self?.badgeChanged()
             }

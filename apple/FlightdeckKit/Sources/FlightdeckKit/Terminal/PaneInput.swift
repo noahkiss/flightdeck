@@ -164,14 +164,18 @@ public final class PaneInputPump: @unchecked Sendable {
 ///   client owns the pane: any input from a client that does not own the pane
 ///   takes the size after the debounce, and hovering or scrolling a viewed
 ///   pane must not. Clicks pass: a click is meant as input.
+/// - In a pane that runs a round's live run (`liveRun`), focus reports, mouse
+///   motion and the wheel never pass, owner or not: the hab ends a run taken
+///   over on any client input (rounds.md 13), and focusing or scrolling is not
+///   meant as input (app.md 21.4).
 enum TerminalReplyFilter {
-    static func keep(_ data: Data, owner: Bool) -> Data {
+    static func keep(_ data: Data, owner: Bool, liveRun: Bool = false) -> Data {
         guard data.first == 0x1B, data.count >= 3 else { return data }
         let b = [UInt8](data)
         switch b[1] {
         case 0x5D: return osc(b) ? Data() : data
         case 0x50: return dcsReply(b) ? Data() : data
-        case 0x5B: return csiKeep(b, owner: owner) ? data : Data()
+        case 0x5B: return csiKeep(b, owner: owner, pointer: owner && !liveRun) ? data : Data()
         default: return data
         }
     }
@@ -194,19 +198,20 @@ enum TerminalReplyFilter {
         return (c >= 0x30 && c <= 0x39) || c == 0x3E
     }
 
-    private static func csiKeep(_ b: [UInt8], owner: Bool) -> Bool {
+    /// `pointer`: focus reports, mouse motion and the wheel may pass.
+    private static func csiKeep(_ b: [UInt8], owner: Bool, pointer: Bool) -> Bool {
         guard let final = b.last else { return true }
         let body = String(decoding: b[2..<(b.count - 1)], as: UTF8.self)
         // Focus in and out.
-        if b.count == 3 && (final == 0x49 || final == 0x4F) { return owner }
+        if b.count == 3 && (final == 0x49 || final == 0x4F) { return pointer }
         // Legacy mouse: CSI M, then three bytes.
         if b.count == 6 && b[2] == 0x4D {
-            return owner || !motionOrWheel(Int(b[3]) - 32)
+            return pointer || !motionOrWheel(Int(b[3]) - 32)
         }
         // SGR mouse: CSI < b ; x ; y M or m.
         if body.hasPrefix("<"), final == 0x4D || final == 0x6D {
             let code = Int(body.dropFirst().split(separator: ";").first ?? "") ?? 0
-            return owner || !motionOrWheel(code)
+            return pointer || !motionOrWheel(code)
         }
         let digits = body.allSatisfy { $0.isNumber || $0 == ";" }
         switch final {

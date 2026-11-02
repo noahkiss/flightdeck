@@ -115,6 +115,8 @@ public final class PushRegistrar {
     public var kinds: [PushKind] {
         var k: [PushKind] = [.permission, .question, .auth, .error]
         if doneBanners { k.append(.done) }
+        // Round notifications (rounds.md 10.2); the round's own notify setting decides which.
+        k.append(.round)
         return k
     }
 
