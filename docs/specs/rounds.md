@@ -353,7 +353,15 @@ thing this feature must never do.
 - **One run per round at a time.** A slot that comes due while a run is live is coalesced into
   the next run after it ends, at most one.
 - **Host limit.** At most 2 runs start at once per host (`rounds.max_running` in the hab's
-  config). Others wait as `queued`, oldest slot first.
+  config). Others wait as `queued`, oldest slot first; equal slots go by when the run was made.
+  Built rule: every live run that is not `queued` holds a place, `waiting` and `blocked`
+  included. Reason: a blocked run still holds a session and an agent.
+- **The scheduler owns `queued`.** Only the scheduler starts a queued run. A run update from
+  outside (the run session, stage 3) cannot move a run out of `queued`, or into it.
+- **Start returns at the spawn.** The scheduler saves the run as `running`, then asks the run
+  starter for the session. The starter returns once the session exists, with its id, or with
+  the error that fails the run. It never waits for `idle` or the turn: readiness, `waiting`,
+  `blocked` and the end come back later as run updates.
 - **Session name.** `fresh` and `fork` sessions are named after the round, with the hab's usual
   `-2`, `-3` suffix rule. The session carries a `round` field (round id and run id) so every client
   can badge and filter it.
@@ -429,8 +437,8 @@ rounds, so rounds keep their own state now.
   deleted. The store reports it per round, and the scheduler leaves it unscheduled and shows
   the error on the round, never silently.
 - **Two parts, one seam.** The scheduler owns the definitions and slots. Run records go through
-  a small run log interface: append a run, update its state, page a round's runs, prune by the
-  retention rule (7.6). The first implementation writes to the rounds store.
+  a small run log interface: append a run, update its state, page a round's runs, list the
+  runs that have not ended, prune by the retention rule (7.6). The first implementation writes to the rounds store.
 - **What Logbook takes over later.** When Logbook exists, a second run log implementation files
   each finished run as a Logbook record (the later ideas in section 14), and `round.runs` reads from it.
   The scheduler, the definitions and `GFF_ROUND_LAST_OK` stay in the rounds store: a slot
@@ -438,6 +446,10 @@ rounds, so rounds keep their own state now.
 - **The run record.** Run id, run number, round id, slot, trigger kind, `missed`, state, reason,
   session id, when it was made (`created`), start and end times, and the first 4 KiB of the
   final agent message. Logbook gets the same fields.
+- **One write per new run.** The scheduler saves a new queued run and its round's state (the
+  run number, the last served slot, the next slot) in one write. A failed write leaves neither,
+  so the slot stays due and the next tick tries again. A slot is never marked served without
+  its run.
 - **Run numbers.** The scheduler gives each run the next number from the round's state in the
   rounds store; the run log stores a run as given and refuses an id it already holds, under
   any round. A run that has ended never changes its state, number or `created` again. Numbers so stay in
@@ -466,7 +478,11 @@ API.
   `nanotime1` (`src/runtime/sys_darwin.go`) calls `mach_absolute_time`
   (`sys_darwin_amd64.s`, `sys_darwin_arm64.s`), which does not advance while the Mac sleeps;
   `mach_continuous_time` would. `time.Now` takes its monotonic reading from `nanotime`.
-- **The first tick after start counts as a wake.** A restart is then treated like a short sleep
+- **Every entry point checks for a wake.** A tick, a run update, a pause and an unpause each
+  read the clock under the scheduler's lock and compare it with the reading before. So a run
+  that ends at wake, before the first tick after it, still sees the wake: missed slots stay
+  missed, due runs wait the settle, and a network failure gets its retry.
+- **The first reading after start counts as a wake.** A restart is then treated like a short sleep
   (8.4), with the settle.
 - **The clock is injected.** The scheduler reads the wall clock and the monotonic reading through
   one interface, so tests move them apart on a fake clock.
@@ -483,7 +499,13 @@ API.
 - `catch_up = skip` drops the missed slots instead: the next slot moves past now and no run
   starts. Use it for jobs that only make sense on time.
 - A `once` round missed while asleep runs at wake, or completes unrun with `skip`. A `once`
-  round completes when its run ends.
+  round completes when its run ends, unless a retry after wake is planned; then it completes
+  when the retry ends.
+- **A `once` round never hangs.** A `once` round with no next slot, no live run and no retry
+  planned completes at the next tick. It has two reasons. "once trigger served": its slot was
+  served, but its run ended without completing it (a pause ended the run, or a restart dropped
+  its retry). "once trigger passed while paused": its instant passed while the round was
+  paused, so it never ran.
 - **On time or missed.** A slot is on time when it came due since the tick before, with no wake
   between. Every slot found at a wake tick is a missed one. `skip` drops missed slots only.
 - **Coalescing.** A slot due while the round's run is `queued` or `waiting` joins that run: the
@@ -510,6 +532,11 @@ API.
 - **gff-hab restarts** (an update, a crash). Rounds, next slots and run records are on disk. A
   live run's session survives in the holder; the new gff-hab finds the run by its session id and
   goes on watching it. A slot that came due during the restart runs once, as after a sleep.
+- **Every live run loads at start**, a deleted round's included. Its end can still be
+  reported, and it holds its place under the host limit.
+- **A lost start.** A run saved as started with no session id lost its start: gff-hab stopped
+  between saving the run and the spawn. At start it fails, "start lost", and counts as a
+  failure. Stage 3 must also fail a running run whose session the holder no longer has.
 - **Host reboot.** Run sessions end with the holder. A run that was live is marked `failed`, "host
   restarted". Due slots run once after start, under the settle rule.
 
@@ -570,11 +597,15 @@ coordinator.
   missing skips that run; after 5 such skips it pauses.
 - **Limits reached.** A round that hits `max_runs` or `expires_at` completes quietly.
 - **What counts.** A success clears both counts. A failure or timeout adds a failure and clears
-  the skips. A take over clears the skips. A skip adds a skip. A run the scheduler ends itself
-  (the round paused, expired, completed or deleted before the run started) counts for nothing.
+  the skips. A take over clears the skips. A skip adds a skip. A run the scheduler ends
+  itself counts for nothing: a `queued` or `waiting` run ended because its round paused,
+  expired, completed or was deleted. The scheduler marks such an end itself; a skip reported
+  from outside always counts, whatever its reason text.
   `max_runs` counts succeeded, failed, timed-out and taken-over runs; a skipped run never ran.
-- **Pause by the user.** A queued or waiting run ends `skipped`, "paused". Slots that pass while
-  a round is paused never run; unpause sets the next slot from now and clears both counts.
+- **Pause by the user.** A queued or waiting run ends `skipped`, "paused". Expiry and completion
+  end such a run the same way. Slots that pass while a round is paused never run; unpause sets
+  the next slot from now and clears both counts. A pause also drops a planned retry and an
+  owed slot (8.2, 8.3). Unpause on a round that is not paused does nothing.
 - **`notify = never`** is applied by the scheduler: it asks for no notice but the self-pause.
 
 Decision: pause after 5 failures in a row. Reason: a broken unattended job costs tokens each slot;

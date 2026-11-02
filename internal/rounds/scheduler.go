@@ -13,8 +13,8 @@ import (
 const (
 	// TickEvery is how often the scheduler compares wall-clock time with each round's next slot.
 	TickEvery = 30 * time.Second
-	// WakeGap: a wall-clock gap between ticks this much longer than the monotonic gap means the
-	// host slept, or its clock jumped forward.
+	// WakeGap: a wall-clock gap between two readings this much longer than the monotonic gap
+	// means the host slept, or its clock jumped forward.
 	WakeGap = 60 * time.Second
 	// DefaultMaxRunning is the host limit, rounds.max_running.
 	DefaultMaxRunning = 2
@@ -40,8 +40,10 @@ const (
 	ReasonExpired      = "round expired"
 	ReasonDeleted      = "round deleted"
 	ReasonCompleted    = "round completed"
+	ReasonStartLost    = "start lost"
 	ReasonMaxRuns      = "max_runs reached"
 	ReasonOnceDone     = "once trigger served"
+	ReasonOncePassed   = "once trigger passed while paused"
 	ReasonOnceMissed   = "once trigger missed, catch_up skip"
 	ReasonFailurePause = "5 failed runs in a row"
 )
@@ -56,18 +58,25 @@ type Clock interface {
 
 type systemClock struct{ start time.Time }
 
-// SystemClock returns the host's clock: the wall clock, and Go's monotonic reading.
+// SystemClock returns the host's clock: the wall clock, and Go's monotonic reading. Now
+// strips the monotonic reading, so a difference of two Now values is wall-clock time; with
+// it kept, time.Time.Sub would use monotonic time and never see a sleep.
 func SystemClock() Clock { return systemClock{start: time.Now()} }
 
 func (c systemClock) Now() time.Time      { return time.Now().Round(0) }
 func (c systemClock) Mono() time.Duration { return time.Since(c.start) }
 
-// Starter starts a run's session. The scheduler has already marked the run running; Start
-// returns an error when the run cannot start (spawn failed), and the run then fails with it.
-// Later changes (waiting, blocked, the end) come back through Scheduler.UpdateRun. Start is
-// called with no scheduler lock held.
+// Starter starts a run's session.
+//
+// The scheduler has already saved the run as running when it calls Start, with no scheduler
+// lock held, on the goroutine of the tick or update that started the run. Start returns once
+// the spawn is done: the session exists, or it could not be made. It returns the session id,
+// which the scheduler saves on the run, or an error, and the run then fails with it. Start
+// must not wait for the harness to reach idle or for the turn: readiness, waiting, blocked
+// and the end come back later through Scheduler.UpdateRun. A run that is running with no
+// session id when gff-hab starts lost its start, and fails as "start lost".
 type Starter interface {
-	Start(round Round, run Run) error
+	Start(round Round, run Run) (sessionID string, err error)
 }
 
 // NoticeKind names a notice the scheduler wants raised (rounds.md 10.2).
@@ -152,14 +161,14 @@ type Scheduler struct {
 	runs   RunLog
 
 	scheds map[string]compiled
-	live   map[string]*Run // run id to a run that has not ended
+	live   map[string]*Run // run id to a run that has not ended, deleted rounds included
 	// owed marks a round whose slot came due on time while its run was live: the slot runs
 	// after that run ends even with catch_up = skip.
 	owed    map[string]bool
 	retry   map[string]retryPlan
 	retried map[string]bool // run ids that are a retry after wake
 
-	ticked      bool
+	observed    bool
 	lastWall    time.Time
 	lastMono    time.Duration
 	lastWake    time.Time
@@ -169,9 +178,10 @@ type Scheduler struct {
 	starts []Run
 }
 
-// NewScheduler loads the rounds and their live runs from the store, and recomputes each
-// future next slot, so a zone database change takes effect at start (rounds.md 8.5). A next
-// slot already past stays: the first tick catches it up, as after a sleep (8.4).
+// NewScheduler loads the rounds and every live run from the store, and recomputes each future
+// next slot, so a zone database change takes effect at start (rounds.md 8.5). A next slot
+// already past stays: the first tick catches it up, as after a sleep (8.4). A run saved as
+// started that has no session id lost its start in a crash, and fails as "start lost".
 func NewScheduler(cfg SchedulerConfig) (*Scheduler, error) {
 	if cfg.Store == nil || cfg.Starter == nil || cfg.Sink == nil {
 		return nil, errors.New("rounds: a scheduler needs a store, a starter and a sink")
@@ -197,43 +207,43 @@ func NewScheduler(cfg SchedulerConfig) (*Scheduler, error) {
 		retry:   map[string]retryPlan{},
 		retried: map[string]bool{},
 	}
+	live, err := s.runs.Live()
+	if err != nil {
+		return nil, err
+	}
+	for i := range live {
+		r := live[i]
+		s.live[r.ID] = &r
+	}
+	s.mu.Lock()
 	now := cfg.Clock.Now()
 	for _, e := range s.store.List() {
-		id := e.Round.ID
-		if err := s.loadLive(id); err != nil {
-			return nil, err
-		}
 		c := s.compile(e.Round)
 		if c.err != nil || e.State.NextSlot == nil || !e.State.NextSlot.After(now) {
 			continue
 		}
 		next := nextAfter(c.sched, now, e.State.LastSlot)
 		if !sameSlot(next, e.State.NextSlot) {
-			s.setState(id, func(st *RoundState) { st.NextSlot = next })
+			s.setState(e.Round.ID, func(st *RoundState) { st.NextSlot = next })
 		}
 	}
-	// Live runs of deleted rounds: the store keeps them until they end.
+	for _, id := range sortedIDs(s.live) {
+		r := s.live[id]
+		if r.State != RunQueued && r.SessionID == "" {
+			s.endLocked(r, RunUpdate{State: RunFailed, Reason: ReasonStartLost}, now, false)
+		}
+	}
+	s.unlockAndFlush()
 	return s, nil
 }
 
-func (s *Scheduler) loadLive(roundID string) error {
-	before := 0
-	for {
-		page, more, err := s.runs.Page(roundID, before, 500)
-		if err != nil {
-			return err
-		}
-		for i := range page {
-			if !page[i].State.Final() {
-				r := page[i]
-				s.live[r.ID] = &r
-			}
-			before = page[i].Number
-		}
-		if !more {
-			return nil
-		}
+func sortedIDs(m map[string]*Run) []string {
+	ids := make([]string, 0, len(m))
+	for id := range m {
+		ids = append(ids, id)
 	}
+	sort.Strings(ids)
+	return ids
 }
 
 func (s *Scheduler) logf(format string, a ...any) {
@@ -292,22 +302,31 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 }
 
-// Tick runs one pass: wake detection, then each round's due slots, then the starts the host
-// limit and the wake settle allow. The first tick after start counts as a wake: a restart is
-// treated like a short sleep (rounds.md 8.4).
-func (s *Scheduler) Tick() {
+// observeLocked reads the clock under the lock and detects a wake: a wall-clock gap since the
+// last reading more than WakeGap longer than the monotonic gap. Every entry point calls it
+// first, so a run that ends at wake before any tick still sees the wake. The first reading
+// after start counts as a wake: a restart is treated like a short sleep (rounds.md 8.4). prev
+// is the wall time of the reading before; a slot after it came due on time.
+func (s *Scheduler) observeLocked() (now, prev time.Time, wake bool) {
 	now, mono := s.cfg.Clock.Now(), s.cfg.Clock.Mono()
-	s.mu.Lock()
-	wake := !s.ticked || now.Sub(s.lastWall)-(mono-s.lastMono) > WakeGap
+	wake = !s.observed || now.Sub(s.lastWall)-(mono-s.lastMono) > WakeGap
+	prev = s.lastWall
+	if !s.observed {
+		prev = now
+	}
 	if wake {
 		s.lastWake = now
 		s.settleUntil = now.Add(s.cfg.WakeSettle)
 	}
-	prev := s.lastWall
-	if !s.ticked {
-		prev = now
-	}
-	s.ticked, s.lastWall, s.lastMono = true, now, mono
+	s.observed, s.lastWall, s.lastMono = true, now, mono
+	return now, prev, wake
+}
+
+// Tick runs one pass: wake detection, then each round's due slots, then the starts the host
+// limit and the wake settle allow.
+func (s *Scheduler) Tick() {
+	s.mu.Lock()
+	now, prev, wake := s.observeLocked()
 	s.evaluateLocked(now, prev, wake)
 	s.startLocked(now)
 	s.unlockAndFlush()
@@ -315,63 +334,85 @@ func (s *Scheduler) Tick() {
 
 // UpdateRun reports a run's new state: waiting, running or blocked while it lives, or a final
 // state when it ends. An ended run updates the round's counts, may pause or complete the
-// round, and lets a coalesced slot or a queued run start.
+// round, and lets a coalesced slot or a queued run start. A queued run belongs to the
+// scheduler, which starts it: an update to a queued run, or into queued, is refused.
 func (s *Scheduler) UpdateRun(runID string, u RunUpdate) error {
-	now := s.cfg.Clock.Now()
 	s.mu.Lock()
+	now, prev, wake := s.observeLocked()
 	run := s.live[runID]
-	if run == nil {
-		s.mu.Unlock()
-		return fmt.Errorf("%w: %s is not live", ErrNoRun, runID)
-	}
-	if u.SessionID != "" {
-		run.SessionID = u.SessionID
+	if err := checkUpdate(run, runID, u); err != nil {
+		// The reading still counts: a wake it saw is acted on now.
+		s.evaluateLocked(now, prev, wake)
+		s.startLocked(now)
+		s.unlockAndFlush()
+		return err
 	}
 	if !u.State.Final() {
-		switch u.State {
-		case RunWaiting, RunRunning, RunBlocked:
-		default:
-			s.mu.Unlock()
-			return fmt.Errorf("rounds: a run cannot move to %q", u.State)
+		if u.SessionID != "" {
+			run.SessionID = u.SessionID
 		}
 		run.State = u.State
-		if run.StartedAt == nil {
-			run.StartedAt = &now
-		}
 		s.saveRun(run)
-		s.unlockAndFlush()
-		return nil
+	} else {
+		s.endLocked(run, u, now, false)
 	}
-	s.endLocked(run, u, now)
-	s.evaluateLocked(now, s.lastWall, false)
+	s.evaluateLocked(now, prev, wake)
 	s.startLocked(now)
 	s.unlockAndFlush()
 	return nil
 }
 
+func checkUpdate(run *Run, runID string, u RunUpdate) error {
+	switch {
+	case run == nil:
+		return fmt.Errorf("%w: %s is not live", ErrNoRun, runID)
+	case run.State == RunQueued:
+		return fmt.Errorf("rounds: run %s is queued; the scheduler starts it", runID)
+	case u.State.Final():
+		return nil
+	case u.State == RunWaiting, u.State == RunRunning, u.State == RunBlocked:
+		return nil
+	}
+	return fmt.Errorf("rounds: a run cannot move to %q", u.State)
+}
+
 // Pause pauses a round by the user: no new runs; a queued or waiting run ends skipped,
-// "paused" (rounds.md 11). A run already running goes on.
+// "paused" (rounds.md 11), in the evaluation that follows. A run already running goes on.
 func (s *Scheduler) Pause(roundID string) error {
-	return s.pause(roundID, "")
+	s.mu.Lock()
+	now, prev, wake := s.observeLocked()
+	err := s.pauseLocked(roundID, "", now)
+	s.evaluateLocked(now, prev, wake)
+	s.startLocked(now)
+	s.unlockAndFlush()
+	return err
 }
 
 // Unpause resumes a paused round and clears its failure and skip counts (10.1). Slots that
-// passed while it was paused do not run; the next slot is the first after now.
+// passed while it was paused do not run; the next slot is the first after now and after the
+// last served slot. On a round that is not paused it does nothing.
 func (s *Scheduler) Unpause(roundID string) error {
-	now := s.cfg.Clock.Now()
 	s.mu.Lock()
+	now, prev, wake := s.observeLocked()
+	err := s.unpauseLocked(roundID, now)
+	s.evaluateLocked(now, prev, wake)
+	s.startLocked(now)
+	s.unlockAndFlush()
+	return err
+}
+
+func (s *Scheduler) unpauseLocked(roundID string, now time.Time) error {
 	e, ok := s.store.Get(roundID)
 	if !ok {
-		s.mu.Unlock()
 		return ErrNotFound
 	}
-	if e.Round.Paused {
-		r := e.Round
-		r.Paused = false
-		if _, err := s.store.Update(r, now); err != nil {
-			s.mu.Unlock()
-			return err
-		}
+	if !e.Round.Paused {
+		return nil
+	}
+	r := e.Round
+	r.Paused = false
+	if _, err := s.store.Update(r, now); err != nil {
+		return err
 	}
 	c := s.compile(e.Round)
 	s.setState(roundID, func(st *RoundState) {
@@ -380,17 +421,7 @@ func (s *Scheduler) Unpause(roundID string) error {
 			st.NextSlot = nextAfter(c.sched, now, st.LastSlot)
 		}
 	})
-	s.startLocked(now)
-	s.unlockAndFlush()
 	return nil
-}
-
-func (s *Scheduler) pause(roundID, reason string) error {
-	now := s.cfg.Clock.Now()
-	s.mu.Lock()
-	err := s.pauseLocked(roundID, reason, now)
-	s.unlockAndFlush()
-	return err
 }
 
 func (s *Scheduler) pauseLocked(roundID, reason string, now time.Time) error {
@@ -406,12 +437,16 @@ func (s *Scheduler) pauseLocked(roundID, reason string, now time.Time) error {
 		}
 	}
 	s.setState(roundID, func(st *RoundState) { st.PausedReason = reason })
-	delete(s.owed, roundID)
-	delete(s.retry, roundID)
-	if run := s.liveFor(roundID); run != nil && (run.State == RunQueued || run.State == RunWaiting) {
-		s.endLocked(run, RunUpdate{State: RunSkipped, Reason: ReasonPaused}, now)
-	}
+	// The evaluation that follows every pause ends a run that has not started and drops the
+	// round's plans (evaluateRound, the paused branch).
 	return nil
+}
+
+// notStarted reports whether a run has not begun its work: queued for a start, or waiting for
+// the lock. The scheduler ends such a run itself when its round pauses, expires, completes or
+// goes.
+func notStarted(r *Run) bool {
+	return r != nil && (r.State == RunQueued || r.State == RunWaiting)
 }
 
 // unlockAndFlush releases the lock and hands the gathered events to the sink in order, then
@@ -438,10 +473,27 @@ func (s *Scheduler) unlockAndFlush() {
 			s.UpdateRun(run.ID, RunUpdate{State: RunSkipped, Reason: ReasonDeleted})
 			continue
 		}
-		if err := s.cfg.Starter.Start(e.Round, run); err != nil {
+		sid, err := s.cfg.Starter.Start(e.Round, run)
+		if err != nil {
 			s.UpdateRun(run.ID, RunUpdate{State: RunFailed, Reason: "start failed: " + err.Error()})
+			continue
 		}
+		s.setSession(run.ID, sid)
 	}
+}
+
+// setSession saves the session id Start returned, unless the run has ended or already
+// reported one.
+func (s *Scheduler) setSession(runID, sid string) {
+	if sid == "" {
+		return
+	}
+	s.mu.Lock()
+	if r := s.live[runID]; r != nil && r.SessionID == "" {
+		r.SessionID = sid
+		s.saveRun(r)
+	}
+	s.unlockAndFlush()
 }
 
 func (s *Scheduler) liveFor(roundID string) *Run {
@@ -531,9 +583,9 @@ func latestSlot(sched *Schedule, now time.Time) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// evaluateLocked looks at every round at now. prev is the wall time of the tick before; a slot
-// after it came due on time. wake says the host woke (or the clock jumped forward, or the hab
-// started) since then: every due slot is a missed one.
+// evaluateLocked looks at every round at now. prev is the wall time of the reading before; a
+// slot after it came due on time. wake says the host woke (or the clock jumped forward, or the
+// hab started) since then: every due slot is a missed one.
 func (s *Scheduler) evaluateLocked(now, prev time.Time, wake bool) {
 	entries := s.store.List()
 	have := map[string]bool{}
@@ -541,9 +593,9 @@ func (s *Scheduler) evaluateLocked(now, prev time.Time, wake bool) {
 		have[e.Round.ID] = true
 		s.evaluateRound(e, now, prev, wake)
 	}
-	for _, run := range s.live {
-		if !have[run.RoundID] && run.State == RunQueued {
-			s.endLocked(run, RunUpdate{State: RunSkipped, Reason: ReasonDeleted}, now)
+	for _, id := range sortedIDs(s.live) {
+		if run := s.live[id]; !have[run.RoundID] && notStarted(run) {
+			s.endLocked(run, RunUpdate{State: RunSkipped, Reason: ReasonDeleted}, now, true)
 		}
 	}
 	for id := range s.scheds {
@@ -563,19 +615,20 @@ func (s *Scheduler) evaluateRound(e Entry, now, prev time.Time, wake bool) {
 	}
 	st := e.State
 	live := s.liveFor(id)
-	waitingRun := live != nil && (live.State == RunQueued || live.State == RunWaiting)
 
 	if st.Completed {
-		if live != nil && live.State == RunQueued {
-			s.endLocked(live, RunUpdate{State: RunSkipped, Reason: ReasonCompleted}, now)
+		delete(s.owed, id)
+		delete(s.retry, id)
+		if notStarted(live) {
+			s.endLocked(live, RunUpdate{State: RunSkipped, Reason: ReasonCompleted}, now, true)
 		}
 		return
 	}
 	if e.Round.Paused {
 		delete(s.owed, id)
 		delete(s.retry, id)
-		if waitingRun {
-			s.endLocked(live, RunUpdate{State: RunSkipped, Reason: ReasonPaused}, now)
+		if notStarted(live) {
+			s.endLocked(live, RunUpdate{State: RunSkipped, Reason: ReasonPaused}, now, true)
 		}
 		if st.NextSlot != nil && !st.NextSlot.After(now) {
 			s.setState(id, func(st *RoundState) { st.NextSlot = nextAfter(c.sched, now, st.LastSlot) })
@@ -584,8 +637,8 @@ func (s *Scheduler) evaluateRound(e Entry, now, prev time.Time, wake bool) {
 	}
 	if e.Round.ExpiresAt != nil && !now.Before(*e.Round.ExpiresAt) {
 		s.complete(id, ReasonExpired)
-		if live != nil && live.State == RunQueued {
-			s.endLocked(live, RunUpdate{State: RunSkipped, Reason: ReasonExpired}, now)
+		if notStarted(live) {
+			s.endLocked(live, RunUpdate{State: RunSkipped, Reason: ReasonExpired}, now, true)
 		}
 		return
 	}
@@ -599,11 +652,22 @@ func (s *Scheduler) evaluateRound(e Entry, now, prev time.Time, wake bool) {
 	}
 
 	if st.NextSlot == nil || st.NextSlot.After(now) {
-		if p, ok := s.retry[id]; ok && live == nil && !now.Before(p.at) {
+		p, planned := s.retry[id]
+		switch {
+		case planned && live == nil && !now.Before(p.at):
 			delete(s.retry, id)
 			if run := s.newRun(e, p.slot, p.missed, now, nil, true); run != nil {
 				s.retried[run.ID] = true
 			}
+		case st.NextSlot == nil && e.Round.Trigger.Kind == TriggerOnce && live == nil && !planned:
+			// A once trigger with nothing left to do: its run ended without completing the
+			// round (a pause ended it, or a restart dropped its retry), or its instant passed
+			// while the round was paused.
+			reason := ReasonOnceDone
+			if st.LastSlot == nil {
+				reason = ReasonOncePassed
+			}
+			s.complete(id, reason)
 		}
 		return
 	}
@@ -616,7 +680,7 @@ func (s *Scheduler) evaluateRound(e Entry, now, prev time.Time, wake bool) {
 	}
 	onTime := !wake && latest.After(prev)
 	switch {
-	case waitingRun:
+	case notStarted(live):
 		// Coalesce into the run that has not started its work yet (7.2, 6.3).
 		live.Slot = &latest
 		live.Missed += n
@@ -640,23 +704,14 @@ func (s *Scheduler) evaluateRound(e Entry, now, prev time.Time, wake bool) {
 	}
 }
 
-// newRun queues a run for slot, numbered from the round's state, and saves the round's last
-// served slot and next slot first. A retry serves a slot already served and leaves both alone.
+// newRun queues a run for slot, numbered from the round's state. The run and the round's
+// state (its number, and for a new slot the last served slot and the next slot) are saved in
+// one write, so a failed save leaves the slot due. A retry serves a slot already served and
+// leaves both slots alone.
 func (s *Scheduler) newRun(e Entry, slot time.Time, missed int, now time.Time, next *time.Time, retry bool) *Run {
-	var num int
-	_, ok := s.setState(e.Round.ID, func(st *RoundState) {
-		st.LastRun++
-		num = st.LastRun
-		if !retry {
-			st.LastSlot, st.NextSlot = &slot, next
-		}
-	})
-	if !ok {
-		return nil
-	}
 	run := Run{
 		ID:      NewID("run"),
-		Number:  num,
+		Number:  e.State.LastRun + 1,
 		RoundID: e.Round.ID,
 		Slot:    &slot,
 		Trigger: e.Round.Trigger.Kind,
@@ -664,26 +719,32 @@ func (s *Scheduler) newRun(e Entry, slot time.Time, missed int, now time.Time, n
 		State:   RunQueued,
 		Created: now,
 	}
-	if err := s.runs.Append(run); err != nil {
-		s.logf("rounds: run %s: save: %v", run.ID, err)
+	ne, err := s.store.QueueRun(run, func(st *RoundState) {
+		st.LastRun = run.Number
+		if !retry {
+			st.LastSlot, st.NextSlot = &slot, next
+		}
+	})
+	if err != nil {
+		s.logf("rounds: round %s: queue run: %v", e.Round.Name, err)
 		return nil
 	}
 	s.live[run.ID] = &run
 	c := run
-	s.events = append(s.events, event{run: &c})
+	s.events = append(s.events, event{round: &ne}, event{run: &c})
 	return &run
 }
 
+// complete marks a round completed. The completed branch of evaluateRound drops its plans.
 func (s *Scheduler) complete(id, reason string) {
 	s.setState(id, func(st *RoundState) {
 		st.Completed, st.CompletedReason, st.NextSlot = true, reason, nil
 	})
-	delete(s.owed, id)
-	delete(s.retry, id)
 }
 
 // startLocked starts queued runs, oldest slot first, while the host limit allows and the wake
-// settle has passed (rounds.md 7.2, 8.3). It marks them running; unlockAndFlush calls the
+// settle has passed (rounds.md 7.2, 8.3). Every live run that is not queued holds a place,
+// waiting and blocked runs included. It marks the runs running; unlockAndFlush calls the
 // starter.
 func (s *Scheduler) startLocked(now time.Time) {
 	if now.Before(s.settleUntil) {
@@ -698,16 +759,7 @@ func (s *Scheduler) startLocked(now time.Time) {
 			running++
 		}
 	}
-	sort.Slice(queued, func(i, j int) bool {
-		a, b := runOrder(queued[i]), runOrder(queued[j])
-		if !a.Equal(b) {
-			return a.Before(b)
-		}
-		if !queued[i].Created.Equal(queued[j].Created) {
-			return queued[i].Created.Before(queued[j].Created)
-		}
-		return queued[i].ID < queued[j].ID
-	})
+	sortQueued(queued)
 	for _, r := range queued {
 		if running >= s.cfg.MaxRunning {
 			return
@@ -720,6 +772,21 @@ func (s *Scheduler) startLocked(now time.Time) {
 	}
 }
 
+// sortQueued orders queued runs oldest slot first (a run with no slot by when it was made),
+// then by when it was made, then by id.
+func sortQueued(queued []*Run) {
+	sort.Slice(queued, func(i, j int) bool {
+		a, b := runOrder(queued[i]), runOrder(queued[j])
+		if !a.Equal(b) {
+			return a.Before(b)
+		}
+		if !queued[i].Created.Equal(queued[j].Created) {
+			return queued[i].Created.Before(queued[j].Created)
+		}
+		return queued[i].ID < queued[j].ID
+	})
+}
+
 func runOrder(r *Run) time.Time {
 	if r.Slot != nil {
 		return *r.Slot
@@ -728,8 +795,10 @@ func runOrder(r *Run) time.Time {
 }
 
 // endLocked ends a live run and applies the round's rules: counts, the failure pause, the
-// skips notice, max_runs, a spent once trigger, the retry after wake (rounds.md 8.3, 10.1).
-func (s *Scheduler) endLocked(run *Run, u RunUpdate, now time.Time) {
+// skips notice, max_runs, the retry after wake (rounds.md 8.3, 10.1).
+// internal is set when the scheduler ends a run that never started its work, because its
+// round paused, expired, completed or went: such a run counts for nothing.
+func (s *Scheduler) endLocked(run *Run, u RunUpdate, now time.Time, internal bool) {
 	delete(s.live, run.ID)
 	isRetry := s.retried[run.ID]
 	delete(s.retried, run.ID)
@@ -744,12 +813,7 @@ func (s *Scheduler) endLocked(run *Run, u RunUpdate, now time.Time) {
 	s.saveRun(run)
 
 	e, ok := s.store.Get(run.RoundID)
-	if !ok {
-		return
-	}
-	internal := u.State == RunSkipped &&
-		(u.Reason == ReasonPaused || u.Reason == ReasonExpired || u.Reason == ReasonDeleted || u.Reason == ReasonCompleted)
-	if internal {
+	if !ok || internal {
 		return
 	}
 
@@ -758,7 +822,6 @@ func (s *Scheduler) endLocked(run *Run, u RunUpdate, now time.Time) {
 		!now.After(s.lastWake.Add(RetryWindow)) {
 		s.retry[run.RoundID] = retryPlan{at: now.Add(RetryDelay), slot: *run.Slot, missed: run.Missed}
 	}
-	_, retrying := s.retry[run.RoundID]
 
 	ne, ok := s.setState(run.RoundID, func(st *RoundState) {
 		switch u.State {
@@ -779,19 +842,13 @@ func (s *Scheduler) endLocked(run *Run, u RunUpdate, now time.Time) {
 		case RunSkipped:
 			st.Skips++
 		}
-		switch {
-		case e.Round.MaxRuns > 0 && st.Finished >= e.Round.MaxRuns:
+		// A spent once trigger completes in the evaluation that follows (evaluateRound).
+		if e.Round.MaxRuns > 0 && st.Finished >= e.Round.MaxRuns {
 			st.Completed, st.CompletedReason, st.NextSlot = true, ReasonMaxRuns, nil
-		case e.Round.Trigger.Kind == TriggerOnce && st.NextSlot == nil && !retrying:
-			st.Completed, st.CompletedReason = true, ReasonOnceDone
 		}
 	})
 	if !ok {
 		return
-	}
-	if ne.State.Completed {
-		delete(s.retry, run.RoundID)
-		delete(s.owed, run.RoundID)
 	}
 
 	never := e.Round.Notify == NotifyNever

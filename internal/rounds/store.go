@@ -56,6 +56,9 @@ type RunLog interface {
 	// Prune applies the retention rule (Keep) to a round's runs at now and returns the runs
 	// it removed, so the caller can remove their exited sessions.
 	Prune(roundID string, now time.Time) (removed []Run, err error)
+	// Live returns every run that has not ended, under any round, deleted rounds included.
+	// The scheduler loads them at start.
+	Live() ([]Run, error)
 }
 
 // Retention: each round keeps its last KeepRuns runs or every run newer than KeepFor,
@@ -419,6 +422,27 @@ func (s *Store) SetState(id string, fn func(*RoundState)) (Entry, error) {
 	return cloneEntry(s.st.Rounds[id]), nil
 }
 
+// QueueRun adds a new run and changes its round's scheduler state through fn, in one save: a
+// failed save leaves neither the run nor the state change, so a slot is never marked served
+// without its run, nor a run stored for a slot still due. The run is checked as Append checks
+// it.
+func (s *Store) QueueRun(r Run, fn func(*RoundState)) (Entry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e := s.st.Rounds[r.RoundID]
+	if e == nil {
+		return Entry{}, ErrNotFound
+	}
+	if err := s.appendLocked(r); err != nil {
+		return Entry{}, err
+	}
+	fn(&s.st.Rounds[r.RoundID].State)
+	if err := s.commitLocked(); err != nil {
+		return Entry{}, err
+	}
+	return cloneEntry(s.st.Rounds[r.RoundID]), nil
+}
+
 // Delete removes a round and its ended runs. A live run stays in the log until it ends; the
 // next Prune for the round then removes it (rounds.md 11: a deleted round's run goes on).
 func (s *Store) Delete(id string) error {
@@ -505,6 +529,14 @@ func (l storeRunLog) Append(r Run) error {
 	s := l.s
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.appendLocked(r); err != nil {
+		return err
+	}
+	return s.commitLocked()
+}
+
+// appendLocked checks a new run and adds it to the state in memory; the caller commits.
+func (s *Store) appendLocked(r Run) error {
 	if r.ID == "" || r.RoundID == "" {
 		return errors.New("rounds: a run needs an id and a round id")
 	}
@@ -516,7 +548,23 @@ func (l storeRunLog) Append(r Run) error {
 		}
 	}
 	s.st.Runs[r.RoundID] = append(s.st.Runs[r.RoundID], r)
-	return s.commitLocked()
+	return nil
+}
+
+func (l storeRunLog) Live() ([]Run, error) {
+	s := l.s
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []Run
+	for _, runs := range s.st.Runs {
+		for _, r := range runs {
+			if !r.State.Final() {
+				out = append(out, r)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
 }
 
 func (l storeRunLog) Update(r Run) error {

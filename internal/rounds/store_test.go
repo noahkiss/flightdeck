@@ -686,3 +686,58 @@ func TestRetentionCap(t *testing.T) {
 		t.Errorf("oldest ended run kept = %d, want %d", oldestEnded, want)
 	}
 }
+
+func TestStoreQueueRun(t *testing.T) {
+	dir := t.TempDir()
+	s := openStore(t, dir)
+	e, _ := s.Create(freshRound(), "", testNow)
+	slot := utc("2026-06-01T13:00:00Z")
+	run := Run{ID: NewID("run"), Number: 1, RoundID: e.Round.ID, Slot: &slot, Trigger: TriggerCron, State: RunQueued, Created: testNow}
+	mark := func(st *RoundState) { st.LastRun, st.LastSlot = 1, &slot }
+
+	orig := s.write
+	s.write = func(string, []byte) error { return errors.New("disk full") }
+	if _, err := s.QueueRun(run, mark); err == nil {
+		t.Fatal("a failed save reported no error")
+	}
+	s.write = orig
+	if g, _ := s.Get(e.Round.ID); g.State.LastSlot != nil || g.State.LastRun != 0 {
+		t.Errorf("state after a failed save: %+v", g.State)
+	}
+	if live, _ := s.Runs().Live(); len(live) != 0 {
+		t.Errorf("run after a failed save: %+v", live)
+	}
+
+	got, err := s.QueueRun(run, mark)
+	if err != nil || got.State.LastRun != 1 {
+		t.Fatalf("queue: %+v %v", got.State, err)
+	}
+	if _, err := s.QueueRun(run, mark); !errors.Is(err, ErrRunExists) {
+		t.Errorf("same id: %v", err)
+	}
+	run2 := run
+	run2.ID, run2.RoundID = NewID("run"), "round-none"
+	if _, err := s.QueueRun(run2, mark); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown round: %v", err)
+	}
+	s2 := openStore(t, dir)
+	live, _ := s2.Runs().Live()
+	if g, _ := s2.Get(e.Round.ID); len(live) != 1 || live[0].ID != run.ID || !g.State.LastSlot.Equal(slot) {
+		t.Errorf("after reopen: %+v %+v", live, g.State)
+	}
+	// Live lists runs of a deleted round too, and no ended run.
+	if err := s2.Delete(e.Round.ID); err != nil {
+		t.Fatal(err)
+	}
+	if live, _ := s2.Runs().Live(); len(live) != 1 {
+		t.Errorf("deleted round's live run: %+v", live)
+	}
+	ended := run
+	ended.State = RunSucceeded
+	if err := s2.Runs().Update(ended); err != nil {
+		t.Fatal(err)
+	}
+	if live, _ := s2.Runs().Live(); len(live) != 0 {
+		t.Errorf("an ended run listed as live: %+v", live)
+	}
+}

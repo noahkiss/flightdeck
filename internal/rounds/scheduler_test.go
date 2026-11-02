@@ -43,11 +43,14 @@ type fakeStarter struct {
 	err     error
 }
 
-func (f *fakeStarter) Start(_ Round, run Run) error {
+func (f *fakeStarter) Start(_ Round, run Run) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.started = append(f.started, run)
-	return f.err
+	if f.err != nil {
+		return "", f.err
+	}
+	return "sess-" + run.ID, nil
 }
 
 func (f *fakeStarter) list() []Run {
@@ -88,6 +91,8 @@ type harness struct {
 	sink  *fakeSink
 	s     *Scheduler
 	max   int
+	// settle is the wake settle; 0 takes the default.
+	settle time.Duration
 }
 
 func newHarness(t *testing.T, at string) *harness {
@@ -107,7 +112,7 @@ func (h *harness) reopen() {
 	h.store = st
 	h.start = &fakeStarter{}
 	h.sink = &fakeSink{}
-	h.s, err = NewScheduler(SchedulerConfig{Store: st, Starter: h.start, Sink: h.sink, Clock: h.clock, MaxRunning: h.max})
+	h.s, err = NewScheduler(SchedulerConfig{Store: st, Starter: h.start, Sink: h.sink, Clock: h.clock, MaxRunning: h.max, WakeSettle: h.settle})
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -593,8 +598,8 @@ func TestSchedulerNetworkRetryAfterWake(t *testing.T) {
 	h.endLatest(e.Round.ID, RunFailed)
 	runs := h.runs(other.Round.ID)
 	h.end(runs[0], RunFailed, "exit 1", false)
-	h.awake("2026-03-02T22:02:30Z")
-	if len(h.runs(e.Round.ID)) != 1 {
+	h.awake("2026-03-02T22:06:00Z")
+	if len(h.runs(e.Round.ID)) != 1 || len(h.runs(other.Round.ID)) != 1 {
 		t.Fatal("not network: no retry expected")
 	}
 
@@ -713,6 +718,10 @@ func TestSystemClock(t *testing.T) {
 	if c.Mono() < a {
 		t.Error("monotonic reading went back")
 	}
+	// Now carries no monotonic reading, so Sub of two Now values is wall-clock time.
+	if s := c.Now().String(); strings.Contains(s, "m=") {
+		t.Errorf("Now keeps the monotonic reading: %s", s)
+	}
 }
 
 func TestSchedulerLongSleepBound(t *testing.T) {
@@ -729,5 +738,694 @@ func TestSchedulerLongSleepBound(t *testing.T) {
 	}
 	if n := h.entry(e.Round.ID).State.NextSlot; !n.Equal(utc("2027-03-02T10:01:00Z")) {
 		t.Errorf("next slot = %v", n)
+	}
+}
+
+// A run that ends at wake, before any tick, sees the wake: missed slots stay missed, due runs
+// wait the settle, and a network failure is retried.
+func TestSchedulerRunEndsAtWakeBeforeAnyTick(t *testing.T) {
+	h := newHarness(t, "2026-03-02T07:59:00Z")
+	l := h.round("long", "0 8 * * *", nil)
+	sk := h.round("skipper", "0 9 * * *", func(r *Round) { r.CatchUp = CatchUpSkip })
+	o := h.round("once", "0 9 * * *", nil)
+	h.s.Tick()
+	h.awake("2026-03-02T08:01:00Z")
+	lr := h.runs(l.Round.ID)
+	if len(lr) != 1 || lr[0].State != RunRunning {
+		t.Fatalf("setup: %+v", lr)
+	}
+	// Asleep to 22:00 with no tick; the long run fails at wake with a network error.
+	h.clock.move(utc("2026-03-02T22:00:00Z").Sub(h.clock.Now()), time.Second)
+	h.end(lr[0], RunFailed, "network", true)
+	if r := h.runs(sk.Round.ID); len(r) != 0 {
+		t.Errorf("a skip round ran a slot missed in sleep: %+v", r)
+	}
+	if r := h.runs(o.Round.ID); len(r) != 1 || r[0].State != RunQueued {
+		t.Errorf("catch-up run not queued for the settle: %+v", r)
+	}
+	h.awake("2026-03-02T22:05:00Z")
+	if r := h.runs(l.Round.ID); len(r) != 2 || !r[0].Slot.Equal(utc("2026-03-02T08:00:00Z")) {
+		t.Errorf("network failure at wake not retried: %+v", r)
+	}
+	if r := h.runs(sk.Round.ID); len(r) != 0 {
+		t.Errorf("skip round ran later: %+v", r)
+	}
+}
+
+func TestSchedulerDeletedRoundLiveRun(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:59:50Z")
+	h.max = 1
+	h.reopen()
+	e := h.round("hourly", "0 * * * *", nil)
+	other := h.round("other", "30 10 * * *", nil)
+	h.s.Tick()
+	h.awake("2026-03-02T10:00:30Z")
+	run := h.runs(e.Round.ID)[0]
+	if err := h.store.Delete(e.Round.ID); err != nil {
+		t.Fatal(err)
+	}
+	h.reopen()
+	// The deleted round's run still holds the host's one place.
+	h.awake("2026-03-02T10:31:00Z")
+	if r := h.runs(other.Round.ID); len(r) != 1 || r[0].State != RunQueued {
+		t.Fatalf("other: %+v", r)
+	}
+	if err := h.s.UpdateRun(run.ID, RunUpdate{State: RunSucceeded}); err != nil {
+		t.Fatalf("a deleted round's live run unknown after restart: %v", err)
+	}
+	if r := h.runs(other.Round.ID); len(r) != 1 || r[0].State != RunRunning {
+		t.Fatalf("other after the end: %+v", r)
+	}
+	if r := h.runs(e.Round.ID); len(r) != 1 || r[0].State != RunSucceeded {
+		t.Errorf("deleted round's run: %+v", r)
+	}
+}
+
+func TestSchedulerDeleteEndsQueuedAndWaitingRuns(t *testing.T) {
+	for _, waiting := range []bool{false, true} {
+		h := newHarness(t, "2026-03-02T08:00:00Z")
+		e := h.round("daily", "0 9 * * *", nil)
+		h.s.Tick()
+		h.awake("2026-03-02T08:01:00Z")
+		h.sleep("2026-03-02T10:00:00Z")
+		if waiting {
+			h.awake("2026-03-02T10:00:30Z")
+			run := h.runs(e.Round.ID)[0]
+			if err := h.s.UpdateRun(run.ID, RunUpdate{State: RunWaiting}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := h.store.Delete(e.Round.ID); err != nil {
+			t.Fatal(err)
+		}
+		h.awake("2026-03-02T10:02:00Z")
+		r := h.runs(e.Round.ID)
+		if len(r) != 1 || r[0].State != RunSkipped || r[0].Reason != ReasonDeleted {
+			t.Fatalf("waiting=%v: %+v", waiting, r)
+		}
+		if !waiting && len(h.start.list()) != 0 {
+			t.Error("a deleted round's queued run started")
+		}
+	}
+}
+
+func TestSchedulerOnceNeverLeftHanging(t *testing.T) {
+	at := utc("2026-03-02T09:00:00Z")
+	once := func(r *Round) { r.Trigger = Trigger{Kind: TriggerOnce, At: &at, Zone: "UTC"} }
+
+	// Its queued run ended by a pause, then unpaused: complete, served.
+	h := newHarness(t, "2026-03-02T08:00:00Z")
+	e := h.round("one", "", once)
+	h.s.Tick()
+	h.awake("2026-03-02T08:01:00Z")
+	h.sleep("2026-03-02T10:00:00Z")
+	h.s.Pause(e.Round.ID)
+	h.s.Unpause(e.Round.ID)
+	if st := h.entry(e.Round.ID).State; !st.Completed || st.CompletedReason != ReasonOnceDone {
+		t.Errorf("paused run: %+v", st)
+	}
+
+	// A retry planned, then dropped by a restart: complete, served.
+	h = newHarness(t, "2026-03-02T08:00:00Z")
+	e = h.round("one", "", once)
+	h.s.Tick()
+	h.awake("2026-03-02T08:01:00Z")
+	h.sleep("2026-03-02T22:00:00Z")
+	h.awake("2026-03-02T22:01:00Z")
+	h.end(h.runs(e.Round.ID)[0], RunFailed, "net", true)
+	if st := h.entry(e.Round.ID).State; st.Completed {
+		t.Fatalf("completed with a retry planned: %+v", st)
+	}
+	h.reopen()
+	h.awake("2026-03-02T22:10:00Z")
+	if st := h.entry(e.Round.ID).State; !st.Completed || st.CompletedReason != ReasonOnceDone {
+		t.Errorf("retry dropped: %+v", st)
+	}
+	if n := len(h.runs(e.Round.ID)); n != 1 {
+		t.Errorf("runs = %d", n)
+	}
+
+	// Paused across its instant, then unpaused: complete, never served.
+	h = newHarness(t, "2026-03-02T08:00:00Z")
+	e = h.round("one", "", once)
+	h.s.Tick()
+	h.s.Pause(e.Round.ID)
+	h.awake("2026-03-02T09:30:00Z")
+	h.s.Unpause(e.Round.ID)
+	if st := h.entry(e.Round.ID).State; !st.Completed || st.CompletedReason != ReasonOncePassed {
+		t.Errorf("passed while paused: %+v", st)
+	}
+	if n := len(h.runs(e.Round.ID)); n != 0 {
+		t.Errorf("runs = %d", n)
+	}
+}
+
+func TestSchedulerOnceWaitsForItsRetry(t *testing.T) {
+	at := utc("2026-03-02T09:00:00Z")
+	h := newHarness(t, "2026-03-02T08:00:00Z")
+	e := h.round("one", "", func(r *Round) { r.Trigger = Trigger{Kind: TriggerOnce, At: &at, Zone: "UTC"} })
+	h.s.Tick()
+	h.awake("2026-03-02T08:01:00Z")
+	h.sleep("2026-03-02T22:00:00Z")
+	h.awake("2026-03-02T22:01:00Z")
+	h.end(h.runs(e.Round.ID)[0], RunFailed, "net", true)
+	h.awake("2026-03-02T22:03:30Z")
+	if st := h.entry(e.Round.ID).State; st.Completed {
+		t.Fatalf("completed before its retry ended: %+v", st)
+	}
+	h.endLatest(e.Round.ID, RunSucceeded)
+	if st := h.entry(e.Round.ID).State; !st.Completed || st.CompletedReason != ReasonOnceDone {
+		t.Errorf("after the retry: %+v", st)
+	}
+}
+
+func TestSchedulerQueueRunIsOneWrite(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:59:50Z")
+	e := h.round("hourly", "0 * * * *", nil)
+	h.s.Tick()
+	h.awake("2026-03-02T09:59:59Z")
+	orig := h.store.write
+	writes := 0
+	h.store.write = func(string, []byte) error { writes++; return errors.New("disk full") }
+	h.awake("2026-03-02T10:00:20Z")
+	h.store.write = orig
+	if writes != 1 {
+		t.Errorf("writes = %d, want the run and the state in one", writes)
+	}
+	st := h.entry(e.Round.ID).State
+	if st.LastSlot != nil || st.LastRun != 0 || len(h.runs(e.Round.ID)) != 0 {
+		t.Fatalf("a failed save left a trace: last %v run %d runs %d", st.LastSlot, st.LastRun, len(h.runs(e.Round.ID)))
+	}
+	h.awake("2026-03-02T10:01:00Z")
+	runs := h.runs(e.Round.ID)
+	if len(runs) != 1 || runs[0].Number != 1 || !runs[0].Slot.Equal(utc("2026-03-02T10:00:00Z")) {
+		t.Fatalf("the slot after the disk recovered: %+v", runs)
+	}
+}
+
+func TestSchedulerStartLost(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:59:50Z")
+	e := h.round("hourly", "0 * * * *", nil)
+	h.s.Tick()
+	// The run is saved as running, and gff-hab stops before Start reports a session.
+	h.start.mu.Lock()
+	h.start.err = nil
+	h.start.mu.Unlock()
+	h.s.cfg.Starter = startFunc(func(Round, Run) (string, error) { return "", nil })
+	h.awake("2026-03-02T10:00:30Z")
+	h.reopen()
+	runs := h.runs(e.Round.ID)
+	if len(runs) != 1 || runs[0].State != RunFailed || runs[0].Reason != ReasonStartLost {
+		t.Fatalf("after restart: %+v", runs)
+	}
+	if st := h.entry(e.Round.ID).State; st.Failures != 1 {
+		t.Errorf("failures = %d", st.Failures)
+	}
+	h.awake("2026-03-02T11:00:30Z")
+	if runs := h.runs(e.Round.ID); len(runs) != 2 || runs[0].State != RunRunning {
+		t.Fatalf("11:00: %+v", runs)
+	}
+	// A run with its session survives a restart and can be ended after it.
+	if id := h.runs(e.Round.ID)[0].SessionID; !strings.HasPrefix(id, "sess-") {
+		t.Fatalf("session id not saved: %q", id)
+	}
+	h.reopen()
+	runs = h.runs(e.Round.ID)
+	if runs[0].State != RunRunning {
+		t.Fatalf("a run with a session failed at restart: %+v", runs[0])
+	}
+	h.end(runs[0], RunSucceeded, "", false)
+}
+
+type startFunc func(Round, Run) (string, error)
+
+func (f startFunc) Start(r Round, run Run) (string, error) { return f(r, run) }
+
+func TestSchedulerUnpauseNotPaused(t *testing.T) {
+	h := newHarness(t, "2026-03-02T08:00:00Z")
+	e := h.round("daily", "0 9 * * *", nil)
+	h.s.Tick()
+	h.awake("2026-03-02T08:01:00Z")
+	if _, err := h.store.SetState(e.Round.ID, func(st *RoundState) { st.Failures = 2 }); err != nil {
+		t.Fatal(err)
+	}
+	h.clock.move(utc("2026-03-02T09:00:10Z").Sub(h.clock.Now()), utc("2026-03-02T09:00:10Z").Sub(h.clock.Now()))
+	h.s.Unpause(e.Round.ID)
+	h.awake("2026-03-02T09:30:00Z")
+	if len(h.runs(e.Round.ID)) != 1 {
+		t.Error("unpause of a round that is not paused dropped the due 09:00 slot")
+	}
+	if f := h.entry(e.Round.ID).State.Failures; f != 2 {
+		t.Errorf("unpause of a round that is not paused cleared failures: %d", f)
+	}
+}
+
+func TestSchedulerExpiryAndCompletionEndWaitingRuns(t *testing.T) {
+	for _, how := range []string{"expired", "completed"} {
+		h := newHarness(t, "2026-03-02T09:59:50Z")
+		exp := utc("2026-03-02T10:05:00Z")
+		e := h.round("hourly", "0 * * * *", func(r *Round) { r.ExpiresAt = &exp })
+		h.s.Tick()
+		h.awake("2026-03-02T10:00:30Z")
+		run := h.runs(e.Round.ID)[0]
+		if err := h.s.UpdateRun(run.ID, RunUpdate{State: RunWaiting}); err != nil {
+			t.Fatal(err)
+		}
+		want := ReasonExpired
+		if how == "completed" {
+			want = ReasonCompleted
+			h.store.SetState(e.Round.ID, func(st *RoundState) { st.Completed, st.CompletedReason = true, "test" })
+		}
+		h.awake("2026-03-02T10:06:00Z")
+		r := h.runs(e.Round.ID)
+		if r[0].State != RunSkipped || r[0].Reason != want {
+			t.Errorf("%s: %+v", how, r[0])
+		}
+		if s := h.entry(e.Round.ID).State.Skips; s != 0 {
+			t.Errorf("%s: the scheduler's own skip counted: %d", how, s)
+		}
+	}
+}
+
+func TestSchedulerOutsideSkipCounts(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:59:50Z")
+	e := h.round("hourly", "0 * * * *", nil)
+	h.s.Tick()
+	h.awake("2026-03-02T10:00:30Z")
+	// A skip reported from outside counts, whatever its reason text says.
+	h.end(h.runs(e.Round.ID)[0], RunSkipped, ReasonPaused, false)
+	if s := h.entry(e.Round.ID).State.Skips; s != 1 {
+		t.Errorf("skips = %d", s)
+	}
+}
+
+func TestSchedulerUpdateRunRefusesQueued(t *testing.T) {
+	h := newHarness(t, "2026-03-02T08:00:00Z")
+	e := h.round("daily", "0 9 * * *", nil)
+	h.s.Tick()
+	h.awake("2026-03-02T08:01:00Z")
+	h.sleep("2026-03-02T10:00:00Z")
+	run := h.runs(e.Round.ID)[0]
+	for _, st := range []RunState{RunRunning, RunSucceeded} {
+		if err := h.s.UpdateRun(run.ID, RunUpdate{State: st}); err == nil {
+			t.Errorf("a queued run moved to %s from outside", st)
+		}
+	}
+	h.awake("2026-03-02T10:00:30Z")
+	run = h.runs(e.Round.ID)[0]
+	if err := h.s.UpdateRun(run.ID, RunUpdate{State: RunQueued}); err == nil {
+		t.Error("a running run moved back to queued")
+	}
+	if err := h.s.UpdateRun("run-none", RunUpdate{State: RunSucceeded}); !errors.Is(err, ErrNoRun) {
+		t.Errorf("unknown run: %v", err)
+	}
+	if got := h.start.list(); len(got) != 1 {
+		t.Errorf("starts = %d", len(got))
+	}
+}
+
+func TestSchedulerBlockedHoldsAPlace(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:59:50Z")
+	a := h.round("a", "0 10 * * *", nil)
+	b := h.round("b", "0 10 * * *", nil)
+	c := h.round("c", "1 10 * * *", nil)
+	h.s.Tick()
+	h.awake("2026-03-02T10:00:30Z")
+	h.s.UpdateRun(h.runs(a.Round.ID)[0].ID, RunUpdate{State: RunBlocked})
+	h.s.UpdateRun(h.runs(b.Round.ID)[0].ID, RunUpdate{State: RunWaiting})
+	h.awake("2026-03-02T10:02:00Z")
+	if r := h.runs(c.Round.ID); len(r) != 1 || r[0].State != RunQueued {
+		t.Fatalf("c: %+v", r)
+	}
+}
+
+func TestDueSlots(t *testing.T) {
+	sched, err := Trigger{Kind: TriggerCron, Cron: "0 * * * *", Zone: "UTC"}.Schedule()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ten, now := utc("2026-03-02T10:00:00Z"), utc("2026-03-02T12:30:00Z")
+	if n, l := dueSlots(sched, ten, nil, now); n != 3 || !l.Equal(utc("2026-03-02T12:00:00Z")) {
+		t.Errorf("no last: %d %v", n, l)
+	}
+	if n, l := dueSlots(sched, ten, &ten, now); n != 2 || !l.Equal(utc("2026-03-02T12:00:00Z")) {
+		t.Errorf("first is last: %d %v", n, l)
+	}
+	twelve := utc("2026-03-02T12:00:00Z")
+	if n, _ := dueSlots(sched, ten, &twelve, now); n != 0 {
+		t.Errorf("all served: %d", n)
+	}
+	if n, l := dueSlots(sched, twelve, nil, twelve); n != 1 || !l.Equal(twelve) {
+		t.Errorf("due right now: %d %v", n, l)
+	}
+}
+
+func TestSchedulerUnpauseAfterClockBack(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:59:00Z")
+	e := h.round("hourly", "0 * * * *", nil)
+	h.s.Tick()
+	h.awake("2026-03-02T10:00:30Z")
+	h.endLatest(e.Round.ID, RunSucceeded)
+	h.clock.move(-time.Hour, TickEvery)
+	h.s.Pause(e.Round.ID)
+	h.s.Unpause(e.Round.ID)
+	if n := h.entry(e.Round.ID).State.NextSlot; !n.Equal(utc("2026-03-02T11:00:00Z")) {
+		t.Errorf("next slot = %v, want after the served 10:00", n)
+	}
+}
+
+func TestSchedulerCoalesceIntoQueued(t *testing.T) {
+	// The first tick is a wake; with a 5-minute settle, each slot that comes due meanwhile
+	// joins the queued run.
+	h := newHarness(t, "2026-03-02T09:59:50Z")
+	h.settle = 5 * time.Minute
+	h.reopen()
+	e := h.round("minutely", "* * * * *", nil)
+	h.s.Tick()
+	h.awake("2026-03-02T10:00:20Z")
+	r := h.runs(e.Round.ID)[0]
+	if r.State != RunQueued || r.Missed != 1 {
+		t.Fatalf("first slot: %+v", r)
+	}
+	h.awake("2026-03-02T10:02:30Z")
+	r = h.runs(e.Round.ID)[0]
+	if r.State != RunQueued || r.Missed != 3 || !r.Slot.Equal(utc("2026-03-02T10:02:00Z")) {
+		t.Fatalf("three slots in the settle: %+v", r)
+	}
+	// The 10:02:30 step moved the tick grid: the settle ends at the tick at 10:05:00.
+	h.awake("2026-03-02T10:05:00Z")
+	runs := h.runs(e.Round.ID)
+	if len(runs) != 1 || runs[0].State != RunRunning || runs[0].Missed != 6 || !runs[0].Slot.Equal(utc("2026-03-02T10:05:00Z")) {
+		t.Fatalf("after the settle: %+v", runs)
+	}
+	if st := h.entry(e.Round.ID).State; !st.LastSlot.Equal(utc("2026-03-02T10:05:00Z")) {
+		t.Errorf("last slot = %v", st.LastSlot)
+	}
+}
+
+func TestSchedulerRetryReplacedByNewSlot(t *testing.T) {
+	h := newHarness(t, "2026-03-02T20:59:00Z")
+	e := h.round("even", "*/2 * * * *", nil)
+	h.s.Tick()
+	h.awake("2026-03-02T21:00:30Z")
+	h.endLatest(e.Round.ID, RunSucceeded)
+	h.sleep("2026-03-02T22:00:00Z")
+	h.awake("2026-03-02T22:00:30Z")
+	h.end(h.runs(e.Round.ID)[0], RunFailed, "net", true) // retry planned for 22:02:30
+	h.awake("2026-03-02T22:02:00Z")                      // the 22:02 slot runs instead
+	h.endLatest(e.Round.ID, RunSucceeded)
+	h.awake("2026-03-02T22:03:30Z")
+	if runs := h.runs(e.Round.ID); len(runs) != 3 {
+		t.Fatalf("runs = %+v", runs)
+	}
+}
+
+func TestSchedulerRetryOnlyOnce(t *testing.T) {
+	h := newHarness(t, "2026-03-02T08:00:00Z")
+	h.settle = -1 // no settle: the retry fails inside the window too
+	h.reopen()
+	e := h.round("daily", "0 9 * * *", nil)
+	h.s.Tick()
+	h.awake("2026-03-02T08:01:00Z")
+	h.sleep("2026-03-02T22:00:00Z")
+	h.end(h.runs(e.Round.ID)[0], RunFailed, "net", true)
+	h.awake("2026-03-02T22:02:00Z")
+	runs := h.runs(e.Round.ID)
+	if len(runs) != 2 || runs[0].State != RunRunning {
+		t.Fatalf("retry: %+v", runs)
+	}
+	h.end(runs[0], RunFailed, "net", true)
+	h.awake("2026-03-02T22:10:00Z")
+	if n := len(h.runs(e.Round.ID)); n != 2 {
+		t.Errorf("a retry was retried: %d runs", n)
+	}
+}
+
+func TestSchedulerPausePaths(t *testing.T) {
+	// A pause through a definition edit, as the API does: the queued run ends at the next tick,
+	// and the next slot moves on past now while paused.
+	h := newHarness(t, "2026-03-02T08:00:00Z")
+	e := h.round("hourly", "0 * * * *", nil)
+	h.s.Tick()
+	h.awake("2026-03-02T08:01:00Z")
+	h.sleep("2026-03-02T10:00:00Z")
+	cur := h.entry(e.Round.ID)
+	cur.Round.Paused = true
+	if _, err := h.store.Update(cur.Round, h.clock.Now()); err != nil {
+		t.Fatal(err)
+	}
+	h.awake("2026-03-02T11:00:30Z")
+	r := h.runs(e.Round.ID)
+	if len(r) != 1 || r[0].State != RunSkipped || r[0].Reason != ReasonPaused {
+		t.Fatalf("runs: %+v", r)
+	}
+	if n := h.entry(e.Round.ID).State.NextSlot; !n.Equal(utc("2026-03-02T12:00:00Z")) {
+		t.Errorf("next slot while paused = %v", n)
+	}
+	// A long pause: unpause sets the next slot to the first after now.
+	h.awake("2026-03-02T15:20:00Z")
+	if err := h.s.Unpause(e.Round.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n := h.entry(e.Round.ID).State.NextSlot; !n.Equal(utc("2026-03-02T16:00:00Z")) {
+		t.Errorf("next slot after unpause = %v", n)
+	}
+}
+
+func TestSchedulerExpiryOnATick(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:59:50Z")
+	exp := utc("2026-03-02T10:01:20Z") // exactly a tick
+	e := h.round("minutely", "* * * * *", func(r *Round) { r.ExpiresAt = &exp })
+	h.s.Tick()
+	h.awake("2026-03-02T10:00:50Z")
+	h.endLatest(e.Round.ID, RunSucceeded)
+	h.awake("2026-03-02T10:01:20Z")
+	if n := len(h.runs(e.Round.ID)); n != 1 {
+		t.Errorf("a slot ran at the expiry instant: %d runs", n)
+	}
+	if st := h.entry(e.Round.ID).State; !st.Completed {
+		t.Errorf("not completed: %+v", st)
+	}
+}
+
+func TestSchedulerMaxRunsWithOwedSlot(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:59:50Z")
+	e := h.round("hourly", "0 * * * *", func(r *Round) { r.MaxRuns = 1; r.CatchUp = CatchUpSkip })
+	h.s.Tick()
+	h.awake("2026-03-02T11:00:30Z") // the 11:00 slot comes due while 10:00 runs
+	h.endLatest(e.Round.ID, RunSucceeded)
+	h.awake("2026-03-02T13:00:30Z")
+	if n := len(h.runs(e.Round.ID)); n != 1 {
+		t.Errorf("runs = %d", n)
+	}
+	// A trigger edit re-arms the round; the old owed slot must not run with skip.
+	cur := h.entry(e.Round.ID)
+	cur.Round.Trigger.Cron = "0 */1 * * *"
+	cur.Round.MaxRuns = 0
+	h.store.Update(cur.Round, h.clock.Now())
+	h.sleep("2026-03-02T15:30:00Z")
+	h.awake("2026-03-02T15:31:00Z")
+	if n := len(h.runs(e.Round.ID)); n != 1 {
+		t.Errorf("an owed slot survived completion: %d runs", n)
+	}
+}
+
+func TestSchedulerCounts(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:59:50Z")
+	e := h.round("minutely", "* * * * *", func(r *Round) { r.Notify = NotifyNever })
+	h.s.Tick()
+	steps := []struct {
+		state            RunState
+		fail, skip, done int
+	}{
+		{RunFailed, 1, 0, 1},
+		{RunSkipped, 1, 1, 1},
+		{RunFailed, 2, 0, 2},
+		{RunSucceeded, 0, 0, 3},
+		{RunSkipped, 0, 1, 3},
+		{RunTakenOver, 0, 0, 4},
+		{RunSkipped, 0, 1, 4},
+		{RunTimedOut, 1, 0, 5},
+		{RunTakenOver, 1, 0, 6},
+		{RunSkipped, 1, 1, 6},
+		{RunSucceeded, 0, 0, 7},
+	}
+	for i, s := range steps {
+		h.awake(h.clock.Now().Add(time.Minute).Format(time.RFC3339))
+		h.endLatest(e.Round.ID, s.state)
+		st := h.entry(e.Round.ID).State
+		if st.Failures != s.fail || st.Skips != s.skip || st.Finished != s.done {
+			t.Fatalf("step %d (%s): failures %d skips %d finished %d, want %d %d %d",
+				i, s.state, st.Failures, st.Skips, st.Finished, s.fail, s.skip, s.done)
+		}
+	}
+}
+
+func TestSchedulerSkipsDoNotFinish(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:59:50Z")
+	e := h.round("minutely", "* * * * *", func(r *Round) { r.MaxRuns = 1 })
+	h.s.Tick()
+	for i := 0; i < 3; i++ {
+		h.awake(h.clock.Now().Add(time.Minute).Format(time.RFC3339))
+		h.endLatest(e.Round.ID, RunSkipped)
+	}
+	if st := h.entry(e.Round.ID).State; st.Completed {
+		t.Errorf("skips completed a max_runs round: %+v", st)
+	}
+}
+
+func TestSchedulerSkipNoticeAtFive(t *testing.T) {
+	for _, never := range []bool{false, true} {
+		h := newHarness(t, "2026-03-02T09:59:50Z")
+		e := h.round("minutely", "* * * * *", func(r *Round) {
+			if never {
+				r.Notify = NotifyNever
+			}
+		})
+		h.s.Tick()
+		for i := 1; i <= SkipsNotice; i++ {
+			h.awake(h.clock.Now().Add(time.Minute).Format(time.RFC3339))
+			h.endLatest(e.Round.ID, RunSkipped)
+			want := 0
+			if i == SkipsNotice && !never {
+				want = 1
+			}
+			if n := len(h.sink.noticesOf(NoticeSkips)); n != want {
+				t.Fatalf("never=%v after %d skips: %d notices", never, i, n)
+			}
+		}
+	}
+}
+
+func TestSchedulerCompletionBeatsPause(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:59:50Z")
+	e := h.round("five", "* * * * *", func(r *Round) { r.MaxRuns = PauseAfterFailures })
+	h.s.Tick()
+	for i := 0; i < PauseAfterFailures; i++ {
+		h.awake(h.clock.Now().Add(time.Minute).Format(time.RFC3339))
+		h.endLatest(e.Round.ID, RunFailed)
+	}
+	en := h.entry(e.Round.ID)
+	if !en.State.Completed || en.Round.Paused || len(h.sink.noticesOf(NoticePaused)) != 0 {
+		t.Errorf("completed %v paused %v notices %d", en.State.Completed, en.Round.Paused, len(h.sink.noticesOf(NoticePaused)))
+	}
+}
+
+func TestSchedulerLastOK(t *testing.T) {
+	h := newHarness(t, "2026-03-02T08:00:00Z")
+	e := h.round("daily", "0 9 * * *", nil)
+	h.s.Tick()
+	h.awake("2026-03-02T08:01:00Z")
+	h.sleep("2026-03-02T22:00:00Z")
+	h.awake("2026-03-02T22:00:30Z")
+	h.endLatest(e.Round.ID, RunSucceeded)
+	if ok := h.entry(e.Round.ID).State.LastOK; ok == nil || !ok.Equal(utc("2026-03-02T22:00:30Z")) {
+		t.Errorf("last ok = %v, want the start", ok)
+	}
+}
+
+func TestSortQueued(t *testing.T) {
+	slot := utc("2026-03-02T09:00:00Z")
+	early, late := utc("2026-03-02T22:00:00Z"), utc("2026-03-02T22:03:00Z")
+	earlier := utc("2026-03-02T08:30:00Z")
+	runs := []*Run{
+		{ID: "run-e", Slot: &earlier, Created: utc("2026-03-02T23:30:00Z")}, // by its slot
+		{ID: "run-d", Created: utc("2026-03-02T08:00:00Z")},                 // no slot: by when it was made
+		{ID: "run-c", Slot: &slot, Created: late},
+		{ID: "run-b", Slot: &slot, Created: early},
+		{ID: "run-a", Slot: &slot, Created: early},
+	}
+	sortQueued(runs)
+	var got []string
+	for _, r := range runs {
+		got = append(got, r.ID)
+	}
+	if strings.Join(got, ",") != "run-d,run-e,run-a,run-b,run-c" {
+		t.Errorf("order = %v", got)
+	}
+}
+
+func TestSchedulerRestartAfterClockBack(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:59:00Z")
+	e := h.round("hourly", "0 * * * *", nil)
+	h.s.Tick()
+	h.awake("2026-03-02T10:00:30Z")
+	h.endLatest(e.Round.ID, RunSucceeded)
+	h.clock.move(-time.Hour, TickEvery)
+	h.reopen() // the start's recompute must not land on the served 10:00 slot
+	if n := h.entry(e.Round.ID).State.NextSlot; !n.Equal(utc("2026-03-02T11:00:00Z")) {
+		t.Errorf("next slot = %v", n)
+	}
+}
+
+func TestSchedulerUnpauseBeforeAnyTick(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:59:00Z")
+	e := h.round("hourly", "0 * * * *", nil)
+	h.s.Tick()
+	h.awake("2026-03-02T10:00:30Z")
+	h.endLatest(e.Round.ID, RunSucceeded)
+	h.awake("2026-03-02T10:30:00Z")
+	h.s.Pause(e.Round.ID)
+	// Five hours awake with no tick, then an unpause: the slots that passed never run.
+	h.clock.move(5*time.Hour, 5*time.Hour)
+	h.s.Unpause(e.Round.ID)
+	h.awake("2026-03-02T15:31:00Z")
+	if n := len(h.runs(e.Round.ID)); n != 1 {
+		t.Errorf("runs = %d", n)
+	}
+	if n := h.entry(e.Round.ID).State.NextSlot; !n.Equal(utc("2026-03-02T16:00:00Z")) {
+		t.Errorf("next slot = %v", n)
+	}
+}
+
+func TestSchedulerPauseAndUnpauseSeeAWake(t *testing.T) {
+	for _, op := range []string{"pause", "unpause"} {
+		h := newHarness(t, "2026-03-02T08:00:00Z")
+		x := h.round("x", "0 9 * * *", nil)
+		sk := h.round("skipper", "0 9 * * *", func(r *Round) { r.CatchUp = CatchUpSkip })
+		h.s.Tick()
+		h.awake("2026-03-02T08:01:00Z")
+		h.clock.move(utc("2026-03-02T22:00:00Z").Sub(h.clock.Now()), time.Second)
+		if op == "pause" {
+			h.s.Pause(x.Round.ID)
+		} else {
+			h.s.Unpause(x.Round.ID)
+		}
+		if r := h.runs(sk.Round.ID); len(r) != 0 {
+			t.Errorf("%s at wake: a skip round ran a missed slot: %+v", op, r)
+		}
+	}
+}
+
+func TestSchedulerPauseDropsPlans(t *testing.T) {
+	// An on-time slot owed behind a live run is dropped by a pause: after unpause, a sleep's
+	// missed slots stay skipped.
+	h := newHarness(t, "2026-03-02T09:59:50Z")
+	e := h.round("hourly", "0 * * * *", func(r *Round) { r.CatchUp = CatchUpSkip })
+	h.s.Tick()
+	h.awake("2026-03-02T11:00:30Z") // 11:00 owed behind the 10:00 run
+	h.s.Pause(e.Round.ID)
+	h.endLatest(e.Round.ID, RunSucceeded)
+	h.awake("2026-03-02T11:30:00Z")
+	h.s.Unpause(e.Round.ID)
+	h.sleep("2026-03-02T15:00:20Z")
+	h.awake("2026-03-02T15:01:00Z")
+	if n := len(h.runs(e.Round.ID)); n != 1 {
+		t.Errorf("owed slot survived a pause: %d runs", n)
+	}
+
+	// A planned retry is dropped by a pause.
+	h = newHarness(t, "2026-03-02T08:00:00Z")
+	e = h.round("daily", "0 9 * * *", nil)
+	h.s.Tick()
+	h.awake("2026-03-02T08:01:00Z")
+	h.sleep("2026-03-02T22:00:00Z")
+	h.awake("2026-03-02T22:01:00Z")
+	h.end(h.runs(e.Round.ID)[0], RunFailed, "net", true)
+	h.s.Pause(e.Round.ID)
+	h.s.Unpause(e.Round.ID)
+	h.awake("2026-03-02T22:06:00Z")
+	if n := len(h.runs(e.Round.ID)); n != 1 {
+		t.Errorf("retry survived a pause: %d runs", n)
 	}
 }
