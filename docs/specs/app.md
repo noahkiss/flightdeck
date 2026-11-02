@@ -2128,6 +2128,9 @@ Rules:
 
 - **Chat first on the phone.** A session opens in the chat view unless the harness has no chat
   reader. The terminal is one tap away.
+- **The switch stays on screen.** On the phone layout the Chat | Terminal switch holds the middle
+  of the navigation bar in both views. The terminal's Fit and Redraw go in the More menu there, so
+  its controls never push the switch off; its microphone stays in the bar.
 - **The split is per device.** The iPad's divider position does not change the Mac's.
 - **Narrow iPad windows** (Slide Over, a third of the screen) use the phone layout.
 - **One session in two windows** is allowed. Each window opens its own data stream; only typing

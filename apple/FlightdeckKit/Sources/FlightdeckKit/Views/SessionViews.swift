@@ -115,9 +115,16 @@ public struct SessionView: View {
                     case .terminal: terminal.make(model.target)
                     }
                 }
+                // The Chat | Terminal switch holds the middle of the bar, so the
+                // terminal's own controls never push it off (app.md 11).
+                .navigationTitle(model.context.title)
                 .toolbar {
                     ToolbarItem(placement: .principal) {
-                        ChatHeader(context: model.context)
+                        Picker("View", selection: $mode) {
+                            ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .fixedSize()
                     }
                     if model.target.session != nil, !model.context.isConsole {
                         ToolbarItem(placement: .secondaryAction) { consoleButton }
@@ -130,13 +137,6 @@ public struct SessionView: View {
                     }
                     ToolbarItem(placement: .primaryAction) {
                         VoiceButton(model: model, shown: $voiceShown)
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        Picker("View", selection: $mode) {
-                            ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
-                        }
-                        .pickerStyle(.segmented)
-                        .fixedSize()
                     }
                 }
                 .sheet(isPresented: $showFiles) {

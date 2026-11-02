@@ -13,6 +13,9 @@ public struct TerminalScreen: View {
     @Environment(\.displayScale) private var displayScale
     @Environment(\.dismiss) private var dismiss
     @Environment(\.terminals) private var terminals
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
 
     /// The pane runs a round's live run: focus reports, mouse motion and the wheel stay
     /// here, so watching never takes the run over (app.md 21.4).
@@ -64,10 +67,14 @@ public struct TerminalScreen: View {
             model.stop()
         }
         .toolbar {
-            ToolbarItemGroup {
-                if let connection {
+            if let connection {
+                ToolbarItem(placement: .automatic) {
                     PaneDictationButton(pane: model.pane, connection: connection)
                 }
+            }
+            // On a narrow screen Fit and Redraw go in the More menu, so the
+            // session's Chat | Terminal switch keeps its room.
+            ToolbarItemGroup(placement: narrow ? .secondaryAction : .automatic) {
                 Button {
                     model.fitToScreen()
                 } label: {
@@ -82,6 +89,14 @@ public struct TerminalScreen: View {
                 .help("Redraw")
             }
         }
+    }
+
+    private var narrow: Bool {
+        #if os(iOS)
+        return sizeClass == .compact
+        #else
+        return false
+        #endif
     }
 
     @ViewBuilder private var inputNotice: some View {
