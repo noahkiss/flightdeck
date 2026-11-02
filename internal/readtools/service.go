@@ -650,7 +650,7 @@ func (s *Service) Transcript(ctx context.Context, local bool, p api.TranscriptRe
 	}
 	folder := r.Cwd()
 	if folder != "" && sc.Denied(folder) {
-		return api.TranscriptPage{}, sc.refuse("the session's folder matches read.deny")
+		return api.TranscriptPage{}, sc.refuse()
 	}
 	return api.TranscriptPage{Host: s.cfg.Host, Harness: harness, Session: native, Folder: folder, Messages: msgs, More: more}, nil
 }

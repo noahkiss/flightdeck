@@ -74,17 +74,17 @@ func (s Scope) Check(path string) (string, error) {
 		return "", err
 	}
 	if s.Broken {
-		return "", s.refuse("the [read] section of the config file does not parse")
+		return "", s.refuse()
 	}
 	if s.denied(p) {
-		return "", s.refuse("it matches read.deny")
+		return "", s.refuse()
 	}
 	real := resolve(p)
 	if !s.allowed(real) {
-		return "", s.refuse("it is outside read.allow")
+		return "", s.refuse()
 	}
 	if s.denied(real) {
-		return "", s.refuse("it matches read.deny")
+		return "", s.refuse()
 	}
 	return real, nil
 }
@@ -98,8 +98,11 @@ func (s Scope) Denied(path string) bool {
 	return s.denied(p) || s.denied(resolve(p))
 }
 
-func (s Scope) refuse(why string) error {
-	return control.Errorf(api.ErrorKindDenied, "%s: the read scope refused this read: %s", s.Host, why)
+// refuse is the one denial for every reason: a path outside every root, a deny match, a
+// session folder denied, or a config that does not parse. One text keeps a denial from telling
+// whether a path lies under an allowed root.
+func (s Scope) refuse() error {
+	return control.Errorf(api.ErrorKindDenied, "%s: the read scope refused this read; the user can see its rules in the app", s.Host)
 }
 
 // abs makes a path absolute and clean; it takes ~/ for the home folder.

@@ -728,7 +728,7 @@ names the first refused row on every `settings.set` error the settings service r
 capability) carries none. Kinds are a server-sent word set, so adding one needs no revision.
 
 With the `read-tools` capability: kind `denied`, a read the host's read scope refused
-(`capcom.md` 5.2). The hint names the host and the list that refused it, never the pattern.
+(`capcom.md` 5.2). The hint names the host, and is the same for every reason: it never names the pattern or the list.
 
 ### 3.7 Reconnect
 

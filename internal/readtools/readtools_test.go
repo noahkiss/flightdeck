@@ -247,8 +247,9 @@ func TestScopeAllowDeny(t *testing.T) {
 			continue
 		}
 		msg := err.Error()
-		if !strings.Contains(msg, "boxa") || !strings.Contains(msg, c.why) {
-			t.Errorf("%s: %q should name the host and %s", c.path, msg, c.why)
+		// One text for every reason, so a denial never tells whether the path is under a root.
+		if want := "boxa: the read scope refused this read; the user can see its rules in the app"; !strings.Contains(msg, want) {
+			t.Errorf("%s (%s): %q, want the one denial %q", c.path, c.why, msg, want)
 		}
 		// The denial never repeats the pattern that matched (capcom.md 5.2, D9).
 		for _, pat := range []string{"~/private", "private", ".ssh", "*.pem", ".env", "id_ed25519"} {

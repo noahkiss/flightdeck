@@ -341,8 +341,9 @@ has no implementation). Error kind `denied`. Doors: `gff-hab read <tool>`, the s
 - **The check.** The hab cleans the path, checks the deny list, resolves every link (a missing
   tail is kept as written), checks the resolved path against each root, as written and
   resolved, then checks the deny list again. A missing path outside the scope is denied, not
-  `not_found`, so a read never shows what exists there. The denial names the host and the list
-  that refused it (`read.allow` or `read.deny`), never the pattern.
+  `not_found`, so a read never shows what exists there. Every denial has one text: it names the
+  host and says the read scope refused the read. It never names the pattern, nor which list
+  refused it, so a denial does not tell whether a path lies under an allowed root.
 - **Config changes.** The hab reads the file again at the next read after its size or time
   changes. A file that does not parse keeps the last good `[read]` section. At start, with no
   good section, every read is refused until the file parses: the user's own deny entries are

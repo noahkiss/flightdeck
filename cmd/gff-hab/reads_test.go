@@ -46,7 +46,7 @@ func (f *fakeReadHab) Call(_ context.Context, method string, params, result any)
 		b, _ := json.Marshal(params)
 		json.Unmarshal(b, &p)
 		if strings.HasSuffix(p.Path, ".env") {
-			return control.Errorf(api.ErrorKindDenied, "host-b: the read scope refused this read: it matches read.deny")
+			return control.Errorf(api.ErrorKindDenied, "host-b: the read scope refused this read; the user can see its rules in the app")
 		}
 		v = api.FileData{Host: "host-a", Path: p.Path, Size: 3, Text: "hi\n"}
 	default:
