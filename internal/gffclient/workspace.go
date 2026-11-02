@@ -76,6 +76,7 @@ type workspaceUI struct {
 	showRuns bool             // run sessions show; off hides those that do not need the owner
 	rounds   []board.RoundRow // every round on every host, ordered
 	onRound  bool             // the board's selection is on a round row
+	boardTop int              // the first board line under the head, so the selection shows
 	selRound board.RoundKey
 	cats     map[string]catCopy // device id -> the newest catalog copy
 	catBusy  map[string]int     // host -> 1 a catalog read is out, 2 and another is due
@@ -954,18 +955,44 @@ func (u *workspaceUI) drawSidebar(a rect) {
 
 func (u *workspaceUI) drawBoard(a rect) {
 	c := u.c
-	y := a.y
-	line := func(s string, st vt.Style) {
-		if y < a.y+a.h {
-			c.canvas.text(a.x, y, a.w, s, st)
-			y++
-		}
+	if a.h <= 0 {
+		return
 	}
 	head := " status board · Enter opens · Esc returns"
 	if !u.showRuns {
 		head += " · " + roundBadge + " run sessions hidden"
 	}
-	line(head, boldStyle)
+	c.canvas.text(a.x, a.y, a.w, head, boldStyle)
+	// The rest scrolls under the head so the selected row stays on screen: an action on the
+	// board always acts on a row the owner can see.
+	type boardLine struct {
+		s  string
+		st vt.Style
+	}
+	var lines []boardLine
+	selLine := -1
+	line := func(s string, st vt.Style) {
+		if st == selStyle {
+			selLine = len(lines)
+		}
+		lines = append(lines, boardLine{s, st})
+	}
+	defer func() {
+		avail := a.h - 1
+		if selLine >= 0 {
+			if selLine < u.boardTop {
+				u.boardTop = selLine
+			}
+			if selLine >= u.boardTop+avail {
+				u.boardTop = selLine - avail + 1
+			}
+		}
+		u.boardTop = max(0, min(u.boardTop, len(lines)-avail))
+		for i := 0; i < avail && u.boardTop+i < len(lines); i++ {
+			l := lines[u.boardTop+i]
+			c.canvas.text(a.x, a.y+1+i, a.w, l.s, l.st)
+		}
+	}()
 	u.fixBoardSel()
 	sel, _, _ := u.selected()
 	section := ""

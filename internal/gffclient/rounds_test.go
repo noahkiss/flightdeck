@@ -1,6 +1,7 @@
 package gffclient
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -229,4 +230,37 @@ func TestKeepCatalog(t *testing.T) {
 	if c, _ := u.catalog("A"); c.Rounds[0].Name != "newer" {
 		t.Fatalf("copy %+v", c)
 	}
+}
+
+// TestBoardScrollsToRound: with more rows than the screen holds, moving the selection into the
+// Rounds list scrolls the board, so Run now acts on a round row that is on screen.
+func TestBoardScrollsToRound(t *testing.T) {
+	d := shortDir(t)
+	a := fakeHab(t, d, "a")
+	now := time.Now()
+	a.PutRound(cronRound("ra", "alpha", now.Add(time.Hour)))
+	a.PutRound(cronRound("rz", "zeta", now.Add(2*time.Hour)))
+	for i := 1; i <= 16; i++ {
+		if _, _, err := a.AddSession(fmt.Sprintf("s%02d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hst := newHost(t, 140, 14, false)
+	startWorkspace(t, hst, a.Sock)
+	hst.typ(cmdKey + "g")
+	hst.waitScreen("the board with its first sessions, the rounds below the screen", func(s string) bool {
+		return strings.Contains(s, "status board") && strings.Contains(s, "s01") && line(s, "  zeta ") < 0
+	})
+	hst.typ(strings.Repeat("j", 30))
+	hst.waitScreen("the last round scrolled into view under the head", func(s string) bool {
+		return strings.Contains(s, "status board") && line(s, "  zeta ") > 0
+	})
+	hst.typ("r")
+	hst.waitScreen("the run of the round on screen", func(_ string) bool {
+		return slices.Equal(a.RunCalls(), []string{"rz"})
+	})
+	hst.typ(strings.Repeat("k", 30))
+	hst.waitScreen("back at the top", func(s string) bool {
+		return line(s, "  zeta ") < 0 && strings.Contains(s, "s01")
+	})
 }
