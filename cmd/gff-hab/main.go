@@ -10,6 +10,8 @@
 //	gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
 //	gff-hab peers    [-socket path] [-json]
 //	gff-hab peers accept [-socket path] <label>
+//	gff-hab pair     [-state dir] [-label name] [-listen addr]... [-port n] [-timeout d] [-authorized-keys path] [-command cmd]
+//	gff-hab devices list|revoke [-state dir] [-json] [<id|label>]
 //	gff-hab notify   [-socket path | -via command] [-level l] [-session id] <title> [body]
 //	gff-hab send     [-socket path | -via command] [-from session] [-reply-to id] [-wait d] <address> <text... | ->
 //	gff-hab wait     [-socket path | -via command] [-session name] [-agent name] [-for states] [-timeout d] [-json]
@@ -131,6 +133,9 @@ const usage = `usage:
   gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
   gff-hab peers    [-socket path] [-json]
   gff-hab peers accept [-socket path] <label>
+  gff-hab pair     [-state dir] [-label name] [-listen addr]... [-port n] [-timeout d] [-authorized-keys path] [-command cmd] [-ssh-port n] [-sshd-keys dir]
+  gff-hab devices list [-state dir] [-json]
+  gff-hab devices revoke [-state dir] <id|label>
   gff-hab notify   [-socket path | -via command] [-level passive|active|time-sensitive] [-session id] <title> [body]
   gff-hab show     [-socket path | -via command] [-session id] [-kind k] [-title t] <path>
   gff-hab send     [-socket path | -via command] [-from session] [-reply-to id] [-wait d] <label/name | name> <text... | ->
@@ -203,6 +208,10 @@ func main() {
 		err = events(os.Args[2:])
 	case "peers":
 		err = peersCmd(os.Args[2:], os.Stdout)
+	case "pair":
+		err = pairCmd(os.Args[2:], os.Stdin, os.Stdout)
+	case "devices":
+		err = devicesCmd(os.Args[2:], os.Stdout)
 	case "notify":
 		err = notifyCmd(os.Args[2:])
 	case "show":

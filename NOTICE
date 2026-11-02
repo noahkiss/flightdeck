@@ -24,12 +24,14 @@ Contents
   github.com/ncruces/go-strftime
   github.com/remyoudompheng/bigfft
   go.mitchellh.com/libghostty
+  golang.org/x/crypto
   golang.org/x/sys
   golang.org/x/text
   modernc.org/libc
   modernc.org/mathutil
   modernc.org/memory
   modernc.org/sqlite
+  rsc.io/qr
   Ghostty
   Zig standard library
   uucode
@@ -572,6 +574,19 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+==============================================================================
+golang.org/x/crypto
+Version: v0.58.0
+Source: https://pkg.go.dev/golang.org/x/crypto
+Licence: see the text below
+In: gff-hab
+
+--- golang.org/x/crypto/LICENSE
+(The same text as Go LICENSE above.)
+
+--- golang.org/x/crypto/PATENTS
+(The same text as Go PATENTS above.)
 
 ==============================================================================
 golang.org/x/sys
@@ -2783,6 +2798,16 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+==============================================================================
+rsc.io/qr
+Version: v0.2.0
+Source: https://pkg.go.dev/rsc.io/qr
+Licence: see the text below
+In: gff-hab
+
+--- rsc.io/qr/LICENSE
+(The same text as modernc.org/memory/LICENSE-GO above.)
 
 ==============================================================================
 Ghostty
