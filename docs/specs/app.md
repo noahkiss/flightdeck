@@ -766,6 +766,8 @@ rows, not as tool cards. Code: `Chat/CapcomCards.swift` (parsing), `Views/Capcom
   (`project`, `message`, `agent`, `host`) and the lead words of the answer. Design call: the
   card parses the hab's own answer text, which `cmd/gff-hab/handoff.go` marks as read by the
   app. A new hab record or API field for this was not worth it while the answer is ours.
+  `TestHandOffAnswerContract` and `TestFileRecordAnswerContract` (`cmd/gff-hab`) check every
+  answer branch against copies of the app's patterns, so a wording change fails there.
 - **Hand-off card.** Header: "Hand-off" and the delivery: Sending (the call runs), Delivered,
   Queued, Held, Not delivered, Not sent, Failed. Below: the target's address, host, harness and
   state from the answer's first line; that line itself; "Why:" and the pick reason; the other

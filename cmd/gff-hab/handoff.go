@@ -314,7 +314,8 @@ func runHandOff(ctx context.Context, c caller, a toolArgs) (any, string, error) 
 	res.Message = &rec
 	// The app's hand-off card reads this answer (app.md 4.8): the first line's lead word
 	// (Delivered, Queued, Held, Not delivered) and "who", then the "Why this agent:", "Also on"
-	// and "Message" lines. Change them together with apple/FlightdeckKit Chat/CapcomCards.swift.
+	// and "Message" lines. Change them together with apple/FlightdeckKit Chat/CapcomCards.swift;
+	// TestHandOffAnswerContract holds the same patterns.
 	who := fmt.Sprintf("%s (%s, %s, on %s)", t.Address, t.Harness, t.State, t.Host)
 	switch {
 	case rec.State == api.ChannelStateDelivered:
