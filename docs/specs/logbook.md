@@ -645,7 +645,7 @@ All additive under `hab-logic-api.md` 3.3. Each answers `unavailable` until its 
 |---|---|---|
 | `logbook` | Capability | The hab has a Logbook replica |
 | `logbook.brief`, `logbook.find`, `logbook.list`, `logbook.ready`, `logbook.get`, `logbook.history` | Methods | Reads |
-| `logbook.write` | Method | One batch of changes with an idempotency key; returns ids and state (`applied` or `proposed`) |
+| `logbook.write` | Method | One batch of changes with an idempotency key; returns ids and state (`applied` or `proposed`). `propose: true` makes the batch a pending proposal whatever `logbook.approval` says; Capcom's `file_record` sends it (`capcom.md` 6.5, which gives the shape it sends). The pane route must take it |
 | `logbook.resolve`, `logbook.decide` | Methods | Settle a conflict; decide a proposal |
 | `logbook.projects`, `logbook.status` | Methods | Projects; replica status |
 | `logbook.pull`, `logbook.push` | Methods | Peer sync (7.1). Only on a peer link |

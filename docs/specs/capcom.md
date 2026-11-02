@@ -558,6 +558,67 @@ Limits, at the bar of herdr, Paseo and Rex:
   first create plus a retry can give two sessions. A `retry_of` argument that reuses the key
   and name is not built.
 
+### 6.5 Built choices (task-9n47i6l8)
+
+Two action tools in `cmd/gff-hab/handoff.go`, in the same table as `start_session`: `hand_off`
+(3.2) and `file_record` (3.4). Doors: `gff-hab mcp`, `gff-hab act` and the manual. No API
+change: `hand_off` uses `catalog.list`, `channel.send` and `channel.status`; `file_record` uses
+`logbook.find` and `logbook.write`.
+
+- **Finding the agent.** The tool reads `catalog.list` and resolves `project` as `suggest_host`
+  does: a project's name, key, remote or a folder of one of its checkouts. The candidates are
+  the agents of every host where that project is checked out whose project name matches, in
+  any state but `none` and `exited`. `host` keeps one host. A project the catalog does not list
+  falls back to the agents' project name.
+- **Picking.** In order: the agent the user named (`agent`: a session name or `host/name`);
+  else an online agent that takes a message now (`idle`, `done` or `error`); else an online busy
+  one (`working`, `blocked`); else one on an offline host; within each, the latest `since`.
+  The answer names the pick, says why, and lists the other candidates. Design call: no "two
+  equal candidates, ask" step. Two agents with the same state and the same `since` to the
+  second are rare, and the other candidates are listed, so Capcom can still ask.
+- **Sending.** `channel.send` to the agent's address (`label/name` on a peer, the bare name on
+  this hab), through the pane route, so the calling pane's session is the sender and the
+  target sees the agent envelope with that address (`mesh.md` 6.5). Outside a pane the hab
+  refuses the send for lack of `from`; the tool takes no `from`, since an MCP server always runs
+  in a pane. No confirmation (owner, 2026-11-01).
+- **What it reports.** For a target that looked ready and online, the tool waits up to 5 s
+  (`channel.status`) for a final state, so an idle agent shows `delivered`. Then one of:
+  delivered; queued, "working; it gets the message when idle"; queued, "blocked on a permission
+  request; it gets the message once that is answered", with a pointer to the open approval;
+  held, the host offline and the message in the outbox for up to 7 days; not delivered, with
+  the hab's reason. The message id and its channel state follow. Design call: the word
+  "queued" here means "waits for the agent", whatever the channel state (`handed` on this hab,
+  `queued` on the way to a peer).
+- **None.** No candidate: the tool sends nothing and says so, pointing at `suggest_host` and
+  `start_session`. An `agent` that matches none lists the agents that do run there. Both are
+  plain answers, not errors.
+- **The hand-off card.** Design call: the card is the `hand_off` tool call in Capcom's own
+  transcript. Its arguments hold the exact text sent and the target; its answer holds the
+  delivery. The chat view renders that tool call as the card (6.3). No hab record is added.
+- **`file_record`.** Arguments: `type` (task, finding, issue, plan or guide), `title` (one line,
+  at most 200 characters), `quote` (required: the user's words), `body` (at most 256 KiB),
+  `project`, `source_message`. A project resolves through the catalog to its key (`logbook.md`
+  3.1); one the catalog lacks is refused. The tool checks these before it calls the hab.
+- **The capability check.** The tool first calls `logbook.find` with limit 1. A hab without
+  Logbook answers `unavailable` at either door, and the tool then answers `unavailable`: "Logbook
+  is not on this host yet, so the record was not filed and nothing was written". It sends no
+  write and stores nothing anywhere. Design call: a probe rather than the welcome's `logbook`
+  capability, because the pane route has no welcome.
+- **The proposal call.** With Logbook there, the tool calls `logbook.write` (`logbook.md` 10.3)
+  with `{idempotency_key, propose: true, changes: [{op: "create", type, project, title, body}],
+  source: {message, quote}}`, and reads `{state, proposal, ids}`. `propose: true` makes a pending
+  proposal whatever `logbook.approval` says (`logbook.md` 9.1: Capcom files proposals by its own
+  rule). The hab fills in the session from the pane's token (`logbook.md` 2.5). The shapes live
+  in `cmd/gff-hab` until Part 12 adds the method to the API; Part 12 must also add
+  `logbook.write` to the pane route, which takes only `logbook.find` and `logbook.get` today.
+  A hab that answers `applied` despite `propose` is reported as such, plainly.
+
+Limits, at the bar of herdr, Paseo and Rex:
+
+- The pick reads the catalog, which a peer refreshes every 15 s: an agent that just changed
+  state may be picked on its old state. Delivery still follows the target's real state.
+- No hab-side record of a hand-off beyond the channel record (7 days on the sender hab).
+
 ---
 
 ## 7. The session host
@@ -742,7 +803,7 @@ The Part 9 stages, with what this spec adds to each.
 |---|---|---|
 | Tools (task-m31qyr6v) | Read tools in the agent kit (4) and the read scope (5). Built; see 5.5 | Tests on fake catalog, transcript and Logbook data; a write through a read tool is refused; a read outside scope is denied without the pattern; a search with an offline and a slow peer returns partial results marked |
 | Session host (task-aqw4iowl) | The Capcom folder, manual and settings (7.1), kind `capcom`, standing and new conversations, home host assignment (7.3) | A `gff-hab` restart keeps Capcom running; a plain-terminal resume works from the folder; the manual and settings are rewritten at start; `gff-hab capcom assign` moves the mark, the old conversation stays resumable, and a host offline during the change drops its mark on its next link |
-| Hand off and file (task-9n47i6l8) | 3.2 and 3.4, the hand-off card as a record, the hand-off and proposal tools | Hand-off to an idle fake agent delivers at once with no confirmation; to a working one queues; the card shows the exact text sent; a record lands as a proposal |
+| Hand off and file (task-9n47i6l8) | 3.2 and 3.4, the hand-off card as a record, the hand-off and proposal tools. Built; see 6.5. The card is the tool call in Capcom's transcript; `file_record` answers `unavailable` until Logbook (Part 12) | Hand-off to an idle fake agent delivers at once with no confirmation; to a working one queues; the card shows the exact text sent; a record lands as a proposal |
 | Suggest and start (task-ph00sdci) | 3.3, ranking, seed, the confirmation mechanism (6.1) and the start and set-up tools, start by confirmation id, `confirm.start_elsewhere`. Built; see 6.4, with the confirmations' expiry, first-answer-wins and the CLI fallback | A host without a needed capability is not suggested and the reason names it; with the setting on, no session starts without a confirm; with it off, the start runs at once and its card shows as a record; a repeated confirm id starts one session |
 | Approval (task-3387vxca) | Review (6.2), and the proposals' CLI fallback. Confirmations' expiry, first-answer-wins and CLI fallback came with "Suggest and start" (6.4) | Three proposals, one approved: only it applies; closing without review leaves all pending; an expired confirmation never runs; a second answer gets `conflict` |
 | Entry API (task-ilse43i7) | 8.3 calls and events, attached context blocks (8.1) | Open, send, attach and confirm against a stub Capcom; the schema compat test passes |
