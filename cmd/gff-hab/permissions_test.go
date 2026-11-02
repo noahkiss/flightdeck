@@ -64,19 +64,30 @@ func TestProbePane(t *testing.T) {
 	}
 
 	// A probe that prints no result: an error, and the pane goes.
+	// Sample the structure until the probe ends: the link must list the pane at some point, and
+	// the hiding view must never list it.
 	pr.argv = []string{"/bin/sh", "-c", "echo not a result; sleep 0.3"}
-	seen := make(chan bool, 1)
+	ran, seen := make(chan struct{}), make(chan [2]bool, 1)
 	go func() {
-		time.Sleep(100 * time.Millisecond)
-		ps, _ := hs.Panes()
-		raw, _ := lk.Structure().Panes()
-		seen <- len(ps) == 0 && len(raw) == 1
+		listed, shown := false, false
+		for {
+			ps, _ := hs.Panes()
+			raw, _ := lk.Structure().Panes()
+			listed, shown = listed || len(raw) == 1, shown || len(ps) != 0
+			select {
+			case <-ran:
+				seen <- [2]bool{listed, shown}
+				return
+			case <-time.After(5 * time.Millisecond):
+			}
+		}
 	}()
 	if _, _, err := pr.run(ctx, []string{grants.Domain}, ""); err == nil || !strings.Contains(err.Error(), "no result") {
 		t.Errorf("no result: %v", err)
 	}
-	if !<-seen {
-		t.Error("while it ran, the probe pane was not hidden from the structure (or not followed by the link)")
+	close(ran)
+	if s := <-seen; !s[0] || s[1] {
+		t.Errorf("while it ran, the link listed the probe pane: %v; the structure showed it: %v", s[0], s[1])
 	}
 	for _, st := range lk.Panes() {
 		if !st.Gone && !st.Lost {
