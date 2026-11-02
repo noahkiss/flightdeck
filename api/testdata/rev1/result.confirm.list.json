@@ -41,6 +41,14 @@
     }
   ],
   "seq": 3,
+  "targets": [
+    {
+      "host": "host-27",
+      "ready": true,
+      "reason": "reason-28",
+      "x_unknown_field": "later"
+    }
+  ],
   "x_unknown_field": "later",
   "x_unknown_object": {
     "flag": true,

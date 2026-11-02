@@ -4379,6 +4379,13 @@
             "type": "integer",
             "format": "uint64",
             "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "targets": {
+            "type": "array",
+            "description": "The hosts a start can go to: this hab first, then each peer in the peer list, with why a start there would be refused.",
+            "items": {
+              "$ref": "#/components/schemas/ConfirmTarget"
+            }
           }
         },
         "required": [
@@ -4543,6 +4550,26 @@
           "cancelled",
           "expired",
           "unknown"
+        ]
+      },
+      "ConfirmTarget": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "This hab's host id, or a peer label."
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "A start there can run now."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why not, when not ready."
+          }
+        },
+        "required": [
+          "host"
         ]
       },
       "Confirmation": {

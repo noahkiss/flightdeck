@@ -1,6 +1,6 @@
 // Package confirm keeps the confirmations of one hab (capcom.md 6.1, mesh.md 7): the starts
-// and set-ups an agent asks for. With confirm.start_elsewhere on, a start on another host, or
-// any start Capcom asks for, opens a confirmation and waits for the user's answer; nothing runs
+// and set-ups an agent asks for. With confirm.start_elsewhere on, a start on another host
+// opens a confirmation and waits for the user's answer; nothing runs
 // until a client confirms it, and an open one expires after 60 minutes and never runs. With
 // the setting off, the start runs at once and the confirmation is a record. Either way the hab,
 // never the agent, runs the action, with the confirmation id as the idempotency key of the
@@ -67,23 +67,31 @@ type Config struct {
 	Runner Runner
 	// Enabled reports confirm.start_elsewhere. Nil: off.
 	Enabled func() bool
-	// Capcom reports whether a session on this hab is a Capcom session: every start it asks
-	// for needs a confirmation while the setting is on. Nil: none is.
-	Capcom func(session string) bool
-	// Publish hears confirm.requested and confirm.closed. It is called with no lock held.
+	// Publish hears confirm.requested and confirm.closed, in order: a confirmation's
+	// requested event always goes out before its closed one. It is called with the service's
+	// publish lock held, never its state lock, so it must not call back into the service.
 	Publish func(structure.Event)
-	// Notify sends a message from Flightdeck to a session on this hab: the answer to a request
-	// whose wait ended first (capcom.md 6.1). Nil: none is sent.
+	// SessionID returns the id of a session on this hab by name, or "". The note goes by id,
+	// so a requester renamed while its card is open still gets it. Nil: notes go by name.
+	SessionID func(name string) string
+	// Notify sends a message from Flightdeck to a session on this hab, named by its id (or by
+	// its name when SessionID is nil): the answer to a request whose wait ended first
+	// (capcom.md 6.1). Nil: none is sent.
 	Notify func(session, text string) error
-	TTL    time.Duration // default TTL
-	Now    func() time.Time
-	Logf   func(string, ...any)
+	// Targets lists the hosts a start can go to now, for confirm.list. Nil: none listed.
+	Targets func() []api.ConfirmTarget
+	TTL     time.Duration // default TTL
+	Now     func() time.Time
+	Logf    func(string, ...any)
 }
 
 // Service is one hab's confirmations.
 type Service struct {
 	cfg Config
 
+	// pub orders the events: a request holds it from the moment its confirmation is visible
+	// until confirm.requested is out, so no confirm.closed for it can go first.
+	pub    sync.Mutex
 	mu     sync.Mutex
 	open   map[string]*entry
 	order  []string // open ids in the order they opened
@@ -95,10 +103,17 @@ type entry struct {
 	c        api.Confirmation
 	expires  time.Time
 	timer    *time.Timer
+	fromID   string        // the requesting session's id, for the note
 	done     chan struct{} // closed when the confirmation closes
 	waiters  int           // requests waiting for the answer now
 	returned bool          // a request returned the closed confirmation
+	// published is set once confirm.requested went out and the request let go of the publish
+	// lock; only the requesting goroutine reads or writes it.
+	published bool
 }
+
+// pubHeld reports whether the request still holds the publish lock for e.
+func (s *Service) pubHeld(e *entry) bool { return !e.published }
 
 // New returns an empty service.
 func New(cfg Config) (*Service, error) {
@@ -164,14 +179,13 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 	if p.WaitMS < 0 {
 		return api.Confirmation{}, control.Errorf(api.ErrorKindInvalid, "wait_ms must not be negative")
 	}
-	wait := min(time.Duration(p.WaitMS)*time.Millisecond, MaxWait)
+	wait := time.Duration(min(p.WaitMS, int(MaxWait/time.Millisecond))) * time.Millisecond
 	st, self, err := s.cfg.Runner.CheckStart(*p.Start)
 	if err != nil {
 		return api.Confirmation{}, err
 	}
 	on := s.cfg.Enabled != nil && s.cfg.Enabled()
-	capcom := p.From != "" && s.cfg.Capcom != nil && s.cfg.Capcom(p.From)
-	ask := on && (!self || capcom)
+	ask := on && !self // a start on the agent's own host never asks (capcom.md 6.4)
 	now := s.cfg.Now()
 	id := newID()
 	if st.Name == "" {
@@ -182,21 +196,34 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 	e := &entry{done: make(chan struct{}), c: api.Confirmation{
 		ID: id, Kind: "start", From: p.From, Start: &st, Created: stamp(now),
 	}}
+	if p.From != "" && s.cfg.SessionID != nil {
+		e.fromID = s.cfg.SessionID(p.From)
+	}
 	if !ask {
 		// The setting is off, or the start is on the agent's own host: it runs now, and the
 		// card is a record (capcom.md 6.1).
 		e.c.State, e.c.Record, e.returned = "running", true, true
+		s.pub.Lock()
 		s.mu.Lock()
 		s.open[e.c.ID] = e
 		s.order = append(s.order, e.c.ID)
 		c := e.c
 		s.mu.Unlock()
-		s.publish(EventRequested, c)
+		s.publishLocked(EventRequested, c)
+		s.pub.Unlock()
 		return s.run(e), nil
 	}
 	e.c.State = "open"
-	e.expires = now.Add(s.cfg.TTL)
+	// Wall time, with no monotonic reading: a Mac's monotonic clock stops in sleep, so a card
+	// past its shown expiry would otherwise still take a confirm after a long sleep.
+	e.expires = now.Add(s.cfg.TTL).Round(0)
 	e.c.ExpiresAt = stamp(e.expires)
+	s.pub.Lock()
+	defer func() {
+		if s.pubHeld(e) {
+			s.pub.Unlock()
+		}
+	}()
 	s.mu.Lock()
 	if s.stop {
 		s.mu.Unlock()
@@ -210,7 +237,9 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 		e.waiters++
 	}
 	s.mu.Unlock()
-	s.publish(EventRequested, c)
+	s.publishLocked(EventRequested, c)
+	e.published = true
+	s.pub.Unlock()
 	if wait == 0 {
 		return c, nil
 	}
@@ -254,6 +283,7 @@ func (s *Service) Answer(ctx context.Context, client string, p api.ConfirmAnswer
 		return c, nil
 	}
 	start := *e.c.Start
+	auto := start.Name == start.Harness+"-"+e.c.ID[:6]
 	s.mu.Unlock()
 
 	edited := false
@@ -273,6 +303,9 @@ func (s *Service) Answer(ctx context.Context, client string, p api.ConfirmAnswer
 		apply(&start.Seed, ed.Seed)
 	}
 	if edited {
+		if auto {
+			start.Name = start.Harness + "-" + p.ID[:6] // a harness edit renames an automatic name
+		}
 		start.Project, start.Branch = "", ""
 		var err error
 		if start, _, err = s.cfg.Runner.CheckStart(start); err != nil {
@@ -393,16 +426,34 @@ func (s *Service) closeLocked(e *entry, state api.ConfirmState, reason string, r
 
 // after publishes confirm.closed and sends the note, with no lock held.
 func (s *Service) after(c api.Confirmation, note string) {
-	s.publish(EventClosed, c)
+	s.pub.Lock()
+	s.publishLocked(EventClosed, c)
+	s.pub.Unlock()
 	if note == "" || s.cfg.Notify == nil {
 		return
 	}
-	if err := s.cfg.Notify(c.From, note); err != nil {
+	to := c.From
+	if s.cfg.SessionID != nil {
+		s.mu.Lock()
+		to = ""
+		for _, e := range s.closed {
+			if e.c.ID == c.ID {
+				to = e.fromID
+			}
+		}
+		s.mu.Unlock()
+		if to == "" {
+			s.cfg.Logf("confirm: %s: the requesting session %s had no id; no message", c.ID, c.From)
+			return
+		}
+	}
+	if err := s.cfg.Notify(to, note); err != nil {
 		s.cfg.Logf("confirm: %s: message to %s: %v", c.ID, c.From, err)
 	}
 }
 
-func (s *Service) publish(t api.EventType, c api.Confirmation) {
+// publishLocked publishes one event; the caller holds s.pub.
+func (s *Service) publishLocked(t api.EventType, c api.Confirmation) {
 	if s.cfg.Publish != nil {
 		s.cfg.Publish(structure.Event{Type: t, ID: c.ID, Data: c})
 	}
@@ -464,6 +515,14 @@ func (s *Service) List(all bool) []api.Confirmation {
 		}
 	}
 	return out
+}
+
+// Targets lists the hosts a start can go to now.
+func (s *Service) Targets() []api.ConfirmTarget {
+	if s.cfg.Targets == nil {
+		return nil
+	}
+	return s.cfg.Targets()
 }
 
 // Get returns one confirmation, open or closed.

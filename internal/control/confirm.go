@@ -14,6 +14,7 @@ type Confirm interface {
 	Answer(ctx context.Context, client string, p api.ConfirmAnswerParams) (api.Confirmation, error)
 	List(all bool) []api.Confirmation
 	Get(id string) (api.Confirmation, error)
+	Targets() []api.ConfirmTarget
 }
 
 // maxConfirmTime bounds one confirm call: the longest wait, or a run, plus a margin.
@@ -55,7 +56,7 @@ func (c *conn) handleConfirm(m message) {
 	case "confirm.list":
 		var p api.ConfirmListParams
 		if e = c.decodeUp(m, &p); e == nil && cf != nil {
-			c.reply(m, seq, api.NonNil(api.ConfirmList{Seq: api.Seq{Seq: seq}, Confirmations: cf.List(p.All)}), nil)
+			c.reply(m, seq, api.NonNil(api.ConfirmList{Seq: api.Seq{Seq: seq}, Confirmations: cf.List(p.All), Targets: cf.Targets()}), nil)
 			return
 		}
 	case "confirm.get":

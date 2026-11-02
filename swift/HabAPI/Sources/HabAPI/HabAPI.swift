@@ -1455,15 +1455,19 @@ public struct ConfirmList: Codable, Sendable, Hashable {
     public var confirmations: [Confirmation]
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
+    /// The hosts a start can go to: this hab first, then each peer in the peer list, with why a start there would be refused.
+    public var targets: [ConfirmTarget]?
 
     enum CodingKeys: String, CodingKey {
         case confirmations = "confirmations"
         case seq = "seq"
+        case targets = "targets"
     }
 
-    public init(confirmations: [Confirmation], seq: UInt64) {
+    public init(confirmations: [Confirmation], seq: UInt64, targets: [ConfirmTarget]? = nil) {
         self.confirmations = confirmations
         self.seq = seq
+        self.targets = targets
     }
 }
 
@@ -1626,6 +1630,27 @@ public struct ConfirmState: RawRepresentable, Codable, Sendable, Hashable {
     public static let cancelled = ConfirmState(rawValue: "cancelled")
     public static let expired = ConfirmState(rawValue: "expired")
     public static let unknown = ConfirmState(rawValue: "unknown")
+}
+
+public struct ConfirmTarget: Codable, Sendable, Hashable {
+    /// This hab's host id, or a peer label.
+    public var host: String
+    /// A start there can run now.
+    public var ready: Bool?
+    /// Why not, when not ready.
+    public var reason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case host = "host"
+        case ready = "ready"
+        case reason = "reason"
+    }
+
+    public init(host: String, ready: Bool? = nil, reason: String? = nil) {
+        self.host = host
+        self.ready = ready
+        self.reason = reason
+    }
 }
 
 public struct Confirmation: Codable, Sendable, Hashable {

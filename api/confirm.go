@@ -101,10 +101,18 @@ type ConfirmListParams struct {
 	All bool `json:"all,omitempty" doc:"Also list closed confirmations the hab still keeps, newest first after the open ones."`
 }
 
+// ConfirmTarget is a host a start could go to, and whether it can now.
+type ConfirmTarget struct {
+	Host   string `json:"host" doc:"This hab's host id, or a peer label."`
+	Ready  bool   `json:"ready,omitempty" doc:"A start there can run now."`
+	Reason string `json:"reason,omitempty" doc:"Why not, when not ready."`
+}
+
 // ConfirmList answers confirm.list.
 type ConfirmList struct {
 	Seq
-	Confirmations []Confirmation `json:"confirmations"`
+	Confirmations []Confirmation  `json:"confirmations"`
+	Targets       []ConfirmTarget `json:"targets,omitempty" doc:"The hosts a start can go to: this hab first, then each peer in the peer list, with why a start there would be refused."`
 }
 
 type ConfirmGetParams struct {

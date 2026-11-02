@@ -71,7 +71,6 @@ func newRig(t *testing.T, on bool, ttl time.Duration) *rig {
 	svc, err := New(Config{
 		Runner:  r.runner,
 		Enabled: func() bool { return r.on },
-		Capcom:  func(s string) bool { return s == "capcom" },
 		Publish: func(e structure.Event) { r.mu.Lock(); r.events = append(r.events, e); r.mu.Unlock() },
 		Notify: func(session, text string) error {
 			r.mu.Lock()
@@ -184,16 +183,104 @@ func TestOffRunsAtOnceAsARecord(t *testing.T) {
 	}
 }
 
-// An agent's start on its own host runs at once; Capcom's needs a confirm while the setting is on.
-func TestOwnHostAndCapcom(t *testing.T) {
+// A start on the agent's own host never asks, Capcom's included (capcom.md 6.4).
+func TestOwnHostNeverAsks(t *testing.T) {
 	r := newRig(t, true, time.Hour)
-	c, err := r.svc.Request(context.Background(), api.ConfirmRequestParams{Kind: "start", Start: start("self"), From: "agent"})
-	if err != nil || !c.Record || c.State != "done" {
-		t.Fatalf("own host: %+v %v", c, err)
+	for _, from := range []string{"agent", "capcom", ""} {
+		c, err := r.svc.Request(context.Background(), api.ConfirmRequestParams{Kind: "start", Start: start("self"), From: from})
+		if err != nil || !c.Record || c.State != "done" {
+			t.Fatalf("own host from %q: %+v %v", from, c, err)
+		}
 	}
-	c, err = r.svc.Request(context.Background(), api.ConfirmRequestParams{Kind: "start", Start: start("self"), From: "capcom"})
-	if err != nil || c.Record || c.State != "open" {
-		t.Fatalf("capcom on its own host: %+v %v", c, err)
+}
+
+// Concurrent answers: exactly one wins and runs; every other gets conflict.
+func TestConcurrentAnswers(t *testing.T) {
+	r := newRig(t, true, time.Hour)
+	c, _ := r.svc.Request(context.Background(), api.ConfirmRequestParams{Kind: "start", Start: start("beta")})
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	wins, conflicts := 0, 0
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			choice := api.ConfirmChoice("confirm")
+			if i%2 == 1 {
+				choice = "cancel"
+			}
+			_, err := r.svc.Answer(context.Background(), fmt.Sprintf("c%d", i), api.ConfirmAnswerParams{ID: c.ID, Choice: choice})
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil:
+				wins++
+			case kind(err) == api.ErrorKindConflict:
+				conflicts++
+			default:
+				t.Errorf("answer %d: %v", i, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if wins != 1 || conflicts != 15 || r.runner.count() > 1 {
+		t.Fatalf("wins %d, conflicts %d, runs %d", wins, conflicts, r.runner.count())
+	}
+	if ts := r.types(); len(ts) != 2 || ts[0] != "confirm.requested" || ts[1] != "confirm.closed" {
+		t.Fatalf("events: %v", ts)
+	}
+}
+
+// An answer racing the expiry: either it wins and runs once, or it gets conflict and nothing runs.
+func TestAnswerRacesExpiry(t *testing.T) {
+	for i := 0; i < 30; i++ {
+		r := newRig(t, true, time.Duration(i%5)*time.Millisecond+time.Millisecond)
+		c, _ := r.svc.Request(context.Background(), api.ConfirmRequestParams{Kind: "start", Start: start("beta")})
+		got, err := r.svc.Answer(context.Background(), "phone", api.ConfirmAnswerParams{ID: c.ID, Choice: "confirm"})
+		final, _ := r.svc.Get(c.ID)
+		switch {
+		case err == nil:
+			if got.State != "done" || r.runner.count() != 1 {
+				t.Fatalf("won: %+v runs %d", got, r.runner.count())
+			}
+		case kind(err) == api.ErrorKindConflict:
+			if r.runner.count() != 0 || final.State != "expired" {
+				t.Fatalf("lost to expiry, yet ran or not expired: %+v runs %d", final, r.runner.count())
+			}
+		default:
+			t.Fatal(err)
+		}
+	}
+}
+
+// A huge wait_ms is clamped, not overflowed; a harness edit renames an automatic name; the
+// note goes by session id.
+func TestWaitClampRenameAndNoteByID(t *testing.T) {
+	r := newRig(t, true, time.Hour)
+	r.svc.cfg.SessionID = func(name string) string { return "id-" + name }
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan api.Confirmation)
+	go func() {
+		c, _ := r.svc.Request(ctx, api.ConfirmRequestParams{Kind: "start", Start: start("beta"), From: "agent", WaitMS: 1 << 62})
+		done <- c
+	}()
+	var id string
+	for id == "" {
+		if open := r.svc.Open(); len(open) == 1 {
+			id = open[0].ID
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel() // the tool call was cancelled: the wait ends, the note will go
+	if c := <-done; c.State != "open" || c.Start.Name != "claude-"+id[:6] {
+		t.Fatalf("after cancel: %+v", c)
+	}
+	got, err := r.svc.Answer(context.Background(), "phone", api.ConfirmAnswerParams{ID: id, Choice: "confirm", Edits: &api.ConfirmEdits{Harness: "codex"}})
+	if err != nil || got.Start.Name != "codex-"+id[:6] {
+		t.Fatalf("rename: %+v %v", got, err)
+	}
+	if n := r.notesNow(); len(n) != 1 || !strings.HasPrefix(n[0], "id-agent: ") {
+		t.Fatalf("notes: %v", n)
 	}
 }
 
