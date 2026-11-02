@@ -711,7 +711,9 @@ copy), `internal/fakehab/rounds.go` (the fake hab's rounds and catalog).
   host no longer has the round).
 - **Filter.** `R` hides or shows run sessions: in session mode (Ctrl+O `R`), in the sidebar and
   on the board. Shown at start, kept for the gff process. Hidden, a run session that needs the
-  owner (blocked, error, done and not seen) still shows. The sidebar and the board's heading say
+  owner (blocked, error, done and not seen) still shows, and so does the session of a run that
+  is `blocked` as its round's last run: Claude Code's trust dialog blocks the run with no
+  blocked agent state (`rounds.md` 7). The sidebar and the board's heading say
   "↻ run sessions hidden". Design call, as the app: a hidden approval would stall the run.
   Call: `R` and not a lower-case key, since `r` is redraw in session mode and rename in the
   sidebar; one key in all three places.
@@ -719,13 +721,16 @@ copy), `internal/fakehab/rounds.go` (the fake hab's rounds and catalog).
   round: name, mode, host, next run, the mark, the trigger. Design call: one list with a host
   column, not one section per host as in the app. The terminal has the width for a column and
   not the height for a heading per host, and the task asks for next-run order across hosts.
+  The board scrolls under its heading so the selected row, session or round, stays on screen:
+  `r` and `p` never act on a row the owner cannot see.
 - **Order.** As the app: rounds with a next slot, soonest first across hosts; then rounds with
   none (by hand); then paused; then completed. Name, then host, break ties.
 - **Next run.** In this machine's zone: "today 09:00", "tomorrow 09:00", else "Mar 13 09:00",
   with the round's own clock beside it when that differs ("tomorrow 15:00 (09:00
   America/Chicago)"). A paused or completed round shows "-": it will not run then.
 - **Mark.** Completed, paused (with the hab's reason when it paused or completed itself), else
-  the last run's state word as the hab sends it, else "no runs yet". A stale row adds "· stale
+  "trigger error" when the stored trigger no longer compiles on its host (the hab's reason
+  follows the trigger), else the last run's state word as the hab sends it, else "no runs yet". A stale row adds "· stale
   3m".
 - **Trigger** in the catalog's words, from `rounds.TriggerWords`, which the catalog's rounds
   section also uses, so the board and `gff-hab round ls -all` say the same. It is the last
@@ -733,10 +738,14 @@ copy), `internal/fakehab/rounds.go` (the fake hab's rounds and catalog).
 - **Stale rows.** A host that is not online shows its last rounds, dimmed, with no action:
   either the rounds of its last snapshot or the copy in another hab's catalog
   (`catalog.list`, `rounds.md` 9). The catalog copy wins when it was confirmed after gff lost
-  the host, or when gff never reached the host (found by its pinned device id). gff reads
+  the host by more than 10 s (the copy's time is by another hab's clock), or when gff never
+  reached the host (found by its pinned device id). A label never reached shows no rounds when
+  another label reached the hab it pins, or an earlier never-reached label pins the same one:
+  one hab's rounds show once. gff reads
   `catalog.list` from each online hab whose welcome lists `catalog`, at connect and on each
   `catalog.updated`, one read per hab at a time, and keeps each device's copy with the latest
-  seen time. A host that failed for good shows no rounds, as with sessions. Peers that are not
+  seen time. It keeps copies only of hosts in its own host list, and skips the answering hab's
+  own entry: gff is connected to that hab, so its snapshot is newer. A host that failed for good shows no rounds, as with sessions. Peers that are not
   in gff's host list are not shown, as in the app (`app.md` 21.1).
 - **Keys on a round row.** `j`/`k` move from the session rows into the rounds and back. `r`
   runs the round now (`round.run`), `p` pauses it or unpauses a paused one, Enter (or `t`)
@@ -752,12 +761,15 @@ copy), `internal/fakehab/rounds.go` (the fake hab's rounds and catalog).
 | Test | Proves |
 |---|---|
 | `habconn` `TestRoundsKept` | round.updated by revision, kept last run, an older run ignored, the same and a newer run applied, an unknown round's run ignored, delete and a late update after it |
-| `board` `TestRoundOrder`, `TestRoundsStale`, `TestRunSessionFilter` | Next-run order across two hosts with by hand, paused and completed after; trigger words; an offline host's held rounds, a newer catalog copy winning and an older one not, a never-reached host by its pin, none for a failed host; the filter keeping a run session that needs the owner; round names and "round" for a gone round |
+| `board` `TestRoundOrder`, `TestRoundsStale`, `TestRunSessionFilter`, `TestRunSessionFilterTrustDialog` | Next-run order across two hosts with by hand, paused and completed after; trigger words; an offline host's held rounds, a newer catalog copy winning and an older one or one inside the skew margin not, a never-reached host by its pin, a never-reached second label for a hab shown once (beside an online, a held or another never-reached label), none for a failed host; the filter keeping a run session that needs the owner, and one whose run is blocked with no blocked agent state; round names and "round" for a gone round |
 | `hosts` `TestRoundsAcrossHosts` | Two fake habs: the board's order from the snapshots, then from round.updated and round.run_updated; a stopped hab's rounds stale, live again after its restart |
 | `gffclient` `TestRunSessionBadge` | gff's screen: the badge; `R` in the sidebar hides run sessions; a blocked run session shows while hidden and goes when working; Ctrl+O `R` shows them again |
 | `gffclient` `TestBoardRounds` | Two fake habs on the board in next-run order, paused last; Run now on a round with a live run shows the hab's conflict and records no run; Run now calls `round.run` and the row shows running; `p` pauses and unpauses; the run's session opens when it shows |
 | `gffclient` `TestBoardRoundsStale` | A never-reached host's rounds from another hab's catalog, stale; a stopped hab's round stale; Run now on it says offline and calls nothing |
 | `gffclient` `TestBoardMatchesRoundLs` | Real holder and gff-hab: rounds made with `gff-hab round add` and one paused; the board lists exactly the rounds of `gff-hab round ls -all -json`, with the same trigger words and marks |
+| `gffclient` `TestBoardScrollsToRound` | More sessions than the screen holds: `j` into the Rounds list scrolls the last round on screen, `r` runs it, `k` scrolls back to the top |
+| `gffclient` `TestKeepCatalog`, `TestRoundTextTriggerError` | A hab's own catalog entry and a device in no host's identity are not kept, the newest copy is; a round whose trigger no longer compiles shows "trigger error" and the reason after its trigger |
+| `gffclient` `TestPrefixKeymapSample` | The one-prefix sample binds `R`, and on the board `r` and `p` |
 | `gffclient` `TestNextText` | Today, tomorrow and a date in this machine's zone; the round's clock beside it when it differs |
 
 ---
