@@ -311,9 +311,21 @@ func LoadScopeConfig(path, home string) (ScopeConfig, []string, error) {
 		c.Allow = append(c.Allow, filepath.Clean(r))
 	}
 	for _, d := range fc.Read.Deny {
-		if d = strings.TrimSpace(d); d != "" {
-			c.Deny = append(c.Deny, d)
+		d = strings.TrimSpace(d)
+		if d == "" {
+			problems = append(problems, fmt.Sprintf("%s: read: deny has a blank entry", path))
+			continue
 		}
+		if w, ok := strings.CutPrefix(d, "!"); ok && (w == "" || strings.Contains(w, "/") || strings.HasPrefix(w, "~")) {
+			problems = append(problems, fmt.Sprintf("%s: read: deny %q: an exemption is one name with no slash", path, d))
+			continue
+		}
+		c.Deny = append(c.Deny, d)
+	}
+	// A list whose every entry is bad keeps the default list; only deny = [] turns it off.
+	if c.DenySet && len(c.Deny) == 0 && len(fc.Read.Deny) > 0 {
+		c.DenySet = false
+		problems = append(problems, fmt.Sprintf("%s: read: deny has no usable entry; the default deny list stays", path))
 	}
 	return c, problems, nil
 }
@@ -350,6 +362,20 @@ func (s *ScopeSource) Scope() Scope {
 	return sc.Resolved()
 }
 
+// replaceNote says what a configured deny list does to the default one.
+func replaceNote(deny []string) string {
+	if len(deny) == 0 {
+		return "read scope: deny = [] turns the default deny list off"
+	}
+	dropped := 0
+	for _, d := range DefaultDeny {
+		if !slices.Contains(deny, d) {
+			dropped++
+		}
+	}
+	return fmt.Sprintf("read scope: [read] deny replaces the default deny list: %d patterns, %d of the %d defaults left out", len(deny), dropped, len(DefaultDeny))
+}
+
 func (s *ScopeSource) config() (ScopeConfig, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -380,6 +406,9 @@ func (s *ScopeSource) config() (ScopeConfig, bool) {
 			s.broken = true
 		}
 		return s.last, s.broken
+	}
+	if c.DenySet {
+		logf("%s", replaceNote(c.Deny))
 	}
 	s.last, s.good, s.broken = c, true, false
 	return c, false

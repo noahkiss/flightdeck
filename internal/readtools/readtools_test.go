@@ -366,6 +366,56 @@ func TestScopeDenyDefaults(t *testing.T) {
 	check("own exemption", sc, at("fixture.db"), true)
 }
 
+func TestScopeDenyConfigLog(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	cfg := filepath.Join(root, "hab.toml")
+	var logs []string
+	src := &ScopeSource{Host: "boxa", Home: home, Config: cfg, Roots: func() []string { return []string{home} },
+		Logf: func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }}
+	load := func(body string) Scope {
+		t.Helper()
+		logs = nil
+		os.WriteFile(cfg, []byte(body), 0o644)
+		// A new size makes the source read the file again.
+		return src.Scope()
+	}
+	has := func(what, want string) {
+		t.Helper()
+		if !slices.ContainsFunc(logs, func(l string) bool { return strings.Contains(l, want) }) {
+			t.Errorf("%s: logs %q, want a line with %q", what, logs, want)
+		}
+	}
+
+	// No deny key: no line about replacing.
+	load("[read]\nallow = []\n")
+	if len(logs) != 0 {
+		t.Errorf("no deny: logs %q", logs)
+	}
+	// A list says how many defaults it leaves out.
+	load("[read]\ndeny = [\".ssh\", \"*.sqlite\"]\n")
+	has("replace", fmt.Sprintf("replaces the default deny list: 2 patterns, %d of the %d defaults left out", len(DefaultDeny)-1, len(DefaultDeny)))
+	// An empty list says the default is off.
+	load("[read]\ndeny = []\n")
+	has("empty", "deny = [] turns the default deny list off")
+
+	// Blank entries and exemptions with a slash or ~ are reported and left out.
+	sc := load("[read]\ndeny = [\"  \", \"!\", \"!proj/.env.example\", \"!~/x\", \"*.db\", \"!a.db\"]\n")
+	if !slices.Equal(sc.Deny, []string{"*.db", "!a.db"}) {
+		t.Errorf("bad entries: deny %v", sc.Deny)
+	}
+	has("blank", "deny has a blank entry")
+	for _, d := range []string{`"!"`, `"!proj/.env.example"`, `"!~/x"`} {
+		has("bad exemption", "deny "+d+": an exemption is one name with no slash")
+	}
+	// A list of bad entries only keeps the default list.
+	sc = load("[read]\ndeny = [\" \", \"!a/b\"]\n")
+	if !slices.Equal(sc.Deny, DefaultDeny) {
+		t.Errorf("only bad entries: deny %v, want the default list", sc.Deny)
+	}
+	has("only bad", "no usable entry; the default deny list stays")
+}
+
 // TestExampleScopeConfig: the [read] section of docs/examples/hab.toml parses, adds its root and
 // keeps the default deny list, since its deny lines are comments.
 func TestExampleScopeConfig(t *testing.T) {
