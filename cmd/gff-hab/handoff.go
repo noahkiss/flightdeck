@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/catalog"
 	"github.com/noahkiss/flightdeck/internal/channels"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/lbsvc"
 	"github.com/noahkiss/flightdeck/internal/suggest"
 )
 
@@ -423,6 +425,106 @@ func runFileRecord(ctx context.Context, c caller, a toolArgs) (any, string, erro
 		return res, fmt.Sprintf("The hab filed the %s %q at once (state %s), not as a proposal: %s. Tell the user it is in Logbook already.\n", typ, title, r.State, strings.Join(r.IDs, ", ")), nil
 	}
 	return res, fmt.Sprintf("Proposed: the %s %q waits for the user's review as proposal %s. Nothing is in Logbook until the user approves it. Tell the user in one line; do not file it again.\n", typ, title, r.Proposal), nil
+}
+
+// --- logbook_write ---
+
+// logbookWriteResult is logbook_write's -json result.
+type logbookWriteResult struct {
+	State    string   `json:"state"`
+	IDs      []string `json:"ids"`
+	Proposal string   `json:"proposal,omitempty"`
+}
+
+// runLogbookWrite makes one Logbook write from an action (logbook.md 10.4). The key comes from
+// the calling pane and the arguments, so a retried call writes once.
+func runLogbookWrite(ctx context.Context, c caller, a toolArgs) (any, string, error) {
+	action, id := a.str("action"), a.str("id")
+	set := func(field string, v any) api.LogbookChange {
+		b, _ := json.Marshal(v)
+		return api.LogbookChange{Op: api.LogbookChangeOpSet, ID: id, Field: field, Value: api.RawJSON(b)}
+	}
+	var tags []string
+	for _, t := range strings.Split(a.str("tags"), ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			tags = append(tags, t)
+		}
+	}
+	needID := func() error {
+		if id == "" {
+			return control.Errorf(api.ErrorKindInvalid, "logbook_write %s needs id", action)
+		}
+		return nil
+	}
+	var chs []api.LogbookChange
+	switch action {
+	case "create", "supersede":
+		ch := api.LogbookChange{Op: api.LogbookChangeOpCreate, Type: a.str("type"), Title: strings.TrimSpace(a.str("title")), Body: a.str("body"),
+			Status: a.str("status"), Project: a.str("project"), Tags: tags}
+		if action == "supersede" {
+			if err := needID(); err != nil {
+				return nil, "", err
+			}
+			ch.Type, ch.Links = "finding", []api.LogbookLink{{Kind: "supersedes", To: id}}
+		}
+		chs = append(chs, ch)
+	case "edit":
+		if err := needID(); err != nil {
+			return nil, "", err
+		}
+		for _, f := range []string{"title", "body", "status"} {
+			if v, ok := a[f]; ok && v != nil {
+				chs = append(chs, set(f, a.str(f)))
+			}
+		}
+		for _, t := range tags {
+			chs = append(chs, api.LogbookChange{Op: api.LogbookChangeOpAdd, ID: id, Tag: t})
+		}
+		if len(chs) == 0 {
+			return nil, "", control.Errorf(api.ErrorKindInvalid, "logbook_write edit needs title, body, status or tags")
+		}
+	case "note":
+		if err := needID(); err != nil {
+			return nil, "", err
+		}
+		chs = append(chs, api.LogbookChange{Op: api.LogbookChangeOpNote, ID: id, Text: a.str("text")})
+	case "mark":
+		if err := needID(); err != nil {
+			return nil, "", err
+		}
+		chs = append(chs, set("status", a.str("status")))
+	case "claim":
+		if err := needID(); err != nil {
+			return nil, "", err
+		}
+		chs = append(chs, set("assignee", lbsvc.Self), set("status", "doing"))
+	case "link":
+		if err := needID(); err != nil {
+			return nil, "", err
+		}
+		kind, to, ok := strings.Cut(a.str("link"), ":")
+		if !ok {
+			return nil, "", control.Errorf(api.ErrorKindInvalid, "logbook_write link needs link as kind:id, such as blocks:task-k3m9q2xz")
+		}
+		chs = append(chs, api.LogbookChange{Op: api.LogbookChangeOpAdd, ID: id, Link: &api.LogbookLink{Kind: kind, To: to}})
+	default:
+		return nil, "", control.Errorf(api.ErrorKindInvalid, "action %q is not one of create, edit, note, mark, claim, link, supersede", action)
+	}
+	pane := ""
+	if p, ok := c.(paneKeyer); ok {
+		pane = p.paneKey()
+	}
+	args, _ := json.Marshal(a)
+	sum := sha256.Sum256(append([]byte(pane+"\x00logbook_write\x00"), args...))
+	var r api.LogbookWritten
+	if err := c.Call(ctx, "logbook.write", api.LogbookWriteParams{IdempotencyKey: hex.EncodeToString(sum[:16]), Changes: chs}, &r); err != nil {
+		return nil, "", err
+	}
+	res := logbookWriteResult{State: string(r.State), IDs: r.IDs, Proposal: r.Proposal}
+	if r.State == api.LogbookWriteStateProposed {
+		return res, fmt.Sprintf("Proposed: the write waits for the user's review as proposal %s. Nothing changed in Logbook yet; do not write it again.\n", r.Proposal), nil
+	}
+	return res, fmt.Sprintf("Written: %s.\n", strings.Join(r.IDs, ", ")), nil
 }
 
 // errKindOf returns an API error's kind, or "".

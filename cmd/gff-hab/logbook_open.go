@@ -44,11 +44,13 @@ func startLogbookVerbs(ctx context.Context, st *logbook.Store, synced func(), pu
 
 // logbookHook answers the Logbook methods on a pane's route: the pane's session, harness and
 // this host are the writer (logbook.md 2.5), and the pane's writes count against its limit (14).
+// A Capcom session's writes are stored as proposals (capcom.md D3, D14).
 func logbookHook(svc *lbsvc.Service, store *structure.Store, agents *harness.Store, host string) hook.ChannelHandler {
 	return func(ctx context.Context, pane, method string, params json.RawMessage) (any, func(error), error) {
 		pn := lbsvc.Pane{ID: pane, Host: host}
 		if s, ok := store.SessionByPane(pane); ok {
 			pn.Session = s.ID
+			pn.Propose = s.Kind == api.SessionKindCapcom
 		}
 		if agents != nil {
 			if a, ok := agents.Get(pane); ok {

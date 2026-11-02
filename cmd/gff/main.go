@@ -4,6 +4,10 @@
 //	    [-split columns|rows] [-prefix ctrl-<key>]
 //	gff [-config path] [-socket path | -via command | -ssh host] [-new command]...
 //	    [-split columns|rows] [-observe] [-prefix ctrl-<key>] [pane...]
+//	gff lb [--json] [--socket path] [--state dir] <verb> [args]
+//
+// `gff lb` (long form `gff logbook`) is the Logbook CLI (docs/specs/logbook.md 10.2,
+// internal/lbcli). `gff-hab lb` is the same command, for panes that have only gff-hab.
 //
 // With no pane and no -new, gff opens the workspace: every host at once, with tabs, a sidebar of
 // every session on every host and a status board. Hosts come from gff's config file (-config,
@@ -69,6 +73,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/gffclient"
 	"github.com/noahkiss/flightdeck/internal/habconn"
 	"github.com/noahkiss/flightdeck/internal/hosts"
+	"github.com/noahkiss/flightdeck/internal/lbcli"
 	gffversion "github.com/noahkiss/flightdeck/internal/version"
 )
 
@@ -93,6 +98,10 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "setup" {
 		os.Exit(setupMain(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
+	if len(os.Args) > 1 && (os.Args[1] == "lb" || os.Args[1] == "logbook") {
+		os.Exit(lbcli.Main(lbcli.Env{Args: os.Args[2:], Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr, Getenv: os.Getenv,
+			Client: api.ClientInfo{Name: "gff", Version: version, Kind: api.ClientKindCli}, Name: "gff lb"}))
 	}
 	err := run(os.Args[1:])
 	switch {

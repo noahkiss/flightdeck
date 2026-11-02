@@ -154,10 +154,11 @@ var readTools = []kitTool{
 	{Name: "file_read", Doc: "Read a text file on a host, inside that host's read scope. Returns at most 256 KiB per call; pass offset to read on.",
 		Args: []toolArg{{Name: "path", Type: "string", Doc: "An absolute path, or one under ~/ on that host.", Required: true}, argHostOne,
 			{Name: "offset", Type: "integer", Doc: "Byte offset to start at."}, {Name: "limit", Type: "integer", Doc: "Most bytes to return."}}, run: runFile},
-	{Name: "logbook_search", Doc: "Search or list Logbook records: tasks, findings, issues and decisions.",
+	{Name: "logbook_search", Doc: "Search or list Logbook records: tasks, findings, issues, plans, guides and proposals, on every host (each hab holds them all). With words, best match first; without, newest change first.",
 		Args: []toolArg{{Name: "words", Type: "string", Doc: "Words to search for. Absent: list records."}, {Name: "type", Type: "string", Doc: "A record type."},
-			{Name: "status", Type: "string", Doc: "A status."}, argProject, {Name: "tag", Type: "string", Doc: "A tag."}, argLimit}, run: runLogbookSearch},
-	{Name: "logbook_read", Doc: "Read one Logbook record.",
+			{Name: "status", Type: "string", Doc: "A status."}, {Name: "project", Type: "string", Doc: "A Logbook project id."}, {Name: "tag", Type: "string", Doc: "A tag."},
+			{Name: "author", Type: "string", Doc: "Records written by this session id, device or harness."}, argLimit}, run: runLogbookSearch},
+	{Name: "logbook_read", Doc: "Read one Logbook record with its links both ways, notes and flags.",
 		Args: []toolArg{{Name: "id", Type: "string", Doc: "The record id.", Required: true}}, run: runLogbookRead},
 	{Name: "suggest_host", Doc: "Rank the connected hosts for new work: hosts that are offline or lack a needed capability or the harness are left out, each with why; the rest go best first, the project checked out and ready on the right branch first, then the host the user named, then the one used last for the project. When none fits it says why and names the host to set the project up on.",
 		Args: []toolArg{{Name: "project", Type: "string", Doc: "The project: a name, a remote, or a folder. Absent: work outside a project."},
@@ -192,6 +193,18 @@ var actionTools = []kitTool{
 			{Name: "project", Type: "string", Doc: "The project: a name, a remote, or a folder. Absent: a record that belongs to no project."},
 			{Name: "source_message", Type: "string", Doc: "The id of the message the quote is from, when you know it."}},
 		run: runFileRecord},
+	{Name: "logbook_write", Action: true, Doc: "Write to Logbook, by action: create a record (a task, finding, issue, plan or guide), edit one, add a note, mark a status, claim a task for your session, link two records, or supersede a finding. The write lands at once and the user sees it; a Capcom session's writes wait for review as proposals instead. A finding's title and body never change: supersede it. Retrying the same call writes once.",
+		Args: []toolArg{{Name: "action", Type: "string", Doc: "create, edit, note, mark, claim, link or supersede.", Required: true},
+			{Name: "id", Type: "string", Doc: "The record: for edit, note, mark, claim, link, and the finding that supersede replaces."},
+			{Name: "type", Type: "string", Doc: "create: task, finding, issue, plan or guide."},
+			{Name: "title", Type: "string", Doc: "create, supersede, edit: one line, at most 200 characters."},
+			{Name: "body", Type: "string", Doc: "create, supersede, edit: Markdown, at most 256 KiB."},
+			{Name: "text", Type: "string", Doc: "note: the note."},
+			{Name: "status", Type: "string", Doc: "mark, edit, create: open, doing, blocked, shelved, done or dropped for a task or issue."},
+			{Name: "tags", Type: "string", Doc: "create, edit: tags to add, comma separated."},
+			{Name: "link", Type: "string", Doc: "link: kind:id, such as blocks:task-k3m9q2xz. Kinds: supersedes, stage, part_of, blocks, relates, from, duplicates."},
+			{Name: "project", Type: "string", Doc: "create: a Logbook project id. Absent: a record that belongs to no project."}},
+		run: runLogbookWrite},
 	{Name: "set_up_project", Action: true, Doc: "Set a project up on a host: clone or fetch its repository, check out a branch and run its bootstrap. Not built yet: it answers unavailable.",
 		Args: []toolArg{{Name: "host", Type: "string", Doc: "A host's label from the hosts tool.", Required: true},
 			{Name: "repository", Type: "string", Doc: "The repository to clone or fetch.", Required: true},
@@ -567,7 +580,7 @@ func runFile(ctx context.Context, c caller, a toolArgs) (any, string, error) {
 
 func runLogbookSearch(ctx context.Context, c caller, a toolArgs) (any, string, error) {
 	p := api.LogbookFindParams{Words: a.str("words"), Type: a.str("type"), Status: a.str("status"),
-		Project: a.str("project"), Tag: a.str("tag"), Limit: int(a.num("limit"))}
+		Project: a.str("project"), Tag: a.str("tag"), Author: a.str("author"), Limit: int(a.num("limit"))}
 	var r api.LogbookRecords
 	if err := c.Call(ctx, "logbook.find", p, &r); err != nil {
 		return nil, "", err
@@ -588,7 +601,36 @@ func runLogbookRead(ctx context.Context, c caller, a toolArgs) (any, string, err
 		return nil, "", err
 	}
 	x := r.Record
-	return r, fmt.Sprintf("%s %s %s: %s\n%s\n", x.ID, x.Type, x.Status, x.Title, x.Body), nil
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s %s %s: %s\n", x.ID, x.Type, x.Status, x.Title)
+	if x.Project != "" {
+		fmt.Fprintf(&b, "project: %s\n", x.Project)
+	}
+	if len(x.Tags) > 0 {
+		fmt.Fprintf(&b, "tags: %s\n", strings.Join(x.Tags, ", "))
+	}
+	if x.Assignee != "" {
+		fmt.Fprintf(&b, "assignee: %s\n", x.Assignee)
+	}
+	for _, s := range x.SupersededBy {
+		fmt.Fprintf(&b, "superseded by: %s\n", s)
+	}
+	for _, l := range x.Links {
+		fmt.Fprintf(&b, "link: %s %s\n", l.Kind, l.To)
+	}
+	for _, l := range x.Backlinks {
+		fmt.Fprintf(&b, "linked from: %s %s\n", l.To, l.Kind)
+	}
+	for _, f := range x.Flags {
+		fmt.Fprintf(&b, "flag: %s %s\n", f.Kind, f.Field)
+	}
+	if x.Body != "" {
+		fmt.Fprintf(&b, "\n%s\n", strings.TrimRight(x.Body, "\n"))
+	}
+	for _, n := range x.Notes {
+		fmt.Fprintf(&b, "\nnote %s:\n%s\n", n.At, strings.TrimRight(n.Text, "\n"))
+	}
+	return r, b.String(), nil
 }
 
 // --- Reaching the hab ---

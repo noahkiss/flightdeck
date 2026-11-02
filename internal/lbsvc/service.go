@@ -231,6 +231,9 @@ type Pane struct {
 	Session string // the Flightdeck session the pane belongs to, or ""
 	Harness string
 	Host    string
+	// Propose makes every write from the pane a pending proposal: a Capcom session's records
+	// wait for review (capcom.md D3, D14).
+	Propose bool
 }
 
 // WritePane is a write through a pane's token: the hab records the pane's harness, session and
@@ -239,6 +242,7 @@ func (s *Service) WritePane(ctx context.Context, pn Pane, p api.LogbookWritePara
 	if err := s.allow(pn.ID); err != nil {
 		return api.LogbookWritten{}, err
 	}
+	p.Propose = p.Propose || pn.Propose
 	if p.Source != nil || pn.Session != "" {
 		src := api.LogbookSource{}
 		if p.Source != nil {
@@ -296,6 +300,7 @@ func (s *Service) Write(ctx context.Context, a api.LogbookActor, p api.LogbookWr
 	if len(p.IdempotencyKey) > logbook.MaxKey {
 		return api.LogbookWritten{}, invalid("an idempotency key is at most %d bytes", logbook.MaxKey)
 	}
+	p.Changes = selfAssignee(p.Changes, a)
 	steps, err := Steps(p.Changes, p.Source)
 	if err != nil {
 		return api.LogbookWritten{}, err
@@ -323,6 +328,32 @@ func (s *Service) Write(ctx context.Context, a api.LogbookActor, p api.LogbookWr
 		out.Proposal = res.Records[0]
 	}
 	return out, nil
+}
+
+// Self is the assignee word for the writer itself (10.2 claim): the pane's session, or the
+// person's device.
+const Self = "self"
+
+// selfAssignee replaces the assignee self with the writer: its session, else its device.
+func selfAssignee(changes []api.LogbookChange, a api.LogbookActor) []api.LogbookChange {
+	me := a.Session
+	if me == "" {
+		me = a.Device
+	}
+	if me == "" {
+		return changes
+	}
+	quoted, _ := json.Marshal(me)
+	out := slices.Clone(changes)
+	for i, c := range out {
+		switch {
+		case c.Op == api.LogbookChangeOpCreate && c.Assignee == Self:
+			out[i].Assignee = me
+		case c.Op == api.LogbookChangeOpSet && c.Field == "assignee" && string(c.Value) == `"`+Self+`"`:
+			out[i].Value = api.RawJSON(quoted)
+		}
+	}
+	return out
 }
 
 // Resolve settles a conflict flag: a set that names every head of the field (5.2).

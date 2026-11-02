@@ -23,6 +23,7 @@
 //	gff-hab manifests list    [-state dir]
 //	gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
 //	gff-hab read [-socket path] [-json] <tool> [-arg value]... [words]
+//	gff-hab lb [--json] [--socket path] [--state dir] <verb> [args]
 //	gff-hab mcp [serve] [-socket path] [--skill]
 //	gff-hab instructions render -config file [-state dir] [-host-id id] [-dry-run | -write target]
 //	gff-hab hook [-t ms] <harness> [event] < payload
@@ -102,6 +103,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/harness"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/hook"
+	"github.com/noahkiss/flightdeck/internal/lbcli"
 	"github.com/noahkiss/flightdeck/internal/lbsync"
 	"github.com/noahkiss/flightdeck/internal/link"
 	"github.com/noahkiss/flightdeck/internal/opencode"
@@ -151,6 +153,7 @@ const usage = `usage:
   gff-hab manifests list    [-state dir]
   gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
   gff-hab read [-socket path] [-json] <tool> [-arg value]... [words]
+  gff-hab lb [--json] [--socket path] [--state dir] <verb> [args]   (the same as gff lb)
   gff-hab act  [-socket path] [-json] <tool> [-arg value]... [words]
   gff-hab confirm list   [-socket path] [-all] [-json]
   gff-hab confirm show   [-socket path] [-json] <id>
@@ -238,6 +241,9 @@ func main() {
 		err = roundCmd(os.Args[2:], os.Stdin, os.Stdout)
 	case "mcp":
 		err = mcpCmd(os.Args[2:], os.Stdin, os.Stdout)
+	case "lb", "logbook":
+		os.Exit(lbcli.Main(lbcli.Env{Args: os.Args[2:], Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr,
+			Getenv: os.Getenv, Client: cliClient, Name: "gff-hab lb"}))
 	case "instructions":
 		err = instructionsCmd(os.Args[2:], os.Stdout)
 	case "install":
@@ -308,24 +314,7 @@ func stateDir(flagValue string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
 	}
-	if d := os.Getenv("GFF_HAB_STATE"); d != "" {
-		return d, nil
-	}
-	if runtime.GOOS == "darwin" {
-		d, err := os.UserConfigDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(d, "gff", "hab"), nil
-	}
-	if d := os.Getenv("XDG_STATE_HOME"); d != "" {
-		return filepath.Join(d, "gff", "hab"), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".local", "state", "gff", "hab"), nil
+	return control.DefaultState()
 }
 
 // emptyHolders is the pane source when the holder link is off: no panes, no notices.
