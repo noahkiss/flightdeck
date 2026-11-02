@@ -482,8 +482,10 @@ func serve(args []string) error {
 					r.agentState(st) // never blocks
 				}
 			}
-			if st, ok := e.Data.(api.AgentState); ok && pushes != nil && pushes.notifier != nil {
-				pushes.notifier.State(st) // never blocks
+			if st, ok := e.Data.(api.AgentState); ok {
+				if n := pushes.live(); n != nil {
+					n.State(st) // never blocks
+				}
 			}
 			if e.Type == api.EventAgentState {
 				pokeCatalog() // pokes channels too
@@ -986,9 +988,8 @@ func serve(args []string) error {
 	defer chSvc.Close()
 	chs.Store(chSvc)
 	caps = append(caps, channels.Capability)
-	if pushes.Enabled() {
-		caps = append(caps, "push")
-	}
+	// The push capability is added at each hello while push is on (control.PushCapability):
+	// the key command may print its key after start.
 	// The read tools (capcom.md 4): sessions and search over the native transcripts, transcript,
 	// notice and file reads, each under this hab's read scope, and across the peer links.
 	reads := newReads(readsSetup{self: key.Fingerprint(), host: *hostID, state: dir, configPath: cpath,

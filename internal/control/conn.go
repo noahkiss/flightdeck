@@ -1043,6 +1043,9 @@ func (c *conn) handleHello(m message) {
 	c.clientID, c.token = c.s.claimToken(c, p.ReconnectToken)
 	c.hello = true
 	caps := c.s.cfg.Capabilities
+	if ps := c.s.cfg.Push; ps != nil && ps.Enabled() && !slices.Contains(caps, PushCapability) {
+		caps = append(slices.Clip(caps), PushCapability)
+	}
 	if caps == nil {
 		caps = []string{}
 	}

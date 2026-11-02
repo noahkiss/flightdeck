@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,6 +41,9 @@ type Message struct {
 	Payload     []byte
 }
 
+// errSign wraps a failure to sign the provider token.
+var errSign = errors.New("push provider token")
+
 // Error is APNs's refusal of a message.
 type Error struct {
 	Status int
@@ -73,6 +77,7 @@ func (e *Error) RateLimited() bool { return e.Status == http.StatusTooManyReques
 // Client sends messages to APNs over HTTP/2 with token authentication.
 type Client struct {
 	signer *Signer
+	keys   *Keyring // nil: the signer's key is fixed
 	topic  string
 	hosts  map[string]string // environment -> base URL
 	http   *http.Client
@@ -82,9 +87,12 @@ type Client struct {
 // and a fresh HTTP/2 client.
 type ClientConfig struct {
 	Signer *Signer
-	Topic  string
-	Hosts  map[string]string
-	HTTP   *http.Client
+	// Keys, when set, gives the signer its key, and is asked to run the key command again when
+	// APNs refuses the provider token or a token cannot be signed.
+	Keys  *Keyring
+	Topic string
+	Hosts map[string]string
+	HTTP  *http.Client
 }
 
 // NewClient returns a client.
@@ -105,18 +113,45 @@ func NewClient(cfg ClientConfig) *Client {
 			},
 		}
 	}
-	return &Client{signer: cfg.Signer, topic: cfg.Topic, hosts: hosts, http: hc}
+	return &Client{signer: cfg.Signer, keys: cfg.Keys, topic: cfg.Topic, hosts: hosts, http: hc}
 }
 
 // Send posts one message. A refusal is an *Error. A provider token APNs calls expired is
-// signed again and the message sent once more.
+// signed again and the message sent once more. With a keyring, a provider token APNs calls
+// invalid, or one that cannot be signed, runs the key command again when its backoff allows;
+// a new key sends the message once more. Before the first key it returns ErrNoKey.
 func (c *Client) Send(ctx context.Context, m Message) error {
+	if c.keys != nil {
+		k := c.keys.Key()
+		if k == nil {
+			return ErrNoKey
+		}
+		c.signer.SetKey(k)
+	}
 	err := c.send(ctx, m)
 	if e, ok := err.(*Error); ok && e.Reason == "ExpiredProviderToken" {
 		c.signer.Expire()
 		err = c.send(ctx, m)
 	}
+	if c.keys != nil && keyFailed(err) {
+		if changed, _ := c.keys.Load(ctx); changed {
+			c.signer.SetKey(c.keys.Key())
+			err = c.send(ctx, m)
+		}
+	}
 	return err
+}
+
+// keyFailed reports an error a new key may fix: APNs refusing the provider token, or a token
+// that could not be signed.
+func keyFailed(err error) bool {
+	if err == nil {
+		return false
+	}
+	if e, ok := err.(*Error); ok {
+		return e.Reason == "InvalidProviderToken"
+	}
+	return errors.Is(err, errSign)
 }
 
 func (c *Client) send(ctx context.Context, m Message) error {
@@ -129,7 +164,7 @@ func (c *Client) send(ctx context.Context, m Message) error {
 	}
 	jwt, err := c.signer.Token()
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errSign, err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/3/device/"+m.Token, bytes.NewReader(m.Payload))
 	if err != nil {

@@ -8,11 +8,15 @@ import (
 // notice id.
 const EventNoticeRaised api.EventType = "notice.raised"
 
+// PushCapability is in the welcome while Push.Enabled reports true, checked at each hello.
+const PushCapability = "push"
+
 // Push serves the push tokens, focus reports and notices (app.md 8, 17; hab-logic-api.md 3.9).
 // gff-hab implements it with internal/push. An error that is an *Error keeps its kind.
 type Push interface {
-	// Enabled reports whether push config loaded and validated. Without it the push.* methods
-	// answer unavailable; session.focus and notice.raise still work.
+	// Enabled reports whether push is on: config loaded and validated, and the key loaded. It
+	// may turn true after start. Without it the push.* methods answer unavailable and the
+	// welcome lacks PushCapability; session.focus and notice.raise still work.
 	Enabled() bool
 	Register(client string, p api.PushRegisterParams) error
 	RegisterActivity(client string, p api.PushActivityParams) error

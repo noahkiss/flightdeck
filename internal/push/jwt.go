@@ -51,6 +51,18 @@ func (s *Signer) Token() (string, error) {
 	return tok, nil
 }
 
+// SetKey replaces the key, after the key command printed a new one, and drops the cached token.
+// The same key keeps the token.
+func (s *Signer) SetKey(k *ecdsa.PrivateKey) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.key == k || (s.key != nil && k != nil && s.key.Equal(k)) {
+		s.key = k
+		return
+	}
+	s.key, s.tok = k, ""
+}
+
 // Expire drops the cached token, after APNs called it expired.
 func (s *Signer) Expire() {
 	s.mu.Lock()
@@ -59,6 +71,9 @@ func (s *Signer) Expire() {
 }
 
 func (s *Signer) sign(now time.Time) (string, error) {
+	if s.key == nil {
+		return "", ErrNoKey
+	}
 	enc := base64.RawURLEncoding
 	h, _ := json.Marshal(map[string]string{"alg": "ES256", "kid": s.keyID})
 	c, _ := json.Marshal(map[string]any{"iss": s.teamID, "iat": now.Unix()})

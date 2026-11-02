@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -132,53 +133,54 @@ func TestClientErrors(t *testing.T) {
 	}
 }
 
-// TestLoadConfig: nothing set is "not set up"; the environment overrides the file; a partial
-// config, a bad id, a key open to others and a non-P-256 key are errors.
+// TestLoadConfig: nothing set is "not set up"; the environment overrides the file, the key
+// command as a JSON array; a partial config, a bad id, an empty program, a key command that is
+// not a JSON array and the retired key_file (file or environment) are errors, the last naming
+// key_command.
 func TestLoadConfig(t *testing.T) {
 	dir := t.TempDir()
 	none := func(string) string { return "" }
 	if _, ok, err := LoadConfig(filepath.Join(dir, ConfigFile), none); ok || err != nil {
 		t.Fatalf("no config: configured %v, %v", ok, err)
 	}
-	_, pemKey := testKey(t)
-	keyPath := filepath.Join(dir, "AuthKey.p8")
-	if err := os.WriteFile(keyPath, pemKey, 0o600); err != nil {
-		t.Fatal(err)
-	}
 	file := filepath.Join(dir, ConfigFile)
-	os.WriteFile(file, []byte(`{"key_file":"`+keyPath+`","key_id":"`+testKeyID+`","team_id":"`+testTeamID+`","topic":"`+testTopic+`"}`), 0o600)
+	os.WriteFile(file, []byte(`{"key_command":["pass","show","apns key"],"key_id":"`+testKeyID+`","team_id":"`+testTeamID+`","topic":"`+testTopic+`"}`), 0o600)
 	c, ok, err := LoadConfig(file, none)
 	if !ok || err != nil {
 		t.Fatalf("file config: %v %v", ok, err)
 	}
-	if c.Environment != Production {
-		t.Errorf("default environment %q", c.Environment)
+	if c.Environment != Production || !slices.Equal(c.KeyCommand, []string{"pass", "show", "apns key"}) {
+		t.Errorf("file config: %+v", c)
 	}
-	if _, err := c.Key(); err != nil {
-		t.Fatalf("key: %v", err)
-	}
-	env := map[string]string{Env.Environment: Development, Env.Topic: "dev.example.other"}
+	env := map[string]string{Env.Environment: Development, Env.Topic: "dev.example.other", Env.KeyCommand: `["/bin/cat", "/dev/null"]`}
 	c, _, err = LoadConfig(file, func(k string) string { return env[k] })
-	if err != nil || c.Environment != Development || c.Topic != "dev.example.other" || c.KeyID != testKeyID {
+	if err != nil || c.Environment != Development || c.Topic != "dev.example.other" || c.KeyID != testKeyID || !slices.Equal(c.KeyCommand, []string{"/bin/cat", "/dev/null"}) {
 		t.Fatalf("env over file: %+v %v", c, err)
 	}
-	if _, ok, err := LoadConfig("", func(k string) string { return map[string]string{Env.KeyID: testKeyID}[k] }); !ok || err == nil {
+	env[Env.KeyCommand] = "pass show apns-key"
+	if _, _, err := LoadConfig(file, func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "JSON array") {
+		t.Errorf("a key command that is not JSON: %v", err)
+	}
+	if _, ok, err := LoadConfig("", func(k string) string { return map[string]string{Env.KeyID: testKeyID}[k] }); !ok || err == nil || !strings.Contains(err.Error(), "key_command") {
 		t.Errorf("partial config: configured %v, err %v", ok, err)
 	}
-	bad := map[string]string{Env.KeyFile: keyPath, Env.KeyID: "short", Env.TeamID: testTeamID, Env.Topic: testTopic}
+	bad := map[string]string{Env.KeyCommand: `["x"]`, Env.KeyID: "short", Env.TeamID: testTeamID, Env.Topic: testTopic}
 	if _, _, err := LoadConfig("", func(k string) string { return bad[k] }); err == nil {
 		t.Error("a malformed key id passed")
 	}
-	os.Chmod(keyPath, 0o644)
-	if _, err := c.Key(); err == nil {
-		t.Error("a key file open to others was read")
+	bad = map[string]string{Env.KeyCommand: `[""]`, Env.KeyID: testKeyID, Env.TeamID: testTeamID, Env.Topic: testTopic}
+	if _, _, err := LoadConfig("", func(k string) string { return bad[k] }); err == nil {
+		t.Error("an empty program passed")
 	}
-	os.Chmod(keyPath, 0o600)
-	os.WriteFile(keyPath, []byte("not a key"), 0o600)
-	if _, err := c.Key(); err == nil {
-		t.Error("a file with no key parsed")
+	bad = map[string]string{Env.KeyFile: "/x/AuthKey.p8", Env.KeyCommand: `["x"]`, Env.KeyID: testKeyID, Env.TeamID: testTeamID, Env.Topic: testTopic}
+	if _, ok, err := LoadConfig("", func(k string) string { return bad[k] }); !ok || err == nil || !strings.Contains(err.Error(), "key_command") {
+		t.Errorf("key file in the environment: %v %v", ok, err)
 	}
-	os.WriteFile(file, []byte(`{"key_file":"x","unknown":1}`), 0o600)
+	os.WriteFile(file, []byte(`{"key_file":"/x/AuthKey.p8","key_id":"`+testKeyID+`","team_id":"`+testTeamID+`","topic":"`+testTopic+`"}`), 0o600)
+	if _, ok, err := LoadConfig(file, none); !ok || err == nil || !strings.Contains(err.Error(), "key_command") {
+		t.Errorf("key_file in the file: %v %v", ok, err)
+	}
+	os.WriteFile(file, []byte(`{"key_command":["x"],"unknown":1}`), 0o600)
 	if _, _, err := LoadConfig(file, none); err == nil {
 		t.Error("an unknown field passed")
 	}

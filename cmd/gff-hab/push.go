@@ -18,12 +18,15 @@ import (
 
 // pushService serves the push methods, session.focus and notice.raise (app.md 8, 17). With no
 // push config, tokens and notifier are nil: the push.* methods answer unavailable, while focus
-// reports and notices still work for live clients.
+// reports and notices still work for live clients. With a config, push is on once the key
+// command printed a key (keys); until then the service acts as with no config.
 type pushService struct {
 	store    *structure.Store
 	agents   *harness.Store
 	tokens   *push.Store
 	notifier *push.Notifier
+	keys     *push.Keyring // nil: the sender needs no key (tests)
+	stop     func()        // ends the key loader
 	publish  func(structure.Event)
 	label    func(client string) string // the client's hello label
 	now      func() time.Time
@@ -57,9 +60,11 @@ type pushSetup struct {
 
 // newPushService reads the push config and starts the notifier. Push not set up, or set up
 // wrong, gives a service without push: the hab says so in its log and leaves the push
-// capability out (app.md 8.4). It never stops gff-hab from starting.
+// capability out (app.md 8.4). It never stops gff-hab from starting, and never waits for the
+// key command: that runs in the background, again with backoff while it fails, and push turns
+// on when it prints a key.
 func newPushService(ps pushSetup, store *structure.Store, agents *harness.Store) *pushService {
-	s := &pushService{store: store, agents: agents, publish: ps.publish, label: ps.label, now: time.Now, notices: ps.notices, denied: ps.denied}
+	s := &pushService{store: store, agents: agents, publish: ps.publish, label: ps.label, now: time.Now, notices: ps.notices, denied: ps.denied, stop: func() {}}
 	path := ps.configPath
 	if path == "" {
 		path = filepath.Join(ps.state, push.ConfigFile)
@@ -70,17 +75,13 @@ func newPushService(ps pushSetup, store *structure.Store, agents *harness.Store)
 		ps.logf("push is off: %v (docs/push.md)", err)
 		return s
 	case !configured:
-		ps.logf("push is not set up (no %s, no $%s): clients get live updates only (docs/push.md)", path, push.Env.KeyFile)
+		ps.logf("push is not set up (no %s, no $%s): clients get live updates only (docs/push.md)", path, push.Env.KeyCommand)
 		return s
 	}
 	sender := ps.sender
 	if sender == nil {
-		key, err := cfg.Key()
-		if err != nil {
-			ps.logf("push is off: %v (docs/push.md)", err)
-			return s
-		}
-		sender = push.NewClient(push.ClientConfig{Signer: push.NewSigner(key, cfg.KeyID, cfg.TeamID, nil), Topic: cfg.Topic})
+		s.keys = push.NewKeyring(push.KeyCommand{Argv: cfg.KeyCommand}, nil, ps.logf)
+		sender = push.NewClient(push.ClientConfig{Signer: push.NewSigner(nil, cfg.KeyID, cfg.TeamID, nil), Keys: s.keys, Topic: cfg.Topic})
 	}
 	tokens, err := push.OpenStore(filepath.Join(ps.state, "push"), nil)
 	if err != nil {
@@ -97,12 +98,36 @@ func newPushService(ps pushSetup, store *structure.Store, agents *harness.Store)
 		Self:      ps.self,
 		Keep:      s.keep,
 	})
-	ps.logf("push is on: topic %s, %s gateway for tokens with no environment", cfg.Topic, cfg.Environment)
+	on := func() {
+		ps.logf("push is on: topic %s, %s gateway for tokens with no environment", cfg.Topic, cfg.Environment)
+	}
+	if s.keys == nil {
+		on()
+		return s
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	s.stop = func() { cancel(); <-done }
+	go func() {
+		defer close(done)
+		for {
+			if _, err := s.keys.Load(ctx); err == nil {
+				on()
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(max(s.keys.Next(), time.Second)):
+			}
+		}
+	}()
 	return s
 }
 
-// Close stops the notifier; pushes it has not sent are dropped.
+// Close stops the key loader and the notifier; pushes it has not sent are dropped.
 func (s *pushService) Close() {
+	s.stop()
 	if s.notifier != nil {
 		s.notifier.Close()
 	}
@@ -113,6 +138,14 @@ func (s *pushService) forget(pane string) {
 	if s != nil && s.notifier != nil {
 		s.notifier.Forget(pane)
 	}
+}
+
+// live returns the notifier while push is on, else nil.
+func (s *pushService) live() *push.Notifier {
+	if s == nil || !s.Enabled() {
+		return nil
+	}
+	return s.notifier
 }
 
 // whereOf names the session and project of a pane, or of a session when pane is empty.
@@ -139,7 +172,10 @@ func whereOf(store *structure.Store, pane, session string) push.Where {
 	return w
 }
 
-func (s *pushService) Enabled() bool { return s.notifier != nil }
+// Enabled reports whether push is on: a valid config, and a key from the key command.
+func (s *pushService) Enabled() bool {
+	return s.notifier != nil && (s.keys == nil || s.keys.Key() != nil)
+}
 
 func (s *pushService) Register(client string, p api.PushRegisterParams) error {
 	if !push.ValidToken(p.Token) {
@@ -187,8 +223,8 @@ func (s *pushService) Focus(client string, p api.SessionFocusParams) error {
 	if p.Active && ss.Pane != "" && s.agents != nil {
 		s.agents.Seen(ss.Pane)
 	}
-	if s.notifier != nil {
-		s.notifier.Focus(client, p.Session, p.Active)
+	if n := s.live(); n != nil {
+		n.Focus(client, p.Session, p.Active)
 	}
 	return nil
 }
@@ -212,8 +248,8 @@ func (s *pushService) Raise(client string, p api.NoticeRaiseParams) (api.NoticeR
 	}
 	s.publish(structure.Event{Type: control.EventNoticeRaised, ID: id, Data: n})
 	pushed := 0
-	if s.notifier != nil {
-		pushed = s.notifier.Raise(push.Notice{ID: id, Title: p.Title, Body: p.Body, Level: push.Level(level), Session: p.Session})
+	if n := s.live(); n != nil {
+		pushed = n.Raise(push.Notice{ID: id, Title: p.Title, Body: p.Body, Level: push.Level(level), Session: p.Session})
 	}
 	return api.NoticeRaised{ID: id, Pushed: pushed}, nil
 }
@@ -239,8 +275,8 @@ func (s *pushService) raiseRound(ev push.RoundEvent, detail, full, folder string
 		s.notices.add(n)
 	}
 	s.publish(structure.Event{Type: control.EventNoticeRaised, ID: no.ID, Data: n})
-	if s.notifier != nil {
-		s.notifier.Raise(no)
+	if n := s.live(); n != nil {
+		n.Raise(no)
 	}
 	return no.ID
 }
@@ -273,7 +309,7 @@ func (s *pushService) keep(full, hidden push.Notice) string {
 // answering tells the notifier an approval.answer is on its way, so the banner it withdraws
 // says which client answered; done reports whether it went out.
 func (s *pushService) answering(pane, request, client string, allow bool) (done func(ok bool)) {
-	if s == nil || s.notifier == nil {
+	if s.live() == nil {
 		return func(bool) {}
 	}
 	by := s.label(client)

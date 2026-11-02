@@ -816,6 +816,9 @@ func (n *Notifier) send(m Message, urgent bool) bool {
 			n.setBroken("")
 			return true
 		}
+		if errors.Is(err, ErrNoKey) {
+			return false // the keyring logs its own failures
+		}
 		var e *Error
 		if !errors.As(err, &e) {
 			n.cfg.Logf("push: %v", err)

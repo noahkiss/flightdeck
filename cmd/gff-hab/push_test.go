@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,8 +60,9 @@ func title(v map[string]any) any {
 	return v["aps"].(map[string]any)["alert"].(map[string]any)["title"]
 }
 
-// writePushConfig writes a push config with a fresh test key: no real team, key or app.
-func writePushConfig(t *testing.T, state string) {
+// writePushConfig writes a push config with a fresh test key: no real team, key or app. The
+// key command is /bin/cat of a key file in state, so a test can see the key bytes it printed.
+func writePushConfig(t *testing.T, state string) (pemKey []byte) {
 	t.Helper()
 	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -69,13 +71,98 @@ func writePushConfig(t *testing.T, state string) {
 	der, _ := x509.MarshalPKCS8PrivateKey(k)
 	os.MkdirAll(state, 0o700)
 	keyPath := filepath.Join(state, "AuthKey_TEST.p8")
-	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
+	pemKey = pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+	if err := os.WriteFile(keyPath, pemKey, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := push.Config{KeyFile: keyPath, KeyID: "KEY0000001", TeamID: "TEAM000001", Topic: "dev.example.flightdeck", Environment: push.Development}
+	cfg := push.Config{KeyCommand: []string{"/bin/cat", keyPath}, KeyID: "KEY0000001", TeamID: "TEAM000001", Topic: "dev.example.flightdeck", Environment: push.Development}
 	b, _ := json.Marshal(cfg)
 	if err := os.WriteFile(filepath.Join(state, push.ConfigFile), b, 0o600); err != nil {
 		t.Fatal(err)
+	}
+	return pemKey
+}
+
+// pemBody is the base64 body of a PEM key, the part that must never reach a log.
+func pemBody(pemKey []byte) string {
+	lines := strings.Split(strings.TrimSpace(string(pemKey)), "\n")
+	return strings.Join(lines[1:len(lines)-1], "")
+}
+
+// lockedLog collects log lines from several goroutines.
+type lockedLog struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedLog) logf(f string, a ...any) {
+	l.mu.Lock()
+	fmt.Fprintf(&l.b, f+"\n", a...)
+	l.mu.Unlock()
+}
+
+func (l *lockedLog) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
+
+// TestPushKeyCommand: push turns on only once the key command printed a key. A command that
+// fails leaves push off with one log line that names its exit status and never its output;
+// gff-hab starts without waiting for it. A command that works turns push on in the background.
+// No log line holds the key.
+func TestPushKeyCommand(t *testing.T) {
+	st, err := structure.Open(structure.Config{Dir: filepath.Join(t.TempDir(), "structure"), Holders: structure.NewFakeHolder()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	setup := func(state string, logs *lockedLog) pushSetup {
+		return pushSetup{state: state, hab: "laptop", getenv: func(string) string { return "" }, logf: logs.logf,
+			connected: func(string) bool { return false }, label: func(string) string { return "" }, publish: func(structure.Event) {}}
+	}
+
+	// A command that prints the key on stderr and fails.
+	state := t.TempDir()
+	pemKey := writePushConfig(t, state)
+	keyPath := filepath.Join(state, "AuthKey_TEST.p8")
+	script := filepath.Join(state, "key.sh")
+	os.WriteFile(script, []byte("cat '"+keyPath+"' >&2\nexit 7\n"), 0o700)
+	b, _ := json.Marshal(push.Config{KeyCommand: []string{"/bin/sh", script}, KeyID: "KEY0000001", TeamID: "TEAM000001", Topic: "dev.example.flightdeck"})
+	os.WriteFile(filepath.Join(state, push.ConfigFile), b, 0o600)
+	logs := &lockedLog{}
+	start := time.Now()
+	s := newPushService(setup(state, logs), st, nil)
+	if time.Since(start) > time.Second {
+		t.Errorf("newPushService waited %v for the key command", time.Since(start))
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for !strings.Contains(logs.String(), "exit status 7") && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if s.Enabled() || s.live() != nil {
+		t.Error("push on with a failing key command")
+	}
+	s.Close()
+	out := logs.String()
+	if !strings.Contains(out, "push is off") || strings.Count(out, "exit status 7") != 1 || strings.Contains(out, "push is on") {
+		t.Errorf("failing command log: %q", out)
+	}
+	if strings.Contains(out, pemBody(pemKey)[:20]) || strings.Contains(out, "PRIVATE KEY") {
+		t.Fatalf("the key reached the log: %q", out)
+	}
+
+	// A command that works.
+	state = t.TempDir()
+	pemKey = writePushConfig(t, state)
+	logs = &lockedLog{}
+	s = newPushService(setup(state, logs), st, nil)
+	defer s.Close()
+	deadline = time.Now().Add(10 * time.Second)
+	for !s.Enabled() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !s.Enabled() || s.live() == nil {
+		t.Fatalf("push did not turn on: %q", logs.String())
+	}
+	if out := logs.String(); !strings.Contains(out, "push is on") || strings.Contains(out, pemBody(pemKey)[:20]) {
+		t.Fatalf("log: %q", out)
 	}
 }
 
@@ -267,7 +354,7 @@ func TestServePush(t *testing.T) {
 	d := shortDir(t)
 	sock := filepath.Join(d, "run", "hab.sock")
 	state := filepath.Join(d, "state")
-	off := []string{push.Env.KeyFile + "=", push.Env.KeyID + "=", push.Env.TeamID + "=", push.Env.Topic + "="}
+	off := []string{push.Env.KeyCommand + "=", push.Env.KeyFile + "=", push.Env.KeyID + "=", push.Env.TeamID + "=", push.Env.Topic + "="}
 	s := startServeWith(t, sock, state, off)
 	if slices.Contains(welcome(t, sock).Capabilities, "push") {
 		t.Fatal("push capability with no config")
@@ -289,8 +376,13 @@ func TestServePush(t *testing.T) {
 
 	writePushConfig(t, state)
 	startServeWith(t, sock, state, off)
-	if !slices.Contains(welcome(t, sock).Capabilities, "push") {
-		t.Fatal("no push capability with a valid config")
+	// The key command runs in the background; the capability is in each welcome once it ends.
+	deadline := time.Now().Add(10 * time.Second)
+	for !slices.Contains(welcome(t, sock).Capabilities, "push") {
+		if time.Now().After(deadline) {
+			t.Fatal("no push capability with a valid config")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	run(t, "api", "call", "-socket", sock, "push.register", `{"device_id":"d","token":"`+strings.Repeat("ab", 32)+`","environment":"production","kinds":["permission"]}`)
 	fi, err := os.Stat(filepath.Join(state, "push", push.TokensFile))
