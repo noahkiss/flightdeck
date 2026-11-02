@@ -553,12 +553,21 @@ public final class ChatModel {
 
     /// The writes that type a message into a harness prompt: the text in
     /// bracketed paste, then Enter as its own write (`harness-adapters.md`,
-    /// Input delivery). A multi-line message stays one message.
+    /// Input delivery). A multi-line message stays one message. A long paste is
+    /// cut into writes of at most `PaneInputPump.maxBatch`, sent one after another, so
+    /// each reply keeps liveness fed over a slow uplink (app.md 10.5).
     public static func typedInput(_ text: String) -> [Data] {
         // An ESC in the text could end the paste early; nobody types one on purpose.
         let clean = text.replacingOccurrences(of: "\u{1b}", with: "")
-        let paste = "\u{1b}[200~" + clean + "\u{1b}[201~"
-        return [Data(paste.utf8), Data("\r".utf8)]
+        let paste = Data(("\u{1b}[200~" + clean + "\u{1b}[201~").utf8)
+        var writes: [Data] = []
+        var start = paste.startIndex
+        while start < paste.endIndex {
+            let end = min(start + PaneInputPump.maxBatch, paste.endIndex)
+            writes.append(Data(paste[start..<end]))
+            start = end
+        }
+        return writes + [Data("\r".utf8)]
     }
 
     private func readBackExpired(_ id: Int) {

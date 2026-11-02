@@ -346,6 +346,16 @@ final class ChatTests: XCTestCase {
         XCTAssertEqual(w[0], Data("\u{1b}[200~a[201~b\u{1b}[201~".utf8))
     }
 
+    /// A long message goes in writes of at most 64 KiB, in order, then Enter.
+    func testTypedInputSplitsLongPaste() {
+        let text = String(repeating: "x", count: 200_000)
+        let w = ChatModel.typedInput(text)
+        XCTAssertEqual(w.count, 5)
+        XCTAssertTrue(w.allSatisfy { $0.count <= PaneInputPump.maxBatch })
+        XCTAssertEqual(w.last, Data("\r".utf8))
+        XCTAssertEqual(w.dropLast().reduce(into: Data()) { $0.append($1) }, Data(("\u{1b}[200~" + text + "\u{1b}[201~").utf8))
+    }
+
     func testRowCacheReusesUnchangedRows() {
         var cache = ChatRender.Cache()
         let ms = [msg(1, text: "# Hi"), msg(2, .user, text: "yo")]
