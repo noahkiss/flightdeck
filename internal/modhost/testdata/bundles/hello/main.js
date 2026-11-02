@@ -2,7 +2,7 @@
 // in act.
 
 function refresh(ctx) {
-  var res = fd.hab.get("session.list", { host: ctx.host });
+  var res = fd.hab.get("structure.get", { host: ctx.host });
   var names = res.sessions.map(function (s) { return s.name; });
   fd.state.set("sessions", names);
   fd.log("refreshed", names.length, "sessions");

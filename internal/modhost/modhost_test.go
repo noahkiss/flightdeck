@@ -69,7 +69,7 @@ func (h *fakeHab) Get(ctx context.Context, method string, params json.RawMessage
 	h.calls = append(h.calls, "get "+method+" "+string(params))
 	h.mu.Unlock()
 	switch method {
-	case "session.list":
+	case "structure.get":
 		return json.RawMessage(`{"sessions":[{"name":"build"},{"name":"docs"}]}`), nil
 	}
 	return nil, errors.New("unknown method " + method)
@@ -144,7 +144,7 @@ func TestHelloGolden(t *testing.T) {
 	if err := modules.ValidateTree(tree, 1); err != nil {
 		t.Errorf("golden tree is not valid: %v", err)
 	}
-	if len(hab.calls) != 1 || hab.calls[0] != `get session.list {"host":"box-a"}` {
+	if len(hab.calls) != 1 || hab.calls[0] != `get structure.get {"host":"box-a"}` {
 		t.Errorf("hab calls = %q", hab.calls)
 	}
 	if len(logs) != 1 || logs[0] != "refreshed 2 sessions" {
@@ -502,7 +502,7 @@ probes.frozen = Object.isFrozen(fd) && Object.isFrozen(fd.hab) && Object.isFroze
 JSON = null; Error = null;
 exports.render = function () { return { type: "log", lines: [] }; };
 exports.act = function () {
-  var r = fd.hab.get("session.list");
+  var r = fd.hab.get("structure.get");
   try { fd.exec(["sh"]); } catch (e) { probes.afterReplace = e.name + " " + r.sessions.length; }
   fd.state.set("probes", probes);
 };
@@ -624,7 +624,9 @@ exports.act = function (name) {
 	if err := render("host"); !errors.As(err, &te) {
 		t.Errorf("looping getter: %v", err)
 	}
-	if err := render("session"); !errors.As(err, &se) || se.Message != "trap threw" {
+	// A proxy is refused before its traps run.
+	var tre *TreeError
+	if err := render("session"); !errors.As(err, &tre) || !strings.Contains(err.Error(), "a Proxy cannot cross") {
 		t.Errorf("throwing proxy: %v", err)
 	}
 	start := time.Now()
@@ -644,7 +646,6 @@ exports.act = function (name) {
 	}
 	c := fixedCall
 	c.Place = "unknown"
-	var tre *TreeError
 	if _, err := m.Render(ctx, c); !errors.As(err, &tre) || !strings.Contains(err.Error(), "returned nothing") {
 		t.Errorf("render after the hostile calls: %v, want the module still running", err)
 	}

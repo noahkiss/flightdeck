@@ -7,11 +7,18 @@ import (
 	"fmt"
 	"path"
 	"reflect"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
+	"github.com/dlclark/regexp2/v2"
 	"github.com/dop251/goja"
+	"github.com/dop251/goja/ast"
+	"github.com/dop251/goja/parser"
 	"github.com/noahkiss/flightdeck/api/modules"
 )
 
@@ -58,9 +65,11 @@ type Module struct {
 	limits Limits
 	powers map[string]bool
 
-	mu  sync.Mutex
-	r   *goja.Runtime
-	err error // set after a MemoryError; every later call returns ErrStopped
+	mu sync.Mutex
+	r  *goja.Runtime
+	// err is set when the module stops (a MemoryError, an InternalError, a stuck call); every
+	// later call returns ErrStopped. Only run's own goroutine writes it, under mu.
+	err error
 
 	// Captured before any module code runs, so a module that replaces the globals cannot
 	// change how the bridge parses JSON or builds errors.
@@ -69,41 +78,70 @@ type Module struct {
 	freeze    goja.Callable
 
 	// The running call. The interrupt guard keeps a late timer from interrupting the next call.
-	cur      *callState
-	imu      sync.Mutex
-	iactive  bool
-	settings goja.Value
+	cur     *callState
+	imu     sync.Mutex
+	iactive bool
 
-	files map[string]*goja.Object // module objects of required files, by path
-	fns   map[string]goja.Callable
-	state map[string]json.RawMessage
-	size  int
+	files    map[string]*goja.Object // module objects of required files, by path
+	fns      map[string]goja.Callable
+	exported map[string]bool // the names in fns, kept when a stop drops the runtime
+
+	// State: committed is what the Store holds; state is what the running call sees. The first
+	// fd.state.set of a call copies committed; run saves once at the call's end, or drops the
+	// writes when the call failed (modules.md 7.3).
+	committed map[string]json.RawMessage
+	csize     int
+	state     map[string]json.RawMessage
+	size      int
+	dirty     bool
+
+	growth atomic.Int64 // heap change over the last call, in bytes
 }
 
 type callState struct {
 	ctx   context.Context
 	phase phase
+	limit time.Duration
+	logs  int // fd.log lines in this call
 }
+
+// regexMatchTimeout bounds one regexp2 match (goja uses regexp2 for patterns with
+// backreferences or lookaround). A match past it throws a RangeError the module may catch.
+// regexp2 checks its own clock, so this holds where the interrupt cannot reach.
+const regexMatchTimeout = 250 * time.Millisecond
+
+var regexOnce sync.Once
+
+// stuckGrace is how long run waits for the runtime after the call's context ends. A runtime
+// still busy then is in a built-in that never checks the interrupt; run abandons it.
+const stuckGrace = 250 * time.Millisecond
 
 // New loads a bundle into a fresh runtime: it reads the module's state, runs main.js's top level
 // under Limits.Load, and finds the exported functions. main.js is CommonJS: it sets
 // module.exports (or properties of exports) to an object with render and, optionally, refresh
 // and act; require("./file.js") loads another file of the bundle (modules.md 7.3).
 func New(b *Bundle, opts Options) (*Module, error) {
+	// regexp2 reads the package value when a pattern compiles, so it is set once before any
+	// module code runs.
+	regexOnce.Do(func() { regexp2.DefaultMatchTimeout = regexMatchTimeout })
 	m := &Module{
-		b:      b,
-		opts:   opts,
-		limits: opts.Limits.withDefaults(),
-		powers: map[string]bool{},
-		r:      goja.New(),
-		files:  map[string]*goja.Object{},
-		fns:    map[string]goja.Callable{},
-		state:  map[string]json.RawMessage{},
+		b:        b,
+		opts:     opts,
+		limits:   opts.Limits.withDefaults(),
+		powers:   map[string]bool{},
+		r:        goja.New(),
+		files:    map[string]*goja.Object{},
+		fns:      map[string]goja.Callable{},
+		exported: map[string]bool{},
+		state:    map[string]json.RawMessage{},
 	}
 	for _, p := range b.Manifest.Powers {
 		m.powers[p] = true
 	}
 	m.r.SetMaxCallStackSize(m.limits.Stack)
+	// goja's parser reads the file a "//# sourceMappingURL=" comment names, from the host's
+	// disk. eval and new Function compile with these options; require passes the same.
+	m.r.SetParserOptions(parser.WithDisableSourceMaps)
 	// GoError is goja's own error type for wrapped Go errors. The bridge never wraps one, and a
 	// module needs no constructor for it.
 	_ = m.r.GlobalObject().Delete("GoError")
@@ -122,6 +160,7 @@ func New(b *Bundle, opts Options) (*Module, error) {
 			m.size += len(k) + len(v)
 		}
 	}
+	m.committed, m.csize = m.state, m.size
 	if err := m.installBridge(); err != nil {
 		return nil, err
 	}
@@ -152,6 +191,7 @@ func New(b *Bundle, opts Options) (*Module, error) {
 					return
 				}
 				m.fns[name] = fn
+				m.exported[name] = true
 			}
 		})
 		if gerr != nil {
@@ -175,16 +215,21 @@ func New(b *Bundle, opts Options) (*Module, error) {
 func (m *Module) Manifest() *modules.Manifest { return m.b.Manifest }
 
 // Has reports whether the module exports the function: refresh, render or act.
-func (m *Module) Has(name string) bool { return m.fns[name] != nil }
+func (m *Module) Has(name string) bool { return m.exported[name] }
+
+// HeapGrowth is how much the Go heap grew over the module's last finished call, in bytes; it is
+// negative when the heap shrank. The heap is the process's, and it counts garbage not yet
+// collected, so this is a hint: the host compares modules' growth to find the one that holds
+// memory (modules.md 8.4).
+func (m *Module) HeapGrowth() int64 { return m.growth.Load() }
 
 // Refresh runs the module's refresh under Limits.Refresh. A module without one succeeds at once.
 func (m *Module) Refresh(ctx context.Context, c Call) error {
-	fn := m.fns["refresh"]
-	if fn == nil {
+	if !m.Has("refresh") {
 		return nil
 	}
 	return m.run(ctx, phaseRefresh, m.limits.Refresh, func() (goja.Value, error) {
-		return m.settle(fn(goja.Undefined(), m.ctxValue(c)))
+		return m.settle(m.fns["refresh"](goja.Undefined(), m.ctxValue(c)))
 	})
 }
 
@@ -246,8 +291,7 @@ func (m *Module) Act(ctx context.Context, name string, args json.RawMessage, c C
 	if strings.HasPrefix(name, modules.ClientPrefix) {
 		return ErrClientAction
 	}
-	fn := m.fns["act"]
-	if fn == nil {
+	if !m.Has("act") {
 		return ErrNoAct
 	}
 	if len(args) == 0 {
@@ -262,17 +306,23 @@ func (m *Module) Act(ctx context.Context, name string, args json.RawMessage, c C
 		if err != nil {
 			return nil, err
 		}
-		return m.settle(fn(goja.Undefined(), m.r.ToValue(name), a, m.ctxValue(c)))
+		return m.settle(m.fns["act"](goja.Undefined(), m.r.ToValue(name), a, m.ctxValue(c)))
 	})
 }
 
 // run runs f with the module's runtime under a time limit and the memory watch, and turns what
-// goja returns into the package's typed errors.
+// goja returns into the package's typed errors. f runs on its own goroutine: run returns at the
+// limit plus stuckGrace even when the runtime never comes back, and a Go panic in f stops the
+// module instead of the process.
 func (m *Module) run(parent context.Context, ph phase, limit time.Duration, f func() (goja.Value, error)) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
 		return ErrStopped
+	}
+	before, err := m.heapAtStart()
+	if err != nil {
+		return err
 	}
 	base, cancelBase := context.WithCancelCause(parent)
 	defer cancelBase(nil)
@@ -300,12 +350,39 @@ func (m *Module) run(parent context.Context, ph phase, limit time.Duration, f fu
 	} else {
 		close(watchDone)
 	}
-	m.cur = &callState{ctx: ctx, phase: ph}
+	m.cur = &callState{ctx: ctx, phase: ph, limit: limit}
 
-	_, err := f()
-	// Classified while the limits still hold: reading a thrown object's name and message can
-	// run module code (getters, toString).
-	err = m.classify(ph, err)
+	done := make(chan error, 1)
+	go func() {
+		defer func() {
+			if p := recover(); p != nil {
+				done <- &InternalError{Func: ph.String(), Value: fmt.Sprint(p), Stack: string(debug.Stack())}
+			}
+		}()
+		_, err := f()
+		// Classified while the limits still hold: reading a thrown object's name and message can
+		// run module code (getters, toString).
+		done <- m.classify(ph, err)
+	}()
+	select {
+	case err = <-done:
+	case <-ctx.Done():
+		t := time.NewTimer(stuckGrace)
+		select {
+		case err = <-done:
+		case <-t.C:
+			// The runtime is in a built-in that ignores the interrupt. Leave it: its goroutine
+			// still owns the runtime, the call state and the state maps, so nothing here
+			// touches them again. The interrupt stays set, so it stops at its next instruction.
+			t.Stop()
+			stop()
+			cancel()
+			<-watchDone
+			m.err = &TimeoutError{Func: ph.String(), Limit: limit, Stuck: true}
+			return m.err
+		}
+		t.Stop()
+	}
 
 	stop()
 	m.imu.Lock()
@@ -315,7 +392,79 @@ func (m *Module) run(parent context.Context, ph phase, limit time.Duration, f fu
 	cancel()
 	<-watchDone
 	m.cur = nil
-	return err
+
+	var me *MemoryError
+	var ie *InternalError
+	if err == nil {
+		err = m.heapAtEnd(ph)
+	}
+	m.growth.Store(int64(heapBytes()) - int64(before))
+	if errors.As(err, &me) || errors.As(err, &ie) {
+		m.stop(err)
+		return err
+	}
+	return m.endState(err)
+}
+
+// heapAtStart samples the heap before a call. A heap over the limit after a collection is not
+// this module's doing, since none of its code has run: the call is refused with
+// ErrHeapPressure and the module keeps running.
+func (m *Module) heapAtStart() (uint64, error) {
+	h := heapBytes()
+	if m.limits.Memory == 0 || h <= m.limits.Memory {
+		return h, nil
+	}
+	runtime.GC()
+	if h = heapBytes(); h > m.limits.Memory {
+		return h, fmt.Errorf("%w: %d MiB, the limit is %d MiB", ErrHeapPressure, h>>20, m.limits.Memory>>20)
+	}
+	return h, nil
+}
+
+// heapAtEnd checks the heap after a call that succeeded: the watch samples every few
+// milliseconds, so a short call can allocate past the limit between samples. A heap still over
+// after a collection was under at the start, so this call kept the memory.
+func (m *Module) heapAtEnd(ph phase) error {
+	if m.limits.Memory == 0 || heapBytes() <= m.limits.Memory {
+		return nil
+	}
+	runtime.GC()
+	if heapBytes() > m.limits.Memory {
+		return &MemoryError{Func: ph.String(), Limit: m.limits.Memory}
+	}
+	return nil
+}
+
+// stop marks the module stopped and lets go of its runtime, so the memory a hog holds is
+// freed even while the host still holds the Module. Only called once the runtime's goroutine
+// has returned.
+func (m *Module) stop(err error) {
+	m.err = err
+	m.r = nil
+	m.fns = nil
+	m.files = nil
+	m.jsonParse, m.errorCtor, m.freeze = nil, nil, nil
+	m.state, m.committed = nil, nil
+}
+
+// endState saves the call's state writes once, when the call succeeded; a call that failed
+// keeps none of them.
+func (m *Module) endState(err error) error {
+	if !m.dirty {
+		return err
+	}
+	m.dirty = false
+	if err == nil && m.opts.State != nil {
+		if serr := m.opts.State.Save(m.b.Manifest.ID, m.state); serr != nil {
+			err = fmt.Errorf("module state: %w", serr)
+		}
+	}
+	if err != nil {
+		m.state, m.size = m.committed, m.csize
+		return err
+	}
+	m.committed, m.csize = m.state, m.size
+	return nil
 }
 
 func (m *Module) classify(ph phase, err error) error {
@@ -325,11 +474,7 @@ func (m *Module) classify(ph phase, err error) error {
 	var ie *goja.InterruptedError
 	if errors.As(err, &ie) {
 		if cause, ok := ie.Value().(error); ok {
-			var me *MemoryError
-			if errors.As(cause, &me) {
-				m.err = me
-			}
-			return cause
+			return cause // run stops the module on a MemoryError
 		}
 		return &ScriptError{Func: ph.String(), Message: "interrupted"}
 	}
@@ -338,9 +483,9 @@ func (m *Module) classify(ph phase, err error) error {
 		se := m.scriptError(ex.Value())
 		se.Func = ph.String()
 		_ = m.guard(func() {
-			se.Stack = ex.String()
+			se.Stack = cutRunes(ex.String(), maxErrorStack)
 			if se.Message == "" {
-				se.Message = ex.Error()
+				se.Message = cutRunes(ex.Error(), maxErrorMessage)
 			}
 		})
 		return se
@@ -360,6 +505,20 @@ func (m *Module) classify(ph phase, err error) error {
 	return err
 }
 
+// Bounds on what a ScriptError carries: a module's message can be as long as it likes, and
+// regexp2's timeout message holds the whole input.
+const (
+	maxErrorMessage = 2000 // runes
+	maxErrorStack   = 8000 // runes
+)
+
+func cutRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n-1]) + "…"
+}
+
 // scriptError reads a thrown value's name and message. Both may run module code, so they are
 // read as a guarded JS call; a getter that throws or loops leaves the field empty.
 func (m *Module) scriptError(v goja.Value) *ScriptError {
@@ -367,13 +526,13 @@ func (m *Module) scriptError(v goja.Value) *ScriptError {
 	_ = m.guard(func() {
 		if o, ok := v.(*goja.Object); ok {
 			if n := o.Get("name"); n != nil && !goja.IsUndefined(n) {
-				se.Name = n.String()
+				se.Name = cutRunes(n.String(), 100)
 			}
 			if msg := o.Get("message"); msg != nil && !goja.IsUndefined(msg) {
-				se.Message = msg.String()
+				se.Message = cutRunes(msg.String(), maxErrorMessage)
 			}
 		} else if v != nil {
-			se.Message = v.String()
+			se.Message = cutRunes(v.String(), maxErrorMessage)
 		}
 	})
 	return se
@@ -433,7 +592,7 @@ func (m *Module) require(p string) (goja.Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("no file %s", p)
 	}
-	prog, err := goja.Compile(p, "(function (exports, require, module) {"+src+"\n})", false)
+	prog, err := compileBody(p, src)
 	if err != nil {
 		return nil, err
 	}
@@ -476,6 +635,28 @@ func (m *Module) require(p string) (goja.Value, error) {
 		return nil, err
 	}
 	return mod.Get("exports"), nil
+}
+
+// compileBody compiles a file's source as the body of function (exports, require, module). It
+// parses the wrapped text and checks that the result is that one function: a source that
+// closes the function early, to run code outside it, is a syntax error.
+func compileBody(name, src string) (*goja.Program, error) {
+	prg, err := goja.Parse(name, "(function (exports, require, module) {"+src+"\n})", parser.WithDisableSourceMaps)
+	if err != nil {
+		return nil, err
+	}
+	ok := false
+	if len(prg.Body) == 1 {
+		if st, isExpr := prg.Body[0].(*ast.ExpressionStatement); isExpr {
+			_, ok = st.Expression.(*ast.FunctionLiteral)
+		}
+	}
+	if !ok {
+		return nil, &goja.CompilerSyntaxError{CompilerError: goja.CompilerError{
+			Message: name + ": the file closes the module function early",
+		}}
+	}
+	return goja.CompileAST(prg, false)
 }
 
 // resolve turns a require path into a bundle path. Only relative paths inside the bundle

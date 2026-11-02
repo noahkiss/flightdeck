@@ -7,6 +7,7 @@ toolchain go1.27.3
 require (
 	github.com/BurntSushi/toml v1.5.0
 	github.com/creack/pty v1.1.24
+	github.com/dlclark/regexp2/v2 v2.11.0
 	github.com/dop251/goja v0.0.0-20261102140139-622d10077b6c
 	github.com/ebitengine/purego v0.11.2
 	go.mitchellh.com/libghostty v0.0.0-20261021212106-df1957cbff56
@@ -15,7 +16,6 @@ require (
 )
 
 require (
-	github.com/dlclark/regexp2/v2 v2.11.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3 // indirect

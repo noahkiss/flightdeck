@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"reflect"
 	"strconv"
 
 	"github.com/dop251/goja"
@@ -107,6 +108,11 @@ func (e *exporter) value(v goja.Value, depth int, key string) (any, error) {
 			}
 			return list, nil
 		}
+		// Keys lists every index of a String object, typed array or arguments object in Go,
+		// before any bound applies; only plain objects reach it.
+		if !plainObject(o) {
+			return nil, &valueError{fmt.Sprintf("a %s cannot cross the bridge; use a plain object, an array or a string", kindOf(o))}
+		}
 		if err := e.count(2); err != nil {
 			return nil, err
 		}
@@ -146,6 +152,36 @@ func (e *exporter) value(v goja.Value, depth int, key string) (any, error) {
 		return x, e.count(len(x) + 2)
 	}
 	return nil, &valueError{"a symbol or BigInt cannot cross the bridge"}
+}
+
+// plainObject reports whether o is an ordinary object: one made by an object literal, a class or
+// Object.create. String, Number and Boolean objects, typed arrays, ArrayBuffers, Maps, Sets,
+// arguments, errors and proxies are not: a proxy forwards the key listing to its target, which
+// may be a typed array. goja names typed arrays, Maps and Sets "Object", so the export type
+// tells them apart; reading it runs no module code.
+func plainObject(o *goja.Object) bool {
+	return o.ClassName() == "Object" && o.ExportType() == mapType
+}
+
+var (
+	mapType   = reflect.TypeFor[map[string]any]()
+	proxyType = reflect.TypeFor[goja.Proxy]()
+)
+
+// kindOf names an object that is not plain, for an error message.
+func kindOf(o *goja.Object) string {
+	if c := o.ClassName(); c != "Object" {
+		return c
+	}
+	switch t := o.ExportType(); {
+	case t == proxyType:
+		return "Proxy"
+	case t != nil && t.Kind() == reflect.Slice && t != reflect.TypeFor[[]any]() && t != reflect.TypeFor[[][2]any]():
+		return "typed array"
+	case t == reflect.TypeFor[goja.ArrayBuffer]():
+		return "ArrayBuffer"
+	}
+	return "built-in object"
 }
 
 // jsString returns a JS string primitive as a Go string. It never exports an object, which would

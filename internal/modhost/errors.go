@@ -12,10 +12,29 @@ import (
 type TimeoutError struct {
 	Func  string // load, refresh, render or act
 	Limit time.Duration
+	// Stuck is a call whose runtime did not stop within a short grace after its time limit or
+	// the caller's cancel: a long built-in that never checks the interrupt. The runtime is
+	// abandoned and the module stopped (ErrStopped after); the host drops it.
+	Stuck bool
 }
 
 func (e *TimeoutError) Error() string {
+	if e.Stuck {
+		return fmt.Sprintf("%s did not stop after its limit of %s; the module is stopped", e.Func, e.Limit)
+	}
 	return fmt.Sprintf("%s did not finish within %s", e.Func, e.Limit)
+}
+
+// InternalError is a Go panic inside a call: in the bridge, a backend or the runtime. The
+// runtime may be inconsistent, so the module is stopped (ErrStopped after).
+type InternalError struct {
+	Func  string
+	Value string // the panic value
+	Stack string // the Go stack where it panicked
+}
+
+func (e *InternalError) Error() string {
+	return fmt.Sprintf("%s: internal error: %s", e.Func, e.Value)
 }
 
 // MemoryError is a call interrupted because the Go heap passed Limits.Memory. The module is
@@ -65,8 +84,14 @@ func (e *ClientTooOld) Error() string {
 }
 
 var (
-	// ErrStopped is returned by every call after a MemoryError.
-	ErrStopped = errors.New("module stopped after passing its memory limit")
+	// ErrStopped is returned by every call after a MemoryError, an InternalError or a stuck
+	// TimeoutError. The host drops the Module and loads the module again.
+	ErrStopped = errors.New("module stopped; load it again")
+	// ErrHeapPressure is a call refused before any module code ran, because the module host's
+	// heap was over Limits.Memory even after a collection: something else holds the memory.
+	// The module is not blamed and keeps running; the host looks for the module whose calls
+	// grew the heap (Module.HeapGrowth).
+	ErrHeapPressure = errors.New("the module host's heap is over its memory limit")
 	// ErrNoAct is returned by Act for a module that exports no act function.
 	ErrNoAct = errors.New("the module has no act function")
 	// ErrClientAction is returned by Act for a client.* action, which never reaches a module.

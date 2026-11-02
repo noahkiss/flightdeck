@@ -21,7 +21,25 @@ const (
 	maxArgv        = 256
 	maxStateKey    = 200
 	maxLogLine     = 2000 // runes
+	maxLogLines    = 100  // fd.log lines per call; the rest are dropped
 )
+
+// habReads are the methods fd.hab.get may call (modules.md 7.3): reads of the structure, usage,
+// host stats, the catalog, command marks, worktrees, rounds and hab-side settings. A method
+// outside the list throws, whatever the Hab backend would answer, so a backend that forgets to
+// refuse a write still gives no write without the act power. Reads that reach transcripts or
+// files are left out: they have their own read scope (capcom.md 5).
+var habReads = map[string]bool{
+	"structure.get": true,
+	"usage.list":    true,
+	"hab.stats":     true,
+	"catalog.list":  true,
+	"command.list":  true,
+	"worktree.list": true,
+	"round.list":    true,
+	"round.runs":    true,
+	"settings.get":  true,
+}
 
 // installBridge sets the global fd object, the whole surface a module may call (modules.md
 // 7.1). Nothing else is added to the global object: goja itself has no file, network, process
@@ -36,6 +54,9 @@ func (m *Module) installBridge() error {
 	_ = hab.Set("get", fn(func(c goja.FunctionCall) goja.Value {
 		cur := m.need("fd.hab.get", "")
 		method, params := m.habArgs("fd.hab.get", c)
+		if !habReads[method] {
+			m.throw(BridgeError, fmt.Sprintf("fd.hab.get: %q is not a read it serves; it serves %s", method, strings.Join(slices.Sorted(maps.Keys(habReads)), ", ")))
+		}
 		if m.opts.Hab == nil {
 			m.throw(BridgeError, "fd.hab.get: this host gives modules no hab access")
 		}
@@ -118,6 +139,15 @@ func (m *Module) installBridge() error {
 	_ = fd.Set("state", state)
 
 	_ = fd.Set("log", fn(func(c goja.FunctionCall) goja.Value {
+		if cur := m.cur; cur != nil {
+			cur.logs++
+			if cur.logs > maxLogLines {
+				if cur.logs == maxLogLines+1 && m.opts.Log != nil {
+					m.opts.Log(fmt.Sprintf("fd.log: more than %d lines in one %s; the rest are dropped", maxLogLines, cur.phase))
+				}
+				return goja.Undefined()
+			}
+		}
 		parts := make([]string, len(c.Arguments))
 		for i, a := range c.Arguments {
 			if s, ok := jsString(a); ok {
@@ -126,8 +156,12 @@ func (m *Module) installBridge() error {
 			}
 			if b, err := exportJSON(r, a, maxLogLine*4); err == nil {
 				parts[i] = string(b)
+			} else if o, ok := a.(*goja.Object); ok && o.ClassName() != "Error" {
+				// Not a String object's text or a typed array's items: either can be as
+				// long as the heap allows.
+				parts[i] = "[object " + o.ClassName() + "]"
 			} else {
-				parts[i] = a.String()
+				parts[i] = cutRunes(a.String(), maxLogLine)
 			}
 		}
 		line := strings.Join(parts, " ")
@@ -181,7 +215,7 @@ func (m *Module) habArgs(call string, c goja.FunctionCall) (string, json.RawMess
 	if goja.IsUndefined(p) || goja.IsNull(p) {
 		return method, json.RawMessage("{}")
 	}
-	if o, ok := p.(*goja.Object); !ok || o.ClassName() == "Array" {
+	if o, ok := p.(*goja.Object); !ok || !plainObject(o) {
 		m.throw(BridgeError, call+": params is an object")
 	}
 	b, err := exportJSON(m.r, p, maxParamsBytes)
@@ -209,7 +243,7 @@ func (m *Module) options(call string, v goja.Value, keys ...string) *goja.Object
 		return nil
 	}
 	o, ok := v.(*goja.Object)
-	if !ok || o.ClassName() == "Array" {
+	if !ok || !plainObject(o) {
 		m.throw(BridgeError, call+": options is an object")
 	}
 	for _, k := range o.Keys() {
@@ -256,8 +290,13 @@ func (m *Module) execArgs(cur *callState, c goja.FunctionCall) ExecRequest {
 			if math.IsNaN(secs) || secs <= 0 {
 				m.throw(BridgeError, "fd.exec: timeout is a number of seconds above 0")
 			}
-			if d := time.Duration(secs * float64(time.Second)); d < req.Timeout {
-				req.Timeout = d
+			// Compared in seconds before converting: a huge number overflows a Duration. A
+			// timeout past the call's own limit is most likely milliseconds by JS habit.
+			if most := cur.limit.Seconds(); secs > most {
+				m.throw(BridgeError, fmt.Sprintf("fd.exec: timeout is in seconds; at most %g", most))
+			}
+			if secs < remaining.Seconds() {
+				req.Timeout = time.Duration(secs * float64(time.Second))
 			}
 		}
 	}
@@ -292,7 +331,7 @@ func (m *Module) fetchArgs(c goja.FunctionCall) FetchRequest {
 	}
 	if v := o.Get("headers"); v != nil && !goja.IsUndefined(v) {
 		ho, ok := v.(*goja.Object)
-		if !ok || ho.ClassName() == "Array" {
+		if !ok || !plainObject(ho) {
 			m.throw(BridgeError, "fd.fetch: headers is an object of strings")
 		}
 		req.Headers = map[string]string{}
@@ -326,19 +365,19 @@ func (m *Module) stateKey(call string, v goja.Value) string {
 	return k
 }
 
-// setState stores one key, or deletes it when the value is undefined, then saves the module's
-// state through the Store. A save that fails, or a state over Limits.State, changes nothing.
+// setState stores one key, or deletes it when the value is undefined, in the call's state. A
+// state over Limits.State changes nothing. run saves the state once when the call ends well,
+// and drops the call's writes when it fails.
 func (m *Module) setState(key string, v goja.Value) {
 	old, had := m.state[key]
 	size := m.size
 	if had {
 		size -= len(key) + len(old)
 	}
-	next := maps.Clone(m.state)
-	if goja.IsUndefined(v) {
-		delete(next, key)
-	} else {
-		b, err := exportJSON(m.r, v, m.limits.State)
+	var b []byte
+	if !goja.IsUndefined(v) {
+		var err error
+		b, err = exportJSON(m.r, v, m.limits.State)
 		if err != nil {
 			m.throw(BridgeError, "fd.state.set: "+err.Error())
 		}
@@ -346,14 +385,17 @@ func (m *Module) setState(key string, v goja.Value) {
 		if size > m.limits.State {
 			m.throw(BridgeError, fmt.Sprintf("fd.state.set: the module's state would be %d bytes; the limit is %d", size, m.limits.State))
 		}
-		next[key] = b
 	}
-	if m.opts.State != nil {
-		if err := m.opts.State.Save(m.b.Manifest.ID, next); err != nil {
-			m.throw(BridgeError, "fd.state.set: "+err.Error())
-		}
+	if !m.dirty {
+		m.state = maps.Clone(m.committed)
+		m.dirty = true
 	}
-	m.state, m.size = next, size
+	if b == nil {
+		delete(m.state, key)
+	} else {
+		m.state[key] = b
+	}
+	m.size = size
 }
 
 // settingsValue builds the frozen fd.settings: each declared setting, the person's value or the
