@@ -392,8 +392,10 @@ func TestStartHold(t *testing.T) {
 		t.Fatal("the write still waits after the first exchange")
 	}
 
-	// No peers: no hold.
-	c := newHab(t, "c")
+	// No peers but this hab's own entry (a shared peer file): no hold.
+	c := newHab(t, "c", func(h *hab, _ *Config) {
+		h.links = []Link{{Label: "c", DeviceID: h.id, Online: false, Caps: []string{Capability}}}
+	})
 	start := time.Now()
 	write(t, c, "alone")
 	if time.Since(start) > time.Second {

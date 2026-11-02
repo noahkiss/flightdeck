@@ -154,8 +154,9 @@ func New(cfg Config) (*Service, error) {
 	s.ctx, s.stop = context.WithCancel(context.Background())
 	// The start hold (logbook.md 7.6, Restored file): with peers listed, writes wait until the
 	// first exchange ends or the hold runs out, so a file restored from an older copy gets its
-	// own ops back before it writes. With none, a mesh of one, nothing waits.
-	if cfg.Peers != nil && len(cfg.Peers.Links()) > 0 {
+	// own ops back before it writes. With none but this hab's own entry, a mesh of one, nothing
+	// waits.
+	if cfg.Peers != nil && slices.ContainsFunc(cfg.Peers.Links(), func(l Link) bool { return l.DeviceID != cfg.Self }) {
 		if err := cfg.Store.HoldWrites(context.Background(), cfg.Now().Add(cfg.StartHold)); err != nil {
 			return nil, err
 		}
