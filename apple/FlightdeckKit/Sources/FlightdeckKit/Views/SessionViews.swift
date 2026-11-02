@@ -79,6 +79,8 @@ public struct SessionView: View {
     /// The composer's draft, here so the Capcom toolbar's New conversation can carry it.
     @State private var draft = ""
     @Environment(\.terminalSlot) private var terminal
+    /// The Capcom view this session view sits in, if any.
+    @Environment(\.capcomView) private var capcomView
 
     enum Mode: String, CaseIterable, Identifiable {
         case chat = "Chat"
@@ -226,7 +228,7 @@ public struct SessionView: View {
             guard let center = model.capcom else { return }
             let text = draft
             Task {
-                if await center.newConversation(from: model, draft: text) { draft = "" }
+                if await center.newConversation(from: model, draft: text, view: capcomView) { draft = "" }
             }
         }
         .disabled(model.capcom == nil || model.capcomBusy || !model.context.online)

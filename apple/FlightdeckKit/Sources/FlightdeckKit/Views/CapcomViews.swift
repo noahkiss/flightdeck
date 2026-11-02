@@ -1,6 +1,11 @@
 import HabAPI
 import SwiftUI
 
+extension EnvironmentValues {
+    /// The token of the Capcom view a session view sits in; nil outside one (app.md 4.10).
+    @Entry var capcomView: UUID? = nil
+}
+
 /// The board's Capcom row (app.md 4.10): opens the standing Capcom conversation.
 struct CapcomEntryRow: View {
     let center: CapcomCenter
@@ -37,11 +42,15 @@ struct CapcomScreen: View {
     let fleet: Fleet
     let compact: Bool
     let close: (() -> Void)?
+    /// This view's token: each window's Capcom view counts on its own.
+    @State private var token = UUID()
 
     private var center: CapcomCenter { fleet.capcom }
 
     var body: some View {
-        Group {
+        // A ZStack, not a Group: the appear and disappear hooks stay on this container and
+        // do not fire again when the content swaps between the state and the conversation.
+        ZStack {
             if let m = center.standing {
                 SessionView(model: m, compact: compact, close: close)
                     .id(m.target)
@@ -51,10 +60,11 @@ struct CapcomScreen: View {
                 state
             }
         }
+        .environment(\.capcomView, token)
         // Opens on appearing; the center opens again when the home comes online or moves,
         // or the standing conversation exits.
-        .onAppear { center.viewAppeared() }
-        .onDisappear { center.viewDisappeared() }
+        .onAppear { center.viewAppeared(token) }
+        .onDisappear { center.viewDisappeared(token) }
     }
 
     @ViewBuilder

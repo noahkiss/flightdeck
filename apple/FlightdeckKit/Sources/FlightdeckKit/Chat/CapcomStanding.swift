@@ -115,53 +115,77 @@ extension CapcomCenter {
     public func openStanding() async {
         guard case .ready(let id) = entry, !opening else { return }
         opening = true
-        await openStanding(on: id)
+        let dropped = await openStanding(on: id)
         opening = false
-        // The home moved while the open was on its way: open there too. Each pass needs a
-        // new home, so this ends.
-        if case .ready(let now) = entry, now != id { await openStanding() }
+        if case .ready(let now) = entry {
+            // The home moved while the open was on its way: open there too. Each pass needs a
+            // new home, so this ends.
+            if now != id { await openStanding(); return }
+            // The link dropped and is back already: one more try.
+            if dropped, retryAfterDrop {
+                retryAfterDrop = false
+                await openStanding()
+            }
+        }
     }
 
-    private func openStanding(on id: String) async {
+    /// One open on `id`. Returns true when it failed because the link dropped; it then marks
+    /// one retry for when the home is online again.
+    private func openStanding(on id: String) async -> Bool {
         do {
             _ = try await run(habID: id, context: [], new: false, request: false)
             standingFailure = nil
+            retryAfterDrop = false
         } catch let e as RPCError where e.kind == .unavailable {
             await refreshHome()
             if case .ready(let next) = entry, next != id, (try? await run(habID: next, context: [], new: false, request: false)) != nil {
                 standingFailure = nil
-                return
+                return false
             }
             standingFailure = Self.message(e, label: habs.label(id), doing: nil)
+        } catch let e as ConnectionClosed {
+            standingFailure = Self.message(e, label: habs.label(id), doing: nil)
+            retryAfterDrop = true
+            return true
         } catch {
             standingFailure = Self.message(error, label: habs.label(id), doing: nil)
         }
+        return false
     }
 
     // MARK: - While a Capcom view is on screen
 
     /// A Capcom view appeared: open the standing conversation, and keep it open while shown.
-    public func viewAppeared() {
-        viewers += 1
+    /// `view` names that view, one per window; a second call with the same token (a redraw
+    /// that swaps the view's content) opens nothing.
+    public func viewAppeared(_ view: UUID) {
+        guard viewers.insert(view).inserted else { return }
         lastEntry = entry
         Task { await openStanding() }
     }
 
     /// A Capcom view went away.
-    public func viewDisappeared() {
-        viewers = max(0, viewers - 1)
+    public func viewDisappeared(_ view: UUID) {
+        viewers.remove(view)
     }
 
     /// While a Capcom view is on screen: a changed entry (the home came online, moved, or was
     /// found) opens the standing conversation again, and so does a standing conversation that
-    /// exited, at most once per `resumeGap` for the same session. The board and each catalog
+    /// exited, at most once per `resumeGap` for the same session, and so does an open that
+    /// failed when the link dropped, once the home is online again. The board and each catalog
     /// read call it. Returns whether it started an open.
     @discardableResult
     func standingCheck() -> Bool {
-        guard viewers > 0 else { return false }
+        guard !viewers.isEmpty else { return false }
         let e = entry
         if e != lastEntry {
             lastEntry = e
+            retryAfterDrop = false
+            Task { await openStanding() }
+            return true
+        }
+        if retryAfterDrop, case .ready = e, !opening {
+            retryAfterDrop = false
             Task { await openStanding() }
             return true
         }

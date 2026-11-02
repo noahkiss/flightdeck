@@ -29,8 +29,11 @@ public final class CapcomCenter {
     public internal(set) var standingFailure: String?
     /// An open of the standing conversation is on its way.
     public internal(set) var opening = false
-    /// Capcom views on screen; while any is, the center opens the standing conversation by itself.
-    @ObservationIgnored var viewers = 0
+    /// Capcom views on screen, one token per view (each window has its own); while any is, the
+    /// center opens the standing conversation by itself.
+    @ObservationIgnored var viewers: Set<UUID> = []
+    /// An open failed because the link dropped: open once more when the home is online again.
+    @ObservationIgnored var retryAfterDrop = false
     /// The entry the views last saw, so a change opens again.
     @ObservationIgnored var lastEntry: CapcomEntry?
     /// The last time the center resumed an exited standing conversation by itself, per session.
@@ -225,7 +228,7 @@ public final class CapcomCenter {
     /// A file that could not go up again stays on the old one. Returns false when the open was
     /// refused; the old conversation then keeps everything, with the hab's text.
     @discardableResult
-    public func newConversation(from old: ChatModel, draft: String) async -> Bool {
+    public func newConversation(from old: ChatModel, draft: String, view: UUID? = nil) async -> Bool {
         let habID = old.target.habID
         let moving = old.pending.filter { $0.kind != .file || old.chipFiles[$0.ref] != nil }
         let refs = moving.compactMap(old.reattachRef)
@@ -233,9 +236,9 @@ public final class CapcomCenter {
         old.capcomBusy = true
         let m: ChatModel
         do {
-            // From the Capcom view, the view shows the new one in its place (run sets
-            // `standing`); from a Capcom session's board row, the board opens it.
-            let inView = viewers > 0 && standing === old
+            // From a Capcom view, that view shows the new one in its place (run sets
+            // `standing`); from a Capcom session's board row, in any window, the board opens it.
+            let inView = view.map { viewers.contains($0) } == true && standing === old
             m = try await run(habID: habID, context: refs, new: true, request: !inView)
         } catch {
             old.capcomBusy = false

@@ -8,6 +8,9 @@ import XCTest
 /// its place.
 @MainActor
 final class CapcomViewTests: XCTestCase {
+    /// One Capcom view's token.
+    private let view = UUID()
+
     private func hab(_ host: String, capcom: Bool = true) async -> FakeHab {
         let h = await sampleHab(host)
         if capcom { await h.setCapability("capcom", true) }
@@ -173,13 +176,13 @@ final class CapcomViewTests: XCTestCase {
         let a = await hab("bench")
         await a.addNotice(id: "n7", title: "Build failed")
         let f = await fleet([a])
-        f.capcom.viewAppeared()
+        f.capcom.viewAppeared(view)
         await eventually("open") { f.capcom.standing != nil }
         let old = try XCTUnwrap(f.capcom.standing)
         await eventually("capcom context") { old.context.isCapcom }
         let ok = await old.attach(CapcomContextRef(kind: .notification, ref: "n7"))
         XCTAssertTrue(ok)
-        let moved = await f.capcom.newConversation(from: old, draft: "why did it fail?")
+        let moved = await f.capcom.newConversation(from: old, draft: "why did it fail?", view: view)
         XCTAssertTrue(moved)
         let m = try XCTUnwrap(f.capcom.standing)
         XCTAssertFalse(m === old)
@@ -188,7 +191,7 @@ final class CapcomViewTests: XCTestCase {
         XCTAssertEqual(m.pending.map(\.title), ["Build failed"])
         XCTAssertTrue(old.pending.isEmpty, "detached from the old one")
         XCTAssertNil(f.capcom.openRequest, "the Capcom view swaps in place")
-        f.capcom.viewDisappeared()
+        f.capcom.viewDisappeared(view)
         let opens = await a.capcomOpens
         XCTAssertEqual(opens.last?.new, true)
         await f.setActive(false)
@@ -249,20 +252,20 @@ final class CapcomViewTests: XCTestCase {
         await b.setSilent(true)
         await b.dropConnections()
         await eventually("attic offline") { f.capcom.entry == .offline(habID: "attic") }
-        f.capcom.viewAppeared()
+        f.capcom.viewAppeared(view)
         XCTAssertNil(f.capcom.standing)
         await b.setSilent(false)
         await eventually("opened by itself") { f.capcom.standing?.target.habID == "attic" }
         let opens = await b.capcomOpens
         XCTAssertEqual(opens, [CapcomOpenParams()])
-        f.capcom.viewDisappeared()
+        f.capcom.viewDisappeared(view)
         await f.setActive(false)
     }
 
     func testExitedStandingConversationResumesOncePerGap() async throws {
         let a = await hab("bench")
         let f = await fleet([a])
-        f.capcom.viewAppeared()
+        f.capcom.viewAppeared(view)
         await eventually("open") { f.capcom.standing != nil }
         let m = try XCTUnwrap(f.capcom.standing)
         await eventually("context") { m.context.isCapcom && !m.context.sessionExited }
@@ -275,11 +278,69 @@ final class CapcomViewTests: XCTestCase {
         XCTAssertFalse(f.capcom.standingCheck(), "no second resume within the gap")
         f.capcom.resumeGap = 0
         // A view that is not on screen resumes nothing.
-        f.capcom.viewDisappeared()
+        f.capcom.viewDisappeared(view)
         XCTAssertFalse(f.capcom.standingCheck())
-        f.capcom.viewAppeared()
+        f.capcom.viewAppeared(view)
         await eventually("resumed again once on screen") { await a.capcomResumes == 2 }
-        f.capcom.viewDisappeared()
+        f.capcom.viewDisappeared(view)
+        await f.setActive(false)
+    }
+
+    func testContentSwapInTheViewOpensNothingMore() async throws {
+        let a = await hab("bench")
+        let f = await fleet([a])
+        f.capcom.viewAppeared(view)
+        await eventually("open") { f.capcom.standing != nil }
+        // The view's content swaps from the state to the conversation: a repeated appear of
+        // the same view opens nothing.
+        f.capcom.viewAppeared(view)
+        XCTAssertFalse(f.capcom.standingCheck())
+        let opens = await a.capcomOpens
+        XCTAssertEqual(opens.count, 1)
+        f.capcom.viewDisappeared(view)
+        await f.setActive(false)
+    }
+
+    func testViewsCountPerWindow() async throws {
+        let a = await hab("bench")
+        let f = await fleet([a])
+        let other = UUID()
+        f.capcom.viewAppeared(view)
+        await eventually("open") { f.capcom.standing != nil }
+        let standing = try XCTUnwrap(f.capcom.standing)
+        await eventually("context") { standing.context.isCapcom }
+        // Another window shows the standing session from its board row: no Capcom view there,
+        // so the board opens the new conversation.
+        let fromRow = await f.capcom.newConversation(from: standing, draft: "", view: nil)
+        XCTAssertTrue(fromRow)
+        XCTAssertEqual(f.capcom.openRequest?.session, "capcom-s2")
+        f.capcom.shown()
+        // A second window's own Capcom view swaps in place.
+        f.capcom.viewAppeared(other)
+        let current = try XCTUnwrap(f.capcom.standing)
+        await eventually("context") { current.context.isCapcom }
+        let fromView = await f.capcom.newConversation(from: current, draft: "", view: other)
+        XCTAssertTrue(fromView)
+        XCTAssertNil(f.capcom.openRequest)
+        f.capcom.viewDisappeared(view)
+        XCTAssertFalse(f.capcom.viewers.isEmpty, "the other window's view still counts")
+        f.capcom.viewDisappeared(other)
+        await f.setActive(false)
+    }
+
+    func testOpenThatFailedOnADropRetriesWhenTheHomeIsBack() async throws {
+        let a = await hab("bench")
+        let f = await fleet([a])
+        await a.setSilent(true)
+        f.capcom.viewAppeared(view)
+        await eventually("open sent") { f.capcom.opening }
+        await a.dropConnections()
+        await eventually("failed") { f.capcom.standingFailure != nil }
+        XCTAssertNil(f.capcom.standing)
+        await a.setSilent(false)
+        await eventually("retried by itself") { f.capcom.standing != nil }
+        XCTAssertNil(f.capcom.standingFailure)
+        f.capcom.viewDisappeared(view)
         await f.setActive(false)
     }
 
