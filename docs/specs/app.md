@@ -2347,6 +2347,15 @@ Code in `apple/FlightdeckKit` (`Voice/`, `Views/VoiceViews.swift`) and the
   hab's limit, with "The turn reached 120 s and ended there."; its start is kept. A route
   change while the owner speaks ends the turn with the audio so far, and rebuilds the live
   recognizer for the new input.
+- **Audio session.** The owner turned voice on, so its speech plays with the silent switch on, as
+  a navigation or podcast app does. Voice mode sets `playAndRecord` with the `voiceChat` mode and
+  `defaultToSpeaker`, `allowBluetoothHFP`, `allowBluetoothA2DP` and `duckOthers`; dictation sets
+  `playAndRecord`, `default`, `defaultToSpeaker`, `allowBluetoothHFP` and `duckOthers`
+  (`VoiceAudio.sessionConfig`). The session is active while the microphone runs and ends with
+  `notifyOthersOnDeactivation`, so other audio comes back. Voice mode never switches to
+  `playback` to speak: that category has no input, and the microphone stays open while the app
+  speaks, for barge-in. Before each reply the app checks the category and sets it again if
+  something changed it. Notification sounds are not this session's; the switch governs them.
 - **Echo and barge-in.** Speech plays through the same audio engine as the microphone, with
   voice processing on, so the echo canceller removes the app's own voice. While the app speaks,
   a barge-in needs 10 dB more level, and live words alone do not start a turn. "Noisy room"

@@ -55,11 +55,11 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         }
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
-        // Dictation ducks the owner's audio instead of stopping it. Another
-        // window's microphone already set the session: keep its mode.
-        if Self.sessionUsers == 0 { try session.setCategory(.playAndRecord, mode: speaks ? .voiceChat : .default,
-                                options: speaks ? [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP]
-                                    : [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers]) }
+        // Another window's microphone already set the session: keep its mode.
+        if Self.sessionUsers == 0 {
+            let c = Self.sessionConfig(speaks: speaks)
+            try session.setCategory(c.category, mode: c.mode, options: c.options)
+        }
         try session.setActive(true)
         observe(session)
         #endif
@@ -161,6 +161,20 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
     }
 
     #if os(iOS)
+    /// The audio session voice mode and dictation set (app.md 13.7, "Audio
+    /// session"). Both use `playAndRecord`, which plays with the silent switch
+    /// on, as a navigation or podcast app does: the owner turned voice on.
+    /// Voice mode keeps the microphone open while it speaks (barge-in, echo
+    /// cancellation), so it never switches to `playback`, which has no input.
+    /// Both duck other audio and route to the speaker or a Bluetooth headset.
+    /// Notification sounds are not this session's: the switch still governs them.
+    static func sessionConfig(speaks: Bool) -> (category: AVAudioSession.Category, mode: AVAudioSession.Mode, options: AVAudioSession.CategoryOptions) {
+        if speaks {
+            return (.playAndRecord, .voiceChat, [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .duckOthers])
+        }
+        return (.playAndRecord, .default, [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers])
+    }
+
     private func observe(_ session: AVAudioSession) {
         observers.append(NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: session, queue: .main) { [weak self] n in
             let raw = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
@@ -186,6 +200,15 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
     public func speak(_ text: String) async -> Bool {
         stopSpeaking()
         guard speaks, running, let fmt = playFormat else { return false }
+        #if os(iOS)
+        // Speech must never play under a category the silent switch mutes.
+        let session = AVAudioSession.sharedInstance()
+        if session.category != .playAndRecord {
+            let c = Self.sessionConfig(speaks: true)
+            try? session.setCategory(c.category, mode: c.mode, options: c.options)
+            try? session.setActive(true)
+        }
+        #endif
         speakID += 1
         let id = speakID
         let utterance = AVSpeechUtterance(string: text)

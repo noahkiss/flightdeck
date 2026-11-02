@@ -41,6 +41,21 @@ final class VoiceAudioTests: XCTestCase {
         return out
     }
 
+    #if os(iOS)
+    /// Voice mode and dictation use a category the silent switch does not
+    /// mute, keep the microphone, and duck other audio (app.md 13.7).
+    @MainActor
+    func testAudioSessionPlaysWithTheSilentSwitchOn() {
+        for speaks in [true, false] {
+            let c = VoiceAudio.sessionConfig(speaks: speaks)
+            XCTAssertEqual(c.category, .playAndRecord, "the silent switch never mutes playAndRecord")
+            XCTAssertTrue(c.options.contains(.duckOthers))
+            XCTAssertTrue(c.options.contains(.defaultToSpeaker))
+        }
+        XCTAssertEqual(VoiceAudio.sessionConfig(speaks: true).mode, .voiceChat, "echo cancellation for barge-in")
+    }
+    #endif
+
     func testCRCMatchesTheOggPolynomial() {
         // CRC-32/MPEG-2 without the final xor and initial ones: the Ogg variant.
         XCTAssertEqual(OggOpusWriter.crc32(Data("123456789".utf8)), 0x89a1_897f)
