@@ -472,6 +472,7 @@ the key without trusting a value the phone could copy.
 | `-listen addr` | Replaces the list; repeatable. An unspecified or public address is refused, even here |
 | Port | `-port`, else one free port the system picks for the first address, reused for the others where it is free |
 | Lifetime | At most five minutes (`-timeout`, capped at five). Closed after one pairing, a `declined` answer or Ctrl-C. Refused tokens never close it |
+| Banner | The library's default, `SSH-2.0-Go`: it names no product, so a scan does not learn it found a pairing window |
 | Commit point | Once the owner said yes and the key is being written, that write decides the outcome. A window that expires, or a Ctrl-C, during the write waits for it: the phone and the terminal both hear paired (or failed), never expired, so the terminal never says nothing paired while the key is in the file |
 | One use | The token pairs one device. A no at the prompt burns it too: someone else may have scanned the code, so the owner runs `gff-hab pair` again |
 | Limits | At most two connections at once from one source address, and sixteen in all; 10 s to finish the SSH handshake; 20 s from auth to the request; one request per connection; one device waits for the owner at a time (another gets `busy`); the owner has until the window closes |

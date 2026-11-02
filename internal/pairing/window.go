@@ -134,8 +134,7 @@ func Open(cfg Config) (*Window, error) {
 			}
 			return nil, errKeyType
 		},
-		MaxAuthTries:  3,
-		ServerVersion: "SSH-2.0-gff-hab-pair",
+		MaxAuthTries: 3, // the default banner, SSH-2.0-Go, names no product
 	}
 	w.srv.AddHostKey(signer)
 	port := cfg.Port

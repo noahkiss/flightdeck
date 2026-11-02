@@ -320,7 +320,7 @@ func TestConnectionsPerSource(t *testing.T) {
 		}
 		held = append(held, c)
 		c.SetReadDeadline(time.Now().Add(5 * time.Second))
-		if l, err := bufio.NewReader(c).ReadString('\n'); err != nil || !strings.HasPrefix(l, "SSH-2.0-") {
+		if l, err := bufio.NewReader(c).ReadString('\n'); err != nil || !strings.HasPrefix(l, "SSH-2.0-") || strings.Contains(strings.ToLower(l), "gff") {
 			t.Fatalf("banner %q %v", l, err)
 		}
 	}
