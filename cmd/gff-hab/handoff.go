@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/catalog"
 	"github.com/noahkiss/flightdeck/internal/channels"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/suggest"
@@ -48,20 +49,26 @@ func ready(s api.AgentStatus) bool {
 	return s == api.AgentStatusIdle || s == api.AgentStatusDone || s == api.AgentStatusError
 }
 
-// projectAgents finds the running agents on a project in the merged catalog: the project by
-// name, key, remote or folder (suggest.Matches), its agents by the project's name on the hosts
-// where it is checked out. host, when given, keeps one host. It returns the project's name.
-func projectAgents(cl api.CatalogList, project, host string) (string, []handOffTarget) {
-	name := project
-	where := map[string]bool{} // device ids where the project is checked out; nil: not in the catalog
+// projectAgents finds the running agents on a project in the merged catalog. The project is the
+// catalog group named by name, key, remote or folder (matchProject); a name two groups share
+// returns both groups and no agents. An agent names its project by its own host's name for it,
+// so on each host the agents count whose project name is one that host gives a project of the
+// group's key; a name the host also gives another project counts for neither. A project the
+// catalog does not list falls back to the agents' project name. host, when given, keeps one
+// host. It returns the project's name.
+func projectAgents(cl api.CatalogList, project, host string) (string, []handOffTarget, []api.CatalogProjectGroup) {
+	var groups []api.CatalogProjectGroup
 	for _, p := range cl.Projects {
-		if !matchProject(p, project) {
-			continue
+		if matchProject(p, project) {
+			groups = append(groups, p)
 		}
-		name = p.Name
-		for _, l := range p.Locations {
-			where[l.DeviceID] = true
-		}
+	}
+	if len(groups) > 1 {
+		return project, nil, groups
+	}
+	name, key := project, ""
+	if len(groups) == 1 {
+		name, key = groups[0].Name, groups[0].Key
 	}
 	var out []handOffTarget
 	for _, h := range cl.Hosts {
@@ -72,11 +79,24 @@ func projectAgents(cl api.CatalogList, project, host string) (string, []handOffT
 		if host != "" && host != label && host != h.Catalog.Host {
 			continue
 		}
-		if len(where) > 0 && !where[h.Catalog.DeviceID] {
-			continue
+		names := map[string]bool{} // this host's names for the project, folded
+		if key == "" {
+			names[strings.ToLower(name)] = true
+		} else {
+			other := map[string]bool{}
+			for _, cp := range h.Catalog.Projects {
+				if catalog.ProjectKey(h.Catalog.DeviceID, cp) == key {
+					names[strings.ToLower(cp.Name)] = true
+				} else {
+					other[strings.ToLower(cp.Name)] = true
+				}
+			}
+			for n := range other {
+				delete(names, n)
+			}
 		}
 		for _, ag := range h.Catalog.Agents {
-			if ag.Project == "" || !strings.EqualFold(ag.Project, name) || ag.State == api.AgentStatusNone || ag.State == api.AgentStatusExited {
+			if ag.Project == "" || !names[strings.ToLower(ag.Project)] || ag.State == api.AgentStatusNone || ag.State == api.AgentStatusExited {
 				continue
 			}
 			addr := ag.Session
@@ -86,7 +106,7 @@ func projectAgents(cl api.CatalogList, project, host string) (string, []handOffT
 			out = append(out, handOffTarget{Host: label, Address: addr, CatalogAgent: ag, Offline: h.Stale})
 		}
 	}
-	return name, out
+	return name, out, nil
 }
 
 // matchProject is suggest.Matches, and for an absolute folder on this host also the folder
@@ -172,9 +192,16 @@ func runHandOff(ctx context.Context, c caller, a toolArgs) (any, string, error) 
 		return nil, "", err
 	}
 	project, host := a.str("project"), a.str("host")
-	name, ts := projectAgents(cl, project, host)
+	name, ts, groups := projectAgents(cl, project, host)
 	res := handOffResult{Project: name}
 	var b strings.Builder
+	if len(groups) > 1 {
+		fmt.Fprintf(&b, "%s names %d projects: nothing was sent. Pass the project's remote or a folder instead:\n", project, len(groups))
+		for _, g := range groups {
+			fmt.Fprintf(&b, "  %s (%s)\n", g.Name, g.Key)
+		}
+		return res, b.String(), nil
+	}
 	on := name
 	if host != "" {
 		on += " on " + host

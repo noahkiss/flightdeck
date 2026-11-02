@@ -60,6 +60,7 @@ func runAction(t *testing.T, c caller, name string, a toolArgs) (any, string, er
 func TestHandOffPick(t *testing.T) {
 	f := &fakeChannelHab{fakeReadHab: twoHosts()}
 	cl := &f.catalog
+	withHostProjects(cl)
 	// A second agent on app, on devbox, idle and older; and an exited one that never counts.
 	cl.Hosts[1].Catalog.Agents = append(cl.Hosts[1].Catalog.Agents,
 		api.CatalogAgent{Session: "app-api", Harness: "codex", Project: "app", State: api.AgentStatusIdle, Since: "2026-03-01T09:00:00Z"},
@@ -120,6 +121,65 @@ func TestHandOffPick(t *testing.T) {
 	res, text, err = runAction(t, f, "hand_off", toolArgs{"project": "app", "message": "z"})
 	if err != nil || res.(handOffResult).Delivery != "held" || !strings.Contains(text, "Held: devbox/app-api") || !strings.Contains(text, "outbox") {
 		t.Fatalf("offline: %v\n%s", err, text)
+	}
+}
+
+// withHostProjects gives each host of twoHosts its own catalog entry for app, as the merged
+// view's group has it.
+func withHostProjects(cl *api.CatalogList) {
+	for i := range cl.Hosts {
+		cl.Hosts[i].Catalog.Projects = []api.CatalogProject{{Name: "app", Remote: "example.com/app"}}
+	}
+}
+
+// TestHandOffProjectIdentity: agents count by the project's identity, not one host's name for
+// it. A host that names the project differently still offers its agent; two projects that
+// share a name never mix, and a bare name that two projects share sends nothing.
+func TestHandOffProjectIdentity(t *testing.T) {
+	cl := api.CatalogList{
+		Hosts: []api.CatalogEntry{
+			{Own: true, Catalog: api.Catalog{DeviceID: "dev-a", Host: "host-a",
+				Projects: []api.CatalogProject{{Name: "shop", Remote: "example.com/shop"}, {Name: "shop", Remote: "example.com/other-shop"}, {Name: "tools", Remote: "example.com/tools"}},
+				Agents: []api.CatalogAgent{
+					{Session: "ambiguous", Harness: "claude", Project: "shop", State: api.AgentStatusIdle, Since: "2026-03-01T12:00:00Z"},
+					{Session: "tooler", Harness: "claude", Project: "tools", State: api.AgentStatusIdle, Since: "2026-03-01T12:00:00Z"}}}},
+			{Label: "devbox", Catalog: api.Catalog{DeviceID: "dev-b", Host: "host-b",
+				Projects: []api.CatalogProject{{Name: "shop-main", Remote: "example.com/shop"}, {Name: "tools", Remote: "example.com/tools-fork"}},
+				Agents: []api.CatalogAgent{
+					{Session: "shopper", Harness: "codex", Project: "shop-main", State: api.AgentStatusIdle, Since: "2026-03-01T10:00:00Z"},
+					{Session: "forker", Harness: "codex", Project: "tools", State: api.AgentStatusIdle, Since: "2026-03-01T13:00:00Z"}}}},
+		},
+		Projects: []api.CatalogProjectGroup{
+			{Key: "remote:example.com/shop", Name: "shop", Remote: "example.com/shop", Locations: []api.CatalogLocation{{DeviceID: "dev-a"}, {DeviceID: "dev-b", Label: "devbox"}}},
+			{Key: "remote:example.com/other-shop", Name: "shop", Remote: "example.com/other-shop", Locations: []api.CatalogLocation{{DeviceID: "dev-a"}}},
+			{Key: "remote:example.com/tools", Name: "tools", Remote: "example.com/tools", Locations: []api.CatalogLocation{{DeviceID: "dev-a"}}},
+			{Key: "remote:example.com/tools-fork", Name: "tools", Remote: "example.com/tools-fork", Locations: []api.CatalogLocation{{DeviceID: "dev-b", Label: "devbox"}}},
+		},
+	}
+	addrs := func(ts []handOffTarget) []string {
+		var out []string
+		for _, x := range ts {
+			out = append(out, x.Address)
+		}
+		return out
+	}
+	// By remote: devbox names it shop-main, and its agent counts. Host a's "shop" agent could be
+	// either shop project there, so it counts for neither.
+	_, ts, groups := projectAgents(cl, "example.com/shop", "")
+	if got := addrs(ts); len(groups) != 0 || len(got) != 1 || got[0] != "devbox/shopper" {
+		t.Fatalf("by remote: %v %v", got, groups)
+	}
+	// tools on host a is not the tools fork on devbox, though both are named tools.
+	_, ts, _ = projectAgents(cl, "example.com/tools", "")
+	if got := addrs(ts); len(got) != 1 || got[0] != "tooler" {
+		t.Fatalf("tools: %v", got)
+	}
+	// A bare name two projects share: nothing is sent, and both keys are listed.
+	f := &fakeChannelHab{fakeReadHab: &fakeReadHab{catalog: cl}}
+	res, text, err := runAction(t, f, "hand_off", toolArgs{"project": "tools", "message": "x"})
+	if err != nil || res.(handOffResult).Sent || len(f.sends) != 0 || !strings.Contains(text, "tools names 2 projects: nothing was sent") ||
+		!strings.Contains(text, "remote:example.com/tools-fork") {
+		t.Fatalf("shared name: %v %v\n%s", err, f.sends, text)
 	}
 }
 

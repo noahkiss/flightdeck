@@ -340,7 +340,7 @@ func groupProjects(hosts []api.CatalogEntry) []api.CatalogProjectGroup {
 	idx := map[string]int{}
 	for _, h := range hosts {
 		for _, p := range h.Catalog.Projects {
-			k := projectKey(h.Catalog.DeviceID, p)
+			k := ProjectKey(h.Catalog.DeviceID, p)
 			if k == "" {
 				continue
 			}
@@ -362,9 +362,10 @@ func groupProjects(hosts []api.CatalogEntry) []api.CatalogProjectGroup {
 	return out
 }
 
-// projectKey is merge's project key for a catalog project; the first folder stands in for the
-// project id of a project with no remote and no root commit.
-func projectKey(device string, p api.CatalogProject) string {
+// ProjectKey is merge's project key for a catalog project, the key of its group in
+// catalog.list; the first folder stands in for the project id of a project with no remote and
+// no root commit.
+func ProjectKey(device string, p api.CatalogProject) string {
 	id := ""
 	if len(p.Folders) > 0 {
 		id = p.Folders[0].Path

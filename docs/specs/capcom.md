@@ -568,10 +568,16 @@ change: `hand_off` uses `catalog.list`, `channel.send` and `channel.status`; `fi
 - **Finding the agent.** The tool reads `catalog.list` and resolves `project` as `suggest_host`
   does: a project's name, key, remote or a folder of one of its checkouts. An absolute folder
   that exists on the tool's host also matches with its links resolved, as the catalog stores a
-  checkout (on macOS `/var` is `/private/var`); `file_record` does the same. The candidates are
-  the agents of every host where that project is checked out whose project name matches, in
-  any state but `none` and `exited`. `host` keeps one host. A project the catalog does not list
-  falls back to the agents' project name.
+  checkout (on macOS `/var` is `/private/var`); `file_record` does the same. A name that two
+  catalog projects share sends nothing: the answer lists each project's key and asks for the
+  remote or a folder.
+- **Agents by identity.** A catalog agent names its project by its own host's name for it, and
+  hosts may name one project differently. So on each host the candidates are the agents whose
+  project name is a name that host gives a project of the matched project's key
+  (`catalog.ProjectKey`, as the merge groups them), in any state but `none` and `exited`. A
+  name the host also gives another project counts for neither: two projects that share a name
+  never mix. `host` keeps one host. A project the catalog does not list falls back to the
+  agents' project name.
 - **Picking.** In order: the agent the user named (`agent`: a session name or `host/name`);
   else an online agent that takes a message now (`idle`, `done` or `error`); else an online busy
   one (`working`, `blocked`); else one on an offline host; within each, the latest `since`.
