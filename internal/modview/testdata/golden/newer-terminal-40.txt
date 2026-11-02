@@ -1,0 +1,2 @@
+|Build pane|
+|Open the pane to see it|

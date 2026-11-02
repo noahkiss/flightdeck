@@ -1,0 +1,6 @@
+|▾ build-box|
+|  Load 0.42  ·  Memory 61 %  ·  Disk 128 GB free|
+|  [linux] [go 1.27] [always on]|
+|  ▪ Projects                                                                   7|
+targets:
+  section host - fold

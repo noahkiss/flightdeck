@@ -1,0 +1,14 @@
+|[x] Watch the main branch|
+||
+||
+|> Add a note|
+||
+||
+|r Refresh c Clear all d Docs o Copy|
+targets:
+  toggle watch - {"name":"set_watch"}
+  field note - {"name":"notes.add","args":{"list":"today"}}
+  button refresh r {"name":"refresh"}
+  button clear c {"name":"notes.clear"} confirm Clear every note?
+  button docs d {"name":"client.open_url","args":{"url":"https://example.com/docs"}}
+  button copy o {"name":"client.copy","args":{"text":"make test"}}

@@ -1,0 +1,57 @@
+package modview
+
+// symbols maps SF Symbol names to characters one column wide in common terminal fonts
+// (modules.md 6.3). A name not here draws nothing. Emoji are left out: their width differs
+// between terminals, and gff's canvas counts one column per character.
+var symbols = map[string]string{
+	"arrow.clockwise":               "↻",
+	"arrow.counterclockwise":        "↺",
+	"arrow.down":                    "↓",
+	"arrow.left":                    "←",
+	"arrow.right":                   "→",
+	"arrow.up":                      "↑",
+	"bell":                          "♪",
+	"bolt":                          "ϟ",
+	"checkmark":                     "✓",
+	"checkmark.circle":              "✓",
+	"checkmark.circle.fill":         "✓",
+	"chevron.right":                 "›",
+	"circle":                        "○",
+	"circle.fill":                   "●",
+	"clock":                         "◷",
+	"doc":                           "≡",
+	"doc.text":                      "≡",
+	"ellipsis":                      "…",
+	"exclamationmark":               "!",
+	"exclamationmark.circle":        "!",
+	"exclamationmark.triangle":      "!",
+	"exclamationmark.triangle.fill": "!",
+	"folder":                        "▪",
+	"gearshape":                     "~",
+	"gearshape.2":                   "~",
+	"hand.raised":                   "!",
+	"hand.tap":                      "•",
+	"info.circle":                   "i",
+	"minus":                         "-",
+	"pause":                         "‖",
+	"pause.fill":                    "‖",
+	"play":                          "▶",
+	"play.fill":                     "▶",
+	"plus":                          "+",
+	"questionmark":                  "?",
+	"questionmark.circle":           "?",
+	"square":                        "□",
+	"square.fill":                   "■",
+	"star":                          "☆",
+	"star.fill":                     "★",
+	"stop":                          "■",
+	"stop.fill":                     "■",
+	"terminal":                      "$",
+	"trash":                         "×",
+	"xmark":                         "✗",
+	"xmark.circle":                  "✗",
+	"xmark.circle.fill":             "✗",
+}
+
+// Symbol is the character gff draws for an SF Symbol name, or "" for a name it does not know.
+func Symbol(name string) string { return symbols[name] }

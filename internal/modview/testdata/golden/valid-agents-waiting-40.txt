@@ -1,0 +1,5 @@
+|! example-app · Wants to run: make t… 2m|
+|~ docs-site · Working|
+targets:
+  row s-1 - {"name":"client.open_session","args":{"id":"s-1"}}
+  row s-2 - {"name":"client.open_session","args":{"id":"s-2"}}

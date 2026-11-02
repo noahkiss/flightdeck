@@ -1,0 +1,19 @@
+|▾ Every block|
+|  ● A row · With a body                                                      now|
+|  Body text|
+|  A caption|
+|    mono  text|
+|  A title|
+|  [new]|
+|  One 1 x  ·  Two 2|
+|  2/2 · ended|
+|  g Go|
+|  [ ] Off|
+|  > …|
+|  Ünïcødé ✓|
+targets:
+  section sec - fold
+  row row - {"name":"pick","args":{"n":1,"none":null,"on":true,"tags":["a"]}}
+  button b g {"name":"client.open_pane","args":{"id":"p-1"}} confirm Go now?
+  toggle tg - {"name":"flip"}
+  field f - {"name":"send"}
