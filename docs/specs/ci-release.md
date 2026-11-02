@@ -808,6 +808,9 @@ pull request body:3: host-name
   command's status is checked; no pipe hides a failing git command.
 - Patterns are not printed when loaded. The secret is masked by Actions anyway; the script must
   not rely on that.
+- The workflow reads the branch name and the pull request's title and body inside the step
+  (`$GITHUB_REF_NAME`, `jq` over `$GITHUB_EVENT_PATH`), never in the step's `env:` block: the log
+  prints that block, so a hit in the body would show there.
 - The script's tests (`scripts/hygiene/`, a Go test that runs the script in temporary
   repositories) plant invented values, check each hit's file, line and rule, and check that the
   output holds none of the planted text. Where dash or gawk is installed they run the script under

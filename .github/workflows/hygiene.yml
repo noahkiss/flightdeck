@@ -39,13 +39,12 @@ jobs:
           gawk --version | head -1
 
       - name: Scan
-        # Every event value reaches the script through env, never interpolated into it.
+        # Every event value reaches the script through env, never interpolated into it. The
+        # branch name and the pull request's title and body are read inside the step, not set in
+        # env:, because the log prints a step's env: block and a hit's text must not reach it.
         env:
           GFF_HYGIENE_AWK: gawk
           GFF_HYGIENE_PATTERNS: ${{ secrets.HYGIENE_PATTERNS }}
-          GFF_HYGIENE_REF: ${{ github.event_name == 'push' && github.ref_name || '' }}
-          GFF_HYGIENE_PR_TITLE: ${{ github.event.pull_request.title }}
-          GFF_HYGIENE_PR_BODY: ${{ github.event.pull_request.body }}
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
@@ -54,7 +53,13 @@ jobs:
         run: |
           set -eu
           zero=0000000000000000000000000000000000000000
+          if [ "$EVENT" = push ]; then
+            export GFF_HYGIENE_REF="$GITHUB_REF_NAME"
+          fi
           if [ "$EVENT" = pull_request ]; then
+            GFF_HYGIENE_PR_TITLE=$(jq -r '.pull_request.title // ""' "$GITHUB_EVENT_PATH")
+            GFF_HYGIENE_PR_BODY=$(jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH")
+            export GFF_HYGIENE_PR_TITLE GFF_HYGIENE_PR_BODY
             exec scripts/hygiene-scan.sh --range "$PR_BASE..$PR_HEAD"
           fi
           if [ "$EVENT" = push ] && [ -n "$BEFORE" ] && [ "$BEFORE" != "$zero" ] &&
