@@ -19,6 +19,13 @@ final class ContentTests: XCTestCase {
         ChatMessage(at: at, id: id, kind: kind, parent: parent, session: "s1", text: id)
     }
 
+    /// The modified-files card names its scope, since it sits under the last
+    /// row, which may be a call still waiting for approval (app.md 4.7).
+    func testModifiedFilesCardNamesTheSession() {
+        XCTAssertEqual(ModifiedFilesCard.title(1), "1 file changed in this session")
+        XCTAssertEqual(ModifiedFilesCard.title(3), "3 files changed in this session")
+    }
+
     func testMergeReplacesByIDAndKeepsChangeMark() {
         let modified = item("a", shown: nil, change: .modified, message: "m1")
         var list = ContentModel.merge([modified, item("b")], item("a", at: "2026-01-01T10:00:09Z"))

@@ -667,7 +667,9 @@ What carries over:
   sheet on iPhone). A PDF renders with PDFKit. HTML shows as text, or in a web view with
   JavaScript off.
 - **Modified files.** One card in the chat lists them, folded, with each file's change. A file
-  opens its diff.
+  opens its diff. The card counts the session's changes so far (git status and finished edit
+  calls), not one tool call's, so it reads "1 file changed in this session". It sits after the
+  last row, and a call still waiting for approval adds nothing to it until it has run.
 - **Side panel.** On Mac and iPad a panel to the right of the session lists the session's
   documents, images and modified files. Selecting one shows it in the panel. On iPhone the same
   list opens as a sheet from the session header.

@@ -572,9 +572,16 @@ func changeColor(_ c: ContentChange?) -> Color {
     }
 }
 
-/// The session's modified files as one folded card in the chat.
+/// The session's modified files as one folded card in the chat. It counts
+/// the session's changes so far, never one tool call's (app.md 4.7).
 struct ModifiedFilesCard: View {
     let model: ContentModel
+
+    /// "1 file changed in this session": the card sits under the last row,
+    /// which may be a call still waiting for approval, so it names its scope.
+    static func title(_ n: Int) -> String {
+        "\(n) file\(n == 1 ? "" : "s") changed in this session"
+    }
     @State private var open = false
     @State private var selected: ContentItem?
 
@@ -589,7 +596,7 @@ struct ModifiedFilesCard: View {
                         Image(systemName: open ? "chevron.down" : "chevron.right")
                             .font(.caption2).foregroundStyle(.secondary).frame(width: 10)
                         Image(systemName: "doc.badge.ellipsis")
-                        Text("\(files.count) file\(files.count == 1 ? "" : "s") changed").font(.callout.weight(.medium))
+                        Text(Self.title(files.count)).font(.callout.weight(.medium))
                         Spacer(minLength: 0)
                     }
                     .contentShape(Rectangle())
