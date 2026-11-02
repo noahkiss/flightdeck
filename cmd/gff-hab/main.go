@@ -100,6 +100,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/harness"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/hook"
+	"github.com/noahkiss/flightdeck/internal/lbsync"
 	"github.com/noahkiss/flightdeck/internal/link"
 	"github.com/noahkiss/flightdeck/internal/opencode"
 	"github.com/noahkiss/flightdeck/internal/panesize"
@@ -427,6 +428,7 @@ func serve(args []string) error {
 	var srv atomic.Pointer[control.Server]
 	var cat atomic.Pointer[catalog.Service]  // set once the catalog runs; a change pokes it
 	var chs atomic.Pointer[channels.Service] // set once channels run; a state change pokes them
+	var lbs atomic.Pointer[lbsync.Service]   // set once Logbook sync runs
 	pokeCatalog := func() {
 		if c := cat.Load(); c != nil {
 			c.Poke()
@@ -760,6 +762,9 @@ func serve(args []string) error {
 			if c := chs.Load(); c != nil {
 				c.Kick() // a link that came up hands over mail now
 			}
+			if l := lbs.Load(); l != nil {
+				l.Kick() // a link that came up syncs Logbook now
+			}
 		},
 		Event: func(label string, e api.Event) {
 			if e.Type != api.EventMeshChanged {
@@ -770,6 +775,9 @@ func serve(args []string) error {
 			if c := chs.Load(); c != nil && err == nil && slices.Contains(mc.Reasons, api.MeshReasonMail) {
 				c.Woken(label) // the peer holds mail for this hab: pull it now (mesh.md 6.5)
 			}
+			if l := lbs.Load(); l != nil && err == nil && slices.Contains(mc.Reasons, api.MeshReasonLogbook) {
+				l.Woken(label) // the peer holds Logbook ops this hab lacks: sync now (logbook.md 7.1)
+			}
 		},
 		Logf: logger.Printf,
 	})
@@ -778,6 +786,26 @@ func serve(args []string) error {
 	}
 	defer pm.Close()
 	caps = append(caps, peers.Capability)
+	// Logbook (logbook.md 4, 7): the replica in <state>/logbook.db, synced over the peer links.
+	lbStore, err := openLogbook(context.Background(), dir, key.Fingerprint(), logger.Printf)
+	if err != nil {
+		return fmt.Errorf("logbook: %w", err)
+	}
+	defer lbStore.Close()
+	lbSvc, err := lbsync.New(lbsync.Config{
+		Self: key.Fingerprint(), Store: lbStore, Path: filepath.Join(dir, logbookFile), Peers: logbookPeers{pm},
+		Wake: func(device string) bool {
+			s := srv.Load()
+			return s != nil && s.NotifyLink(device, structure.Event{Type: api.EventMeshChanged, ID: key.Fingerprint(), Data: api.MeshChanged{Reasons: []api.MeshReason{api.MeshReasonLogbook}}}) > 0
+		},
+		Logf: logger.Printf,
+	})
+	if err != nil {
+		return err
+	}
+	defer lbSvc.Close()
+	lbs.Store(lbSvc)
+	caps = append(caps, lbsync.Capability)
 	// The catalog (mesh.md 5): this host's facts, projects and agents, and the peers' copies.
 	cpath, err := habConfigPath(*habConfig)
 	if err != nil {
@@ -1164,6 +1192,7 @@ func serve(args []string) error {
 		Usage:       usageStore,
 		Content:     contents,
 		Channels:    chSvc,
+		LogbookSync: lbSvc,
 		Worktrees:   wts,
 		Speech:      speechSvc,
 		Attachments: attachments,

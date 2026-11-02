@@ -3143,6 +3143,85 @@ public struct LogbookGetParams: Codable, Sendable, Hashable {
     }
 }
 
+public struct LogbookPullParams: Codable, Sendable, Hashable {
+    /// The caller's version vector. An origin it does not list counts as 0.
+    public var have: [LogbookSeq]
+    /// Origins the caller refuses (two hosts share them, logbook.md 7.4); none of their ops are sent.
+    public var skip: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case have = "have"
+        case skip = "skip"
+    }
+
+    public init(have: [LogbookSeq], skip: [String]? = nil) {
+        self.have = have
+        self.skip = skip
+    }
+}
+
+public struct LogbookPullResult: Codable, Sendable, Hashable {
+    /// More ops follow: pull again with the new vector.
+    public var more: Bool?
+    /// Op bytes as stored, per origin in seq order: at most 2,000 ops or 4 MiB, or one larger op.
+    public var ops: [Data]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// Origins the answering hab refuses; send it none of their ops.
+    public var skip: [String]?
+    /// The answering hab's version vector.
+    public var vector: [LogbookSeq]
+
+    enum CodingKeys: String, CodingKey {
+        case more = "more"
+        case ops = "ops"
+        case seq = "seq"
+        case skip = "skip"
+        case vector = "vector"
+    }
+
+    public init(more: Bool? = nil, ops: [Data], seq: UInt64, skip: [String]? = nil, vector: [LogbookSeq]) {
+        self.more = more
+        self.ops = ops
+        self.seq = seq
+        self.skip = skip
+        self.vector = vector
+    }
+}
+
+public struct LogbookPushParams: Codable, Sendable, Hashable {
+    /// Op bytes as stored, per origin in seq order: at most 2,000 ops or 4 MiB, or one larger op.
+    public var ops: [Data]
+
+    enum CodingKeys: String, CodingKey {
+        case ops = "ops"
+    }
+
+    public init(ops: [Data]) {
+        self.ops = ops
+    }
+}
+
+public struct LogbookPushResult: Codable, Sendable, Hashable {
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// Origins the answering hab refuses; send it none of their ops.
+    public var skip: [String]?
+    public var vector: [LogbookSeq]
+
+    enum CodingKeys: String, CodingKey {
+        case seq = "seq"
+        case skip = "skip"
+        case vector = "vector"
+    }
+
+    public init(seq: UInt64, skip: [String]? = nil, vector: [LogbookSeq]) {
+        self.seq = seq
+        self.skip = skip
+        self.vector = vector
+    }
+}
+
 public struct LogbookRecord: Codable, Sendable, Hashable {
     /// Absent in a search result.
     public var body: String?
@@ -3206,6 +3285,22 @@ public struct LogbookRecords: Codable, Sendable, Hashable {
     public init(more: Bool? = nil, records: [LogbookRecord], seq: UInt64) {
         self.more = more
         self.records = records
+        self.seq = seq
+    }
+}
+
+public struct LogbookSeq: Codable, Sendable, Hashable {
+    /// The origin hab's device id.
+    public var origin: String
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case origin = "origin"
+        case seq = "seq"
+    }
+
+    public init(origin: String, seq: UInt64) {
+        self.origin = origin
         self.seq = seq
     }
 }
@@ -3338,6 +3433,7 @@ public struct MeshReason: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
     public static let mail = MeshReason(rawValue: "mail")
+    public static let logbook = MeshReason(rawValue: "logbook")
 }
 
 public struct Notice: Codable, Sendable, Hashable {
@@ -6258,6 +6354,10 @@ public enum HabMethods {
     public static let mailPush = HabMethod<MailPushParams, MailPushResult>(name: "mail.push")
     /// A peer link takes the outbox items waiting for its hab, and reports on its last pull (mesh.md 6.5). Needs the channels capability.
     public static let mailPull = HabMethod<MailPullParams, MailPullResult>(name: "mail.pull")
+    /// A peer link takes one page of the Logbook ops its hab lacks by its version vector (logbook.md 7.1). Peer links only. Needs the logbook capability.
+    public static let logbookPull = HabMethod<LogbookPullParams, LogbookPullResult>(name: "logbook.pull")
+    /// A peer link hands over one page of Logbook ops this hab lacks; the answer is this hab's version vector (logbook.md 7.1). Peer links only. Needs the logbook capability.
+    public static let logbookPush = HabMethod<LogbookPushParams, LogbookPushResult>(name: "logbook.push")
     /// List a repository's working trees, the main one first (spec 3.10).
     public static let worktreeList = HabMethod<WorktreeListParams, WorktreeList>(name: "worktree.list")
     /// Make a worktree, copy the files .worktreeinclude names, and start its setup script in a session (spec 3.10).

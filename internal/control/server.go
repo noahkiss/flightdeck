@@ -206,6 +206,7 @@ type Config struct {
 	Settings     Settings    // nil: settings.get and settings.set answer unavailable
 	Reads        Reads       // nil: the read tools (transcript.*, notice.get, file.read) answer unavailable
 	Logbook      Logbook     // nil: logbook.find and logbook.get answer unavailable
+	LogbookSync  LogbookSync // nil: logbook.pull and logbook.push answer unavailable
 	Confirm      Confirm     // nil: the confirm.* methods answer unavailable
 	Capcom       Capcom      // nil: capcom.open and capcom.assign answer unavailable
 	Rounds       Rounds      // nil: the round.* methods answer unavailable

@@ -11,7 +11,8 @@ import (
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite" // pure-Go SQLite with FTS5
+	"modernc.org/sqlite" // pure-Go SQLite with FTS5
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // foldVersion names the folded tables' shape and this build's fold rules. A file folded by
@@ -30,6 +31,13 @@ var ErrSharedOrigin = errors.New("logbook: this host's device id is shared with 
 
 // ErrNoOrigin means the file has no origin yet and none was given.
 var ErrNoOrigin = errors.New("logbook: no origin: the file is new and Options.Origin is empty")
+
+// ErrOtherOrigin means the file belongs to another origin than the one Open was given: the host
+// got a new device id and kept its old file.
+var ErrOtherOrigin = errors.New("logbook: the file belongs to another origin")
+
+// ErrCorrupt means SQLite found the file is not a database, or a damaged one (logbook.md 14).
+var ErrCorrupt = errors.New("logbook: the file is corrupt")
 
 // InvalidError is a refused write (the API's invalid): what is wrong and what to do instead.
 type InvalidError struct {
@@ -120,6 +128,10 @@ func Open(ctx context.Context, path string, opts Options) (*Store, error) {
 	}
 	if err := s.init(ctx, opts.Origin); err != nil {
 		_ = db.Close()
+		var se *sqlite.Error
+		if errors.As(err, &se) && (se.Code()&0xff == sqlite3.SQLITE_NOTADB || se.Code()&0xff == sqlite3.SQLITE_CORRUPT) {
+			return nil, fmt.Errorf("%w: %v", ErrCorrupt, err)
+		}
 		return nil, err
 	}
 	return s, nil
@@ -232,7 +244,7 @@ func (s *Store) init(ctx context.Context, origin string) error {
 			return err
 		}
 	case origin != "" && origin != m.origin:
-		return fmt.Errorf("logbook: the file belongs to origin %q, not %q", m.origin, origin)
+		return fmt.Errorf("%w: %q, not %q", ErrOtherOrigin, m.origin, origin)
 	}
 	s.origin = m.origin
 	if m.foldVersion != foldVersion {

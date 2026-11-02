@@ -1858,6 +1858,71 @@
       }
     },
     {
+      "name": "logbook.pull",
+      "summary": "A peer link takes one page of the Logbook ops its hab lacks by its version vector (logbook.md 7.1). Peer links only. Needs the logbook capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "have",
+          "description": "The caller's version vector. An origin it does not list counts as 0.",
+          "required": true,
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogbookSeq"
+            }
+          }
+        },
+        {
+          "name": "skip",
+          "description": "Origins the caller refuses (two hosts share them, logbook.md 7.4); none of their ops are sent.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/LogbookPullResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/LogbookPullParams"
+      }
+    },
+    {
+      "name": "logbook.push",
+      "summary": "A peer link hands over one page of Logbook ops this hab lacks; the answer is this hab's version vector (logbook.md 7.1). Peer links only. Needs the logbook capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "ops",
+          "description": "Op bytes as stored, per origin in seq order: at most 2,000 ops or 4 MiB, or one larger op.",
+          "required": true,
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "contentEncoding": "base64"
+            }
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/LogbookPushResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/LogbookPushParams"
+      }
+    },
+    {
       "name": "worktree.list",
       "summary": "List a repository's working trees, the main one first (spec 3.10).",
       "paramStructure": "by-name",
@@ -6630,6 +6695,112 @@
           "id"
         ]
       },
+      "LogbookPullParams": {
+        "type": "object",
+        "properties": {
+          "have": {
+            "type": "array",
+            "description": "The caller's version vector. An origin it does not list counts as 0.",
+            "items": {
+              "$ref": "#/components/schemas/LogbookSeq"
+            }
+          },
+          "skip": {
+            "type": "array",
+            "description": "Origins the caller refuses (two hosts share them, logbook.md 7.4); none of their ops are sent.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "have"
+        ]
+      },
+      "LogbookPullResult": {
+        "type": "object",
+        "properties": {
+          "more": {
+            "type": "boolean",
+            "description": "More ops follow: pull again with the new vector."
+          },
+          "ops": {
+            "type": "array",
+            "description": "Op bytes as stored, per origin in seq order: at most 2,000 ops or 4 MiB, or one larger op.",
+            "items": {
+              "type": "string",
+              "contentEncoding": "base64"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "skip": {
+            "type": "array",
+            "description": "Origins the answering hab refuses; send it none of their ops.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "vector": {
+            "type": "array",
+            "description": "The answering hab's version vector.",
+            "items": {
+              "$ref": "#/components/schemas/LogbookSeq"
+            }
+          }
+        },
+        "required": [
+          "seq",
+          "ops",
+          "vector"
+        ]
+      },
+      "LogbookPushParams": {
+        "type": "object",
+        "properties": {
+          "ops": {
+            "type": "array",
+            "description": "Op bytes as stored, per origin in seq order: at most 2,000 ops or 4 MiB, or one larger op.",
+            "items": {
+              "type": "string",
+              "contentEncoding": "base64"
+            }
+          }
+        },
+        "required": [
+          "ops"
+        ]
+      },
+      "LogbookPushResult": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "skip": {
+            "type": "array",
+            "description": "Origins the answering hab refuses; send it none of their ops.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "vector": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogbookSeq"
+            }
+          }
+        },
+        "required": [
+          "seq",
+          "vector"
+        ]
+      },
       "LogbookRecord": {
         "type": "object",
         "properties": {
@@ -6701,6 +6872,23 @@
         "required": [
           "seq",
           "records"
+        ]
+      },
+      "LogbookSeq": {
+        "type": "object",
+        "properties": {
+          "origin": {
+            "type": "string",
+            "description": "The origin hab's device id."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        "required": [
+          "origin",
+          "seq"
         ]
       },
       "MailItem": {
@@ -6839,7 +7027,8 @@
       "MeshReason": {
         "type": "string",
         "x-known-values": [
-          "mail"
+          "mail",
+          "logbook"
         ]
       },
       "Notice": {

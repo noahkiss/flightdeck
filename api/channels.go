@@ -136,8 +136,8 @@ type ChannelWaitResult struct {
 	TimedOut bool            `json:"timed_out,omitempty"`
 }
 
-// MeshReason says what waits for a peer link's dialer: mail (mail.pull). An open word set:
-// the catalog and the logbook will add theirs (mesh.md 4.2, logbook.md 7.1).
+// MeshReason says what waits for a peer link's dialer: mail (mail.pull) or Logbook ops
+// (logbook.pull). An open word set: the catalog will add its own (mesh.md 4.2, logbook.md 7.1).
 type MeshReason string
 
 // MeshChanged is the data of mesh.changed: a hab tells a peer link that dialed it that

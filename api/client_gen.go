@@ -170,7 +170,8 @@ const (
 )
 
 const (
-	MeshReasonMail MeshReason = "mail"
+	MeshReasonMail    MeshReason = "mail"
+	MeshReasonLogbook MeshReason = "logbook"
 )
 
 const (
@@ -898,6 +899,20 @@ func (c Client) MailPush(ctx context.Context, params MailPushParams) (MailPushRe
 func (c Client) MailPull(ctx context.Context, params MailPullParams) (MailPullResult, error) {
 	var result MailPullResult
 	err := c.Caller.Call(ctx, "mail.pull", params, &result)
+	return result, err
+}
+
+// LogbookPull calls logbook.pull. A peer link takes one page of the Logbook ops its hab lacks by its version vector (logbook.md 7.1). Peer links only. Needs the logbook capability.
+func (c Client) LogbookPull(ctx context.Context, params LogbookPullParams) (LogbookPullResult, error) {
+	var result LogbookPullResult
+	err := c.Caller.Call(ctx, "logbook.pull", params, &result)
+	return result, err
+}
+
+// LogbookPush calls logbook.push. A peer link hands over one page of Logbook ops this hab lacks; the answer is this hab's version vector (logbook.md 7.1). Peer links only. Needs the logbook capability.
+func (c Client) LogbookPush(ctx context.Context, params LogbookPushParams) (LogbookPushResult, error) {
+	var result LogbookPushResult
+	err := c.Caller.Call(ctx, "logbook.push", params, &result)
 	return result, err
 }
 

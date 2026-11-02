@@ -1,0 +1,26 @@
+{
+  "more": true,
+  "ops": [
+    "b3BzLTQA/w=="
+  ],
+  "seq": 3,
+  "skip": [
+    "skip-7"
+  ],
+  "vector": [
+    {
+      "origin": "origin-5",
+      "seq": 6,
+      "x_unknown_field": "later"
+    }
+  ],
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

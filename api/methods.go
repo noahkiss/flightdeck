@@ -117,6 +117,8 @@ var Methods = []Method{
 	{"channel.wait", "Wait for a message to a session, or for an agent's state, or the end of the time (mesh.md 6.4). Needs the channels capability.", ChannelWaitParams{}, ChannelWaitResult{}},
 	{"mail.push", "A peer link hands over outbox items for this hab; one result per item (mesh.md 6.5). Needs the channels capability.", MailPushParams{}, MailPushResult{}},
 	{"mail.pull", "A peer link takes the outbox items waiting for its hab, and reports on its last pull (mesh.md 6.5). Needs the channels capability.", MailPullParams{}, MailPullResult{}},
+	{"logbook.pull", "A peer link takes one page of the Logbook ops its hab lacks by its version vector (logbook.md 7.1). Peer links only. Needs the logbook capability.", LogbookPullParams{}, LogbookPullResult{}},
+	{"logbook.push", "A peer link hands over one page of Logbook ops this hab lacks; the answer is this hab's version vector (logbook.md 7.1). Peer links only. Needs the logbook capability.", LogbookPushParams{}, LogbookPushResult{}},
 	{"worktree.list", "List a repository's working trees, the main one first (spec 3.10).", WorktreeListParams{}, WorktreeList{}},
 	{"worktree.create", "Make a worktree, copy the files .worktreeinclude names, and start its setup script in a session (spec 3.10).", WorktreeCreateParams{}, WorktreeCreated{}},
 	{"worktree.setup", "Start a worktree's setup script in a session now: the yes to a pending setup, or a rerun (spec 3.10).", WorktreeSetupParams{}, WorktreeSetupResult{}},
@@ -240,7 +242,7 @@ var Enums = map[string][]string{
 	// Sets added for channels (mesh.md 6.5).
 	"ChannelState": {"queued", "handed", "delivered", "not_delivered", "refused", "expired"},
 	"MailKind":     {"message", "status"},
-	"MeshReason":   {"mail"},
+	"MeshReason":   {"mail", "logbook"},
 	// Sets added for worktrees (spec 3.10).
 	"SetupMode":     {"auto", "run", "skip"},
 	"SetupState":    {"none", "started", "pending", "skipped", "error"},
@@ -304,7 +306,9 @@ var Translators = map[int]Translator{}
 // (app.md 4.4). "settings" means settings.get, settings.set and the settings.updated event work,
 // and the host snapshot carries the settings (app.md 20.5). "read-tools" means transcript.list,
 // transcript.search, transcript.read, notice.get and file.read work (capcom.md 4). "logbook" means
-// the hab has a Logbook replica and the logbook.* methods work (logbook.md 10.3). "confirm" means
+// the hab has a Logbook replica, serves logbook.pull and logbook.push to peer links and sends
+// them mesh.changed with logbook when ops wait (logbook.md 7), and the logbook.* methods for
+// clients work (logbook.md 10.3). "confirm" means
 // the confirm.* methods and events work, the host snapshot carries the open confirmations, and
 // session.create takes model and seed (capcom.md 6.1). "capcom" means capcom.open, capcom.assign
 // and session.resume of a Capcom session work, and the catalog carries the capcom section

@@ -1,0 +1,22 @@
+{
+  "seq": 3,
+  "skip": [
+    "skip-6"
+  ],
+  "vector": [
+    {
+      "origin": "origin-4",
+      "seq": 5,
+      "x_unknown_field": "later"
+    }
+  ],
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

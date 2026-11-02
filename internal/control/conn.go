@@ -485,6 +485,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleChannels(m)
 		return
 	}
+	if m.Method == "logbook.pull" || m.Method == "logbook.push" {
+		c.handleLogbookSync(m)
+		return
+	}
 	if isReadMethod(m.Method) {
 		c.handleReads(m)
 		return
