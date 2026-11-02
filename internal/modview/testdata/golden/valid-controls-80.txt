@@ -4,7 +4,7 @@
 |> Add a note|
 ||
 ||
-|r Refresh c Clear all d Docs o Copy|
+|r Refresh  c Clear all  d Docs  o Copy|
 targets:
   toggle watch - {"name":"set_watch"}
   field note - {"name":"notes.add","args":{"list":"today"}}

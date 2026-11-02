@@ -280,7 +280,7 @@ func TestKeys(t *testing.T) {
 	if keys != "rei1" {
 		t.Errorf("keys %q, want rei1", keys)
 	}
-	if got := v.Lines[0].Text(); got != "r Run e Rerun i Kill 1 !!" {
+	if got := v.Lines[0].Text(); got != "r Run  e Rerun  i Kill  1 !!" {
 		t.Errorf("hints: %q", got)
 	}
 	if i := v.TargetByKey('e'); i != 1 {

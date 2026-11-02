@@ -351,14 +351,14 @@ func (r *renderer) block(b *modules.Block, w int, dim bool) []Line {
 
 func one(spans ...Span) Line { return Line{Spans: spans, Target: -1} }
 
-// gap is a stack's space between children: the block's steps; absent, none between rows and one
-// column between columns, so a row of badges or buttons stays readable.
+// gap is a stack's space between children: the block's steps; absent, none between rows and two
+// columns between columns, the shortcut bar's spacing, so a row of key hints reads as hints.
 func gap(s *modules.StackBlock, horizontal bool) int {
 	if s.Gap != nil {
 		return max(0, min(*s.Gap, 4))
 	}
 	if horizontal {
-		return 1
+		return 2
 	}
 	return 0
 }
@@ -761,3 +761,6 @@ func trimRight(l Line) Line {
 	}
 	return l
 }
+
+// Clean is module text made safe for a terminal, as every drawn span is: no control characters.
+func Clean(s string) string { return clean(s) }
