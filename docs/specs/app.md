@@ -2367,6 +2367,13 @@ Code in `apple/FlightdeckKit` (`Voice/`, `Views/VoiceViews.swift`) and the
   `playback` to speak: that category has no input, and the microphone stays open while the app
   speaks, for barge-in. Before each reply the app checks the category and sets it again if
   something changed it. Notification sounds are not this session's; the switch governs them.
+  Voice mode's speech is the only speech outside Settings' Preview. Both play through the
+  owner's session, never the default `soloAmbient` that the switch mutes.
+- **Speaker route.** Voice processing can move the route to the earpiece even with
+  `defaultToSpeaker`, and away from the ear that sounds silent. When the earpiece is the only
+  output, the app moves speech to the loudspeaker (`overrideOutputAudioPort(.speaker)`). It does
+  this after the engine starts, after each restart (a route change) and before each reply
+  (`VoiceAudio.needsSpeaker`). A headset, AirPods or a car keep their route.
 - **Echo and barge-in.** Speech plays through the same audio engine as the microphone, with
   voice processing on, so the echo canceller removes the app's own voice. While the app speaks,
   a barge-in needs 10 dB more level, and live words alone do not start a turn. "Noisy room"

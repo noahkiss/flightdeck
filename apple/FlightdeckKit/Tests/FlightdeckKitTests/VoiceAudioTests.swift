@@ -54,6 +54,19 @@ final class VoiceAudioTests: XCTestCase {
         }
         XCTAssertEqual(VoiceAudio.sessionConfig(speaks: true).mode, .voiceChat, "echo cancellation for barge-in")
     }
+
+    /// Speech moves to the loudspeaker only when the earpiece is the sole
+    /// output; a headset, AirPods or a car keep their route.
+    @MainActor
+    func testSpeakerOverrideOnlyForTheEarpiece() {
+        XCTAssertTrue(VoiceAudio.needsSpeaker(outputs: [.builtInReceiver]))
+        XCTAssertFalse(VoiceAudio.needsSpeaker(outputs: [.builtInSpeaker]))
+        XCTAssertFalse(VoiceAudio.needsSpeaker(outputs: [.headphones]))
+        XCTAssertFalse(VoiceAudio.needsSpeaker(outputs: [.bluetoothHFP]))
+        XCTAssertFalse(VoiceAudio.needsSpeaker(outputs: [.bluetoothA2DP]))
+        XCTAssertFalse(VoiceAudio.needsSpeaker(outputs: [.carAudio]))
+        XCTAssertFalse(VoiceAudio.needsSpeaker(outputs: []))
+    }
     #endif
 
     func testCRCMatchesTheOggPolynomial() {

@@ -85,7 +85,10 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         }
         engine.prepare()
         try engine.start()
-        if speaks { player.play() }
+        if speaks {
+            player.play()
+            useSpeaker()
+        }
         running = true
         Self.sessionUsers += 1
         // The microphone runs now; live words follow, after their asset downloads.
@@ -155,7 +158,10 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         }
         do {
             try engine.start()
-            if speaks { player.play() }
+            if speaks {
+                player.play()
+                useSpeaker()
+            }
             sink.yield(.routeChanged)
         } catch {
             sink.yield(.failed("the audio input did not restart: \(error.localizedDescription)"))
@@ -175,6 +181,13 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
             return (.playAndRecord, .voiceChat, [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .duckOthers])
         }
         return (.playAndRecord, .default, [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers])
+    }
+
+    /// Whether speech would leave by the earpiece: the phone's receiver is the
+    /// only output. Voice processing can move the route there even with
+    /// `defaultToSpeaker`, and away from the ear that sounds silent.
+    static func needsSpeaker(outputs: [AVAudioSession.Port]) -> Bool {
+        outputs == [.builtInReceiver]
     }
 
     private func observe(_ session: AVAudioSession) {
@@ -197,6 +210,21 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
 
     // MARK: - Speaker
 
+    /// Voice mode speaks from the loudspeaker when no headset is connected.
+    /// A headset, AirPods or a car keep their route.
+    private func useSpeaker() {
+        #if os(iOS)
+        let session = AVAudioSession.sharedInstance()
+        let outputs = session.currentRoute.outputs.map(\.portType)
+        guard Self.needsSpeaker(outputs: outputs) else { return }
+        do {
+            try session.overrideOutputAudioPort(.speaker)
+        } catch {
+            log.error("speaker override failed: \(error.localizedDescription, privacy: .public)")
+        }
+        #endif
+    }
+
     public var isSpeaking: Bool { speakDone != nil }
 
     public func speak(_ text: String) async -> Bool {
@@ -211,6 +239,7 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
             try? session.setActive(true)
         }
         #endif
+        useSpeaker()
         speakID += 1
         let id = speakID
         let utterance = AVSpeechUtterance(string: text)
