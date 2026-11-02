@@ -269,6 +269,9 @@ for b in a b; do
 			"$repo/scripts/macos-bundle.sh" -dev -bin-dir "$work/$b" -o "$work/$b" >/dev/null
 	fi
 done
+# From here on, the system's PATH only: install writes its PATH into the jobs, and the test hab
+# must not find a program of an installed Flightdeck or of the user's own PATH.
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 mkdir -p "$scratch"
 mkdir -m 700 "$holders" # gff-hab makes it at its first holder; made here, it is in the path list
 cat >"$scratch/child.sh" <<'EOF'

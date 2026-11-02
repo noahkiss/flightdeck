@@ -136,7 +136,9 @@ second pane's program ended, that no job is loaded (on macOS `launchctl print gu
 for the logic job and every holder seen, which works over SSH too), and that no process of the
 test is left. It lists every path under the unit directory and the work directory before the
 install and again after the uninstall: nothing may be gone, and only gff-hab's own state may be
-new. A failure uninstalls and removes everything too. It runs on Linux (systemd) and macOS
+new. A failure uninstalls and removes everything too. It installs with the system's PATH only
+(`/usr/bin:/bin:/usr/sbin:/sbin`), so the test hab never finds a program of an installed
+Flightdeck or of the user's own PATH. It runs on Linux (systemd) and macOS
 (launchd); `internal/service` holds the unit-level check of test 13 with a fake init system.
 
 Core test 4 lives in `cmd/gff-hab/data_test.go`, with the real holder and gff-hab binaries and a
