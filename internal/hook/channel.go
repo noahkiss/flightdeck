@@ -32,6 +32,11 @@ var ReadMethods = []string{"catalog.list", "peers.list", "transcript.list", "tra
 // a confirmation.
 var ConfirmMethods = []string{"confirm.request", "confirm.get", "confirm.list"}
 
+// RoundMethods are the round methods the route takes (rounds.md 13): an agent's `gff-hab round`
+// from its pane. The pane's session is the caller: it fills created_by and target self.
+var RoundMethods = []string{"round.list", "round.get", "round.create", "round.update", "round.delete",
+	"round.pause", "round.unpause", "round.run", "round.runs"}
+
 // ReadHandler answers one read tool call from a pane. An error that is a *control.Error keeps
 // its kind; any other is unavailable.
 type ReadHandler func(ctx context.Context, method string, params json.RawMessage) (result any, err error)
@@ -82,6 +87,14 @@ func (s *Server) SetConfirm(h ChannelHandler) {
 	s.mu.Unlock()
 }
 
+// SetRounds sets the handler of the round methods on the route. With none, each answers
+// unavailable.
+func (s *Server) SetRounds(h ChannelHandler) {
+	s.mu.Lock()
+	s.rounds = h
+	s.mu.Unlock()
+}
+
 // SetChannels sets the handler of the channel route. With none, every call answers unavailable.
 func (s *Server) SetChannels(h ChannelHandler) {
 	s.mu.Lock()
@@ -121,12 +134,15 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		fail(api.ErrorKindInvalid, "not a channel call: %v", err)
 		return
 	}
-	known, read, conf := false, false, false
+	known, read, conf, round := false, false, false, false
 	for _, m := range ChannelMethods {
 		known = known || m == call.Method
 	}
 	for _, m := range ConfirmMethods {
 		conf = conf || m == call.Method
+	}
+	for _, m := range RoundMethods {
+		round = round || m == call.Method
 	}
 	for _, m := range ReadMethods {
 		read = read || m == call.Method
@@ -162,14 +178,17 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		_ = answer(channelAnswer{Result: b})
 		return
 	}
-	if !known && !conf {
-		fail(api.ErrorKindInvalid, "%q is not one of %v, %v or %v", call.Method, ChannelMethods, ReadMethods, ConfirmMethods)
+	if !known && !conf && !round {
+		fail(api.ErrorKindInvalid, "%q is not one of %v, %v, %v or %v", call.Method, ChannelMethods, ReadMethods, ConfirmMethods, RoundMethods)
 		return
 	}
 	s.mu.Lock()
 	h := s.channels
-	if conf {
+	switch {
+	case conf:
 		h = s.confirm
+	case round:
+		h = s.rounds
 	}
 	s.mu.Unlock()
 	if h == nil {

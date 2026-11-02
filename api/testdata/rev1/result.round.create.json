@@ -1,0 +1,94 @@
+{
+  "round": {
+    "catch_up": "skip",
+    "command": [
+      "command-15"
+    ],
+    "completed": true,
+    "completed_reason": "completed_reason-34",
+    "created_at": "created_at-26",
+    "created_by": "created_by-25",
+    "cwd": "cwd-19",
+    "deleted": true,
+    "expires_at": "expires_at-22",
+    "failures": 31,
+    "harness": "harness-12",
+    "harness_args": [
+      "harness_args-14"
+    ],
+    "id": "id-4",
+    "last_ok": "last_ok-30",
+    "last_run": {
+      "created": "created-43",
+      "ended_at": "ended_at-45",
+      "id": "id-36",
+      "missed": 40,
+      "number": 37,
+      "reason": "reason-41",
+      "result": "result-46",
+      "round": "round-38",
+      "session": "session-42",
+      "slot": "slot-39",
+      "started_at": "started_at-44",
+      "state": "taken_over",
+      "trigger": "manual",
+      "x_unknown_field": "later"
+    },
+    "last_slot": "last_slot-29",
+    "max_runs": 21,
+    "mode": "fork",
+    "model": "model-13",
+    "name": "name-6",
+    "next_slot": "next_slot-28",
+    "notify": "never",
+    "on_finish": "keep",
+    "paused": true,
+    "paused_reason": "paused_reason-33",
+    "project": "project-16",
+    "project_dir": "project_dir-17",
+    "project_remote": "project_remote-18",
+    "prompt": "prompt-11",
+    "revision": 5,
+    "skips": 32,
+    "target": "target-20",
+    "timeout_ms": 23,
+    "trigger": {
+      "at": "at-10",
+      "cron": "cron-7",
+      "every": "every-8",
+      "kind": "manual",
+      "x_unknown_field": "later",
+      "zone": "zone-9"
+    },
+    "trigger_error": "trigger_error-35",
+    "updated_at": "updated_at-27",
+    "wait_ms": 24,
+    "x_unknown_field": "later"
+  },
+  "run": {
+    "created": "created-54",
+    "ended_at": "ended_at-56",
+    "id": "id-47",
+    "missed": 51,
+    "number": 48,
+    "reason": "reason-52",
+    "result": "result-57",
+    "round": "round-49",
+    "session": "session-53",
+    "slot": "slot-50",
+    "started_at": "started_at-55",
+    "state": "taken_over",
+    "trigger": "manual",
+    "x_unknown_field": "later"
+  },
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

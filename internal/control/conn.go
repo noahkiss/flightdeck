@@ -493,6 +493,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleConfirm(m)
 		return
 	}
+	if isRoundMethod(m.Method) {
+		c.handleRounds(m)
+		return
+	}
 	if strings.HasPrefix(m.Method, "worktree.") {
 		c.handleWorktree(m)
 		return

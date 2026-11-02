@@ -1,0 +1,46 @@
+{
+  "host": "host-4",
+  "notice": {
+    "at": "at-9",
+    "body": "body-7",
+    "id": "id-5",
+    "level": "time-sensitive",
+    "session": "session-8",
+    "title": "title-6",
+    "x_unknown_field": "later"
+  },
+  "seq": 3,
+  "session": {
+    "context_pct": 19,
+    "dir": "dir-20",
+    "exit": {
+      "code": 15,
+      "signal": "signal-16",
+      "x_unknown_field": "later"
+    },
+    "id": "id-10",
+    "kind": "capcom",
+    "model": "model-18",
+    "name": "name-12",
+    "pane": "pane-14",
+    "project": "project-13",
+    "revision": 11,
+    "round": {
+      "round": "round-21",
+      "run": "run-22",
+      "x_unknown_field": "later"
+    },
+    "state": "exited",
+    "title": "title-17",
+    "x_unknown_field": "later"
+  },
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

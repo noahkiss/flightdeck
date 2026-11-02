@@ -35,7 +35,8 @@
     "read-tools",
     "logbook",
     "confirm",
-    "capcom"
+    "capcom",
+    "rounds"
   ],
   "methods": [
     {
@@ -2605,6 +2606,274 @@
       "x-params": {
         "$ref": "#/components/schemas/ConfirmGetParams"
       }
+    },
+    {
+      "name": "round.list",
+      "summary": "This hab's rounds with their next slot and newest run (rounds.md 13). Needs the rounds capability.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RoundList"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/RoundListParams"
+      }
+    },
+    {
+      "name": "round.get",
+      "summary": "One round by id or name, with its definition (rounds.md 13). Needs the rounds capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "id",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "name",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RoundResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/RoundRef"
+      }
+    },
+    {
+      "name": "round.create",
+      "summary": "Create a round; checks the trigger, mode and target. run_now also starts one run (rounds.md 3, 13). Needs the rounds capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "round",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/RoundSpec"
+          }
+        },
+        {
+          "name": "run_now",
+          "description": "Also start one run now. It does not move the next slot.",
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RoundCreated"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/RoundCreateParams"
+      }
+    },
+    {
+      "name": "round.update",
+      "summary": "Replace a round's definition; a changed trigger sets the next slot from now. A run in flight keeps its values (rounds.md 3). Needs the rounds capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "revision",
+          "description": "The round's revision the client last saw. Another revision refuses the call with conflict. Absent: no check.",
+          "schema": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        {
+          "name": "round",
+          "description": "The whole new definition. A field left out takes its default; round.get gives the stored one to edit.",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/RoundSpec"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RoundResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/RoundUpdateParams"
+      }
+    },
+    {
+      "name": "round.delete",
+      "summary": "Delete a round and its ended runs; a live run goes on to its end (rounds.md 13). Needs the rounds capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "id",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "name",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/Empty"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/RoundRef"
+      }
+    },
+    {
+      "name": "round.pause",
+      "summary": "Pause a round: no new runs; a queued run ends skipped (rounds.md 13). Needs the rounds capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "id",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "name",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RoundResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/RoundRef"
+      }
+    },
+    {
+      "name": "round.unpause",
+      "summary": "Unpause a round and clear its failure count (rounds.md 10.1). Needs the rounds capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "id",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "name",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RoundResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/RoundRef"
+      }
+    },
+    {
+      "name": "round.run",
+      "summary": "Start a run now, outside the trigger. A round with a live run answers conflict (rounds.md 13). Needs the rounds capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "id",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "name",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RoundRunResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/RoundRef"
+      }
+    },
+    {
+      "name": "round.runs",
+      "summary": "A page of a round's runs, newest first (rounds.md 7.7). Needs the rounds capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "before",
+          "description": "Return runs with a number below this. Absent: from the newest.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "id",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "description": "At most this many runs; default 50, at most 200.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "name",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/RoundRuns"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/RoundRunsParams"
+      }
     }
   ],
   "x-notifications": [
@@ -2790,6 +3059,20 @@
       "summary": "A confirmation closed: done, failed, cancelled, expired or unknown; every card withdraws its buttons; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral.",
       "data": {
         "$ref": "#/components/schemas/Confirmation"
+      }
+    },
+    {
+      "type": "round.updated",
+      "summary": "A round was created, changed, paused, completed or deleted (data.deleted); the id is the round id (rounds.md 13). Host scope only. Not ephemeral: the rounds are in the host snapshot.",
+      "data": {
+        "$ref": "#/components/schemas/Round"
+      }
+    },
+    {
+      "type": "round.run_updated",
+      "summary": "A run of a round changed state; the id is the run id (rounds.md 13). Host scope only. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/RoundRun"
       }
     },
     {
@@ -7099,6 +7382,591 @@
           "max"
         ]
       },
+      "Round": {
+        "type": "object",
+        "properties": {
+          "catch_up": {
+            "$ref": "#/components/schemas/RoundCatchUp",
+            "description": "once (the default) or skip."
+          },
+          "command": {
+            "type": "array",
+            "description": "Fresh only: a plain program, as an argv, instead of a harness and a prompt. Exit status 0 is a success.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "completed": {
+            "type": "boolean",
+            "description": "The round will not run again until its trigger changes."
+          },
+          "completed_reason": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "created_by": {
+            "type": "string",
+            "description": "The session that created the round, when an agent did from its pane. Absent for a user. Read only."
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Fresh: an absolute folder to start in, instead of the project's most recent one."
+          },
+          "deleted": {
+            "type": "boolean",
+            "description": "In a round.updated event only: the round was deleted. Its live run goes on to its end."
+          },
+          "expires_at": {
+            "type": "string",
+            "description": "RFC 3339 time the round completes. A past time is refused."
+          },
+          "failures": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Failed or timed-out runs in a row."
+          },
+          "harness": {
+            "type": "string",
+            "description": "Fresh with a prompt: claude, codex or opencode."
+          },
+          "harness_args": {
+            "type": "array",
+            "description": "Passed to the harness at start, as session.create does.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_ok": {
+            "type": "string",
+            "description": "RFC 3339 time the last successful run started: the run's GFF_ROUND_LAST_OK."
+          },
+          "last_run": {
+            "$ref": "#/components/schemas/RoundRun",
+            "description": "The newest run, in round.list and round.get."
+          },
+          "last_slot": {
+            "type": "string",
+            "description": "RFC 3339 time of the last slot served."
+          },
+          "max_runs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The round completes after this many finished runs. Absent: no limit."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/RoundMode",
+            "description": "fresh, resume or fork. This hab runs fresh rounds with a command; the others are refused until their stage."
+          },
+          "model": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "Unique on the hab: 1 to 64 letters, digits, - and _."
+          },
+          "next_slot": {
+            "type": "string",
+            "description": "RFC 3339 time of the next slot. Absent when there is none: manual, paused past it, completed."
+          },
+          "notify": {
+            "$ref": "#/components/schemas/RoundNotify",
+            "description": "failures (the default), always or never."
+          },
+          "on_finish": {
+            "$ref": "#/components/schemas/RoundOnFinish",
+            "description": "Fresh and fork: close (the default) closes the run's pane after a success; keep leaves it."
+          },
+          "paused": {
+            "type": "boolean",
+            "description": "A paused round starts no runs. An update keeps the stored mark: round.pause and round.unpause change it."
+          },
+          "paused_reason": {
+            "type": "string",
+            "description": "Why the round paused itself. Absent for a pause by the user."
+          },
+          "project": {
+            "type": "string",
+            "description": "Fresh: the project id. The run starts in the project's most recently used folder."
+          },
+          "project_dir": {
+            "type": "string",
+            "description": "In a create or update only, instead of project: an absolute folder; the hab finds or creates its project, as session.create does, and stores the project id."
+          },
+          "project_remote": {
+            "type": "string",
+            "description": "In a create or update, instead of project: a git remote; the hab takes its project with that remote. In a round read back: the project's remote, when it has one, so an exported round names its project on any host."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "The text the agent gets each run, at most 64 KiB. Required unless command is set."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Raised by one on each change; starts at 1 when gff-hab starts. Compared only within an epoch (spec 3.5)."
+          },
+          "skips": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Skipped runs in a row."
+          },
+          "target": {
+            "type": "string",
+            "description": "Resume and fork: the target session id."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The longest a run may take. Absent: 60 minutes."
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/RoundTrigger"
+          },
+          "trigger_error": {
+            "type": "string",
+            "description": "The stored trigger no longer compiles on this host, such as a zone its zone database lacks. The round is not scheduled until an edit fixes it."
+          },
+          "updated_at": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "wait_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Resume only: how long a run waits for the session to be free. Absent: 10 minutes."
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "name",
+          "mode",
+          "trigger",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "RoundCatchUp": {
+        "type": "string",
+        "x-known-values": [
+          "once",
+          "skip"
+        ]
+      },
+      "RoundCreateParams": {
+        "type": "object",
+        "properties": {
+          "round": {
+            "$ref": "#/components/schemas/RoundSpec"
+          },
+          "run_now": {
+            "type": "boolean",
+            "description": "Also start one run now. It does not move the next slot."
+          }
+        },
+        "required": [
+          "round"
+        ]
+      },
+      "RoundCreated": {
+        "type": "object",
+        "properties": {
+          "round": {
+            "$ref": "#/components/schemas/Round"
+          },
+          "run": {
+            "$ref": "#/components/schemas/RoundRun",
+            "description": "With run_now: the run it started."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "round"
+        ]
+      },
+      "RoundList": {
+        "type": "object",
+        "properties": {
+          "rounds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Round"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "rounds"
+        ]
+      },
+      "RoundListParams": {
+        "type": "object"
+      },
+      "RoundMode": {
+        "type": "string",
+        "x-known-values": [
+          "fresh",
+          "resume",
+          "fork"
+        ]
+      },
+      "RoundNotify": {
+        "type": "string",
+        "x-known-values": [
+          "failures",
+          "always",
+          "never"
+        ]
+      },
+      "RoundOnFinish": {
+        "type": "string",
+        "x-known-values": [
+          "close",
+          "keep"
+        ]
+      },
+      "RoundRef": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "RoundResult": {
+        "type": "object",
+        "properties": {
+          "round": {
+            "$ref": "#/components/schemas/Round"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "round"
+        ]
+      },
+      "RoundRun": {
+        "type": "object",
+        "properties": {
+          "created": {
+            "type": "string",
+            "description": "RFC 3339 time the run was made."
+          },
+          "ended_at": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "id": {
+            "type": "string"
+          },
+          "missed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many slots the run covers: 1 on time, more after a catch-up."
+          },
+          "number": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The run number within its round, from 1."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string",
+            "description": "The first 4 KiB of the final agent message."
+          },
+          "round": {
+            "type": "string",
+            "description": "The round id."
+          },
+          "session": {
+            "type": "string",
+            "description": "The run session's id, once it exists."
+          },
+          "slot": {
+            "type": "string",
+            "description": "RFC 3339 time of the slot the run serves. Absent for a run by hand."
+          },
+          "started_at": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "state": {
+            "$ref": "#/components/schemas/RoundRunState"
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/RoundTriggerKind",
+            "description": "What asked for the run: the round's trigger kind, or manual for a run by hand."
+          }
+        },
+        "required": [
+          "id",
+          "number",
+          "round",
+          "trigger",
+          "state",
+          "created"
+        ]
+      },
+      "RoundRunResult": {
+        "type": "object",
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/RoundRun"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "run"
+        ]
+      },
+      "RoundRunState": {
+        "type": "string",
+        "x-known-values": [
+          "queued",
+          "waiting",
+          "running",
+          "blocked",
+          "succeeded",
+          "failed",
+          "timed_out",
+          "skipped",
+          "taken_over"
+        ]
+      },
+      "RoundRuns": {
+        "type": "object",
+        "properties": {
+          "more": {
+            "type": "boolean",
+            "description": "Older runs remain."
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoundRun"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "runs"
+        ]
+      },
+      "RoundRunsParams": {
+        "type": "object",
+        "properties": {
+          "before": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Return runs with a number below this. Absent: from the newest."
+          },
+          "id": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "At most this many runs; default 50, at most 200."
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "RoundSpec": {
+        "type": "object",
+        "properties": {
+          "catch_up": {
+            "$ref": "#/components/schemas/RoundCatchUp",
+            "description": "once (the default) or skip."
+          },
+          "command": {
+            "type": "array",
+            "description": "Fresh only: a plain program, as an argv, instead of a harness and a prompt. Exit status 0 is a success.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Fresh: an absolute folder to start in, instead of the project's most recent one."
+          },
+          "expires_at": {
+            "type": "string",
+            "description": "RFC 3339 time the round completes. A past time is refused."
+          },
+          "harness": {
+            "type": "string",
+            "description": "Fresh with a prompt: claude, codex or opencode."
+          },
+          "harness_args": {
+            "type": "array",
+            "description": "Passed to the harness at start, as session.create does.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "max_runs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The round completes after this many finished runs. Absent: no limit."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/RoundMode",
+            "description": "fresh, resume or fork. This hab runs fresh rounds with a command; the others are refused until their stage."
+          },
+          "model": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "description": "Unique on the hab: 1 to 64 letters, digits, - and _."
+          },
+          "notify": {
+            "$ref": "#/components/schemas/RoundNotify",
+            "description": "failures (the default), always or never."
+          },
+          "on_finish": {
+            "$ref": "#/components/schemas/RoundOnFinish",
+            "description": "Fresh and fork: close (the default) closes the run's pane after a success; keep leaves it."
+          },
+          "paused": {
+            "type": "boolean",
+            "description": "A paused round starts no runs. An update keeps the stored mark: round.pause and round.unpause change it."
+          },
+          "project": {
+            "type": "string",
+            "description": "Fresh: the project id. The run starts in the project's most recently used folder."
+          },
+          "project_dir": {
+            "type": "string",
+            "description": "In a create or update only, instead of project: an absolute folder; the hab finds or creates its project, as session.create does, and stores the project id."
+          },
+          "project_remote": {
+            "type": "string",
+            "description": "In a create or update, instead of project: a git remote; the hab takes its project with that remote. In a round read back: the project's remote, when it has one, so an exported round names its project on any host."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "The text the agent gets each run, at most 64 KiB. Required unless command is set."
+          },
+          "target": {
+            "type": "string",
+            "description": "Resume and fork: the target session id."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The longest a run may take. Absent: 60 minutes."
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/RoundTrigger"
+          },
+          "wait_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Resume only: how long a run waits for the session to be free. Absent: 10 minutes."
+          }
+        },
+        "required": [
+          "name",
+          "mode",
+          "trigger"
+        ]
+      },
+      "RoundTrigger": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "Kind once: the RFC 3339 instant. A past instant is refused."
+          },
+          "cron": {
+            "type": "string",
+            "description": "Kind cron: a 5-field cron expression."
+          },
+          "every": {
+            "type": "string",
+            "description": "Kind cron, in a create or update only: a preset such as 5m, 1h or 1d, instead of cron. The hab stores the cron expression it compiles to, so a round read back has cron and no every."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RoundTriggerKind",
+            "description": "cron, once or manual. event triggers come in a later stage and are refused."
+          },
+          "zone": {
+            "type": "string",
+            "description": "Kind cron or once: the IANA time zone. Absent in a create: the hab's zone, stored by name."
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "RoundTriggerKind": {
+        "type": "string",
+        "x-known-values": [
+          "cron",
+          "once",
+          "manual"
+        ]
+      },
+      "RoundUpdateParams": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The round's revision the client last saw. Another revision refuses the call with conflict. Absent: no check."
+          },
+          "round": {
+            "$ref": "#/components/schemas/RoundSpec",
+            "description": "The whole new definition. A field left out takes its default; round.get gives the stored one to edit."
+          }
+        },
+        "required": [
+          "id",
+          "round"
+        ]
+      },
       "Scope": {
         "type": "object",
         "properties": {
@@ -7173,6 +8041,10 @@
           "revision": {
             "type": "integer",
             "format": "uint64"
+          },
+          "round": {
+            "$ref": "#/components/schemas/SessionRound",
+            "description": "Set on a session a round's run started: the round and the run. Every client can badge and filter it."
           },
           "state": {
             "$ref": "#/components/schemas/SessionState"
@@ -7324,6 +8196,23 @@
         "required": [
           "session",
           "name"
+        ]
+      },
+      "SessionRound": {
+        "type": "object",
+        "properties": {
+          "round": {
+            "type": "string",
+            "description": "The round id."
+          },
+          "run": {
+            "type": "string",
+            "description": "The run id."
+          }
+        },
+        "required": [
+          "round",
+          "run"
         ]
       },
       "SessionSendParams": {
@@ -7664,6 +8553,13 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Project"
+            }
+          },
+          "rounds": {
+            "type": "array",
+            "description": "The rounds (rounds.md 13), in a host scope snapshot only. Absent when the hab has none, and from a hab without the rounds capability.",
+            "items": {
+              "$ref": "#/components/schemas/Round"
             }
           },
           "seq": {

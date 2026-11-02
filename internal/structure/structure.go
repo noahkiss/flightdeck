@@ -64,6 +64,7 @@ var ephemeral = map[api.EventType]bool{
 	"chat.message": true, "session.turn_end": true, "pane.bell": true, "pane.output": true,
 	"usage.updated": true, "command.updated": true, "peer.updated": true, "notice.raised": true,
 	"catalog.updated": true, "mesh.changed": true, "confirm.requested": true, "confirm.closed": true,
+	"round.run_updated": true,
 }
 
 // Ephemeral reports whether events of type t carry no revision on the wire (spec 3.5, 3.9).
@@ -536,6 +537,8 @@ type SessionSpec struct {
 	// Kind and Dir mark a Capcom session (capcom.md 2.1, 7.4): kind capcom and its folder.
 	Kind string
 	Dir  string
+	// Round marks a run session (rounds.md 7.2): Session.round. Nil for any other session.
+	Round *api.SessionRound
 }
 
 // CreateSession adds a session record for a live pane, or for a pane about to be spawned
@@ -571,6 +574,10 @@ func (s *Store) CreateSession(spec SessionSpec) (api.Session, error) {
 	}
 	ss := &sessionRecord{ID: newID("s"), Revision: 1, Name: spec.Name, Project: spec.Project, Pane: spec.Pane, State: stateRunning,
 		Spawning: spec.NewPane, Kind: spec.Kind, Dir: spec.Dir}
+	if spec.Round != nil {
+		r := *spec.Round
+		ss.Round = &r
+	}
 	if ps != nil && ps.exit != nil {
 		ss.State = stateExited
 		ss.Exit = copyExit(ps.exit)
@@ -1042,9 +1049,17 @@ func copyInt(v *int) *int {
 func sessionAPI(ss *sessionRecord) api.Session {
 	return api.NonNil(api.Session{
 		ID: ss.ID, Revision: ss.Revision, Name: ss.Name, Project: ss.Project, Pane: ss.Pane,
-		State: api.SessionState(ss.State), Exit: copyExit(ss.Exit),
+		State: api.SessionState(ss.State), Exit: copyExit(ss.Exit), Round: copyRound(ss.Round),
 		Kind: api.SessionKind(ss.Kind), Dir: ss.Dir,
 	})
+}
+
+func copyRound(r *api.SessionRound) *api.SessionRound {
+	if r == nil {
+		return nil
+	}
+	c := *r
+	return &c
 }
 
 func copyExit(e *api.ExitStatus) *api.ExitStatus {

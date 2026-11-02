@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -3991,6 +3991,562 @@ public struct RevisionRange: Codable, Sendable, Hashable {
     }
 }
 
+public struct Round: Codable, Sendable, Hashable {
+    /// once (the default) or skip.
+    public var catchUp: RoundCatchUp?
+    /// Fresh only: a plain program, as an argv, instead of a harness and a prompt. Exit status 0 is a success.
+    public var command: [String]?
+    /// The round will not run again until its trigger changes.
+    public var completed: Bool?
+    public var completedReason: String?
+    /// RFC 3339.
+    public var createdAt: String
+    /// The session that created the round, when an agent did from its pane. Absent for a user. Read only.
+    public var createdBy: String?
+    /// Fresh: an absolute folder to start in, instead of the project's most recent one.
+    public var cwd: String?
+    /// In a round.updated event only: the round was deleted. Its live run goes on to its end.
+    public var deleted: Bool?
+    /// RFC 3339 time the round completes. A past time is refused.
+    public var expiresAt: String?
+    /// Failed or timed-out runs in a row.
+    public var failures: Int?
+    /// Fresh with a prompt: claude, codex or opencode.
+    public var harness: String?
+    /// Passed to the harness at start, as session.create does.
+    public var harnessArgs: [String]?
+    public var id: String
+    /// RFC 3339 time the last successful run started: the run's GFF_ROUND_LAST_OK.
+    public var lastOk: String?
+    /// The newest run, in round.list and round.get.
+    public var lastRun: RoundRun?
+    /// RFC 3339 time of the last slot served.
+    public var lastSlot: String?
+    /// The round completes after this many finished runs. Absent: no limit.
+    public var maxRuns: Int?
+    /// fresh, resume or fork. This hab runs fresh rounds with a command; the others are refused until their stage.
+    public var mode: RoundMode
+    public var model: String?
+    /// Unique on the hab: 1 to 64 letters, digits, - and _.
+    public var name: String
+    /// RFC 3339 time of the next slot. Absent when there is none: manual, paused past it, completed.
+    public var nextSlot: String?
+    /// failures (the default), always or never.
+    public var notify: RoundNotify?
+    /// Fresh and fork: close (the default) closes the run's pane after a success; keep leaves it.
+    public var onFinish: RoundOnFinish?
+    /// A paused round starts no runs. An update keeps the stored mark: round.pause and round.unpause change it.
+    public var paused: Bool?
+    /// Why the round paused itself. Absent for a pause by the user.
+    public var pausedReason: String?
+    /// Fresh: the project id. The run starts in the project's most recently used folder.
+    public var project: String?
+    /// In a create or update only, instead of project: an absolute folder; the hab finds or creates its project, as session.create does, and stores the project id.
+    public var projectDir: String?
+    /// In a create or update, instead of project: a git remote; the hab takes its project with that remote. In a round read back: the project's remote, when it has one, so an exported round names its project on any host.
+    public var projectRemote: String?
+    /// The text the agent gets each run, at most 64 KiB. Required unless command is set.
+    public var prompt: String?
+    /// Raised by one on each change; starts at 1 when gff-hab starts. Compared only within an epoch (spec 3.5).
+    public var revision: UInt64
+    /// Skipped runs in a row.
+    public var skips: Int?
+    /// Resume and fork: the target session id.
+    public var target: String?
+    /// The longest a run may take. Absent: 60 minutes.
+    public var timeoutMs: Int?
+    public var trigger: RoundTrigger
+    /// The stored trigger no longer compiles on this host, such as a zone its zone database lacks. The round is not scheduled until an edit fixes it.
+    public var triggerError: String?
+    /// RFC 3339.
+    public var updatedAt: String
+    /// Resume only: how long a run waits for the session to be free. Absent: 10 minutes.
+    public var waitMs: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case catchUp = "catch_up"
+        case command = "command"
+        case completed = "completed"
+        case completedReason = "completed_reason"
+        case createdAt = "created_at"
+        case createdBy = "created_by"
+        case cwd = "cwd"
+        case deleted = "deleted"
+        case expiresAt = "expires_at"
+        case failures = "failures"
+        case harness = "harness"
+        case harnessArgs = "harness_args"
+        case id = "id"
+        case lastOk = "last_ok"
+        case lastRun = "last_run"
+        case lastSlot = "last_slot"
+        case maxRuns = "max_runs"
+        case mode = "mode"
+        case model = "model"
+        case name = "name"
+        case nextSlot = "next_slot"
+        case notify = "notify"
+        case onFinish = "on_finish"
+        case paused = "paused"
+        case pausedReason = "paused_reason"
+        case project = "project"
+        case projectDir = "project_dir"
+        case projectRemote = "project_remote"
+        case prompt = "prompt"
+        case revision = "revision"
+        case skips = "skips"
+        case target = "target"
+        case timeoutMs = "timeout_ms"
+        case trigger = "trigger"
+        case triggerError = "trigger_error"
+        case updatedAt = "updated_at"
+        case waitMs = "wait_ms"
+    }
+
+    public init(catchUp: RoundCatchUp? = nil, command: [String]? = nil, completed: Bool? = nil, completedReason: String? = nil, createdAt: String, createdBy: String? = nil, cwd: String? = nil, deleted: Bool? = nil, expiresAt: String? = nil, failures: Int? = nil, harness: String? = nil, harnessArgs: [String]? = nil, id: String, lastOk: String? = nil, lastRun: RoundRun? = nil, lastSlot: String? = nil, maxRuns: Int? = nil, mode: RoundMode, model: String? = nil, name: String, nextSlot: String? = nil, notify: RoundNotify? = nil, onFinish: RoundOnFinish? = nil, paused: Bool? = nil, pausedReason: String? = nil, project: String? = nil, projectDir: String? = nil, projectRemote: String? = nil, prompt: String? = nil, revision: UInt64, skips: Int? = nil, target: String? = nil, timeoutMs: Int? = nil, trigger: RoundTrigger, triggerError: String? = nil, updatedAt: String, waitMs: Int? = nil) {
+        self.catchUp = catchUp
+        self.command = command
+        self.completed = completed
+        self.completedReason = completedReason
+        self.createdAt = createdAt
+        self.createdBy = createdBy
+        self.cwd = cwd
+        self.deleted = deleted
+        self.expiresAt = expiresAt
+        self.failures = failures
+        self.harness = harness
+        self.harnessArgs = harnessArgs
+        self.id = id
+        self.lastOk = lastOk
+        self.lastRun = lastRun
+        self.lastSlot = lastSlot
+        self.maxRuns = maxRuns
+        self.mode = mode
+        self.model = model
+        self.name = name
+        self.nextSlot = nextSlot
+        self.notify = notify
+        self.onFinish = onFinish
+        self.paused = paused
+        self.pausedReason = pausedReason
+        self.project = project
+        self.projectDir = projectDir
+        self.projectRemote = projectRemote
+        self.prompt = prompt
+        self.revision = revision
+        self.skips = skips
+        self.target = target
+        self.timeoutMs = timeoutMs
+        self.trigger = trigger
+        self.triggerError = triggerError
+        self.updatedAt = updatedAt
+        self.waitMs = waitMs
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct RoundCatchUp: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let once = RoundCatchUp(rawValue: "once")
+    public static let skip = RoundCatchUp(rawValue: "skip")
+}
+
+public struct RoundCreateParams: Codable, Sendable, Hashable {
+    public var round: RoundSpec
+    /// Also start one run now. It does not move the next slot.
+    public var runNow: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case round = "round"
+        case runNow = "run_now"
+    }
+
+    public init(round: RoundSpec, runNow: Bool? = nil) {
+        self.round = round
+        self.runNow = runNow
+    }
+}
+
+public struct RoundCreated: Codable, Sendable, Hashable {
+    public var round: Round
+    /// With run_now: the run it started.
+    public var run: RoundRun?
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case round = "round"
+        case run = "run"
+        case seq = "seq"
+    }
+
+    public init(round: Round, run: RoundRun? = nil, seq: UInt64) {
+        self.round = round
+        self.run = run
+        self.seq = seq
+    }
+}
+
+public struct RoundList: Codable, Sendable, Hashable {
+    public var rounds: [Round]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case rounds = "rounds"
+        case seq = "seq"
+    }
+
+    public init(rounds: [Round], seq: UInt64) {
+        self.rounds = rounds
+        self.seq = seq
+    }
+}
+
+public struct RoundListParams: Codable, Sendable, Hashable {
+    public init() {
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct RoundMode: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let fresh = RoundMode(rawValue: "fresh")
+    public static let resume = RoundMode(rawValue: "resume")
+    public static let fork = RoundMode(rawValue: "fork")
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct RoundNotify: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let failures = RoundNotify(rawValue: "failures")
+    public static let always = RoundNotify(rawValue: "always")
+    public static let never = RoundNotify(rawValue: "never")
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct RoundOnFinish: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let close = RoundOnFinish(rawValue: "close")
+    public static let keep = RoundOnFinish(rawValue: "keep")
+}
+
+public struct RoundRef: Codable, Sendable, Hashable {
+    public var id: String?
+    public var name: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case name = "name"
+    }
+
+    public init(id: String? = nil, name: String? = nil) {
+        self.id = id
+        self.name = name
+    }
+}
+
+public struct RoundResult: Codable, Sendable, Hashable {
+    public var round: Round
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case round = "round"
+        case seq = "seq"
+    }
+
+    public init(round: Round, seq: UInt64) {
+        self.round = round
+        self.seq = seq
+    }
+}
+
+public struct RoundRun: Codable, Sendable, Hashable {
+    /// RFC 3339 time the run was made.
+    public var created: String
+    /// RFC 3339.
+    public var endedAt: String?
+    public var id: String
+    /// How many slots the run covers: 1 on time, more after a catch-up.
+    public var missed: Int?
+    /// The run number within its round, from 1.
+    public var number: Int
+    public var reason: String?
+    /// The first 4 KiB of the final agent message.
+    public var result: String?
+    /// The round id.
+    public var round: String
+    /// The run session's id, once it exists.
+    public var session: String?
+    /// RFC 3339 time of the slot the run serves. Absent for a run by hand.
+    public var slot: String?
+    /// RFC 3339.
+    public var startedAt: String?
+    public var state: RoundRunState
+    /// What asked for the run: the round's trigger kind, or manual for a run by hand.
+    public var trigger: RoundTriggerKind
+
+    enum CodingKeys: String, CodingKey {
+        case created = "created"
+        case endedAt = "ended_at"
+        case id = "id"
+        case missed = "missed"
+        case number = "number"
+        case reason = "reason"
+        case result = "result"
+        case round = "round"
+        case session = "session"
+        case slot = "slot"
+        case startedAt = "started_at"
+        case state = "state"
+        case trigger = "trigger"
+    }
+
+    public init(created: String, endedAt: String? = nil, id: String, missed: Int? = nil, number: Int, reason: String? = nil, result: String? = nil, round: String, session: String? = nil, slot: String? = nil, startedAt: String? = nil, state: RoundRunState, trigger: RoundTriggerKind) {
+        self.created = created
+        self.endedAt = endedAt
+        self.id = id
+        self.missed = missed
+        self.number = number
+        self.reason = reason
+        self.result = result
+        self.round = round
+        self.session = session
+        self.slot = slot
+        self.startedAt = startedAt
+        self.state = state
+        self.trigger = trigger
+    }
+}
+
+public struct RoundRunResult: Codable, Sendable, Hashable {
+    public var run: RoundRun
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case run = "run"
+        case seq = "seq"
+    }
+
+    public init(run: RoundRun, seq: UInt64) {
+        self.run = run
+        self.seq = seq
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct RoundRunState: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let queued = RoundRunState(rawValue: "queued")
+    public static let waiting = RoundRunState(rawValue: "waiting")
+    public static let running = RoundRunState(rawValue: "running")
+    public static let blocked = RoundRunState(rawValue: "blocked")
+    public static let succeeded = RoundRunState(rawValue: "succeeded")
+    public static let failed = RoundRunState(rawValue: "failed")
+    public static let timedOut = RoundRunState(rawValue: "timed_out")
+    public static let skipped = RoundRunState(rawValue: "skipped")
+    public static let takenOver = RoundRunState(rawValue: "taken_over")
+}
+
+public struct RoundRuns: Codable, Sendable, Hashable {
+    /// Older runs remain.
+    public var more: Bool?
+    public var runs: [RoundRun]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case more = "more"
+        case runs = "runs"
+        case seq = "seq"
+    }
+
+    public init(more: Bool? = nil, runs: [RoundRun], seq: UInt64) {
+        self.more = more
+        self.runs = runs
+        self.seq = seq
+    }
+}
+
+public struct RoundRunsParams: Codable, Sendable, Hashable {
+    /// Return runs with a number below this. Absent: from the newest.
+    public var before: Int?
+    public var id: String?
+    /// At most this many runs; default 50, at most 200.
+    public var limit: Int?
+    public var name: String?
+
+    enum CodingKeys: String, CodingKey {
+        case before = "before"
+        case id = "id"
+        case limit = "limit"
+        case name = "name"
+    }
+
+    public init(before: Int? = nil, id: String? = nil, limit: Int? = nil, name: String? = nil) {
+        self.before = before
+        self.id = id
+        self.limit = limit
+        self.name = name
+    }
+}
+
+public struct RoundSpec: Codable, Sendable, Hashable {
+    /// once (the default) or skip.
+    public var catchUp: RoundCatchUp?
+    /// Fresh only: a plain program, as an argv, instead of a harness and a prompt. Exit status 0 is a success.
+    public var command: [String]?
+    /// Fresh: an absolute folder to start in, instead of the project's most recent one.
+    public var cwd: String?
+    /// RFC 3339 time the round completes. A past time is refused.
+    public var expiresAt: String?
+    /// Fresh with a prompt: claude, codex or opencode.
+    public var harness: String?
+    /// Passed to the harness at start, as session.create does.
+    public var harnessArgs: [String]?
+    /// The round completes after this many finished runs. Absent: no limit.
+    public var maxRuns: Int?
+    /// fresh, resume or fork. This hab runs fresh rounds with a command; the others are refused until their stage.
+    public var mode: RoundMode
+    public var model: String?
+    /// Unique on the hab: 1 to 64 letters, digits, - and _.
+    public var name: String
+    /// failures (the default), always or never.
+    public var notify: RoundNotify?
+    /// Fresh and fork: close (the default) closes the run's pane after a success; keep leaves it.
+    public var onFinish: RoundOnFinish?
+    /// A paused round starts no runs. An update keeps the stored mark: round.pause and round.unpause change it.
+    public var paused: Bool?
+    /// Fresh: the project id. The run starts in the project's most recently used folder.
+    public var project: String?
+    /// In a create or update only, instead of project: an absolute folder; the hab finds or creates its project, as session.create does, and stores the project id.
+    public var projectDir: String?
+    /// In a create or update, instead of project: a git remote; the hab takes its project with that remote. In a round read back: the project's remote, when it has one, so an exported round names its project on any host.
+    public var projectRemote: String?
+    /// The text the agent gets each run, at most 64 KiB. Required unless command is set.
+    public var prompt: String?
+    /// Resume and fork: the target session id.
+    public var target: String?
+    /// The longest a run may take. Absent: 60 minutes.
+    public var timeoutMs: Int?
+    public var trigger: RoundTrigger
+    /// Resume only: how long a run waits for the session to be free. Absent: 10 minutes.
+    public var waitMs: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case catchUp = "catch_up"
+        case command = "command"
+        case cwd = "cwd"
+        case expiresAt = "expires_at"
+        case harness = "harness"
+        case harnessArgs = "harness_args"
+        case maxRuns = "max_runs"
+        case mode = "mode"
+        case model = "model"
+        case name = "name"
+        case notify = "notify"
+        case onFinish = "on_finish"
+        case paused = "paused"
+        case project = "project"
+        case projectDir = "project_dir"
+        case projectRemote = "project_remote"
+        case prompt = "prompt"
+        case target = "target"
+        case timeoutMs = "timeout_ms"
+        case trigger = "trigger"
+        case waitMs = "wait_ms"
+    }
+
+    public init(catchUp: RoundCatchUp? = nil, command: [String]? = nil, cwd: String? = nil, expiresAt: String? = nil, harness: String? = nil, harnessArgs: [String]? = nil, maxRuns: Int? = nil, mode: RoundMode, model: String? = nil, name: String, notify: RoundNotify? = nil, onFinish: RoundOnFinish? = nil, paused: Bool? = nil, project: String? = nil, projectDir: String? = nil, projectRemote: String? = nil, prompt: String? = nil, target: String? = nil, timeoutMs: Int? = nil, trigger: RoundTrigger, waitMs: Int? = nil) {
+        self.catchUp = catchUp
+        self.command = command
+        self.cwd = cwd
+        self.expiresAt = expiresAt
+        self.harness = harness
+        self.harnessArgs = harnessArgs
+        self.maxRuns = maxRuns
+        self.mode = mode
+        self.model = model
+        self.name = name
+        self.notify = notify
+        self.onFinish = onFinish
+        self.paused = paused
+        self.project = project
+        self.projectDir = projectDir
+        self.projectRemote = projectRemote
+        self.prompt = prompt
+        self.target = target
+        self.timeoutMs = timeoutMs
+        self.trigger = trigger
+        self.waitMs = waitMs
+    }
+}
+
+public struct RoundTrigger: Codable, Sendable, Hashable {
+    /// Kind once: the RFC 3339 instant. A past instant is refused.
+    public var at: String?
+    /// Kind cron: a 5-field cron expression.
+    public var cron: String?
+    /// Kind cron, in a create or update only: a preset such as 5m, 1h or 1d, instead of cron. The hab stores the cron expression it compiles to, so a round read back has cron and no every.
+    public var every: String?
+    /// cron, once or manual. event triggers come in a later stage and are refused.
+    public var kind: RoundTriggerKind
+    /// Kind cron or once: the IANA time zone. Absent in a create: the hab's zone, stored by name.
+    public var zone: String?
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case cron = "cron"
+        case every = "every"
+        case kind = "kind"
+        case zone = "zone"
+    }
+
+    public init(at: String? = nil, cron: String? = nil, every: String? = nil, kind: RoundTriggerKind, zone: String? = nil) {
+        self.at = at
+        self.cron = cron
+        self.every = every
+        self.kind = kind
+        self.zone = zone
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct RoundTriggerKind: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let cron = RoundTriggerKind(rawValue: "cron")
+    public static let once = RoundTriggerKind(rawValue: "once")
+    public static let manual = RoundTriggerKind(rawValue: "manual")
+}
+
+public struct RoundUpdateParams: Codable, Sendable, Hashable {
+    public var id: String
+    /// The round's revision the client last saw. Another revision refuses the call with conflict. Absent: no check.
+    public var revision: UInt64?
+    /// The whole new definition. A field left out takes its default; round.get gives the stored one to edit.
+    public var round: RoundSpec
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case revision = "revision"
+        case round = "round"
+    }
+
+    public init(id: String, revision: UInt64? = nil, round: RoundSpec) {
+        self.id = id
+        self.revision = revision
+        self.round = round
+    }
+}
+
 public struct Scope: Codable, Sendable, Hashable {
     /// Project or session ids, for kind projects or sessions.
     public var ids: [String]?
@@ -4042,6 +4598,8 @@ public struct Session: Codable, Sendable, Hashable {
     /// Project id. Absent means unfiled.
     public var project: String?
     public var revision: UInt64
+    /// Set on a session a round's run started: the round and the run. Every client can badge and filter it.
+    public var round: SessionRound?
     public var state: SessionState
     /// The agent session's title, from its adapter. Absent when the harness has none.
     public var title: String?
@@ -4057,11 +4615,12 @@ public struct Session: Codable, Sendable, Hashable {
         case pane = "pane"
         case project = "project"
         case revision = "revision"
+        case round = "round"
         case state = "state"
         case title = "title"
     }
 
-    public init(contextPct: Int? = nil, dir: String? = nil, exit: ExitStatus? = nil, id: String, kind: SessionKind? = nil, model: String? = nil, name: String, pane: String? = nil, project: String? = nil, revision: UInt64, state: SessionState, title: String? = nil) {
+    public init(contextPct: Int? = nil, dir: String? = nil, exit: ExitStatus? = nil, id: String, kind: SessionKind? = nil, model: String? = nil, name: String, pane: String? = nil, project: String? = nil, revision: UInt64, round: SessionRound? = nil, state: SessionState, title: String? = nil) {
         self.contextPct = contextPct
         self.dir = dir
         self.exit = exit
@@ -4072,6 +4631,7 @@ public struct Session: Codable, Sendable, Hashable {
         self.pane = pane
         self.project = project
         self.revision = revision
+        self.round = round
         self.state = state
         self.title = title
     }
@@ -4207,6 +4767,23 @@ public struct SessionRenameParams: Codable, Sendable, Hashable {
     public init(name: String, session: String) {
         self.name = name
         self.session = session
+    }
+}
+
+public struct SessionRound: Codable, Sendable, Hashable {
+    /// The round id.
+    public var round: String
+    /// The run id.
+    public var run: String
+
+    enum CodingKeys: String, CodingKey {
+        case round = "round"
+        case run = "run"
+    }
+
+    public init(round: String, run: String) {
+        self.round = round
+        self.run = run
     }
 }
 
@@ -4514,6 +5091,8 @@ public struct StructureResult: Codable, Sendable, Hashable {
     public var host: HostInfo
     public var panes: [Pane]
     public var projects: [Project]
+    /// The rounds (rounds.md 13), in a host scope snapshot only. Absent when the hab has none, and from a hab without the rounds capability.
+    public var rounds: [Round]?
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
     public var sessions: [Session]
@@ -4526,17 +5105,19 @@ public struct StructureResult: Codable, Sendable, Hashable {
         case host = "host"
         case panes = "panes"
         case projects = "projects"
+        case rounds = "rounds"
         case seq = "seq"
         case sessions = "sessions"
         case settings = "settings"
     }
 
-    public init(agents: [AgentState]? = nil, confirmations: [Confirmation]? = nil, host: HostInfo, panes: [Pane], projects: [Project], seq: UInt64, sessions: [Session], settings: [Setting]? = nil) {
+    public init(agents: [AgentState]? = nil, confirmations: [Confirmation]? = nil, host: HostInfo, panes: [Pane], projects: [Project], rounds: [Round]? = nil, seq: UInt64, sessions: [Session], settings: [Setting]? = nil) {
         self.agents = agents
         self.confirmations = confirmations
         self.host = host
         self.panes = panes
         self.projects = projects
+        self.rounds = rounds
         self.seq = seq
         self.sessions = sessions
         self.settings = settings
@@ -5470,6 +6051,24 @@ public enum HabMethods {
     public static let confirmList = HabMethod<ConfirmListParams, ConfirmList>(name: "confirm.list")
     /// One confirmation by id, open or closed (capcom.md 6.1). Needs the confirm capability.
     public static let confirmGet = HabMethod<ConfirmGetParams, ConfirmationResult>(name: "confirm.get")
+    /// This hab's rounds with their next slot and newest run (rounds.md 13). Needs the rounds capability.
+    public static let roundList = HabMethod<RoundListParams, RoundList>(name: "round.list")
+    /// One round by id or name, with its definition (rounds.md 13). Needs the rounds capability.
+    public static let roundGet = HabMethod<RoundRef, RoundResult>(name: "round.get")
+    /// Create a round; checks the trigger, mode and target. run_now also starts one run (rounds.md 3, 13). Needs the rounds capability.
+    public static let roundCreate = HabMethod<RoundCreateParams, RoundCreated>(name: "round.create")
+    /// Replace a round's definition; a changed trigger sets the next slot from now. A run in flight keeps its values (rounds.md 3). Needs the rounds capability.
+    public static let roundUpdate = HabMethod<RoundUpdateParams, RoundResult>(name: "round.update")
+    /// Delete a round and its ended runs; a live run goes on to its end (rounds.md 13). Needs the rounds capability.
+    public static let roundDelete = HabMethod<RoundRef, Empty>(name: "round.delete")
+    /// Pause a round: no new runs; a queued run ends skipped (rounds.md 13). Needs the rounds capability.
+    public static let roundPause = HabMethod<RoundRef, RoundResult>(name: "round.pause")
+    /// Unpause a round and clear its failure count (rounds.md 10.1). Needs the rounds capability.
+    public static let roundUnpause = HabMethod<RoundRef, RoundResult>(name: "round.unpause")
+    /// Start a run now, outside the trigger. A round with a live run answers conflict (rounds.md 13). Needs the rounds capability.
+    public static let roundRun = HabMethod<RoundRef, RoundRunResult>(name: "round.run")
+    /// A page of a round's runs, newest first (rounds.md 7.7). Needs the rounds capability.
+    public static let roundRuns = HabMethod<RoundRunsParams, RoundRuns>(name: "round.runs")
 }
 
 public enum HabNotification {
@@ -5526,6 +6125,10 @@ public enum HabEvent: Sendable, Hashable {
     case confirmRequested(Confirmation)
     /// A confirmation closed: done, failed, cancelled, expired or unknown; every card withdraws its buttons; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral.
     case confirmClosed(Confirmation)
+    /// A round was created, changed, paused, completed or deleted (data.deleted); the id is the round id (rounds.md 13). Host scope only. Not ephemeral: the rounds are in the host snapshot.
+    case roundUpdated(Round)
+    /// A run of a round changed state; the id is the run id (rounds.md 13). Host scope only. Ephemeral.
+    case roundRunUpdated(RoundRun)
     /// Sent only to a peer link that dialed this hab, subscribed or not: something waits for the dialer, so it pulls now; the id is this hab's device id (mesh.md 4.2, 6.5). Ephemeral.
     case meshChanged(MeshChanged)
     case unknown(type: String, data: JSONValue)
@@ -5555,6 +6158,8 @@ public enum HabEvent: Sendable, Hashable {
         case "channel.message": self = .channelMessage(try event.data.decode(ChannelRecord.self))
         case "confirm.requested": self = .confirmRequested(try event.data.decode(Confirmation.self))
         case "confirm.closed": self = .confirmClosed(try event.data.decode(Confirmation.self))
+        case "round.updated": self = .roundUpdated(try event.data.decode(Round.self))
+        case "round.run_updated": self = .roundRunUpdated(try event.data.decode(RoundRun.self))
         case "mesh.changed": self = .meshChanged(try event.data.decode(MeshChanged.self))
         default: self = .unknown(type: event.type, data: event.data)
         }

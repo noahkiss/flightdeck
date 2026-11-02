@@ -239,6 +239,46 @@ const (
 )
 
 const (
+	RoundCatchUpOnce RoundCatchUp = "once"
+	RoundCatchUpSkip RoundCatchUp = "skip"
+)
+
+const (
+	RoundModeFresh  RoundMode = "fresh"
+	RoundModeResume RoundMode = "resume"
+	RoundModeFork   RoundMode = "fork"
+)
+
+const (
+	RoundNotifyFailures RoundNotify = "failures"
+	RoundNotifyAlways   RoundNotify = "always"
+	RoundNotifyNever    RoundNotify = "never"
+)
+
+const (
+	RoundOnFinishClose RoundOnFinish = "close"
+	RoundOnFinishKeep  RoundOnFinish = "keep"
+)
+
+const (
+	RoundRunStateQueued    RoundRunState = "queued"
+	RoundRunStateWaiting   RoundRunState = "waiting"
+	RoundRunStateRunning   RoundRunState = "running"
+	RoundRunStateBlocked   RoundRunState = "blocked"
+	RoundRunStateSucceeded RoundRunState = "succeeded"
+	RoundRunStateFailed    RoundRunState = "failed"
+	RoundRunStateTimedOut  RoundRunState = "timed_out"
+	RoundRunStateSkipped   RoundRunState = "skipped"
+	RoundRunStateTakenOver RoundRunState = "taken_over"
+)
+
+const (
+	RoundTriggerKindCron   RoundTriggerKind = "cron"
+	RoundTriggerKindOnce   RoundTriggerKind = "once"
+	RoundTriggerKindManual RoundTriggerKind = "manual"
+)
+
+const (
 	ScopeKindHost     ScopeKind = "host"
 	ScopeKindProjects ScopeKind = "projects"
 	ScopeKindSessions ScopeKind = "sessions"
@@ -338,6 +378,8 @@ const (
 	EventChannelMessage   EventType = "channel.message"
 	EventConfirmRequested EventType = "confirm.requested"
 	EventConfirmClosed    EventType = "confirm.closed"
+	EventRoundUpdated     EventType = "round.updated"
+	EventRoundRunUpdated  EventType = "round.run_updated"
 	EventMeshChanged      EventType = "mesh.changed"
 )
 
@@ -435,6 +477,14 @@ func (e Event) DecodeData() (any, error) {
 		return v, err
 	case EventConfirmClosed:
 		var v Confirmation
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventRoundUpdated:
+		var v Round
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventRoundRunUpdated:
+		var v RoundRun
 		err := json.Unmarshal(e.Data, &v)
 		return v, err
 	case EventMeshChanged:
@@ -963,5 +1013,68 @@ func (c Client) ConfirmList(ctx context.Context, params ConfirmListParams) (Conf
 func (c Client) ConfirmGet(ctx context.Context, params ConfirmGetParams) (ConfirmationResult, error) {
 	var result ConfirmationResult
 	err := c.Caller.Call(ctx, "confirm.get", params, &result)
+	return result, err
+}
+
+// RoundList calls round.list. This hab's rounds with their next slot and newest run (rounds.md 13). Needs the rounds capability.
+func (c Client) RoundList(ctx context.Context, params RoundListParams) (RoundList, error) {
+	var result RoundList
+	err := c.Caller.Call(ctx, "round.list", params, &result)
+	return result, err
+}
+
+// RoundGet calls round.get. One round by id or name, with its definition (rounds.md 13). Needs the rounds capability.
+func (c Client) RoundGet(ctx context.Context, params RoundRef) (RoundResult, error) {
+	var result RoundResult
+	err := c.Caller.Call(ctx, "round.get", params, &result)
+	return result, err
+}
+
+// RoundCreate calls round.create. Create a round; checks the trigger, mode and target. run_now also starts one run (rounds.md 3, 13). Needs the rounds capability.
+func (c Client) RoundCreate(ctx context.Context, params RoundCreateParams) (RoundCreated, error) {
+	var result RoundCreated
+	err := c.Caller.Call(ctx, "round.create", params, &result)
+	return result, err
+}
+
+// RoundUpdate calls round.update. Replace a round's definition; a changed trigger sets the next slot from now. A run in flight keeps its values (rounds.md 3). Needs the rounds capability.
+func (c Client) RoundUpdate(ctx context.Context, params RoundUpdateParams) (RoundResult, error) {
+	var result RoundResult
+	err := c.Caller.Call(ctx, "round.update", params, &result)
+	return result, err
+}
+
+// RoundDelete calls round.delete. Delete a round and its ended runs; a live run goes on to its end (rounds.md 13). Needs the rounds capability.
+func (c Client) RoundDelete(ctx context.Context, params RoundRef) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "round.delete", params, &result)
+	return result, err
+}
+
+// RoundPause calls round.pause. Pause a round: no new runs; a queued run ends skipped (rounds.md 13). Needs the rounds capability.
+func (c Client) RoundPause(ctx context.Context, params RoundRef) (RoundResult, error) {
+	var result RoundResult
+	err := c.Caller.Call(ctx, "round.pause", params, &result)
+	return result, err
+}
+
+// RoundUnpause calls round.unpause. Unpause a round and clear its failure count (rounds.md 10.1). Needs the rounds capability.
+func (c Client) RoundUnpause(ctx context.Context, params RoundRef) (RoundResult, error) {
+	var result RoundResult
+	err := c.Caller.Call(ctx, "round.unpause", params, &result)
+	return result, err
+}
+
+// RoundRun calls round.run. Start a run now, outside the trigger. A round with a live run answers conflict (rounds.md 13). Needs the rounds capability.
+func (c Client) RoundRun(ctx context.Context, params RoundRef) (RoundRunResult, error) {
+	var result RoundRunResult
+	err := c.Caller.Call(ctx, "round.run", params, &result)
+	return result, err
+}
+
+// RoundRuns calls round.runs. A page of a round's runs, newest first (rounds.md 7.7). Needs the rounds capability.
+func (c Client) RoundRuns(ctx context.Context, params RoundRunsParams) (RoundRuns, error) {
+	var result RoundRuns
+	err := c.Caller.Call(ctx, "round.runs", params, &result)
 	return result, err
 }

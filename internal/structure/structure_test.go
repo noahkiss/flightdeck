@@ -659,3 +659,39 @@ func TestSetOwnerDoesNotSave(t *testing.T) {
 		t.Fatalf("pane after SetOwner: owner %q revision %d", p.Owner, p.Revision)
 	}
 }
+
+// TestSessionRound: a run session carries its round and run in every event and snapshot, and
+// across a restart (rounds.md 7.2).
+func TestSessionRound(t *testing.T) {
+	dir := t.TempDir()
+	h := NewFakeHolder(pane("p1"))
+	s, rec := open(t, dir, h)
+	ref := &api.SessionRound{Round: "round-1", Run: "run-1"}
+	ss, err := s.CreateSession(SessionSpec{Name: "nightly", Pane: "p1", Index: -1, Round: ref})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref.Run = "changed" // the store keeps its own copy
+	if ss.Round == nil || *ss.Round != (api.SessionRound{Round: "round-1", Run: "run-1"}) {
+		t.Fatalf("created: %+v", ss.Round)
+	}
+	found := false
+	for _, e := range rec.take() {
+		if e.Type == SessionUpdated {
+			found = e.Data.(api.Session).Round != nil
+		}
+	}
+	if !found {
+		t.Fatal("session.updated without round")
+	}
+	plain, _ := s.CreateSession(SessionSpec{Name: "plain", Pane: "p2", Index: -1, NewPane: true})
+	if plain.Round != nil {
+		t.Fatalf("a plain session has a round: %+v", plain.Round)
+	}
+	s.Close()
+	s2, _ := open(t, dir, h)
+	got, ok := s2.Session(ss.ID)
+	if !ok || got.Round == nil || got.Round.Run != "run-1" {
+		t.Fatalf("after restart: %+v", got)
+	}
+}

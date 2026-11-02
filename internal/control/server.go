@@ -208,6 +208,7 @@ type Config struct {
 	Logbook      Logbook     // nil: logbook.find and logbook.get answer unavailable
 	Confirm      Confirm     // nil: the confirm.* methods answer unavailable
 	Capcom       Capcom      // nil: capcom.open and capcom.assign answer unavailable
+	Rounds       Rounds      // nil: the round.* methods answer unavailable
 	// ApproversChanged, if set, is called with no lock held after a connection closes or
 	// changes its subscription, so Approvers may have dropped.
 	ApproversChanged func()

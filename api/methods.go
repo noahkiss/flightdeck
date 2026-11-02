@@ -136,6 +136,15 @@ var Methods = []Method{
 	{"confirm.answer", "Answer an open confirmation: confirm, with the user's edits, or cancel. The first answer wins; a later one answers conflict. A confirm returns once the hab ran the action (capcom.md 6.1). Needs the confirm capability.", ConfirmAnswerParams{}, ConfirmationResult{}},
 	{"confirm.list", "The open confirmations, and with all the closed ones the hab keeps (capcom.md 6.1). Needs the confirm capability.", ConfirmListParams{}, ConfirmList{}},
 	{"confirm.get", "One confirmation by id, open or closed (capcom.md 6.1). Needs the confirm capability.", ConfirmGetParams{}, ConfirmationResult{}},
+	{"round.list", "This hab's rounds with their next slot and newest run (rounds.md 13). Needs the rounds capability.", RoundListParams{}, RoundList{}},
+	{"round.get", "One round by id or name, with its definition (rounds.md 13). Needs the rounds capability.", RoundRef{}, RoundResult{}},
+	{"round.create", "Create a round; checks the trigger, mode and target. run_now also starts one run (rounds.md 3, 13). Needs the rounds capability.", RoundCreateParams{}, RoundCreated{}},
+	{"round.update", "Replace a round's definition; a changed trigger sets the next slot from now. A run in flight keeps its values (rounds.md 3). Needs the rounds capability.", RoundUpdateParams{}, RoundResult{}},
+	{"round.delete", "Delete a round and its ended runs; a live run goes on to its end (rounds.md 13). Needs the rounds capability.", RoundRef{}, Empty{}},
+	{"round.pause", "Pause a round: no new runs; a queued run ends skipped (rounds.md 13). Needs the rounds capability.", RoundRef{}, RoundResult{}},
+	{"round.unpause", "Unpause a round and clear its failure count (rounds.md 10.1). Needs the rounds capability.", RoundRef{}, RoundResult{}},
+	{"round.run", "Start a run now, outside the trigger. A round with a live run answers conflict (rounds.md 13). Needs the rounds capability.", RoundRef{}, RoundRunResult{}},
+	{"round.runs", "A page of a round's runs, newest first (rounds.md 7.7). Needs the rounds capability.", RoundRunsParams{}, RoundRuns{}},
 }
 
 // Notifications is every notification the server sends on a control connection.
@@ -170,6 +179,8 @@ var Events = []EventDef{
 	{"channel.message", "A message this hab sent changed state; the id is the message id (mesh.md 6.5). Host scope only. Ephemeral.", ChannelRecord{}},
 	{"confirm.requested", "A confirmation opened, a start ran at once as a record, or a confirmed one moved to running; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral: the open ones are in the host snapshot.", Confirmation{}},
 	{"confirm.closed", "A confirmation closed: done, failed, cancelled, expired or unknown; every card withdraws its buttons; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral.", Confirmation{}},
+	{"round.updated", "A round was created, changed, paused, completed or deleted (data.deleted); the id is the round id (rounds.md 13). Host scope only. Not ephemeral: the rounds are in the host snapshot.", Round{}},
+	{"round.run_updated", "A run of a round changed state; the id is the run id (rounds.md 13). Host scope only. Ephemeral.", RoundRun{}},
 	{"mesh.changed", "Sent only to a peer link that dialed this hab, subscribed or not: something waits for the dialer, so it pulls now; the id is this hab's device id (mesh.md 4.2, 6.5). Ephemeral.", MeshChanged{}},
 }
 
@@ -244,6 +255,13 @@ var Enums = map[string][]string{
 	"ConfirmChoice": {"confirm", "cancel"},
 	// Sets added for Capcom (capcom.md 2.1).
 	"SessionKind": {"capcom"},
+	// Sets added for rounds (rounds.md 3, 7.1).
+	"RoundMode":        {"fresh", "resume", "fork"},
+	"RoundTriggerKind": {"cron", "once", "manual"},
+	"RoundCatchUp":     {"once", "skip"},
+	"RoundOnFinish":    {"close", "keep"},
+	"RoundNotify":      {"failures", "always", "never"},
+	"RoundRunState":    {"queued", "waiting", "running", "blocked", "succeeded", "failed", "timed_out", "skipped", "taken_over"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per
@@ -284,5 +302,7 @@ var Translators = map[int]Translator{}
 // the confirm.* methods and events work, the host snapshot carries the open confirmations, and
 // session.create takes model and seed (capcom.md 6.1). "capcom" means capcom.open, capcom.assign
 // and session.resume of a Capcom session work, and the catalog carries the capcom section
-// (capcom.md 7).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom"}
+// (capcom.md 7). "rounds" means the round.* methods and the round.updated and
+// round.run_updated events work, the host snapshot carries the rounds, and a run session
+// carries Session.round (rounds.md 13).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds"}

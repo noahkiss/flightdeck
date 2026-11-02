@@ -76,6 +76,8 @@ type sessionRecord struct {
 	// Kind and Dir mark a Capcom session (capcom.md 2.1, 7.4).
 	Kind string `json:"kind,omitempty"`
 	Dir  string `json:"dir,omitempty"`
+	// Round marks a run session: the round and the run that started it (rounds.md 7.2).
+	Round *api.SessionRound `json:"round,omitempty"`
 }
 
 // paneRecord keeps what gff-hab owns about a pane: its revision, plus the last size and build it

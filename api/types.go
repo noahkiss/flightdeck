@@ -110,6 +110,9 @@ type Session struct {
 	// reads a session from an older revision 1 hab.
 	Kind SessionKind `json:"kind,omitempty" doc:"capcom for a Capcom session, which clients label Capcom. Absent for an ordinary session."`
 	Dir  string      `json:"dir,omitempty" doc:"The hab-owned folder a Capcom session runs in; a plain terminal resumes the harness from there. Absent for other sessions."`
+	// Round marks a run session (rounds.md 7.2). Optional, so a newer client reads a session
+	// from an older revision 1 hab.
+	Round *SessionRound `json:"round,omitempty" doc:"Set on a session a round's run started: the round and the run. Every client can badge and filter it."`
 }
 
 // SessionKind says what a session is for, beyond running a program. Open: a client shows an
@@ -137,6 +140,7 @@ type Structure struct {
 	// Confirmations are the open ones (capcom.md 6.1), so a client shows each card after a
 	// (re)subscribe with no read.
 	Confirmations []Confirmation `json:"confirmations,omitempty" doc:"The open confirmations (capcom.md 6.1), in a host scope snapshot only. Absent when none is open, and from a hab without the confirm capability."`
+	Rounds        []Round        `json:"rounds,omitempty" doc:"The rounds (rounds.md 13), in a host scope snapshot only. Absent when the hab has none, and from a hab without the rounds capability."`
 }
 
 // --- Agent state (docs/specs/harness-adapters.md, State event model) ---
