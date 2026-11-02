@@ -188,6 +188,13 @@ RELEASE_VERSION ?= dev
 RELEASE_BUILD ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 RELEASE_DIR ?= build/release
 RELEASE_LDFLAGS = -s -w -X main.version=$(RELEASE_VERSION) -X main.build=$(RELEASE_BUILD)
+# macOS: 13.0 is the floor libghostty builds for. The CGO flags carry it too, because the Go build
+# cache does not key on MACOSX_DEPLOYMENT_TARGET and would link objects built for this Mac's macOS.
+ifeq ($(SPEECH_OS),Darwin)
+release-build: export MACOSX_DEPLOYMENT_TARGET = 13.0
+release-build: export CGO_CFLAGS = -O2 -g -mmacosx-version-min=13.0
+release-build: export CGO_LDFLAGS = -O2 -g -mmacosx-version-min=13.0
+endif
 release-build: libghostty
 	@mkdir -p $(RELEASE_DIR)
 	$(GHOSTTY_ENV) $(GO) build -tags ghostty -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(RELEASE_DIR)/ ./cmd/gff-hab ./cmd/gff
