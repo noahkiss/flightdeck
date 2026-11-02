@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -35,7 +36,7 @@ const (
 	reasonTyped         = "a client typed into the run session"
 	reasonSent          = "a client sent the run session a message"
 	reasonClosed        = "a client closed the run's pane"
-	reasonNoHarnessRuns = "prompt rounds need harness runs, which this hab does not have yet (rounds.md 14, stage 4)"
+	reasonNoHarnessRuns = "resume and fork rounds need the session lock, which this hab does not have yet (rounds.md 14, stage 5)"
 )
 
 // roundsCheckEvery is how often a run whose pane is on a holder the link has not reached yet is
@@ -110,13 +111,23 @@ func roundStartFrom(ctx context.Context) (roundStart, bool) {
 	return rs, ok
 }
 
-// runWatch is one live run gff-hab watches: its pane's exit, its timeout, and take over.
+// runWatch is one live run gff-hab watches: its pane's exit, its timeout, and take over; for a
+// harness run also its agent's states (roundharness.go).
 type runWatch struct {
 	run     rounds.Run
 	round   rounds.Round // the values the run started with
 	session string
 	pane    string
 	timer   *time.Timer
+	h       *harnessWatch // nil for a command run
+}
+
+// stopLocked stops the watch's timers. The caller holds s.mu.
+func (w *runWatch) stopLocked() {
+	w.timer.Stop()
+	if w.h != nil && w.h.ready != nil {
+		w.h.ready.Stop()
+	}
 }
 
 // roundsConfig is what newRounds needs.
@@ -140,6 +151,19 @@ type roundsConfig struct {
 	notice func(title, body string)
 	tick   time.Duration // 0: rounds.TickEvery
 	logf   func(string, ...any)
+
+	// Harness runs (roundharness.go). agent reads a pane's agent state; send delivers a prompt
+	// as session.send does, but as the hab, not as a client: no take over; interrupt stops a
+	// working turn through its adapter; result reads a run's final agent message from its
+	// session's conversation (native: the harness's own session id, when known); lookHarness
+	// finds a harness's program (default exec.LookPath). ready is the readiness limit
+	// (default roundReady).
+	agent       func(pane string) (api.AgentState, bool)
+	send        func(ctx context.Context, session, text string) error
+	interrupt   func(ctx context.Context, pane string) error
+	result      func(ctx context.Context, session, harness, native string) (string, error)
+	lookHarness func(name string) (string, error)
+	ready       time.Duration
 }
 
 // roundsService runs the rounds of one gff-hab.
@@ -149,6 +173,7 @@ type roundsService struct {
 	sched *rounds.Scheduler
 
 	editMu sync.Mutex // one edit at a time: a revision check and its update
+	liveMu sync.Mutex // one live-state report of a harness run at a time (liveLater)
 
 	mu      sync.Mutex
 	revs    map[string]uint64    // round id to its revision in this epoch
@@ -171,6 +196,26 @@ var _ control.Rounds = (*roundsService)(nil)
 // newRounds opens <state>/rounds and the scheduler. A state file that does not parse is set
 // aside and one notice is raised; a file from a newer build stops gff-hab (rounds.md 7.7).
 func newRounds(cfg roundsConfig) (*roundsService, error) {
+	if cfg.lookHarness == nil {
+		cfg.lookHarness = exec.LookPath
+	}
+	if cfg.ready <= 0 {
+		cfg.ready = roundReady
+	}
+	if cfg.agent == nil {
+		cfg.agent = func(string) (api.AgentState, bool) { return api.AgentState{}, false }
+	}
+	if cfg.send == nil {
+		cfg.send = func(context.Context, string, string) error {
+			return control.Errorf(api.ErrorKindUnavailable, "this hab has no harness adapters")
+		}
+	}
+	if cfg.interrupt == nil {
+		cfg.interrupt = func(context.Context, string) error { return nil }
+	}
+	if cfg.result == nil {
+		cfg.result = func(context.Context, string, string, string) (string, error) { return "", nil }
+	}
 	st, aside, err := rounds.Open(cfg.state, rounds.Options{Logf: cfg.logf})
 	if err != nil {
 		return nil, err
@@ -261,7 +306,7 @@ func (s *roundsService) Close() {
 	s.mu.Lock()
 	s.closed = true
 	for _, w := range s.watches {
-		w.timer.Stop()
+		w.stopLocked()
 	}
 	s.stopRecheckLocked()
 	s.mu.Unlock()
@@ -270,11 +315,12 @@ func (s *roundsService) Close() {
 
 // --- Run sessions ---
 
-// Start starts a run's session (rounds.Starter): a fresh command run in a new pane. It returns
-// at the spawn, with the session id; the end comes back through the pane's exit.
+// Start starts a run's session (rounds.Starter): a fresh command run, or a fresh harness run, in
+// a new pane. It returns at the spawn, with the session id; the end comes back through the
+// pane's exit, or the agent's turn.
 func (s *roundsService) Start(r rounds.Round, run rounds.Run) (string, error) {
-	switch {
-	case r.Mode != rounds.ModeFresh || len(r.Command) == 0:
+	harnessRun := r.Mode == rounds.ModeFresh && len(r.Command) == 0 && r.Harness != ""
+	if !harnessRun && (r.Mode != rounds.ModeFresh || len(r.Command) == 0) {
 		return "", errors.New(reasonNoHarnessRuns)
 	}
 	env := []string{"GFF_ROUND=" + r.ID, "GFF_ROUND_RUN=" + run.ID}
@@ -283,6 +329,9 @@ func (s *roundsService) Start(r rounds.Round, run rounds.Run) (string, error) {
 	}
 	if e, ok := s.store.Get(r.ID); ok && e.State.LastOK != nil {
 		env = append(env, "GFF_ROUND_LAST_OK="+e.State.LastOK.UTC().Format(time.RFC3339))
+	}
+	if harnessRun {
+		return s.startHarness(r, run, env)
 	}
 	p := api.SessionCreateParams{Argv: r.Command, Project: r.Project, Cwd: r.Cwd, Env: env,
 		IdempotencyKey: "round-run-" + run.ID}
@@ -301,8 +350,13 @@ func (s *roundsService) Start(r rounds.Round, run rounds.Run) (string, error) {
 // watch follows a live run's pane: its exit ends the run, and the timeout hangs it up. A pane
 // that exited before the watch began ends the run at once.
 func (s *roundsService) watch(run rounds.Run, r rounds.Round, session, pane string) {
+	s.watchWith(run, r, session, pane, nil)
+}
+
+// watchWith is watch, with h for a harness run.
+func (s *roundsService) watchWith(run rounds.Run, r rounds.Round, session, pane string, h *harnessWatch) {
 	run.SessionID = session
-	w := &runWatch{run: run, round: r, session: session, pane: pane}
+	w := &runWatch{run: run, round: r, session: session, pane: pane, h: h}
 	started := run.Created
 	if run.StartedAt != nil {
 		started = *run.StartedAt
@@ -310,6 +364,9 @@ func (s *roundsService) watch(run rounds.Run, r rounds.Round, session, pane stri
 	left := time.Until(started.Add(time.Duration(r.Timeout)))
 	s.mu.Lock()
 	if s.closed {
+		if h != nil && h.ready != nil {
+			h.ready.Stop()
+		}
 		s.mu.Unlock()
 		return
 	}
@@ -334,7 +391,7 @@ func (s *roundsService) finish(runID string, u rounds.RunUpdate) bool {
 	}
 	delete(s.watches, runID)
 	delete(s.byPane, w.pane)
-	w.timer.Stop()
+	w.stopLocked()
 	s.mu.Unlock()
 	u.SessionID = w.session
 	s.bg.Go(func() { s.update(runID, u) })
@@ -348,7 +405,7 @@ func (s *roundsService) unwatch(w *runWatch) {
 	if s.watches[w.run.ID] == w {
 		delete(s.watches, w.run.ID)
 		delete(s.byPane, w.pane)
-		w.timer.Stop()
+		w.stopLocked()
 	}
 }
 
@@ -368,13 +425,30 @@ func (s *roundsService) runOf(pane string) (*runWatch, bool) {
 	return s.watches[id], true
 }
 
-// exited ends a run whose program exited: exit 0 succeeded, any other status failed.
+// exited ends a run whose program exited: exit 0 succeeded, any other status failed. A harness
+// whose program exits before its turn ended fails, whatever its status.
 func (s *roundsService) exited(pane string, st hp.ExitStatus) {
 	w, ok := s.runOf(pane)
 	if !ok {
 		return
 	}
-	s.finish(w.run.ID, exitUpdate(link.APIExit(st)))
+	s.finish(w.run.ID, s.exitOf(w, link.APIExit(st)))
+}
+
+// exitOf is the end of a run whose program exited with e.
+func (s *roundsService) exitOf(w *runWatch, e api.ExitStatus) rounds.RunUpdate {
+	u := exitUpdate(e)
+	if w.h == nil {
+		return u
+	}
+	reason := reasonHarnessExited
+	switch {
+	case u.State == rounds.RunSucceeded:
+		reason += " (exit status 0)"
+	case u.Reason != "":
+		reason += " (" + u.Reason + ")"
+	}
+	return rounds.RunUpdate{State: rounds.RunFailed, Reason: reason}
 }
 
 func exitUpdate(e api.ExitStatus) rounds.RunUpdate {
@@ -395,6 +469,10 @@ func (s *roundsService) timedOut(runID string) {
 	w := s.watches[runID]
 	s.mu.Unlock()
 	if w == nil {
+		return
+	}
+	if w.h != nil {
+		s.harnessTimedOut(w)
 		return
 	}
 	if !s.finish(runID, rounds.RunUpdate{State: rounds.RunTimedOut,
@@ -428,7 +506,7 @@ func (s *roundsService) notice(n link.Notice) {
 			return
 		}
 		if n.Pane.Exited {
-			s.finish(w.run.ID, exitUpdate(link.APIExit(n.Pane.Exit)))
+			s.finish(w.run.ID, s.exitOf(w, link.APIExit(n.Pane.Exit)))
 		} else {
 			s.finish(w.run.ID, rounds.RunUpdate{State: rounds.RunFailed, Reason: reasonPaneGone})
 		}
@@ -466,12 +544,22 @@ func (s *roundsService) adopt(run rounds.Run) {
 		r = e.Round
 	}
 	run.SessionID = ss.ID
+	var h *harnessWatch
+	if r.Mode == rounds.ModeFresh && len(r.Command) == 0 && r.Harness != "" {
+		// Whether the prompt went in before the restart is not kept: the run is taken to be in
+		// its turn, and ends at the next turn end, the exit, a take over or the timeout.
+		h = &harnessWatch{kind: r.Harness, prompt: r.Prompt, phase: phaseTurn, blocked: run.State == rounds.RunBlocked}
+	}
 	if st, ok := s.cfg.pane(ss.Pane); ok && !st.Lost {
-		s.watch(run, r, ss.ID, ss.Pane)
+		if h != nil {
+			s.watchHarness(run, r, ss.ID, ss.Pane, h)
+		} else {
+			s.watch(run, r, ss.ID, ss.Pane)
+		}
 		return
 	}
 	if ss.Exit != nil && (ss.Exit.Code != nil || ss.Exit.Signal != "") {
-		s.update(run.ID, withSession(exitUpdate(*ss.Exit), ss.ID))
+		s.update(run.ID, withSession(s.exitOf(&runWatch{h: h}, *ss.Exit), ss.ID))
 		return
 	}
 	if s.cfg.complete() {
@@ -578,7 +666,7 @@ func (s *roundsService) RunChanged(r rounds.Run) {
 	if w != nil {
 		delete(s.watches, r.ID)
 		delete(s.byPane, w.pane)
-		w.timer.Stop()
+		w.stopLocked()
 	}
 	s.mu.Unlock()
 	s.bg.Go(func() { s.prune(r.RoundID) })
@@ -874,6 +962,9 @@ func (s *roundsService) Create(ctx context.Context, p api.RoundCreateParams, cre
 	if err != nil {
 		return api.RoundCreated{}, err
 	}
+	if err := s.checkHarness(r); err != nil {
+		return api.RoundCreated{}, err
+	}
 	s.editMu.Lock()
 	defer s.editMu.Unlock()
 	e, run, err := s.sched.Create(r, createdBy, p.RunNow)
@@ -909,8 +1000,16 @@ func (s *roundsService) Update(ctx context.Context, p api.RoundUpdateParams) (ap
 	r.ID = p.ID
 	s.editMu.Lock()
 	defer s.editMu.Unlock()
-	if _, ok := s.store.Get(p.ID); !ok {
+	old, ok := s.store.Get(p.ID)
+	if !ok {
 		return api.Round{}, control.Errorf(api.ErrorKindNotFound, "no round %s on this hab", p.ID)
+	}
+	// A harness is checked when the edit names a new one; a round whose harness went away
+	// stays editable (its runs fail "harness not found").
+	if old.Round.Harness != r.Harness || old.Round.Mode != r.Mode {
+		if err := s.checkHarness(r); err != nil {
+			return api.Round{}, err
+		}
 	}
 	s.mu.Lock()
 	rev := max(s.revs[p.ID], 1)

@@ -8,3 +8,7 @@ import "time"
 var roundTickSeam time.Duration
 
 func roundTick() time.Duration { return roundTickSeam }
+
+// roundReadySeam, when set, is the readiness limit of a harness run instead of roundReady.
+// Only a build with the testseam tag sets it, from $GFF_TEST_ROUND_READY.
+var roundReadySeam time.Duration

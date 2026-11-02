@@ -26,13 +26,19 @@ import (
 // git repository with a remote for the rounds' project.
 func newRoundEnv(t *testing.T) (*habEnv, string) {
 	t.Helper()
+	return newRoundEnvWith(t)
+}
+
+// newRoundEnvWith is newRoundEnv with env added to gff-hab's environment.
+func newRoundEnvWith(t *testing.T, env ...string) (*habEnv, string) {
+	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}
 	e := newHolderEnv(t, 0)
 	cfg := filepath.Join(e.work, "hab.toml")
 	writeFile(t, cfg, "[rounds]\nwake_settle = \"0s\"\nmax_running = 4\n")
-	e.env = []string{"GFF_HAB_CONFIG=" + cfg, "GFF_TEST_ROUND_TICK=200ms"}
+	e.env = append([]string{"GFF_HAB_CONFIG=" + cfg, "GFF_TEST_ROUND_TICK=200ms"}, env...)
 	e.serve()
 	repo := filepath.Join(e.work, "app")
 	if out, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {

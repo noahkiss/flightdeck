@@ -185,6 +185,26 @@ func (a *agentService) Send(ctx context.Context, client string, p api.SessionSen
 	return nil
 }
 
+// interruptTurn stops a working agent's turn through its adapter, as the hab, not as a client:
+// a round's timeout (rounds.md 7.3). Claude Code and Codex get Esc, their interrupt key, as the
+// owner's key would. It does nothing unless the agent works: on a dialog Esc would answer it.
+// opencode has no interrupt yet.
+func (a *agentService) interruptTurn(ctx context.Context, pane string) error {
+	st, ok := a.agents.Get(pane)
+	if !ok || st.State != api.AgentStatusWorking {
+		return nil
+	}
+	switch st.Harness {
+	case detect.KindClaude, detect.KindCodex:
+		if err := a.write(ctx, pane, []byte{0x1b}); err != nil {
+			return err
+		}
+		a.agents.Interrupt(pane, []byte{0x1b})
+		return nil
+	}
+	return control.Errorf(api.ErrorKindUnavailable, "%s has no interrupt yet", st.Harness)
+}
+
 // holdForTurn keeps the pane claimed until its agent leaves idle, done and error, or sendStart
 // passes, then frees it for the next send.
 func (a *agentService) holdForTurn(pane string) {

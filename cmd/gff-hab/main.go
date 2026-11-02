@@ -469,10 +469,17 @@ func serve(args []string) error {
 		debugf = logger.Printf
 	}
 	var pushes *pushService // set before anything publishes an agent state
+	// Harness runs of rounds follow their agents' states (roundharness.go); set once rounds run.
+	var roundsRef atomic.Pointer[roundsService]
 	agents := harness.NewStore(harness.Config{
 		Publish: func(e structure.Event) {
 			if s := srv.Load(); s != nil {
 				s.Publish(e)
+			}
+			if r := roundsRef.Load(); r != nil {
+				if st, ok := e.Data.(api.AgentState); ok {
+					r.agentState(st) // never blocks
+				}
 			}
 			if st, ok := e.Data.(api.AgentState); ok && pushes != nil && pushes.notifier != nil {
 				pushes.notifier.State(st) // never blocks
@@ -560,6 +567,7 @@ func serve(args []string) error {
 	var ds *datastream.Server
 	var mgr *panesize.Manager
 	var sessionActs *actions
+	var findTranscript func(harness, native string) (string, error)
 	if lk != nil {
 		caps = append(caps, "agent-state") // panes gff-hab spawns post hooks
 		caps = append(caps, "data-streams", "snapshot-vt")
@@ -614,10 +622,11 @@ func serve(args []string) error {
 		// Codex reports usage in its rollout: read the end of it after the session's hooks.
 		usages.codexHome = codexHome
 		usages.find = func(native string) (string, error) { return transcript.FindCodex(codexHome, native) }
+		findTranscript = transcriptFinder(claudeDir, codexHome)
 		chats = newChatService(chatConfig{
 			session: store.Session,
 			agent:   agents.Get,
-			find:    transcriptFinder(claudeDir, codexHome),
+			find:    findTranscript,
 			publish: func(e structure.Event) {
 				if s := srv.Load(); s != nil {
 					s.Publish(e)
@@ -1026,7 +1035,12 @@ func serve(args []string) error {
 			complete:  func() bool { return structure.Complete(lk.Structure()) },
 			closePane: sa.ClosePane,
 			projectFor: func(ctx context.Context, dir string) (string, error) {
-				id, _, err := sa.projectFor(ctx, dir)
+				id, top, err := sa.projectFor(ctx, dir)
+				if err == nil {
+					// The folder becomes the project's most recent one, where runs start
+					// (rounds.md 3), also for a project this call made.
+					sa.noteDir(ctx, id, top, false, "")
+				}
 				return id, err
 			},
 			publish: func(e structure.Event) {
@@ -1041,11 +1055,24 @@ func serve(args []string) error {
 			},
 			tick: roundTick(),
 			logf: logger.Printf,
+
+			agent: agents.Get,
+			send: func(ctx context.Context, session, text string) error {
+				return agentSvc.Send(ctx, "round", api.SessionSendParams{Session: session, Text: text})
+			},
+			interrupt: agentSvc.interruptTurn,
+			result: func(ctx context.Context, session, kind, native string) (string, error) {
+				return readResult(ctx, func(ctx context.Context) ([]api.ChatMessage, error) {
+					return roundMessages(ctx, chats, findTranscript, session, kind, native)
+				})
+			},
+			ready: roundReadySeam,
 		})
 		if err != nil {
 			return err
 		}
 		defer roundsSvc.Close()
+		roundsRef.Store(roundsSvc)
 		roundsCtl = roundsSvc
 		acts = roundActions{actions: sa, rounds: roundsSvc}
 		input = roundInput{Input: input, rounds: roundsSvc}

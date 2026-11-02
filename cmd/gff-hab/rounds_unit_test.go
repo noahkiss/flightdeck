@@ -73,6 +73,13 @@ func fakeRoundsServiceWith(t *testing.T, state string, holder *structure.FakeHol
 		publish:    func(structure.Event) {},
 		notice:     func(string, string) {},
 		logf:       t.Logf,
+		// Only claude is installed.
+		lookHarness: func(name string) (string, error) {
+			if name == "claude" {
+				return "/bin/claude", nil
+			}
+			return "", errors.New("not on PATH")
+		},
 	}
 	if edit != nil {
 		edit(&cfg)
@@ -217,17 +224,43 @@ func TestRoundServiceChecks(t *testing.T) {
 		rs, _ := svc.Runs(api.RoundRunsParams{RoundRef: api.RoundRef{Name: "r"}})
 		return len(rs.Runs) == 1 && rs.Runs[0].State == api.RoundRunStateFailed && strings.Contains(rs.Runs[0].Reason, "no holder")
 	})
-	// A prompt round is stored; its run fails until harness runs are built.
-	ps := api.RoundSpec{Name: "asks", Mode: api.RoundModeFresh, Trigger: api.RoundTrigger{Kind: api.RoundTriggerKindManual},
-		Project: p.ID, Harness: "claude", Prompt: "triage"}
+	// A resume round is stored; its run fails until the lock is built (stage 5).
+	target, err := svc.cfg.store.CreateSession(structure.SessionSpec{Name: "target", Pane: newUUID().String(), Index: -1, NewPane: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := api.RoundSpec{Name: "asks", Mode: api.RoundModeResume, Trigger: api.RoundTrigger{Kind: api.RoundTriggerKindManual},
+		Target: target.ID, Prompt: "triage"}
 	if _, err := svc.Create(ctx, api.RoundCreateParams{Round: ps, RunNow: true}, ""); err != nil {
 		t.Fatal(err)
 	}
-	waitUntil(t, "the prompt run to fail", func() bool {
+	waitUntil(t, "the resume run to fail", func() bool {
 		rs, _ := svc.Runs(api.RoundRunsParams{RoundRef: api.RoundRef{Name: "asks"}})
 		return len(rs.Runs) == 1 && rs.Runs[0].State == api.RoundRunStateFailed && strings.Contains(rs.Runs[0].Reason, reasonNoHarnessRuns)
 	})
 	if err := svc.Delete(api.RoundRef{Name: "asks"}); err != nil {
+		t.Fatal(err)
+	}
+	// A fresh harness round: refused with no adapter or no program; with both, its run starts
+	// the harness (here the start fails: no holder).
+	hs := api.RoundSpec{Name: "fresh", Mode: api.RoundModeFresh, Trigger: api.RoundTrigger{Kind: api.RoundTriggerKindManual},
+		Project: p.ID, Harness: "pi", Prompt: "triage"}
+	if _, err := svc.Create(ctx, api.RoundCreateParams{Round: hs}, ""); kind(err) != api.ErrorKindInvalid {
+		t.Errorf("a harness with no adapter: %v", err)
+	}
+	hs.Harness = "codex"
+	if _, err := svc.Create(ctx, api.RoundCreateParams{Round: hs}, ""); kind(err) != api.ErrorKindUnavailable {
+		t.Errorf("a harness not installed: %v", err)
+	}
+	hs.Harness = "claude"
+	if _, err := svc.Create(ctx, api.RoundCreateParams{Round: hs, RunNow: true}, ""); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the harness run to fail at its start", func() bool {
+		rs, _ := svc.Runs(api.RoundRunsParams{RoundRef: api.RoundRef{Name: "fresh"}})
+		return len(rs.Runs) == 1 && rs.Runs[0].State == api.RoundRunStateFailed && strings.Contains(rs.Runs[0].Reason, "no holder")
+	})
+	if err := svc.Delete(api.RoundRef{Name: "fresh"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(svc.List()) != 1 {
