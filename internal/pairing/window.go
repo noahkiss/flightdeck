@@ -16,12 +16,13 @@ import (
 
 // Window limits (transport.md 6.1.3).
 const (
-	MaxLifetime      = 5 * time.Minute
-	maxConns         = 4
-	handshakeTimeout = 10 * time.Second
-	requestTimeout   = 20 * time.Second
-	maxBadTokens     = 10
-	maxRefusalLines  = 20
+	MaxLifetime       = 5 * time.Minute
+	maxConns          = 16
+	maxConnsPerSource = 2
+	handshakeTimeout  = 10 * time.Second
+	requestTimeout    = 20 * time.Second
+	maxBadTokens      = 10 // per source address; that address is then refused
+	maxRefusalLines   = 20
 )
 
 var errKeyType = errors.New("key type not accepted")
@@ -30,7 +31,6 @@ var errKeyType = errors.New("key type not accepted")
 var (
 	ErrExpired   = errors.New("the pairing window expired")
 	ErrDeclined  = errors.New("pairing declined")
-	ErrTooMany   = errors.New("too many refused tokens")
 	ErrAdmitFail = errors.New("the key could not be saved")
 )
 
@@ -81,9 +81,10 @@ type Window struct {
 	wg       sync.WaitGroup
 
 	mu        sync.Mutex
-	pending   bool // a device waits for the owner
-	done      bool // the token is burned
-	badTokens int
+	pending   bool               // a device waits for the owner
+	done      bool               // the token is burned
+	badTokens map[netip.Addr]int // refused tokens per source address
+	conns     map[netip.Addr]int // open connections per source address
 	refusals  int
 	result    chan result
 }
@@ -121,7 +122,8 @@ func Open(cfg Config) (*Window, error) {
 	if err != nil {
 		return nil, err
 	}
-	w := &Window{cfg: cfg, token: tok, sem: make(chan struct{}, maxConns), result: make(chan result, 1)}
+	w := &Window{cfg: cfg, token: tok, sem: make(chan struct{}, maxConns), result: make(chan result, 1),
+		badTokens: map[netip.Addr]int{}, conns: map[netip.Addr]int{}}
 	w.srv = &ssh.ServerConfig{
 		PublicKeyCallback: func(c ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			switch key.Type() {
@@ -179,7 +181,7 @@ func (w *Window) closeListeners() {
 }
 
 // Wait serves the window until one device pairs (it returns that device), the owner declines,
-// the window expires, too many tokens are refused, or ctx ends. The window is closed when it
+// the window expires, or ctx ends. Refused tokens never close it. The window is closed when it
 // returns, and every connection has ended.
 func (w *Window) Wait(ctx context.Context) (*Device, error) {
 	w.deadline = time.Now().Add(w.cfg.Lifetime)
@@ -251,20 +253,56 @@ func (w *Window) accept(ln net.Listener) {
 		if err != nil {
 			return
 		}
-		select {
-		case w.sem <- struct{}{}:
-		default:
-			w.refuse(c.RemoteAddr(), "", "too many connections at once")
+		src := sourceOf(c.RemoteAddr())
+		if why := w.take(src); why != "" {
+			w.refuse(c.RemoteAddr(), "", why)
 			c.Close()
 			continue
 		}
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()
-			defer func() { <-w.sem }()
+			defer w.release(src)
 			w.serve(c)
 		}()
 	}
+}
+
+// sourceOf is the address a connection came from.
+func sourceOf(a net.Addr) netip.Addr {
+	if t, ok := a.(*net.TCPAddr); ok {
+		return t.AddrPort().Addr().Unmap()
+	}
+	return netip.Addr{}
+}
+
+// take claims a connection slot for src, or says why it cannot: that address sent too many
+// wrong tokens, already holds maxConnsPerSource connections, or every slot is taken.
+func (w *Window) take(src netip.Addr) string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	switch {
+	case w.badTokens[src] >= maxBadTokens:
+		return "too many refused tokens from this address"
+	case w.conns[src] >= maxConnsPerSource:
+		return "too many connections from this address"
+	}
+	select {
+	case w.sem <- struct{}{}:
+	default:
+		return "too many connections at once"
+	}
+	w.conns[src]++
+	return ""
+}
+
+func (w *Window) release(src netip.Addr) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.conns[src]--; w.conns[src] <= 0 {
+		delete(w.conns, src)
+	}
+	<-w.sem
 }
 
 func (w *Window) serve(c net.Conn) {

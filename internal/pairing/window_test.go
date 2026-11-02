@@ -11,7 +11,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -230,15 +232,116 @@ func TestWrongTokenRefused(t *testing.T) {
 	f.wait(t)
 }
 
-func TestTooManyWrongTokensClose(t *testing.T) {
-	f := open(t, time.Minute, yes)
+// settle waits until src holds at most n of the window's connections: a connection the client
+// closed is released a moment after the client returns.
+func (f *fixture) settle(t *testing.T, src string, n int) {
+	t.Helper()
+	a := netip.MustParseAddr(src)
+	for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+		f.w.mu.Lock()
+		c := f.w.conns[a]
+		f.w.mu.Unlock()
+		if c <= n {
+			return
+		}
+	}
+	t.Fatalf("%s still holds more than %d connections", src, n)
+}
+
+// TestWrongTokensNeverCloseOrAbort: wrong tokens from one address get that address refused, but
+// the window stays open and the device waiting for the owner still pairs.
+func TestWrongTokensNeverCloseOrAbort(t *testing.T) {
+	release := make(chan struct{})
+	f := open(t, time.Minute, func(ctx context.Context, _ Device) (bool, error) {
+		select {
+		case <-release:
+			return true, nil
+		case <-ctx.Done():
+			return false, ctx.Err()
+		}
+	})
+	waiting := make(chan struct{})
+	firstDone := make(chan []Answer, 1)
+	go func() {
+		as, _ := pairWith(t, f, phoneKey(t), request(EncodeToken(f.w.Offer().Token), "phone"), func() { close(waiting) })
+		firstDone <- as
+	}()
+	<-waiting
 	bad, _ := NewToken()
-	for range maxBadTokens {
-		pairWith(t, f, phoneKey(t), request(EncodeToken(bad), "phone"), nil)
+	for range maxBadTokens + 2 {
+		f.settle(t, "127.0.0.1", 1)
+		c, err := dial(f, phoneKey(t), f.hostPub)
+		if err != nil {
+			continue // refused at accept once the limit is reached
+		}
+		ch, reqs, err := c.OpenChannel("session", nil)
+		if err == nil {
+			go ssh.DiscardRequests(reqs)
+			ch.SendRequest("subsystem", true, ssh.Marshal(struct{ Name string }{Subsystem}))
+			fmt.Fprintln(ch, request(EncodeToken(bad), "x"))
+			sc := bufio.NewScanner(ch)
+			for sc.Scan() {
+				if !strings.Contains(sc.Text(), `"reason":"token"`) {
+					t.Errorf("wrong token answered %s", sc.Text())
+				}
+			}
+		}
+		c.Close()
 	}
-	if _, err := f.wait(t); !errors.Is(err, ErrTooMany) {
-		t.Fatalf("err %v", err)
+	f.settle(t, "127.0.0.1", 1)
+	if c, err := dial(f, phoneKey(t), f.hostPub); err == nil {
+		c.Close()
+		t.Fatal("an address past the wrong-token limit still connects")
 	}
+	select {
+	case <-f.done:
+		t.Fatalf("wrong tokens closed the window: %v", f.err)
+	default:
+	}
+	close(release)
+	if as := <-firstDone; len(as) != 2 || as[1].State != "paired" {
+		t.Fatalf("the waiting device: %+v", as)
+	}
+	if dev, err := f.wait(t); err != nil || dev == nil || f.admits.Load() != 1 {
+		t.Fatalf("Wait %v %v, admits %d", dev, err, f.admits.Load())
+	}
+}
+
+// TestConnectionsPerSource: one address holds at most maxConnsPerSource connections; a third is
+// closed before the SSH banner, and the slots come back when they close.
+func TestConnectionsPerSource(t *testing.T) {
+	f := open(t, time.Minute, yes)
+	ep := f.w.Offer().Endpoints[0]
+	var held []net.Conn
+	for range maxConnsPerSource {
+		c, err := net.Dial("tcp", ep)
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, c)
+		c.SetReadDeadline(time.Now().Add(5 * time.Second))
+		if l, err := bufio.NewReader(c).ReadString('\n'); err != nil || !strings.HasPrefix(l, "SSH-2.0-") {
+			t.Fatalf("banner %q %v", l, err)
+		}
+	}
+	c, err := net.Dial("tcp", ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if n, err := c.Read(make([]byte, 64)); n != 0 || err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("a third connection from one address: read %d, %v", n, err)
+	}
+	c.Close()
+	for _, h := range held {
+		h.Close()
+	}
+	f.settle(t, "127.0.0.1", 0)
+	as, _ := pairWith(t, f, phoneKey(t), request(EncodeToken(f.w.Offer().Token), "phone"), nil)
+	if as[len(as)-1].State != "paired" {
+		t.Fatalf("after the held connections closed: %+v", as)
+	}
+	f.wait(t)
 }
 
 func TestExpired(t *testing.T) {

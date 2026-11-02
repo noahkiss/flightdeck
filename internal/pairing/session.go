@@ -79,13 +79,11 @@ func (w *Window) pair(conn *ssh.ServerConn, c net.Conn, key ssh.PublicKey, fp st
 	if err != nil {
 		w.refuse(remote, fp, err.Error())
 		if reason == ReasonToken {
+			// Counted per source address: past the limit that address is refused at accept.
+			// The window stays open and a device waiting for the owner is never touched.
 			w.mu.Lock()
-			w.badTokens++
-			tooMany := w.badTokens >= maxBadTokens
+			w.badTokens[sourceOf(remote)]++
 			w.mu.Unlock()
-			if tooMany {
-				w.finish(result{err: ErrTooMany})
-			}
 		}
 		end(refused(reason))
 		return
