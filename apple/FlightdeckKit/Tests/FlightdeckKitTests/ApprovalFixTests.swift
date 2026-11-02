@@ -251,7 +251,7 @@ final class ApprovalFixTests: XCTestCase {
     /// When that try is refused, the first one most likely landed: "Answered".
     func testDroppedLiveRetriesOnce() async {
         let silent = await blockedHab()
-        let conn = HabConnection(id: "h", transport: silent.transport(), timing: fastTiming())
+        let conn = HabConnection(id: "h", transport: silent.transport(), timing: livenessTiming())
         await conn.start()
         await eventually("online") { await conn.state.status == .online }
         await silent.setSilent(true)
