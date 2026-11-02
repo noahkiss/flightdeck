@@ -148,8 +148,10 @@ cgo and gff-hab builds with `CGO_ENABLED=0` (`voice.md`, Hab speech engine).
 - **libopus** comes from the system: `pkg-config opus` (Homebrew `opus`, Debian `libopus-dev`).
   On macOS `make opus-static` (run by `make speech-helper` and `make test-speech`) writes
   `build/opus-static/opus.pc`, which names the system's `libopus.a`, so the helper links it
-  statically and loads only system libraries under the hardened runtime. `make speech-helper`
-  builds with `-a`, because the Go build cache does not see a pkg-config change.
+  statically and loads only system libraries under the hardened runtime. The Go build cache
+  does not see a pkg-config change, so the build also sets `CGO_LDFLAGS` with
+  `-L build/opus-static` (a folder with no library in it): a marker in the cache key that keeps a
+  static build from reusing a cached dynamic one.
 - **Build and test.** `make speech-helper` writes `build/gff-hab-speech`. `make test-speech` runs
   its tests; set `$GFF_SPEECH_MODEL_DIR` to the extracted model archive to include real
   recognition. The clip comes from macOS `say`; with no `say` (Linux), set `$GFF_SPEECH_TEST_WAV`

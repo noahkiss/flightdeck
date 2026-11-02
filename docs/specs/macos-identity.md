@@ -223,8 +223,9 @@ Built: `scripts/macos-bundle.sh` writes the bundles. Choices it made beyond the 
   is not reverse-DNS.
 - The bare `gff` is signed when `cmd/gff` exists, and `gff-hab install` copies it into
   `<state>/bin` (6.1).
-- **The speech helper sits in `GFF Hab.app`.** When a helper is built (`build/gff-hab-speech`
-  from `make speech-helper`, or `gff-hab-speech` in `-bin-dir`) or given (`-speech-helper`), the
+- **The speech helper sits in `GFF Hab.app`.** When a helper is built (`gff-hab-speech` in
+  `-bin-dir`, or with no `-bin-dir` `build/gff-hab-speech` from `make speech-helper`) or given
+  (`-speech-helper`), the
   script puts it at `GFF Hab.app/Contents/MacOS/gff-hab-speech`, beside gff-hab, where gff-hab
   looks for it (`voice.md`). It is nested code with the identifier `<prefix>.hab-speech` and no
   entitlements, signed before the bundle (5.1). It runs as gff-hab's child, so gff-hab stays the
@@ -400,9 +401,11 @@ The script runs 5.1 to 5.3 in one pass. Settings come from the environment only:
   `-info` from inside the bundle, which fails if a library it loads is refused. Under the hardened
   runtime library validation refuses a library signed by another team, ad hoc included: a dev
   build of the helper against Homebrew's `libopus.dylib` does not start (proof on macOS 27.2). So
-  `make speech-helper` links libopus statically on macOS (`layout.md`), and the script refuses a
-  release helper that links any library outside `/usr/lib` and `/System/Library`; a dev build
-  only warns.
+  `make speech-helper` links libopus statically on macOS (`layout.md`), and the script checks the
+  helper before it nests it: one that links any library outside `/usr/lib` and
+  `/System/Library` fails the build, except in a dev build when it was found rather than named
+  (`-speech-helper`): then it is left out, with a warning to rebuild it with
+  `make speech-helper`.
 
 ### 5.3 Verification
 
@@ -484,9 +487,12 @@ Built (`internal/service`, `bundle.go`). Choices beyond the paper spec:
   `gff` beside `GFF Hab.app` (the `gff-macos/` layout), records it, and prints one line: where
   `gff` is and, when the jobs' PATH (the installing shell's) lacks that folder, the `export PATH`
   line to add, quoted for the space in `Application Support`. A plain copy keeps its signature,
-  and `gff` needs no bundle (3.2). With no `gff` install says so and installs the hab alone.
+  and `gff` needs no bundle (3.2); when the source is signed, install runs
+  `codesign --verify --strict` on the copy and fails if it does not pass. With no `gff` install
+  says so: it keeps a `gff` an earlier install wrote (a reinstall from the installed build has
+  none beside it), else it installs the hab alone.
 - **Linux is unchanged**: one copy of each binary in `<state>/bin` (`hab-holder.md` 4.4), and no
-  `gff` copy.
+  `gff` copy; `-gff-bin` is refused there.
 
 ### 6.2 Drain keeps grants
 

@@ -576,7 +576,7 @@ Built (stage 6):
 - **gff-hab waits for a private socket folder.** At start, before anything else runs, gff-hab
   checks the folders of its two sockets. While one is open to other users it logs one line, with
   the folder, its mode and the `chmod 700` to run, then checks again every 2 s and logs nothing
-  more. It starts once the folder is private, and SIGTERM or SIGINT ends the wait with exit 0.
+  more while it waits. It starts once the folder is private, with one line saying so, and SIGTERM or SIGINT ends the wait with exit 0.
   Waiting, not a distinct exit status, because launchd's `KeepAlive` true restarts on any exit
   and a longer `ThrottleInterval` would slow every real crash recovery; the wait works the same
   under systemd and by hand.
