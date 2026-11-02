@@ -266,6 +266,9 @@ final class ApprovalAnswerTests: XCTestCase {
         let rec = Recorder()
         let c = ApprovalCenter(board: board ?? Board(), answerer: answerer, defaults: emptyDefaults())
         c.post = { t, b, m in rec.posts.append((t, b, m)) }
+        // These tests answer as an unlocked device. The default reads the simulator, whose
+        // protected data is sometimes unavailable on a CI runner.
+        c.isUnlocked = { true }
         return (c, rec)
     }
 

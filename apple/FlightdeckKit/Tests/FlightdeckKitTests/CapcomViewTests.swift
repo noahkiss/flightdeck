@@ -116,6 +116,9 @@ final class CapcomViewTests: XCTestCase {
         XCTAssertNil(f.capcom.standing, "no open while the home is offline")
         await b.setSilent(false)
         await eventually("attic back") { f.capcom.entry == .ready(habID: "attic") }
+        // An open waits while a catalog read is on its way; with no view on screen nothing
+        // opens again after it, so wait for the reads to end.
+        await eventually("catalog reads done") { f.capcom.reading.isEmpty }
         await f.capcom.openStanding()
         XCTAssertEqual(f.capcom.standing?.target.habID, "attic")
         await f.setActive(false)
@@ -225,6 +228,7 @@ final class CapcomViewTests: XCTestCase {
         await DemoFleet.populate(f, script: false)
         await f.setActive(true)
         await eventually("ready") { f.capcom.entry == .ready(habID: "demo-workbench") }
+        await eventually("catalog reads done") { f.capcom.reading.isEmpty }
         await f.capcom.openStanding()
         let m = try XCTUnwrap(f.capcom.standing)
         XCTAssertEqual(m.target.session, "capcom-s1", "the loaded standing conversation, not a new one")
