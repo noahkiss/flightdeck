@@ -1,0 +1,7 @@
+id = "powers"
+name = "Powers"
+version = "0.1.0"
+blocks = 1
+bridge = 1
+places = ["sheet"]
+powers = ["act", "exec", "fetch"]

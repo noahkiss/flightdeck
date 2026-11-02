@@ -1,0 +1,6 @@
+id = "newer-blocks"
+name = "Newer blocks"
+version = "0.1.0"
+blocks = 2
+bridge = 1
+places = ["board"]

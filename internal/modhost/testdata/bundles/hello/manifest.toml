@@ -1,0 +1,21 @@
+id = "hello"
+name = "Hello"
+summary = "Sessions on this host, and a counter."
+version = "0.1.0"
+blocks = 1
+bridge = 1
+places = ["board", "host"]
+refresh = 30
+events = ["session.updated"]
+
+[[settings]]
+key = "greeting"
+title = "Greeting"
+kind = "text"
+default = "Hello"
+
+[[settings]]
+key = "show_count"
+title = "Show the counter"
+kind = "toggle"
+default = true

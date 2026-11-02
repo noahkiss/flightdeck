@@ -1,0 +1,7 @@
+id = "newer-bridge"
+name = "Newer bridge"
+version = "0.1.0"
+blocks = 1
+bridge = 2
+places = ["board", "dock"]
+wants = "a field of bridge 2"
