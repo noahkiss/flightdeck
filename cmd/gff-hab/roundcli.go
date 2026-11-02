@@ -21,6 +21,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/rounds"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
@@ -30,10 +31,10 @@ import (
 // which makes the pane's session the creator and the meaning of --target self.
 
 const roundUsage = `usage:
-  gff-hab round ls      [door] [-json]
+  gff-hab round ls      [door] [-host label | -all] [-json]
   gff-hab round show    [door] [-json] <name>
   gff-hab round add     [door] <name> (-cron expr [-tz zone] | -every preset | -at time | -manual)
-                        [-mode fresh|resume|fork] [-project dir] [-cwd dir] [-target session|self]
+                        [-mode fresh|resume|fork] [-project dir | -remote url] [-cwd dir] [-target session|self]
                         [-harness h] [-model m] [-harness-arg a]... [-timeout d] [-max-runs n]
                         [-expires time] [-catch-up once|skip] [-on-finish close|keep]
                         [-notify failures|always|never] [-paused] [-run-now]
@@ -42,18 +43,20 @@ const roundUsage = `usage:
   gff-hab round rm      [door] [-yes] <name>
   gff-hab round pause | unpause | run [door] <name>
   gff-hab round runs    [door] [-limit n] [-json] <name>
+  gff-hab round move    [door] [-yes] <name> -host label
   gff-hab round export  [door]
   gff-hab round apply   [door] [-yes] <file>
 door: -socket path | -via command; from a pane, $GFF_HAB
+-host label: act on that peer's rounds instead, through its endpoint from this hab's peer list
 `
 
 // roundDef holds the definition flags of add and edit.
 type roundDef struct {
-	mode, cron, tz, every, at, project, cwd, target, harness, model string
-	timeout, wait, maxRuns, expires, catchUp, onFinish, notify      string
-	manual, paused, command                                         bool
-	via                                                             bool // the hab is reached through -via
-	harnessArgs                                                     stringList
+	mode, cron, tz, every, at, project, remote, cwd, target, harness, model string
+	timeout, wait, maxRuns, expires, catchUp, onFinish, notify              string
+	manual, paused, command                                                 bool
+	via                                                                     bool // the hab is reached through -via or -host
+	harnessArgs                                                             stringList
 }
 
 type stringList []string
@@ -69,6 +72,7 @@ func (d *roundDef) flags(fs *flag.FlagSet) {
 	fs.StringVar(&d.at, "at", "", "run once at this time: RFC 3339, or 2006-01-02T15:04 in -tz (else this host's zone)")
 	fs.BoolVar(&d.manual, "manual", false, "run only by hand: gff-hab round run, the app, or the API")
 	fs.StringVar(&d.project, "project", "", "fresh: the project folder (default for add: this folder)")
+	fs.StringVar(&d.remote, "remote", "", "fresh: the project by its git remote, instead of -project")
 	fs.StringVar(&d.cwd, "cwd", "", "fresh: start in this folder instead of the project's most recent one")
 	fs.StringVar(&d.target, "target", "", "resume and fork: the target session id; self from inside a pane")
 	fs.StringVar(&d.harness, "harness", "", "fresh with a prompt: claude, codex or opencode")
@@ -115,9 +119,15 @@ func (d *roundDef) apply(spec *api.RoundSpec, set map[string]bool, words []strin
 	case set["tz"]:
 		spec.Trigger.Zone = d.tz
 	}
+	if set["project"] && set["remote"] {
+		return errors.New("give -project or -remote, not both")
+	}
+	if set["remote"] {
+		spec.Project, spec.ProjectDir, spec.ProjectRemote = "", "", d.remote
+	}
 	if set["project"] {
 		if d.via && !filepath.IsAbs(d.project) {
-			return fmt.Errorf("-project %q: with -via, give the absolute folder on the hab's host", d.project)
+			return fmt.Errorf("-project %q: with -via or -host, give the absolute folder on the hab's host", d.project)
 		}
 		dir, err := filepath.Abs(d.project)
 		if err != nil {
@@ -237,6 +247,8 @@ func roundCmd(args []string, stdin io.Reader, out io.Writer) error {
 	yes := fs.Bool("yes", false, "rm and apply: do not ask")
 	limit := fs.Int("limit", 20, "runs: at most this many runs")
 	runNow := fs.Bool("run-now", false, "add: also start one run now")
+	host := fs.String("host", "", "a peer's label: act on its rounds, through its endpoint (move: the new runner)")
+	all := fs.Bool("all", false, "ls: the rounds of every host in this hab's catalog")
 	var def roundDef
 	if verb == "add" || verb == "edit" {
 		def.flags(fs)
@@ -255,7 +267,7 @@ func roundCmd(args []string, stdin io.Reader, out io.Writer) error {
 	}
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
-	def.via = *via != ""
+	def.via = *via != "" || *host != ""
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	needName := func() error {
@@ -283,7 +295,7 @@ func roundCmd(args []string, stdin io.Reader, out io.Writer) error {
 		if err := needName(); err != nil {
 			return err
 		}
-	case "show", "rm", "pause", "unpause", "run", "runs":
+	case "show", "rm", "pause", "unpause", "run", "runs", "move":
 		if err := needName(); err != nil {
 			return err
 		}
@@ -293,11 +305,38 @@ func roundCmd(args []string, stdin io.Reader, out io.Writer) error {
 	default:
 		return fmt.Errorf("round %s: unknown command\n%s", verb, roundUsage)
 	}
+	switch {
+	case *all && verb != "ls":
+		return fmt.Errorf("round %s: -all is for ls", verb)
+	case *all && *host != "":
+		return errors.New("round ls: give -host or -all, not both")
+	case verb == "move" && *host == "":
+		return errors.New("round move needs -host: the peer that becomes the round's runner")
+	case *host != "" && *sock == "" && *via == "" && os.Getenv(hook.Env) != "":
+		// A round on another host from an agent goes through confirm.start_elsewhere once the
+		// agent kit has it (rounds.md 12 Q1); until then a pane cannot reach a peer's rounds.
+		return fmt.Errorf("round %s -host is not available from a pane: a round on another host needs the owner's confirmation", verb)
+	case *host != "" && *via != "":
+		return errors.New("-host dials the peer's endpoint from this machine: use it with this machine's hab, not with -via")
+	}
 	c, done, err := channelCaller(ctx, *sock, *via, false, "", false)
 	if err != nil {
 		return err
 	}
 	defer done()
+	local := c
+	if *host != "" {
+		pc, pdone, err := peerCaller(ctx, c, *host)
+		if err != nil {
+			return err
+		}
+		defer pdone()
+		if verb != "move" {
+			c = pc
+		} else {
+			return moveRound(ctx, local, pc, name, *host, *yes, *asJSON, stdin, out)
+		}
+	}
 	ref := api.RoundRef{Name: name}
 	show := func(v any, text func()) error {
 		if *asJSON {
@@ -308,6 +347,14 @@ func roundCmd(args []string, stdin io.Reader, out io.Writer) error {
 	}
 	switch verb {
 	case "ls":
+		if *all {
+			var cl api.CatalogList
+			if err := c.Call(ctx, "catalog.list", api.CatalogListParams{}, &cl); err != nil {
+				return err
+			}
+			rows := hostRounds(cl)
+			return show(rows, func() { printHostRounds(out, rows) })
+		}
 		var l api.RoundList
 		if err := c.Call(ctx, "round.list", api.RoundListParams{}, &l); err != nil {
 			return err
@@ -331,16 +378,25 @@ func roundCmd(args []string, stdin io.Reader, out io.Writer) error {
 		if err := def.apply(&spec, set, words); err != nil {
 			return err
 		}
-		if spec.Mode == api.RoundModeFresh && !set["project"] {
-			if *via != "" {
+		if spec.Mode == api.RoundModeFresh && !set["project"] && !set["remote"] {
+			switch {
+			case *via != "":
 				// This folder is on this machine, not on the hab's host.
 				return errors.New("round add with -via needs -project: the project folder on the hab's host")
+			case *host != "":
+				// The peer has its own checkout: name the project by this folder's remote.
+				remote, err := localRemote(ctx, local)
+				if err != nil {
+					return err
+				}
+				spec.ProjectRemote = remote
+			default:
+				wd, err := os.Getwd()
+				if err != nil {
+					return err
+				}
+				spec.ProjectDir = wd
 			}
-			wd, err := os.Getwd()
-			if err != nil {
-				return err
-			}
-			spec.ProjectDir = wd
 		}
 		var made api.RoundCreated
 		if err := c.Call(ctx, "round.create", api.RoundCreateParams{Round: spec, RunNow: *runNow}, &made); err != nil {

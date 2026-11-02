@@ -429,6 +429,7 @@ Left for the project-identity `/consensus` (`logbook.md` 3), not decided here:
 | services | Name, URL, optional health URL | Declared |
 | projects | Identity (remote, else root commit), name, the folders on this host, branch, head, dirty or clean, last commit time, the first line of `AGENTS.md` or `README` | Scanned from configured project roots and from the structure model |
 | agents | Session name, harness, project, state, since | The structure model and agent state |
+| rounds | Per round: id, name, mode, trigger in plain words, project and its remote, next slot (UTC), last run state and time, paused or completed (`rounds.md` 9) | The rounds store |
 | always on | true or absent | Declared (8) |
 | endpoints | The embedded server's address, when it is on | gff-hab |
 | generation | A per-hab counter, raised on every change; saved across restarts | gff-hab |

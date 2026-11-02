@@ -120,6 +120,16 @@ gff-hab notify -level time-sensitive -session <session-id> "Deploy needs you"
 and the body to 16; longer text is shortened with "…". The hab sends a `notice.raised` event to
 open clients, and a push to each registered device that is not in use right now.
 
+## Round notifications
+
+Rounds (`docs/specs/rounds.md` 10.2) raise their notices the same way, with push kind `round`:
+only a device that names `round` in `push.register` gets the push. One round's notifications
+share one collapse id, so a failing round shows one banner, updated. The banner says the
+round's name and what happened: a run failed or timed out, succeeded (with `notify = always`),
+the round paused itself, did not run for 5 slots, or completed because its target session is
+gone. A banner about a run opens its session. A round's result is never in the push; it is in
+the kept notice that `notice.get` and "Ask an agent" read, where the read scope allows it.
+
 ## What a push holds
 
 A push passes through Apple. In this release its text is plain: the title, the project and hab,

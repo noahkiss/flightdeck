@@ -225,7 +225,7 @@ var Enums = map[string][]string{
 	"ChatEvent":       {"compaction", "permission", "interrupt", "command", "notice", "reset", "unknown"},
 	"PlanStepStatus":  {"pending", "in_progress", "done"},
 	"PushEnvironment": {"development", "production"},
-	"PushKind":        {"permission", "question", "auth", "error", "done", "usage"},
+	"PushKind":        {"permission", "question", "auth", "error", "done", "usage", "round"},
 	"NoticeLevel":     {"passive", "active", "time-sensitive"},
 	"CommandState":    {"running", "done", "unknown"},
 	// Sets added for rich content (app.md 4.7).
@@ -265,6 +265,7 @@ var Enums = map[string][]string{
 	"RoundOnFinish":    {"close", "keep"},
 	"RoundNotify":      {"failures", "always", "never"},
 	"RoundRunState":    {"queued", "waiting", "running", "blocked", "succeeded", "failed", "timed_out", "skipped", "taken_over"},
+	"RoundNoticeKind":  {"run_failed", "run_succeeded", "paused", "skips", "target_gone", "state_set_aside"},
 	// Sets added for the Capcom entry API (capcom.md 8.1).
 	"CapcomContextKind": {"notification", "session", "file", "command", "logbook"},
 }

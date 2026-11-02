@@ -57,6 +57,7 @@ type hab struct {
 type habOpts struct {
 	folders map[string]Folder
 	config  string
+	rounds  func() []api.CatalogRound
 }
 
 func shortDir(t *testing.T) string {
@@ -137,7 +138,8 @@ func (h *hab) start(t *testing.T, o habOpts) {
 			f.State.Path = d
 			return f, ok
 		},
-		Pull: 30 * time.Millisecond, Debounce: 5 * time.Millisecond,
+		Rounds: o.rounds,
+		Pull:   30 * time.Millisecond, Debounce: 5 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -292,6 +294,48 @@ func TestOfflineStale(t *testing.T) {
 		return !ok
 	})
 	wait(t, "the copy of b gone from catalog.json", func() bool { return len(savedCopies(t, a.state)) == 0 })
+}
+
+// TestRoundsSection: a hab publishes its rounds in its catalog (rounds.md 9). A peer lists
+// them in catalog.list; a change raises the generation and reaches the peer; a stopped hab's
+// rounds stay, stale, with the copy's age.
+func TestRoundsSection(t *testing.T) {
+	d := shortDir(t)
+	var mu sync.Mutex
+	rs := []api.CatalogRound{{ID: "r1", Name: "nightly", Mode: "fresh", Trigger: "every 1d in UTC", Project: "app",
+		Remote: "example.com/o/app", NextSlot: "2026-11-02T00:00:00Z"}}
+	b := startHab(t, d, "b", "SHA256:bbbb", "", habOpts{rounds: func() []api.CatalogRound {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(rs)
+	}})
+	a := startHab(t, d, "a", "SHA256:aaaa", peersFile([2]string{"b", b.sock}), habOpts{})
+	wait(t, "a lists b's round", func() bool {
+		e, ok := entry(a.cat.List(), b.id)
+		return ok && len(e.Catalog.Rounds) == 1 && e.Catalog.Rounds[0].Name == "nightly"
+	})
+	if e, _ := entry(a.cat.List(), a.id); e.Catalog.Rounds != nil {
+		t.Fatalf("a has no rounds: %+v", e.Catalog.Rounds)
+	}
+	g := b.cat.Get(0).Generation
+	mu.Lock()
+	rs[0].LastRun, rs[0].NextSlot = "succeeded", "2026-11-03T00:00:00Z"
+	mu.Unlock()
+	b.cat.Poke()
+	wait(t, "a new generation on b", func() bool { return b.cat.Get(0).Generation > g })
+	wait(t, "a sees the run", func() bool {
+		e, _ := entry(a.cat.List(), b.id)
+		return len(e.Catalog.Rounds) == 1 && e.Catalog.Rounds[0].LastRun == "succeeded"
+	})
+	b.stop()
+	wait(t, "b's rounds stale in a's view", func() bool {
+		e, ok := entry(a.cat.List(), b.id)
+		return ok && e.Stale && len(e.Catalog.Rounds) == 1
+	})
+	e, _ := entry(a.cat.List(), b.id)
+	if at, err := time.Parse(time.RFC3339, e.SeenAt); err != nil || time.Since(at) > time.Minute {
+		t.Fatalf("seen_at %q: %v", e.SeenAt, err)
+	}
 }
 
 // TestAlwaysOnAlert (acceptance 3): three habs list each other; c is marked always on. When c

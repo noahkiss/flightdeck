@@ -104,6 +104,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/opencode"
 	"github.com/noahkiss/flightdeck/internal/panesize"
 	"github.com/noahkiss/flightdeck/internal/peers"
+	"github.com/noahkiss/flightdeck/internal/push"
 	"github.com/noahkiss/flightdeck/internal/readtools"
 	"github.com/noahkiss/flightdeck/internal/service"
 	"github.com/noahkiss/flightdeck/internal/settings"
@@ -896,6 +897,12 @@ func serve(args []string) error {
 			}
 			return capcomSvc.Section()
 		},
+		Rounds: func() []api.CatalogRound {
+			if r := roundsRef.Load(); r != nil {
+				return r.CatalogSection()
+			}
+			return nil
+		},
 		OnCopy: func(c api.Catalog) {
 			if capcomSvc != nil {
 				capcomSvc.Observe(c)
@@ -1049,10 +1056,22 @@ func serve(args []string) error {
 					s.Publish(e)
 				}
 			},
-			notice: func(title, body string) {
-				if _, err := pushes.Raise("", api.NoticeRaiseParams{Title: title, Body: body, Level: api.NoticeLevelActive}); err != nil {
-					logger.Printf("rounds: notice: %v", err)
+			raise: func(ev push.RoundEvent, detail, full, folder string) {
+				pushes.raiseRound(ev, detail, full, folder)
+			},
+			changed: cs.Poke,
+			remoteDir: func(remote string) string {
+				for _, h := range cs.List().Hosts {
+					if !h.Own {
+						continue
+					}
+					for _, p := range h.Catalog.Projects {
+						if p.Remote == remote && len(p.Folders) > 0 {
+							return p.Folders[0].Path
+						}
+					}
 				}
+				return ""
 			},
 			tick: roundTick(),
 			logf: logger.Printf,
@@ -1110,6 +1129,7 @@ func serve(args []string) error {
 		}
 		defer roundsSvc.Close()
 		roundsRef.Store(roundsSvc)
+		cs.Poke() // the catalog's rounds section
 		roundsCtl = roundsSvc
 		acts = roundActions{actions: sa, rounds: roundsSvc}
 		pushCtl = roundPush{Push: pushes, rounds: roundsSvc}

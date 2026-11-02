@@ -556,6 +556,8 @@ public struct Catalog: Codable, Sendable, Hashable {
     public var peers: [String]
     /// Git projects on this host, one per identity.
     public var projects: [CatalogProject]
+    /// The rounds this hab runs, by name. Absent from a hab without the rounds capability or with no round.
+    public var rounds: [CatalogRound]?
     /// Services the user declared for this host.
     public var services: [CatalogService]
     public var system: CatalogSystem
@@ -577,13 +579,14 @@ public struct Catalog: Codable, Sendable, Hashable {
         case host = "host"
         case peers = "peers"
         case projects = "projects"
+        case rounds = "rounds"
         case services = "services"
         case system = "system"
         case toolchains = "toolchains"
         case watches = "watches"
     }
 
-    public init(actions: [CatalogAction], agents: [CatalogAgent], alwaysOn: Bool? = nil, at: String, capabilities: [CatalogCapability], capcom: CatalogCapcom? = nil, deviceId: String, generation: UInt64, harnesses: [CatalogTool], host: String, peers: [String], projects: [CatalogProject], services: [CatalogService], system: CatalogSystem, toolchains: [CatalogTool], watches: [String]) {
+    public init(actions: [CatalogAction], agents: [CatalogAgent], alwaysOn: Bool? = nil, at: String, capabilities: [CatalogCapability], capcom: CatalogCapcom? = nil, deviceId: String, generation: UInt64, harnesses: [CatalogTool], host: String, peers: [String], projects: [CatalogProject], rounds: [CatalogRound]? = nil, services: [CatalogService], system: CatalogSystem, toolchains: [CatalogTool], watches: [String]) {
         self.actions = actions
         self.agents = agents
         self.alwaysOn = alwaysOn
@@ -596,6 +599,7 @@ public struct Catalog: Codable, Sendable, Hashable {
         self.host = host
         self.peers = peers
         self.projects = projects
+        self.rounds = rounds
         self.services = services
         self.system = system
         self.toolchains = toolchains
@@ -909,6 +913,54 @@ public struct CatalogPutParams: Codable, Sendable, Hashable {
 
     public init(catalog: Catalog) {
         self.catalog = catalog
+    }
+}
+
+public struct CatalogRound: Codable, Sendable, Hashable {
+    public var completed: Bool?
+    public var id: String
+    /// The newest run's state. Absent before the first run.
+    public var lastRun: RoundRunState?
+    /// RFC 3339 time the newest run ended, else started, else was made.
+    public var lastRunAt: String?
+    public var mode: RoundMode
+    public var name: String
+    /// RFC 3339 UTC time of the next slot. Absent when there is none.
+    public var nextSlot: String?
+    public var paused: Bool?
+    /// The project's name on the publishing host. Absent for resume and fork rounds.
+    public var project: String?
+    /// The project's normalized remote, when it has one: its identity across hosts.
+    public var remote: String?
+    /// The trigger in plain words, such as every 1h, cron 0 9 * * 1-5 in Europe/Berlin, once at <time>, or by hand.
+    public var trigger: String
+
+    enum CodingKeys: String, CodingKey {
+        case completed = "completed"
+        case id = "id"
+        case lastRun = "last_run"
+        case lastRunAt = "last_run_at"
+        case mode = "mode"
+        case name = "name"
+        case nextSlot = "next_slot"
+        case paused = "paused"
+        case project = "project"
+        case remote = "remote"
+        case trigger = "trigger"
+    }
+
+    public init(completed: Bool? = nil, id: String, lastRun: RoundRunState? = nil, lastRunAt: String? = nil, mode: RoundMode, name: String, nextSlot: String? = nil, paused: Bool? = nil, project: String? = nil, remote: String? = nil, trigger: String) {
+        self.completed = completed
+        self.id = id
+        self.lastRun = lastRun
+        self.lastRunAt = lastRunAt
+        self.mode = mode
+        self.name = name
+        self.nextSlot = nextSlot
+        self.paused = paused
+        self.project = project
+        self.remote = remote
+        self.trigger = trigger
     }
 }
 
@@ -3294,6 +3346,8 @@ public struct Notice: Codable, Sendable, Hashable {
     public var body: String?
     public var id: String
     public var level: NoticeLevel
+    /// A round notification: the round, the run and the row. Absent for any other notice.
+    public var round: NoticeRound?
     public var session: String?
     public var title: String
 
@@ -3302,15 +3356,17 @@ public struct Notice: Codable, Sendable, Hashable {
         case body = "body"
         case id = "id"
         case level = "level"
+        case round = "round"
         case session = "session"
         case title = "title"
     }
 
-    public init(at: String, body: String? = nil, id: String, level: NoticeLevel, session: String? = nil, title: String) {
+    public init(at: String, body: String? = nil, id: String, level: NoticeLevel, round: NoticeRound? = nil, session: String? = nil, title: String) {
         self.at = at
         self.body = body
         self.id = id
         self.level = level
+        self.round = round
         self.session = session
         self.title = title
     }
@@ -3408,6 +3464,31 @@ public struct NoticeRecord: Codable, Sendable, Hashable {
         self.notice = notice
         self.seq = seq
         self.session = session
+    }
+}
+
+public struct NoticeRound: Codable, Sendable, Hashable {
+    /// run_failed (failed or timed out), run_succeeded (notify = always), paused (after failures in a row), skips (skips in a row), target_gone (completed: its target session is gone), state_set_aside (the rounds state file did not parse).
+    public var kind: RoundNoticeKind
+    /// The round's name.
+    public var name: String?
+    /// The round id. Absent for state_set_aside.
+    public var round: String?
+    /// The run id, when a run raised it.
+    public var run: String?
+
+    enum CodingKeys: String, CodingKey {
+        case kind = "kind"
+        case name = "name"
+        case round = "round"
+        case run = "run"
+    }
+
+    public init(kind: RoundNoticeKind, name: String? = nil, round: String? = nil, run: String? = nil) {
+        self.kind = kind
+        self.name = name
+        self.round = round
+        self.run = run
     }
 }
 
@@ -3990,6 +4071,7 @@ public struct PushKind: RawRepresentable, Codable, Sendable, Hashable {
     public static let error = PushKind(rawValue: "error")
     public static let done = PushKind(rawValue: "done")
     public static let usage = PushKind(rawValue: "usage")
+    public static let round = PushKind(rawValue: "round")
 }
 
 public struct PushRegisterParams: Codable, Sendable, Hashable {
@@ -4367,6 +4449,18 @@ public struct RoundMode: RawRepresentable, Codable, Sendable, Hashable {
     public static let fresh = RoundMode(rawValue: "fresh")
     public static let resume = RoundMode(rawValue: "resume")
     public static let fork = RoundMode(rawValue: "fork")
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct RoundNoticeKind: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let runFailed = RoundNoticeKind(rawValue: "run_failed")
+    public static let runSucceeded = RoundNoticeKind(rawValue: "run_succeeded")
+    public static let paused = RoundNoticeKind(rawValue: "paused")
+    public static let skips = RoundNoticeKind(rawValue: "skips")
+    public static let targetGone = RoundNoticeKind(rawValue: "target_gone")
+    public static let stateSetAside = RoundNoticeKind(rawValue: "state_set_aside")
 }
 
 /// An open word set: values outside the known list decode and round-trip unchanged.

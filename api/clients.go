@@ -366,6 +366,20 @@ type Notice struct {
 	Level   NoticeLevel `json:"level"`
 	Session string      `json:"session,omitempty"`
 	At      string      `json:"at" doc:"RFC 3339 time gff-hab raised it."`
+	// Round was added within revision 1, a new field set of each notice message (rounds.md 10.2).
+	Round *NoticeRound `json:"round,omitempty" doc:"A round notification: the round, the run and the row. Absent for any other notice."`
+}
+
+// RoundNoticeKind is the row of rounds.md 10.2 a round notification is for. The server sends
+// it, so the set is open: a client shows an unknown word as a plain notice.
+type RoundNoticeKind string
+
+// NoticeRound names the round a notice is about.
+type NoticeRound struct {
+	Kind  RoundNoticeKind `json:"kind" doc:"run_failed (failed or timed out), run_succeeded (notify = always), paused (after failures in a row), skips (skips in a row), target_gone (completed: its target session is gone), state_set_aside (the rounds state file did not parse)."`
+	Round string          `json:"round,omitempty" doc:"The round id. Absent for state_set_aside."`
+	Name  string          `json:"name,omitempty" doc:"The round's name."`
+	Run   string          `json:"run,omitempty" doc:"The run id, when a run raised it."`
 }
 
 // --- Pane activity ---

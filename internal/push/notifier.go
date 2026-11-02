@@ -76,6 +76,15 @@ type Notice struct {
 	Level   Level
 	Session string // optional: the session it is about, for its subtitle and the focus hold
 	Folder  string // a kept permission banner's working folder, for the read-scope check
+	// Kind is the push kind: empty or KindNotice goes to every device, any other kind only to
+	// the devices that registered it. Collapse replaces "n-<id>" as the collapse id, and
+	// Category names the banner's actions (empty: none). Round and Run name a round
+	// notification's round and run in the push's metadata.
+	Kind     string
+	Collapse string
+	Category string
+	Round    string
+	Run      string
 }
 
 // Notifier turns agent state changes into pushes. State is safe to call under any lock: it
@@ -392,13 +401,17 @@ func (n *Notifier) tier(device, session string) Tier {
 	return TierPush
 }
 
-// Raise queues a notice for every registered device, under the presence tiers. It returns the
-// number of devices it goes to.
+// Raise queues a notice for every registered device that wants its kind, under the presence
+// tiers. It returns the number of devices it goes to.
 func (n *Notifier) Raise(no Notice) int {
 	devs := n.cfg.Store.Devices()
 	var to []target
+	kind := no.Kind
+	if kind == "" {
+		kind = KindNotice
+	}
 	for _, d := range devs {
-		if d.Token == "" || n.tier(d.ID, no.Session) != TierPush {
+		if d.Token == "" || kind != KindNotice && !d.Wants(kind) || n.tier(d.ID, no.Session) != TierPush {
 			continue
 		}
 		to = append(to, target{device: d.ID, token: d.Token, env: d.Environment, ask: d.Asks()})
@@ -414,7 +427,12 @@ func (n *Notifier) Raise(no Notice) int {
 			w.Hab, w.Session = n.cfg.Hab, no.Session
 		}
 		b := NoticeBanner(w, no.Title, no.Body, no.Level)
-		meta := Meta{Hab: n.cfg.Hab, Session: no.Session, Notice: no.ID}
+		b.Kind, b.Category = kind, no.Category
+		meta := Meta{Hab: n.cfg.Hab, Session: no.Session, Notice: no.ID, Round: no.Round, Run: no.Run}
+		collapse := no.Collapse
+		if collapse == "" {
+			collapse = "n-" + no.ID
+		}
 		meta.Context, meta.CapcomHome = n.ask(no.ID)
 		for _, t := range to {
 			// Only an app that registered the Ask categories gets one; any other keeps the
@@ -424,7 +442,7 @@ func (n *Notifier) Raise(no Notice) int {
 				tb.Category = AskCategory(b.Category)
 			}
 			payload := AlertPayload(tb, meta, no.Session)
-			n.send(Message{Token: t.token, Environment: t.env, Type: TypeAlert, Priority: priority(b.Level), CollapseID: "n-" + no.ID, Expiration: n.cfg.Now().Add(alertKeep), Payload: payload}, true)
+			n.send(Message{Token: t.token, Environment: t.env, Type: TypeAlert, Priority: priority(b.Level), CollapseID: collapse, Expiration: n.cfg.Now().Add(alertKeep), Payload: payload}, true)
 		}
 	})
 	n.mu.Unlock()

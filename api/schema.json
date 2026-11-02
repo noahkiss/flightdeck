@@ -3910,6 +3910,13 @@
               "$ref": "#/components/schemas/CatalogProject"
             }
           },
+          "rounds": {
+            "type": "array",
+            "description": "The rounds this hab runs, by name. Absent from a hab without the rounds capability or with no round.",
+            "items": {
+              "$ref": "#/components/schemas/CatalogRound"
+            }
+          },
           "services": {
             "type": "array",
             "description": "Services the user declared for this host.",
@@ -4278,6 +4285,56 @@
         },
         "required": [
           "catalog"
+        ]
+      },
+      "CatalogRound": {
+        "type": "object",
+        "properties": {
+          "completed": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_run": {
+            "$ref": "#/components/schemas/RoundRunState",
+            "description": "The newest run's state. Absent before the first run."
+          },
+          "last_run_at": {
+            "type": "string",
+            "description": "RFC 3339 time the newest run ended, else started, else was made."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/RoundMode"
+          },
+          "name": {
+            "type": "string"
+          },
+          "next_slot": {
+            "type": "string",
+            "description": "RFC 3339 UTC time of the next slot. Absent when there is none."
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "project": {
+            "type": "string",
+            "description": "The project's name on the publishing host. Absent for resume and fork rounds."
+          },
+          "remote": {
+            "type": "string",
+            "description": "The project's normalized remote, when it has one: its identity across hosts."
+          },
+          "trigger": {
+            "type": "string",
+            "description": "The trigger in plain words, such as every 1h, cron 0 9 * * 1-5 in Europe/Berlin, once at \u003ctime\u003e, or by hand."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "mode",
+          "trigger"
         ]
       },
       "CatalogService": {
@@ -6801,6 +6858,10 @@
           "level": {
             "$ref": "#/components/schemas/NoticeLevel"
           },
+          "round": {
+            "$ref": "#/components/schemas/NoticeRound",
+            "description": "A round notification: the round, the run and the row. Absent for any other notice."
+          },
           "session": {
             "type": "string"
           },
@@ -6910,6 +6971,30 @@
           "seq",
           "host",
           "notice"
+        ]
+      },
+      "NoticeRound": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/RoundNoticeKind",
+            "description": "run_failed (failed or timed out), run_succeeded (notify = always), paused (after failures in a row), skips (skips in a row), target_gone (completed: its target session is gone), state_set_aside (the rounds state file did not parse)."
+          },
+          "name": {
+            "type": "string",
+            "description": "The round's name."
+          },
+          "round": {
+            "type": "string",
+            "description": "The round id. Absent for state_set_aside."
+          },
+          "run": {
+            "type": "string",
+            "description": "The run id, when a run raised it."
+          }
+        },
+        "required": [
+          "kind"
         ]
       },
       "OwnerReason": {
@@ -7521,7 +7606,8 @@
           "auth",
           "error",
           "done",
-          "usage"
+          "usage",
+          "round"
         ]
       },
       "PushRegisterParams": {
@@ -7927,6 +8013,17 @@
           "fresh",
           "resume",
           "fork"
+        ]
+      },
+      "RoundNoticeKind": {
+        "type": "string",
+        "x-known-values": [
+          "run_failed",
+          "run_succeeded",
+          "paused",
+          "skips",
+          "target_gone",
+          "state_set_aside"
         ]
       },
       "RoundNotify": {

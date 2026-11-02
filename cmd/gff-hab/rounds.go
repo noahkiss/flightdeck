@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/link"
+	"github.com/noahkiss/flightdeck/internal/push"
 	"github.com/noahkiss/flightdeck/internal/rounds"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
@@ -149,10 +151,16 @@ type roundsConfig struct {
 	// projectFor finds or makes the project of an absolute folder, as session.create does.
 	projectFor func(ctx context.Context, dir string) (string, error)
 	publish    func(structure.Event)
-	// notice raises one Flightdeck notice (a state file set aside).
-	notice func(title, body string)
-	tick   time.Duration // 0: rounds.TickEvery
-	logf   func(string, ...any)
+	// raise raises one round notification (rounds.md 10.2): its banner from ev; the kept
+	// notice's body is full when the read scope allows folder, else detail. Nil: logged only.
+	raise func(ev push.RoundEvent, detail, full, folder string)
+	// changed says a round or a run changed: the catalog's rounds section is built again.
+	changed func()
+	// remoteDir returns a folder of this host's checkout of a project remote that the catalog
+	// found, or "". Nil: none.
+	remoteDir func(remote string) string
+	tick      time.Duration // 0: rounds.TickEvery
+	logf      func(string, ...any)
 
 	// Harness runs (roundharness.go). agent reads a pane's agent state; send delivers a prompt
 	// as session.send does, but as the hab, not as a client: no take over; interrupt stops a
@@ -267,9 +275,8 @@ func newRounds(cfg roundsConfig) (*roundsService, error) {
 	if err != nil {
 		return nil, err
 	}
-	if aside && cfg.notice != nil {
-		cfg.notice("Rounds state set aside",
-			"The rounds state file did not parse. gff-hab kept it beside the new one and started with no rounds.")
+	if aside && cfg.raise != nil {
+		cfg.raise(push.RoundEvent{Kind: push.RoundStateSetAside}, "", "", "")
 	}
 	s := &roundsService{cfg: cfg, store: st, revs: map[string]uint64{}, watches: map[string]*runWatch{},
 		byPane: map[string]string{}, pending: map[string]rounds.Run{}, inputAt: map[string]time.Time{},
@@ -771,6 +778,14 @@ func (s *roundsService) RoundChanged(e rounds.Entry) {
 	r := s.apiRoundLocked(e)
 	s.mu.Unlock()
 	s.cfg.publish(structure.Event{Type: control.EventRoundUpdated, ID: r.ID, Revision: r.Revision, Data: api.NonNil(r)})
+	s.poke()
+}
+
+// poke tells the catalog its rounds section may have changed.
+func (s *roundsService) poke() {
+	if s.cfg.changed != nil {
+		s.cfg.changed()
+	}
 }
 
 func (s *roundsService) RoundDeleted(e rounds.Entry) {
@@ -781,6 +796,7 @@ func (s *roundsService) RoundDeleted(e rounds.Entry) {
 	s.mu.Unlock()
 	r.Deleted, r.LastRun = true, nil
 	s.cfg.publish(structure.Event{Type: control.EventRoundUpdated, ID: r.ID, Revision: r.Revision, Data: api.NonNil(r)})
+	s.poke()
 }
 
 // RunChanged sends round.run_updated. A run that ended is no longer watched; a succeeded run
@@ -788,6 +804,7 @@ func (s *roundsService) RoundDeleted(e rounds.Entry) {
 // (7.6). A run that failed, timed out or was taken over keeps its pane.
 func (s *roundsService) RunChanged(r rounds.Run) {
 	s.cfg.publish(structure.Event{Type: control.EventRoundRunUpdated, ID: r.ID, Data: api.NonNil(apiRun(r))})
+	s.poke()
 	if !r.State.Final() {
 		return
 	}
@@ -847,9 +864,71 @@ func (s *roundsService) prune(roundID string) {
 	}
 }
 
-// Notice logs a notice the scheduler wants raised; round notifications come in a later stage
-// (rounds.md 10.2, stage 6).
-func (s *roundsService) Notice(n rounds.Notice) { s.cfg.logf("rounds: %s", n.Text) }
+// Notice raises a notification the scheduler asks for (rounds.md 10.2). The scheduler already
+// applied the round's notify setting; it is applied here again, so no path past the scheduler
+// sends a row the setting leaves out.
+func (s *roundsService) Notice(n rounds.Notice) {
+	s.cfg.logf("rounds: %s", n.Text)
+	ev, ok := roundEvent(n)
+	if !ok || s.cfg.raise == nil || !push.RoundAllowed(string(n.Round.Round.Notify), ev.Kind) {
+		return
+	}
+	detail := ev.Reason
+	if n.Run != nil {
+		detail = fmt.Sprintf("Run %d %s", n.Run.Number, n.Run.State)
+		if n.Run.Reason != "" {
+			detail += ": " + n.Run.Reason
+		}
+	}
+	if ev.Kind == push.RoundSkips {
+		detail = fmt.Sprintf("Not run since %s; the last skip: %s", ev.Since, ev.Reason)
+	}
+	// The run's result goes into the kept notice, for "Ask an agent", only when the read
+	// scope allows the run's folder; an unknown folder keeps it out.
+	full, folder := "", ""
+	if n.Run != nil && n.Run.Result != "" && ev.Session != "" {
+		full = detail + "\n\nThe final message:\n" + n.Run.Result
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		folder = s.cfg.folder(ctx, ev.Session)
+		cancel()
+	}
+	s.cfg.raise(ev, detail, full, folder)
+}
+
+// roundEvent turns a scheduler notice into the words of its banner.
+func roundEvent(n rounds.Notice) (push.RoundEvent, bool) {
+	r, st := n.Round.Round, n.Round.State
+	ev := push.RoundEvent{Round: r.ID, Name: r.Name}
+	if n.Run != nil {
+		ev.Run, ev.RunNumber, ev.State, ev.Reason, ev.Result, ev.Session = n.Run.ID, n.Run.Number, string(n.Run.State), n.Run.Reason, n.Run.Result, n.Run.SessionID
+	}
+	switch n.Kind {
+	case rounds.NoticeRunFailed:
+		ev.Kind = push.RoundRunFailed
+	case rounds.NoticeRunSucceeded:
+		ev.Kind = push.RoundRunSucceeded
+	case rounds.NoticePaused:
+		ev.Kind, ev.Failures = push.RoundPaused, max(st.Failures, rounds.PauseAfterFailures)
+	case rounds.NoticeSkips:
+		ev.Kind = push.RoundSkips
+		since := r.CreatedAt
+		if st.LastOK != nil {
+			since = *st.LastOK
+		}
+		loc := time.UTC
+		if r.Trigger.Zone != "" {
+			if l, err := rounds.LoadZone(r.Trigger.Zone); err == nil {
+				loc = l
+			}
+		}
+		ev.Since = since.In(loc).Format("Jan 2 15:04 MST")
+	case rounds.NoticeTargetGone:
+		ev.Kind = push.RoundTargetGone
+	default:
+		return ev, false
+	}
+	return ev, true
+}
 
 // --- The API ---
 
@@ -907,6 +986,54 @@ func apiRun(r rounds.Run) api.RoundRun {
 		Missed: r.Missed, State: api.RoundRunState(r.State), Reason: r.Reason, Session: r.SessionID,
 		Created: rfc(&r.Created), StartedAt: rfc(r.StartedAt), EndedAt: rfc(r.EndedAt), Result: r.Result,
 	}
+}
+
+// CatalogSection is the catalog's rounds section (rounds.md 9): every round, by name.
+func (s *roundsService) CatalogSection() []api.CatalogRound {
+	var out []api.CatalogRound
+	for _, r := range s.List() {
+		c := api.CatalogRound{ID: r.ID, Name: r.Name, Mode: r.Mode, Trigger: triggerWords(r.Trigger),
+			Remote: r.ProjectRemote, NextSlot: r.NextSlot, Paused: r.Paused, Completed: r.Completed}
+		if p, ok := s.cfg.store.Project(r.Project); ok && r.Project != "" {
+			c.Project = p.Name
+		}
+		if lr := r.LastRun; lr != nil {
+			c.LastRun = lr.State
+			c.LastRunAt = lr.Created
+			if lr.StartedAt != "" {
+				c.LastRunAt = lr.StartedAt
+			}
+			if lr.EndedAt != "" {
+				c.LastRunAt = lr.EndedAt
+			}
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// triggerWords is a trigger in plain words: "every 1h", "cron 0 9 * * 1-5 in Europe/Berlin",
+// "once at <time>" or "by hand". A preset of an hour or more gives its zone too: its slots fall
+// at clock times in that zone.
+func triggerWords(t api.RoundTrigger) string {
+	switch t.Kind {
+	case api.RoundTriggerKindCron:
+		if p := rounds.PresetName(t.Cron); p != "" {
+			if strings.HasSuffix(p, "m") || t.Zone == "" {
+				return "every " + p
+			}
+			return "every " + p + " in " + t.Zone
+		}
+		if t.Zone == "" {
+			return "cron " + t.Cron
+		}
+		return "cron " + t.Cron + " in " + t.Zone
+	case api.RoundTriggerKindOnce:
+		return "once at " + t.At
+	case api.RoundTriggerKindManual:
+		return "by hand"
+	}
+	return string(t.Kind)
 }
 
 // List returns every round, by name: the snapshot's rounds and round.list.
@@ -1034,10 +1161,24 @@ func (s *roundsService) definition(ctx context.Context, p api.RoundSpec) (rounds
 		r.Project = id
 	case p.ProjectRemote != "":
 		pr, ok := s.cfg.store.ProjectByIdentity(p.ProjectRemote, "")
-		if !ok {
+		if ok {
+			r.Project = pr.ID
+			break
+		}
+		// A checkout the catalog found under a project root, which no session used yet: its
+		// folder becomes the project, as project_dir does (rounds.md 9, a round on another host).
+		dir := ""
+		if s.cfg.remoteDir != nil {
+			dir = s.cfg.remoteDir(p.ProjectRemote)
+		}
+		if dir == "" {
 			return r, control.Errorf(api.ErrorKindNotFound, "no project on this hab has the remote %s", p.ProjectRemote)
 		}
-		r.Project = pr.ID
+		id, err := s.cfg.projectFor(ctx, dir)
+		if err != nil {
+			return r, err
+		}
+		r.Project = id
 	}
 	if r.Cwd != "" && !filepath.IsAbs(r.Cwd) {
 		return r, bad("cwd", "%q is not an absolute path", r.Cwd)

@@ -79,6 +79,9 @@ type Config struct {
 	// Capcom returns the own catalog's capcom section (capcom.md 7.3). Nil, or a nil result:
 	// no section.
 	Capcom func() *api.CatalogCapcom
+	// Rounds returns the own catalog's rounds section (rounds.md 9). Nil, or an empty result:
+	// no section.
+	Rounds func() []api.CatalogRound
 	// OnCopy hears each peer copy that changed, after it is stored. Nil: none.
 	OnCopy func(api.Catalog)
 	// Detect reads the host's facts. Default Detect.
@@ -553,6 +556,10 @@ func (s *Service) build(first bool) {
 	if s.cfg.Capcom != nil {
 		capcom = s.cfg.Capcom()
 	}
+	var rounds []api.CatalogRound
+	if s.cfg.Rounds != nil {
+		rounds = s.cfg.Rounds()
+	}
 	s.mu.Lock()
 	var watches []string
 	for _, id := range peerIDs {
@@ -575,6 +582,7 @@ func (s *Service) build(first bool) {
 		Peers:        peerIDs,
 		Watches:      watches,
 		Capcom:       capcom,
+		Rounds:       rounds,
 	}
 	c = api.NonNil(c)
 	prev := s.own

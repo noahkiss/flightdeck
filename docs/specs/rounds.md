@@ -814,8 +814,8 @@ Built (stage 3, task-ams092is). Where this spec left a choice open:
   nor aim a round at another session. The owner may loosen this later.
 - **Not built yet.** Before stage 5 a round in `resume` or `fork` mode could be created, read
   and edited (so `--target self` works), but its run failed. (Before stage 4 a `fresh` round
-  with a prompt failed the same way.) The
-  scheduler's notices are logged until stage 6; a set-aside state file raises one notice.
+  with a prompt failed the same way.) Before stage 6 the scheduler's notices were only logged,
+  and a set-aside state file raised one plain notice.
 - **Retention.** The prune of 7.6 runs when a run ends and at start; it removes the session
   records of the runs it drops when they have exited.
 - **Export and apply.** The file is `[[rounds]]` tables with the definition fields, the trigger
@@ -1000,6 +1000,70 @@ this spec left a choice open:
   - A restart between Enter and the harness's write of the user message to its transcript
     finds no envelope at adoption: the run waits for the lock again and can send its prompt a
     second time. The window is small.
+
+Built (stage 6, task-00cqxbrf): notifications, the catalog `rounds` section, and rounds on
+other hosts (`cmd/gff-hab/roundhosts.go`, `internal/push/round.go`). Where this spec left a
+choice open:
+
+- **The rows (10.2).** Each row raises one notice through the path `notice.raise` uses: a kept
+  notice for `notice.get` and Capcom, a `notice.raised` event, a push. The notice carries the
+  new optional `round` field (`kind`, `round`, `name`, `run`); `kind` is `run_failed`,
+  `run_succeeded`, `paused`, `skips`, `target_gone` or `state_set_aside`, an open set.
+
+  | Row | Title | Body | Level | Action |
+  |---|---|---|---|---|
+  | `run_failed` | "Round failed: <name>" ("Round timed out: <name>") | The reason | Active | Open the run session |
+  | `run_succeeded` | "Round done: <name>" | The first line of the final message | Passive | Open the run session |
+  | `paused` | "Round paused: <name>" | "5 failed runs in a row. Unpause it to run again." | Active | Open the last run's session |
+  | `skips` | "Round not running: <name>" | "Not run since <time in the round's zone>: <reason>" | Passive | Open the target |
+  | `target_gone` | "Round completed: <name>" | "Its target session is gone." | Passive | None |
+  | `state_set_aside` | "Rounds state set aside" | What gff-hab did | Active | None |
+
+- **The push.** Kind `round` goes only to a device that names it in `push.register`, as `done`
+  does: the app opts in (stage 7). The collapse id is `round-<round id>` (`round-state` for the
+  state file), so a failing round's failures, then its pause, update one banner. The push's
+  metadata carries `round` and `run` beside `notice`. The presence tiers apply as for any
+  notice: a client watching the run session holds the push.
+- **notify.** The scheduler applies `notify`; gff-hab applies it again before it raises, so no
+  path past the scheduler sends a row the setting leaves out. `never` leaves only the pause.
+- **Ask an agent.** The kept notice's body is the run number, its state and reason, then the
+  run's final message, so Capcom gets the result with the event. The final message is kept only
+  when the read scope allows the run session's folder; an unknown folder keeps it out. The
+  banner never holds it, except the first line of a success.
+- **The catalog section.** `rounds`: per round its id, name, mode, the trigger in plain words
+  (`every 1h`, `every 1d in Europe/Berlin` for a preset of an hour or more, `cron <expr> in
+  <zone>`, `once at <time>`, `by hand`), the project's name and remote, the next slot in UTC,
+  the last run's state and time, paused, completed. Every round and run change pokes the
+  catalog, so the generation rises with a run's state. The age of a stale copy is the entry's
+  `seen_at` (`mesh.md` 5.2); there is no field per round.
+- **-host.** `gff-hab round <verb> -host <label>` acts on that peer's rounds over a control
+  connection the CLI opens itself, through the endpoint the peer's link uses from this hab's
+  peer list. The peer must be online there, else "host offline: <label> is offline, last seen
+  ..."; edits never queue (11). The hab that answers must present the pinned device id. Every
+  verb takes it. Decision: the CLI dials, not the hab over its peer link. Reason: the user's
+  edit then reaches the runner with the user's own SSH access, as `-via` does, and no hab
+  forwards `round.*` for another; a hab-to-hab path for rounds belongs with the agent kit's
+  confirmation (stage 10).
+- **-host is refused from a pane, and with -via.** From a pane it is an agent's round on
+  another host, which waits for `confirm.start_elsewhere` in the agent kit (Q1, stage 10); a
+  direct dial would also skip the pane route's narrowing. With `-via` the peer list's endpoints
+  are the remote hab's, not this machine's.
+- **The project on the peer.** `add -host` with `-project` takes a folder on the peer, as `-via`
+  does; with no `-project` it names the project by the remote of this folder's project in this
+  hab's catalog (`-remote` gives one by hand). `round.create` with `project_remote` takes a
+  project the peer's structure has, else a checkout its catalog found under a project root,
+  which becomes a project as `project_dir` would.
+- **ls -all.** `catalog.list`: this hab's rounds, then each peer's, with "host asleep since
+  <seen_at>" on a stale host's rows. `-json` prints the rows with their host.
+- **move.** It asks first (`-yes` skips it), then pauses the round here, so no slot runs on both
+  hosts, creates it on the new runner with the same definition and pause mark, its project named
+  by remote, and deletes it here. The next slot is the trigger's next one from now on both, so
+  it does not change. A create that fails unpauses the round here. A delete that fails leaves
+  it paused here, and says so. Refused: `resume` and `fork` rounds, a round with a `cwd` (a
+  folder on this host), a project with no remote. The run history and the counts stay behind
+  and go with the delete; `created_by` is not carried. A live run here goes on to its end.
+- **Not yet.** The always-on suggestion at creation (9) and the status board's list (10.3) are
+  app and client stages (7, 8).
 
 ---
 

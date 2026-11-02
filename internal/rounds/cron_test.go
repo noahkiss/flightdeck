@@ -335,3 +335,21 @@ func TestHostZone(t *testing.T) {
 		t.Errorf("HostZone() does not load: %v", err)
 	}
 }
+
+// TestPresetName: the cron a preset compiles to names the preset back, spaces aside; any other
+// cron names none.
+func TestPresetName(t *testing.T) {
+	for _, p := range presets {
+		if got := PresetName(p.cron); got != p.name {
+			t.Errorf("PresetName(%q) = %q, want %q", p.cron, got, p.name)
+		}
+	}
+	if got := PresetName("0  *  * * *"); got != "1h" {
+		t.Errorf("extra spaces: %q", got)
+	}
+	for _, c := range []string{"0 9 * * *", "*/7 * * * *", ""} {
+		if got := PresetName(c); got != "" {
+			t.Errorf("PresetName(%q) = %q", c, got)
+		}
+	}
+}

@@ -167,6 +167,18 @@ func PresetCron(every string) (string, error) {
 	return "", fmt.Errorf("every %s: cron cannot express it; nearest presets: %s", every, strings.Join(near, ", "))
 }
 
+// PresetName is the preset a cron expression compiles from, such as "1h", or "" when it is
+// no preset's.
+func PresetName(cron string) string {
+	cron = strings.Join(strings.Fields(cron), " ")
+	for _, p := range presets {
+		if p.cron == cron {
+			return p.name
+		}
+	}
+	return ""
+}
+
 // maxSpan bounds a preset span well above the longest preset, so the multiplication cannot
 // overflow and a long span is still refused with the nearest presets.
 const maxSpan = 1000 * 24 * time.Hour

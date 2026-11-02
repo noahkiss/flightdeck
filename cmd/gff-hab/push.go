@@ -218,6 +218,33 @@ func (s *pushService) Raise(client string, p api.NoticeRaiseParams) (api.NoticeR
 	return api.NoticeRaised{ID: id, Pushed: pushed}, nil
 }
 
+// raiseRound raises one round notification (rounds.md 10.2): the notice kept for notice.get
+// and Capcom, a notice.raised event with the round named, and a push of kind round to the
+// devices that registered it, collapsed by round id. The kept notice's body is full (with the
+// run's result) when the read scope allows folder, else detail; empty ones fall back to the
+// banner's body. It returns the notice id.
+func (s *pushService) raiseRound(ev push.RoundEvent, detail, full, folder string) string {
+	no := push.RoundNotice(ev)
+	no.ID = noticeID()
+	if full != "" && folder != "" && (s.denied == nil || !s.denied(folder)) {
+		detail = full
+	}
+	if detail == "" {
+		detail = no.Body
+	}
+	n := api.Notice{ID: no.ID, Title: no.Title, Body: detail, Level: api.NoticeLevel(no.Level), Session: no.Session,
+		At:    s.now().UTC().Format(time.RFC3339),
+		Round: &api.NoticeRound{Kind: api.RoundNoticeKind(ev.Kind), Round: ev.Round, Name: ev.Name, Run: ev.Run}}
+	if s.notices != nil {
+		s.notices.add(n)
+	}
+	s.publish(structure.Event{Type: control.EventNoticeRaised, ID: no.ID, Data: n})
+	if s.notifier != nil {
+		s.notifier.Raise(no)
+	}
+	return no.ID
+}
+
 // noticeID is a new notice id: 16 hex digits.
 func noticeID() string {
 	var b [8]byte

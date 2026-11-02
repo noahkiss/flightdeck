@@ -1,0 +1,166 @@
+{
+  "hosts": [
+    {
+      "catalog": {
+        "actions": [
+          {
+            "command": "command-24",
+            "name": "name-23",
+            "x_unknown_field": "later"
+          }
+        ],
+        "agents": [
+          {
+            "harness": "harness-34",
+            "project": "project-35",
+            "session": "session-33",
+            "since": "since-36",
+            "state": "exited",
+            "x_unknown_field": "later"
+          }
+        ],
+        "always_on": true,
+        "at": "at-9",
+        "capabilities": [
+          {
+            "declared": true,
+            "detected": true,
+            "name": "name-19",
+            "x_unknown_field": "later"
+          }
+        ],
+        "capcom": {
+          "assignment": 39,
+          "home": "home-40",
+          "sessions": [
+            {
+              "harness": "harness-43",
+              "name": "name-42",
+              "session": "session-41",
+              "standing": true,
+              "x_unknown_field": "later"
+            }
+          ],
+          "x_unknown_field": "later"
+        },
+        "device_id": "device_id-6",
+        "generation": 8,
+        "harnesses": [
+          {
+            "name": "name-17",
+            "version": "version-18",
+            "x_unknown_field": "later"
+          }
+        ],
+        "host": "host-7",
+        "peers": [
+          "peers-37"
+        ],
+        "projects": [
+          {
+            "folders": [
+              {
+                "branch": "branch-30",
+                "dirty": true,
+                "head": "head-31",
+                "last_commit": "last_commit-32",
+                "path": "path-29",
+                "x_unknown_field": "later"
+              }
+            ],
+            "name": "name-25",
+            "remote": "remote-26",
+            "root_commit": "root_commit-27",
+            "summary": "summary-28",
+            "x_unknown_field": "later"
+          }
+        ],
+        "rounds": [
+          {
+            "completed": true,
+            "id": "id-44",
+            "last_run": "taken_over",
+            "last_run_at": "last_run_at-50",
+            "mode": "fork",
+            "name": "name-45",
+            "next_slot": "next_slot-49",
+            "paused": true,
+            "project": "project-47",
+            "remote": "remote-48",
+            "trigger": "trigger-46",
+            "x_unknown_field": "later"
+          }
+        ],
+        "services": [
+          {
+            "health": "health-22",
+            "name": "name-20",
+            "url": "url-21",
+            "x_unknown_field": "later"
+          }
+        ],
+        "system": {
+          "arch": "arch-12",
+          "cores": 13,
+          "memory_bytes": 14,
+          "os": "os-10",
+          "os_version": "os_version-11",
+          "x_unknown_field": "later"
+        },
+        "toolchains": [
+          {
+            "name": "name-15",
+            "version": "version-16",
+            "x_unknown_field": "later"
+          }
+        ],
+        "watches": [
+          "watches-38"
+        ],
+        "x_unknown_field": "later"
+      },
+      "label": "label-4",
+      "own": true,
+      "seen_at": "seen_at-5",
+      "stale": true,
+      "x_unknown_field": "later"
+    }
+  ],
+  "projects": [
+    {
+      "key": "key-51",
+      "locations": [
+        {
+          "device_id": "device_id-55",
+          "folders": [
+            {
+              "branch": "branch-58",
+              "dirty": true,
+              "head": "head-59",
+              "last_commit": "last_commit-60",
+              "path": "path-57",
+              "x_unknown_field": "later"
+            }
+          ],
+          "label": "label-56",
+          "stale": true,
+          "x_unknown_field": "later"
+        }
+      ],
+      "name": "name-52",
+      "remote": "remote-53",
+      "root_commit": "root_commit-54",
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

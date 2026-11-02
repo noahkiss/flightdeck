@@ -18,6 +18,7 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/link"
+	"github.com/noahkiss/flightdeck/internal/push"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
@@ -47,7 +48,7 @@ func TestRoundSettings(t *testing.T) {
 func fakeRoundsService(t *testing.T, state string, notices *[]string) *roundsService {
 	t.Helper()
 	svc, _ := fakeRoundsServiceWith(t, state, structure.NewFakeHolder(), func(c *roundsConfig) {
-		c.notice = func(title, body string) { *notices = append(*notices, title) }
+		c.raise = func(ev push.RoundEvent, _, _, _ string) { *notices = append(*notices, ev.Kind) }
 	})
 	return svc
 }
@@ -71,7 +72,7 @@ func fakeRoundsServiceWith(t *testing.T, state string, holder *structure.FakeHol
 		closePane:  func(context.Context, string) error { return nil },
 		projectFor: func(context.Context, string) (string, error) { return "", errors.New("no git") },
 		publish:    func(structure.Event) {},
-		notice:     func(string, string) {},
+		raise:      func(push.RoundEvent, string, string, string) {},
 		logf:       t.Logf,
 		// Only claude is installed.
 		lookHarness: func(name string) (string, error) {

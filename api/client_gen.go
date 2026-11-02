@@ -231,6 +231,7 @@ const (
 	PushKindError      PushKind = "error"
 	PushKindDone       PushKind = "done"
 	PushKindUsage      PushKind = "usage"
+	PushKindRound      PushKind = "round"
 )
 
 const (
@@ -255,6 +256,15 @@ const (
 	RoundModeFresh  RoundMode = "fresh"
 	RoundModeResume RoundMode = "resume"
 	RoundModeFork   RoundMode = "fork"
+)
+
+const (
+	RoundNoticeKindRunFailed     RoundNoticeKind = "run_failed"
+	RoundNoticeKindRunSucceeded  RoundNoticeKind = "run_succeeded"
+	RoundNoticeKindPaused        RoundNoticeKind = "paused"
+	RoundNoticeKindSkips         RoundNoticeKind = "skips"
+	RoundNoticeKindTargetGone    RoundNoticeKind = "target_gone"
+	RoundNoticeKindStateSetAside RoundNoticeKind = "state_set_aside"
 )
 
 const (

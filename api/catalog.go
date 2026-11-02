@@ -21,6 +21,23 @@ type Catalog struct {
 	Peers        []string            `json:"peers" doc:"The device ids in this hab's peer list."`
 	Watches      []string            `json:"watches" doc:"The peers marked always on that this hab watches: each is in its peer list and its copy carries the mark (mesh.md 8)."`
 	Capcom       *CatalogCapcom      `json:"capcom,omitempty" doc:"The Capcom home host as this hab knows it, and the Capcom sessions on this host (capcom.md 7.3). Absent from a hab without the capcom capability, and while no host was ever assigned and this host has no Capcom session."`
+	// Rounds was added within revision 1, a new field set of each catalog message (rounds.md 9).
+	Rounds []CatalogRound `json:"rounds,omitempty" doc:"The rounds this hab runs, by name. Absent from a hab without the rounds capability or with no round."`
+}
+
+// CatalogRound is one round on the publishing host, as peers see it (rounds.md 9, 10.3).
+type CatalogRound struct {
+	ID        string        `json:"id"`
+	Name      string        `json:"name"`
+	Mode      RoundMode     `json:"mode"`
+	Trigger   string        `json:"trigger" doc:"The trigger in plain words, such as every 1h, cron 0 9 * * 1-5 in Europe/Berlin, once at <time>, or by hand."`
+	Project   string        `json:"project,omitempty" doc:"The project's name on the publishing host. Absent for resume and fork rounds."`
+	Remote    string        `json:"remote,omitempty" doc:"The project's normalized remote, when it has one: its identity across hosts."`
+	NextSlot  string        `json:"next_slot,omitempty" doc:"RFC 3339 UTC time of the next slot. Absent when there is none."`
+	LastRun   RoundRunState `json:"last_run,omitempty" doc:"The newest run's state. Absent before the first run."`
+	LastRunAt string        `json:"last_run_at,omitempty" doc:"RFC 3339 time the newest run ended, else started, else was made."`
+	Paused    bool          `json:"paused,omitempty"`
+	Completed bool          `json:"completed,omitempty"`
 }
 
 // CatalogCapcom is one hab's view of the Capcom assignment, and its own Capcom sessions. Every
