@@ -75,6 +75,9 @@ type Row struct {
 	Round *api.SessionRound
 	// RoundName is the run's round's name; "round" when the host no longer has the round.
 	RoundName string
+	// RunBlocked: the round's newest run is this session's run and it is blocked, as on
+	// Claude Code's trust dialog, which gives no blocked agent state (rounds.md 7).
+	RunBlocked bool
 }
 
 // RunSession reports whether the row is a round's run session.
@@ -83,7 +86,9 @@ func (r Row) RunSession() bool { return r.Round != nil }
 // ShowRuns reports whether a row shows while the run-session filter hides run sessions: every
 // row but a run session that does not need the owner (app.md 21.2: a hidden approval would
 // stall the run).
-func ShowRuns(r Row, show bool) bool { return show || !r.RunSession() || r.Rank.NeedsYou() }
+func ShowRuns(r Row, show bool) bool {
+	return show || !r.RunSession() || r.Rank.NeedsYou() || r.RunBlocked
+}
 
 // Offline reports whether the row's host has no live connection.
 func (r Row) Offline() bool { return r.HostStatus != hosts.Online }
@@ -175,8 +180,12 @@ func Rows(hs []hosts.Host, seen Seen) []Row {
 			agents[st.Agents[i].Pane] = &st.Agents[i]
 		}
 		roundNames := map[string]string{}
+		blockedRuns := map[string]bool{} // round id + "/" + run id
 		for _, x := range st.Rounds {
 			roundNames[x.ID] = x.Name
+			if x.LastRun != nil && x.LastRun.State == api.RoundRunStateBlocked {
+				blockedRuns[x.ID+"/"+x.LastRun.ID] = true
+			}
 		}
 		filed := map[string]bool{}
 		for _, s := range st.Sessions {
@@ -185,6 +194,7 @@ func Rows(hs []hosts.Host, seen Seen) []Row {
 			if s.Round != nil {
 				rr := *s.Round
 				r.Round, r.RoundName = &rr, roundNames[rr.Round]
+				r.RunBlocked = blockedRuns[rr.Round+"/"+rr.Run]
 				if r.RoundName == "" {
 					r.RoundName = "round"
 				}

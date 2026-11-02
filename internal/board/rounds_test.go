@@ -115,3 +115,25 @@ func TestRunSessionFilter(t *testing.T) {
 		t.Fatalf("round names: %v", names)
 	}
 }
+
+// TestRunSessionFilterTrustDialog: a run blocked on Claude Code's trust dialog has no blocked
+// agent state, yet its session stays shown while the filter hides run sessions. An older run
+// of the same round that is not the blocked one stays hidden.
+func TestRunSessionFilterTrustDialog(t *testing.T) {
+	r1 := round("r1", "nightly", "", false, false)
+	r1.LastRun = &api.RoundRun{ID: "x2", Round: "r1", State: api.RoundRunStateBlocked, Session: "s2"}
+	h := hosts.Host{Label: "a", Status: hosts.Online, Structure: api.Structure{
+		Rounds: []api.Round{r1},
+		Sessions: []api.Session{
+			{ID: "s1", Name: "old", Pane: "p1", Round: &api.SessionRound{Round: "r1", Run: "x1"}},
+			{ID: "s2", Name: "trust", Pane: "p2", Round: &api.SessionRound{Round: "r1", Run: "x2"}},
+		},
+	}}
+	shown := map[string]bool{}
+	for _, r := range Rows([]hosts.Host{h}, nil) {
+		shown[r.Name] = ShowRuns(r, false)
+	}
+	if shown["old"] || !shown["trust"] {
+		t.Fatalf("hidden filter: %v", shown)
+	}
+}
