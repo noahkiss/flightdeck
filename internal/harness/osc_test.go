@@ -192,6 +192,34 @@ func TestPermissionKeys(t *testing.T) {
 	}
 }
 
+// TestPlanApproveKey: the plan dialog's approve key is read by its label from a hand-written
+// screen of Claude Code 2.1.316's plan dialog, never "1" (clear context and auto-accept).
+func TestPlanApproveKey(t *testing.T) {
+	b, err := os.ReadFile("testdata/claude-plan-dialog-2.1.316.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := strings.Split(string(b), "\n")
+	if k, ok := PlanApproveKey(rows); !ok || string(k) != "3" {
+		t.Errorf("fixture: %q %v, want 3", k, ok)
+	}
+	// Options in another order still pick by label.
+	moved := []string{"  1. Yes, manually approve edits", "❯ 2. Yes, auto-accept edits", "  3. No, keep planning"}
+	if k, ok := PlanApproveKey(moved); !ok || string(k) != "1" {
+		t.Errorf("moved: %q %v", k, ok)
+	}
+	for name, rs := range map[string][]string{
+		"no dialog":     {"$ ls", "README.md"},
+		"label renamed": {"❯ 1. Yes, clear context", "  2. Yes, approve each edit", "  3. No, keep planning"},
+		// A plan step that repeats the label makes the screen ambiguous: nothing is sent.
+		"label twice": append([]string{"│ │ 3. Yes, manually approve edits │ │"}, rows...),
+	} {
+		if k, ok := PlanApproveKey(rs); ok {
+			t.Errorf("%s: got key %q", name, k)
+		}
+	}
+}
+
 func TestChangedFires(t *testing.T) {
 	var events []structure.Event
 	s := newTestStore(&events)

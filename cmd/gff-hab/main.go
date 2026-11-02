@@ -706,7 +706,7 @@ func serve(args []string) error {
 		commands = commandService{lk}
 		caps = append(caps, "commands")
 		agentSvc = &agentService{store: store, agents: agents, gate: gate, input: linkQueuer{lk}, logf: logger.Printf,
-			answering: pushes.answering, opencode: ocs, attachments: attachSvc}
+			answering: pushes.answering, opencode: ocs, attachments: attachSvc, screen: linkScreen(lk)}
 		agentCalls = agentSvc
 		// Why a pane shows its state (harness-adapters.md, Detection): read only.
 		// The manifests are parsed now, off the start path, and again only when the data

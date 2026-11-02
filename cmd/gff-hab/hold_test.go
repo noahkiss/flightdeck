@@ -13,6 +13,34 @@ import (
 	"github.com/noahkiss/flightdeck/internal/progstatus"
 )
 
+// TestPlanAnswerKeys: approving a Claude Code plan by keys picks "Yes, manually approve
+// edits" by its label on screen, never "1"; with no such row, or no screen, nothing is sent.
+// Deny stays Esc ("No, keep planning"), and other requests keep their keys.
+func TestPlanAnswerKeys(t *testing.T) {
+	dialog := []string{"│ Would you like to proceed? │", "│ ❯ 1. Yes, clear context and auto-accept edits (shift+tab) │",
+		"│   2. Yes, auto-accept edits │", "│   3. Yes, manually approve edits │", "│   4. No, keep planning │"}
+	plan := api.AgentState{Harness: "claude", Request: &api.PermissionRequest{ID: "r", Tool: harness.ToolPlan}}
+	bash := api.AgentState{Harness: "claude", Request: &api.PermissionRequest{ID: "r", Tool: "Bash", Command: "make"}}
+	rows := dialog
+	a := &agentService{screen: func(string) ([]string, error) { return rows, nil }}
+	if k, err := a.permissionKeys("p", plan, true); err != nil || string(k) != "3" {
+		t.Errorf("plan allow: %q %v", k, err)
+	}
+	if k, err := a.permissionKeys("p", plan, false); err != nil || string(k) != "\x1b" {
+		t.Errorf("plan deny: %q %v", k, err)
+	}
+	if k, err := a.permissionKeys("p", bash, true); err != nil || string(k) != "1" {
+		t.Errorf("bash allow: %q %v", k, err)
+	}
+	rows = []string{"$ "}
+	if k, err := a.permissionKeys("p", plan, true); errKind(err) != api.ErrorKindUnavailable {
+		t.Errorf("plan with no dialog: %q %v", k, err)
+	}
+	if k, err := (&agentService{}).permissionKeys("p", plan, true); errKind(err) != api.ErrorKindUnavailable {
+		t.Errorf("plan with no screen: %q %v", k, err)
+	}
+}
+
 // keyLog records the writes an agentService queues.
 type keyLog struct {
 	mu     sync.Mutex

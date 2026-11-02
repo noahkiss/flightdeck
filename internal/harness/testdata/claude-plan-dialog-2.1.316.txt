@@ -1,0 +1,20 @@
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Ready to code?                                                               │
+│                                                                              │
+│ Here is Claude's plan:                                                       │
+│ ╭──────────────────────────────────────────────────────────────────────────╮ │
+│ │ Add a rate limit to the login form                                       │ │
+│ │                                                                          │ │
+│ │ 1. Count failed attempts per address in the session store                │ │
+│ │ 2. Refuse a sign-in after 5 failures in 10 minutes                       │ │
+│ │ 3. Add tests for the limit and its reset                                 │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ Would you like to proceed?                                                   │
+│                                                                              │
+│ ❯ 1. Yes, clear context and auto-accept edits (shift+tab)                    │
+│   2. Yes, auto-accept edits                                                  │
+│   3. Yes, manually approve edits                                             │
+│   4. No, keep planning                                                       │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯

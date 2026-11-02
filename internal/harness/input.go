@@ -3,6 +3,7 @@ package harness
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -326,6 +327,35 @@ func ImageMessageWrites(harness, text string, images []string) ([][]byte, error)
 		return nil, errors.New("the message is empty")
 	}
 	return append(out, []byte("\r")), nil
+}
+
+// ToolPlan is Claude Code's plan approval tool. Its dialog is not the usual Yes and No.
+const ToolPlan = "ExitPlanMode"
+
+// planManual is the label of the plan dialog option that approves the plan and leaves edits to
+// ask, as before plan mode.
+const planManual = "manually approve edits"
+
+// optionLine is one numbered option of a select, inside a box or not, with the cursor or not.
+var optionLine = regexp.MustCompile(`^[\s│]*(?:[❯›>]\s*)?([1-9])[.)]\s+(.+?)[\s│]*$`)
+
+// PlanApproveKey returns the key that picks "Yes, manually approve edits" in Claude Code's
+// plan dialog, read by its label from the visible rows. The dialog's first option clears the
+// context and turns on auto-accept, so "1" never approves a plan. It reports false when no row
+// or more than one row carries that label: the hab then sends nothing.
+func PlanApproveKey(rows []string) ([]byte, bool) {
+	var key []byte
+	for _, row := range rows {
+		m := optionLine.FindStringSubmatch(row)
+		if m == nil || !strings.Contains(strings.ToLower(m[2]), planManual) {
+			continue
+		}
+		if key != nil {
+			return nil, false
+		}
+		key = []byte(m[1])
+	}
+	return key, key != nil
 }
 
 // PermissionKeys returns the keys that choose allow or deny in harness's permission dialog.

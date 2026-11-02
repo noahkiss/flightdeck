@@ -74,6 +74,9 @@ type agentService struct {
 	// attachments holds the files of a send's attachment ids, and hears of each delivered send
 	// (app.md 4.4). Nil: a send with attachments answers unavailable.
 	attachments attachmentStore
+	// screen reads a pane's visible rows, for answers picked by label (a Claude Code plan).
+	// Nil: such an answer is refused.
+	screen func(pane string) ([]string, error)
 
 	mu      sync.Mutex
 	sending map[string]bool // panes a session.send holds until the turn starts
@@ -298,9 +301,9 @@ func (a *agentService) Answer(ctx context.Context, client string, p api.Approval
 			// nobody answered, whose dialog may still be on screen: keys would answer that one.
 			return control.Errorf(api.ErrorKindConflict, "pane %s may not show request %s on screen (the terminal said otherwise, or it came while another request was open); answer it in the terminal", p.Pane, p.Request)
 		}
-		keys, err := harness.PermissionKeys(st.Harness, allow)
+		keys, err := a.permissionKeys(p.Pane, st, allow)
 		if err != nil {
-			return agentErr(err)
+			return err
 		}
 		sent = true // a write that fails may still have reached the dialog
 		a.agents.Sent(p.Pane, p.Request)
@@ -318,6 +321,43 @@ func (a *agentService) Answer(ctx context.Context, client string, p api.Approval
 		a.agents.Unsent(p.Pane, p.Request)
 	}
 	return err
+}
+
+// linkScreen reads a pane's visible rows through the holder link.
+func linkScreen(lk *link.Link) func(pane string) ([]string, error) {
+	return func(pane string) ([]string, error) {
+		u, ok := parseUUID(pane)
+		if !ok {
+			return nil, fmt.Errorf("pane %q is not a pane id", pane)
+		}
+		rows, _, err := lk.VisibleRows(u)
+		return rows, err
+	}
+}
+
+// permissionKeys returns the keys that answer the pane's dialog. Approving a Claude Code plan
+// picks "Yes, manually approve edits" by its label on screen: the dialog's first option clears
+// the context and turns on auto-accept. With no such row on screen, nothing is sent.
+func (a *agentService) permissionKeys(pane string, st api.AgentState, allow bool) ([]byte, error) {
+	if allow && st.Harness == detect.KindClaude && st.Request != nil && st.Request.Tool == harness.ToolPlan {
+		var rows []string
+		if a.screen != nil {
+			r, err := a.screen(pane)
+			if err != nil {
+				return nil, control.Errorf(api.ErrorKindUnavailable, "pane %s: reading the plan dialog: %v", pane, err)
+			}
+			rows = r
+		}
+		if k, ok := harness.PlanApproveKey(rows); ok {
+			return k, nil
+		}
+		return nil, control.Errorf(api.ErrorKindUnavailable, "pane %s does not show one \"Yes, manually approve edits\" option; approve the plan in the terminal", pane)
+	}
+	keys, err := harness.PermissionKeys(st.Harness, allow)
+	if err != nil {
+		return nil, agentErr(err)
+	}
+	return keys, nil
 }
 
 // opencodeClient returns the client of the pane's opencode server when the pane runs opencode
