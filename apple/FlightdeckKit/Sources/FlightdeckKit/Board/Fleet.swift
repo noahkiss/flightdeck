@@ -41,7 +41,8 @@ public final class Fleet {
         label: { [weak self] id in self?.board.habs.first { $0.id == id }?.label ?? id },
         online: { [weak self] id in self?.board.habs.first { $0.id == id }?.state.status == .online },
         device: { [weak self] d in self?.habID(device: d) },
-        allOnline: { [weak self] in self?.board.habs.allSatisfy { $0.state.status == .online } ?? true }))
+        allOnline: { [weak self] in self?.board.habs.allSatisfy { $0.state.status == .online } ?? true },
+        statuses: { [weak self] in self?.board.habs.map { ($0.id, $0.state.status) } ?? [] }))
 
     /// The hab with this device id: a live welcome's, else the hab book's.
     func habID(device: String) -> String? {
@@ -149,6 +150,7 @@ public final class Fleet {
         book?.forget(connection: id)
         usage?.book.forget(habID: id)
         settings?.forget(habID: id)
+        capcom.forget(habID: id)
         badgeChanged()
     }
 
@@ -168,6 +170,10 @@ public final class Fleet {
         }
         Task { @MainActor [weak self] in
             await self?.settings?.connectionOnline(habID: id)
+        }
+        // Where Capcom runs, for the Capcom view (app.md 4.10).
+        Task { @MainActor [weak self] in
+            await self?.capcom.habOnline(id)
         }
     }
 

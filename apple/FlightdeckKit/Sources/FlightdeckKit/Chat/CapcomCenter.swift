@@ -17,6 +17,19 @@ public final class CapcomCenter {
     /// Why the last open failed, for an alert; the view clears it.
     public var failure: CapcomFailure?
 
+    // The Capcom view's state (app.md 4.10): where the home is, and its standing conversation.
+
+    /// What each hab's catalog says of the Capcom home, by hab id.
+    public internal(set) var beliefs: [String: CapcomBelief] = [:]
+    /// Habs whose catalog read is on its way.
+    public internal(set) var reading: Set<String> = []
+    /// The standing conversation's chat model, from the last `capcom.open` with no context.
+    public internal(set) var standing: ChatModel?
+    /// Why the last open of the standing conversation failed; nil after a success.
+    public internal(set) var standingFailure: String?
+    /// An open of the standing conversation is on its way.
+    public internal(set) var opening = false
+
     /// The hooks into the fleet.
     public struct Habs {
         /// The live connection of a hab, by id.
@@ -31,23 +44,27 @@ public final class CapcomCenter {
         public var device: @MainActor (String) -> String?
         /// Whether every hab in the app is online: no welcome is still to come.
         public var allOnline: @MainActor () -> Bool
+        /// Every hab in the app, by id, with its status.
+        public var statuses: @MainActor () -> [(id: String, status: HabStatus)]
 
         public init(connection: @escaping @MainActor (String) -> HabConnection?,
                     chat: @escaping @MainActor (SessionTarget) -> ChatModel,
                     label: @escaping @MainActor (String) -> String,
                     online: @escaping @MainActor (String) -> Bool,
                     device: @escaping @MainActor (String) -> String?,
-                    allOnline: @escaping @MainActor () -> Bool) {
+                    allOnline: @escaping @MainActor () -> Bool,
+                    statuses: @escaping @MainActor () -> [(id: String, status: HabStatus)] = { [] }) {
             self.connection = connection
             self.chat = chat
             self.label = label
             self.online = online
             self.device = device
             self.allOnline = allOnline
+            self.statuses = statuses
         }
     }
 
-    @ObservationIgnored private let habs: Habs
+    @ObservationIgnored let habs: Habs
     /// The model last opened, held until its view takes it: the fleet keeps models weakly.
     @ObservationIgnored public private(set) var held: ChatModel?
     /// How long "Ask an agent" waits for the Capcom host to come online after the app opens.
@@ -75,17 +92,26 @@ public final class CapcomCenter {
         }
     }
 
-    private func run(habID: String, context: [CapcomContextRef], new: Bool) async throws -> ChatModel {
+    /// Calls `capcom.open`. With `request`, the board opens the result's session; without,
+    /// the caller shows it (the Capcom view).
+    func run(habID: String, context: [CapcomContextRef], new: Bool, request: Bool = true) async throws -> ChatModel {
         guard let conn = habs.connection(habID) else { throw TransportError("that hab is no longer in the app") }
         let r = try await conn.call(HabMethods.capcomOpen, CapcomOpenParams(context: context.isEmpty ? nil : context, new: new ? true : nil))
+        guard request else { return model(habID: habID, opened: r) }
         return show(habID: habID, opened: r)
+    }
+
+    /// The chat model of an open's session, with its chips.
+    private func model(habID: String, opened r: CapcomOpened) -> ChatModel {
+        let m = habs.chat(SessionTarget(habID: habID, session: r.session, pane: r.pane))
+        m.takePending(r.pending)
+        return m
     }
 
     /// Hands an open's result to its chat model and asks the board to open it.
     func show(habID: String, opened r: CapcomOpened) -> ChatModel {
+        let m = model(habID: habID, opened: r)
         let target = SessionTarget(habID: habID, session: r.session, pane: r.pane)
-        let m = habs.chat(target)
-        m.takePending(r.pending)
         held = m
         openRequest = target
         // A session the board never lists does not open much later, and the model is let go
@@ -179,8 +205,8 @@ public final class CapcomCenter {
 
     // MARK: - New conversation
 
-    /// "New conversation" beside the chips (capcom.md 8.2): `capcom.open {new: true}` with the
-    /// chips that can move, opens the new one with `draft` in its composer, attaches the files
+    /// "New conversation" in the Capcom view's toolbar (capcom.md 8.2): `capcom.open {new: true}`
+    /// with the chips that can move, opens the new one with `draft` in its composer, attaches the files
     /// again there, and only then detaches from the old conversation what reached the new one.
     /// A file that could not go up again stays on the old one. Returns false when the open was
     /// refused; the old conversation then keeps everything, with the hab's text.
@@ -193,7 +219,11 @@ public final class CapcomCenter {
         old.capcomBusy = true
         let m: ChatModel
         do {
-            m = try await run(habID: habID, context: refs, new: true)
+            // From the standing conversation, the Capcom view shows the new one in its place;
+            // from any other Capcom session, the board opens it.
+            let wasStanding = standing === old
+            m = try await run(habID: habID, context: refs, new: true, request: !wasStanding)
+            if wasStanding { standing = m }
         } catch {
             old.capcomBusy = false
             old.notice = Self.message(error, label: habs.label(habID), doing: nil)

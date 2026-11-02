@@ -225,6 +225,31 @@ public actor FakeHab {
     }
     /// Adds a console command a `command` ref resolves.
     public func addCapcomCommand(pane: String, id: UInt64, line: String) { capcomCommands["\(pane):\(id)"] = line }
+    /// The Capcom home this hab believes in (capcom.md 7.6): the assignment counter and the
+    /// home's device id (nil: none assigned), served in `catalog.get`. Unset, this hab is the
+    /// home at assignment 1. A home that is not this hab makes `capcom.open` answer
+    /// `unavailable` naming it, and none says to assign one, as the real hab does.
+    private var capcomHomeSet: (assignment: UInt64, home: String?)?
+    public var capcomHome: (assignment: UInt64, home: String?) { capcomHomeSet ?? (1, deviceID) }
+    /// Every `catalog.get` received.
+    public private(set) var catalogGets = 0
+    /// This hab's device id, as its welcome gives it.
+    public nonisolated var deviceID: String { Self.deviceID(host: hostID) }
+    /// The device id a fake hab with this host id gives.
+    public static func deviceID(host: String) -> String { "SHA256:fake-" + host }
+    /// Sets the Capcom home this hab believes in; a nil home for none assigned.
+    public func setCapcomHome(assignment: UInt64, home: String?) {
+        capcomHomeSet = (assignment, home)
+    }
+    /// Adds a Capcom session without an event, as a state file read at start; `standing`
+    /// makes it the standing conversation.
+    public func loadCapcomSession(_ id: String, name: String, pane: String, standing: Bool) {
+        sessions[id] = Session(dir: "/state/capcom/\(id)", id: id, kind: .capcom, name: name, pane: pane, revision: 1, state: .running)
+        panes[pane] = Fixture.pane(pane, session: id)
+        agents[pane] = Fixture.agent(pane: pane, harness: "claude", state: .idle)
+        capcomCount += 1
+        if standing { capcomStanding = id }
+    }
     /// Makes the next Capcom call fail with this error.
     public func failNextCapcom(kind: ErrorKind, hint: String) { nextCapcomFailure = Failure(kind: kind, hint: hint) }
     /// What waits for a Capcom session's next message.
@@ -829,6 +854,9 @@ public actor FakeHab {
             await reply(c, id: id, result: NoticeRaised(id: "n\(notices.count)", pushed: 0, seq: c.seq))
         case HabMethods.capcomOpen.name, HabMethods.capcomAttach.name, HabMethods.capcomDetach.name, HabMethods.capcomPending.name:
             await capcomCall(method, params, c, id: id)
+        case HabMethods.catalogGet.name where capabilities.contains("catalog") || capabilities.contains("capcom"):
+            catalogGets += 1
+            await reply(c, id: id, result: CatalogGetResult(catalog: catalog(), generation: 1, seq: c.seq))
         case HabMethods.confirmAnswer.name where capabilities.contains(ConfirmBook.capability):
             guard let p = try? params.decode(ConfirmAnswerParams.self) else {
                 await fail(c, id: id, kind: .invalid, hint: "bad confirm.answer params")
@@ -929,6 +957,13 @@ public actor FakeHab {
             case HabMethods.capcomOpen.name:
                 let p = try decode(CapcomOpenParams.self, params, method)
                 capcomOpens.append(p)
+                // Not the home host (capcom.md 7.6): the real hab names the home, or says to assign one.
+                guard let home = capcomHome.home else {
+                    throw Failure(kind: .unavailable, hint: "no Capcom home host is assigned; run gff-hab capcom assign")
+                }
+                guard home == deviceID else {
+                    throw Failure(kind: .unavailable, hint: "Capcom runs on \(capcomPeers[home] ?? home); open it there")
+                }
                 let refs = p.context ?? []
                 guard refs.count <= 8 else { throw Failure(kind: .invalid, hint: "at most 8 context items") }
                 if refs.contains(where: { $0.kind == .file }) {
@@ -993,6 +1028,22 @@ public actor FakeHab {
         } catch {
             await fail(c, id: id, kind: .invalid, hint: "bad \(method) params")
         }
+    }
+
+    /// A minimal catalog: the host, its device id and, with the capability `capcom`, the
+    /// Capcom section (capcom.md 7.6).
+    private func catalog() -> Catalog {
+        var cap: CatalogCapcom?
+        if capabilities.contains("capcom") {
+            let mine = sessions.values.filter { $0.kind == .capcom }.sorted { $0.id < $1.id }
+                .map { CatalogCapcomSession(harness: "claude", name: $0.name, session: $0.id, standing: $0.id == capcomStanding ? true : nil) }
+            if capcomHome.home != nil || !mine.isEmpty {
+                cap = CatalogCapcom(assignment: capcomHome.home == nil ? 0 : capcomHome.assignment, home: capcomHome.home, sessions: mine)
+            }
+        }
+        return Catalog(actions: [], agents: [], at: Fixture.stamp(Date()), capabilities: [], capcom: cap, deviceId: deviceID,
+                       generation: 1, harnesses: [], host: hostID, peers: [], projects: [], services: [],
+                       system: CatalogSystem(arch: "arm64", cores: 8, os: "darwin"), toolchains: [], watches: [])
     }
 
     private func decode<T: Decodable>(_ t: T.Type, _ params: JSONValue, _ method: String) throws -> T {
