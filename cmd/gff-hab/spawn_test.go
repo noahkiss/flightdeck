@@ -319,8 +319,8 @@ func TestSessionCreateAndClose(t *testing.T) {
 	if kind := callErr(t, sock, "session.create", api.SessionCreateParams{Name: "loop", Argv: []string{"/bin/true"}}); kind != "conflict" {
 		t.Errorf("a taken name: %s, want conflict", kind)
 	}
-	if kind := callErr(t, sock, "session.create", api.SessionCreateParams{Harness: "claude"}); kind != "unavailable" {
-		t.Errorf("a harness: %s, want unavailable", kind)
+	if kind := callErr(t, sock, "session.create", api.SessionCreateParams{Harness: "pi"}); kind != "unavailable" {
+		t.Errorf("a harness with no adapter: %s, want unavailable", kind)
 	}
 	if kind := callErr(t, sock, "pane.close", api.PaneRef{Pane: "fd000000-0000-4000-8000-0000000000ff"}); kind != "not_found" {
 		t.Errorf("an unknown pane: %s, want not_found", kind)
