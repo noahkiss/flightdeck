@@ -111,6 +111,20 @@ jobs:
             exit 1
           fi
 
+      # Found before an hour of builds, not after: publish never replaces a release (7.4).
+      - name: Check no release exists for the tag
+        if: ${{ steps.tag.outputs.dry_run != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" -R "$REPO" > /dev/null 2>&1; then
+            echo "::error::A release for $TAG already exists. Assets are never replaced: delete it (a draft) by hand, then dispatch again. To retry a failed tap bump, use Re-run failed jobs on the run that published."
+            exit 1
+          fi
+
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -164,7 +178,7 @@ jobs:
           while read -r id head; do
             [ -n "$id" ] || continue
             git merge-base --is-ancestor "$head" "$sha" 2>/dev/null || continue
-            changed=$(git diff --no-renames --name-only "$head" "$sha" | "$RUNNER_TEMP/pathfilter" -patterns "$RUNNER_TEMP/ci-paths")
+            changed=$(git -c core.quotePath=false diff --no-renames --name-only "$head" "$sha" | "$RUNNER_TEMP/pathfilter" -patterns "$RUNNER_TEMP/ci-paths")
             [ -z "$changed" ] || continue
             if full "$id"; then
               echo "ci.yml run $id on main at $head passed the full set; nothing ci.yml tests changed since."
@@ -173,7 +187,8 @@ jobs:
           done <<< "$runs"
 
           echo "No passing full ci.yml run covers $TAG. Dispatching ci.yml on the tag."
-          since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          # A minute early, so a runner clock ahead of GitHub's still finds the run; headSha narrows it.
+          since=$(date -u -d '-60 sec' +%Y-%m-%dT%H:%M:%SZ)
           gh workflow run ci.yml -R "$REPO" --ref "$TAG"
           id=
           for _ in $(seq 1 30); do
@@ -285,11 +300,6 @@ jobs:
     env:
       VERSION: ${{ needs.verify.outputs.version }}
       ASSET: gff_${{ needs.verify.outputs.version }}_darwin_arm64
-      # macOS 13.0 is the floor libghostty builds for (7.3). The CGO flags carry it too, because
-      # the Go build cache does not key on MACOSX_DEPLOYMENT_TARGET.
-      MACOSX_DEPLOYMENT_TARGET: '13.0'
-      CGO_CFLAGS: -O2 -g -mmacosx-version-min=13.0
-      CGO_LDFLAGS: -O2 -g -mmacosx-version-min=13.0
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -314,7 +324,8 @@ jobs:
           path: build/libghostty-vt
           key: ${{ needs.verify.outputs.ghostty_key }}-macOS-ARM64-baseline
 
-      # No GHOSTTY_ZIGFLAGS: Ghostty's build sets its own macOS target (7.3).
+      # No GHOSTTY_ZIGFLAGS: Ghostty's build sets its own macOS target (7.3). make release-build
+      # sets the macOS 13.0 minimum for cgo and the link.
       - name: Build
         env:
           BUILD: ${{ needs.verify.outputs.build }}
@@ -324,8 +335,15 @@ jobs:
         uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.329.0
         with:
           ruby-version: '4.0'
-          bundler-cache: true
           working-directory: .github/fastlane
+
+      # No bundler cache: a cache saved on a tag is visible to that tag only, and no main run
+      # installs these gems, so a cache would never be read (5).
+      - name: Install fastlane
+        working-directory: .github/fastlane
+        env:
+          BUNDLE_FROZEN: 'true'
+        run: bundle install --jobs 4 --retry 3
 
       # A throwaway keychain with a random password, and the keys in private files.
       - name: Keychain and keys
@@ -409,7 +427,7 @@ jobs:
           mkdir -p dist "$RUNNER_TEMP/$ASSET"
           ditto "$RUNNER_TEMP/bundle/gff-macos" "$RUNNER_TEMP/$ASSET"
           cp LICENSE NOTICE "$RUNNER_TEMP/$ASSET/"
-          COPYFILE_DISABLE=1 tar -C "$RUNNER_TEMP" -czf "dist/$ASSET.tar.gz" "$ASSET"
+          COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -C "$RUNNER_TEMP" -czf "dist/$ASSET.tar.gz" "$ASSET"
           (cd dist && shasum -a 256 "$ASSET.tar.gz" > "$ASSET.tar.gz.sha256")
           cat "dist/$ASSET.tar.gz.sha256"
 
@@ -474,11 +492,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
           PRERELEASE: ${{ needs.verify.outputs.prerelease }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" -R "$REPO" > /dev/null 2>&1; then
             echo "::error::A release for $TAG already exists. Assets are never replaced: delete it (a draft) by hand, then dispatch again."
+            exit 1
+          fi
+          # The release attaches to wherever the tag points now; the binaries are of $SHA.
+          now=$(gh api "repos/$REPO/commits/$TAG" --jq .sha)
+          if [ "$now" != "$SHA" ]; then
+            echo "::error::$TAG moved to $now during this run, which built $SHA. Nothing was published; the run for the new tag builds it."
             exit 1
           fi
           flags=(--draft --verify-tag --generate-notes --title "$TAG")
