@@ -431,7 +431,9 @@ func (s *Store) affectedBy(ctx context.Context, tx txn, ops []*Op, affected map[
 const appliedKnown = ` FROM ops o JOIN origins g ON g.origin = o.origin WHERE o.known = 1 AND o.seq <= g.applied`
 
 // refold folds the given records again from their ops and replaces their folded rows. It returns
-// the ops a record type's rules kept out.
+// the ops a record type's rules kept out. Proposals fold first: a record an approve made folds
+// against its proposal's standing decision (9.3). A refolded proposal also refolds the records
+// its approve batches touched, and adds their roots to roots, so callers see them change.
 func (s *Store) refold(ctx context.Context, tx txn, roots map[string]bool) (map[OpID]bool, error) {
 	skipped := map[OpID]bool{}
 	list := sortedKeys(roots)
@@ -444,36 +446,89 @@ func (s *Store) refold(ctx context.Context, tx txn, roots map[string]bool) (map[
 		}
 		projects = projects || typ == TypeProject
 	}
-	for _, root := range list {
+	var props, rest []*Op
+	load := func(root string) error {
 		id, err := ParseOpID(root)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		creates, err := scanOps(tx.QueryContext(ctx, `SELECT o.raw`+appliedKnown+` AND o.origin = ? AND o.seq = ? AND o.kind = 'create'`,
 			id.Origin, id.Seq))
-		if err != nil {
+		if err != nil || len(creates) == 0 {
+			return err
+		}
+		var cv createValue
+		_ = json.Unmarshal(creates[0].Value, &cv)
+		if cv.Type == TypeProposal {
+			props = append(props, creates[0])
+		} else {
+			rest = append(rest, creates[0])
+		}
+		return nil
+	}
+	for _, root := range list {
+		if err := load(root); err != nil {
 			return nil, err
 		}
-		if len(creates) == 0 {
-			continue
-		}
-		create := creates[0]
+	}
+	batches := map[batchKey]batchVerdict{}
+	foldOne := func(create *Op) error {
+		root := create.ID().String()
 		siblings, err := scanOps(tx.QueryContext(ctx, `SELECT o.raw`+appliedKnown+` AND o.kind = 'create' AND o.record = ?`, create.Record))
 		if err != nil {
-			return nil, err
+			return err
 		}
 		slices.SortFunc(siblings, opCmp)
 		collision := slices.IndexFunc(siblings, func(p *Op) bool { return p.ID() == create.ID() })
 		ops, err := scanOps(tx.QueryContext(ctx, `SELECT o.raw`+appliedKnown+` AND o.root = ? AND o.kind != 'create'`, root))
 		if err != nil {
-			return nil, err
+			return err
 		}
-		f := fold(create, ops, collision)
+		ov, err := s.overruled(ctx, tx, append([]*Op{create}, ops...), batches)
+		if err != nil {
+			return err
+		}
+		f := fold(create, ops, collision, ov)
 		projects = projects || f.Type == TypeProject
 		for _, sk := range f.Skipped {
 			skipped[sk] = true
 		}
-		if err := writeFolded(ctx, tx, f); err != nil {
+		return writeFolded(ctx, tx, f)
+	}
+	for _, c := range props {
+		if err := foldOne(c); err != nil {
+			return nil, err
+		}
+	}
+	for _, c := range props {
+		made, err := decisionRoots(ctx, tx, c.ID().String())
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range made {
+			if roots[r] {
+				continue
+			}
+			roots[r] = true
+			if _, err := deleteFolded(ctx, tx, r); err != nil {
+				return nil, err
+			}
+			n := len(props)
+			if err := load(r); err != nil {
+				return nil, err
+			}
+			if len(props) > n {
+				// A proposal an approve's draft made: it folds as any record.
+				rest = append(rest, props[n])
+				props = props[:n]
+			}
+		}
+	}
+	// The proposals' standing decisions are in the folded tables now; what was cached while they
+	// folded predates them.
+	clear(batches)
+	for _, c := range rest {
+		if err := foldOne(c); err != nil {
 			return nil, err
 		}
 	}
@@ -483,6 +538,142 @@ func (s *Store) refold(ctx context.Context, tx txn, roots map[string]bool) (map[
 		}
 	}
 	return skipped, nil
+}
+
+// batchKey names one batch: its origin and its last seq.
+type batchKey struct {
+	origin string
+	last   uint64
+}
+
+// batchOps calls fn for each op of the batch that ends at last, from its last op back, until fn
+// returns false. A batch's ops are the run of seqs that share its last seq (4.2).
+func batchOps(ctx context.Context, tx queryer, origin string, last uint64, fn func(*Op) bool) error {
+	rows, err := tx.QueryContext(ctx, `SELECT batch_last, raw FROM ops WHERE origin = ? AND seq <= ? ORDER BY seq DESC`, origin, last)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var bl uint64
+		var raw []byte
+		if err := rows.Scan(&bl, &raw); err != nil {
+			return err
+		}
+		if bl != last {
+			break
+		}
+		o, err := decodeOp(raw)
+		if err != nil {
+			return err
+		}
+		if !fn(o) {
+			break
+		}
+	}
+	return rows.Err()
+}
+
+// approval reports whether o sets a proposal's status to an approve, in an approve batch: one
+// whose actor names the approving device (9.2).
+func approval(o *Op) bool {
+	if o.Kind != KindSet || o.Field != "status" || o.Actor == nil || o.Actor.ApprovedBy == "" || !o.known() {
+		return false
+	}
+	var st string
+	return json.Unmarshal(o.Value, &st) == nil && slices.Contains(approvals, st)
+}
+
+// batchVerdict is what refold learned of one approve batch: its decision, and the decision that
+// stands over it when that is another one.
+type batchVerdict struct {
+	dec, win *Op
+}
+
+// overruled names the ops among ops that came in an approve batch whose decision did not stand
+// (9.3), each with the decision that did. The proposal's own ops are never overruled: its fold
+// keeps the first decision. A proposal this replica has not folded yet has no standing decision:
+// its approves stand until it folds. batches caches each batch's verdict.
+func (s *Store) overruled(ctx context.Context, tx txn, ops []*Op, batches map[batchKey]batchVerdict) (overrule, error) {
+	var ov overrule
+	for _, o := range ops {
+		if o.Actor == nil || o.Actor.ApprovedBy == "" {
+			continue
+		}
+		key := batchKey{o.Origin, o.BatchLast}
+		v, ok := batches[key]
+		if !ok {
+			var dec, win *Op
+			err := batchOps(ctx, tx, o.Origin, o.BatchLast, func(b *Op) bool {
+				if approval(b) {
+					dec = b
+					return false
+				}
+				return true
+			})
+			if err != nil {
+				return nil, err
+			}
+			if dec != nil {
+				var standing string
+				err := tx.QueryRowContext(ctx, `SELECT f.op FROM fields f JOIN records r ON r.root = f.root
+					WHERE f.root = ? AND f.field = 'status' AND r.type = ?`, dec.Root.String(), TypeProposal).Scan(&standing)
+				switch {
+				case errors.Is(err, sql.ErrNoRows):
+				case err != nil:
+					return nil, err
+				case standing != dec.ID().String():
+					id, err := ParseOpID(standing)
+					if err != nil {
+						return nil, err
+					}
+					raw, err := storedRaw(ctx, tx, id)
+					if err != nil {
+						return nil, err
+					}
+					if raw != nil {
+						if win, err = decodeOp(raw); err != nil {
+							return nil, err
+						}
+					}
+				}
+			}
+			v = batchVerdict{dec: dec, win: win}
+			batches[key] = v
+		}
+		if v.win != nil && v.dec.Root != o.Root {
+			if ov == nil {
+				ov = overrule{}
+			}
+			ov[o.ID()] = v.win
+		}
+	}
+	return ov, nil
+}
+
+// decisionRoots returns the roots of the other records the proposal's approve batches touched:
+// their standing depends on its decision (9.3).
+func decisionRoots(ctx context.Context, tx queryer, proposal string) ([]string, error) {
+	sets, err := scanOps(tx.QueryContext(ctx, `SELECT o.raw`+appliedKnown+` AND o.root = ? AND o.kind = 'set'`, proposal))
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, d := range sets {
+		if !approval(d) {
+			continue
+		}
+		err := batchOps(ctx, tx, d.Origin, d.BatchLast, func(b *Op) bool {
+			if r := b.Root.String(); r != proposal {
+				out[r] = true
+			}
+			return true
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return sortedKeys(out), nil
 }
 
 // deleteFolded removes a record's folded rows and returns its type.

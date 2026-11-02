@@ -13,7 +13,15 @@ const (
 	FlagIDCollision       = "id_collision"        // 2.3
 	FlagDecidedTwice      = "decided_twice"       // 5.6
 	FlagSupersededTwice   = "superseded_twice"    // 5.6; derived when the record is read
+	// FlagApprovalOverruled: an approve of a proposal lost to a decision stamped before it (9.3).
+	// A record the approve made is hidden like a deleted one; a change it made to another record
+	// is not folded.
+	FlagApprovalOverruled = "approval_overruled"
 )
+
+// overrule names, for one record, its ops that came in an approve batch that lost (9.3), each
+// with the decision that won on the proposal.
+type overrule map[OpID]*Op
 
 // FieldValue is a folded scalar: its value, the op that set it, and the field's heads, the set
 // ops no other set op on the field saw. A local set names the heads as its prev.
@@ -94,8 +102,8 @@ func (f *folded) boolean(name string) bool {
 
 // fold folds one record. create is its create op; ops are the other applied, known ops whose root
 // is the create, in any order; collision is the create's place among applied creates of the same
-// id by stamp (0 keeps the id).
-func fold(create *Op, ops []*Op, collision int) *folded {
+// id by stamp (0 keeps the id); ov names the record's ops whose approve lost (9.3).
+func fold(create *Op, ops []*Op, collision int, ov overrule) *folded {
 	var cv createValue
 	_ = json.Unmarshal(create.Value, &cv)
 	f := &folded{
@@ -124,6 +132,7 @@ func fold(create *Op, ops []*Op, collision int) *folded {
 	adds := map[string][]*Op{} // set field -> adds
 	removed := map[OpID]bool{} // adds named by a remove
 	var appends []*Op
+	var overruledBy []*Op // the winning decisions over this record's overruled ops
 	mine := map[OpID]bool{f.Root: true}
 	for _, o := range ops {
 		if o.Root == f.Root {
@@ -136,6 +145,13 @@ func fold(create *Op, ops []*Op, collision int) *folded {
 			continue
 		}
 		if o.Root != f.Root || o.Kind == KindCreate || o.Kind == KindForget {
+			continue
+		}
+		if win, ok := ov[o.ID()]; ok {
+			// A change an overruled approve made: counted, so the revision never goes down, but
+			// not folded.
+			f.Revision++
+			overruledBy = append(overruledBy, win)
 			continue
 		}
 		if _, ok := fieldFor(createType, o.Field); !ok {
@@ -252,6 +268,35 @@ func fold(create *Op, ops []*Op, collision int) *folded {
 		}
 		if len(after) > 0 {
 			f.Flags = append(f.Flags, Flag{Kind: FlagEditedAfterDelete, Values: after})
+		}
+	}
+
+	// An overruled approve (9.3): the record it made is hidden like a deleted one until a person
+	// restores it, and either way the record is flagged.
+	createWin, createOver := ov[f.Root]
+	if createOver {
+		overruledBy = append(overruledBy, createWin)
+	}
+	if len(overruledBy) > 0 {
+		f.Revision++
+		fl := Flag{Kind: FlagApprovalOverruled}
+		seen := map[OpID]bool{}
+		for _, w := range overruledBy {
+			if !seen[w.ID()] {
+				seen[w.ID()] = true
+				fl.Values = append(fl.Values, flagValue(w))
+			}
+		}
+		f.Flags = append(f.Flags, fl)
+	}
+	if createOver {
+		restored := deleteOp != nil && deleteOp.ID() != f.Root && !f.boolean("deleted") && create.before(deleteOp)
+		if !restored {
+			fv := FieldValue{Value: json.RawMessage("true"), Op: createWin.ID()}
+			if old, ok := f.Fields["deleted"]; ok {
+				fv.Heads = old.Heads
+			}
+			f.Fields["deleted"] = fv
 		}
 	}
 	slices.SortStableFunc(f.Flags, func(a, b Flag) int {

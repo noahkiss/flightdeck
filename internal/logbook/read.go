@@ -339,6 +339,24 @@ func (s *Store) Changes(ctx context.Context, cursor int64) ([]string, int64, err
 	if err := rows.Err(); err != nil {
 		return nil, cursor, err
 	}
+	// A decision on a proposal changes the standing of what its approves made (9.3).
+	for _, r := range sortedKeys(roots) {
+		var typ string
+		err := s.db.QueryRowContext(ctx, `SELECT type FROM records WHERE root = ?`, r).Scan(&typ)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && typ != TypeProposal) {
+			continue
+		}
+		if err != nil {
+			return nil, cursor, err
+		}
+		made, err := decisionRoots(ctx, s.db, r)
+		if err != nil {
+			return nil, cursor, err
+		}
+		for _, m := range made {
+			roots[m] = true
+		}
+	}
 	for _, c := range sortedKeys(claims) {
 		siblings, err := queryStrings(ctx, s.db, `SELECT root FROM ops WHERE kind = 'create' AND record = ?`, c)
 		if err != nil {

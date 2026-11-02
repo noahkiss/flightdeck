@@ -17,7 +17,7 @@ import (
 
 // foldVersion names the folded tables' shape and this build's fold rules. A file folded by
 // another version is rebuilt from its ops at open (4.4): no migrations.
-const foldVersion = 1
+const foldVersion = 2
 
 // ErrNotFound means the record or op is not on this replica.
 var ErrNotFound = errors.New("logbook: not found")

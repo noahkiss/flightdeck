@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -442,6 +443,10 @@ func checkScalar(typ, name string, spec fieldSpec, v json.RawMessage) error {
 	case "type":
 		if !retypeOK(v) {
 			return invalid("", "only a task and an issue change type, into each other")
+		}
+	case "expires":
+		if _, err := time.Parse(time.RFC3339Nano, s); err != nil {
+			return invalid("", "expires is an RFC 3339 time")
 		}
 	case "triage":
 		if s != "" && s != "new" {

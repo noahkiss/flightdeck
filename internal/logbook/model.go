@@ -36,6 +36,12 @@ var statuses = map[string][]string{
 // decisions are the proposal statuses that decide it; the first one written stands (5.6).
 var decisions = []string{"approved", "edited", "rejected", "expired"}
 
+// approvals are the decisions that apply a proposal's draft (9.2).
+var approvals = []string{"approved", "edited"}
+
+// Decision reports whether status decides a proposal.
+func Decision(status string) bool { return slices.Contains(decisions, status) }
+
 // ValidStatus reports whether status belongs to the type.
 func ValidStatus(typ, status string) bool { return slices.Contains(statuses[typ], status) }
 
@@ -76,6 +82,9 @@ var fields = map[string]fieldSpec{
 	"target":     {kind: scalarString, types: []string{TypeProposal}},
 	"draft":      {kind: scalarJSON, types: []string{TypeProposal}, text: true},
 	"decided_by": {kind: scalarString, types: []string{TypeProposal}},
+	// expires is a memory proposal's end (instructions-mcp-flight-rules.md 12.3): RFC 3339. A
+	// decision after it is refused; fixed at create.
+	"expires":    {kind: scalarString, types: []string{TypeProposal}},
 	"identities": {kind: setField, types: []string{TypeProject}},
 	"tags":       {kind: setField},
 	"links":      {kind: setField},
@@ -144,6 +153,9 @@ type Actor struct {
 	Pane    string `json:"pane,omitempty"`
 	Host    string `json:"host,omitempty"`
 	Device  string `json:"device,omitempty"`
+	// ApprovedBy is the device that approved the proposal this change came from (9.2): the
+	// actor stays the proposing agent. Only an approve batch sets it.
+	ApprovedBy string `json:"approved_by,omitempty"`
 }
 
 // Source is where a record came from: a session, a message and a quote of the user's words.

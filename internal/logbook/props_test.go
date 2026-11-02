@@ -305,6 +305,9 @@ func (w *world) write(r *replica) {
 		return
 	}
 	actor := &Actor{Kind: "agent", Harness: "claude", Session: fmt.Sprintf("s%d", rng.Intn(3))}
+	if steps[0].Kind == KindCreate && slices.ContainsFunc(steps, func(st Step) bool { return st.Field == "decided_by" }) {
+		actor.ApprovedBy = "SHA256:device-" + r.name
+	}
 	res, err := r.Write(ctx, Batch{Actor: actor, Steps: steps})
 	if err != nil && !errors.Is(err, ErrInvalid) && !errors.Is(err, ErrNotFound) {
 		w.t.Fatalf("%s write %+v: %v", r.name, steps, err)
@@ -386,9 +389,20 @@ func (w *world) steps(r *replica) []Step {
 		return []Step{set(id, "body", vocab[rng.Intn(len(vocab))]+" text")}
 	case 2:
 		if list := statuses[rec.Type]; len(list) > 0 {
-			st := []Step{set(id, "status", list[rng.Intn(len(list))])}
+			status := list[rng.Intn(len(list))]
+			st := []Step{set(id, "status", status)}
 			if rec.Type == TypeProposal {
 				st = append(st, set(id, "decided_by", r.name))
+				if slices.Contains(approvals, status) && rng.Intn(2) == 0 {
+					// An approve batch (9.2): the draft's record, linked from the proposal, and a
+					// change to another record. write gives it an approve's actor.
+					made := NewID(TypeTask)
+					st = append([]Step{create(made, TypeTask, map[string]any{"title": "made"}),
+						add(made, "links", Link{Kind: LinkFrom, To: id})}, st...)
+					if other := w.pick(r); other != "" && other != id {
+						st = append(st, note(other, "from an approve"))
+					}
+				}
 			}
 			return st
 		}
