@@ -420,6 +420,42 @@ final class ConfirmTests: XCTestCase {
         XCTAssertEqual(c.approvals.map(\.confirmation.id), ["mine"])
     }
 
+    /// A failed start Capcom asked for is held in the Capcom view (and Capcom's
+    /// session view, past the closed limit), never in the approvals area.
+    @MainActor
+    func testFailedCapcomStartHeldInCapcomView() async throws {
+        let f = Self.confirmation("f", from: "capcom")
+        var older: [Confirmation] = []
+        for i in 0..<4 {
+            older.append(Self.closed(Self.confirmation("old\(i)", from: "capcom"), .done, at: Self.t0.addingTimeInterval(Double(10 + i))))
+        }
+        let failed = Self.closed(f, .failed, at: Self.t0.addingTimeInterval(1))
+        let (c, board) = center(try book([f])) { _, _ in ConfirmationResult(confirmation: failed, seq: 1) }
+        var st = habState(try book([f]))
+        var cap = Fixture.session("s9", name: "capcom", pane: "%9", project: nil)
+        cap.kind = .capcom
+        let sessions = [Fixture.session("s1", name: "claude", pane: "%1", project: nil), cap]
+        st.store.reset(StructureResult(host: HostInfo(id: "boxa"), panes: [], projects: [], seq: 0, sessions: sessions))
+        board.update("a", st)
+        XCTAssertTrue(c.approvals.isEmpty, "Capcom's question is not in the approvals area")
+        await c.confirm(try XCTUnwrap(c.capcom.first))
+        // The hab closes it, then four newer starts close after it.
+        st.confirmations = try book([], closed: [failed] + older)
+        board.update("a", st)
+        c.boardChanged()
+        XCTAssertTrue(c.approvals.isEmpty)
+        let ids = c.capcom.map(\.confirmation.id)
+        XCTAssertEqual(ids.first, "f")
+        XCTAssertEqual(ids.count, 1 + ConfirmCenter.closedShown)
+        let s9 = SessionTarget(habID: "a", session: "s9", pane: "%9")
+        XCTAssertTrue(c.cards(for: s9).contains { $0.confirmation.id == "f" }, "held past the closed limit")
+        let kept = try XCTUnwrap(c.capcom.first)
+        XCTAssertTrue(c.isHeld(kept))
+        c.dismiss(kept)
+        XCTAssertFalse(c.capcom.contains { $0.confirmation.id == "f" })
+        XCTAssertFalse(c.cards(for: s9).contains { $0.confirmation.id == "f" })
+    }
+
     /// A refusal of this client's only confirm leaves no mark: a later failed
     /// close by another client is not held.
     @MainActor

@@ -102,8 +102,9 @@ public struct ConfirmDraft: Equatable, Sendable {
 ///   view and in the approvals area. A card from outside a pane shows in the
 ///   approvals area only.
 /// - The approvals area shows questions, and starts this client confirmed that
-///   failed or ended unknown, until dismissed. Records and other closed cards
-///   stay in their session view (and the Capcom view), with their outcome.
+///   failed or ended unknown, until dismissed; Capcom's such starts stay in the
+///   Capcom view instead. Records and other closed cards stay in their session
+///   view (and the Capcom view), with their outcome.
 @MainActor
 @Observable
 public final class ConfirmCenter {
@@ -195,18 +196,25 @@ public final class ConfirmCenter {
 
     /// The approvals area: questions from agents other than Capcom, oldest
     /// first, then failed or unknown starts this client confirmed, newest first.
+    /// Capcom's held starts stay in the Capcom view instead.
     public var approvals: [ConfirmCard] {
         let all = cards
         let asks = all.filter { $0.confirmation.asks && !$0.capcom }
-        let kept = held.values.map { h in all.first { $0.id == h.id && $0.confirmation.isClosed } ?? h }
-            .sorted { Self.time($0.confirmation.closed) > Self.time($1.confirmation.closed) }
-        return asks + kept
+        return asks + heldCards(all).filter { !$0.capcom }
     }
 
-    /// Whether the approvals area keeps this card until it is dismissed.
+    /// The held cards, newest first, each as its hab has it now (or as it was
+    /// held, once the hab dropped it).
+    private func heldCards(_ all: [ConfirmCard]) -> [ConfirmCard] {
+        held.values.map { h in all.first { $0.id == h.id && $0.confirmation.isClosed } ?? h }
+            .sorted { Self.time($0.confirmation.closed) > Self.time($1.confirmation.closed) }
+    }
+
+    /// Whether the card is held (in the approvals area, or the Capcom view for
+    /// Capcom's starts) until it is dismissed.
     public func isHeld(_ card: ConfirmCard) -> Bool { held[card.id] != nil }
 
-    /// Takes a failed or unknown start out of the approvals area.
+    /// Takes a failed or unknown start out of the approvals area or the Capcom view.
     public func dismiss(_ card: ConfirmCard) {
         held[card.id] = nil
         dismissed.insert(card.id)
@@ -249,15 +257,27 @@ public final class ConfirmCenter {
         if conflicts.contains(where: { !keep($0) }) { conflicts = conflicts.filter(keep) }
     }
 
-    /// The Capcom view's cards.
+    /// The Capcom view's cards: its open ones, then its held failed or unknown
+    /// starts until dismissed, then at most `closedShown` other closed ones.
     public var capcom: [ConfirmCard] {
-        cards.filter(\.capcom)
+        let all = cards
+        let kept = heldCards(all).filter(\.capcom)
+        let mine = all.filter(\.capcom)
+        return mine.filter { !$0.confirmation.isClosed } + kept
+            + mine.filter { $0.confirmation.isClosed && held[$0.id] == nil }.prefix(Self.closedShown)
     }
 
-    /// One session view's cards: its open ones, then at most `closedShown` closed.
+    /// One session view's cards: its open ones, then its closed ones newest
+    /// first: every held one, and at most `closedShown` others.
     public func cards(for target: SessionTarget) -> [ConfirmCard] {
         let mine = cards.filter { $0.session?.habID == target.habID && $0.session?.session == target.session && target.session != nil }
-        return mine.filter { !$0.confirmation.isClosed } + mine.filter(\.confirmation.isClosed).prefix(Self.closedShown)
+        var others = 0
+        let closed = mine.filter(\.confirmation.isClosed).filter { c in
+            if held[c.id] != nil { return true }
+            others += 1
+            return others <= Self.closedShown
+        }
+        return mine.filter { !$0.confirmation.isClosed } + closed
     }
 
     /// Closed cards a session view keeps under its open ones.

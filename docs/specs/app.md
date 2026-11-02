@@ -1165,7 +1165,10 @@ The cards of `capcom.md` 6.1 and 6.3: a start an agent asks for on another host,
   covers a reconnect that brings a new client id. A refusal of the only confirm sent (a
   `conflict` or another error) drops the mark; a refusal after an earlier confirm whose
   answer never came back keeps it, since that confirm may have run. A dismissed card is not
-  held again.
+  held again. Design call: a failed or unknown start Capcom asked for is held in the Capcom
+  view (until that view exists, Capcom's session view) and never in the approvals area, as
+  Capcom's question was never there. A held card stays in its session view past the 3
+  closed cards it keeps, until dismissed.
 - **Records.** A record (`record: true`) shows "Ran without asking" and no buttons. It never
   shows in the approvals area.
 - **Withdraw.** `confirm.closed` takes a card out of the approvals area at once. Design call:
