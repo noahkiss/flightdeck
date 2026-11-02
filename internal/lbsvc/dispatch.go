@@ -80,7 +80,10 @@ func (s *Service) Dispatch(ctx context.Context, a api.LogbookActor, pane *Pane, 
 			if pane.Propose {
 				return nil, control.Errorf(api.ErrorKindInvalid, "this session's writes wait for review: write the value with logbook.write, which files a proposal")
 			}
-			if err := s.allow(pane.ID); err != nil {
+			if err := s.paneSet(ctx, p.ID, p.Field, false); err != nil {
+				return nil, control.Errorf(api.ErrorKindInvalid, "%v", err)
+			}
+			if err := s.allow(pane.ID, 1); err != nil {
 				return nil, err
 			}
 			a = PaneActor(*pane)

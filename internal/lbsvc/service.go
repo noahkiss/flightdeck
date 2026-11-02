@@ -27,6 +27,13 @@ import (
 // PaneWrites is the default pane write limit: writes from one pane in a minute (14, D20).
 const PaneWrites = 60
 
+// PaneChanges is the default pane change limit: changes from one pane in a minute, counted over
+// all its writes (10.5). A write of many changes counts each of them.
+const PaneChanges = 600
+
+// MaxChanges bounds the changes in one logbook.write, from any writer (10.5).
+const MaxChanges = 200
+
 // Config is what New needs. Store is required.
 type Config struct {
 	Store *logbook.Store
@@ -37,8 +44,10 @@ type Config struct {
 	Wrote func()
 	// PaneWrites is the pane write limit per minute; 0 is PaneWrites.
 	PaneWrites int
-	Now        func() time.Time
-	Logf       func(format string, args ...any)
+	// PaneChanges is the pane change limit per minute; 0 is PaneChanges.
+	PaneChanges int
+	Now         func() time.Time
+	Logf        func(format string, args ...any)
 }
 
 // Service serves the verbs over one store.
@@ -51,7 +60,7 @@ type Service struct {
 	flags  map[string][]string // records that carry a flag, by id: their flag kinds
 
 	limMu  sync.Mutex
-	writes map[string][]time.Time // per pane: the times of its writes in the last minute
+	writes map[string][]paneWrite // per pane: its writes in the last minute
 	warned map[string]time.Time   // per pane: when the limit was last logged
 }
 
@@ -67,8 +76,11 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	if cfg.PaneWrites <= 0 {
 		cfg.PaneWrites = PaneWrites
 	}
+	if cfg.PaneChanges <= 0 {
+		cfg.PaneChanges = PaneChanges
+	}
 	s := &Service{cfg: cfg, st: cfg.Store, flags: map[string][]string{},
-		writes: map[string][]time.Time{}, warned: map[string]time.Time{}}
+		writes: map[string][]paneWrite{}, warned: map[string]time.Time{}}
 	cur, err := s.st.Cursor(ctx)
 	if err != nil {
 		return nil, err
@@ -97,7 +109,7 @@ func apiErr(err error) error {
 		return control.Errorf(api.ErrorKindNotFound, "no such record or op on this replica")
 	case errors.Is(err, logbook.ErrKeyReused):
 		return control.Errorf(api.ErrorKindConflict, "%s", strings.TrimPrefix(err.Error(), "logbook: "))
-	case errors.Is(err, logbook.ErrSharedOrigin):
+	case errors.Is(err, logbook.ErrSharedOrigin), errors.Is(err, logbook.ErrRestoring):
 		return control.Errorf(api.ErrorKindUnavailable, "%s", strings.TrimPrefix(err.Error(), "logbook: "))
 	}
 	return err
@@ -237,9 +249,15 @@ type Pane struct {
 }
 
 // WritePane is a write through a pane's token: the hab records the pane's harness, session and
-// host, sets the source's session to the pane's, and refuses past the pane write limit.
+// host, sets the source's session to the pane's, and refuses past the pane write limit. An agent
+// never decides a proposal (9.2): a pane's write refuses a create of type proposal and a set of a
+// proposal's status or decided_by. It forgets only ops its own session wrote (10.5).
 func (s *Service) WritePane(ctx context.Context, pn Pane, p api.LogbookWriteParams) (api.LogbookWritten, error) {
-	if err := s.allow(pn.ID); err != nil {
+	hash := hashOf("logbook.write", p) // the request as sent, before the pane's fields go in
+	if err := s.paneChecks(ctx, pn, p.Changes); err != nil {
+		return api.LogbookWritten{}, err
+	}
+	if err := s.allow(pn.ID, len(p.Changes)); err != nil {
 		return api.LogbookWritten{}, err
 	}
 	p.Propose = p.Propose || pn.Propose
@@ -251,7 +269,7 @@ func (s *Service) WritePane(ctx context.Context, pn Pane, p api.LogbookWritePara
 		src.Session = pn.Session
 		p.Source = &src
 	}
-	return s.Write(ctx, PaneActor(pn), p)
+	return s.write(ctx, PaneActor(pn), p, hash)
 }
 
 // PaneActor is the actor of a write through a pane.
@@ -259,31 +277,101 @@ func PaneActor(pn Pane) api.LogbookActor {
 	return api.LogbookActor{Kind: "agent", Harness: pn.Harness, Session: pn.Session, Pane: pn.ID, Host: pn.Host}
 }
 
-// allow counts one write from a pane, or refuses it past the limit.
-func (s *Service) allow(pane string) error {
+// paneChecks refuses what an agent may not write (10.5): a decision on a proposal, and a forget
+// of an op its own session did not write.
+func (s *Service) paneChecks(ctx context.Context, pn Pane, changes []api.LogbookChange) error {
+	created := map[string]bool{}
+	for i, c := range changes {
+		switch c.Op {
+		case api.LogbookChangeOpCreate:
+			if c.Type == logbook.TypeProposal {
+				return invalid("change %d: an agent files a proposal with propose: true, never as a create of type proposal", i+1)
+			}
+			if c.ID != "" {
+				created[c.ID] = true
+			}
+		case api.LogbookChangeOpSet:
+			if err := s.paneSet(ctx, c.ID, c.Field, created[c.ID]); err != nil {
+				return invalid("change %d: %v", i+1, err)
+			}
+		case api.LogbookChangeOpForget:
+			id, err := logbook.ParseOpID(c.OpID)
+			if err != nil {
+				continue // Steps refuses it with its reason
+			}
+			o, err := s.st.Op(ctx, id)
+			if errors.Is(err, logbook.ErrNotFound) {
+				continue // the store refuses it with its reason
+			}
+			if err != nil {
+				return err
+			}
+			if pn.Session == "" || o.Actor == nil || o.Actor.Session != pn.Session {
+				return invalid("change %d: a pane forgets only ops its own session wrote, and %s is not one of them. A person can forget it: gff lb forget %s, run outside a pane", i+1, c.OpID, c.OpID)
+			}
+		}
+	}
+	return nil
+}
+
+// paneSet refuses a pane's set of a proposal's decision fields: only a person decides (9.2).
+func (s *Service) paneSet(ctx context.Context, id, field string, created bool) error {
+	if field == "decided_by" {
+		return errors.New("only a person decides a proposal: decided_by is not an agent's to set")
+	}
+	if field != "status" || created || id == "" {
+		return nil
+	}
+	r, err := s.st.Get(ctx, id)
+	if err != nil {
+		return nil // the store refuses a missing record with its reason
+	}
+	if r.Type == logbook.TypeProposal {
+		return fmt.Errorf("only a person decides a proposal: %s's status is not an agent's to set", id)
+	}
+	return nil
+}
+
+// paneWrite is one write a pane made: when, and how many changes it carried.
+type paneWrite struct {
+	at      time.Time
+	changes int
+}
+
+// allow counts one write of n changes from a pane, or refuses it past either limit: writes in
+// the last minute, or changes in the last minute.
+func (s *Service) allow(pane string, n int) error {
 	now := s.cfg.Now()
 	s.limMu.Lock()
 	defer s.limMu.Unlock()
 	w := s.writes[pane]
 	cut := 0
-	for cut < len(w) && now.Sub(w[cut]) >= time.Minute {
+	for cut < len(w) && now.Sub(w[cut].at) >= time.Minute {
 		cut++
 	}
 	w = w[cut:]
-	if len(w) >= s.cfg.PaneWrites {
+	sum := 0
+	for _, x := range w {
+		sum += x.changes
+	}
+	if len(w) >= s.cfg.PaneWrites || (len(w) > 0 && sum+n > s.cfg.PaneChanges) {
 		s.writes[pane] = w
 		if now.Sub(s.warned[pane]) >= time.Minute {
 			s.warned[pane] = now
-			s.cfg.Logf("logbook: pane %s wrote %d times in a minute; its writes are refused until the minute passes", pane, len(w))
+			s.cfg.Logf("logbook: pane %s wrote %d times (%d changes) in a minute; its writes are refused until the minute passes", pane, len(w), sum)
 		}
-		wait := time.Minute - now.Sub(w[0])
-		return invalid("this pane wrote %d times in the last minute, the limit: nothing was written. Wait %s, and write less often; a loop that writes on every step should batch its changes",
-			len(w), wait.Round(time.Second))
+		wait := time.Minute - now.Sub(w[0].at)
+		if len(w) >= s.cfg.PaneWrites {
+			return invalid("this pane wrote %d times in the last minute, the limit: nothing was written. Wait %s, and write less often; a loop that writes on every step should batch its changes",
+				len(w), wait.Round(time.Second))
+		}
+		return invalid("this pane wrote %d changes in the last minute, and %d more pass the limit of %d: nothing was written. Wait %s, and write less",
+			sum, n, s.cfg.PaneChanges, wait.Round(time.Second))
 	}
-	s.writes[pane] = append(w, now)
+	s.writes[pane] = append(w, paneWrite{at: now, changes: n})
 	if len(s.writes) > 4096 { // panes come and go: drop the quiet ones
 		for k, v := range s.writes {
-			if len(v) == 0 || now.Sub(v[len(v)-1]) >= time.Minute {
+			if len(v) == 0 || now.Sub(v[len(v)-1].at) >= time.Minute {
 				delete(s.writes, k)
 				delete(s.warned, k)
 			}
@@ -294,13 +382,26 @@ func (s *Service) allow(pane string) error {
 
 // Write applies one batch, or with propose stores it as a pending proposal (9.2).
 func (s *Service) Write(ctx context.Context, a api.LogbookActor, p api.LogbookWriteParams) (api.LogbookWritten, error) {
+	return s.write(ctx, a, p, hashOf("logbook.write", p))
+}
+
+// write is Write with the key's hash: the hash of the request as its writer sent it, so a key
+// means the same request whichever door it came through (4.5).
+func (s *Service) write(ctx context.Context, a api.LogbookActor, p api.LogbookWriteParams, hash string) (api.LogbookWritten, error) {
 	if len(p.Changes) == 0 {
 		return api.LogbookWritten{}, invalid("logbook.write needs at least one change")
+	}
+	if len(p.Changes) > MaxChanges {
+		return api.LogbookWritten{}, invalid("logbook.write takes at most %d changes, and this one has %d: split it into several writes", MaxChanges, len(p.Changes))
 	}
 	if len(p.IdempotencyKey) > logbook.MaxKey {
 		return api.LogbookWritten{}, invalid("an idempotency key is at most %d bytes", logbook.MaxKey)
 	}
-	p.Changes = selfAssignee(p.Changes, a)
+	changes, err := selfAssignee(p.Changes, a)
+	if err != nil {
+		return api.LogbookWritten{}, err
+	}
+	p.Changes = changes
 	steps, err := Steps(p.Changes, p.Source)
 	if err != nil {
 		return api.LogbookWritten{}, err
@@ -316,7 +417,7 @@ func (s *Service) Write(ctx context.Context, a api.LogbookActor, p api.LogbookWr
 	}
 	b := logbook.Batch{Actor: storeActor(a), Steps: steps}
 	if p.IdempotencyKey != "" {
-		b.Key, b.KeyHash = p.IdempotencyKey, hashOf("logbook.write", p)
+		b.Key, b.KeyHash = p.IdempotencyKey, hash
 	}
 	res, err := s.st.Write(ctx, b)
 	if err != nil {
@@ -334,26 +435,32 @@ func (s *Service) Write(ctx context.Context, a api.LogbookActor, p api.LogbookWr
 // person's device.
 const Self = "self"
 
-// selfAssignee replaces the assignee self with the writer: its session, else its device.
-func selfAssignee(changes []api.LogbookChange, a api.LogbookActor) []api.LogbookChange {
+// selfAssignee replaces the assignee self with the writer: its session, else its device. A
+// writer with neither, such as a pane outside a session, is refused: self names no one then.
+func selfAssignee(changes []api.LogbookChange, a api.LogbookActor) ([]api.LogbookChange, error) {
 	me := a.Session
 	if me == "" {
 		me = a.Device
 	}
-	if me == "" {
-		return changes
-	}
 	quoted, _ := json.Marshal(me)
 	out := slices.Clone(changes)
 	for i, c := range out {
-		switch {
-		case c.Op == api.LogbookChangeOpCreate && c.Assignee == Self:
+		var v string
+		isSelf := (c.Op == api.LogbookChangeOpCreate && c.Assignee == Self) ||
+			(c.Op == api.LogbookChangeOpSet && c.Field == "assignee" && json.Unmarshal(c.Value, &v) == nil && v == Self)
+		if !isSelf {
+			continue
+		}
+		if me == "" {
+			return nil, invalid("change %d: the assignee %s names the writer's session, and this writer has none: name the assignee", i+1, Self)
+		}
+		if c.Op == api.LogbookChangeOpCreate {
 			out[i].Assignee = me
-		case c.Op == api.LogbookChangeOpSet && c.Field == "assignee" && string(c.Value) == `"`+Self+`"`:
+		} else {
 			out[i].Value = api.RawJSON(quoted)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // Resolve settles a conflict flag: a set that names every head of the field (5.2).

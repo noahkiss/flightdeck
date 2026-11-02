@@ -84,7 +84,7 @@ func (s *Store) Write(ctx context.Context, b Batch) (WriteResult, error) {
 		return res, err
 	}
 	if b.Key != "" {
-		if r, found, err := keyed(ctx, tx, b.Key, b.KeyHash); found || err != nil {
+		if r, found, err := keyed(ctx, tx, b.Key, b.KeyHash, s.now().UnixMilli()); found || err != nil {
 			return r, err
 		}
 	}

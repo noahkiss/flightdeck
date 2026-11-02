@@ -28,11 +28,11 @@ CREATE TABLE IF NOT EXISTS keys (key TEXT PRIMARY KEY, hash TEXT NOT NULL, resul
 CREATE INDEX IF NOT EXISTS keys_at ON keys(at);
 `
 
-// keyed returns the stored result of key, or found false. A key held with another hash is
-// ErrKeyReused.
-func keyed(ctx context.Context, tx txn, key, hash string) (res WriteResult, found bool, err error) {
+// keyed returns the stored result of key, or found false. A key older than KeyKeep is not
+// found, though no keyed write has dropped it yet. A key held with another hash is ErrKeyReused.
+func keyed(ctx context.Context, tx txn, key, hash string, nowMS int64) (res WriteResult, found bool, err error) {
 	var h, data string
-	err = tx.QueryRowContext(ctx, `SELECT hash, result FROM keys WHERE key = ?`, key).Scan(&h, &data)
+	err = tx.QueryRowContext(ctx, `SELECT hash, result FROM keys WHERE key = ? AND at >= ?`, key, nowMS-KeyKeep).Scan(&h, &data)
 	if errors.Is(err, sql.ErrNoRows) {
 		return res, false, nil
 	}

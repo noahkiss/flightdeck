@@ -158,6 +158,18 @@ func (s *Store) History(ctx context.Context, id string) ([]*Op, error) {
 	return ops, nil
 }
 
+// Op reads one op by its id, or ErrNotFound.
+func (s *Store) Op(ctx context.Context, id OpID) (*Op, error) {
+	ops, err := scanOps(s.db.QueryContext(ctx, `SELECT raw FROM ops WHERE origin = ? AND seq = ?`, id.Origin, id.Seq))
+	if err != nil {
+		return nil, err
+	}
+	if len(ops) == 0 {
+		return nil, ErrNotFound
+	}
+	return ops[0], nil
+}
+
 // Known reports whether this build folds the op.
 func (o *Op) Known() bool { return o.known() }
 

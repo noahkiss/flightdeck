@@ -59,6 +59,40 @@ func TestKeyAppliesOnce(t *testing.T) {
 	}
 }
 
+// A key past KeyKeep is not found, though no keyed write has dropped it from the file yet.
+func TestKeyExpiresOnLookup(t *testing.T) {
+	ctx := context.Background()
+	a := newReplica(t, "A")
+	b := Batch{Steps: []Step{Create(TypeTask, map[string]any{"title": "once"})}, Key: "k1", KeyHash: "h1"}
+	if _, err := a.Write(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	a.clock.Advance(KeyKeep*time.Millisecond - time.Second)
+	b.Steps = []Step{Create(TypeTask, map[string]any{"title": "once"})}
+	if r, err := a.Write(ctx, b); err != nil || !r.Repeated {
+		t.Fatalf("a key inside KeyKeep: %+v %v", r, err)
+	}
+	a.clock.Advance(2 * time.Second)
+	b.Steps = []Step{Create(TypeTask, map[string]any{"title": "once"})}
+	if r, err := a.Write(ctx, b); err != nil || r.Repeated {
+		t.Fatalf("a key past KeyKeep still held: %+v %v", r, err)
+	}
+}
+
+func TestOpByID(t *testing.T) {
+	ctx := context.Background()
+	a := newReplica(t, "A")
+	agent := &Actor{Kind: "agent", Session: "s-1"}
+	res := a.write(t, agent, Create(TypeTask, map[string]any{"title": "x"}))
+	o, err := a.Op(ctx, res.Ops[0])
+	if err != nil || o.ID() != res.Ops[0] || o.Actor == nil || o.Actor.Session != "s-1" {
+		t.Fatalf("Op: %+v %v", o, err)
+	}
+	if _, err := a.Op(ctx, OpID{Origin: res.Ops[0].Origin, Seq: 99}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing op: %v", err)
+	}
+}
+
 func TestSearch(t *testing.T) {
 	ctx := context.Background()
 	a := newReplica(t, "A")
