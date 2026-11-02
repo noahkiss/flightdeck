@@ -1077,6 +1077,12 @@ choice open:
 - **Not yet.** The always-on suggestion at creation (9) and the status board's list (10.3) are
   app and client stages (7, 8).
 
+Built (stage 7, task-xhpsgzkr): rounds in the Flightdeck app, with no hab change. The app's
+choices are in `app.md` 21: the Rounds list per hab and its order, the round page, the form
+and the always-on line, the badge and the filter, Open on a round banner, and the app-side
+filter that keeps focus reports, mouse motion and the wheel out of a live run's pane. The
+catalog's other hosts are not listed yet (`app.md` 21.1); the `gff` client is stage 8.
+
 ---
 
 ## 14. Build stages
