@@ -40,8 +40,23 @@ struct CapcomHost: ViewModifier {
 /// another hab, and a remove button.
 struct CapcomChipStrip: View {
     let model: ChatModel
+    /// Moves the chips and the draft to a fresh Capcom session; nil hides the button.
+    var newConversation: (() -> Void)?
 
     var body: some View {
+        HStack(spacing: 6) {
+            chips
+            if let newConversation {
+                Button("New conversation", action: newConversation)
+                    .font(.caption)
+                    .buttonStyle(.borderless)
+                    .fixedSize()
+                    .disabled(model.capcomBusy)
+            }
+        }
+    }
+
+    private var chips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(model.pending, id: \.self) { item in

@@ -35,10 +35,19 @@ public final class Fleet {
     /// Confirmation cards (capcom.md 6.1).
     public var confirms: ConfirmCenter?
     /// Opens Capcom with context attached (capcom.md 8.2, 8.4).
-    public private(set) lazy var capcom = CapcomCenter(
+    public private(set) lazy var capcom = CapcomCenter(habs: .init(
         connection: { [weak self] id in self?.connections.first { $0.id == id } },
         chat: { [unowned self] t in self.chat(for: t) },
-        label: { [weak self] id in self?.board.habs.first { $0.id == id }?.label ?? id })
+        label: { [weak self] id in self?.board.habs.first { $0.id == id }?.label ?? id },
+        online: { [weak self] id in self?.board.habs.first { $0.id == id }?.state.status == .online },
+        device: { [weak self] d in self?.habID(device: d) }))
+
+    /// The hab with this device id: a live welcome's, else the hab book's.
+    func habID(device: String) -> String? {
+        if let h = board.habs.first(where: { $0.state.welcome?.deviceId == device }) { return h.id }
+        guard let c = book?.entry(device: device)?.connection, connections.contains(where: { $0.id == c }) else { return nil }
+        return c
+    }
     /// The app icon or Dock tile badge (app.md 7.9); nil sets none.
     public var badge: AppBadge? {
         didSet { badgeChanged() }
@@ -118,6 +127,7 @@ public final class Fleet {
                 }
                 self?.approvals?.boardChanged()
                 self?.confirms?.boardChanged()
+                self?.capcom.boardChanged()
                 self?.activities?.boardChanged()
                 self?.badgeChanged()
             }
@@ -148,7 +158,7 @@ public final class Fleet {
     private func connectionOnline(_ conn: HabConnection, _ s: HabState) {
         guard let w = s.welcome else { return }
         let label = board.habs.first { $0.id == conn.id }?.label ?? w.host.id
-        book?.record(host: w.host.id, connection: conn.id, label: label)
+        book?.record(host: w.host.id, connection: conn.id, label: label, device: w.deviceId)
         push?.connectionOnline(conn, welcome: w)
         let id = conn.id
         Task { @MainActor [weak self] in
@@ -270,6 +280,7 @@ public final class Fleet {
         let conn = connections.first { $0.id == target.habID }
         let m = ChatModel(target: target, connection: conn)
         m.onSent = { [weak self] t in self?.activities?.noteSent(t) }
+        m.capcom = capcom
         if let h = board.habs.first(where: { $0.id == target.habID }) {
             m.update(ChatContext.of(target, hab: h))
         }

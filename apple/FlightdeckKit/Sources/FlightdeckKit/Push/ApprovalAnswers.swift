@@ -14,11 +14,24 @@ public enum PushCategory {
     /// A question with a text Reply. The hab does not send it until it answers
     /// questions through `approval.answer`; the app is ready for it.
     public static let question = "question"
+    /// The same sets with "Ask an agent" last, sent while some host runs Capcom to a device
+    /// that registered the `ask` feature (capcom.md 8.5). `ask` alone is for notices and
+    /// finished turns.
+    public static let approvalAsk = "approval-ask"
+    public static let approvalDenyAsk = "approval-deny-ask"
+    public static let openAsk = "open-ask"
+    public static let ask = "ask"
 
     public static let approveAction = "flightdeck.approve"
     public static let denyAction = "flightdeck.deny"
     public static let openAction = "flightdeck.open"
     public static let replyAction = "flightdeck.reply"
+    public static let askAction = "flightdeck.ask"
+
+    /// The `push.register` features this build's categories cover. Sent in the same build
+    /// that registers the Ask categories, never apart: iOS shows no actions for a category id
+    /// the app did not register.
+    public static let features = ["ask"]
 }
 
 /// What a tap on a notification asks for.
@@ -27,6 +40,8 @@ public enum NotificationIntent: Equatable, Sendable {
     case answer(host: String, ApprovalAnswerParams)
     /// Open the app at the request or session.
     case open(PushMeta)
+    /// Open Capcom with the push's context attached (capcom.md 8.2). Never answers.
+    case ask(PushMeta)
     /// Nothing to do (dismissed, or a push without our object).
     case none
 }
@@ -47,6 +62,8 @@ public enum NotificationAnswer {
             return .answer(host: meta.hab, ApprovalAnswerParams(choice: .answer, pane: pane, request: request, text: t, via: .banner))
         case PushCategory.openAction, defaultAction:
             return .open(meta)
+        case PushCategory.askAction:
+            return .ask(meta)
         default:
             return .none
         }

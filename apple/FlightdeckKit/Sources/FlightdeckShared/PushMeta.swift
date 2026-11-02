@@ -18,14 +18,34 @@ public struct PushMeta: Sendable, Equatable, Codable {
     /// RFC 3339; after it the hab refuses a remote answer.
     public var expiresAt: String?
     public var notice: String?
+    /// The item "Ask an agent" hands to `capcom.open` as its one context item, unread
+    /// (capcom.md 8.5). Present while some host runs Capcom.
+    public var capcomContext: CapcomItem?
+    /// The device id of the hab that runs Capcom: the one "Ask an agent" calls.
+    public var capcomHome: String?
+
+    /// A `capcom_context`: the same fields as the hab's `CapcomContextRef`.
+    public struct CapcomItem: Sendable, Equatable, Codable {
+        public var kind: String
+        public var ref: String
+        public var host: String?
+
+        public init(kind: String, ref: String, host: String? = nil) {
+            self.kind = kind
+            self.ref = ref
+            self.host = host
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case v, kind, hab, session, pane, state, request
         case expiresAt = "expires_at"
         case notice
+        case capcomContext = "capcom_context"
+        case capcomHome = "capcom_home"
     }
 
-    public init(v: Int = 1, kind: String, hab: String, session: String? = nil, pane: String? = nil, state: String? = nil, request: String? = nil, expiresAt: String? = nil, notice: String? = nil) {
+    public init(v: Int = 1, kind: String, hab: String, session: String? = nil, pane: String? = nil, state: String? = nil, request: String? = nil, expiresAt: String? = nil, notice: String? = nil, capcomContext: CapcomItem? = nil, capcomHome: String? = nil) {
         self.v = v
         self.kind = kind
         self.hab = hab
@@ -35,6 +55,8 @@ public struct PushMeta: Sendable, Equatable, Codable {
         self.request = request
         self.expiresAt = expiresAt
         self.notice = notice
+        self.capcomContext = capcomContext
+        self.capcomHome = capcomHome
     }
 
     /// The key under which a push and a local notification carry the object.

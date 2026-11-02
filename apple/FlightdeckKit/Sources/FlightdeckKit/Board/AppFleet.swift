@@ -151,6 +151,7 @@ public enum AppFleet {
         let actions = HabActions(keys: keys, listURL: listURL)
         actions.approvals = center
         actions.usage = fleet.usage?.book
+        actions.capcom = fleet.capcom
         actions.install()
         fleet.keepAlive.append(actions)
         #if os(iOS)

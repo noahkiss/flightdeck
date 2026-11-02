@@ -149,7 +149,7 @@ final class PushRegistrationTests: XCTestCase {
         fleet.book = HabBook(url: url)
         await fleet.setActive(true)
         await eventually("recorded") { fleet.book?.entry(host: "testhost") != nil }
-        XCTAssertEqual(fleet.book?.entry(host: "testhost"), HabBook.Entry(connection: "h", label: "desk"))
+        XCTAssertEqual(fleet.book?.entry(host: "testhost"), HabBook.Entry(connection: "h", label: "desk", device: "SHA256:fake-testhost"))
         XCTAssertEqual(HabBook(url: url).entry(host: "testhost")?.connection, "h", "read back from the file")
         let mode = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
         XCTAssertEqual(mode, 0o600)

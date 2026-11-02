@@ -37,6 +37,12 @@ public struct ChatView: View {
         .onChange(of: sendFiles?.handed) { _, _ in
             attachments += sendFiles?.take(for: model.target) ?? []
         }
+        // Text "New conversation" carried here (capcom.md 8.2).
+        .onChange(of: model.handoff, initial: true) { _, text in
+            guard let text else { return }
+            model.handoff = nil
+            draft = draft.isEmpty ? text : draft + "\n" + text
+        }
         // A Capcom composer attaches files as context chips (capcom.md 8.1).
         .onChange(of: attachments, initial: true) { _, files in
             guard model.context.isCapcom, !files.isEmpty else { return }
@@ -677,7 +683,7 @@ struct ComposerView: View {
                     .foregroundStyle(.secondary)
             }
             if model.context.isCapcom && !model.pending.isEmpty {
-                CapcomChipStrip(model: model)
+                CapcomChipStrip(model: model, newConversation: newConversation)
             }
             if !attachments.isEmpty {
                 DraftStrip(attachments: $attachments)
@@ -741,6 +747,18 @@ struct ComposerView: View {
         }
         .onDisappear {
             if let d = dictation { Task { await d.cancel() } }
+        }
+    }
+
+    /// "New conversation" beside the chips (capcom.md 8.2): the chips and the draft move to a
+    /// fresh Capcom session.
+    private var newConversation: (() -> Void)? {
+        guard let center = model.capcom else { return nil }
+        return {
+            let text = draft
+            Task {
+                if await center.newConversation(from: model, draft: text) { draft = "" }
+            }
         }
     }
 

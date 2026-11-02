@@ -19,6 +19,9 @@ public final class HabBook: @unchecked Sendable {
         public var connection: String
         /// The label the board shows, for "Could not reach <hab>".
         public var label: String
+        /// The hab's device id from its welcome: a push names the Capcom host by it
+        /// (capcom.md 8.5). Absent in a book from before.
+        public var device: String? = nil
     }
 
     public init(url: URL?) {
@@ -41,9 +44,14 @@ public final class HabBook: @unchecked Sendable {
         lock.withLock { map[host] }
     }
 
+    /// The entry of the hab with this device id.
+    public func entry(device: String) -> Entry? {
+        lock.withLock { map.values.first { $0.device == device } }
+    }
+
     /// Records a pair; writes the file only when it changed.
-    public func record(host: String, connection: String, label: String) {
-        let e = Entry(connection: connection, label: label)
+    public func record(host: String, connection: String, label: String, device: String? = nil) {
+        let e = Entry(connection: connection, label: label, device: device)
         let snapshot: [String: Entry]? = lock.withLock {
             if map[host] == e { return nil }
             // One connection answers for one host: drop an older pair for it.

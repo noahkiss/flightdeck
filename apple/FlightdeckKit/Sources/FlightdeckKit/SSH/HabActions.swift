@@ -25,6 +25,8 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
     @MainActor public weak var approvals: ApprovalCenter?
     /// Opens the usage sheet from a usage notification (app.md 14.4).
     @MainActor public weak var usage: UsageBook?
+    /// Opens Capcom from "Ask an agent" (capcom.md 8.2).
+    @MainActor public weak var capcom: CapcomCenter?
 
     public init(keys: DeviceKeys?, listURL: URL?) {
         self.keys = keys
@@ -39,12 +41,18 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
         let deny = UNNotificationAction(identifier: PushCategory.denyAction, title: "Deny", options: [.authenticationRequired, .destructive])
         let open = UNNotificationAction(identifier: PushCategory.openAction, title: openTitle, options: [.foreground])
         let reply = UNTextInputNotificationAction(identifier: PushCategory.replyAction, title: "Reply", options: [.authenticationRequired], textInputButtonTitle: "Send", textInputPlaceholder: "Answer")
+        // Ask opens the app at Capcom; it never answers (capcom.md 8.5).
+        let ask = UNNotificationAction(identifier: PushCategory.askAction, title: "Ask an agent", options: [.foreground])
         return [
             UNNotificationCategory(identifier: pingCategory, actions: [ping], intentIdentifiers: []),
             UNNotificationCategory(identifier: PushCategory.approval, actions: [deny, approve], intentIdentifiers: []),
             UNNotificationCategory(identifier: PushCategory.approvalDeny, actions: [deny, open], intentIdentifiers: []),
             UNNotificationCategory(identifier: PushCategory.open, actions: [open], intentIdentifiers: []),
             UNNotificationCategory(identifier: PushCategory.question, actions: [reply, open], intentIdentifiers: []),
+            UNNotificationCategory(identifier: PushCategory.approvalAsk, actions: [deny, approve, ask], intentIdentifiers: []),
+            UNNotificationCategory(identifier: PushCategory.approvalDenyAsk, actions: [deny, open, ask], intentIdentifiers: []),
+            UNNotificationCategory(identifier: PushCategory.openAsk, actions: [open, ask], intentIdentifiers: []),
+            UNNotificationCategory(identifier: PushCategory.ask, actions: [ask], intentIdentifiers: []),
         ]
     }
 
@@ -106,6 +114,8 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
             _ = await approvals.answer(host: host, params, meta: meta)
         case .open(let m):
             await approvals?.open(m)
+        case .ask(let m):
+            await capcom?.ask(m)
         case .none:
             break
         }

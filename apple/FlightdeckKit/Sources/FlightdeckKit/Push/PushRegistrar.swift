@@ -121,7 +121,8 @@ public final class PushRegistrar {
     /// The params `push.register` sends, or nil with no token.
     public var params: PushRegisterParams? {
         guard let token else { return nil }
-        return PushRegisterParams(deviceId: deviceID, environment: environment, hideCommands: showCommands ? nil : true, kinds: kinds, token: token)
+        return PushRegisterParams(deviceId: deviceID, environment: environment, features: PushCategory.features,
+                                  hideCommands: showCommands ? nil : true, kinds: kinds, token: token)
     }
 
     // MARK: - Inputs

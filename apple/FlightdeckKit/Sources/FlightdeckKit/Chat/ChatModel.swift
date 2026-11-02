@@ -139,6 +139,10 @@ public final class ChatModel {
     /// Files this model attached as chips, by attachment id, so "New conversation" can
     /// attach them again to the new session.
     @ObservationIgnored var chipFiles: [String: DraftAttachment] = [:]
+    /// Text "New conversation" carried here; the composer takes it once.
+    public var handoff: String?
+    /// Opens Capcom sessions for "New conversation"; the fleet sets it.
+    @ObservationIgnored public weak var capcom: CapcomCenter?
 
     /// Page size of `chat.page`.
     @ObservationIgnored public var pageSize = 50
