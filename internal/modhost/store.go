@@ -14,8 +14,10 @@ import (
 	"github.com/noahkiss/flightdeck/api/modules"
 )
 
-// DirStore keeps each module's state as <Dir>/<module id>.json, written to a temporary file
-// and renamed into place, so a crash leaves the old state or the new one.
+// DirStore keeps each module's state as <Dir>/<module id>.json, written to a temporary file,
+// synced, renamed into place and the folder synced, so a crash leaves the old state or the new
+// one. Two modules with the same id share one file: the host refuses a second module with an id
+// it already has (modules.md 8.4).
 type DirStore struct {
 	Dir string
 }
@@ -77,8 +79,18 @@ func (d DirStore) Save(module string, state map[string]json.RawMessage) error {
 	}
 	if werr != nil {
 		os.Remove(tmp)
+		return werr
 	}
-	return werr
+	// The rename is durable once the folder's entry is on disk.
+	dir, err := os.Open(d.Dir)
+	if err != nil {
+		return err
+	}
+	serr := dir.Sync()
+	if cerr := dir.Close(); serr == nil {
+		serr = cerr
+	}
+	return serr
 }
 
 // MemStore keeps state in memory, for tests and `gff-hab modules check`.
