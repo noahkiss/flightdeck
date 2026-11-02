@@ -165,6 +165,13 @@ Rules:
 - **Edits.** An edit takes effect from the next run. A run already in flight keeps the values it
   started with. Changing the trigger recomputes the next slot from now.
 
+- **Field rules (stage 1).** A name is at most 64 characters. `harness`, `project` and `cwd`
+  are for `fresh` rounds only: a `resume` or `fork` run uses its target's harness and folder.
+  `model` and `harness_args` apply in every mode that starts a harness. A `command` round takes
+  no prompt, harness, model or harness arguments. An `expires_at` in the past is refused, as a
+  past `once` instant is. Both checks apply at creation and when the value changes, so an edit
+  to another field never fails on a time that has passed since.
+
 Decision: rounds live in the runner's state and are edited by the API, with export and apply for
 a file. Reason: the app and agents must create and edit rounds, as in Paseo, and a store the hab
 writes has no merge problem. Export and apply keep the "rounds in a config file" option open for
@@ -184,17 +191,26 @@ users who want it in git.
 ### 4.1 Cron
 
 - **Expression.** Standard 5 fields: minute, hour, day of month, month, day of week. Lists,
-  ranges, steps and the names `MON` and `JAN` are accepted. Seconds and `@reboot` are not.
+  ranges, steps and the names `MON` and `JAN` are accepted, in any case. Day of week 7 is Sunday,
+  as 0 is. When both day fields are restricted, a day matches when either matches; when one
+  starts with `*`, both must match (classic cron). Seconds are refused, and so is every `@` form
+  (`@reboot`, `@daily`): a preset covers the short forms. `L`, `W`, `#` and `?` are refused.
 - **Presets.** `--every 5m`, `1h`, `1d` and the like compile to cron, as in Paseo: `5m` is
   `*/5 * * * *`. A preset that cron cannot express (`7m` does not divide the hour) is refused
   with the nearest presets that work. There is no rolling interval anchored to creation time.
+  The presets are `1m`, `2m`, `5m`, `10m`, `15m`, `20m`, `30m`, `1h`, `2h`, `3h`, `4h`, `6h`,
+  `8h`, `12h` and `1d` (midnight in the round's zone). An equal span in another unit works
+  (`60m` is `1h`); any other span is refused, naming the presets on either side (`7m`: `5m`,
+  `10m`).
 - **Time zone.** Stored with the round. The default is the runner host's zone at creation time,
   written out as an IANA name, so a laptop that travels keeps the time the user meant. The UI
   shows the next run in the viewer's zone and the round's zone.
 - **Daylight saving.** The next slot is computed in the round's zone and stored as a UTC instant.
   A local time that does not exist (the hour skipped in spring) runs at the first valid minute
   after it. A local time that happens twice (the hour repeated in autumn) runs once, at its first
-  occurrence.
+  occurrence. The rule holds for every round: an hourly or `*/5` round does not run again in the
+  repeated hour, and several slots in a skipped hour make one run at its end. A zone that skips
+  a whole day follows the same rule.
 - **Floor.** One minute, the cron granularity. Paseo allows the same.
 - **Run on create.** `--run-now` starts one run at creation, as Paseo's flag does. It does not
   move the next slot.
@@ -384,6 +400,9 @@ running it where the user can see it.
 - **`on_finish = keep`.** The session stays open at the harness's prompt until the user closes it.
 - **Retention.** Each round keeps its last 200 runs or 90 days, whichever is more. Exited run
   sessions older than that are removed from the structure; their transcripts are not touched.
+  A run's age counts from when it was made (`created`). A run that has not ended is never
+  pruned. Deleting a round drops its ended runs; a live run stays until it ends, and the next
+  prune drops it.
 - `resume` mode never closes its target.
 
 ### 7.7 Where round and run state lives, and the Logbook seam
@@ -403,8 +422,13 @@ rounds, so rounds keep their own state now.
   The scheduler, the definitions and `GFF_ROUND_LAST_OK` stay in the rounds store: a slot
   decision must never wait on a store that syncs between hosts.
 - **The run record.** Run id, run number, round id, slot, trigger kind, `missed`, state, reason,
-  session id, start and end times, and the first 4 KiB of the final agent message. Logbook gets
-  the same fields.
+  session id, when it was made (`created`), start and end times, and the first 4 KiB of the
+  final agent message. Logbook gets the same fields.
+- **Run numbers.** The scheduler gives each run the next number from the round's state in the
+  rounds store; the run log stores a run as given and refuses a repeated id. Numbers so stay in
+  the store that owns the slots, whichever run log holds the records.
+- **A newer file.** A state file a newer build wrote is not set aside: gff-hab refuses to start
+  with it, so a downgrade never loses rounds.
 
 Decision: rounds keep their own state behind a run log interface. Reason: Logbook comes after
 rounds; a narrow seam lets it take over the run history with no change to the scheduler or the
