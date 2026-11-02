@@ -7,8 +7,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
@@ -51,6 +53,11 @@ func peerCaller(ctx context.Context, c caller, label string) (caller, func(), er
 		}
 		return nil, nil, errors.New(msg)
 	}
+	if p.DeviceID == "" {
+		// Online with no device id: the link could not pin the peer (gff-hab peers says why).
+		// Any hab at that endpoint would pass, so nothing is dialed until the peer is pinned.
+		return nil, nil, fmt.Errorf("peer %s: host not pinned: this hab has no device id for it yet; see gff-hab peers, and try again once it is pinned", label)
+	}
 	ep, err := hosts.ParseEndpoint(p.Endpoint)
 	if err != nil {
 		return nil, nil, fmt.Errorf("peer %s: %w", label, err)
@@ -69,7 +76,7 @@ func peerCaller(ctx context.Context, c caller, label string) (caller, func(), er
 		pc.Close()
 		return nil, nil, fmt.Errorf("%s: %s: %w", errHostOffline, label, err)
 	}
-	if p.DeviceID != "" && w.DeviceID != p.DeviceID {
+	if w.DeviceID != p.DeviceID {
 		pc.Close()
 		return nil, nil, fmt.Errorf("peer %s: the hab at %s presents %s, not the pinned %s", label, p.Endpoint, shortID(w.DeviceID), shortID(p.DeviceID))
 	}
@@ -169,11 +176,22 @@ func printHostRounds(out io.Writer, rows []hostRound) {
 	tw.Flush()
 }
 
+// moveCallTimeout bounds each step of a move after the user answered; moveSettleTimeout bounds
+// the rollback and the question to the peer after a failed create, each with its own context
+// from context.Background, so they run whatever happened to the move's own. Tests shorten them.
+var (
+	moveCallTimeout   = 60 * time.Second
+	moveSettleTimeout = 15 * time.Second
+)
+
 // moveRound moves a fresh round from the hab behind from to the peer behind to (rounds.md 9),
 // after the user confirms: it pauses the round here, so no slot runs on both hosts, creates it
 // on the peer with the same definition and pause mark, its project named by remote, then
-// deletes it here. A failed create unpauses it here again. Resume and fork rounds stay: their
-// target session lives on this host. The run history stays behind, and goes with the delete.
+// deletes it here. A create the peer refused unpauses it here again. A create whose answer was
+// lost asks the peer: a round there finishes the move; no round unpauses it here; no answer
+// leaves it paused here and says what to check. Resume and fork rounds stay: their target
+// session lives on this host. A completed round stays: its counts stay behind, so it would run
+// again on the peer. The run history stays behind, and goes with the delete.
 func moveRound(ctx context.Context, from, to caller, name, label string, yes, asJSON bool, stdin io.Reader, out io.Writer) error {
 	var got api.RoundResult
 	if err := from.Call(ctx, "round.get", api.RoundRef{Name: name}, &got); err != nil {
@@ -182,6 +200,13 @@ func moveRound(ctx context.Context, from, to caller, name, label string, yes, as
 	r := got.Round
 	if r.Mode != api.RoundModeFresh {
 		return fmt.Errorf("round %s is a %s round: its target session lives on this host, so it cannot move", name, r.Mode)
+	}
+	if r.Completed {
+		why := ""
+		if r.CompletedReason != "" {
+			why = " (" + r.CompletedReason + ")"
+		}
+		return fmt.Errorf("round %s is completed%s: on %s it would run again, as its counts stay here. Edit its trigger, -max-runs or -expires with gff-hab round edit, or delete it with gff-hab round rm %s", name, why, label, name)
 	}
 	if r.Cwd != "" {
 		return fmt.Errorf("round %s starts in %s, a folder on this host: clear -cwd with round edit first", name, r.Cwd)
@@ -196,6 +221,9 @@ func moveRound(ctx context.Context, from, to caller, name, label string, yes, as
 	if !yes && !askYes(stdin, out, fmt.Sprintf("Move round %s to %s? It is created there and deleted here, with its run history. [y/N] ", name, label)) {
 		return errors.New("not moved")
 	}
+	// The answer may have taken any time: the move gets a context of its own.
+	ctx, cancel := context.WithTimeout(context.Background(), moveCallTimeout)
+	defer cancel()
 	if !r.Paused {
 		if err := from.Call(ctx, "round.pause", api.RoundRef{ID: r.ID}, nil); err != nil {
 			return fmt.Errorf("pause round %s here: %w", name, err)
@@ -203,13 +231,53 @@ func moveRound(ctx context.Context, from, to caller, name, label string, yes, as
 	}
 	var made api.RoundCreated
 	if err := to.Call(ctx, "round.create", api.RoundCreateParams{Round: spec}, &made); err != nil {
+		var ce *control.Error
+		refused := errors.As(err, &ce)
+		sctx, scancel := context.WithTimeout(context.Background(), moveSettleTimeout)
+		defer scancel()
+		var there api.RoundResult
+		gerr := to.Call(sctx, "round.get", api.RoundRef{Name: name}, &there)
+		var ge *control.Error
+		absent := errors.As(gerr, &ge) && ge.Data.Kind == api.ErrorKindNotFound
+		switch {
+		case !refused && gerr == nil && sameRound(there.Round, spec):
+			// The create took effect; only its answer was lost. Finish the move.
+			made = api.RoundCreated{Round: there.Round}
+			return finishMove(from, r, made, name, label, asJSON, out)
+		case !refused && !absent:
+			// Neither the create's answer nor the peer's: the round may run on both hosts once
+			// unpaused here, so it stays paused.
+			why := "has a different round by that name"
+			if gerr != nil {
+				why = "did not say whether it has the round: " + gerr.Error()
+			}
+			return fmt.Errorf("create round %s on %s: %w; the answer was lost, and %s %s. Round %s stays paused here. Check with gff-hab round show %s -host %s: if %s has it, remove it here with gff-hab round rm %s; if not, run it here again with gff-hab round unpause %s",
+				name, label, err, label, why, name, name, label, label, name, name)
+		case refused && gerr == nil:
+			// The peer refused, and has a round by that name: an earlier move whose delete
+			// failed, or another round.
+			if !r.Paused {
+				if uerr := from.Call(sctx, "round.unpause", api.RoundRef{ID: r.ID}, nil); uerr != nil {
+					return fmt.Errorf("create round %s on %s: %w; a round %s already exists on %s, and round %s stays paused here: %v", name, label, err, name, label, name, uerr)
+				}
+			}
+			return fmt.Errorf("create round %s on %s: %w; a round %s already exists on %s. If it is this round from an earlier move, remove it here with gff-hab round rm %s; else rename one of them with gff-hab round edit",
+				name, label, err, name, label, name)
+		}
 		if !r.Paused {
-			if uerr := from.Call(ctx, "round.unpause", api.RoundRef{ID: r.ID}, nil); uerr != nil {
+			if uerr := from.Call(sctx, "round.unpause", api.RoundRef{ID: r.ID}, nil); uerr != nil {
 				return fmt.Errorf("create round %s on %s: %w; and it stays paused here: %v", name, label, err, uerr)
 			}
 		}
 		return fmt.Errorf("create round %s on %s: %w; it stays here", name, label, err)
 	}
+	return finishMove(from, r, made, name, label, asJSON, out)
+}
+
+// finishMove deletes round r here once the peer has it as made.
+func finishMove(from caller, r api.Round, made api.RoundCreated, name, label string, asJSON bool, out io.Writer) error {
+	ctx, cancel := context.WithTimeout(context.Background(), moveSettleTimeout)
+	defer cancel()
 	if err := from.Call(ctx, "round.delete", api.RoundRef{ID: r.ID}, nil); err != nil {
 		return fmt.Errorf("round %s now runs on %s, but deleting it here failed: %w; it is paused here, remove it with gff-hab round rm %s", name, label, err, name)
 	}
@@ -218,4 +286,12 @@ func moveRound(ctx context.Context, from, to caller, name, label string, yes, as
 	}
 	fmt.Fprintf(out, "moved %s to %s: next %s (was %s)\n", name, label, orDash(made.Round.NextSlot), orDash(r.NextSlot))
 	return nil
+}
+
+// sameRound says whether have, a round read from the peer, is the one a lost create sent:
+// the same mode, trigger, command, prompt and harness.
+func sameRound(have api.Round, sent api.RoundSpec) bool {
+	return have.Mode == sent.Mode && have.Trigger.Kind == sent.Trigger.Kind && have.Trigger.Cron == sent.Trigger.Cron &&
+		have.Trigger.Zone == sent.Trigger.Zone && have.Trigger.At == sent.Trigger.At && have.Prompt == sent.Prompt &&
+		have.Harness == sent.Harness && slices.Equal(have.Command, sent.Command)
 }

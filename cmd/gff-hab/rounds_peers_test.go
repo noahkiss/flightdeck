@@ -124,14 +124,16 @@ func TestRoundPeers(t *testing.T) {
 	waitPeer(t, b.sock, "ay", "b sees a online", func(p api.Peer) bool { return p.State == api.PeerStateOnline })
 	ca, cb := a.control(), b.control()
 
-	// A round on a; one made on b from a, by folder; one by this folder's remote.
+	// A round on a; one made on b from a by this folder's remote, while b's structure has no
+	// project yet: only b's catalog scan found the checkout; one by folder.
 	a.must(t, "", "add", "nightly", "-every", "1h", "-project", a.repo, "-command", "--", "true")
-	a.must(t, "", "add", "daily", "-host", "bee", "-every", "1d", "-tz", "UTC", "-project", b.repo, "-command", "--", "true")
-	waitUntil(t, "a's catalog has its project", func() bool {
-		e, _ := hostEntry(catalogOf(t, ca), "host-a")
-		return len(e.Catalog.Projects) > 0
+	waitUntil(t, "a's and b's catalogs have their projects", func() bool {
+		ea, _ := hostEntry(catalogOf(t, ca), "host-a")
+		eb, _ := hostEntry(catalogOf(t, cb), "host-b")
+		return len(ea.Catalog.Projects) > 0 && len(eb.Catalog.Projects) > 0
 	})
 	a.must(t, a.repo, "add", "weekly", "-host", "bee", "-cron", "0 9 * * 1", "-tz", "UTC", "-command", "--", "true")
+	a.must(t, "", "add", "daily", "-host", "bee", "-every", "1d", "-tz", "UTC", "-project", b.repo, "-command", "--", "true")
 	if !hasRound(cb, "daily") || !hasRound(cb, "weekly") || hasRound(ca, "daily") {
 		t.Fatal("the -host rounds are not on b alone")
 	}
@@ -160,6 +162,39 @@ func TestRoundPeers(t *testing.T) {
 	}
 	if out := a.must(t, "", "ls", "-host", "bee"); !strings.Contains(out, "weekly") || strings.Contains(out, "nightly") {
 		t.Errorf("ls -host bee:\n%s", out)
+	}
+
+	// The -host connection: an online peer row pinned to b's id reaches b; a pin b does not
+	// present is refused; a row with no pin and an offline row are refused before any dial,
+	// though b's socket would answer.
+	idB := welcome(t, b.sock).DeviceID
+	row := func(state api.PeerState, id string) caller {
+		return &moveFake{handlers: map[string]func(context.Context, any) (any, error){
+			"peers.list": answer(api.PeerList{Peers: []api.Peer{{Label: "x", State: state, Endpoint: b.sock, DeviceID: id, LastSeen: "2026-11-02T08:00:00Z"}}}),
+		}}
+	}
+	ctx := context.Background()
+	pc, pdone, err := peerCaller(ctx, row(api.PeerStateOnline, idB), "x")
+	if err != nil {
+		t.Fatalf("a pinned online peer: %v", err)
+	}
+	var got api.RoundResult
+	if err := pc.Call(ctx, "round.get", api.RoundRef{Name: "daily"}, &got); err != nil {
+		t.Errorf("round.get through the peer connection: %v", err)
+	}
+	pdone()
+	for _, c := range []struct {
+		state api.PeerState
+		id    string
+		want  string
+	}{
+		{api.PeerStateOnline, strings.Repeat("0f", 32), "not the pinned"},
+		{api.PeerStateOnline, "", "host not pinned"},
+		{api.PeerStateOffline, idB, "host offline: x is offline, last seen 2026-11-02T08:00:00Z"},
+	} {
+		if _, _, err := peerCaller(ctx, row(c.state, c.id), "x"); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("peer row %s %q: %v, want %q", c.state, c.id, err, c.want)
+		}
 	}
 
 	// Move nightly to b: only b has it after, with the same next slot.

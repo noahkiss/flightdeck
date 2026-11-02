@@ -430,7 +430,10 @@ func roundCmd(args []string, stdin io.Reader, out io.Writer) error {
 		if !*yes && !askYes(stdin, out, fmt.Sprintf("Delete round %s and its ended runs? A live run goes on to its end. [y/N] ", name)) {
 			return errors.New("not deleted")
 		}
-		if err := c.Call(ctx, "round.delete", ref, nil); err != nil {
+		// The answer may have taken any time: the delete gets a context of its own.
+		dctx, dcancel := context.WithTimeout(context.Background(), moveCallTimeout)
+		defer dcancel()
+		if err := c.Call(dctx, "round.delete", ref, nil); err != nil {
 			return err
 		}
 		fmt.Fprintf(out, "deleted %s\n", name)
@@ -962,6 +965,10 @@ func applyRounds(ctx context.Context, c caller, path string, yes bool, stdin io.
 		if !askLine(in, out, "Apply these changes? [y/N] ") {
 			return errors.New("nothing applied")
 		}
+		// The answer may have taken any time: what follows gets a context of its own.
+		actx, acancel := context.WithTimeout(context.Background(), moveCallTimeout)
+		defer acancel()
+		ctx = actx
 		// The rounds may have changed while the user read the plan: a run ended, a slot
 		// passed, another client edited one. Apply only the plan the user saw, with the
 		// revisions read now; a different plan is shown and asked again.

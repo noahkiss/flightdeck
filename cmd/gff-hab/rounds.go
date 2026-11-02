@@ -911,6 +911,12 @@ func roundEvent(n rounds.Notice) (push.RoundEvent, bool) {
 		ev.Kind, ev.Failures = push.RoundPaused, max(st.Failures, rounds.PauseAfterFailures)
 	case rounds.NoticeSkips:
 		ev.Kind = push.RoundSkips
+		// Open goes to the target, the session the runs wait for; a fork run's own session
+		// is a fork that never got its prompt. A fresh round has no target: its skipped run's
+		// session, when it has one.
+		if r.Target != "" {
+			ev.Session = r.Target
+		}
 		since := r.CreatedAt
 		if st.LastOK != nil {
 			since = *st.LastOK

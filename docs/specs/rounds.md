@@ -586,7 +586,8 @@ lose runs for reasons the user never sees. A restart is treated like a short sle
   project onto another host first, use project set-up (task-j600w23a).
 - **Move a round.** `gff round move <name> --host <label>` creates the round on the new runner
   and deletes it on the old one, after the user confirms. A `resume` or `fork` round cannot move,
-  because its target lives on one host.
+  because its target lives on one host. A completed round cannot move either: its counts stay
+  on the old host, so it would run again on the new one. The user edits it or deletes it.
 - **No failover.** While the runner is offline, its rounds do not run anywhere. No other hab picks
   them up. When the runner wakes, catch-up applies.
 - **The always-on host.** A hab marked `always_on` (`mesh.md` 8) is the natural runner for rounds
@@ -1015,7 +1016,7 @@ choice open:
   | `run_failed` | "Round failed: <name>" ("Round timed out: <name>") | The reason | Active | Open the run session |
   | `run_succeeded` | "Round done: <name>" | The first line of the final message | Passive | Open the run session |
   | `paused` | "Round paused: <name>" | "5 failed runs in a row. Unpause it to run again." | Active | Open the last run's session |
-  | `skips` | "Round not running: <name>" | "Not run since <time in the round's zone>: <reason>" | Passive | Open the target |
+  | `skips` | "Round not running: <name>" | "Not run since <time in the round's zone>: <reason>" | Passive | Open the target (`resume`, `fork`); a `fresh` round has none: the skipped run's session, when it has one |
   | `target_gone` | "Round completed: <name>" | "Its target session is gone." | Passive | None |
   | `state_set_aside` | "Rounds state set aside" | What gff-hab did | Active | None |
 
@@ -1039,8 +1040,10 @@ choice open:
 - **-host.** `gff-hab round <verb> -host <label>` acts on that peer's rounds over a control
   connection the CLI opens itself, through the endpoint the peer's link uses from this hab's
   peer list. The peer must be online there, else "host offline: <label> is offline, last seen
-  ..."; edits never queue (11). The hab that answers must present the pinned device id. Every
-  verb takes it. Decision: the CLI dials, not the hab over its peer link. Reason: the user's
+  ..."; edits never queue (11). The peer must be pinned: a row with no device id (the link
+  could not save the pin) is refused "host not pinned" before any dial, since any hab at that
+  endpoint would pass. The hab that answers must present the pinned device id. Every verb
+  takes it. Decision: the CLI dials, not the hab over its peer link. Reason: the user's
   edit then reaches the runner with the user's own SSH access, as `-via` does, and no hab
   forwards `round.*` for another; a hab-to-hab path for rounds belongs with the agent kit's
   confirmation (stage 10).
@@ -1058,9 +1061,18 @@ choice open:
 - **move.** It asks first (`-yes` skips it), then pauses the round here, so no slot runs on both
   hosts, creates it on the new runner with the same definition and pause mark, its project named
   by remote, and deletes it here. The next slot is the trigger's next one from now on both, so
-  it does not change. A create that fails unpauses the round here. A delete that fails leaves
-  it paused here, and says so. Refused: `resume` and `fork` rounds, a round with a `cwd` (a
-  folder on this host), a project with no remote. The run history and the counts stay behind
+  it does not change. A create the new runner refused unpauses the round here; when the
+  refusal is a name it already holds (an earlier move whose delete failed, or another round),
+  the error says so and what to do. A create whose answer was lost (the connection dropped, a
+  timeout) may have taken effect, so the CLI asks the new runner with `round.get` by name: the
+  same round there finishes the move; no round there unpauses it here; no answer, or another
+  round by that name, leaves it paused here and prints the commands that settle it. A delete
+  that fails leaves it paused here, and says so. The steps after the question get a context of
+  their own, and the rollback one from `context.Background`, so a slow answer or a slow create
+  never skips the unpause. Refused: `resume` and `fork` rounds, a completed round (its counts
+  stay behind, so on the new runner it would run again: edit its trigger, `max_runs` or
+  `expires_at`, or delete it), a round with a `cwd` (a folder on this host), a project with no
+  remote. The run history and the counts stay behind
   and go with the delete; `created_by` is not carried. A live run here goes on to its end.
 - **Not yet.** The always-on suggestion at creation (9) and the status board's list (10.3) are
   app and client stages (7, 8).

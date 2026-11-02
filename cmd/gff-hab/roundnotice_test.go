@@ -79,14 +79,22 @@ func TestRoundNoticePush(t *testing.T) {
 		Run: run(5, rounds.RunFailed, "exit status 1", "s-open", "")})
 	svc.Notice(rounds.Notice{Kind: rounds.NoticeTargetGone, Round: entry("r3", "check-in", rounds.NotifyFailures),
 		Run: run(6, rounds.RunSkipped, "the target session is gone", "s-gone", "")})
+	// A session whose folder is unknown keeps the result out.
+	svc.Notice(rounds.Notice{Kind: rounds.NoticeRunFailed, Round: entry("r4", "lost", rounds.NotifyFailures),
+		Run: run(7, rounds.RunFailed, "exit status 3", "s-unknown", "hidden words")})
+	// The skips row opens the target, not the skipped run's own session (a fork's).
+	skips := entry("r5", "check", rounds.NotifyFailures)
+	skips.Round.Mode, skips.Round.Target = rounds.ModeFork, "s-target"
+	svc.Notice(rounds.Notice{Kind: rounds.NoticeSkips, Round: skips,
+		Run: run(8, rounds.RunSkipped, "the session is in use", "s-fork", "")})
 	pushes.notifier.Sync()
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(events) != 4 {
-		t.Fatalf("%d notice.raised events, want 4: %+v", len(events), events)
+	if len(events) != 6 {
+		t.Fatalf("%d notice.raised events, want 6: %+v", len(events), events)
 	}
-	wantKinds := []api.RoundNoticeKind{"run_failed", "run_failed", "paused", "target_gone"}
+	wantKinds := []api.RoundNoticeKind{"run_failed", "run_failed", "paused", "target_gone", "run_failed", "skips"}
 	for i, e := range events {
 		if e.Round == nil || e.Round.Kind != wantKinds[i] || e.Round.Run == "" {
 			t.Fatalf("event %d: %+v", i, e)
@@ -98,15 +106,21 @@ func TestRoundNoticePush(t *testing.T) {
 	if b := events[1].Body; strings.Contains(b, "private") || !strings.Contains(b, "timed out") {
 		t.Errorf("a denied folder kept the result: %q", b)
 	}
+	if b := events[4].Body; strings.Contains(b, "hidden") || !strings.Contains(b, "exit status 3") {
+		t.Errorf("an unknown folder kept the result: %q", b)
+	}
+	if e := events[5]; e.Session != "s-target" || !strings.Contains(e.Body, "the session is in use") {
+		t.Errorf("the skips notice opens %q, want the target: %+v", e.Session, e)
+	}
 	if n, ok := pushes.notices.get(events[0].ID); !ok || n.Round == nil || n.Round.Round != "r1" || n.Title != "Round failed: nightly" {
 		t.Errorf("notice.get: %v %+v", ok, n)
 	}
 	al := sent.alerts()
-	if len(al) != 4 {
-		t.Fatalf("%d pushes, want 4 (the phone only): %v", len(al), al)
+	if len(al) != 6 {
+		t.Fatalf("%d pushes, want 6 (the phone only): %v", len(al), al)
 	}
-	wantTitles := []string{"Round failed: nightly", "Round timed out: nightly", "Round paused: quiet", "Round completed: check-in"}
-	wantCollapse := []string{"round-r1", "round-r1", "round-r2", "round-r3"}
+	wantTitles := []string{"Round failed: nightly", "Round timed out: nightly", "Round paused: quiet", "Round completed: check-in", "Round failed: lost", "Round not running: check"}
+	wantCollapse := []string{"round-r1", "round-r1", "round-r2", "round-r3", "round-r4", "round-r5"}
 	for i, a := range al {
 		fd := a["flightdeck"].(map[string]any)
 		if title(a) != wantTitles[i] || a["collapse"] != wantCollapse[i] || fd["kind"] != push.KindRound || fd["round"] == nil || fd["notice"] != events[i].ID {
@@ -115,5 +129,21 @@ func TestRoundNoticePush(t *testing.T) {
 	}
 	if cat := al[0]["aps"].(map[string]any)["category"]; cat != push.CategoryOpen {
 		t.Errorf("a failed run's banner opens its session: %v", cat)
+	}
+	if fd := al[5]["flightdeck"].(map[string]any); fd["session"] != "s-target" {
+		t.Errorf("the skips push opens %v, want the target", fd["session"])
+	}
+}
+
+// TestRoundRunChangedPokes: every run change pokes the catalog, so a run's state reaches the
+// rounds section without waiting for a round change (Built (stage 6), the catalog section).
+func TestRoundRunChangedPokes(t *testing.T) {
+	pokes := 0
+	svc := &roundsService{cfg: roundsConfig{logf: t.Logf, publish: func(structure.Event) {}, changed: func() { pokes++ }}}
+	for i, st := range []rounds.RunState{rounds.RunQueued, rounds.RunWaiting, rounds.RunRunning} {
+		svc.RunChanged(rounds.Run{ID: "run1", RoundID: "r1", Number: 1, State: st})
+		if pokes != i+1 {
+			t.Fatalf("after %s: %d pokes, want %d", st, pokes, i+1)
+		}
 	}
 }
