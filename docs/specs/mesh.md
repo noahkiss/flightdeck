@@ -217,7 +217,7 @@ got through the transport as the owner (`landscape.md` 2.17).
 - **A tailnet or VPN** is only a route to an endpoint. Online and offline come from the link, not
   from a VPN's status.
 - **A peer link has no data connections.** Habs exchange control traffic only: catalog, channel
-  messages, control items. Pane bytes go from a hab to a client, never hab to hab.
+  messages, control items, Logbook ops (`logbook.md` 7). Pane bytes go from a hab to a client, never hab to hab.
 
 ### 4.2 The peer link
 
@@ -1121,13 +1121,15 @@ it.
 | `catalog.put` | Method | The dialer pushes its own catalog sections | task-dyagzrw0 |
 | `catalog.list` | Method | The merged view: own catalog plus direct peers' copies, with age and stale marks | task-dyagzrw0 |
 | `catalog.updated` | Event | A copy or the own catalog changed (generation and device id only) | task-dyagzrw0 |
-| `mesh.changed` | Event | To a peer link: catalog or mail waiting (4.2); `reasons` `mail` built (6.5) | task-dyagzrw0; mail task-x0m0pyc8 |
+| `mesh.changed` | Event | To a peer link: catalog, mail or Logbook ops waiting (4.2); `reasons` `mail` built (6.5), `logbook` built (`logbook.md` 7.6) | task-dyagzrw0; mail task-x0m0pyc8; logbook task-82f5stqr |
 | `mail.push` | Method | Hand over messages and control items; returns accepted ids | task-z5pysi5t |
 | `mail.pull` | Method | Take items waiting for the caller's device id | task-z5pysi5t |
 | `channel.send` | Method | An agent's send through its own hab; returns id and state | task-z5pysi5t |
 | `channel.status` | Method | A message's state | task-z5pysi5t |
 | `channel.wait` | Method | Wait for a message to the caller or an agent state change (6.4) | task-z5pysi5t |
 | `channel.message` | Event | A message state changed (sender side) | task-z5pysi5t |
+| `logbook.pull` | Method | A peer link takes one page of the Logbook ops its hab lacks, by version vector (`logbook.md` 7.6) | task-82f5stqr |
+| `logbook.push` | Method | A peer link hands over one page of Logbook ops; returns the callee's version vector | task-82f5stqr |
 | `transcript.index` | Method | A page of this hab's transcript index | task-syy38i23 |
 
 ---

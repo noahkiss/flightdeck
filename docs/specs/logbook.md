@@ -584,6 +584,48 @@ its next link.
   keys. It sends them when a hab answers. A queued write shows as "waiting to send".
 - `gff` and the app may write through any hab. The record reaches every other hab by sync.
 
+### 7.6 Built (stage 3)
+
+`internal/logbook` (`sync.go`: `Store.Sync`, `ServePull`, `ServePush`) and `internal/lbsync`,
+wired into `gff-hab serve` (task-82f5stqr). Capability `logbook`. Methods `logbook.pull` and
+`logbook.push`; `mesh.changed` gains the reason `logbook`. Until stage 4, `logbook` names the
+peer methods only; the client methods of 10.3 come with stage 4.
+
+Where this spec was silent, stage 3 decided:
+
+| Point | Decision |
+|---|---|
+| The file | gff-hab opens `<state>/logbook.db` at start, with its device id as the origin. A corrupt file (SQLite says it is not a database, or damaged) is renamed `logbook.db.corrupt-<unix seconds>`, with its WAL, and gff-hab starts empty and logs it; the peers send a full copy (14). A file of another origin (the host got a new device id and kept its state folder) is renamed `logbook.db.other-origin-<unix seconds>`, and its ops are copied into the new replica as the old origin's ops, so nothing it held is lost. Neither file is deleted |
+| Peer links only | Both methods need a peer link (client kind `hab` with the hello's `peer`) and refuse one that claims this hab's own device id, with `invalid`. A client gets the same refusal |
+| Wire shape | `logbook.pull {have, skip}` answers `{ops, vector, more, skip}`; `logbook.push {ops}` answers `{vector, skip}`. A vector is a list of `{origin, seq}`. Ops travel as base64 of their stored bytes, not as JSON values: a JSON encoder may compact or escape a value, and a replica compares op bytes (4.5, Shared origin), so an op must arrive byte for byte |
+| Pages | 2,000 ops or 4 MiB, one larger op alone (7.1). A push of more is refused with `invalid` and stores nothing. 4 MiB of ops is about 5.4 MiB of base64, under the control connection's 8 MiB backlog and 16 MiB line |
+| One exchange | `Store.Sync`: pull page after page until the answer says no more, then push, page after page, what the peer's last answered vector lacks. A page that moves no vector ends that direction, logged; so does the 1,000th page, and the next exchange carries on. Pull before push, so a push never sends ops the peer is about to send back |
+| Refused origins | Each side lists in `skip` the origins it refuses (two hosts share them, 7.4), and the other side sends none of their ops. Without it, a refused origin's ops would fill every page and starve the origins after it |
+| When the dialer syncs | When the link comes up, every 60 s (7.1), at once when this replica's vector grows, and at once on `mesh.changed` with `logbook` from that link, past any backoff. One exchange per link at a time: a request during one runs it once more after. A failed exchange waits 1 s, doubled for each failure in a row up to 60 s; only the first failure in a row is logged |
+| Seeing new ops | gff-hab acts when the vector grows: after a pull or a push stored ops, after `Changed()` (stage 4's writes through gff-hab), and when the size or time of `logbook.db` or its WAL changes, checked every 500 ms. The check catches ops another process wrote: the CLI (4.3). A change is looked at once more on the next check: a commit seen half written may not show in the vector yet, and its last write need not move the size or the coarse file time |
+| Wake-ups | A hab that dialed this one and pulled from it at least once is woken with `mesh.changed` (`reasons: ["logbook"]`) when this replica holds ops its last pull lacked. Once until its next pull, as for mail (`mesh.md` 6.5). None when this hab holds an online link to it that is not in backoff: this hab pushes instead. A wake-up no link took is tried again at the next change |
+| Multi-hop | Ops stored from a peer count as growth, so they go on to every other link at once, by push or by wake-up (7.2) |
+| A new key | A hab rebuilt with a new key is a new origin with an empty file. Its old origin's ops are, to it, another origin's ops: it pulls them from any peer in seq order, folds and serves them like any others. The own-origin rule of 4.5 (Own ops back) applies only to a replica's current origin, so it never meets the old one; and the old origin never writes again, since its key is gone, so no seq of it is used twice. Ops the old disk held that no peer held are lost (7.4) |
+| No outbox | Logbook puts nothing in the mesh outbox (7.3); the op log and the vectors are the outbox |
+
+Not built in stage 3:
+
+- A replica restored with the same device id (14) that writes before its first sync reuses seqs
+  that peers hold, and they mark the origin shared. Nothing holds local writes until the first
+  pull after a restore. Recovery is a new device id (7.4).
+- "syncing, N of M" in search, and `gff lb status` unsynced counts per peer (7.4): stage 4.
+- The nightly soak of 1 million ops over 5 replicas (17).
+
+Property test counts: P1 to P9 run in one process over `Store.Sync`, with a fake link that drops a
+request, holds one and delivers it after others, repeats one (at once, checked to change nothing,
+or later), or serves one and loses the answer. A replica restart or rebuild kills the requests in
+flight to or from it. Per push: P1 40 runs, P4 30, P5, P7, P8 and P9 20 each, of 60 steps; nightly
+(`GFF_LOGBOOK_NIGHTLY=1`) P1 20,000 and the rest 5,000; under `-race` a twentieth. Fewer than 17's
+500 for P1, for the same reason as P2 in 4.5: the package stays near 15 s. P1 also checks P2 on
+every tenth run. P4 rebuilds replicas with a new key; it excuses only ops that no other replica
+held when the disk died. P8 sets clocks up to a day apart with drift and, after each sync that
+stored ops, checks that a new write stamps after every op the replica holds.
+
 ---
 
 ## 8. One machine alone
