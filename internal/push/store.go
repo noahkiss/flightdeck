@@ -27,6 +27,7 @@ type Device struct {
 	Environment  string    `json:"environment,omitempty"`
 	Kinds        []string  `json:"kinds,omitempty"`
 	HideCommands bool      `json:"hide_commands,omitempty"`
+	Features     []string  `json:"features,omitempty"`
 	Activity     *Activity `json:"activity,omitempty"`
 	Updated      time.Time `json:"updated"`
 }
@@ -39,6 +40,12 @@ type Activity struct {
 
 // Wants reports whether the device asked for kind.
 func (d Device) Wants(kind string) bool { return slices.Contains(d.Kinds, kind) }
+
+// FeatureAsk is the push.register feature of an app that registered the Ask categories.
+const FeatureAsk = "ask"
+
+// Asks reports whether the device's app registered the Ask categories (capcom.md 8.5).
+func (d Device) Asks() bool { return slices.Contains(d.Features, FeatureAsk) }
 
 // Store keeps the tokens in one owner-only JSON file. Safe for concurrent use.
 type Store struct {
@@ -92,10 +99,15 @@ func ValidToken(t string) bool {
 // Register stores the device token and kinds of a device, replacing its earlier ones. Its Live
 // Activity token stays.
 func (s *Store) Register(id, token, env string, kinds []string, hide bool) error {
+	return s.RegisterWith(id, token, env, kinds, hide, nil)
+}
+
+// RegisterWith is Register with the features the device's app registered.
+func (s *Store) RegisterWith(id, token, env string, kinds []string, hide bool, features []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	d := s.deviceLocked(id)
-	d.Token, d.Environment, d.Kinds, d.HideCommands = token, env, slices.Clone(kinds), hide
+	d.Token, d.Environment, d.Kinds, d.HideCommands, d.Features = token, env, slices.Clone(kinds), hide, slices.Clone(features)
 	return s.saveLocked()
 }
 

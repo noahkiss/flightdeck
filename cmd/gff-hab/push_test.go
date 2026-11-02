@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/progstatus"
 	"github.com/noahkiss/flightdeck/internal/push"
@@ -155,7 +156,9 @@ func TestAnswerWithdrawsBanner(t *testing.T) {
 // TestPushAskContext: while Capcom runs on another host, a notice.raise banner carries the
 // notice id as capcom_context with this hab's device id as the host, and the ask category; a
 // permission banner carries the id of the notice gff-hab kept it as, with approval-ask. Both
-// notices read back from the saved store, also after it is opened again (a restart).
+// notices read back from the saved store, also after it is opened again (a restart). Keeping
+// raises no notice.raised event. A request in a folder the read scope denies is kept without
+// its command. A device that registered no Ask feature gets the old categories.
 func TestPushAskContext(t *testing.T) {
 	state := t.TempDir()
 	writePushConfig(t, state)
@@ -171,14 +174,22 @@ func TestPushAskContext(t *testing.T) {
 			pushes.notifier.State(s)
 		}
 	}})
+	var raisedEvents atomic.Int32
 	pushes = newPushService(pushSetup{
 		state: state, hab: "laptop", self: "dev-self", capcom: func() string { return "dev-home" },
 		getenv: func(string) string { return "" }, logf: t.Logf, sender: sent,
-		connected: func(string) bool { return false }, label: func(string) string { return "" }, publish: func(structure.Event) {},
+		connected: func(string) bool { return false }, label: func(string) string { return "" },
+		publish: func(e structure.Event) {
+			if e.Type == control.EventNoticeRaised {
+				raisedEvents.Add(1)
+			}
+		},
+		notices: openNoticeLog(state, nil, t.Logf),
+		denied:  func(folder string) bool { return folder == "/secret/proj" },
 	}, st, agents)
 	defer pushes.Close()
-	pushes.notices = openNoticeLog(state, nil, t.Logf)
-	if err := pushes.Register("c-phone", api.PushRegisterParams{DeviceID: "dev1", Token: strings.Repeat("ab", 32), Environment: "development", Kinds: []api.PushKind{"permission"}}); err != nil {
+	if err := pushes.Register("c-phone", api.PushRegisterParams{DeviceID: "dev1", Token: strings.Repeat("ab", 32), Environment: "development",
+		Kinds: []api.PushKind{"permission"}, Features: []string{push.FeatureAsk}}); err != nil {
 		t.Fatal(err)
 	}
 	ask := func(v map[string]any) (category any, ctx map[string]any, home any) {
@@ -220,6 +231,31 @@ func TestPushAskContext(t *testing.T) {
 		if n, ok := l.get(kept); !ok || n.Title != "Run make test?" || n.Body != "make test" || n.Level != "time-sensitive" {
 			t.Errorf("kept notice: %v %+v", ok, n)
 		}
+	}
+	if n := raisedEvents.Load(); n != 1 {
+		t.Errorf("%d notice.raised events, want 1: a kept banner raises none", n)
+	}
+
+	// A request in a denied folder: the banner still shows the command to this device, but the
+	// kept notice holds only what a hidden banner shows.
+	agents.Hook("p", claudeEnv("PermissionRequest", `{"session_id":"a","hook_event_name":"PermissionRequest","tool_name":"Bash","cwd":"/secret/proj","tool_input":{"command":"curl -H token"}}`, 3))
+	pushes.notifier.Sync()
+	al = sent.alerts()
+	_, c, _ = ask(al[len(al)-1])
+	ref, _ := c["ref"].(string)
+	if n, ok := pushes.notices.get(ref); !ok || n.Title != "Approval needed" || strings.Contains(n.Title+n.Body, "curl") {
+		t.Errorf("kept notice in a denied folder: %v %+v", ok, n)
+	}
+
+	// An app that registered no Ask categories keeps the old ones; the context rides along.
+	if err := pushes.Register("c-phone", api.PushRegisterParams{DeviceID: "dev1", Token: strings.Repeat("ab", 32), Environment: "development", Kinds: []api.PushKind{"permission"}}); err != nil {
+		t.Fatal(err)
+	}
+	pushes.Raise("c-script", api.NoticeRaiseParams{Title: "Backup done"})
+	pushes.notifier.Sync()
+	al = sent.alerts()
+	if cat, c, _ := ask(al[len(al)-1]); cat != nil || c["ref"] == nil {
+		t.Errorf("old app notice: category %v, context %v", cat, c)
 	}
 }
 

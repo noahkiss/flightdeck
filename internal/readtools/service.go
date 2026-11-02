@@ -663,6 +663,12 @@ func (s *Service) Transcript(ctx context.Context, local bool, p api.TranscriptRe
 
 // --- notice.get ---
 
+// FolderDenied reports whether folder matches this hab's read deny list (capcom.md 5.2). An
+// empty folder is not denied.
+func (s *Service) FolderDenied(folder string) bool {
+	return folder != "" && s.cfg.Scope != nil && s.cfg.Scope().Denied(folder)
+}
+
 // Notice answers notice.get.
 func (s *Service) Notice(ctx context.Context, local bool, p api.NoticeGetParams) (api.NoticeRecord, error) {
 	if p.ID == "" {

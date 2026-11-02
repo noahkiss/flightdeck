@@ -1171,6 +1171,16 @@
           }
         },
         {
+          "name": "features",
+          "description": "Notification features the app registered. ask: the Ask categories (approval-ask, approval-deny-ask, open-ask, ask; capcom.md 8.5). Unknown words are kept and ignored.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        {
           "name": "hide_commands",
           "description": "True: banners say \"Approval needed\" with no command, and offer no Approve (app.md 16.1).",
           "schema": {
@@ -7483,6 +7493,13 @@
           },
           "environment": {
             "$ref": "#/components/schemas/PushEnvironment"
+          },
+          "features": {
+            "type": "array",
+            "description": "Notification features the app registered. ask: the Ask categories (approval-ask, approval-deny-ask, open-ask, ask; capcom.md 8.5). Unknown words are kept and ignored.",
+            "items": {
+              "type": "string"
+            }
           },
           "hide_commands": {
             "type": "boolean",

@@ -60,7 +60,7 @@ func (r *notifierRig) connect(c string, on bool) { r.mu.Lock(); r.connected[c] =
 
 func blocked(id, cmd string) api.AgentState {
 	return api.AgentState{Pane: "p1", Harness: "claude", State: api.AgentStatusBlocked, Kind: api.BlockedKindPermission,
-		Request: &api.PermissionRequest{ID: id, Tool: "Bash", Command: cmd, ExpiresAt: "2026-11-01T12:05:00Z"}, At: "2026-11-01T12:00:00Z"}
+		Request: &api.PermissionRequest{ID: id, Tool: "Bash", Command: cmd, Cwd: "/work/app", ExpiresAt: "2026-11-01T12:05:00Z"}, At: "2026-11-01T12:00:00Z"}
 }
 
 func state(s api.AgentStatus) api.AgentState {

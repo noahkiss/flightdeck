@@ -487,7 +487,14 @@ func serve(args []string) error {
 	// The Capcom home host, once the session host below exists: banners carry the Ask action
 	// while some host runs Capcom (capcom.md 8.5).
 	var capcomRef atomic.Pointer[capcomService]
+	var readsRef atomic.Pointer[readtools.Service]
 	pushes = newPushService(pushSetup{
+		// Recent notices, saved in the state directory, for notice.get and Capcom (8.5).
+		notices: openNoticeLog(dir, nil, logger.Printf),
+		denied: func(folder string) bool {
+			r := readsRef.Load()
+			return r == nil || r.FolderDenied(folder) // before the read tools exist: hidden
+		},
 		configPath: *pushConfig, state: dir, hab: *hostID, getenv: os.Getenv, logf: logger.Printf,
 		self: key.Fingerprint(),
 		capcom: func() string {
@@ -510,8 +517,6 @@ func serve(args []string) error {
 		},
 	}, store, agents)
 	defer pushes.Close()
-	// Recent notices, saved in the state directory, for notice.get and Capcom (capcom.md 8.5).
-	pushes.notices = openNoticeLog(dir, nil, logger.Printf)
 	// A pane's hook token is a keyed hash of its uuid under the secret in the state directory, so
 	// it outlives a gff-hab restart. A token resolves only while the link follows the pane: a
 	// pane the link reports gone loses its token and its agent state.
@@ -932,6 +937,7 @@ func serve(args []string) error {
 	reads := newReads(readsSetup{self: key.Fingerprint(), host: *hostID, state: dir, configPath: cpath,
 		store: store, agents: agents, catalog: cs, peers: pm, notices: pushes.notices, getenv: os.Getenv, logf: logger.Printf})
 	caps = append(caps, readtools.Capability)
+	readsRef.Store(reads)
 	if capcomSvc != nil {
 		capcomSvc.res.notice = func(ctx context.Context, id, host string) (api.NoticeRecord, error) {
 			return reads.Notice(ctx, false, api.NoticeGetParams{ID: id, Host: host})

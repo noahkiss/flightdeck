@@ -2,6 +2,7 @@ package push
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -13,8 +14,9 @@ type askRig struct {
 	*notifierRig
 	mu    sync.Mutex
 	home  string
-	kept  []Notice
-	nokey bool // Keep fails
+	kept  []Notice // the notices kept, as the keeper chose them
+	full  []Notice // what the notifier offered as full, per kept notice
+	nokey bool     // Keep fails
 }
 
 func newAskRig(t *testing.T) *askRig {
@@ -22,13 +24,14 @@ func newAskRig(t *testing.T) *askRig {
 	a.notifierRig = newNotifierRig(t, func(c *NotifierConfig) {
 		c.Self = "dev-self"
 		c.Capcom = func() string { a.mu.Lock(); defer a.mu.Unlock(); return a.home }
-		c.Keep = func(n Notice) string {
+		c.Keep = func(full, hidden Notice) string {
 			a.mu.Lock()
 			defer a.mu.Unlock()
 			if a.nokey {
 				return ""
 			}
-			a.kept = append(a.kept, n)
+			a.kept = append(a.kept, hidden)
+			a.full = append(a.full, full)
 			return fmt.Sprintf("k%d", len(a.kept))
 		}
 	})
@@ -56,8 +59,10 @@ func askContext(q fakeReq) (kind, ref, host any, ok bool) {
 // when Capcom runs elsewhere. With no Capcom host, nothing changes.
 func TestNotifierAsk(t *testing.T) {
 	r := newAskRig(t)
-	r.store.Register("dev-phone", phone, Production, append(allKinds, KindDone), false)
-	r.store.Register("dev-mac", mac, Production, allKinds, true) // commands hidden
+	old := strings.Repeat("d4", 32) // an app that registered no Ask categories
+	r.store.RegisterWith("dev-phone", phone, Production, append(allKinds, KindDone), false, []string{FeatureAsk, "later"})
+	r.store.RegisterWith("dev-mac", mac, Production, allKinds, true, []string{FeatureAsk}) // commands hidden
+	r.store.Register("dev-old", old, Production, append(allKinds, KindDone), false)
 
 	// No Capcom host: the categories of before, no context, nothing kept.
 	r.n.State(blocked("req-1", "make test"))
@@ -95,9 +100,17 @@ func TestNotifierAsk(t *testing.T) {
 	if _, mref, _, _ := askContext(m); mref != "k1" {
 		t.Errorf("mac context %v: one notice per banner, not per device", askMeta(m))
 	}
-	if len(r.kept) != 1 || r.kept[0].Title != "Run go test?" || r.kept[0].Body != "go test ./... -run TestLongName -count=1" ||
-		r.kept[0].Session != "s1" || r.kept[0].Level != LevelTimeSensitive {
-		t.Errorf("kept %+v", r.kept)
+	// The old app keeps the category it registered, with the context riding along.
+	oa := alerts(r.prod.requests(), old)
+	if o := oa[len(oa)-1]; askCat(o) != CategoryApproval {
+		t.Errorf("old app category %v", askCat(o))
+	} else if _, oref, _, _ := askContext(o); oref != "k1" {
+		t.Errorf("old app context %v", askMeta(o))
+	}
+	// The mac hides commands, so the kept notice shows none either: full is the hidden text.
+	if len(r.kept) != 1 || r.full[0].Title != "Approval needed" || strings.Contains(r.full[0].Body+r.full[0].Title, "go test") ||
+		r.kept[0].Session != "s1" || r.kept[0].Level != LevelTimeSensitive || r.full[0].Folder != "/work/app" {
+		t.Errorf("kept full %+v hidden %+v", r.full, r.kept)
 	}
 	// The withdrawal is a record: no actions, no context.
 	r.n.State(state(api.AgentStatusWorking))
@@ -130,6 +143,13 @@ func TestNotifierAsk(t *testing.T) {
 	}
 	if len(r.kept) != 3 {
 		t.Errorf("a notice was kept again for notice.raise: %d kept", len(r.kept))
+	}
+	oa = alerts(r.prod.requests(), old)
+	for i, want := range []any{CategoryOpen, nil, nil} {
+		o := oa[len(oa)-3+i]
+		if _, _, host, ok := askContext(o); askCat(o) != want || !ok || host != "dev-self" {
+			t.Errorf("old app banner %d: category %v, meta %v", i, askCat(o), askMeta(o))
+		}
 	}
 
 	// A banner that could not be kept goes out without Ask.

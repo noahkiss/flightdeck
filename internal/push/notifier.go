@@ -62,9 +62,10 @@ type NotifierConfig struct {
 	// Self is this hab's device id: the context's host when Capcom runs elsewhere.
 	Self string
 	// Keep records an agent-state banner as a notice and returns its id, so its Ask action
-	// names a notice the Capcom home can read; "" when it could not. Nil: agent-state banners
-	// carry no Ask.
-	Keep func(Notice) string
+	// names a notice the Capcom home can read; "" when it could not. full holds the request's
+	// command, hidden only what a banner with commands hidden shows; the keeper picks hidden
+	// when the session is outside the read scope. Nil: agent-state banners carry no Ask.
+	Keep func(full, hidden Notice) string
 }
 
 // Notice is a notification raised through notice.raise or by the hab itself.
@@ -74,6 +75,7 @@ type Notice struct {
 	Body    string
 	Level   Level
 	Session string // optional: the session it is about, for its subtitle and the focus hold
+	Folder  string // a kept permission banner's working folder, for the read-scope check
 }
 
 // Notifier turns agent state changes into pushes. State is safe to call under any lock: it
@@ -130,6 +132,7 @@ type sent struct {
 type target struct {
 	device, token, env string
 	hide               bool
+	ask                bool // the device's app registered the Ask categories
 }
 
 // NewNotifier starts the notifier's goroutine.
@@ -398,7 +401,7 @@ func (n *Notifier) Raise(no Notice) int {
 		if d.Token == "" || n.tier(d.ID, no.Session) != TierPush {
 			continue
 		}
-		to = append(to, target{device: d.ID, token: d.Token, env: d.Environment})
+		to = append(to, target{device: d.ID, token: d.Token, env: d.Environment, ask: d.Asks()})
 	}
 	if len(to) == 0 {
 		return 0
@@ -412,11 +415,15 @@ func (n *Notifier) Raise(no Notice) int {
 		}
 		b := NoticeBanner(w, no.Title, no.Body, no.Level)
 		meta := Meta{Hab: n.cfg.Hab, Session: no.Session, Notice: no.ID}
-		if meta.Context, meta.CapcomHome = n.ask(no.ID); meta.Context != nil {
-			b.Category = AskCategory(b.Category)
-		}
-		payload := AlertPayload(b, meta, no.Session)
+		meta.Context, meta.CapcomHome = n.ask(no.ID)
 		for _, t := range to {
+			// Only an app that registered the Ask categories gets one; any other keeps the
+			// categories it knows. The context rides along either way.
+			tb := b
+			if meta.Context != nil && t.ask {
+				tb.Category = AskCategory(b.Category)
+			}
+			payload := AlertPayload(tb, meta, no.Session)
 			n.send(Message{Token: t.token, Environment: t.env, Type: TypeAlert, Priority: priority(b.Level), CollapseID: "n-" + no.ID, Expiration: n.cfg.Now().Add(alertKeep), Payload: payload}, true)
 		}
 	})
@@ -442,16 +449,19 @@ func (n *Notifier) ask(id string) (*Ask, string) {
 	return a, home
 }
 
-// keptNotice is the notice an agent-state banner is recorded as: the banner's words with the
-// commands shown, and a permission request's whole command or file list as the body.
-func keptNotice(kind string, st api.AgentState, w Where) Notice {
+// keptNotice is the notice an agent-state banner is recorded as. With hide, only what a
+// banner with commands hidden shows; otherwise the banner's words with the commands shown, and
+// a permission request's whole command or file list as the body.
+func keptNotice(kind string, st api.AgentState, w Where, hide bool) Notice {
 	var b Banner
 	switch kind {
 	case KindPermission:
-		b = PermissionBanner(w, st.Request, false)
-		if r := st.Request; r != nil && r.Command != "" {
+		b = PermissionBanner(w, st.Request, hide)
+		switch r := st.Request; {
+		case hide || r == nil:
+		case r.Command != "":
 			b.Body = r.Command
-		} else if r != nil && len(r.Files) > 0 {
+		case len(r.Files) > 0:
 			b.Body = strings.Join(r.Files, "\n")
 		}
 	case KindQuestion:
@@ -463,7 +473,11 @@ func keptNotice(kind string, st api.AgentState, w Where) Notice {
 	case KindDone:
 		b = DoneBanner(w)
 	}
-	return Notice{Title: b.Title, Body: b.Body, Level: b.Level, Session: w.Session}
+	no := Notice{Title: b.Title, Body: b.Body, Level: b.Level, Session: w.Session}
+	if st.Request != nil {
+		no.Folder = st.Request.Cwd
+	}
+	return no
 }
 
 func (n *Notifier) run() {
@@ -625,6 +639,12 @@ func (n *Notifier) banner(st api.AgentState, w Where) {
 	// The banner is kept as a notice, once, when it first goes to a device: its Ask action
 	// names that notice.
 	kept := n.cfg.Keep == nil || n.cfg.Capcom == nil
+	// A device that hides commands keeps them out of the kept notice too: Ask must not show
+	// in Capcom what that banner left out.
+	hide := false
+	for _, d := range n.cfg.Store.Devices() {
+		hide = hide || (d.Token != "" && d.Wants(kind) && d.HideCommands)
+	}
 	var out *sent
 	if kind == KindPermission || kind == KindQuestion {
 		out = &sent{kind: string(st.Kind), request: requestID(st), collapse: collapse, req: st.Request, expires: expires}
@@ -656,10 +676,15 @@ func (n *Notifier) banner(st api.AgentState, w Where) {
 		if !kept {
 			kept = true
 			if n.cfg.Capcom() != "" {
-				meta.Context, meta.CapcomHome = n.ask(n.cfg.Keep(keptNotice(kind, st, w)))
+				hidden := keptNotice(kind, st, w, true)
+				full := hidden
+				if !hide {
+					full = keptNotice(kind, st, w, false)
+				}
+				meta.Context, meta.CapcomHome = n.ask(n.cfg.Keep(full, hidden))
 			}
 		}
-		if meta.Context != nil {
+		if meta.Context != nil && d.Asks() {
 			b.Category = AskCategory(b.Category)
 		}
 		payload := AlertPayload(b, meta, w.Session)

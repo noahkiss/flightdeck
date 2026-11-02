@@ -28,6 +28,7 @@ type pushService struct {
 	label    func(client string) string // the client's hello label
 	now      func() time.Time
 	notices  *noticeLog // the notices raised, for notice.get; nil: none kept
+	denied   func(folder string) bool
 }
 
 var _ control.Push = (*pushService)(nil)
@@ -40,7 +41,11 @@ type pushSetup struct {
 	self       string // the hab's device id
 	// capcom returns the device id of the host that runs Capcom, or ""; nil: no Ask action
 	// (capcom.md 8.5).
-	capcom    func() string
+	capcom func() string
+	// notices is the notice store; denied reports a folder the read scope denies. Both are set
+	// before the notifier starts.
+	notices   *noticeLog
+	denied    func(folder string) bool
 	getenv    func(string) string
 	connected func(client string) bool
 	label     func(client string) string
@@ -54,7 +59,7 @@ type pushSetup struct {
 // wrong, gives a service without push: the hab says so in its log and leaves the push
 // capability out (app.md 8.4). It never stops gff-hab from starting.
 func newPushService(ps pushSetup, store *structure.Store, agents *harness.Store) *pushService {
-	s := &pushService{store: store, agents: agents, publish: ps.publish, label: ps.label, now: time.Now}
+	s := &pushService{store: store, agents: agents, publish: ps.publish, label: ps.label, now: time.Now, notices: ps.notices, denied: ps.denied}
 	path := ps.configPath
 	if path == "" {
 		path = filepath.Join(ps.state, push.ConfigFile)
@@ -144,7 +149,7 @@ func (s *pushService) Register(client string, p api.PushRegisterParams) error {
 	for i, k := range p.Kinds {
 		kinds[i] = string(k)
 	}
-	if err := s.tokens.Register(p.DeviceID, p.Token, string(p.Environment), kinds, p.HideCommands); err != nil {
+	if err := s.tokens.RegisterWith(p.DeviceID, p.Token, string(p.Environment), kinds, p.HideCommands, p.Features); err != nil {
 		return err
 	}
 	s.notifier.Bind(client, p.DeviceID)
@@ -221,12 +226,17 @@ func noticeID() string {
 }
 
 // keep records an agent-state banner as a notice, so its Ask action names a notice that
-// notice.get and Capcom's notification context resolve (capcom.md 8.5). It raises no
-// notice.raised event and no push of its own: the banner is the push, and clients have the
-// agent state. It returns the notice id, or "" with no store.
-func (s *pushService) keep(no push.Notice) string {
+// notice.get and Capcom's notification context resolve (capcom.md 8.5). A request whose folder
+// the read scope denies is kept as hidden: no command. It raises no notice.raised event and no
+// push of its own: the banner is the push, and clients have the agent state. It returns the
+// notice id, or "" with no store.
+func (s *pushService) keep(full, hidden push.Notice) string {
 	if s.notices == nil {
 		return ""
+	}
+	no := full
+	if s.denied != nil && s.denied(full.Folder) {
+		no = hidden
 	}
 	id := noticeID()
 	s.notices.add(api.Notice{ID: id, Title: no.Title, Body: no.Body, Level: api.NoticeLevel(no.Level), Session: no.Session, At: s.now().UTC().Format(time.RFC3339)})

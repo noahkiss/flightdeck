@@ -3979,6 +3979,8 @@ public struct PushRegisterParams: Codable, Sendable, Hashable {
     /// The device's key fingerprint (transport.md 5).
     public var deviceId: String
     public var environment: PushEnvironment
+    /// Notification features the app registered. ask: the Ask categories (approval-ask, approval-deny-ask, open-ask, ask; capcom.md 8.5). Unknown words are kept and ignored.
+    public var features: [String]?
     /// True: banners say "Approval needed" with no command, and offer no Approve (app.md 16.1).
     public var hideCommands: Bool?
     /// The kinds of push this device wants.
@@ -3989,14 +3991,16 @@ public struct PushRegisterParams: Codable, Sendable, Hashable {
     enum CodingKeys: String, CodingKey {
         case deviceId = "device_id"
         case environment = "environment"
+        case features = "features"
         case hideCommands = "hide_commands"
         case kinds = "kinds"
         case token = "token"
     }
 
-    public init(deviceId: String, environment: PushEnvironment, hideCommands: Bool? = nil, kinds: [PushKind], token: String) {
+    public init(deviceId: String, environment: PushEnvironment, features: [String]? = nil, hideCommands: Bool? = nil, kinds: [PushKind], token: String) {
         self.deviceId = deviceId
         self.environment = environment
+        self.features = features
         self.hideCommands = hideCommands
         self.kinds = kinds
         self.token = token

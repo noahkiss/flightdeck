@@ -320,6 +320,9 @@ type PushRegisterParams struct {
 	// HideCommands is the app's "show commands in notifications" setting turned off (app.md 8.3).
 	// Optional, so an older client registers as before.
 	HideCommands bool `json:"hide_commands,omitempty" doc:"True: banners say \"Approval needed\" with no command, and offer no Approve (app.md 16.1)."`
+	// Features names what the app's notification categories can do beyond the first set.
+	// Optional, so an older client registers as before and keeps the categories it knows.
+	Features []string `json:"features,omitempty" doc:"Notification features the app registered. ask: the Ask categories (approval-ask, approval-deny-ask, open-ask, ask; capcom.md 8.5). Unknown words are kept and ignored."`
 }
 
 // PushActivityParams stores a Live Activity token for the session a device tracks.
