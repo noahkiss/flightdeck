@@ -51,6 +51,9 @@ public struct UploadedAttachment: Equatable, Sendable {
 public enum AttachmentUpload {
     /// A run when the hab names none.
     static let defaultChunk = 1 << 20
+    /// The most bytes one `attachment.write` carries, whatever the hab allows (app.md 4.4):
+    /// each run's reply keeps the connection's liveness check fed over a slow uplink.
+    static let maxWrite = 256 << 10
 
     public static func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
@@ -64,7 +67,7 @@ public enum AttachmentUpload {
         if put.done == true || a.data.isEmpty {
             return UploadedAttachment(id: put.id, path: put.path)
         }
-        let chunk = max(1, min(put.chunk ?? defaultChunk, defaultChunk))
+        let chunk = max(1, min(put.chunk ?? maxWrite, maxWrite))
         var offset = 0
         while offset < a.data.count {
             let end = min(offset + chunk, a.data.count)
@@ -102,7 +105,7 @@ public struct UploadStalled: Error, CustomStringConvertible {
 }
 
 /// Small previews of composer attachments, made once per file version and kept: a view body
-/// asks for them on every pass, and an upload changes the row every 1 MiB.
+/// asks for them on every pass, and an upload changes the row every 256 KiB.
 @MainActor
 enum DraftThumbs {
     private static let cache: NSCache<NSString, CGImage> = {
