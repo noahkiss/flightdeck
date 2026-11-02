@@ -9,8 +9,8 @@ One Go module, `github.com/noahkiss/flightdeck`, at the repo root. Swift package
 | `api/schema.json` | Generated OpenRPC document; gff-hab serves it from `rpc.discover` |
 | `api/client_gen.go` | Generated Go word constants, event decoding and client stubs |
 | `api/released/<revision>.json` | The schema as released for each revision; the compat test compares against it |
-| `api/modules/` | The module tier's contracts: the block vocabulary table (`vocab.go`), the generated schemas `blocks-v<N>.schema.json` and `manifest.schema.json`, the generated typed blocks (`blocks_gen.go`), `ValidateTree` and `ParseManifest`, and hand-written fixtures in `testdata/`. Spec: `docs/specs/modules.md` 6.5 |
-| `internal/apigen/` | Schema builder, Go and Swift generators (the API and the block vocabulary, `modules.go`), compat checker |
+| `api/modules/` | The module tier's contracts: the block vocabulary table (`vocab.go`), the generated schemas `blocks-v<N>.schema.json` and `manifest.schema.json`, the generated typed blocks (`blocks_gen.go`), `ValidateTree` and `ParseManifest`, hand-written fixtures in `testdata/`, and a copy of each released vocabulary's schema in `released/`. Spec: `docs/specs/modules.md` 6.5 |
+| `internal/apigen/` | Schema builder, Go and Swift generators (the API and the block vocabulary, `modules.go`), compat checkers (the API, and released block vocabularies in `modules_compat.go`) |
 | `internal/holderproto/` | The gff-hab to holder wire protocol: frames, codec, version negotiation. Pure Go. Spec: `docs/protocol/holder.md` |
 | `internal/holder/` | The holder core: panes in PTYs, byte rings, pump, reaper, input queues, and the protocol server with one writer queue per connection. Pure Go. Spec: `docs/specs/hab-holder.md` 2 |
 | `internal/holderreg/` | The holder registry: one `<instance>.json` per live holder in the holder directory, atomic writes, the stale rule and pruning, and the trust checks the holder and gff-hab share (socket directory, socket file, peer uid). Pure Go. Spec: `docs/specs/hab-holder.md` 4.2 |

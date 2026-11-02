@@ -372,6 +372,7 @@ Stage 2 holds the vocabulary as data and generates the rest from it.
 |---|---|
 | `api/modules/vocab.go` | The source: every block type with the version that added it (`Since`), its fields, limits, words and the client actions |
 | `api/modules/blocks-v<N>.schema.json` | Generated: the JSON Schema (draft 2020-12) of vocabulary N, one file per version. Vocabulary 1: [`blocks-v1.schema.json`](../../api/modules/blocks-v1.schema.json) |
+| `api/modules/released/blocks-v<N>.schema.json` | A copy of each released vocabulary's schema, made by hand; `make gen` never writes it. A test in `internal/apigen` fails when the generated schema of a released version would refuse a tree the copy accepts (9). Vocabulary 1 is released |
 | `api/modules/manifest.schema.json` | Generated: the schema of `manifest.toml`. Stock tools such as `check-jsonschema` read TOML directly |
 | `api/modules/blocks_gen.go` | Generated: the typed Go blocks for the terminal renderer. An unknown type keeps its JSON in `Raw` |
 | `swift/HabAPI/Sources/HabAPI/Blocks.swift` | Generated: `Block`, `BlockContent` (one case per type, plus `.unknown`, whose fields `Block.unknownFields` keeps so it encodes back unchanged) and the field types, for the SwiftUI renderer |
@@ -492,6 +493,11 @@ Rules:
   older client skips that module with "Needs a newer Flightdeck".
 - **A field added within a version is optional.** A required field, a removed field or a changed
   meaning needs a new block type instead.
+- **A released vocabulary only gains.** Once the app that draws vocabulary N ships, its schema is
+  copied to `api/modules/released/`. From then on its generated schema may gain a new optional
+  field or a new word, and nothing else: a removed field or word, a new required field, a changed
+  limit or a new rule fails `go test ./internal/apigen/`. Every version below the newest must
+  have a copy, so vocabulary N is released before N+1 starts. Vocabulary 1 is released.
 - **The hab renders per vocabulary version.** If two clients with different versions view the
   same module, the hab calls `render` once for each version and caches the result.
 - **A client older than a module's `blocks`** shows the module's name and "Needs a newer
