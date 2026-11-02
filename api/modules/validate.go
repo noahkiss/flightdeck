@@ -377,3 +377,21 @@ func sortedKeys[V any](m map[string]V) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// drawnWord is the word a renderer draws for a word field (modules.md 6.4): w when it is one of
+// words, else the first of words, the field's default.
+func drawnWord(w string, words ...string) string {
+	if contains(words, w) {
+		return w
+	}
+	return words[0]
+}
+
+// drawnTint is the tint a renderer draws (modules.md 6.3): a known meaning or a #RRGGBB colour,
+// else "" for none, the same as an absent tint.
+func drawnTint(t string) string {
+	if contains(Tints, t) || tintRE.MatchString(t) {
+		return t
+	}
+	return ""
+}

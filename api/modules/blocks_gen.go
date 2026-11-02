@@ -162,12 +162,36 @@ type StackBlock struct {
 	Gap *int `json:"gap,omitempty"`
 }
 
+// MarshalJSON encodes a nil required array as [], which the schema needs.
+func (b StackBlock) MarshalJSON() ([]byte, error) {
+	type plain StackBlock
+	if b.Children == nil {
+		b.Children = []Block{}
+	}
+	return json.Marshal(plain(b))
+}
+
+// DrawnAxis is the axis to draw: the field's word when this build knows it, else its first
+// word, "vertical", which is also the default when the field is absent.
+func (b *StackBlock) DrawnAxis() string {
+	return drawnWord(b.Axis, "vertical", "horizontal")
+}
+
 // SectionBlock is a section block: children under a header.
 type SectionBlock struct {
 	Title    string  `json:"title"`
 	Children []Block `json:"children"`
 	// Starts collapsed. The client keeps the person's choice by block id.
 	Collapsed *bool `json:"collapsed,omitempty"`
+}
+
+// MarshalJSON encodes a nil required array as [], which the schema needs.
+func (b SectionBlock) MarshalJSON() ([]byte, error) {
+	type plain SectionBlock
+	if b.Children == nil {
+		b.Children = []Block{}
+	}
+	return json.Marshal(plain(b))
 }
 
 // RowBlock is a row block: one list row: symbol, title, body and a trailing value.
@@ -182,16 +206,32 @@ type RowBlock struct {
 	Action *Action `json:"action,omitempty"`
 }
 
+// DrawnTint is the tint to draw: a known meaning or a #RRGGBB colour, else "" for none.
+func (b *RowBlock) DrawnTint() string {
+	return drawnTint(b.Tint)
+}
+
 // TextBlock is a text block: a run of text.
 type TextBlock struct {
 	Text  string `json:"text"`
 	Style string `json:"style,omitempty"`
 }
 
+// DrawnStyle is the style to draw: the field's word when this build knows it, else its first
+// word, "body", which is also the default when the field is absent.
+func (b *TextBlock) DrawnStyle() string {
+	return drawnWord(b.Style, "body", "caption", "mono", "title")
+}
+
 // BadgeBlock is a badge block: a short label in a capsule.
 type BadgeBlock struct {
 	Text string `json:"text"`
 	Tint string `json:"tint,omitempty"`
+}
+
+// DrawnTint is the tint to draw: a known meaning or a #RRGGBB colour, else "" for none.
+func (b *BadgeBlock) DrawnTint() string {
+	return drawnTint(b.Tint)
 }
 
 // MetricBlock is a metric block: a labelled value.
@@ -203,9 +243,23 @@ type MetricBlock struct {
 	Tint  string `json:"tint,omitempty"`
 }
 
+// DrawnTint is the tint to draw: a known meaning or a #RRGGBB colour, else "" for none.
+func (b *MetricBlock) DrawnTint() string {
+	return drawnTint(b.Tint)
+}
+
 // MetricsBlock is a metrics block: a grid of up to six metrics.
 type MetricsBlock struct {
 	Children []Block `json:"children"`
+}
+
+// MarshalJSON encodes a nil required array as [], which the schema needs.
+func (b MetricsBlock) MarshalJSON() ([]byte, error) {
+	type plain MetricsBlock
+	if b.Children == nil {
+		b.Children = []Block{}
+	}
+	return json.Marshal(plain(b))
 }
 
 // ProgressBlock is a progress block: a bar from a fraction, or a step count.
@@ -226,6 +280,12 @@ type ButtonBlock struct {
 	Role   string `json:"role,omitempty"`
 	// A question the client asks before it sends the action.
 	Confirm string `json:"confirm,omitempty"`
+}
+
+// DrawnRole is the role to draw: the field's word when this build knows it, else its first
+// word, "normal", which is also the default when the field is absent.
+func (b *ButtonBlock) DrawnRole() string {
+	return drawnWord(b.Role, "normal", "destructive")
 }
 
 // ToggleBlock is a toggle block: an on or off switch.
@@ -250,9 +310,27 @@ type ListBlock struct {
 	Empty string `json:"empty,omitempty"`
 }
 
+// MarshalJSON encodes a nil required array as [], which the schema needs.
+func (b ListBlock) MarshalJSON() ([]byte, error) {
+	type plain ListBlock
+	if b.Children == nil {
+		b.Children = []Block{}
+	}
+	return json.Marshal(plain(b))
+}
+
 // LogBlock is a log block: lines of monospaced text.
 type LogBlock struct {
 	Lines []string `json:"lines"`
 	// Keep the newest line in view.
 	Follow *bool `json:"follow,omitempty"`
+}
+
+// MarshalJSON encodes a nil required array as [], which the schema needs.
+func (b LogBlock) MarshalJSON() ([]byte, error) {
+	type plain LogBlock
+	if b.Lines == nil {
+		b.Lines = []string{}
+	}
+	return json.Marshal(plain(b))
 }

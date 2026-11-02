@@ -344,6 +344,8 @@ An `action` is `{name, args}`.
 - `tint` takes a meaning: `accent`, `muted`, `working`, `blocked`, `done`, `idle`, `error`,
   `warning`. The app maps these to its theme; `gff` maps them to theme tokens that default to the
   host terminal's ANSI colours. A raw `#RRGGBB` is accepted; `gff` picks the nearest colour.
+  An unknown meaning (one a newer vocabulary added) draws as no tint, the same as an absent
+  `tint`.
 - `symbol` is an SF Symbol name. `gff` keeps a small table of symbol names to Unicode characters
   and shows nothing for a name it does not know.
 
@@ -356,7 +358,11 @@ An `action` is `{name, args}`.
 - A block over a limit, or a tree over the size limit: the hab replaces the tree with an error
   block and logs why.
 - An unknown word in a known field (a `style` a newer vocabulary added): draw the field's first
-  word, its default.
+  word, its default. The generated types do this: `Drawn<Field>()` in Go and `drawn<Field>` in
+  Swift return the word or tint to draw, so no renderer repeats the rule.
+- The Swift decoder refuses a block nested deeper than 13, and free JSON (action `args`, an
+  unknown block's fields) nested past 48 coding path levels. The hab never sends such a tree; the
+  guard keeps a bad one from a peer or a cache from exhausting a small thread stack.
 
 ### 6.5 Schema and fixtures
 
@@ -368,7 +374,7 @@ Stage 2 holds the vocabulary as data and generates the rest from it.
 | `api/modules/blocks-v<N>.schema.json` | Generated: the JSON Schema (draft 2020-12) of vocabulary N, one file per version. Vocabulary 1: [`blocks-v1.schema.json`](../../api/modules/blocks-v1.schema.json) |
 | `api/modules/manifest.schema.json` | Generated: the schema of `manifest.toml`. Stock tools such as `check-jsonschema` read TOML directly |
 | `api/modules/blocks_gen.go` | Generated: the typed Go blocks for the terminal renderer. An unknown type keeps its JSON in `Raw` |
-| `swift/HabAPI/Sources/HabAPI/Blocks.swift` | Generated: `Block`, `BlockContent` (one case per type, plus `.unknown`) and the field types, for the SwiftUI renderer |
+| `swift/HabAPI/Sources/HabAPI/Blocks.swift` | Generated: `Block`, `BlockContent` (one case per type, plus `.unknown`, whose fields `Block.unknownFields` keeps so it encodes back unchanged) and the field types, for the SwiftUI renderer |
 | `api/modules/validate.go` | `ValidateTree(tree, version)`: what the schema states, plus what it cannot (at most 500 blocks, depth 12, 64 KiB, unique ids, `steps.current` at most `steps.total`). `gff-hab modules check` will use it |
 | `api/modules/manifest.go` | `ParseManifest`: a `bridge` above `BridgeVersion` first (`NewerBridge`), then the manifest schema plus unique setting keys and a choice default among its choices. A `refresh` under 5 is raised to 5 |
 | `api/modules/testdata/` | Hand-written fixtures. `blocks/valid` and `manifest/valid` pass every check; `invalid` fails every check; `beyond-schema` passes the schema and fails the Go check; `blocks/newer` holds a block of a later vocabulary, which vocabulary 1 refuses and the typed decoders keep as unknown; `manifest/newer` holds a manifest of a later bridge with a field and a place this hab does not know, which `ParseManifest` refuses as `NewerBridge` alone |
@@ -376,7 +382,9 @@ Stage 2 holds the vocabulary as data and generates the rest from it.
 The Go tests check every fixture with `ValidateTree` or `ParseManifest`, with a small schema
 evaluator over the generated files, and with `check-jsonschema` when it is installed. They also
 fail when a block type, field, word or client action appears in no valid fixture. The Swift tests
-decode every valid and beyond-schema tree and encode it back unchanged.
+decode every valid, beyond-schema and newer tree and encode it back unchanged, decode every
+invalid tree that breaks only a strict rule (an unknown field, word or child type, a value out of
+range, text too long), and check the depth guard on a 512 KB thread stack.
 
 An action name is dotted lowercase words (`notes.add`), at most 64 characters. `args` is any JSON
 object. A `client.*` name outside the four in 6.2 is refused, and each of the four needs its one

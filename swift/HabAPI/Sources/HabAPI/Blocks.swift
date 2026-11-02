@@ -9,6 +9,60 @@ public enum BlockVocabulary {
     public static let types: [String] = ["stack", "section", "row", "text", "badge", "metric", "metrics", "progress", "button", "toggle", "field", "list", "log"]
     /// Colour meanings a tint may name; a tint may also be #RRGGBB.
     public static let tints: [String] = ["accent", "muted", "working", "blocked", "done", "idle", "error", "warning"]
+    /// The deepest tree the hab sends (docs/specs/modules.md 8.1).
+    public static let maxDepth = 12
+
+    /// Refuses a block nested past maxDepth, with one level of slack. Each level adds two
+    /// coding path entries (the children key and the index). The hab never sends such a tree;
+    /// the guard keeps a bad one from exhausting a small thread stack.
+    static func checkBlockDepth(_ decoder: Decoder) throws {
+        if decoder.codingPath.count > 2 * maxDepth {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "block tree deeper than \(maxDepth)"))
+        }
+    }
+
+    /// The same guard for free JSON inside a tree: action args and an unknown block's fields.
+    static func checkValueDepth(_ decoder: Decoder) throws {
+        if decoder.codingPath.count > 4 * maxDepth {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "JSON nested too deep in a block tree"))
+        }
+    }
+}
+
+/// Any JSON key.
+struct BlockKey: CodingKey {
+    var stringValue: String
+    var intValue: Int? { nil }
+    init(_ s: String) { stringValue = s }
+    init?(stringValue: String) { self.stringValue = stringValue }
+    init?(intValue: Int) { nil }
+}
+
+/// A JSON value decoded under the depth guard.
+struct GuardedJSON: Decodable {
+    var value: JSONValue
+
+    init(from decoder: Decoder) throws {
+        try BlockVocabulary.checkValueDepth(decoder)
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() {
+            value = .null
+        } else if let v = try? c.decode(Bool.self) {
+            value = .bool(v)
+        } else if let v = try? c.decode(Int64.self) {
+            value = .int(v)
+        } else if let v = try? c.decode(UInt64.self) {
+            value = .uint(v)
+        } else if let v = try? c.decode(Double.self) {
+            value = .number(v)
+        } else if let v = try? c.decode(String.self) {
+            value = .string(v)
+        } else if let v = try? c.decode([GuardedJSON].self) {
+            value = .array(v.map(\.value))
+        } else {
+            value = .object(try c.decode([String: GuardedJSON].self).mapValues(\.value))
+        }
+    }
 }
 
 /// One block of a module's tree. Unknown fields are ignored; an unknown type decodes to
@@ -21,6 +75,9 @@ public struct Block: Codable, Sendable, Hashable {
     /// Seconds after the tree arrives when the client greys the block.
     public var staleAfter: Int?
     public var content: BlockContent
+    /// For a type this build does not know: the block's other fields, kept so it encodes back
+    /// unchanged. Empty for a known type.
+    public var unknownFields: [String: JSONValue] = [:]
 
     enum CommonKeys: String, CodingKey {
         case type = "type"
@@ -57,6 +114,7 @@ public struct Block: Codable, Sendable, Hashable {
     }
 
     public init(from decoder: Decoder) throws {
+        try BlockVocabulary.checkBlockDepth(decoder)
         let c = try decoder.container(keyedBy: CommonKeys.self)
         id = try c.decodeIfPresent(String.self, forKey: .id)
         fallback = try c.decodeIfPresent(String.self, forKey: .fallback)
@@ -75,7 +133,12 @@ public struct Block: Codable, Sendable, Hashable {
         case "field": content = .field(try FieldBlock(from: decoder))
         case "list": content = .list(try ListBlock(from: decoder))
         case "log": content = .log(try LogBlock(from: decoder))
-        case let other: content = .unknown(type: other)
+        case let other:
+            content = .unknown(type: other)
+            let all = try decoder.container(keyedBy: BlockKey.self)
+            for key in all.allKeys where CommonKeys(rawValue: key.stringValue) == nil {
+                unknownFields[key.stringValue] = try all.decode(GuardedJSON.self, forKey: key).value
+            }
         }
     }
 
@@ -94,7 +157,11 @@ public struct Block: Codable, Sendable, Hashable {
         case .field(let b): try b.encode(to: encoder)
         case .list(let b): try b.encode(to: encoder)
         case .log(let b): try b.encode(to: encoder)
-        case .unknown: break
+        case .unknown:
+            var all = encoder.container(keyedBy: BlockKey.self)
+            for (key, value) in unknownFields where CommonKeys(rawValue: key) == nil {
+                try all.encode(value, forKey: BlockKey(key))
+            }
         }
         var c = encoder.container(keyedBy: CommonKeys.self)
         try c.encode(type, forKey: .type)
@@ -145,6 +212,16 @@ public struct BlockAction: Codable, Sendable, Hashable {
         self.name = name
         self.args = args
     }
+
+    enum CodingKeys: String, CodingKey {
+        case name, args
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        args = try c.decodeIfPresent([String: GuardedJSON].self, forKey: .args)?.mapValues(\.value)
+    }
 }
 
 /// A progress block's step count.
@@ -172,12 +249,33 @@ public struct BlockTint: RawRepresentable, Codable, Sendable, Hashable {
     public static let warning = BlockTint(rawValue: "warning")
 }
 
+extension BlockTint {
+    /// The words this build knows, the field's default first.
+    public static let known: [BlockTint] = [.accent, .muted, .working, .blocked, .done, .idle, .error, .warning]
+}
+
+extension BlockTint {
+    /// This tint when it is a known meaning or a #RRGGBB colour, else nil: an unknown meaning
+    /// draws as no tint (docs/specs/modules.md 6.3).
+    public var drawn: BlockTint? {
+        if Self.known.contains(self) { return self }
+        let u = Array(rawValue.utf8)
+        guard u.count == 7, u[0] == UInt8(ascii: "#") else { return nil }
+        return u.dropFirst().allSatisfy { (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0) } ? self : nil
+    }
+}
+
 /// An open word set: values outside the known list decode and round-trip unchanged.
 public struct BlockStackAxis: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
     public static let vertical = BlockStackAxis(rawValue: "vertical")
     public static let horizontal = BlockStackAxis(rawValue: "horizontal")
+}
+
+extension BlockStackAxis {
+    /// The words this build knows, the field's default first.
+    public static let known: [BlockStackAxis] = [.vertical, .horizontal]
 }
 
 /// An open word set: values outside the known list decode and round-trip unchanged.
@@ -190,12 +288,22 @@ public struct BlockTextStyle: RawRepresentable, Codable, Sendable, Hashable {
     public static let title = BlockTextStyle(rawValue: "title")
 }
 
+extension BlockTextStyle {
+    /// The words this build knows, the field's default first.
+    public static let known: [BlockTextStyle] = [.body, .caption, .mono, .title]
+}
+
 /// An open word set: values outside the known list decode and round-trip unchanged.
 public struct BlockButtonRole: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
     public static let normal = BlockButtonRole(rawValue: "normal")
     public static let destructive = BlockButtonRole(rawValue: "destructive")
+}
+
+extension BlockButtonRole {
+    /// The words this build knows, the field's default first.
+    public static let known: [BlockButtonRole] = [.normal, .destructive]
 }
 
 /// Children in a column or a row.
@@ -216,6 +324,13 @@ public struct StackBlock: Codable, Sendable, Hashable {
         self.axis = axis
         self.children = children
         self.gap = gap
+    }
+
+    /// The axis to draw: the field's word when this build knows it, else its first word,
+    /// .vertical, which is also the default when the field is absent.
+    public var drawnAxis: BlockStackAxis {
+        guard let v = axis, BlockStackAxis.known.contains(v) else { return .vertical }
+        return v
     }
 }
 
@@ -267,6 +382,9 @@ public struct RowBlock: Codable, Sendable, Hashable {
         self.tint = tint
         self.action = action
     }
+
+    /// The tint to draw: a known meaning or a #RRGGBB colour, else nil for none.
+    public var drawnTint: BlockTint? { tint?.drawn }
 }
 
 /// A run of text.
@@ -282,6 +400,13 @@ public struct TextBlock: Codable, Sendable, Hashable {
     public init(text: String, style: BlockTextStyle? = nil) {
         self.text = text
         self.style = style
+    }
+
+    /// The style to draw: the field's word when this build knows it, else its first word,
+    /// .body, which is also the default when the field is absent.
+    public var drawnStyle: BlockTextStyle {
+        guard let v = style, BlockTextStyle.known.contains(v) else { return .body }
+        return v
     }
 }
 
@@ -299,6 +424,9 @@ public struct BadgeBlock: Codable, Sendable, Hashable {
         self.text = text
         self.tint = tint
     }
+
+    /// The tint to draw: a known meaning or a #RRGGBB colour, else nil for none.
+    public var drawnTint: BlockTint? { tint?.drawn }
 }
 
 /// A labelled value.
@@ -322,6 +450,9 @@ public struct MetricBlock: Codable, Sendable, Hashable {
         self.unit = unit
         self.tint = tint
     }
+
+    /// The tint to draw: a known meaning or a #RRGGBB colour, else nil for none.
+    public var drawnTint: BlockTint? { tint?.drawn }
 }
 
 /// A grid of up to six metrics.
@@ -382,6 +513,13 @@ public struct ButtonBlock: Codable, Sendable, Hashable {
         self.action = action
         self.role = role
         self.confirm = confirm
+    }
+
+    /// The role to draw: the field's word when this build knows it, else its first word,
+    /// .normal, which is also the default when the field is absent.
+    public var drawnRole: BlockButtonRole {
+        guard let v = role, BlockButtonRole.known.contains(v) else { return .normal }
+        return v
     }
 }
 

@@ -357,3 +357,46 @@ func mustRead(t *testing.T, path string) []byte {
 	}
 	return b
 }
+
+// TestDrawnWords checks the generated accessors a renderer draws from (modules.md 6.3, 6.4): a
+// known word as it is, an unknown or absent one as the field's first word; a tint as a known
+// meaning or a #RRGGBB colour, else none.
+func TestDrawnWords(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{{"horizontal", "horizontal"}, {"diagonal", "vertical"}, {"", "vertical"}} {
+		if got := (&StackBlock{Axis: tc.in}).DrawnAxis(); got != tc.want {
+			t.Errorf("axis %q drawn as %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	if got := (&TextBlock{Style: "headline"}).DrawnStyle(); got != "body" {
+		t.Errorf("style headline drawn as %q", got)
+	}
+	if got := (&ButtonBlock{Role: "destructive"}).DrawnRole(); got != "destructive" {
+		t.Errorf("role destructive drawn as %q", got)
+	}
+	for _, tc := range []struct{ in, want string }{{"blocked", "blocked"}, {"#a0B1c2", "#a0B1c2"}, {"sparkly", ""}, {"#12345", ""}, {"", ""}} {
+		if got := (&BadgeBlock{Tint: tc.in}).DrawnTint(); got != tc.want {
+			t.Errorf("tint %q drawn as %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestNilChildrenEncodeEmpty: a required array left nil encodes as [], never null.
+func TestNilChildrenEncodeEmpty(t *testing.T) {
+	for _, b := range []Block{
+		{Type: "stack", Stack: &StackBlock{}},
+		{Type: "list", List: &ListBlock{}},
+		{Type: "log", Log: &LogBlock{}},
+		{Type: "section", Section: &SectionBlock{Title: "x"}},
+	} {
+		data, err := json.Marshal(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(data, []byte("null")) {
+			t.Errorf("%s encodes null: %s", b.Type, data)
+		}
+		if err := ValidateTree(data, Version); err != nil {
+			t.Errorf("%s: %s refused: %v", b.Type, data, err)
+		}
+	}
+}

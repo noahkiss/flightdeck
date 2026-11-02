@@ -396,8 +396,41 @@ func BlocksGo() ([]byte, error) {
 			p("\t%s %s `json:\"%s\"`\n", goName(f.Name), goFieldType(f, !f.Required), tag)
 		}
 		p("}\n\n")
+		goBlockMethods(p, b)
 	}
 	return format.Source(w.Bytes())
+}
+
+// goBlockMethods writes a block's methods: MarshalJSON when a required array must encode as []
+// rather than null, and a Drawn accessor per word and tint field (modules.md 6.3, 6.4).
+func goBlockMethods(p func(string, ...any), b modules.BlockDef) {
+	name := goName(b.Type) + "Block"
+	var arrays []string
+	for _, f := range b.Fields {
+		if f.Required && (f.Kind == modules.KindChildren || f.Kind == modules.KindLines) {
+			arrays = append(arrays, goName(f.Name)+"|"+goFieldType(f, false))
+		}
+	}
+	if len(arrays) > 0 {
+		p("// MarshalJSON encodes a nil required array as [], which the schema needs.\n")
+		p("func (b %s) MarshalJSON() ([]byte, error) {\n\ttype plain %s\n", name, name)
+		for _, a := range arrays {
+			f, t, _ := strings.Cut(a, "|")
+			p("\tif b.%s == nil {\n\t\tb.%s = %s{}\n\t}\n", f, f, t)
+		}
+		p("\treturn json.Marshal(plain(b))\n}\n\n")
+	}
+	for _, f := range b.Fields {
+		switch f.Kind {
+		case modules.KindWords:
+			p("// Drawn%s is the %s to draw: the field's word when this build knows it, else its first\n", goName(f.Name), f.Name)
+			p("// word, %q, which is also the default when the field is absent.\n", f.Words[0])
+			p("func (b *%s) Drawn%s() string {\n\treturn drawnWord(b.%s, %s)\n}\n\n", name, goName(f.Name), goName(f.Name), quoteList(f.Words))
+		case modules.KindTint:
+			p("// Drawn%s is the %s to draw: a known meaning or a #RRGGBB colour, else \"\" for none.\n", goName(f.Name), f.Name)
+			p("func (b *%s) Drawn%s() string {\n\treturn drawnTint(b.%s)\n}\n\n", name, goName(f.Name), goName(f.Name))
+		}
+	}
 }
 
 func lowerFirst(s string) string {
@@ -456,7 +489,37 @@ func BlocksSwift() []byte {
 	p("    public static let types: [String] = [%s]\n", quoteList(types))
 	p("    /// Colour meanings a tint may name; a tint may also be #RRGGBB.\n")
 	p("    public static let tints: [String] = [%s]\n", quoteList(modules.Tints))
+	p("    /// The deepest tree the hab sends (docs/specs/modules.md 8.1).\n")
+	p("    public static let maxDepth = %d\n\n", modules.MaxDepth)
+	p("    /// Refuses a block nested past maxDepth, with one level of slack. Each level adds two\n")
+	p("    /// coding path entries (the children key and the index). The hab never sends such a tree;\n")
+	p("    /// the guard keeps a bad one from exhausting a small thread stack.\n")
+	p("    static func checkBlockDepth(_ decoder: Decoder) throws {\n")
+	p("        if decoder.codingPath.count > 2 * maxDepth {\n")
+	p("            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: \"block tree deeper than \\(maxDepth)\"))\n")
+	p("        }\n    }\n\n")
+	p("    /// The same guard for free JSON inside a tree: action args and an unknown block's fields.\n")
+	p("    static func checkValueDepth(_ decoder: Decoder) throws {\n")
+	p("        if decoder.codingPath.count > 4 * maxDepth {\n")
+	p("            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: \"JSON nested too deep in a block tree\"))\n")
+	p("        }\n    }\n")
 	p("}\n\n")
+	p("/// Any JSON key.\n")
+	p("struct BlockKey: CodingKey {\n    var stringValue: String\n    var intValue: Int? { nil }\n")
+	p("    init(_ s: String) { stringValue = s }\n    init?(stringValue: String) { self.stringValue = stringValue }\n    init?(intValue: Int) { nil }\n}\n\n")
+	p("/// A JSON value decoded under the depth guard.\n")
+	p("struct GuardedJSON: Decodable {\n    var value: JSONValue\n\n")
+	p("    init(from decoder: Decoder) throws {\n")
+	p("        try BlockVocabulary.checkValueDepth(decoder)\n")
+	p("        let c = try decoder.singleValueContainer()\n")
+	p("        if c.decodeNil() {\n            value = .null\n")
+	p("        } else if let v = try? c.decode(Bool.self) {\n            value = .bool(v)\n")
+	p("        } else if let v = try? c.decode(Int64.self) {\n            value = .int(v)\n")
+	p("        } else if let v = try? c.decode(UInt64.self) {\n            value = .uint(v)\n")
+	p("        } else if let v = try? c.decode(Double.self) {\n            value = .number(v)\n")
+	p("        } else if let v = try? c.decode(String.self) {\n            value = .string(v)\n")
+	p("        } else if let v = try? c.decode([GuardedJSON].self) {\n            value = .array(v.map(\\.value))\n")
+	p("        } else {\n            value = .object(try c.decode([String: GuardedJSON].self).mapValues(\\.value))\n        }\n    }\n}\n\n")
 
 	p("/// One block of a module's tree. Unknown fields are ignored; an unknown type decodes to\n")
 	p("/// `.unknown`, which a renderer draws as `fallback` or \"Needs a newer Flightdeck\".\n")
@@ -465,7 +528,10 @@ func BlocksSwift() []byte {
 		p("    /// %s\n", f.Doc)
 		p("    public var %s: %s?\n", swiftIdent(camel(f.Name, false)), swiftFieldType("", f))
 	}
-	p("    public var content: BlockContent\n\n")
+	p("    public var content: BlockContent\n")
+	p("    /// For a type this build does not know: the block's other fields, kept so it encodes back\n")
+	p("    /// unchanged. Empty for a known type.\n")
+	p("    public var unknownFields: [String: JSONValue] = [:]\n\n")
 	p("    enum CommonKeys: String, CodingKey {\n        case type = \"type\"\n")
 	for _, f := range modules.Common {
 		p("        case %s = %q\n", swiftIdent(camel(f.Name, false)), f.Name)
@@ -485,6 +551,7 @@ func BlocksSwift() []byte {
 	}
 	p("        case .unknown(let type): return type\n        }\n    }\n\n")
 	p("    public init(from decoder: Decoder) throws {\n")
+	p("        try BlockVocabulary.checkBlockDepth(decoder)\n")
 	p("        let c = try decoder.container(keyedBy: CommonKeys.self)\n")
 	for _, f := range modules.Common {
 		id := swiftIdent(camel(f.Name, false))
@@ -494,13 +561,19 @@ func BlocksSwift() []byte {
 	for _, b := range modules.Blocks {
 		p("        case %q: content = .%s(try %s(from: decoder))\n", b.Type, swiftIdent(camel(b.Type, false)), swiftBlockName(b.Type))
 	}
-	p("        case let other: content = .unknown(type: other)\n        }\n    }\n\n")
+	p("        case let other:\n            content = .unknown(type: other)\n")
+	p("            let all = try decoder.container(keyedBy: BlockKey.self)\n")
+	p("            for key in all.allKeys where CommonKeys(rawValue: key.stringValue) == nil {\n")
+	p("                unknownFields[key.stringValue] = try all.decode(GuardedJSON.self, forKey: key).value\n")
+	p("            }\n        }\n    }\n\n")
 	p("    public func encode(to encoder: Encoder) throws {\n")
 	p("        switch content {\n")
 	for _, b := range modules.Blocks {
 		p("        case .%s(let b): try b.encode(to: encoder)\n", swiftIdent(camel(b.Type, false)))
 	}
-	p("        case .unknown: break\n        }\n")
+	p("        case .unknown:\n            var all = encoder.container(keyedBy: BlockKey.self)\n")
+	p("            for (key, value) in unknownFields where CommonKeys(rawValue: key) == nil {\n")
+	p("                try all.encode(value, forKey: BlockKey(key))\n            }\n        }\n")
 	p("        var c = encoder.container(keyedBy: CommonKeys.self)\n")
 	p("        try c.encode(type, forKey: .type)\n")
 	for _, f := range modules.Common {
@@ -521,17 +594,31 @@ func BlocksSwift() []byte {
 	p("/// A block's action (docs/specs/modules.md 6.2). A client.* name is handled by the client.\n")
 	p("public struct BlockAction: Codable, Sendable, Hashable {\n")
 	p("    public var name: String\n    public var args: [String: JSONValue]?\n\n")
-	p("    public init(name: String, args: [String: JSONValue]? = nil) {\n        self.name = name\n        self.args = args\n    }\n}\n\n")
+	p("    public init(name: String, args: [String: JSONValue]? = nil) {\n        self.name = name\n        self.args = args\n    }\n\n")
+	p("    enum CodingKeys: String, CodingKey {\n        case name, args\n    }\n\n")
+	p("    public init(from decoder: Decoder) throws {\n")
+	p("        let c = try decoder.container(keyedBy: CodingKeys.self)\n")
+	p("        name = try c.decode(String.self, forKey: .name)\n")
+	p("        args = try c.decodeIfPresent([String: GuardedJSON].self, forKey: .args)?.mapValues(\\.value)\n    }\n}\n\n")
 	p("/// A progress block's step count.\n")
 	p("public struct ProgressSteps: Codable, Sendable, Hashable {\n")
 	p("    public var total: Int\n    public var current: Int\n\n")
 	p("    public init(total: Int, current: Int) {\n        self.total = total\n        self.current = current\n    }\n}\n\n")
-	swiftWords(&w, "BlockTint", &Schema{KnownValues: modules.Tints})
+	blockWords(&w, "BlockTint", modules.Tints)
+	p("extension BlockTint {\n")
+	p("    /// This tint when it is a known meaning or a #RRGGBB colour, else nil: an unknown meaning\n")
+	p("    /// draws as no tint (docs/specs/modules.md 6.3).\n")
+	p("    public var drawn: BlockTint? {\n")
+	p("        if Self.known.contains(self) { return self }\n")
+	p("        let u = Array(rawValue.utf8)\n")
+	p("        guard u.count == 7, u[0] == UInt8(ascii: \"#\") else { return nil }\n")
+	p("        return u.dropFirst().allSatisfy { (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0) } ? self : nil\n")
+	p("    }\n}\n\n")
 
 	for _, b := range modules.Blocks {
 		for _, f := range b.Fields {
 			if f.Kind == modules.KindWords {
-				swiftWords(&w, swiftWordsName(b.Type, f.Name), &Schema{KnownValues: f.Words})
+				blockWords(&w, swiftWordsName(b.Type, f.Name), f.Words)
 			}
 		}
 	}
@@ -568,9 +655,37 @@ func BlocksSwift() []byte {
 			args = append(args, a)
 			sets = append(sets, fmt.Sprintf("        self.%s = %s\n", f.id, f.id))
 		}
-		p("    public init(%s) {\n%s    }\n}\n\n", strings.Join(args, ", "), strings.Join(sets, ""))
+		p("    public init(%s) {\n%s    }\n", strings.Join(args, ", "), strings.Join(sets, ""))
+		for _, f := range b.Fields {
+			id := swiftIdent(camel(f.Name, false))
+			drawn := "drawn" + camel(f.Name, true)
+			switch f.Kind {
+			case modules.KindWords:
+				t := swiftWordsName(b.Type, f.Name)
+				p("\n    /// The %s to draw: the field's word when this build knows it, else its first word,\n", f.Name)
+				p("    /// .%s, which is also the default when the field is absent.\n", swiftIdent(camel(f.Words[0], false)))
+				p("    public var %s: %s {\n", drawn, t)
+				p("        guard let v = %s, %s.known.contains(v) else { return .%s }\n        return v\n    }\n", id, t, swiftIdent(camel(f.Words[0], false)))
+			case modules.KindTint:
+				p("\n    /// The %s to draw: a known meaning or a #RRGGBB colour, else nil for none.\n", f.Name)
+				p("    public var %s: BlockTint? { %s?.drawn }\n", drawn, id)
+			}
+		}
+		p("}\n\n")
 	}
 	return append(bytes.TrimRight(w.Bytes(), "\n"), '\n')
+}
+
+// blockWords writes an open word set with its known words in order, the first being the field's
+// default.
+func blockWords(w *bytes.Buffer, name string, words []string) {
+	swiftWords(w, name, &Schema{KnownValues: words})
+	ids := make([]string, len(words))
+	for i, v := range words {
+		ids[i] = "." + swiftIdent(camel(v, false))
+	}
+	fmt.Fprintf(w, "extension %s {\n    /// The words this build knows, the field's default first.\n", name)
+	fmt.Fprintf(w, "    public static let known: [%s] = [%s]\n}\n\n", name, strings.Join(ids, ", "))
 }
 
 func swiftBlockName(t string) string { return camel(t, true) + "Block" }
