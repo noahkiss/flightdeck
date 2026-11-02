@@ -202,7 +202,7 @@ final class ApprovalFixTests: XCTestCase {
         c.isUnlocked = { false }
         let o = await c.answerFromActivity(host: "testhost", pane: "%1", request: "req-1", allow: true)
         XCTAssertNil(o)
-        XCTAssertEqual(posts, ["Unlock to answer"])
+        XCTAssertEqual(posts, [ApprovalCenter.lockedTitle])
         XCTAssertEqual(c.pending.first?.request, "req-1")
         let n = await hab.answers.count
         XCTAssertEqual(n, 0)
@@ -224,7 +224,12 @@ final class ApprovalFixTests: XCTestCase {
         let meta = PushMeta(kind: "permission", hab: "testhost", pane: "%1", request: "req-1")
         let o = await c.answer(host: "testhost", ApprovalAnswerParams(choice: .deny, pane: "%1", request: "req-1", via: .banner), meta: meta)
         XCTAssertNil(o)
-        XCTAssertEqual(posts.map(\.0), ["Unlock to answer"])
+        XCTAssertEqual(posts.map(\.0), [ApprovalCenter.lockedTitle])
+        #if os(iOS)
+        XCTAssertTrue(["Unlock iPhone to answer", "Unlock iPad to answer"].contains(ApprovalCenter.lockedTitle))
+        #else
+        XCTAssertEqual(ApprovalCenter.lockedTitle, "Unlock to answer")
+        #endif
         XCTAssertEqual(posts.first?.1, "testhost")
         XCTAssertEqual(posts.first?.2, meta, "the notice opens the request")
         XCTAssertEqual(c.pending, [meta])
