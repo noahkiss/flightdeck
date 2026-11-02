@@ -54,6 +54,7 @@ of Apple platforms, not from a page opened for this spec. A device test must con
 18. [Open questions](#18-open-questions)
 19. [Sources](#19-sources)
 20. [Settings and levels](#20-settings-and-levels)
+21. [Rounds (built, task-xhpsgzkr)](#21-rounds-built-task-xhpsgzkr)
 
 ---
 
@@ -1523,8 +1524,8 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
   again when the token, "Show details in notifications" or "Notify when a turn finishes"
   changes. The app disconnects in the background (12.1), so each return to the foreground
   registers again; the hab keeps one token per device id. The device id is a random UUID kept in
-  the app's defaults. Kinds: `permission`, `question`, `auth`, `error`, plus `done` when that
-  setting is on. A hab without `push`, or one that answers `unavailable`, shows "Push is not set
+  the app's defaults. Kinds: `permission`, `question`, `auth`, `error` and `round` (21.3), plus `done` when
+  that setting is on. A hab without `push`, or one that answers `unavailable`, shows "Push is not set
   up on <hab>" with a link to `docs/push.md` in Settings › Notifications.
 - **Environment.** The build's `aps-environment` is development for Debug and production for
   Release (`APP_APS_ENVIRONMENT` in `Names.xcconfig`); Info.plist repeats it as
@@ -3303,3 +3304,97 @@ The page is `Views/SettingsViews.swift`.
 - **`gff lb status`** waits for Logbook.
 - **Pushed preferences** (20.4) still reach each hab through `push.register` as before; the
   usage thresholds are not sent yet.
+
+---
+
+## 21. Rounds (built, task-xhpsgzkr)
+
+The app side of rounds (`rounds.md` 10.2, 10.3, 13). Code: `Rounds/RoundCenter.swift` (the
+lists, the actions, the session to open, live run panes), `Rounds/RoundEvents.swift` (round
+events into `HabState`), `Rounds/RoundText.swift` (the words), `Rounds/RoundForm.swift` (the
+form's fields), `Views/RoundViews.swift` (the board's Rounds part, the round page, the form,
+the badge), `Demo/FakeRounds.swift` (the fake hab). Tests: `RoundTests`,
+`LiveTests.testLiveRounds`.
+
+### 21.1 State
+
+- **Per hab.** `HabState.rounds` holds the rounds of the host snapshot, then each
+  `round.updated` whose revision is above the held one. A `deleted` update removes the round.
+  `round.run_updated` sets the round's `lastRun` when it is the same run or a newer one, and
+  goes into `HabState.roundRuns` (at most 200, ended runs dropped first) for the round page. A
+  new snapshot replaces both. Rounds stay while the hab is offline, as sessions do.
+- **Capability.** The Rounds part, the actions and New round show only for a hab whose welcome
+  lists `rounds`.
+- **Not built: other hosts' rounds.** The list shows the habs in the app, each from its own
+  connection. A peer that is not in the app, which the catalog's `rounds` section names, is not
+  listed. Design call: every hab the owner drives is in the app, and its own connection is
+  newer than any catalog copy; the merged catalog view waits for a host the app cannot reach.
+
+### 21.2 The status board
+
+- **Rounds list.** Below the session sections, a "Rounds" section holds the "Show run
+  sessions" switch and New round, then one section per hab, "Rounds on <hab>" ("· offline"
+  when it is). Each row: the name, the mode, the trigger in the catalog's words ("every 1h",
+  "every 1d in Europe/Berlin", "cron … in <zone>", "once at …", "by hand"), the next run, and
+  on the right the mark (Paused, Completed) or the last run's state.
+- **Order.** Rounds that will run, soonest next slot first; then rounds with no next slot (by
+  hand); then paused; then completed. The name breaks ties. Design call: the board ranks
+  sessions by what needs the owner; for rounds the next thing to happen leads, and what will
+  not run sinks.
+- **Times.** The next run shows in the viewer's zone ("today 09:00", "tomorrow 09:00", else the
+  short date), with the round's zone beside it when its clock differs: "tomorrow 15:00 (09:00
+  America/Chicago)" (`rounds.md` 4.1).
+- **Badge.** A session with `Session.round` carries a round badge with the round's name, on its
+  board row and in the session header; "Round" when the round is gone.
+- **Filter.** "Show run sessions" is on by default and kept in the app's defaults. Off hides
+  run sessions from the board, except in "Needs you". Design call: a hidden approval would
+  stall the run; the filter is for clutter, not for things the owner must answer.
+- **Navigation.** A round row pushes its page in the list's own navigation stack, on every
+  device; a run session opens in the session pane as any board row does.
+
+### 21.3 The round page and the actions
+
+- **Page.** The trigger, the next run, the mark with its reason, the mode, the command or the
+  agent and model, the project. Then Run now, Pause or Unpause, Edit, Delete. Then the runs,
+  newest first, 50 per page with Older runs: the run number, its slot (or "by hand"), state,
+  missed count, duration, reason, the first line of the result, and Open session. The page
+  merges `round.run_updated` events into its page, so a run's state moves while it is open.
+- **Refusals.** An action's refusal shows under the actions in the hab's words as a sentence:
+  "The round has a live run." for Run now during a run, "The round is paused." and so on. The
+  next action clears it. The app checks nothing the hab checks.
+- **Run now.** `round.run`. When the run's session exists on the board, it opens. Design
+  call: the owner asked for a run now, so they want to watch it; a run skipped before it had a
+  session opens nothing.
+- **Delete asks first,** in a confirmation dialog: "A run in progress goes on to its end." No
+  other action asks (`rounds.md` 12).
+- **New round and Edit.** One form: the hab (new only), name (fixed on edit), mode; when (every
+  with the preset menu, cron with a time zone field, once at a date, by hand) and Run now (new
+  only); what (project and Agent or Command for fresh, the target session for resume and fork;
+  agent, model, prompt); limits (timeout, run limit, notify, catch-up, what happens after a
+  good run). The form refuses only a missing name, project, prompt, command, target or cron
+  expression; the hab checks the rest. Fields the form does not show (`cwd`, `expires_at`,
+  `harness_args`, `wait`) stay as they were on edit. An edit sends the revision it was opened
+  at, so an edit made elsewhere meanwhile is refused with the hab's "read it again".
+- **Always on** (`rounds.md` 9). On a new fresh round, when the chosen hab is not marked always
+  on and another online hab is, with the project (same remote, or same name when neither has a
+  remote), one line offers "Run it on <hab>? It is always on." The tap switches the form's hab
+  and its project. The mark comes from the catalogs the Capcom center reads (4.10).
+- **Push.** The app registers kind `round`; the round's own `notify` decides what is sent. A
+  banner's Open (or a tap) that names a session and no request opens that session once its hab
+  shows it. This also opens `done` banners. `PushMeta` reads `round` and `run`.
+
+### 21.4 Live run panes
+
+A client's `pane.input` on a run session ends the run `taken_over` (`rounds.md` 13). A program
+in a run pane can turn on focus or mouse reporting, and the terminal view then writes focus
+reports, mouse motion and wheel reports while the client owns the pane.
+
+- **Call: filter in the app.** For a pane whose session carries `Session.round` and whose run
+  is not known to have ended, `TerminalReplyFilter` drops focus reports, mouse motion and the
+  wheel even for the owner. Clicks, keys and the owner's Shift+F3 pass: those are meant as
+  input, and a take over by them is right. A run the app has not seen (an older run, a round
+  gone) counts as live until its session exits.
+- **Reason.** The hab cannot tell a focus report from typed bytes in `pane.input` without
+  parsing the stream, and other clients (`gff`) send their own. The app knows what its
+  terminal generated.
+
