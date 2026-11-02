@@ -25,7 +25,14 @@ var ChannelMethods = []string{"channel.send", "channel.status", "channel.wait"}
 // ReadMethods are the read tool methods the route takes (capcom.md 4): the agent kit's MCP
 // server and CLI in a pane reach the hab through GFF_HAB.
 var ReadMethods = []string{"catalog.list", "peers.list", "transcript.list", "transcript.search", "transcript.read",
-	"notice.get", "file.read", "logbook.find", "logbook.get"}
+	"notice.get", "file.read"}
+
+// LogbookMethods are the Logbook methods the route takes (logbook.md 10.3): the agent's reads
+// and writes. The pane's token names the writer: the hab records its harness, session and host
+// (2.5), and limits its writes (14). logbook.decide is never on the route: an agent does not
+// decide a proposal.
+var LogbookMethods = []string{"logbook.find", "logbook.get", "logbook.list", "logbook.ready", "logbook.history",
+	"logbook.write", "logbook.resolve", "logbook.projects", "logbook.status"}
 
 // ConfirmMethods are the confirmation methods the route takes (capcom.md 6.1): an agent asks
 // for a start and reads where it stands. confirm.answer is never on the route: no tool answers
@@ -95,6 +102,14 @@ func (s *Server) SetRounds(h ChannelHandler) {
 	s.mu.Unlock()
 }
 
+// SetLogbook sets the handler of the Logbook methods on the route. With none, each answers
+// unavailable.
+func (s *Server) SetLogbook(h ChannelHandler) {
+	s.mu.Lock()
+	s.logbook = h
+	s.mu.Unlock()
+}
+
 // SetChannels sets the handler of the channel route. With none, every call answers unavailable.
 func (s *Server) SetChannels(h ChannelHandler) {
 	s.mu.Lock()
@@ -134,7 +149,7 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		fail(api.ErrorKindInvalid, "not a channel call: %v", err)
 		return
 	}
-	known, read, conf, round := false, false, false, false
+	known, read, conf, round, lb := false, false, false, false, false
 	for _, m := range ChannelMethods {
 		known = known || m == call.Method
 	}
@@ -146,6 +161,9 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 	}
 	for _, m := range ReadMethods {
 		read = read || m == call.Method
+	}
+	for _, m := range LogbookMethods {
+		lb = lb || m == call.Method
 	}
 	if read {
 		s.mu.Lock()
@@ -178,8 +196,8 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		_ = answer(channelAnswer{Result: b})
 		return
 	}
-	if !known && !conf && !round {
-		fail(api.ErrorKindInvalid, "%q is not one of %v, %v, %v or %v", call.Method, ChannelMethods, ReadMethods, ConfirmMethods, RoundMethods)
+	if !known && !conf && !round && !lb {
+		fail(api.ErrorKindInvalid, "%q is not one of %v, %v, %v, %v or %v", call.Method, ChannelMethods, ReadMethods, ConfirmMethods, RoundMethods, LogbookMethods)
 		return
 	}
 	s.mu.Lock()
@@ -189,8 +207,14 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		h = s.confirm
 	case round:
 		h = s.rounds
+	case lb:
+		h = s.logbook
 	}
 	s.mu.Unlock()
+	if h == nil && lb {
+		fail(api.ErrorKindUnavailable, "%s needs Logbook, which this hab is running without", call.Method)
+		return
+	}
 	if h == nil {
 		fail(api.ErrorKindUnavailable, "%s needs a service this hab is running without", call.Method)
 		return

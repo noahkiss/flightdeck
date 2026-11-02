@@ -285,7 +285,7 @@ type fakeLogbookHab struct {
 	*fakeReadHab
 	mu        sync.Mutex
 	records   []api.LogbookRecord
-	proposals []logbookWrite
+	proposals []api.LogbookWriteParams
 	pane      string // the calling pane, for the idempotency key
 }
 
@@ -303,24 +303,24 @@ func (f *fakeLogbookHab) Call(ctx context.Context, method string, params, result
 		return nil
 	case "logbook.write":
 		b, _ := json.Marshal(params)
-		var w logbookWrite
+		var w api.LogbookWriteParams
 		if err := json.Unmarshal(b, &w); err != nil {
 			return control.Errorf(api.ErrorKindInvalid, "%v", err)
 		}
 		if !w.Propose {
 			c := w.Changes[0]
 			f.records = append(f.records, api.LogbookRecord{ID: c.Type + "-k3m9q2xz", Type: c.Type, Title: c.Title, Status: "open"})
-			*result.(*logbookWritten) = logbookWritten{State: "applied", IDs: []string{c.Type + "-k3m9q2xz"}}
+			*result.(*api.LogbookWritten) = api.LogbookWritten{State: "applied", IDs: []string{c.Type + "-k3m9q2xz"}}
 			return nil
 		}
 		for i, p := range f.proposals { // a repeated key gets its first answer
 			if p.IdempotencyKey == w.IdempotencyKey {
-				*result.(*logbookWritten) = logbookWritten{State: "proposed", Proposal: fmt.Sprintf("proposal-%08d", i+1)}
+				*result.(*api.LogbookWritten) = api.LogbookWritten{State: "proposed", Proposal: fmt.Sprintf("proposal-%08d", i+1)}
 				return nil
 			}
 		}
 		f.proposals = append(f.proposals, w)
-		*result.(*logbookWritten) = logbookWritten{State: "proposed", Proposal: fmt.Sprintf("proposal-%08d", len(f.proposals))}
+		*result.(*api.LogbookWritten) = api.LogbookWritten{State: "proposed", Proposal: fmt.Sprintf("proposal-%08d", len(f.proposals))}
 	}
 	return nil
 }
@@ -500,9 +500,24 @@ func TestHandOffEndToEnd(t *testing.T) {
 	if err != nil || !strings.Contains(text, "No agent is running on web: nothing was sent") {
 		t.Fatalf("none: %v\n%s", err, text)
 	}
-	// file_record through the pane door: this hab has no Logbook, so unavailable.
+	// file_record through the pane door: the hab has Logbook, so the record waits as a pending
+	// proposal, written by alice's pane.
 	fr, _ := findIn(actionTools, "file_record")
-	if _, _, err := fr.run(ctx, c, toolArgs{"type": "task", "title": "t", "quote": "q"}); errKind(err) != api.ErrorKindUnavailable {
-		t.Fatalf("file_record without Logbook: %v", err)
+	res, text, err = fr.run(ctx, c, toolArgs{"type": "task", "title": "Fix the cart total", "quote": "note that the cart total is wrong"})
+	filed, _ := res.(fileRecordResult)
+	if err != nil || !filed.Filed || filed.State != "proposed" || !strings.Contains(text, "as proposal "+filed.Proposal) {
+		t.Fatalf("file_record with Logbook: %+v %v\n%s", filed, err, text)
+	}
+	var got api.LogbookRecordResult
+	if err := e.control().Call(ctx, "logbook.get", api.LogbookGetParams{ID: filed.Proposal}, &got); err != nil {
+		t.Fatal(err)
+	}
+	if by := got.Record.CreatedBy; got.Record.Status != "pending" || by == nil || by.Kind != "agent" || by.Session == "" || by.Pane == "" || by.Host == "" ||
+		got.Record.Source == nil || got.Record.Source.Session != by.Session || got.Record.Source.Quote != "note that the cart total is wrong" {
+		t.Fatalf("the proposal: %+v by %+v", got.Record, got.Record.CreatedBy)
+	}
+	var tasks api.LogbookRecords
+	if err := e.control().Call(ctx, "logbook.list", api.LogbookListParams{LogbookFilter: api.LogbookFilter{Type: "task"}}, &tasks); err != nil || len(tasks.Records) != 0 {
+		t.Fatalf("a proposed task landed: %+v %v", tasks, err)
 	}
 }

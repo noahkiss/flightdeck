@@ -32,6 +32,9 @@ type Config struct {
 	Store *logbook.Store
 	// Publish emits one event: logbook.updated or logbook.conflict. Nil emits nothing (the CLI).
 	Publish func(t api.EventType, id string, revision uint64, data any)
+	// Wrote is called after each write through the service lands in the store: gff-hab tells
+	// Logbook sync, which sends the new ops at once (7.2). Nil calls nothing (the CLI).
+	Wrote func()
 	// PaneWrites is the pane write limit per minute; 0 is PaneWrites.
 	PaneWrites int
 	Now        func() time.Time
@@ -314,7 +317,7 @@ func (s *Service) Write(ctx context.Context, a api.LogbookActor, p api.LogbookWr
 	if err != nil {
 		return api.LogbookWritten{}, apiErr(err)
 	}
-	s.Changed(ctx)
+	s.wrote(ctx)
 	out := written(res, state)
 	if p.Propose && len(res.Records) > 0 {
 		out.Proposal = res.Records[0]
@@ -358,8 +361,16 @@ func (s *Service) Resolve(ctx context.Context, a api.LogbookActor, p api.Logbook
 	if err != nil {
 		return api.LogbookWritten{}, apiErr(err)
 	}
-	s.Changed(ctx)
+	s.wrote(ctx)
 	return written(res, api.LogbookWriteStateApplied), nil
+}
+
+// wrote follows a write that landed: its events, then Logbook sync's nudge.
+func (s *Service) wrote(ctx context.Context) {
+	s.Changed(ctx)
+	if s.cfg.Wrote != nil {
+		s.cfg.Wrote()
+	}
 }
 
 func written(res logbook.WriteResult, state api.LogbookWriteState) api.LogbookWritten {

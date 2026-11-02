@@ -205,7 +205,7 @@ type Config struct {
 	Attachments  Attachments // nil: the attachment.* methods answer unavailable
 	Settings     Settings    // nil: settings.get and settings.set answer unavailable
 	Reads        Reads       // nil: the read tools (transcript.*, notice.get, file.read) answer unavailable
-	Logbook      Logbook     // nil: logbook.find and logbook.get answer unavailable
+	Logbook      Logbook     // nil: the logbook.* methods answer unavailable
 	LogbookSync  LogbookSync // nil: logbook.pull and logbook.push answer unavailable
 	Confirm      Confirm     // nil: the confirm.* methods answer unavailable
 	Capcom       Capcom      // nil: capcom.open and capcom.assign answer unavailable

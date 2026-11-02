@@ -52,6 +52,7 @@ type Server struct {
 	channels ChannelHandler
 	confirm  ChannelHandler
 	rounds   ChannelHandler
+	logbook  ChannelHandler
 	reads    ReadHandler
 	http     *http.Server
 }

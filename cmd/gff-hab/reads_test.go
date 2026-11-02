@@ -497,8 +497,8 @@ func TestReadToolsOverSSH(t *testing.T) {
 	if err := json.Unmarshal([]byte(run(t, "api", "call", "-socket", sockA, "notice.get", string(q))), &rec); err != nil || rec.Host != "bee" || rec.Notice.Title != "Disk almost full" {
 		t.Errorf("b's notice by device id: %v %+v", err, rec)
 	}
-	// Logbook answers unavailable until it exists.
-	if r := c.tool("logbook_search", map[string]any{"words": "cache"}); !r.IsError || !strings.Contains(r.text(), "unavailable") {
+	// Logbook is there, and empty.
+	if r := c.tool("logbook_search", map[string]any{"words": "cache"}); r.IsError || !strings.Contains(r.text(), "no records") {
 		t.Errorf("logbook: %s", r.text())
 	}
 	// The CLI reads the same.

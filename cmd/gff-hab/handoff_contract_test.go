@@ -135,7 +135,7 @@ type filedHab struct{ *fakeLogbookHab }
 
 func (f *filedHab) Call(ctx context.Context, method string, params, result any) error {
 	if method == "logbook.write" {
-		*result.(*logbookWritten) = logbookWritten{State: "applied", IDs: []string{"task-1"}}
+		*result.(*api.LogbookWritten) = api.LogbookWritten{State: "applied", IDs: []string{"task-1"}}
 		return nil
 	}
 	return f.fakeLogbookHab.Call(ctx, method, params, result)

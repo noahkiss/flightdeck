@@ -815,6 +815,17 @@ func serve(args []string) error {
 	defer lbSvc.Close()
 	lbs.Store(lbSvc)
 	caps = append(caps, lbsync.Capability)
+	// The Logbook verbs (logbook.md 10) over the same store: every write tells sync at once, and
+	// a watch turns other writers' ops into events.
+	lbVerbs, closeVerbs, err := startLogbookVerbs(context.Background(), lbStore, lbSvc.Changed, func(e structure.Event) {
+		if s := srv.Load(); s != nil {
+			s.Publish(e)
+		}
+	}, logger.Printf)
+	if err != nil {
+		return fmt.Errorf("logbook: %w", err)
+	}
+	defer closeVerbs()
 	// The catalog (mesh.md 5): this host's facts, projects and agents, and the peers' copies.
 	cpath, err := habConfigPath(*habConfig)
 	if err != nil {
@@ -1210,6 +1221,7 @@ func serve(args []string) error {
 		Confirm:     cfSvc,
 		Capcom:      capcomCtl,
 		Rounds:      roundsCtl,
+		Logbook:     lbVerbs,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)
@@ -1271,8 +1283,9 @@ func serve(args []string) error {
 		return opened
 	}, logger.Printf)
 	hooks.SetChannels(channelHook(store, chSvc))
-	hooks.SetReads(readHook(reads, cs, pm, nil))
+	hooks.SetReads(readHook(reads, cs, pm))
 	hooks.SetConfirm(confirmHook(store, cfSvc))
+	hooks.SetLogbook(logbookHook(lbVerbs, store, agents, *hostID))
 	if roundsSvc != nil {
 		hooks.SetRounds(roundHook(store, roundsSvc))
 	}

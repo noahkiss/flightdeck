@@ -159,7 +159,7 @@ func (p *projectFolders) name(folder string) string {
 
 // readHook answers the read methods on a pane's hook route: an agent's own calls, which read
 // every host (capcom.md 2.3).
-func readHook(rs control.Reads, cat control.Catalog, pl control.Peers, lb control.Logbook) hook.ReadHandler {
+func readHook(rs control.Reads, cat control.Catalog, pl control.Peers) hook.ReadHandler {
 	return func(ctx context.Context, method string, params json.RawMessage) (any, error) {
 		bad := func(err error) error { return control.Errorf(api.ErrorKindInvalid, "%s params: %v", method, err) }
 		decode := func(v any) error {
@@ -179,22 +179,6 @@ func readHook(rs control.Reads, cat control.Catalog, pl control.Peers, lb contro
 				return nil, control.Errorf(api.ErrorKindUnavailable, "peers.list needs the peer list, which this hab is running without")
 			}
 			return api.NonNil(pl.List()), nil
-		case "logbook.find", "logbook.get":
-			if lb == nil {
-				return nil, control.Errorf(api.ErrorKindUnavailable, "%s needs Logbook, which this hab does not have yet; the logbook capability is absent", method)
-			}
-			if method == "logbook.find" {
-				var p api.LogbookFindParams
-				if err := decode(&p); err != nil {
-					return nil, err
-				}
-				return lb.Find(ctx, p)
-			}
-			var p api.LogbookGetParams
-			if err := decode(&p); err != nil {
-				return nil, err
-			}
-			return lb.Get(ctx, p)
 		}
 		if rs == nil {
 			return nil, control.Errorf(api.ErrorKindUnavailable, "%s needs the read tools, which this hab is running without", method)

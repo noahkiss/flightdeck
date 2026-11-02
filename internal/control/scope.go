@@ -143,6 +143,9 @@ func (f *filter) pass(e structure.Event) bool {
 	case EventRoundUpdated, EventRoundRunUpdated:
 		// The rounds are in the host snapshot only (rounds.md 13).
 		return false
+	case EventLogbookUpdated, EventLogbookConflict:
+		// Subscribers to the host scope get Logbook events (logbook.md 10.3).
+		return false
 	case api.EventUsageUpdated:
 		// An account's reading is about no session: every subscription gets it.
 		return true

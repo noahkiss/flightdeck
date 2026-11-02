@@ -347,43 +347,6 @@ func runHandOff(ctx context.Context, c caller, a toolArgs) (any, string, error) 
 
 // --- file_record ---
 
-// The Logbook write that file_record makes (logbook.md 10.3). Logbook (Part 12) owns the
-// method and its shapes; these are only what Capcom sends and reads back (capcom.md 3.4, 6.2).
-// No hab serves logbook.write yet, so they stay here, out of the API, until Part 12 adds the
-// method.
-
-// logbookWrite is one batch of changes. Propose makes it a pending proposal whatever the hab's
-// logbook.approval says: Capcom files proposals by its own rule (logbook.md 9.1).
-type logbookWrite struct {
-	IdempotencyKey string          `json:"idempotency_key"`
-	Propose        bool            `json:"propose"`
-	Changes        []logbookChange `json:"changes"`
-	Source         *logbookSource  `json:"source,omitempty"`
-}
-
-// logbookChange is one change; file_record makes only creates.
-type logbookChange struct {
-	Op      string `json:"op"`
-	Type    string `json:"type"`
-	Project string `json:"project,omitempty"`
-	Title   string `json:"title"`
-	Body    string `json:"body,omitempty"`
-}
-
-// logbookSource is where a record came from (logbook.md 2.5). The hab fills in the session
-// from the pane's token.
-type logbookSource struct {
-	Message string `json:"message,omitempty"`
-	Quote   string `json:"quote"`
-}
-
-// logbookWritten answers logbook.write.
-type logbookWritten struct {
-	State    string   `json:"state"` // applied or proposed
-	Proposal string   `json:"proposal,omitempty"`
-	IDs      []string `json:"ids,omitempty"`
-}
-
 // recordTypes are the types file_record files (logbook.md 2.2, less proposal).
 var recordTypes = []string{"task", "finding", "issue", "plan", "guide"}
 
@@ -445,17 +408,17 @@ func runFileRecord(ctx context.Context, c caller, a toolArgs) (any, string, erro
 		pane = p.paneKey()
 	}
 	sum := sha256.Sum256([]byte(strings.Join([]string{pane, typ, project, title, body, quote}, "\x00")))
-	w := logbookWrite{IdempotencyKey: hex.EncodeToString(sum[:16]), Propose: true,
-		Changes: []logbookChange{{Op: "create", Type: typ, Project: project, Title: title, Body: body}},
-		Source:  &logbookSource{Message: a.str("source_message"), Quote: quote}}
-	var r logbookWritten
+	w := api.LogbookWriteParams{IdempotencyKey: hex.EncodeToString(sum[:16]), Propose: true,
+		Changes: []api.LogbookChange{{Op: api.LogbookChangeOpCreate, Type: typ, Project: project, Title: title, Body: body}},
+		Source:  &api.LogbookSource{Message: a.str("source_message"), Quote: quote}}
+	var r api.LogbookWritten
 	if err := c.Call(ctx, "logbook.write", w, &r); err != nil {
 		return nil, "", fmt.Errorf("file_record: the hab did not take the proposal, so nothing was filed: %w", err)
 	}
-	res := fileRecordResult{Filed: true, State: r.State, Proposal: r.Proposal}
+	res := fileRecordResult{Filed: true, State: string(r.State), Proposal: r.Proposal}
 	// The app's proposal line reads the lead words "Proposed:" and "The hab filed", and the
 	// proposal id after "as proposal" (app.md 4.8).
-	if r.State != "proposed" {
+	if r.State != api.LogbookWriteStateProposed {
 		// A hab that ignored propose: say what happened, plainly.
 		return res, fmt.Sprintf("The hab filed the %s %q at once (state %s), not as a proposal: %s. Tell the user it is in Logbook already.\n", typ, title, r.State, strings.Join(r.IDs, ", ")), nil
 	}

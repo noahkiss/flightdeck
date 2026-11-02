@@ -19,19 +19,12 @@ type Reads interface {
 	File(ctx context.Context, local bool, p api.FileReadParams) (api.FileData, error)
 }
 
-// Logbook serves the Logbook reads (logbook.md 10.3). Nothing implements it until Logbook
-// (Part 12) exists, so logbook.find and logbook.get answer unavailable.
-type Logbook interface {
-	Find(ctx context.Context, p api.LogbookFindParams) (api.LogbookRecords, error)
-	Get(ctx context.Context, p api.LogbookGetParams) (api.LogbookRecordResult, error)
-}
-
 // maxReadTime bounds one read call: the per-host budget, the forward's grace and a margin.
 const maxReadTime = 30 * time.Second
 
 func isReadMethod(m string) bool {
 	switch m {
-	case "transcript.list", "transcript.search", "transcript.read", "notice.get", "file.read", "logbook.find", "logbook.get":
+	case "transcript.list", "transcript.search", "transcript.read", "notice.get", "file.read":
 		return true
 	}
 	return false
@@ -41,7 +34,7 @@ func isReadMethod(m string) bool {
 // host.
 func (c *conn) handleReads(m message) {
 	seq := c.currentSeq()
-	rs, lb := c.s.cfg.Reads, c.s.cfg.Logbook
+	rs := c.s.cfg.Reads
 	local := c.peer != nil
 	var call func(ctx context.Context) (any, error)
 	var e *Error
@@ -71,23 +64,9 @@ func (c *conn) handleReads(m message) {
 		if e = c.decodeUp(m, &p); e == nil && rs != nil {
 			call = func(ctx context.Context) (any, error) { return rs.File(ctx, local, p) }
 		}
-	case "logbook.find":
-		var p api.LogbookFindParams
-		if e = c.decodeUp(m, &p); e == nil && lb != nil {
-			call = func(ctx context.Context) (any, error) { return lb.Find(ctx, p) }
-		}
-	case "logbook.get":
-		var p api.LogbookGetParams
-		if e = c.decodeUp(m, &p); e == nil && lb != nil {
-			call = func(ctx context.Context) (any, error) { return lb.Get(ctx, p) }
-		}
 	}
 	if e == nil && call == nil {
-		if m.Method == "logbook.find" || m.Method == "logbook.get" {
-			e = appErr(api.ErrorKindUnavailable, "%s needs Logbook, which this hab does not have yet; the logbook capability is absent", m.Method)
-		} else {
-			e = appErr(api.ErrorKindUnavailable, "%s needs the read tools, which this hab is running without; the read-tools capability is absent", m.Method)
-		}
+		e = appErr(api.ErrorKindUnavailable, "%s needs the read tools, which this hab is running without; the read-tools capability is absent", m.Method)
 	}
 	if e != nil {
 		c.reply(m, seq, nil, e)
@@ -117,12 +96,6 @@ func (c *conn) handleReads(m message) {
 			r.Seq = s
 			res = api.NonNil(r)
 		case api.FileData:
-			r.Seq = s
-			res = api.NonNil(r)
-		case api.LogbookRecords:
-			r.Seq = s
-			res = api.NonNil(r)
-		case api.LogbookRecordResult:
 			r.Seq = s
 			res = api.NonNil(r)
 		}

@@ -493,6 +493,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleReads(m)
 		return
 	}
+	if isLogbookMethod(m.Method) {
+		c.handleLogbook(m)
+		return
+	}
 	if isConfirmMethod(m.Method) {
 		c.handleConfirm(m)
 		return
