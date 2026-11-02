@@ -62,7 +62,7 @@ endif
 SPEECH_ENV := PKG_CONFIG_PATH=$(if $(OPUS_STATIC),$(OPUS_STATIC):)$(SHERPA_PREFIX)/lib/pkgconfig$(if $(PKG_CONFIG_PATH),:$(PKG_CONFIG_PATH)) $(SPEECH_LDFLAGS) CGO_ENABLED=1
 
 .PHONY: gen test test-pure race fuzz check-gen check-pure release-schema libghostty build vet clean-libghostty \
-	sherpa-onnx speech-helper test-speech clean-sherpa-onnx opus-static ci-full ci-fast
+	sherpa-onnx speech-helper test-speech clean-sherpa-onnx opus-static ci-full ci-fast release-build
 
 # Regenerate api/schema.json, api/client_gen.go and the Swift package.
 gen:
@@ -180,6 +180,18 @@ check-gen: gen
 ci-full: check-pure vet test race
 
 ci-fast: check-pure build
+
+# Build the release binaries into RELEASE_DIR (docs/specs/ci-release.md 7.3): gff-hab and gff with
+# libghostty linked in (-tags ghostty), gff-hab-holder in pure Go. release.yml passes the version
+# from the tag, the platform's GHOSTTY_ZIGFLAGS and, on Linux, CC for the glibc floor.
+RELEASE_VERSION ?= dev
+RELEASE_BUILD ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+RELEASE_DIR ?= build/release
+RELEASE_LDFLAGS = -s -w -X main.version=$(RELEASE_VERSION) -X main.build=$(RELEASE_BUILD)
+release-build: libghostty
+	@mkdir -p $(RELEASE_DIR)
+	$(GHOSTTY_ENV) $(GO) build -tags ghostty -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(RELEASE_DIR)/ ./cmd/gff-hab ./cmd/gff
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(RELEASE_DIR)/ ./cmd/gff-hab-holder
 
 # Record the current schema as the released schema of its revision. Run at release time only.
 release-schema:
