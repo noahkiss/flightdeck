@@ -812,9 +812,9 @@ Built (stage 3, task-ams092is). Where this spec left a choice open:
   The control socket, the user's own clients, keeps full access. Reason: an agent, possibly in
   a harness sandbox, must not gain an unsandboxed scheduled command over someone else's round,
   nor aim a round at another session. The owner may loosen this later.
-- **Not built yet.** A round in `resume` or `fork` mode can be created, read and edited (so
-  `--target self` works), but its run fails, "resume and fork rounds need the session lock",
-  until stage 5. (Before stage 4 a `fresh` round with a prompt failed the same way.) The
+- **Not built yet.** Before stage 5 a round in `resume` or `fork` mode could be created, read
+  and edited (so `--target self` works), but its run failed. (Before stage 4 a `fresh` round
+  with a prompt failed the same way.) The
   scheduler's notices are logged until stage 6; a set-aside state file raises one notice.
 - **Retention.** The prune of 7.6 runs when a run ends and at start; it removes the session
   records of the runs it drops when they have exited.
@@ -912,6 +912,70 @@ Built (stage 4, task-kt363fw0): `fresh` runs with a harness and a prompt
 - **Close.** gff-hab starts no background work after its rounds close: no prompt is sent and
   no run ends. Runs stay live on disk for the next gff-hab.
 - **Tests.** `$GFF_TEST_ROUND_READY` (testseam builds only) shortens the readiness limit.
+
+Built (stage 5, task-21rifvi9): `resume` and `fork` runs (`cmd/gff-hab/roundlock.go`). Where
+this spec left a choice open:
+
+- **In use (6.1).** gff-hab looks at a waiting run's target every 250 ms. The agent: `working`
+  ("working"), `blocked` or an open request ("blocked"), or no agent with an adapter in the
+  pane ("in use: no agent this hab knows runs in it"). Clients: a `pane.input` or a client's
+  `session.send` to the pane, counted when it is asked for and when it ends, refused or not,
+  in the last 2 minutes; a `session.focus` with `active` true in the last 60 s (clients send
+  it every 30 s while on screen), cleared at once by `active` false. A send of any client
+  still starting its turn, and another round's run that holds the pane, count too. The
+  reasons start "in use:" for the client and send signals.
+- **The lock and the send.** A free target is taken: the run holds the pane (two rounds on one
+  target take turns), reports `running`, then sends through `session.send`'s path as the hab.
+  The client signals are checked again under the send's claim, after the agent's own check
+  and before any byte is written, so no other send comes between the check and the paste. A
+  send refused for a busy agent or a client puts the run back to `waiting`. A client typing
+  in the instant between that check and the paste is not covered; nothing is atomic with a
+  person's keys. The prompt is pasted after anything the user left unsent in the prompt; the
+  lock never clears input.
+- **Waiting.** The run reports `waiting` with the reason, and again when the reason changes.
+  Past `wait`, counted from the run's start, it ends `skipped` with the last reason. The
+  scheduler already coalesces a due slot into a waiting run and ends it `skipped`, "paused" on
+  a pause; the move from `waiting` to `running` is reported before the send, so a pause that
+  came first leaves nothing to send. A waiting run that reaches its `timeout` ends `skipped`
+  with the reason, not `timed_out`: it never ran.
+- **The envelope.** `[Flightdeck: the prompt of round '<name>', run <n>, slot <time>` (or `run by
+  hand`) `, sent by Flightdeck on the owner's schedule. Its values: GFF_ROUND=... GFF_ROUND_RUN=...
+  [GFF_ROUND_SLOT=...] [GFF_ROUND_LAST_OK=...]. ...]`, then `[begin round message <run id>]`,
+  the prompt, `[end round message <run id>]`, cleaned and with markers neutralised as the
+  channels envelope is (`internal/channels`). Fork runs get it too, and the values in their
+  environment as well.
+- **Turn and end.** After the send a resume run is a stage 4 harness run: read back, the turn's
+  `done` or `error`, the final message, take over. The target is never closed, and retention
+  removes only a session whose `Session.round` names the run, so a target stays. A timeout
+  sends Esc only to a turn this gff-hab started with the prompt.
+- **Exited target.** `session.resume` serves Capcom sessions only, so gff-hab starts the
+  target's harness again itself, as Capcom's resume does: the exited pane is released, then
+  `claude <harness_args> --resume <id>` or `codex resume <id> <harness_args>` runs in a new pane
+  of the same session, in the target's folder. The prompt goes in at the first `idle`, under
+  the readiness limit, with the same check under the claim. opencode's resume is not built:
+  the run fails. A target whose pane's holder is not reached yet waits ("in use: its holder is
+  not connected").
+- **What the target runs.** No session record holds a harness or a native session id, so the
+  round remembers them (`target` in its state): at create, at edit and at each run that sees
+  the target's agent. The folder is the session's recorded one (the content service).
+- **Fork.** `claude <harness_args> --resume <id> --fork-session` or `codex fork <id>
+  <harness_args>` (with `--no-daemon`), in the target's folder and project, named after the
+  round with `Session.round`; then a fresh run with the envelope. gff-hab picks no Claude
+  Code session id for a fork; the fork's id comes from its hooks. The adapter's fork support is
+  `forks()`: Claude Code and Codex. A fork round whose target runs opencode is refused at
+  create (`invalid`); a target whose harness is not seen yet passes, and its run fails with the
+  reason. The target's transcript is never written.
+- **Target gone (10.1).** A target whose record is gone at the start, or while the run waits,
+  ends the run `skipped`, "the target session is gone", which counts for nothing, and
+  completes the round ("target session gone") with one `target_gone` notice (none with
+  `notify = never`). Stage 6 sends it.
+- **Restarts.** A `waiting` resume run waits for the lock again. A `running` one reads its
+  target's conversation: a user message that holds its envelope's begin line means the prompt
+  went in (in its turn, or ended); none means it waits for the lock again. A fork run is adopted
+  as a fresh harness run, the begin line telling its prompt from the parent's messages.
+- **CLI.** `gff-hab round add|edit -wait <duration>`.
+- **Not yet.** The real fork on a Mac; opencode fork and exited-opencode resume; a user
+  draft left in the prompt is not detected.
 
 ---
 

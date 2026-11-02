@@ -50,7 +50,7 @@ door: -socket path | -via command; from a pane, $GFF_HAB
 // roundDef holds the definition flags of add and edit.
 type roundDef struct {
 	mode, cron, tz, every, at, project, cwd, target, harness, model string
-	timeout, maxRuns, expires, catchUp, onFinish, notify            string
+	timeout, wait, maxRuns, expires, catchUp, onFinish, notify      string
 	manual, paused, command                                         bool
 	via                                                             bool // the hab is reached through -via
 	harnessArgs                                                     stringList
@@ -75,6 +75,7 @@ func (d *roundDef) flags(fs *flag.FlagSet) {
 	fs.StringVar(&d.model, "model", "", "the model for the harness")
 	fs.Var(&d.harnessArgs, "harness-arg", "one argument for the harness; repeat it for more")
 	fs.StringVar(&d.timeout, "timeout", "", "the longest a run may take (default 60m)")
+	fs.StringVar(&d.wait, "wait", "", "resume: how long a run waits for the session to be free (default 10m)")
 	fs.StringVar(&d.maxRuns, "max-runs", "", "complete the round after this many finished runs")
 	fs.StringVar(&d.expires, "expires", "", "complete the round at this time (RFC 3339)")
 	fs.StringVar(&d.catchUp, "catch-up", "", "once (default) or skip: what a slot missed in sleep does")
@@ -152,6 +153,13 @@ func (d *roundDef) apply(spec *api.RoundSpec, set map[string]bool, words []strin
 			return fmt.Errorf("-timeout %q is not a duration such as 30m", d.timeout)
 		}
 		spec.TimeoutMS = t.Milliseconds()
+	}
+	if set["wait"] {
+		w, err := time.ParseDuration(d.wait)
+		if err != nil || w <= 0 {
+			return fmt.Errorf("-wait %q is not a duration such as 10m", d.wait)
+		}
+		spec.WaitMS = w.Milliseconds()
 	}
 	if set["max-runs"] {
 		n, err := strconv.Atoi(d.maxRuns)
@@ -493,6 +501,9 @@ func printRound(out io.Writer, r api.Round, runs []api.RoundRun) {
 	row("cwd", r.Cwd)
 	row("target", r.Target)
 	row("timeout", (time.Duration(r.TimeoutMS) * time.Millisecond).String())
+	if r.WaitMS > 0 {
+		row("wait", (time.Duration(r.WaitMS) * time.Millisecond).String())
+	}
 	if r.MaxRuns > 0 {
 		row("max runs", strconv.Itoa(r.MaxRuns))
 	}
