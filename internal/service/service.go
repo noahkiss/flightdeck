@@ -548,7 +548,7 @@ func Install(ctx context.Context, c Config, o Options) error {
 		if err := registerBuild(ctx, o.Run, c.BuildDir()); err != nil {
 			fmt.Fprintf(o.Out, "warning: %v\n", err)
 		}
-		if err := installClient(c, o, m); err != nil {
+		if err := installClient(ctx, c, o, m); err != nil {
 			return err
 		}
 	} else if err := installBinaries(c, o, m); err != nil {
@@ -631,9 +631,14 @@ func privateSocketDir(c Config, m *manifest, out io.Writer) error {
 	if err := m.mkdirAll(c, dir, 0o700); err != nil {
 		return err
 	}
+	// Again, after the mkdir: a folder made meanwhile in a parent others can write (a link, or
+	// another user's) is refused, so the chmod never follows a link to a folder of ours.
 	fi, err := os.Lstat(dir)
 	if err != nil {
 		return err
+	}
+	if !fi.IsDir() || !ownedByMe(fi) {
+		return fmt.Errorf("service: socket folder %s is not a directory of this user's; gff-hab cannot listen there", dir)
 	}
 	perm := fi.Mode().Perm()
 	if perm&0o077 == 0 {
@@ -655,16 +660,21 @@ func ownedByMe(fi os.FileInfo) bool {
 // installClient copies gff into <state>/bin (launchd), and prints one line: where gff is, with
 // the PATH line to add when the jobs' PATH (the installing shell's) lacks that folder. gff runs
 // from the user's terminal and needs no bundle (macos-identity.md 3.2), so a plain copy will do;
-// the copy keeps its signature.
-func installClient(c Config, o Options, m *manifest) error {
+// the copy keeps its signature, which install checks when the source is signed. With no source,
+// a gff an earlier install wrote stays.
+func installClient(ctx context.Context, c Config, o Options, m *manifest) error {
+	dst := filepath.Join(c.BinDir(), ClientBinary)
 	if o.ClientSource == "" {
-		fmt.Fprintf(o.Out, "no %s to install (pass -gff-bin): installed the hab only\n", ClientBinary)
+		if _, err := os.Stat(dst); err == nil && slices.Contains(m.Files, dst) {
+			fmt.Fprintf(o.Out, "no %s to install (pass -gff-bin): kept %s from an earlier install\n", ClientBinary, dst)
+		} else {
+			fmt.Fprintf(o.Out, "no %s to install (pass -gff-bin): installed the hab only\n", ClientBinary)
+		}
 		return nil
 	}
 	if err := m.mkdirAll(c, c.BinDir(), 0o700); err != nil {
 		return err
 	}
-	dst := filepath.Join(c.BinDir(), ClientBinary)
 	if !sameFile(o.ClientSource, dst) {
 		if err := m.willWrite(c, dst); err != nil {
 			return err
@@ -672,6 +682,11 @@ func installClient(c Config, o Options, m *manifest) error {
 	}
 	if err := copyBinary(o.ClientSource, dst); err != nil {
 		return err
+	}
+	if _, err := o.Run(ctx, "codesign", "-d", o.ClientSource); err == nil {
+		if _, err := o.Run(ctx, "codesign", "--verify", "--strict", dst); err != nil {
+			return fmt.Errorf("service: the copy %s fails codesign --verify --strict: %w", dst, err)
+		}
 	}
 	if slices.Contains(filepath.SplitList(c.Path), c.BinDir()) {
 		fmt.Fprintf(o.Out, "installed %s in %s\n", ClientBinary, c.BinDir())

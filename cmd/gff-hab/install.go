@@ -165,6 +165,9 @@ func install(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if *gffBin != "" && c.Init != service.Launchd {
+		return errors.New("-gff-bin: only a macOS install copies gff")
+	}
 	hab, holderSrc, err := sources(*habBin, *holderBin, c.Init)
 	if err != nil && !(*dry && c.Init == service.Systemd) {
 		return err

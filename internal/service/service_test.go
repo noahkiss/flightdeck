@@ -263,6 +263,9 @@ func (f *fakeInit) run(_ context.Context, name string, args ...string) ([]byte, 
 		if f.badSig != "" && strings.Contains(item, f.badSig) {
 			return []byte(item + ": a sealed resource is missing or invalid"), fail
 		}
+		if fi, err := os.Stat(item); err == nil && fi.Mode().IsRegular() {
+			return nil, nil // a bare binary: gff
+		}
 		if _, err := os.Stat(filepath.Join(item, "Contents", "Info.plist")); err != nil {
 			return nil, fail
 		}
@@ -1030,6 +1033,24 @@ func TestInstallClient(t *testing.T) {
 	if strings.Contains(out.String(), "export PATH") || !strings.Contains(out.String(), "installed gff in") {
 		t.Errorf("output with the folder on PATH: %q", out.String())
 	}
+	// A reinstall with no gff (say from the installed build) keeps the earlier copy and says so.
+	out.Reset()
+	if err := Install(context.Background(), c, Options{HabSource: hab, HolderSource: holder, Run: f.run, Out: &out}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "kept "+dst) {
+		t.Errorf("reinstall with no gff: %q", out.String())
+	}
+	if _, err := os.Stat(dst); err != nil {
+		t.Errorf("reinstall with no gff removed the copy: %v", err)
+	}
+	// A copy that fails codesign fails the install.
+	f.badSig = filepath.Join("bin", ClientBinary)
+	err = Install(context.Background(), c, Options{HabSource: hab, HolderSource: holder, ClientSource: client, Run: f.run})
+	if err == nil || !strings.Contains(err.Error(), "codesign") {
+		t.Errorf("install of a gff copy that fails codesign: %v", err)
+	}
+	f.badSig = ""
 	if err := Uninstall(context.Background(), c, Options{Run: f.run}); err != nil {
 		t.Fatal(err)
 	}
