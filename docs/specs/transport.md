@@ -668,21 +668,32 @@ key this way is safe: it came over a pinned, authenticated channel.
     restarted and has not been unlocked yet" and the hab's label, and raises the request in the
     foreground (`app.md` 16.4).
   - **Existing installs.** Keychain items written by earlier builds use
-    `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. At start, while the device is unlocked, one
-    `SecItemUpdate` over the store moves every item to the new class in place, data unchanged; a
-    locked device fails it and the next start tries again. That is the whole migration for an
+    `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. At start on iOS, while the device is unlocked,
+    one `SecItemUpdate` over the store moves every item to the new class in place, data unchanged;
+    a locked device fails it and the next start tries again. The Mac leaves its items as they are. That is the whole migration for an
     imported key and for a software key. An enclave key's access rule is fixed when it is made,
     so an earlier build's enclave key still signs only while unlocked.
   - **Key move.** For that key the iOS app makes a new enclave key beside it (`device-next`). The
     old key keeps working, so the app never loses a host. Each dial on the default key offers the
-    new key first and the old one second, in one SSH auth exchange. A host that takes the new key
-    is recorded. Settings shows the new key's line and the hosts still waiting, once, until each
-    host on the default key has taken it. The app then makes the new key the default key and
-    drops the old one. A host learns the new key the way it learned the first: its line in
+    new key first and the old one second, in one SSH auth exchange. The old key is left out while
+    the device is locked (it would fail inside the handshake) and for a host that has taken the
+    new key. A host that takes the new key is recorded by its entry id and host key fingerprint,
+    so an entry pointed at another host waits again. Settings shows the new key's line and the
+    hosts still waiting, once, until each host on the default key has taken it. The app then
+    makes the new key the default key and drops the old one. That step needs the hab list read
+    cleanly at start and again at that moment: when either read fails, both keys stay and a later
+    check tries again, so an unreadable list never drops the key a host still needs. A host that
+    lacks the new key logs one refused key per dial while the move runs; a server with
+    `MaxAuthTries 1` ends the exchange before the old key, so add the new line to it first. A host learns the new key the way it learned the first: its line in
     `authorized_keys` (6.1), or pairing again once `devices.pair` exists. A one-step rotation
     over a live connection (6.5) is not built, so this is the one re-pair. Until a host takes the
     new key, a locked answer to that hab posts "Unlock iPhone to answer" with "<hab> does not have
-    this device's new key yet". Making a new key by hand ends the move. The Mac app keeps its key:
+    this device's new key yet". Making a new key by hand ends the move.
+  - **Face ID.** A key that needs Face ID cannot sign while locked: no prompt shows over the lock
+    screen. That is a key with "Require Face ID for SSH keys" on (`app.md` 10.7), or an earlier
+    build's enclave key made with Face ID built in. A locked answer then sends nothing and posts
+    "Unlock iPhone to answer" with "Face ID is required to use the SSH key" and the hab's label.
+    During a key move, Face ID is asked at most once per dial, and only for a key that needs it. The Mac app keeps its key:
     no Watch answers through it.
   - **Trade-off.** A phone stolen after its first unlock can sign while it stays locked: code on
     it can use the key without the passcode. Watch actions still need an unlocked Watch on the

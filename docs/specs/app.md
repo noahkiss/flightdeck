@@ -2049,8 +2049,10 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH/KeyImport` and `Views/Key
   memory while the import sheet holds the file. The sheet drops them when it closes.
 - **Storage class.** Every write sets `AfterFirstUnlockThisDeviceOnly` and not synchronisable
   (`transport.md` 7.2). Items an earlier build wrote with `WhenUnlockedThisDeviceOnly` move to it
-  in place at start. A test checks the query, the move and, on the real Keychain, the stored item. On the Mac the login keychain
-  keeps no accessibility class (10.6), so there the test checks only the sync flag.
+  in place at start on iOS. A test checks the query, and on the Mac's login keychain that the move
+  leaves the data unchanged. The login keychain keeps no accessibility class (10.6), and the iOS
+  Simulator test run has no Keychain entitlement, so no test sees the class change itself; a
+  device run does.
 - **Face ID.** One device-wide setting, "Require Face ID for SSH keys" (Settings › SSH, iOS), off
   by default, covers the generated key and every imported key, including keys imported later.
   One app-level check over every key is the owner's decision (2026-11-01). It replaces the
@@ -2751,7 +2753,7 @@ Budgets are maximums. The hab counts words and characters; it keeps to both.
 | The request was answered elsewhere | The replacement push (7.5) takes the same collapse id, so the Watch shows "Answered on <client>" |
 | A project or session name longer than its share of the budget | The hab shortens it on a word boundary with "…"; the command keeps its share first |
 | A language with long words | Character budgets win over word budgets |
-| The phone is locked when the Watch answers | The answer goes through. Before the first unlock after a restart, the phone posts "Unlock iPhone to answer" and sends nothing (16.4) |
+| The phone is locked when the Watch answers | The answer goes through. Before the first unlock after a restart, for a hab that does not have the device's new key yet, or with a key that needs Face ID, the phone posts "Unlock iPhone to answer" and sends nothing (16.4) |
 
 ### 16.4 Built choices (task-46oedzhy)
 
@@ -2793,12 +2795,14 @@ unlock rule). Tests: `TestBannerBudgets`, `TestToolBanners`, `TestPlanApproveKey
 - **Locked phone.** iOS mirrors a banner to the Watch only while the phone is locked. The device
   key signs once the phone has been unlocked after it starts (owner decision 2026-11-02,
   `transport.md` 7.2), so a banner action from the Watch answers. (On the phone's lock screen,
-  Approve and Deny ask for unlock first.) Two cases cannot sign, and the app tells them apart
-  before it dials: the phone has not been unlocked since it restarted (the key cannot be read),
-  or the hab's entry still has only an earlier build's key (the key move of `transport.md` 7.2).
-  Either posts "Unlock iPhone to answer" ("Unlock iPad" on an iPad), with "iPhone restarted and
-  has not been unlocked yet · <hab>" or "<hab> does not have this device's new key yet", which
-  opens the request, and keeps the request for the foreground prompt. The Live Activity buttons
+  Approve and Deny ask for unlock first.) Three cases cannot sign, and the app tells them apart
+  before it dials: the phone has not been unlocked since it restarted (the key cannot be read);
+  the hab's entry still has only an earlier build's key (the key move of `transport.md` 7.2); or
+  the key needs Face ID ("Require Face ID for SSH keys" on, or an earlier build's key made with
+  Face ID), which cannot show over the lock screen. Each posts "Unlock iPhone to answer" ("Unlock
+  iPad" on an iPad), with "iPhone restarted and has not been unlocked yet · <hab>", "<hab> does
+  not have this device's new key yet" or "Face ID is required to use the SSH key · <hab>", which
+  opens the request, and keeps the request for the foreground prompt. Nothing is sent. The Live Activity buttons
   follow the same rule. The check reads `isProtectedDataAvailable` in the shared package, so it
   holds on a background launch, before any scene exists, and asks the key store only while the
   device is locked. Tests set both answers; none reads the simulator's lock state. Design call:
