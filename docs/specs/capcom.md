@@ -477,8 +477,9 @@ confirmations in a `host` snapshot (`confirmations`); `model`, `seed` and `seed_
   model or a seed can be replaced but not removed. A harness edit renames an automatic name
   (`claude-3fa9c2` becomes `codex-3fa9c2`); a name the agent gave stays.
 - **The wait and the late answer.** `confirm.request` takes `wait_ms`, clamped to 120 s.
-  `start_session` waits 45 s, under the shortest default MCP tool timeout of the supported
-  harnesses, so it says "still waiting" before the harness gives up on the call. `gff-hab mcp`
+  `start_session` waits 45 s. Design call: a margin under the tool timeouts MCP clients commonly
+  use, so it says "still waiting" before a client gives up on the call; no harness's timeout
+  was checked for this. `gff-hab mcp`
   honours `notifications/cancelled`: a cancelled call ends its hab call at once and gets no
   answer. The answer reaches the requesting session later as a message from Flightdeck when no
   request returned it: the wait ended first, was cancelled, or the request asked for none. The
@@ -489,8 +490,11 @@ confirmations in a `host` snapshot (`confirmations`); `model`, `seed` and `seed_
   is filed. It waits there until the agent can take a message, and then arrives as one paste
   in a start envelope: "the start message of this session, written by <host/session> on the
   owner's behalf", with begin and end lines and the reply command. Markers inside the seed are
-  neutralised as in an agent message. `seed_from` must be `host/session` in the channel
-  charset, so it cannot forge the header. A seed that cannot be queued after the spawn is logged
+  neutralised as in an agent message. `seed_from` must be `host/session`: the session after the
+  last slash in the channel charset, the host id before it printable with no space, quote,
+  backslash or bracket (a host id may hold ':', '/' or '+'), so it cannot forge the header. A
+  requesting hab whose host id fails that sends no `seed_from`, and the envelope names "an
+  agent"; the start still runs. A seed that cannot be queued after the spawn is logged
   and the session keeps running, so a retry with the key never starts a second session.
 - **Outcomes.** `done` with the session id, name and pane; `failed` with the target's refusal; a
   transport error or a lost answer on the peer link is `unknown`, and the text names the
