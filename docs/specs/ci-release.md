@@ -1118,7 +1118,15 @@ signed bundles from the matching `v*` release's darwin asset, unchanged, and sig
 - The marketing version comes from the tag, without an `-rc.` or `-dry.` suffix (7.7). `verify`
   refuses a tag whose version is lower than the last non-dry `app-v*` tag's. An `-rc` and its
   final share a version, so equal passes. A dry run skips the check: it uploads nothing.
-- One build number per run, from `verify`, so the iOS and the Mac build of one tag match.
+- One build number per run, from `verify`, so the iOS and the Mac build of one tag match. A
+  re-run of a failed job reuses `verify`'s outputs, so on any attempt after the first each signing
+  job takes the UTC minute at its own start instead (`github.run_attempt`). That number is later,
+  so still higher, and never the number of a build an earlier attempt may have uploaded. A re-run
+  of both jobs may then give the iOS and the Mac build different numbers; nothing depends on them
+  matching.
+- The 12-digit form (`YYYYMMDDHHMM`) is unproven against App Store Connect from CI. The first real
+  `app-v*` tag is its first check there; a dry run exports without contacting App Store Connect.
+  `apple/scripts/testflight.sh` uses the same form for a hand upload.
 - The build number is the UTC time to the minute, `YYYYMMDDHHMM`, the same rule as
   `apple/scripts/testflight.sh`. A CI upload and a hand upload therefore never collide, and each
   is higher than the last. The run number is not used: it restarts per workflow and would fall

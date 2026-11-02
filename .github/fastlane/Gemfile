@@ -1,5 +1,6 @@
 # fastlane for the release jobs: match installs signing certificates from the signing store
-# (docs/specs/ci-release.md 7.4, 10.2). CI installs it with bundler and caches it on Gemfile.lock.
+# (docs/specs/ci-release.md 7.4, 10.2). CI installs it with bundler from Gemfile.lock on every run,
+# with no gem cache: a cache saved on a tag is visible to that tag only (5).
 source "https://rubygems.org"
 
 gem "fastlane", "2.241.0"
