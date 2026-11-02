@@ -443,8 +443,10 @@ final class RoundTests: XCTestCase {
         XCTAssertEqual(RoundText.trigger(RoundTrigger(kind: .manual)), "by hand")
         let now = try XCTUnwrap(RoundText.parse("2026-11-02T08:00:00Z"))
         let once = RoundTrigger(at: "2026-11-05T09:00:00Z", kind: .once)
-        XCTAssertEqual(RoundText.trigger(once, now: now, timeZone: utc, locale: locale), "once at Thu 5 Nov 09:00",
-                       "a once trigger names its own day, not today")
+        // The day's punctuation comes from the platform's locale data ("Thu 5 Nov", "Thu, 5 Nov").
+        let onceText = RoundText.trigger(once, now: now, timeZone: utc, locale: locale)
+        XCTAssertTrue(onceText.hasPrefix("once at Thu") && onceText.hasSuffix("5 Nov 09:00"),
+                      "a once trigger names its own day, not today: \(onceText)")
         XCTAssertEqual(RoundText.trigger(RoundTrigger(at: "2026-11-03T09:00:00Z", kind: .once), now: now, timeZone: utc, locale: locale),
                        "once at tomorrow 09:00")
         XCTAssertEqual(RoundText.slot("2026-11-02T09:00:00Z", roundZone: "UTC", now: now, timeZone: utc, locale: locale), "today 09:00",
