@@ -5522,7 +5522,7 @@ public enum HabEvent: Sendable, Hashable {
     case settingsUpdated(SettingUpdated)
     /// A message this hab sent changed state; the id is the message id (mesh.md 6.5). Host scope only. Ephemeral.
     case channelMessage(ChannelRecord)
-    /// A confirmation opened, or a start ran at once as a record; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral: the open ones are in the host snapshot.
+    /// A confirmation opened, a start ran at once as a record, or a confirmed one moved to running; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral: the open ones are in the host snapshot.
     case confirmRequested(Confirmation)
     /// A confirmation closed: done, failed, cancelled, expired or unknown; every card withdraws its buttons; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral.
     case confirmClosed(Confirmation)

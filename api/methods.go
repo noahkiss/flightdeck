@@ -168,7 +168,7 @@ var Events = []EventDef{
 	{"content.updated", "A session showed a file (content.show); the id is the item id. Ephemeral.", ContentItem{}},
 	{"settings.updated", "A hab-side setting changed: by a client or by a config read; the id is the setting id (app.md 20.5). Host scope only. Not ephemeral: the settings are in the host snapshot.", SettingUpdated{}},
 	{"channel.message", "A message this hab sent changed state; the id is the message id (mesh.md 6.5). Host scope only. Ephemeral.", ChannelRecord{}},
-	{"confirm.requested", "A confirmation opened, or a start ran at once as a record; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral: the open ones are in the host snapshot.", Confirmation{}},
+	{"confirm.requested", "A confirmation opened, a start ran at once as a record, or a confirmed one moved to running; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral: the open ones are in the host snapshot.", Confirmation{}},
 	{"confirm.closed", "A confirmation closed: done, failed, cancelled, expired or unknown; every card withdraws its buttons; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral.", Confirmation{}},
 	{"mesh.changed", "Sent only to a peer link that dialed this hab, subscribed or not: something waits for the dialer, so it pulls now; the id is this hab's device id (mesh.md 4.2, 6.5). Ephemeral.", MeshChanged{}},
 }

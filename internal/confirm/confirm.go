@@ -67,7 +67,8 @@ type Config struct {
 	Runner Runner
 	// Enabled reports confirm.start_elsewhere. Nil: off.
 	Enabled func() bool
-	// Publish hears confirm.requested and confirm.closed, in order: a confirmation's
+	// Publish hears confirm.requested and confirm.closed, in order. A confirmed one sends
+	// confirm.requested again with state running before it runs. A confirmation's
 	// requested event always goes out before its closed one. It is called with the service's
 	// publish lock held, never its state lock, so it must not call back into the service.
 	Publish func(structure.Event)
@@ -313,16 +314,23 @@ func (s *Service) Answer(ctx context.Context, client string, p api.ConfirmAnswer
 		}
 	}
 
+	// The publish lock first, as in Request: confirm.requested with state running goes out
+	// before run can publish confirm.closed, so every client's card drops its buttons first.
+	s.pub.Lock()
 	s.mu.Lock()
 	if e, err = s.answerableLocked(p.ID); err != nil { // another answer won meanwhile
 		s.mu.Unlock()
+		s.pub.Unlock()
 		return api.Confirmation{}, err
 	}
 	e.c.State, e.c.AnsweredBy, e.c.Edited, e.c.Start = "running", client, edited, &start
 	if e.timer != nil {
 		e.timer.Stop()
 	}
+	c := e.c
 	s.mu.Unlock()
+	s.publishLocked(EventRequested, c)
+	s.pub.Unlock()
 	return s.run(e), nil
 }
 

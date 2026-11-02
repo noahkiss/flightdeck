@@ -19,6 +19,7 @@ import (
 type fakeRunner struct {
 	mu   sync.Mutex
 	runs []run
+	hold chan struct{} // non-nil: RunStart waits for it to close
 }
 
 type run struct {
@@ -40,7 +41,11 @@ func (f *fakeRunner) CheckStart(s api.ConfirmStart) (api.ConfirmStart, bool, err
 func (f *fakeRunner) RunStart(_ context.Context, id, from string, s api.ConfirmStart) (api.ConfirmResult, error) {
 	f.mu.Lock()
 	f.runs = append(f.runs, run{id, from, s})
+	hold := f.hold
 	f.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
 	switch s.Host {
 	case "lost":
 		return api.ConfirmResult{}, fmt.Errorf("%w: the link to lost dropped", ErrUnknown)
@@ -148,7 +153,7 @@ func TestOnNothingRunsWithoutAConfirm(t *testing.T) {
 	if r.runner.count() != 1 {
 		t.Fatal("a second answer ran the start again")
 	}
-	if ts := r.types(); strings.Join(ts, ",") != "confirm.requested,confirm.closed" {
+	if ts := r.types(); strings.Join(ts, ",") != "confirm.requested,confirm.requested,confirm.closed" {
 		t.Fatalf("events: %v", ts)
 	}
 	if len(r.svc.Open()) != 0 {
@@ -226,7 +231,56 @@ func TestConcurrentAnswers(t *testing.T) {
 	if wins != 1 || conflicts != 15 || r.runner.count() > 1 {
 		t.Fatalf("wins %d, conflicts %d, runs %d", wins, conflicts, r.runner.count())
 	}
-	if ts := r.types(); len(ts) != 2 || ts[0] != "confirm.requested" || ts[1] != "confirm.closed" {
+	// A confirm that won sends requested again with state running; a cancel goes straight to closed.
+	want := "confirm.requested,confirm.closed"
+	if r.runner.count() == 1 {
+		want = "confirm.requested,confirm.requested,confirm.closed"
+	}
+	if ts := r.types(); strings.Join(ts, ",") != want {
+		t.Fatalf("events: %v, want %s", ts, want)
+	}
+}
+
+// A confirm publishes confirm.requested with state running before the start runs, so every
+// client's card drops its buttons while the hab runs it; confirm.closed follows at the end.
+func TestConfirmPublishesRunning(t *testing.T) {
+	r := newRig(t, true, time.Hour)
+	hold := make(chan struct{})
+	r.runner.hold = hold
+	c, err := r.svc.Request(context.Background(), api.ConfirmRequestParams{Kind: "start", Start: start("beta"), From: "agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan api.Confirmation, 1)
+	go func() {
+		got, _ := r.svc.Answer(context.Background(), "phone", api.ConfirmAnswerParams{ID: c.ID, Choice: "confirm"})
+		done <- got
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for r.runner.count() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the start never ran")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	r.mu.Lock()
+	evs := append([]structure.Event(nil), r.events...)
+	r.mu.Unlock()
+	if len(evs) != 2 || evs[1].Type != EventRequested {
+		t.Fatalf("events while running: %v", r.types())
+	}
+	if rc, ok := evs[1].Data.(api.Confirmation); !ok || rc.State != "running" || rc.AnsweredBy != "phone" || rc.ID != c.ID {
+		t.Fatalf("running event: %+v", evs[1].Data)
+	}
+	// A second client's answer meanwhile is refused.
+	if _, err := r.svc.Answer(context.Background(), "mac", api.ConfirmAnswerParams{ID: c.ID, Choice: "cancel"}); kind(err) != api.ErrorKindConflict {
+		t.Fatalf("answer while running: %v", err)
+	}
+	close(hold)
+	if got := <-done; got.State != "done" {
+		t.Fatalf("answer: %+v", got)
+	}
+	if ts := r.types(); strings.Join(ts, ",") != "confirm.requested,confirm.requested,confirm.closed" {
 		t.Fatalf("events: %v", ts)
 	}
 }

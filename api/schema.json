@@ -2780,7 +2780,7 @@
     },
     {
       "type": "confirm.requested",
-      "summary": "A confirmation opened, or a start ran at once as a record; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral: the open ones are in the host snapshot.",
+      "summary": "A confirmation opened, a start ran at once as a record, or a confirmed one moved to running; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral: the open ones are in the host snapshot.",
       "data": {
         "$ref": "#/components/schemas/Confirmation"
       }
