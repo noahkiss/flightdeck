@@ -82,7 +82,7 @@ func prefixKeymap(t *testing.T) *Keymap {
 func TestKeyReader(t *testing.T) {
 	d := func(data string) keyEvent { return keyEvent{data: []byte(data)} }
 	a := func(act, key string) keyEvent { return keyEvent{act: act, key: key} }
-	pre := a(actPrefix, `ctrl-\`)
+	pre := a(actSession, `ctrl-\`)
 	km := prefixKeymap(t)
 	for _, tc := range []struct {
 		name   string

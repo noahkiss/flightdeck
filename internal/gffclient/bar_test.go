@@ -21,7 +21,7 @@ func bottom(screen string) string {
 
 // TestBarFollowsMode: the shortcut bar shows the keys of the mode gff is in, from the loaded
 // keymap (gff-client.md 8.1): the sidebar's keys while it has focus, the leaders in normal mode,
-// the command mode's keys after Ctrl+O, pane mode's keys through a focus move until a command
+// session mode's keys after Ctrl+O, pane mode's keys through a focus move until a command
 // ends it, tab mode's through a tab move until Enter, and only the unlock key while locked.
 func TestBarFollowsMode(t *testing.T) {
 	d := shortDir(t)
@@ -30,23 +30,23 @@ func TestBarFollowsMode(t *testing.T) {
 	hst := newHost(t, 240, 30, false)
 	startWorkspace(t, hst, a.Sock)
 
-	leaders := "Ctrl+G lock  Ctrl+P pane  Ctrl+T tab  Ctrl+O commands"
+	leaders := "Ctrl+G lock  Ctrl+P pane  Ctrl+T tab  Ctrl+O session  Alt+h/l/j/k move focus  Alt+i/o move tab"
 	steps := []struct {
 		keys      string
 		want, not []string
 	}{
-		{"", []string{"↑/k/↓/j move", "Enter open", "n new", "/ filter", "Esc/q back"}, []string{"Ctrl+O commands"}},
+		{"", []string{"↑/k/↓/j move", "Enter open", "n new", "/ filter", "Esc/q back"}, []string{"Ctrl+O session"}},
 		{"\x1b", []string{leaders}, []string{"Enter open", "zoom"}},
-		{"\x0f", []string{"prefix ·", "w sidebar", "g board", "r redraw", "d detach", "Ctrl+P pane"}, []string{"Ctrl+O commands"}},
-		// Ctrl+P switches from the command mode to pane mode.
-		{"\x10", []string{"pane ·", "p/Tab focus", "f zoom", "s split", "x close view", "Esc/Enter back", "Ctrl+T tab", "Ctrl+O commands"},
-			[]string{"w sidebar", "prefix ·", "Ctrl+P pane"}},
+		{"\x0f", []string{"session ·", "w sidebar", "g board", "r redraw", "d detach", "Ctrl+P pane"}, []string{"Ctrl+O session"}},
+		// Ctrl+P switches from session mode to pane mode.
+		{"\x10", []string{"pane ·", "p/Tab focus", "f zoom", "s split", "x close view", "Esc/Enter back", "Ctrl+T tab", "Ctrl+O session"},
+			[]string{"w sidebar", "session ·", "Ctrl+P pane"}},
 		{"p", []string{"pane ·", "p/Tab focus"}, nil}, // a focus move keeps pane mode
 		{"f", []string{leaders}, []string{"pane ·"}},  // a command ends it
 		{"\x14", []string{"tab ·", "n new tab", "h/←/k/↑ previous tab", "l/→/j/↓ next tab", "1-9 go to tab"}, []string{"f zoom"}},
 		{"\x1b[C", []string{"tab ·"}, nil}, // a tab move keeps tab mode
 		{"\r", []string{leaders}, []string{"tab ·"}},
-		{"\x07", []string{"locked · Ctrl+G unlock"}, []string{"commands", "zoom"}},
+		{"\x07", []string{"locked · Ctrl+G unlock"}, []string{"session", "zoom"}},
 		{"\x07", []string{leaders}, []string{"locked"}},
 	}
 	for _, s := range steps {
@@ -85,7 +85,7 @@ func TestKeymapConfig(t *testing.T) {
 label = "a"
 endpoints = ["/tmp/a.sock"]
 
-[keys.prefix]
+[keys.session]
 g = "none"
 q = "detach"
 k = "launch"
@@ -108,7 +108,7 @@ info = ["cpu", "temp"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	hs := s.Keymap.hints(ModePrefix)
+	hs := s.Keymap.hints(ModeSession)
 	var all []string
 	for _, h := range hs {
 		all = append(all, h.full())
@@ -124,9 +124,9 @@ info = ["cpu", "temp"]
 		t.Error("ctrl-a not bound in normal mode")
 	}
 	for _, want := range []string{
-		p + `:8: [keys.prefix] k: unknown action "launch"`,
-		p + `:9: [keys.prefix] x: action "open" does not work in prefix mode`,
-		p + `:10: [keys.prefix] ctrl-m:`,
+		p + `:8: [keys.session] k: unknown action "launch"`,
+		p + `:9: [keys.session] x: action "open" does not work in session mode`,
+		p + `:10: [keys.session] ctrl-m:`,
 		p + `:14: [keys.normal] a: normal mode takes only ctrl-<key>`,
 		p + `: [keys.nope]: unknown mode`,
 		`unknown info item "temp"`,
@@ -144,11 +144,11 @@ info = ["cpu", "temp"]
 	}
 
 	// clear-defaults starts from no keys.
-	s, _, err = LoadSettings(writeConfig(t, "[keys]\nclear-defaults = true\n[keys.normal]\n\"ctrl-a\" = \"prefix\"\n[keys.prefix]\nd = \"detach\"\n"))
+	s, _, err = LoadSettings(writeConfig(t, "[keys]\nclear-defaults = true\n[keys.normal]\n\"ctrl-a\" = \"session-mode\"\n[keys.session]\nd = \"detach\"\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if h := s.Keymap.hints(ModePrefix); len(h) != 1 || h[0].full() != "d detach" {
+	if h := s.Keymap.hints(ModeSession); len(h) != 1 || h[0].full() != "d detach" {
 		t.Errorf("defaults off: prefix hints %v", h)
 	}
 	k := newKeyReader(s.Keymap)
@@ -157,18 +157,18 @@ info = ["cpu", "temp"]
 	}
 
 	// SetPrefix moves the leader; pressed twice, the new one sends itself and the old one does
-	// nothing in prefix mode.
+	// nothing in session mode.
 	km := DefaultKeymap()
 	if p := km.SetPrefix("ctrl-a"); len(p) != 0 {
 		t.Errorf("SetPrefix problems %q", p)
 	}
 	for _, m := range []Mode{ModeNormal, ModePane, ModeTab} {
-		if km.lookup(m, "ctrl-a") != actPrefix || km.lookup(m, "ctrl-o") != "" {
+		if km.lookup(m, "ctrl-a") != actSession || km.lookup(m, "ctrl-o") != "" {
 			t.Errorf("SetPrefix did not move the prefix in %s mode", m)
 		}
 	}
 	if evs := newKeyReader(km).feed([]byte("\x01\x01\x01\x0fx")); !reflect.DeepEqual(evs, []keyEvent{
-		{act: actPrefix, key: "ctrl-a"}, {act: actSend, key: "ctrl-a"}, {act: actPrefix, key: "ctrl-a"}, {data: []byte("x")}}) {
+		{act: actSession, key: "ctrl-a"}, {act: actSend, key: "ctrl-a"}, {act: actSession, key: "ctrl-a"}, {data: []byte("x")}}) {
 		t.Errorf("ctrl-a twice, then ctrl-a and ctrl-o: %q", evs)
 	}
 	if _, _, err := LoadSettings(filepath.Join(t.TempDir(), "none.toml")); err != nil {
@@ -180,7 +180,7 @@ info = ["cpu", "temp"]
 // mode other than normal that has no key back.
 func reachable(t *testing.T, km *Keymap) map[Mode]bool {
 	t.Helper()
-	to := map[string]Mode{actPrefix: ModePrefix, actPaneMode: ModePane, actTabMode: ModeTab, actLock: ModeLocked,
+	to := map[string]Mode{actSession: ModeSession, actPaneMode: ModePane, actTabMode: ModeTab, actLock: ModeLocked,
 		actSidebar: ModeSidebar, actBoard: ModeBoard}
 	seen := map[Mode]bool{ModeNormal: true}
 	queue := []Mode{ModeNormal}
@@ -214,7 +214,7 @@ func TestPrefixKeymapSample(t *testing.T) {
 			t.Errorf("%s keymap reaches %v, want every mode", name, got)
 		}
 	}
-	if bs := km.Bindings(ModeNormal); len(bs) != 1 || bs[0] != (Binding{`ctrl-\`, actPrefix}) {
+	if bs := km.Bindings(ModeNormal); len(bs) != 1 || bs[0] != (Binding{`ctrl-\`, actSession}) {
 		t.Errorf("sample normal bindings %v, want only Ctrl+\\: the default keymap leaked in", bs)
 	}
 	for _, m := range []Mode{ModePane, ModeTab} {
@@ -227,7 +227,7 @@ func TestPrefixKeymapSample(t *testing.T) {
 	// What its header says: the prefix takes one key and returns; pressed twice it sends
 	// itself; tab mode stays through a tab move and a digit ends it; locked passes the prefix.
 	evs := newKeyReader(km).feed([]byte("\x1cw\x1c\x1c\x1ct][3x\x1cl\x1cz\x07"))
-	pre := keyEvent{act: actPrefix, key: `ctrl-\`}
+	pre := keyEvent{act: actSession, key: `ctrl-\`}
 	want := []keyEvent{pre, {act: actSidebar, key: "w"}, pre, {act: actSend, key: `ctrl-\`},
 		pre, {act: actTabMode, key: "t"}, {act: actNextTab, key: "]"}, {act: actPrevTab, key: "["}, {act: actTabN + "3", key: "3"},
 		{data: []byte("x")}, pre, {act: actLock, key: "l"}, {data: []byte("\x1cz")}, {act: actUnlock, key: "ctrl-g"}}

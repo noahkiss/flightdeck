@@ -280,7 +280,7 @@ func (u *workspaceUI) command(act string) bool {
 	c := u.c
 	u.msg = ""
 	switch act {
-	case actBack, actPrefix, actPaneMode, actTabMode, actLock, actUnlock:
+	case actBack, actSession, actPaneMode, actTabMode, actLock, actUnlock:
 		// Mode keys: the key reader moved the mode, and the bar shows it.
 	case actWarnings:
 		if w := u.warnings(); len(w) > 0 {
@@ -313,6 +313,16 @@ func (u *workspaceUI) command(act string) bool {
 		c.tabs = append(c.tabs, &tab{name: strconv.Itoa(len(c.tabs) + 1), split: c.cfg.Split})
 		u.switchTab(len(c.tabs) - 1)
 		u.mode = modeSidebar
+	case actMoveTabLeft, actMoveTabRight:
+		j := c.cur - 1
+		if act == actMoveTabRight {
+			j = c.cur + 1
+		}
+		if j >= 0 && j < len(c.tabs) {
+			c.tabs[c.cur], c.tabs[j] = c.tabs[j], c.tabs[c.cur]
+			c.cur = j
+			u.dirty = true
+		}
 	case actNextTab:
 		u.switchTab((c.cur + 1) % len(c.tabs))
 	case actPrevTab:

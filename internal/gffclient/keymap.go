@@ -17,14 +17,14 @@ import (
 // Mode is a key mode.
 type Mode string
 
-// The modes (gff-client.md 8.1). Normal passes keys to the pane and watches for its Ctrl keys.
-// Locked passes every key but its own. Prefix takes one key, then returns to normal. Pane and
+// The modes (gff-client.md 8.1). Normal passes keys to the pane and watches for its Ctrl and
+// Alt keys. Locked passes every key but its own. Session takes one key, then returns to normal. Pane and
 // tab stay through focus and tab moves, until another command, Esc or Enter. Sidebar and board
 // are the keys while that part has focus.
 const (
 	ModeNormal  Mode = "normal"
 	ModeLocked  Mode = "locked"
-	ModePrefix  Mode = "prefix"
+	ModeSession Mode = "session"
 	ModePane    Mode = "pane"
 	ModeTab     Mode = "tab"
 	ModeSidebar Mode = "sidebar"
@@ -32,37 +32,37 @@ const (
 )
 
 // Modes lists the modes in the order the config documents them.
-var Modes = []Mode{ModeNormal, ModeLocked, ModePrefix, ModePane, ModeTab, ModeSidebar, ModeBoard}
+var Modes = []Mode{ModeNormal, ModeLocked, ModeSession, ModePane, ModeTab, ModeSidebar, ModeBoard}
 
 // sticky reports whether a mode stays after a key it does not bind, and after a focus or tab
 // move (stays), until Esc, Enter or another command.
 func (m Mode) sticky() bool { return m == ModePane || m == ModeTab }
 
 // command reports whether every key in the mode is a command key.
-func (m Mode) command() bool { return m == ModePrefix || m.sticky() }
+func (m Mode) command() bool { return m == ModeSession || m.sticky() }
 
-// chord reports whether the mode only takes Ctrl keys, passing the rest to the pane.
+// chord reports whether the mode only takes Ctrl and Alt keys, passing the rest to the pane.
 func (m Mode) chord() bool { return m == ModeNormal || m == ModeLocked }
 
 // Actions. The label is the bar's word for the action.
 const (
-	actPrefix    = "prefix"     // enter prefix mode
-	actPaneMode  = "pane-mode"  // enter pane mode
-	actTabMode   = "tab-mode"   // enter tab mode
-	actLock      = "lock"       // enter locked mode
-	actUnlock    = "unlock"     // leave locked mode
-	actBack      = "back"       // leave the mode, or the sidebar or board
-	actSend      = "send"       // send the bound key itself to the pane
-	actFocusNext = "focus-next" // focus the next pane
-	actZoom      = "zoom"       // the focused pane alone, and back
-	actSplit     = "split"      // side by side or stacked
-	actRedraw    = "redraw"     // pane.redraw snapshot
-	actNudge     = "nudge"      // pane.redraw nudge
-	actFit       = "fit"        // pane.take
-	actDetach    = "detach"     // quit gff; programs keep running
-	actSidebar   = "sidebar"    // focus the sidebar, showing it
-	actBoard     = "board"      // the status board
-	actBars      = "bars"       // hide or show the bars
+	actSession   = "session-mode" // enter session mode: one command key
+	actPaneMode  = "pane-mode"    // enter pane mode
+	actTabMode   = "tab-mode"     // enter tab mode
+	actLock      = "lock"         // enter locked mode
+	actUnlock    = "unlock"       // leave locked mode
+	actBack      = "back"         // leave the mode, or the sidebar or board
+	actSend      = "send"         // send the bound key itself to the pane
+	actFocusNext = "focus-next"   // focus the next pane
+	actZoom      = "zoom"         // the focused pane alone, and back
+	actSplit     = "split"        // side by side or stacked
+	actRedraw    = "redraw"       // pane.redraw snapshot
+	actNudge     = "nudge"        // pane.redraw nudge
+	actFit       = "fit"          // pane.take
+	actDetach    = "detach"       // quit gff; programs keep running
+	actSidebar   = "sidebar"      // focus the sidebar, showing it
+	actBoard     = "board"        // the status board
+	actBars      = "bars"         // hide or show the bars
 	actNewTab    = "new-tab"
 	actNextTab   = "next-tab"
 	actPrevTab   = "prev-tab"
@@ -78,18 +78,28 @@ const (
 	actClose     = "close-session"
 	actFilter    = "filter"
 	actGroup     = "group"
+	// Focus moves by direction, as zellij's Alt keys. Left and right fall to the previous or
+	// next tab at the edge (zellij's MoveFocusOrTab); up and down stop there.
+	actFocusLeft  = "focus-left"
+	actFocusRight = "focus-right"
+	actFocusUp    = "focus-up"
+	actFocusDown  = "focus-down"
+	// Move the current tab one place left or right, as zellij's MoveTab; nothing at the edge.
+	actMoveTabLeft  = "move-tab-left"
+	actMoveTabRight = "move-tab-right"
 )
 
 // actionLabels names every action on the bar. The bar groups keys by label, so tab-1 to tab-9
 // show as one hint.
 var actionLabels = map[string]string{
-	actPrefix: "commands", actPaneMode: "pane", actTabMode: "tab", actLock: "lock", actUnlock: "unlock",
+	actSession: "session", actPaneMode: "pane", actTabMode: "tab", actLock: "lock", actUnlock: "unlock",
 	actBack: "back", actSend: "send key", actFocusNext: "focus", actZoom: "zoom", actSplit: "split",
 	actRedraw: "redraw", actNudge: "nudge", actFit: "fit", actDetach: "detach", actSidebar: "sidebar",
 	actBoard: "board", actBars: "bars", actNewTab: "new tab", actNextTab: "next tab", actPrevTab: "previous tab",
 	actCloseView: "close view", actWarnings: "warnings", actUp: "move", actDown: "move", actOpen: "open",
 	actOpenTab: "open in new tab", actNew: "new", actRename: "rename", actClose: "close", actFilter: "filter",
-	actGroup: "group",
+	actGroup: "group", actFocusLeft: "move focus", actFocusRight: "move focus", actFocusUp: "move focus",
+	actFocusDown: "move focus", actMoveTabLeft: "move tab", actMoveTabRight: "move tab",
 }
 
 func init() {
@@ -158,22 +168,22 @@ func (km *Keymap) bind(m Mode, k, act string) {
 	km.modes[m] = bs
 }
 
-// SetPrefix moves the prefix to key k (ctrl-<key>): the keys that enter prefix mode from
-// normal, pane and tab mode, and a prefix-mode key bound to send that was one of them. The
-// prefix pressed again sends itself unless prefix mode binds it (keyReader.act). Another
-// binding of k in normal, pane or tab mode gives way, and SetPrefix returns a problem for each
-// one in normal mode. In prefix mode, k keeps only a send binding.
+// SetPrefix moves the session leader (gff -prefix) to key k (ctrl-<key>): the keys that enter
+// session mode from normal, pane and tab mode, and a session-mode key bound to send that was
+// one of them. The leader pressed again sends itself unless session mode binds it
+// (keyReader.act). Another binding of k in normal, pane or tab mode gives way, and SetPrefix
+// returns a problem for each one in normal mode. In session mode, k keeps only a send binding.
 func (km *Keymap) SetPrefix(k string) []string {
 	var problems []string
 	old := map[string]bool{}
 	for _, b := range km.modes[ModeNormal] {
-		if b.Action == actPrefix {
+		if b.Action == actSession {
 			old[b.Key] = true
 		}
 	}
 	for m, bs := range km.modes {
 		for i, b := range bs {
-			if (m != ModePrefix && b.Action == actPrefix) || (m == ModePrefix && b.Action == actSend && old[b.Key]) {
+			if (m != ModeSession && b.Action == actSession) || (m == ModeSession && b.Action == actSend && old[b.Key]) {
 				bs[i].Key = k
 			}
 		}
@@ -184,15 +194,15 @@ func (km *Keymap) SetPrefix(k string) []string {
 		for _, b := range km.modes[m] {
 			switch {
 			case b.Key != k:
-			case m != ModePrefix && b.Action != actPrefix:
+			case m != ModeSession && b.Action != actSession:
 				if m == ModeNormal {
 					problems = append(problems, fmt.Sprintf("-prefix %s replaces [keys.normal] %s = %q", k, k, b.Action))
 				}
 				continue
-			case m == ModePrefix && b.Action != actSend:
-				continue // the prefix pressed twice sends itself
+			case m == ModeSession && b.Action != actSend:
+				continue // the leader pressed twice sends itself
 			case seen:
-				continue // two old prefix keys moved to one
+				continue // two old leaders moved to one
 			default:
 				seen = true
 			}
@@ -201,6 +211,17 @@ func (km *Keymap) SetPrefix(k string) []string {
 		km.modes[m] = kept
 	}
 	return problems
+}
+
+// alts returns the characters of the Alt keys bound in mode m, for the key reader.
+func (km *Keymap) alts(m Mode) map[byte]bool {
+	out := map[byte]bool{}
+	for _, b := range km.modes[m] {
+		if c, ok := strings.CutPrefix(b.Key, "alt-"); ok && len(c) == 1 {
+			out[c[0]] = true
+		}
+	}
+	return out
 }
 
 // chords returns the Ctrl bytes bound in mode m, for the key reader.
@@ -216,13 +237,13 @@ func (km *Keymap) chords(m Mode) map[byte]bool {
 
 // sharedModes are the modes [keys.shared] binds into: every mode but locked, the sidebar and
 // the board, as zellij's shared_except "locked".
-var sharedModes = []Mode{ModeNormal, ModePrefix, ModePane, ModeTab}
+var sharedModes = []Mode{ModeNormal, ModeSession, ModePane, ModeTab}
 
 // entersMode is the mode an action enters, or "".
 func entersMode(act string) Mode {
 	switch act {
-	case actPrefix:
-		return ModePrefix
+	case actSession:
+		return ModeSession
 	case actPaneMode:
 		return ModePane
 	case actTabMode:
@@ -248,14 +269,19 @@ func (km *Keymap) bindShared(k, act string) {
 // stays reports whether an action keeps pane or tab mode on, as zellij's focus and tab moves
 // do. Every other action in those modes goes back to normal after it runs.
 func stays(act string) bool {
-	return act == actFocusNext || act == actNextTab || act == actPrevTab
+	switch act {
+	case actFocusNext, actNextTab, actPrevTab, actFocusLeft, actFocusRight, actFocusUp, actFocusDown,
+		actMoveTabLeft, actMoveTabRight:
+		return true
+	}
+	return false
 }
 
 // DefaultKeymap is the shipped keymap: modes with Ctrl leaders, as zellij's (gff-client.md
-// 8.4, 15.5). Ctrl+G locks, Ctrl+P enters pane mode, Ctrl+T tab mode and Ctrl+O the command
-// mode (prefix mode: one key, then back). Each leader also works from the other command modes,
-// so one leader switches modes. The leader of the current mode, pressed again, sends itself to
-// the pane (keyReader.act).
+// 8.4, 15.5). Ctrl+G locks, Ctrl+P enters pane mode, Ctrl+T tab mode and Ctrl+O session mode
+// (one key, then back). Each leader also works from the other command modes, so one leader
+// switches modes. The leader of the current mode, pressed again, sends itself to the pane
+// (keyReader.act). zellij's Alt keys move focus and tabs in every mode but locked.
 func DefaultKeymap() *Keymap {
 	km := &Keymap{modes: map[Mode][]Binding{}}
 	add := func(m Mode, pairs ...string) {
@@ -264,7 +290,7 @@ func DefaultKeymap() *Keymap {
 		}
 	}
 	add(ModeLocked, "ctrl-g", actUnlock)
-	add(ModePrefix, "w", actSidebar, "g", actBoard, "b", actBars, "!", actWarnings,
+	add(ModeSession, "w", actSidebar, "g", actBoard, "b", actBars, "!", actWarnings,
 		"r", actRedraw, "n", actNudge, "f", actFit, "d", actDetach, "esc", actBack)
 	add(ModePane, "p", actFocusNext, "tab", actFocusNext, "f", actZoom, "s", actSplit, "x", actCloseView,
 		"esc", actBack, "enter", actBack)
@@ -278,7 +304,14 @@ func DefaultKeymap() *Keymap {
 	km.bindShared("ctrl-g", actLock)
 	km.bindShared("ctrl-p", actPaneMode)
 	km.bindShared("ctrl-t", actTabMode)
-	km.bindShared("ctrl-o", actPrefix)
+	km.bindShared("ctrl-o", actSession)
+	// zellij's Alt keys, in every mode but locked. Alt+F and Alt+B stay with the shell.
+	km.bindShared("alt-h", actFocusLeft)
+	km.bindShared("alt-l", actFocusRight)
+	km.bindShared("alt-j", actFocusDown)
+	km.bindShared("alt-k", actFocusUp)
+	km.bindShared("alt-i", actMoveTabLeft)
+	km.bindShared("alt-o", actMoveTabRight)
 	add(ModeSidebar, "up", actUp, "k", actUp, "down", actDown, "j", actDown, "enter", actOpen, "t", actOpenTab,
 		"n", actNew, "r", actRename, "x", actClose, "/", actFilter, "p", actGroup, "esc", actBack, "q", actBack)
 	add(ModeBoard, "up", actUp, "k", actUp, "down", actDown, "j", actDown, "enter", actOpen, "t", actOpenTab,
@@ -287,8 +320,9 @@ func DefaultKeymap() *Keymap {
 }
 
 // ParseKey reads a key name: a single character, ctrl-<key> (a key from @ a-z [ \ ] ^ _, not
-// one that is Backspace, Tab, Enter or Esc), or tab, enter, esc, up, down, left, right,
-// backspace, space.
+// one that is Backspace, Tab, Enter or Esc), alt-<character> (printable ASCII but [ and O,
+// which start the arrows' sequences), or tab, enter, esc, up, down, left, right, backspace,
+// space.
 // It returns the canonical name.
 func ParseKey(s string) (string, error) {
 	switch l := strings.ToLower(s); l {
@@ -308,10 +342,16 @@ func ParseKey(s string) (string, error) {
 		}
 		return ctrlName(b), nil
 	}
+	if len(s) > 4 && strings.EqualFold(s[:4], "alt-") {
+		if c, ok := altByte([]byte("\x1b" + s[4:])); ok && len(s) == 5 {
+			return altName(c), nil
+		}
+		return "", fmt.Errorf("key %q: want alt- and one printable ASCII character other than [ and O", s)
+	}
 	if r := []rune(s); len(r) == 1 && r[0] > 0x20 && r[0] != 0x7f {
 		return s, nil
 	}
-	return "", fmt.Errorf("key %q: want one character, ctrl-<key>, tab, enter, esc, up, down, left, right, backspace or space", s)
+	return "", fmt.Errorf("key %q: want one character, ctrl-<key>, alt-<key>, tab, enter, esc, up, down, left, right, backspace or space", s)
 }
 
 // ctrlName is the canonical name of a Ctrl byte: ctrl-a, ctrl-\.
@@ -355,6 +395,9 @@ func keyLabel(k string) string {
 	}
 	if b, ok := ctrlByte(k); ok {
 		return prefixName(b)
+	}
+	if c, ok := strings.CutPrefix(k, "alt-"); ok {
+		return "Alt+" + c
 	}
 	return k
 }
@@ -402,6 +445,7 @@ func (km *Keymap) hints(m Mode) []hint {
 }
 
 // joinKeys writes keys for one hint: a run of digits as a range, the rest joined by slashes.
+// Keys that all share one modifier write it once: Alt+h/l, Ctrl+T/Y.
 func joinKeys(ks []string) string {
 	digits := true
 	for i, k := range ks {
@@ -415,6 +459,17 @@ func joinKeys(ks []string) string {
 	var ls []string
 	for _, k := range ks {
 		ls = append(ls, keyLabel(k))
+	}
+	for _, mod := range []string{"Ctrl+", "Alt+"} {
+		var rest []string
+		for _, l := range ls {
+			if r, ok := strings.CutPrefix(l, mod); ok {
+				rest = append(rest, r)
+			}
+		}
+		if len(ls) > 1 && len(rest) == len(ls) {
+			return mod + strings.Join(rest, "/")
+		}
 	}
 	return strings.Join(ls, "/")
 }
@@ -491,19 +546,30 @@ var SettingsTables = []string{"keys", "bar"}
 const (
 	clearDefaults = "clear-defaults"
 	sharedTable   = "shared"
+	// oldSessionName is the earlier name of session mode and of the action that enters it. The
+	// config still takes it, with a problem that names the new one.
+	oldSessionName = "prefix"
 )
+
+// modeNamed is the mode a [keys.<name>] table binds: the earlier name prefix is session mode.
+func modeNamed(n string) Mode {
+	if n == oldSessionName {
+		return ModeSession
+	}
+	return Mode(n)
+}
 
 // LoadSettings reads the keymap and the bars from gff's config file, over the defaults.
 //
 //	[keys]
 //	clear-defaults = true     # start from no bindings instead of the shipped keymap
-//	[keys.shared]             # normal, prefix, pane and tab mode at once
+//	[keys.shared]             # normal, session, pane and tab mode at once
 //	"ctrl-a" = "pane-mode"    # not bound in pane mode itself: there it sends itself
 //	"ctrl-p" = "none"         # unbind Ctrl+P in all four
 //	[keys.pane]
 //	clear-defaults = true     # start pane mode from no bindings; [keys.shared] still applies
 //	z = "zoom"                # bind z to zoom
-//	[keys.prefix]
+//	[keys.session]
 //	d = "none"                # unbind d
 //	[bar]
 //	max_hints = 8
@@ -574,7 +640,7 @@ func LoadSettings(path string) (Settings, []string, error) {
 		if n == sharedTable {
 			return -1
 		}
-		return slices.Index(Modes, Mode(n))
+		return slices.Index(Modes, modeNamed(n))
 	}
 	slices.SortFunc(names, func(a, b string) int {
 		if d := rank(a) - rank(b); d != 0 {
@@ -595,14 +661,17 @@ func LoadSettings(path string) (Settings, []string, error) {
 				problems = append(problems, where("keys", n)+": unknown key; [keys] takes clear-defaults, a shared table and a table per mode")
 			}
 			continue
-		case n != sharedTable && !slices.Contains(Modes, Mode(n)):
+		case n != sharedTable && n != oldSessionName && !slices.Contains(Modes, Mode(n)):
 			problems = append(problems, fmt.Sprintf("%s: [%s]: unknown mode; modes are %s; [keys.shared] binds into %s", path, tname, modeList(), sharedList()))
 			continue
+		}
+		if n == oldSessionName {
+			problems = append(problems, fmt.Sprintf("%s: [%s]: the mode is now session; write [keys.session]", path, tname))
 		}
 		t := table(keys[n], tname)
 		tables[n] = t
 		if p, ok := t[clearDefaults]; ok && n != sharedTable && cleared(tname, p) {
-			s.Keymap.modes[Mode(n)] = nil
+			s.Keymap.modes[modeNamed(n)] = nil
 		}
 	}
 	for _, n := range names {
@@ -611,7 +680,7 @@ func LoadSettings(path string) (Settings, []string, error) {
 			continue
 		}
 		shared := n == sharedTable
-		m, what := Mode(n), n+" mode"
+		m, what := modeNamed(n), string(modeNamed(n))+" mode"
 		if shared {
 			m, what = ModeNormal, "[keys.shared]" // the rules of the strictest shared mode
 		}
@@ -635,6 +704,10 @@ func LoadSettings(path string) (Settings, []string, error) {
 				problems = append(problems, where(tname, k)+`: want an action in quotes, such as "zoom"`)
 				continue
 			}
+			if act == oldSessionName {
+				problems = append(problems, where(tname, k)+`: action "prefix" is now "session-mode"`)
+				act = actSession
+			}
 			key, err := ParseKey(k)
 			switch {
 			case err != nil:
@@ -649,8 +722,8 @@ func LoadSettings(path string) (Settings, []string, error) {
 				bind = func(act string) { s.Keymap.bindShared(key, act) }
 			}
 			switch {
-			case m.chord() && !strings.HasPrefix(key, "ctrl-"):
-				problems = append(problems, where(tname, k)+": "+what+" takes only ctrl-<key>; other keys go to the program")
+			case m.chord() && !strings.HasPrefix(key, "ctrl-") && !strings.HasPrefix(key, "alt-"):
+				problems = append(problems, where(tname, k)+": "+what+" takes only ctrl-<key> and alt-<key>; other keys go to the program")
 				continue
 			case act == "none":
 				bind("")
@@ -726,7 +799,7 @@ func LoadSettings(path string) (Settings, []string, error) {
 // what that key had, and a problem says so. With no key to detach in any reachable mode, a
 // problem says gff cannot be left from the keyboard.
 func (km *Keymap) exits(path string) []string {
-	to := map[string]Mode{actPrefix: ModePrefix, actPaneMode: ModePane, actTabMode: ModeTab, actLock: ModeLocked,
+	to := map[string]Mode{actSession: ModeSession, actPaneMode: ModePane, actTabMode: ModeTab, actLock: ModeLocked,
 		actSidebar: ModeSidebar, actBoard: ModeBoard}
 	seen := map[Mode]bool{ModeNormal: true, ModeSidebar: true}
 	queue := []Mode{ModeNormal, ModeSidebar}
@@ -746,8 +819,8 @@ func (km *Keymap) exits(path string) []string {
 	}
 	var problems []string
 	for _, m := range Modes {
-		if !seen[m] || m == ModeNormal || m == ModePrefix {
-			continue // prefix mode takes one key and returns
+		if !seen[m] || m == ModeNormal || m == ModeSession {
+			continue // session mode takes one key and returns
 		}
 		out := m.sticky() && (km.lookup(m, "esc") == "" || km.lookup(m, "enter") == "")
 		for _, b := range km.modes[m] {

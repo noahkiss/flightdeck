@@ -276,7 +276,7 @@ dropped (a long OSC 52 clipboard write passes).
 sender: keys typed while a call is out go in the next call, in order. Offline, input is refused
 with a frame note, never queued (11.6); an observer view sends none. Keys typed while gff
 starts, before a pane's first snapshot, still go to the pane, as `ssh` keeps typeahead. The
-prefix key was Ctrl+\; the default keymap's command-mode leader is now Ctrl+O (8.4).
+prefix key was Ctrl+\; the default keymap's session-mode leader is now Ctrl+O (8.4).
 `-prefix ctrl-<key>` moves it; the keys that are Backspace, Tab, Enter and Esc are refused.
 
 The key reader knows the prefix in three forms: legacy (one control byte), kitty
@@ -288,7 +288,7 @@ release or a modifier key alone does not count as the command. A lone Esc is nev
 
 gff opens its panes while it already reads keys: each view opens its stream off the main loop.
 Opening waits while the hab is offline, and the terminal is raw, so Ctrl+C is no signal: the
-command-mode leader and `d` (Ctrl+O `d` by default) end a start that hangs, and gff does not wait for an open that has not returned.
+session-mode leader and `d` (Ctrl+O `d` by default) end a start that hangs, and gff does not wait for an open that has not returned.
 
 After the prefix:
 
@@ -707,9 +707,9 @@ Sources: `app.md` 3 and 7 (ranks, row content, approval flow, answered elsewhere
 - **Locked mode** passes every key to the pane except the unlock key. The bar shows only that key.
 - **Keys left to programs.** The default keymap does not take keys that shells and harnesses use:
   for example Ctrl+B (harnesses background a task with it), Ctrl+S, Alt+F and Alt+B (shell word
-  moves) and Alt+arrows. The leaders are few, and the config can change every one. The leaders
-  it does take (Ctrl+G, Ctrl+P, Ctrl+T, Ctrl+O) reach the program in locked mode, or pressed
-  twice (8.4).
+  moves) and Alt+arrows. The leaders are few, and the config can change every one. The keys it
+  does take (the leaders Ctrl+G, Ctrl+P, Ctrl+T, Ctrl+O, and Alt+H, J, K, L, I, O) reach the
+  program in locked mode; a leader also gets through pressed twice (8.4).
 - **Fitting.** When the row is too short, hints drop by priority, then shorten to the key alone.
   A configurable cap limits how many show.
 - **System info** fills the right end (9).
@@ -743,10 +743,10 @@ Packages: `internal/gffclient` (`keymap.go`, `keys.go`, `bars.go`), `cmd/gff`.
 
 | Mode | Keys it takes | Left by |
 |---|---|---|
-| normal | Only its own Ctrl keys; the rest go to the pane | A leader moves to another mode |
-| prefix | One command key, then back to normal; a key it does not bind cancels | The command, or Esc |
+| normal | Only its own Ctrl and Alt keys; the rest go to the pane | A leader moves to another mode |
+| session | One command key, then back to normal; a key it does not bind cancels | The command, or Esc |
 | pane, tab | Every key; a key the mode does not bind goes nowhere | Any command but a focus or tab move; a `back` key; Esc or Enter while the mode does not bind it |
-| locked | Only its own Ctrl keys (unlock); every other key, the prefix included, goes to the pane | Unlock |
+| locked | Only its own Ctrl and Alt keys (unlock); every other key, the leaders included, goes to the pane | Unlock |
 | sidebar, board | The keys while that part has focus (4.3, 7) | Esc or `q` |
 
 **No mode traps the user.** After loading, `LoadSettings` walks the modes the keymap reaches
@@ -760,12 +760,13 @@ does not. It keeps Esc and Enter bindable in pane and tab mode while another key
 The fallback for an unbound Esc or Enter stays.
 
 **Commands end pane and tab mode.** As in zellij, a command in pane or tab mode returns to
-normal: zoom, split, close view, new tab, a tab number. Focus moves (`focus-next`) and tab moves
-(`next-tab`, `prev-tab`) keep the mode, so `l l l` walks the tabs. Decided (implementer,
+normal: zoom, split, close view, new tab, a tab number. Focus moves (`focus-next`, `focus-left`,
+`focus-right`, `focus-up`, `focus-down`) and tab moves (`next-tab`, `prev-tab`, `move-tab-left`,
+`move-tab-right`) keep the mode, so `l l l` walks the tabs. Decided (implementer,
 task-y62yb3nb): a fixed rule per action, not a per-binding choice as zellij's `SwitchToMode`.
 It gives zellij's defaults with no extra config syntax.
 
-**Sending a leader.** In a command mode (prefix, pane, tab), the key that entered the mode,
+**Sending a leader.** In a command mode (session, pane, tab), the key that entered the mode,
 pressed again, sends itself to the pane when the mode does not bind it, and gff is back in
 normal mode. So Ctrl+P twice sends Ctrl+P, a moved leader sends the new key and not the old
 one, and the one-prefix sample's prefix sends itself the same way. A `send` binding sends its
@@ -799,9 +800,10 @@ owner's zellij mode keys, mapped to gff's actions; no zellij file is read.
 
 | Mode | Keys |
 |---|---|
-| normal | Ctrl+G lock, Ctrl+P pane mode, Ctrl+T tab mode, Ctrl+O command mode (`prefix`) |
+| normal | Ctrl+G lock, Ctrl+P pane mode, Ctrl+T tab mode, Ctrl+O session mode |
+| normal, session, pane, tab | Alt+h focus left, else the previous tab; Alt+l focus right, else the next tab; Alt+j focus down; Alt+k focus up; Alt+i move the tab left; Alt+o move the tab right |
 | locked | Ctrl+G unlock |
-| prefix (Ctrl+O, one key) | `w` sidebar, `g` board, `b` bars, `!` warnings, `r` redraw, `n` nudge, `f` fit, `d` detach, Esc back |
+| session (Ctrl+O, one key) | `w` sidebar, `g` board, `b` bars, `!` warnings, `r` redraw, `n` nudge, `f` fit, `d` detach, Esc back |
 | pane (Ctrl+P) | `p` or Tab focus the next pane (stays), `f` zoom, `s` split, `x` close view, Esc or Enter back |
 | tab (Ctrl+T) | `n` new tab, `h` `←` `k` `↑` previous tab (stays), `l` `→` `j` `↓` next tab (stays), `1` to `9` go to a tab, Esc or Enter back |
 | sidebar, board | As 4.3 and 7 |
@@ -814,10 +816,22 @@ owner's zellij mode keys, mapped to gff's actions; no zellij file is read.
   session mode (Ctrl+O) holds detach (`d`) and the session manager (`w`, here the sidebar);
   the board, bars and warnings join it. Ctrl+S, Ctrl+B and Ctrl+Q stay with programs, as in the
   owner's trims (1.6).
+- **Alt keys, as zellij's globals.** Alt+h and Alt+l are zellij's MoveFocusOrTab: focus moves
+  one view along a side-by-side tab, and past the edge (or in a stacked tab) to the previous or
+  next tab, wrapping as `prev-tab` and `next-tab` do. Alt+j and Alt+k are MoveFocus: one view
+  along a stacked tab, stopping at the edge, and nothing in a side-by-side tab. Alt+i and Alt+o
+  are MoveTab: the tab moves one place, and stays at the edge. Outside the workspace there is one
+  tab, so left and right stop at the edge and the tab moves do nothing. A zoomed tab keeps its
+  zoom and shows the newly focused view. Alt+F and Alt+B are never bound by default: they are
+  the shell's word moves.
+- **Gaps against zellij.** gff has one row or column of views per tab (3.4), so a direction
+  across the split has no view: Alt+j and Alt+k do nothing side by side, and Alt+h and Alt+l go
+  to a tab. zellij's own MoveTab wraps at the edge; gff's stops there. Decided (implementer,
+  task-y62yb3nb): the simplest action for each, to revisit with nested splits (5.2).
 - **Not taken.** zellij's resize (Ctrl+N), move (Ctrl+H) and scroll (Ctrl+S) modes have no gff
-  action yet, so their keys go to programs. Alt keys (zellij's focus moves) are not read (Limits).
-- **Redraw, nudge and fit** live in the command mode, not in pane mode. Decided (implementer,
-  task-y62yb3nb): they repair a view rather than shape the layout, and pane mode keeps `n`,
+  mode yet, so their keys go to programs. Ctrl+H is Backspace in the legacy encoding as well.
+- **Redraw, nudge and fit** live in session mode, not in pane mode. Decided (implementer,
+  task-y62yb3nb, confirmed by the coordinator): they repair a view rather than shape the layout, and pane mode keeps `n`,
   `r`, `d` and `h` `j` `k` `l` free for new panes and splits (5.2), which zellij binds there.
 
 Decided (owner, 2026-11-01): A is the default, configurable as zellij's is, and not designed
@@ -827,6 +841,11 @@ pane mode, `t` tab mode, `l` lock and `!` warnings. It sets `clear-defaults = tr
 the whole keymap: using it is a config change only. `[keys.normal]` takes any action, so one
 chord can also run a command directly.
 
+**Session mode** is zellij's name for the one-key mode Ctrl+O enters, on the bar (`session ·`),
+in the config (`[keys.session]`, the action `session-mode`) and here. Its earlier name still
+loads: a `[keys.prefix]` table binds session mode and an action `"prefix"` means
+`"session-mode"`, each with one problem that names the new spelling.
+
 **Config.** gff's config file (4.3) holds the keymap in `[keys.<mode>]` tables, `key =
 "action"` per line, over the default keymap. It works as zellij's `keybinds`: bind, unbind
 (`none`, as zellij's `unbind`), `[keys.shared]` (as `shared_except "locked"`) and
@@ -835,27 +854,30 @@ chord can also run a command directly.
 ```toml
 [keys]
 clear-defaults = true     # optional: start from no bindings
-[keys.shared]             # normal, prefix, pane and tab mode at once
+[keys.shared]             # normal, session, pane and tab mode at once
 "ctrl-a" = "pane-mode"    # a new leader; pane mode itself does not bind it
 "ctrl-p" = "none"         # unbind Ctrl+P in all four
 [keys.normal]
-"ctrl-b" = "tab-mode"     # normal and locked take only ctrl-<key>
+"ctrl-b" = "tab-mode"     # normal and locked take only ctrl-<key> and alt-<key>
+"alt-f" = "focus-right"   # takes Alt+F from the shell's word moves
 [keys.pane]
 clear-defaults = true     # start pane mode from no bindings; [keys.shared] still applies
 z = "zoom"
-[keys.prefix]
+[keys.session]
 q = "detach"
 d = "none"                # unbind
 ```
 
 - Order: `[keys] clear-defaults`, then each mode's `clear-defaults`, then `[keys.shared]`, then
   the mode tables, so a mode's own line wins over a shared one.
-- `[keys.shared]` takes `ctrl-<key>` only and the actions normal mode takes. A mode key
-  (`prefix`, `pane-mode`, `tab-mode`, `lock`) is not bound in the mode it enters, so there the
+- `[keys.shared]` takes `ctrl-<key>` and `alt-<key>` only, and the actions normal mode takes.
+  A mode key (`session-mode`, `pane-mode`, `tab-mode`, `lock`) is not bound in the mode it enters, so there the
   key sends itself. It does not take `clear-defaults`.
-- A key is one character, `ctrl-<key>` (as `-prefix`), `tab`, `enter`, `esc`, `up`, `down`,
-  `left`, `right`, `backspace` or `space`.
-- Actions: `prefix`, `pane-mode`, `tab-mode`, `lock`, `unlock`, `back`, `send`, `focus-next`,
+- A key is one character, `ctrl-<key>` (as `-prefix`), `alt-<character>` (printable ASCII
+  but `[` and `O`, which start the arrows' sequences; case kept, so `alt-H` is Alt+Shift+H),
+  `tab`, `enter`, `esc`, `up`, `down`, `left`, `right`, `backspace` or `space`.
+- Actions: `session-mode`, `pane-mode`, `tab-mode`, `lock`, `unlock`, `back`, `send`, `focus-next`,
+  `focus-left`, `focus-right`, `focus-up`, `focus-down`, `move-tab-left`, `move-tab-right`,
   `zoom`, `split`, `redraw`, `nudge`, `fit`, `detach`, `sidebar`, `board`, `bars`, `new-tab`,
   `next-tab`, `prev-tab`, `tab-1` to `tab-9`, `close-view`, `warnings`; in the sidebar and board
   also `up`, `down`, `open`, `open-tab`, and in the sidebar `new-session`, `rename`,
@@ -866,9 +888,9 @@ d = "none"                # unbind
   of its table and the file load. A table header may carry a comment.
 - TOML refuses a key written twice in one table, so the file does not load and gff says where.
   Two spellings of one key (`esc`, `escape`) are a problem and the later line wins.
-- `-prefix ctrl-<key>` moves the command-mode leader: the keys that enter prefix mode from
-  normal, pane and tab mode, and a prefix `send` binding on the old key. Another binding of the
-  new key in those modes gives way, with a problem for one in normal mode; prefix mode keeps
+- `-prefix ctrl-<key>` moves the session-mode leader: the keys that enter session mode from
+  normal, pane and tab mode, and a session `send` binding on the old key. Another binding of the
+  new key in those modes gives way, with a problem for one in normal mode; session mode keeps
   only a `send` on it, so the leader pressed twice sends itself.
 - `[keys] defaults = false`, the earlier spelling, is a problem that says to write
   `clear-defaults = true`.
@@ -876,7 +898,7 @@ d = "none"                # unbind
   warnings for the `keys` and `bar` tables, which `gffclient.LoadSettings` reads and checks.
 
 **The bar.** The bottom row shows the keys of the mode, from the loaded keymap: the reader's
-mode when it is not normal (named first: `prefix ·`, `pane ·`, `tab ·`, `locked ·`), else the
+mode when it is not normal (named first: `session ·`, `pane ·`, `tab ·`, `locked ·`), else the
 sidebar's or board's while it has focus, else normal's. Keys with one label join: `o/Tab
 focus`, `↑/k/↓/j move`, a run of digits as `1-9 go to tab`. `send` is not listed. Binding order
 is priority. When the row is short, hints drop from the end until the rest fit with labels; when
@@ -888,9 +910,12 @@ replaces the row.
 
 | Test | Proves |
 |---|---|
-| `TestBarFollowsMode` | gff's screen over a fake hab: the bar shows the sidebar's keys, then normal's four leaders, the command mode's keys after Ctrl+O, pane mode's after Ctrl+P from there (kept after a focus move, gone after zoom), tab mode's (kept after a right arrow), then only the unlock key while locked; Enter and unlock return to normal |
-| `TestDefaultKeymap` | Each mode's bar text in full; Ctrl+S, Ctrl+B, Ctrl+Q and Ctrl+N stay with programs; no exit problem; the reader: focus keeps pane mode, zoom and close view end it, tab moves (letters and the left arrow) keep tab mode, new tab and a digit end it, the command mode takes one key, the leaders switch modes, lock from pane mode, each leader pressed twice sends itself |
-| `TestKeysSharedAndClear` | `[keys.shared]` binds in normal, prefix and tab mode and not a mode key in its own mode; a mode's own line wins; unbind with `none`; a plain key, an action normal mode cannot take and `clear-defaults` there are problems with their lines; `clear-defaults` in a mode and in `[keys]`; the old `defaults` key names the new one; a non-boolean `clear-defaults` |
+| `TestBarFollowsMode` | gff's screen over a fake hab: the bar shows the sidebar's keys, then normal's four leaders and Alt keys, session mode's keys after Ctrl+O, pane mode's after Ctrl+P from there (kept after a focus move, gone after zoom), tab mode's (kept after a right arrow), then only the unlock key while locked; Enter and unlock return to normal |
+| `TestDefaultKeymap` | Each mode's bar text in full; Ctrl+S, Ctrl+B, Ctrl+Q, Ctrl+N, Alt+F and Alt+B stay with programs; no exit problem; the reader: focus keeps pane mode, zoom and close view end it, tab moves (letters and the left arrow) keep tab mode, new tab and a digit end it, session mode takes one key, the leaders switch modes, lock from pane mode, each leader pressed twice sends itself; the six Alt keys in legacy, kitty and modifyOtherKeys forms, Alt+F, Alt+B and Alt+Shift passing, a kitty Alt release dropped, Alt keys keeping pane mode, an unbound Alt key in pane mode read as Esc, kitty Alt+F naming no key in tab mode, locked mode passing Alt keys |
+| `TestAltFocusAndTabMoves` | In the workspace: Alt+l along side-by-side views and on to the next tab, Alt+h from a tab with no view to the previous one, Alt+j and Alt+k doing nothing side by side and stopping at the edge when stacked, Alt+h in a stacked tab going to the previous tab (wrapping), a kitty Alt key; Alt+o and Alt+i moving the tab and stopping at each edge, the moved tab still current |
+| `TestAltKeyConfig` | `alt-<character>` parsed with its case, `alt-[`, `alt-O` and others refused, Alt keys bound and unbound in normal and locked mode, an unbound Alt key passing |
+| `TestSessionModeAlias` | `[keys.prefix]` and the action `"prefix"` still bind session mode, with exactly one problem each naming the new spelling |
+| `TestKeysSharedAndClear` | `[keys.shared]` binds in normal, session and tab mode and not a mode key in its own mode; a mode's own line wins; unbind with `none`; a plain key, an action normal mode cannot take and `clear-defaults` there are problems with their lines; `clear-defaults` in a mode and in `[keys]`; the old `defaults` key names the new one; a non-boolean `clear-defaults` |
 | `TestKeymapConfig` | An unbound key leaves the hints; a new key joins its action's hint; each bad line is a problem with its file and line; `clear-defaults = true`; another prefix; `SetPrefix` moves the leader in normal, pane and tab mode; `max_hints` |
 | `TestKeyReader` | Over the one-prefix sample: the reader's modes: prefix one-shot, cancel, send, pane and tab modes that stay through focus and tab moves and end on another command, locked mode passing the prefix, unlock in legacy and kitty forms; the prefix in legacy, kitty and modifyOtherKeys forms across split reads, releases and modifier keys skipped; a paste whole in tab mode, after the prefix, around a leader or unlock byte and across reads; Shift in kitty's forms; releases of taken keys dropped in the next mode (unlock, a command key, the prefix sent, an arrow); right Ctrl, AltGr and Level 5 shift skipped; Ctrl+Shift+\ passes |
 | `TestFitHints` | Hints drop by priority, then show keys alone |
@@ -910,10 +935,10 @@ replaces the row.
 
 | Limit | Why it is acceptable now |
 |---|---|
-| No resize, move or session modes | gff has no split resize or pane move yet (5.2); the sidebar covers sessions, and the command mode (Ctrl+O) holds zellij's session keys |
+| No resize or move modes | gff has no split resize or pane move yet (5.2) |
 | A binding cannot choose whether its mode stays | Focus and tab moves stay, other commands end the mode, as zellij's defaults |
-| The command mode is named `prefix` in the config and on the bar, not `session` | It is also the one-prefix sample's prefix mode |
-| Normal and locked modes take only Ctrl keys; no Alt keys | Alt+letters are shell word moves (8.1); the reader knows Ctrl keys in three encodings |
+| An Alt key split across two reads (ESC, then the letter) is a lone Esc and the letter | A host terminal writes an Alt key at once; holding a lone Esc would delay it in every program |
+| Alt with an arrow or a named key cannot be bound | The default takes none (8.1); Alt+arrows stay with the shell |
 | No help overlay listing the whole keymap (13) | The bar shows each mode's keys |
 | Keys are not re-encoded per pane (8.2) | As 3.4 |
 

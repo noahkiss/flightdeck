@@ -25,20 +25,22 @@ func TestDefaultKeymap(t *testing.T) {
 		mode Mode
 		hint string
 	}{
-		{ModeNormal, "Ctrl+G lock  Ctrl+P pane  Ctrl+T tab  Ctrl+O commands"},
+		{ModeNormal, "Ctrl+G lock  Ctrl+P pane  Ctrl+T tab  Ctrl+O session  Alt+h/l/j/k move focus  Alt+i/o move tab"},
 		{ModeLocked, "Ctrl+G unlock"},
-		{ModePrefix, "w sidebar  g board  b bars  ! warnings  r redraw  n nudge  f fit  d detach  Esc back  " +
-			"Ctrl+G lock  Ctrl+P pane  Ctrl+T tab"},
-		{ModePane, "p/Tab focus  f zoom  s split  x close view  Esc/Enter back  Ctrl+G lock  Ctrl+T tab  Ctrl+O commands"},
+		{ModeSession, "w sidebar  g board  b bars  ! warnings  r redraw  n nudge  f fit  d detach  Esc back  " +
+			"Ctrl+G lock  Ctrl+P pane  Ctrl+T tab  Alt+h/l/j/k move focus  Alt+i/o move tab"},
+		{ModePane, "p/Tab focus  f zoom  s split  x close view  Esc/Enter back  Ctrl+G lock  Ctrl+T tab  Ctrl+O session  Alt+h/l/j/k move focus  Alt+i/o move tab"},
 		{ModeTab, "n new tab  h/←/k/↑ previous tab  l/→/j/↓ next tab  1-9 go to tab  Esc/Enter back  " +
-			"Ctrl+G lock  Ctrl+P pane  Ctrl+O commands"},
+			"Ctrl+G lock  Ctrl+P pane  Ctrl+O session  Alt+h/l/j/k move focus  Alt+i/o move tab"},
 	} {
 		if got := barHints(km, tc.mode); got != tc.hint {
 			t.Errorf("%s mode bar:\n got %q\nwant %q", tc.mode, got, tc.hint)
 		}
 	}
-	// The keys the owner's zellij setup leaves to programs stay with them.
-	for _, k := range []string{"ctrl-s", "ctrl-b", "ctrl-q", "ctrl-n"} {
+	// The keys the owner's zellij setup leaves to programs stay with them: Ctrl+N and Ctrl+H
+	// (resize and move modes gff does not have), Ctrl+S, Ctrl+B, Ctrl+Q, and Alt+F and Alt+B for
+	// the shell's word moves.
+	for _, k := range []string{"ctrl-s", "ctrl-b", "ctrl-q", "ctrl-n", "alt-f", "alt-b"} {
 		if a := km.lookup(ModeNormal, k); a != "" {
 			t.Errorf("normal mode takes %s for %s", k, a)
 		}
@@ -62,13 +64,24 @@ func TestDefaultKeymap(t *testing.T) {
 			a(actPrevTab, "h"), a(actPrevTab, "k"), a(actNextTab, "j")}, ModeTab},
 		{"new tab ends tab mode", "\x14nx", []keyEvent{a(actTabMode, "ctrl-t"), a(actNewTab, "n"), d("x")}, ModeNormal},
 		{"a digit ends tab mode", "\x147x", []keyEvent{a(actTabMode, "ctrl-t"), a(actTabN+"7", "7"), d("x")}, ModeNormal},
-		{"command mode takes one key", "\x0fdx", []keyEvent{a(actPrefix, "ctrl-o"), a(actDetach, "d"), d("x")}, ModeNormal},
+		{"session mode takes one key", "\x0fdx", []keyEvent{a(actSession, "ctrl-o"), a(actDetach, "d"), d("x")}, ModeNormal},
 		{"leaders switch modes", "\x10\x14\x0f\x10", []keyEvent{a(actPaneMode, "ctrl-p"), a(actTabMode, "ctrl-t"),
-			a(actPrefix, "ctrl-o"), a(actPaneMode, "ctrl-p")}, ModePane},
+			a(actSession, "ctrl-o"), a(actPaneMode, "ctrl-p")}, ModePane},
 		{"lock from pane mode", "\x10\x07x\x10\x07", []keyEvent{a(actPaneMode, "ctrl-p"), a(actLock, "ctrl-g"), d("x\x10"),
 			a(actUnlock, "ctrl-g")}, ModeNormal},
+		{"alt keys in normal mode", "\x1bh\x1bl\x1bj\x1bk\x1bi\x1bo", []keyEvent{a(actFocusLeft, "alt-h"), a(actFocusRight, "alt-l"),
+			a(actFocusDown, "alt-j"), a(actFocusUp, "alt-k"), a(actMoveTabLeft, "alt-i"), a(actMoveTabRight, "alt-o")}, ModeNormal},
+		{"alt-f and alt-b reach the shell", "\x1bf\x1bb\x1b", []keyEvent{d("\x1bf\x1bb\x1b")}, ModeNormal},
+		{"kitty and modifyOtherKeys alt", "\x1b[104;3u\x1b[27;3;108~", []keyEvent{a(actFocusLeft, "alt-h"), a(actFocusRight, "alt-l")}, ModeNormal},
+		{"kitty alt release dropped", "\x1b[104;3u\x1b[104;3:3ua", []keyEvent{a(actFocusLeft, "alt-h"), d("a")}, ModeNormal},
+		{"kitty alt shift passes", "\x1b[104;4u", []keyEvent{d("\x1b[104;4u")}, ModeNormal},
+		{"alt keys keep pane mode", "\x10\x1bl\x1b[107;3ux", []keyEvent{a(actPaneMode, "ctrl-p"), a(actFocusRight, "alt-l"),
+			a(actFocusUp, "alt-k"), a(actCloseView, "x")}, ModeNormal},
+		{"an unbound alt key in pane mode is Esc", "\x10\x1bfx", []keyEvent{a(actPaneMode, "ctrl-p"), a(actBack, "esc"), d("fx")}, ModeNormal},
+		{"kitty alt f in tab mode is no key", "\x14\x1b[102;3u", []keyEvent{a(actTabMode, "ctrl-t")}, ModeTab},
+		{"locked passes alt keys", "\x07\x1bh\x1b[104;3u\x07", []keyEvent{a(actLock, "ctrl-g"), d("\x1bh\x1b[104;3u"), a(actUnlock, "ctrl-g")}, ModeNormal},
 		{"a leader twice sends it", "\x10\x10\x14\x14\x0f\x0fx", []keyEvent{a(actPaneMode, "ctrl-p"), a(actSend, "ctrl-p"),
-			a(actTabMode, "ctrl-t"), a(actSend, "ctrl-t"), a(actPrefix, "ctrl-o"), a(actSend, "ctrl-o"), d("x")}, ModeNormal},
+			a(actTabMode, "ctrl-t"), a(actSend, "ctrl-t"), a(actSession, "ctrl-o"), a(actSend, "ctrl-o"), d("x")}, ModeNormal},
 	} {
 		k := newKeyReader(km)
 		if got := k.feed([]byte(tc.in)); !reflect.DeepEqual(got, tc.want) || k.mode != tc.mode {
@@ -77,7 +90,7 @@ func TestDefaultKeymap(t *testing.T) {
 	}
 }
 
-// [keys.shared] binds a key in normal, prefix, pane and tab mode at once, but a mode key not
+// [keys.shared] binds a key in normal, session, pane and tab mode at once, but a mode key not
 // in the mode it enters; a mode's own table wins over it. clear-defaults in [keys] or in a
 // mode's table drops the shipped bindings there, as zellij's clear-defaults; [keys.shared]
 // still applies to a cleared mode.
@@ -112,7 +125,7 @@ clear-defaults = true
 		t.Errorf("problems %q, want 3", problems)
 	}
 	km := s.Keymap
-	for _, m := range []Mode{ModeNormal, ModePrefix, ModeTab} {
+	for _, m := range []Mode{ModeNormal, ModeSession, ModeTab} {
 		if a := km.lookup(m, "ctrl-a"); a != actPaneMode {
 			t.Errorf("%s ctrl-a = %q, want pane-mode", m, a)
 		}
@@ -127,7 +140,7 @@ clear-defaults = true
 	if got := barHints(km, ModePane); got != "Ctrl+Y tab  Ctrl+A back  z zoom" {
 		t.Errorf("pane bar %q", got)
 	}
-	if got := barHints(km, ModeNormal); got != "Ctrl+G lock  Ctrl+T/Ctrl+Y tab  Ctrl+O commands  Ctrl+A pane" {
+	if got := barHints(km, ModeNormal); got != "Ctrl+G lock  Ctrl+T/Y tab  Ctrl+O session  Alt+h/l/j/k move focus  Alt+i/o move tab  Ctrl+A pane" {
 		t.Errorf("normal bar %q", got)
 	}
 	// Ctrl+Y enters tab mode and, pressed again there, sends itself; Ctrl+A enters pane mode;
@@ -140,12 +153,12 @@ clear-defaults = true
 	}
 
 	// [keys] clear-defaults drops every shipped key; the old spelling says what to write.
-	s, problems, _ = LoadSettings(writeConfig(t, "[keys]\nclear-defaults = true\n[keys.shared]\n\"ctrl-a\" = \"prefix\"\n[keys.prefix]\nd = \"detach\"\n[keys.sidebar]\nesc = \"back\"\n"))
+	s, problems, _ = LoadSettings(writeConfig(t, "[keys]\nclear-defaults = true\n[keys.shared]\n\"ctrl-a\" = \"session-mode\"\n[keys.session]\nd = \"detach\"\n[keys.sidebar]\nesc = \"back\"\n"))
 	if len(problems) != 0 {
 		t.Errorf("problems %q", problems)
 	}
-	got := barHints(s.Keymap, ModeNormal) + " | " + barHints(s.Keymap, ModePrefix) + " | " + barHints(s.Keymap, ModeTab)
-	if got != "Ctrl+A commands | d detach | Ctrl+A commands" {
+	got := barHints(s.Keymap, ModeNormal) + " | " + barHints(s.Keymap, ModeSession) + " | " + barHints(s.Keymap, ModeTab)
+	if got != "Ctrl+A session | d detach | Ctrl+A session" {
 		t.Errorf("cleared keymap %q", got)
 	}
 	s, problems, _ = LoadSettings(writeConfig(t, "[keys]\ndefaults = false\n"))

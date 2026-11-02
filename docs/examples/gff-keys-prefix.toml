@@ -1,8 +1,9 @@
 # Sample gff keymap: one prefix key, tmux style (docs/specs/gff-client.md 15.5, option B).
 #
 # gff's default keymap is modes with Ctrl leaders, as zellij's: Ctrl+G lock, Ctrl+P pane mode,
-# Ctrl+T tab mode, Ctrl+O command mode. This file replaces it with one prefix key, Ctrl+\, that
-# leads to every command and takes no other Ctrl key from programs. To use it, copy the tables
+# Ctrl+T tab mode, Ctrl+O session mode, and Alt+h/j/k/l and Alt+i/o. This file replaces it with
+# one prefix key, Ctrl+\, that leads to every command (session mode is the prefix's mode here)
+# and takes no other Ctrl or Alt key from programs. To use it, copy the tables
 # below into gff's config file (-config, else $GFF_CONFIG, else gff/config.toml in your config
 # directory), beside any [[hosts]] tables. `gff -prefix ctrl-<key>` moves the prefix.
 #
@@ -18,12 +19,12 @@
 clear-defaults = true # these tables are the whole keymap
 
 [keys.normal]
-'ctrl-\' = "prefix"
+'ctrl-\' = "session-mode"
 
 [keys.locked]
 "ctrl-g" = "unlock"
 
-[keys.prefix]
+[keys.session]
 w = "sidebar"
 g = "board"
 p = "pane-mode"

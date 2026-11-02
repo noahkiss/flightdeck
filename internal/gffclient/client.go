@@ -92,7 +92,7 @@ type Config struct {
 	Logf func(format string, args ...any)
 }
 
-// ErrDetached is Run's result when the owner detaches with the prefix and d.
+// ErrDetached is Run's result when the owner detaches (session mode, then d).
 var ErrDetached = errors.New("gff: detached; the programs keep running")
 
 // hostState is the client's side of one host: its calls queue and whether it is online.
@@ -269,7 +269,7 @@ func Run(ctx context.Context, cfg Config) (err error) {
 	}
 
 	// Views open their streams off the loop, so the loop reads keys while they open: the
-	// prefix and d end a start that hangs with the host raw, and keys typed meanwhile go to the
+	// session leader and d end a start that hangs with the host raw, and keys typed meanwhile go to the
 	// focused pane (typeKeys sends before the first snapshot).
 	input := make(chan []byte)
 	inputErr := make(chan error, 1)
@@ -494,7 +494,7 @@ func (c *client) openStream(v *view) {
 }
 
 // openPane opens a pane's stream, and gives up when ctx ends even if the open has not
-// returned: a hab that hangs must not hold Run's return (the prefix and d while opening). A
+// returned: a hab that hangs must not hold Run's return (the session leader and d while opening). A
 // stream that opens after that is closed.
 func openPane(ctx context.Context, conn *habconn.Conn, pane string, opts habconn.PaneOptions) (*habconn.PaneStream, error) {
 	type result struct {
@@ -699,6 +699,35 @@ func (c *client) focused() *view {
 	return t.views[min(t.focus, len(t.views)-1)]
 }
 
+// moveFocus moves focus one view along the tab's split, as zellij's Alt keys: left and right
+// in side-by-side views, up and down in stacked ones. Left or right with no view that way goes
+// to the previous or next tab in the workspace; up and down stop at the edge.
+func (c *client) moveFocus(act string) {
+	t := c.tab()
+	horizontal := act == actFocusLeft || act == actFocusRight
+	step := 1
+	if act == actFocusLeft || act == actFocusUp {
+		step = -1
+	}
+	if n := len(t.views); n > 0 && horizontal == (t.split == SplitColumns) {
+		if i := min(t.focus, n-1) + step; i >= 0 && i < n {
+			t.focus = i
+			if t.zoom {
+				c.layoutChanged()
+			}
+			c.ui.focusChanged()
+			return
+		}
+	}
+	if horizontal && c.ws {
+		if step < 0 {
+			c.ui.command(actPrevTab)
+		} else {
+			c.ui.command(actNextTab)
+		}
+	}
+}
+
 // command runs one action of the keymap.
 func (c *client) command(ev keyEvent) error {
 	switch ev.act {
@@ -707,7 +736,12 @@ func (c *client) command(ev keyEvent) error {
 	case actSend:
 		if b, ok := ctrlByte(ev.key); ok {
 			c.typeKeys([]byte{b})
+		} else if a, ok := strings.CutPrefix(ev.key, "alt-"); ok {
+			c.typeKeys([]byte("\x1b" + a))
 		}
+		return nil
+	case actFocusLeft, actFocusRight, actFocusUp, actFocusDown:
+		c.moveFocus(ev.act)
 		return nil
 	}
 	if c.ws && c.ui.command(ev.act) {
@@ -1115,11 +1149,11 @@ func (c *client) frameText(v *view, s slot) string {
 
 // modeNote names the key reader's mode and its way back for the focused frame row outside the
 // workspace, where no bar shows them: "pane · Esc/Enter back", "locked · Ctrl+G unlock". It is
-// "" in normal and prefix mode, and in the workspace. While it is not "", a pane alone is
+// "" in normal and session mode, and in the workspace. While it is not "", a pane alone is
 // composed under its frame row rather than passed through, so the mode shows.
 func (c *client) modeNote() string {
 	m := c.keys.mode
-	if c.ws || m == ModeNormal || m == ModePrefix {
+	if c.ws || m == ModeNormal || m == ModeSession {
 		return ""
 	}
 	parts := []string{string(m)}

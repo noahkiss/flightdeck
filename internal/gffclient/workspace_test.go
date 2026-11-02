@@ -17,7 +17,7 @@ import (
 // server and structure store, agent states the test sets) and read the fake host terminal's
 // screen. Every wait is on the screen or the hab reaching a state, never on time alone.
 
-// The default keymap's leaders: Ctrl+O the command mode, Ctrl+T tab mode.
+// The default keymap's leaders: Ctrl+O session mode, Ctrl+T tab mode.
 const (
 	cmdKey = "\x0f"
 	tabKey = "\x14"

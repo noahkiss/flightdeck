@@ -14,7 +14,7 @@ import (
 func TestHostProblems(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "config.toml")
 	body := "[[hosts]]\nlabel = \"a\"\nendpoints = [\"/tmp/a.sock\"]\ncolour = \"red\"\n\n" +
-		"[keys.prefix]\nz = \"zoom\"\n\n[bar]\nclock = \"\"\n\n[barn]\nx = 1\n"
+		"[keys.session]\nz = \"zoom\"\n\n[bar]\nclock = \"\"\n\n[barn]\nx = 1\n"
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}

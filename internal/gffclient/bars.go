@@ -229,7 +229,7 @@ func (u *workspaceUI) barText(w int) string {
 	m := u.barMode()
 	lead := ""
 	switch m {
-	case ModePrefix, ModePane, ModeTab, ModeLocked:
+	case ModeSession, ModePane, ModeTab, ModeLocked:
 		lead = " " + string(m) + " ·"
 	}
 	return lead + fitHints(u.c.cfg.Keymap.hints(m), w-len([]rune(lead)), u.c.cfg.Bar.MaxHints)

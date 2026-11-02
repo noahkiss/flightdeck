@@ -52,7 +52,7 @@ func TestKeymapNoTraps(t *testing.T) {
 	}
 
 	// A mode the keymap does not reach is no trap, and the shipped keymap has none.
-	p = writeConfig(t, "[keys]\nclear-defaults = true\n[keys.normal]\n\"ctrl-a\" = \"prefix\"\n[keys.prefix]\nd = \"detach\"\n[keys.sidebar]\nq = \"back\"\n")
+	p = writeConfig(t, "[keys]\nclear-defaults = true\n[keys.normal]\n\"ctrl-a\" = \"session-mode\"\n[keys.session]\nd = \"detach\"\n[keys.sidebar]\nq = \"back\"\n")
 	if _, problems, _ = LoadSettings(p); len(problems) != 0 {
 		t.Errorf("problems for modes not reached: %q", problems)
 	}
@@ -79,13 +79,13 @@ func TestEscLeavesWhenUnbound(t *testing.T) {
 // The key that entered a command mode, pressed again, sends itself, so a moved prefix and its
 // send key cannot drift apart (S3); the old prefix sends nothing.
 func TestPrefixSendFollowsTheKey(t *testing.T) {
-	p := writeConfig(t, "[keys.normal]\n\"ctrl-o\" = \"none\"\n\"ctrl-a\" = \"prefix\"\n")
+	p := writeConfig(t, "[keys.normal]\n\"ctrl-o\" = \"none\"\n\"ctrl-a\" = \"session-mode\"\n")
 	s, problems, _ := LoadSettings(p)
 	if len(problems) != 0 {
 		t.Errorf("problems %q", problems)
 	}
 	evs := newKeyReader(s.Keymap).feed([]byte("\x01\x01\x01\x0fx"))
-	want := []keyEvent{{act: actPrefix, key: "ctrl-a"}, {act: actSend, key: "ctrl-a"}, {act: actPrefix, key: "ctrl-a"},
+	want := []keyEvent{{act: actSession, key: "ctrl-a"}, {act: actSend, key: "ctrl-a"}, {act: actSession, key: "ctrl-a"},
 		{data: []byte("x")}}
 	if !reflect.DeepEqual(evs, want) {
 		t.Errorf("got %q, want %q", evs, want)
@@ -97,10 +97,10 @@ func TestPrefixSendFollowsTheKey(t *testing.T) {
 	if !hasProblem(problems, `-prefix ctrl-a replaces [keys.normal] ctrl-a = "zoom"`) {
 		t.Errorf("problems %q", problems)
 	}
-	if a, o := s.Keymap.lookup(ModeNormal, "ctrl-a"), s.Keymap.lookup(ModeNormal, "ctrl-o"); a != actPrefix || o != "" {
+	if a, o := s.Keymap.lookup(ModeNormal, "ctrl-a"), s.Keymap.lookup(ModeNormal, "ctrl-o"); a != actSession || o != "" {
 		t.Errorf("normal ctrl-a = %q, ctrl-o = %q", a, o)
 	}
-	if h := barHints(s.Keymap, ModeNormal); h != "Ctrl+G lock  Ctrl+P pane  Ctrl+T tab  Ctrl+A commands" {
+	if h := barHints(s.Keymap, ModeNormal); h != "Ctrl+G lock  Ctrl+P pane  Ctrl+T tab  Ctrl+A session  Alt+h/l/j/k move focus  Alt+i/o move tab" {
 		t.Errorf("normal hints %q", h)
 	}
 }
@@ -108,7 +108,7 @@ func TestPrefixSendFollowsTheKey(t *testing.T) {
 // A value of the wrong type is a problem on its line, and the rest of its table and the file
 // still load (S4).
 func TestConfigValueTypes(t *testing.T) {
-	p := writeConfig(t, `[keys.prefix]
+	p := writeConfig(t, `[keys.session]
 z = 1
 q = "detach"
 
@@ -124,7 +124,7 @@ colour = "red"
 		t.Fatalf("one bad value failed the file: %v", err)
 	}
 	for _, want := range []string{
-		p + `:2: [keys.prefix] z: want an action in quotes`,
+		p + `:2: [keys.session] z: want an action in quotes`,
 		p + `:6: [bar] max_hints: want a number`,
 		p + `:8: [bar] usage: want true or false`,
 		p + `:9: [bar] info: want a list`,
@@ -134,7 +134,7 @@ colour = "red"
 			t.Errorf("no problem %q in %q", want, problems)
 		}
 	}
-	if s.Keymap.lookup(ModePrefix, "q") != actDetach {
+	if s.Keymap.lookup(ModeSession, "q") != actDetach {
 		t.Error("q = detach beside a bad line was lost")
 	}
 	if s.Bar.Clock != "15:04:05" || s.Bar.MaxHints != 0 || !s.Bar.Usage || len(s.Bar.Info) != len(infoItems) {
@@ -149,9 +149,9 @@ colour = "red"
 
 // Problems keep their line when a table header has a comment after it.
 func TestKeyLineHeaderComment(t *testing.T) {
-	p := writeConfig(t, "[keys.prefix] # mine\nk = \"launch\"\n[ bar ]   \nclock = 1\n")
+	p := writeConfig(t, "[keys.session] # mine\nk = \"launch\"\n[ bar ]   \nclock = 1\n")
 	_, problems, _ := LoadSettings(p)
-	for _, want := range []string{p + `:2: [keys.prefix] k: unknown action`, p + `:4: [bar] clock: want`} {
+	for _, want := range []string{p + `:2: [keys.session] k: unknown action`, p + `:4: [bar] clock: want`} {
 		if !hasProblem(problems, want) {
 			t.Errorf("no problem %q in %q", want, problems)
 		}
@@ -162,13 +162,13 @@ func TestKeyLineHeaderComment(t *testing.T) {
 // reader gives them in.
 func TestConfigLaterLineWins(t *testing.T) {
 	for range 20 {
-		p := writeConfig(t, "[keys.prefix]\nescape = \"zoom\"\nesc = \"split\"\nreturn = \"fit\"\nenter = \"redraw\"\n")
+		p := writeConfig(t, "[keys.session]\nescape = \"zoom\"\nesc = \"split\"\nreturn = \"fit\"\nenter = \"redraw\"\n")
 		s, problems, _ := LoadSettings(p)
-		if !hasProblem(problems, p+":3: [keys.prefix] esc: the key is bound twice; this later line wins") ||
-			!hasProblem(problems, p+":5: [keys.prefix] enter: the key is bound twice") {
+		if !hasProblem(problems, p+":3: [keys.session] esc: the key is bound twice; this later line wins") ||
+			!hasProblem(problems, p+":5: [keys.session] enter: the key is bound twice") {
 			t.Fatalf("problems %q", problems)
 		}
-		if a, b := s.Keymap.lookup(ModePrefix, "esc"), s.Keymap.lookup(ModePrefix, "enter"); a != actSplit || b != actRedraw {
+		if a, b := s.Keymap.lookup(ModeSession, "esc"), s.Keymap.lookup(ModeSession, "enter"); a != actSplit || b != actRedraw {
 			t.Fatalf("esc = %q, enter = %q: the earlier line won", a, b)
 		}
 	}
@@ -176,7 +176,7 @@ func TestConfigLaterLineWins(t *testing.T) {
 
 // Locked mode takes only unlock, and send never shows on the bar.
 func TestConfigLockedAndSend(t *testing.T) {
-	p := writeConfig(t, "[keys.locked]\n\"ctrl-a\" = \"zoom\"\n[keys.prefix]\n\"ctrl-a\" = \"send\"\n")
+	p := writeConfig(t, "[keys.locked]\n\"ctrl-a\" = \"zoom\"\n[keys.session]\n\"ctrl-a\" = \"send\"\n")
 	s, problems, _ := LoadSettings(p)
 	if !hasProblem(problems, p+`:2: [keys.locked] ctrl-a: action "zoom" does not work in locked mode`) {
 		t.Errorf("problems %q", problems)
@@ -184,10 +184,10 @@ func TestConfigLockedAndSend(t *testing.T) {
 	if s.Keymap.lookup(ModeLocked, "ctrl-a") != "" {
 		t.Error("locked mode took zoom")
 	}
-	if s.Keymap.lookup(ModePrefix, "ctrl-a") != actSend {
+	if s.Keymap.lookup(ModeSession, "ctrl-a") != actSend {
 		t.Fatal("send not bound")
 	}
-	for _, h := range s.Keymap.hints(ModePrefix) {
+	for _, h := range s.Keymap.hints(ModeSession) {
 		if h.label == actionLabels[actSend] {
 			t.Errorf("send shows on the bar: %v", h)
 		}

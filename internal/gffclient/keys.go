@@ -46,7 +46,7 @@ var (
 
 // keyReader splits host input into pane bytes and actions, following the keymap's modes
 // (gff-client.md 8.1). In normal and locked mode it watches for the mode's Ctrl keys and passes
-// the rest; in prefix, pane and tab mode every key is a command key. It knows a Ctrl key in its
+// the rest; in session, pane and tab mode every key is a command key. It knows a Ctrl key in its
 // legacy form (one control byte), in the kitty keyboard protocol's form (CSI code;5u) and in
 // xterm's modifyOtherKeys form (CSI 27;5;code~). A host sends those forms while a pane in the
 // pass-through view has that protocol or mode on.
@@ -57,6 +57,7 @@ type keyReader struct {
 	km     *Keymap
 	mode   Mode
 	chords map[byte]bool // the Ctrl keys of the current chord mode
+	alts   map[byte]bool // the Alt keys of the current chord mode, by their character
 	held   []byte        // the start of a possible key sequence, cut at a read boundary
 	entry  string        // the key that entered the current command mode
 	paste  bool          // inside a bracketed paste
@@ -79,6 +80,7 @@ func (k *keyReader) setMode(m Mode) {
 	k.mode = m
 	if m.chord() {
 		k.chords = k.km.chords(m)
+		k.alts = k.km.alts(m)
 	}
 }
 
@@ -105,8 +107,8 @@ func (k *keyReader) act(name string) (keyEvent, bool) {
 	}
 	next := k.mode
 	switch {
-	case a == actPrefix:
-		next = ModePrefix
+	case a == actSession:
+		next = ModeSession
 	case a == actPaneMode:
 		next = ModePane
 	case a == actTabMode:
@@ -119,7 +121,7 @@ func (k *keyReader) act(name string) (keyEvent, bool) {
 		next = ModeNormal // a way out of a mode always works
 	case k.mode.sticky() && a != "" && !stays(a):
 		next = ModeNormal // as zellij: a command ends pane or tab mode, a focus or tab move does not
-	case k.mode == ModePrefix:
+	case k.mode == ModeSession:
 		next = ModeNormal // one key, then back; an unbound key cancels
 	}
 	if next != k.mode && next.command() {
@@ -171,6 +173,16 @@ func (k *keyReader) feed(p []byte) []keyEvent {
 			continue
 		}
 		if k.mode.command() {
+			if c, ok := altByte(p[i:]); ok && k.km.lookup(k.mode, altName(c)) != "" {
+				// ESC and a character: an Alt key the mode binds. Unbound, ESC stays a lone Esc.
+				k.take(int(c))
+				if ev, ok := k.act(altName(c)); ok {
+					evs = append(evs, ev)
+				}
+				i += 2
+				start = i
+				continue
+			}
 			name, id, n, ok := commandKey(p[i:])
 			if !ok {
 				return hold(i)
@@ -197,13 +209,23 @@ func (k *keyReader) feed(p []byte) []keyEvent {
 			start = i
 			continue
 		}
+		if c, ok := altByte(p[i:]); ok && k.alts[c] {
+			flush(i)
+			k.take(int(c))
+			if ev, ok := k.act(altName(c)); ok {
+				evs = append(evs, ev)
+			}
+			i += 2
+			start = i
+			continue
+		}
 		if p[i] == 0x1b {
-			n, b, m := k.chordSeq(p[i:])
+			n, name, id, m := k.chordSeq(p[i:])
 			switch m {
 			case seqChord:
 				flush(i)
-				k.take(chordCode(b))
-				if ev, ok := k.act(ctrlName(b)); ok {
+				k.take(id)
+				if ev, ok := k.act(name); ok {
 					evs = append(evs, ev)
 				}
 				i += n
@@ -260,37 +282,54 @@ func chordCode(b byte) int {
 	return int(b | 0x60)
 }
 
+// altByte reads an Alt key in its legacy form at the start of p: ESC and one printable ASCII
+// character other than [ and O, which start CSI and SS3 sequences.
+func altByte(p []byte) (byte, bool) {
+	if len(p) < 2 || p[0] != 0x1b {
+		return 0, false
+	}
+	c := p[1]
+	return c, c > 0x20 && c < 0x7f && c != '[' && c != 'O'
+}
+
+// altName is the canonical name of the Alt key of character c: alt-h.
+func altName(c byte) string { return "alt-" + string(rune(c)) }
+
 // chordSeq matches a sequence at the start of p, which starts with ESC: one of the mode's Ctrl
-// keys in the kitty form CSI code;5u (an event type may follow the 5: :1 press, :2 repeat, :3
-// release) or the modifyOtherKeys form CSI 27;5;code~; or the release of a key whose press the
-// reader took. Caps Lock and Num Lock in the modifiers do not matter. It returns the Ctrl byte
-// it matched. The start of a bracketed paste marker is partial.
-func (k *keyReader) chordSeq(p []byte) (int, byte, seqMatch) {
+// or Alt keys in the kitty form CSI code;5u or code;3u (an event type may follow the
+// modifiers: :1 press, :2 repeat, :3 release) or the modifyOtherKeys form CSI 27;5;code~ or
+// 27;3;code~; or the release of a key whose press the reader took. Caps Lock and Num Lock in
+// the modifiers do not matter. It returns the key's name and kitty id. The start of a
+// bracketed paste marker is partial.
+func (k *keyReader) chordSeq(p []byte) (int, string, int, seqMatch) {
 	if len(p) < 2 || p[1] != '[' {
-		return 0, 0, seqNo // a lone Esc is a key of its own; it is never held
+		return 0, "", 0, seqNo // a lone Esc is a key of its own; it is never held
 	}
 	n, complete := csiEnd(p)
 	if n < 0 {
-		return 0, 0, seqNo
+		return 0, "", 0, seqNo
 	}
 	if !complete {
 		if len(p) >= maxKeySeq {
-			return 0, 0, seqNo
+			return 0, "", 0, seqNo
 		}
 		if bytes.HasPrefix(pasteStart, p) {
-			return 0, 0, seqPartial
+			return 0, "", 0, seqPartial
 		}
 		f0, rest, more := strings.Cut(string(p[2:]), ";")
 		f0, _, _ = strings.Cut(f0, ":")
 		if strings.ContainsAny(rest, "<=>?") {
-			return 0, 0, seqNo
+			return 0, "", 0, seqNo
 		}
 		var codes []string
-		if len(k.chords) > 0 {
+		if len(k.chords)+len(k.alts) > 0 {
 			codes = append(codes, "27")
 		}
 		for b := range k.chords {
 			codes = append(codes, strconv.Itoa(chordCode(b)))
+		}
+		for c := range k.alts {
+			codes = append(codes, strconv.Itoa(int(c)))
 		}
 		for id := range k.taken {
 			if id > 0 {
@@ -301,32 +340,42 @@ func (k *keyReader) chordSeq(p []byte) (int, byte, seqMatch) {
 		}
 		for _, code := range codes {
 			if (!more && strings.HasPrefix(code, f0)) || (more && f0 == code) {
-				return 0, 0, seqPartial
+				return 0, "", 0, seqPartial
 			}
 		}
-		return 0, 0, seqNo
+		return 0, "", 0, seqNo
 	}
 	if id, release := keyRelease(p[:n]); release && k.taken[id] {
 		delete(k.taken, id)
-		return n, 0, seqChordRelease
+		return n, "", 0, seqChordRelease
 	}
-	if len(k.chords) == 0 {
-		return 0, 0, seqNo
+	if len(k.chords)+len(k.alts) == 0 {
+		return 0, "", 0, seqNo
 	}
 	code, mods, event, ok := decodeKey(p[:n])
-	if !ok || !ctrlOnly(mods) {
-		return 0, 0, seqNo
+	if !ok {
+		return 0, "", 0, seqNo
 	}
-	for b := range k.chords {
-		if chordCode(b) != code {
-			continue
+	name := ""
+	switch {
+	case ctrlOnly(mods):
+		for b := range k.chords {
+			if chordCode(b) == code {
+				name = ctrlName(b)
+			}
 		}
-		if event == 3 {
-			return n, b, seqChordRelease
+	case altOnly(mods):
+		if code > 0 && code < 0x80 && k.alts[byte(code)] {
+			name = altName(byte(code))
 		}
-		return n, b, seqChord
 	}
-	return 0, 0, seqNo
+	switch {
+	case name == "":
+		return 0, "", 0, seqNo
+	case event == 3:
+		return n, name, code, seqChordRelease
+	}
+	return n, name, code, seqChord
 }
 
 // csiEnd finds the end of the CSI sequence at the start of p (ESC [ ...). It returns the
@@ -438,6 +487,9 @@ func decodeKeyFull(seq []byte) (kittyKey, bool) {
 // ctrlOnly reports whether mods is Ctrl and no other modifier, Caps Lock and Num Lock aside.
 func ctrlOnly(mods int) bool { return (mods-1)&^(64|128) == 4 }
 
+// altOnly reports whether mods is Alt and no other modifier, Caps Lock and Num Lock aside.
+func altOnly(mods int) bool { return (mods-1)&^(64|128) == 2 }
+
 // Kitty's code points for keys that are no command alone: Shift, Ctrl, Alt, Super, Hyper,
 // Meta (left and right), ISO Level 3 (AltGr) and Level 5 shift; and the lock keys.
 func modifierKey(code int) bool {
@@ -496,6 +548,12 @@ func commandKey(p []byte) (name string, id, n int, ok bool) {
 	}
 	code := k.code
 	switch mods := k.mods - 1; {
+	case mods&2 != 0:
+		// Alt: alt-<character> alone; Alt with Ctrl or Shift names no key.
+		if mods&(4|1) == 0 && code > 0x20 && code < 0x7f && code != '[' && code != 'O' {
+			return altName(byte(code)), id, n, true
+		}
+		return "", id, n, true
 	case mods&4 != 0:
 		if code >= 0x40 && code < 0x80 {
 			code &= 0x1f // a Ctrl key: its legacy byte
