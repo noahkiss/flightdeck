@@ -578,12 +578,15 @@ change: `hand_off` uses `catalog.list`, `channel.send` and `channel.status`; `fi
   name the host also gives another project counts for neither: two projects that share a name
   never mix. `host` keeps one host. A project the catalog does not list falls back to the
   agents' project name.
-- **Picking.** In order: the agent the user named (`agent`: a session name or `host/name`);
-  else an online agent that takes a message now (`idle`, `done` or `error`); else an online busy
-  one (`working`, `blocked`); else one on an offline host; within each, the latest `since`.
-  The answer names the pick, says why, and lists the other candidates. Design call: no "two
-  equal candidates, ask" step. Two agents with the same state and the same `since` to the
-  second are rare, and the other candidates are listed, so Capcom can still ask.
+- **A named agent.** `agent` is a session name or `host/name`. A bare name that runs on two or
+  more hosts of the project sends nothing and lists the full addresses, as `gff-hab send` does
+  for a bare name (`mesh.md` 6.5). A name that runs nowhere on the project lists the agents
+  that do.
+- **Picking, with no name.** By a fixed rule: an online agent that takes a message now
+  (`idle`, `done` or `error`); else an online busy one (`working`, `blocked`); else one on an
+  offline host; within each, the latest `since`, compared as times (an unparsable one last).
+  The answer names the pick, says why, and lists the other candidates, so the user can
+  redirect it. There is no "equal candidates, ask" step (lead's call, 2026-11-01; 3.2).
 - **Sending.** `channel.send` to the agent's address (`label/name` on a peer, the bare name on
   this hab), through the pane route, so the calling pane's session is the sender and the
   target sees the agent envelope with that address (`mesh.md` 6.5). Outside a pane (`gff-hab

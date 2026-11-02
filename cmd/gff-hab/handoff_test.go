@@ -220,6 +220,25 @@ func TestHandOffSkipsSelf(t *testing.T) {
 	}
 }
 
+// TestHandOffNamedTwice: a bare agent name that runs on two hosts sends nothing and lists both
+// full addresses; host/name picks one.
+func TestHandOffNamedTwice(t *testing.T) {
+	f := &fakeChannelHab{fakeReadHab: twoHosts()}
+	cl := &f.catalog
+	withHostProjects(cl)
+	cl.Hosts[1].Catalog.Agents = append(cl.Hosts[1].Catalog.Agents,
+		api.CatalogAgent{Session: "app-ui", Harness: "codex", Project: "app", State: api.AgentStatusIdle, Since: "2026-03-01T09:00:00Z"})
+	res, text, err := runAction(t, f, "hand_off", toolArgs{"project": "app", "agent": "app-ui", "message": "x"})
+	if err != nil || res.(handOffResult).Sent || len(f.sends) != 0 ||
+		!strings.Contains(text, "app-ui runs on 2 hosts: nothing was sent. Name one of: host-a/app-ui, devbox/app-ui") {
+		t.Fatalf("bare name on two hosts: %v %v\n%s", err, f.sends, text)
+	}
+	res, _, err = runAction(t, f, "hand_off", toolArgs{"project": "app", "agent": "devbox/app-ui", "message": "x"})
+	if err != nil || len(f.sends) != 1 || f.sends[0].To != "devbox/app-ui" || res.(handOffResult).Why != "the agent the user named" {
+		t.Fatalf("host/name: %v %v", err, f.sends)
+	}
+}
+
 // TestHandOffOutsidePane: through the control socket, where no session is the caller, hand_off
 // refuses at once with a clear message and reads nothing.
 func TestHandOffOutsidePane(t *testing.T) {

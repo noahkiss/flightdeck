@@ -243,6 +243,20 @@ func runHandOff(ctx context.Context, c caller, a toolArgs) (any, string, error) 
 		return res, b.String(), nil
 	}
 	named := a.str("agent")
+	if named != "" && !strings.Contains(named, "/") {
+		// A bare name on two hosts is refused with the full addresses, as gff-hab send does
+		// (mesh.md 6.5); only a name with no match falls to the list below.
+		var same []string
+		for _, t := range ts {
+			if t.Session == named {
+				same = append(same, t.Host+"/"+t.Session)
+			}
+		}
+		if len(same) > 1 {
+			fmt.Fprintf(&b, "%s runs on %d hosts: nothing was sent. Name one of: %s\n", named, len(same), strings.Join(same, ", "))
+			return res, b.String(), nil
+		}
+	}
 	var (
 		t    handOffTarget
 		why  string
