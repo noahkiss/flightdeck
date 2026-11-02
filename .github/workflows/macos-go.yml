@@ -4,6 +4,8 @@
 # nightly run and a dispatch add core tests 2 and 13 under launchd (scripts/service-check.sh); a
 # scheduled run is skipped when main has not moved since the last passing nightly run. The paths
 # include the parser (internal/vt) and the build pins (Makefile, go.mod, go.sum, mise.toml).
+# The image's /bin/bash is 3.2 and it has no Homebrew bash, so the job installs one: the marked
+# shell tests need bash 4.4 (PS0), and with GFF_TEST_BASH set they fail rather than skip.
 name: macOS Go
 
 on:
@@ -96,6 +98,7 @@ jobs:
       cache-key: ${{ needs.plan.outputs.ghostty_key }}-macOS-ARM64-baseline
       cancel-in-progress: ${{ github.event_name != 'schedule' && github.ref != 'refs/heads/main' }}
       commands: |
+        HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install bash && export GFF_TEST_BASH="$(brew --prefix)/bin/bash"
         GFF_TEST_TIMEOUT_SCALE=3 go test -race -count=3 ./internal/holder/... ./internal/holderproto/... ./internal/holderclient/... ./internal/holderreg/... ./internal/link/... ./internal/service/... ./internal/grants/... ./cmd/gff-hab-holder/...
         GFF_TEST_TIMEOUT_SCALE=3 make test
         ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'scripts/service-check.sh' || '' }}
