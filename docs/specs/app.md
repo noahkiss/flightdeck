@@ -423,9 +423,10 @@ whiteboard, a log file.
 
 Built choices (task-mthck7r4):
 
-- **Upload.** `attachment.put`, then `attachment.write` runs of at most 1 MiB in order, as
-  `content.read` serves bytes; the last run checks the SHA-256 (`hab-logic-api.md`,
-  `attachment.*`). One control message is at most 16 MiB, so a 25 MB file cannot go in one.
+- **Upload.** `attachment.put`, then `attachment.write` runs in order, as `content.read`
+  serves bytes; the last run checks the SHA-256 (`hab-logic-api.md`, `attachment.*`). A run is
+  at most 256 KiB, even when the hab allows 1 MiB, so each reply keeps liveness fed (10.5,
+  Liveness). One control message is at most 16 MiB, so a 25 MB file cannot go in one.
   The hab needs the `attachments` capability; an older hab gets "this hab cannot take files;
   update gff-hab" before any upload. The app uploads when the message goes out, so a queued
   message ("sends after this turn") uploads when the turn ends. A retry uploads only the
@@ -878,7 +879,11 @@ The terminal view and its data-stream client. Code in `apple/FlightdeckKit/Sourc
   before it. Viewing, rotating and window resizes never send a size. "Fit to this screen" sends
   `pane.take`. Pinch zoom with horizontal pan is not built yet.
 - **Input.** What libghostty writes goes to `pane.input` through one pump: one call in flight,
-  keys typed meanwhile sent together in the next call, in order, at most 1 MiB per call.
+  keys typed meanwhile sent together in the next call, in order, at most 64 KiB per call.
+  The cap keeps a large paste alive over a slow uplink (10.5, Liveness). When a call fails, the
+  pump drops all input queued behind it and reports once. Sending the rest after a reconnect
+  would leave a gap in the middle of the input. The terminal then shows "Some input was not
+  sent: the connection dropped." until dismissed.
   libghostty's replies to queries the hab leaves in the stream are dropped: OSC 52, colour and DCS
   replies, device attributes, mode, keyboard flag, device status and size reports. A cursor
   position report looks like a modified F3, so it passes only from the owner.
@@ -1635,6 +1640,16 @@ The first app stage: the connection to every hab and the status board. Code in
   ignored. `agent.state` carries its revision in the data when the envelope has none.
 - **Liveness.** `hab.ping` goes out when nothing was sent for 15 s. Nothing received for 45 s
   ends the connection. The check runs every second.
+- **Large writes on a slow uplink.** Liveness counts only bytes received. A ping queues behind
+  a long write on the same stream, so one large message over a slow uplink gets no answer
+  until it is sent. The app therefore caps its bulk messages: `pane.input` carries at most
+  64 KiB (about 88 KB of base64), `attachment.write` at most 256 KiB. Each reply is bytes
+  received, and pings go out between calls. A 64 KiB call fits the 30 s call timeout down to
+  about 3 KB/s, a 256 KiB run down to about 12 KB/s. A write that makes no progress gets no
+  reply, so the link is still declared dead after 45 s. We did not count write progress as
+  liveness: the call timeout starts before the write, and the hab sets its own 45 s read
+  deadline once per line (`internal/control/conn.go`). Both would still end a long message.
+  The cost is one round trip per 64 KiB of a paste.
 - **Reconnect.** The first retry after a connection that stayed online for 10 s goes at once. A
   shorter one counts as a failure, so a hab that drops every connection after the snapshot is
   not hammered. Later retries wait 0.5 s doubling to 30 s, then a random point in the upper half

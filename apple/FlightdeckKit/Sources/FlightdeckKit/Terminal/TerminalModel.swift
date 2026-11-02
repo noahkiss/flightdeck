@@ -25,6 +25,9 @@ public final class TerminalModel {
     /// The size this client last sent with `pane.set_desired_size`.
     public private(set) var sentSize: (cols: Int, rows: Int)?
     public private(set) var lastError: String?
+    /// Set when a `pane.input` call failed and the input queued behind it was
+    /// dropped (app.md 5.3); the view shows it until dismissed.
+    public private(set) var inputNotice: String?
     /// True while the pane shows the alternate screen (a full-screen
     /// program); the console hands over to this view then (app.md 6.1).
     public private(set) var alternateScreen = false
@@ -118,6 +121,9 @@ public final class TerminalModel {
         )
         view = TerminalViewState(controller: Self.controller)
         view.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
+        input.setOnError { [weak self] e in
+            Task { @MainActor in self?.inputDropped(e) }
+        }
         #if os(iOS)
         view.inputAccessoryItems = [
             .esc, .tab, .ctrl, .alt, .divider,
@@ -186,6 +192,17 @@ public final class TerminalModel {
         stream = nil
         if case .exited = status {} else if status != .gone { status = .connecting }
         Task { await s?.close() }
+    }
+
+    /// Hides the notice of dropped input.
+    public func dismissInputNotice() {
+        inputNotice = nil
+    }
+
+    private func inputDropped(_ e: InputDropped) {
+        inputNotice = "Some input was not sent: the connection dropped."
+        lastError = e.description
+        log.notice("pane \(self.pane, privacy: .public): \(e.description, privacy: .public)")
     }
 
     /// The pump the terminal's key output goes through; tests type with it.

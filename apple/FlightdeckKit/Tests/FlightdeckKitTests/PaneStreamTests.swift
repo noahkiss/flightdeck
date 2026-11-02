@@ -258,20 +258,11 @@ final class PaneStreamTests: XCTestCase {
         XCTAssertEqual(keep("\(e)[M\u{20}!!"), "\(e)[M\u{20}!!") // legacy press
     }
 
-    /// A large paste goes out in calls of at most 1 MiB, in order.
+    /// A large paste goes out in calls of at most 64 KiB, in order.
     func testLargePasteIsSplit() async throws {
         let hab = FakeHab(hostID: "box")
         await hab.terminals.add("%1")
-        // The fake answers nothing, pings included, while it decodes a 1 MiB call. On a loaded
-        // runner that silence outlasts fastTiming's 600 ms, the connection is declared dead, and
-        // the pump drops the batches still to send, as it must. Give liveness the room the
-        // product's 45 s gives it.
-        var timing = fastTiming()
-        timing.deadAfter = .seconds(30)
-        timing.callTimeout = .seconds(30)
-        let conn = HabConnection(id: "h", transport: hab.transport(), timing: timing, clientLabel: "test")
-        await conn.start()
-        await eventually("online") { await conn.state.status == .online }
+        let conn = await online(hab)
         let errors = OSAllocatedUnfairLock<[String]>(initialState: [])
         let pump = PaneInputPump(pane: "%1", connection: conn, onError: { e in errors.withLock { $0.append("\(e)") } })
         var want = Data()
@@ -284,8 +275,64 @@ final class PaneStreamTests: XCTestCase {
         XCTAssertEqual(errors.withLock { $0 }, [], "a dropped batch")
         let inputs = await hab.terminals.inputs
         XCTAssertEqual(inputs.reduce(into: Data()) { $0.append($1.data) }, want)
-        XCTAssertTrue(inputs.allSatisfy { $0.data.count <= 1 << 20 })
-        XCTAssertEqual(inputs.count, 3)
+        XCTAssertTrue(inputs.allSatisfy { $0.data.count <= 64 << 10 })
+        XCTAssertEqual(inputs.count, (want.count + (64 << 10) - 1) / (64 << 10))
+    }
+
+    /// A 1 MiB paste over a 1 MB/s uplink with a 600 ms liveness window. A batch (88 KB of
+    /// base64) takes about 90 ms and its reply comes back well inside the window, so the
+    /// connection stays up and the paste lands whole. One 1 MiB call (1.4 MB of base64) would
+    /// take at least 1.4 s with nothing coming back, and the link would be declared dead.
+    func testSlowUplinkPasteCompletes() async throws {
+        let hab = FakeHab(hostID: "box")
+        await hab.terminals.add("%1")
+        let uplink = SlowUplink(hab.transport())
+        let conn = HabConnection(id: "h", transport: uplink, timing: livenessTiming(), clientLabel: "test")
+        await conn.start()
+        await eventually("online") { await conn.state.status == .online }
+        let errors = OSAllocatedUnfairLock<[String]>(initialState: [])
+        let pump = PaneInputPump(pane: "%1", connection: conn, onError: { e in errors.withLock { $0.append("\(e)") } })
+        let want = Data((0..<(1 << 20)).map { UInt8(0x20 + $0 % 90) })
+        pump.enqueue(want)
+        await eventually("all", timeout: 30) {
+            let got = await hab.terminals.inputs.reduce(0) { $0 + $1.data.count }
+            return got == want.count || !errors.withLock { $0.isEmpty }
+        }
+        XCTAssertEqual(errors.withLock { $0 }, [], "a dropped batch")
+        let got = await hab.terminals.inputs.reduce(into: Data()) { $0.append($1.data) }
+        XCTAssertEqual(got, want)
+        let state = await conn.state
+        XCTAssertEqual(state.status, .online)
+        XCTAssertEqual(state.snapshots, 1, "the connection never dropped")
+        await conn.stop()
+    }
+
+    /// A write that makes no progress still ends the connection after the liveness window.
+    /// The pump drops what waits behind the failed call and reports once; input typed after
+    /// the reconnect goes out alone, with no part of the dropped paste after it.
+    func testStalledUplinkIsDead() async throws {
+        let hab = FakeHab(hostID: "box")
+        await hab.terminals.add("%1")
+        let uplink = SlowUplink(hab.transport())
+        let conn = HabConnection(id: "h", transport: uplink, timing: livenessTiming(), clientLabel: "test")
+        await conn.start()
+        await eventually("online") { await conn.state.status == .online }
+        let drops = OSAllocatedUnfairLock<[InputDropped]>(initialState: [])
+        let pump = PaneInputPump(pane: "%1", connection: conn, onError: { e in drops.withLock { $0.append(e) } })
+        uplink.setStalled(true)
+        let paste = Data(repeating: 0x41, count: 200_000)
+        pump.enqueue(paste)
+        await eventually("declared dead") { await conn.state.status != .online }
+        await eventually("one report") { drops.withLock { $0.count } == 1 }
+        XCTAssertEqual(drops.withLock { $0.first?.dropped }, paste.count - (64 << 10))
+        uplink.setStalled(false)
+        await eventually("online again") { await conn.state.status == .online }
+        pump.enqueue(Data("after".utf8))
+        await eventually("typed input") { await hab.terminals.inputs.count == 1 }
+        let inputs = await hab.terminals.inputs
+        XCTAssertEqual(inputs.map(\.data), [Data("after".utf8)])
+        XCTAssertEqual(drops.withLock { $0.count }, 1)
+        await conn.stop()
     }
 
     func testFrameBufferSplitsAnywhere() throws {

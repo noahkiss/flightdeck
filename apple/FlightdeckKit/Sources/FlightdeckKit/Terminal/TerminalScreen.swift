@@ -40,6 +40,7 @@ public struct TerminalScreen: View {
         }
         .background(Color(red: 0x1e / 255, green: 0x1e / 255, blue: 0x1e / 255))
         .overlay(alignment: .center) { statusOverlay }
+        .overlay(alignment: .bottom) { inputNotice }
         .onReceive(model.view.$surfaceSize) { m in
             model.surfaceChanged(m, displayScale: displayScale)
         }
@@ -73,6 +74,26 @@ public struct TerminalScreen: View {
                 }
                 .help("Redraw")
             }
+        }
+    }
+
+    @ViewBuilder private var inputNotice: some View {
+        if let notice = model.inputNotice {
+            HStack(spacing: 8) {
+                Label(notice, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                Button {
+                    model.dismissInputNotice()
+                } label: {
+                    Label("Dismiss", systemImage: "xmark")
+                        .labelStyle(.iconOnly)
+                }
+                .buttonStyle(.borderless)
+                .help("Dismiss")
+            }
+            .padding(10)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .padding(12)
         }
     }
 

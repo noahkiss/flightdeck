@@ -1,30 +1,52 @@
 import Foundation
 import HabAPI
 
+/// Input the pump did not send, because a `pane.input` call failed.
+public struct InputDropped: Error, CustomStringConvertible, Sendable {
+    /// Bytes queued behind the failed call, dropped with it.
+    public var dropped: Int
+    /// Why the call failed.
+    public var cause: String
+    public var description: String { "input not sent (\(dropped) more bytes dropped): \(cause)" }
+}
+
 /// Sends a pane's input over the control connection (`pane.input`, hab-logic-api.md 3.8),
 /// in order. One call is in flight at a time; bytes typed meanwhile go out
 /// together in the next call, so fast typing over a slow link costs one round
 /// trip per batch, never a reordering.
+///
+/// A batch is at most 64 KiB (app.md 5.3). Each reply is bytes from the hab, so a
+/// large paste over a slow uplink keeps the connection's liveness check fed and
+/// each call inside its timeout, and pings go out between batches.
+///
+/// When a call fails, the pump drops everything still queued and reports once: sending
+/// the rest after a reconnect would leave a hole in the middle of the input.
 public final class PaneInputPump: @unchecked Sendable {
     public typealias Send = @Sendable (Data) async throws -> Void
+    public typealias OnError = @Sendable (InputDropped) -> Void
 
     private let lock = NSLock()
     private var pending = Data()
     private var running = false
     private let send: Send
-    private let onError: @Sendable (Error) -> Void
+    private var onError: OnError
     /// Bytes per `pane.input` call at most.
-    static let maxBatch = 1 << 20
+    static let maxBatch = 64 << 10
 
-    public init(send: @escaping Send, onError: @escaping @Sendable (Error) -> Void = { _ in }) {
+    public init(send: @escaping Send, onError: @escaping OnError = { _ in }) {
         self.send = send
         self.onError = onError
     }
 
-    public convenience init(pane: String, connection: HabConnection, onError: @escaping @Sendable (Error) -> Void = { _ in }) {
+    public convenience init(pane: String, connection: HabConnection, onError: @escaping OnError = { _ in }) {
         self.init(send: { data in
             _ = try await connection.call(HabMethods.paneInput, InputParams(data: data, pane: pane))
         }, onError: onError)
+    }
+
+    /// Replaces the error handler; the terminal model sets it once it exists.
+    public func setOnError(_ f: @escaping OnError) {
+        lock.withLock { onError = f }
     }
 
     /// Queues bytes. Safe from any thread.
@@ -46,8 +68,6 @@ public final class PaneInputPump: @unchecked Sendable {
                     running = false
                     return nil
                 }
-                // A batch stays far below the hab's 16 MiB message limit,
-                // after base64.
                 let n = min(pending.count, Self.maxBatch)
                 let b = pending.prefix(n)
                 pending = Data(pending.dropFirst(n))
@@ -58,7 +78,13 @@ public final class PaneInputPump: @unchecked Sendable {
                 try await send(batch)
             } catch {
                 // A failed call is not sent again: whether the hab wrote it is unknown.
-                onError(error)
+                // What waits behind it goes too, so the pane never gets input with a gap.
+                let (dropped, report): (Int, OnError) = lock.withLock {
+                    let n = pending.count
+                    pending = Data()
+                    return (n, onError)
+                }
+                report(InputDropped(dropped: dropped, cause: String(describing: error)))
             }
         }
     }
