@@ -75,6 +75,8 @@ public struct HabState: Sendable, Equatable {
     /// snapshot, then `confirm.requested` and `confirm.closed`. Empty from a
     /// hab without the `confirm` capability.
     public var confirmations = ConfirmBook()
+    /// How many `catalog.updated` events named the hab's own catalog, over all connections.
+    public var catalogChanges = 0
 }
 
 /// Timings of the control connection. The defaults follow hab-logic-api.md 3.5
@@ -546,6 +548,13 @@ public actor HabConnection {
         if e.type == "confirm.requested" || e.type == "confirm.closed" {
             confirmSeqs[e.id] = e.seq
             if state.confirmations.apply(e) { publish() }
+            return
+        }
+        if e.type == "catalog.updated" {
+            if let c = try? e.data.decode(CatalogUpdated.self), c.deviceId == state.welcome?.deviceId {
+                state.catalogChanges += 1
+                publish()
+            }
             return
         }
         if e.type == "settings.updated" {

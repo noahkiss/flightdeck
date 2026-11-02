@@ -25,6 +25,19 @@ public enum CapcomEntry: Equatable, Sendable {
     case ready(habID: String)
 }
 
+/// One hab in the Capcom host picker (app.md 4.10).
+public struct CapcomHostChoice: Identifiable, Equatable, Sendable {
+    /// The hab's id in the app.
+    public var id: String
+    public var label: String
+    /// This hab is the Capcom home now.
+    public var isHome: Bool
+    /// Why it cannot be chosen; nil when it can.
+    public var unavailable: String?
+
+    public var choosable: Bool { unavailable == nil }
+}
+
 /// The Capcom view's side of `CapcomCenter` (app.md 4.10): it finds the home hab from each
 /// hab's catalog and opens the standing conversation there with `capcom.open` and no context.
 extension CapcomCenter {
@@ -71,32 +84,58 @@ extension CapcomCenter {
     }
 
     /// A hab came online: read its catalog for the home. A hab without the `capcom`
-    /// capability names none.
-    public func habOnline(_ habID: String) async {
+    /// capability names none. A `quiet` read (after `catalog.updated`) does not count as
+    /// on its way, so the entry does not flash back to loading.
+    public func habOnline(_ habID: String, quiet: Bool = false) async {
         guard let conn = habs.connection(habID) else { return }
         guard await conn.has(capability: CapcomChip.capability) else {
             beliefs[habID] = CapcomBelief.none
+            standingSessions[habID] = nil
             return
         }
-        reading[habID, default: 0] += 1
+        if !quiet { reading[habID, default: 0] += 1 }
         defer {
-            let n = (reading[habID] ?? 1) - 1
-            reading[habID] = n > 0 ? n : nil
+            if !quiet {
+                let n = (reading[habID] ?? 1) - 1
+                reading[habID] = n > 0 ? n : nil
+            }
             standingCheck()
         }
         let r = try? await conn.call(HabMethods.catalogGet, CatalogGetParams())
         guard habs.connection(habID) === conn else { return }
-        if let c = r?.catalog?.capcom, let home = c.home, !home.isEmpty {
+        // A failed quiet read keeps what the last read found.
+        if quiet, r == nil { return }
+        let cat = r?.catalog
+        if cat?.alwaysOn == true { alwaysOn.insert(habID) } else if cat != nil { alwaysOn.remove(habID) }
+        standingSessions[habID] = cat?.capcom?.sessions.first { $0.standing == true }?.session
+        if let c = cat?.capcom, let home = c.home, !home.isEmpty {
             beliefs[habID] = .home(assignment: c.assignment, device: home)
         } else {
             beliefs[habID] = CapcomBelief.none
         }
     }
 
+    /// The hab's own catalog changed (`catalog.updated`): read it again, so a re-assignment
+    /// from the command line or another device shows at once. Changes that arrive during a
+    /// read give one more read after it.
+    public func catalogChanged(_ habID: String) async {
+        guard rereading.insert(habID).inserted else {
+            rereadAgain.insert(habID)
+            return
+        }
+        defer { rereading.remove(habID) }
+        repeat {
+            rereadAgain.remove(habID)
+            await habOnline(habID, quiet: true)
+        } while rereadAgain.contains(habID)
+    }
+
     /// A hab left the app: its belief goes.
     public func forget(habID: String) {
         beliefs[habID] = nil
         reading[habID] = nil
+        standingSessions[habID] = nil
+        alwaysOn.remove(habID)
     }
 
     /// Reads every online hab's catalog again: "Check again", and an open the old home
@@ -151,6 +190,76 @@ extension CapcomCenter {
             standingFailure = Self.message(error, label: habs.label(id), doing: nil)
         }
         return false
+    }
+
+    // MARK: - The standing conversation's row state
+
+    /// The standing conversation on the home, for the entry row's agent state: the last
+    /// open's session when it ran on the home, else the session the home's catalog marks.
+    public var standingTarget: SessionTarget? {
+        guard case .ready(let id) = entry else { return nil }
+        if let m = standing, m.target.habID == id, m.target.session != nil { return m.target }
+        guard let s = standingSessions[id] else { return nil }
+        return SessionTarget(habID: id, session: s, pane: nil)
+    }
+
+    /// The board row of the standing conversation, if the board lists it.
+    public func standingRow(in rows: [BoardRow]) -> BoardRow? {
+        guard let t = standingTarget else { return nil }
+        return rows.first { $0.target.habID == t.habID && $0.target.session == t.session }
+    }
+
+    // MARK: - Host picker (capcom.md 7.3)
+
+    /// The highest assignment counter any hab's catalog named.
+    public var highestAssignment: UInt64 {
+        beliefs.values.reduce(0) { n, b in
+            if case .home(let a, _) = b { return max(n, a) }
+            return n
+        }
+    }
+
+    /// Every hab in the app, in the app's order, for the host picker. Only an online hab with
+    /// the `capcom` capability can be chosen.
+    public var hostChoices: [CapcomHostChoice] {
+        let home = homeDevice.flatMap { habs.device($0) }
+        return habs.statuses().map { h in
+            let why: String?
+            if h.status != .online { why = "Offline" }
+            else if !habs.hasCapcom(h.id) { why = "No Capcom" }
+            else { why = nil }
+            return CapcomHostChoice(id: h.id, label: habs.label(h.id), isHome: h.id == home, unavailable: why)
+        }
+    }
+
+    /// The hab the picker suggests when no host is assigned: one marked always on, else the
+    /// first hab in the app, among those that can be chosen.
+    public var suggestedHost: String? {
+        let ok = hostChoices.filter(\.choosable)
+        return (ok.first { alwaysOn.contains($0.id) } ?? ok.first)?.id
+    }
+
+    /// Makes `habID` the Capcom home: `capcom.assign` with host `self` on that hab, with a
+    /// counter above every one the app has seen, so no peer link is needed. The answer
+    /// becomes that hab's belief at once. Returns whether it succeeded.
+    @discardableResult
+    public func assign(habID: String) async -> Bool {
+        guard assigning == nil, hostChoices.first(where: { $0.id == habID })?.choosable == true,
+              let conn = habs.connection(habID) else { return false }
+        assigning = habID
+        defer { assigning = nil }
+        do {
+            let r = try await conn.call(HabMethods.capcomAssign, CapcomAssignParams(assignment: highestAssignment + 1, host: "self"))
+            beliefs[habID] = .home(assignment: r.assignment, device: r.home)
+            // A new home starts a fresh standing conversation (capcom.md 7.3).
+            standingSessions[habID] = nil
+            assignFailure = nil
+            standingCheck()
+            return true
+        } catch {
+            assignFailure = Self.message(error, label: habs.label(habID), doing: nil)
+            return false
+        }
     }
 
     // MARK: - While a Capcom view is on screen

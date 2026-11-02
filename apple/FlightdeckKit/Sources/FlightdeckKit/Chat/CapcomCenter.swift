@@ -41,6 +41,17 @@ public final class CapcomCenter {
     /// How long an exited standing conversation waits before the center resumes it again by
     /// itself, so a harness that exits at once is not restarted in a loop.
     @ObservationIgnored public var resumeGap: TimeInterval = 60
+    /// The standing Capcom session each hab's catalog marks, by hab id (app.md 4.10).
+    public internal(set) var standingSessions: [String: String] = [:]
+    /// The habs whose catalog says they are marked always on, by hab id.
+    public internal(set) var alwaysOn: Set<String> = []
+    /// The hab a `capcom.assign` is on its way to.
+    public internal(set) var assigning: String?
+    /// Why the last `capcom.assign` failed; nil after a success.
+    public internal(set) var assignFailure: String?
+    /// Habs whose catalog is read again after `catalog.updated`, and those changed again since.
+    @ObservationIgnored var rereading: Set<String> = []
+    @ObservationIgnored var rereadAgain: Set<String> = []
 
     /// The hooks into the fleet.
     public struct Habs {
@@ -58,6 +69,8 @@ public final class CapcomCenter {
         public var allOnline: @MainActor () -> Bool
         /// Every hab in the app, by id, with its status.
         public var statuses: @MainActor () -> [(id: String, status: HabStatus)]
+        /// Whether a hab's welcome lists the `capcom` capability.
+        public var hasCapcom: @MainActor (String) -> Bool
 
         public init(connection: @escaping @MainActor (String) -> HabConnection?,
                     chat: @escaping @MainActor (SessionTarget) -> ChatModel,
@@ -65,7 +78,8 @@ public final class CapcomCenter {
                     online: @escaping @MainActor (String) -> Bool,
                     device: @escaping @MainActor (String) -> String?,
                     allOnline: @escaping @MainActor () -> Bool,
-                    statuses: @escaping @MainActor () -> [(id: String, status: HabStatus)] = { [] }) {
+                    statuses: @escaping @MainActor () -> [(id: String, status: HabStatus)] = { [] },
+                    hasCapcom: @escaping @MainActor (String) -> Bool = { _ in false }) {
             self.connection = connection
             self.chat = chat
             self.label = label
@@ -73,6 +87,7 @@ public final class CapcomCenter {
             self.device = device
             self.allOnline = allOnline
             self.statuses = statuses
+            self.hasCapcom = hasCapcom
         }
     }
 

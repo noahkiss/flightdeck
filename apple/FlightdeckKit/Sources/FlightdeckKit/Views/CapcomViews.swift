@@ -6,26 +6,44 @@ extension EnvironmentValues {
     @Entry var capcomView: UUID? = nil
 }
 
-/// The board's Capcom row (app.md 4.10): opens the standing Capcom conversation.
+/// The board's Capcom row (app.md 4.10): opens the standing Capcom conversation, and shows
+/// its agent state as the board shows a session's.
 struct CapcomEntryRow: View {
     let center: CapcomCenter
+    var rows: [BoardRow] = []
+    var now: Date = .now
 
     var body: some View {
         let e = center.entry
+        let row = center.standingRow(in: rows)
         HStack(spacing: 10) {
             Image(systemName: "dot.radiowaves.left.and.right")
                 .foregroundStyle(.tint)
                 .frame(width: 20)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Capcom")
-                    .font(.body.weight(.medium))
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Capcom")
+                        .font(.body.weight(.medium))
+                    Spacer(minLength: 8)
+                    if let row {
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(row.stateColor)
+                                .frame(width: 8, height: 8)
+                                .accessibilityHidden(true)
+                            Text(row.stateText(now: now))
+                                .lineLimit(1)
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
                 Text(center.entryText(e))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            Spacer(minLength: 8)
             if e == .loading {
                 ProgressView()
                     .controlSize(.small)
@@ -33,6 +51,111 @@ struct CapcomEntryRow: View {
         }
         .padding(.vertical, 2)
         .contentShape(Rectangle())
+    }
+}
+
+/// The Capcom host picker (capcom.md 7.3): every hab in the app, the home marked. Choosing an
+/// online hab with Capcom assigns it at once.
+struct CapcomHostList: View {
+    let center: CapcomCenter
+
+    var body: some View {
+        ForEach(center.hostChoices) { c in
+            Button {
+                Task { await center.assign(habID: c.id) }
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(c.label)
+                            .foregroundStyle(c.choosable ? .primary : .secondary)
+                        if let why = c.unavailable {
+                            Text(why)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    if center.assigning == c.id {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else if c.isHome {
+                        Image(systemName: "checkmark")
+                            .foregroundStyle(.tint)
+                            .accessibilityLabel("Capcom host")
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!c.choosable || c.isHome || center.assigning != nil)
+        }
+    }
+}
+
+/// The Capcom host page in Settings.
+struct CapcomHostSettingsView: View {
+    let center: CapcomCenter
+
+    var body: some View {
+        Form {
+            Section {
+                CapcomHostList(center: center)
+            } header: {
+                Text("Runs Capcom")
+            } footer: {
+                if let f = center.assignFailure {
+                    Text(f)
+                        .foregroundStyle(.red)
+                }
+            }
+        }
+    }
+}
+
+/// The inline host picker of the Capcom view with no host assigned: the suggested hab
+/// preselected, then Assign.
+struct CapcomAssignInline: View {
+    let center: CapcomCenter
+    @State private var choice: String?
+
+    var body: some View {
+        let options = center.hostChoices.filter(\.choosable)
+        VStack(spacing: 10) {
+            if options.isEmpty {
+                Text("No online hab runs Capcom.")
+                    .foregroundStyle(.secondary)
+            } else {
+                Picker("Capcom host", selection: $choice) {
+                    ForEach(options) { Text($0.label).tag(Optional($0.id)) }
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+                Button {
+                    guard let id = choice else { return }
+                    Task { await center.assign(habID: id) }
+                } label: {
+                    if center.assigning != nil {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Assign")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(choice == nil || center.assigning != nil)
+            }
+            if let f = center.assignFailure {
+                Text(f)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+            }
+            Button("Check again") { Task { await center.refreshHome() } }
+                .buttonStyle(.borderless)
+        }
+        .onAppear { if choice == nil { choice = center.suggestedHost } }
+        .onChange(of: options.map(\.id)) { _, ids in
+            if choice == nil || !ids.contains(choice!) { choice = center.suggestedHost }
+        }
     }
 }
 
@@ -116,9 +239,9 @@ struct CapcomScreen: View {
                 ContentUnavailableView {
                     Label("No Capcom host", systemImage: "dot.radiowaves.left.and.right")
                 } description: {
-                    Text("Assign a hab with gff-hab capcom assign.")
+                    Text("Choose the hab that runs Capcom.")
                 } actions: {
-                    Button("Check again") { Task { await center.refreshHome() } }
+                    CapcomAssignInline(center: center)
                 }
             case .noHabOnline:
                 ContentUnavailableView("No hab online", systemImage: "wifi.slash",

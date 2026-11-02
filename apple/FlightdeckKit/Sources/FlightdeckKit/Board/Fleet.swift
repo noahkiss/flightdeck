@@ -42,7 +42,10 @@ public final class Fleet {
         online: { [weak self] id in self?.board.habs.first { $0.id == id }?.state.status == .online },
         device: { [weak self] d in self?.habID(device: d) },
         allOnline: { [weak self] in self?.board.habs.allSatisfy { $0.state.status == .online } ?? true },
-        statuses: { [weak self] in self?.board.habs.map { ($0.id, $0.state.status) } ?? [] }))
+        statuses: { [weak self] in self?.board.habs.map { ($0.id, $0.state.status) } ?? [] },
+        hasCapcom: { [weak self] id in
+            self?.board.habs.first { $0.id == id }?.state.welcome?.capabilities.contains(CapcomChip.capability) ?? false
+        }))
 
     /// The hab with this device id: a live welcome's, else the hab book's.
     func habID(device: String) -> String? {
@@ -112,6 +115,7 @@ public final class Fleet {
         let b = board
         consumers.append(Task { @MainActor [weak self] in
             var lastSnapshot = 0
+            var lastCatalog = 0
             for await s in conn.updates {
                 b.update(conn.id, s)
                 self?.settings?.update(habID: conn.id, label: b.habs.first { $0.id == conn.id }?.label ?? conn.id, state: s)
@@ -126,6 +130,14 @@ public final class Fleet {
                     self?.connectionOnline(conn, s)
                 } else if s.status != .online {
                     self?.push?.connectionOffline(id: conn.id)
+                }
+                // The hab's own catalog changed: read the Capcom home again (app.md 4.10).
+                if s.catalogChanges != lastCatalog {
+                    lastCatalog = s.catalogChanges
+                    if s.status == .online {
+                        let id = conn.id
+                        Task { @MainActor [weak self] in await self?.capcom.catalogChanged(id) }
+                    }
                 }
                 self?.approvals?.boardChanged()
                 self?.confirms?.boardChanged()

@@ -10,6 +10,7 @@ struct SettingsPage: View {
     var openUsage: (() -> Void)?
     @Environment(\.sshSetup) private var ssh
     @Environment(\.voiceKit) private var voice
+    @Environment(\.capcom) private var capcom
     @State private var query = ""
 
     var body: some View {
@@ -55,9 +56,10 @@ struct SettingsPage: View {
     }
 
     private enum Link: Hashable {
-        case notifications, voice, usage, ssh
+        case notifications, voice, usage, ssh, capcom
         var title: String {
             switch self {
+            case .capcom: return "Capcom host"
             case .notifications: return "Notifications"
             case .voice: return "Voice"
             case .usage: return "Usage warnings"
@@ -69,6 +71,7 @@ struct SettingsPage: View {
     /// The pages an area links to on this device.
     private func availableLinks(_ area: SettingArea) -> [Link] {
         switch area {
+        case .agents where capcom != nil && !board.habs.isEmpty: return [.capcom]
         case .notifications where push != nil: return [.notifications]
         case .voice where voice != nil: return [.voice]
         case .usage where openUsage != nil: return [.usage]
@@ -96,6 +99,10 @@ struct SettingsPage: View {
             }
         case .usage:
             Button(l.title) { openUsage?() }
+        case .capcom:
+            if let capcom {
+                NavigationLink(l.title) { CapcomHostSettingsView(center: capcom).navigationTitle(l.title) }
+            }
         case .ssh:
             if let ssh {
                 NavigationLink(l.title) { SSHSettingsView(setup: ssh).navigationTitle("SSH") }

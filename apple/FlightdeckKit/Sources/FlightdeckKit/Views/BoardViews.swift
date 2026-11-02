@@ -317,7 +317,7 @@ struct BoardList: View {
                 // The standing Capcom conversation (app.md 4.10), above every section.
                 if showsCapcom, let capcom, let openCapcom {
                     Button(action: openCapcom) {
-                        CapcomEntryRow(center: capcom)
+                        CapcomEntryRow(center: capcom, rows: board.rows, now: ctx.date)
                     }
                     .buttonStyle(.plain)
                     if board.sections.isEmpty, confirms?.approvals.isEmpty ?? true {
