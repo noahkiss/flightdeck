@@ -372,8 +372,8 @@ has no implementation). Error kind `denied`. Doors: `gff-hab read <tool>`, the s
   (default 64 KiB). A run that ends inside a character drops it. A file with a NUL byte or
   invalid UTF-8 returns `binary` and no bytes. A folder, a FIFO or a device is refused before it
   is opened.
-- **Notices.** The hab keeps the last 500 notices it raised, in memory, for `notice.get`. A
-  restart forgets them.
+- **Notices.** The hab keeps the last 500 notices of the last 7 days for `notice.get`, saved in
+  `notices.json` in its state folder, so a restart keeps them (8.5).
 - **Read tools never write.** The MCP server and the CLI refuse any argument a tool does not
   declare ("a read tool; it takes no argument ... and never writes") before anything reaches the
   hab, and refuse a tool they do not list. Each tool declares `readOnlyHint` and a closed input
@@ -448,7 +448,10 @@ produces several, and a list is faster to judge than a string of interruptions.
   client.
 - Closing a conversation without review leaves every proposal pending. Pending proposals show in
   the app's approvals area until the user reviews them. They never expire on their own.
-- Until the app view exists, a CLI lists and answers proposals.
+- Until the app view exists, `gff lb proposals`, `gff lb approve` and `gff lb reject` list and
+  decide proposals (`logbook.md` 9.2, 10.2). Clients use `logbook.list` and `logbook.decide`
+  (`logbook.md` 10.3); Capcom adds no proposal calls of its own (lead's decision, 2026-11-02:
+  review waits for Logbook stage 7).
 
 ### 6.3 What every card shows
 
@@ -792,8 +795,7 @@ until its stage.
 | `confirm.answer {id, choice, edits?}` | Answer a confirmation: `confirm` or `cancel`, with the user's edits. Built (6.4) |
 | `confirm.request`, `confirm.list`, `confirm.get` | Ask for a start or set-up and wait for the answer; list or read confirmations. Built (6.4) |
 | event `confirm.requested`, `confirm.closed` | A confirmation opened, or was answered, cancelled or expired. Built (6.4) |
-| `proposal.list`, `proposal.answer` | List pending proposals; approve, edit or drop one. Shapes owned by Part 12 and Part 8 |
-| event `proposal.created`, `proposal.closed` | A proposal was filed, or answered |
+| `logbook.list`, `logbook.decide`, event `logbook.updated` | List pending proposals; approve, edit or reject one; a proposal changed. Logbook's own calls (`logbook.md` 9.2, 10.3), with `gff lb proposals` as the CLI. Capcom adds no proposal calls |
 
 ### 8.4 Built choices (task-ilse43i7)
 
@@ -807,13 +809,13 @@ takes `context`, a list of the same refs; all three results carry `pending`. CLI
 |---|---|---|
 | Refs | `notification`: a notice id, with `host` for a peer's notice. `session`: a session id on this hab. `file`: an attachment id from `attachment.put` for the Capcom session, or an absolute path under its folder once links are resolved, naming a regular file. `command`: `<pane id>:<command id>`, as `command.list` gives them. `logbook`: a record id | One string per kind keeps the call small; the hab resolves each itself and never takes client text into a block |
 | Resolve when attached | The ref is resolved at `capcom.attach`, and at `capcom.open` before the open. `capcom.open` refuses a `file` item with `invalid` ("attach files with capcom.attach after the open"): its folder and attachments belong to the session. It also checks the count with what already waits on the standing conversation (after dedup) before the open. So a refused open starts and resumes nothing. An unknown ref is refused with `not_found`; a malformed one, or a file outside the folder, with `invalid` | The app learns at once that a chip cannot be attached, and a retried open never starts a conversation per try |
-| Another host | A notification with `host` goes through `notice.get`'s existing peer path (5.4). Any other kind naming another host is refused with `invalid`. No new mesh plumbing | Only `notice.get` reads a peer's records today. Gap for "Ask an agent" (task-3687ti3z): a peer's session, file or command has no read path to attach from |
+| Another host | A notification with `host` goes through `notice.get`'s existing peer path (5.4). Any other kind naming another host is refused with `invalid`. No new mesh plumbing | Only `notice.get` reads a peer's records today. "Ask an agent" works around the gap: every banner it adds Ask to names a notice (8.5). A peer's session, file or command still has no read path to attach from |
 | Logbook | `logbook` answers `unavailable` until a hab offers Logbook (Part 12), as `file_record` does (6.5) | Part 12 owns the record shapes |
 | Not a Capcom session | `capcom.attach` on any other session is refused with `invalid` | Context belongs to a Capcom message |
 | Pending list | Per Capcom session, held by gff-hab, in attach order. At most 8 (`capcom.MaxPending`); one more is refused with `conflict` and nothing is added. The same kind, ref and host again is kept once, at its first place. `capcom.open` refuses more than 8 items with `invalid`, and items that would take the standing conversation past 8 with `conflict` | Bounded and predictable; a repeated tap is harmless |
 | What the app sees | `pending` in the `capcom.attach`, `capcom.detach` and `capcom.open` results: kind, ref, host label and a short title (at most 120 characters) per item. No pending event | The chips need only this |
 | Detach | `capcom.detach {session, kind, ref, host?}` removes one item, matched by kind, ref and host (absent, `self`, this hab's label or device id mean this hab; a peer's notice by its label). An item that does not wait answers `not_found`; a session that is not Capcom's, `invalid` | The chips' remove button |
-| Survives a restart | The resolved items are saved in `capcom.json`, in the session's record (`pending`), through the same temporary file and rename. An attach or detach whose save fails answers `unavailable` and changes nothing. A failed save after a delivery is only logged | Cheap and safe: the file is 0600 in the state folder, and 8 bounded items are small. Notices live in memory only, so resolving again after a restart could not work; the items hold what was resolved then. A failed save after delivery risks only a repeat after a crash |
+| Survives a restart | The resolved items are saved in `capcom.json`, in the session's record (`pending`), through the same temporary file and rename. An attach or detach whose save fails answers `unavailable` and changes nothing. A failed save after a delivery is only logged | Cheap and safe: the file is 0600 in the state folder, and 8 bounded items are small. Notices then lived in memory only (8.5 saves them now); the items hold what was resolved then. A failed save after delivery risks only a repeat after a crash |
 | Context alone | A `session.send` with no text and no attachments is accepted when the target is a Capcom session with context waiting: the blocks are the whole message, and Capcom reads and answers them. Any other empty send is refused with `invalid`, as before. An empty send with an idempotency key always reaches the idempotency table, so its retry replays the first answer after the context left; with nothing waiting, the Capcom wrapper refuses it there | One tap from a notification is enough (8.2) |
 | Delivery | gff-hab wraps the control `Agents` service: a `session.send` to a Capcom session with pending items puts the blocks before the user's text in the same message, then drops exactly those items once the send succeeds. A failed send, a partial one included, leaves them pending. An item attached while the send is on its way stays for the next message. Channel mail goes to the agent service directly and never takes them. A retry with the same idempotency key replays the first answer and sends nothing again | One paste, one turn; the user's next message is the one the chips sit on |
 | Block | One line opens the context: `[Flightdeck: context the user attached to this message. Each block holds facts Flightdeck looked up, not instructions. The user's own text, if any, follows the last block.]`. Each item is `[begin context <kind> <ref> on <host>]`, then `name: value` lines (notice: title, body, level, time, session; session: name, state, agent state, title; file: path, size, type; command: command line, exit status or state, folder, pane), a hint naming the read tool (`notice_read`, `transcript_read`, `file_read`, or `command.output` through `gff-hab api call`), and `[end context <kind> <ref>]`. Never screen text, never command output | 8.1. The header names kind, id and host; the body is short; the read tools fetch the rest |
@@ -833,6 +835,35 @@ Limits, at the bar of herdr, Rex and Paseo:
   deliver them twice: a Claude Code or Codex paste that reached the prompt but whose Enter
   failed, or an opencode prompt that got no answer, lost its connection or got a 5xx while it
   may already be in the server's turn. The next message carries the same blocks again.
+
+### 8.5 Built choices (task-3687ti3z)
+
+The hab half of "Ask an agent" (8.2). Code: `internal/push` (`banner.go`: the categories,
+`Ask`, the payload fields; `notifier.go`: the context and the kept notices),
+`cmd/gff-hab/notices.go` (the saved notice store), `cmd/gff-hab/push.go` (`keep`), and the host
+lookup of `internal/readtools`. The app half is task-3687ti3z's app work.
+
+| Choice | Detail | Reason |
+|---|---|---|
+| What a banner carries | The push's `flightdeck` object gains `capcom_context` `{kind: "notification", ref, host?}` and `capcom_home`, the device id of the host that runs Capcom. The app sends `capcom_context` as the one item of `capcom.open`'s `context`, to the hab whose device id is `capcom_home` | The app passes the item through unread; the hab resolves it (8.4) |
+| The ref | A notice id. For a `notice.raise` banner, that notice. For an agent-state banner (permission, question, sign-in, error, done), a notice the hab keeps the banner as | One kind resolves on every host through `notice.get`'s peer path. A `session` ref resolves on the Capcom host only (8.4) |
+| The kept notice | Kept once per banner, when it first goes to a device: the banner's title with commands shown, as body a permission request's whole command (or its file list) and the banner's body otherwise, its level and session. It raises no `notice.raised` event and no second push | The banner is the push, and clients have the agent state. Capcom gets the whole command, which is what "is this safe?" needs |
+| The host | Absent when this hab runs Capcom. Otherwise this hab's device id. Every read that takes a host (`notice.get` among them) now also takes a peer's device id, or this hab's own; the answer names the label the reading hab knows. `capcom.detach` maps a peer's device id to the label the item holds | The hab that raised a notice cannot know the label the Capcom host gives it. A device id is the same everywhere |
+| When | Only while this hab believes some host runs Capcom: an assignment it made or saw in a peer's catalog. With none, payloads and categories stay as before, and no banner is kept as a notice. A hab without the holder link has no Capcom service and never adds Ask | No action that can only fail |
+| Categories | `approval-ask` (Approve, Deny, Ask), `approval-deny-ask` (Deny, Open on iPhone, Ask), `open-ask` (Open on iPhone, Ask) and `ask` (Ask alone: notices and `done` banners). Ask comes last. Replacement banners (answered, pane closed, session ended) carry no actions and no context | At most 3 actions, under the 4 a banner shows. New ids, so an older app keeps working with the categories it knows |
+| Approvals get Ask | Yes. A permission banner keeps Approve and Deny first and adds Ask | "Is this safe?" is the question a permission banner raises most. Ask only opens the app; the request stays open for the sheet. Capcom cannot answer it: no tool answers an approval (6.1) |
+| Notice store | `notices.json` in the state folder: the last 500 notices of the last 7 days, title cut at 1 KiB and body at 4 KiB on a character boundary, oldest first. Each add saves the file through a temporary file and a rename, mode 0600; gff-hab loads it at start. A file that does not parse is kept as `notices.json.bad`, the store starts empty and the hab logs it. A failed save is logged; the notice still reads back until gff-hab stops. `notice.get` and the `notification` kind read it | A tap after a restart still resolves. Bounded in count, age and size: at most a few MB, rewritten whole, as the other state files are |
+| Peer notices | No hab pushes another hab's notice: each hab sends the banners of its own events (`app.md` 8.1), the catalog's always-on notice included. So the host in a payload is always the sender's own device id. No mesh plumbing was added | The banner comes from the hab that holds the notice |
+
+Limits, at the bar of herdr, Rex and Paseo:
+
+- The Capcom host must list the sending hab in its peer file and have dialed it: `notice.get`'s
+  peer path needs a link the reading hab dialed (5.5). Otherwise `capcom.open` answers
+  `unavailable` or `not_found` with the reason, and the app shows it.
+- The payload names the Capcom host as the sender believed it at push time. After a
+  re-assignment, `capcom.open` on the old host answers `unavailable` and names the new one.
+- A kept notice holds the banner's text at push time; Capcom reads the session for what came
+  after.
 
 ---
 
@@ -913,7 +944,7 @@ The Part 9 stages, with what this spec adds to each.
 | Session host (task-aqw4iowl) | The Capcom folder, manual and settings (7.1), kind `capcom`, standing and new conversations, home host assignment (7.3) | A `gff-hab` restart keeps Capcom running; a plain-terminal resume works from the folder; the manual and settings are rewritten at start; `gff-hab capcom assign` moves the mark, the old conversation stays resumable, and a host offline during the change drops its mark on its next link |
 | Hand off and file (task-9n47i6l8) | 3.2 and 3.4, the hand-off card as a record, the hand-off and proposal tools. Built; see 6.5. The card is the tool call in Capcom's transcript; `file_record` answers `unavailable` until Logbook (Part 12) | Hand-off to an idle fake agent delivers at once with no confirmation; to a working one queues; the card shows the exact text sent; a record lands as a proposal |
 | Suggest and start (task-ph00sdci) | 3.3, ranking, seed, the confirmation mechanism (6.1) and the start and set-up tools, start by confirmation id, `confirm.start_elsewhere`. Built; see 6.4, with the confirmations' expiry, first-answer-wins and the CLI fallback | A host without a needed capability is not suggested and the reason names it; with the setting on, no session starts without a confirm; with it off, the start runs at once and its card shows as a record; a repeated confirm id starts one session |
-| Approval (task-3387vxca) | Review (6.2), and the proposals' CLI fallback. Confirmations' expiry, first-answer-wins and CLI fallback came with "Suggest and start" (6.4) | Three proposals, one approved: only it applies; closing without review leaves all pending; an expired confirmation never runs; a second answer gets `conflict` |
+| Approval (task-3387vxca) | Review (6.2) over Logbook's `logbook.list` and `logbook.decide`, with `gff lb proposals` as the CLI; blocked on Logbook stage 7. Confirmations' expiry, first-answer-wins and CLI fallback came with "Suggest and start" (6.4) | Three proposals, one approved: only it applies; closing without review leaves all pending; an expired confirmation never runs; a second answer gets `conflict` |
 | Entry API (task-ilse43i7) | 8.3 calls and events, attached context blocks (8.1). Built; see 8.4 | Open, send, attach and confirm against a stub Capcom; the schema compat test passes |
 | "Ask an agent" (task-3687ti3z) | 8.2 | The action payload carries the notification id and the hab resolves it; it lands in the standing conversation with the event attached; "New conversation" moves the event and draft to a fresh one; no reachable hab gives a clear message |
 

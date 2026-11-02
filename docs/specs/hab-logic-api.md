@@ -655,7 +655,9 @@ server is on and the `devices.*` methods work. `push` means the hab has working 
 `host-stats` means `hab.stats` works (3.9). `settings` means the hab-side settings work:
 `settings.get`, `settings.set`, `settings.updated`, and `settings` in a `host` snapshot
 (`app.md` 20.5). `read-tools` means `transcript.list`, `transcript.search`, `transcript.read`,
-`notice.get` and `file.read` work (`capcom.md` 4, 5.5). `logbook` means the hab has a Logbook
+`notice.get` and `file.read` work (`capcom.md` 4, 5.5); their `host` is a peer label or device
+id, this hab's host id or device id, or `self`. `notice.get` reads the last 500 notices of the
+last 7 days, saved across a restart (`capcom.md` 8.5). `logbook` means the hab has a Logbook
 replica and the `logbook.*` methods work (`logbook.md` 10.3); until then `logbook.find` and
 `logbook.get` answer `unavailable`. `rounds` means the `round.*` methods, the `round.updated` and
 `round.run_updated` events, the rounds in a `host` snapshot and `Session.round` work (`rounds.md` 13).
@@ -1184,11 +1186,16 @@ a key it sends the same call again, and the hab runs it at most once. Built choi
   token is dropped. The content state is `state`, `kind`, `title`, `request`, `pane`,
   `buttons`, `since`, `others` (other blocked panes on this hab), `hab` and `harness`.
 - **Payload.** `aps` holds `alert` (`title`, `subtitle`, `body`), `interruption-level`,
-  `category` (`approval`: Approve and Deny; `approval-deny`: Deny and Open; `open`),
+  `category` (`approval`: Approve and Deny; `approval-deny`: Deny and Open; `open`; while some
+  host runs Capcom, `approval-ask`, `approval-deny-ask`, `open-ask` and `ask`, each with Ask
+  last, `capcom.md` 8.5),
   `thread-id` (the session), `sound` except when passive, and `mutable-content` 1, so the
   notification service extension can add the expiry as a local clock time. A `flightdeck`
   object carries `v` (1), `kind`, `hab`, `session`, `pane`, `state`, `request`, `expires_at`
-  and `notice`. Payloads stay under 4 KB.
+  and `notice`, and, while some host runs Capcom, `capcom_context` (`{kind: "notification",
+  ref, host?}`: a notice id, and this hab's device id when Capcom runs elsewhere) and
+  `capcom_home` (that host's device id). An agent-state banner's ref is a notice the hab keeps
+  the banner as. Payloads stay under 4 KB.
 - **Words** (`app.md` 16). Each field is fitted to its budget on word boundaries, with "…".
   The command is shortened (leading `cd`, environment assignments, the working directory part
   of paths, the middle of long quoted strings) and gets 13 words and 84 characters, leaving

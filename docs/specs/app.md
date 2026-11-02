@@ -1311,6 +1311,12 @@ relies on:
   (Open on iPhone). The app registers all three. Question banners use `open` until answering a
   question through `approval.answer` is built. A permission request with no request id uses
   `open`: no answer can name it.
+- **Ask an agent** (task-3687ti3z, hab half; `capcom.md` 8.2, 8.5). While some host runs Capcom,
+  each banner adds Ask last: categories `approval-ask`, `approval-deny-ask`, `open-ask`, and
+  `ask` for notices and `done` banners, which had no actions. The `flightdeck` object carries
+  `capcom_context` (`{kind, ref, host?}`, the item `capcom.open` takes) and `capcom_home` (the
+  device id of the Capcom host). Agent-state banners are kept as notices so the ref is always a
+  notice id. Replacement banners carry neither. With no Capcom host, nothing changes.
 - **Expiry text.** The hab leaves the expiry out of the body and sends `expires_at` in the
   payload's `flightdeck` object, with `mutable-content` set. The notification service extension
   appends " · Expires 14:05" in local time.
