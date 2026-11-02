@@ -940,6 +940,13 @@ func (c Client) CapcomAttach(ctx context.Context, params CapcomAttachParams) (Ca
 	return result, err
 }
 
+// CapcomDetach calls capcom.detach. Remove one item from the context waiting for a Capcom session's next message, and return what still waits; an item that does not wait answers not_found (capcom.md 8.4). Needs the capcom capability.
+func (c Client) CapcomDetach(ctx context.Context, params CapcomDetachParams) (CapcomAttached, error) {
+	var result CapcomAttached
+	err := c.Caller.Call(ctx, "capcom.detach", params, &result)
+	return result, err
+}
+
 // CapcomAssign calls capcom.assign. Make a host the Capcom home host, with a counter above every one seen (capcom.md 7.3). Needs the capcom capability.
 func (c Client) CapcomAssign(ctx context.Context, params CapcomAssignParams) (CapcomAssigned, error) {
 	var result CapcomAssigned

@@ -16,7 +16,7 @@
 //	gff-hab worktree list|create|setup|remove [-socket path | -via command] [-project id | -dir path] ...
 //	gff-hab capcom assign [-socket path | -via command] <peer label|self>
 //	gff-hab capcom open   [-socket path | -via command] [-new]
-//	gff-hab capcom attach [-socket path | -via command] [-host h] <session> <kind> <ref>
+//	gff-hab capcom attach|detach [-socket path | -via command] [-host h] <session> <kind> <ref>
 //	gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
 //	gff-hab manifests list    [-state dir]
 //	gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
@@ -139,7 +139,7 @@ const usage = `usage:
   gff-hab worktree remove [-socket path | -via command] [-project id | -dir path] [-force] <worktree>
   gff-hab capcom assign [-socket path | -via command] <peer label|self>
   gff-hab capcom open   [-socket path | -via command] [-new]
-  gff-hab capcom attach [-socket path | -via command] [-host h] <session> <kind> <ref>
+  gff-hab capcom attach|detach [-socket path | -via command] [-host h] <session> <kind> <ref>
   gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
   gff-hab manifests list    [-state dir]
   gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>

@@ -310,6 +310,31 @@ func TestCapcomContext(t *testing.T) {
 	if p := mustOpen(t, c, false).Pending; len(p) != capcom.MaxPending || p[0].Title != "worker" || p[1].Title != "Notice 0" {
 		t.Fatalf("pending after a restart: %+v", p)
 	}
+
+	// Detach removes one item and returns the rest; one that does not wait is not_found.
+	ctx2, cancel2 := context.WithTimeout(context.Background(), scaleTimeout(20*time.Second))
+	defer cancel2()
+	var left api.CapcomAttached
+	if err := c.Call(ctx2, "capcom.detach", api.CapcomDetachParams{Session: op.Session, Kind: "notification", Ref: refs[0].Ref}, &left); err != nil {
+		t.Fatalf("detach: %v", err)
+	}
+	if len(left.Pending) != capcom.MaxPending-1 || left.Pending[0].Title != "worker" || left.Pending[1].Title != "Notice 1" {
+		t.Fatalf("pending after a detach: %+v", left.Pending)
+	}
+	err = c.Call(ctx2, "capcom.detach", api.CapcomDetachParams{Session: op.Session, Kind: "notification", Ref: refs[0].Ref}, nil)
+	if errKind(err) != api.ErrorKindNotFound {
+		t.Fatalf("detach of an item that does not wait: %v", err)
+	}
+	err = c.Call(ctx2, "capcom.detach", api.CapcomDetachParams{Session: worker.Session, Kind: "session", Ref: worker.Session}, nil)
+	if errKind(err) != api.ErrorKindInvalid {
+		t.Fatalf("detach on a session that is not Capcom's: %v", err)
+	}
+	if out := run(t, "capcom", "detach", "-socket", e.sock, op.Session, "session", worker.Session); !strings.Contains(out, fmt.Sprintf("%d waiting", capcom.MaxPending-2)) || strings.Contains(out, "session "+worker.Session) {
+		t.Fatalf("capcom detach: %q", out)
+	}
+	if p := mustOpen(t, c, false).Pending; len(p) != capcom.MaxPending-2 || p[0].Title != "Notice 1" {
+		t.Fatalf("pending after two detaches: %+v", p)
+	}
 }
 
 func capcomOpenWith(t *testing.T, c *control.Client, p api.CapcomOpenParams) (api.CapcomOpened, error) {

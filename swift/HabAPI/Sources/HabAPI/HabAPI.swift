@@ -442,6 +442,30 @@ public struct CapcomContextRef: Codable, Sendable, Hashable {
     }
 }
 
+public struct CapcomDetachParams: Codable, Sendable, Hashable {
+    /// As attached, or the item's host label. Absent: this hab.
+    public var host: String?
+    public var kind: CapcomContextKind
+    /// As attached.
+    public var ref: String
+    /// A Capcom session on this hab.
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case host = "host"
+        case kind = "kind"
+        case ref = "ref"
+        case session = "session"
+    }
+
+    public init(host: String? = nil, kind: CapcomContextKind, ref: String, session: String) {
+        self.host = host
+        self.kind = kind
+        self.ref = ref
+        self.session = session
+    }
+}
+
 public struct CapcomOpenParams: Codable, Sendable, Hashable {
     /// Context to attach to the returned session's next message, in order, as capcom.attach takes it (capcom.md 8.1). A refused item fails the call; items checked before the open fail it before any start. A file names an attachment of the returned session, or a path under its folder.
     public var context: [CapcomContextRef]?
@@ -6133,6 +6157,8 @@ public enum HabMethods {
     public static let capcomOpen = HabMethod<CapcomOpenParams, CapcomOpened>(name: "capcom.open")
     /// Attach context to a Capcom session's next message: a notification, a session, a file, a console command or a Logbook record. The hab resolves the ref at once and delivers it as a block before the user's text at the next session.send, then drops it; at most 8 items wait, and the same item twice is kept once (capcom.md 8.1). Needs the capcom capability.
     public static let capcomAttach = HabMethod<CapcomAttachParams, CapcomAttached>(name: "capcom.attach")
+    /// Remove one item from the context waiting for a Capcom session's next message, and return what still waits; an item that does not wait answers not_found (capcom.md 8.4). Needs the capcom capability.
+    public static let capcomDetach = HabMethod<CapcomDetachParams, CapcomAttached>(name: "capcom.detach")
     /// Make a host the Capcom home host, with a counter above every one seen (capcom.md 7.3). Needs the capcom capability.
     public static let capcomAssign = HabMethod<CapcomAssignParams, CapcomAssigned>(name: "capcom.assign")
     /// Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).

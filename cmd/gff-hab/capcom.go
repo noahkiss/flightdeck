@@ -492,25 +492,25 @@ func randHex(n int) string {
 }
 
 // capcomCmd is `gff-hab capcom assign <peer label|self>`, `gff-hab capcom open [-new]` and
-// `gff-hab capcom attach [-host h] <session> <kind> <ref>`.
+// `gff-hab capcom attach|detach [-host h] <session> <kind> <ref>`.
 func capcomCmd(args []string, out io.Writer) error {
-	if len(args) == 0 || (args[0] != "assign" && args[0] != "open" && args[0] != "attach") {
-		return errors.New("usage: gff-hab capcom assign [-socket path | -via command] <peer label|self>, gff-hab capcom open [-socket path | -via command] [-new], or gff-hab capcom attach [-socket path | -via command] [-host h] <session> <kind> <ref>")
+	if len(args) == 0 || (args[0] != "assign" && args[0] != "open" && args[0] != "attach" && args[0] != "detach") {
+		return errors.New("usage: gff-hab capcom assign [-socket path | -via command] <peer label|self>, gff-hab capcom open [-socket path | -via command] [-new], or gff-hab capcom attach|detach [-socket path | -via command] [-host h] <session> <kind> <ref>")
 	}
 	verb := args[0]
 	fs := flag.NewFlagSet("capcom "+verb, flag.ExitOnError)
 	sock := socketFlag(fs)
 	via := fs.String("via", "", "a command whose stdin and stdout reach a hab, such as: ssh host gff-hab connect")
 	fresh := fs.Bool("new", false, "open: start a fresh Capcom conversation")
-	host := fs.String("host", "", "attach: the host a notification was raised on (a peer label); absent: this hab")
+	host := fs.String("host", "", "attach, detach: the host a notification was raised on (a peer label); absent: this hab")
 	fs.Parse(args[1:])
 	switch {
 	case verb == "assign" && fs.NArg() != 1:
 		return errors.New("capcom assign needs one host: a peer label, a device id, or self")
 	case verb == "open" && fs.NArg() != 0:
 		return errors.New("capcom open takes no arguments")
-	case verb == "attach" && fs.NArg() != 3:
-		return errors.New("capcom attach needs a session, a kind (notification, session, file, command, logbook) and a ref")
+	case (verb == "attach" || verb == "detach") && fs.NArg() != 3:
+		return errors.New("capcom " + verb + " needs a session, a kind (notification, session, file, command, logbook) and a ref")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -523,8 +523,14 @@ func capcomCmd(args []string, out io.Writer) error {
 		return err
 	}
 	cl := api.Client{Caller: c}
-	if verb == "attach" {
-		r, err := cl.CapcomAttach(ctx, api.CapcomAttachParams{Session: fs.Arg(0), Kind: api.CapcomContextKind(fs.Arg(1)), Ref: fs.Arg(2), Host: *host})
+	if verb == "attach" || verb == "detach" {
+		var r api.CapcomAttached
+		var err error
+		if verb == "attach" {
+			r, err = cl.CapcomAttach(ctx, api.CapcomAttachParams{Session: fs.Arg(0), Kind: api.CapcomContextKind(fs.Arg(1)), Ref: fs.Arg(2), Host: *host})
+		} else {
+			r, err = cl.CapcomDetach(ctx, api.CapcomDetachParams{Session: fs.Arg(0), Kind: api.CapcomContextKind(fs.Arg(1)), Ref: fs.Arg(2), Host: *host})
+		}
 		if err != nil {
 			return err
 		}

@@ -86,6 +86,39 @@ func (c *capcomService) addPending(session string, items []capcom.Item) ([]api.C
 	return nil, control.Errorf(api.ErrorKindNotFound, "session %s is no longer a Capcom session on this hab", session)
 }
 
+// Detach answers capcom.detach: one pending item leaves the list, matched by kind, ref and
+// host (absent, self, this hab's label or device id: this hab). The list is saved before the
+// answer; a failed save keeps the item.
+func (c *capcomService) Detach(p api.CapcomDetachParams) (api.CapcomAttached, error) {
+	host := p.Host
+	if c.ownHost(host) {
+		host = c.host
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range c.st.Sessions {
+		rec := &c.st.Sessions[i]
+		if rec.ID != p.Session {
+			continue
+		}
+		gone := capcom.Item{Kind: string(p.Kind), Ref: p.Ref, Host: host}
+		left := capcom.Drop(rec.Pending, []capcom.Item{gone})
+		if len(left) == len(rec.Pending) {
+			return api.CapcomAttached{}, control.Errorf(api.ErrorKindNotFound, "no %s %s from %s waits for session %s", p.Kind, p.Ref, host, p.Session)
+		}
+		old := rec.Pending
+		rec.Pending = left
+		if err := c.trySaveLocked(); err != nil {
+			rec.Pending = old
+			c.logf("capcom: save: %v", err)
+			return api.CapcomAttached{}, control.Errorf(api.ErrorKindUnavailable, "session %s: the context could not be saved (%v); nothing was removed", p.Session, err)
+		}
+		return api.CapcomAttached{Session: p.Session, Pending: apiPending(left)}, nil
+	}
+	return api.CapcomAttached{}, control.Errorf(api.ErrorKindInvalid,
+		"session %s is not a Capcom session on this hab; context attaches only to a Capcom conversation", p.Session)
+}
+
 // pending returns the context waiting for a Capcom session's next message.
 func (c *capcomService) pending(session string) []capcom.Item {
 	c.mu.Lock()

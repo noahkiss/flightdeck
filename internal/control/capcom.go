@@ -6,11 +6,12 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 )
 
-// Capcom serves capcom.open, capcom.attach and capcom.assign (capcom.md 7, 8.3). gff-hab
+// Capcom serves capcom.open, capcom.attach, capcom.detach and capcom.assign (capcom.md 7, 8.3). gff-hab
 // implements it. An error that is an *Error keeps its kind.
 type Capcom interface {
 	Open(ctx context.Context, p api.CapcomOpenParams) (api.CapcomOpened, error)
 	Attach(ctx context.Context, p api.CapcomAttachParams) (api.CapcomAttached, error)
+	Detach(p api.CapcomDetachParams) (api.CapcomAttached, error)
 	Assign(ctx context.Context, p api.CapcomAssignParams) (api.CapcomAssigned, error)
 }
 
@@ -47,7 +48,7 @@ type Resumer interface {
 
 const hintNoCapcom = "%s needs the Capcom host, which this hab is running without; the capcom capability is absent"
 
-// dispatchCapcom answers capcom.open, capcom.attach and capcom.assign.
+// dispatchCapcom answers capcom.open, capcom.attach, capcom.detach and capcom.assign.
 func (c *conn) dispatchCapcom(m message, s api.Seq) (any, *Error) {
 	cc := c.s.cfg.Capcom
 	ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
@@ -74,6 +75,27 @@ func (c *conn) dispatchCapcom(m message, s api.Seq) (any, *Error) {
 		}
 		res.Seq = s
 		return res, nil
+	}
+	if m.Method == "capcom.detach" {
+		var p api.CapcomDetachParams
+		if e := c.decodeUp(m, &p); e != nil {
+			return nil, e
+		}
+		if cc == nil {
+			return nil, appErr(api.ErrorKindUnavailable, hintNoCapcom, m.Method)
+		}
+		if p.Session == "" {
+			return nil, appErr(api.ErrorKindInvalid, "capcom.detach needs a session")
+		}
+		if e := checkContext(m.Method, api.CapcomContextRef{Kind: p.Kind, Ref: p.Ref, Host: p.Host}); e != nil {
+			return nil, e
+		}
+		res, err := cc.Detach(p)
+		if err != nil {
+			return nil, actionErr(m.Method, err)
+		}
+		res.Seq = s
+		return api.NonNil(res), nil
 	}
 	if m.Method == "capcom.attach" {
 		var p api.CapcomAttachParams

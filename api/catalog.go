@@ -194,6 +194,14 @@ type CapcomAttachParams struct {
 	Host    string            `json:"host,omitempty" doc:"As in CapcomContextRef."`
 }
 
+// CapcomDetachParams names one pending item to remove, as it was attached.
+type CapcomDetachParams struct {
+	Session string            `json:"session" doc:"A Capcom session on this hab."`
+	Kind    CapcomContextKind `json:"kind"`
+	Ref     string            `json:"ref" doc:"As attached."`
+	Host    string            `json:"host,omitempty" doc:"As attached, or the item's host label. Absent: this hab."`
+}
+
 // CapcomAttached answers capcom.attach with everything now pending for the session's next
 // message, in delivery order.
 type CapcomAttached struct {
