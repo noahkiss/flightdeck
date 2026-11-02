@@ -147,3 +147,16 @@ func (e *exporter) value(v goja.Value, depth int, key string) (any, error) {
 	}
 	return nil, &valueError{"a symbol or BigInt cannot cross the bridge"}
 }
+
+// jsString returns a JS string primitive as a Go string. It never exports an object, which would
+// read its properties.
+func jsString(v goja.Value) (string, bool) {
+	if v == nil {
+		return "", false
+	}
+	if _, isObj := v.(*goja.Object); isObj {
+		return "", false
+	}
+	s, ok := v.Export().(string)
+	return s, ok
+}

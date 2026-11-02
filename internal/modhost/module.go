@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -124,29 +125,45 @@ func New(b *Bundle, opts Options) (*Module, error) {
 	if err := m.installBridge(); err != nil {
 		return nil, err
 	}
-	var exports goja.Value
+	// Requiring main.js and reading its exports can run module code (a getter on exports), so
+	// both run as a guarded JS call under the load limit.
+	var bad *BundleError
 	err := m.run(context.Background(), phaseLoad, m.limits.Load, func() (goja.Value, error) {
-		v, err := m.require(MainFile)
-		exports = v
-		return v, err
+		var rerr error
+		gerr := m.guard(func() {
+			var exports goja.Value
+			exports, rerr = m.require(MainFile)
+			if rerr != nil {
+				return
+			}
+			obj, ok := exports.(*goja.Object)
+			if !ok {
+				bad = &BundleError{Path: MainFile, Message: "module.exports is not an object"}
+				return
+			}
+			for _, name := range []string{"refresh", "render", "act"} {
+				v := obj.Get(name)
+				if v == nil || goja.IsUndefined(v) {
+					continue
+				}
+				fn, ok := goja.AssertFunction(v)
+				if !ok {
+					bad = &BundleError{Path: MainFile, Message: name + " is exported but is not a function"}
+					return
+				}
+				m.fns[name] = fn
+			}
+		})
+		if gerr != nil {
+			return nil, gerr
+		}
+		return nil, rerr
 	})
 	if err != nil {
 		return nil, err
 	}
-	obj, ok := exports.(*goja.Object)
-	if !ok {
-		return nil, &BundleError{Path: MainFile, Message: "module.exports is not an object"}
-	}
-	for _, name := range []string{"refresh", "render", "act"} {
-		v := obj.Get(name)
-		if v == nil || goja.IsUndefined(v) {
-			continue
-		}
-		fn, ok := goja.AssertFunction(v)
-		if !ok {
-			return nil, &BundleError{Path: MainFile, Message: name + " is exported but is not a function"}
-		}
-		m.fns[name] = fn
+	if bad != nil {
+		return nil, bad
 	}
 	if m.fns["render"] == nil {
 		return nil, &BundleError{Path: MainFile, Message: "exports no render function"}
@@ -192,8 +209,12 @@ func (m *Module) Render(ctx context.Context, c Call) ([]byte, error) {
 		if res == nil || goja.IsUndefined(res) {
 			return nil, &TreeError{Problems: modules.Problems{{Message: "render returned nothing"}}}
 		}
-		// The bound is above the tree limit so that long text can still be cut to fit.
-		raw, err = exportJSON(m.r, res, renderExportMax)
+		// The bound is above the tree limit so that long text can still be cut to fit. Reading
+		// the result can run module code (getters, proxies, toJSON), so it runs as a JS call:
+		// an exception or an interrupt comes back as an error, never as a panic.
+		if gerr := m.guard(func() { raw, err = exportJSON(m.r, res, renderExportMax) }); gerr != nil {
+			return nil, gerr
+		}
 		var ve *valueError
 		if errors.As(err, &ve) {
 			return nil, &TreeError{Problems: modules.Problems{{Message: ve.msg}}}
@@ -282,6 +303,9 @@ func (m *Module) run(parent context.Context, ph phase, limit time.Duration, f fu
 	m.cur = &callState{ctx: ctx, phase: ph}
 
 	_, err := f()
+	// Classified while the limits still hold: reading a thrown object's name and message can
+	// run module code (getters, toString).
+	err = m.classify(ph, err)
 
 	stop()
 	m.imu.Lock()
@@ -291,7 +315,7 @@ func (m *Module) run(parent context.Context, ph phase, limit time.Duration, f fu
 	cancel()
 	<-watchDone
 	m.cur = nil
-	return m.classify(ph, err)
+	return err
 }
 
 func (m *Module) classify(ph phase, err error) error {
@@ -311,11 +335,14 @@ func (m *Module) classify(ph phase, err error) error {
 	}
 	var ex *goja.Exception
 	if errors.As(err, &ex) {
-		se := scriptError(ex.Value())
-		se.Func, se.Stack = ph.String(), ex.String()
-		if se.Message == "" {
-			se.Message = ex.Error()
-		}
+		se := m.scriptError(ex.Value())
+		se.Func = ph.String()
+		_ = m.guard(func() {
+			se.Stack = ex.String()
+			if se.Message == "" {
+				se.Message = ex.Error()
+			}
+		})
 		return se
 	}
 	var se *goja.CompilerSyntaxError
@@ -333,19 +360,22 @@ func (m *Module) classify(ph phase, err error) error {
 	return err
 }
 
-// scriptError reads a thrown value's name and message.
-func scriptError(v goja.Value) *ScriptError {
+// scriptError reads a thrown value's name and message. Both may run module code, so they are
+// read as a guarded JS call; a getter that throws or loops leaves the field empty.
+func (m *Module) scriptError(v goja.Value) *ScriptError {
 	se := &ScriptError{}
-	if o, ok := v.(*goja.Object); ok {
-		if n := o.Get("name"); n != nil && !goja.IsUndefined(n) {
-			se.Name = n.String()
+	_ = m.guard(func() {
+		if o, ok := v.(*goja.Object); ok {
+			if n := o.Get("name"); n != nil && !goja.IsUndefined(n) {
+				se.Name = n.String()
+			}
+			if msg := o.Get("message"); msg != nil && !goja.IsUndefined(msg) {
+				se.Message = msg.String()
+			}
+		} else if v != nil {
+			se.Message = v.String()
 		}
-		if msg := o.Get("message"); msg != nil && !goja.IsUndefined(msg) {
-			se.Message = msg.String()
-		}
-	} else if v != nil {
-		se.Message = v.String()
-	}
+	})
 	return se
 }
 
@@ -360,6 +390,11 @@ func (m *Module) settle(v goja.Value, err error) (goja.Value, error) {
 	if !ok {
 		return v, nil
 	}
+	if o.ExportType() != promiseType {
+		return v, nil
+	}
+	// Export of a promise returns it without reading its properties; of another object, it
+	// would run every getter outside a JS call.
 	p, ok := o.Export().(*goja.Promise)
 	if !ok {
 		return v, nil
@@ -368,7 +403,7 @@ func (m *Module) settle(v goja.Value, err error) (goja.Value, error) {
 	case goja.PromiseStateFulfilled:
 		return p.Result(), nil
 	case goja.PromiseStateRejected:
-		return nil, scriptError(p.Result())
+		return nil, m.scriptError(p.Result())
 	}
 	return nil, &ScriptError{Name: BridgeError, Message: "the returned promise never settled"}
 }
@@ -414,7 +449,7 @@ func (m *Module) require(p string) (goja.Value, error) {
 	dir := path.Dir(p)
 	req := m.r.ToValue(func(call goja.FunctionCall) goja.Value {
 		spec := call.Argument(0)
-		s, ok := spec.Export().(string)
+		s, ok := jsString(spec)
 		if !ok {
 			panic(m.newError(BridgeError, "require takes a relative path such as \"./util.js\""))
 		}
@@ -427,6 +462,10 @@ func (m *Module) require(p string) (goja.Value, error) {
 			var ex *goja.Exception
 			if errors.As(err, &ex) {
 				panic(ex)
+			}
+			var se *goja.CompilerSyntaxError
+			if errors.As(err, &se) {
+				panic(m.newError("SyntaxError", se.Error()))
 			}
 			panic(m.newError(BridgeError, err.Error()))
 		}
@@ -468,6 +507,19 @@ func (m *Module) newError(name, msg string) *goja.Object {
 	_ = o.Set("name", name)
 	return o
 }
+
+// guard runs f as a native JS function, so goja turns an exception or an interrupt that module
+// code raises inside f into an error.
+func (m *Module) guard(f func()) error {
+	fn, _ := goja.AssertFunction(m.r.ToValue(func(goja.FunctionCall) goja.Value {
+		f()
+		return goja.Undefined()
+	}))
+	_, err := fn(goja.Undefined())
+	return err
+}
+
+var promiseType = reflect.TypeFor[*goja.Promise]()
 
 // importJSON parses JSON into a JS value with the JSON.parse captured at New.
 func (m *Module) importJSON(raw json.RawMessage) (goja.Value, error) {

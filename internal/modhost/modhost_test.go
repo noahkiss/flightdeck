@@ -590,3 +590,69 @@ func TestCutText(t *testing.T) {
 		t.Errorf("cut = %q %v", s, c)
 	}
 }
+
+// TestHostileValues feeds the runtime values whose reading runs module code that throws or loops:
+// none may crash the host or outlive the call's limit.
+func TestHostileValues(t *testing.T) {
+	ctx := context.Background()
+	m := newModule(t, writeBundle(t, "hostile", `"exec", "fetch"`, `
+exports.render = function (ctx) {
+  switch (ctx.place) {
+  case "board": return { type: "text", get text() { throw new Error("getter threw"); } };
+  case "host": return { type: "text", get text() { for (;;) {} } };
+  case "session": return new Proxy({}, { ownKeys: function () { throw new Error("trap threw"); } });
+  case "sheet": throw { get name() { throw 1; }, get message() { for (;;) {} } };
+  }
+};
+exports.act = function (name) {
+  if (name === "argv.hole") fd.exec(["ls", , "x"]);
+  if (name === "header.getter") fd.fetch("https://example.invalid/", { headers: { get a() { throw new Error("no"); } } });
+  if (name === "symbol.name") { var e = new Error("m"); e.name = Symbol("s"); throw e; }
+};
+`), Options{Backends: Backends{Exec: &fakeExec{}, Fetch: &fakeFetch{}}})
+	render := func(place string) error {
+		c := fixedCall
+		c.Place = place
+		_, err := m.Render(ctx, c)
+		return err
+	}
+	var se *ScriptError
+	if err := render("board"); !errors.As(err, &se) || se.Message != "getter threw" {
+		t.Errorf("throwing getter: %v", err)
+	}
+	var te *TimeoutError
+	if err := render("host"); !errors.As(err, &te) {
+		t.Errorf("looping getter: %v", err)
+	}
+	if err := render("session"); !errors.As(err, &se) || se.Message != "trap threw" {
+		t.Errorf("throwing proxy: %v", err)
+	}
+	start := time.Now()
+	if err := render("sheet"); err == nil {
+		t.Error("a hostile thrown object passed")
+	} else if time.Since(start) > 3*time.Second {
+		t.Errorf("a hostile thrown object held the call for %s", time.Since(start))
+	}
+	if err := m.Act(ctx, "argv.hole", nil, fixedCall); !errors.As(err, &se) || se.Name != BridgeError {
+		t.Errorf("argv with a hole: %v", err)
+	}
+	if err := m.Act(ctx, "header.getter", nil, fixedCall); !errors.As(err, &se) || se.Message != "no" {
+		t.Errorf("header getter: %v", err)
+	}
+	if err := m.Act(ctx, "symbol.name", nil, fixedCall); err == nil {
+		t.Error("an error named by a symbol passed")
+	}
+	c := fixedCall
+	c.Place = "unknown"
+	var tre *TreeError
+	if _, err := m.Render(ctx, c); !errors.As(err, &tre) || !strings.Contains(err.Error(), "returned nothing") {
+		t.Errorf("render after the hostile calls: %v, want the module still running", err)
+	}
+	// A getter on module.exports that throws fails the load, without a panic.
+	_, err := New(writeBundle(t, "hostile-exports", "", `
+Object.defineProperty(module, "exports", { get: function () { throw new Error("no exports"); } });
+`), Options{})
+	if !errors.As(err, &se) || se.Func != "load" || se.Message != "no exports" {
+		t.Errorf("throwing exports getter: %v", err)
+	}
+}

@@ -565,7 +565,9 @@ cap.
 - **Stack.** At most 1,000 JS calls deep. Deeper recursion throws a `RangeError` instead of
   growing the goroutine's stack.
 - **Values.** The bounds of 7.3 keep a value the module builds from making the host recurse or
-  allocate without end.
+  allocate without end. Reading a value, a thrown error's name and message, or `module.exports`
+  runs as a JS call under the limit, so a getter or proxy that throws fails the call and one
+  that loops is interrupted; neither can take the host down.
 - **Failures.** The runtime returns typed errors: `TimeoutError`, `MemoryError`, `ScriptError`
   (an exception the module did not catch, or a syntax error, with its JS name), `TreeError`,
   `ClientTooOld`, `BundleError`, `NewerBridge` and `NewerBlocks`. Counting failures, pausing a

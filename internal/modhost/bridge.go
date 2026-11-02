@@ -120,7 +120,7 @@ func (m *Module) installBridge() error {
 	_ = fd.Set("log", fn(func(c goja.FunctionCall) goja.Value {
 		parts := make([]string, len(c.Arguments))
 		for i, a := range c.Arguments {
-			if s, ok := a.Export().(string); ok {
+			if s, ok := jsString(a); ok {
 				parts[i] = s
 				continue
 			}
@@ -173,7 +173,7 @@ func (m *Module) need(call, power string) *callState {
 }
 
 func (m *Module) habArgs(call string, c goja.FunctionCall) (string, json.RawMessage) {
-	method, ok := c.Argument(0).Export().(string)
+	method, ok := jsString(c.Argument(0))
 	if !ok || method == "" {
 		m.throw(BridgeError, call+": the first argument is a method name, such as \"session.list\"")
 	}
@@ -231,8 +231,12 @@ func (m *Module) execArgs(cur *callState, c goja.FunctionCall) ExecRequest {
 	}
 	var req ExecRequest
 	for i := int64(0); i < n; i++ {
-		s, ok := argvV.Get(fmt.Sprint(i)).Export().(string)
-		if !ok || strings.IndexByte(s, 0) >= 0 || (i == 0 && s == "") {
+		var s string
+		item := argvV.Get(fmt.Sprint(i)) // nil for a hole
+		if item != nil {
+			s, ok = jsString(item)
+		}
+		if item == nil || !ok || strings.IndexByte(s, 0) >= 0 || (i == 0 && s == "") {
 			m.throw(BridgeError, "fd.exec: argv holds strings, the first not empty")
 		}
 		req.Argv = append(req.Argv, s)
@@ -241,7 +245,7 @@ func (m *Module) execArgs(cur *callState, c goja.FunctionCall) ExecRequest {
 	req.Timeout = remaining
 	if o := m.options("fd.exec", c.Argument(1), "cwd", "timeout"); o != nil {
 		if v := o.Get("cwd"); v != nil && !goja.IsUndefined(v) {
-			s, ok := v.Export().(string)
+			s, ok := jsString(v)
 			if !ok {
 				m.throw(BridgeError, "fd.exec: cwd is a path")
 			}
@@ -269,7 +273,7 @@ func deadline(ctx context.Context) time.Time {
 }
 
 func (m *Module) fetchArgs(c goja.FunctionCall) FetchRequest {
-	s, ok := c.Argument(0).Export().(string)
+	s, ok := jsString(c.Argument(0))
 	u, err := url.Parse(s)
 	if !ok || err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		m.throw(BridgeError, "fd.fetch: the first argument is an http or https URL")
@@ -280,7 +284,7 @@ func (m *Module) fetchArgs(c goja.FunctionCall) FetchRequest {
 		return req
 	}
 	if v := o.Get("method"); v != nil && !goja.IsUndefined(v) {
-		meth, ok := v.Export().(string)
+		meth, ok := jsString(v)
 		if !ok || meth == "" || strings.ContainsAny(meth, " \t\r\n") {
 			m.throw(BridgeError, "fd.fetch: method is a word such as GET or POST")
 		}
@@ -293,15 +297,19 @@ func (m *Module) fetchArgs(c goja.FunctionCall) FetchRequest {
 		}
 		req.Headers = map[string]string{}
 		for _, k := range ho.Keys() {
-			hv, ok := ho.Get(k).Export().(string)
-			if !ok || strings.ContainsAny(k+hv, "\r\n") {
+			var hv string
+			item := ho.Get(k)
+			if item != nil {
+				hv, ok = jsString(item)
+			}
+			if item == nil || !ok || strings.ContainsAny(k+hv, "\r\n") {
 				m.throw(BridgeError, "fd.fetch: headers is an object of strings")
 			}
 			req.Headers[k] = hv
 		}
 	}
 	if v := o.Get("body"); v != nil && !goja.IsUndefined(v) {
-		body, ok := v.Export().(string)
+		body, ok := jsString(v)
 		if !ok || len(body) > maxParamsBytes {
 			m.throw(BridgeError, fmt.Sprintf("fd.fetch: body is a string of at most %d bytes", maxParamsBytes))
 		}
@@ -311,7 +319,7 @@ func (m *Module) fetchArgs(c goja.FunctionCall) FetchRequest {
 }
 
 func (m *Module) stateKey(call string, v goja.Value) string {
-	k, ok := v.Export().(string)
+	k, ok := jsString(v)
 	if !ok || k == "" || len(k) > maxStateKey {
 		m.throw(BridgeError, fmt.Sprintf("%s: a key is a string of 1 to %d bytes", call, maxStateKey))
 	}
