@@ -310,7 +310,9 @@ the vault or the item. 1Password references written to any pushed file use ids o
 
 ### 6.1 The `release` environment
 
-Limited to the release tag patterns (7.1). Only the jobs that sign or upload name it.
+Limited to the release tag patterns (7.1), which also admit the dry-run tags `v*-dry.*` and
+`app-v*-dry.*` (7.6): the deployment rules are `v*` and `app-v*`, so they do. Only the jobs that
+sign or upload name it.
 
 | Name | Kind | Value lives in | Used by |
 |---|---|---|---|
@@ -487,7 +489,7 @@ rule. The release values:
    requirement comparison that refuses a release which would drop every grant. Smoke as on Linux.
    Pack, `.sha256`, upload as an artifact. Delete the keychain and keys in an `always()` step.
    Timeout 45 minutes.
-4. **`publish`** (ubuntu, `needs: [linux, darwin]`, `contents: write`). Download the artifacts,
+4. **`publish`** (ubuntu, `needs: [linux, darwin]`, `contents: write`; skipped on a dry run). Download the artifacts,
    write `SHA256SUMS`, create the GitHub release as a draft, attach every asset (never clobber an
    existing asset), then publish it. An `-rc.` tag publishes as a prerelease. Release notes come
    from `--generate-notes`.
@@ -506,7 +508,8 @@ commit gets no `ci.yml` run; most commits get no `apple.yml` run). So `verify` a
 
 **Only a full run counts.** The fast run of 3.3 (`make check-pure`, `make build`) runs no tests.
 `ci.yml` names its go job `go (full)` or `go (fast)` from the `plan` output, and `verify` reads a
-run's jobs (`gh run view <id> --json jobs`) and requires a successful `go (full)`. A dispatch
+run's jobs (`gh run view <id> --json jobs`) and requires a successful job whose name starts with
+`go (full)`: a job that calls a reusable workflow shows as `go (full) / <called job>`. A dispatch
 always runs the full set. Every `apple.yml` run is full.
 
 **The path test needs its own matcher** for GitHub's path patterns. A git pathspec cannot do it:
@@ -619,16 +622,18 @@ to get the version. Existing callers pass nothing and see no change. `app-releas
 `app-v`.
 
 **Extension 2: per-platform formula.** When a formula holds several `url` lines, each interpolating
-only `#{version}`, bump.yml rewrites the one `version` line and every `sha256`, the top-level
-one and those inside `on_*` blocks, from the matching published `<asset>.sha256` (as
-`bump-zellij.yml` already reads its shas). It checks that every asset and its `.sha256` are
-attached before it rewrites anything. A url with no `.sha256` asset, such as a source archive
-fallback in another formula, is downloaded and hashed directly, as a single-url formula is today.
+only `#{version}`, bump.yml rewrites the one `version` line and every `sha256`. The top-level url
+is downloaded and hashed directly, as a single-url formula is today. Each url inside an `on_*`
+block takes its sha from the matching published `<asset>.sha256`; bump.yml also downloads that
+asset and refuses the bump when the two hashes differ, because the verify legs install on two
+platforms only. Every asset and its `.sha256` must be attached before anything is rewritten. A
+nested url that names no release asset (a `resource` block) is left alone. Built in
+noahkiss/homebrew-tap#10.
 
 A formula with one `url` takes today's path unchanged. The verify legs stay as they are:
 `brew readall`, then `brew install` and `brew test` on both platforms.
 
-`bump-zellij.yml` is not a fit: it is tied to one repo, one formula pair and a from-source twin.
+The tap's other bump workflows are not a fit: each is tied to one producer's formulas.
 
 ### 8.3 The caller
 
@@ -1039,7 +1044,7 @@ Read while writing this spec, 2026-11-01.
 - `go.mitchellh.com/libghostty` at the version in `go.mod`: `cgo_static.go` and `cgo_shared.go`.
 - `noahkiss/workflows`: `go-ci.yml`, `dispatch-and-wait.yml`, the README's "Saving CI minutes
   and time".
-- `noahkiss/homebrew-tap`: `.github/workflows/bump.yml`, `bump-zellij.yml`.
+- `noahkiss/homebrew-tap`: `.github/workflows/bump.yml` and its per-producer bump workflows.
 - `noahkiss/heraldo`: `.github/workflows/ci.yml` (a go-ci, ghcr-build-push and
   dispatch-and-wait caller).
 - The archived rootshell FlightDeck repo: `.github/workflows/release.yml` (described in 13, not
