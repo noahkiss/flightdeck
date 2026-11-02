@@ -129,7 +129,7 @@ func TestRoundEveryMinute(t *testing.T) {
 	ev.KeepAlive(control.DefaultHeartbeat) // the slot may be most of a minute away
 	call(t, ev, "events.subscribe", api.SubscribeParams{Scope: api.Scope{Kind: api.ScopeKindHost}}, nil)
 	envFile := filepath.Join(e.work, "env")
-	script := "env | grep '^GFF_ROUND' | sort > " + envFile + ".tmp; mv " + envFile + ".tmp " + envFile + "; sleep 1"
+	script := "env | grep '^GFF_ROUND' | LC_ALL=C sort > " + envFile + ".tmp; mv " + envFile + ".tmp " + envFile + "; sleep 1"
 	out := mustRound(t, e, "add", "minutely", "-every", "1m", "-project", repo, "-command", "--", "/bin/sh", "-c", script)
 	if !strings.Contains(out, "minutely") {
 		t.Fatalf("add: %s", out)
