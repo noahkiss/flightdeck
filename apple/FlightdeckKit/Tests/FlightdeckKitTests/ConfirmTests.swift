@@ -327,4 +327,200 @@ final class ConfirmTests: XCTestCase {
         XCTAssertTrue(book.open.isEmpty)
         await conn.stop()
     }
+
+    // MARK: - Fix round
+
+    /// A confirmed start that failed stays in the approvals area with its outcome until dismissed.
+    @MainActor
+    func testFailedStartStaysUntilDismissed() async throws {
+        let hab = await sampleHab("boxa")
+        await hab.setCapability("confirm", true)
+        await hab.requestConfirmation(Self.confirmation("f", created: Date()))
+        await hab.setConfirmOutcome(.failed, reason: "cwd is not a directory")
+        let conn = HabConnection(id: "a", transport: hab.transport(), timing: fastTiming())
+        let board = Board()
+        board.register(id: "a", label: nil, endpoint: "fake")
+        let center = ConfirmCenter(board: board, answer: { _, p in try await conn.call(HabMethods.confirmAnswer, p) })
+        let feed = Task { @MainActor in for await s in conn.updates { board.update("a", s); center.boardChanged() } }
+        defer { feed.cancel() }
+        await conn.start()
+        await eventually("card") { center.approvals.count == 1 }
+        let card = try XCTUnwrap(center.approvals.first)
+        await center.confirm(card)
+        await eventually("closed") { center.cards.first?.confirmation.isClosed == true }
+        let kept = try XCTUnwrap(center.approvals.first)
+        XCTAssertEqual(kept.confirmation.state, .failed)
+        XCTAssertTrue(center.isHeld(kept))
+        XCTAssertEqual(ConfirmCenter.outcome(kept.confirmation), "Failed: cwd is not a directory")
+        center.boardChanged()
+        XCTAssertEqual(center.approvals.count, 1, "pruning keeps a held card")
+        center.dismiss(kept)
+        XCTAssertTrue(center.approvals.isEmpty)
+        await conn.stop()
+    }
+
+    /// A done answer leaves nothing in the approvals area.
+    @MainActor
+    func testDoneStartIsNotHeld() async throws {
+        let a = Self.confirmation("a")
+        var done = Self.closed(a, .done)
+        done.result = ConfirmResult(host: "boxb", pane: "%2", session: "s2")
+        let (c, _) = center(try book([a])) { _, _ in ConfirmationResult(confirmation: done, seq: 1) }
+        await c.confirm(try XCTUnwrap(c.cards.first))
+        XCTAssertFalse(c.isHeld(try XCTUnwrap(c.cards.first)))
+    }
+
+    /// A second tap while the first answer is on its way sends nothing.
+    @MainActor
+    func testSecondTapWhileSending() async throws {
+        var calls = 0
+        var release: CheckedContinuation<Void, Never>?
+        let a = Self.confirmation("a")
+        let (c, _) = center(try book([a])) { _, _ in
+            calls += 1
+            await withCheckedContinuation { release = $0 }
+            return ConfirmationResult(confirmation: a, seq: 1)
+        }
+        let card = try XCTUnwrap(c.cards.first)
+        let first = Task { await c.confirm(card) }
+        await eventually("sending") { c.phase(card) == .sending && release != nil }
+        XCTAssertFalse(c.canAnswer(card))
+        await c.confirm(card)
+        await c.cancel(card)
+        XCTAssertEqual(calls, 1)
+        release?.resume()
+        await first.value
+        XCTAssertEqual(calls, 1)
+    }
+
+    /// Through HabConnection: closed cards stay across a reconnect in one epoch, a card
+    /// that closed while offline learns its outcome from confirm.list, a running record
+    /// comes back, and a new epoch drops them all.
+    @MainActor
+    func testReconnectAndNewEpoch() async throws {
+        let hab = await sampleHab("boxa")
+        await hab.setCapability("confirm", true)
+        await hab.requestConfirmation(Self.confirmation("a", created: Date()))
+        await hab.requestConfirmation(Self.confirmation("b", created: Date()))
+        let conn = HabConnection(id: "a", transport: hab.transport(), timing: fastTiming())
+        await conn.start()
+        await eventually("two open") { await conn.state.confirmations.open.count == 2 }
+        await hab.closeConfirmation("a", state: .cancelled)
+        await eventually("a closed") { await conn.state.confirmations.closed.map(\.id) == ["a"] }
+
+        await conn.stop()
+        await hab.closeConfirmation("b", state: .expired, reason: "no answer within 60 minutes; nothing ran")
+        var rec = Self.confirmation("r", state: .running, record: true, created: Date())
+        rec.expiresAt = nil
+        await hab.requestConfirmation(rec)
+        await conn.start()
+        await eventually("outcome recovered") { await conn.state.confirmations.find("b")?.state == .expired }
+        var book = await conn.state.confirmations
+        XCTAssertEqual(Set(book.closed.map(\.id)), ["a", "b"])
+        XCTAssertEqual(book.open.map(\.id), ["r"], "the running record is not in the snapshot; the list brings it")
+
+        let lists = await hab.confirmLists
+        await hab.restart()
+        await eventually("new epoch") { await conn.state.epochChanges == 1 }
+        await eventually("list merged") { await hab.confirmLists > lists }
+        book = await conn.state.confirmations
+        XCTAssertTrue(book.closed.isEmpty, "a new epoch drops the closed cards")
+        await conn.stop()
+    }
+
+    /// An event that arrives before the snapshot's answer waits and applies after it.
+    @MainActor
+    func testEventBufferedBeforeSnapshot() async throws {
+        let hab = await sampleHab("boxa")
+        await hab.setCapability("confirm", true)
+        let early = Self.confirmation("early", created: Date())
+        await hab.setSubscribeHook { await hab.requestConfirmation(early) }
+        let conn = HabConnection(id: "a", transport: hab.transport(), timing: fastTiming())
+        await conn.start()
+        await eventually("early card") { await conn.state.confirmations.open.map(\.id) == ["early"] }
+        await conn.stop()
+    }
+
+    /// Two habs with the same session name and confirmation id keep their cards,
+    /// drafts and conflicts apart.
+    @MainActor
+    func testTwoHabsSameIDs() async throws {
+        let b = try book([Self.confirmation("x")])
+        let board = Board()
+        board.register(id: "a", label: "boxa", endpoint: "fake")
+        board.register(id: "b", label: "boxb", endpoint: "fake")
+        board.update("a", habState(b))
+        board.update("b", habState(b))
+        let c = ConfirmCenter(board: board, now: { Self.t0 }) { habID, p in
+            if habID == "a" {
+                throw RPCError(code: -32000, message: "conflict", data: ErrorData(hint: "taken", kind: .conflict, seq: 1))
+            }
+            return ConfirmationResult(confirmation: Self.confirmation(p.id), seq: 1)
+        }
+        let cards = c.cards
+        XCTAssertEqual(Set(cards.map(\.id)), ["a/x", "b/x"])
+        let ca = try XCTUnwrap(cards.first { $0.habID == "a" })
+        let cb = try XCTUnwrap(cards.first { $0.habID == "b" })
+        XCTAssertEqual(c.cards(for: SessionTarget(habID: "b", session: "s1", pane: "%1")).map(\.id), ["b/x"])
+        var d = try XCTUnwrap(c.draft(ca))
+        d.model = "opus"
+        c.setDraft(d, for: ca)
+        XCTAssertTrue(c.isEdited(ca))
+        XCTAssertFalse(c.isEdited(cb))
+        await c.confirm(ca)
+        XCTAssertEqual(c.phase(ca), .alreadyAnswered)
+        XCTAssertEqual(c.phase(cb), .open)
+    }
+
+    /// Waiting questions count in the needs-you count; records and offline habs do not.
+    @MainActor
+    func testWaitingCountsInNeedsYou() throws {
+        let board = Board()
+        board.register(id: "a", label: "boxa", endpoint: "fake")
+        board.register(id: "b", label: "boxb", endpoint: "fake")
+        board.update("a", habState(try book([Self.confirmation("q1"), Self.confirmation("q2"), Self.confirmation("r", state: .running, record: true)])))
+        board.update("b", habState(try book([Self.confirmation("q3")]), online: false))
+        XCTAssertEqual(board.waitingConfirmations, 2)
+        XCTAssertEqual(board.needsYouCount, 2)
+    }
+
+    /// A card's edits and notes go once it closes.
+    @MainActor
+    func testStateIsPrunedOnClose() async throws {
+        let a = Self.confirmation("a")
+        let (c, board) = center(try book([a])) { _, _ in
+            throw RPCError(code: -32000, message: "invalid", data: ErrorData(hint: "bad model", kind: .invalid, seq: 1))
+        }
+        let card = try XCTUnwrap(c.cards.first)
+        var d = try XCTUnwrap(c.draft(card))
+        d.model = "opus"
+        c.setDraft(d, for: card)
+        await c.confirm(card)
+        XCTAssertEqual(c.phase(card), .failed("bad model"))
+        c.boardChanged()
+        XCTAssertTrue(c.isEdited(card), "an open card keeps its draft")
+        board.update("a", habState(try book([], closed: [Self.closed(a, .cancelled)])))
+        c.boardChanged()
+        XCTAssertFalse(c.isEdited(card))
+        XCTAssertEqual(c.phase(card), .open, "the stale card value has no note left")
+    }
+
+    func testSeedCountsScalars() {
+        let s = Self.start()
+        var d = ConfirmDraft(s)
+        // One character, two scalars: the hab counts runes, not characters.
+        d.seed = String(repeating: "e\u{301}", count: 4001)
+        XCTAssertEqual(d.seed.count, 4001)
+        XCTAssertNotNil(d.problem(against: s))
+    }
+
+    @MainActor
+    func testOrderByParsedTime() throws {
+        var a = Self.confirmation("a")
+        a.created = "2026-11-02T00:00:04Z"
+        var b = Self.confirmation("b")
+        b.created = "2026-11-02T00:00:04.5Z"
+        let (c, _) = center(try book([b, a]))
+        XCTAssertEqual(c.cards.map(\.confirmation.id), ["a", "b"])
+    }
 }

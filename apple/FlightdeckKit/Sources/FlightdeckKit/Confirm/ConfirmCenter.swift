@@ -88,7 +88,8 @@ public struct ConfirmDraft: Equatable, Sendable {
 
     /// Why Confirm is off for this draft; nil when it can go.
     public func problem(against s: ConfirmStart) -> String? {
-        if seed.count > Self.seedLimit { return "The seed is longer than \(Self.seedLimit) characters" }
+        // The hab counts runes (Unicode scalars), not grapheme clusters.
+        if seed.unicodeScalars.count > Self.seedLimit { return "The seed is longer than \(Self.seedLimit) characters" }
         if let e = edits(against: s), e.host != nil, e.folder == nil { return "Give the folder on the new host" }
         return nil
     }
@@ -100,8 +101,9 @@ public struct ConfirmDraft: Equatable, Sendable {
 /// - Capcom's cards show in the Capcom view; another agent's in its session
 ///   view and in the approvals area. A card from outside a pane shows in the
 ///   approvals area only.
-/// - The approvals area shows questions only; records and closed cards stay in
-///   their session view (and the Capcom view), with their outcome.
+/// - The approvals area shows questions, and starts this client confirmed that
+///   failed or ended unknown, until dismissed. Records and other closed cards
+///   stay in their session view (and the Capcom view), with their outcome.
 @MainActor
 @Observable
 public final class ConfirmCenter {
@@ -141,6 +143,10 @@ public final class ConfirmCenter {
     private var sending: Set<String> = []
     private var failures: [String: String] = [:]
     private var conflicts: Set<String> = []
+    /// Starts this client confirmed that failed or ended unknown, by card id,
+    /// as the answer or the closed event last had them: the approvals area
+    /// keeps them until dismissed.
+    private var held: [String: ConfirmCard] = [:]
     /// The hosts a start can go to, per hab, from `confirm.list`.
     public private(set) var targets: [String: [ConfirmTarget]] = [:]
 
@@ -172,14 +178,47 @@ public final class ConfirmCenter {
             open += book.open.map(card)
             closed += book.closed.map(card)
         }
-        open.sort { $0.confirmation.created < $1.confirmation.created }
-        closed.sort { ($0.confirmation.closed ?? "") > ($1.confirmation.closed ?? "") }
+        open.sort { Self.time($0.confirmation.created) < Self.time($1.confirmation.created) }
+        closed.sort { Self.time($0.confirmation.closed) > Self.time($1.confirmation.closed) }
         return open + closed
     }
 
-    /// The approvals area: questions from agents other than Capcom, oldest first.
+    /// An RFC 3339 stamp as a date; distant past when absent or unreadable.
+    nonisolated static func time(_ s: String?) -> Date {
+        s.flatMap(UsageBook.parseTime) ?? .distantPast
+    }
+
+    /// The approvals area: questions from agents other than Capcom, oldest
+    /// first, then failed or unknown starts this client confirmed, newest first.
     public var approvals: [ConfirmCard] {
-        cards.filter { $0.confirmation.asks && !$0.capcom }
+        let all = cards
+        let asks = all.filter { $0.confirmation.asks && !$0.capcom }
+        let kept = held.values.map { h in all.first { $0.id == h.id && $0.confirmation.isClosed } ?? h }
+            .sorted { Self.time($0.confirmation.closed) > Self.time($1.confirmation.closed) }
+        return asks + kept
+    }
+
+    /// Whether the approvals area keeps this card until it is dismissed.
+    public func isHeld(_ card: ConfirmCard) -> Bool { held[card.id] != nil }
+
+    /// Takes a failed or unknown start out of the approvals area.
+    public func dismiss(_ card: ConfirmCard) {
+        held[card.id] = nil
+    }
+
+    /// Drops the edits, notes and marks of cards that are no longer open on
+    /// their hab. A held card stays until dismissed.
+    public func boardChanged() {
+        let open = Set(cards.filter { !$0.confirmation.isClosed }.map(\.id))
+        let all = cards
+        for (id, h) in held {
+            // A newer copy (the closed event after the answer) replaces the held one.
+            if let c = all.first(where: { $0.id == id && $0.confirmation.isClosed }), c != h { held[id] = c }
+        }
+        let keep = { (id: String) in open.contains(id) || self.sending.contains(id) }
+        if drafts.keys.contains(where: { !keep($0) }) { drafts = drafts.filter { keep($0.key) } }
+        if failures.keys.contains(where: { !keep($0) }) { failures = failures.filter { keep($0.key) } }
+        if conflicts.contains(where: { !keep($0) }) { conflicts = conflicts.filter(keep) }
     }
 
     /// The Capcom view's cards.
@@ -296,8 +335,13 @@ public final class ConfirmCenter {
         failures[card.id] = nil
         defer { sending.remove(card.id) }
         do {
-            _ = try await answerer(card.habID, p)
+            let r = try await answerer(card.habID, p)
             drafts[card.id] = nil
+            if p.choice == .confirm, r.confirmation.state == .failed || r.confirmation.state == .unknown {
+                var c = card
+                c.confirmation = r.confirmation
+                held[card.id] = c
+            }
         } catch let e as RPCError where e.kind == .conflict {
             conflicts.insert(card.id)
         } catch let e as RPCError {

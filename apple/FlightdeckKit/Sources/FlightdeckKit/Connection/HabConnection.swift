@@ -153,6 +153,9 @@ public actor HabConnection {
     /// The last welcome brought another epoch than the one before (or was the
     /// first): the next snapshot drops the closed confirmations held.
     private var confirmEpochChanged = true
+    /// The seq of the last confirm event per confirmation id on this
+    /// connection, so an older `confirm.list` answer does not undo it.
+    private var confirmSeqs: [String: UInt64] = [:]
 
     public init(id: String, transport: Transport, timing: HabTiming = HabTiming(), clientLabel: String? = nil, clientVersion: String = "0") {
         self.id = id
@@ -364,6 +367,7 @@ public actor HabConnection {
         rpc = r
         generation += 1
         usageSeqs = [:]
+        confirmSeqs = [:]
         lastSeq = 0
         snapshotApplied = false
         buffered = []
@@ -409,6 +413,9 @@ public actor HabConnection {
         publish()
         if welcome.capabilities.contains(Self.usageCapability) {
             Task { await self.loadUsage(r) }
+        }
+        if welcome.capabilities.contains(ConfirmBook.capability) {
+            Task { await self.loadConfirmations(r) }
         }
 
         try await waitSessionEnd()
@@ -537,6 +544,7 @@ public actor HabConnection {
             return
         }
         if e.type == "confirm.requested" || e.type == "confirm.closed" {
+            confirmSeqs[e.id] = e.seq
             if state.confirmations.apply(e) { publish() }
             return
         }
@@ -579,6 +587,17 @@ public actor HabConnection {
             changed = true
         }
         if changed { publish() }
+    }
+
+    /// Asks for every confirmation the hab keeps, after the snapshot: running
+    /// ones and records are not in the snapshot, and a card held open before a
+    /// reconnect learns how it ended (app.md 7.9). An event with a higher seq
+    /// that arrived first stays. A failure changes nothing.
+    private func loadConfirmations(_ r: RPCClient) async {
+        guard let res = try? await r.call(HabMethods.confirmList, ConfirmListParams(all: true), timeout: timing.callTimeout) else { return }
+        guard rpc === r else { return }
+        let skip = Set(confirmSeqs.filter { $0.value > res.seq }.keys)
+        if state.confirmations.merge(list: res.confirmations, skip: skip) { publish() }
     }
 
     /// Holds one account's reading with the clock offset in force now.

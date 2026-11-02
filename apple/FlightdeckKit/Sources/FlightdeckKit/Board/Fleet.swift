@@ -103,6 +103,7 @@ public final class Fleet {
                     self?.push?.connectionOffline(id: conn.id)
                 }
                 self?.approvals?.boardChanged()
+                self?.confirms?.boardChanged()
                 self?.activities?.boardChanged()
             }
         })

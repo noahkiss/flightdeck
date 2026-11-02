@@ -27,18 +27,56 @@ public struct ConfirmBook: Sendable, Equatable {
 
     public init() {}
 
+    /// Ids held open before the last reset, within the same epoch: the
+    /// `confirm.list` answer after the snapshot says how they ended.
+    public private(set) var pending: Set<String> = []
+
     /// Replaces the open confirmations with a snapshot's. A new epoch, or a hab
     /// without the capability, also drops the closed ones.
     public mutating func reset(_ snapshot: [Confirmation]?, enabled: Bool, newEpoch: Bool) {
+        let before = Set(open.map(\.id))
         self.enabled = enabled
         guard enabled else {
             open = []
             closed = []
+            pending = []
             return
         }
         if newEpoch { closed = [] }
+        pending = newEpoch ? [] : before
         let shut = Set(closed.map(\.id))
         open = (snapshot ?? []).filter { !shut.contains($0.id) }
+    }
+
+    /// Merges a `confirm.list {all: true}` answer taken after the snapshot
+    /// (the snapshot holds open questions only). Running ones and records join
+    /// `open`; a closed one joins `closed` when this book held it open before
+    /// the reconnect. `skip` names ids with an event newer than the answer,
+    /// which wins. Returns whether anything changed.
+    @discardableResult
+    public mutating func merge(list: [Confirmation], skip: Set<String>) -> Bool {
+        guard enabled else { return false }
+        var changed = false
+        let known = pending
+        pending = []
+        for c in list where !skip.contains(c.id) {
+            if closed.contains(where: { $0.id == c.id }) { continue }
+            if c.isClosed {
+                guard known.contains(c.id) || open.contains(where: { $0.id == c.id }) else { continue }
+                changed = closed(c) || changed
+            } else if !open.contains(where: { $0.id == c.id }) {
+                open.append(c)
+                changed = true
+            }
+        }
+        if changed {
+            closed.sort { Self.time($0.closed) > Self.time($1.closed) }
+        }
+        return changed
+    }
+
+    static func time(_ s: String?) -> Date {
+        s.flatMap(UsageBook.parseTime) ?? .distantPast
     }
 
     /// Applies `confirm.requested` or `confirm.closed`. Returns whether anything

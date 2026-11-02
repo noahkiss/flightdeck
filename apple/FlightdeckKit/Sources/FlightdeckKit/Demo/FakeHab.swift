@@ -206,6 +206,16 @@ public actor FakeHab {
 
     /// Open and running confirmations (capcom.md 6.1), in arrival order.
     private var confirms: [Confirmation] = []
+    /// Closed confirmations, newest first, for `confirm.list {all}`.
+    private var closedConfirms: [Confirmation] = []
+    /// Runs before `confirm.answer` closes a confirmed start: it may return a
+    /// state (failed, unknown) and reason in place of done.
+    private var confirmOutcome: (state: ConfirmState, reason: String)?
+    public func setConfirmOutcome(_ state: ConfirmState, reason: String) { confirmOutcome = (state, reason) }
+    /// Runs after a subscribe's snapshot is taken and before it is sent, so
+    /// events it raises reach the client ahead of the snapshot.
+    private var subscribeHook: (@Sendable () async -> Void)?
+    public func setSubscribeHook(_ hook: (@Sendable () async -> Void)?) { subscribeHook = hook }
     /// What `confirm.list` names as targets.
     private var confirmTargets: [ConfirmTarget] = []
     /// Every `confirm.answer` the hab took, answered or refused.
@@ -230,6 +240,7 @@ public actor FakeHab {
         c.result = result
         c.answeredBy = answeredBy ?? c.answeredBy
         c.closed = Fixture.stamp(Date())
+        closedConfirms.insert(c, at: 0)
         await emit(type: "confirm.closed", id: c.id, revision: nil, data: c)
     }
 
@@ -270,14 +281,21 @@ public actor FakeHab {
             confirms[i].start = start
             confirms[i].edited = edited
         }
-        let res = ConfirmResult(host: start?.host ?? hostID, name: start?.name, pane: "%9", session: "s-" + p.id.prefix(6))
-        await closeConfirmation(p.id, state: .done, result: res, answeredBy: client)
         var out = c
         out.start = start
         out.edited = edited
+        out.answeredBy = client
+        if let o = confirmOutcome {
+            confirmOutcome = nil
+            await closeConfirmation(p.id, state: o.state, reason: o.reason, answeredBy: client)
+            out.state = o.state
+            out.reason = o.reason
+            return out
+        }
+        let res = ConfirmResult(host: start?.host ?? hostID, name: start?.name, pane: "%9", session: "s-" + p.id.prefix(6))
+        await closeConfirmation(p.id, state: .done, result: res, answeredBy: client)
         out.state = .done
         out.result = res
-        out.answeredBy = client
         return out
     }
 
@@ -630,7 +648,12 @@ public actor FakeHab {
                 c.subscribed = true
                 subscribes += 1
             }
-            await reply(c, id: id, result: snapshot(seq: c.seq))
+            let snap = snapshot(seq: c.seq)
+            if method == HabMethods.eventsSubscribe.name, let hook = subscribeHook {
+                subscribeHook = nil
+                await hook()
+            }
+            await reply(c, id: id, result: snap)
         case HabMethods.dataTicket.name, HabMethods.paneInput.name, HabMethods.paneSetDesiredSize.name,
              HabMethods.paneTake.name, HabMethods.paneRedraw.name:
             await terminalCall(method, params, c, id: id)
@@ -746,7 +769,8 @@ public actor FakeHab {
             }
         case HabMethods.confirmList.name where capabilities.contains(ConfirmBook.capability):
             confirmLists += 1
-            await reply(c, id: id, result: ConfirmList(confirmations: confirms, seq: c.seq, targets: confirmTargets))
+            let all = (try? params.decode(ConfirmListParams.self))?.all ?? false
+            await reply(c, id: id, result: ConfirmList(confirmations: all ? confirms + closedConfirms : confirms, seq: c.seq, targets: confirmTargets))
         case HabMethods.approvalAnswer.name:
             guard let p = try? params.decode(ApprovalAnswerParams.self) else {
                 await fail(c, id: id, kind: .invalid, hint: "bad approval.answer params")

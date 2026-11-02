@@ -521,7 +521,9 @@ takes edits and answers (`app.md` 7.9).
   once, at the final state, so every card withdraws.
 - **Events in order.** `confirm.requested` and `confirm.closed` carry no revision. The hab
   publishes them under one lock, held by a request from the moment its confirmation is visible
-  until `confirm.requested` is out, so a confirmation's closed event never goes first. The open
+  until `confirm.requested` is out, so a confirmation's closed event never goes first. A
+  confirm sends `confirm.requested` again with state `running` before the start runs, under
+  the same lock, so every client's card drops its buttons; `confirm.closed` follows. The open
   confirmations are also in the `host` snapshot: they are the exception to "ephemeral means
   never in the snapshot" (`hab-logic-api.md` 3.5). A client applies events after the snapshot
   in seq order, as for any event.

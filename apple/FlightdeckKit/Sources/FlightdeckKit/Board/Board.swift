@@ -71,10 +71,17 @@ public final class Board {
 
     public var rows: [BoardRow] { sections.flatMap(\.rows) }
 
-    /// Sessions that need the owner, across online habs (the app badge).
+    /// Sessions that need the owner, plus confirmations that wait for an
+    /// answer, across online habs (the app badge; app.md 7.9).
     public var needsYouCount: Int {
         let online = Set(habs.filter { $0.state.status == .online }.map(\.id))
-        return sections.first { $0.kind == .needsYou }?.rows.filter { online.contains($0.target.habID) }.count ?? 0
+        let rows = sections.first { $0.kind == .needsYou }?.rows.filter { online.contains($0.target.habID) }.count ?? 0
+        return rows + waitingConfirmations
+    }
+
+    /// Open confirmations that are not records, across online habs.
+    public var waitingConfirmations: Int {
+        habs.filter { $0.state.status == .online }.reduce(0) { $0 + $1.state.confirmations.open.filter(\.asks).count }
     }
 
     public var onlineCount: Int { habs.filter { $0.state.status == .online }.count }

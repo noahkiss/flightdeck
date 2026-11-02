@@ -223,6 +223,11 @@ struct ConfirmCardView: View {
                 Text(harnessName(s))
                     .foregroundStyle(.secondary)
             }
+            if center.isHeld(card) {
+                Button("Dismiss") { center.dismiss(card) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
         }
         .font(.caption)
         .padding(.horizontal, 12)

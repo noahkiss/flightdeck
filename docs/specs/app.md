@@ -1122,7 +1122,11 @@ The cards of `capcom.md` 6.1 and 6.3: a start an agent asks for on another host,
 - **Source.** Each connection keeps its hab's confirmations in `HabState.confirmations`: the
   host snapshot's `confirmations`, then `confirm.requested` and `confirm.closed` in seq order.
   Only a hab whose welcome lists `confirm` fills it; from any other hab the app shows no card
-  and ignores the events.
+  and ignores the events. After each snapshot the app also calls `confirm.list {all: true}`:
+  the snapshot holds open questions only, so the list brings back running starts and records,
+  and tells a card held open before a reconnect how it ended. A confirm event with a higher seq
+  than the list's answer wins. On a new epoch the list is empty, since the hab keeps
+  confirmations in memory.
 - **Where a card shows.** Capcom's cards show in the Capcom view. Another agent's card shows in
   its session view, above the chat, and in the approvals area: a "Confirm" section at the top
   of the status board. A card from outside a pane names no session and shows in the approvals
@@ -1136,7 +1140,8 @@ The cards of `capcom.md` 6.1 and 6.3: a start an agent asks for on another host,
   or a text field when the hab lists none. Only changed fields go in `edits`; a new host
   always carries the folder, and Confirm says "Give the folder on the new host" when it is
   empty. An emptied field keeps the card's value, as the hab does. A seed over 8000
-  characters turns Confirm off with the reason. With changes, the button reads "Confirm with
+  characters (counted as Unicode scalars, as the hab counts runes) turns Confirm off with the
+  reason. With changes, the button reads "Confirm with
   changes", and the card shows the start as it will run; a new host or folder hides project
   and branch, which the hab fills in again.
 - **Countdown.** "Expires in 4m 12s" from `expires_at`, corrected by the clock offset
@@ -1145,17 +1150,28 @@ The cards of `capcom.md` 6.1 and 6.3: a start an agent asks for on another host,
 - **Answers.** `confirm.answer` goes over the live connection with a 75 s limit, since a
   confirm returns only once the hab ran the start (60 s, `capcom.md` 6.4). A `conflict`
   shows "Already answered" and turns the buttons off. Any other refusal shows the hab's hint
-  and leaves the buttons on. An offline hab's card shows "Offline" with the buttons off.
+  and leaves the buttons on. An offline hab's card shows "Offline" with the buttons off. A
+  second tap while an answer is on its way sends nothing. When a confirm starts running, the
+  hab sends `confirm.requested` again with state `running` (`capcom.md` 6.4), so every
+  client's card shows "Running" with no buttons.
+- **A start that failed.** Design call: a start this client confirmed whose answer comes back
+  `failed` or `unknown` stays in the approvals area as one line with its outcome and a Dismiss
+  button, until the owner dismisses it. A failed start is the one outcome the owner must act
+  on, and the session view may not be on screen. Other outcomes leave the approvals area at
+  once.
 - **Records.** A record (`record: true`) shows "Ran without asking" and no buttons. It never
   shows in the approvals area.
 - **Withdraw.** `confirm.closed` takes a card out of the approvals area at once. Design call:
   the session view keeps the last 3 closed cards of that session as one line each, with the
   outcome ("Started claude-3fa9c2 on boxb", "Cancelled", "Expired: nothing ran"), so a record
   does not vanish the moment its start ends. The app keeps the last 50 closed cards per hab,
-  within one epoch; a new epoch drops them, and a reconnect in the same epoch keeps them.
-- **Not built.** No push or Live Activity for a confirmation, and the status board's
-  needs-you count leaves confirmations out. The set-up card shows its fields; the hab
-  refuses set-ups until the mesh stage builds them.
+  within one epoch; a new epoch drops them, and a reconnect in the same epoch keeps them. A
+  card's edits, notes and marks go once it closes. The owner kept the 3 one-line outcomes
+  (2026-11-02).
+- **Needs-you count.** Open questions (not records) on online habs count in the board's
+  needs-you count, the number the app badge shows.
+- **Not built.** No push or Live Activity for a confirmation. The set-up card shows its
+  fields; the hab refuses set-ups until the mesh stage builds them.
 
 ---
 
