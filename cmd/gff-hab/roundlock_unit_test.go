@@ -92,7 +92,7 @@ func TestForkRefusedForOpencode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resume on opencode: %v", err)
 	}
-	if e, _ := svc.store.Get(made.Round.ID); e.State.Target == nil || *e.State.Target != (rounds.TargetSeen{Harness: "opencode", Native: "ses_1"}) {
+	if e, _ := svc.store.Get(made.Round.ID); e.State.Target == nil || *e.State.Target != (rounds.TargetSeen{Session: oc.ID, Harness: "opencode", Native: "ses_1"}) {
 		t.Errorf("remembered target: %+v", e.State.Target)
 	}
 	delete(agents, oc.Pane)

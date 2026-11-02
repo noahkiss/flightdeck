@@ -1598,3 +1598,23 @@ func TestTargetGone(t *testing.T) {
 		t.Errorf("a completed round ran again: %d runs", n)
 	}
 }
+
+// TestTargetGoneRetargeted: a run whose session is not the round's target now (an edit
+// re-targeted the round while it waited on the old one) ends skipped, and the round goes on.
+func TestTargetGoneRetargeted(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:00:00Z")
+	e := h.round("a", "0 * * * *", func(r *Round) {
+		r.Mode, r.Project, r.Command, r.Target, r.Prompt = ModeResume, "", nil, "sess-new", "check"
+	})
+	h.awake("2026-03-02T10:00:30Z")
+	runs := h.runs(e.Round.ID)
+	if len(runs) != 1 || runs[0].SessionID == e.Round.Target {
+		t.Fatalf("runs: %+v", runs)
+	}
+	if err := h.s.UpdateRun(runs[0].ID, RunUpdate{State: RunSkipped, Reason: ErrTargetGone.Error(), TargetGone: true}); err != nil {
+		t.Fatal(err)
+	}
+	if st := h.entry(e.Round.ID).State; st.Completed {
+		t.Errorf("a re-targeted round completed: %+v", st)
+	}
+}

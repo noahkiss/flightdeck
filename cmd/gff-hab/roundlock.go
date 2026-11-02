@@ -41,6 +41,8 @@ const (
 	lockRound   = "in use: another round's run holds it"
 	lockNoAgent = "in use: no agent this hab knows runs in it"
 	lockLost    = "in use: its holder is not connected; its program may still run"
+	lockStarted = "in use: gff-hab just started"
+	lockElse    = "in use: its conversation runs in another pane"
 )
 
 // forks says whether a harness's adapter forks a conversation natively (rounds.md 5): Claude
@@ -74,30 +76,48 @@ func envelopeMarker(runID string) string { return "[begin round message " + runI
 
 // --- What a target is ---
 
-// targetSeen returns the target's harness and native session id: from its live agent, which
-// is then remembered on the round, else from what the round remembered.
+// targetSeen returns the target's harness and native session id: from its live agent, else
+// from what the round remembered. The memo counts only when it was seen in ss and ss is the
+// round's target now: a run still on the target an edit replaced never reads another's.
 func (s *roundsService) targetSeen(roundID string, ss api.Session) rounds.TargetSeen {
+	seen, _ := s.seenOf(roundID, ss)
+	return seen
+}
+
+// seenOf is targetSeen, and whether the round should remember what it returns: it is new, it
+// was seen live, and ss is the round's target.
+func (s *roundsService) seenOf(roundID string, ss api.Session) (rounds.TargetSeen, bool) {
 	var seen rounds.TargetSeen
-	if e, ok := s.store.Get(roundID); ok && e.State.Target != nil {
+	e, ok := s.store.Get(roundID)
+	current := ok && ss.ID != "" && e.Round.Target == ss.ID
+	if current && e.State.Target != nil && e.State.Target.Session == ss.ID {
 		seen = *e.State.Target
 	}
 	if ss.Pane == "" {
-		return seen
+		return seen, false
 	}
 	st, ok := s.cfg.agent(ss.Pane)
 	if !ok || !slices.Contains(harness.Harnesses, st.Harness) {
-		return seen
+		return seen, false
 	}
-	now := rounds.TargetSeen{Harness: st.Harness, Native: st.Session}
+	now := rounds.TargetSeen{Session: ss.ID, Harness: st.Harness, Native: st.Session}
 	if now.Native == "" && now.Harness == seen.Harness {
 		now.Native = seen.Native
 	}
-	if now != seen && roundID != "" {
-		if _, err := s.store.SetState(roundID, func(rs *rounds.RoundState) { rs.Target = &now }); err != nil {
-			s.cfg.logf("rounds: round %s: remember target: %v", roundID, err)
-		}
+	return now, current && now != seen
+}
+
+// noteTargetLocked remembers on the round what its target runs, when it was seen live and ss
+// is the round's target. The caller holds s.editMu, so no edit changes the target between the
+// check and the write.
+func (s *roundsService) noteTargetLocked(roundID string, ss api.Session) {
+	now, changed := s.seenOf(roundID, ss)
+	if !changed {
+		return
 	}
-	return now
+	if _, err := s.store.SetState(roundID, func(rs *rounds.RoundState) { rs.Target = &now }); err != nil {
+		s.cfg.logf("rounds: round %s: remember target: %v", roundID, err)
+	}
 }
 
 // checkTarget refuses a fork round whose target's adapter cannot fork (rounds.md 5). A target
@@ -118,13 +138,14 @@ func (s *roundsService) checkTarget(r rounds.Round) error {
 }
 
 // rememberTarget saves what a new or edited round's target runs, so a later run can resume or
-// fork it after its program exited.
+// fork it after its program exited. It runs after the edit committed; the caller holds
+// s.editMu.
 func (s *roundsService) rememberTarget(r rounds.Round) {
 	if r.Mode == rounds.ModeFresh {
 		return
 	}
 	if ss, ok := s.cfg.store.Session(r.Target); ok {
-		s.targetSeen(r.ID, ss)
+		s.noteTargetLocked(r.ID, ss)
 	}
 }
 
@@ -194,11 +215,7 @@ func (s *roundsService) startResume(r rounds.Round, run rounds.Run, env []string
 
 // lockWatch watches a resume run that waits for its target, and looks at it at once.
 func (s *roundsService) lockWatch(run rounds.Run, r rounds.Round, ss api.Session, h *harnessWatch) bool {
-	started := run.Created
-	if run.StartedAt != nil {
-		started = *run.StartedAt
-	}
-	h.lockUntil = started.Add(time.Duration(r.Wait))
+	h.lockUntil = lockUntil(run, r)
 	h.waiting = run.State == rounds.RunWaiting
 	if !s.watchWith(run, r, ss.ID, ss.Pane, h) {
 		return false
@@ -206,6 +223,15 @@ func (s *roundsService) lockWatch(run rounds.Run, r rounds.Round, ss api.Session
 	id := run.ID
 	s.goBg(func() { s.checkLock(id) })
 	return true
+}
+
+// lockUntil is when a resume run's wait for the lock runs out: wait, counted from its start.
+func lockUntil(run rounds.Run, r rounds.Round) time.Time {
+	started := run.Created
+	if run.StartedAt != nil {
+		started = *run.StartedAt
+	}
+	return started.Add(time.Duration(r.Wait))
 }
 
 // noteInput records a client's input to a pane.
@@ -241,7 +267,9 @@ func (s *roundsService) noteFocus(client, session string, active bool) {
 }
 
 // clientUseLocked is the in-use reason from clients: input to the pane in the last 2 minutes,
-// or the session in focus on a client within 60 s. The caller holds s.mu.
+// or the session in focus on a client within 60 s. Those signals live in memory only, so for
+// the quiet window after the service starts every pane counts as in use: a client may have
+// typed into it, or have it on screen, while gff-hab restarted. The caller holds s.mu.
 func (s *roundsService) clientUseLocked(session, pane string) string {
 	now := time.Now()
 	if at, ok := s.inputAt[pane]; ok && now.Sub(at) < roundInputWindow {
@@ -251,6 +279,9 @@ func (s *roundsService) clientUseLocked(session, pane string) string {
 		if now.Sub(at) < roundFocusWindow {
 			return lockFocused
 		}
+	}
+	if now.Sub(s.started) < s.cfg.quiet {
+		return lockStarted
 	}
 	return ""
 }
@@ -302,20 +333,32 @@ func (s *roundsService) checkLock(runID string) {
 		return
 	}
 	lost := ss.Pane != "" && ss.Exit == nil && !s.cfg.complete()
+	why := ""
 	if (ss.State == api.SessionStateExited || ss.Pane == "") && !lost {
-		s.resumeTarget(w, ss)
-		return
+		// Its conversation may run on in another pane: the user resumed it there, or Capcom
+		// did. A second program on one conversation is never started.
+		if !s.liveElsewhere(s.targetSeen(w.run.RoundID, ss), ss.Pane) {
+			s.resumeTarget(w, ss)
+			return
+		}
+		why = lockElse
 	}
-	st, agentOK := s.cfg.agent(ss.Pane)
-	why := agentUse(st, agentOK)
-	if ss.State == api.SessionStateExited {
-		why = lockLost
-	}
-	if why == "" && s.cfg.sendHeld(ss.Pane) {
-		why = lockSending
-	}
-	if agentOK && slices.Contains(harness.Harnesses, st.Harness) {
-		s.targetSeen(w.run.RoundID, ss)
+	var st api.AgentState
+	if why == "" {
+		var agentOK bool
+		st, agentOK = s.cfg.agent(ss.Pane)
+		why = agentUse(st, agentOK)
+		if ss.State == api.SessionStateExited {
+			why = lockLost
+		}
+		if why == "" && s.cfg.sendHeld(ss.Pane) {
+			why = lockSending
+		}
+		if agentOK && slices.Contains(harness.Harnesses, st.Harness) {
+			s.editMu.Lock()
+			s.noteTargetLocked(w.run.RoundID, ss)
+			s.editMu.Unlock()
+		}
 	}
 
 	s.liveMu.Lock() // the waiting and running reports go out in order
@@ -397,6 +440,9 @@ func (s *roundsService) checkLock(runID string) {
 func (s *roundsService) relockLocked(w *runWatch, err error) {
 	h := w.h
 	h.phase = phaseLock
+	if h.lockUntil.IsZero() { // a target this run started again
+		h.lockUntil = lockUntil(w.run, w.round)
+	}
 	if s.byPane[w.pane] == w.run.ID {
 		delete(s.byPane, w.pane)
 	}
@@ -406,6 +452,20 @@ func (s *roundsService) relockLocked(w *runWatch, err error) {
 		time.Sleep(roundLockPoll)
 		s.checkLock(id)
 	})
+}
+
+// liveElsewhere says whether an agent this hab knows runs seen's conversation in a pane other
+// than pane.
+func (s *roundsService) liveElsewhere(seen rounds.TargetSeen, pane string) bool {
+	if seen.Native == "" {
+		return false
+	}
+	for _, a := range s.cfg.agents() {
+		if a.Pane != pane && a.Harness == seen.Harness && a.Session == seen.Native && a.State != api.AgentStatusExited {
+			return true
+		}
+	}
+	return false
 }
 
 // resumeTarget starts an exited target's harness again in a new pane of the same session, as
@@ -454,12 +514,27 @@ func (s *roundsService) resumeTarget(w *runWatch, ss api.Session) {
 	}
 	p := api.SessionCreateParams{Harness: seen.Harness, Model: r.Model, Argv: resumeArgv(seen.Harness, seen.Native, r.HarnessArgs)}
 	pane, err := s.cfg.resume(ctx, ss.ID, p, cwd)
+	var ce *control.Error
+	if err != nil && errors.As(err, &ce) && ce.Data.Kind == api.ErrorKindConflict {
+		// Another run started it first (two rounds on one target): the run waits for the
+		// lock, and takes its turn.
+		s.mu.Lock()
+		if s.watches[run.ID] == w && !s.closed {
+			w.h.waiting = false // it reported running: waiting goes out again
+			s.relockLocked(w, err)
+		}
+		s.mu.Unlock()
+		return
+	}
 	if err != nil {
 		fail(err.Error())
 		return
 	}
-	s.unwatch(w)
-	s.watchHarness(run, r, ss.ID, pane, h)
+	// The run may have ended during the start (its timeout, a pause, a delete), or gff-hab
+	// closed: then the target runs on, and gets no prompt.
+	if !s.watchHarnessOver(w, run, r, ss.ID, pane, h) {
+		s.cfg.logf("rounds: run %s: it ended while its target started again; the target runs on", run.ID)
+	}
 }
 
 // adoptResume picks up a resume run that was live when the last gff-hab stopped. Its

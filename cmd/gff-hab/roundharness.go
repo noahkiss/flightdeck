@@ -329,14 +329,20 @@ func (s *roundsService) spawnHarness(r rounds.Round, run rounds.Run, p api.Sessi
 // readiness limit and, for Claude Code, the trust dialog. The pane's current state is applied
 // at once: the harness may have reported before the spawn returned.
 func (s *roundsService) watchHarness(run rounds.Run, r rounds.Round, session, pane string, h *harnessWatch) {
+	s.watchHarnessOver(nil, run, r, session, pane, h)
+}
+
+// watchHarnessOver is watchHarness in place of old (watchOver); it reports false, and watches
+// nothing, when old is no longer the run's watch or the service closed.
+func (s *roundsService) watchHarnessOver(old *runWatch, run rounds.Run, r rounds.Round, session, pane string, h *harnessWatch) bool {
 	id := run.ID
 	if h.phase == phaseStarting {
 		s.mu.Lock()
 		h.ready = time.AfterFunc(s.cfg.ready, func() { s.goBg(func() { s.notReady(id) }) })
 		s.mu.Unlock()
 	}
-	if !s.watchWith(run, r, session, pane, h) {
-		return
+	if !s.watchOver(old, run, r, session, pane, h) {
+		return false
 	}
 	s.mu.Lock()
 	if w := s.watches[id]; w != nil && w.h == h {
@@ -349,6 +355,7 @@ func (s *roundsService) watchHarness(run rounds.Run, r rounds.Round, session, pa
 	if st, ok := s.cfg.agent(pane); ok {
 		s.agentState(st)
 	}
+	return true
 }
 
 // goLocked runs f in the background work Close waits for, unless the service is closed. The

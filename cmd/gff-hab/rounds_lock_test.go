@@ -51,10 +51,18 @@ if [ "$app" = codex ]; then
 else
   out="$CLAUDE_CONFIG_DIR/projects/-work-app/$sid.jsonl"
 fi
+rec() { printf '{"parentUuid":"00000000-0000-4000-8000-00000000000%s","isSidechain":false,"type":"%s","uuid":"00000000-0000-4000-8000-00000000000%s","timestamp":"2026-01-01T10:00:0%s.000Z","userType":"external","entrypoint":"cli","cwd":"/work/app","sessionId":"%s","version":"2.1.310","message":%s}\n' "$1" "$2" "$3" "$3" "$sid" "$4"; }
 write() {
   [ -e "$out" ] && [ -z "$fork" ] && [ "$1" = start ] && return
   mkdir -p "$(dirname "$out")"
-  sed "s/@SID@/$sid/g" "$D/transcript-$app.jsonl" > "$out.tmp" && mv "$out.tmp" "$out"
+  sed "s/@SID@/$sid/g" "$D/transcript-$app.jsonl" > "$out.tmp"
+  # Claude Code: the round's prompt as a user message, and the reply after it once done.
+  m=$(grep -o 'begin round message [^]]*' "$in" 2>/dev/null | tail -n 1)
+  if [ "$app" = claude ] && [ -n "$m" ] && [ "$1" != start ]; then
+    rec 3 user 4 '{"role":"user","content":"['"$m"']"}' >> "$out.tmp"
+    [ "$1" = reply ] && rec 4 assistant 5 '{"id":"msg_3","role":"assistant","model":"model-x","type":"message","content":[{"type":"text","text":"Round reply."}]}' >> "$out.tmp"
+  fi
+  mv "$out.tmp" "$out"
 }
 stty raw -echo
 in="$D/in-$tag"
@@ -81,6 +89,7 @@ while :; do
   n=$(grep -c 'end round message' "$in")
   if [ "$n" -gt "$seen" ] && [ "$(tail -c 1 "$in" | od -An -c | tr -d ' ')" = '\r' ]; then
     seen=$n
+    write prompt
     hook UserPromptSubmit ',"prompt":"x"'
     if [ -z "$hold" ]; then write reply; hook Stop ''; fi
   fi
@@ -104,7 +113,7 @@ func lockEnv(t *testing.T) (*habEnv, *control.Client, string, string) {
 	writeFile(t, filepath.Join(work, "transcript-codex.jsonl"), codexTranscript("Round reply."))
 	e, repo := newRoundEnvWith(t, "PATH="+fake+":/usr/bin:/bin",
 		"CLAUDE_CONFIG_DIR="+filepath.Join(work, "claude"), "CODEX_HOME="+filepath.Join(work, "codex"),
-		"GFF_HAB_BIN="+bin, noRaceExitSleep, "GFF_TEST_ROUND_READY=5s")
+		"GFF_HAB_BIN="+bin, noRaceExitSleep, "GFF_TEST_ROUND_READY=5s", "GFF_TEST_ROUND_QUIET=0s")
 	return e, e.control(), repo, work
 }
 
@@ -401,5 +410,97 @@ func TestRoundLockTargetGone(t *testing.T) {
 			r := getRound(t, c, name)
 			return r.Completed && r.CompletedReason == rounds.ReasonTargetGone
 		})
+	}
+}
+
+// TestRoundLockDeletedKeepsTarget (review finding 1): a resume round deleted while its run is in
+// its turn; the turn ends done, the run succeeds, and the target's pane stays open: only a
+// session the run made is ever closed.
+func TestRoundLockDeletedKeepsTarget(t *testing.T) {
+	e, c, repo, work := lockEnv(t)
+	tgt := startTarget(t, e, c, repo, work, "claude", "mine")
+	order(t, work, "mine", "hold")
+	addLockRound(t, c, "watch", api.RoundModeResume, tgt.Session, nil)
+	runRound(t, c, "watch")
+	waitUntil(t, "the prompt in", func() bool { return strings.Contains(inputOf(work, "mine"), "[end round message") })
+	waitUntil(t, "the turn started", func() bool { return agentStates(t, e.sock)[tgt.Pane].State == api.AgentStatusWorking })
+	r := getRound(t, c, "watch")
+	call(t, c, "round.delete", api.RoundRef{ID: r.ID}, nil)
+	order(t, work, "mine", "done")
+	time.Sleep(3 * time.Second)
+	if !paneOpen(t, c, tgt.Session) {
+		t.Fatal("the target's pane was closed after its deleted resume round's run succeeded")
+	}
+}
+
+// TestRoundLockRestart: gff-hab restarts with one resume run in its turn and another waiting.
+// The run in its turn is adopted by its envelope in the conversation and gets no second
+// prompt. The waiting one waits out the quiet window after the start, saying why, though its
+// target is idle: a client may have typed while gff-hab was down. Each target gets one paste.
+func TestRoundLockRestart(t *testing.T) {
+	e, c, repo, work := lockEnv(t)
+	sent := startTarget(t, e, c, repo, work, "claude", "sent")
+	order(t, work, "sent", "hold")
+	addLockRound(t, c, "in-turn", api.RoundModeResume, sent.Session, nil)
+	runRound(t, c, "in-turn")
+	waitUntil(t, "the prompt in", func() bool { return strings.Contains(inputOf(work, "sent"), "[end round message") })
+	waitUntil(t, "the turn started", func() bool { return agentStates(t, e.sock)[sent.Pane].State == api.AgentStatusWorking })
+
+	waiting := startTarget(t, e, c, repo, work, "claude", "waits")
+	order(t, work, "waits", "working")
+	addLockRound(t, c, "waiting", api.RoundModeResume, waiting.Session, nil)
+	runRound(t, c, "waiting")
+	waitRunWhy(t, c, "waiting", api.RoundRunStateWaiting, lockWorking)
+
+	e.env = append(e.env, "GFF_TEST_ROUND_QUIET=6s")
+	e.restart(true)
+	c = e.control()
+	order(t, work, "waits", "done")
+	waitRunWhy(t, c, "waiting", api.RoundRunStateWaiting, lockStarted)
+	if got := inputOf(work, "waits"); got != "" {
+		t.Fatalf("the round wrote in the quiet window: %q", got)
+	}
+	if r := roundRuns(t, c, "in-turn")[0]; r.State != api.RoundRunStateRunning {
+		t.Fatalf("the run in its turn after the restart: %+v", r)
+	}
+	order(t, work, "sent", "done")
+	waitRun(t, e, c, "in-turn", api.RoundRunStateSucceeded)
+	waitRun(t, e, c, "waiting", api.RoundRunStateSucceeded)
+	time.Sleep(time.Second)
+	for _, tag := range []string{"sent", "waits"} {
+		if n := strings.Count(inputOf(work, tag), "\x1b[200~"); n != 1 {
+			t.Errorf("%s got %d pastes: %q", tag, n, inputOf(work, tag))
+		}
+	}
+}
+
+// TestRoundLockTwoExited (review finding 5): two resume rounds on one exited target. One run
+// starts it again; the other's start is refused, so it waits for the lock and takes its turn.
+// Both succeed, and the target was started once.
+func TestRoundLockTwoExited(t *testing.T) {
+	e, c, repo, work := lockEnv(t)
+	tgt := startTarget(t, e, c, repo, work, "claude", "gone")
+	addLockRound(t, c, "one", api.RoundModeResume, tgt.Session, nil)
+	addLockRound(t, c, "two", api.RoundModeResume, tgt.Session, nil)
+	order(t, work, "gone", "exit")
+	waitUntil(t, "the target exited", func() bool {
+		ss, ok := runSessionOf(structureOf(t, c), tgt.Session)
+		return ok && ss.State == api.SessionStateExited
+	})
+	runRound(t, c, "one")
+	runRound(t, c, "two")
+	waitRun(t, e, c, "one", api.RoundRunStateSucceeded)
+	waitRun(t, e, c, "two", api.RoundRunStateSucceeded)
+	a, _ := filepath.Glob(filepath.Join(work, "argv-one-*"))
+	b, _ := filepath.Glob(filepath.Join(work, "argv-two-*"))
+	if len(a)+len(b) != 1 {
+		t.Fatalf("the target started %d times: %v %v", len(a)+len(b), a, b)
+	}
+	tag := "one"
+	if len(b) == 1 {
+		tag = "two"
+	}
+	if n := strings.Count(inputOf(work, tag), "\x1b[200~"); n != 2 {
+		t.Errorf("two pastes into the started target, got %d: %q", n, inputOf(work, tag))
 	}
 }

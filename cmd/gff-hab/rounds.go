@@ -177,7 +177,12 @@ type roundsConfig struct {
 	// turn starts; folder is the folder a session works in ("" when unknown); resume starts an
 	// exited session's harness again in a new pane of the same session, as session.resume
 	// does, and returns the pane.
+	// quiet is how long after the service starts every pane counts as in use: the client
+	// signals of the gff-hab before are gone (main passes roundInputWindow; 0: none).
+	// agents lists every agent this hab knows (a conversation live in another pane).
 	sendHeld func(pane string) bool
+	agents   func() []api.AgentState
+	quiet    time.Duration
 	folder   func(ctx context.Context, session string) string
 	resume   func(ctx context.Context, session string, p api.SessionCreateParams, cwd string) (string, error)
 }
@@ -200,6 +205,7 @@ type roundsService struct {
 	// per session and client, when the client last reported it in focus (roundlock.go).
 	inputAt map[string]time.Time
 	focus   map[string]map[string]time.Time
+	started time.Time // when the service started: the quiet window counts from it
 	// recheck is closed to stop the loop that looks at pending runs again; nil while none runs.
 	recheck chan struct{}
 	closed  bool
@@ -226,6 +232,9 @@ func newRounds(cfg roundsConfig) (*roundsService, error) {
 	}
 	if cfg.agent == nil {
 		cfg.agent = func(string) (api.AgentState, bool) { return api.AgentState{}, false }
+	}
+	if cfg.agents == nil {
+		cfg.agents = func() []api.AgentState { return nil }
 	}
 	if cfg.sendHeld == nil {
 		cfg.sendHeld = func(string) bool { return false }
@@ -264,7 +273,7 @@ func newRounds(cfg roundsConfig) (*roundsService, error) {
 	}
 	s := &roundsService{cfg: cfg, store: st, revs: map[string]uint64{}, watches: map[string]*runWatch{},
 		byPane: map[string]string{}, pending: map[string]rounds.Run{}, inputAt: map[string]time.Time{},
-		focus: map[string]map[string]time.Time{}, done: make(chan struct{})}
+		focus: map[string]map[string]time.Time{}, done: make(chan struct{}), started: time.Now()}
 	s.attachLostStarts()
 	for _, e := range st.List() {
 		s.revs[e.Round.ID] = 1
@@ -396,6 +405,13 @@ func (s *roundsService) watch(run rounds.Run, r rounds.Round, session, pane stri
 // watchWith is watch, with h for a harness run. It reports false when the service is closed:
 // nothing is watched.
 func (s *roundsService) watchWith(run rounds.Run, r rounds.Round, session, pane string, h *harnessWatch) bool {
+	return s.watchOver(nil, run, r, session, pane, h)
+}
+
+// watchOver is watchWith that replaces old, the run's watch now, in one step: it reports false,
+// and watches nothing, when old is no longer the run's watch (the run ended meanwhile). A nil
+// old replaces nothing.
+func (s *roundsService) watchOver(old *runWatch, run rounds.Run, r rounds.Round, session, pane string, h *harnessWatch) bool {
 	run.SessionID = session
 	w := &runWatch{run: run, round: r, session: session, pane: pane, h: h}
 	started := run.Created
@@ -404,12 +420,15 @@ func (s *roundsService) watchWith(run rounds.Run, r rounds.Round, session, pane 
 	}
 	left := time.Until(started.Add(time.Duration(r.Timeout)))
 	s.mu.Lock()
-	if s.closed {
+	if s.closed || (old != nil && s.watches[run.ID] != old) {
 		if h != nil {
 			h.stop()
 		}
 		s.mu.Unlock()
 		return false
+	}
+	if old != nil {
+		s.dropLocked(old)
 	}
 	s.watches[run.ID] = w
 	if h == nil || h.phase != phaseLock {
@@ -580,12 +599,22 @@ func (s *roundsService) notice(n link.Notice) {
 // takeOver ends the run of a pane as taken over (7.5): a client typed into it, sent it a
 // message, or closed it. The session is the user's from then on: never closed or timed out by
 // the round. Input that answers Claude Code's trust dialog is not a take over, as an
-// approval.answer is not; a run whose turn already ended keeps that end.
+// approval.answer is not; a run whose turn already ended keeps that end. A resume run whose
+// prompt has not gone in is not taken over by input or a message: the session is in use, so
+// the run waits for the lock again (a send in flight is refused under its claim, and deliver
+// puts the run back).
 func (s *roundsService) takeOver(pane, reason string) {
 	s.mu.Lock()
 	id, ok := s.byPane[pane]
 	w := s.watches[id]
 	answer := ok && w != nil && reason == reasonTyped && w.trustAnswerLocked()
+	if ok && w != nil && w.h != nil && w.h.resume && reason != reasonClosed && w.h.phase < phaseSent {
+		if w.h.phase == phaseStarting && !answer {
+			s.relockLocked(w, errors.New("a client used the session"))
+		}
+		s.mu.Unlock()
+		return
+	}
 	s.mu.Unlock()
 	if ok && !answer {
 		s.finish(id, rounds.RunUpdate{State: rounds.RunTakenOver, Reason: reason})
@@ -772,7 +801,8 @@ func (s *roundsService) RunChanged(r rounds.Run) {
 	if r.State != rounds.RunSucceeded || r.SessionID == "" {
 		return
 	}
-	onFinish := rounds.OnFinishClose
+	// A round that is gone keeps the pane: what it wanted is not known.
+	onFinish := rounds.OnFinishKeep
 	if w != nil {
 		onFinish = w.round.OnFinish
 	} else if e, ok := s.store.Get(r.RoundID); ok {
@@ -781,8 +811,9 @@ func (s *roundsService) RunChanged(r rounds.Run) {
 	if onFinish != rounds.OnFinishClose {
 		return
 	}
+	// Only a session the run made is closed: a resume run's session is its target, the user's.
 	ss, ok := s.cfg.store.Session(r.SessionID)
-	if !ok || ss.Pane == "" {
+	if !ok || ss.Pane == "" || ss.Round == nil || ss.Round.Run != r.ID {
 		return
 	}
 	s.bg.Go(func() {

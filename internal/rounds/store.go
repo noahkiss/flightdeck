@@ -39,8 +39,11 @@ type RoundState struct {
 	Target *TargetSeen `json:"target,omitempty"`
 }
 
-// TargetSeen is a target session's harness and native session id, as last seen live.
+// TargetSeen is a target session's harness and native session id, as last seen live. Session
+// is the Flightdeck session it was seen in: the memo holds only while that is the round's
+// target.
 type TargetSeen struct {
+	Session string `json:"session,omitempty"`
 	Harness string `json:"harness"`
 	Native  string `json:"native,omitempty"`
 }

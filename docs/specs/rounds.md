@@ -923,12 +923,16 @@ this spec left a choice open:
   in the last 2 minutes; a `session.focus` with `active` true in the last 60 s (clients send
   it every 30 s while on screen), cleared at once by `active` false. A send of any client
   still starting its turn, and another round's run that holds the pane, count too. The
-  reasons start "in use:" for the client and send signals.
+  reasons start "in use:" for the client and send signals. The client signals live in memory
+  only, so for 2 minutes after gff-hab starts every pane counts as in use ("in use: gff-hab
+  just started"), for adopted runs too: a client may have typed or watched while it was down.
 - **The lock and the send.** A free target is taken: the run holds the pane (two rounds on one
   target take turns), reports `running`, then sends through `session.send`'s path as the hab.
   The client signals are checked again under the send's claim, after the agent's own check
   and before any byte is written, so no other send comes between the check and the paste. A
-  send refused for a busy agent or a client puts the run back to `waiting`. A client typing
+  send refused for a busy agent or a client puts the run back to `waiting`. Input or a client
+  send that reaches the pane before the prompt went in does the same; it is not a take over
+  (7.5 takes over only after the prompt). Closing the pane is still one. A client typing
   in the instant between that check and the paste is not covered; nothing is atomic with a
   person's keys. The prompt is pasted after anything the user left unsent in the prompt; the
   lock never clears input.
@@ -946,7 +950,9 @@ this spec left a choice open:
   environment as well.
 - **Turn and end.** After the send a resume run is a stage 4 harness run: read back, the turn's
   `done` or `error`, the final message, take over. The target is never closed, and retention
-  removes only a session whose `Session.round` names the run, so a target stays. A timeout
+  removes only a session whose `Session.round` names the run, so a target stays. On `on_finish
+  = close` the same check applies, and a round that is gone (deleted mid-run) keeps the pane:
+  a run never closes a session it did not make. A timeout
   sends Esc only to a turn this gff-hab started with the prompt.
 - **Exited target.** `session.resume` serves Capcom sessions only, so gff-hab starts the
   target's harness again itself, as Capcom's resume does: the exited pane is released, then
@@ -954,10 +960,17 @@ this spec left a choice open:
   of the same session, in the target's folder. The prompt goes in at the first `idle`, under
   the readiness limit, with the same check under the claim. opencode's resume is not built:
   the run fails. A target whose pane's holder is not reached yet waits ("in use: its holder is
-  not connected").
+  not connected"). Before the start, gff-hab looks for a live agent in another pane on the same
+  conversation (the user or Capcom resumed it there): then the run waits ("in use: its
+  conversation runs in another pane"), and no second program starts on one conversation. Two
+  runs on one exited target: the store refuses the second start, and that run waits for the
+  lock and takes its turn. A run that ends while its target starts (its timeout, a pause, a
+  delete), or a gff-hab that closes meanwhile, leaves the started target alone.
 - **What the target runs.** No session record holds a harness or a native session id, so the
-  round remembers them (`target` in its state): at create, at edit and at each run that sees
-  the target's agent. The folder is the session's recorded one (the content service).
+  round remembers them (`target` in its state, with the session they were seen in): after a
+  create or an edit commits, and at each look of a waiting run that sees the target's agent.
+  The memo is written and read only while its session is the round's target, so a refused edit
+  or a run still waiting on a replaced target never names the wrong conversation.
 - **Fork.** `claude <harness_args> --resume <id> --fork-session` or `codex fork <id>
   <harness_args>` (with `--no-daemon`), in the target's folder and project, named after the
   round with `Session.round`; then a fresh run with the envelope. gff-hab picks no Claude
@@ -968,7 +981,8 @@ this spec left a choice open:
 - **Target gone (10.1).** A target whose record is gone at the start, or while the run waits,
   ends the run `skipped`, "the target session is gone", which counts for nothing, and
   completes the round ("target session gone") with one `target_gone` notice (none with
-  `notify = never`). Stage 6 sends it.
+  `notify = never`). Stage 6 sends it. A run on a target an edit already replaced completes
+  nothing: the round goes on with its new target.
 - **Restarts.** A `waiting` resume run waits for the lock again. A `running` one reads its
   target's conversation: a user message that holds its envelope's begin line means the prompt
   went in (in its turn, or ended); none means it waits for the lock again. A fork run is adopted
@@ -976,6 +990,16 @@ this spec left a choice open:
 - **CLI.** `gff-hab round add|edit -wait <duration>`.
 - **Not yet.** The real fork on a Mac; opencode fork and exited-opencode resume; a user
   draft left in the prompt is not detected.
+- **Known limits.**
+  - The resume and fork folder is the session's recorded folder, not the agent's working
+    folder from its hooks. Claude Code finds `--resume <id>` by project folder, so a session
+    whose `claude` started in a subfolder fails the run, safely.
+  - The chat view does not mark the round envelope yet (5); only Capcom's context chips parse
+    markers. That is an app-stage item. The marker neutraliser misses look-alikes such as
+    `[begin-round-message` and full-width brackets; channels has the same gap.
+  - A restart between Enter and the harness's write of the user message to its transcript
+    finds no envelope at adoption: the run waits for the lock again and can send its prompt a
+    second time. The window is small.
 
 ---
 

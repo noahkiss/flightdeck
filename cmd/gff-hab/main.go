@@ -1062,6 +1062,7 @@ func serve(args []string) error {
 				return agentSvc.sendGuarded(ctx, "round", api.SessionSendParams{Session: session, Text: text}, guard)
 			},
 			sendHeld: agentSvc.sendHeld,
+			agents:   agents.Snapshot,
 			folder: func(ctx context.Context, session string) string {
 				if c := contentRef.Load(); c != nil {
 					return c.Folder(ctx, session)
@@ -1102,6 +1103,7 @@ func serve(args []string) error {
 				return detect.ScreenText(rows), true
 			},
 			ready: roundReadySeam,
+			quiet: roundQuietSeam,
 		})
 		if err != nil {
 			return err

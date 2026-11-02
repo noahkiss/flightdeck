@@ -12,3 +12,8 @@ func roundTick() time.Duration { return roundTickSeam }
 // roundReadySeam, when set, is the readiness limit of a harness run instead of roundReady.
 // Only a build with the testseam tag sets it, from $GFF_TEST_ROUND_READY.
 var roundReadySeam time.Duration
+
+// roundQuietSeam is how long after its start gff-hab counts every pane as in use (rounds.md
+// 6.1): roundInputWindow, unless a build with the testseam tag sets it from
+// $GFF_TEST_ROUND_QUIET.
+var roundQuietSeam = roundInputWindow

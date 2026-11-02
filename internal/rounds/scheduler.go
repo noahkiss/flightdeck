@@ -126,7 +126,8 @@ type RunUpdate struct {
 	// Network is set when the harness reported a network or sign-in error (rounds.md 8.3).
 	Network bool
 	// TargetGone ends a resume or fork run whose target session's record was removed: the
-	// round completes with ReasonTargetGone and one notice; the run counts for nothing.
+	// round completes with ReasonTargetGone and one notice; the run counts for nothing. A run
+	// whose session is not the round's target now (an edit re-targeted it) completes nothing.
 	TargetGone bool
 }
 
@@ -974,7 +975,7 @@ func (s *Scheduler) endLocked(run *Run, u RunUpdate, now time.Time, internal boo
 	if !ok || internal {
 		return
 	}
-	if u.TargetGone {
+	if u.TargetGone && (run.SessionID == "" || run.SessionID == e.Round.Target) {
 		ne, ok := s.setState(run.RoundID, func(st *RoundState) {
 			st.Completed, st.CompletedReason, st.NextSlot = true, ReasonTargetGone, nil
 		})
