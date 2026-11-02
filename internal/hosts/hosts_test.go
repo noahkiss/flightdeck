@@ -198,8 +198,21 @@ func TestBoardOrdersBlockedFirst(t *testing.T) {
 		}
 		return out
 	}
+	ranks := func(hs []hosts.Host) map[string]board.Rank {
+		out := map[string]board.Rank{}
+		for _, r := range board.Rows(hs, nil) {
+			out[r.Name] = r.Rank
+		}
+		return out
+	}
+	// Wait for the ranks, not the names alone: until host one's agent states arrive, its two
+	// rows both rank Other, tie, and sort by name into this same order.
 	want := "[waiting finished working]"
-	waitHosts(t, s, "the three states", func([]hosts.Host) bool { return fmt.Sprint(names()) == want })
+	waitHosts(t, s, "the three states", func(hs []hosts.Host) bool {
+		rk := ranks(hs)
+		return fmt.Sprint(names()) == want && rk["waiting"] == board.RankBlocked &&
+			rk["finished"] == board.RankDone && rk["working"] == board.RankWorking
+	})
 
 	// A second working session's later state change does not move the first.
 	_, work2, _ := b.AddSession("working2")
@@ -213,7 +226,7 @@ func TestBoardOrdersBlockedFirst(t *testing.T) {
 	})
 	got := names()
 	if got[0] != "waiting" || got[1] != "finished" {
-		t.Fatalf("order %v", got)
+		t.Fatalf("order %v, ranks %v", got, ranks(s.Hosts()))
 	}
 	a.SetAgent(work, api.AgentStatusWorking, "") // same rank, new time: stays put
 	waitHosts(t, s, "the repeat", func(hs []hosts.Host) bool {
