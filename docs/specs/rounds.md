@@ -812,10 +812,10 @@ Built (stage 3, task-ams092is). Where this spec left a choice open:
   The control socket, the user's own clients, keeps full access. Reason: an agent, possibly in
   a harness sandbox, must not gain an unsandboxed scheduled command over someone else's round,
   nor aim a round at another session. The owner may loosen this later.
-- **Not built yet.** A round with a prompt, or in `resume` or `fork` mode, can be created, read
-  and edited (so `--target self` works), but its run fails, "prompt rounds need harness runs",
-  until stage 4. The scheduler's notices are logged until stage 6; a set-aside state file raises
-  one notice.
+- **Not built yet.** A round in `resume` or `fork` mode can be created, read and edited (so
+  `--target self` works), but its run fails, "resume and fork rounds need the session lock",
+  until stage 5. (Before stage 4 a `fresh` round with a prompt failed the same way.) The
+  scheduler's notices are logged until stage 6; a set-aside state file raises one notice.
 - **Retention.** The prune of 7.6 runs when a run ends and at start; it removes the session
   records of the runs it drops when they have exited.
 - **Export and apply.** The file is `[[rounds]]` tables with the definition fields, the trigger
@@ -833,6 +833,57 @@ Built (stage 3, task-ams092is). Where this spec left a choice open:
   `round unpause` change the mark.
 - **Config.** `[rounds]` in the hab's config file: `max_running` (from 1) and `wake_settle` (a
   duration; `"0s"` for none). gff-hab runs rounds only with the holder link.
+
+Built (stage 4, task-kt363fw0): `fresh` runs with a harness and a prompt
+(`cmd/gff-hab/roundharness.go`). Where this spec left a choice open:
+
+- **Start.** The run's `session.create` names the harness, the model and `argv` = the harness's
+  name plus `harness_args`, so Codex gets `--no-daemon` and opencode its wrapper as any start
+  does. Claude Code also gets `--session-id <uuid>` that gff-hab picks, unless `harness_args`
+  already pick a session (`--session-id`, `--resume`, `--continue`, `--fork-session`): the
+  final message and a later `claude --resume` then find the transcript even where no hook
+  reaches gff-hab.
+- **Harness checks.** `round.create`, and `round.update` when the harness or mode changes,
+  refuse a harness with no adapter (`invalid`) and one whose program is not on gff-hab's
+  `PATH` (`unavailable`). A harness that goes away later fails each run "start failed:
+  harness not found: ...", which counts toward the failure pause.
+- **Folder.** A round made with `project_dir` records that folder as the project's most
+  recent one, so its runs start there (a stage 3 gap: a new project had no folder, and runs
+  started in the home folder).
+- **Readiness.** The prompt goes in at the agent's first `idle` (or `done`, or `error`) after
+  the spawn. The 2-minute limit stops while the run is `blocked` (a sign-in at start) and
+  starts again, whole, when it goes on. A first-run dialog the harness reports no state for
+  fails the run at the limit: Claude Code's workspace trust dialog in a folder it does not
+  trust yet. Answer it once in that folder; later runs start at once.
+- **Delivery.** The prompt goes through `session.send`'s path (paste, then Enter, under the
+  input rules) as the hab, so it is not a take over. A refusal for a busy agent waits for its
+  next `idle`, within the readiness limit. A prompt that may have reached the pane in part,
+  or any other refusal, fails the run, "the prompt was not delivered".
+- **Turn end.** No `session.turn_end` event is sent yet, so the agent state is the turn end:
+  the first `done` or `error` after the send began. Read back is `working` or `blocked` after
+  the send. An `idle` in the turn ends nothing: the owner's interrupt key shows `idle` before
+  the input that carried it takes the run over, and that run must end `taken_over`.
+- **Result.** The last agent message after the last user message (the prompt), from the
+  Claude Code transcript by the session id gff-hab chose, else through the chat view's
+  reader. It is read before the run ends, so before `on_finish close` closes the pane
+  (opencode's conversation lives in its server). The read tries for up to 5 s, since a
+  transcript may trail the turn's end.
+- **Failure.** `error` fails the run, "the turn ended with an error", with the harness's
+  failure kind after a colon where it gives one: the new optional `AgentState.error`, from
+  Claude Code's `StopFailure`. The kinds `harness.NetworkFailure` lists (`authentication_failed`,
+  `cloud_credential_error`, `server_error`, `unknown`) set the network flag for the retry
+  after a wake (8.3). The harness's program exiting before the turn end, whatever its status,
+  fails the run, "the harness exited before its turn ended (exit status N)".
+- **Blocked.** Any `blocked` kind shows the run `blocked`; the agent going on shows it
+  `running` again. The round adds no notice.
+- **Timeout.** The run ends `timed_out` at once. A turn that is `working` then gets Esc,
+  Claude Code's and Codex's interrupt key, through the adapter (the `session.interrupt`
+  method itself is still not served). A `blocked` run gets nothing: the reason names the
+  request kind, which stays open. opencode has no interrupt yet.
+- **Restarts.** A harness run adopted after a gff-hab restart is taken to be in its turn: it
+  ends at the next turn end, the exit, a take over or the timeout. Whether its prompt went in
+  is not stored.
+- **Tests.** `$GFF_TEST_ROUND_READY` (testseam builds only) shortens the readiness limit.
 
 ---
 
