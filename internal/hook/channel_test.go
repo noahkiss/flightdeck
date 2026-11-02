@@ -102,3 +102,42 @@ func TestChannelRouteWriteFails(t *testing.T) {
 		t.Fatal("written was not called")
 	}
 }
+
+// TestReadRoute: a pane reaches the read tools through its GFF_HAB address; with no handler a
+// read answers unavailable, and a write method stays refused.
+func TestReadRoute(t *testing.T) {
+	reg := newTestPanes()
+	sock := filepath.Join(shortDir(t), "hook.sock")
+	l, err := control.Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewServer(reg, func(string, harness.Envelope) string { return "" }, t.Logf)
+	go s.Serve(l)
+	t.Cleanup(func() { s.Close() })
+	addr := Addr(sock, reg.mint("pane-4"))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var ce *control.Error
+	if err := Call(ctx, addr, "file.read", api.FileReadParams{Path: "/x"}, nil); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindUnavailable {
+		t.Fatalf("no handler: %v", err)
+	}
+	s.SetReads(func(_ context.Context, method string, params json.RawMessage) (any, error) {
+		var p api.FileReadParams
+		json.Unmarshal(params, &p)
+		if p.Path == "/denied" {
+			return nil, control.Errorf(api.ErrorKindDenied, "host-x: the read scope refused this read")
+		}
+		return api.FileData{Host: "host-x", Path: p.Path, Text: method}, nil
+	})
+	var d api.FileData
+	if err := Call(ctx, addr, "file.read", api.FileReadParams{Path: "/ok"}, &d); err != nil || d.Text != "file.read" || d.Path != "/ok" {
+		t.Fatalf("read: %v %+v", err, d)
+	}
+	if err := Call(ctx, addr, "file.read", api.FileReadParams{Path: "/denied"}, nil); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindDenied {
+		t.Fatalf("denied: %v", err)
+	}
+	if err := Call(ctx, addr, "session.create", struct{}{}, nil); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindInvalid {
+		t.Fatalf("a write method on the route: %v", err)
+	}
+}

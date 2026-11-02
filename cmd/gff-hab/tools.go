@@ -212,7 +212,7 @@ func formatHosts(r hostsResult) string {
 		if h.Stale {
 			state = "offline, last seen " + h.SeenAt
 		}
-		sys := strings.TrimSpace(c.System.OS + " " + c.System.OSVersion + " " + c.System.Arch)
+		sys := strings.Join(strings.Fields(c.System.OS+" "+c.System.OSVersion+" "+c.System.Arch), " ")
 		fmt.Fprintf(&b, "%s: %s; %s, %d cores", hostName(h), state, sys, c.System.Cores)
 		if c.System.MemoryBytes > 0 {
 			fmt.Fprintf(&b, ", %d GB", c.System.MemoryBytes>>30)
