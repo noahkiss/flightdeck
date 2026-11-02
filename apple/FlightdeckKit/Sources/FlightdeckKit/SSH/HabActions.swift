@@ -91,10 +91,15 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
 
     // MARK: - Delegate
 
+    // On the main actor: iOS calls its completion handler on the thread where this returns,
+    // and UIKit aborts when that is not the main thread (a background notification action
+    // crashed the app after Ping hab answered).
+    @MainActor
     public func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         [.banner, .list, .sound]
     }
 
+    @MainActor
     public func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let content = response.notification.request.content
         if response.actionIdentifier == Self.pingAction {
