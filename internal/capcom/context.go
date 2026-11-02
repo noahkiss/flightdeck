@@ -2,7 +2,6 @@ package capcom
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -104,7 +103,9 @@ func writeBlock(b *strings.Builder, it Item) {
 		if v == "" {
 			continue
 		}
-		fmt.Fprintf(b, "%s: %s\n", line(f.Name), v)
+		// Each line after the first is indented: no resolved line starts at column 0, where
+		// the real markers sit.
+		fmt.Fprintf(b, "%s: %s\n", line(f.Name), strings.ReplaceAll(v, "\n", "\n  "))
 	}
 	if it.Hint != "" {
 		fmt.Fprintf(b, "%s\n", line(it.Hint))
@@ -112,33 +113,28 @@ func writeBlock(b *strings.Builder, it Item) {
 	fmt.Fprintf(b, "[end context %s %s]\n", kind, ref)
 }
 
-var (
-	// marker finds a block's begin or end line inside resolved text, after Clean has dropped
-	// invisible format characters. Unicode spaces count as spaces, and the words may run
-	// together, so "[end context" and "[endcontext" are caught.
-	marker = regexp.MustCompile(`(?i)\[([\s\p{Z}]*)(begin|end)([\s\p{Z}]*context)`)
-	// lead finds the line that opens the context, so resolved text cannot repeat it.
-	lead = regexp.MustCompile(`(?i)\[([\s\p{Z}]*flightdeck[\s\p{Z}]*:)`)
-)
-
-// Clean prepares resolved text for a block: it drops control characters but newline and tab,
-// and invisible format characters (one inside a word could hide a marker), then turns each
-// "[" that would start a block marker or the context's first line into "(". Nothing in a
-// notice, a session name, a path or a command line can forge a header or close a block.
+// Clean prepares resolved text for a block. Line and paragraph separators become newlines;
+// control characters but newline and tab, and invisible format characters, are dropped; and
+// every opening square bracket, with its fullwidth and lookalike forms (any opening
+// punctuation outside ASCII that is not a quotation mark), becomes "(". No word list is
+// needed: nothing in a notice, a session name, a path or a command line can write a "[" that
+// would read as a block marker or the context's first line. Message also indents every line
+// after a value's first.
 func Clean(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
-	s = strings.ReplaceAll(s, "\r", "\n")
-	s = strings.Map(func(r rune) rune {
+	return strings.Map(func(r rune) rune {
 		switch {
-		case r == '\n' || r == '\t':
+		case r == '\n' || r == '\r' || r == ' ' || r == ' ' || r == '\u0085' || r == '\v' || r == '\f':
+			return '\n'
+		case r == '\t':
 			return r
 		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f), unicode.Is(unicode.Cf, r):
 			return -1
+		case r == '[', r > 0x7f && unicode.Is(unicode.Ps, r) && !unicode.Is(unicode.Quotation_Mark, r):
+			return '('
 		}
 		return r
 	}, strings.ToValidUTF8(s, "�"))
-	s = marker.ReplaceAllString(s, "($1$2$3")
-	return lead.ReplaceAllString(s, "($1")
 }
 
 // line is Clean on one line: newlines and tabs become spaces.
