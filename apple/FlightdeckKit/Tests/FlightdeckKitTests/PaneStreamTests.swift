@@ -1,4 +1,5 @@
 import Foundation
+import os
 import HabAPI
 import XCTest
 @testable import FlightdeckKit
@@ -261,14 +262,26 @@ final class PaneStreamTests: XCTestCase {
     func testLargePasteIsSplit() async throws {
         let hab = FakeHab(hostID: "box")
         await hab.terminals.add("%1")
-        let conn = HabConnection(id: "h", transport: hab.transport(), timing: fastTiming(), clientLabel: "test")
+        // The fake answers nothing, pings included, while it decodes a 1 MiB call. On a loaded
+        // runner that silence outlasts fastTiming's 600 ms, the connection is declared dead, and
+        // the pump drops the batches still to send, as it must. Give liveness the room the
+        // product's 45 s gives it.
+        var timing = fastTiming()
+        timing.deadAfter = .seconds(30)
+        timing.callTimeout = .seconds(30)
+        let conn = HabConnection(id: "h", transport: hab.transport(), timing: timing, clientLabel: "test")
         await conn.start()
         await eventually("online") { await conn.state.status == .online }
-        let pump = PaneInputPump(pane: "%1", connection: conn)
+        let errors = OSAllocatedUnfairLock<[String]>(initialState: [])
+        let pump = PaneInputPump(pane: "%1", connection: conn, onError: { e in errors.withLock { $0.append("\(e)") } })
         var want = Data()
         for i in 0..<5 { want.append(Data(repeating: UInt8(0x41 + i), count: 500_000)) }
         pump.enqueue(want)
-        await eventually("all", timeout: 10) { await hab.terminals.inputs.reduce(0) { $0 + $1.data.count } == want.count }
+        await eventually("all", timeout: 30) {
+            let got = await hab.terminals.inputs.reduce(0) { $0 + $1.data.count }
+            return got == want.count || !errors.withLock { $0.isEmpty }
+        }
+        XCTAssertEqual(errors.withLock { $0 }, [], "a dropped batch")
         let inputs = await hab.terminals.inputs
         XCTAssertEqual(inputs.reduce(into: Data()) { $0.append($1.data) }, want)
         XCTAssertTrue(inputs.allSatisfy { $0.data.count <= 1 << 20 })
