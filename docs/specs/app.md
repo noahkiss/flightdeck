@@ -1430,8 +1430,10 @@ The hab sends to APNs itself, with the user's own APNs key. No hub, no relay, no
 service.
 
 1. The user creates an APNs auth key in their Apple Developer account.
-2. They put the key file path, key id, team id, the app's bundle id and the APNs environment in the
-   hab's config file. The key file has owner-only permissions. Config holds a path, never the key.
+2. They store the key where a command can print it (a password manager or keychain), and put
+   that command, the key id, team id, the app's bundle id and the APNs environment in the hab's
+   config file. The hab runs the command and holds the key in memory only. Config holds the
+   command, never the key (`docs/push.md`).
 3. The app registers for push and gets a device token. It sends the token to each paired hab over
    its authenticated connection, with the device id and the kinds it wants (17).
 4. Each hab sends pushes for its own sessions only. No hab relays another hab's events, so no

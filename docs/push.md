@@ -25,18 +25,20 @@ Push is optional. Without it, the app works with live updates while it is open.
 One key works for every app of your team, in both the development and production
 environments. Treat the file as a password: anyone with it can push to your apps.
 
-## 2. Put the key on the hab host
+## 2. Store the key where a command can print it
 
-Copy the key file to the host and make it readable by your user only:
+gff-hab does not read a key file. It runs a command that prints the key on stdout, and keeps
+the key in memory only. Store the `.p8` file's contents in a password manager or keychain that
+a command can read without a terminal prompt. Some examples:
 
-```sh
-mkdir -p ~/.config/flightdeck
-mv AuthKey_ABCDE12345.p8 ~/.config/flightdeck/
-chmod 600 ~/.config/flightdeck/AuthKey_ABCDE12345.p8
-```
+| Store | Command |
+|---|---|
+| `pass` | `["pass", "show", "flightdeck/apns-key"]` |
+| 1Password CLI | `["op", "read", "op://<vault>/<item>/<field>"]` |
+| Secret Service (Linux) | `["secret-tool", "lookup", "service", "flightdeck-apns"]` |
 
-gff-hab refuses a key file that is a symlink, belongs to another user, or is open to group or
-others.
+The command must print the whole PEM text, from `-----BEGIN PRIVATE KEY-----` to
+`-----END PRIVATE KEY-----`. Delete the downloaded file once the store holds it.
 
 ## 3. Write the push config
 
@@ -46,7 +48,7 @@ Write `push.json` in the hab's state directory. That is `~/.local/state/gff/hab/
 
 ```json
 {
-  "key_file": "/home/<user>/.config/flightdeck/AuthKey_ABCDE12345.p8",
+  "key_command": ["pass", "show", "flightdeck/apns-key"],
   "key_id": "ABCDE12345",
   "team_id": "TEAM123456",
   "topic": "com.example.flightdeck",
@@ -56,7 +58,7 @@ Write `push.json` in the hab's state directory. That is `~/.local/state/gff/hab/
 
 | Field | Value |
 |---|---|
-| `key_file` | Absolute path of the `.p8` file. The config holds the path, never the key |
+| `key_command` | The command that prints the key, as an argv: the program, then each argument. No shell runs it, so pipes, `~` and `$VAR` do not work; wrap them in a script of your own if you need them. A program with no `/` is looked up on gff-hab's `PATH` |
 | `key_id` | The key's 10-character id |
 | `team_id` | Your 10-character team id |
 | `topic` | The bundle id of your Flightdeck build |
@@ -65,19 +67,43 @@ Write `push.json` in the hab's state directory. That is `~/.local/state/gff/hab/
 Each device token carries its own environment, so one hab pushes to a development build from
 Xcode and a TestFlight build at once.
 
-The environment can set or override any field: `GFF_HAB_PUSH_KEY_FILE`, `GFF_HAB_PUSH_KEY_ID`,
-`GFF_HAB_PUSH_TEAM_ID`, `GFF_HAB_PUSH_TOPIC`, `GFF_HAB_PUSH_ENVIRONMENT`. `gff-hab serve
--push-config <path>` reads another file.
+The environment can set or override any field: `GFF_HAB_PUSH_KEY_COMMAND`,
+`GFF_HAB_PUSH_KEY_ID`, `GFF_HAB_PUSH_TEAM_ID`, `GFF_HAB_PUSH_TOPIC`,
+`GFF_HAB_PUSH_ENVIRONMENT`. `GFF_HAB_PUSH_KEY_COMMAND` is a JSON array of strings, such as
+`["pass", "show", "flightdeck/apns-key"]`. `gff-hab serve -push-config <path>` reads another
+file.
+
+An older config with `key_file` (or `GFF_HAB_PUSH_KEY_FILE`) is refused: push stays off, and
+the log says to set `key_command`.
+
+### How gff-hab runs the command
+
+- In the background after start. gff-hab never waits for it.
+- With gff-hab's environment, stdin from `/dev/null` and no terminal, so it cannot wait on a
+  password prompt. A store that asks with a dialog (a GUI agent) can still work.
+- For at most 30 seconds. Past that, gff-hab kills it and everything it started.
+- Stdout is capped at 16 KiB and must be one P-256 private key in PEM (`PRIVATE KEY`).
+- The key is never logged and never written to disk. A failure logs the program, its exit
+  status and at most the first line of stderr, cut to 120 bytes. A line that looks like key
+  material (a `-----` marker or a long base64 run) is left out.
+
+A failure leaves push off and logs one line. gff-hab tries again after 30 seconds, then waits
+twice as long after each failure, up to 30 minutes. A password manager that is locked at boot
+only delays push: unlock it, and push turns on at the next try.
 
 ## 4. Restart gff-hab
 
 gff-hab reads the config at start. Its log says which way it went:
 
-- `push is on: topic com.example.flightdeck, ...`: push works. The welcome carries the `push`
-  capability.
+- `push is on: topic com.example.flightdeck, ...`: the command printed a key and push works.
+  The welcome carries the `push` capability.
 - `push is not set up ...`: no config file and no environment. Clients get live updates only.
-- `push is off: <reason>`: the config is incomplete, malformed, or the key file fails its
-  checks. gff-hab still starts; fix the config and restart.
+- `push is off: <reason>`: the config is incomplete or malformed, or the key command failed.
+  gff-hab still starts. A bad config needs a fix and a restart; a failed command is tried
+  again, as above.
+
+A client that connected before push turned on sees the `push` capability at its next
+connection.
 
 Then open the app. It registers its push token with each paired hab, every time it connects.
 Connections › Notifications shows each hab's push status. A Debug build from Xcode registers
@@ -98,6 +124,9 @@ and `APP_WIDGET_PROFILE` in `Local.xcconfig`).
 - **APNs refuses the key or the topic** (a revoked key, the wrong team, a bundle id the key does
   not cover): the hab logs `push broken` once and keeps trying with the next push. Check the
   config.
+- **APNs calls the provider token invalid** (`InvalidProviderToken`, such as after you replace
+  the key in your store): the hab runs the key command again, at most once every 5 minutes. A
+  new key sends the push again. If the command fails, the hab keeps the key it had.
 - **A device token is no longer valid**: the hab drops it and logs once. The app sends a new one
   when it next connects.
 - **APNs rate-limits the hab**: the hab backs off. Approvals wait out the back-off; Live

@@ -1123,14 +1123,26 @@ a key it sends the same call again, and the hab runs it at most once. Built choi
 
 **Push** (task-oe7ioczy; `internal/push`, `cmd/gff-hab/push.go`). Built choices:
 
-- **Config.** `-push-config`, else `<state>/push.json`, with `GFF_HAB_PUSH_KEY_FILE`,
-  `GFF_HAB_PUSH_KEY_ID`, `GFF_HAB_PUSH_TEAM_ID`, `GFF_HAB_PUSH_TOPIC` and
-  `GFF_HAB_PUSH_ENVIRONMENT` over it, field by field. The file names the key's path, never the
-  key. The key file passes the owner-only checks of the hook key (`internal/secretfile`). Key id
-  and team id are 10 capital letters and digits; the topic is the app's bundle id. Nothing set:
-  push is not set up. Set but wrong: gff-hab logs why and runs without push. Either way it
-  leaves `push` out of the capabilities, and the `push.*` methods answer `unavailable` with a
-  hint that names `docs/push.md`. `session.focus` and `notice.raise` work without push.
+- **Config.** `-push-config`, else `<state>/push.json`, with `GFF_HAB_PUSH_KEY_COMMAND` (a
+  JSON array), `GFF_HAB_PUSH_KEY_ID`, `GFF_HAB_PUSH_TEAM_ID`, `GFF_HAB_PUSH_TOPIC` and
+  `GFF_HAB_PUSH_ENVIRONMENT` over it, field by field. The file names a command that prints the
+  key (`key_command`, an argv run with no shell), never the key. `key_file` and
+  `GFF_HAB_PUSH_KEY_FILE` are refused with a message that names `key_command`. Key id and team
+  id are 10 capital letters and digits; the topic is the app's bundle id. Nothing set: push is
+  not set up. Set but wrong: gff-hab logs why and runs without push. Either way it leaves
+  `push` out of the capabilities, and the `push.*` methods answer `unavailable` with a hint
+  that names `docs/push.md`. `session.focus` and `notice.raise` work without push.
+- **Key command** (task-sle59fdq). gff-hab runs it in the background after start, never
+  waiting for it: gff-hab's environment, stdin from `/dev/null`, its own process group, 30 s
+  timeout (the group is killed), 16 KiB stdout cap. Stdout must parse as a PKCS #8 P-256 PEM
+  key. The key stays in memory, is never logged and never written to disk; the stdout buffer is
+  overwritten after parsing. An error names the program and exit status, and at most the first
+  stderr line cut to 120 bytes, dropped when it holds a PEM marker or a 32-character base64 run.
+  Push is on, and the welcome lists `push` (checked at each hello), only once a key parsed. A
+  failure logs one line per failure streak and retries after 30 s, doubling to 30 minutes, so a
+  password manager locked at boot delays push only. APNs answering `InvalidProviderToken`, or a
+  token that cannot be signed, runs the command again, at most once per 5 minutes; a new key
+  sends the message once more, a failure keeps the old key.
 - **APNs.** HTTP/2 to `api.push.apple.com` or `api.sandbox.push.apple.com`, chosen by each
   token's environment. Token auth: an ES256 JWT with the key id and team id, reused for 40
   minutes (APNs refuses one older than an hour or refreshed within 20 minutes), signed again
