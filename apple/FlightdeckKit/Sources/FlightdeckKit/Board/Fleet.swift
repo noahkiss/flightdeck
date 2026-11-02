@@ -40,7 +40,8 @@ public final class Fleet {
         chat: { [unowned self] t in self.chat(for: t) },
         label: { [weak self] id in self?.board.habs.first { $0.id == id }?.label ?? id },
         online: { [weak self] id in self?.board.habs.first { $0.id == id }?.state.status == .online },
-        device: { [weak self] d in self?.habID(device: d) }))
+        device: { [weak self] d in self?.habID(device: d) },
+        allOnline: { [weak self] in self?.board.habs.allSatisfy { $0.state.status == .online } ?? true }))
 
     /// The hab with this device id: a live welcome's, else the hab book's.
     func habID(device: String) -> String? {

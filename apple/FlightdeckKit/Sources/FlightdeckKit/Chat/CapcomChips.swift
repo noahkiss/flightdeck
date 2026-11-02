@@ -84,12 +84,13 @@ extension ChatModel {
         }
     }
 
-    /// Reads what waits from `capcom.open` with no context, when the session runs and the hab
-    /// answers for it as the standing conversation. Other answers change nothing.
+    /// Reads what waits with `capcom.pending`, which starts and resumes nothing, so any Capcom
+    /// session, running or exited, standing or older, reads its own chips. A hab from before
+    /// that call answers `unavailable` and the chips stay as the app last saw them.
     public func refreshPending() async {
         guard let conn = connection, let session = target.session, context.isCapcom, context.online,
-              !context.sessionExited, await conn.has(capability: CapcomChip.capability) else { return }
-        guard let r = try? await conn.call(HabMethods.capcomOpen, CapcomOpenParams()), r.session == session else { return }
+              await conn.has(capability: CapcomChip.capability) else { return }
+        guard let r = try? await conn.call(HabMethods.capcomPending, CapcomPendingParams(session: session)), r.session == session else { return }
         takePending(r.pending)
     }
 
@@ -135,5 +136,66 @@ public enum CapcomChip {
         case .logbook: return "book.closed"
         default: return "paperclip"
         }
+    }
+}
+
+/// One context block a Capcom user message carried, as the hab wrote it (capcom.md 8.4).
+public struct CapcomContextBlock: Hashable, Sendable {
+    public var kind: String
+    public var ref: String
+    public var host: String
+    /// The block's first field: the notice title, the session name, the file path or the
+    /// command line.
+    public var title: String
+}
+
+/// Reads the context blocks the hab puts before a Capcom message's text (capcom.md 8.4): an
+/// opening `[Flightdeck: context ...]` line, then `[begin context <kind> <ref> on <host>]` ...
+/// `[end context <kind> <ref>]` per item, then the user's text. Resolved lines never start at
+/// column 0 with `[` (the hab indents and cleans them), so only the hab's markers match.
+public enum CapcomContextText {
+    static let opening = "[Flightdeck: context "
+
+    /// The blocks and the user's text after the last one (empty for context alone), or nil
+    /// when the text does not start with the opening line.
+    public static func split(_ text: String) -> (blocks: [CapcomContextBlock], text: String)? {
+        guard text.hasPrefix(opening) else { return nil }
+        let lines = text.components(separatedBy: "\n")
+        var i = 1
+        var blocks: [CapcomContextBlock] = []
+        while i < lines.count, let head = begin(lines[i]) {
+            var title = ""
+            var j = i + 1
+            let end = "[end context \(head.kind) \(head.ref)]"
+            while j < lines.count, lines[j] != end {
+                let l = lines[j]
+                if title.isEmpty, !l.hasPrefix(" "), let colon = l.range(of: ": ") {
+                    title = String(l[colon.upperBound...])
+                }
+                j += 1
+            }
+            // A block with no end line is not one the hab wrote.
+            guard j < lines.count else { return nil }
+            blocks.append(CapcomContextBlock(kind: head.kind, ref: head.ref, host: head.host, title: title))
+            i = j + 1
+        }
+        guard !blocks.isEmpty else { return nil }
+        return (blocks, i < lines.count ? lines[i...].joined(separator: "\n") : "")
+    }
+
+    /// The kind, ref and host of a begin line.
+    private static func begin(_ line: String) -> (kind: String, ref: String, host: String)? {
+        let pre = "[begin context ", post = "]"
+        guard line.hasPrefix(pre), line.hasSuffix(post) else { return nil }
+        let inner = line.dropFirst(pre.count).dropLast(post.count)
+        guard let on = inner.range(of: " on ", options: .backwards) else { return nil }
+        let head = inner[..<on.lowerBound]
+        guard let sp = head.firstIndex(of: " ") else { return nil }
+        return (String(head[..<sp]), String(head[head.index(after: sp)...]), String(inner[on.upperBound...]))
+    }
+
+    /// The user's own text of a transcript record: after the blocks, or all of it.
+    public static func userText(_ text: String) -> String {
+        split(text)?.text ?? text
     }
 }

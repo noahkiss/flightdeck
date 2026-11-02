@@ -526,7 +526,12 @@ public final class ChatModel {
                 }
             }
             // The hab dropped exactly those items; ones attached meanwhile still wait.
-            if !carried.isEmpty { dropChips(carried) }
+            // The hab delivered its own list, which may hold an item attached after the
+            // snapshot: read what still waits.
+            if !carried.isEmpty {
+                dropChips(carried)
+                await refreshPending()
+            }
             guard let j = outgoing.firstIndex(where: { $0.id == id }) else { return }
             outgoing[j].status = .sent
             outgoing[j].sentAt = Date()
@@ -623,8 +628,9 @@ public final class ChatModel {
     }
 
     /// A new user record clears the oldest sent message with the same text.
+    /// A Capcom record starts with the hab's context blocks; its own text follows the last one.
     private func matchOutgoing(_ m: ChatMessage) {
-        let text = (m.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = CapcomContextText.userText(m.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if let i = outgoing.firstIndex(where: { [.sending, .sent, .delivered, .notDelivered].contains($0.status) && $0.text == text }) {
             outgoing.remove(at: i)
         }

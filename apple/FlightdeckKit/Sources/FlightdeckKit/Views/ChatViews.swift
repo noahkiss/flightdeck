@@ -12,6 +12,8 @@ public struct ChatView: View {
     var focusComposer = 0
     @State private var draft = ""
     @State private var attachments: [DraftAttachment] = []
+    /// Files a Capcom composer could not attach as chips: they stay in the draft.
+    @State private var keptFiles: Set<UUID> = []
     @Environment(\.sendFiles) private var sendFiles
 
     public init(model: ChatModel, openTerminal: (() -> Void)? = nil, openVoice: (() -> Void)? = nil, focusComposer: Int = 0) {
@@ -44,10 +46,17 @@ public struct ChatView: View {
             draft = draft.isEmpty ? text : draft + "\n" + text
         }
         // A Capcom composer attaches files as context chips (capcom.md 8.1).
+        // A refused file goes back to the draft, with the hab's reason under the composer.
         .onChange(of: attachments, initial: true) { _, files in
-            guard model.context.isCapcom, !files.isEmpty else { return }
-            attachments = []
-            Task { for f in files { await model.attachFile(f) } }
+            let fresh = files.filter { !keptFiles.contains($0.id) }
+            guard model.context.isCapcom, !fresh.isEmpty else { return }
+            attachments.removeAll { f in fresh.contains { $0.id == f.id } }
+            Task {
+                for f in fresh where !(await model.attachFile(f)) {
+                    keptFiles.insert(f.id)
+                    attachments.append(f)
+                }
+            }
         }
         .onDisappear { model.stop() }
     }
@@ -292,6 +301,30 @@ public struct ChatItemView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                             .background(sender == nil ? Color.accentColor.opacity(0.18) : Color.purple.opacity(0.15), in: RoundedRectangle(cornerRadius: 14))
+                    }
+                }
+            }
+        case .capcomUser(_, let context, let text, let att):
+            HStack {
+                Spacer(minLength: 40)
+                VStack(alignment: .trailing, spacing: 3) {
+                    ForEach(context, id: \.self) { c in
+                        Label(c.title.isEmpty ? "\(c.kind) \(c.ref)" : c.title, systemImage: CapcomChip.symbol(CapcomContextKind(rawValue: c.kind)))
+                            .font(.caption)
+                            .lineLimit(1)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.quaternary.opacity(0.6), in: Capsule())
+                    }
+                    if !att.isEmpty {
+                        AttachmentThumbRow(ids: att, images: images)
+                    }
+                    if !text.isEmpty {
+                        Text(text)
+                            .textSelection(.enabled)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 14))
                     }
                 }
             }

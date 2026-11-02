@@ -29,17 +29,21 @@ public final class CapcomCenter {
         public var online: @MainActor (String) -> Bool
         /// The hab with this device id: its welcome's, or the hab book's from an earlier run.
         public var device: @MainActor (String) -> String?
+        /// Whether every hab in the app is online: no welcome is still to come.
+        public var allOnline: @MainActor () -> Bool
 
         public init(connection: @escaping @MainActor (String) -> HabConnection?,
                     chat: @escaping @MainActor (SessionTarget) -> ChatModel,
                     label: @escaping @MainActor (String) -> String,
                     online: @escaping @MainActor (String) -> Bool,
-                    device: @escaping @MainActor (String) -> String?) {
+                    device: @escaping @MainActor (String) -> String?,
+                    allOnline: @escaping @MainActor () -> Bool) {
             self.connection = connection
             self.chat = chat
             self.label = label
             self.online = online
             self.device = device
+            self.allOnline = allOnline
         }
     }
 
@@ -48,8 +52,8 @@ public final class CapcomCenter {
     @ObservationIgnored public private(set) var held: ChatModel?
     /// How long "Ask an agent" waits for the Capcom host to come online after the app opens.
     @ObservationIgnored public var askWait: Duration = .seconds(20)
-    /// An Ask that waits for its hab to come online.
-    @ObservationIgnored private var waiting: (habID: String, context: CapcomContextRef, token: Int)?
+    /// An Ask that waits for its hab to be found (a welcome still to come) or to come online.
+    @ObservationIgnored private var waiting: (home: String, habID: String?, context: CapcomContextRef, token: Int)?
     @ObservationIgnored private var nextToken = 0
     @ObservationIgnored let log = Logger(subsystem: "com.flightdeck.app", category: "capcom")
 
@@ -84,10 +88,19 @@ public final class CapcomCenter {
         m.takePending(r.pending)
         held = m
         openRequest = target
+        // A session the board never lists does not open much later, and the model is let go
+        // once its view had time to take it.
+        let wait = askWait
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: wait)
+            guard let self else { return }
+            if self.openRequest == target { self.openRequest = nil }
+            if self.held === m { self.held = nil }
+        }
         return m
     }
 
-    /// The board showed the session: the view holds the model now.
+    /// The board showed the session: its view takes the model.
     public func shown() {
         openRequest = nil
     }
@@ -104,25 +117,36 @@ public final class CapcomCenter {
             return
         }
         let ref = CapcomContextRef(host: c.host, kind: CapcomContextKind(rawValue: c.kind), ref: c.ref)
-        guard let habID = habs.device(home) else {
-            log.notice("ask: no hab with the Capcom host's device id")
-            failure = CapcomFailure(message: "The hab that runs Capcom is not in this app.")
+        let habID = habs.device(home)
+        if let habID, habs.online(habID) {
+            await askNow(habID: habID, ref)
             return
         }
-        guard habs.online(habID) else {
-            nextToken += 1
-            let token = nextToken
-            waiting = (habID, ref, token)
-            let wait = askWait
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: wait)
-                guard let self, let w = self.waiting, w.token == token else { return }
-                self.waiting = nil
-                self.failure = CapcomFailure(message: "Could not reach \(self.habs.label(habID)) to ask an agent.")
+        if habID == nil, habs.allOnline() {
+            notFound()
+            return
+        }
+        // A hab still connecting, or one whose welcome (and so its device id) is still to come:
+        // look again as the board changes, until askWait.
+        nextToken += 1
+        let token = nextToken
+        waiting = (home, habID, ref, token)
+        let wait = askWait
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: wait)
+            guard let self, let w = self.waiting, w.token == token else { return }
+            self.waiting = nil
+            if let id = w.habID ?? self.habs.device(w.home) {
+                self.failure = CapcomFailure(message: "Could not reach \(self.habs.label(id)) to ask an agent.")
+            } else {
+                self.notFound()
             }
-            return
         }
-        await askNow(habID: habID, ref)
+    }
+
+    private func notFound() {
+        log.notice("ask: no hab with the Capcom host's device id")
+        failure = CapcomFailure(message: "The hab that runs Capcom is not in this app.")
     }
 
     private func askNow(habID: String, _ ref: CapcomContextRef) async {
@@ -133,25 +157,39 @@ public final class CapcomCenter {
         }
     }
 
-    /// The board changed: a waiting Ask goes once its hab is online.
+    /// The board changed: a waiting Ask looks for its hab again, and goes once it is online.
+    /// With every hab online and none with the device id, it fails at once.
     public func boardChanged() {
-        guard let w = waiting, habs.online(w.habID) else { return }
+        guard var w = waiting else { return }
+        if w.habID == nil {
+            w.habID = habs.device(w.home)
+            waiting = w
+        }
+        guard let id = w.habID else {
+            if habs.allOnline() {
+                waiting = nil
+                notFound()
+            }
+            return
+        }
+        guard habs.online(id) else { return }
         waiting = nil
-        Task { await askNow(habID: w.habID, w.context) }
+        Task { await askNow(habID: id, w.context) }
     }
 
     // MARK: - New conversation
 
     /// "New conversation" beside the chips (capcom.md 8.2): `capcom.open {new: true}` with the
-    /// chips that can move, then detaches them from the old conversation, opens the new one
-    /// with `draft` in its composer, and attaches the files again there. Returns false when the
-    /// open was refused; the old conversation then keeps everything, with the hab's text.
+    /// chips that can move, opens the new one with `draft` in its composer, attaches the files
+    /// again there, and only then detaches from the old conversation what reached the new one.
+    /// A file that could not go up again stays on the old one. Returns false when the open was
+    /// refused; the old conversation then keeps everything, with the hab's text.
     @discardableResult
     public func newConversation(from old: ChatModel, draft: String) async -> Bool {
         let habID = old.target.habID
         let moving = old.pending.filter { $0.kind != .file || old.chipFiles[$0.ref] != nil }
         let refs = moving.compactMap(old.reattachRef)
-        let files = moving.compactMap { $0.kind == .file ? old.chipFiles[$0.ref] : nil }
+        let files = moving.compactMap { item in item.kind == .file ? old.chipFiles[item.ref].map { (item, $0) } : nil }
         old.capcomBusy = true
         let m: ChatModel
         do {
@@ -162,10 +200,11 @@ public final class CapcomCenter {
             return false
         }
         old.capcomBusy = false
-        // The old conversation's next message must not carry them too.
-        for item in moving { await old.detach(item) }
         if !draft.isEmpty { m.handoff = draft }
-        for f in files { await m.attachFile(f) }
+        var stay: [CapcomContextItem] = []
+        for (item, data) in files where !(await m.attachFile(data)) { stay.append(item) }
+        // The old conversation's next message must not carry what moved.
+        for item in moving where !stay.contains(item) { await old.detach(item) }
         return true
     }
 

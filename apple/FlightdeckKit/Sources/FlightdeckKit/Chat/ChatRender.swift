@@ -145,6 +145,9 @@ public struct ToolCard: Hashable, Sendable {
 /// One row of the chat view, built from the hab's chat messages.
 public indirect enum ChatItem: Hashable, Sendable, Identifiable {
     case user(id: String, text: String, sender: String?, attachments: [String])
+    /// A user message to Capcom that carried context blocks (capcom.md 8.4): the blocks as
+    /// chips, then the user's own text (empty for context alone).
+    case capcomUser(id: String, context: [CapcomContextBlock], text: String, attachments: [String])
     case agent(id: String, blocks: [MarkdownBlock], sender: String?)
     case tool(id: String, card: ToolCard)
     case event(id: String, event: ChatEvent, text: String)
@@ -159,7 +162,7 @@ public indirect enum ChatItem: Hashable, Sendable, Identifiable {
 
     public var id: String {
         switch self {
-        case .user(let id, _, _, _), .agent(let id, _, _), .tool(let id, _), .event(let id, _, _),
+        case .user(let id, _, _, _), .capcomUser(let id, _, _, _), .agent(let id, _, _), .tool(let id, _), .event(let id, _, _),
              .plan(let id, _, _), .handOff(let id, _), .proposal(let id, _), .unsupported(let id, _):
             return id
         }
@@ -211,7 +214,11 @@ public enum ChatRender {
             let item: ChatItem
             switch m.kind {
             case .user:
-                item = .user(id: m.id, text: SpokenText.hidingSummaryRequest(m.text ?? ""), sender: m.sender, attachments: m.attachments ?? [])
+                if m.sender == nil, let c = CapcomContextText.split(m.text ?? "") {
+                    item = .capcomUser(id: m.id, context: c.blocks, text: SpokenText.hidingSummaryRequest(c.text), attachments: m.attachments ?? [])
+                } else {
+                    item = .user(id: m.id, text: SpokenText.hidingSummaryRequest(m.text ?? ""), sender: m.sender, attachments: m.attachments ?? [])
+                }
             case .agent:
                 item = .agent(id: m.id, blocks: MarkdownBlock.parse(m.text ?? ""), sender: m.sender)
             case .tool:
@@ -331,6 +338,10 @@ public enum ChatRender {
         case .user(_, let text, let sender, let att):
             add("USER" + (sender.map { " from \($0)" } ?? "") + (att.isEmpty ? "" : " [\(att.count) attachments]"))
             body(text)
+        case .capcomUser(_, let context, let text, let att):
+            add("USER" + (att.isEmpty ? "" : " [\(att.count) attachments]"))
+            for c in context { body("[context \(c.kind) \(c.ref) on \(c.host)] \(c.title)") }
+            if !text.isEmpty { body(text) }
         case .agent(_, let blocks, let sender):
             add("AGENT" + (sender.map { " from \($0)" } ?? ""))
             for b in blocks {
