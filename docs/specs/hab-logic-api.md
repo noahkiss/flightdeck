@@ -670,7 +670,9 @@ engine on (`voice.md`, Built choices).
   revision is not higher than the one it holds. Deleting an object emits a final event with a final
   revision. Revisions order events only within an epoch; they are not compared across epochs.
 - **Ephemeral events carry no revision.** `pane.activity` describes state that is not stored; so
-  do the activity, chat, turn and usage events of 3.9. Ephemeral means never in the snapshot.
+  do the activity, chat, turn and usage events of 3.9. Ephemeral means never in the snapshot,
+  with one exception: the open confirmations are in a `host` snapshot, and `confirm.requested`
+  and `confirm.closed` carry no revision; the hab sends them in order (`capcom.md` 6.4).
   `pane.owner` is not ephemeral: the owner is part of the pane in the snapshot, so its event
   carries the pane's revision, and a client orders it against the snapshot it holds like any
   other pane change. Owners are still not saved; a new epoch starts with none (6.8). Their `revision` is absent, and the "ignore a revision not higher" rule does not apply:

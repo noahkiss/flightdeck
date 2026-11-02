@@ -57,7 +57,7 @@ threads = 4
 # gff-hab reads this table again a few seconds after the file changes.
 [settings]
 # Confirm before an agent starts work on another host: true or false.
-"confirm.start_elsewhere" = true
+# "confirm.start_elsewhere" = false
 # Remote answers expire after this many minutes: 0 for never, else 1 to 1440.
 # "approval.max_age" = 60
 # Require approval for memories: "off" or "agents".

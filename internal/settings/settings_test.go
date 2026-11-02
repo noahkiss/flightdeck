@@ -324,12 +324,12 @@ func TestOverridesWinOverConfig(t *testing.T) {
 	}
 }
 
-// TestExampleConfig: the [settings] table of docs/examples/hab.toml parses and locks only the
-// setting it names.
+// TestExampleConfig: the [settings] table of docs/examples/hab.toml parses and locks nothing:
+// every row there is commented out, so the app sets them.
 func TestExampleConfig(t *testing.T) {
 	s, _ := open(t, t.TempDir(), filepath.Join("..", "..", "docs", "examples", "hab.toml"), nil)
 	for _, st := range s.List() {
-		if locked := st.Source == api.SettingSourceConfig; locked != (st.ID == StartElsewhere) {
+		if st.Source == api.SettingSourceConfig {
 			t.Errorf("%s: %+v", st.ID, st)
 		}
 	}

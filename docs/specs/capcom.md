@@ -394,8 +394,9 @@ produces several, and a list is faster to judge than a string of interruptions.
 
 - **The setting.** `confirm.start_elsewhere`, default off, a hab-side setting (`app.md` 20.5):
   the app writes it, and a value in the hab's config file locks it. It covers every session
-  start and project set-up an agent asks for on a host other than its own, and every start
-  Capcom asks for, since Capcom never works in a project folder. Off: the hab runs the action
+  start and project set-up an agent asks for on a host other than its own, Capcom's included.
+  A start on the agent's own host never asks (lead's decision, 2026-11-01, 6.4). Off: the hab
+  runs the action
   at once and shows the card as a record. It is a levelled setting: on at Safe, off at
   Balanced and Bypass permissions (owner, 2026-11-01, superseding the first ruling of default
   on) (`app.md` 20.3). The app writes it to every hab through
@@ -407,8 +408,9 @@ produces several, and a list is faster to judge than a string of interruptions.
 - The hab raises a confirmation card in the Capcom view on every client (for another agent, in
   that agent's session view and the approvals area). The card shows exactly
   what will happen (6.3). Buttons: confirm, edit, cancel.
-- The tool waits up to 120 s for the answer. If none comes, it returns "still waiting"; the
-  answer reaches Capcom later as a message marked as from Flightdeck.
+- The tool waits for the answer: `confirm.request` up to 120 s, `start_session` 45 s (6.4). If
+  none comes, it returns "still waiting"; the answer reaches Capcom later as a message marked
+  as from Flightdeck.
 - The first answer wins. A second client's answer gets `conflict`, and every card withdraws, as
   approvals do (`app.md` 7.5).
 - An open confirmation expires after 60 minutes, like an approval (`app.md` 7.4). An expired one
@@ -456,11 +458,14 @@ confirmations in a `host` snapshot (`confirmations`); `model`, `seed` and `seed_
   as `session.create` with the confirmation id as `idempotency_key`; the hab never forwards
   the confirmation itself. A peer without `confirm`, offline, or reachable only by its own link
   in is refused when the agent asks, before any card opens.
-- **When it asks.** With `confirm.start_elsewhere` on, a start on another host, or any start by a
-  Capcom session, opens a confirmation. Any other start runs at once as a record: the setting is
-  off, or a non-Capcom agent starts on its own host. Until session records carry kind
-  `capcom` (the session host stage), a Capcom session is one whose folder lies under
-  `<state>/capcom`. A request from outside a pane names no requester and follows the same rule.
+- **When it asks.** With `confirm.start_elsewhere` on, a start on another host opens a
+  confirmation, for Capcom and for any agent. A start on the agent's own host never asks, and
+  with the setting off nothing asks: the start runs at once as a record. A request from
+  outside a pane names no requester and follows the same rule.
+- **Lead's decisions on the stage's user-visible questions (2026-11-01).** (1) An agent's start
+  on its own host never asks; Capcom's starts ask only while `confirm.start_elsewhere` is on,
+  and only for another host. (2) Automatic names such as `claude-3fa9c2` stay. (3)
+  `suggest_host` orders by fixed rules and shows every reason.
 - **The card values.** The hab checks a start before the card opens and again after the user's
   edits: a known harness (claude, codex, opencode), an absolute folder, a name in the channel
   charset, a model that is not a flag, a seed of at most 8000 characters. It fills in the
@@ -468,33 +473,49 @@ confirmations in a `host` snapshot (`confirmations`); `model`, `seed` and `seed_
   one made from the harness and the first six hex digits of the confirmation id, such as
   `claude-3fa9c2`: the card shows it, and after a lost answer the agent looks for that name on
   the target. The user may change host (with its folder), folder, harness, model and seed; the
-  edited values run.
-- **The wait and the late answer.** `confirm.request` takes `wait_ms`, at most 120 s;
-  `start_session` waits the whole 120 s. The answer reaches the requesting session later as a
-  message from Flightdeck when no request returned it: the wait ended first, or the request
-  asked for none. The message goes through the channels inbox like any message, so it waits
+  edited values run. An edit cannot clear a field: an empty value keeps the old one, so a
+  model or a seed can be replaced but not removed. A harness edit renames an automatic name
+  (`claude-3fa9c2` becomes `codex-3fa9c2`); a name the agent gave stays.
+- **The wait and the late answer.** `confirm.request` takes `wait_ms`, clamped to 120 s.
+  `start_session` waits 45 s, under the shortest default MCP tool timeout of the supported
+  harnesses, so it says "still waiting" before the harness gives up on the call. `gff-hab mcp`
+  honours `notifications/cancelled`: a cancelled call ends its hab call at once and gets no
+  answer. The answer reaches the requesting session later as a message from Flightdeck when no
+  request returned it: the wait ended first, was cancelled, or the request asked for none. The
+  hab keeps the requester's session id, so a session renamed meanwhile still gets it. The message goes through the channels inbox like any message, so it waits
   until the agent can take it. It reads "[Flightdeck: a message from Flightdeck itself, not
   from an agent]" and one line of outcome.
 - **The seed.** The target hab queues the seed in its own channels inbox as soon as the session
   is filed. It waits there until the agent can take a message, and then arrives as one paste
   in a start envelope: "the start message of this session, written by <host/session> on the
   owner's behalf", with begin and end lines and the reply command. Markers inside the seed are
-  neutralised as in an agent message. A seed that cannot be queued after the spawn is logged
+  neutralised as in an agent message. `seed_from` must be `host/session` in the channel
+  charset, so it cannot forge the header. A seed that cannot be queued after the spawn is logged
   and the session keeps running, so a retry with the key never starts a second session.
 - **Outcomes.** `done` with the session id, name and pane; `failed` with the target's refusal; a
   transport error or a lost answer on the peer link is `unknown`, and the text names the
-  session to look for; `cancelled`; `expired` after 60 minutes, which never runs. The first
+  session to look for; `cancelled`; `expired` after 60 minutes, which never runs. The expiry
+  is wall time: an answer after a long sleep past `expires_at` is refused. The first
   answer wins: a second, or one after the expiry, gets `conflict`. `confirm.closed` goes out
   once, at the final state, so every card withdraws.
+- **Events in order.** `confirm.requested` and `confirm.closed` carry no revision. The hab
+  publishes them under one lock, held by a request from the moment its confirmation is visible
+  until `confirm.requested` is out, so a confirmation's closed event never goes first. The open
+  confirmations are also in the `host` snapshot: they are the exception to "ephemeral means
+  never in the snapshot" (`hab-logic-api.md` 3.5). A client applies events after the snapshot
+  in seq order, as for any event.
 - **No tool answers.** `confirm.answer` is not on a pane's hook route, and a peer link cannot
-  send it. `gff-hab confirm answer` refuses to run where `$GFF_HAB` is set. These are cheap
+  send it. `gff-hab confirm answer` and `gff-hab api call confirm.answer` refuse to run where
+  `$GFF_HAB` is set. These are cheap
   guards, not a sandbox: an agent with the user's shell could still reach the control socket,
   as in herdr, Paseo and Rex, which have no confirmation at all.
 - **In memory.** Confirmations are not saved. A gff-hab restart drops the open ones, which then
   never run, and a client sees them gone in its next snapshot. The hab keeps the last 200
   closed ones for `confirm.get`.
 - **Ranking.** `suggest_host` reads `catalog.list` and runs in the tool, not in the hab: it
-  leaves out offline hosts and hosts that lack a needed capability word or the harness, each
+  leaves out offline hosts, hosts that lack a needed capability word or the harness, a hab
+  that linked in but is not in the peer list, and a peer a start would be refused on
+  (`confirm.list` `targets`: offline, only its own link up, or no `confirm` capability), each
   with its reason, then orders the rest by project ready (checked out on the right branch with
   no changes), then on the right branch with changes, then on another branch, then not checked
   out; then the host the user named; then the host used last for the project (the latest of its
@@ -515,8 +536,9 @@ Limits, at the bar of herdr, Paseo and Rex:
   answer and a retry with the same key starts a second session. Nothing retries on its own;
   the agent checks the target first.
 - Confirmation cards and the late message go only to the requesting hab's clients and session.
-- A start Capcom asks for on its own host is confirmed only while Capcom's folder is under
-  `<state>/capcom`; a Capcom started elsewhere counts as any agent until kind `capcom` exists.
+- A retry after an unknown outcome gets a new confirmation id and a new automatic name: a slow
+  first create plus a retry can give two sessions. A `retry_of` argument that reuses the key
+  and name is not built.
 
 ---
 
@@ -642,7 +664,7 @@ until its stage.
 | The project is on no online host | Capcom says so and offers set-up on a host that fits |
 | No host has a needed capability | Capcom names the capability and suggests nothing |
 | A session start fails on the target | The card closes with the target hab's error; nothing is retried |
-| A start's response is lost | The outcome is unknown; Capcom checks the target for a session with that confirmation id before it offers a retry |
+| A start's response is lost | The outcome is unknown; Capcom checks the target for the session's name, shown on the card and in the outcome (6.4), before it offers a retry |
 | The user answers a card on two devices | First wins; the second gets `conflict` |
 | The user ends the conversation with a card open | The card stays until answered or expired |
 | A transcript or notification contains instructions | Treated as data. Capcom hands off only what the user asked for; a start still needs a confirmation while the setting is on (4) |
@@ -712,9 +734,8 @@ Notes for those stages:
 
 - The tools stage built the read tools and the read scope only. The action tools, the proposal
   tools and the confirmation mechanism moved to the stages after the session host: hand-off and
-  proposal tools to "Hand off and file", the confirmation mechanism with start and set-up to
-  "Suggest and start", and expiry and first-answer-wins to "Approval" (lead's call, 2026-11-01:
-  the tools stage was too big otherwise).
+  proposal tools to "Hand off and file", and the confirmation mechanism with start and set-up
+  to "Suggest and start" (lead's call, 2026-11-01: the tools stage was too big otherwise).
 - The confirmation mechanism (6.1) is shared by start and set-up, for Capcom and for any agent
   that starts work on another host (the mesh spec). Build it once, with
   `confirm.start_elsewhere`, in the "Suggest and start" stage, and let later stages add card
