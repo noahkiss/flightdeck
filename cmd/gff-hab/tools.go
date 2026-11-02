@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -17,8 +16,11 @@ import (
 	"github.com/noahkiss/flightdeck/internal/hook"
 )
 
-// The agent kit's read tools (capcom.md 4): one table serves `gff-hab read`, the MCP server
-// (`gff-hab mcp`) and the printed manual (`gff-hab mcp --skill`). Every tool reads; none writes.
+// The agent kit's tools (capcom.md 4, 3.3): two tables serve the CLI (`gff-hab read` for the
+// read tools, `gff-hab act` for the action tools), the MCP server (`gff-hab mcp`) and the printed
+// manual (`gff-hab mcp --skill`). Every read tool reads and none writes; the action tools ask the
+// hab for a start or a set-up, which the hab runs, after the user's confirmation when the
+// setting asks for one.
 
 // toolArg is one argument of a read tool.
 type toolArg struct {
@@ -28,12 +30,13 @@ type toolArg struct {
 	Required bool
 }
 
-// readTool is one read tool. run returns the result for -json and its text.
-type readTool struct {
-	Name string
-	Doc  string
-	Args []toolArg
-	run  func(ctx context.Context, c caller, a toolArgs) (any, string, error)
+// kitTool is one tool. run returns the result for -json and its text.
+type kitTool struct {
+	Name   string
+	Doc    string
+	Args   []toolArg
+	Action bool // an action tool: it asks the hab to change something
+	run    func(ctx context.Context, c caller, a toolArgs) (any, string, error)
 }
 
 // toolArgs are a call's arguments, checked against the tool's own.
@@ -77,9 +80,12 @@ func (e errWrite) Error() string {
 
 // check refuses an argument the tool does not take, a missing required one, and a value of
 // the wrong type.
-func (t readTool) check(a toolArgs) error {
+func (t kitTool) check(a toolArgs) error {
 	for name := range a {
 		if !slices.ContainsFunc(t.Args, func(x toolArg) bool { return x.Name == name }) {
+			if t.Action {
+				return fmt.Errorf("refused: %s takes no argument %q", t.Name, name)
+			}
 			return errWrite{t.Name, name}
 		}
 	}
@@ -130,7 +136,7 @@ var (
 )
 
 // readTools is every read tool, in the order the manual lists them.
-var readTools = []readTool{
+var readTools = []kitTool{
 	{Name: "hosts", Doc: "List the connected hosts: online or offline, OS, arch, cores, memory, capabilities, harnesses, toolchains, services and the always-on mark.",
 		run: runHosts},
 	{Name: "projects", Doc: "List the projects on every host and where each is checked out: folder, branch, head and whether it has changes.",
@@ -153,17 +159,47 @@ var readTools = []readTool{
 			{Name: "status", Type: "string", Doc: "A status."}, argProject, {Name: "tag", Type: "string", Doc: "A tag."}, argLimit}, run: runLogbookSearch},
 	{Name: "logbook_read", Doc: "Read one Logbook record.",
 		Args: []toolArg{{Name: "id", Type: "string", Doc: "The record id.", Required: true}}, run: runLogbookRead},
+	{Name: "suggest_host", Doc: "Rank the connected hosts for new work: hosts that are offline or lack a needed capability or the harness are left out, each with why; the rest go best first, the project checked out and ready on the right branch first, then the host the user named, then the one used last for the project. When none fits it says why and names the host to set the project up on.",
+		Args: []toolArg{{Name: "project", Type: "string", Doc: "The project: a name, a remote, or a folder. Absent: work outside a project."},
+			{Name: "branch", Type: "string", Doc: "The branch the work wants."},
+			{Name: "needs", Type: "string", Doc: "Capability words the host must have, comma separated, such as xcode or gpu."},
+			argHarness, {Name: "host", Type: "string", Doc: "A host the user named: preferred when it fits."}}, run: runSuggest},
+	{Name: "confirmation_read", Doc: "Read where a start or set-up you asked for stands, by its confirmation id: open, running, done, failed, cancelled, expired or unknown, and what it made.",
+		Args: []toolArg{{Name: "id", Type: "string", Doc: "The confirmation id start_session returned.", Required: true}}, run: runConfirmationRead},
 }
 
-func findTool(name string) (readTool, bool) {
+// actionTools is every action tool, in the order the manual lists them.
+var actionTools = []kitTool{
+	{Name: "start_session", Action: true, Doc: "Start an agent session in a project folder on a host, seeded with your brief as its first message. With the owner's confirmation setting on, the owner confirms it in Flightdeck first, and may edit it; the tool waits up to 120 s and then says it is still waiting. Returns the new session's name and host, or why it did not start.",
+		Args: []toolArg{{Name: "folder", Type: "string", Doc: "The absolute project folder on that host, from projects or suggest_host.", Required: true},
+			{Name: "harness", Type: "string", Doc: "claude, codex or opencode.", Required: true},
+			{Name: "host", Type: "string", Doc: "A host's label from the hosts tool. Absent: this host."},
+			{Name: "model", Type: "string", Doc: "A model for the harness, as the harness names it."},
+			{Name: "name", Type: "string", Doc: "The new session's name. Absent: one made from the harness and the confirmation id."},
+			{Name: "seed", Type: "string", Doc: "The first message: the goal, decisions so far, open questions and where they came from. At most 8000 characters. The new session sees nothing else of this conversation."}},
+		run: runStart},
+	{Name: "set_up_project", Action: true, Doc: "Set a project up on a host: clone or fetch its repository, check out a branch and run its bootstrap. Not built yet: it answers unavailable.",
+		Args: []toolArg{{Name: "host", Type: "string", Doc: "A host's label from the hosts tool.", Required: true},
+			{Name: "repository", Type: "string", Doc: "The repository to clone or fetch.", Required: true},
+			{Name: "branch", Type: "string", Doc: "The branch to check out."}},
+		run: runSetup},
+}
+
+// allTools is every tool, read tools first.
+func allTools() []kitTool { return append(slices.Clip(readTools), actionTools...) }
+
+func findIn(tools []kitTool, name string) (kitTool, bool) {
 	name = strings.ReplaceAll(name, "-", "_")
-	for _, t := range readTools {
+	for _, t := range tools {
 		if t.Name == name {
 			return t, true
 		}
 	}
-	return readTool{}, false
+	return kitTool{}, false
 }
+
+// findTool finds a read tool.
+func findTool(name string) (kitTool, bool) { return findIn(readTools, name) }
 
 // --- Runs ---
 
@@ -564,26 +600,37 @@ func toolCaller(ctx context.Context, sock string, getenv func(string) string) (c
 
 // readCmd is `gff-hab read [-socket path] [-json] <tool> [-arg value]... [words...]`.
 func readCmd(args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("read", flag.ExitOnError)
+	return toolCmd("read", readTools, 40*time.Second, args, out)
+}
+
+// actCmd is `gff-hab act [-socket path] [-json] <tool> [-arg value]... [words...]`: the action
+// tools.
+func actCmd(args []string, out io.Writer) error {
+	return toolCmd("act", actionTools, actionCallTime, args, out)
+}
+
+// toolCmd runs one tool of tools from the command line.
+func toolCmd(verb string, tools []kitTool, wait time.Duration, args []string, out io.Writer) error {
+	fs := flag.NewFlagSet(verb, flag.ExitOnError)
 	sock := socketFlag(fs)
 	asJSON := fs.Bool("json", false, "print the result as JSON")
-	timeout := fs.Duration("timeout", 40*time.Second, "give up after this long")
+	timeout := fs.Duration("timeout", wait, "give up after this long")
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "usage: gff-hab read [-socket path] [-json] <tool> [-arg value]... [value of the first required argument]")
-		for _, t := range readTools {
+		fmt.Fprintf(fs.Output(), "usage: gff-hab %s [-socket path] [-json] <tool> [-arg value]... [value of the first required argument]\n", verb)
+		for _, t := range tools {
 			fmt.Fprintf(fs.Output(), "  %s\n", t.Name)
 		}
 	}
 	fs.Parse(args)
 	if fs.NArg() < 1 {
 		fs.Usage()
-		return errors.New("read needs a tool")
+		return fmt.Errorf("%s needs a tool", verb)
 	}
-	t, ok := findTool(fs.Arg(0))
+	t, ok := findIn(tools, fs.Arg(0))
 	if !ok {
-		return fmt.Errorf("no read tool %q; gff-hab mcp --skill lists them", fs.Arg(0))
+		return fmt.Errorf("no %s tool %q; gff-hab mcp --skill lists them", verb, fs.Arg(0))
 	}
-	tfs := flag.NewFlagSet("read "+t.Name, flag.ExitOnError)
+	tfs := flag.NewFlagSet(verb+" "+t.Name, flag.ExitOnError)
 	vals := map[string]*string{}
 	for _, x := range t.Args {
 		vals[x.Name] = tfs.String(x.Name, "", x.Doc)

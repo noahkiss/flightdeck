@@ -27,6 +27,11 @@ var ChannelMethods = []string{"channel.send", "channel.status", "channel.wait"}
 var ReadMethods = []string{"catalog.list", "peers.list", "transcript.list", "transcript.search", "transcript.read",
 	"notice.get", "file.read", "logbook.find", "logbook.get"}
 
+// ConfirmMethods are the confirmation methods the route takes (capcom.md 6.1): an agent asks
+// for a start and reads where it stands. confirm.answer is never on the route: no tool answers
+// a confirmation.
+var ConfirmMethods = []string{"confirm.request", "confirm.get", "confirm.list"}
+
 // ReadHandler answers one read tool call from a pane. An error that is a *control.Error keeps
 // its kind; any other is unavailable.
 type ReadHandler func(ctx context.Context, method string, params json.RawMessage) (result any, err error)
@@ -69,6 +74,14 @@ func (s *Server) SetReads(h ReadHandler) {
 	s.mu.Unlock()
 }
 
+// SetConfirm sets the handler of the confirmation methods on the route. With none, each answers
+// unavailable.
+func (s *Server) SetConfirm(h ChannelHandler) {
+	s.mu.Lock()
+	s.confirm = h
+	s.mu.Unlock()
+}
+
 // SetChannels sets the handler of the channel route. With none, every call answers unavailable.
 func (s *Server) SetChannels(h ChannelHandler) {
 	s.mu.Lock()
@@ -108,9 +121,12 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		fail(api.ErrorKindInvalid, "not a channel call: %v", err)
 		return
 	}
-	known, read := false, false
+	known, read, conf := false, false, false
 	for _, m := range ChannelMethods {
 		known = known || m == call.Method
+	}
+	for _, m := range ConfirmMethods {
+		conf = conf || m == call.Method
 	}
 	for _, m := range ReadMethods {
 		read = read || m == call.Method
@@ -146,15 +162,18 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		_ = answer(channelAnswer{Result: b})
 		return
 	}
-	if !known {
-		fail(api.ErrorKindInvalid, "%q is not one of %v or %v", call.Method, ChannelMethods, ReadMethods)
+	if !known && !conf {
+		fail(api.ErrorKindInvalid, "%q is not one of %v, %v or %v", call.Method, ChannelMethods, ReadMethods, ConfirmMethods)
 		return
 	}
 	s.mu.Lock()
 	h := s.channels
+	if conf {
+		h = s.confirm
+	}
 	s.mu.Unlock()
 	if h == nil {
-		fail(api.ErrorKindUnavailable, "%s needs channels, which this hab is running without", call.Method)
+		fail(api.ErrorKindUnavailable, "%s needs a service this hab is running without", call.Method)
 		return
 	}
 	if len(call.Params) == 0 {

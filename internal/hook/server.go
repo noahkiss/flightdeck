@@ -50,6 +50,7 @@ type Server struct {
 	unknown  map[string]bool // tokens already logged as unknown
 	holder   Holder
 	channels ChannelHandler
+	confirm  ChannelHandler
 	reads    ReadHandler
 	http     *http.Server
 }

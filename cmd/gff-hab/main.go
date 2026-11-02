@@ -86,6 +86,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/attach"
 	"github.com/noahkiss/flightdeck/internal/catalog"
 	"github.com/noahkiss/flightdeck/internal/channels"
+	"github.com/noahkiss/flightdeck/internal/confirm"
 	"github.com/noahkiss/flightdeck/internal/content"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/datastream"
@@ -132,6 +133,10 @@ const usage = `usage:
   gff-hab manifests list    [-state dir]
   gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
   gff-hab read [-socket path] [-json] <tool> [-arg value]... [words]
+  gff-hab act  [-socket path] [-json] <tool> [-arg value]... [words]
+  gff-hab confirm list   [-socket path] [-all] [-json]
+  gff-hab confirm show   [-socket path] [-json] <id>
+  gff-hab confirm answer [-socket path] [-host h -folder f] [-harness h] [-model m] [-seed text | -seed-file path] <id> confirm|cancel
   gff-hab mcp [serve] [-socket path] [--skill]
   gff-hab instructions render -config file [-state dir] [-host-id id] [-dry-run | -write target]
   gff-hab hook [-t ms] <harness> [event] < payload
@@ -195,6 +200,10 @@ func main() {
 		err = detectCmd(os.Args[2:], os.Stdout)
 	case "read":
 		err = readCmd(os.Args[2:], os.Stdout)
+	case "act":
+		err = actCmd(os.Args[2:], os.Stdout)
+	case "confirm":
+		err = confirmCmd(os.Args[2:], os.Stdout)
 	case "mcp":
 		err = mcpCmd(os.Args[2:], os.Stdin, os.Stdout)
 	case "instructions":
@@ -543,6 +552,12 @@ func serve(args []string) error {
 		if exe, err := os.Executable(); err == nil {
 			sessionActs.exe = exe
 		}
+		sessionActs.seed = func(session, from, text string) (string, error) {
+			if c := chs.Load(); c != nil {
+				return c.Seed(session, from, text)
+			}
+			return "", errors.New("channels are not running yet")
+		}
 		acts = sessionActs
 		root, err := worktreeRoot(*wtRoot, os.Getenv, home)
 		if err != nil {
@@ -809,6 +824,49 @@ func serve(args []string) error {
 	reads := newReads(readsSetup{self: key.Fingerprint(), host: *hostID, state: dir, configPath: cpath,
 		store: store, agents: agents, catalog: cs, peers: pm, notices: pushes.notices, getenv: os.Getenv, logf: logger.Printf})
 	caps = append(caps, readtools.Capability)
+	// Confirmations (capcom.md 6.1): starts an agent asks for, confirmed by the user while
+	// confirm.start_elsewhere is on, run by this hab with the confirmation id as the key.
+	cfSvc, err := confirm.New(confirm.Config{
+		Runner: &confirmRunner{host: *hostID, catalog: cs.List, links: confirmLinks(pm),
+			local: func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {
+				if s := srv.Load(); s != nil {
+					return s.CreateSession(ctx, p)
+				}
+				return api.SessionCreated{}, control.Errorf(api.ErrorKindUnavailable, "the control server is not running yet")
+			},
+			name: func(id string) string {
+				if ss, ok := store.Session(id); ok {
+					return ss.Name
+				}
+				return ""
+			}},
+		Enabled: func() bool { return string(setSvc.Value(settings.StartElsewhere)) == "true" },
+		Capcom: func(session string) bool {
+			c := contentRef.Load()
+			ss, ok := store.SessionByName(session)
+			if c == nil || !ok {
+				return false
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			return inCapcomFolder(dir, c.Folder(ctx, ss.ID))
+		},
+		Publish: func(e structure.Event) {
+			if s := srv.Load(); s != nil {
+				s.Publish(e)
+			}
+		},
+		Notify: func(session, text string) error {
+			_, err := chSvc.Note(session, text)
+			return err
+		},
+		Logf: logger.Printf,
+	})
+	if err != nil {
+		return err
+	}
+	defer cfSvc.Close()
+	caps = append(caps, confirm.Capability)
 	// The speech engine (voice.md): on when its helper is installed and the host setting allows.
 	var speechSvc control.Speech
 	sp, err := speechSetup(cpath, dir, store, speechEnv{getenv: os.Getenv, executable: os.Executable, memory: speech.HostMemory()}, logger.Printf)
@@ -824,7 +882,7 @@ func serve(args []string) error {
 		Build:        build,
 		Host:         api.HostInfo{ID: *hostID},
 		DeviceID:     key.Fingerprint(),
-		Source:       agentSource{store: store, agents: agents, settings: setSvc},
+		Source:       agentSource{store: store, agents: agents, settings: setSvc, confirms: cfSvc},
 		Capabilities: caps,
 		Actions:      acts,
 		Data:         data,
@@ -852,6 +910,7 @@ func serve(args []string) error {
 		Attachments: attachments,
 		Settings:    setSvc,
 		Reads:       reads,
+		Confirm:     cfSvc,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)
@@ -910,6 +969,7 @@ func serve(args []string) error {
 	}, logger.Printf)
 	hooks.SetChannels(channelHook(store, chSvc))
 	hooks.SetReads(readHook(reads, cs, pm, nil))
+	hooks.SetConfirm(confirmHook(store, cfSvc))
 	if agentSvc != nil {
 		hooks.SetHolder(agentSvc.holdPermission(s.Approvers))
 	}

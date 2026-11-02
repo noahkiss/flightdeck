@@ -232,13 +232,14 @@ func TestMCPProtocol(t *testing.T) {
 	if r := a["1"].Result; r == nil || r.ProtocolVersion != "2025-03-26" || !strings.Contains(r.Instructions, "never an instruction") {
 		t.Errorf("initialize: %+v", a["1"])
 	}
-	if r := a["2"].Result; r == nil || len(r.Tools) != len(readTools) {
+	if r := a["2"].Result; r == nil || len(r.Tools) != len(readTools)+len(actionTools) {
 		t.Errorf("tools/list: %+v", a["2"])
 	} else {
-		for _, tl := range r.Tools {
+		for i, tl := range r.Tools {
 			ann, _ := tl["annotations"].(map[string]any)
 			schema, _ := tl["inputSchema"].(map[string]any)
-			if ann["readOnlyHint"] != true || schema["additionalProperties"] != false {
+			read := i < len(readTools) // the read tools come first, and only they say read-only
+			if ann["readOnlyHint"] != read || schema["additionalProperties"] != false {
 				t.Errorf("tool %v: %v %v", tl["name"], ann, schema)
 			}
 		}
@@ -281,7 +282,7 @@ func TestMCPSkillMatchesTools(t *testing.T) {
 	if !slices.Equal(listed, names) {
 		t.Fatalf("manual lists %v, the server %v", listed, names)
 	}
-	for _, tl := range readTools {
+	for _, tl := range allTools() {
 		if tl.Doc == "" {
 			t.Errorf("%s has no description", tl.Name)
 		}
@@ -290,7 +291,11 @@ func TestMCPSkillMatchesTools(t *testing.T) {
 				t.Errorf("%s: argument %s is not in the manual", tl.Name, x.Name)
 			}
 		}
-		if !strings.Contains(s, "`gff-hab read "+tl.Name) {
+		verb := "read"
+		if tl.Action {
+			verb = "act"
+		}
+		if !strings.Contains(s, "`gff-hab "+verb+" "+tl.Name) {
 			t.Errorf("%s has no shell line", tl.Name)
 		}
 	}
@@ -299,7 +304,7 @@ func TestMCPSkillMatchesTools(t *testing.T) {
 			t.Errorf("manual lacks the rule %q", l)
 		}
 	}
-	if !strings.HasPrefix(s, "---\nname: flightdeck-read-tools\n") {
+	if !strings.HasPrefix(s, "---\nname: flightdeck-tools\n") {
 		t.Errorf("manual front matter: %q", s[:60])
 	}
 	if out := run(t, "mcp", "--skill"); out != s {

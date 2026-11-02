@@ -14,6 +14,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/channels"
+	"github.com/noahkiss/flightdeck/internal/confirm"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/detect"
 	"github.com/noahkiss/flightdeck/internal/holderclient"
@@ -50,6 +51,9 @@ type actions struct {
 	// startedIn hears the folder a new session started in (content and attachments, app.md
 	// 4.4 and 4.7). nil: none.
 	startedIn func(session, dir string)
+	// seed queues a new session's first message in the channels inbox (capcom.md 3.3). nil: a
+	// create with a seed answers unavailable.
+	seed func(session, from, text string) (string, error)
 }
 
 // onPeer returns where name is in use on a peer, or "".
@@ -68,6 +72,21 @@ var _ control.Actions = (*actions)(nil)
 // once (gff-hab show, send, wait) finds its session. If the spawn fails, it closes the session
 // again, so no session is left that never ran.
 func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) (string, string, error) {
+	switch {
+	case p.Model != "" && p.Harness == "":
+		return "", "", control.Errorf(api.ErrorKindInvalid, "model needs harness")
+	case p.Seed != "" && p.Harness == "":
+		return "", "", control.Errorf(api.ErrorKindInvalid, "seed needs harness: it is the agent's first message")
+	case p.Seed != "" && a.seed == nil:
+		return "", "", control.Errorf(api.ErrorKindUnavailable, "this hab cannot queue a seed: it runs without channels")
+	case strings.HasPrefix(p.Model, "-"):
+		return "", "", control.Errorf(api.ErrorKindInvalid, "model %q is not a model name", p.Model)
+	}
+	if p.Seed != "" {
+		if err := confirm.CheckSeed(p.Seed); err != nil {
+			return "", "", err
+		}
+	}
 	if p.Harness != "" {
 		var err error
 		if p, err = harnessStart(p); err != nil {
@@ -194,6 +213,13 @@ func (a *actions) CreateSession(ctx context.Context, p api.SessionCreateParams) 
 	if a.startedIn != nil {
 		a.startedIn(ss.ID, cwd)
 	}
+	if p.Seed != "" {
+		// The session runs; a seed that cannot be queued is logged, not an error, so a retry
+		// with the same idempotency key never starts a second session.
+		if _, err := a.seed(ss.Name, p.SeedFrom, p.Seed); err != nil && a.sp.logf != nil {
+			a.sp.logf("session %s: seed: %v", ss.Name, err)
+		}
+	}
 	return ss.ID, pane, nil
 }
 
@@ -216,10 +242,14 @@ func (a *actions) recentDir(project string) string {
 // Environment contract and Open decisions). Codex runs with --no-daemon, so its agent loop and
 // tool commands stay children of the holder and see the pane's environment; argv defaults to
 // `codex` and gets the flag when it lacks it. opencode's argv defaults to `opencode`;
-// opencodeStart then wraps it. The pane gets AGENT_KIND. Other harnesses are not started this
-// way yet.
+// opencodeStart then wraps it. Claude Code's argv defaults to `claude`. A model goes after the
+// program's other arguments as --model. The pane gets AGENT_KIND.
 func harnessStart(p api.SessionCreateParams) (api.SessionCreateParams, error) {
 	switch p.Harness {
+	case detect.KindClaude:
+		if len(p.Argv) == 0 {
+			p.Argv = []string{"claude"}
+		}
 	case detect.KindOpencode:
 		if len(p.Argv) == 0 {
 			p.Argv = []string{"opencode"}
@@ -235,7 +265,10 @@ func harnessStart(p api.SessionCreateParams) (api.SessionCreateParams, error) {
 		p.Argv = argv
 	default:
 		return p, control.Errorf(api.ErrorKindUnavailable,
-			"session.create with harness %q is not built yet; only codex and opencode are. Give argv instead", p.Harness)
+			"session.create with harness %q is not built yet; only claude, codex and opencode are. Give argv instead", p.Harness)
+	}
+	if p.Model != "" {
+		p.Argv = append(slices.Clone(p.Argv), "--model", p.Model)
 	}
 	p.Env = append(slices.Clone(p.Env), "AGENT_KIND="+p.Harness)
 	return p, nil

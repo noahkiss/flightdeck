@@ -87,6 +87,7 @@ type agentSource struct {
 	store    *structure.Store
 	agents   *harness.Store
 	settings *settings.Service // nil: no settings in the snapshot
+	confirms confirmService    // nil: no confirmations in the snapshot
 }
 
 func (a agentSource) Snapshot(host api.HostInfo) api.Structure {
@@ -95,7 +96,23 @@ func (a agentSource) Snapshot(host api.HostInfo) api.Structure {
 	if a.settings != nil {
 		st.Settings = a.settings.List()
 	}
+	if a.confirms != nil {
+		if open := openOnly(a.confirms.List(false)); len(open) > 0 {
+			st.Confirmations = open
+		}
+	}
 	return st
+}
+
+// openOnly keeps the open confirmations: a running one has its answer already.
+func openOnly(cs []api.Confirmation) []api.Confirmation {
+	var out []api.Confirmation
+	for _, c := range cs {
+		if c.State == "open" {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 var errHookServe = errors.New("hook endpoint stopped")

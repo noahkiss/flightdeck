@@ -173,8 +173,14 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 	capcom := p.From != "" && s.cfg.Capcom != nil && s.cfg.Capcom(p.From)
 	ask := on && (!self || capcom)
 	now := s.cfg.Now()
+	id := newID()
+	if st.Name == "" {
+		// A name made from the id: the card shows it, and after a lost answer the requester
+		// can look for it on the target.
+		st.Name = st.Harness + "-" + id[:6]
+	}
 	e := &entry{done: make(chan struct{}), c: api.Confirmation{
-		ID: newID(), Kind: "start", From: p.From, Start: &st, Created: stamp(now),
+		ID: id, Kind: "start", From: p.From, Start: &st, Created: stamp(now),
 	}}
 	if !ask {
 		// The setting is off, or the start is on the agent's own host: it runs now, and the
@@ -198,7 +204,6 @@ func (s *Service) Request(ctx context.Context, p api.ConfirmRequestParams) (api.
 	}
 	s.open[e.c.ID] = e
 	s.order = append(s.order, e.c.ID)
-	id := e.c.ID
 	e.timer = time.AfterFunc(s.cfg.TTL, func() { s.expire(id) })
 	c := e.c
 	if wait > 0 {
