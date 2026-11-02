@@ -25,6 +25,7 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/habconn"
+	"github.com/noahkiss/flightdeck/internal/testtmp"
 	"github.com/noahkiss/flightdeck/internal/vt"
 )
 
@@ -35,7 +36,7 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	d, err := os.MkdirTemp("", "gffcl")
+	d, err := testtmp.MainDir("gffcl")
 	if err != nil {
 		panic(err)
 	}
@@ -68,12 +69,10 @@ func TestMain(m *testing.M) {
 		}
 		if out, err := cmd.CombinedOutput(); err != nil {
 			fmt.Fprintf(os.Stderr, "build %s: %v\n%s", b.pkg, err, out)
-			os.Exit(1)
+			testtmp.Exit(1, d)
 		}
 	}
-	code := m.Run()
-	os.RemoveAll(d)
-	os.Exit(code)
+	testtmp.Exit(m.Run(), d)
 }
 
 // waitLong bounds every wait; GFF_TEST_TIMEOUT_SCALE raises it on a slow machine.

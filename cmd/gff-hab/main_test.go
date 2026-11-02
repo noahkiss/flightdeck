@@ -21,6 +21,7 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/structure"
+	"github.com/noahkiss/flightdeck/internal/testtmp"
 )
 
 var (
@@ -31,11 +32,16 @@ var (
 	buildFlags = []string{"-tags", "testseam"}
 )
 
+// testDir is TestMain's directory: the built binaries and the fakes built once
+// (buildFakeOpencode). It goes when the test binary ends.
+var testDir string
+
 func TestMain(m *testing.M) {
-	d, err := os.MkdirTemp("", "gffhab")
+	d, err := testtmp.MainDir("gffhab")
 	if err != nil {
 		panic(err)
 	}
+	testDir = d
 	bin = filepath.Join(d, "gff-hab")
 	holderBin = filepath.Join(d, "gff-hab-holder")
 	os.Setenv("GFF_HOLDER_DIR", filepath.Join(d, "holders"))     // never the user's real holders
@@ -45,17 +51,15 @@ func TestMain(m *testing.M) {
 	out, err := exec.Command("go", append(append([]string{"build"}, buildFlags...), "-o", bin, ".")...).CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "build gff-hab: %v\n%s", err, out)
-		os.Exit(1)
+		testtmp.Exit(1, d)
 	}
 	hb := exec.Command("go", "build", "-o", holderBin, "github.com/noahkiss/flightdeck/cmd/gff-hab-holder")
 	hb.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := hb.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "build gff-hab-holder: %v\n%s", err, out)
-		os.Exit(1)
+		testtmp.Exit(1, d)
 	}
-	code := m.Run()
-	os.RemoveAll(d)
-	os.Exit(code)
+	testtmp.Exit(m.Run(), d)
 }
 
 // shortDir returns a private directory with a short path (macOS socket paths max 104 bytes).

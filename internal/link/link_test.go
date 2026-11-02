@@ -24,6 +24,7 @@ import (
 
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/holderreg"
+	"github.com/noahkiss/flightdeck/internal/testtmp"
 	"github.com/noahkiss/flightdeck/internal/vt"
 )
 
@@ -52,26 +53,23 @@ func TestMain(m *testing.M) {
 	if os.Getenv("GFF_LINK_HELPER") == "1" {
 		os.Exit(helperMain())
 	}
-	code := func() int {
-		dir, err := os.MkdirTemp("", "fdlink")
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
-		}
-		defer os.RemoveAll(dir)
-		if _, err := exec.LookPath("go"); err == nil {
-			holderBin = filepath.Join(dir, "holder")
-			cmd := exec.Command("go", "build", "-o", holderBin, "-ldflags", "-X main.build=test",
-				"github.com/noahkiss/flightdeck/cmd/gff-hab-holder")
-			cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
-			if out, err := cmd.CombinedOutput(); err != nil {
-				fmt.Fprintf(os.Stderr, "build holder: %v\n%s", err, out)
-				return 1
-			}
-		}
-		return m.Run()
-	}()
-	os.Exit(code)
+	if _, err := exec.LookPath("go"); err != nil {
+		os.Exit(m.Run())
+	}
+	dir, err := testtmp.MainDir("fdlink")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	holderBin = filepath.Join(dir, "holder")
+	cmd := exec.Command("go", "build", "-o", holderBin, "-ldflags", "-X main.build=test",
+		"github.com/noahkiss/flightdeck/cmd/gff-hab-holder")
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "build holder: %v\n%s", err, out)
+		testtmp.Exit(1, dir)
+	}
+	testtmp.Exit(m.Run(), dir)
 }
 
 // shortDir returns a fresh directory with a short path (macOS caps socket paths at 104 bytes).

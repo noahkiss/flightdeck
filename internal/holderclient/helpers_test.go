@@ -17,6 +17,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/holder"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/holderreg"
+	"github.com/noahkiss/flightdeck/internal/testtmp"
 )
 
 // waitLong bounds every wait. Conditions are waited for, never slept on.
@@ -45,29 +46,27 @@ var binDir string
 // TestMain builds cmd/gff-hab-holder twice, as build A and build B, so the tests can run two
 // real holder builds side by side.
 func TestMain(m *testing.M) {
-	code := func() int {
-		dir, err := os.MkdirTemp("", "fdbin")
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
+	// The drain helper process runs no holder of its own, and the test kills it: it makes no
+	// directory, since it would never get to remove one.
+	if _, err := exec.LookPath("go"); err != nil || os.Getenv(helperEnv) != "" {
+		os.Exit(m.Run())
+	}
+	dir, err := testtmp.MainDir("fdbin")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	for _, b := range []string{"A", "B"} {
+		cmd := exec.Command("go", "build", "-o", filepath.Join(dir, "holder-"+b),
+			"-ldflags", "-X main.build="+b, "github.com/noahkiss/flightdeck/cmd/gff-hab-holder")
+		cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "build holder %s: %v\n%s", b, err, out)
+			testtmp.Exit(1, dir)
 		}
-		defer os.RemoveAll(dir)
-		// The drain helper process runs no holder of its own.
-		if _, err := exec.LookPath("go"); err == nil && os.Getenv(helperEnv) == "" {
-			for _, b := range []string{"A", "B"} {
-				cmd := exec.Command("go", "build", "-o", filepath.Join(dir, "holder-"+b),
-					"-ldflags", "-X main.build="+b, "github.com/noahkiss/flightdeck/cmd/gff-hab-holder")
-				cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
-				if out, err := cmd.CombinedOutput(); err != nil {
-					fmt.Fprintf(os.Stderr, "build holder %s: %v\n%s", b, err, out)
-					return 1
-				}
-			}
-			binDir = dir
-		}
-		return m.Run()
-	}()
-	os.Exit(code)
+	}
+	binDir = dir
+	testtmp.Exit(m.Run(), dir)
 }
 
 // regDir returns a fresh registry directory with a short path (macOS caps socket paths at 104

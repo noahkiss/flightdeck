@@ -20,6 +20,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/testtmp"
 )
 
 // fakeSSHEnv makes the test binary act as ssh: it checks the options the transport must pass,
@@ -40,11 +41,13 @@ func TestMain(m *testing.M) {
 	if os.Getenv(fakeSSHEnv) == "1" {
 		os.Exit(fakeSSH(os.Args[1:]))
 	}
-	code := m.Run()
-	if gffHabDir != "" {
-		os.RemoveAll(gffHabDir)
+	d, err := testtmp.MainDir("gffhcbin")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
-	os.Exit(code)
+	gffHabDir = d
+	testtmp.Exit(m.Run(), d)
 }
 
 func fakeSSH(args []string) int {
@@ -87,7 +90,7 @@ func fakeSSH(args []string) int {
 
 var (
 	gffHabOnce sync.Once
-	gffHabDir  string
+	gffHabDir  string // TestMain's directory, removed when the test binary ends
 	gffHabBin  string
 	gffHabErr  error
 )
@@ -96,10 +99,6 @@ var (
 func gffHab(t *testing.T) string {
 	t.Helper()
 	gffHabOnce.Do(func() {
-		gffHabDir, gffHabErr = os.MkdirTemp("", "gffhcbin")
-		if gffHabErr != nil {
-			return
-		}
 		gffHabBin = filepath.Join(gffHabDir, "gff-hab")
 		cmd := exec.Command("go", "build", "-o", gffHabBin, "github.com/noahkiss/flightdeck/cmd/gff-hab")
 		cmd.Env = append(os.Environ(), "CGO_ENABLED=0")

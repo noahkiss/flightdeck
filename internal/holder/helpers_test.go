@@ -53,6 +53,7 @@ func testHolderOn(t *testing.T, cfg Config, prep func(h *Holder), wrap func(*net
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { os.RemoveAll(dir) }) // runs last, after the holder's shutdown below
 	path := filepath.Join(dir, "h.sock")
 	l, err := Listen(path)
 	if err != nil {
@@ -86,7 +87,6 @@ func testHolderOn(t *testing.T, cfg Config, prep func(h *Holder), wrap func(*net
 	t.Cleanup(func() {
 		h.Shutdown()
 		<-served
-		os.RemoveAll(dir)
 		if t.Failed() {
 			logMu.Lock()
 			t.Logf("holder log:\n%s", logBuf.String())

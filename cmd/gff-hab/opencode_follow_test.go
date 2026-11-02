@@ -624,12 +624,13 @@ var (
 	fakeOpencodeErr  error
 )
 
-// buildFakeOpencode builds testdata/fakeopencode once per test binary.
+// buildFakeOpencode builds testdata/fakeopencode once per test binary, into TestMain's
+// directory.
 func buildFakeOpencode(t *testing.T) string {
 	t.Helper()
 	fakeOpencodeOnce.Do(func() {
-		d, err := os.MkdirTemp("", "fakeopencode")
-		if err != nil {
+		d := filepath.Join(testDir, "fakeopencode")
+		if err := os.Mkdir(d, 0o700); err != nil {
 			fakeOpencodeErr = err
 			return
 		}
