@@ -1,0 +1,460 @@
+# Release the app (docs/specs/ci-release.md 10): the iOS app to TestFlight, and the Mac app
+# signed with Developer ID. The Mac app is built, signed and checked only: no notarization, no
+# GitHub release and no cask yet (10.1).
+#
+# A push of app-v<x.y.z> or app-v<x.y.z>-rc.<n> starts it and uploads to TestFlight. A push of
+# app-v<x.y.z>-dry.<n> runs everything except the upload (7.6): delete the tag after. To run it
+# again, dispatch it on the tag:
+#   gh workflow run app-release.yml --ref app-v<x.y.z> -f tag=app-v<x.y.z> [-f dry_run=true]
+#
+# The tests are apple.yml, called on the tagged commit. The signing jobs run in the `release`
+# environment, which admits tags only, through the shared composite actions xcode-match-signing
+# and xcode-archive-upload. Their secrets and variable are listed in the spec (6.1); no value is
+# in this file.
+name: App release
+run-name: App release ${{ inputs.tag || github.ref_name }}${{ (inputs.dry_run || contains(github.ref_name, '-dry.')) && ' (dry run)' || '' }}
+
+on:
+  push:
+    tags: ['app-v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The tag to release, app-v<version>; dispatch on that tag (--ref)
+        required: true
+        type: string
+      dry_run:
+        description: Build, sign and check everything; upload nothing
+        type: boolean
+        default: false
+
+concurrency:
+  group: app-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  # Xcode 27.1 by path on the xcode-27 image; never the image default or a beta (spec 4).
+  XCODE_APP: /Applications/Xcode_27.1.app
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      build: ${{ steps.tag.outputs.build }}
+      dry_run: ${{ steps.tag.outputs.dry_run }}
+      prefix: ${{ steps.tag.outputs.prefix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The marketing version is the tag's x.y.z without a suffix (7.7). The build number is the
+      # UTC minute, as apple/scripts/testflight.sh sets it, so CI and hand uploads never collide
+      # and each is higher than the last (10.3). One value for both jobs.
+      - name: Check the tag
+        id: tag
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+          REF: ${{ github.ref }}
+          DRY: ${{ inputs.dry_run == true }}
+        run: |
+          set -euo pipefail
+          if [ "$REF" != "refs/tags/$TAG" ]; then
+            echo "::error::This run is on $REF, not on the tag $TAG. Dispatch it on the tag: gh workflow run app-release.yml --ref $TAG -f tag=$TAG"
+            exit 1
+          fi
+          if [[ "$TAG" =~ ^app-v([0-9]+\.[0-9]+\.[0-9]+)(-rc\.[0-9]+)?$ ]]; then
+            :
+          elif [[ "$TAG" =~ ^app-v([0-9]+\.[0-9]+\.[0-9]+)-dry\.[0-9]+$ ]]; then
+            DRY=true
+          else
+            echo "::error::$TAG is not an app release tag: want app-v<x.y.z>, app-v<x.y.z>-rc.<n> or (dry run) app-v<x.y.z>-dry.<n>."
+            exit 1
+          fi
+          version=${BASH_REMATCH[1]}
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse "$TAG^{commit}")" ]; then
+            echo "::error::The checkout is not the commit $TAG names. Delete and push the tag again."
+            exit 1
+          fi
+          # App Store Connect refuses a version below one it has; find it here, not after the
+          # archive. A dry run uploads nothing, so it may rebuild an older tag.
+          last=$(git tag -l 'app-v*' | grep -Ev -- '-dry\.' | sed -E 's/^app-v([0-9]+\.[0-9]+\.[0-9]+).*/\1/' \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
+          if [ "$DRY" != true ] && [ -n "$last" ] && [ "$(printf '%s\n%s\n' "$last" "$version" | sort -V | head -n 1)" != "$last" ]; then
+            echo "::error::$TAG's version $version is lower than the last app tag's, $last."
+            exit 1
+          fi
+          prefix=$(sed -n 's/^APP_BUNDLE_PREFIX = //p' apple/Config/Names.xcconfig)
+          [ -n "$prefix" ] || { echo "::error::Cannot read APP_BUNDLE_PREFIX from apple/Config/Names.xcconfig."; exit 1; }
+          build=$(date -u +%Y%m%d%H%M)
+          {
+            echo "version=$version"
+            echo "build=$build"
+            echo "dry_run=$DRY"
+            echo "prefix=$prefix"
+          } >> "$GITHUB_OUTPUT"
+          echo "App $version, build $build, dry run $DRY."
+
+      # A -dry. tag marks untagged work, so it skips the on-main check (7.6).
+      - name: Check the commit is on main
+        if: ${{ !contains(inputs.tag || github.ref_name, '-dry.') }}
+        run: |
+          set -euo pipefail
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::The tagged commit is not on main. Merge it to main, then tag the commit on main."
+            exit 1
+          fi
+
+  # The Apple build and tests of apple.yml (3.4) on the tagged commit, through xcode-ci. No
+  # secrets. The signing jobs wait for it, so a failing test uploads nothing.
+  test:
+    name: Test
+    needs: verify
+    permissions:
+      contents: read
+    uses: ./.github/workflows/apple.yml
+
+  ios:
+    name: iOS to TestFlight
+    needs: [verify, test]
+    runs-on: xcode-27
+    environment: release
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      BUILD: ${{ needs.verify.outputs.build }}
+      APP_ID: ${{ needs.verify.outputs.prefix }}.flightdeck
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # DEVELOPER_DIR picks the Xcode without changing the runner's global choice.
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          if [ ! -d "$XCODE_APP/Contents/Developer" ]; then
+            echo "::error::$XCODE_APP is not on this runner. Installed: $(find /Applications -maxdepth 1 -name 'Xcode*.app' | sort | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$XCODE_APP/Contents/Developer" >> "$GITHUB_ENV"
+          DEVELOPER_DIR="$XCODE_APP/Contents/Developer" xcodebuild -version
+
+      - name: Set up fastlane
+        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.329.0
+        with:
+          ruby-version: '4.0'
+          working-directory: .github/fastlane
+
+      # No bundler cache: a cache saved on a tag is visible to that tag only, and no main run
+      # installs these gems, so a cache would never be read (5).
+      - name: Install fastlane
+        working-directory: .github/fastlane
+        env:
+          BUNDLE_FROZEN: 'true'
+        run: bundle install --jobs 4 --retry 3
+
+      # SwiftPM's binary downloads from GitHub hit the anonymous rate limit without it (3.4).
+      - name: Write ~/.netrc for SwiftPM
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ( umask 077; printf 'machine api.github.com\n  login x-access-token\n  password %s\n' "$GH_TOKEN" > ~/.netrc )
+
+      # The checkouts xcode-ci saved from main, same key and paths; a miss resolves from scratch.
+      - name: SwiftPM cache key
+        id: spm-key
+        env:
+          HASH: ${{ hashFiles('apple/FlightdeckKit/Package.resolved') }}
+        run: |
+          set -euo pipefail
+          xcode=$(xcodebuild -version | sed -n 's/^Build version //p')
+          echo "prefix=xcode-ci-spm-$RUNNER_OS-$RUNNER_ARCH-$xcode-" >> "$GITHUB_OUTPUT"
+          echo "key=xcode-ci-spm-$RUNNER_OS-$RUNNER_ARCH-$xcode-$HASH" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the SwiftPM cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ${{ runner.temp }}/xcode-ci-packages
+          key: ${{ steps.spm-key.outputs.key }}
+          restore-keys: ${{ steps.spm-key.outputs.prefix }}
+
+      # match read-only for the app and its two extensions, into a throwaway keychain, with a
+      # manual-signing xcconfig that outranks the project's settings (10.2, steps 4 and 5).
+      - name: Signing from the match store
+        id: signing
+        uses: noahkiss/workflows/actions/xcode-match-signing@main
+        env:
+          BUNDLE_GEMFILE: ${{ github.workspace }}/.github/fastlane/Gemfile
+        with:
+          team-id: ${{ vars.APPLE_TEAM_ID }}
+          profiles: appstore ios ${{ env.APP_ID }},${{ env.APP_ID }}.notification-service,${{ env.APP_ID }}.widgets
+          match-git-url: ${{ secrets.MATCH_GIT_URL }}
+          match-password: ${{ secrets.MATCH_PASSWORD }}
+          match-deploy-key: ${{ secrets.MATCH_DEPLOY_KEY }}
+          fastlane: bundle exec fastlane
+
+      - name: Generate the project
+        run: apple/scripts/generate.sh
+
+      - name: Archive
+        id: archive
+        uses: noahkiss/workflows/actions/xcode-archive-upload@main
+        with:
+          project: apple/Flightdeck.xcodeproj
+          scheme: FlightdeckiOS
+          destination: generic/platform=iOS
+          xcconfig: ${{ steps.signing.outputs.xcconfig }}
+          marketing-version: ${{ env.VERSION }}
+          build-number: ${{ env.BUILD }}
+          packages-dir: ${{ runner.temp }}/xcode-ci-packages
+          xcodebuild-args: -onlyUsePackageVersionsFromResolvedFile
+          export-method: ''
+
+      # Export compliance (section 1), each bundle's embedded profile, the team, the versions
+      # (10.2, step 8). Profile names and the team are public in any shipped build.
+      - name: Check the archive
+        env:
+          ARCHIVE: ${{ steps.archive.outputs.archive-path }}
+          PROFILES: ${{ steps.signing.outputs.profiles }}
+          TEAM: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          app=$(find "$ARCHIVE/Products/Applications" -maxdepth 1 -name '*.app' -print | head -n 1)
+          [ -n "$app" ] || { echo "::error::The archive holds no app."; exit 1; }
+          pb() { /usr/libexec/PlistBuddy -c "Print :$1" "$2"; }
+          [ "$(pb ITSAppUsesNonExemptEncryption "$app/Info.plist")" = false ] \
+            || { echo "::error::ITSAppUsesNonExemptEncryption is not false in the app's Info.plist."; exit 1; }
+          [ "$(pb CFBundleShortVersionString "$app/Info.plist")" = "$VERSION" ] \
+            || { echo "::error::The app's marketing version is not $VERSION."; exit 1; }
+          [ "$(pb CFBundleVersion "$app/Info.plist")" = "$BUILD" ] \
+            || { echo "::error::The app's build number is not $BUILD."; exit 1; }
+          n=0
+          for bundle in "$app" "$app"/PlugIns/*.appex; do
+            [ -d "$bundle" ] || continue
+            id=$(pb CFBundleIdentifier "$bundle/Info.plist")
+            want=$(jq -r --arg id "$id" '.[$id] // empty' <<< "$PROFILES")
+            [ -n "$want" ] || { echo "::error::$id has no match profile; add it to the profiles line."; exit 1; }
+            [ -f "$bundle/embedded.mobileprovision" ] || { echo "::error::$id embeds no profile."; exit 1; }
+            got=$(security cms -D -i "$bundle/embedded.mobileprovision" | plutil -extract Name raw -o - -)
+            [ "$got" = "$want" ] || { echo "::error::$id embeds '$got', not '$want'."; exit 1; }
+            team=$(codesign -dv "$bundle" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+            [ "$team" = "$TEAM" ] || { echo "::error::$id is not signed by the release team."; exit 1; }
+            echo "$id: $got"
+            n=$((n + 1))
+          done
+          [ "$n" -eq "$(jq length <<< "$PROFILES")" ] \
+            || { echo "::error::The archive signs $n bundles; the profiles line names $(jq length <<< "$PROFILES")."; exit 1; }
+
+      # Upload to App Store Connect; a dry run exports the .ipa to disk and uploads nothing, so the
+      # API key reaches this step only when it uploads.
+      - name: Export and upload
+        uses: noahkiss/workflows/actions/xcode-archive-upload@main
+        with:
+          archive-path: ${{ steps.archive.outputs.archive-path }}
+          export-method: app-store-connect
+          upload: ${{ needs.verify.outputs.dry_run != 'true' }}
+          team-id: ${{ vars.APPLE_TEAM_ID }}
+          provisioning-profiles: ${{ steps.signing.outputs.profiles }}
+          api-key-p8: ${{ needs.verify.outputs.dry_run != 'true' && secrets.UPLOAD_KEY_P8 || '' }}
+          api-key-id: ${{ needs.verify.outputs.dry_run != 'true' && secrets.UPLOAD_KEY_ID || '' }}
+          api-key-issuer-id: ${{ needs.verify.outputs.dry_run != 'true' && secrets.ASC_ISSUER_ID || '' }}
+
+      - name: Result
+        env:
+          DRY: ${{ needs.verify.outputs.dry_run }}
+        run: |
+          if [ "$DRY" = true ]; then
+            echo "Dry run: exported $VERSION ($BUILD) and uploaded nothing." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Uploaded $VERSION ($BUILD); App Store Connect is processing it for the internal TestFlight group." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload the logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: app-release-ios-logs
+          path: ${{ runner.temp }}/xcode-archive-upload/logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Remove the keychain and keys
+        if: always()
+        uses: noahkiss/workflows/actions/xcode-match-signing@main
+        with:
+          cleanup: 'true'
+
+      - name: Remove ~/.netrc
+        if: always()
+        run: rm -f ~/.netrc
+
+  # Signed with Developer ID and checked; not notarized and not published until the Mac
+  # distribution step turns that on (10.1, 10.4). Runs beside ios; each fails alone.
+  mac:
+    name: Mac, Developer ID
+    needs: [verify, test]
+    runs-on: xcode-27
+    environment: release
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      BUILD: ${{ needs.verify.outputs.build }}
+      APP_ID: ${{ needs.verify.outputs.prefix }}.flightdeck
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          if [ ! -d "$XCODE_APP/Contents/Developer" ]; then
+            echo "::error::$XCODE_APP is not on this runner. Installed: $(find /Applications -maxdepth 1 -name 'Xcode*.app' | sort | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$XCODE_APP/Contents/Developer" >> "$GITHUB_ENV"
+          DEVELOPER_DIR="$XCODE_APP/Contents/Developer" xcodebuild -version
+
+      - name: Set up fastlane
+        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.329.0
+        with:
+          ruby-version: '4.0'
+          working-directory: .github/fastlane
+
+      - name: Install fastlane
+        working-directory: .github/fastlane
+        env:
+          BUNDLE_FROZEN: 'true'
+        run: bundle install --jobs 4 --retry 3
+
+      - name: Write ~/.netrc for SwiftPM
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ( umask 077; printf 'machine api.github.com\n  login x-access-token\n  password %s\n' "$GH_TOKEN" > ~/.netrc )
+
+      - name: SwiftPM cache key
+        id: spm-key
+        env:
+          HASH: ${{ hashFiles('apple/FlightdeckKit/Package.resolved') }}
+        run: |
+          set -euo pipefail
+          xcode=$(xcodebuild -version | sed -n 's/^Build version //p')
+          echo "prefix=xcode-ci-spm-$RUNNER_OS-$RUNNER_ARCH-$xcode-" >> "$GITHUB_OUTPUT"
+          echo "key=xcode-ci-spm-$RUNNER_OS-$RUNNER_ARCH-$xcode-$HASH" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the SwiftPM cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ${{ runner.temp }}/xcode-ci-packages
+          key: ${{ steps.spm-key.outputs.key }}
+          restore-keys: ${{ steps.spm-key.outputs.prefix }}
+
+      # The Developer ID certificate only: the Mac app's one entitlement (audio input) needs no
+      # profile (10.2, Mac step 5). The xcconfig adds --timestamp for this identity.
+      - name: Signing from the match store
+        id: signing
+        uses: noahkiss/workflows/actions/xcode-match-signing@main
+        env:
+          BUNDLE_GEMFILE: ${{ github.workspace }}/.github/fastlane/Gemfile
+        with:
+          team-id: ${{ vars.APPLE_TEAM_ID }}
+          profiles: developer_id macos ${{ env.APP_ID }} certificates-only
+          match-git-url: ${{ secrets.MATCH_GIT_URL }}
+          match-password: ${{ secrets.MATCH_PASSWORD }}
+          match-deploy-key: ${{ secrets.MATCH_DEPLOY_KEY }}
+          fastlane: bundle exec fastlane
+
+      - name: Generate the project
+        run: apple/scripts/generate.sh
+
+      # Apple silicon only: a universal archive about doubles the time (10.2, Mac step 6).
+      # notarize false: the export verifies the signature and uploads nothing to Apple.
+      - name: Archive and export
+        id: export
+        uses: noahkiss/workflows/actions/xcode-archive-upload@main
+        with:
+          project: apple/Flightdeck.xcodeproj
+          scheme: FlightdeckMac
+          destination: generic/platform=macOS
+          xcconfig: ${{ steps.signing.outputs.xcconfig }}
+          marketing-version: ${{ env.VERSION }}
+          build-number: ${{ env.BUILD }}
+          packages-dir: ${{ runner.temp }}/xcode-ci-packages
+          xcodebuild-args: |
+            -onlyUsePackageVersionsFromResolvedFile
+            ARCHS=arm64
+          export-method: developer-id
+          team-id: ${{ vars.APPLE_TEAM_ID }}
+          notarize: 'false'
+
+      # Every Mach-O is arm64 only; the app has the hardened runtime and a secure timestamp, both
+      # of which notarization will need; the versions are the tag's (10.2, Mac step 7).
+      - name: Check the app
+        env:
+          APP: ${{ steps.export.outputs.app-path }}
+          TEAM: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          pb() { /usr/libexec/PlistBuddy -c "Print :$1" "$APP/Contents/Info.plist"; }
+          [ "$(pb CFBundleIdentifier)" = "$APP_ID" ] || { echo "::error::The app's bundle id is not $APP_ID."; exit 1; }
+          [ "$(pb CFBundleShortVersionString)" = "$VERSION" ] || { echo "::error::The app's marketing version is not $VERSION."; exit 1; }
+          [ "$(pb CFBundleVersion)" = "$BUILD" ] || { echo "::error::The app's build number is not $BUILD."; exit 1; }
+          info=$(codesign -dv --verbose=4 "$APP" 2>&1)
+          grep -q '^Authority=Developer ID Application: ' <<< "$info" || { echo "::error::The app is not signed with Developer ID."; exit 1; }
+          [ "$(sed -n 's/^TeamIdentifier=//p' <<< "$info")" = "$TEAM" ] || { echo "::error::The app is not signed by the release team."; exit 1; }
+          grep -Eq '^CodeDirectory .*flags=0x[0-9a-f]*\(.*runtime.*\)' <<< "$info" || { echo "::error::The app lacks the hardened runtime."; exit 1; }
+          grep -q '^Timestamp=' <<< "$info" || { echo "::error::The app's signature has no secure timestamp."; exit 1; }
+          if codesign -d --entitlements :- "$APP" 2>/dev/null | grep -q 'get-task-allow'; then
+            echo "::error::The app carries get-task-allow, which notarization refuses."
+            exit 1
+          fi
+          n=0
+          while IFS= read -r -d '' f; do
+            file -b "$f" | grep -q 'Mach-O' || continue
+            archs=$(lipo -archs "$f")
+            [ "$archs" = arm64 ] || { echo "::error::${f#"$APP"/} is $archs, not arm64 only."; exit 1; }
+            n=$((n + 1))
+          done < <(find "$APP" -type f -print0)
+          echo "Flightdeck $VERSION ($BUILD): Developer ID, hardened runtime, timestamp, $n Mach-O files, arm64 only." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: app-release-mac-logs
+          path: ${{ runner.temp }}/xcode-archive-upload/logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Remove the keychain and keys
+        if: always()
+        uses: noahkiss/workflows/actions/xcode-match-signing@main
+        with:
+          cleanup: 'true'
+
+      - name: Remove ~/.netrc
+        if: always()
+        run: rm -f ~/.netrc
