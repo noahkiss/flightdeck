@@ -1,0 +1,140 @@
+[
+  {
+    "id": "00000000-0000-4000-9000-000000000001",
+    "session": "s1",
+    "kind": "user",
+    "at": "2026-02-01T09:00:01.000Z",
+    "text": "Ask the agent on orbit-api to raise the upload timeout to 60 seconds."
+  },
+  {
+    "id": "00000000-0000-4000-9000-000000000002",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-02-01T09:00:02.000Z",
+    "tool": {
+      "name": "mcp__flightdeck__hand_off",
+      "status": "done",
+      "input": {
+        "project": "orbit-api",
+        "message": "Raise the upload timeout in the orbit-api client from 30 to 60 seconds.\nThe user saw uploads of large files fail at 30 s on a slow link.\nRun the upload tests after the change.\nReply with the commit."
+      },
+      "output": "Delivered: box-b/api-claude (claude, idle, on box-b) has the message now.\nWhy this agent: idle, so it takes the message now; the most recently active of 1 agents that are.\nAlso on orbit-api: box-a/api-codex (codex, working).\nMessage m-0001, state delivered. A reply reaches you as an agent message.\n"
+    }
+  },
+  {
+    "id": "00000000-0000-4000-9000-000000000004",
+    "session": "s1",
+    "kind": "agent",
+    "at": "2026-02-01T09:00:04.000Z",
+    "text": "Handed to api-claude on box-b, which had it at once. api-codex on box-a also runs there."
+  },
+  {
+    "id": "00000000-0000-4000-9000-000000000005",
+    "session": "s1",
+    "kind": "user",
+    "at": "2026-02-01T09:00:05.000Z",
+    "text": "Also tell api-codex to stop after its current step."
+  },
+  {
+    "id": "00000000-0000-4000-9000-000000000006",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-02-01T09:00:06.000Z",
+    "tool": {
+      "name": "mcp__flightdeck__hand_off",
+      "status": "done",
+      "input": {
+        "project": "orbit-api",
+        "agent": "api-codex",
+        "message": "Stop after your current step; the timeout change is with api-claude."
+      },
+      "output": "Queued: box-a/api-codex (codex, working, on box-a) is working; it gets the message when idle.\nWhy this agent: the agent the user named.\nAlso on orbit-api: box-b/api-claude (claude, idle).\nMessage m-0002, state queued. A reply reaches you as an agent message.\n"
+    }
+  },
+  {
+    "id": "00000000-0000-4000-9000-000000000008",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-02-01T09:00:08.000Z",
+    "tool": {
+      "name": "mcp__flightdeck__hand_off",
+      "status": "done",
+      "input": {
+        "project": "star-docs",
+        "message": "Fix the broken link on the install page."
+      },
+      "output": "No agent is running on star-docs: nothing was sent. To start one, run suggest_host for the project, then start_session on the host it suggests.\n"
+    }
+  },
+  {
+    "id": "00000000-0000-4000-9000-000000000010",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-02-01T09:00:10.000Z",
+    "tool": {
+      "name": "mcp__flightdeck__hand_off",
+      "status": "error",
+      "input": {
+        "project": "orbit-api",
+        "message": "Check the CI run."
+      },
+      "output": "hand_off needs to run from a session's pane: your session is the sender. Outside one, gff-hab send -from \u003csession\u003e sends as a named session"
+    }
+  },
+  {
+    "id": "00000000-0000-4000-9000-000000000012",
+    "session": "s1",
+    "kind": "user",
+    "at": "2026-02-01T09:00:12.000Z",
+    "text": "Note down that the upload timeout should be a setting."
+  },
+  {
+    "id": "00000000-0000-4000-9000-000000000013",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-02-01T09:00:13.000Z",
+    "tool": {
+      "name": "mcp__flightdeck__file_record",
+      "status": "done",
+      "input": {
+        "type": "task",
+        "title": "Make the upload timeout a setting",
+        "project": "orbit-api",
+        "quote": "the upload timeout should be a setting",
+        "body": "Today it is a constant in the client."
+      },
+      "output": "Proposed: the task \"Make the upload timeout a setting\" waits for the user's review as proposal p-0001. Nothing is in Logbook until the user approves it. Tell the user in one line; do not file it again.\n"
+    }
+  },
+  {
+    "id": "00000000-0000-4000-9000-000000000015",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-02-01T09:00:15.000Z",
+    "tool": {
+      "name": "mcp__flightdeck__file_record",
+      "status": "error",
+      "input": {
+        "type": "finding",
+        "title": "Uploads fail at 30 s on slow links",
+        "quote": "uploads of large files fail at 30 s"
+      },
+      "output": "Logbook is not on this host yet, so the record was not filed and nothing was written. Tell the user, and keep the draft in this conversation"
+    }
+  },
+  {
+    "id": "00000000-0000-4000-9000-000000000017",
+    "session": "s1",
+    "kind": "tool",
+    "at": "2026-02-01T09:00:17.000Z",
+    "tool": {
+      "name": "mcp__flightdeck__hand_off",
+      "status": "running",
+      "input": {
+        "project": "orbit-api",
+        "host": "box-a",
+        "message": "Rebase onto main when the timeout change lands."
+      }
+    }
+  }
+]
