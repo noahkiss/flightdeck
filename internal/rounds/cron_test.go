@@ -25,6 +25,7 @@ func TestParseCron(t *testing.T) {
 		{"0 9 * * MON-FRI", []int{0}, []int{9}, nil, nil, []int{1, 2, 3, 4, 5}},
 		{"*/15 */6 1,15 JAN,jul *", []int{0, 15, 30, 45}, []int{0, 6, 12, 18}, []int{1, 15}, []int{1, 7}, nil},
 		{"5-20/5 0 * * sun", []int{5, 10, 15, 20}, []int{0}, nil, nil, []int{0}},
+		{"*/59 5-5 * * *", []int{0, 59}, []int{5}, nil, nil, nil}, // a step as wide as the field; a one-value range
 		{"30/10 23 31 dec 7", []int{30, 40, 50}, []int{23}, []int{31}, []int{12}, []int{0}},
 		{"  0   0  1 *  0,6 ", []int{0}, []int{0}, []int{1}, nil, []int{0, 6}},
 	}
@@ -81,6 +82,9 @@ func TestParseCronRefused(t *testing.T) {
 		{"* * L * *", "bad value"},
 		{"* * ? * *", "bad value"},
 		{"1,,2 * * * *", "empty list item"},
+		{"+5 * * * *", "bad value"},
+		{"*/+5 * * * *", "bad step"},
+		{"-5 * * * *", "bad value"},
 		{"* * * MON *", "bad value"}, // a day name in the month field
 	}
 	for _, tt := range tests {
@@ -131,6 +135,9 @@ func TestCronNext(t *testing.T) {
 			[]string{"2028-02-29T00:00:00Z", "2032-02-29T00:00:00Z"}},
 		{"day 7 is Sunday", "0 0 * * 7", "UTC", "2026-05-01T00:00:00Z",
 			[]string{"2026-05-03T00:00:00Z"}},
+		// 29 February on a Sunday: 2100 is not a leap year, so the gap after 2096 is 32 years.
+		{"leap day on one weekday across a skipped leap year", "0 0 29 2 */7", "UTC", "2097-01-01T00:00:00Z",
+			[]string{"2128-02-29T00:00:00Z"}},
 
 		// Spring forward in New York: 2026-03-08, 02:00 EST becomes 03:00 EDT.
 		{"spring gap runs at the first valid minute", "30 2 * * *", "America/New_York", "2026-03-07T17:00:00Z",
@@ -150,9 +157,15 @@ func TestCronNext(t *testing.T) {
 		{"hourly skips the repeated hour", "0 * * * *", "America/New_York", "2026-11-01T04:30:00Z",
 			[]string{"2026-11-01T05:00:00Z", "2026-11-01T07:00:00Z", "2026-11-01T08:00:00Z"}},
 
+		// Fall back in Auckland, 12 hours from UTC: 2024-04-07, 03:00 NZDT becomes 02:00 NZST.
+		{"autumn repeat far from UTC, first occurrence", "30 2 * * *", "Pacific/Auckland", "2024-04-06T00:00:00Z",
+			[]string{"2024-04-06T13:30:00Z", "2024-04-07T14:30:00Z"}},
+
 		// Samoa skipped 2011-12-30 entirely.
 		{"a skipped day runs at the first minute after it", "0 12 30 12 *", "Pacific/Apia", "2011-12-29T00:00:00Z",
 			[]string{"2011-12-30T10:00:00Z", "2012-12-29T22:00:00Z"}},
+		{"a midnight slot on the skipped day bridges 24 hours", "0 0 30 12 *", "Pacific/Apia", "2011-12-29T00:00:00Z",
+			[]string{"2011-12-30T10:00:00Z", "2012-12-29T10:00:00Z"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -251,14 +264,15 @@ func TestOnceAndManual(t *testing.T) {
 
 func TestPresetCron(t *testing.T) {
 	ok := map[string]string{
-		"1m":  "* * * * *",
-		"5m":  "*/5 * * * *",
-		"30m": "*/30 * * * *",
-		"60m": "0 * * * *",
-		"1h":  "0 * * * *",
-		"6h":  "0 */6 * * *",
-		"24h": "0 0 * * *",
-		"1d":  "0 0 * * *",
+		"1m":    "* * * * *",
+		"5m":    "*/5 * * * *",
+		"30m":   "*/30 * * * *",
+		"60m":   "0 * * * *",
+		"1h":    "0 * * * *",
+		"6h":    "0 */6 * * *",
+		"1440m": "0 0 * * *",
+		"24h":   "0 0 * * *",
+		"1d":    "0 0 * * *",
 	}
 	for in, want := range ok {
 		got, err := PresetCron(in)
@@ -270,15 +284,21 @@ func TestPresetCron(t *testing.T) {
 		}
 	}
 	refused := map[string]string{
-		"7m":  "nearest presets: 5m, 10m",
-		"45m": "nearest presets: 30m, 1h",
-		"5h":  "nearest presets: 4h, 6h",
-		"2d":  "nearest presets: 1d",
-		"90s": "want a number",
-		"0m":  "want a number",
-		"m":   "want a number",
-		"5":   "want a number",
-		"-5m": "want a number",
+		"7m":                "nearest presets: 5m, 10m",
+		"45m":               "nearest presets: 30m, 1h",
+		"5h":                "nearest presets: 4h, 6h",
+		"2d":                "nearest presets: 1d",
+		"1000d":             "nearest presets: 1d",
+		"999h":              "nearest presets: 1d",
+		"90s":               "want a number",
+		"0m":                "want a number",
+		"m":                 "want a number",
+		"5":                 "want a number",
+		"-5m":               "want a number",
+		"+5m":               "want a number",
+		" 5m":               "want a number",
+		"1001d":             "want a number",
+		"9999999999999999m": "want a number",
 	}
 	for in, want := range refused {
 		_, err := PresetCron(in)
@@ -302,6 +322,8 @@ func TestHostZone(t *testing.T) {
 		{"", link("/var/db/timezone/zoneinfo/America/New_York"), "America/New_York"},
 		{"Not/AZone", link("../usr/share/zoneinfo/Europe/Berlin"), "Europe/Berlin"},
 		{"", link("/etc/somewhere"), "UTC"},
+		{"", link("./UTC"), "UTC"}, // the time package loads "./UTC"; it is no zone name
+		{"./Asia/Tokyo", link("./Europe/Berlin"), "UTC"},
 		{"", noLink, "UTC"},
 	}
 	for _, tt := range tests {

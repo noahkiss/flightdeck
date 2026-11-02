@@ -77,6 +77,14 @@ func TestNormalizeRefused(t *testing.T) {
 		{"resume without target", func(r *Round) { r.Mode, r.Harness, r.Project = ModeResume, "", "" }, "target", "required"},
 		{"fork with harness", func(r *Round) { r.Mode, r.Target, r.Project = ModeFork, "s", "" }, "harness", "target's harness"},
 		{"fork with project", func(r *Round) { r.Mode, r.Target, r.Harness = ModeFork, "s", "" }, "project", "target's folder"},
+		{"resume with cwd", func(r *Round) {
+			r.Mode, r.Target, r.Harness, r.Project, r.Cwd = ModeResume, "s", "", "", "/src"
+		}, "cwd", "target's folder"},
+		{"negative wait on resume", func(r *Round) {
+			r.Mode, r.Target, r.Harness, r.Project, r.Wait = ModeResume, "s", "", "", -1
+		}, "wait", "positive"},
+		{"once with a bad zone", func(r *Round) { r.Trigger = Trigger{Kind: TriggerOnce, At: &future, Zone: "Mars/Olympus"} }, "trigger", "Mars/Olympus"},
+		{"expiry now", func(r *Round) { now := testNow; r.ExpiresAt = &now }, "expires_at", "in the past"},
 		{"resume with command", func(r *Round) {
 			r.Mode, r.Target, r.Harness, r.Project, r.Command = ModeResume, "s", "", "", []string{"x"}
 		}, "command", "fresh rounds only"},
@@ -161,6 +169,10 @@ func TestRunStateFinal(t *testing.T) {
 func TestTruncateResult(t *testing.T) {
 	if s := TruncateResult("short"); s != "short" {
 		t.Error(s)
+	}
+	exact := strings.Repeat("a", MaxResultBytes)
+	if s := TruncateResult(exact); s != exact {
+		t.Errorf("a result of exactly %d bytes was cut to %d", MaxResultBytes, len(s))
 	}
 	long := strings.Repeat("a", MaxResultBytes-1) + "é" + "tail" // é straddles the limit
 	got := TruncateResult(long)

@@ -204,8 +204,11 @@ func (r *Round) Normalize(now time.Time, zone string, prev *Round) error {
 		if r.Harness != "" {
 			return fieldErr("harness", "a %s round uses its target's harness", r.Mode)
 		}
-		if r.Project != "" || r.Cwd != "" {
+		if r.Project != "" {
 			return fieldErr("project", "a %s round works in its target's folder", r.Mode)
+		}
+		if r.Cwd != "" {
+			return fieldErr("cwd", "a %s round works in its target's folder", r.Mode)
 		}
 	case "":
 		return fieldErr("mode", "required")

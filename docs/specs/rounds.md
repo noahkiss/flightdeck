@@ -163,7 +163,10 @@ Rules:
   session does. A secret the job needs comes from the harness's own login or the host's
   environment.
 - **Edits.** An edit takes effect from the next run. A run already in flight keeps the values it
-  started with. Changing the trigger recomputes the next slot from now.
+  started with. Changing the trigger recomputes the next slot from now. A changed trigger also
+  re-arms a completed round (a spent `once` given a new instant, a round past `max_runs` or
+  `expires_at`): it clears the completed mark, and the round runs at its new next slot. An edit
+  that keeps the trigger leaves a completed round completed.
 
 - **Field rules (stage 1).** A name is at most 64 characters. `harness`, `project` and `cwd`
   are for `fresh` rounds only: a `resume` or `fork` run uses its target's harness and folder.
@@ -398,8 +401,12 @@ running it where the user can see it.
 - **Never closed:** a run that failed, timed out, is blocked, or was taken over. The user should
   see what happened.
 - **`on_finish = keep`.** The session stays open at the harness's prompt until the user closes it.
-- **Retention.** Each round keeps its last 200 runs or 90 days, whichever is more. Exited run
-  sessions older than that are removed from the structure; their transcripts are not touched.
+- **Retention.** Each round keeps its last 200 runs or 90 days, whichever is more, up to a hard
+  cap of 2,000 ended runs per round; past the cap the oldest ended runs go first. Reason for the
+  cap: the rounds store saves its whole file on every change (7.7), and a 1-minute round would
+  otherwise keep about 130,000 runs inside 90 days, a file of tens of megabytes rewritten
+  several times a minute. Exited run sessions older than that are removed from the structure;
+  their transcripts are not touched.
   A run's age counts from when it was made (`created`). A run that has not ended is never
   pruned. Deleting a round drops its ended runs; a live run stays until it ends, and the next
   prune drops it.
@@ -413,7 +420,14 @@ rounds, so rounds keep their own state now.
 - **Own store.** `<state>/rounds/state.json` holds every round, its next slot, its last served
   slot, its failure and skip counts, and its run records. It is saved whole through a synced
   temporary file and one rename, as the channels state is (`mesh.md` 6.5). A file that does not
-  parse is set aside as `.bad`, and the hab starts with no rounds and raises one notice.
+  parse, or that names no version (`null` included), is set aside as
+  `state.json.bad-<unix seconds>` (with `-2`, `-3` when that name is taken; an earlier
+  set-aside file is never overwritten), and the hab starts with no rounds and raises one
+  notice.
+- **A stored trigger that no longer compiles.** A round whose stored trigger fails to compile
+  at load (a zone this host's zone database lacks) still loads and can be read, edited or
+  deleted. The store reports it per round, and the scheduler leaves it unscheduled and shows
+  the error on the round, never silently.
 - **Two parts, one seam.** The scheduler owns the definitions and slots. Run records go through
   a small run log interface: append a run, update its state, page a round's runs, prune by the
   retention rule (7.6). The first implementation writes to the rounds store.
@@ -425,7 +439,8 @@ rounds, so rounds keep their own state now.
   session id, when it was made (`created`), start and end times, and the first 4 KiB of the
   final agent message. Logbook gets the same fields.
 - **Run numbers.** The scheduler gives each run the next number from the round's state in the
-  rounds store; the run log stores a run as given and refuses a repeated id. Numbers so stay in
+  rounds store; the run log stores a run as given and refuses an id it already holds, under
+  any round. A run that has ended never changes its state, number or `created` again. Numbers so stay in
   the store that owns the slots, whichever run log holds the records.
 - **A newer file.** A state file a newer build wrote is not set aside: gff-hab refuses to start
   with it, so a downgrade never loses rounds.

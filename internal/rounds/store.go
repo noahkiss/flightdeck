@@ -44,9 +44,11 @@ type Entry struct {
 // RunLog holds run records (rounds.md 7.7). The rounds store is the first implementation;
 // a Logbook implementation can take over later with no change to its callers.
 type RunLog interface {
-	// Append adds a new run. The caller sets its id and number; a duplicate id is refused.
+	// Append adds a new run. The caller sets its id and number; an id already in the log,
+	// under any round, is refused.
 	Append(r Run) error
-	// Update replaces a stored run, found by round id and run id.
+	// Update replaces a stored run, found by round id and run id. A run that has ended is
+	// refused a change of state, number or creation time (ErrRunEnded).
 	Update(r Run) error
 	// Page returns up to limit runs of a round, newest first, with numbers below before
 	// (before <= 0: from the newest). more says whether older runs remain.
@@ -57,14 +59,18 @@ type RunLog interface {
 }
 
 // Retention: each round keeps its last KeepRuns runs or every run newer than KeepFor,
-// whichever keeps more (rounds.md 7.6).
+// whichever keeps more, and never more than MaxKeepRuns ended runs (rounds.md 7.6). The cap
+// bounds the state file, which is saved whole on every change: a 1-minute round would
+// otherwise keep about 130,000 runs inside 90 days.
 const (
-	KeepRuns = 200
-	KeepFor  = 90 * 24 * time.Hour
+	KeepRuns    = 200
+	KeepFor     = 90 * 24 * time.Hour
+	MaxKeepRuns = 2000
 )
 
-// Keep reports which of a round's runs the retention rule keeps at now. A run is kept while it
-// is among the KeepRuns newest by number, is newer than KeepFor, or has not ended.
+// Keep reports which of a round's runs the retention rule keeps at now. A run that has not
+// ended is always kept. An ended run is kept while it is among the KeepRuns newest by number
+// or newer than KeepFor, and among the MaxKeepRuns newest ended runs.
 func Keep(runs []Run, now time.Time) []bool {
 	order := make([]int, len(runs))
 	for i := range order {
@@ -73,16 +79,25 @@ func Keep(runs []Run, now time.Time) []bool {
 	sort.Slice(order, func(a, b int) bool { return runs[order[a]].Number > runs[order[b]].Number })
 	keep := make([]bool, len(runs))
 	cutoff := now.Add(-KeepFor)
+	ended := 0
 	for rank, i := range order {
 		r := runs[i]
-		keep[i] = rank < KeepRuns || r.Created.After(cutoff) || !r.State.Final()
+		if !r.State.Final() {
+			keep[i] = true
+			continue
+		}
+		keep[i] = ended < MaxKeepRuns && (rank < KeepRuns || r.Created.After(cutoff))
+		if keep[i] {
+			ended++
+		}
 	}
 	return keep
 }
 
 // The state file: <state>/rounds/state.json holds every round and its runs. Every change is
 // saved whole through a synced temporary file and one rename, so a crash leaves the old
-// state or the new one. A file that does not parse is set aside as .bad.
+// state or the new one. A file that does not parse is set aside as state.json.bad-<unix
+// seconds>, never over an earlier one.
 const (
 	dirName      = "rounds"
 	stateFile    = "state.json"
@@ -105,7 +120,7 @@ func newState() state {
 type Store struct {
 	mu       sync.Mutex
 	path     string
-	zone     string
+	zone     string // empty: HostZone() at each create and edit
 	st       state
 	lastGood []byte
 	// write saves the state file; tests replace it. Default writeSynced.
@@ -118,24 +133,25 @@ var (
 	ErrNameTaken = errors.New("name taken")
 	ErrRunExists = errors.New("run exists")
 	ErrNoRun     = errors.New("no such run")
+	ErrRunEnded  = errors.New("run has ended")
 )
 
 // Options configure Open.
 type Options struct {
-	// Zone is the zone a new round takes when it names none. Default HostZone().
+	// Zone is the zone a new round takes when it names none. Default: HostZone() at the
+	// moment the round is created or edited, so a host that changes zone while the hab runs
+	// gives new rounds its new zone (rounds.md 4.1).
 	Zone string
 	// Logf receives one line when a corrupt file is set aside. Default: discard.
 	Logf func(format string, a ...any)
 }
 
-// Open loads <stateDir>/rounds/state.json, creating the folder. A file that does not parse is
-// renamed to state.json.bad and the store starts empty; setAside is then true, so the caller
-// can raise one notice. A file that cannot be read, or that a newer build wrote, is an error:
+// Open loads <stateDir>/rounds/state.json, creating the folder. A file that does not parse, or
+// that names no version, is renamed to state.json.bad-<unix seconds> (with a counter when that
+// name is taken) and the store starts empty; setAside is then true, so the caller can raise
+// one notice. A file that cannot be read, or that a newer build wrote, is an error:
 // the hab refuses to start rather than lose rounds.
 func Open(stateDir string, opt Options) (s *Store, setAside bool, err error) {
-	if opt.Zone == "" {
-		opt.Zone = HostZone()
-	}
 	s = &Store{
 		path:  filepath.Join(stateDir, dirName, stateFile),
 		zone:  opt.Zone,
@@ -158,11 +174,15 @@ func Open(stateDir string, opt Options) (s *Store, setAside bool, err error) {
 		case errors.As(derr, &newer):
 			return nil, false, fmt.Errorf("rounds: %s: %w", s.path, derr)
 		case derr != nil:
-			if opt.Logf != nil {
-				opt.Logf("rounds: %s: %v; set aside as .bad, starting empty", s.path, derr)
-			}
-			if err := os.Rename(s.path, s.path+".bad"); err != nil {
+			bad, err := setAsideName(s.path, time.Now())
+			if err != nil {
 				return nil, false, err
+			}
+			if err := os.Rename(s.path, bad); err != nil {
+				return nil, false, err
+			}
+			if opt.Logf != nil {
+				opt.Logf("rounds: %s: %v; set aside as %s, starting empty", s.path, derr, filepath.Base(bad))
 			}
 			setAside = true
 		default:
@@ -175,22 +195,59 @@ func Open(stateDir string, opt Options) (s *Store, setAside bool, err error) {
 	return s, setAside, nil
 }
 
+// setAsideName returns a name for a corrupt state file that no earlier set-aside file holds:
+// <path>.bad-<unix seconds>, then -2, -3 and so on.
+func setAsideName(path string, now time.Time) (string, error) {
+	base := fmt.Sprintf("%s.bad-%d", path, now.Unix())
+	for n := 1; n < 1000; n++ {
+		p := base
+		if n > 1 {
+			p = fmt.Sprintf("%s-%d", base, n)
+		}
+		if _, err := os.Lstat(p); errors.Is(err, os.ErrNotExist) {
+			return p, nil
+		} else if err != nil {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("rounds: no free name to set %s aside", path)
+}
+
+func (s *Store) zoneNow() string {
+	if s.zone != "" {
+		return s.zone
+	}
+	return HostZone()
+}
+
 type newerError struct{ version int }
 
 func (e *newerError) Error() string {
 	return fmt.Sprintf("state version %d is newer than this build's %d", e.version, stateVersion)
 }
 
+// decodeState reads the version first, so a newer file whose fields this build cannot decode
+// is refused rather than set aside (rounds.md 7.7). A file with no version, or that is null,
+// is not a state file this build wrote, and is set aside like a corrupt one.
 func decodeState(b []byte) (state, error) {
-	st := newState()
-	if err := json.Unmarshal(b, &st); err != nil {
+	var head struct {
+		Version *int `json:"version"`
+	}
+	if err := json.Unmarshal(b, &head); err != nil {
 		return newState(), err
 	}
-	if st.Version > stateVersion {
-		return newState(), &newerError{st.Version}
+	if head.Version == nil {
+		return newState(), errors.New("no state version")
 	}
-	if st.Version < 1 {
-		return newState(), fmt.Errorf("state version %d", st.Version)
+	if *head.Version > stateVersion {
+		return newState(), &newerError{*head.Version}
+	}
+	if *head.Version < 1 {
+		return newState(), fmt.Errorf("state version %d", *head.Version)
+	}
+	st := state{}
+	if err := json.Unmarshal(b, &st); err != nil {
+		return newState(), err
 	}
 	if st.Rounds == nil {
 		st.Rounds = map[string]*Entry{}
@@ -204,6 +261,23 @@ func decodeState(b []byte) (state, error) {
 		}
 	}
 	return st, nil
+}
+
+// TriggerErrors returns, by round id, the rounds whose stored trigger no longer compiles: a
+// zone this host's zone database lacks, or a rule a later build tightened. Such a round loads
+// and can be read, edited or deleted, but has no schedule. The scheduler reads this at start
+// and after each load, leaves those rounds unscheduled, and reports each error on the round
+// rather than skipping it silently. Create and Update never store such a trigger.
+func (s *Store) TriggerErrors() map[string]error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]error{}
+	for id, e := range s.st.Rounds {
+		if _, err := e.Round.Trigger.Schedule(); err != nil {
+			out[id] = err
+		}
+	}
+	return out
 }
 
 // commitLocked saves the state. When the save fails, the state returns to the last saved one
@@ -264,7 +338,7 @@ func (s *Store) byNameLocked(name string) *Entry {
 // Create checks and stores a new round, gives it an id, and sets its first slot after now.
 // createdBy is the session of the agent that created it, or empty for a user.
 func (s *Store) Create(r Round, createdBy string, now time.Time) (Entry, error) {
-	if err := r.Normalize(now, s.zone, nil); err != nil {
+	if err := r.Normalize(now, s.zoneNow(), nil); err != nil {
 		return Entry{}, err
 	}
 	sched, err := r.Trigger.Schedule()
@@ -290,7 +364,8 @@ func (s *Store) Create(r Round, createdBy string, now time.Time) (Entry, error) 
 }
 
 // Update replaces a round's definition with r, found by r.ID. The id, created_by and creation
-// time stay. A changed trigger sets the next slot from now (rounds.md 3, Edits).
+// time stay. A changed trigger sets the next slot from now (rounds.md 3, Edits), and re-arms a
+// completed round: Completed and its reason are cleared.
 func (s *Store) Update(r Round, now time.Time) (Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -299,7 +374,7 @@ func (s *Store) Update(r Round, now time.Time) (Entry, error) {
 		return Entry{}, ErrNotFound
 	}
 	prev := e.Round
-	if err := r.Normalize(now, s.zone, &prev); err != nil {
+	if err := r.Normalize(now, s.zoneNow(), &prev); err != nil {
 		return Entry{}, err
 	}
 	if o := s.byNameLocked(r.Name); o != nil && o != e {
@@ -308,12 +383,13 @@ func (s *Store) Update(r Round, now time.Time) (Entry, error) {
 	r.CreatedBy, r.CreatedAt = prev.CreatedBy, prev.CreatedAt
 	r.UpdatedAt = now.UTC()
 	e.Round = r
-	if !prev.Trigger.Equal(r.Trigger) && !e.State.Completed {
+	if !prev.Trigger.Equal(r.Trigger) {
 		sched, err := r.Trigger.Schedule()
 		if err != nil {
 			return Entry{}, err
 		}
 		e.State.NextSlot = nextSlot(sched, now)
+		e.State.Completed, e.State.CompletedReason = false, ""
 	}
 	if err := s.commitLocked(); err != nil {
 		return Entry{}, err
@@ -432,9 +508,11 @@ func (l storeRunLog) Append(r Run) error {
 	if r.ID == "" || r.RoundID == "" {
 		return errors.New("rounds: a run needs an id and a round id")
 	}
-	for _, o := range s.st.Runs[r.RoundID] {
-		if o.ID == r.ID {
-			return fmt.Errorf("%w: %s", ErrRunExists, r.ID)
+	for _, runs := range s.st.Runs {
+		for _, o := range runs {
+			if o.ID == r.ID {
+				return fmt.Errorf("%w: %s", ErrRunExists, r.ID)
+			}
 		}
 	}
 	s.st.Runs[r.RoundID] = append(s.st.Runs[r.RoundID], r)
@@ -448,6 +526,10 @@ func (l storeRunLog) Update(r Run) error {
 	runs := s.st.Runs[r.RoundID]
 	for i := range runs {
 		if runs[i].ID == r.ID {
+			if o := runs[i]; o.State.Final() &&
+				(r.State != o.State || r.Number != o.Number || !r.Created.Equal(o.Created)) {
+				return fmt.Errorf("%w: %s is %s", ErrRunEnded, r.ID, o.State)
+			}
 			runs[i] = r
 			return s.commitLocked()
 		}

@@ -3,7 +3,6 @@ package rounds
 import (
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -168,15 +167,36 @@ func PresetCron(every string) (string, error) {
 	return "", fmt.Errorf("every %s: cron cannot express it; nearest presets: %s", every, strings.Join(near, ", "))
 }
 
-// parseSpan reads a whole number and one unit: m, h or d.
+// maxSpan bounds a preset span well above the longest preset, so the multiplication cannot
+// overflow and a long span is still refused with the nearest presets.
+const maxSpan = 1000 * 24 * time.Hour
+
+// parseSpan reads a whole number (digits only) and one unit: m, h or d.
 func parseSpan(s string) (time.Duration, error) {
+	bad := fmt.Errorf("every %q: want a number and m, h or d, such as 5m", s)
 	if len(s) < 2 {
-		return 0, fmt.Errorf("every %q: want a number and m, h or d, such as 5m", s)
+		return 0, bad
 	}
 	unit := map[byte]time.Duration{'m': time.Minute, 'h': time.Hour, 'd': 24 * time.Hour}[s[len(s)-1]]
-	n, err := strconv.Atoi(s[:len(s)-1])
-	if unit == 0 || err != nil || n < 1 || n > 1000 {
-		return 0, fmt.Errorf("every %q: want a number and m, h or d, such as 5m", s)
+	n, ok := digits(s[:len(s)-1])
+	if unit == 0 || !ok || n < 1 || n > int(maxSpan/unit) {
+		return 0, bad
 	}
 	return time.Duration(n) * unit, nil
+}
+
+// digits reads a decimal number of at most 9 digits with no sign: strconv.Atoi would also
+// take "+5" and "-5".
+func digits(s string) (int, bool) {
+	if s == "" || len(s) > 9 {
+		return 0, false
+	}
+	n := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return 0, false
+		}
+		n = n*10 + int(s[i]-'0')
+	}
+	return n, true
 }

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math/bits"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -100,8 +99,8 @@ func (cf cronField) parseItem(item string) (uint64, error) {
 	rng, stepText, hasStep := strings.Cut(item, "/")
 	step := 1
 	if hasStep {
-		n, err := strconv.Atoi(stepText)
-		if err != nil || n < 1 {
+		n, ok := digits(stepText)
+		if !ok || n < 1 {
 			return 0, fmt.Errorf("bad step %q", stepText)
 		}
 		if n > cf.max-cf.min {
@@ -147,8 +146,8 @@ func (cf cronField) value(s string) (int, error) {
 			return cf.min + i, nil
 		}
 	}
-	v, err := strconv.Atoi(s)
-	if err != nil {
+	v, ok := digits(s)
+	if !ok {
 		return 0, fmt.Errorf("bad value %q", s)
 	}
 	if v < cf.min || v > cf.max {

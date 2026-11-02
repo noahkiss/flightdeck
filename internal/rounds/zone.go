@@ -38,12 +38,14 @@ func hostZone(tz string, readlink func() (string, error)) string {
 	return "UTC"
 }
 
-// zoneName turns a zone name or a path into a zoneinfo tree into an IANA name that loads.
+// zoneName turns a zone name or a path into a zoneinfo tree into an IANA name that loads. A
+// path outside a zoneinfo tree, absolute or relative ("./UTC", which the time package would
+// load), is not a zone name.
 func zoneName(s string) (string, bool) {
 	if i := strings.LastIndex(s, "zoneinfo/"); i >= 0 {
 		s = s[i+len("zoneinfo/"):]
 	}
-	if s == "" || strings.HasPrefix(s, "/") {
+	if s == "" || strings.HasPrefix(s, "/") || strings.HasPrefix(s, ".") {
 		return "", false
 	}
 	if _, err := LoadZone(s); err != nil {

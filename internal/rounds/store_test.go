@@ -138,7 +138,18 @@ func TestStoreUpdate(t *testing.T) {
 	}
 }
 
-// A file that does not parse is set aside as .bad and the store starts empty.
+// setAsideFiles returns the files a corrupt state file was set aside as.
+func setAsideFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	m, err := filepath.Glob(statePath(dir) + ".bad-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+// A file that does not parse, or names no version, is set aside as .bad-<unix seconds> and
+// the store starts empty.
 func TestStoreCorruptFile(t *testing.T) {
 	for name, content := range map[string]string{
 		"truncated":    "",
@@ -149,6 +160,9 @@ func TestStoreCorruptFile(t *testing.T) {
 		"version 0":    `{"version":0,"rounds":{}}`,
 		"wrong shape":  `{"version":1,"rounds":[]}`,
 		"string state": `"state"`,
+		"null":         `null`,
+		"no version":   `{"rounds":{}}`,
+		"null version": `{"version":null,"rounds":{}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -172,8 +186,15 @@ func TestStoreCorruptFile(t *testing.T) {
 			if !setAside || len(s.List()) != 0 || len(logged) != 1 {
 				t.Errorf("setAside=%v rounds=%d logged=%v", setAside, len(s.List()), logged)
 			}
-			if b, err := os.ReadFile(p + ".bad"); err != nil || string(b) != content {
-				t.Errorf(".bad = %q %v", b, err)
+			bad := setAsideFiles(t, dir)
+			if len(bad) != 1 {
+				t.Fatalf("set-aside files = %v", bad)
+			}
+			if b, err := os.ReadFile(bad[0]); err != nil || string(b) != content {
+				t.Errorf("%s = %q %v", bad[0], b, err)
+			}
+			if !strings.Contains(logged[0], filepath.Base(bad[0])) {
+				t.Errorf("log line names no file: %q", logged[0])
 			}
 			// The store works and saves again.
 			if _, err := s.Create(freshRound(), "", testNow); err != nil {
@@ -186,16 +207,117 @@ func TestStoreCorruptFile(t *testing.T) {
 	}
 }
 
+// A file a newer build wrote is refused, never set aside, even when its fields do not decode
+// into this build's types.
 func TestStoreNewerVersionRefused(t *testing.T) {
+	for name, content := range map[string]string{
+		"plain":       `{"version":99,"rounds":{}}`,
+		"new shapes":  `{"version":2,"rounds":{"x":{"round":{"id":"x","timeout":3600}}}}`,
+		"runs as map": `{"version":2,"runs":{"x":{"run-1":{}}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			p := statePath(dir)
+			os.MkdirAll(filepath.Dir(p), 0o700)
+			os.WriteFile(p, []byte(content), 0o600)
+			if _, _, err := Open(dir, Options{Zone: "UTC"}); err == nil || !strings.Contains(err.Error(), "newer") {
+				t.Errorf("err = %v", err)
+			}
+			if bad := setAsideFiles(t, dir); len(bad) != 0 {
+				t.Errorf("a newer file was set aside: %v", bad)
+			}
+			if b, _ := os.ReadFile(p); string(b) != content {
+				t.Errorf("the newer file changed: %q", b)
+			}
+		})
+	}
+}
+
+// A second corrupt file never replaces one set aside before.
+func TestStoreSetAsideKeepsEarlier(t *testing.T) {
 	dir := t.TempDir()
 	p := statePath(dir)
 	os.MkdirAll(filepath.Dir(p), 0o700)
-	os.WriteFile(p, []byte(`{"version":99,"rounds":{}}`), 0o600)
-	if _, _, err := Open(dir, Options{Zone: "UTC"}); err == nil || !strings.Contains(err.Error(), "newer") {
-		t.Errorf("err = %v", err)
+	for i, content := range []string{"first", "second", "third"} {
+		os.WriteFile(p, []byte(content), 0o600)
+		if _, setAside, err := Open(dir, Options{Zone: "UTC"}); err != nil || !setAside {
+			t.Fatalf("open %d: %v %v", i, setAside, err)
+		}
 	}
-	if _, err := os.Stat(p + ".bad"); err == nil {
-		t.Error("a newer file was set aside")
+	got := map[string]bool{}
+	for _, f := range setAsideFiles(t, dir) {
+		b, _ := os.ReadFile(f)
+		got[string(b)] = true
+	}
+	if len(got) != 3 || !got["first"] || !got["second"] || !got["third"] {
+		t.Errorf("set-aside contents = %v", got)
+	}
+
+	// Names within one second take a counter.
+	at := time.Unix(1700000000, 0)
+	base := fmt.Sprintf("%s.bad-%d", p, at.Unix())
+	n1, _ := setAsideName(p, at)
+	os.WriteFile(n1, nil, 0o600)
+	n2, _ := setAsideName(p, at)
+	os.WriteFile(n2, nil, 0o600)
+	n3, _ := setAsideName(p, at)
+	if n1 != base || n2 != base+"-2" || n3 != base+"-3" {
+		t.Errorf("names = %s %s %s", n1, n2, n3)
+	}
+}
+
+// A stored round whose trigger no longer compiles loads, and TriggerErrors reports it.
+func TestStoreTriggerErrors(t *testing.T) {
+	dir := t.TempDir()
+	s := openStore(t, dir)
+	good, _ := s.Create(freshRound(), "", testNow)
+	r := freshRound()
+	r.Name = "elsewhere"
+	r.Trigger.Zone = "Europe/Paris"
+	bad, _ := s.Create(r, "", testNow)
+	if errs := s.TriggerErrors(); len(errs) != 0 {
+		t.Errorf("errors before = %v", errs)
+	}
+	b, _ := os.ReadFile(statePath(dir))
+	b = []byte(strings.Replace(string(b), "Europe/Paris", "Mars/Olympus", 1))
+	os.WriteFile(statePath(dir), b, 0o600)
+
+	s2 := openStore(t, dir)
+	if len(s2.List()) != 2 {
+		t.Fatalf("rounds = %d", len(s2.List()))
+	}
+	errs := s2.TriggerErrors()
+	if len(errs) != 1 || errs[bad.Round.ID] == nil || !strings.Contains(errs[bad.Round.ID].Error(), "Mars/Olympus") {
+		t.Errorf("errors = %v", errs)
+	}
+	if _, ok := errs[good.Round.ID]; ok {
+		t.Error("a good round reported")
+	}
+	// The round can still be fixed by an edit.
+	e, _ := s2.Get(bad.Round.ID)
+	e.Round.Trigger.Zone = "Asia/Tokyo"
+	if _, err := s2.Update(e.Round, testNow); err != nil {
+		t.Fatal(err)
+	}
+	if errs := s2.TriggerErrors(); len(errs) != 0 {
+		t.Errorf("errors after the fix = %v", errs)
+	}
+}
+
+// With no zone in Options, a new round takes the host's zone at the moment it is created.
+func TestStoreZoneAtCreate(t *testing.T) {
+	t.Setenv("TZ", "Asia/Tokyo")
+	s, _, err := Open(t.TempDir(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := s.Create(freshRound(), "", testNow)
+	t.Setenv("TZ", "Europe/Paris")
+	r := freshRound()
+	r.Name = "later"
+	b, _ := s.Create(r, "", testNow)
+	if a.Round.Trigger.Zone != "Asia/Tokyo" || b.Round.Trigger.Zone != "Europe/Paris" {
+		t.Errorf("zones = %q %q", a.Round.Trigger.Zone, b.Round.Trigger.Zone)
 	}
 }
 
@@ -373,5 +495,194 @@ func TestRetention(t *testing.T) {
 				t.Errorf("second prune removed %d (%v)", len(again), err)
 			}
 		})
+	}
+}
+
+// An edit that changes only the trigger's zone moves the next slot.
+func TestStoreUpdateZoneOnly(t *testing.T) {
+	s := openStore(t, t.TempDir())
+	e, _ := s.Create(freshRound(), "", testNow) // 09:00 New York
+	r := e.Round
+	r.Trigger.Zone = "Europe/Paris"
+	u, err := s.Update(r, testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 09:00 in Paris on 2026-06-02 (CEST) is 07:00 UTC; 2026-06-01 09:00 has passed at noon UTC.
+	if want := utc("2026-06-02T07:00:00Z"); u.State.NextSlot == nil || !u.State.NextSlot.Equal(want) {
+		t.Errorf("next slot = %v, want %v", u.State.NextSlot, want)
+	}
+}
+
+// A changed trigger re-arms a completed round; another edit leaves it completed.
+func TestStoreUpdateRearmsCompleted(t *testing.T) {
+	s := openStore(t, t.TempDir())
+	at := testNow.Add(time.Hour)
+	r := freshRound()
+	r.Trigger = Trigger{Kind: TriggerOnce, At: &at}
+	e, _ := s.Create(r, "", testNow)
+	later := testNow.Add(2 * time.Hour)
+	if _, err := s.SetState(e.Round.ID, func(st *RoundState) {
+		st.NextSlot, st.LastSlot = nil, &at
+		st.Completed, st.CompletedReason = true, "once"
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	r = e.Round
+	r.Prompt = "edited"
+	u, err := s.Update(r, later)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !u.State.Completed || u.State.NextSlot != nil {
+		t.Errorf("an edit that keeps the trigger re-armed the round: %+v", u.State)
+	}
+
+	again := testNow.Add(24 * time.Hour)
+	r.Trigger.At = &again
+	u, err = s.Update(r, later)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.State.Completed || u.State.CompletedReason != "" || u.State.NextSlot == nil || !u.State.NextSlot.Equal(again) {
+		t.Errorf("a new instant did not re-arm the round: %+v", u.State)
+	}
+	if u.State.LastSlot == nil || !u.State.LastSlot.Equal(at) {
+		t.Errorf("the last served slot changed: %v", u.State.LastSlot)
+	}
+}
+
+// Get, ByName and List return copies: changing one never reaches the store.
+func TestStoreReturnsCopies(t *testing.T) {
+	s := openStore(t, t.TempDir())
+	r := freshRound()
+	exp := testNow.Add(time.Hour)
+	r.HarnessArgs, r.ExpiresAt = []string{"--a"}, &exp
+	e, _ := s.Create(r, "", testNow)
+	slot := *e.State.NextSlot
+
+	mutate := func(g Entry) {
+		g.Round.HarnessArgs[0] = "--changed"
+		*g.Round.ExpiresAt = exp.Add(time.Hour)
+		*g.State.NextSlot = slot.Add(time.Hour)
+	}
+	g, _ := s.Get(e.Round.ID)
+	mutate(g)
+	n, _ := s.ByName(r.Name)
+	mutate(n)
+	mutate(s.List()[0])
+	mutate(e)
+
+	g, _ = s.Get(e.Round.ID)
+	if g.Round.HarnessArgs[0] != "--a" || !g.Round.ExpiresAt.Equal(exp) || !g.State.NextSlot.Equal(slot) {
+		t.Errorf("the store shares memory with a caller: %+v %+v", g.Round, g.State)
+	}
+}
+
+// A run that has ended never changes state, number or creation time again.
+func TestRunLogEndedRun(t *testing.T) {
+	s := openStore(t, t.TempDir())
+	e, _ := s.Create(freshRound(), "", testNow)
+	log := s.Runs()
+	run := Run{ID: "run-1", Number: 1, RoundID: e.Round.ID, State: RunRunning, Created: testNow}
+	if err := log.Append(run); err != nil {
+		t.Fatal(err)
+	}
+	run.State = RunSucceeded
+	if err := log.Update(run); err != nil {
+		t.Fatal(err)
+	}
+	for name, edit := range map[string]func(*Run){
+		"state":   func(r *Run) { r.State = RunRunning },
+		"final":   func(r *Run) { r.State = RunFailed },
+		"number":  func(r *Run) { r.Number = 9 },
+		"created": func(r *Run) { r.Created = testNow.Add(time.Hour) },
+	} {
+		r := run
+		edit(&r)
+		if err := log.Update(r); !errors.Is(err, ErrRunEnded) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	// Other fields of an ended run can still be filled in, such as the session id.
+	r := run
+	r.SessionID, r.Result = "sess-1", "done"
+	if err := log.Update(r); err != nil {
+		t.Errorf("filling in an ended run: %v", err)
+	}
+	if got, _, _ := log.Page(e.Round.ID, 0, 1); got[0].State != RunSucceeded || got[0].Result != "done" {
+		t.Errorf("stored = %+v", got[0])
+	}
+}
+
+// A run id is unique across the whole log, not only within one round.
+func TestRunLogIDAcrossRounds(t *testing.T) {
+	s := openStore(t, t.TempDir())
+	a, _ := s.Create(freshRound(), "", testNow)
+	r := freshRound()
+	r.Name = "other"
+	b, _ := s.Create(r, "", testNow)
+	if err := s.Runs().Append(Run{ID: "run-1", Number: 1, RoundID: a.Round.ID, State: RunQueued}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Runs().Append(Run{ID: "run-1", Number: 1, RoundID: b.Round.ID, State: RunQueued}); !errors.Is(err, ErrRunExists) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// Pruned runs stay gone after the store is opened again.
+func TestPruneSaved(t *testing.T) {
+	dir := t.TempDir()
+	s := openStore(t, dir)
+	s.write = func(p string, b []byte) error { return os.WriteFile(p, b, 0o600) }
+	e, _ := s.Create(freshRound(), "", testNow)
+	old := testNow.Add(-2 * KeepFor)
+	for i := 1; i <= KeepRuns+5; i++ {
+		if err := s.Runs().Append(Run{ID: fmt.Sprintf("run-%d", i), Number: i, RoundID: e.Round.ID, State: RunSucceeded, Created: old}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	removed, err := s.Runs().Prune(e.Round.ID, testNow)
+	if err != nil || len(removed) != 5 {
+		t.Fatalf("removed %d, %v", len(removed), err)
+	}
+	s2 := openStore(t, dir)
+	runs, more, _ := s2.Runs().Page(e.Round.ID, 0, 1000)
+	if len(runs) != KeepRuns || more || runs[len(runs)-1].Number != 6 {
+		t.Errorf("after reopen: %d runs, oldest %d", len(runs), runs[len(runs)-1].Number)
+	}
+}
+
+// However recent, a round keeps at most MaxKeepRuns ended runs; live runs are never pruned
+// and do not count.
+func TestRetentionCap(t *testing.T) {
+	now := utc("2026-06-01T00:00:00Z")
+	var runs []Run
+	n := MaxKeepRuns + 300
+	for i := 1; i <= n; i++ {
+		st := RunSucceeded
+		if i == 1 || i == n {
+			st = RunRunning
+		}
+		// One run a minute: all within 90 days.
+		runs = append(runs, Run{Number: i, State: st, Created: now.Add(-time.Duration(n-i) * time.Minute)})
+	}
+	keep := Keep(runs, now)
+	kept, oldestEnded := 0, 0
+	for i, k := range keep {
+		if !k {
+			continue
+		}
+		kept++
+		if runs[i].State.Final() && oldestEnded == 0 {
+			oldestEnded = runs[i].Number
+		}
+	}
+	if kept != MaxKeepRuns+2 || !keep[0] || !keep[n-1] {
+		t.Errorf("kept %d (first %v, last %v), want %d ended and both live runs", kept, keep[0], keep[n-1], MaxKeepRuns)
+	}
+	if want := n - 1 - MaxKeepRuns + 1; oldestEnded != want {
+		t.Errorf("oldest ended run kept = %d, want %d", oldestEnded, want)
 	}
 }
