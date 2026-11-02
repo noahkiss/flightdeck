@@ -1612,11 +1612,13 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
 - **Live Activity buttons and unlock** (owner ruling 2026-11-01). The intents are compiled into
   both the app and the widget (App Intents reads metadata per target) and run in the app. Allow
   asks for Face ID or the passcode (`authenticationPolicy` `requiresAuthentication`); Deny runs
-  without it. The device key signs only while the device is unlocked (transport.md 7.2), so an
-  answer while protected data is unavailable sends nothing: the app posts "Unlock iPhone to answer" and
-  raises the request in the foreground. This holds for Deny too, and for banner actions (16.4). The setting "Approve from the lock
-  screen without unlocking" is gone (20.6, task-yfmrj6yc): with today's key class it changed
-  nothing, so Allow always uses the authenticated intent.
+  without it. The device key signs once the device has been unlocked after it starts
+  (transport.md 7.2), so an answer from a locked device goes through. Before the first unlock
+  after a restart, or while the hab has only an earlier build's key, it sends nothing: the app
+  posts "Unlock iPhone to answer" and raises the request in the foreground. This holds for Deny
+  too, and for banner actions (16.4). The setting "Approve from the lock screen without
+  unlocking" is gone (20.6, task-yfmrj6yc): with the key class of the time it changed nothing,
+  and Allow always uses the authenticated intent.
   Push-to-start and the "hab offline" end are not built.
 - **Mac.** The Mac app answers banners and reports focus, but asks for no APNs token: its
   entitlements have no `aps-environment` until a Developer ID profile with push exists.
@@ -1788,7 +1790,7 @@ Settings › Keys offers two kinds of key per device.
 | What | A P-256 key made in the Secure Enclave on first start | The owner's existing OpenSSH private key |
 | Types | P-256 only (the Secure Enclave makes no other) | Ed25519; ECDSA P-256, P-384 and P-521 |
 | Where | Secure Enclave; the private key never exists outside it | Keychain, this device only, not synced, never in backups |
-| Usable | Only while the device is unlocked | Only while the device is unlocked |
+| Usable | Once the device has been unlocked after it starts (`transport.md` 7.2) | Once the device has been unlocked after it starts |
 | Can be copied off the device | No | Not by the app, but a copy already exists wherever it came from |
 | A host admits it by | Pairing (`transport.md` 6.1) | Already trusting it; no pairing step |
 
@@ -2045,8 +2047,9 @@ Code in `apple/FlightdeckKit/Sources/FlightdeckKit/SSH/KeyImport` and `Views/Key
   derived key, the decrypted section and the copies of the seed or scalar are zeroed after use.
   Swift cannot promise more: strings are not zeroed, and an unencrypted file's bytes stay in
   memory while the import sheet holds the file. The sheet drops them when it closes.
-- **Storage class.** Every write sets `WhenUnlockedThisDeviceOnly` and not synchronisable. A test
-  checks the query and, on the real Keychain, the stored item. On the Mac the login keychain
+- **Storage class.** Every write sets `AfterFirstUnlockThisDeviceOnly` and not synchronisable
+  (`transport.md` 7.2). Items an earlier build wrote with `WhenUnlockedThisDeviceOnly` move to it
+  in place at start. A test checks the query, the move and, on the real Keychain, the stored item. On the Mac the login keychain
   keeps no accessibility class (10.6), so there the test checks only the sync flag.
 - **Face ID.** One device-wide setting, "Require Face ID for SSH keys" (Settings › SSH, iOS), off
   by default, covers the generated key and every imported key, including keys imported later.
@@ -2748,14 +2751,15 @@ Budgets are maximums. The hab counts words and characters; it keeps to both.
 | The request was answered elsewhere | The replacement push (7.5) takes the same collapse id, so the Watch shows "Answered on <client>" |
 | A project or session name longer than its share of the budget | The hab shortens it on a word boundary with "…"; the command keeps its share first |
 | A language with long words | Character budgets win over word budgets |
-| The phone is locked when the Watch answers | The phone posts "Unlock iPhone to answer" and sends nothing (16.4) |
+| The phone is locked when the Watch answers | The answer goes through. Before the first unlock after a restart, the phone posts "Unlock iPhone to answer" and sends nothing (16.4) |
 
 ### 16.4 Built choices (task-46oedzhy)
 
 No Watch target: every notification is a mirrored iPhone banner. Code: `internal/push/banner.go`
 (hab text), `internal/harness/input.go` (the plan key) and `Push/ApprovalCenter.swift` (the
 unlock rule). Tests: `TestBannerBudgets`, `TestToolBanners`, `TestPlanApproveKey`,
-`TestPlanAnswerKeys`, `ApprovalFixTests.testLockedBannerAnswerRefused`.
+`TestPlanAnswerKeys`, `ApprovalFixTests.testLockedBannerAnswerRefused`, `LockedAnswerTests`,
+`KeyMoveTests`.
 
 - **Already in place before this task.** The hab fits every banner to 16.2 (`Fit`,
   `ShortCommand`), offers Approve only for a command shown whole, and leaves the expiry to the
@@ -2786,17 +2790,20 @@ unlock rule). Tests: `TestBannerBudgets`, `TestToolBanners`, `TestPlanApproveKey
   hidden too. A question banner then reads "Question waiting". Coordinator call (2026-11-02): the
   setting was "Show commands in notifications". The label changed, but the id
   `notify.show_commands` and `hide_commands` on `push.register` stay, so saved values carry over.
-- **Locked phone.** iOS mirrors a banner to the Watch only while the phone is locked, and the
-  device key signs only while the phone is unlocked (`transport.md` 7.2). So a banner action from
-  the Watch sends nothing. (On the phone's lock screen, Approve and Deny ask for unlock first.) It
-  posts "Unlock iPhone to answer" ("Unlock iPad" on an iPad) with the hab's label, which opens the
-  request, and keeps the request for the foreground prompt. The Live Activity buttons follow the
-  same rule. The check reads `isProtectedDataAvailable` in the shared package, so it holds on a
-  background launch, before any scene exists. Design call: before this, a locked answer failed at
-  the signature and posted a misleading "Could not reach".
-- **Limit: the device key's access class waits for the owner.** Until the owner decides whether
-  the device key may sign after first unlock, a Watch answer shows "Unlock iPhone to answer"
-  instead of answering.
+- **Locked phone.** iOS mirrors a banner to the Watch only while the phone is locked. The device
+  key signs once the phone has been unlocked after it starts (owner decision 2026-11-02,
+  `transport.md` 7.2), so a banner action from the Watch answers. (On the phone's lock screen,
+  Approve and Deny ask for unlock first.) Two cases cannot sign, and the app tells them apart
+  before it dials: the phone has not been unlocked since it restarted (the key cannot be read),
+  or the hab's entry still has only an earlier build's key (the key move of `transport.md` 7.2).
+  Either posts "Unlock iPhone to answer" ("Unlock iPad" on an iPad), with "iPhone restarted and
+  has not been unlocked yet · <hab>" or "<hab> does not have this device's new key yet", which
+  opens the request, and keeps the request for the foreground prompt. The Live Activity buttons
+  follow the same rule. The check reads `isProtectedDataAvailable` in the shared package, so it
+  holds on a background launch, before any scene exists, and asks the key store only while the
+  device is locked. Tests set both answers; none reads the simulator's lock state. Design call:
+  before this, a locked answer failed at the signature and posted a misleading "Could not
+  reach".
 - **Action order.** Deny first, then Approve, as 8.7 registers them; 16.2 listed them the other way
   round. Coordinator call (2026-11-02): the first action sits nearest the text on the Watch, and
   the safer answer goes there.
@@ -2878,6 +2885,9 @@ always need unlock.
 
 Decision: as recommended (coordinator, following the owner's Face ID decision). `transport.md`
 4.3, 7.2 and 7.3 now say the key is usable only while the device is unlocked.
+
+Later (2026-11-02, owner, task-pfggputn): the key signs once the device has been unlocked after it
+starts, so a Watch banner can answer while the phone is locked (`transport.md` 7.2).
 
 Later (2026-11-01, settings levels): the one Face ID setting is "Require Face ID for SSH keys"
 (10.7, owner). The gate on the app and in-app answers is dropped (7.6, 20.6).
@@ -3301,7 +3311,7 @@ Each candidate below is a fixed behaviour now.
 
 | Candidate | Fixed behaviour | Why |
 |---|---|---|
-| Approve from the lock screen without unlocking | An answer from a banner or a Live Activity needs the device unlocked | The device key signs only while unlocked (`transport.md` 7.2), so the switch changed nothing (8.7) |
+| Approve from the lock screen without unlocking | Approve on the phone's lock screen asks for unlock; a Watch answer needs the unlocked Watch on the wrist | iOS asks for unlock on actions that need authentication; the device key signs after the first unlock (`transport.md` 7.2) |
 | Face ID before in-app approvals, app open and a voice Allow (7.6) | No Face ID gate of our own beyond the SSH keys | `ssh.require_face_id` covers each dial, and the passcode guards the device. iOS 18 and later can require Face ID for any app from the Home Screen *(gk)*, which covers a shared phone. Moshi puts Face ID on keys only |
 | Worktree setup trust for rebased and cherry-picked commits | They count as own when their source does (`hab-logic-api.md` 3.10) | A false alarm costs one yes, and nobody wants more of them. Not levelled: it guards against someone else's code |
 | Alert when free fires at once | A fresh reading with room fires the alert now (14.4) | The user asked to know when it is free |

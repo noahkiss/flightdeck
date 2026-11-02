@@ -220,7 +220,8 @@ the phone, with QR pairing and pinned host keys.**
      decrypted once with its passphrase on import, kept in the Keychain this device only, never in
      backups, never sent anywhere. Hosts that already trust it need no pairing.
 
-   Both work only while the device is unlocked. Face ID inside the app is optional and off by
+   Both work once the device has been unlocked after it starts, also while it is locked again
+   (7.2). Face ID inside the app is optional and off by
    default (`app.md` 18.2). An imported key trades the generated key's containment for reach: if
    the device is compromised, the key opens every host that trusts it, and revoking it means
    replacing it everywhere. The generated key stays the default.
@@ -316,7 +317,7 @@ took about 3 ms. The cold-start time on an iPhone over a real network is still t
 **What the app target needs:**
 
 - Store the Secure Enclave key's `dataRepresentation` in the Keychain with
-  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, not synchronizable. The blob is wrapped by this
+  `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` (7.2), not synchronizable. The blob is wrapped by this
   device's enclave and useless elsewhere, but it stays out of backups.
 - Create the key with `.privateKeyUsage` only. Face ID is one app setting for every SSH key,
   generated or imported (`app.md` 10.7): the app asks for Face ID before it signs, so turning the
@@ -395,8 +396,8 @@ pairing window is built now. The phone works today through the system sshd.
    and answers with what the phone needs to connect: the user, the system sshd's endpoints and its
    host keys. Then the window closes.
 8. The phone stores the hab: device id, label, user, endpoints, the pinned sshd host key. From then
-   on it runs `gff-hab connect` over the system sshd with plain key auth, usable only while the
-   device is unlocked.
+   on it runs `gff-hab connect` over the system sshd with plain key auth, usable once the device
+   has been unlocked after it starts (7.2).
 
 Why the answer carries the sshd host keys: the system sshd's host key is not the hab's key. The
 phone learns it over the pairing channel, which the code pinned, so it never trusts a host key on
@@ -652,9 +653,41 @@ key this way is safe: it came over a pinned, authenticated channel.
 - Away from home with no VPN: the first build shows the hab as offline. Later carriers, each its own
   owner decision: an embedded tailnet node in the app, or an end-to-end relay. A router port forward
   is possible but not recommended.
-- Background notification actions: the device key, generated or imported, works only while the
-  device is unlocked (4.3). iOS already asks for unlock on actions marked as needing
-  authentication, so an approval from the lock screen fits this.
+- Background notification actions: the device key, generated or imported, signs once the device
+  has been unlocked after it starts, also while it is locked again (owner decision 2026-11-02,
+  task-pfggputn). iOS mirrors a banner to the Watch only while the phone is locked, so this is
+  what lets Approve and Deny from a Watch banner sign. On the phone's own lock screen, iOS still
+  asks for unlock on actions marked as needing authentication.
+  - **Access class.** New Secure Enclave keys are made with
+    `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and `.privateKeyUsage`. Every Keychain item
+    of the key store (the enclave key's blob, imported keys, the Face ID setting) uses the same
+    class, not synchronizable. The private key never leaves the Secure Enclave, or for an
+    imported key the Keychain, this device only.
+  - **Before the first unlock.** After a restart, until the owner unlocks once, nothing can read
+    the key. An answer then sends nothing: the phone posts "Unlock iPhone to answer" with "iPhone
+    restarted and has not been unlocked yet" and the hab's label, and raises the request in the
+    foreground (`app.md` 16.4).
+  - **Existing installs.** Keychain items written by earlier builds use
+    `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. At start, while the device is unlocked, one
+    `SecItemUpdate` over the store moves every item to the new class in place, data unchanged; a
+    locked device fails it and the next start tries again. That is the whole migration for an
+    imported key and for a software key. An enclave key's access rule is fixed when it is made,
+    so an earlier build's enclave key still signs only while unlocked.
+  - **Key move.** For that key the iOS app makes a new enclave key beside it (`device-next`). The
+    old key keeps working, so the app never loses a host. Each dial on the default key offers the
+    new key first and the old one second, in one SSH auth exchange. A host that takes the new key
+    is recorded. Settings shows the new key's line and the hosts still waiting, once, until each
+    host on the default key has taken it. The app then makes the new key the default key and
+    drops the old one. A host learns the new key the way it learned the first: its line in
+    `authorized_keys` (6.1), or pairing again once `devices.pair` exists. A one-step rotation
+    over a live connection (6.5) is not built, so this is the one re-pair. Until a host takes the
+    new key, a locked answer to that hab posts "Unlock iPhone to answer" with "<hab> does not have
+    this device's new key yet". Making a new key by hand ends the move. The Mac app keeps its key:
+    no Watch answers through it.
+  - **Trade-off.** A phone stolen after its first unlock can sign while it stays locked: code on
+    it can use the key without the passcode. Watch actions still need an unlocked Watch on the
+    wrist, lock-screen Approve still asks for unlock, a restart closes the window, and the key
+    never leaves the device. Revocation (6.6) ends it.
 
 ### 7.3 A lost phone
 
@@ -663,8 +696,9 @@ key this way is safe: it came over a pinned, authenticated channel.
 3. A generated key cannot be copied: it lives in the Secure Enclave and is excluded from backups.
    An imported key is in the Keychain, this device only, and also excluded from backups, but it
    was copied onto the phone in the first place, and other devices may hold it too.
-4. Until revoked, a thief also needs to unlock the phone to use the key, because the key works only
-   while the device is unlocked.
+4. Until revoked, the key works on a phone that has been unlocked once since it started, also while
+   it is locked again (7.2). Approve on the lock screen still asks for unlock, and a Watch answer
+   needs the unlocked Watch on the wrist. After a restart, a thief needs the passcode.
 5. A new phone pairs from scratch. With generated keys there is nothing to restore: each device
    has its own key, so no shared secret was on the lost phone.
 6. **An imported key on the lost phone** needs more. Revoking it on the habs is not enough: the

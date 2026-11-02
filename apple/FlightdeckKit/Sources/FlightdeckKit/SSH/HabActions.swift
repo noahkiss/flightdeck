@@ -9,9 +9,10 @@ import UserNotifications
 /// disconnects (task-iv89iwd8). It answers approvals from push banners
 /// (Approve, Deny, Reply; task-oe7ioczy) and keeps the "Ping hab" test action.
 ///
-/// Approve and Deny ask for unlock: an Allow can run a command (app.md 7.6),
-/// and the device key works only while the device is unlocked (transport.md
-/// 7.2). A failure posts a notice and raises the request again in the
+/// Approve and Deny ask for unlock on the phone's lock screen: an Allow can
+/// run a command (app.md 7.6). The device key signs once the device has been
+/// unlocked after it starts, so a Watch answer signs while the phone is
+/// locked (transport.md 7.2). A failure posts a notice and raises the request again in the
 /// foreground; nothing retries on its own (app.md 18.7).
 public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
     public static let pingCategory = "flightdeck.hab-ping"
