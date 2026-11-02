@@ -12,6 +12,20 @@ import (
 // ManifestFile is the manifest's file name in a module folder (modules.md 5).
 const ManifestFile = "manifest.toml"
 
+// BridgeVersion is the newest bridge version this hab provides (modules.md 7, 9).
+const BridgeVersion = 1
+
+// NewerBridge is the error ParseManifest returns for a manifest whose bridge is above
+// BridgeVersion. It comes before every other check: a newer manifest may hold fields and words
+// this hab does not know, and the person needs "needs a newer hab", not a list of them.
+type NewerBridge struct {
+	Bridge int64 // the version the manifest names
+}
+
+func (e *NewerBridge) Error() string {
+	return fmt.Sprintf("the module needs bridge %d; this hab has %d: it needs a newer hab", e.Bridge, BridgeVersion)
+}
+
 // Manifest is a module's manifest.toml (modules.md 5). A new manifest field comes with a new
 // bridge version, so an older hab refuses a manifest it cannot read in full.
 type Manifest struct {
@@ -67,13 +81,17 @@ var (
 var manifestKeys = []string{"id", "name", "summary", "version", "blocks", "bridge", "powers", "places", "refresh", "events", "settings"}
 var settingKeys = []string{"key", "title", "kind", "default", "choices"}
 
-// ParseManifest reads and checks a manifest.toml. It returns Problems for a manifest that breaks
-// manifest.schema.json or a rule the schema cannot state (unique setting keys, a choice default
-// among its choices). Refresh below MinRefresh is raised, not refused.
+// ParseManifest reads and checks a manifest.toml. It reads bridge first: above BridgeVersion it
+// returns *NewerBridge and checks nothing else. Otherwise it returns Problems for a manifest that
+// breaks manifest.schema.json or a rule the schema cannot state (unique setting keys, a choice
+// default among its choices). Refresh below MinRefresh is raised, not refused.
 func ParseManifest(data []byte) (*Manifest, error) {
 	var raw map[string]any
 	if _, err := toml.Decode(string(data), &raw); err != nil {
 		return nil, Problems{{"", "not TOML: " + err.Error()}}
+	}
+	if b, ok := raw["bridge"].(int64); ok && b > BridgeVersion {
+		return nil, &NewerBridge{Bridge: b}
 	}
 	var ps Problems
 	fail := func(path, format string, args ...any) {

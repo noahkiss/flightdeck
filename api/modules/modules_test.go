@@ -21,8 +21,9 @@ import (
 //	valid          the schema and Go accept
 //	invalid        the schema and Go refuse
 //	beyond-schema  the schema accepts; Go refuses (a rule JSON Schema cannot state)
-//	newer          (trees) a block of a later vocabulary: vocabulary 1 refuses it, the typed
-//	               decoders keep it as an unknown block
+//	newer          trees: a block of a later vocabulary: vocabulary 1 refuses it, the typed
+//	               decoders keep it as an unknown block. Manifests: a later bridge, with fields
+//	               and words this hab does not know: ParseManifest says NewerBridge alone
 type expect struct{ schema, golang bool }
 
 var folders = map[string]expect{
@@ -105,6 +106,10 @@ func TestManifestFixturesGo(t *testing.T) {
 			m, err := ParseManifest(data)
 			if got := err == nil; got != want.golang {
 				t.Errorf("%s: ParseManifest ok=%v, want %v (%v)", f, got, want.golang, err)
+			}
+			var nb *NewerBridge
+			if isNewer := errors.As(err, &nb); isNewer != (folder == "newer") {
+				t.Errorf("%s: NewerBridge=%v in folder %s (%v)", f, isNewer, folder, err)
 			}
 			if err != nil {
 				t.Logf("%s: %v", f, err)

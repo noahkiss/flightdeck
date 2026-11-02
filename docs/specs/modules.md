@@ -272,8 +272,10 @@ Manifest fields:
 
 The manifest schema is `api/modules/manifest.schema.json`, and `modules.ParseManifest` reads the
 file (6.5). Required: `id`, `name`, `version`, `blocks`, `bridge`, `places`. An unknown key is
-refused, so a new manifest field comes with a new bridge version: an older hab then refuses the
-module by its `bridge` number, not by a parse error.
+refused, so a new manifest field comes with a new bridge version. `ParseManifest` reads `bridge`
+before anything else: above the hab's bridge version it returns `NewerBridge` ("needs a newer
+hab") and checks nothing more, so an older hab refuses the module by its `bridge` number, not by
+a parse error. The schema describes manifests of the current bridge only.
 
 **The module's shape.** `main.js` exports three functions. All three are optional except
 `render`.
@@ -368,8 +370,8 @@ Stage 2 holds the vocabulary as data and generates the rest from it.
 | `api/modules/blocks_gen.go` | Generated: the typed Go blocks for the terminal renderer. An unknown type keeps its JSON in `Raw` |
 | `swift/HabAPI/Sources/HabAPI/Blocks.swift` | Generated: `Block`, `BlockContent` (one case per type, plus `.unknown`) and the field types, for the SwiftUI renderer |
 | `api/modules/validate.go` | `ValidateTree(tree, version)`: what the schema states, plus what it cannot (at most 500 blocks, depth 12, 64 KiB, unique ids, `steps.current` at most `steps.total`). `gff-hab modules check` will use it |
-| `api/modules/manifest.go` | `ParseManifest`: the manifest schema plus unique setting keys and a choice default among its choices. A `refresh` under 5 is raised to 5 |
-| `api/modules/testdata/` | Hand-written fixtures. `blocks/valid` and `manifest/valid` pass every check; `invalid` fails every check; `beyond-schema` passes the schema and fails the Go check; `blocks/newer` holds a block of a later vocabulary, which vocabulary 1 refuses and the typed decoders keep as unknown |
+| `api/modules/manifest.go` | `ParseManifest`: a `bridge` above `BridgeVersion` first (`NewerBridge`), then the manifest schema plus unique setting keys and a choice default among its choices. A `refresh` under 5 is raised to 5 |
+| `api/modules/testdata/` | Hand-written fixtures. `blocks/valid` and `manifest/valid` pass every check; `invalid` fails every check; `beyond-schema` passes the schema and fails the Go check; `blocks/newer` holds a block of a later vocabulary, which vocabulary 1 refuses and the typed decoders keep as unknown; `manifest/newer` holds a manifest of a later bridge with a field and a place this hab does not know, which `ParseManifest` refuses as `NewerBridge` alone |
 
 The Go tests check every fixture with `ValidateTree` or `ParseManifest`, with a small schema
 evaluator over the generated files, and with `check-jsonschema` when it is installed. They also

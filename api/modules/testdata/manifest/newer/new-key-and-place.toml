@@ -1,0 +1,9 @@
+# A manifest for a later bridge: a field and a place this hab does not know. The hab answers
+# "needs a newer hab" from the bridge number, before it reads the rest.
+id = "later-module"
+name = "Later module"
+version = "2.0.0"
+blocks = 1
+bridge = 2
+places = ["board", "watch"]
+icon = "star"
