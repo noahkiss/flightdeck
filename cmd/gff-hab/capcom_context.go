@@ -317,6 +317,10 @@ type capcomSender struct {
 func (s capcomSender) Send(ctx context.Context, client string, p api.SessionSendParams) error {
 	items := s.cc.pending(p.Session)
 	if len(items) == 0 {
+		if p.Text == "" && len(p.Attachments) == 0 {
+			// The context it was let through for went with another message meanwhile.
+			return control.Errorf(api.ErrorKindInvalid, "session.send needs a session, and text or attachments; no context waits for session %s", p.Session)
+		}
 		return s.Agents.Send(ctx, client, p)
 	}
 	p.Text = capcom.Message(items, p.Text)
@@ -326,3 +330,9 @@ func (s capcomSender) Send(ctx context.Context, client string, p api.SessionSend
 	s.cc.delivered(p.Session, items)
 	return nil
 }
+
+// SendsContext lets a send with no text through to a Capcom session that has context waiting:
+// the blocks go alone (capcom.md 8.4).
+func (s capcomSender) SendsContext(session string) bool { return len(s.cc.pending(session)) > 0 }
+
+var _ control.ContextSender = capcomSender{}

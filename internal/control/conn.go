@@ -907,7 +907,7 @@ func (c *conn) handleAgent(m message) {
 	var answer api.ApprovalAnswerParams
 	var e *Error
 	if m.Method == "session.send" {
-		if e = c.decodeUp(m, &send); e == nil && (send.Session == "" || (send.Text == "" && len(send.Attachments) == 0)) {
+		if e = c.decodeUp(m, &send); e == nil && (send.Session == "" || (send.Text == "" && len(send.Attachments) == 0 && !c.sendsContext(send.Session))) {
 			e = appErr(api.ErrorKindInvalid, "session.send needs a session, and text or attachments")
 		}
 		if e == nil && !isWord("SendOrigin", string(send.Origin)) && send.Origin != "" {
