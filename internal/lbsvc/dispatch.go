@@ -77,7 +77,7 @@ func (s *Service) Dispatch(ctx context.Context, a api.LogbookActor, pane *Pane, 
 		}
 		if pane != nil {
 			if pane.Propose {
-				return nil, control.Errorf(api.ErrorKindInvalid, "this session's writes wait for the user's review: write the value with logbook.write, which files a proposal")
+				return nil, control.Errorf(api.ErrorKindInvalid, "this session's writes wait for review: write the value with logbook.write, which files a proposal")
 			}
 			if err := s.paneSet(ctx, p.ID, p.Field, false); err != nil {
 				return nil, control.Errorf(api.ErrorKindInvalid, "%v", err)
