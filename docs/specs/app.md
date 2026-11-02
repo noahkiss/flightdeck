@@ -792,8 +792,8 @@ rows, not as tool cards. Code: `Chat/CapcomCards.swift` (parsing), `Views/Capcom
 
 The app side of the entry API (`capcom.md` 8.1, 8.4). Code: `Chat/CapcomChips.swift` (the
 model's chip calls), `Chat/CapcomCenter.swift` (opening Capcom with context from outside its
-view), `Views/CapcomChipViews.swift`. Tests: `CapcomEntryTests`. Until a Capcom view exists, the
-Capcom session's chat view is the Capcom view: a session with kind `capcom` gets the chips.
+view), `Views/CapcomChipViews.swift`. Tests: `CapcomEntryTests`. Every session with kind `capcom`
+gets the chips, in the Capcom view (4.10).
 
 - **Chips.** The chat model holds `pending` as the hab listed it last, in delivery order: from
   each `capcom.open`, `capcom.attach` and `capcom.detach` result. A chip shows the kind's symbol,
@@ -837,6 +837,66 @@ Capcom session's chat view is the Capcom view: a session with kind `capcom` gets
   Capcom" alert and opens nothing.
 - **One model per session.** `Fleet.chat(for:)` matches a session by hab and session id, so the
   model that took the chips is the one the board's row opens, whatever pane each names.
+
+### 4.10 Capcom view and entry row (app side)
+
+The dedicated Capcom view (`capcom.md` 7.2, 8.2). Code: `Chat/CapcomStanding.swift` (the home
+and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row and the screen),
+`Views/SessionViews.swift` (the Capcom style), `Views/BoardViews.swift` (navigation). Tests:
+`CapcomViewTests`.
+
+- **Entry row.** A "Capcom" row heads the status board, above the Confirm section and every
+  rank, on iPhone, iPad and Mac. Its second line says where Capcom stands: the home hab's
+  label, "<hab> · offline", "Looking for the Capcom host", "No Capcom host assigned", "No hab
+  online", or "The Capcom host is not in this app". It shows whenever the app has a hab.
+  Design call: the board is the app's one top-level list (3.1, 11), so a pinned row there is
+  one tap from home on every device; the sidebar and tabs of 3.3 and 3.5 are not built yet.
+- **Finding the home.** When a hab comes online, the app reads its catalog (`catalog.get`) and
+  keeps the `capcom` section's belief: the home's device id at its assignment counter. A hab
+  without the `capcom` capability, or a failed read, names no home. The home is the belief with
+  the highest counter, a tie going to the lower device id, as on the habs (`capcom.md` 7.6). Its
+  device id maps to a hab as "Ask an agent" maps it (8.8): a live welcome, else the hab book.
+  Design call: the catalog is where clients find Capcom (`capcom.md` 7.3); one read per
+  connection is cheap. The app does not follow `catalog.updated`, so a re-assignment made while
+  the app runs shows at the next connection, at "Check again", or when the old home refuses
+  the open (below).
+- **States.** Loading: a hab is connecting, or a catalog read is on its way, and no home is
+  known. No Capcom host: every hab that answered names none; "Check again" reads every online
+  hab's catalog again. No hab online: nothing answered and nothing is connecting. Not in this
+  app: the home's device id names no hab here. Offline: the home is a hab here that is not
+  online; the view opens the conversation by itself once it is. A refused open shows the hab's
+  text with "Try again".
+- **Opening.** The view calls `capcom.open` with no context on the home whenever it appears
+  and whenever the state changes, so it starts or resumes the standing conversation as needed
+  (`capcom.md` 7.6). It shows the result's session with its chips; the board opens nothing.
+  An open refused with `unavailable` (the home moved) reads every catalog again and tries the
+  new home once. Design call: opening the view is the user's request to talk to Capcom, so a
+  resume here is expected; merely viewing an older Capcom session still never resumes it (4.9).
+- **The view.** The session view of the Capcom session, in a Capcom style. On iPhone it is
+  chat first with the Chat and Terminal switch, as for any session. On iPad and Mac the chat
+  fills the width, with the same switch in the header instead of the 50/50 split. Design call:
+  Capcom has no project to watch in a terminal; the terminal is there for a first-start trust
+  prompt (`capcom.md` 7.5). Every session with kind `capcom` gets this style, opened from its
+  board row too. Files, voice, the console and the chips' remove buttons stay as built (4.9).
+- **New conversation.** A toolbar button ("New conversation", the compose symbol) on every
+  Capcom session (8.8). The draft now lives in the session view, so the button carries it.
+  From the standing conversation, the view shows the new one in its place. From an older
+  Capcom session, the board opens the new one as before.
+- **Navigation.** iPhone: the row pushes the Capcom view on the board's stack. iPad and Mac:
+  the board list stays on the left and the Capcom view takes the session's place on the right;
+  its close button returns to the board. The Capcom view and an open session never show at
+  once: opening one closes the other. "Ask an agent", "Attach to Capcom" and New conversation
+  from an older session still open the session's board row (4.9, 8.8).
+- **Demo mode.** Workbench runs Capcom with a standing conversation and one notice waiting as a
+  chip; attic's catalog names workbench as the home. Debug builds take
+  `-FlightdeckOpenCapcom YES` to open the Capcom view at launch.
+
+Limits, at the bar of herdr, Rex and Paseo:
+
+- No host picker yet: with no home, the view says to run `gff-hab capcom assign`
+  (`capcom.md` 7.3 names a picker in the app's Capcom settings).
+- The row shows where Capcom runs, not the standing conversation's agent state; that session's
+  own row on the board shows it.
 
 ---
 
@@ -1228,8 +1288,8 @@ The cards of `capcom.md` 6.1 and 6.3: a start an agent asks for on another host,
   its session view, above the chat, and in the approvals area: a "Confirm" section at the top
   of the status board. A card from outside a pane names no session and shows in the approvals
   area only. A card is Capcom's when its requesting session has kind `capcom` on that hab
-  (`capcom.md` 7.2). The Capcom view embeds `ConfirmCardList` once that view exists; until
-  then Capcom's cards show in Capcom's session view.
+  (`capcom.md` 7.2). The Capcom view (4.10) is the session view of a Capcom session, so its
+  chat shows Capcom's cards above the messages, as for any session.
 - **What a start card shows.** Host, project, folder, branch, harness, model when set, name,
   then the seed. The byline names the requesting session and the hab.
 - **Edits.** Edit opens fields for host, folder, harness, model and seed. Host is a picker of
@@ -1535,7 +1595,8 @@ ids). Tests: `CapcomAskTests`; the chips themselves are 4.9.
   the payload), "Could not reach <hab> to ask an agent." (not online in time, or the connection
   dropped), or the hab's own text for a refusal (`unavailable` naming the new home after a
   re-assignment, `not_found` for a notice the home cannot read).
-- **New conversation.** A text button beside the chips (coordinator call, 2026-11-02). It calls
+- **New conversation.** A button in the Capcom view's toolbar (4.10); it first sat beside the
+  chips as a text button (coordinator calls, 2026-11-02). It calls
   `capcom.open {new: true}` with the chips that can move (a file chip cannot: its ref names the
   old session's attachment), opens the new one with the typed draft in its composer, uploads and
   attaches the moved files again there, and only then detaches from the old conversation what

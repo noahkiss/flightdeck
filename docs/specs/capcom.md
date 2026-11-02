@@ -741,8 +741,8 @@ Limits, at the bar of herdr, Rex and Paseo:
   assign each other at the same moment both wait until the call's timeout (30 s) and both fail;
   the user assigns again. The two calls conflict anyway.
 
-Not built in this stage: the app's Capcom row, picker and label, and `gff`'s label (the hab
-side is done); `capcom.open`'s `context` (8.1, built since by the entry API stage, 8.4); hook entries in the
+Not built in this stage: the app's Capcom row (built since: the Capcom view, `app.md` 4.10),
+picker and label, and `gff`'s label (the hab side is done); `capcom.open`'s `context` (8.1, built since by the entry API stage, 8.4); hook entries in the
 folder's settings (Capcom gets the user's own hook install, as any session); `session.resume`
 for sessions that are not Capcom's (Part 4).
 
