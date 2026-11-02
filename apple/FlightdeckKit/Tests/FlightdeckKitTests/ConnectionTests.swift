@@ -78,15 +78,15 @@ final class ConnectionTests: XCTestCase {
     func testFirstRetryIsImmediate() async {
         let hab = await sampleHab()
         var t = fastTiming()
-        t.minBackoff = .seconds(5)
-        t.maxBackoff = .seconds(5)
+        t.minBackoff = .seconds(30)
+        t.maxBackoff = .seconds(30)
         let conn = HabConnection(id: "a", transport: hab.transport(), timing: t)
         await conn.start()
         await eventually("online") { await conn.state.status == .online }
         try? await Task.sleep(for: .milliseconds(300)) // past stableAfter
         await hab.dropConnections()
-        // With a 5 s backoff, only an immediate retry is back within 2 s.
-        await eventually("back online", timeout: 2) { let s = await conn.state; return s.status == .online && s.snapshots == 2 }
+        // A 30 s backoff waits at least 15 s: only an immediate retry is back within 10 s.
+        await eventually("back online", timeout: 10) { let s = await conn.state; return s.status == .online && s.snapshots == 2 }
         await conn.stop()
     }
 
@@ -172,7 +172,7 @@ final class ConnectionTests: XCTestCase {
 
     func testPingsWhenIdleAndDeadAfterSilence() async {
         let hab = await sampleHab()
-        let conn = HabConnection(id: "a", transport: hab.transport(), timing: fastTiming())
+        let conn = HabConnection(id: "a", transport: hab.transport(), timing: livenessTiming())
         await conn.start()
         await eventually("online") { await conn.state.status == .online }
         await eventually("pinged") { await hab.pings >= 2 }
@@ -191,7 +191,7 @@ final class ConnectionTests: XCTestCase {
         // the connection must stay up past deadAfter.
         let hab = await sampleHab()
         await hab.setHeartbeat(.milliseconds(100))
-        var t = fastTiming()
+        var t = livenessTiming()
         t.pingInterval = .seconds(60)
         let conn = HabConnection(id: "a", transport: hab.transport(), timing: t)
         await conn.start()

@@ -4,16 +4,29 @@ import XCTest
 @testable import FlightdeckKit
 
 /// Fast timings for tests: no test waits on the real 15 s and 45 s.
+///
+/// The liveness window and the call timeout stay long. A loaded CI runner can stall a test
+/// process for seconds; a short window then calls a healthy fake hab dead, and the call in
+/// flight fails with "not online". Only a test of liveness itself uses `livenessTiming()`.
 func fastTiming() -> HabTiming {
     var t = HabTiming()
     t.pingInterval = .milliseconds(100)
-    t.deadAfter = .milliseconds(600)
+    t.deadAfter = .seconds(30)
     t.minBackoff = .milliseconds(20)
     t.maxBackoff = .milliseconds(80)
     t.helloTimeout = .seconds(2)
-    t.callTimeout = .seconds(2)
+    t.callTimeout = .seconds(30)
     t.tick = .milliseconds(25)
     t.stableAfter = .milliseconds(150)
+    return t
+}
+
+/// `fastTiming()` with a short liveness window and call timeout, for the tests of a hab that
+/// stops answering.
+func livenessTiming() -> HabTiming {
+    var t = fastTiming()
+    t.deadAfter = .milliseconds(600)
+    t.callTimeout = .seconds(2)
     return t
 }
 
