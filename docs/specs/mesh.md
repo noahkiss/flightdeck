@@ -970,8 +970,8 @@ Limits, at the bar of herdr, Rex and Paseo (hc has no outbox and no dedup):
   starting a session there (`session.create` on that hab) are separate agent kit actions. Each
   raises a Flightdeck confirmation card before it runs: the same card, expiry and
   first-answer-wins rules as Capcom's (`capcom.md` 6.1). The harness's own tool-permission prompt
-  still applies to the command. The setting `confirm.start_elsewhere` (default on; off at Bypass
-  permissions, `app.md` 20.3) turns the card off; the action then runs at once and its card
+  still applies to the command. The setting `confirm.start_elsewhere` (on at Safe; off at Balanced,
+  the default, and at Bypass permissions, `app.md` 20.3) turns the card off; the action then runs at once and its card
   shows as a record (owner, 2026-11-01; section 11).
 - **No scoring, no automatic choice.** Flightdeck ranks nothing. `gff hosts --has <capability>`
   filters; the agent reasons.
@@ -1081,10 +1081,11 @@ The study recommended no extra gate (the harness's own tool prompt only, as in P
 
 - Before `session.create` or a project set-up on a host other than the agent's own, the hab
   raises a confirmation card. It uses Capcom's mechanism (`capcom.md` 6.1, 6.3).
-- `confirm.start_elsewhere`, default on, turns the card off. It is a hab-side setting
+- `confirm.start_elsewhere` turns the card on or off; it is off by default. It is a hab-side setting
   (`app.md` 20.5): the app writes it, and a value in the hab's config file locks it. Off, the
   action runs at once and the card shows as a record.
-- The level picker sets it: on at Safe and Balanced, off at Bypass permissions (`app.md` 20.3).
+- The level picker sets it: on at Safe, off at Balanced and Bypass permissions (`app.md` 20.3;
+  owner, 2026-11-01, a later ruling that supersedes default on).
 - Built: gff-hab stores and serves the setting (task-yfmrj6yc); the card waits for Capcom.
 - Handing work to an agent already on a project needs no card (owner, 2026-11-01).
 

@@ -94,7 +94,7 @@ func TestSettingsServe(t *testing.T) {
 	var got api.SettingsResult
 	call(t, c, "settings.get", api.SettingsGetParams{}, &got)
 	se := settingOf(t, got.Settings, settings.StartElsewhere)
-	if se.Revision != 1 || se.Source != api.SettingSourceDefault || string(se.Value) != "true" {
+	if se.Revision != 1 || se.Source != api.SettingSourceDefault || string(se.Value) != "false" {
 		t.Fatalf("get: %+v", se)
 	}
 	var set api.SettingsResult

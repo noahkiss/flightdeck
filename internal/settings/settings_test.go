@@ -74,13 +74,22 @@ func refusal(err error) (api.ErrorKind, string) {
 	return "", ""
 }
 
+// TestStartElsewhereOffAtBalanced: the hab default is the Balanced column, and
+// confirm.start_elsewhere is off there (app.md 20.3; owner, 2026-11-01).
+func TestStartElsewhereOffAtBalanced(t *testing.T) {
+	d, ok := Lookup(StartElsewhere)
+	if !ok || string(d.Default) != "false" {
+		t.Fatalf("confirm.start_elsewhere default %s, want false", d.Default)
+	}
+}
+
 func TestDefaults(t *testing.T) {
 	s, r := open(t, t.TempDir(), "", nil)
 	list := s.List()
 	if len(list) != len(Defs) {
 		t.Fatalf("listed %d, want %d", len(list), len(Defs))
 	}
-	want := map[string]string{StartElsewhere: "true", ApprovalMaxAge: "60", LogbookApproval: `"off"`, PermissionWait: "0"}
+	want := map[string]string{StartElsewhere: "false", ApprovalMaxAge: "60", LogbookApproval: `"off"`, PermissionWait: "0"}
 	for id, v := range want {
 		st := find(t, list, id)
 		if string(st.Value) != v || string(st.Default) != v || st.Revision != 1 || st.Source != api.SettingSourceDefault {
@@ -165,20 +174,20 @@ func TestConfigLocks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("[catalog]\nalways_on = true\n\n[settings]\n\"confirm.start_elsewhere\" = false\n\"approval.max_age\" = 5000\n\"no.such\" = 1\n")
+	write("[catalog]\nalways_on = true\n\n[settings]\n\"confirm.start_elsewhere\" = true\n\"approval.max_age\" = 5000\n\"no.such\" = 1\n")
 	s, r := open(t, state, cfg, nil)
 	st := find(t, s.List(), StartElsewhere)
-	if string(st.Value) != "false" || st.Source != api.SettingSourceConfig || st.Revision != 2 {
+	if string(st.Value) != "true" || st.Source != api.SettingSourceConfig || st.Revision != 2 {
 		t.Fatalf("locked row: %+v", st)
 	}
 	// A value outside its type is left out, not a lock.
 	if st := find(t, s.List(), ApprovalMaxAge); st.Source != api.SettingSourceDefault {
 		t.Fatalf("bad config value locked the row: %+v", st)
 	}
-	if r.applied[StartElsewhere] != "false" {
+	if r.applied[StartElsewhere] != "true" {
 		t.Fatalf("lock not applied: %v", r.applied)
 	}
-	_, err := s.Set(api.SettingsSetParams{Values: []api.SettingWrite{{ID: StartElsewhere, Value: json.RawMessage(`true`), Revision: 2}}})
+	_, err := s.Set(api.SettingsSetParams{Values: []api.SettingWrite{{ID: StartElsewhere, Value: json.RawMessage(`false`), Revision: 2}}})
 	if k, id := refusal(err); k != api.ErrorKindLocked || id != StartElsewhere {
 		t.Fatalf("write to a locked row: %v", err)
 	}
@@ -190,7 +199,7 @@ func TestConfigLocks(t *testing.T) {
 	if len(ev) != 1 || ev[0].ID != StartElsewhere || ev[0].Revision != 3 {
 		t.Fatalf("events: %+v", ev)
 	}
-	if d := ev[0].Data.(api.SettingUpdated); string(d.Value) != "true" || d.Source != api.SettingSourceDefault {
+	if d := ev[0].Data.(api.SettingUpdated); string(d.Value) != "false" || d.Source != api.SettingSourceDefault {
 		t.Fatalf("event data: %+v", d)
 	}
 
@@ -351,11 +360,11 @@ func TestSaveFailureChangesNothing(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root writes anywhere")
 	}
-	_, err := s.Set(api.SettingsSetParams{Values: []api.SettingWrite{{ID: StartElsewhere, Value: json.RawMessage(`false`), Revision: 1}}})
+	_, err := s.Set(api.SettingsSetParams{Values: []api.SettingWrite{{ID: StartElsewhere, Value: json.RawMessage(`true`), Revision: 1}}})
 	if k, id := refusal(err); k != api.ErrorKindUnavailable || id != StartElsewhere {
 		t.Fatalf("save failure: %v", err)
 	}
-	if st := find(t, s.List(), StartElsewhere); st.Revision != 1 || string(st.Value) != "true" {
+	if st := find(t, s.List(), StartElsewhere); st.Revision != 1 || string(st.Value) != "false" {
 		t.Fatalf("a failed save changed the row: %+v", st)
 	}
 	if ev := r.take(); len(ev) != 0 {

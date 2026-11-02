@@ -36,7 +36,7 @@ type Def struct {
 
 // Defs is every hab-side setting, in the order settings.get lists them.
 var Defs = []Def{
-	{ID: StartElsewhere, Default: json.RawMessage(`true`), check: checkBool},
+	{ID: StartElsewhere, Default: json.RawMessage(`false`), check: checkBool},
 	{ID: ApprovalMaxAge, Default: json.RawMessage(`60`), check: checkInt(0, 1440), integer: true},
 	{ID: LogbookApproval, Default: json.RawMessage(`"off"`), check: checkWord("off", "agents")},
 	{ID: PermissionWait, Default: json.RawMessage(`0`), check: checkInt(0, 120), integer: true},

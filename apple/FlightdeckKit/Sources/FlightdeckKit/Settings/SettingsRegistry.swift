@@ -105,7 +105,7 @@ public enum SettingsRegistry {
     /// The levelled settings, in registry order (app.md 20.3).
     public static let levelled: [SettingDef] = [
         SettingDef(id: startElsewhere, title: "Confirm before an agent starts work on another host", area: .agents, kind: .bool, store: .everyHab,
-                   levels: [.safe: .bool(true), .balanced: .bool(true), .bypass: .bool(false)]),
+                   levels: [.safe: .bool(true), .balanced: .bool(false), .bypass: .bool(false)]),
         SettingDef(id: approvalMaxAge, title: "Remote answers expire after", area: .approvals, kind: .integer(0...1440, unit: "min"), store: .everyHab,
                    levels: [.safe: .int(60), .balanced: .int(60), .bypass: .int(0)]),
         SettingDef(id: logbookApproval, title: "Require approval for memories", area: .agents,

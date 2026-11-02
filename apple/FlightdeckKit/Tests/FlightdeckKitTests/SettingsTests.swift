@@ -28,6 +28,14 @@ final class SettingsTests: XCTestCase {
 
     // MARK: - Level matching
 
+    /// confirm.start_elsewhere: on at Safe, off at Balanced and Bypass (app.md 20.3).
+    func testStartElsewhereOffAtBalanced() {
+        let levels = R.def(R.startElsewhere)?.levels
+        XCTAssertEqual(levels?[.safe], .bool(true))
+        XCTAssertEqual(levels?[.balanced], .bool(false))
+        XCTAssertEqual(levels?[.bypass], .bool(false))
+    }
+
     func testEachColumnMatchesItsLevel() {
         XCTAssertEqual(LevelMatcher.match(app: app(.balanced), habs: [balancedHab()]).level, .balanced)
         var h = balancedHab()
@@ -134,20 +142,20 @@ final class SettingsTests: XCTestCase {
     func testSameEpochSendsWithItsRevision() {
         var h = balancedHab()
         h.settings[R.startElsewhere]?.revision = 4
-        let q = QueuedSettingWrite(habID: "h1", settingID: R.startElsewhere, value: .bool(false), revision: 3, epoch: "e1", seen: .bool(true))
+        let q = QueuedSettingWrite(habID: "h1", settingID: R.startElsewhere, value: .bool(true), revision: 3, epoch: "e1", seen: .bool(false))
         let p = SettingsWrites.connectPlan(hab: h, queued: [q], picked: nil)
-        XCTAssertEqual(p.send, [SettingWrite(id: R.startElsewhere, revision: 3, value: .bool(false))], "the hab answers conflict if another device wrote since")
+        XCTAssertEqual(p.send, [SettingWrite(id: R.startElsewhere, revision: 3, value: .bool(true))], "the hab answers conflict if another device wrote since")
         XCTAssertEqual(p.settled, [R.startElsewhere])
     }
 
     func testNewEpochComparesTheSnapshotValue() {
         var h = balancedHab(epoch: "e2")
         h.settings[R.startElsewhere]?.revision = 1
-        let kept = QueuedSettingWrite(habID: "h1", settingID: R.startElsewhere, value: .bool(false), revision: 9, epoch: "e1", seen: .bool(true))
+        let kept = QueuedSettingWrite(habID: "h1", settingID: R.startElsewhere, value: .bool(true), revision: 9, epoch: "e1", seen: .bool(false))
         XCTAssertEqual(SettingsWrites.connectPlan(hab: h, queued: [kept], picked: nil).send,
-                       [SettingWrite(id: R.startElsewhere, revision: 1, value: .bool(false))])
-        let lost = QueuedSettingWrite(habID: "h1", settingID: R.startElsewhere, value: .bool(false), revision: 9, epoch: "e1", seen: .bool(false))
-        h.settings[R.startElsewhere]?.value = .bool(true)
+                       [SettingWrite(id: R.startElsewhere, revision: 1, value: .bool(true))])
+        let lost = QueuedSettingWrite(habID: "h1", settingID: R.startElsewhere, value: .bool(true), revision: 9, epoch: "e1", seen: .bool(true))
+        h.settings[R.startElsewhere]?.value = .bool(false)
         h.settings[R.startElsewhere]?.source = .client
         let p = SettingsWrites.connectPlan(hab: h, queued: [lost], picked: nil)
         XCTAssertTrue(p.send.isEmpty)
@@ -257,22 +265,24 @@ final class SettingsTests: XCTestCase {
         c.update(habID: on.habID, label: on.label, state: state(on))
         c.update(habID: off.habID, label: off.label, state: state(off))
         await c.pick(.safe)
-        XCTAssertEqual(sent["h1"], [SettingWrite(id: R.logbookApproval, revision: 1, value: .string("agents"))])
+        XCTAssertEqual(sent["h1"], [SettingWrite(id: R.startElsewhere, revision: 1, value: .bool(true)),
+                                     SettingWrite(id: R.logbookApproval, revision: 1, value: .string("agents"))])
         XCTAssertNil(sent["h2"])
-        XCTAssertEqual(c.queue.items.map(\.habID), ["h2"])
+        XCTAssertEqual(c.queue.items.map(\.habID), ["h2", "h2"])
         XCTAssertFalse(yes)
         XCTAssertFalse(faceID)
         #if os(iOS)
         XCTAssertTrue(c.notice?.hasPrefix("Safe: 1 of 2 changed.") ?? false, c.notice ?? "")
         #endif
         XCTAssertTrue(c.notice?.contains("beta gets the change when it connects.") ?? false, c.notice ?? "")
-        XCTAssertEqual(SettingsQueue.load(d).items.count, 1, "the queue is saved")
+        XCTAssertEqual(SettingsQueue.load(d).items.count, 2, "the queue is saved")
         XCTAssertEqual(d.string(forKey: SettingsCenter.levelKey), "safe")
 
         // The offline hab connects in the same epoch: its queued write goes, and the queue empties.
         c.update(habID: "h2", label: "beta", state: state(balancedHab("h2", label: "beta")))
         await c.connectionOnline(habID: "h2")
-        XCTAssertEqual(sent["h2"], [SettingWrite(id: R.logbookApproval, revision: 1, value: .string("agents"))])
+        XCTAssertEqual(sent["h2"], [SettingWrite(id: R.startElsewhere, revision: 1, value: .bool(true)),
+                                     SettingWrite(id: R.logbookApproval, revision: 1, value: .string("agents"))])
         XCTAssertTrue(c.queue.items.isEmpty)
     }
 
@@ -287,7 +297,7 @@ final class SettingsTests: XCTestCase {
         let h = balancedHab()
         c2.update(habID: h.habID, label: h.label, state: state(h))
         await c2.connectionOnline(habID: h.habID)
-        XCTAssertEqual(Set(sent.map(\.id)), [R.startElsewhere, R.approvalMaxAge])
+        XCTAssertEqual(Set(sent.map(\.id)), [R.approvalMaxAge])
     }
 
     /// A refused queued write on connect is dropped and named in the notice.
@@ -296,7 +306,7 @@ final class SettingsTests: XCTestCase {
         let d = try XCTUnwrap(UserDefaults(suiteName: "SettingsTests.drop"))
         d.removePersistentDomain(forName: "SettingsTests.drop")
         var q = SettingsQueue()
-        q.put(QueuedSettingWrite(habID: "h1", settingID: R.startElsewhere, value: .bool(false), revision: 1, epoch: "e1", seen: .bool(true)))
+        q.put(QueuedSettingWrite(habID: "h1", settingID: R.startElsewhere, value: .bool(true), revision: 1, epoch: "e1", seen: .bool(false)))
         q.save(d)
         let c2 = SettingsCenter(defaults: d) { _, _ in throw self.refusal(.conflict, R.startElsewhere) }
         XCTAssertEqual(c2.queue.items.count, 1, "the queue survives a relaunch")
@@ -350,7 +360,7 @@ final class SettingsTests: XCTestCase {
         let d = try XCTUnwrap(UserDefaults(suiteName: "SettingsTests.s1"))
         d.removePersistentDomain(forName: "SettingsTests.s1")
         var q = SettingsQueue()
-        q.put(QueuedSettingWrite(habID: "h1", settingID: R.startElsewhere, value: .bool(false), revision: 1, epoch: "e1", seen: .bool(true)))
+        q.put(QueuedSettingWrite(habID: "h1", settingID: R.startElsewhere, value: .bool(true), revision: 1, epoch: "e1", seen: .bool(false)))
         q.save(d)
         var savedDuringSend = -1
         let c = SettingsCenter(defaults: d) { _, p in

@@ -2584,7 +2584,7 @@ every key, so a change never makes a new key.
 | Level | Meaning |
 |---|---|
 | Safe | Every confirmation and check Flightdeck offers is on |
-| Balanced | The defaults: hands-off, with the one cross-host confirmation kept |
+| Balanced | The defaults: hands-off, with no confirmation Flightdeck adds beyond approval expiry |
 | Bypass permissions | No confirmation or check that Flightdeck adds |
 | Custom | Shown, never picked: the values match no level |
 
@@ -2638,17 +2638,17 @@ every key, so a change never makes a new key.
 
 | Id | Title | Area | Type | Safe | Balanced | Bypass | Stored | Source |
 |---|---|---|---|---|---|---|---|---|
-| `confirm.start_elsewhere` | Confirm before an agent starts work on another host | Agents | bool | `true` | `true` (owner to confirm) | `false` | Hab, every hab | `capcom.md` 6.1, `mesh.md` 11 Q1 |
+| `confirm.start_elsewhere` | Confirm before an agent starts work on another host | Agents | bool | `true` | `false` | `false` | Hab, every hab | `capcom.md` 6.1, `mesh.md` 11 Q1 |
 | `approval.max_age` | Remote answers expire after | Approvals | integer minutes, 0 = never, else 1 to 1440 | 60 | 60 | 0 | Hab, every hab | 7.4 |
 | `logbook.approval` | Require approval for memories | Agents | `"off"` or `"agents"` | `"agents"` | `"off"` | `"off"` | Hab, every hab | `logbook.md` 9.1, `instructions-mcp-flight-rules.md` 12 |
 | `voice.yes_allows` | "Yes" counts as Allow | Voice | bool | Off | On | On | App, this device | 13.3, 13.7 |
 | `ssh.require_face_id` | Require Face ID for SSH keys | Security | bool | On | Off | Off | App, Keychain item; iOS only | 10.7 |
 
-- **`confirm.start_elsewhere`** stays on in Balanced. Capcom's tools are allowed in its own
-  folder (`capcom.md` 7.1), so no harness prompt stands before a start on another host. Off: the
-  action runs at once and the card shows as a record. The owner's first ruling (default on)
-  stands. Owner to confirm: the later power-user rule (default to no extra confirmation) could
-  make it off in Balanced.
+- **`confirm.start_elsewhere`** is off in Balanced and Bypass, on in Safe (owner, 2026-11-01:
+  power-user defaults, no extra confirmation). Off: the action runs at once and the card shows
+  as a record. On: nothing starts until the user confirms. Capcom's tools are allowed in its
+  own folder (`capcom.md` 7.1), so at Balanced no harness prompt stands before a start on
+  another host either; Safe is the level for that check.
 - **`approval.max_age`** bounds a remote Allow on an old request (7.4). At 0 the hab sets no
   limit: a request takes a remote answer until the answer path's own deadline, and with no such
   deadline no countdown shows (7.4). Not built: the hab sends no limit yet.

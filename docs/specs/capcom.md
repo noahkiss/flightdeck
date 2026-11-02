@@ -392,12 +392,13 @@ produces several, and a list is faster to judge than a string of interruptions.
 
 ### 6.1 Confirmations
 
-- **The setting.** `confirm.start_elsewhere`, default on, a hab-side setting (`app.md` 20.5):
+- **The setting.** `confirm.start_elsewhere`, default off, a hab-side setting (`app.md` 20.5):
   the app writes it, and a value in the hab's config file locks it. It covers every session
   start and project set-up an agent asks for on a host other than its own, and every start
   Capcom asks for, since Capcom never works in a project folder. Off: the hab runs the action
-  at once and shows the card as a record. It is a levelled setting: on at Safe and Balanced,
-  off at Bypass permissions (`app.md` 20.3). The app writes it to every hab through
+  at once and shows the card as a record. It is a levelled setting: on at Safe, off at
+  Balanced and Bypass permissions (owner, 2026-11-01, superseding the first ruling of default
+  on) (`app.md` 20.3). The app writes it to every hab through
   `settings.set` (`app.md` 20.5).
 - Built: gff-hab stores and serves the setting, and the app writes it (task-yfmrj6yc). No
   confirmation reads it yet; that waits for Capcom.
@@ -608,7 +609,7 @@ The owner settled the study's questions on 2026-11-01. Each row cites "owner, 20
 | O2 | Reading every peer | Capcom reads every connected host, within each host's own read scope. No separate list of peers for Capcom (owner, 2026-11-01) | 5.4 |
 | O3 | "Ask an agent" from a notification | It continues the standing conversation with the event attached. A "New conversation" action is one tap away. The aim: no friction, and context kept where it matters (owner, 2026-11-01) | 8.2 |
 | O4 | Confirming hand-offs | A hand-off to an agent already on a project needs no tap. Its card records what was sent (owner, 2026-11-01) | 3.2, 6 |
-| O5 | Starting work on another host | A confirmation card, with a setting (`confirm.start_elsewhere`) to turn it off (owner, 2026-11-01). On at Safe and Balanced, off at Bypass permissions (`app.md` 20) | 6.1 |
+| O5 | Starting work on another host | A confirmation card, with a setting (`confirm.start_elsewhere`) to turn it off (owner, 2026-11-01). On at Safe, off at Balanced and Bypass permissions (owner, 2026-11-01, later ruling: power-user defaults) (`app.md` 20) | 6.1 |
 
 ---
 
