@@ -10,17 +10,27 @@ public struct ChatView: View {
     var openVoice: (() -> Void)?
     /// A change focuses the composer (voice mode's Keyboard control).
     var focusComposer = 0
-    @State private var draft = ""
+    /// The draft, when the session view holds it (the Capcom toolbar's New conversation reads it).
+    private var heldDraft: Binding<String>?
+    @State private var ownDraft = ""
     @State private var attachments: [DraftAttachment] = []
     /// Files a Capcom composer could not attach as chips: they stay in the draft.
     @State private var keptFiles: Set<UUID> = []
     @Environment(\.sendFiles) private var sendFiles
 
-    public init(model: ChatModel, openTerminal: (() -> Void)? = nil, openVoice: (() -> Void)? = nil, focusComposer: Int = 0) {
+    public init(model: ChatModel, openTerminal: (() -> Void)? = nil, openVoice: (() -> Void)? = nil, focusComposer: Int = 0, draft: Binding<String>? = nil) {
         self.model = model
         self.openTerminal = openTerminal
         self.openVoice = openVoice
         self.focusComposer = focusComposer
+        self.heldDraft = draft
+    }
+
+    private var draftBinding: Binding<String> { heldDraft ?? $ownDraft }
+
+    private var draft: String {
+        get { draftBinding.wrappedValue }
+        nonmutating set { draftBinding.wrappedValue = newValue }
     }
 
     public var body: some View {
@@ -29,7 +39,7 @@ public struct ChatView: View {
             SessionConfirmCards(target: model.target)
             ChatTranscript(model: model)
             Divider()
-            ComposerView(model: model, draft: $draft, attachments: $attachments, openTerminal: openTerminal, openVoice: openVoice, focusRequest: focusComposer)
+            ComposerView(model: model, draft: draftBinding, attachments: $attachments, openTerminal: openTerminal, openVoice: openVoice, focusRequest: focusComposer)
         }
         .onAppear {
             model.start()
@@ -716,7 +726,7 @@ struct ComposerView: View {
                     .foregroundStyle(.secondary)
             }
             if model.context.isCapcom && !model.pending.isEmpty {
-                CapcomChipStrip(model: model, newConversation: newConversation)
+                CapcomChipStrip(model: model)
             }
             if !attachments.isEmpty {
                 DraftStrip(attachments: $attachments)
@@ -780,18 +790,6 @@ struct ComposerView: View {
         }
         .onDisappear {
             if let d = dictation { Task { await d.cancel() } }
-        }
-    }
-
-    /// "New conversation" beside the chips (capcom.md 8.2): the chips and the draft move to a
-    /// fresh Capcom session.
-    private var newConversation: (() -> Void)? {
-        guard let center = model.capcom else { return nil }
-        return {
-            let text = draft
-            Task {
-                if await center.newConversation(from: model, draft: text) { draft = "" }
-            }
         }
     }
 

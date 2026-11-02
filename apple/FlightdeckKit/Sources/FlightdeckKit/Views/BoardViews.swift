@@ -61,6 +61,8 @@ public struct BoardScreen: View {
     /// With a fleet, a row opens its session view; without, a sheet of its fields.
     private let fleet: Fleet?
     @State private var opened: BoardRow?
+    /// The Capcom view is open (app.md 4.10); it and `opened` never both hold.
+    @State private var capcomShown = false
     @State private var showConnections = false
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -93,6 +95,12 @@ public struct BoardScreen: View {
         guard row.rank == .blocked, !row.offline, let a = fleet?.approvals else { return false }
         a.open(row)
         return a.presenting
+    }
+
+    /// The board's Capcom row: opens the Capcom view; nil without a fleet.
+    private var openCapcom: (() -> Void)? {
+        guard fleet != nil else { return nil }
+        return { capcomShown = true }
     }
 
     /// The sheet's chat button: open the session at the request.
@@ -128,11 +136,14 @@ public struct BoardScreen: View {
         Group {
             if compact {
                 NavigationStack {
-                    BoardList(board: board, opened: $opened, openRequest: openRequest)
+                    BoardList(board: board, opened: $opened, openRequest: openRequest, openCapcom: openCapcom)
                         .usageFooter(fleet?.usage)
                         .navigationTitle("Flightdeck")
                         .navigationDestination(item: fleet == nil ? .constant(nil) : $opened) { row in
                             session(row, compact: true)
+                        }
+                        .navigationDestination(isPresented: $capcomShown) {
+                            if let fleet { CapcomScreen(fleet: fleet, compact: true, close: nil) }
                         }
                         .toolbar {
                             ToolbarItem {
@@ -155,10 +166,20 @@ public struct BoardScreen: View {
                             }
                     }
                 }
+            } else if let fleet, capcomShown {
+                BoardSessionSplit {
+                    NavigationStack {
+                        BoardList(board: board, opened: $opened, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
+                            .usageFooter(fleet.usage)
+                            .navigationTitle("Flightdeck")
+                    }
+                } session: {
+                    CapcomScreen(fleet: fleet, compact: false, close: { capcomShown = false })
+                }
             } else if fleet != nil, let row = opened {
                 BoardSessionSplit {
                     NavigationStack {
-                        BoardList(board: board, opened: $opened, openRequest: openRequest, heading: "Sessions")
+                        BoardList(board: board, opened: $opened, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
                         .usageFooter(fleet?.usage)
                             .navigationTitle("Flightdeck")
                     }
@@ -169,7 +190,7 @@ public struct BoardScreen: View {
                 // The session cards column (app.md 3.3) returns when live previews exist.
                 HStack(spacing: 0) {
                     NavigationStack {
-                        BoardList(board: board, opened: $opened, openRequest: openRequest, heading: "Sessions")
+                        BoardList(board: board, opened: $opened, openRequest: openRequest, openCapcom: openCapcom, heading: "Sessions")
                         .usageFooter(fleet?.usage)
                             .navigationTitle("Flightdeck")
                     }
@@ -186,6 +207,9 @@ public struct BoardScreen: View {
         .modifier(ApprovalSheetHost(center: fleet?.approvals, openChat: openChat))
         .modifier(SendFileSheetHost(center: fleet?.files, board: board))
         .modifier(CapcomHost(center: fleet?.capcom, board: board, opened: $opened))
+        // One detail at a time: a session or the Capcom view.
+        .onChange(of: opened) { _, r in if r != nil { capcomShown = false } }
+        .onChange(of: capcomShown) { _, on in if on { opened = nil } }
         // A file sent to a session from the send sheet opens that session (app.md 4.4).
         .onChange(of: fleet?.files.openRequest) { _, t in
             guard let t else { return }
@@ -199,6 +223,10 @@ public struct BoardScreen: View {
             if let p, showConnections { showUsage(p.account) }
         }
         #if DEBUG
+        // Debug builds only: `-FlightdeckOpenCapcom YES` opens the Capcom view at launch.
+        .task {
+            if fleet != nil, UserDefaults.standard.bool(forKey: "FlightdeckOpenCapcom") { capcomShown = true }
+        }
         // Debug builds only: `-FlightdeckOpenSession <session>` opens that session at launch,
         // so a build can be checked with no clicks.
         .task {
@@ -213,7 +241,7 @@ public struct BoardScreen: View {
         }
         #endif
         #if os(macOS)
-        .frame(minWidth: fleet != nil && opened != nil ? 960 : 680, minHeight: 420)
+        .frame(minWidth: fleet != nil && (opened != nil || capcomShown) ? 960 : 680, minHeight: 420)
         #endif
     }
 }
@@ -255,9 +283,12 @@ struct BoardList: View {
     @Binding var opened: BoardRow?
     /// Returns true when the row opened the approval sheet instead.
     var openRequest: (BoardRow) -> Bool = { _ in false }
+    /// Opens the Capcom view from its row; nil shows no row.
+    var openCapcom: (() -> Void)? = nil
     /// A heading above the list, for the iPad and Mac columns.
     var heading: String? = nil
     @Environment(\.confirmations) private var confirms
+    @Environment(\.capcom) private var capcom
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -273,12 +304,26 @@ struct BoardList: View {
         }
     }
 
+    /// The Capcom row shows with a fleet and at least one hab.
+    private var showsCapcom: Bool { capcom != nil && openCapcom != nil && !board.habs.isEmpty }
+
     private var list: some View {
         TimelineView(.periodic(from: .now, by: 30)) { ctx in
             List {
                 ForEach(board.habs.filter(\.needsUpdate)) { h in
                     Label("\(h.label): \(h.updateText)", systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
+                }
+                // The standing Capcom conversation (app.md 4.10), above every section.
+                if showsCapcom, let capcom, let openCapcom {
+                    Button(action: openCapcom) {
+                        CapcomEntryRow(center: capcom)
+                    }
+                    .buttonStyle(.plain)
+                    if board.sections.isEmpty, confirms?.approvals.isEmpty ?? true {
+                        Text("Sessions on your habs show here.")
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 // The approvals area's confirmations (capcom.md 6.1): starts other agents ask for.
                 if let confirms, case let cards = confirms.approvals, !cards.isEmpty {
@@ -302,7 +347,7 @@ struct BoardList: View {
                 }
             }
             .overlay {
-                if board.sections.isEmpty, confirms?.approvals.isEmpty ?? true {
+                if board.sections.isEmpty, confirms?.approvals.isEmpty ?? true, !showsCapcom {
                     ContentUnavailableView("No sessions", systemImage: "rectangle.stack",
                                            description: Text(board.habs.isEmpty ? "No habs configured." : "Sessions on your habs show here."))
                 }

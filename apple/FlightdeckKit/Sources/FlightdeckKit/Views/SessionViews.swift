@@ -76,6 +76,8 @@ public struct SessionView: View {
     @State private var voiceShown = false
     /// Raised by voice mode's Keyboard control: focus the composer.
     @State private var focusComposer = 0
+    /// The composer's draft, here so the Capcom toolbar's New conversation can carry it.
+    @State private var draft = ""
     @Environment(\.terminalSlot) private var terminal
 
     enum Mode: String, CaseIterable, Identifiable {
@@ -106,7 +108,7 @@ public struct SessionView: View {
             if compact {
                 Group {
                     switch mode {
-                    case .chat: ChatView(model: model, openTerminal: { mode = .terminal }, openVoice: { voiceShown = true }, focusComposer: focusComposer)
+                    case .chat: ChatView(model: model, openTerminal: { mode = .terminal }, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: $draft)
                     case .terminal: terminal.make(model.target)
                     }
                 }
@@ -119,6 +121,9 @@ public struct SessionView: View {
                     }
                     ToolbarItem(placement: .secondaryAction) {
                         Button("Files", systemImage: "doc.on.doc") { showFiles = true }
+                    }
+                    if model.context.isCapcom {
+                        ToolbarItem(placement: .primaryAction) { newConversationButton }
                     }
                     ToolbarItem(placement: .primaryAction) {
                         VoiceButton(model: model, shown: $voiceShown)
@@ -140,6 +145,17 @@ public struct SessionView: View {
                     HStack {
                         ChatHeader(context: model.context)
                         Spacer()
+                        if model.context.isCapcom {
+                            Picker("View", selection: $mode) {
+                                ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .fixedSize()
+                            newConversationButton
+                                .labelStyle(.iconOnly)
+                                .buttonStyle(.borderless)
+                        }
                         VoiceButton(model: model, shown: $voiceShown)
                             .buttonStyle(.borderless)
                         if model.target.session != nil, !model.context.isConsole {
@@ -163,13 +179,22 @@ public struct SessionView: View {
                     .padding(.vertical, 8)
                     Divider()
                     HStack(spacing: 0) {
-                        GeometryReader { geo in
-                            HStack(spacing: 0) {
-                                ChatView(model: model, openVoice: { voiceShown = true }, focusComposer: focusComposer)
-                                    .frame(width: geo.size.width / 2)
-                                Divider()
-                                terminal.make(model.target)
-                                    .frame(maxWidth: .infinity)
+                        if model.context.isCapcom {
+                            // The Capcom view (app.md 4.10): the conversation fills the width;
+                            // the terminal is one switch away.
+                            switch mode {
+                            case .chat: ChatView(model: model, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: $draft)
+                            case .terminal: terminal.make(model.target)
+                            }
+                        } else {
+                            GeometryReader { geo in
+                                HStack(spacing: 0) {
+                                    ChatView(model: model, openVoice: { voiceShown = true }, focusComposer: focusComposer, draft: $draft)
+                                        .frame(width: geo.size.width / 2)
+                                    Divider()
+                                    terminal.make(model.target)
+                                        .frame(maxWidth: .infinity)
+                                }
                             }
                         }
                         if showFiles {
@@ -192,6 +217,20 @@ public struct SessionView: View {
             mode = .chat
             focusComposer += 1
         }
+    }
+
+    /// "New conversation" (capcom.md 8.2): the chips that can move and the draft go to a fresh
+    /// Capcom session, which opens in this one's place.
+    private var newConversationButton: some View {
+        Button("New conversation", systemImage: "square.and.pencil") {
+            guard let center = model.capcom else { return }
+            let text = draft
+            Task {
+                if await center.newConversation(from: model, draft: text) { draft = "" }
+            }
+        }
+        .disabled(model.capcom == nil || model.capcomBusy || !model.context.online)
+        .help("Start a new Capcom conversation")
     }
 
     /// Opens the session's console (app.md 6).
