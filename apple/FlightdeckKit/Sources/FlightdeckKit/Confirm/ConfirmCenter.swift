@@ -147,6 +147,11 @@ public final class ConfirmCenter {
     /// as the answer or the closed event last had them: the approvals area
     /// keeps them until dismissed.
     private var held: [String: ConfirmCard] = [:]
+    /// Cards this client sent a confirm for, by card id. A failed or unknown
+    /// close holds the card even when the answer never came back.
+    private var confirmed: Set<String> = []
+    /// Held cards the owner dismissed: never held again.
+    private var dismissed: Set<String> = []
     /// The hosts a start can go to, per hab, from `confirm.list`.
     public private(set) var targets: [String: [ConfirmTarget]] = [:]
 
@@ -204,10 +209,23 @@ public final class ConfirmCenter {
     /// Takes a failed or unknown start out of the approvals area.
     public func dismiss(_ card: ConfirmCard) {
         held[card.id] = nil
+        dismissed.insert(card.id)
+    }
+
+    /// Whether this client answered the card: it sent a confirm for it, or the
+    /// hab names this client's id as the one that answered.
+    private func answeredHere(_ card: ConfirmCard) -> Bool {
+        if confirmed.contains(card.id) { return true }
+        guard let by = card.confirmation.answeredBy, !by.isEmpty else { return false }
+        return board.habs.first { $0.id == card.habID }?.state.welcome?.clientId == by
     }
 
     /// Drops the edits, notes and marks of cards that are no longer open on
     /// their hab. A held card stays until dismissed.
+    ///
+    /// A start this client answered that closed failed or unknown is held too
+    /// when the answer itself never returned: the closed event, or the
+    /// `confirm.list` after a reconnect, brings the outcome.
     public func boardChanged() {
         let open = Set(cards.filter { !$0.confirmation.isClosed }.map(\.id))
         let all = cards
@@ -215,6 +233,16 @@ public final class ConfirmCenter {
             // A newer copy (the closed event after the answer) replaces the held one.
             if let c = all.first(where: { $0.id == id && $0.confirmation.isClosed }), c != h { held[id] = c }
         }
+        for c in all where held[c.id] == nil && !dismissed.contains(c.id) {
+            let s = c.confirmation.state
+            if s == .failed || s == .unknown, c.confirmation.record != true, answeredHere(c) { held[c.id] = c }
+        }
+        // Answer marks go with their card, but not while a reconnect waits for
+        // `confirm.list` to say how a card held open before it ended.
+        var known = Set(all.map(\.id))
+        for h in board.habs { known.formUnion(h.state.confirmations.pending.map { h.id + "/" + $0 }) }
+        if confirmed.contains(where: { !known.contains($0) }) { confirmed = confirmed.filter(known.contains) }
+        if dismissed.contains(where: { !known.contains($0) }) { dismissed = dismissed.filter(known.contains) }
         let keep = { (id: String) in open.contains(id) || self.sending.contains(id) }
         if drafts.keys.contains(where: { !keep($0) }) { drafts = drafts.filter { keep($0.key) } }
         if failures.keys.contains(where: { !keep($0) }) { failures = failures.filter { keep($0.key) } }
@@ -334,6 +362,10 @@ public final class ConfirmCenter {
         sending.insert(card.id)
         failures[card.id] = nil
         defer { sending.remove(card.id) }
+        // An earlier confirm whose answer never came back may still have run.
+        let earlier = confirmed.contains(card.id)
+        if p.choice == .confirm { confirmed.insert(card.id) }
+        func refused() { if !earlier { confirmed.remove(card.id) } }
         do {
             let r = try await answerer(card.habID, p)
             drafts[card.id] = nil
@@ -343,10 +375,13 @@ public final class ConfirmCenter {
                 held[card.id] = c
             }
         } catch let e as RPCError where e.kind == .conflict {
+            refused()
             conflicts.insert(card.id)
         } catch let e as RPCError {
+            refused()
             failures[card.id] = e.data?.hint ?? e.message
         } catch {
+            // No answer (a dropped link, the time limit): the confirm may still run.
             failures[card.id] = String(describing: error)
         }
     }

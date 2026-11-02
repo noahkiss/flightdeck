@@ -386,6 +386,81 @@ final class ConfirmTests: XCTestCase {
         XCTAssertFalse(c.isHeld(try XCTUnwrap(c.cards.first)))
     }
 
+    /// The confirm's answer never returned (the time limit); the hab's closed
+    /// event says it failed: the card is held until dismissed, and stays dismissed.
+    @MainActor
+    func testFailedStartHeldWhenAnswerLostThenClosed() async throws {
+        let a = Self.confirmation("a")
+        let (c, board) = center(try book([a])) { _, _ in throw TransportError("call timed out") }
+        await c.confirm(try XCTUnwrap(c.cards.first))
+        c.boardChanged()
+        XCTAssertTrue(c.approvals.allSatisfy { !c.isHeld($0) })
+        board.update("a", habState(try book([], closed: [Self.closed(a, .failed)])))
+        c.boardChanged()
+        let kept = try XCTUnwrap(c.approvals.first)
+        XCTAssertEqual(kept.confirmation.state, .failed)
+        XCTAssertTrue(c.isHeld(kept))
+        c.dismiss(kept)
+        c.boardChanged()
+        XCTAssertTrue(c.approvals.isEmpty, "a dismissed card is not held again")
+    }
+
+    /// The hab names this client in `answered_by`: held with no local record.
+    /// Another client's answer, or a record, is not held.
+    @MainActor
+    func testFailedStartHeldByAnsweredBy() throws {
+        var mine = Self.closed(Self.confirmation("mine"), .unknown)
+        mine.answeredBy = "c"
+        var theirs = Self.closed(Self.confirmation("theirs"), .failed)
+        theirs.answeredBy = "c99"
+        var rec = Self.closed(Self.confirmation("rec", record: true), .failed)
+        rec.answeredBy = "c"
+        let (c, _) = center(try book([], closed: [mine, theirs, rec]))
+        c.boardChanged()
+        XCTAssertEqual(c.approvals.map(\.confirmation.id), ["mine"])
+    }
+
+    /// A refusal of this client's only confirm leaves no mark: a later failed
+    /// close by another client is not held.
+    @MainActor
+    func testRefusedConfirmLeavesNoMark() async throws {
+        let a = Self.confirmation("a")
+        let (c, board) = center(try book([a])) { _, _ in
+            throw RPCError(code: -32000, message: "conflict", data: ErrorData(hint: "taken", kind: .conflict, seq: 1))
+        }
+        await c.confirm(try XCTUnwrap(c.cards.first))
+        board.update("a", habState(try book([], closed: [Self.closed(a, .failed)])))
+        c.boardChanged()
+        XCTAssertTrue(c.approvals.isEmpty)
+    }
+
+    /// The link drops while the confirm is on its way; the start fails meanwhile.
+    /// After the reconnect, `confirm.list` brings the failure and the card is held.
+    @MainActor
+    func testFailedStartHeldAfterReconnect() async throws {
+        let hab = await sampleHab("boxa")
+        await hab.setCapability("confirm", true)
+        await hab.requestConfirmation(Self.confirmation("f", created: Date()))
+        let conn = HabConnection(id: "a", transport: hab.transport(), timing: fastTiming())
+        let board = Board()
+        board.register(id: "a", label: nil, endpoint: "fake")
+        let center = ConfirmCenter(board: board, answer: { _, _ in
+            await conn.stop()
+            // Another client id: only the local record ties the card to this client.
+            await hab.closeConfirmation("f", state: .failed, reason: "cwd is not a directory", answeredBy: "c-old")
+            throw TransportError("link dropped")
+        })
+        let feed = Task { @MainActor in for await s in conn.updates { board.update("a", s); center.boardChanged() } }
+        defer { feed.cancel() }
+        await conn.start()
+        await eventually("card") { center.approvals.count == 1 }
+        await center.confirm(try XCTUnwrap(center.approvals.first))
+        await conn.start()
+        await eventually("held after the list") { center.approvals.first.map(center.isHeld) == true }
+        XCTAssertEqual(center.approvals.first?.confirmation.state, .failed)
+        await conn.stop()
+    }
+
     /// A second tap while the first answer is on its way sends nothing.
     @MainActor
     func testSecondTapWhileSending() async throws {

@@ -1158,7 +1158,14 @@ The cards of `capcom.md` 6.1 and 6.3: a start an agent asks for on another host,
   `failed` or `unknown` stays in the approvals area as one line with its outcome and a Dismiss
   button, until the owner dismisses it. A failed start is the one outcome the owner must act
   on, and the session view may not be on screen. Other outcomes leave the approvals area at
-  once.
+  once. The same holds when the answer never comes back (the link drops, or the 75 s limit
+  passes) and the failure arrives later, by `confirm.closed` or by the `confirm.list` after a
+  reconnect. Design call: a card counts as this client's answer when this client sent a
+  confirm for it, or when its `answered_by` is this client's id on that hab. The local mark
+  covers a reconnect that brings a new client id. A refusal of the only confirm sent (a
+  `conflict` or another error) drops the mark; a refusal after an earlier confirm whose
+  answer never came back keeps it, since that confirm may have run. A dismissed card is not
+  held again.
 - **Records.** A record (`record: true`) shows "Ran without asking" and no buttons. It never
   shows in the approvals area.
 - **Withdraw.** `confirm.closed` takes a card out of the approvals area at once. Design call:
