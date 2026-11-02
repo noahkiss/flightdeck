@@ -1,10 +1,11 @@
 # Release the app (docs/specs/ci-release.md 10): the iOS app to TestFlight, and the Mac app
-# signed with Developer ID. The Mac app is built, signed and checked only: no notarization, no
-# GitHub release and no cask yet (10.1).
+# signed with Developer ID, notarized, stapled and attached to the GitHub release app-v<version>.
+# No cask yet (10.1).
 #
-# A push of app-v<x.y.z> or app-v<x.y.z>-rc.<n> starts it and uploads to TestFlight. A push of
-# app-v<x.y.z>-dry.<n> runs everything except the upload (7.6): delete the tag after. To run it
-# again, dispatch it on the tag:
+# A push of app-v<x.y.z> or app-v<x.y.z>-rc.<n> starts it, uploads to TestFlight and publishes the
+# release. A push of app-v<x.y.z>-dry.<n> runs everything, notarization included, but uploads to
+# TestFlight and publishes nothing (7.6): delete the tag after. To run it again, dispatch it on
+# the tag:
 #   gh workflow run app-release.yml --ref app-v<x.y.z> -f tag=app-v<x.y.z> [-f dry_run=true]
 #
 # The tests are apple.yml, called on the tagged commit. The signing jobs run in the `release`
@@ -24,7 +25,7 @@ on:
         required: true
         type: string
       dry_run:
-        description: Build, sign and check everything; upload nothing
+        description: Build, sign, notarize and check everything; upload and publish nothing
         type: boolean
         default: false
 
@@ -317,8 +318,9 @@ jobs:
         if: always()
         run: rm -f ~/.netrc
 
-  # Signed with Developer ID and checked; not notarized and not published until the Mac
-  # distribution step turns that on (10.1, 10.4). Runs beside ios; each fails alone.
+  # Signed with Developer ID, notarized, stapled and checked, then zipped for publish (10.1).
+  # A dry run notarizes too: Apple sees the app, nobody else does. Runs beside ios; each fails
+  # alone.
   mac:
     name: Mac, Developer ID
     needs: [verify, test]
@@ -417,8 +419,10 @@ jobs:
         run: apple/scripts/generate.sh
 
       # Apple silicon only: a universal archive about doubles the time (10.2, Mac step 6).
-      # notarize false: the export verifies the signature and uploads nothing to Apple.
-      - name: Archive and export
+      # The action exports, verifies the signature, notarizes (on any status but Accepted it
+      # prints the notary log and fails), staples, and checks stapler and spctl (10.2, Mac step 8).
+      # The key reaches it on a dry run too: a dry run proves notarization.
+      - name: Archive, export and notarize
         id: export
         uses: noahkiss/workflows/actions/xcode-archive-upload@main
         with:
@@ -434,10 +438,14 @@ jobs:
             ARCHS=arm64
           export-method: developer-id
           team-id: ${{ vars.APPLE_TEAM_ID }}
-          notarize: 'false'
+          notarize: 'true'
+          api-key-p8: ${{ secrets.UPLOAD_KEY_P8 }}
+          api-key-id: ${{ secrets.UPLOAD_KEY_ID }}
+          api-key-issuer-id: ${{ secrets.ASC_ISSUER_ID }}
 
-      # Every Mach-O is arm64 only; the app has the hardened runtime and a secure timestamp, both
-      # of which notarization will need; the versions are the tag's (10.2, Mac step 7).
+      # The stapled app, as it ships: every Mach-O is arm64 only; the hardened runtime and a
+      # secure timestamp; the versions are the tag's; the ticket is stapled and Gatekeeper
+      # accepts it as notarized (10.2, Mac steps 7 and 8).
       - name: Check the app
         env:
           APP: ${{ steps.export.outputs.app-path }}
@@ -473,7 +481,36 @@ jobs:
             fi
             n=$((n + 1))
           done < <(find "$APP" -type f -print0)
-          echo "Flightdeck $VERSION ($BUILD): Developer ID, hardened runtime, timestamp, $n Mach-O files, arm64 only." | tee -a "$GITHUB_STEP_SUMMARY"
+          xcrun stapler validate "$APP" || { echo "::error::The app has no valid stapled ticket."; exit 1; }
+          assessment=$(spctl -a -vv "$APP" 2>&1) || { echo "::error::Gatekeeper rejects the app: $assessment"; exit 1; }
+          echo "$assessment"
+          grep -q '^source=Notarized Developer ID$' <<< "$assessment" || { echo "::error::spctl does not say source=Notarized Developer ID."; exit 1; }
+          echo "Flightdeck $VERSION ($BUILD): Developer ID, notarized and stapled, hardened runtime, timestamp, $n Mach-O files, arm64 only." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # ditto keeps the bundle's symbolic links and extended attributes, which zip does not
+      # (10.2, Mac step 9).
+      - name: Zip
+        env:
+          APP: ${{ steps.export.outputs.app-path }}
+        run: |
+          set -euo pipefail
+          dist=$RUNNER_TEMP/dist
+          zip=Flightdeck-$VERSION-macos-arm64.zip
+          rm -rf -- "$dist"
+          mkdir -p "$dist"
+          ditto -c -k --keepParent "$APP" "$dist/$zip"
+          (cd "$dist" && shasum -a 256 "$zip" > "$zip.sha256" && cat "$zip.sha256")
+          echo "DIST=$dist" >> "$GITHUB_ENV"
+
+      # The artifacts of a public repo are public, so a dry run keeps its zip on the runner.
+      - name: Upload the zip
+        if: ${{ needs.verify.outputs.dry_run != 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: app-release-mac
+          path: ${{ env.DIST }}
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload the logs
         if: failure()
@@ -493,3 +530,81 @@ jobs:
       - name: Remove ~/.netrc
         if: always()
         run: rm -f ~/.netrc
+
+  # The GitHub release app-v<version>: a draft first, so nobody sees it half attached, then the
+  # notarized Mac zip and its .sha256, then published (10.1). Not on a dry run. Not marked latest:
+  # that mark stays on the gff release (v*).
+  publish:
+    name: Publish
+    needs: [verify, mac]
+    if: ${{ needs.verify.outputs.dry_run != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: app-release-mac
+          path: ${{ runner.temp }}/dist
+
+      - name: Check the zip
+        working-directory: ${{ runner.temp }}/dist
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          zip=Flightdeck-$VERSION-macos-arm64.zip
+          [ -f "$zip" ] && [ -f "$zip.sha256" ] || { echo "::error::Want $zip and $zip.sha256, found: $(find . -maxdepth 1 -type f -printf '%f ')"; exit 1; }
+          sha256sum -c "$zip.sha256"
+
+      # Safe to run again: a draft a failed run left is reused, and an asset already there is
+      # kept when its bytes match and refused when they do not. Nothing is ever replaced.
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+          SHA: ${{ github.sha }}
+          DIST: ${{ runner.temp }}/dist
+        run: |
+          set -euo pipefail
+          # The release attaches to wherever the tag points now; the app is of $SHA.
+          now=$(gh api "repos/$REPO/commits/$TAG" --jq .sha)
+          if [ "$now" != "$SHA" ]; then
+            echo "::error::$TAG moved to $now during this run, which built $SHA. Nothing was published; the run for the new tag builds it."
+            exit 1
+          fi
+          if ! gh release view "$TAG" -R "$REPO" > /dev/null 2>&1; then
+            flags=(--draft --verify-tag --generate-notes --title "$TAG" --latest=false)
+            [[ "$TAG" == *-rc.* ]] && flags+=(--prerelease)
+            # Notes from the last app tag before this one, so the gff tags (v*) do not cut them short.
+            if start=$(git describe --tags --abbrev=0 --match 'app-v*' --exclude '*-dry.*' "$SHA^" 2>/dev/null); then
+              flags+=(--notes-start-tag "$start")
+            fi
+            gh release create "$TAG" -R "$REPO" "${flags[@]}"
+          fi
+          have=$(gh release view "$TAG" -R "$REPO" --json assets --jq '.assets[].name')
+          for f in "$DIST"/*; do
+            name=$(basename "$f")
+            if grep -qxF "$name" <<< "$have"; then
+              rm -rf -- "$RUNNER_TEMP/attached"
+              gh release download "$TAG" -R "$REPO" -p "$name" -D "$RUNNER_TEMP/attached"
+              cmp -s "$f" "$RUNNER_TEMP/attached/$name" \
+                || { echo "::error::$TAG already has a different $name. Assets are never replaced: delete it by hand, then run again."; exit 1; }
+              echo "$name is already attached."
+            else
+              gh release upload "$TAG" -R "$REPO" "$f"
+            fi
+          done
+          if [ "$(gh release view "$TAG" -R "$REPO" --json isDraft --jq .isDraft)" = true ]; then
+            gh release edit "$TAG" -R "$REPO" --draft=false --latest=false
+          fi
+          echo "Published $TAG with $(find "$DIST" -maxdepth 1 -type f -printf '%f ')." | tee -a "$GITHUB_STEP_SUMMARY"

@@ -650,7 +650,9 @@ first.
 `verify` makes any `-dry.` tag a dry run whatever the dispatch says. Push the tag, watch the run,
 delete the tag. Reason: the dry run is how an app signing change is proven, and one push is one
 fewer step to get wrong. A `-dry.` tag can never upload, so starting on its push risks nothing.
-The `release.yml` behaviour above is unchanged.
+An app dry run sends the Mac app to Apple's notary and staples it, as `release.yml`'s dry run
+notarizes the helper bundles. It uploads nothing to TestFlight, uploads no Mac artifact, and
+skips `publish` (10.1). The `release.yml` behaviour above is unchanged.
 
 Design call: dry runs use `-dry.` tags, not a branch the `release` environment admits. The
 environment stays limited to tags, so a dry run reaches the signing secrets only the way a release
@@ -1005,22 +1007,25 @@ As built (stage 8). The jobs:
 3. **`ios`** (`needs: [verify, test]`, `xcode-27`, environment `release`, 120 minutes). Steps
    below. Uploads to TestFlight; on a dry run it exports the `.ipa` to disk and uploads nothing.
 4. **`mac`** (`needs: [verify, test]`, `xcode-27`, environment `release`, 90 minutes). Steps
-   below. Signs with Developer ID and checks the app. It does not notarize, attach or publish
-   anything yet.
+   below. Signs with Developer ID, notarizes and staples, checks the stapled app, and zips it
+   as `Flightdeck-<version>-macos-arm64.zip` with its `.sha256`. Uploads the two files as the
+   artifact `app-release-mac` (7 days). A dry run notarizes too, but uploads no artifact.
+5. **`publish`** (ubuntu, `needs: [verify, mac]`, `contents: write`, 10 minutes; skipped on a
+   dry run). Downloads the artifact and checks the `.sha256`. Refuses when the tag no longer
+   names the commit the run built, as `release.yml` does (7.4). Creates the GitHub release for
+   the tag as a draft when it does not exist (`gh release create --draft --verify-tag
+   --generate-notes`, `--prerelease` on an `-rc.` tag, `--latest=false`). The notes start at
+   the last non-dry `app-v*` tag before this commit (`--notes-start-tag`, from `git describe`),
+   so a `v*` tag between them does not cut them short. Then it attaches the zip and its
+   `.sha256` and publishes the draft.
 
 The `ios` and `mac` jobs run in parallel. Each fails alone: a failed TestFlight upload does not
-stop the Mac build, and the reverse.
+stop the Mac build, and the reverse. `publish` waits for `mac` only.
 
-Not built yet, for the Mac distribution step: notarization in `mac` (the action's `notarize`
-input), the zip and its `.sha256`, and these two jobs:
-
-- **`publish`** (ubuntu, `needs: [verify, mac]`, `contents: write`; skipped on a dry run). Create
-  the GitHub release `app-v<version>` as a draft when it does not exist (`gh release create
-  --draft --verify-tag`, `--prerelease` on an `-rc.` tag, `--generate-notes`), attach the
-  notarized Mac zip and its `.sha256` (never clobber), then publish it.
-- **`bump-tap`** (`needs: [verify, publish]`, final tags only, not on a dry run).
-  `dispatch-and-wait.yml` with `inputs_json` from `verify`:
-  `{"formula": "flightdeck", "tag": "app-v<version>", "tag_prefix": "app-v"}`.
+Not built yet: **`bump-tap`** (`needs: [verify, publish]`, final tags only, not on a dry run).
+`dispatch-and-wait.yml` with `inputs_json` from `verify`:
+`{"formula": "flightdeck", "tag": "app-v<version>", "tag_prefix": "app-v"}`. It waits for a
+Flightdeck cask in the tap and the secret `HOMEBREW_TAP_TOKEN` (6.2).
 
 **Design calls, as built:**
 
@@ -1039,9 +1044,20 @@ input), the zip and its `.sha256`, and these two jobs:
   paths; a miss resolves from scratch.
 - **Logs upload on failure only.** The archive logs of a passing run hold nothing to act on, and
   the artifacts of a public repo are public.
-- **The Mac job does not notarize.** Notarization sends the app to Apple. That waits with the
-  publish and cask steps for the Mac distribution step. The job still proves the Developer ID
-  signature and every check notarization depends on.
+- **The Mac job notarizes in the action, on a dry run too.** One `xcode-archive-upload` call
+  exports, notarizes and staples. The checks then run on the stapled app, the bytes that ship,
+  not on an earlier export. A dry run notarizes because notarization is the step a signing
+  change most often breaks. Apple sees the app; nobody else does. So the App Store Connect key
+  reaches the `mac` job on every run, while `ios` gets it only when it uploads.
+- **A dry run keeps the Mac zip on the runner.** The artifacts of a public repo are public, so
+  a dry run builds and hashes the zip but uploads no artifact.
+- **`publish` is safe to run again.** A draft that a failed run left is reused. An asset already
+  attached is kept when its bytes match and refused when they do not, so no asset is ever
+  replaced. This differs from `release.yml`, which refuses any existing release (7.4): there,
+  `verify` checks first, so an existing release fails in seconds. Here, a re-run of the failed
+  `publish` job must finish the release that run started.
+- **An app release is never marked latest.** GitHub's "latest" mark stays on the `gff` release
+  (`v*`), whose assets the tap and any `releases/latest` link expect.
 
 ### 10.2 Steps of the signing jobs
 
@@ -1095,19 +1111,21 @@ The `mac` job:
    input. A profile joins when an entitlement needs one (`Local.example.xcconfig`, step 3).
 6. Generate, then archive `FlightdeckMac` (Release) with `Developer ID Application`,
    `--timestamp` and `ARCHS=arm64`.
-7. Export with `method` `developer-id` and `notarize: false`. Verify:
-   `codesign --verify --deep --strict` (the action), the Developer ID authority and the team,
-   the hardened runtime, a secure timestamp, no `get-task-allow`, every Mach-O arm64 only (Apple's embedded `libswift*.dylib` back-deployment libraries ship universal and need only an arm64 slice)
+7. Export with `method` `developer-id` and `notarize: 'true'`, with the App Store Connect key
+   (`UPLOAD_KEY_P8`, `UPLOAD_KEY_ID`, `ASC_ISSUER_ID`) on every run, a dry run included. The
+   action runs `codesign --verify --deep --strict`, then step 8. After it, the workflow
+   verifies the stapled app: the Developer ID authority and the team, the hardened runtime, a
+   secure timestamp, no `get-task-allow`, every Mach-O arm64 only (Apple's embedded
+   `libswift*.dylib` back-deployment libraries ship universal and need only an arm64 slice)
    (`lipo -archs`), and the bundle id and versions.
-
-Steps 8 and 9 are not built yet (10.1); they join with the Mac distribution step.
-
-8. Notarize (`notarytool submit`, then `wait`); on any status but `Accepted`, print
-   `notarytool log` and fail. Staple; `stapler validate`; `spctl -a -vv` must say
-   `source=Notarized Developer ID`.
-9. Zip with `ditto -c -k --keepParent` as `Flightdeck_<version>_macos.zip`; write its `.sha256`;
-   upload as an artifact.
-10. Cleanup as `ios` (built).
+8. Notarize in the action: zip with `ditto`, `notarytool submit`, then `wait`; on any status but
+   `Accepted`, print `notarytool log` and fail. Staple; `stapler validate`; `spctl -a -vv` must
+   say `source=Notarized Developer ID`. The workflow runs `stapler validate` and the `spctl`
+   check again in its own check step, so the job proves them even if the action changes.
+9. Zip the stapled app with `ditto -c -k --keepParent` as
+   `Flightdeck-<version>-macos-arm64.zip`; write its `.sha256` (`shasum -a 256`, the file name
+   only). Upload both as the artifact `app-release-mac`, except on a dry run.
+10. Cleanup as `ios`.
 
 The Mac app embeds the helper bundles later (`macos-identity.md` 3.4). That job will take the
 signed bundles from the matching `v*` release's darwin asset, unchanged, and sign the app last
@@ -1292,8 +1310,8 @@ moved (2); the hygiene rule names printed but never the match (9.6); one baselin
 build shared by tests and releases, and the macOS 13.0 floor (5, 7.3); the release CI rule
 that accepts a full ancestor run (7.4); dry runs on `-dry.` tags (7.6); suffix-free bundle and
 marketing versions (7.7); the formula's top-level asset url (8.2); the app line's dry run on the
-tag push, its tests through `apple.yml` on the tag, and the Mac job without notarization (7.6,
-10.1).
+tag push, its tests through `apple.yml` on the tag, and the Mac job that notarizes on every run,
+dry runs included (7.6, 10.1).
 
 ---
 
