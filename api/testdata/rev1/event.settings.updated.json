@@ -1,0 +1,23 @@
+{
+  "data": {
+    "source": "config",
+    "value": {
+      "value": 3,
+      "x_unknown_field": "later"
+    },
+    "x_unknown_field": "later"
+  },
+  "id": "id-6",
+  "revision": 4,
+  "seq": 5,
+  "type": "settings.updated",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

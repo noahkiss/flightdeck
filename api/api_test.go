@@ -84,8 +84,12 @@ func TestNoNullArrays(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Event.data is any JSON value, so only its own null is allowed.
-		s := strings.ReplaceAll(string(b), `"data":null`, "")
+		// Event.data and a setting's value and default are any JSON value, so only their own
+		// null is allowed.
+		s := string(b)
+		for _, k := range []string{"data", "value", "default"} {
+			s = strings.ReplaceAll(s, `"`+k+`":null`, "")
+		}
 		if strings.Contains(s, "null") {
 			t.Errorf("%T marshals a null: %s", v, b)
 		}
@@ -347,7 +351,7 @@ func addUnknown(v any, top bool) {
 
 // rawFields names nested fields of type RawJSON. Like an event's data, they keep extra fields on
 // a round trip.
-var rawFields = map[string]bool{"input": true} // PermissionRequest.Input, ChatTool.Input
+var rawFields = map[string]bool{"input": true, "value": true, "default": true} // PermissionRequest.Input, ChatTool.Input, Setting.Value and Default
 
 // stripUnknown removes the x_unknown_* fields from every object in v, recursively. Below a key
 // in keep (such as an event's data), or a key in rawFields, it leaves v as it is.

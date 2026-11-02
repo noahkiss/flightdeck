@@ -127,6 +127,7 @@ const (
 	ErrorKindRevisionUnsupported ErrorKind = "revision_unsupported"
 	ErrorKindNotOwner            ErrorKind = "not_owner"
 	ErrorKindTicketInvalid       ErrorKind = "ticket_invalid"
+	ErrorKindLocked              ErrorKind = "locked"
 	ErrorKindInvalid             ErrorKind = "invalid"
 )
 
@@ -226,6 +227,12 @@ const (
 )
 
 const (
+	SettingSourceDefault SettingSource = "default"
+	SettingSourceClient  SettingSource = "client"
+	SettingSourceConfig  SettingSource = "config"
+)
+
+const (
 	SetupModeAuto SetupMode = "auto"
 	SetupModeRun  SetupMode = "run"
 	SetupModeSkip SetupMode = "skip"
@@ -275,27 +282,28 @@ const (
 
 // Event types.
 const (
-	EventProjectUpdated EventType = "project.updated"
-	EventProjectDeleted EventType = "project.deleted"
-	EventSessionUpdated EventType = "session.updated"
-	EventSessionDeleted EventType = "session.deleted"
-	EventPaneUpdated    EventType = "pane.updated"
-	EventPaneDeleted    EventType = "pane.deleted"
-	EventPaneOwner      EventType = "pane.owner"
-	EventPaneActivity   EventType = "pane.activity"
-	EventAgentState     EventType = "agent.state"
-	EventPaneBell       EventType = "pane.bell"
-	EventPaneOutput     EventType = "pane.output"
-	EventChatMessage    EventType = "chat.message"
-	EventSessionTurnEnd EventType = "session.turn_end"
-	EventUsageUpdated   EventType = "usage.updated"
-	EventCommandUpdated EventType = "command.updated"
-	EventPeerUpdated    EventType = "peer.updated"
-	EventCatalogUpdated EventType = "catalog.updated"
-	EventNoticeRaised   EventType = "notice.raised"
-	EventContentUpdated EventType = "content.updated"
-	EventChannelMessage EventType = "channel.message"
-	EventMeshChanged    EventType = "mesh.changed"
+	EventProjectUpdated  EventType = "project.updated"
+	EventProjectDeleted  EventType = "project.deleted"
+	EventSessionUpdated  EventType = "session.updated"
+	EventSessionDeleted  EventType = "session.deleted"
+	EventPaneUpdated     EventType = "pane.updated"
+	EventPaneDeleted     EventType = "pane.deleted"
+	EventPaneOwner       EventType = "pane.owner"
+	EventPaneActivity    EventType = "pane.activity"
+	EventAgentState      EventType = "agent.state"
+	EventPaneBell        EventType = "pane.bell"
+	EventPaneOutput      EventType = "pane.output"
+	EventChatMessage     EventType = "chat.message"
+	EventSessionTurnEnd  EventType = "session.turn_end"
+	EventUsageUpdated    EventType = "usage.updated"
+	EventCommandUpdated  EventType = "command.updated"
+	EventPeerUpdated     EventType = "peer.updated"
+	EventCatalogUpdated  EventType = "catalog.updated"
+	EventNoticeRaised    EventType = "notice.raised"
+	EventContentUpdated  EventType = "content.updated"
+	EventSettingsUpdated EventType = "settings.updated"
+	EventChannelMessage  EventType = "channel.message"
+	EventMeshChanged     EventType = "mesh.changed"
 )
 
 // DecodeData decodes e.Data into the type its event type names. It returns
@@ -376,6 +384,10 @@ func (e Event) DecodeData() (any, error) {
 		return v, err
 	case EventContentUpdated:
 		var v ContentItem
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventSettingsUpdated:
+		var v SettingUpdated
 		err := json.Unmarshal(e.Data, &v)
 		return v, err
 	case EventChannelMessage:
@@ -796,6 +808,20 @@ func (c Client) WorktreeCreate(ctx context.Context, params WorktreeCreateParams)
 func (c Client) WorktreeSetup(ctx context.Context, params WorktreeSetupParams) (WorktreeSetupResult, error) {
 	var result WorktreeSetupResult
 	err := c.Caller.Call(ctx, "worktree.setup", params, &result)
+	return result, err
+}
+
+// SettingsGet calls settings.get. Read every hab-side setting, or the named ones (app.md 20.5). Needs the settings capability.
+func (c Client) SettingsGet(ctx context.Context, params SettingsGetParams) (SettingsResult, error) {
+	var result SettingsResult
+	err := c.Caller.Call(ctx, "settings.get", params, &result)
+	return result, err
+}
+
+// SettingsSet calls settings.set. Write hab-side settings, all or nothing, each with the revision last seen (app.md 20.5). Needs the settings capability.
+func (c Client) SettingsSet(ctx context.Context, params SettingsSetParams) (SettingsResult, error) {
+	var result SettingsResult
+	err := c.Caller.Call(ctx, "settings.set", params, &result)
 	return result, err
 }
 

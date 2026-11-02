@@ -105,6 +105,8 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.worktreeCreate)
         result(HabMethods.worktreeSetup)
         result(HabMethods.worktreeRemove)
+        result(HabMethods.settingsGet)
+        result(HabMethods.settingsSet)
         result(HabMethods.habPermissions)
         result(HabMethods.detectExplain)
         result(HabMethods.channelSend)
@@ -184,7 +186,8 @@ final class GoldenTests: XCTestCase {
     }
 
     /// Nested fields that hold any JSON value. Like an event's data, they keep extra fields.
-    static let rawFields: Set<String> = ["input"]  // PermissionRequest.input, ChatTool.input
+    // PermissionRequest.input, ChatTool.input, Setting.value and Setting.default
+    static let rawFields: Set<String> = ["input", "value", "default"]
 
     /// Removes the x_unknown_* fields from every object. Below the key `keep`, or a key in
     /// `rawFields`, it leaves the value as it is.

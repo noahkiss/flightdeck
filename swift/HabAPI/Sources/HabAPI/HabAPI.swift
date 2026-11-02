@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -2105,6 +2105,8 @@ public struct ErrorData: Codable, Sendable, Hashable {
     /// Client revision range, on revision_unsupported.
     public var client: RevisionRange?
     public var hint: String
+    /// On every settings.set error: the id of the first refused row (app.md 20.5).
+    public var id: String?
     public var kind: ErrorKind
     public var seq: UInt64
     /// Server revision range, on revision_unsupported.
@@ -2113,14 +2115,16 @@ public struct ErrorData: Codable, Sendable, Hashable {
     enum CodingKeys: String, CodingKey {
         case client = "client"
         case hint = "hint"
+        case id = "id"
         case kind = "kind"
         case seq = "seq"
         case server = "server"
     }
 
-    public init(client: RevisionRange? = nil, hint: String, kind: ErrorKind, seq: UInt64, server: RevisionRange? = nil) {
+    public init(client: RevisionRange? = nil, hint: String, id: String? = nil, kind: ErrorKind, seq: UInt64, server: RevisionRange? = nil) {
         self.client = client
         self.hint = hint
+        self.id = id
         self.kind = kind
         self.seq = seq
         self.server = server
@@ -2137,6 +2141,7 @@ public struct ErrorKind: RawRepresentable, Codable, Sendable, Hashable {
     public static let revisionUnsupported = ErrorKind(rawValue: "revision_unsupported")
     public static let notOwner = ErrorKind(rawValue: "not_owner")
     public static let ticketInvalid = ErrorKind(rawValue: "ticket_invalid")
+    public static let locked = ErrorKind(rawValue: "locked")
     public static let invalid = ErrorKind(rawValue: "invalid")
 }
 
@@ -3468,6 +3473,120 @@ public struct SessionState: RawRepresentable, Codable, Sendable, Hashable {
     public static let exited = SessionState(rawValue: "exited")
 }
 
+public struct Setting: Codable, Sendable, Hashable {
+    /// The hab's built-in value: the Balanced column (app.md 20.1).
+    public var `default`: JSONValue
+    /// The setting id, such as confirm.start_elsewhere (app.md 20.3).
+    public var id: String
+    /// Raised by one on each change; starts at 1. Compared only within an epoch (spec 3.5).
+    public var revision: UInt64
+    /// default: no client wrote it and no config sets it. client: a client wrote it. config: the hab's config file, a flag or the environment sets it, and writes are refused with locked.
+    public var source: SettingSource
+    /// The value the hab enforces now.
+    public var value: JSONValue
+
+    enum CodingKeys: String, CodingKey {
+        case `default` = "default"
+        case id = "id"
+        case revision = "revision"
+        case source = "source"
+        case value = "value"
+    }
+
+    public init(`default`: JSONValue, id: String, revision: UInt64, source: SettingSource, value: JSONValue) {
+        self.`default` = `default`
+        self.id = id
+        self.revision = revision
+        self.source = source
+        self.value = value
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct SettingSource: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let `default` = SettingSource(rawValue: "default")
+    public static let client = SettingSource(rawValue: "client")
+    public static let config = SettingSource(rawValue: "config")
+}
+
+public struct SettingUpdated: Codable, Sendable, Hashable {
+    public var source: SettingSource
+    public var value: JSONValue
+
+    enum CodingKeys: String, CodingKey {
+        case source = "source"
+        case value = "value"
+    }
+
+    public init(source: SettingSource, value: JSONValue) {
+        self.source = source
+        self.value = value
+    }
+}
+
+public struct SettingWrite: Codable, Sendable, Hashable {
+    public var id: String
+    /// The setting's revision the client last saw. Any other revision refuses the call with conflict.
+    public var revision: UInt64
+    public var value: JSONValue
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case revision = "revision"
+        case value = "value"
+    }
+
+    public init(id: String, revision: UInt64, value: JSONValue) {
+        self.id = id
+        self.revision = revision
+        self.value = value
+    }
+}
+
+public struct SettingsGetParams: Codable, Sendable, Hashable {
+    /// The settings to read. Absent: every hab-side setting. An id this hab does not know is left out of the result.
+    public var ids: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case ids = "ids"
+    }
+
+    public init(ids: [String]? = nil) {
+        self.ids = ids
+    }
+}
+
+public struct SettingsResult: Codable, Sendable, Hashable {
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    public var settings: [Setting]
+
+    enum CodingKeys: String, CodingKey {
+        case seq = "seq"
+        case settings = "settings"
+    }
+
+    public init(seq: UInt64, settings: [Setting]) {
+        self.seq = seq
+        self.settings = settings
+    }
+}
+
+public struct SettingsSetParams: Codable, Sendable, Hashable {
+    /// Rows to write, all or nothing. Any refused row refuses the call; error.data.id names the first refused row.
+    public var values: [SettingWrite]
+
+    enum CodingKeys: String, CodingKey {
+        case values = "values"
+    }
+
+    public init(values: [SettingWrite]) {
+        self.values = values
+    }
+}
+
 /// An open word set: values outside the known list decode and round-trip unchanged.
 public struct SetupMode: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
@@ -3625,6 +3744,8 @@ public struct StructureResult: Codable, Sendable, Hashable {
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
     public var sessions: [Session]
+    /// The hab-side settings (app.md 20.5), in a host scope snapshot only. Absent from a hab without the settings capability.
+    public var settings: [Setting]?
 
     enum CodingKeys: String, CodingKey {
         case agents = "agents"
@@ -3633,15 +3754,17 @@ public struct StructureResult: Codable, Sendable, Hashable {
         case projects = "projects"
         case seq = "seq"
         case sessions = "sessions"
+        case settings = "settings"
     }
 
-    public init(agents: [AgentState]? = nil, host: HostInfo, panes: [Pane], projects: [Project], seq: UInt64, sessions: [Session]) {
+    public init(agents: [AgentState]? = nil, host: HostInfo, panes: [Pane], projects: [Project], seq: UInt64, sessions: [Session], settings: [Setting]? = nil) {
         self.agents = agents
         self.host = host
         self.panes = panes
         self.projects = projects
         self.seq = seq
         self.sessions = sessions
+        self.settings = settings
     }
 }
 
@@ -4254,6 +4377,10 @@ public enum HabMethods {
     public static let worktreeCreate = HabMethod<WorktreeCreateParams, WorktreeCreated>(name: "worktree.create")
     /// Start a worktree's setup script in a session now: the yes to a pending setup, or a rerun (spec 3.10).
     public static let worktreeSetup = HabMethod<WorktreeSetupParams, WorktreeSetupResult>(name: "worktree.setup")
+    /// Read every hab-side setting, or the named ones (app.md 20.5). Needs the settings capability.
+    public static let settingsGet = HabMethod<SettingsGetParams, SettingsResult>(name: "settings.get")
+    /// Write hab-side settings, all or nothing, each with the revision last seen (app.md 20.5). Needs the settings capability.
+    public static let settingsSet = HabMethod<SettingsSetParams, SettingsResult>(name: "settings.set")
     /// Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).
     public static let worktreeRemove = HabMethod<WorktreeRemoveParams, WorktreeRemoved>(name: "worktree.remove")
 }
@@ -4304,6 +4431,8 @@ public enum HabEvent: Sendable, Hashable {
     case noticeRaised(Notice)
     /// A session showed a file (content.show); the id is the item id. Ephemeral.
     case contentUpdated(ContentItem)
+    /// A hab-side setting changed: by a client or by a config read; the id is the setting id (app.md 20.5). Host scope only. Not ephemeral: the settings are in the host snapshot.
+    case settingsUpdated(SettingUpdated)
     /// A message this hab sent changed state; the id is the message id (mesh.md 6.5). Host scope only. Ephemeral.
     case channelMessage(ChannelRecord)
     /// Sent only to a peer link that dialed this hab, subscribed or not: something waits for the dialer, so it pulls now; the id is this hab's device id (mesh.md 4.2, 6.5). Ephemeral.
@@ -4331,6 +4460,7 @@ public enum HabEvent: Sendable, Hashable {
         case "catalog.updated": self = .catalogUpdated(try event.data.decode(CatalogUpdated.self))
         case "notice.raised": self = .noticeRaised(try event.data.decode(Notice.self))
         case "content.updated": self = .contentUpdated(try event.data.decode(ContentItem.self))
+        case "settings.updated": self = .settingsUpdated(try event.data.decode(SettingUpdated.self))
         case "channel.message": self = .channelMessage(try event.data.decode(ChannelRecord.self))
         case "mesh.changed": self = .meshChanged(try event.data.decode(MeshChanged.self))
         default: self = .unknown(type: event.type, data: event.data)

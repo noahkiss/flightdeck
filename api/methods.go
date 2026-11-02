@@ -120,6 +120,8 @@ var Methods = []Method{
 	{"worktree.list", "List a repository's working trees, the main one first (spec 3.10).", WorktreeListParams{}, WorktreeList{}},
 	{"worktree.create", "Make a worktree, copy the files .worktreeinclude names, and start its setup script in a session (spec 3.10).", WorktreeCreateParams{}, WorktreeCreated{}},
 	{"worktree.setup", "Start a worktree's setup script in a session now: the yes to a pending setup, or a rerun (spec 3.10).", WorktreeSetupParams{}, WorktreeSetupResult{}},
+	{"settings.get", "Read every hab-side setting, or the named ones (app.md 20.5). Needs the settings capability.", SettingsGetParams{}, SettingsResult{}},
+	{"settings.set", "Write hab-side settings, all or nothing, each with the revision last seen (app.md 20.5). Needs the settings capability.", SettingsSetParams{}, SettingsResult{}},
 	{"worktree.remove", "Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).", WorktreeRemoveParams{}, WorktreeRemoved{}},
 }
 
@@ -151,6 +153,7 @@ var Events = []EventDef{
 	{"catalog.updated", "A catalog this hab holds changed: its own or a peer's copy; the id is the device id (mesh.md 5.2). Host scope only. Ephemeral.", CatalogUpdated{}},
 	{"notice.raised", "A notice was raised (notice.raise); the id is the notice id. Ephemeral.", Notice{}},
 	{"content.updated", "A session showed a file (content.show); the id is the item id. Ephemeral.", ContentItem{}},
+	{"settings.updated", "A hab-side setting changed: by a client or by a config read; the id is the setting id (app.md 20.5). Host scope only. Not ephemeral: the settings are in the host snapshot.", SettingUpdated{}},
 	{"channel.message", "A message this hab sent changed state; the id is the message id (mesh.md 6.5). Host scope only. Ephemeral.", ChannelRecord{}},
 	{"mesh.changed", "Sent only to a peer link that dialed this hab, subscribed or not: something waits for the dialer, so it pulls now; the id is this hab's device id (mesh.md 4.2, 6.5). Ephemeral.", MeshChanged{}},
 }
@@ -183,7 +186,7 @@ var Enums = map[string][]string{
 	"BlockedKind":   {"permission", "question", "auth"},
 	"StateSource":   {"server", "hook", "osc", "screen", "spawn"},
 	"HookHealth":    {"missing"},
-	"ErrorKind":     {"not_found", "conflict", "unavailable", "revision_unsupported", "not_owner", "ticket_invalid", "invalid"},
+	"ErrorKind":     {"not_found", "conflict", "unavailable", "revision_unsupported", "not_owner", "ticket_invalid", "locked", "invalid"},
 	// Sets added for the clients' calls (spec 3.9).
 	"SendOrigin":      {"typed", "dictated", "voice"},
 	"ApprovalChoice":  {"allow", "deny", "answer"},
@@ -216,6 +219,8 @@ var Enums = map[string][]string{
 	// Sets added for the hab speech engine (voice.md).
 	"SpeechState":  {"absent", "downloading", "loading", "ready"},
 	"SpeechFormat": {"opus", "pcm16"},
+	// Sets added for hab-side settings (app.md 20.5).
+	"SettingSource": {"default", "client", "config"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per
@@ -249,5 +254,6 @@ var Translators = map[int]Translator{}
 // "speech" means the hab's speech engine is installed and turned on, so speech.prepare and
 // speech.transcribe work, though the model may still need its download (voice.md).
 // "attachments" means the attachment.* methods work and session.send takes attachment ids
-// (app.md 4.4).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments"}
+// (app.md 4.4). "settings" means settings.get, settings.set and the settings.updated event work,
+// and the host snapshot carries the settings (app.md 20.5).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings"}

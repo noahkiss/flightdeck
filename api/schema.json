@@ -30,7 +30,8 @@
     "content",
     "channels",
     "speech",
-    "attachments"
+    "attachments",
+    "settings"
   ],
   "methods": [
     {
@@ -1947,6 +1948,59 @@
       }
     },
     {
+      "name": "settings.get",
+      "summary": "Read every hab-side setting, or the named ones (app.md 20.5). Needs the settings capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "ids",
+          "description": "The settings to read. Absent: every hab-side setting. An id this hab does not know is left out of the result.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SettingsResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/SettingsGetParams"
+      }
+    },
+    {
+      "name": "settings.set",
+      "summary": "Write hab-side settings, all or nothing, each with the revision last seen (app.md 20.5). Needs the settings capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "values",
+          "description": "Rows to write, all or nothing. Any refused row refuses the call; error.data.id names the first refused row.",
+          "required": true,
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SettingWrite"
+            }
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SettingsResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/SettingsSetParams"
+      }
+    },
+    {
       "name": "worktree.remove",
       "summary": "Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).",
       "paramStructure": "by-name",
@@ -2147,6 +2201,13 @@
       "summary": "A session showed a file (content.show); the id is the item id. Ephemeral.",
       "data": {
         "$ref": "#/components/schemas/ContentItem"
+      }
+    },
+    {
+      "type": "settings.updated",
+      "summary": "A hab-side setting changed: by a client or by a config read; the id is the setting id (app.md 20.5). Host scope only. Not ephemeral: the settings are in the host snapshot.",
+      "data": {
+        "$ref": "#/components/schemas/SettingUpdated"
       }
     },
     {
@@ -4506,6 +4567,10 @@
           "hint": {
             "type": "string"
           },
+          "id": {
+            "type": "string",
+            "description": "On every settings.set error: the id of the first refused row (app.md 20.5)."
+          },
           "kind": {
             "$ref": "#/components/schemas/ErrorKind"
           },
@@ -4533,6 +4598,7 @@
           "revision_unsupported",
           "not_owner",
           "ticket_invalid",
+          "locked",
           "invalid"
         ]
       },
@@ -5935,6 +6001,124 @@
           "exited"
         ]
       },
+      "Setting": {
+        "type": "object",
+        "properties": {
+          "default": {
+            "description": "The hab's built-in value: the Balanced column (app.md 20.1)."
+          },
+          "id": {
+            "type": "string",
+            "description": "The setting id, such as confirm.start_elsewhere (app.md 20.3)."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Raised by one on each change; starts at 1. Compared only within an epoch (spec 3.5)."
+          },
+          "source": {
+            "$ref": "#/components/schemas/SettingSource",
+            "description": "default: no client wrote it and no config sets it. client: a client wrote it. config: the hab's config file, a flag or the environment sets it, and writes are refused with locked."
+          },
+          "value": {
+            "description": "The value the hab enforces now."
+          }
+        },
+        "required": [
+          "id",
+          "value",
+          "default",
+          "revision",
+          "source"
+        ]
+      },
+      "SettingSource": {
+        "type": "string",
+        "x-known-values": [
+          "default",
+          "client",
+          "config"
+        ]
+      },
+      "SettingUpdated": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/SettingSource"
+          },
+          "value": {}
+        },
+        "required": [
+          "value",
+          "source"
+        ]
+      },
+      "SettingWrite": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The setting's revision the client last saw. Any other revision refuses the call with conflict."
+          },
+          "value": {}
+        },
+        "required": [
+          "id",
+          "value",
+          "revision"
+        ]
+      },
+      "SettingsGetParams": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "description": "The settings to read. Absent: every hab-side setting. An id this hab does not know is left out of the result.",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "SettingsResult": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "settings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Setting"
+            }
+          }
+        },
+        "required": [
+          "seq",
+          "settings"
+        ]
+      },
+      "SettingsSetParams": {
+        "type": "object",
+        "properties": {
+          "values": {
+            "type": "array",
+            "description": "Rows to write, all or nothing. Any refused row refuses the call; error.data.id names the first refused row.",
+            "items": {
+              "$ref": "#/components/schemas/SettingWrite"
+            }
+          }
+        },
+        "required": [
+          "values"
+        ]
+      },
       "SetupMode": {
         "type": "string",
         "x-known-values": [
@@ -6122,6 +6306,13 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Session"
+            }
+          },
+          "settings": {
+            "type": "array",
+            "description": "The hab-side settings (app.md 20.5), in a host scope snapshot only. Absent from a hab without the settings capability.",
+            "items": {
+              "$ref": "#/components/schemas/Setting"
             }
           }
         },

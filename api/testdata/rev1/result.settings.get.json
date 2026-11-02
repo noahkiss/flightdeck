@@ -1,0 +1,28 @@
+{
+  "seq": 3,
+  "settings": [
+    {
+      "default": {
+        "default": 6,
+        "x_unknown_field": "later"
+      },
+      "id": "id-4",
+      "revision": 7,
+      "source": "config",
+      "value": {
+        "value": 5,
+        "x_unknown_field": "later"
+      },
+      "x_unknown_field": "later"
+    }
+  ],
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

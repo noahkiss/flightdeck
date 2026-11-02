@@ -125,6 +125,7 @@ type Structure struct {
 	Sessions []Session    `json:"sessions"`
 	Panes    []Pane       `json:"panes"`
 	Agents   []AgentState `json:"agents,omitempty" doc:"The current agent state of each pane that has one (harness-adapters.md, State event model). Absent from a hab without the agent-state capability."`
+	Settings []Setting    `json:"settings,omitempty" doc:"The hab-side settings (app.md 20.5), in a host scope snapshot only. Absent from a hab without the settings capability."`
 }
 
 // --- Agent state (docs/specs/harness-adapters.md, State event model) ---
@@ -403,6 +404,7 @@ type ErrorData struct {
 	Seq    uint64         `json:"seq"`
 	Server *RevisionRange `json:"server,omitempty" doc:"Server revision range, on revision_unsupported."`
 	Client *RevisionRange `json:"client,omitempty" doc:"Client revision range, on revision_unsupported."`
+	ID     string         `json:"id,omitempty" doc:"On every settings.set error: the id of the first refused row (app.md 20.5)."`
 }
 
 // --- Data connection (spec 5) ---
