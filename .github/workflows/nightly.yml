@@ -1,0 +1,86 @@
+# The slow Linux suites, once a night (docs/specs/ci-release.md 3.6): the holderproto fuzz
+# targets, the 200-cycle restart loop of core test 1, and core tests 2 and 13 under systemd
+# (scripts/service-check.sh). A night when main has not moved since the last passing run costs
+# one short job. A dispatch always runs.
+#
+# go-ci is pinned to the branch of noahkiss/workflows#15 until it merges; then back to @main.
+name: Nightly
+
+on:
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run: ${{ steps.guard.outputs.run }}
+      ghostty_key: ${{ steps.key.outputs.ghostty_key }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: libghostty cache key
+        id: key
+        run: |
+          set -euo pipefail
+          commit=$(sed -n 's/^GHOSTTY_COMMIT := //p' Makefile)
+          zig=$(sed -n 's/^zig = "\(.*\)"$/\1/p' mise.toml)
+          [ -n "$commit" ] && [ -n "$zig" ] || { echo "::error::cannot read GHOSTTY_COMMIT or the zig pin"; exit 1; }
+          echo "ghostty_key=libghostty-${commit}-zig${zig}" >> "$GITHUB_OUTPUT"
+
+      - name: Skip when main has not moved
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          run=true
+          if [ "$EVENT" = schedule ]; then
+            last=$(gh run list -R "$REPO" --workflow nightly.yml --branch main --status success --limit 1 --json headSha --jq '.[0].headSha // ""') || last=""
+            if [ "$last" = "$SHA" ]; then
+              echo "main is still at $SHA, which last night's run passed; nothing to do."
+              run=false
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+  linux:
+    name: Nightly suites
+    needs: plan
+    if: needs.plan.outputs.run == 'true'
+    permissions:
+      contents: read
+    uses: noahkiss/workflows/.github/workflows/go-ci.yml@go-ci-runner-mise-cache
+    with:
+      fmt: false
+      mise: true
+      cache-path: build/libghostty-vt
+      cache-key: ${{ needs.plan.outputs.ghostty_key }}-Linux-X64
+      cancel-in-progress: false
+      # A raw `-tags ghostty` command needs the Makefile's pkg-config path to find libghostty.
+      # service-check needs a systemd user manager, so the runner user gets lingering first.
+      commands: |
+        make libghostty
+        make fuzz FUZZTIME=30s
+        PKG_CONFIG_PATH="$PWD/build/libghostty-vt/share/pkgconfig" CGO_ENABLED=1 GFF_TEST_TIMEOUT_SCALE=3 GFF_RESTART_LOOP=200 go test -tags ghostty -run TestRestartLoop ./internal/link/
+        sudo loginctl enable-linger "$USER"
+        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+        for _ in $(seq 30); do [ -S "$XDG_RUNTIME_DIR/bus" ] && break; sleep 1; done
+        scripts/service-check.sh
+      timeout-minutes: 40

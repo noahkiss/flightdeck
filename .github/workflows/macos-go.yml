@@ -1,0 +1,99 @@
+# Go on macOS (docs/specs/ci-release.md 3.5): macOS PTYs and launchd differ from Linux, so the
+# holder packages run here when they change, plus a nightly run (owner decision, 2026-10-31).
+# A change: the holder group under -race three times, then every test with libghostty. The
+# nightly run adds core tests 2 and 13 under launchd (scripts/service-check.sh); it is skipped
+# when main has not moved since the last passing nightly run.
+#
+# go-ci is pinned to the branch of noahkiss/workflows#15 (inputs runner, mise, cache-path,
+# cache-key, cancel-in-progress) until it merges; then back to @main.
+name: macOS Go
+
+on:
+  push:
+    branches: [main]
+    paths: &holder
+      - 'internal/holder/**'
+      - 'internal/holderproto/**'
+      - 'internal/holderclient/**'
+      - 'internal/holderreg/**'
+      - 'internal/link/**'
+      - 'internal/service/**'
+      - 'internal/grants/**'
+      - 'cmd/gff-hab-holder/**'
+      - 'scripts/service-check.sh'
+      - 'scripts/macos-bundle.sh'
+      - '.github/workflows/macos-go.yml'
+  pull_request:
+    paths: *holder
+  schedule:
+    - cron: '47 7 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: macos-go-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
+permissions: {}
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run: ${{ steps.guard.outputs.run }}
+      ghostty_key: ${{ steps.key.outputs.ghostty_key }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: libghostty cache key
+        id: key
+        run: |
+          set -euo pipefail
+          commit=$(sed -n 's/^GHOSTTY_COMMIT := //p' Makefile)
+          zig=$(sed -n 's/^zig = "\(.*\)"$/\1/p' mise.toml)
+          [ -n "$commit" ] && [ -n "$zig" ] || { echo "::error::cannot read GHOSTTY_COMMIT or the zig pin"; exit 1; }
+          echo "ghostty_key=libghostty-${commit}-zig${zig}" >> "$GITHUB_OUTPUT"
+
+      - name: Skip a nightly run when main has not moved
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          run=true
+          if [ "$EVENT" = schedule ]; then
+            last=$(gh run list -R "$REPO" --workflow macos-go.yml --event schedule --status success --limit 1 --json headSha --jq '.[0].headSha // ""') || last=""
+            if [ "$last" = "$SHA" ]; then
+              echo "main is still at $SHA, which the last nightly run passed; nothing to do."
+              run=false
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+  go:
+    name: Go on macOS
+    needs: plan
+    if: needs.plan.outputs.run == 'true'
+    permissions:
+      contents: read
+    uses: noahkiss/workflows/.github/workflows/go-ci.yml@go-ci-runner-mise-cache
+    with:
+      runner: macos-26
+      fmt: false
+      mise: true
+      cache-path: build/libghostty-vt
+      cache-key: ${{ needs.plan.outputs.ghostty_key }}-macOS-ARM64
+      cancel-in-progress: ${{ github.event_name != 'schedule' && github.ref != 'refs/heads/main' }}
+      commands: |
+        GFF_TEST_TIMEOUT_SCALE=3 go test -race -count=3 ./internal/holder/... ./internal/holderproto/... ./internal/holderclient/... ./internal/holderreg/... ./internal/link/... ./internal/service/... ./internal/grants/... ./cmd/gff-hab-holder/...
+        GFF_TEST_TIMEOUT_SCALE=3 make test
+        ${{ github.event_name == 'schedule' && 'scripts/service-check.sh' || '' }}
+      timeout-minutes: 60
