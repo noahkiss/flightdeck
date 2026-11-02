@@ -278,7 +278,9 @@ i=0
 while :; do
 	i=$((i + 1))
 	echo "tick $i"
-	echo $i > "$1/count"
+	# A rename, so a reader never sees the file truncated and not yet written.
+	echo $i > "$1/count.new"
+	mv -f "$1/count.new" "$1/count"
 	sleep 0.1
 done
 EOF
