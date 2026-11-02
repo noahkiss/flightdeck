@@ -673,8 +673,11 @@ nothing on top beyond the manual.
 ### 7.3 Harness and host
 
 - Any supported harness can run Capcom: it needs MCP tools, a resume command and our hooks.
-  Claude Code, Codex and opencode all qualify. Which one is the default is a `/consensus` item
-  in the Part 9 plan; this spec does not depend on the answer.
+  Claude Code, Codex and opencode all qualify. Decided (coordinator, 2026-11-01, in place of a
+  `/consensus` run): Claude Code is the default behind `[capcom] harness`, and Codex and
+  opencode may be set there. Reason: one config key with a sensible default, and Claude Code has
+  the hooks, MCP and resume paths this stage was built against. The host stays the user's choice
+  (11, O1).
 - **The user assigns the home host** and may re-assign it at any time (owner, 2026-11-01). Two
   ways, same effect: `gff-hab capcom assign <peer label>` (or `self`), and a host picker in the
   app's Capcom settings. At first run the app asks, and suggests a host marked always on, else
@@ -714,7 +717,7 @@ works for Capcom sessions. CLI: `gff-hab capcom assign <peer label|self>` and
 | MCP entry | Server `flightdeck`, command gff-hab's own path with links resolved, argument `mcp`. At every `serve` start gff-hab writes each Capcom folder's manual and settings again with its own path | Stage 2 builds `gff-hab mcp`. On macOS an install retires the build directory an earlier gff-hab ran from; the rewrite at start keeps a plain-terminal resume and an MCP reconnect working |
 | Rewrite | Manual and settings are written at every start and resume, through a temporary file and a rename; a link in their place is replaced, never written through. Other files stay | 9: a hand edit is undone; attachments are the user's |
 | Read-scope seam | `capcom.ReadScope{Deny}` goes to the writer. Claude Code gets `Read(...)` deny rules from it; Codex and opencode get none yet. gff-hab passes an empty scope until the read-scope stage | 5.3: a cheap guard on top of the read tools |
-| Harness | `[capcom] harness` in the hab's config file: `claude` (default), `codex` or `opencode`. Read at each new start; an unknown word is logged and the default runs. A resume keeps the harness the session started with | One key, so the default can change after the `/consensus` |
+| Harness | `[capcom] harness` in the hab's config file: `claude` (default), `codex` or `opencode`. Read at each new start; an unknown word is logged and the default runs. A resume keeps the harness the session started with | Decided (7.3): one config key with a sensible default; Claude Code has the hooks, MCP and resume paths this stage was built against |
 | Start and resume | Claude Code starts with `--session-id <uuid>` and resumes with `--resume <uuid>`, so the resume id is known at once. Claude Code writes no transcript before the first message, so when the transcript reader finds none for the id, the resume starts again with `--session-id <same uuid>`. Codex and opencode start plain; their resume id is taken from the pane's agent state (the native session id) and saved. With none, Codex resumes the folder's latest (`codex resume --last`, which filters by folder) and opencode starts fresh (it files folders outside git under one global project, so `--continue` could pick another folder's session). Codex and opencode go through `session.create`'s harness start (`--no-daemon`, the opencode wrapper) | Only the transcript reader's own lookup is used; nothing in the user's harness folders is written |
 | Session record | `kind: capcom` and `dir` (the folder) on the session; name `capcom`, then `capcom-2` and on | Clients label it, and show the folder in its details for a plain-terminal resume |
 | Standing conversation | `capcom.open` returns the standing session when it runs, resumes it when it exited, and starts one when there is none or its record was closed. `new` starts a fresh one, which becomes the standing conversation | The last conversation the user chose is the one clients open by default |
