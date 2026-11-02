@@ -959,10 +959,10 @@ public actor FakeHab {
                 capcomOpens.append(p)
                 // Not the home host (capcom.md 7.6): the real hab names the home, or says to assign one.
                 guard let home = capcomHome.home else {
-                    throw Failure(kind: .unavailable, hint: "no Capcom home host is assigned; run gff-hab capcom assign")
+                    throw Failure(kind: .unavailable, hint: "no host runs Capcom yet; assign one with gff-hab capcom assign <peer label|self>")
                 }
                 guard home == deviceID else {
-                    throw Failure(kind: .unavailable, hint: "Capcom runs on \(capcomPeers[home] ?? home); open it there")
+                    throw Failure(kind: .unavailable, hint: "Capcom runs on \(capcomPeers[home] ?? home) (assignment \(capcomHome.assignment)), not on this host")
                 }
                 let refs = p.context ?? []
                 guard refs.count <= 8 else { throw Failure(kind: .invalid, hint: "at most 8 context items") }
