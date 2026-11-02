@@ -91,17 +91,24 @@ func (c *capcomService) addPending(session string, items []capcom.Item) ([]api.C
 // answer; a failed save keeps the item.
 func (c *capcomService) Detach(p api.CapcomDetachParams) (api.CapcomAttached, error) {
 	host := p.Host
+	hosts := []string{host}
 	if c.ownHost(host) {
-		host = c.host
+		host, hosts = c.host, []string{c.host}
 	} else if c.links != nil {
 		// A peer's notice was attached by its device id, as a push names it (8.5); the item
-		// holds the label notice.get answered with.
+		// holds the label notice.get answered with. Each label sharing the id is tried, online
+		// links first, as notice.get prefers them.
+		var on, off []string
 		for _, l := range c.links() {
-			if l.DeviceID != "" && l.DeviceID == host {
-				host = l.Label
-				break
+			switch {
+			case l.DeviceID == "" || l.DeviceID != host:
+			case l.Online:
+				on = append(on, l.Label)
+			default:
+				off = append(off, l.Label)
 			}
 		}
+		hosts = append(append(hosts, on...), off...)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -110,8 +117,12 @@ func (c *capcomService) Detach(p api.CapcomDetachParams) (api.CapcomAttached, er
 		if rec.ID != p.Session {
 			continue
 		}
-		gone := capcom.Item{Kind: string(p.Kind), Ref: p.Ref, Host: host}
-		left := capcom.Drop(rec.Pending, []capcom.Item{gone})
+		left := rec.Pending
+		for _, h := range hosts {
+			if left = capcom.Drop(rec.Pending, []capcom.Item{{Kind: string(p.Kind), Ref: p.Ref, Host: h}}); len(left) < len(rec.Pending) {
+				break
+			}
+		}
 		if len(left) == len(rec.Pending) {
 			return api.CapcomAttached{}, control.Errorf(api.ErrorKindNotFound, "no %s %s from %s waits for session %s", p.Kind, p.Ref, host, p.Session)
 		}

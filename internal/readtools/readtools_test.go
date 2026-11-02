@@ -797,16 +797,20 @@ func TestNoticeGetByDeviceID(t *testing.T) {
 		list: []api.Peer{
 			{Label: "b", DeviceID: "dev-b", State: api.PeerStateOnline},
 			{Label: "b-again", DeviceID: "dev-b", State: api.PeerStateOnline},
-			{Label: "c", State: api.PeerStateOnline}, // not pinned yet: its link knows the id
+			{Label: "c", State: api.PeerStateOnline},                                             // not pinned yet: its link knows the id
+			{Label: "d-old", DeviceID: "dev-d", State: api.PeerStateOffline, Reason: "no route"}, // an old endpoint
+			{Label: "d-lan", DeviceID: "dev-d", State: api.PeerStateOnline},
 		},
 		links: []Link{
 			{Label: "b", DeviceID: "dev-b", Online: true, Caps: []string{Capability}, Caller: peerCaller{b}},
 			{Label: "b-again", DeviceID: "dev-b", Online: true, Caps: []string{Capability}, Caller: peerCaller{b}},
 			{Label: "c", DeviceID: "dev-c", Online: true, Caps: []string{Capability}, Caller: peerCaller{b}},
+			{Label: "d-old", DeviceID: "dev-d"},
+			{Label: "d-lan", DeviceID: "dev-d", Online: true, Caps: []string{Capability}, Caller: peerCaller{b}},
 		},
 	}})
 	ctx := context.Background()
-	for host, want := range map[string]string{"dev-b": "b", "b": "b", "dev-c": "c", "dev-a": "boxa", "self": "boxa"} {
+	for host, want := range map[string]string{"dev-b": "b", "b": "b", "dev-c": "c", "dev-a": "boxa", "self": "boxa", "dev-d": "d-lan"} {
 		r, err := a.Notice(ctx, false, api.NoticeGetParams{ID: "n1", Host: host})
 		if err != nil || r.Host != want {
 			t.Errorf("host %s: %v %+v, want host %s", host, err, r, want)

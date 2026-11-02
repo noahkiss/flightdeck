@@ -105,7 +105,8 @@ type target struct {
 // targets picks the hosts for a read: host "" is every host when all is set, else this hab.
 // A host is a peer label, a peer's device id, this hab's host id or device id, or self: a
 // push names its hab by device id, since the hab that reads it may know that hab by another
-// label (capcom.md 8.5). local answers from this hab only (a call over a peer link: one hop).
+// label (capcom.md 8.5). A device id that two labels share picks the first label, in peer-file
+// order, whose link can answer, else the first label. local answers from this hab only (a call over a peer link: one hop).
 func (s *Service) targets(host string, all, local bool) ([]target, error) {
 	self := target{host: api.ReadHost{Label: s.cfg.Host, DeviceID: s.cfg.Self, Own: true, State: api.ReadHostStateOk}}
 	if local || host == s.cfg.Host || host == "self" || (host != "" && host == s.cfg.Self) || (host == "" && !all) {
@@ -132,10 +133,9 @@ func (s *Service) targets(host string, all, local bool) ([]target, error) {
 		if host != "" && p.Label != host && !byID {
 			continue
 		}
-		if byID && found {
-			continue // one hab under two labels: the first answers
+		if byID && found && (len(out) == 0 || out[len(out)-1].caller != nil) {
+			continue // one hab under two labels: the first that can answer does
 		}
-		found = true
 		t := target{host: api.ReadHost{Label: p.Label, DeviceID: p.DeviceID}}
 		switch {
 		case !ok || !l.Online || l.Caller == nil:
@@ -157,6 +157,13 @@ func (s *Service) targets(host string, all, local bool) ([]target, error) {
 				t.host.DeviceID = l.DeviceID
 			}
 		}
+		if byID && found {
+			if t.caller != nil {
+				out[len(out)-1] = t // a label that can answer beats an earlier offline one
+			}
+			continue
+		}
+		found = true
 		out = append(out, t)
 	}
 	if host != "" && !found {

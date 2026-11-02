@@ -439,7 +439,10 @@ func TestCapcomContextSaveFails(t *testing.T) {
 // is held under the peer's label; a detach by the same device id finds it (capcom.md 8.5).
 func TestCapcomDetachByDeviceID(t *testing.T) {
 	cc := &capcomService{state: t.TempDir(), host: "boxa", self: "dev-a", logf: t.Logf,
-		links: func() []catalog.Link { return []catalog.Link{{Label: "bee", DeviceID: "dev-b"}} }}
+		links: func() []catalog.Link {
+			// One hab under two labels; the item holds the online one, which comes second.
+			return []catalog.Link{{Label: "bee-old", DeviceID: "dev-b"}, {Label: "bee", DeviceID: "dev-b", Online: true}}
+		}}
 	cc.st.Sessions = []capcom.Session{{ID: "s1", Pending: []capcom.Item{{Kind: capcom.KindNotification, Ref: "n1", Host: "bee"}}}}
 	res, err := cc.Detach(api.CapcomDetachParams{Session: "s1", Kind: "notification", Ref: "n1", Host: "dev-b"})
 	if err != nil || len(res.Pending) != 0 {
