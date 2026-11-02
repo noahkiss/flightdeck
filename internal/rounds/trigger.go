@@ -179,6 +179,31 @@ func PresetName(cron string) string {
 	return ""
 }
 
+// TriggerWords is a trigger in plain words: "every 1h", "cron 0 9 * * 1-5 in Europe/Berlin",
+// "once at <time>" or "by hand". A preset of an hour or more gives its zone too: its slots fall
+// at clock times in that zone. kind is the trigger kind's word; an unknown one is given back.
+// The catalog's rounds section and every client use these words (rounds.md 10.3).
+func TriggerWords(kind, cron, zone, at string) string {
+	switch kind {
+	case "cron":
+		if p := PresetName(cron); p != "" {
+			if strings.HasSuffix(p, "m") || zone == "" {
+				return "every " + p
+			}
+			return "every " + p + " in " + zone
+		}
+		if zone == "" {
+			return "cron " + cron
+		}
+		return "cron " + cron + " in " + zone
+	case "once":
+		return "once at " + at
+	case "manual":
+		return "by hand"
+	}
+	return kind
+}
+
 // maxSpan bounds a preset span well above the longest preset, so the multiplication cannot
 // overflow and a long span is still refused with the nearest presets.
 const maxSpan = 1000 * 24 * time.Hour

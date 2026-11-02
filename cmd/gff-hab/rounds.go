@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -1018,28 +1017,9 @@ func (s *roundsService) CatalogSection() []api.CatalogRound {
 	return out
 }
 
-// triggerWords is a trigger in plain words: "every 1h", "cron 0 9 * * 1-5 in Europe/Berlin",
-// "once at <time>" or "by hand". A preset of an hour or more gives its zone too: its slots fall
-// at clock times in that zone.
+// triggerWords is a trigger in plain words (rounds.TriggerWords).
 func triggerWords(t api.RoundTrigger) string {
-	switch t.Kind {
-	case api.RoundTriggerKindCron:
-		if p := rounds.PresetName(t.Cron); p != "" {
-			if strings.HasSuffix(p, "m") || t.Zone == "" {
-				return "every " + p
-			}
-			return "every " + p + " in " + t.Zone
-		}
-		if t.Zone == "" {
-			return "cron " + t.Cron
-		}
-		return "cron " + t.Cron + " in " + t.Zone
-	case api.RoundTriggerKindOnce:
-		return "once at " + t.At
-	case api.RoundTriggerKindManual:
-		return "by hand"
-	}
-	return string(t.Kind)
+	return rounds.TriggerWords(string(t.Kind), t.Cron, t.Zone, t.At)
 }
 
 // List returns every round, by name: the snapshot's rounds and round.list.
