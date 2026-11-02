@@ -128,7 +128,7 @@ info = ["cpu", "temp"]
 		p + `:9: [keys.session] x: action "open" does not work in session mode`,
 		p + `:10: [keys.session] ctrl-m:`,
 		p + `:14: [keys.normal] a: normal mode takes only ctrl-<key>`,
-		p + `: [keys.nope]: unknown mode`,
+		p + `:16: [keys.nope]: unknown mode`,
 		`unknown info item "temp"`,
 	} {
 		if !slices.ContainsFunc(problems, func(s string) bool { return strings.Contains(s, want) }) {

@@ -173,9 +173,9 @@ func (k *keyReader) feed(p []byte) []keyEvent {
 			continue
 		}
 		if k.mode.command() {
-			if c, ok := altByte(p[i:]); ok && k.km.lookup(k.mode, altName(c)) != "" {
-				// ESC and a character: an Alt key the mode binds. Unbound, ESC stays a lone Esc.
-				k.take(int(c))
+			if c, ok := altByte(p[i:]); ok {
+				// ESC and a character in one read: one Alt key, bound or not, as its kitty
+				// form is. A legacy key sends no release, so the reader takes nothing.
 				if ev, ok := k.act(altName(c)); ok {
 					evs = append(evs, ev)
 				}
@@ -210,8 +210,7 @@ func (k *keyReader) feed(p []byte) []keyEvent {
 			continue
 		}
 		if c, ok := altByte(p[i:]); ok && k.alts[c] {
-			flush(i)
-			k.take(int(c))
+			flush(i) // a legacy key sends no release: nothing to take
 			if ev, ok := k.act(altName(c)); ok {
 				evs = append(evs, ev)
 			}

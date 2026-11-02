@@ -255,11 +255,12 @@ func entersMode(act string) Mode {
 }
 
 // bindShared binds key k to act in every shared mode, but not a mode-entry action in the mode
-// it enters: there the key that entered the mode, pressed again, sends itself (keyReader.act).
-// act "" unbinds k in every shared mode.
+// it enters: there k is unbound, so the key that entered the mode, pressed again, sends itself
+// (keyReader.act). act "" unbinds k in every shared mode.
 func (km *Keymap) bindShared(k, act string) {
 	for _, m := range sharedModes {
 		if act != "" && entersMode(act) == m {
+			km.bind(m, k, "")
 			continue
 		}
 		km.bind(m, k, act)
@@ -549,6 +550,8 @@ const (
 	// oldSessionName is the earlier name of session mode and of the action that enters it. The
 	// config still takes it, with a problem that names the new one.
 	oldSessionName = "prefix"
+	// oldClearDefaults is the earlier spelling of [keys] clear-defaults, as defaults = false.
+	oldClearDefaults = "defaults"
 )
 
 // modeNamed is the mode a [keys.<name>] table binds: the earlier name prefix is session mode.
@@ -596,6 +599,13 @@ func LoadSettings(path string) (Settings, []string, error) {
 		return s, nil, fmt.Errorf("%s: %w", path, err)
 	}
 	var problems []string
+	// atTable is the file and the line of a table's header, or the file alone.
+	atTable := func(table string) string {
+		if n := tableLine(b, table); n > 0 {
+			return fmt.Sprintf("%s:%d", path, n)
+		}
+		return path
+	}
 	where := func(table, key string) string {
 		if n := keyLine(b, table, key); n > 0 {
 			return fmt.Sprintf("%s:%d: [%s] %s", path, n, table, key)
@@ -628,9 +638,21 @@ func LoadSettings(path string) (Settings, []string, error) {
 	if p, ok := keys[clearDefaults]; ok && cleared("keys", p) {
 		s.Keymap = &Keymap{modes: map[Mode][]Binding{}}
 	}
+	// The earlier spelling, defaults = false, still clears, with a problem naming the new one.
+	if p, ok := keys[oldClearDefaults]; ok {
+		var on bool
+		if err := md.PrimitiveDecode(p, &on); err != nil {
+			problems = append(problems, where("keys", oldClearDefaults)+": want true or false")
+		} else {
+			problems = append(problems, where("keys", oldClearDefaults)+": the switch is now clear-defaults; write clear-defaults = true")
+			if !on {
+				s.Keymap = &Keymap{modes: map[Mode][]Binding{}}
+			}
+		}
+	}
 	names := make([]string, 0, len(keys))
 	for n := range keys {
-		if n != clearDefaults {
+		if n != clearDefaults && n != oldClearDefaults {
 			names = append(names, n)
 		}
 	}
@@ -655,18 +677,14 @@ func LoadSettings(path string) (Settings, []string, error) {
 		tname := "keys." + n
 		switch {
 		case md.Type("keys", n) != "Hash":
-			if n == "defaults" {
-				problems = append(problems, where("keys", n)+": unknown key; write clear-defaults = true to start from no bindings")
-			} else {
-				problems = append(problems, where("keys", n)+": unknown key; [keys] takes clear-defaults, a shared table and a table per mode")
-			}
+			problems = append(problems, where("keys", n)+": unknown key; [keys] takes clear-defaults, a shared table and a table per mode")
 			continue
 		case n != sharedTable && n != oldSessionName && !slices.Contains(Modes, Mode(n)):
-			problems = append(problems, fmt.Sprintf("%s: [%s]: unknown mode; modes are %s; [keys.shared] binds into %s", path, tname, modeList(), sharedList()))
+			problems = append(problems, fmt.Sprintf("%s: [%s]: unknown mode; modes are %s; [keys.shared] binds into %s", atTable(tname), tname, modeList(), sharedList()))
 			continue
 		}
 		if n == oldSessionName {
-			problems = append(problems, fmt.Sprintf("%s: [%s]: the mode is now session; write [keys.session]", path, tname))
+			problems = append(problems, fmt.Sprintf("%s: [%s]: the mode is now session; write [keys.session]", atTable(tname), tname))
 		}
 		t := table(keys[n], tname)
 		tables[n] = t
@@ -862,6 +880,20 @@ func modeList() string {
 		ms = append(ms, string(m))
 	}
 	return strings.Join(ms, ", ")
+}
+
+// tableLine finds the 1-based line of the header [table] in a TOML file, or 0.
+func tableLine(b []byte, table string) int {
+	for i, l := range strings.Split(string(b), "\n") {
+		l = strings.TrimSpace(l)
+		if !strings.HasPrefix(l, "[") || strings.HasPrefix(l, "[[") {
+			continue
+		}
+		if j := strings.IndexByte(l, ']'); j >= 0 && strings.TrimSpace(l[1:j]) == table {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 // keyLine finds the 1-based line of key in [table] of a TOML file, or 0. It reads tables and

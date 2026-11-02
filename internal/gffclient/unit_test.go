@@ -94,7 +94,9 @@ func TestKeyReader(t *testing.T) {
 		{"prefix twice sends it", []string{"\x1c\x1c"}, []keyEvent{pre, a(actSend, `ctrl-\`)}},
 		{"split after prefix", []string{"a\x1c", "o"}, []keyEvent{d("a"), pre, a(actFocusNext, "o")}},
 		{"tab after prefix", []string{"\x1c\t"}, []keyEvent{pre, a(actFocusNext, "tab")}},
-		{"esc cancels", []string{"\x1c\x1bx"}, []keyEvent{pre, a(actBack, "esc"), d("x")}},
+		{"esc cancels", []string{"\x1c\x1b", "x"}, []keyEvent{pre, a(actBack, "esc"), d("x")}},
+		// ESC and a character in one read are one Alt key; unbound, it cancels the prefix.
+		{"alt key after the prefix", []string{"\x1c\x1bxy"}, []keyEvent{pre, d("y")}},
 		{"unbound key cancels", []string{"\x1c\x01x"}, []keyEvent{pre, d("x")}},
 		{"kitty prefix", []string{"\x1b[92;5ur"}, []keyEvent{pre, a(actRedraw, "r")}},
 		{"kitty prefix split", []string{"q\x1b[9", "2;5", ":1u", "\x1b[100u"}, []keyEvent{d("q"), pre, a(actDetach, "d")}},

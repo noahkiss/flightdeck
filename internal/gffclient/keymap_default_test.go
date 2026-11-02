@@ -77,7 +77,8 @@ func TestDefaultKeymap(t *testing.T) {
 		{"kitty alt shift passes", "\x1b[104;4u", []keyEvent{d("\x1b[104;4u")}, ModeNormal},
 		{"alt keys keep pane mode", "\x10\x1bl\x1b[107;3ux", []keyEvent{a(actPaneMode, "ctrl-p"), a(actFocusRight, "alt-l"),
 			a(actFocusUp, "alt-k"), a(actCloseView, "x")}, ModeNormal},
-		{"an unbound alt key in pane mode is Esc", "\x10\x1bfx", []keyEvent{a(actPaneMode, "ctrl-p"), a(actBack, "esc"), d("fx")}, ModeNormal},
+		{"an unbound alt key in pane mode goes nowhere", "\x10\x1bfx", []keyEvent{a(actPaneMode, "ctrl-p"), a(actCloseView, "x")}, ModeNormal},
+		{"an unbound alt key cancels session mode", "\x0f\x1bfx", []keyEvent{a(actSession, "ctrl-o"), d("x")}, ModeNormal},
 		{"kitty alt f in tab mode is no key", "\x14\x1b[102;3u", []keyEvent{a(actTabMode, "ctrl-t")}, ModeTab},
 		{"locked passes alt keys", "\x07\x1bh\x1b[104;3u\x07", []keyEvent{a(actLock, "ctrl-g"), d("\x1bh\x1b[104;3u"), a(actUnlock, "ctrl-g")}, ModeNormal},
 		{"a leader twice sends it", "\x10\x10\x14\x14\x0f\x0fx", []keyEvent{a(actPaneMode, "ctrl-p"), a(actSend, "ctrl-p"),
@@ -152,7 +153,22 @@ clear-defaults = true
 		t.Errorf("got %q, want %q", evs, want)
 	}
 
-	// [keys] clear-defaults drops every shipped key; the old spelling says what to write.
+	// A shared mode key leaves the mode it enters with the key unbound, so the key sends itself
+	// there: no stale default (tab mode's Ctrl+P = pane-mode) survives.
+	s, problems, _ = LoadSettings(writeConfig(t, "[keys.shared]\n\"ctrl-p\" = \"tab-mode\"\n"))
+	if len(problems) != 0 {
+		t.Errorf("problems %q", problems)
+	}
+	if a := s.Keymap.lookup(ModeTab, "ctrl-p"); a != "" {
+		t.Errorf("tab ctrl-p = %q, want unbound", a)
+	}
+	evs = newKeyReader(s.Keymap).feed([]byte("\x10\x10"))
+	if want := []keyEvent{{act: actTabMode, key: "ctrl-p"}, {act: actSend, key: "ctrl-p"}}; !reflect.DeepEqual(evs, want) {
+		t.Errorf("ctrl-p twice: %q, want %q", evs, want)
+	}
+
+	// [keys] clear-defaults drops every shipped key; the old spelling still does, with a
+	// problem that says what to write.
 	s, problems, _ = LoadSettings(writeConfig(t, "[keys]\nclear-defaults = true\n[keys.shared]\n\"ctrl-a\" = \"session-mode\"\n[keys.session]\nd = \"detach\"\n[keys.sidebar]\nesc = \"back\"\n"))
 	if len(problems) != 0 {
 		t.Errorf("problems %q", problems)
@@ -162,7 +178,7 @@ clear-defaults = true
 		t.Errorf("cleared keymap %q", got)
 	}
 	s, problems, _ = LoadSettings(writeConfig(t, "[keys]\ndefaults = false\n"))
-	if !hasProblem(problems, ":2: [keys] defaults: unknown key; write clear-defaults = true") || s.Keymap.lookup(ModeNormal, "ctrl-p") != actPaneMode {
+	if !hasProblem(problems, ":2: [keys] defaults: the switch is now clear-defaults; write clear-defaults = true") || s.Keymap.lookup(ModeNormal, "ctrl-p") != "" {
 		t.Errorf("old defaults switch: %q", problems)
 	}
 	if _, problems, _ = LoadSettings(writeConfig(t, "[keys.tab]\nclear-defaults = \"yes\"\n")); !hasProblem(problems, ":2: [keys.tab] clear-defaults: want true or false") {

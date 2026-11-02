@@ -34,7 +34,8 @@ func TestKeymapNoTraps(t *testing.T) {
 	if !hasProblem(problems, "no key leaves pane mode; Esc now does") {
 		t.Errorf("pane with Esc and Enter bound: %q", problems)
 	}
-	if evs := newKeyReader(s.Keymap).feed([]byte("\x10\x1bx")); !reflect.DeepEqual(evs, []keyEvent{
+	k := newKeyReader(s.Keymap)
+	if evs := append(k.feed([]byte("\x10\x1b")), k.feed([]byte("x"))...); !reflect.DeepEqual(evs, []keyEvent{
 		{act: actPaneMode, key: "ctrl-p"}, {act: actBack, key: "esc"}, {data: []byte("x")}}) {
 		t.Errorf("no way out of pane mode: %q", evs)
 	}
@@ -68,7 +69,11 @@ func TestEscLeavesWhenUnbound(t *testing.T) {
 	if len(problems) != 0 {
 		t.Errorf("problems %q", problems)
 	}
-	evs := newKeyReader(s.Keymap).feed([]byte("\x10\x1bx\x14\rx"))
+	k := newKeyReader(s.Keymap)
+	var evs []keyEvent
+	for _, chunk := range []string{"\x10\x1b", "x\x14\rx"} { // Esc alone in its read
+		evs = append(evs, k.feed([]byte(chunk))...)
+	}
 	want := []keyEvent{{act: actPaneMode, key: "ctrl-p"}, {data: []byte("x")},
 		{act: actTabMode, key: "ctrl-t"}, {data: []byte("x")}}
 	if !reflect.DeepEqual(evs, want) {

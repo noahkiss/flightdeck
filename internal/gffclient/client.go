@@ -699,6 +699,23 @@ func (c *client) focused() *view {
 	return t.views[min(t.focus, len(t.views)-1)]
 }
 
+// keyBytes is what a send binding types for its key: a Ctrl key's byte, or an Alt key in its
+// legacy form, ESC and the character. Other keys type nothing.
+func keyBytes(k string) []byte {
+	if b, ok := ctrlByte(k); ok {
+		return []byte{b}
+	}
+	if a, ok := strings.CutPrefix(k, "alt-"); ok {
+		return []byte("\x1b" + a)
+	}
+	return nil
+}
+
+// panesFocused reports whether the panes have the keys: always outside the workspace, and in
+// it unless the sidebar, the board or a prompt has them. Focus and tab moves act only then,
+// so they never change what is out of sight.
+func (c *client) panesFocused() bool { return !c.ws || c.ui.mode == modePanes }
+
 // moveFocus moves focus one view along the tab's split, as zellij's Alt keys: left and right
 // in side-by-side views, up and down in stacked ones. Left or right with no view that way goes
 // to the previous or next tab in the workspace; up and down stop at the edge.
@@ -734,15 +751,20 @@ func (c *client) command(ev keyEvent) error {
 	case actDetach:
 		return ErrDetached
 	case actSend:
-		if b, ok := ctrlByte(ev.key); ok {
-			c.typeKeys([]byte{b})
-		} else if a, ok := strings.CutPrefix(ev.key, "alt-"); ok {
-			c.typeKeys([]byte("\x1b" + a))
+		if b := keyBytes(ev.key); b != nil {
+			c.typeKeys(b)
 		}
 		return nil
 	case actFocusLeft, actFocusRight, actFocusUp, actFocusDown:
+		if !c.panesFocused() {
+			return nil
+		}
 		c.moveFocus(ev.act)
 		return nil
+	case actMoveTabLeft, actMoveTabRight:
+		if !c.panesFocused() {
+			return nil
+		}
 	}
 	if c.ws && c.ui.command(ev.act) {
 		return nil

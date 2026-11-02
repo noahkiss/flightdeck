@@ -16,7 +16,7 @@ func TestSessionModeAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		p + ": [keys.prefix]: the mode is now session; write [keys.session]",
+		p + ":1: [keys.prefix]: the mode is now session; write [keys.session]",
 		p + `:4: [keys.normal] ctrl-a: action "prefix" is now "session-mode"`,
 	} {
 		if !hasProblem(problems, want) {
@@ -64,6 +64,7 @@ func TestAltFocusAndTabMoves(t *testing.T) {
 	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 	c := barClient(t, 160, 30, &now)
 	c.debounce = &fakeTimer{c: make(chan time.Time, 1)}
+	c.ui.mode = modePanes
 	hs := c.hosts[c.first]
 	a := &tab{name: "1", split: SplitColumns}
 	for _, id := range []string{"x", "y", "z"} {
@@ -118,6 +119,48 @@ func TestAltFocusAndTabMoves(t *testing.T) {
 		}
 		if o := order(); o != step.order || c.cur != step.cur || c.tab() != a {
 			t.Errorf("after %q: tabs %s, current %d; want %s, %d, the moved tab current", step.keys, o, c.cur, step.order, step.cur)
+		}
+	}
+	// A zoomed tab lays out again for the newly focused view.
+	a.split, a.zoom, a.focus = SplitColumns, true, 0
+	c.canvas.valid = true
+	if err := c.input([]byte("\x1bl")); err != nil {
+		t.Fatal(err)
+	}
+	if a.focus != 1 || c.canvas.valid {
+		t.Errorf("zoomed Alt+l: focus %d, canvas valid %v; want 1 and a repaint", a.focus, c.canvas.valid)
+	}
+
+	// While the sidebar, the board or a prompt has the keys, the Alt keys change nothing.
+	for _, m := range []uiMode{modeSidebar, modeBoard, modePrompt} {
+		c.ui.mode = m
+		before, o := at(), order()
+		if err := c.input([]byte("\x1bl\x1bh\x1bo\x1bi")); err != nil {
+			t.Fatal(err)
+		}
+		if at() != before || order() != o {
+			t.Errorf("mode %v: Alt keys moved focus or tabs: %+v %s, was %+v %s", m, at(), order(), before, o)
+		}
+	}
+}
+
+// A kitty Alt key cut between two reads is held and read whole, never passed to the pane.
+func TestAltKeySplitRead(t *testing.T) {
+	k := newKeyReader(DefaultKeymap())
+	var evs []keyEvent
+	for _, chunk := range []string{"\x1b[10", "4;3u"} {
+		evs = append(evs, k.feed([]byte(chunk))...)
+	}
+	if len(evs) != 1 || evs[0].act != actFocusLeft || evs[0].key != "alt-h" {
+		t.Errorf("split kitty Alt+h: %q", evs)
+	}
+}
+
+// A send binding types its own key: a Ctrl key's byte, an Alt key as ESC and the character.
+func TestKeyBytes(t *testing.T) {
+	for k, want := range map[string]string{"ctrl-p": "\x10", `ctrl-\`: "\x1c", "alt-s": "\x1bs", "alt-H": "\x1bH", "x": "", "esc": ""} {
+		if got := string(keyBytes(k)); got != want {
+			t.Errorf("keyBytes(%q) = %q, want %q", k, got, want)
 		}
 	}
 }

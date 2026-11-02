@@ -85,7 +85,7 @@ func TestObserverNeverResizes(t *testing.T) {
 		t.Errorf("full view asked for %dx%d, want 49x29", got.Cols, got.Rows)
 	}
 	// Focus the full view and type, so the observer's input lane would have run by now.
-	hst.typ("\x10p\x1b" + "x") // Ctrl+P p focuses the next pane; Esc leaves pane mode
+	hst.typ("\x10p\r" + "x") // Ctrl+P p focuses the next pane; Enter leaves pane mode
 	waitUntil(t, "input to the full view", func() bool { return len(g.rec.calls("pane.input", mine)) > 0 })
 
 	for _, m := range []string{"pane.set_desired_size", "pane.take", "pane.request", "pane.input", "pane.redraw"} {
