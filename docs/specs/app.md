@@ -254,6 +254,10 @@ On iPad and Mac the board has a second column beside the list.
 - **New session.** A floating button starts a session: pick a hab, a project and a harness.
 - On iPhone the board is the list alone. Cards and connections live behind tabs in the top bar
   (home, devices, network, settings).
+- **Until previews exist.** The second column holds connections only. An empty cards box headed
+  "Sessions" read as the session list on the wrong side, so it stays out until live previews
+  exist; then the cards return at the top of the column. The board list on the left carries the
+  "Sessions" heading on iPad and Mac.
 
 | Case | Behaviour |
 |---|---|
@@ -1522,8 +1526,9 @@ The first app stage: the connection to every hab and the status board. Code in
 - **Open hook.** `Board.onOpen` receives a `SessionTarget` (hab, session, pane). The session view
   (chat and the terminal slot, 4.6) opens from the board; a board with no fleet shows a sheet
   of the session's fields.
-- **Layout.** iPhone: the list, with connections in a sheet. iPad and Mac: the list beside a
-  column with a session cards placeholder and the connections list. The project and hab grouping
+- **Layout.** iPhone: the list, with connections in a sheet. iPad and Mac: the list, headed
+  "Sessions", on the left beside a column with the connections list. No empty cards
+  placeholder shows (3.3). The project and hab grouping
   switch, search and the usage footer are not built yet.
 - **Lifecycle.** iPhone and iPad close every connection when the app enters the background and
   reconnect when it becomes active; `inactive` changes nothing. The App reads the app-level

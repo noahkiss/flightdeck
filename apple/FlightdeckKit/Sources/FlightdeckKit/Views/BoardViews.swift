@@ -49,8 +49,9 @@ extension Fleet {
     }
 }
 
-/// The status board: one list on iPhone; on iPad and Mac the list plus a
-/// second column with session cards and connections (app.md 3.3).
+/// The status board: one list on iPhone; on iPad and Mac the list, headed
+/// "Sessions", plus a second column with connections (app.md 3.3). Session
+/// cards join that column when live previews exist.
 public struct BoardScreen: View {
     private let board: Board
     /// With a fleet, a row opens its session view; without, a sheet of its fields.
@@ -153,7 +154,7 @@ public struct BoardScreen: View {
             } else if fleet != nil, let row = opened {
                 HStack(spacing: 0) {
                     NavigationStack {
-                        BoardList(board: board, opened: $opened, openRequest: openRequest)
+                        BoardList(board: board, opened: $opened, openRequest: openRequest, heading: "Sessions")
                         .usageFooter(fleet?.usage)
                             .navigationTitle("Flightdeck")
                     }
@@ -163,20 +164,17 @@ public struct BoardScreen: View {
                         .frame(minWidth: 640)
                 }
             } else {
+                // The session cards column (app.md 3.3) returns when live previews exist.
                 HStack(spacing: 0) {
                     NavigationStack {
-                        BoardList(board: board, opened: $opened, openRequest: openRequest)
+                        BoardList(board: board, opened: $opened, openRequest: openRequest, heading: "Sessions")
                         .usageFooter(fleet?.usage)
                             .navigationTitle("Flightdeck")
                     }
                     .frame(minWidth: 360)
                     Divider()
-                    VStack(spacing: 0) {
-                        SessionCardsPlaceholder()
-                        Divider()
-                        ConnectionsList(board: board, push: fleet?.push, usage: fleet?.usage, settings: fleet?.settings)
-                    }
-                    .frame(minWidth: 260, idealWidth: 300, maxWidth: 360)
+                    ConnectionsList(board: board, push: fleet?.push, usage: fleet?.usage, settings: fleet?.settings)
+                        .frame(minWidth: 260, idealWidth: 300, maxWidth: 360)
                 }
             }
         }
@@ -222,8 +220,24 @@ struct BoardList: View {
     @Binding var opened: BoardRow?
     /// Returns true when the row opened the approval sheet instead.
     var openRequest: (BoardRow) -> Bool = { _ in false }
+    /// A heading above the list, for the iPad and Mac columns.
+    var heading: String? = nil
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let heading {
+                Text(heading)
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 4)
+            }
+            list
+        }
+    }
+
+    private var list: some View {
         TimelineView(.periodic(from: .now, by: 30)) { ctx in
             List {
                 ForEach(board.habs.filter(\.needsUpdate)) { h in
@@ -436,21 +450,6 @@ struct ConnectionsList: View {
                 #endif
             }
         }
-    }
-}
-
-/// Holds the place of the session cards (live previews), which come with data streams.
-struct SessionCardsPlaceholder: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Sessions")
-                .font(.headline)
-            RoundedRectangle(cornerRadius: 8)
-                .fill(.quaternary)
-                .frame(height: 96)
-                .overlay(Text("No previews").font(.caption).foregroundStyle(.secondary))
-        }
-        .padding(12)
     }
 }
 
