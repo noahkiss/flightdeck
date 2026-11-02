@@ -227,6 +227,10 @@ func (c *capcomService) Open(ctx context.Context, p api.CapcomOpenParams) (api.C
 		}
 		items = append(items, it)
 	}
+	// One open at a time from the count check to the attach: a concurrent open cannot fill the
+	// list between them. Another attach still can; addPending then refuses after the open.
+	c.op.Lock()
+	defer c.op.Unlock()
 	if len(items) > 0 && !p.New {
 		// The standing conversation's list, with the new items after its own.
 		c.mu.Lock()
@@ -266,9 +270,8 @@ func prefixErr(err error, format string, args ...any) error {
 	return control.Errorf(kind, "%s: %s", fmt.Sprintf(format, args...), msg)
 }
 
+// open opens the standing conversation or a new one. The caller holds c.op.
 func (c *capcomService) open(ctx context.Context, p api.CapcomOpenParams) (api.CapcomOpened, error) {
-	c.op.Lock()
-	defer c.op.Unlock()
 	c.mu.Lock()
 	b, standing := c.st.Belief(), c.st.Standing
 	rec, _ := c.recordLocked(standing)
