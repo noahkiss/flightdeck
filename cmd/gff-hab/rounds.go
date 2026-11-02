@@ -1044,6 +1044,15 @@ func (a roundAgents) Send(ctx context.Context, client string, p api.SessionSendP
 	return nil
 }
 
+// SendsContext passes the Capcom wrapper's answer through, so a context-only send to a Capcom
+// session still gets past the empty-send check (capcom.md 8.4).
+func (a roundAgents) SendsContext(session string, keyed bool) bool {
+	cs, ok := a.Agents.(control.ContextSender)
+	return ok && cs.SendsContext(session, keyed)
+}
+
+var _ control.ContextSender = roundAgents{}
+
 // roundActions ends a run as taken over when a client closes its pane (pane.close), before
 // the close: the hang-up's exit must not end the run as failed. The hab's own closes (a
 // timeout, on_finish) go to the link directly.

@@ -365,7 +365,10 @@ func (s capcomSender) Send(ctx context.Context, client string, p api.SessionSend
 }
 
 // SendsContext lets a send with no text through to a Capcom session that has context waiting:
-// the blocks go alone (capcom.md 8.4).
-func (s capcomSender) SendsContext(session string) bool { return len(s.cc.pending(session)) > 0 }
+// the blocks go alone (capcom.md 8.4). A keyed one goes on to the idempotency table, and Send
+// refuses it there when nothing waits.
+func (s capcomSender) SendsContext(session string, keyed bool) bool {
+	return keyed || len(s.cc.pending(session)) > 0
+}
 
 var _ control.ContextSender = capcomSender{}

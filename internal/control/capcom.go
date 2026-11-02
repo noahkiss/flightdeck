@@ -16,20 +16,20 @@ type Capcom interface {
 }
 
 // ContextSender is an Agents that may deliver a message with no text of the user's: a Capcom
-// session's pending context alone (capcom.md 8.4). gff-hab's Capcom wrapper implements it.
+// session's pending context alone (capcom.md 8.4). gff-hab's Capcom wrapper implements it, and
+// any wrapper around it passes the answer through.
 type ContextSender interface {
-	// SendsContext reports whether a send to session with no text and no attachments still
-	// has something to deliver.
-	SendsContext(session string) bool
+	// SendsContext reports whether a send to session with no text and no attachments may go
+	// on: it still has something to deliver, or it is keyed (so a retry after the context
+	// left gets the first answer from the idempotency table; with nothing waiting, the
+	// sender refuses it there). False when no Capcom wrapper is underneath.
+	SendsContext(session string, keyed bool) bool
 }
 
-// sendsContext reports whether an empty send to session may go on to the Agents service: it
-// would deliver context alone. A keyed one always goes on, so a retry after the context left
-// still gets the first answer from the idempotency table; with nothing waiting, the
-// ContextSender refuses it there.
+// sendsContext reports whether an empty send to session may go on to the Agents service.
 func (c *conn) sendsContext(session, key string) bool {
 	cs, ok := c.s.cfg.Agents.(ContextSender)
-	return ok && (key != "" || cs.SendsContext(session))
+	return ok && cs.SendsContext(session, key != "")
 }
 
 // checkContext refuses a context ref with no ref or an unknown kind.
