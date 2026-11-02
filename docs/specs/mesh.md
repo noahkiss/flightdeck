@@ -266,7 +266,9 @@ Package `internal/peers`, wired into `gff-hab serve`. Commands: `gff-hab peers` 
   shows the parse error, with its line, in `peers.list`.
 - **Reload on change.** gff-hab checks the file's size and modification time every 2 s, and reads
   the file once a changed size and time held for one more check (2 to 4 s). A writer that edits
-  in place is not read half way. No file watcher library.
+  in place is not read half way. A pin, an accept or an entry found to reach this hab applies the
+  last read again with that change, and leaves reading the file to the check. No file watcher
+  library.
 - **The pin is a line edit.** It replaces the entry's `device_id` line, or adds one after its
   `label` line, at the same indent. Every other line stays, comments included. The edited text
   must parse with the new pin before it replaces the file, in one rename that keeps the mode. An

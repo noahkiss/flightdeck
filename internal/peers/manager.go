@@ -65,6 +65,18 @@ type Manager struct {
 	published map[string]api.Peer
 	stamp     fileStamp // the file as last read
 	pending   fileStamp // a changed stamp seen at one poll; the next poll reloads if it holds
+	read      fileRead  // the file as last read, this hab's own entries included
+	reread    bool      // the reload in progress applies read again instead of reading the file
+
+	// reloadMu makes reloads one at a time, so reread belongs to the reload that set it.
+	reloadMu sync.Mutex
+}
+
+// fileRead is one read of the peer file: its entries and problems, or why it did not parse.
+type fileRead struct {
+	specs    []hosts.Spec
+	problems []string
+	err      error
 }
 
 type fileStamp struct {
@@ -135,13 +147,23 @@ func Open(cfg Config) (*Manager, error) {
 // source is the hosts.Source over the peer file.
 type source struct{ m *Manager }
 
-// Hosts reads the peer file and leaves out this hab's own entries. A file that does not parse
-// keeps the last good list.
+// Hosts reads the peer file, or takes its last read in a reapply, and leaves out this hab's own
+// entries. A file that does not parse keeps the last good list.
 func (s source) Hosts() ([]hosts.Spec, error) {
 	m := s.m
-	specs, problems, err := Load(m.cfg.Path)
+	m.mu.Lock()
+	r := m.read
+	reread := m.reread
+	m.mu.Unlock()
+	if !reread {
+		r.specs, r.problems, r.err = Load(m.cfg.Path)
+	}
+	specs, problems, err := slices.Clone(r.specs), slices.Clone(r.problems), r.err
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !reread {
+		m.read = r
+	}
 	if err != nil {
 		m.problems = []string{err.Error()}
 		m.cfg.Logf("peers: %v", err)
@@ -185,12 +207,36 @@ func endpointsKey(sp hosts.Spec) string {
 	return b.String()
 }
 
-// reload reads the peer file again and applies it.
-func (m *Manager) reload() {
+// reload reads the peer file again and applies it. Only the watch calls it, once the file held.
+func (m *Manager) reload() { m.apply(false, "", "") }
+
+// reapply applies the last read of the peer file again, with label's device id set to id when
+// label is not empty: after this hab wrote that pin, or found that an entry reaches itself. It
+// does not read the file, which a writer may be editing in place; the watch reads it once it
+// holds (mesh.md 4.4).
+func (m *Manager) reapply(label, id string) { m.apply(true, label, id) }
+
+func (m *Manager) apply(reread bool, label, id string) {
+	m.reloadMu.Lock()
 	m.mu.Lock()
-	m.stamp = stampOf(m.cfg.Path)
+	if !reread {
+		m.stamp = stampOf(m.cfg.Path)
+	} else if label != "" {
+		m.read.specs = slices.Clone(m.read.specs)
+		for i := range m.read.specs {
+			if m.read.specs[i].Label == label {
+				m.read.specs[i].DeviceID = id
+			}
+		}
+	}
+	m.reread = reread
 	m.mu.Unlock()
-	if err := m.set.Reload(); err != nil {
+	err := m.set.Reload()
+	m.mu.Lock()
+	m.reread = false
+	m.mu.Unlock()
+	m.reloadMu.Unlock()
+	if err != nil {
 		m.cfg.Logf("peers: reload: %v", err)
 	}
 	m.publishAll()
@@ -265,7 +311,7 @@ func (m *Manager) online(label string, w api.Welcome) bool {
 			}
 		}
 		m.mu.Unlock()
-		m.reload()
+		m.reapply("", "")
 		return true
 	}
 	m.mu.Lock()
@@ -284,7 +330,7 @@ func (m *Manager) online(label string, w api.Welcome) bool {
 			m.mu.Lock()
 			delete(m.pinFailed, label)
 			m.mu.Unlock()
-			m.reload()
+			m.reapply(label, w.DeviceID)
 		}
 	}
 	return false
@@ -409,7 +455,7 @@ func (m *Manager) Accept(label string) (api.PeerAccepted, error) {
 		return api.PeerAccepted{}, control.Errorf(api.ErrorKindUnavailable, "%v", err)
 	}
 	m.cfg.Logf("peers: accepted %s: %s, was %s", label, dc.Got, dc.Pinned)
-	m.reload()
+	m.reapply(label, dc.Got)
 	return api.PeerAccepted{Label: label, Old: dc.Pinned, New: dc.Got}, nil
 }
 
