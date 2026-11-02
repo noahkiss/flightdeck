@@ -114,7 +114,8 @@ func readLines(t *testing.T, path string) []string {
 // conversation gets a fresh folder and becomes the standing one; the old session stays.
 func TestCapcomHost(t *testing.T) {
 	e := newHolderEnv(t, 0)
-	e.env = []string{"PATH=" + fakeHarnessBin(t) + string(os.PathListSeparator) + os.Getenv("PATH")}
+	claudeDir := shortDir(t)
+	e.env = []string{"PATH=" + fakeHarnessBin(t) + string(os.PathListSeparator) + os.Getenv("PATH"), "CLAUDE_CONFIG_DIR=" + claudeDir}
 	e.serve()
 	c := e.control()
 	if w := welcome(t, e.sock); !strings.Contains(strings.Join(w.Capabilities, " "), "capcom") {
@@ -169,9 +170,15 @@ func TestCapcomHost(t *testing.T) {
 		t.Fatalf("second open: %+v, first %+v", again, first)
 	}
 
-	// A gff-hab restart keeps the Capcom pane running.
+	// A gff-hab restart keeps the Capcom pane running, and writes each folder's settings again
+	// with its own path (an install retires the build an earlier gff-hab ran from).
+	wantMCP, _ := os.ReadFile(mcp)
+	writeFile(t, mcp, "{}\n")
 	e.restart(false)
 	c = e.control()
+	if b, _ := os.ReadFile(mcp); string(b) != string(wantMCP) {
+		t.Fatalf(".mcp.json after the restart: %s", b)
+	}
 	after := sessionOf(t, c, first.Session)
 	if after.State != api.SessionStateRunning || after.Pane != first.Pane || after.Kind != api.SessionKindCapcom {
 		t.Fatalf("after the restart: %+v", after)
@@ -204,8 +211,23 @@ func TestCapcomHost(t *testing.T) {
 	waitSession(t, c, first.Session, "running again", func(s api.Session) bool {
 		return s.State == api.SessionStateRunning && s.Pane == res.Pane
 	})
-	waitUntil(t, "the harness resumed", func() bool { return len(readLines(t, argvLog)) == 2 })
-	if got := readLines(t, argvLog)[1]; got != "--resume "+id {
+	// Claude Code wrote no transcript yet (no message was sent): the same id starts again.
+	waitUntil(t, "the harness restarted", func() bool { return len(readLines(t, argvLog)) == 2 })
+	if got := readLines(t, argvLog)[1]; got != "--session-id "+id {
+		t.Fatalf("start again argv %q, want --session-id %s", got, id)
+	}
+	// With a transcript, the next start resumes it.
+	if err := os.MkdirAll(filepath.Join(claudeDir, "projects", "-capcom"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(claudeDir, "projects", "-capcom", id+".jsonl"), "{}\n")
+	writeFile(t, filepath.Join(first.Dir, "stop"), "")
+	waitSession(t, c, first.Session, "the harness exited again", func(s api.Session) bool { return s.State == api.SessionStateExited })
+	if res, err = resume(t, c, first.Session); err != nil {
+		t.Fatalf("second session.resume: %v", err)
+	}
+	waitUntil(t, "the harness resumed", func() bool { return len(readLines(t, argvLog)) == 3 })
+	if got := readLines(t, argvLog)[2]; got != "--resume "+id {
 		t.Fatalf("resume argv %q, want --resume %s", got, id)
 	}
 	if b, _ := os.ReadFile(manual); string(b) != capcom.Manual {
@@ -245,8 +267,17 @@ func TestCapcomHost(t *testing.T) {
 			t.Fatalf("resume of a plain session: %v", err)
 		}
 	}
-	for _, d := range []string{first.Dir, fresh.Dir} {
-		writeFile(t, filepath.Join(d, "stop"), "")
+
+	// The holder dies: both Capcom sessions show exited with no status (pane lost). Neither
+	// resumes, since its harness may still run once the holder is back.
+	e.holder.Process.Kill()
+	<-e.holderDone
+	waitSession(t, c, fresh.Session, "the pane lost", func(s api.Session) bool { return s.State == api.SessionStateExited && s.Exit == nil })
+	if _, err := resume(t, c, fresh.Session); errKind(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "holder is not connected") {
+		t.Fatalf("resume of a lost pane: %v", err)
+	}
+	if _, err := capcomOpen(t, c, false); errKind(err) != api.ErrorKindUnavailable {
+		t.Fatalf("open with the standing pane lost: %v", err)
 	}
 }
 

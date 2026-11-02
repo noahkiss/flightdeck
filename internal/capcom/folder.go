@@ -169,7 +169,7 @@ func StartFor(harness, claudeID string) (Start, error) {
 }
 
 // ResumeFor returns the start that resumes a session in its folder. With no resume id known,
-// Codex and opencode pick the folder's most recent session.
+// Claude Code and Codex pick the folder's most recent session, and opencode starts fresh.
 func ResumeFor(harness, resume string) (Start, error) {
 	switch harness {
 	case Claude:
@@ -184,7 +184,9 @@ func ResumeFor(harness, resume string) (Start, error) {
 		return Start{Harness: Codex, Argv: []string{"codex", "resume", resume}}, nil
 	case Opencode:
 		if resume == "" {
-			return Start{Harness: Opencode, Argv: []string{"opencode", "--continue"}}, nil
+			// No id: start fresh. opencode files a folder outside git under one global project,
+			// so --continue could pick an unrelated session from another folder.
+			return Start{Harness: Opencode, Argv: []string{"opencode"}}, nil
 		}
 		return Start{Harness: Opencode, Argv: []string{"opencode", "--session", resume}}, nil
 	}

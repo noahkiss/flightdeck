@@ -148,9 +148,14 @@ func SaveState(dir string, st State) error {
 }
 
 // writeFile writes p through a temporary file in its folder, synced, then renamed into place.
+// A file or link left at the temporary name is removed first, and the new one is made with
+// O_EXCL, so a planted link is never written through.
 func writeFile(p string, b []byte, mode fs.FileMode) error {
 	tmp := p + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err := os.Remove(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return err
 	}
@@ -162,7 +167,7 @@ func writeFile(p string, b []byte, mode fs.FileMode) error {
 		err = cerr
 	}
 	if err == nil {
-		err = os.Chmod(tmp, mode) // an earlier tmp file may have had another mode
+		err = os.Chmod(tmp, mode) // the umask may have narrowed it
 	}
 	if err != nil {
 		os.Remove(tmp)

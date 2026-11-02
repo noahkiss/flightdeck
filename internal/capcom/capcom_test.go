@@ -179,6 +179,17 @@ func TestWriteFolderRewrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.WriteFile(filepath.Join(dir, "photo.png"), []byte("attachment"), 0o600)
+	// A link planted at the temporary name is removed, never written through.
+	planted := filepath.Join(t.TempDir(), "planted")
+	os.WriteFile(planted, []byte("untouched"), 0o600)
+	if err := os.Symlink(planted, filepath.Join(dir, "CLAUDE.md.tmp")); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if b, _ := os.ReadFile(planted); string(b) != "untouched" {
+			t.Errorf("written through the temporary link: %q", b)
+		}
+	}()
 	if err := WriteFolder(dir, Claude, exe, ReadScope{}); err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +220,7 @@ func TestStartAndResume(t *testing.T) {
 		{Codex, "t-9", "codex", "codex resume t-9", Codex, Codex},
 		{Codex, "", "codex", "codex resume --last", Codex, Codex},
 		{Opencode, "ses_1", "opencode", "opencode --session ses_1", Opencode, Opencode},
-		{Opencode, "", "opencode", "opencode --continue", Opencode, Opencode},
+		{Opencode, "", "opencode", "opencode", Opencode, Opencode},
 	} {
 		st, err := StartFor(tc.harness, tc.id)
 		if err != nil {

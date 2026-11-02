@@ -763,6 +763,14 @@ func serve(args []string) error {
 		capcomSvc = newCapcomService(&capcomService{
 			self: key.Fingerprint(), state: dir, configPath: cpath, exe: exe,
 			acts: sessionActs, store: store, links: catalogPeers{pm}.Links,
+			claudeTranscript: func(id string) bool {
+				d, err := transcript.ClaudeConfigDir(os.Getenv)
+				if err != nil {
+					return true
+				}
+				_, err = transcript.FindClaude(d, id)
+				return err == nil
+			},
 			native: func(pane string) string {
 				if st, ok := agents.Get(pane); ok {
 					return st.Session

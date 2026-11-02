@@ -40,10 +40,13 @@ type capcomService struct {
 	copies func() []api.Catalog
 	// native returns the harness's own session id that a pane's agent state reports.
 	native func(pane string) string
-	poke   func() // the catalog is built again
-	scope  func() capcom.ReadScope
-	now    func() time.Time
-	logf   func(string, ...any)
+	// claudeTranscript reports whether Claude Code wrote a transcript for a session id. It
+	// writes none before the first message, and --resume of such an id fails. Nil: assume it did.
+	claudeTranscript func(id string) bool
+	poke             func() // the catalog is built again
+	scope            func() capcom.ReadScope
+	now              func() time.Time
+	logf             func(string, ...any)
 
 	op sync.Mutex // one open, resume or assign at a time
 
@@ -51,7 +54,8 @@ type capcomService struct {
 	st capcom.State
 }
 
-// newCapcomService loads capcom.json and drops entries whose session record is gone.
+// newCapcomService loads capcom.json, drops entries whose session record is gone, and writes
+// each remaining folder's manual and settings again.
 func newCapcomService(c *capcomService) *capcomService {
 	if c.now == nil {
 		c.now = time.Now
@@ -66,7 +70,32 @@ func newCapcomService(c *capcomService) *capcomService {
 	if err != nil {
 		c.logf("capcom: %v", err)
 	}
+	kept := st.Sessions[:0]
+	for _, rec := range st.Sessions {
+		if _, ok := c.store.Session(rec.ID); ok {
+			kept = append(kept, rec)
+		}
+	}
+	pruned := len(kept) != len(st.Sessions)
+	st.Sessions = kept
+	if _, ok := c.store.Session(st.Standing); !ok {
+		st.Standing = ""
+	}
 	c.st = st
+	if pruned {
+		c.saveLocked()
+	}
+	// Each folder's settings name this gff-hab's own path. An install retires the build an
+	// earlier gff-hab ran from (macOS), so every folder gets the current path at start: a
+	// plain-terminal resume and an MCP reconnect keep the tools.
+	for _, rec := range st.Sessions {
+		if fi, err := os.Stat(rec.Dir); err != nil || !fi.IsDir() {
+			continue
+		}
+		if err := capcom.WriteFolder(rec.Dir, rec.Harness, c.exe, c.readScope()); err != nil {
+			c.logf("capcom: rewrite %s: %v", rec.Dir, err)
+		}
+	}
 	return c
 }
 
@@ -262,17 +291,37 @@ func (c *capcomService) resume(ctx context.Context, rec capcom.Session, ss api.S
 	if ss.State != api.SessionStateExited {
 		return "", control.Errorf(api.ErrorKindConflict, "session %s is running", ss.ID)
 	}
+	if ss.Pane != "" && ss.Exit == nil {
+		// Exited with no status: the pane's holder dropped out or is not reached yet, and the
+		// harness may still run there. A second one would share the conversation.
+		return "", control.Errorf(api.ErrorKindUnavailable, "session %s: its holder is not connected; its pane may still run", ss.ID)
+	}
 	if err := capcom.WriteFolder(rec.Dir, rec.Harness, c.exe, c.readScope()); err != nil {
 		return "", control.Errorf(api.ErrorKindUnavailable, "capcom folder: %v", err)
 	}
-	st, err := capcom.ResumeFor(rec.Harness, rec.Resume)
+	resumeID := rec.Resume
+	if rec.Harness == capcom.Claude && resumeID != "" && c.claudeTranscript != nil && !c.claudeTranscript(resumeID) {
+		resumeID = "" // no transcript yet: start again under the same id
+	}
+	var st capcom.Start
+	var err error
+	if rec.Harness == capcom.Claude && resumeID == "" && rec.Resume != "" {
+		st, err = capcom.StartFor(capcom.Claude, rec.Resume)
+	} else {
+		st, err = capcom.ResumeFor(rec.Harness, resumeID)
+	}
 	if err != nil {
 		return "", control.Errorf(api.ErrorKindUnavailable, "%v", err)
 	}
 	if ss.Pane != "" {
 		// An exited pane the holder still keeps: release it, so the session's new pane is its
-		// only one. A pane already gone answers not_found.
-		_ = c.acts.ClosePane(ctx, ss.Pane)
+		// only one. A pane already gone answers not_found; any other answer stops the resume.
+		if err := c.acts.ClosePane(ctx, ss.Pane); err != nil {
+			var ce *control.Error
+			if !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindNotFound {
+				return "", err
+			}
+		}
 	}
 	return c.acts.resumeSession(ctx, ss.ID, api.SessionCreateParams{Harness: st.Harness, Argv: st.Argv, Env: st.Env}, rec.Dir)
 }
