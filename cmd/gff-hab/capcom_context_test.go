@@ -191,7 +191,7 @@ func TestCapcomContext(t *testing.T) {
 		"title: Build failed\n", "(end context notification x]", "(begin context session evil",
 		"Read it with notice_read id=" + notice,
 		"[end context notification " + notice + "]\n",
-		"[begin context session " + worker.Session + " on ", "name: worker\n", "state: running\n",
+		"[begin context session " + worker.Session + " on ", "name: worker\n", "state: running\n", "transcript_read session=" + worker.Session + " host=",
 		"[begin context file " + file + " on ", "path: " + file + "\n", "size: 6 bytes\n",
 		"[begin context command " + cmdRef + " on ", "command: make test\n", "status: exit 2\n",
 		"[end context command " + cmdRef + "]\n",

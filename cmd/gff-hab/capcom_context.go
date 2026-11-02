@@ -202,7 +202,7 @@ func (c *capcomService) resolveSession(it capcom.Item) (capcom.Item, error) {
 	if ss.Title != "" {
 		it.Body = append(it.Body, capcom.Field{Name: "title", Value: capcom.Cut(ss.Title, capcom.MaxField)})
 	}
-	it.Hint = fmt.Sprintf("Read its transcript with transcript_read session=%s host=%s; agents shows its state now.", ss.Name, c.host)
+	it.Hint = fmt.Sprintf("Read its transcript with transcript_read session=%s host=%s; agents shows its state now.", ss.ID, c.host)
 	return it, nil
 }
 
