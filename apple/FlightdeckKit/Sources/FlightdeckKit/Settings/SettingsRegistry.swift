@@ -121,7 +121,7 @@ public enum SettingsRegistry {
     /// kind `.page` keep their rows on the page their area links to.
     public static let preferences: [SettingDef] = [
         SettingDef(id: "notify.done", title: "Notify when a turn finishes", area: .notifications, kind: .page, store: .app),
-        SettingDef(id: "notify.show_commands", title: "Show commands in notifications", area: .notifications, kind: .page, store: .app),
+        SettingDef(id: "notify.show_commands", title: "Show details in notifications", area: .notifications, kind: .page, store: .app),
         SettingDef(id: "notify.command_done", title: "Notify when a long command finishes", area: .notifications, kind: .page, store: .app, built: false),
         SettingDef(id: "notify.tap", title: "Open a notification in", area: .notifications, kind: .page, store: .app, built: false),
         SettingDef(id: "usage.warnings", title: "Usage warnings, with thresholds", area: .usage, kind: .page, store: .app),

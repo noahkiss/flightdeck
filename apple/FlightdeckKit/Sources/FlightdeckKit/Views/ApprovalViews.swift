@@ -291,7 +291,7 @@ public struct NotificationSettingsView: View {
     public var body: some View {
         Form {
             Section {
-                Toggle("Show commands in notifications", isOn: $push.showCommands)
+                Toggle("Show details in notifications", isOn: $push.showCommands)
                 Toggle("Notify when a turn finishes", isOn: $push.doneBanners)
             }
             if push.permission == .denied {

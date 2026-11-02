@@ -1332,7 +1332,7 @@ service.
 - **Small payloads.** A push carries the hab, session, pane, state, request id and a short text. The
   full request loads when the app opens. A push stays under the APNs size limit.
 - **Privacy.** A push passes through Apple. In the first build its short text is plain. A setting
-  "show commands in notifications" (default on) can hide the text and show only "approval needed".
+  "show details in notifications" (default on) can hide the text and show only "approval needed".
   Sealing payloads end to end is a plan decision for later (18.9).
 
 ### 8.4 Not set up
@@ -1384,7 +1384,7 @@ relies on:
   appends " · Expires 14:05" in local time.
 - **Opt-ins.** `done` banners go only to devices that registered the `done` kind. Notices from
   `notice.raise` go to every registered device. `hide_commands` on `push.register` is the
-  "show commands in notifications" setting turned off.
+  "show details in notifications" setting turned off.
 - **Live Activity content.** The content state keys are listed in `hab-logic-api.md` 3.9, Push.
   `done`, `error` and an exit end the activity with a ten-minute dismissal; the app starts a new
   one for the next turn.
@@ -1400,7 +1400,7 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
 
 - **Registration.** `PushRegistrar` calls `push.register` on every hab whose welcome lists
   `push`, each time a connection reaches online (a new snapshot count), and on every online hab
-  again when the token, "Show commands in notifications" or "Notify when a turn finishes"
+  again when the token, "Show details in notifications" or "Notify when a turn finishes"
   changes. The app disconnects in the background (12.1), so each return to the foreground
   registers again; the hab keeps one token per device id. The device id is a random UUID kept in
   the app's defaults. Kinds: `permission`, `question`, `auth`, `error`, plus `done` when that
@@ -2552,7 +2552,7 @@ phone shows the same words.
 - **Actions.** Approve and Deny need authentication: on the Watch, that means on the wrist and
   unlocked *(gk)*. The action runs the phone app's handler in the background, as for a lock-screen
   answer (7.3).
-- **"Show commands in notifications" off** (8.3): the title becomes "Approval needed", the body
+- **"Show details in notifications" off** (8.3): the title becomes "Approval needed", the body
   the project and hab only, and Approve is not offered from the banner.
 
 ### 16.2 Word budgets
@@ -2617,8 +2617,10 @@ unlock rule). Tests: `TestBannerBudgets`, `TestToolBanners`, `TestPlanApproveKey
 - **Answered.** The replacement names what was answered: "Allowed: plan", "Denied: github create
   issue", "Allowed: fetch docs.example.com". A question is answered, not allowed: its replacement
   body is the question, fitted.
-- **Hidden commands.** With "Show commands in notifications" off, a plan, a question and a URL are
-  hidden too. A question banner then reads "Question waiting".
+- **Hidden details.** With "Show details in notifications" off, a plan, a question and a URL are
+  hidden too. A question banner then reads "Question waiting". Coordinator call (2026-11-02): the
+  setting was "Show commands in notifications". The label changed, but the id
+  `notify.show_commands` and `hide_commands` on `push.register` stay, so saved values carry over.
 - **Locked phone.** iOS mirrors a banner to the Watch only while the phone is locked, and the
   device key signs only while the phone is unlocked (`transport.md` 7.2). So a banner action from
   the Watch sends nothing. (On the phone's lock screen, Approve and Deny ask for unlock first.) It
@@ -2653,7 +2655,7 @@ stage that fills it.
 | `push.register {device_id, token, environment, kinds}` | Store an APNs device token for this device |
 | `push.register_activity {device_id, session, token}` | Store a Live Activity token for the tracked session |
 | `push.unregister {device_id, token}` | Drop a token |
-| `push.register` field `hide_commands` | "Show commands in notifications" off: banners carry no command (8.3) |
+| `push.register` field `hide_commands` | "Show details in notifications" off: banners carry no command (8.3) |
 | `notice.raise {title, body?, level?, session?}` | Raise a notice from a hab event or a local script; event `notice.raised` |
 | capability `push` | The hab has push config that works |
 | `session.focus {session, active}` | Report focus: marks `done` seen, and feeds hold-while-watched (8.3) |
@@ -2778,7 +2780,7 @@ existing SSH key (10.4).
 ### 18.9 Sealed push payloads
 
 The plan already calls a `/consensus` on this. Recommendation for the first release: plain short
-text through APNs, the "show commands in notifications" setting, and a payload shape that leaves
+text through APNs, the "show details in notifications" setting, and a payload shape that leaves
 room for a sealed body later.
 
 Decision: as recommended for the first release (coordinator, 2026-11-01), in place of the `/consensus` run. Paseo
@@ -2979,7 +2981,7 @@ picker never changes them.
 | Id | Title | Area | Type | Default | Stored | Source |
 |---|---|---|---|---|---|---|
 | `notify.done` | Notify when a turn finishes | Notifications | bool | Off | App; push kind `done` on each hab | 8.2, 18.5 |
-| `notify.show_commands` | Show commands in notifications | Notifications | bool | On | App; `hide_commands` on `push.register` | 8.3 |
+| `notify.show_commands` | Show details in notifications | Notifications | bool | On | App; `hide_commands` on `push.register` | 8.3 |
 | `notify.command_done` | Notify when a long command finishes | Notifications | bool | Off | App; push kind `command` on each hab (not built) | 6.1, 8.2 |
 | `notify.tap` | Open a notification in | Notifications | chat, terminal or smart | Smart | App | 9.1 |
 | `usage.warnings` | Usage warnings, with thresholds | Usage | off, or a list of percentages from 50 to 100 | On, 80 and 95 | App; push kind `usage` with `usage_thresholds` on `push.register` (not built) | 14.3 |

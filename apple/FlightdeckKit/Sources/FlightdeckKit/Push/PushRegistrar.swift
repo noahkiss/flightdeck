@@ -45,7 +45,7 @@ public final class PushRegistrar {
     public nonisolated let deviceID: String
     public nonisolated let environment: PushEnvironment
 
-    /// "Show commands in notifications" (app.md 8.3); on by default.
+    /// "Show details in notifications" (app.md 8.3); on by default.
     public var showCommands: Bool {
         didSet {
             guard showCommands != oldValue else { return }

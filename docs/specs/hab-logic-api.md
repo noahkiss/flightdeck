@@ -1001,7 +1001,7 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   when its session is in scope. `gff-hab show` is the command line of `content.show`.
 - **`push.register`** `environment` is `development` or `production`; `kinds` are `permission`,
   `question`, `auth`, `error`, `done` and `usage`. Added by the push stage, optional:
-  `hide_commands`, the app's "show commands in notifications" turned off (`app.md` 8.3). Added
+  `hide_commands`, the app's "show details in notifications" turned off (`app.md` 8.3). Added
   by "Ask an agent", optional: `features`, words for what the app's categories can do; `ask`
   means it registered the Ask categories (`capcom.md` 8.5). Unknown words are kept and
   ignored.

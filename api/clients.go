@@ -317,7 +317,7 @@ type PushRegisterParams struct {
 	Token       string          `json:"token" doc:"APNs device token, hex."`
 	Environment PushEnvironment `json:"environment"`
 	Kinds       []PushKind      `json:"kinds" doc:"The kinds of push this device wants."`
-	// HideCommands is the app's "show commands in notifications" setting turned off (app.md 8.3).
+	// HideCommands is the app's "show details in notifications" setting turned off (app.md 8.3).
 	// Optional, so an older client registers as before.
 	HideCommands bool `json:"hide_commands,omitempty" doc:"True: banners say \"Approval needed\" with no command, and offer no Approve (app.md 16.1)."`
 	// Features names what the app's notification categories can do beyond the first set.
