@@ -12,7 +12,7 @@ on:
     branches: [main]
     paths: &apple
       - 'apple/**'
-      - 'swift/**'
+      - 'swift/HabAPI/**'
       - 'api/**'
       - 'design/icons/**'
       - 'internal/transcript/testdata/**'
