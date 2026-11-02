@@ -70,6 +70,9 @@ type Engine struct {
 	dir    string // the model folder
 	ctx    context.Context
 	cancel context.CancelFunc
+	// fetches is the download goroutine: Close waits for it, so no download writes into the
+	// state folder after Close returns.
+	fetches sync.WaitGroup
 
 	mu       sync.Mutex
 	info     *speechproto.Hello // from helper -info, once it ran well
@@ -117,7 +120,7 @@ func New(cfg Config) *Engine {
 	return e
 }
 
-// Close stops a download and the helper.
+// Close stops a download and the helper, and returns once both ended.
 func (e *Engine) Close() {
 	e.mu.Lock()
 	e.closed = true
@@ -128,6 +131,7 @@ func (e *Engine) Close() {
 	}
 	e.mu.Unlock()
 	e.cancel()
+	e.fetches.Wait()
 	if p != nil {
 		p.stop()
 		<-p.done
@@ -220,7 +224,9 @@ func (e *Engine) fetchLocked() {
 	e.fetching, e.read = true, 0 // lastErr stays until a download or load succeeds
 	m := e.cfg.Model
 	e.cfg.Logf("speech: downloading the model %s from %s into %s. %s", m.Name, m.URL, e.dir, m.Attribution)
+	e.fetches.Add(1)
 	go func() {
+		defer e.fetches.Done()
 		err := fetch(e.ctx, e.cfg.HTTP, m, e.dir, e.cfg.StallTimeout, func(n int64) {
 			e.mu.Lock()
 			e.read = n
