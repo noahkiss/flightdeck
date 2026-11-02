@@ -178,7 +178,7 @@ struct SettingRow: View {
             Text(def.title)
             ForEach(center.habs.filter { $0.hasSettings && $0.settings[def.id] != nil }, id: \.habID) { h in
                 let s = h.settings[def.id]!
-                PermissionWaitRow(label: h.label, setting: s) { v in Task { await center.setOneHab(def.id, habID: h.habID, v) } }
+                PermissionWaitRow(label: h.label, setting: s, shown: LevelMatcher.value(h, def.id, queued: center.queue.items)) { v in Task { await center.setOneHab(def.id, habID: h.habID, v) } }
                     .disabled(s.isLocked)
             }
         }
@@ -249,9 +249,11 @@ struct ValueControl: View {
 struct PermissionWaitRow: View {
     let label: String
     let setting: Setting
+    /// The value shown: the queued one for an offline hab, else the hab's (app.md 20.8).
+    let shown: JSONValue?
     let set: (JSONValue) -> Void
 
-    private var seconds: Int64 { if case .int(let n) = setting.value { return n } else { return 0 } }
+    private var seconds: Int64 { if case .int(let n)? = shown { return n } else { return 0 } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {

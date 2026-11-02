@@ -88,18 +88,22 @@ public enum LevelMatcher {
 
     /// The picker's state. `app` holds the app-side values this device
     /// shows; a setting it does not show is absent and left out. `prefer`,
-    /// the last picked level, is tried first, so a set of rows that two
-    /// columns share shows the level the user picked.
+    /// the last picked level, wins when it matches, so a set of rows that two
+    /// columns share shows the level the user picked. Otherwise the matching
+    /// level with the fewest exceptions wins; a tie goes to the safer level.
     public static func match(defs: [SettingDef] = SettingsRegistry.levelled, app: [String: JSONValue], habs: [HabSettingsView],
                              queued: [QueuedSettingWrite] = [], prefer: SettingLevel? = nil) -> LevelState {
-        var order = SettingLevel.allCases
-        if let p = prefer { order.removeAll { $0 == p }; order.insert(p, at: 0) }
-        for level in order {
-            if let ex = exceptions(level, defs: defs, app: app, habs: habs, queued: queued) {
-                return LevelState(level: level, exceptions: ex)
+        if let p = prefer, let ex = exceptions(p, defs: defs, app: app, habs: habs, queued: queued) {
+            return LevelState(level: p, exceptions: ex)
+        }
+        var best: LevelState?
+        for level in SettingLevel.allCases {
+            guard let ex = exceptions(level, defs: defs, app: app, habs: habs, queued: queued) else { continue }
+            if best == nil || ex.count < best!.exceptions.count {
+                best = LevelState(level: level, exceptions: ex)
             }
         }
-        return .custom
+        return best ?? .custom
     }
 
     /// The exceptions when every row matches `level`, else nil.

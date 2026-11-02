@@ -32,7 +32,9 @@ public final class SettingsCenter {
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let setter: (String, SettingsSetParams) async throws -> SettingsResult
-    @ObservationIgnored private var flushing: Set<String> = []
+    /// The last write or connect step queued for each hab: writes to one hab run one at a
+    /// time, so each reads the revisions the one before it left (review S2, S3).
+    @ObservationIgnored private var tails: [String: Task<Void, Never>] = [:]
 
     static let levelKey = "FlightdeckSettingsLevel"
 
@@ -76,6 +78,13 @@ public final class SettingsCenter {
                                 hasSettings: state.welcome?.capabilities.contains(Self.capability) ?? false,
                                 epoch: state.welcome?.epoch, settings: state.settings)
         if let i = habs.firstIndex(where: { $0.habID == habID }) {
+            var v = v
+            if habs[i].epoch == v.epoch {
+                // A state that predates a write's answer must not roll the row back.
+                for (id, held) in habs[i].settings where held.revision > (v.settings[id]?.revision ?? 0) {
+                    v.settings[id] = held
+                }
+            }
             if habs[i] != v { habs[i] = v }
         } else {
             habs.append(v)
@@ -94,20 +103,53 @@ public final class SettingsCenter {
 
     /// A hab connected and applied its first snapshot: send its queued writes, then give each
     /// row still at its default the picked level's value (app.md 20.2, 20.5).
+    ///
+    /// A connect that arrives while an earlier step for the hab is in flight waits for it, then
+    /// runs with the view current at that point: deferred, never skipped. A queued write leaves
+    /// the saved queue only once the hab answered it.
     public func connectionOnline(habID: String) async {
-        guard let h = hab(habID), h.online, h.hasSettings, !flushing.contains(habID) else { return }
-        flushing.insert(habID)
-        defer { flushing.remove(habID) }
+        await serialized(habID) { await self.flush(habID: habID) }
+    }
+
+    private func flush(habID: String) async {
+        guard let h = hab(habID), h.online, h.hasSettings else { return }
+        let queuedIDs = Set(queue.items(for: habID).map(\.settingID))
         let plan = SettingsWrites.connectPlan(hab: h, queued: queue.items(for: habID), picked: picked)
-        for id in plan.settled { queue.remove(habID: habID, settingID: id) }
+        // Dropped before sending, or already in place: settled now.
+        let sending = Set(plan.send.map(\.id))
+        for id in plan.settled where !sending.contains(id) { queue.remove(habID: habID, settingID: id) }
         queue.save(defaults)
         var sentences = plan.dropped.map { SettingsWrites.sentence($0, habLabel: h.label) }
         if !plan.send.isEmpty {
             let out = await SettingsWrites.send(plan.send, habID: habID) { try await self.setter(habID, $0) }
+            merge(habID: habID, out.written)
+            for w in out.written { queue.remove(habID: habID, settingID: w.id) }
+            for d in out.dropped where queuedIDs.contains(d.settingID) { queue.remove(habID: habID, settingID: d.settingID) }
+            // An unreached queued write stays queued as it was; a new-hab row is checked again
+            // at the next connect.
+            queue.save(defaults)
             sentences += out.dropped.map { SettingsWrites.sentence($0, habLabel: h.label) }
-            for w in out.unreached { enqueue(habID: habID, id: w.id, value: w.value) }
         }
         if !sentences.isEmpty { notice = sentences.joined(separator: " ") }
+    }
+
+    /// Runs `work` after every earlier step for the hab has finished.
+    private func serialized<T: Sendable>(_ habID: String, _ work: @escaping @MainActor () async -> T) async -> T {
+        let prev = tails[habID]
+        let t = Task { @MainActor in
+            await prev?.value
+            return await work()
+        }
+        tails[habID] = Task { @MainActor in _ = await t.value }
+        return await t.value
+    }
+
+    /// Takes a write's answer into the hab's view at once, without waiting for the event.
+    private func merge(habID: String, _ written: [Setting]) {
+        guard let i = habs.firstIndex(where: { $0.habID == habID }) else { return }
+        for s in written where s.revision > (habs[i].settings[s.id]?.revision ?? 0) {
+            habs[i].settings[s.id] = s
+        }
     }
 
     /// Queues a write for a hab, with the revision, epoch and value the app last saw.
@@ -121,6 +163,10 @@ public final class SettingsCenter {
     /// Writes rows to one hab: at once when online, else through the queue. A hab whose
     /// settings the app has never seen gets nothing queued; the new-hab check covers it.
     private func write(habID: String, rows: [(id: String, value: JSONValue)]) async -> [DroppedSetting] {
+        await serialized(habID) { await self.writeNow(habID: habID, rows: rows) }
+    }
+
+    private func writeNow(habID: String, rows: [(id: String, value: JSONValue)]) async -> [DroppedSetting] {
         guard let h = hab(habID), h.hasSettings else { return [] }
         let rows = rows.filter { r in
             guard let s = h.settings[r.id] else { return false }
@@ -133,8 +179,10 @@ public final class SettingsCenter {
         }
         let writes = rows.map { SettingWrite(id: $0.id, revision: h.settings[$0.id]?.revision ?? 0, value: $0.value) }
         let out = await SettingsWrites.send(writes, habID: habID) { try await self.setter(habID, $0) }
+        merge(habID: habID, out.written)
         for w in out.unreached { enqueue(habID: habID, id: w.id, value: w.value) }
         for w in out.written { queue.remove(habID: habID, settingID: w.id) }
+        for x in out.dropped { queue.remove(habID: habID, settingID: x.settingID) }
         queue.save(defaults)
         return out.dropped
     }

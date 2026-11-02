@@ -246,7 +246,7 @@ final class SettingsTests: XCTestCase {
         var sent: [String: [SettingWrite]] = [:]
         let (c, d) = try center("SettingsTests.pick") { hab, p in
             sent[hab, default: []] += p.values
-            return SettingsResult(seq: 1, settings: [])
+            return SettingsResult(seq: 1, settings: p.values.map { self.setting($0.id, $0.value, rev: $0.revision + 1, source: .client) })
         }
         var yes = true
         var faceID = false
@@ -305,6 +305,124 @@ final class SettingsTests: XCTestCase {
         await c2.connectionOnline(habID: h.habID)
         XCTAssertTrue(c2.queue.items.isEmpty)
         XCTAssertEqual(c2.notice, "Confirm before an agent starts work on another host on alpha was changed from another device.")
+    }
+
+    // MARK: - Review fixes
+
+    /// S4: a same-epoch queued write whose value is in place at a newer revision (the answer was
+    /// lost) is cleared with nothing sent.
+    func testSameEpochValueInPlaceSendsNothing() {
+        var h = balancedHab()
+        h.settings[R.startElsewhere] = setting(R.startElsewhere, .bool(false), rev: 4, source: .client)
+        let q = QueuedSettingWrite(habID: "h1", settingID: R.startElsewhere, value: .bool(false), revision: 3, epoch: "e1", seen: .bool(true))
+        let p = SettingsWrites.connectPlan(hab: h, queued: [q], picked: nil)
+        XCTAssertTrue(p.send.isEmpty)
+        XCTAssertTrue(p.dropped.isEmpty)
+        XCTAssertEqual(p.settled, [R.startElsewhere])
+    }
+
+    /// N3: with no level picked, the matching level with the fewest exceptions wins.
+    func testFewestExceptionsWinsWithNoPick() {
+        var h = balancedHab()
+        for d in R.levelledHabSide {
+            h.settings[d.id] = setting(d.id, d.levels![.bypass]!, rev: 2, source: .config)
+        }
+        var a = app(.bypass)
+        a[R.sshRequireFaceID] = nil
+        let st = LevelMatcher.match(app: a, habs: [h])
+        XCTAssertEqual(st.level, .bypass)
+        XCTAssertEqual(st.title, "Bypass permissions")
+        // A picked level that does not match falls back to the same rule.
+        XCTAssertEqual(LevelMatcher.match(app: a, habs: [h], prefer: .safe).level, .bypass)
+        // A picked level that matches wins, exceptions and all.
+        XCTAssertEqual(LevelMatcher.match(app: a, habs: [h], prefer: .balanced).level, .balanced)
+    }
+
+    func testInvalidSentence() {
+        XCTAssertEqual(SettingsWrites.sentence(DroppedSetting(settingID: R.approvalMaxAge, habID: "h", reason: .invalid), habLabel: "alpha"),
+                       "Remote answers expire after on alpha was refused: not a value this hab takes.")
+    }
+
+    /// S1: during the send, the queued write is still in the saved queue; it leaves after the
+    /// hab answers.
+    @MainActor
+    func testQueuedWriteLeavesTheSavedQueueAfterTheAnswer() async throws {
+        let d = try XCTUnwrap(UserDefaults(suiteName: "SettingsTests.s1"))
+        d.removePersistentDomain(forName: "SettingsTests.s1")
+        var q = SettingsQueue()
+        q.put(QueuedSettingWrite(habID: "h1", settingID: R.startElsewhere, value: .bool(false), revision: 1, epoch: "e1", seen: .bool(true)))
+        q.save(d)
+        var savedDuringSend = -1
+        let c = SettingsCenter(defaults: d) { _, p in
+            savedDuringSend = SettingsQueue.load(d).items.count
+            return SettingsResult(seq: 1, settings: p.values.map { self.setting($0.id, $0.value, rev: $0.revision + 1, source: .client) })
+        }
+        let h = balancedHab()
+        c.update(habID: h.habID, label: h.label, state: state(h))
+        await c.connectionOnline(habID: h.habID)
+        XCTAssertEqual(savedDuringSend, 1, "a kill during the send keeps the write")
+        XCTAssertTrue(SettingsQueue.load(d).items.isEmpty)
+
+        // An unreached send keeps it queued, as it was.
+        q.save(d)
+        let c2 = SettingsCenter(defaults: d) { _, _ in throw TransportError("gone") }
+        c2.update(habID: h.habID, label: h.label, state: state(h))
+        await c2.connectionOnline(habID: h.habID)
+        XCTAssertEqual(SettingsQueue.load(d).items, q.items)
+    }
+
+    /// S2: a connect that arrives during a flush runs after it, with the current view.
+    @MainActor
+    func testConnectDuringAFlushIsDeferred() async throws {
+        let d = try XCTUnwrap(UserDefaults(suiteName: "SettingsTests.s2"))
+        d.removePersistentDomain(forName: "SettingsTests.s2")
+        d.set("safe", forKey: SettingsCenter.levelKey)
+        var calls = 0
+        var release: CheckedContinuation<Void, Never>?
+        let c = SettingsCenter(defaults: d) { _, p in
+            calls += 1
+            if calls == 1 {
+                await withCheckedContinuation { release = $0 }
+                throw TransportError("the hab restarted")
+            }
+            return SettingsResult(seq: 1, settings: p.values.map { self.setting($0.id, $0.value, rev: $0.revision + 1, source: .client) })
+        }
+        let h = balancedHab()
+        c.update(habID: h.habID, label: h.label, state: state(h))
+        let first = Task { await c.connectionOnline(habID: h.habID) }
+        while release == nil { await Task.yield() }
+        let second = Task { await c.connectionOnline(habID: h.habID) }
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(calls, 1, "the second connect waits for the first")
+        release?.resume()
+        await first.value
+        await second.value
+        XCTAssertEqual(calls, 2, "the second connect ran its new-hab check")
+        XCTAssertEqual(c.hab("h1")?.settings[R.logbookApproval]?.value, .string("agents"))
+    }
+
+    /// S3: two fast writes to one row send increasing revisions.
+    @MainActor
+    func testFastWritesUseFreshRevisions() async throws {
+        let d = try XCTUnwrap(UserDefaults(suiteName: "SettingsTests.s3"))
+        d.removePersistentDomain(forName: "SettingsTests.s3")
+        var revisions: [UInt64] = []
+        let c = SettingsCenter(defaults: d) { _, p in
+            revisions += p.values.map(\.revision)
+            try await Task.sleep(for: .milliseconds(20))
+            return SettingsResult(seq: 1, settings: p.values.map { self.setting($0.id, $0.value, rev: $0.revision + 1, source: .client) })
+        }
+        var h = balancedHab()
+        h.settings[R.permissionWait] = setting(R.permissionWait, .int(0))
+        c.update(habID: h.habID, label: h.label, state: state(h))
+        async let a: Void = c.setOneHab(R.permissionWait, habID: "h1", .int(30))
+        async let b: Void = c.setOneHab(R.permissionWait, habID: "h1", .int(31))
+        _ = await (a, b)
+        XCTAssertEqual(revisions, [1, 2])
+        XCTAssertNil(c.notice)
+        // A stale state from before the answers does not roll the row back.
+        c.update(habID: h.habID, label: h.label, state: state(h))
+        XCTAssertEqual(c.hab("h1")?.settings[R.permissionWait]?.revision, 3)
     }
 
     // MARK: - Voice

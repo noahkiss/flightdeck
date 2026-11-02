@@ -124,7 +124,9 @@ public enum SettingsWrites {
                 continue
             }
             if q.epoch != nil, q.epoch == hab.epoch {
-                if s.revision == q.revision, s.value == q.value { continue }
+                // In place already, whatever its revision: the call reached the hab and only the
+                // answer was lost.
+                if s.value == q.value { continue }
                 plan.send.append(SettingWrite(id: q.settingID, revision: q.revision, value: q.value))
             } else if s.value != q.seen {
                 plan.dropped.append(DroppedSetting(settingID: q.settingID, habID: hab.habID, reason: .changedElsewhere))
@@ -190,7 +192,7 @@ public enum SettingsWrites {
         case .changedElsewhere: return "\(title) on \(habLabel) was changed from another device."
         case .locked: return "\(title) is set in \(habLabel)'s config."
         case .notOnHab: return "\(title) is not on \(habLabel)."
-        case .invalid: return "\(habLabel) refused \(title)."
+        case .invalid: return "\(title) on \(habLabel) was refused: not a value this hab takes."
         case .notTried: return "\(title) on \(habLabel) was not changed."
         case .failed(let why): return "\(title) on \(habLabel) was not changed: \(why)."
         }
