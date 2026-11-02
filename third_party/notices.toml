@@ -1,0 +1,248 @@
+# Third-party notices: the code we did not write that ends up in what we publish.
+#
+# internal/notices reads this file, the licence texts under third_party/licenses/, go.mod with the
+# Go module cache, and apple/FlightdeckKit/Package.resolved, and writes two files:
+#   NOTICE                       release archives and the helper bundles (set "release")
+#   apple/App/Acknowledgements.txt  the Flightdeck app (set "app")
+# Run `make notices` after a change; `make check-gen` fails when either file is stale, and the
+# generator fails when a Swift package has no [[swift]] entry or a Go module has no licence file.
+#
+# [[component]]: code that is not a Go module or a Swift package (C libraries, Zig packages, fonts,
+# data). `files` are paths from the repository root. Each of `release` and `app` says where the
+# component sits in that set (`in`) and which version (`version`: "make:VAR" reads the Makefile,
+# "mise:tool" reads mise.toml, anything else is printed as written). A component without a table
+# for a set is not in that set.
+#
+# [[swift]]: one entry per package pinned in Package.resolved. Its licence texts are every file
+# under third_party/licenses/swift/<identity>/, copied from the package at the pinned revision.
+
+# --- libghostty-vt, linked into gff and gff-hab -------------------------------------------------
+
+[[component]]
+name = "Ghostty"
+url = "https://github.com/ghostty-org/ghostty"
+license = "MIT"
+files = ["third_party/licenses/ghostty/LICENSE"]
+release = { in = "gff, gff-hab (libghostty-vt)", version = "make:GHOSTTY_COMMIT" }
+app = { in = "Flightdeck (GhosttyKit, the libghostty build of libghostty-spm)", version = "the commit in libghostty-spm's Ghostty.ref" }
+
+[[component]]
+name = "Zig standard library"
+url = "https://ziglang.org"
+license = "MIT"
+files = ["third_party/licenses/zig/LICENSE"]
+release = { in = "gff, gff-hab (compiled into libghostty-vt)", version = "mise:zig" }
+app = { in = "Flightdeck (compiled into GhosttyKit)", version = "the Zig release libghostty-spm builds with" }
+
+[[component]]
+name = "uucode"
+url = "https://github.com/jacobsandlund/uucode"
+license = "MIT"
+files = ["third_party/licenses/uucode/LICENSE.md"]
+release = { in = "gff, gff-hab (inside libghostty-vt)", version = "the version Ghostty pins" }
+app = { in = "Flightdeck (inside GhosttyKit)", version = "the version Ghostty pins" }
+
+[[component]]
+name = "simdutf"
+url = "https://github.com/simdutf/simdutf"
+license = "MIT (dual-licensed MIT or Apache-2.0; used under MIT)"
+files = ["third_party/licenses/simdutf/LICENSE-MIT"]
+release = { in = "gff, gff-hab (inside libghostty-vt)", version = "the version Ghostty vendors" }
+app = { in = "Flightdeck (inside GhosttyKit)", version = "the version Ghostty vendors" }
+
+[[component]]
+name = "Highway"
+url = "https://github.com/google/highway"
+license = "BSD-3-Clause (dual-licensed Apache-2.0 or BSD-3-Clause; used under BSD-3-Clause)"
+files = ["third_party/licenses/highway/LICENSE-BSD3"]
+release = { in = "gff, gff-hab (inside libghostty-vt)", version = "the version Ghostty pins" }
+app = { in = "Flightdeck (inside GhosttyKit)", version = "the version Ghostty pins" }
+
+[[component]]
+name = "Wuffs"
+url = "https://github.com/google/wuffs"
+license = "MIT (dual-licensed MIT or Apache-2.0; used under MIT)"
+files = ["third_party/licenses/wuffs/LICENSE-MIT"]
+release = { in = "gff, gff-hab (inside libghostty-vt)", version = "the version Ghostty pins" }
+app = { in = "Flightdeck (inside GhosttyKit)", version = "the version Ghostty pins" }
+
+# --- Only in GhosttyKit (the full libghostty in the app) ----------------------------------------
+
+[[component]]
+name = "Oniguruma"
+url = "https://github.com/kkos/oniguruma"
+license = "BSD-2-Clause"
+files = ["third_party/licenses/oniguruma/COPYING"]
+app = { in = "Flightdeck (inside GhosttyKit)", version = "the version Ghostty pins" }
+
+[[component]]
+name = "libxev"
+url = "https://github.com/mitchellh/libxev"
+license = "MIT"
+files = ["third_party/licenses/libxev/LICENSE"]
+app = { in = "Flightdeck (inside GhosttyKit)", version = "the version Ghostty pins" }
+
+[[component]]
+name = "zig-objc"
+url = "https://github.com/mitchellh/zig-objc"
+license = "MIT"
+files = ["third_party/licenses/zig-objc/LICENSE"]
+app = { in = "Flightdeck (inside GhosttyKit)", version = "the version Ghostty pins" }
+
+[[component]]
+name = "z2d"
+url = "https://github.com/vancluever/z2d"
+license = "MPL-2.0 (the source of the covered files is at the URL above)"
+files = ["third_party/licenses/z2d/LICENSE"]
+app = { in = "Flightdeck (inside GhosttyKit, unmodified)", version = "the version Ghostty pins" }
+
+[[component]]
+name = "JetBrains Mono"
+url = "https://github.com/JetBrains/JetBrainsMono"
+license = "OFL-1.1"
+files = ["third_party/licenses/jetbrains-mono/OFL.txt"]
+app = { in = "Flightdeck (font embedded in GhosttyKit)", version = "the version Ghostty pins" }
+
+[[component]]
+name = "Nerd Fonts (Symbols Only)"
+url = "https://github.com/ryanoasis/nerd-fonts"
+license = "MIT; the glyphs keep their own licences, listed in the text below"
+files = ["third_party/licenses/nerd-fonts/LICENSE"]
+app = { in = "Flightdeck (font embedded in GhosttyKit)", version = "the version Ghostty pins" }
+
+# --- Data in gff-hab ---------------------------------------------------------------------------
+
+[[component]]
+name = "herdr agent detection manifests"
+url = "https://github.com/herdrdev/herdr"
+license = "Apache-2.0 (files copied unchanged; the source record is internal/detect/manifests/SOURCE)"
+files = ["internal/detect/manifests/LICENSE"]
+release = { in = "gff-hab (embedded data)", version = "the commit in internal/detect/manifests/SOURCE" }
+
+# --- gff-hab-speech, the speech helper inside GFF Hab.app when it is built with one -------------
+
+[[component]]
+name = "sherpa-onnx"
+url = "https://github.com/k2-fsa/sherpa-onnx"
+license = "Apache-2.0"
+files = ["third_party/licenses/sherpa-onnx/LICENSE"]
+release = { in = "gff-hab-speech (static library)", version = "make:SHERPA_VERSION" }
+
+[[component]]
+name = "ONNX Runtime"
+url = "https://github.com/microsoft/onnxruntime"
+license = "MIT; its own third-party notices follow its licence"
+files = ["third_party/licenses/onnxruntime/LICENSE", "third_party/licenses/onnxruntime/ThirdPartyNotices.txt"]
+release = { in = "gff-hab-speech (inside the sherpa-onnx static library)", version = "1.28.2 (the version sherpa-onnx pins)" }
+
+[[component]]
+name = "kaldi-native-fbank"
+url = "https://github.com/csukuangfj/kaldi-native-fbank"
+license = "Apache-2.0"
+files = ["third_party/licenses/kaldi-native-fbank/LICENSE"]
+release = { in = "gff-hab-speech (inside the sherpa-onnx static library)", version = "1.22.4 (the version sherpa-onnx pins)" }
+
+[[component]]
+name = "KISS FFT"
+url = "https://github.com/mborgerding/kissfft"
+license = "BSD-3-Clause"
+files = ["third_party/licenses/kissfft/COPYING", "third_party/licenses/kissfft/BSD-3-Clause"]
+release = { in = "gff-hab-speech (inside the sherpa-onnx static library)", version = "the version kaldi-native-fbank pins" }
+
+[[component]]
+name = "kaldi-decoder and kaldifst"
+url = "https://github.com/k2-fsa/kaldi-decoder"
+license = "Apache-2.0"
+files = ["third_party/licenses/kaldi-decoder/LICENSE"]
+release = { in = "gff-hab-speech (inside the sherpa-onnx static library)", version = "0.3.0 (the version sherpa-onnx pins)" }
+
+[[component]]
+name = "OpenFst"
+url = "https://github.com/csukuangfj/openfst"
+license = "Apache-2.0"
+files = ["third_party/licenses/openfst/COPYING"]
+release = { in = "gff-hab-speech (inside the sherpa-onnx static library)", version = "1.8.5-2026-07-09 (the version sherpa-onnx pins)" }
+
+[[component]]
+name = "simple-sentencepiece"
+url = "https://github.com/pkufool/simple-sentencepiece"
+license = "Apache-2.0"
+files = ["third_party/licenses/simple-sentencepiece/LICENSE"]
+release = { in = "gff-hab-speech (inside the sherpa-onnx static library)", version = "0.7 (the version sherpa-onnx pins)" }
+
+[[component]]
+name = "utf8proc"
+url = "https://github.com/JuliaStrings/utf8proc"
+license = "MIT and the Unicode data licence"
+files = ["third_party/licenses/utf8proc/LICENSE.md"]
+release = { in = "gff-hab-speech (inside the sherpa-onnx static library)", version = "2.12.0 (the version sherpa-onnx pins)" }
+
+[[component]]
+name = "PortAudio"
+url = "https://github.com/PortAudio/portaudio"
+license = "MIT"
+files = ["third_party/licenses/portaudio/LICENSE.txt"]
+release = { in = "gff-hab-speech (inside the sherpa-onnx static library)", version = "19.7.0 (the version sherpa-onnx pins)" }
+
+[[component]]
+name = "nlohmann/json"
+url = "https://github.com/nlohmann/json"
+license = "MIT"
+files = ["third_party/licenses/nlohmann-json/LICENSE.MIT"]
+release = { in = "gff-hab-speech (inside the sherpa-onnx static library)", version = "the version sherpa-onnx pins" }
+
+[[component]]
+name = "hclust-cpp"
+url = "https://github.com/csukuangfj/hclust-cpp"
+license = "BSD-2-Clause"
+files = ["third_party/licenses/hclust-cpp/LICENSE"]
+release = { in = "gff-hab-speech (inside the sherpa-onnx static library)", version = "the version sherpa-onnx pins" }
+
+[[component]]
+name = "Opus (libopus)"
+url = "https://opus-codec.org"
+license = "BSD-3-Clause"
+files = ["third_party/licenses/opus/COPYING"]
+release = { in = "gff-hab-speech (linked statically on macOS)", version = "the build machine's libopus" }
+
+# --- Swift packages in Package.resolved --------------------------------------------------------
+
+[[swift]]
+identity = "fluidaudio"
+license = "Apache-2.0; its third-party licences follow"
+
+[[swift]]
+identity = "libghostty-spm"
+license = "MIT; bash-preexec (MIT) and the iTerm2 colour schemes (MIT) follow"
+
+[[swift]]
+identity = "msdisplaylink"
+license = "MIT"
+
+[[swift]]
+identity = "swift-asn1"
+license = "Apache-2.0"
+
+[[swift]]
+identity = "swift-atomics"
+license = "Apache-2.0"
+
+[[swift]]
+identity = "swift-collections"
+license = "Apache-2.0"
+
+[[swift]]
+identity = "swift-crypto"
+license = "Apache-2.0"
+
+[[swift]]
+identity = "swift-nio"
+license = "Apache-2.0"
+
+[[swift]]
+identity = "swift-nio-ssh"
+license = "Apache-2.0"
+
+[[swift]]
+identity = "swift-system"
+license = "Apache-2.0"

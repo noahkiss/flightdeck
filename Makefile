@@ -62,7 +62,8 @@ endif
 SPEECH_ENV := PKG_CONFIG_PATH=$(if $(OPUS_STATIC),$(OPUS_STATIC):)$(SHERPA_PREFIX)/lib/pkgconfig$(if $(PKG_CONFIG_PATH),:$(PKG_CONFIG_PATH)) $(SPEECH_LDFLAGS) CGO_ENABLED=1
 
 .PHONY: gen test test-pure race fuzz check-gen check-pure release-schema libghostty build vet clean-libghostty \
-	sherpa-onnx speech-helper test-speech clean-sherpa-onnx opus-static ci-full ci-fast release-build
+	sherpa-onnx speech-helper test-speech clean-sherpa-onnx opus-static ci-full ci-fast release-build \
+	notices check-notices
 
 # Regenerate api/schema.json, api/client_gen.go and the Swift package.
 gen:
@@ -172,8 +173,18 @@ check-pure:
 	CGO_ENABLED=0 $(GO) build ./...
 	CGO_ENABLED=0 $(GO) vet ./...
 
+# Write NOTICE and apple/App/Acknowledgements.txt from third_party/notices.toml, go.mod with the
+# module cache, and apple/FlightdeckKit/Package.resolved (docs/specs/ci-release.md 7.5). Fails when
+# a Go module has no licence file or a pinned Swift package has no entry.
+notices:
+	$(GO) run ./internal/notices/cmd -root .
+
+# Fail when NOTICE or apple/App/Acknowledgements.txt is stale, writing nothing.
+check-notices:
+	$(GO) run ./internal/notices/cmd -root . -check
+
 # Fail when a generated file is stale. CI runs this.
-check-gen: gen
+check-gen: gen check-notices
 	git diff --exit-code -- api swift
 
 # What .github/workflows/ci.yml runs after go-ci's gofmt and generate checks (docs/specs/ci-release.md
@@ -201,6 +212,7 @@ release-build: libghostty
 	@mkdir -p $(RELEASE_DIR)
 	$(GHOSTTY_ENV) $(GO) build -tags ghostty -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(RELEASE_DIR)/ ./cmd/gff-hab ./cmd/gff
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(RELEASE_DIR)/ ./cmd/gff-hab-holder
+	cp LICENSE NOTICE $(RELEASE_DIR)/
 
 # Record the current schema as the released schema of its revision. Run at release time only.
 release-schema:
