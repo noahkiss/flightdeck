@@ -34,7 +34,7 @@ jobs:
     permissions:
       contents: read
     # TODO: repoint to @main once noahkiss/workflows#16 merges.
-    uses: noahkiss/workflows/.github/workflows/xcode-ci.yml@xcode-ci
+    uses: noahkiss/workflows/.github/workflows/xcode-ci.yml@main
     with:
       # Xcode 27.1 by path on the xcode-27 image; never the image default or a beta (spec 4).
       runner: xcode-27
