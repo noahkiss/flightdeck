@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"unicode"
@@ -19,13 +20,17 @@ import (
 	"github.com/noahkiss/flightdeck/internal/control"
 )
 
-// DefaultDeny is the deny list every hab has (capcom.md 5.1): SSH and cloud credential folders,
-// .env files and private key files. A word with no slash is matched against every part of a
-// path; one with a slash against consecutive parts; one that starts with / or ~/ against the
-// path from its start.
+// DefaultDeny is the deny list a hab has when its config file sets no [read] deny (capcom.md
+// 5.1, 5.5): SSH and cloud credential folders, .env files and private key files. The .env
+// templates projects commit (.env.example, .env.sample, .env.template) stay readable. A word
+// with no slash is matched against every part of a path; one with a slash against consecutive
+// parts; one that starts with / or ~/ against the path from its start. A word that starts with
+// ! exempts a part it matches from the slash-free words: .env.example is readable, while
+// .ssh/.env.example is still refused by .ssh.
 var DefaultDeny = []string{
 	".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".config/gcloud", ".oci",
-	".env", ".env.*", ".netrc", ".git-credentials", ".pgpass", ".credentials.json",
+	".env", ".env.*", "!.env.example", "!.env.sample", "!.env.template",
+	".netrc", ".git-credentials", ".pgpass", ".credentials.json",
 	"*.pem", "*.key", "*.p12", "*.pfx", "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*",
 }
 
@@ -178,8 +183,14 @@ func fold(s string) string {
 func (s Scope) denied(p string) bool {
 	p = fold(p)
 	parts := strings.Split(strings.TrimPrefix(p, string(filepath.Separator)), string(filepath.Separator))
+	var exempt []string
 	for _, pat := range s.Deny {
-		if pat == "" {
+		if w, ok := strings.CutPrefix(pat, "!"); ok && w != "" && !strings.Contains(w, "/") {
+			exempt = append(exempt, fold(w))
+		}
+	}
+	for _, pat := range s.Deny {
+		if pat == "" || strings.HasPrefix(pat, "!") {
 			continue
 		}
 		if pat == "~" || strings.HasPrefix(pat, "~/") || filepath.IsAbs(pat) {
@@ -192,7 +203,27 @@ func (s Scope) denied(p string) bool {
 			}
 			continue
 		}
-		if sequence(parts, strings.Split(strings.Trim(fold(pat), "/"), "/")) {
+		words := strings.Split(strings.Trim(fold(pat), "/"), "/")
+		if len(words) == 1 {
+			if single(parts, words[0], exempt) {
+				return true
+			}
+			continue
+		}
+		if sequence(parts, words) {
+			return true
+		}
+	}
+	return false
+}
+
+// single reports whether a slash-free word matches a part of a path that no exemption matches.
+func single(parts []string, w string, exempt []string) bool {
+	for _, part := range parts {
+		if m, _ := filepath.Match(w, part); !m {
+			continue
+		}
+		if !slices.ContainsFunc(exempt, func(e string) bool { m, _ := filepath.Match(e, part); return m }) {
 			return true
 		}
 	}
@@ -228,11 +259,13 @@ func sequence(parts, pat []string) bool {
 	return false
 }
 
-// ScopeConfig is the [read] section of the hab's config file: roots and patterns added to the
-// defaults.
+// ScopeConfig is the [read] section of the hab's config file: roots added to the default roots,
+// and a deny list that replaces DefaultDeny when the section sets one.
 type ScopeConfig struct {
 	Allow []string
 	Deny  []string
+	// DenySet: the section sets deny, so Deny replaces DefaultDeny; deny = [] turns it off.
+	DenySet bool
 }
 
 // LoadScopeConfig reads the [read] section of the hab's config file. A missing file or section
@@ -256,9 +289,11 @@ func LoadScopeConfig(path, home string) (ScopeConfig, []string, error) {
 			Deny  []string `toml:"deny"`
 		} `toml:"read"`
 	}
-	if _, err := toml.Decode(string(b), &fc); err != nil {
+	md, err := toml.Decode(string(b), &fc)
+	if err != nil {
 		return c, nil, fmt.Errorf("%s: %w", path, err)
 	}
+	c.DenySet = md.IsDefined("read", "deny")
 	var problems []string
 	for _, r := range fc.Read.Allow {
 		r = strings.TrimSpace(r)
@@ -307,7 +342,11 @@ func (s *ScopeSource) Scope() Scope {
 		sc.Allow = append(sc.Allow, s.Roots()...)
 	}
 	sc.Allow = append(sc.Allow, c.Allow...)
-	sc.Deny = append(append(sc.Deny, DefaultDeny...), c.Deny...)
+	if c.DenySet {
+		sc.Deny = append(sc.Deny, c.Deny...)
+	} else {
+		sc.Deny = append(sc.Deny, DefaultDeny...)
+	}
 	return sc.Resolved()
 }
 

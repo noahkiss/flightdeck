@@ -284,17 +284,94 @@ func TestScopeSourceConfig(t *testing.T) {
 	} else if _, err := sc.Check(filepath.Join(home, "proj", "a")); kindOf(err) != api.ErrorKindDenied {
 		t.Fatalf("broken config: %v", err)
 	}
-	// A good file adds roots and patterns.
+	// A good file adds roots, and its deny list replaces the default one.
 	os.WriteFile(cfg, []byte("[read]\nallow = [\"~/extra\", \"relative\"]\ndeny = [\"*.sqlite\"]\n"), 0o644)
 	sc = src.Scope()
 	if sc.Broken || !slices.Contains(sc.Allow, filepath.Join(home, "extra")) || slices.ContainsFunc(sc.Allow, func(r string) bool { return strings.HasSuffix(r, "relative") }) ||
-		sc.Deny[len(sc.Deny)-1] != "*.sqlite" {
+		!slices.Equal(sc.Deny, []string{"*.sqlite"}) {
 		t.Fatalf("good config: %+v", sc)
 	}
 	// Then a broken one keeps the last good section.
 	os.WriteFile(cfg, []byte("[read\n"), 0o644)
 	if sc := src.Scope(); sc.Broken || !slices.Contains(sc.Allow, filepath.Join(home, "extra")) {
 		t.Fatalf("broken after good: %+v", sc)
+	}
+}
+
+func TestScopeDenyDefaults(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	proj := filepath.Join(home, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(root, "hab.toml")
+	src := &ScopeSource{Host: "boxa", Home: home, Config: cfg, Roots: func() []string { return []string{home} }}
+	check := func(what string, sc Scope, path string, ok bool) {
+		t.Helper()
+		_, err := sc.Check(path)
+		if ok && err != nil {
+			t.Errorf("%s: %s: %v, want readable", what, path, err)
+		}
+		if !ok && kindOf(err) != api.ErrorKindDenied {
+			t.Errorf("%s: %s: %v, want a denial", what, path, err)
+		}
+	}
+	at := func(name ...string) string { return filepath.Join(append([]string{proj}, name...)...) }
+
+	// No [read] deny: the default list. The three .env templates are readable, in any case;
+	// other .env files are not, and an exemption never lifts a denied folder above it.
+	for _, body := range []string{"", "[read]\nallow = []\n"} {
+		os.WriteFile(cfg, []byte(body), 0o644)
+		sc := src.Scope()
+		if !slices.Equal(sc.Deny, DefaultDeny) {
+			t.Fatalf("config %q: deny %v, want the default list", body, sc.Deny)
+		}
+		for _, name := range []string{".env.example", ".env.sample", ".env.template", ".ENV.Example"} {
+			check("default", sc, at(name), true)
+			check("default", sc, at("sub", name), true)
+		}
+		for _, name := range []string{".env", ".env.local", ".env.production", ".ENV.LOCAL", ".env.example.local"} {
+			check("default", sc, at(name), false)
+		}
+		check("default", sc, filepath.Join(home, ".ssh", ".env.example"), false)
+		check("default", sc, at(".env", ".env.example"), false)
+		check("default", sc, at("server.pem"), false)
+	}
+
+	// A configured list replaces the default one.
+	os.WriteFile(cfg, []byte("[read]\ndeny = [\"*.sqlite\"]\n"), 0o644)
+	sc := src.Scope()
+	check("replaced", sc, at("app.sqlite"), false)
+	check("replaced", sc, at(".env"), true)
+	check("replaced", sc, at("server.pem"), true)
+	check("replaced", sc, at(".env.example"), true)
+
+	// deny = [] turns the default list off.
+	os.WriteFile(cfg, []byte("[read]\ndeny = []\n"), 0o644)
+	sc = src.Scope()
+	if len(sc.Deny) != 0 {
+		t.Fatalf("deny = []: %v, want no patterns", sc.Deny)
+	}
+	for _, p := range []string{at(".env"), at(".env.local"), at("server.pem"), filepath.Join(home, ".ssh", "id_ed25519")} {
+		check("empty", sc, p, true)
+	}
+	// Outside every root is still refused.
+	check("empty", sc, filepath.Join(root, "elsewhere"), false)
+
+	// A configured list may carry its own exemptions.
+	os.WriteFile(cfg, []byte("[read]\ndeny = [\"*.db\", \"!fixture.db\"]\n"), 0o644)
+	sc = src.Scope()
+	check("own exemption", sc, at("prod.db"), false)
+	check("own exemption", sc, at("fixture.db"), true)
+}
+
+// TestExampleScopeConfig: the [read] section of docs/examples/hab.toml parses, adds its root and
+// keeps the default deny list, since its deny lines are comments.
+func TestExampleScopeConfig(t *testing.T) {
+	c, problems, err := LoadScopeConfig(filepath.Join("..", "..", "docs", "examples", "hab.toml"), "/home/u")
+	if err != nil || len(problems) != 0 || c.DenySet || !slices.Equal(c.Allow, []string{"/home/u/notes"}) {
+		t.Fatalf("example: %+v, %v, %v", c, problems, err)
 	}
 }
 
