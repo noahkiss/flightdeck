@@ -124,14 +124,21 @@ func TestToolBanners(t *testing.T) {
 			"Approve plan?", "Add rate limit to login", CategoryApproval, "Allowed: plan"},
 		{"long plan", &api.PermissionRequest{ID: "p2", Tool: "ExitPlanMode", Input: in(`{"plan":"# Plan\n1. Move the session store to Redis so restarts keep users signed in\n2. Add a migration\n3. Update the tests"}`)},
 			"Approve plan?", "Move the session store to Redis so restarts keep users signed in…", CategoryDeny, "Allowed: plan"},
+		{"plan with flags", &api.PermissionRequest{ID: "p3", Tool: "ExitPlanMode", Input: in(`{"plan":"--force push the branch"}`)},
+			"Approve plan?", "--force push the branch", CategoryApproval, "Allowed: plan"},
 		{"question", &api.PermissionRequest{ID: "q1", Tool: "AskUserQuestion", Input: in(`{"questions":[{"question":"Which auth library should we use?","header":"Auth","options":[{"label":"Clerk","description":"hosted"},{"label":"Auth.js"}],"multiSelect":false}]}`)},
-			"Which auth library should we use?", "1 Clerk · 2 Auth.js", CategoryOpen, "Allowed: question"},
+			"Which auth library should we use?", "1 Clerk · 2 Auth.js", CategoryOpen, "Which auth library should we use?"},
 		{"question, no input", &api.PermissionRequest{ID: "q2", Tool: "AskUserQuestion"},
-			"Question waiting", "", CategoryOpen, "Allowed: question"},
+			"Question waiting", "", CategoryOpen, ""},
+		{"two questions, an empty label", &api.PermissionRequest{ID: "q3", Tool: "AskUserQuestion", Input: in(`{"questions":[{"question":"Which database should the new service use for its jobs?","options":[{"label":""},{"label":"Postgres"},{"label":"SQLite"}]},{"question":"Deploy now?","options":[{"label":"Yes"}]}]}`)},
+			"Which database should the new service… (+1 more)", "2 Postgres · 3 SQLite", CategoryOpen, "Which database should the new service use for…"},
 		{"mcp tool", &api.PermissionRequest{ID: "m1", Tool: "mcp__github__create_issue"},
-			"Allow github create issue?", "", CategoryDeny, "Allowed:"},
+			"Allow github create issue?", "", CategoryDeny, "Allowed: github create issue"},
+		// Only WebFetch reads as a fetch: another tool's url hides its other arguments.
+		{"mcp tool with a url", &api.PermissionRequest{ID: "m2", Tool: "mcp__browser__navigate", Input: in(`{"url":"https://example.com/","post":"x"}`)},
+			"Allow browser navigate?", "", CategoryDeny, "Allowed: browser navigate"},
 		{"fetch", &api.PermissionRequest{ID: "f1", Tool: "WebFetch", Input: in(`{"url":"https://docs.example.com/guide/","prompt":"summarise"}`)},
-			"Fetch docs.example.com?", "docs.example.com/guide", CategoryApproval, "Allowed:"},
+			"Fetch docs.example.com?", "docs.example.com/guide", CategoryApproval, "Allowed: fetch docs.example.com"},
 	}
 	for _, c := range cases {
 		b := PermissionBanner(w, c.r, false)
@@ -149,8 +156,15 @@ func TestToolBanners(t *testing.T) {
 		}
 	}
 	// Hidden commands hide the plan and the question too.
-	if b := PermissionBanner(w, cases[2].r, true); b.Title != "Approval needed" || strings.Contains(b.Body, "Clerk") {
+	q := cases[3].r
+	if b := PermissionBanner(w, q, true); b.Title != "Question waiting" || strings.Contains(b.Body, "Clerk") {
 		t.Errorf("hidden question leaked: %+v", b)
+	}
+	if a := AnsweredBanner(w, "phone", nil, q, true); a.Body != "" {
+		t.Errorf("hidden answered question leaked: %+v", a)
+	}
+	if b := PermissionBanner(w, cases[0].r, true); b.Title != "Approval needed" || strings.Contains(b.Body, "rate") {
+		t.Errorf("hidden plan leaked: %+v", b)
 	}
 }
 

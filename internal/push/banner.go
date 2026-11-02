@@ -131,7 +131,7 @@ func requestText(r *api.PermissionRequest) (text string, whole bool) {
 		return Fit(s, commandWords, commandChars), s != "" && Fits(s, commandWords, commandChars)
 	case r.Tool == toolQuestion:
 		// The options are shown, never answered from the banner: whole stays false.
-		_, opts := questionText(r)
+		_, opts, _ := questionText(r)
 		return Fit(opts, commandWords, commandChars), false
 	case r.Command != "":
 		s := ShortCommand(r.Command, r.Cwd)
@@ -173,8 +173,15 @@ func inputField(r *api.PermissionRequest, key string) string {
 	return v
 }
 
-// inputURL is the tool input's url without its scheme or a trailing slash, for a fetch tool.
+// toolFetch is Claude Code's fetch tool. Only its url is the whole request; another tool with
+// a url (a browser or webhook MCP tool) has other arguments the banner would hide.
+const toolFetch = "WebFetch"
+
+// inputURL is a WebFetch request's url without its scheme or a trailing slash, else "".
 func inputURL(r *api.PermissionRequest) string {
+	if r == nil || r.Tool != toolFetch {
+		return ""
+	}
 	u := inputField(r, "url")
 	for _, p := range []string{"https://", "http://"} {
 		u = strings.TrimPrefix(u, p)
@@ -182,7 +189,9 @@ func inputURL(r *api.PermissionRequest) string {
 	return strings.TrimRight(u, "/")
 }
 
-var listNumber = regexp.MustCompile(`^\d+[.)]\s+`)
+// lineMark is one Markdown mark at the start of a line: a heading, a quote, a bullet or a list
+// number, each followed by a space. "--force" keeps its dashes.
+var lineMark = regexp.MustCompile(`^(?:#{1,6}|>|[-*+]|\d+[.)])\s+`)
 
 // planText is the plan of an ExitPlanMode request in plain words: Markdown heading, quote,
 // list and emphasis marks dropped, a heading that only says "Plan" left out, lines joined
@@ -190,8 +199,8 @@ var listNumber = regexp.MustCompile(`^\d+[.)]\s+`)
 func planText(r *api.PermissionRequest) string {
 	var out []string
 	for _, line := range strings.Split(inputField(r, "plan"), "\n") {
-		line = strings.TrimLeft(strings.TrimSpace(line), "#>-*+ ")
-		line = listNumber.ReplaceAllString(line, "")
+		line = strings.TrimSpace(line)
+		line = lineMark.ReplaceAllString(line, "")
 		line = strings.NewReplacer("**", "", "__", "", "`", "").Replace(line)
 		if line != "" && !strings.EqualFold(strings.TrimRight(line, ":"), "plan") {
 			out = append(out, line)
@@ -200,11 +209,12 @@ func planText(r *api.PermissionRequest) string {
 	return strings.Join(out, " · ")
 }
 
-// questionText is the first question of an AskUserQuestion request and its options, numbered:
-// "1 Clerk · 2 Auth.js" (app.md 16.2).
-func questionText(r *api.PermissionRequest) (question, options string) {
+// questionText is the first question of an AskUserQuestion request and its options, numbered
+// by their place: "1 Clerk · 2 Auth.js" (app.md 16.2). An option with no label is left out.
+// more counts the questions after the first.
+func questionText(r *api.PermissionRequest) (question, options string, more int) {
 	if r == nil || len(r.Input) == 0 {
-		return "", ""
+		return "", "", 0
 	}
 	var in struct {
 		Questions []struct {
@@ -215,14 +225,30 @@ func questionText(r *api.PermissionRequest) (question, options string) {
 		} `json:"questions"`
 	}
 	if json.Unmarshal(r.Input, &in) != nil || len(in.Questions) == 0 {
-		return "", ""
+		return "", "", 0
 	}
 	q := in.Questions[0]
 	opts := make([]string, 0, len(q.Options))
 	for i, o := range q.Options {
-		opts = append(opts, fmt.Sprintf("%d %s", i+1, strings.Join(strings.Fields(o.Label), " ")))
+		if label := strings.Join(strings.Fields(o.Label), " "); label != "" {
+			opts = append(opts, fmt.Sprintf("%d %s", i+1, label))
+		}
 	}
-	return q.Question, strings.Join(opts, " · ")
+	return strings.Join(strings.Fields(q.Question), " "), strings.Join(opts, " · "), len(in.Questions) - 1
+}
+
+// questionTitle is the first question in the question budget, 8 words and 50 characters, with
+// "(+N more)" when more questions follow.
+func questionTitle(r *api.PermissionRequest) string {
+	q, _, more := questionText(r)
+	if q == "" {
+		return "Question waiting"
+	}
+	if more == 0 {
+		return Fit(q, 8, 50)
+	}
+	tail := fmt.Sprintf(" (+%d more)", more)
+	return Fit(q, 6, 50-len(tail)) + tail
 }
 
 // toolName is a tool's name in plain words: the MCP tool "mcp__github__create_issue" reads
@@ -244,11 +270,7 @@ func permissionTitle(r *api.PermissionRequest) string {
 	case toolPlan:
 		return "Approve plan?"
 	case toolQuestion:
-		// A question gets the question budget: 8 words, 50 characters (16.2).
-		if q, _ := questionText(r); q != "" {
-			return Fit(q, 8, 50)
-		}
-		return "Question waiting"
+		return questionTitle(r)
 	}
 	if r.Title != "" && Fits(r.Title, 4, 28) {
 		return r.Title
@@ -284,6 +306,9 @@ func PermissionBanner(w Where, r *api.PermissionRequest, hide bool) Banner {
 	}
 	if hide {
 		b.Title = "Approval needed"
+		if r != nil && r.Tool == toolQuestion {
+			b.Title = "Question waiting"
+		}
 		b.Body = w.place()
 		return b
 	}
@@ -337,19 +362,29 @@ func AnsweredBanner(w Where, by string, allow *bool, r *api.PermissionRequest, h
 		title = Fit("Answered on "+by, 4, 32)
 	}
 	b := Banner{Kind: KindAnswered, Title: title, Subtitle: w.place(), Level: LevelPassive}
+	if r != nil && r.Tool == toolQuestion {
+		// A question is answered, not allowed: the body is the question.
+		if !hide {
+			q, _, _ := questionText(r)
+			b.Body = Fit(q, 8, 60)
+		}
+		return b
+	}
 	obj := ""
 	if r != nil && !hide {
-		if r.Command != "" {
+		switch {
+		case r.Command != "":
 			obj = verbObject(ShortCommand(r.Command, r.Cwd))
-		} else if len(r.Files) > 0 {
+		case len(r.Files) == 1:
 			obj = path.Base(r.Files[0])
-			if len(r.Files) > 1 {
-				obj = fmt.Sprintf("%d files", len(r.Files))
-			}
-		} else if r.Tool == toolPlan {
+		case len(r.Files) > 1:
+			obj = fmt.Sprintf("%d files", len(r.Files))
+		case r.Tool == toolPlan:
 			obj = "plan"
-		} else if r.Tool == toolQuestion {
-			obj = "question"
+		case inputURL(r) != "":
+			obj = "fetch " + strings.SplitN(inputURL(r), "/", 2)[0]
+		case r.Tool != "":
+			obj = toolName(r.Tool)
 		}
 	}
 	switch {
