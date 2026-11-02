@@ -110,9 +110,16 @@ public struct SSHSettingsView: View {
                 LabeledContent("Type", value: k.kind == .secureEnclave ? "P-256, Secure Enclave" : "P-256, Keychain")
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Fingerprint").font(.caption).foregroundStyle(.secondary)
-                    Text(k.fingerprint).font(.caption.monospaced()).textSelection(.enabled)
+                    Text(setup.keyMove?.fingerprint ?? k.fingerprint).font(.caption.monospaced()).textSelection(.enabled)
                 }
                 PublicKeyLine(line: line)
+                if let m = setup.keyMove {
+                    // An earlier build's key signs only while unlocked (transport.md 7.2).
+                    Text("New key. Add it to each host so the Watch can answer while iPhone is locked. The old key works until then.")
+                        .font(.callout)
+                    Text("Waiting for: " + m.waiting.map { $0.label ?? $0.destination }.joined(separator: ", "))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 #if os(iOS)
                 Toggle("Require Face ID for SSH keys", isOn: Binding(
                     get: { setup.faceID },

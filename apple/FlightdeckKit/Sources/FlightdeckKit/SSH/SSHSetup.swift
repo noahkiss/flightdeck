@@ -29,6 +29,18 @@ public final class SSHSetup {
     /// "Require Face ID for SSH keys": one setting for the generated key and
     /// every imported key (app.md 10.7).
     public private(set) var faceID = false
+    /// A key move that waits for hosts to learn the new key (transport.md 7.2).
+    public private(set) var keyMove: KeyMove?
+    /// Whether an earlier build's key, which signs only while the device is
+    /// unlocked, moves to a new key. On by default on iOS, where a Watch
+    /// answers while the phone is locked; tests set it.
+    @ObservationIgnored public var movesOldKey: Bool = {
+        #if os(iOS)
+        return true
+        #else
+        return false
+        #endif
+    }()
 
     @ObservationIgnored private let listURL: URL?
     @ObservationIgnored private weak var fleet: Fleet?
@@ -54,6 +66,9 @@ public final class SSHSetup {
         } catch {
             log.error("ssh hab list unreadable: \(String(describing: error), privacy: .public)")
         }
+        keys.onKeyMove = { [weak self] in
+            Task { @MainActor in self?.refreshKeyMove() }
+        }
     }
 
     /// Loads the default key, making it on first use. A locked device leaves
@@ -61,6 +76,7 @@ public final class SSHSetup {
     @discardableResult
     public func loadKey() -> GeneratedKey? {
         if let k = deviceKey { return k }
+        keys.upgradeStore()
         do {
             let k = try keys.defaultKey()
             deviceKey = k
@@ -73,16 +89,51 @@ public final class SSHSetup {
             log.debug("device key line: \(line, privacy: .public)")
             print("flightdeck: device key: \(line)")
             #endif
-            return k
+            if movesOldKey {
+                do {
+                    try keys.startKeyMove()
+                } catch {
+                    log.error("key move: \(String(describing: error), privacy: .public)")
+                }
+                refreshKeyMove()
+            }
+            return deviceKey
         } catch {
             keyError = DeviceKeys.explain(error).description
             return nil
         }
     }
 
-    /// The line to add to a host's authorized keys.
+    /// The line to add to a host's authorized keys: during a key move, the
+    /// new key's, so a host added now gets the key that stays.
     public var authorizedKeysLine: String? {
-        deviceKey?.authorizedKeysLine(comment: DeviceKeys.comment)
+        keyMove?.line ?? deviceKey?.authorizedKeysLine(comment: DeviceKeys.comment)
+    }
+
+    // MARK: - Key move (transport.md 7.2)
+
+    /// Reads the move's state. Once every entry on the default key has
+    /// signed in with the new key, the new key becomes the default key and
+    /// those entries reconnect with it alone.
+    public func refreshKeyMove() {
+        guard let next = try? keys.nextKey() else {
+            keyMove = nil
+            return
+        }
+        let moved = (try? keys.movedEntries()) ?? []
+        let waiting = entries(using: DeviceKeys.defaultID).filter { !moved.contains($0.id) }
+        guard waiting.isEmpty else {
+            keyMove = KeyMove(line: next.authorizedKeysLine(comment: DeviceKeys.comment), fingerprint: next.fingerprint, waiting: waiting)
+            return
+        }
+        do {
+            try keys.finishKeyMove()
+            deviceKey = try keys.defaultKey()
+            keyMove = nil
+            reconnect { $0.keyID == DeviceKeys.defaultID }
+        } catch {
+            log.error("key move finish: \(String(describing: error), privacy: .public)")
+        }
     }
 
     /// Adds a connection to the fleet for every entry.
@@ -131,6 +182,7 @@ public final class SSHSetup {
         try SSHHabList(habs: next).save(to: listURL)
         entries = next
         attach(e)
+        refreshKeyMove()
     }
 
     /// Forgets an entry and drops its connection.
@@ -139,11 +191,15 @@ public final class SSHSetup {
         try SSHHabList(habs: next).save(to: listURL)
         entries = next
         await fleet?.remove(id: e.connectionID)
+        refreshKeyMove()
     }
 
     /// Makes a new default key. Every host must get the new public key.
     public func replaceKey() throws {
         let k = try keys.create(id: DeviceKeys.defaultID)
+        // The new key signs while locked: no move is needed any more.
+        try keys.cancelKeyMove()
+        keyMove = nil
         deviceKey = k
         keyError = nil
         // Running connections hold the old key; rebuild them.
@@ -238,6 +294,7 @@ public final class SSHSetup {
         try SSHHabList(habs: next).save(to: listURL)
         entries = next
         reconnect { $0.id == e.id }
+        refreshKeyMove()
     }
 
     /// The key with this id: the generated one or an imported one. Throws
@@ -351,6 +408,17 @@ public struct PendingKeyFile: Identifiable, Sendable {
 }
 
 /// Whether the key a hab entry names can be used now.
+/// A key move in progress (transport.md 7.2): an earlier build's key signs
+/// only while the device is unlocked, so the app made a new one. Each host
+/// on the default key needs the new line; the old key works until then.
+public struct KeyMove: Equatable, Sendable {
+    /// The new key's line for a host's authorized keys.
+    public let line: String
+    public let fingerprint: String
+    /// The entries whose host has not signed in with the new key yet.
+    public let waiting: [SSHHabEntry]
+}
+
 public enum KeyState: Equatable, Sendable {
     case present
     /// No such key on this device: deleted, or not carried by a backup.

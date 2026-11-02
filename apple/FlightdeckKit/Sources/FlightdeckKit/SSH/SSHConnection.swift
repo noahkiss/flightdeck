@@ -96,17 +96,15 @@ final class SSHConnection: @unchecked Sendable {
         let hostKeys = HostKeyValidator(check: check, endpoint: ep.description)
         // Unlock the key here, off the event loop: a Face ID prompt must not
         // hold the loop every hab shares. The probe never signs.
-        let signing: NIOSSHPrivateKey?
-        if check == .probe {
-            signing = nil
-        } else {
+        var signing: [(fingerprint: String, key: NIOSSHPrivateKey)] = []
+        if check != .probe {
             do {
-                signing = try await key.signingKey()
+                signing = try await key.signingKeys()
             } catch {
                 throw DeviceKeys.explain(error)
             }
         }
-        let auth = ClientKeyAuth(user: user, fingerprint: key.fingerprint, key: signing)
+        let auth = ClientKeyAuth(user: user, fingerprint: key.fingerprint, keys: signing, probe: check == .probe)
         let bootstrap = ClientBootstrap(group: loop)
             .connectTimeout(.nanoseconds(Int64(timing.connectTimeout.components.seconds) * 1_000_000_000 + timing.connectTimeout.components.attoseconds / 1_000_000_000))
             .channelOption(ChannelOptions.socket(IPPROTO_TCP, TCP_NODELAY), value: 1)
@@ -147,6 +145,8 @@ final class SSHConnection: @unchecked Sendable {
             throw error
         }
         timer.cancel()
+        // Auth succeeded with the key offered last; a key move records it.
+        if let fp = auth.lastOffered { key.accepted(fingerprint: fp) }
         return SSHConnection(channel: ch, endpoint: ep, hostKey: hostKeys.presented)
     }
 
@@ -232,29 +232,38 @@ final class HostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @uncheck
     }
 }
 
-/// Offers the device key once. A second request means the host refused it.
+/// Offers each key once, in order: one device key, or during a key move the
+/// new key, then the old one (transport.md 7.2). A request after the last
+/// offer means the host refused them all.
 final class ClientKeyAuth: NIOSSHClientUserAuthenticationDelegate, @unchecked Sendable {
     let user: String
     let fingerprint: String
-    let key: NIOSSHPrivateKey?
-    private var offered = false
+    let keys: [(fingerprint: String, key: NIOSSHPrivateKey)]
+    let probe: Bool
+    private var next = 0
+    /// The fingerprint of the key offered last: the one the host took, once
+    /// auth succeeds. Read after the handshake.
+    private(set) var lastOffered: String?
 
-    init(user: String, fingerprint: String, key: NIOSSHPrivateKey?) {
+    init(user: String, fingerprint: String, keys: [(fingerprint: String, key: NIOSSHPrivateKey)], probe: Bool = false) {
         self.user = user
         self.fingerprint = fingerprint
-        self.key = key
+        self.keys = keys
+        self.probe = probe
     }
 
     func nextAuthenticationType(availableMethods: NIOSSHAvailableUserAuthenticationMethods, nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>) {
-        guard !offered, availableMethods.contains(.publicKey) else {
-            nextChallengePromise.fail(SSHKeyRefused(user: user, fingerprint: fingerprint))
-            return
-        }
-        offered = true
-        guard let key else {
+        if probe || keys.isEmpty {
             nextChallengePromise.fail(TransportError("no key to sign with"))
             return
         }
-        nextChallengePromise.succeed(.init(username: user, serviceName: "", offer: .privateKey(.init(privateKey: key))))
+        guard next < keys.count, availableMethods.contains(.publicKey) else {
+            nextChallengePromise.fail(SSHKeyRefused(user: user, fingerprint: fingerprint))
+            return
+        }
+        let k = keys[next]
+        next += 1
+        lastOffered = k.fingerprint
+        nextChallengePromise.succeed(.init(username: user, serviceName: "", offer: .privateKey(.init(privateKey: k.key))))
     }
 }

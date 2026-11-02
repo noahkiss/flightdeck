@@ -30,12 +30,29 @@ public protocol SSHKeySource: Sendable {
     /// The private key for one connection, unlocked before the SSH handshake
     /// needs it, so no prompt runs on the network thread.
     func signingKey() async throws -> NIOSSHPrivateKey
+    /// Whether the key can sign while the device is locked, once it has been
+    /// unlocked after a restart (transport.md 7.2).
+    var signsWhileLocked: Bool { get }
+    /// The keys to offer at SSH auth, in order, each with its fingerprint,
+    /// unlocked like `signingKey`. One key offers itself; a key move offers
+    /// the new key, then the old one.
+    func signingKeys() async throws -> [(fingerprint: String, key: NIOSSHPrivateKey)]
+    /// The host took the key with this fingerprint.
+    func accepted(fingerprint: String)
 }
 
 extension SSHKeySource {
     public func signingKey() async throws -> NIOSSHPrivateKey {
         try privateKey()
     }
+
+    public var signsWhileLocked: Bool { true }
+
+    public func signingKeys() async throws -> [(fingerprint: String, key: NIOSSHPrivateKey)] {
+        [(fingerprint, try await signingKey())]
+    }
+
+    public func accepted(fingerprint: String) {}
 
     /// The SHA-256 fingerprint, as `ssh-keygen -l` prints it.
     public var fingerprint: String { SSHFingerprint.of(publicKey) }
@@ -84,6 +101,21 @@ struct StoredKey: Codable {
     /// migration into the device-wide setting, then dropped; never written.
     var biometry: Bool?
     var created: Date
+    /// When the key can sign: `afterFirstUnlock` for keys this build makes.
+    /// None on keys of earlier builds, whose enclave keys sign only while
+    /// the device is unlocked (transport.md 7.2).
+    var access: String?
+
+    static let afterFirstUnlock = "after-first-unlock"
+    /// Only tests write it: a software key that acts like an earlier
+    /// build's enclave key.
+    static let whenUnlocked = "when-unlocked"
+
+    /// An enclave key's access rule is fixed when it is made; a software
+    /// key has none, so it follows its Keychain item.
+    var signsWhileLocked: Bool {
+        access == Self.afterFirstUnlock || (access == nil && kind == .software)
+    }
 }
 
 /// A generated device key loaded from the store.
@@ -97,6 +129,7 @@ public struct GeneratedKey: SSHKeySource {
     /// An enclave key made by an earlier build with `.biometryCurrentSet`:
     /// it asks for Face ID whatever the setting says.
     public let biometryBuiltIn: Bool
+    public let signsWhileLocked: Bool
 
     /// Read at each use, not at load (review S1).
     public var requiresBiometry: Bool { biometryBuiltIn || faceID() }
@@ -107,6 +140,7 @@ public struct GeneratedKey: SSHKeySource {
         self.kind = stored.kind
         self.data = stored.data
         self.created = stored.created
+        self.signsWhileLocked = stored.signsWhileLocked
         switch stored.kind {
         case .secureEnclave:
             // Loading the public part needs no authentication.
@@ -152,9 +186,19 @@ public struct GeneratedKey: SSHKeySource {
     /// authentication, so signing during the handshake does not prompt.
     public func signingKey() async throws -> NIOSSHPrivateKey {
         guard requiresBiometry else { return try privateKey() }
+        return try privateKey(authenticated: try await Self.faceIDContext())
+    }
+
+    /// Asks for Face ID once; the context then signs with no prompt.
+    static func faceIDContext() async throws -> LAContext {
         let ctx = LAContext()
         ctx.localizedReason = "Use the SSH key"
         _ = try await ctx.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "Use the SSH key")
+        return ctx
+    }
+
+    /// The private key, signing with an authentication already made.
+    func privateKey(authenticated ctx: LAContext) throws -> NIOSSHPrivateKey {
         guard kind == .secureEnclave else { return try privateKey() }
         return NIOSSHPrivateKey(secureEnclaveP256Key: try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: data, authenticationContext: ctx))
     }
@@ -176,6 +220,8 @@ public final class DeviceKeys: @unchecked Sendable {
     /// The store account of the device-wide "Require Face ID for SSH keys"
     /// setting. No item means off.
     static let faceIDAccount = FaceIDState.account
+    /// Store accounts with this prefix hold settings, never keys.
+    static let settingPrefix = "setting-"
 
     let store: SecretStore
     private let lock = NSLock()
@@ -185,6 +231,8 @@ public final class DeviceKeys: @unchecked Sendable {
     /// The Face ID setting. Keys hold it too, so they read it at each use
     /// (review S1); it holds no key, so there is no cycle.
     private let setting: FaceIDState
+    private var upgraded = false
+    private var moveObserver: (@Sendable () -> Void)?
 
     public init(store: SecretStore, preferEnclave: Bool = true) {
         self.store = store
@@ -200,7 +248,7 @@ public final class DeviceKeys: @unchecked Sendable {
         if let k = lock.withLock({ cache[id] }) { return k }
         // The item first: a missing key reads as missing even when the
         // setting cannot be read yet.
-        guard id != Self.faceIDAccount, let data = try store.read(account: id) else { return nil }
+        guard !id.hasPrefix(Self.settingPrefix), let data = try store.read(account: id) else { return nil }
         _ = try faceID()
         let k: any SSHKeySource
         if id.hasPrefix(Self.importedPrefix) {
@@ -251,19 +299,143 @@ public final class DeviceKeys: @unchecked Sendable {
         let stored: StoredKey
         if preferEnclave && SecureEnclave.isAvailable {
             var error: Unmanaged<CFError>?
-            let access = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, [.privateKeyUsage], &error)
+            // After first unlock, so Approve and Deny from a notification can
+            // sign while the device is locked (transport.md 7.2).
+            let access = SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly, [.privateKeyUsage], &error)
             guard let access else {
                 throw TransportError("cannot make the key's access rule: \(error?.takeRetainedValue().localizedDescription ?? "unknown")")
             }
             let k = try SecureEnclave.P256.Signing.PrivateKey(accessControl: access)
-            stored = StoredKey(kind: .secureEnclave, data: k.dataRepresentation, created: Date())
+            stored = StoredKey(kind: .secureEnclave, data: k.dataRepresentation, created: Date(), access: StoredKey.afterFirstUnlock)
         } else {
-            stored = StoredKey(kind: .software, data: P256.Signing.PrivateKey().rawRepresentation, created: Date())
+            stored = StoredKey(kind: .software, data: P256.Signing.PrivateKey().rawRepresentation, created: Date(), access: StoredKey.afterFirstUnlock)
         }
         try store.write(account: id, data: JSONEncoder().encode(stored))
         let k = try GeneratedKey(id: id, stored: stored, faceID: faceIDSetting)
         lock.withLock { cache[id] = k }
         return k
+    }
+
+    /// Moves every stored item to the current storage class (transport.md
+    /// 7.2). Runs once per process; a locked device fails and the next call
+    /// tries again.
+    public func upgradeStore() {
+        guard !lock.withLock({ upgraded }) else { return }
+        do {
+            try store.upgradeProtection()
+            lock.withLock { upgraded = true }
+        } catch {
+            Self.log.notice("keychain upgrade failed, will retry: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    // MARK: - Key move (transport.md 7.2)
+
+    /// Where the new key waits while hosts learn it.
+    public static let nextID = "device-next"
+    /// The ids of the hab entries whose host took the new key.
+    static let moveAccount = settingPrefix + "key-move"
+
+    struct MoveRecord: Codable {
+        var accepted: [String]
+    }
+
+    /// Called after a host takes the new key, on any thread.
+    public var onKeyMove: (@Sendable () -> Void)? {
+        get { lock.withLock { moveObserver } }
+        set { lock.withLock { moveObserver = newValue } }
+    }
+
+    /// The new key while a move runs.
+    public func nextKey() throws -> GeneratedKey? {
+        try key(Self.nextID) as? GeneratedKey
+    }
+
+    /// Starts a move when the default key cannot sign while locked: an
+    /// earlier build's enclave key, whose access rule cannot change. A new
+    /// key is made beside it; the old one keeps working meanwhile. Returns
+    /// the new key, or nil when no move is needed (and clears any leftover).
+    @discardableResult
+    public func startKeyMove() throws -> GeneratedKey? {
+        let d = try defaultKey()
+        if d.signsWhileLocked {
+            try cancelKeyMove()
+            return nil
+        }
+        if let n = try nextKey() { return n }
+        let n = try create(id: Self.nextID)
+        Self.log.notice("key move started: \(n.fingerprint, privacy: .public)")
+        return n
+    }
+
+    /// The hab entries whose host took the new key.
+    public func movedEntries() throws -> Set<String> {
+        guard let d = try store.read(account: Self.moveAccount) else { return [] }
+        return Set(try JSONDecoder().decode(MoveRecord.self, from: d).accepted)
+    }
+
+    /// Records that this entry's host took the new key.
+    public func noteMoved(entry: String) {
+        do {
+            var s = try movedEntries()
+            guard !s.contains(entry) else { return }
+            s.insert(entry)
+            try store.write(account: Self.moveAccount, data: JSONEncoder().encode(MoveRecord(accepted: s.sorted())))
+        } catch {
+            Self.log.error("key move record: \(String(describing: error), privacy: .public)")
+            return
+        }
+        onKeyMove?()
+    }
+
+    /// The new key becomes the default key. The new key is written first,
+    /// so a stop halfway leaves a default key that signs while locked, and
+    /// the next start clears the rest.
+    public func finishKeyMove() throws {
+        guard let data = try store.read(account: Self.nextID) else { return }
+        try store.write(account: Self.defaultID, data: data)
+        _ = lock.withLock { cache.removeValue(forKey: Self.defaultID) }
+        try cancelKeyMove()
+        Self.log.notice("key move finished")
+    }
+
+    /// Drops the new key and the record.
+    public func cancelKeyMove() throws {
+        try store.delete(account: Self.nextID)
+        try store.delete(account: Self.moveAccount)
+        _ = lock.withLock { cache.removeValue(forKey: Self.nextID) }
+    }
+
+    /// The key an entry signs with: during a move, the default key offers
+    /// the new key first, then the old one.
+    public func signingSource(keyID: String, entry: String) throws -> (any SSHKeySource)? {
+        guard let k = try key(keyID) else { return nil }
+        guard keyID == Self.defaultID, let d = k as? GeneratedKey, !d.signsWhileLocked, let n = try nextKey() else { return k }
+        return MovingKey(next: n, old: d, entry: entry, keys: self)
+    }
+
+    /// Whether an answer from a notification can sign while the device is
+    /// locked (app.md 16.4). A key that cannot be read means the device has
+    /// not been unlocked since it started. A missing key is not a lock
+    /// problem: the dial reports it.
+    public func lockedSigning(keyID: String, entry: String) -> LockedSigning {
+        do {
+            guard let k = try signingSource(keyID: keyID, entry: entry) else { return .ready }
+            return k.signsWhileLocked ? .ready : .keyLocked
+        } catch {
+            return .beforeFirstUnlock
+        }
+    }
+
+    /// Whether the store can be read now, past any cache: false before the
+    /// device's first unlock after a restart.
+    public func storeReadable() -> Bool {
+        do {
+            _ = try store.read(account: Self.defaultID)
+            return true
+        } catch {
+            return false
+        }
     }
 
     /// Removes a key. Hab entries that named it have no key until one is chosen.
@@ -279,7 +451,7 @@ public final class DeviceKeys: @unchecked Sendable {
             return TransportError("Face ID did not unlock the SSH key: \(la.localizedDescription)")
         }
         if (error as NSError).code == Int(errSecInteractionNotAllowed) {
-            return TransportError("the device is locked: its SSH key works only while it is unlocked")
+            return TransportError("the device is locked: unlock it to use its SSH key")
         }
         if (error as NSError).code == Int(errSecUserCanceled) {
             return TransportError("the SSH key was not unlocked: Face ID was cancelled")
@@ -294,6 +466,62 @@ public final class DeviceKeys: @unchecked Sendable {
         #else
         return "flightdeck-ios"
         #endif
+    }
+}
+
+/// Whether a key can sign now, with the device locked.
+public enum LockedSigning: Equatable, Sendable {
+    /// It can: the device was unlocked once since it started.
+    case ready
+    /// The key cannot be read: the device has not been unlocked since it started.
+    case beforeFirstUnlock
+    /// The key signs only while the device is unlocked: an earlier build's
+    /// key, while the host has not taken the new one yet.
+    case keyLocked
+}
+
+/// The default key during a key move: offers the new key, then the old one,
+/// and records the host that takes the new key.
+struct MovingKey: SSHKeySource {
+    let next: GeneratedKey
+    let old: GeneratedKey
+    let entry: String
+    let keys: DeviceKeys
+
+    var id: String { DeviceKeys.defaultID }
+    var kind: SSHKeyKind { next.kind }
+    var publicKey: NIOSSHPublicKey { next.publicKey }
+    var requiresBiometry: Bool { next.requiresBiometry || old.requiresBiometry }
+    func privateKey() throws -> NIOSSHPrivateKey { try next.privateKey() }
+
+    /// Locked, only the new key signs; it helps once this host took it.
+    var signsWhileLocked: Bool {
+        (try? keys.movedEntries().contains(entry)) ?? false
+    }
+
+    /// Face ID at most once for both keys. The old key may fail (the device
+    /// is locked); the new one alone is offered then.
+    func signingKeys() async throws -> [(fingerprint: String, key: NIOSSHPrivateKey)] {
+        let ctx: LAContext? = requiresBiometry ? try await GeneratedKey.faceIDContext() : nil
+        func load(_ k: GeneratedKey) throws -> NIOSSHPrivateKey {
+            if let ctx { return try k.privateKey(authenticated: ctx) }
+            return try k.privateKey()
+        }
+        var out: [(fingerprint: String, key: NIOSSHPrivateKey)] = []
+        var firstError: Error?
+        for k in [next, old] {
+            do {
+                out.append((k.fingerprint, try load(k)))
+            } catch {
+                if firstError == nil { firstError = error }
+            }
+        }
+        if out.isEmpty, let firstError { throw firstError }
+        return out
+    }
+
+    func accepted(fingerprint: String) {
+        if fingerprint == next.fingerprint { keys.noteMoved(entry: entry) }
     }
 }
 

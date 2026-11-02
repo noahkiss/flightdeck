@@ -141,19 +141,25 @@ public final class ApprovalCenter {
     /// posts a notice and raises the request again in the foreground; a
     /// refusal says it was already answered or expired.
     ///
-    /// A locked device cannot sign with its key (transport.md 7.2), so the
-    /// answer is refused at once with "Unlock iPhone to answer", the request
-    /// is raised again in the foreground, and nothing is sent. Returns nil
-    /// when it was refused that way. This is the usual case for a Watch
-    /// answer: iOS mirrors a banner to the Watch only while the phone is
-    /// locked (app.md 16.4).
+    /// A locked device signs once it has been unlocked after a restart
+    /// (transport.md 7.2), so a Watch answer goes through: iOS mirrors a
+    /// banner to the Watch only while the phone is locked (app.md 16.4).
+    /// Two cases cannot sign and are refused at once, with nothing sent and
+    /// the request raised again in the foreground: the device has not been
+    /// unlocked since it started, or the hab's key is an earlier build's key
+    /// that signs only while unlocked and the host has not taken the new
+    /// one yet. Returns nil when it was refused that way.
     @discardableResult
     public func answer(host: String, _ params: ApprovalAnswerParams, meta: PushMeta?) async -> AnswerOutcome? {
-        guard isUnlocked() else {
-            log.notice("background answer \(params.choice.rawValue, privacy: .public): locked")
-            await post?(Self.lockedTitle, habLabel(host: host), meta)
-            if let meta { addPending(meta) }
-            return nil
+        if !isUnlocked() {
+            let state = lockedSigning(host)
+            if state != .ready {
+                log.notice("background answer \(params.choice.rawValue, privacy: .public): locked \(String(describing: state), privacy: .public)")
+                let n = Self.lockedNotice(state, hab: habLabel(host: host))
+                await post?(n.title, n.body, meta)
+                if let meta { addPending(meta) }
+                return nil
+            }
         }
         let o = await answerer.answer(host: host, params)
         // The case is public; the hab's hint or the dial error may name hosts or commands.
@@ -168,11 +174,15 @@ public final class ApprovalCenter {
         return o
     }
 
-    /// Whether the device is unlocked (protected data available). The device
-    /// key signs only while unlocked (transport.md 7.2). The default reads
-    /// UIKit on iOS, so it holds on a background launch for a notification
-    /// action, before any scene exists; tests replace it.
+    /// Whether the device is unlocked (protected data available). The default
+    /// reads UIKit on iOS, so it holds on a background launch for a
+    /// notification action, before any scene exists; tests replace it.
     @ObservationIgnored public var isUnlocked: @MainActor () -> Bool = ApprovalCenter.protectedDataAvailable
+
+    /// With the device locked, whether the key for this hab can sign
+    /// (`DeviceKeys.lockedSigning`). The app sets it; the default refuses,
+    /// as a key of an earlier build would.
+    @ObservationIgnored public var lockedSigning: @MainActor (_ host: String) -> LockedSigning = { _ in .keyLocked }
 
     static func protectedDataAvailable() -> Bool {
         #if os(iOS)
@@ -182,14 +192,33 @@ public final class ApprovalCenter {
         #endif
     }
 
-    /// The notice a locked device posts. It names the device to unlock, since
-    /// the Watch that shows it is already unlocked.
+    /// The notice a locked device posts when it cannot sign. It names the
+    /// device to unlock, since the Watch that shows it is already unlocked.
     static var lockedTitle: String {
         #if os(iOS)
-        return UIDevice.current.userInterfaceIdiom == .pad ? "Unlock iPad to answer" : "Unlock iPhone to answer"
+        return "Unlock \(deviceName) to answer"
         #else
         return "Unlock to answer"
         #endif
+    }
+
+    /// The device's name in a notice: iPhone, iPad, or none on the Mac.
+    static var deviceName: String {
+        #if os(iOS)
+        return UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+        #else
+        return "this Mac"
+        #endif
+    }
+
+    /// The title and body for a refused answer.
+    static func lockedNotice(_ state: LockedSigning, hab: String) -> (title: String, body: String) {
+        switch state {
+        case .beforeFirstUnlock:
+            return (lockedTitle, "\(deviceName) restarted and has not been unlocked yet · \(hab)")
+        case .keyLocked, .ready:
+            return (lockedTitle, "\(hab) does not have this device's new key yet")
+        }
     }
 
     /// Allow or Deny from the Live Activity, with the unlock rule of `answer`.

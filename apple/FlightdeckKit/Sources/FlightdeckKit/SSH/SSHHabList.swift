@@ -45,7 +45,7 @@ public struct SSHHabEntry: Codable, Sendable, Equatable, Identifiable {
 
     /// The carrier for this entry, with the key it names.
     public func transport(keys: DeviceKeys, timing: SSHTiming = SSHTiming()) throws -> Transport {
-        guard let key = try keys.key(keyID) else {
+        guard let key = try keys.signingSource(keyID: keyID, entry: id) else {
             throw TransportError("no key: pair again or choose a key")
         }
         return NIOSSHTransport(user: user, endpoints: endpoints, hostKeyFingerprint: hostKeyFingerprint, key: key, command: command, timing: timing)

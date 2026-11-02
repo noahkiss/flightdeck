@@ -147,6 +147,7 @@ public enum AppFleet {
         let center = ApprovalCenter(board: fleet.board, answerer: answerer)
         center.post = { title, body, meta in await HabActions.post(title, body, meta: meta) }
         center.withdraw = { ids in await HabActions.withdraw(requests: ids) }
+        center.lockedSigning = { host in lockedSigning(host: host, book: book, keys: keys, listURL: listURL) }
         fleet.approvals = center
         let actions = HabActions(keys: keys, listURL: listURL)
         actions.approvals = center
@@ -169,6 +170,22 @@ public enum AppFleet {
     static func activityAnswer(center: ApprovalCenter, tracker: LiveActivityTracker, hab: String, pane: String, request: String, allow: Bool) async {
         guard let o = await center.answerFromActivity(host: hab, pane: pane, request: request, allow: allow) else { return }
         await tracker.answered(pane: pane, request: request, outcome: o)
+    }
+
+    /// With the device locked, whether the key of the hab a push named can
+    /// sign (app.md 16.4). Before the first unlock the app's files cannot
+    /// be read either, so an entry that cannot be found asks the Keychain.
+    /// A hab outside the in-app SSH carrier is left to the dial to report.
+    static func lockedSigning(host: String, book: HabBook, keys: DeviceKeys?, listURL: URL?) -> LockedSigning {
+        guard let keys else { return .ready }
+        guard let e = book.entry(host: host),
+              let list = try? SSHHabList.load(from: listURL) else {
+            return keys.storeReadable() ? .ready : .beforeFirstUnlock
+        }
+        guard e.connection.hasPrefix("nio:") else { return .ready }
+        let id = String(e.connection.dropFirst(4))
+        guard let entry = list.habs.first(where: { $0.id == id }) else { return .ready }
+        return keys.lockedSigning(keyID: entry.keyID, entry: entry.id)
     }
 
     /// A transport for one call to the hab a push named, from the hab book.

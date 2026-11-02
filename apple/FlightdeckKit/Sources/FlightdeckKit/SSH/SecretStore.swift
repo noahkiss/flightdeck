@@ -8,11 +8,20 @@ public protocol SecretStore: Sendable {
     func delete(account: String) throws
     /// Every account name in the store, without reading the secrets.
     func accounts() throws -> [String]
+    /// Moves every item to the current storage class, in place. Items of
+    /// earlier builds could be read only while the device was unlocked.
+    func upgradeProtection() throws
 }
 
-/// The Keychain: generic password items, usable only while the device is
-/// unlocked, this device only, never synchronised, so neither iCloud Keychain
-/// nor a backup carries them to another device (app.md 10.4).
+extension SecretStore {
+    public func upgradeProtection() throws {}
+}
+
+/// The Keychain: generic password items, usable once the device has been
+/// unlocked after a restart (so a notification action can sign while the
+/// device is locked, transport.md 7.2), this device only, never synchronised,
+/// so neither iCloud Keychain nor a backup carries them to another device
+/// (app.md 10.4).
 ///
 /// On iOS the items live in the data protection Keychain. The Mac app is not
 /// sandboxed and may be signed ad hoc, which the data protection Keychain
@@ -46,7 +55,7 @@ public struct KeychainStore: SecretStore {
 
     /// The attributes every write sets: the storage class (app.md 10.4).
     static let protection: [String: Any] = [
-        kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         kSecAttrSynchronizable as String: false,
     ]
 
@@ -83,6 +92,21 @@ public struct KeychainStore: SecretStore {
         guard rc == errSecSuccess, let a = out as? [String: Any] else { throw Self.error("read", rc) }
         let sync = (a[kSecAttrSynchronizable as String] as? Bool) ?? ((a[kSecAttrSynchronizable as String] as? NSNumber)?.boolValue ?? false)
         return ((a[kSecAttrAccessible as String] as? String) ?? "", sync)
+    }
+
+    /// One update over the service: the storage class changes, the data does
+    /// not. Earlier builds wrote `WhenUnlockedThisDeviceOnly`, which the
+    /// Keychain lets an update change, but only while the device is unlocked;
+    /// a locked device fails and the next start tries again.
+    public func upgradeProtection() throws {
+        let q: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrSynchronizable as String: false,
+        ]
+        let attrs: [String: Any] = [kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+        let rc = SecItemUpdate(q as CFDictionary, attrs as CFDictionary)
+        guard rc == errSecSuccess || rc == errSecItemNotFound else { throw Self.error("upgrade", rc) }
     }
 
     public func accounts() throws -> [String] {

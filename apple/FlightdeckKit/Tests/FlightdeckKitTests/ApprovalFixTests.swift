@@ -191,8 +191,9 @@ final class LiveActivityFixTests: XCTestCase {
 
 @MainActor
 final class ApprovalFixTests: XCTestCase {
-    /// A Live Activity answer on a locked device sends nothing: "Unlock to
-    /// answer", and the request waits for the foreground.
+    /// A Live Activity answer on a locked device whose key signs only while
+    /// unlocked (the default answer) sends nothing: "Unlock to answer", and
+    /// the request waits for the foreground.
     func testLockedActivityAnswerRefused() async {
         let hab = await blockedHab()
         let answerer = ApprovalAnswerer(live: { _ in nil }, oneShot: { _ in hab.transport() }, clientLabel: "phone")
@@ -211,9 +212,10 @@ final class ApprovalFixTests: XCTestCase {
         XCTAssertEqual(o2, .answered)
     }
 
-    /// A banner answer on a locked phone, the usual case for a Watch action
-    /// (app.md 16.4), sends nothing either: one notice that opens the
-    /// request, and the request waits for the foreground. Deny too.
+    /// A banner answer on a phone not unlocked since it restarted, the one
+    /// case a Watch action cannot sign (app.md 16.4), sends nothing either:
+    /// one notice that names the case and opens the request, and the request
+    /// waits for the foreground. Deny too.
     func testLockedBannerAnswerRefused() async {
         let hab = await blockedHab()
         let answerer = ApprovalAnswerer(live: { _ in nil }, oneShot: { _ in hab.transport() }, clientLabel: "phone")
@@ -221,6 +223,7 @@ final class ApprovalFixTests: XCTestCase {
         var posts: [(String, String, PushMeta?)] = []
         c.post = { t, b, m in posts.append((t, b, m)) }
         c.isUnlocked = { false }
+        c.lockedSigning = { _ in .beforeFirstUnlock }
         let meta = PushMeta(kind: "permission", hab: "testhost", pane: "%1", request: "req-1")
         let o = await c.answer(host: "testhost", ApprovalAnswerParams(choice: .deny, pane: "%1", request: "req-1", via: .banner), meta: meta)
         XCTAssertNil(o)
@@ -230,7 +233,8 @@ final class ApprovalFixTests: XCTestCase {
         #else
         XCTAssertEqual(ApprovalCenter.lockedTitle, "Unlock to answer")
         #endif
-        XCTAssertEqual(posts.first?.1, "testhost")
+        XCTAssertEqual(posts.first?.1, ApprovalCenter.lockedNotice(.beforeFirstUnlock, hab: "testhost").body)
+        XCTAssertTrue(posts.first?.1.contains("restarted") == true)
         XCTAssertEqual(posts.first?.2, meta, "the notice opens the request")
         XCTAssertEqual(c.pending, [meta])
         let n = await hab.answers.count

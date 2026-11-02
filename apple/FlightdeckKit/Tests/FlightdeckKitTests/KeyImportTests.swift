@@ -300,12 +300,12 @@ final class KeyImportTests: XCTestCase {
         }
     }
 
-    /// The Keychain storage class: usable only while unlocked, this device
-    /// only, not synchronisable (app.md 10.4).
+    /// The Keychain storage class: usable once unlocked after a restart,
+    /// this device only, not synchronisable (app.md 10.4, transport.md 7.2).
     func testKeychainStorageClass() throws {
         let store = KeychainStore(service: "flightdeck.test." + UUID().uuidString)
         let q = store.addQuery(account: "a", data: Data([1]))
-        XCTAssertEqual(q[kSecAttrAccessible as String] as! CFString, kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
+        XCTAssertEqual(q[kSecAttrAccessible as String] as! CFString, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly)
         XCTAssertEqual(q[kSecAttrSynchronizable as String] as? Bool, false)
 
         // The real Keychain, when the test process may use it.
@@ -319,12 +319,33 @@ final class KeyImportTests: XCTestCase {
         XCTAssertFalse(p.synchronizable)
         #if os(iOS)
         // The Mac's login keychain keeps no accessibility class (app.md 10.6).
-        XCTAssertEqual(p.accessible, kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)
+        XCTAssertEqual(p.accessible, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String)
         #endif
         XCTAssertEqual(try store.accounts(), ["imported-test"])
         try store.write(account: "imported-test", data: Data("y".utf8))
         XCTAssertEqual(try store.read(account: "imported-test"), Data("y".utf8))
         XCTAssertFalse(try XCTUnwrap(try store.protectionOf(account: "imported-test")).synchronizable)
+    }
+
+    /// An item an earlier build wrote with `WhenUnlockedThisDeviceOnly` moves
+    /// to the new class in place, data unchanged (transport.md 7.2).
+    func testKeychainUpgradeProtection() throws {
+        let store = KeychainStore(service: "flightdeck.test." + UUID().uuidString)
+        var q = store.addQuery(account: "imported-old", data: Data("old".utf8))
+        q[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        let rc = SecItemAdd(q as CFDictionary, nil)
+        guard rc == errSecSuccess else { throw XCTSkip("no keychain access here: \(rc)") }
+        defer { try? store.delete(account: "imported-old") }
+        #if os(iOS)
+        XCTAssertEqual(try store.protectionOf(account: "imported-old")?.accessible, kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)
+        #endif
+        try store.upgradeProtection()
+        XCTAssertEqual(try store.read(account: "imported-old"), Data("old".utf8))
+        #if os(iOS)
+        XCTAssertEqual(try store.protectionOf(account: "imported-old")?.accessible, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String)
+        #endif
+        // An empty service is not an error.
+        try KeychainStore(service: "flightdeck.test." + UUID().uuidString).upgradeProtection()
     }
 
     // MARK: - On the carrier
