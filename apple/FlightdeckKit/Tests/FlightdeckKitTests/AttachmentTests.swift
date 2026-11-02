@@ -93,17 +93,19 @@ final class AttachmentTests: XCTestCase {
         let a = DraftAttachment(name: "a.png", type: "image/png", data: Data([1]))
         let (fleet, hab, model) = await setup()
         await hab.setAttachmentChunk(1)
-        model.send("two", attachments: [a, DraftAttachment(name: "b.png", type: "image/png", data: Data(count: 2000))])
-        // The second file goes up one byte per write: the failures start long before its end.
-        await eventually("first file stored") { await hab.storedFiles.count == 1 }
-        await hab.failNextAttachmentWrites(5)
+        // One byte per write: a's one write and b's first are taken, b's second breaks off.
+        await hab.failNextAttachmentWrites(1, after: 2)
+        model.send("two", attachments: [a, DraftAttachment(name: "b.png", type: "image/png", data: Data([2, 3, 4]))])
         await eventually("not sent") { if case .failed = model.outgoing.first?.status { return true }; return false }
         XCTAssertEqual(model.outgoing.first?.uploaded.count, 1)
-        await hab.failNextAttachmentWrites(0)
+        let storedBefore = await hab.storedFiles.count
+        XCTAssertEqual(storedBefore, 1)
         model.retry(model.outgoing[0].id)
         await eventually("sent after retry") { model.outgoing.first?.status == .sent }
         let stored = await hab.storedFiles.count
         XCTAssertEqual(stored, 2, "the first file was not uploaded twice")
+        let writes = await hab.attachmentWrites
+        XCTAssertEqual(writes, 6, "1 for a, 2 for the broken b, then 3 for b again")
         let sends = await hab.sends
         XCTAssertEqual(sends.first?.attachments?.count, 2)
         await fleet.setActive(false)

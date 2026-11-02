@@ -320,7 +320,7 @@ final class ContentLimitTests: XCTestCase {
             if n == 1 { try? await Task.sleep(for: .milliseconds(300)) }
         }
         let slow = Task { await content.refresh() }
-        try? await Task.sleep(for: .milliseconds(50))
+        await eventually("the slow list reached the hab") { await hab.contentLists == 1 }
         await hab.setContent(session: "s1", items: items + [item("f9", size: 5)])
         await content.refresh()
         XCTAssertEqual(content.items.count, 2)

@@ -77,7 +77,7 @@ public actor FakeHab {
     private var contentUnavailable = 0
     /// Runs before each `content.list` reply, so a test can hold one back.
     private var contentListHook: (@Sendable (Int) async -> Void)?
-    private var contentLists = 0
+    public private(set) var contentLists = 0
 
     /// Attachments (app.md 4.4), with the capability `attachments`: uploads by id, and the
     /// stored files. A put names the path the real hab would.
@@ -88,13 +88,19 @@ public actor FakeHab {
     private var attachmentChunk = 1 << 20
     /// Writes to refuse with `unavailable` before taking them again.
     private var attachmentWriteFailures = 0
+    /// Writes to take before those failures start.
+    private var attachmentWritesBeforeFailures = 0
     private var nextAttachment = 1
 
     public func setAttachmentChunk(_ n: Int) { attachmentChunk = n }
     /// A broken hab: writes answer without taking the bytes.
     private var attachmentStall = false
     public func setAttachmentStall(_ on: Bool) { attachmentStall = on }
-    public func failNextAttachmentWrites(_ n: Int) { attachmentWriteFailures = n }
+    /// Refuses `n` writes, after taking `after` writes first.
+    public func failNextAttachmentWrites(_ n: Int, after: Int = 0) {
+        attachmentWriteFailures = n
+        attachmentWritesBeforeFailures = after
+    }
     /// Stores a file as an upload would, for the chat view's thumbnails.
     public func storeAttachment(id: String, name: String, data: Data, type: String = "image/png") {
         storedFiles[id] = (AttachmentPutParams(name: name, session: "", sha256: "", size: UInt64(data.count), type: type), data)
@@ -865,7 +871,9 @@ public actor FakeHab {
                 return await fail(c, id: id, kind: .invalid, hint: "bad attachment.write params")
             }
             attachmentWrites += 1
-            if attachmentWriteFailures > 0 {
+            if attachmentWritesBeforeFailures > 0 {
+                attachmentWritesBeforeFailures -= 1
+            } else if attachmentWriteFailures > 0 {
                 attachmentWriteFailures -= 1
                 return await fail(c, id: id, kind: .unavailable, hint: "the write broke off")
             }
