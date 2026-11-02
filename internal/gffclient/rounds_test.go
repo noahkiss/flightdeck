@@ -117,9 +117,10 @@ func TestBoardRounds(t *testing.T) {
 		return order(s, "beta", "alpha", "gamma") && strings.Contains(s, "every 1h in UTC") && strings.Contains(s, "paused")
 	})
 
-	// The selection starts on beta (no session rows); j moves to alpha.
+	// The selection latches on the first round row the board drew, and host one can come online
+	// first, so kk moves it to beta, the top row (no session rows); j moves to alpha.
 	a.SetRunLive("ra", true)
-	hst.typ("jr")
+	hst.typ("kkjr")
 	hst.waitScreen("the conflict in the hab's words", func(s string) bool {
 		return strings.Contains(s, "run alpha: the round has a live run")
 	})
@@ -196,9 +197,12 @@ func TestBoardRoundsStale(t *testing.T) {
 			row(s, "kept") != "" && !strings.Contains(row(s, "kept"), "stale")
 	})
 
+	// The selection latches on the first round row the board drew, which may be one's or three's
+	// when two came online last: kk moves it to kept, the top row.
+	hst.typ("kk")
 	b.Stop()
 	hst.waitScreen("two's round stale", func(s string) bool { return strings.Contains(row(s, "kept"), "stale") })
-	// The selection is on the first round: kept, the soonest. Run now refuses a stale row.
+	// Run now refuses the stale row kept.
 	hst.typ("r")
 	hst.waitScreen("no action on a stale round", func(s string) bool { return strings.Contains(s, "two is offline") })
 	if calls := b.RunCalls(); len(calls) != 0 {
