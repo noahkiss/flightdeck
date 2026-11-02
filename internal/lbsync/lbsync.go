@@ -279,16 +279,18 @@ func (s *Service) Push(ctx context.Context, from api.PeerHello, p api.LogbookPus
 	if !logbook.OnePage(p.Ops) {
 		return api.LogbookPushResult{}, control.Errorf(api.ErrorKindInvalid, "%d ops; at most %d ops or %d bytes in one push", len(p.Ops), logbook.PageOps, logbook.PageBytes)
 	}
-	a, res, err := s.cfg.Store.ServePush(ctx, p.Ops)
-	if err != nil {
-		return api.LogbookPushResult{}, err
-	}
+	// The pusher holds what it pushes: those ops never wake it (an echo of its own push). Its
+	// have counts them before they are stored, so the change loop never sees them stored while
+	// its have lacks them. Ops refused or failed here are still the pusher's own.
 	s.mu.Lock()
-	// The pusher holds what it pushed: those ops never wake it (an echo of its own push).
 	if h, ok := s.have[from.DeviceID]; ok {
 		s.have[from.DeviceID] = merged(h, logbook.PageVector(p.Ops))
 	}
 	s.mu.Unlock()
+	a, res, err := s.cfg.Store.ServePush(ctx, p.Ops)
+	if err != nil {
+		return api.LogbookPushResult{}, err
+	}
 	if res.Stored > 0 {
 		s.Changed() // other links may lack them (7.2)
 	}
