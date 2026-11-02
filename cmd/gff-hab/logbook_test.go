@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -141,9 +142,20 @@ func logbookTwoHabs(t *testing.T, tr string) {
 	if !strings.Contains(strings.Join(welcome(t, sockB).Capabilities, " "), "logbook") {
 		t.Fatal("no logbook capability")
 	}
-	// 10,000 records on b, written through the file as the CLI does, 200 to a transaction.
+	// The sync methods serve peer links only.
+	for _, m := range []string{"logbook.pull", "logbook.push"} {
+		out, err := exec.Command(bin, "api", "call", "-socket", sockB, m, `{"have":[],"ops":[]}`).CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "needs a peer link") {
+			t.Fatalf("%s from a client: %v %s", m, err, out)
+		}
+	}
+	// 10,000 records on b, written through the file as the CLI does, 200 to a transaction. The
+	// race build, about twenty times slower here, checks the same paths with 1,000.
 	sb := openReplicaFile(t, stateB)
-	const records = 10000
+	records := 10000
+	if slices.Contains(buildFlags, "-race") {
+		records = 1000
+	}
 	for i := 0; i < records; i += 200 {
 		var steps []logbook.Step
 		for j := i; j < i+200; j++ {
@@ -153,7 +165,7 @@ func logbookTwoHabs(t *testing.T, tr string) {
 			t.Fatal(err)
 		}
 	}
-	if v := vectorOf(t, sb); v[oldB] != records || sb.Origin() != oldB {
+	if v := vectorOf(t, sb); v[oldB] != uint64(records) || sb.Origin() != oldB {
 		t.Fatalf("b's vector %v, origin %s", v, sb.Origin())
 	}
 
@@ -161,8 +173,8 @@ func logbookTwoHabs(t *testing.T, tr string) {
 	idA := welcome(t, sockA).DeviceID
 	waitPeer(t, sockA, "bee", "a sees b online", func(p api.Peer) bool { return p.State == api.PeerStateOnline })
 	sa := openReplicaFile(t, stateA)
-	bulk := waitFor(t, "a holds b's 10,000 records", 60*time.Second, func() bool { return sameVector(vectorOf(t, sa), vectorOf(t, sb)) })
-	t.Logf("%s: 10,000 records reached a %v after its link came up", tr, bulk)
+	bulk := waitFor(t, "a holds b's records", scaleTimeout(60*time.Second), func() bool { return sameVector(vectorOf(t, sa), vectorOf(t, sb)) })
+	t.Logf("%s: %d records reached a %v after its link came up", tr, records, bulk)
 	if st, err := sa.Status(ctx); err != nil || st.Records != records {
 		t.Fatalf("a's status %+v %v", st, err)
 	}
@@ -171,11 +183,11 @@ func logbookTwoHabs(t *testing.T, tr string) {
 	if _, err := sb.Write(ctx, logbook.Batch{Steps: []logbook.Step{logbook.Create(logbook.TypeTask, map[string]any{"title": "one more on b"})}}); err != nil {
 		t.Fatal(err)
 	}
-	one := waitFor(t, "b's write on a", 2*time.Second, func() bool { return sameVector(vectorOf(t, sa), vectorOf(t, sb)) })
+	one := waitFor(t, "b's write on a", scaleTimeout(2*time.Second), func() bool { return sameVector(vectorOf(t, sa), vectorOf(t, sb)) })
 	if _, err := sa.Write(ctx, logbook.Batch{Steps: []logbook.Step{logbook.Create(logbook.TypeTask, map[string]any{"title": "one on a"})}}); err != nil {
 		t.Fatal(err)
 	}
-	back := waitFor(t, "a's write on b", 2*time.Second, func() bool { return vectorOf(t, sb)[idA] == 1 })
+	back := waitFor(t, "a's write on b", scaleTimeout(2*time.Second), func() bool { return vectorOf(t, sb)[idA] == 1 })
 	t.Logf("%s: one write on b reached a in %v; one on a reached b in %v", tr, one, back)
 	found, err := sa.Find(ctx, "one more on b", 5)
 	if err != nil || len(found) != 1 {
@@ -193,9 +205,9 @@ func logbookTwoHabs(t *testing.T, tr string) {
 		t.Fatal("the rebuilt hab kept its device id")
 	}
 	sb2 := openReplicaFile(t, stateB2)
-	waitFor(t, "the rebuilt b gets its old ops back", 60*time.Second, func() bool {
+	waitFor(t, "the rebuilt b gets its old ops back", scaleTimeout(60*time.Second), func() bool {
 		v := vectorOf(t, sb2)
-		return v[oldB] == records+1 && v[idA] == 1
+		return v[oldB] == uint64(records)+1 && v[idA] == 1
 	})
 	if sb2.Origin() != newB {
 		t.Fatalf("rebuilt b writes as %s, want %s", sb2.Origin(), newB)
@@ -207,5 +219,59 @@ func logbookTwoHabs(t *testing.T, tr string) {
 	if _, err := sb2.Write(ctx, logbook.Batch{Steps: []logbook.Step{logbook.Create(logbook.TypeTask, map[string]any{"title": "after the rebuild"})}}); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "the rebuilt b's write on a", 5*time.Second, func() bool { return vectorOf(t, sa)[newB] == 1 })
+	waitFor(t, "the rebuilt b's write on a", scaleTimeout(5*time.Second), func() bool { return vectorOf(t, sa)[newB] == 1 })
+}
+
+// openLogbook sets a corrupt file aside and starts empty; a file of another origin (a new key
+// with the old state folder) is set aside and its ops are copied into the new replica as the
+// old origin's ops (logbook.md 14, Built (stage 3)).
+func TestOpenLogbookSetAside(t *testing.T) {
+	ctx := context.Background()
+	var logs []string
+	logf := func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }
+
+	d := t.TempDir()
+	if err := os.WriteFile(filepath.Join(d, logbookFile), []byte(strings.Repeat("not a database ", 400)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := openLogbook(ctx, d, "SHA256:new", logf)
+	if err != nil {
+		t.Fatalf("corrupt file: %v", err)
+	}
+	if v := vectorOf(t, s); len(v) != 0 || s.Origin() != "SHA256:new" {
+		t.Fatalf("after a corrupt file: %v %s", v, s.Origin())
+	}
+	_ = s.Close()
+	if m, _ := filepath.Glob(filepath.Join(d, logbookFile+".corrupt-*")); len(m) != 1 || !strings.Contains(strings.Join(logs, "\n"), "set aside") {
+		t.Fatalf("set aside: %v; logs %q", m, logs)
+	}
+
+	d = t.TempDir()
+	old, err := logbook.Open(ctx, filepath.Join(d, logbookFile), logbook.Options{Origin: "SHA256:old"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 3 {
+		if _, err := old.Write(ctx, logbook.Batch{Steps: []logbook.Step{logbook.Create(logbook.TypeTask, map[string]any{"title": fmt.Sprintf("old %d", i)})}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = old.Close()
+	s, err = openLogbook(ctx, d, "SHA256:new", logf)
+	if err != nil {
+		t.Fatalf("other origin: %v", err)
+	}
+	defer s.Close()
+	if v := vectorOf(t, s); v["SHA256:old"] != 3 || s.Origin() != "SHA256:new" {
+		t.Fatalf("after another origin's file: %v %s", v, s.Origin())
+	}
+	if _, err := s.Write(ctx, logbook.Batch{Steps: []logbook.Step{logbook.Create(logbook.TypeTask, map[string]any{"title": "new"})}}); err != nil {
+		t.Fatal(err)
+	}
+	if v := vectorOf(t, s); v["SHA256:new"] != 1 {
+		t.Fatalf("the new origin starts at seq 1: %v", v)
+	}
+	if m, _ := filepath.Glob(filepath.Join(d, logbookFile+".other-origin-*")); len(m) != 1 {
+		t.Fatalf("set aside: %v", m)
+	}
 }

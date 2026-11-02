@@ -373,6 +373,7 @@ func (s *Service) changeLoop() {
 	t := time.NewTicker(s.cfg.Watch)
 	defer t.Stop()
 	sig := s.fileSig()
+	recheck := false
 	for {
 		select {
 		case <-s.done:
@@ -380,9 +381,13 @@ func (s *Service) changeLoop() {
 		case <-s.changed:
 		case <-t.C:
 			now := s.fileSig()
-			if now == sig {
+			if now == sig && !recheck {
 				continue
 			}
+			// A change seen while a commit was still being written may not show in the vector
+			// yet, and the commit's last write need not move the size or the coarse file time
+			// again. So a change is looked at once more on the next check.
+			recheck = now != sig
 			sig = now
 		}
 		s.onChange()
