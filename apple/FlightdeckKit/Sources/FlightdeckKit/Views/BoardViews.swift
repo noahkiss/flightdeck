@@ -23,6 +23,7 @@ public struct FlightdeckRoot: View {
             .environment(\.confirmations, fleet.confirms)
             .environment(\.capcom, fleet.capcom)
             .environment(\.rounds, fleet.rounds)
+            .environment(\.approvals, fleet.approvals)
             .sshSheets(fleet.ssh)
             .onAppear { fleet.windowOpened() }
             .onDisappear { fleet.windowClosed() }
@@ -37,6 +38,7 @@ public struct FlightdeckRoot: View {
             .environment(\.confirmations, fleet.confirms)
             .environment(\.capcom, fleet.capcom)
             .environment(\.rounds, fleet.rounds)
+            .environment(\.approvals, fleet.approvals)
             .sshSheets(fleet.ssh)
         #endif
     }

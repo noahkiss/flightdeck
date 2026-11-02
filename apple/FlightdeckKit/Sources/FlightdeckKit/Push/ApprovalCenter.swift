@@ -26,6 +26,7 @@ public final class ApprovalCenter {
     /// Removes delivered notifications of requests that closed.
     @ObservationIgnored public var withdraw: (@MainActor (_ requests: Set<String>) async -> Void)?
     @ObservationIgnored private var lastOpen: Set<String> = []
+    @ObservationIgnored private let now: () -> Date
 
     static let pendingKey = "flightdeck.approvals.reraise"
 
@@ -33,6 +34,7 @@ public final class ApprovalCenter {
         self.board = board
         self.answerer = answerer
         self.defaults = defaults
+        self.now = now
         let a = answerer
         sheet = ApprovalSheetModel(board: board, now: now) { req, params in
             guard let host = req.host else { return .unreachable("the hab has not said its host id yet") }
@@ -87,6 +89,50 @@ public final class ApprovalCenter {
             if !habOnline { keep.append(m) }
         }
         pending = keep
+    }
+
+    // MARK: - The chat view's request card
+
+    /// What the chat view's request card shows for one session (app.md 4.2).
+    public struct CardState: Equatable, Sendable {
+        public var request: OpenRequest
+        /// Whether the card's answer buttons are on.
+        public var canAnswer: Bool
+        public var sending: Bool
+        /// Why the last answer from the card did not land.
+        public var failure: String?
+        public var expired: Bool
+    }
+
+    /// The session's open request, as the card shows it; nil when none waits.
+    /// It reads the sheet's state while the sheet holds that request, so a
+    /// failure or a send in flight shows on the card too.
+    public func card(for target: SessionTarget) -> CardState? {
+        guard let pane = target.pane,
+              let r = sheet.requests.first(where: { $0.habID == target.habID && $0.pane == pane })
+        else { return nil }
+        if sheet.current?.id == r.id {
+            let phase = sheet.phase
+            var failure: String?
+            if case .failed(let why) = phase { failure = why }
+            return CardState(request: r, canAnswer: sheet.canAnswer, sending: phase == .sending, failure: failure, expired: phase == .expired)
+        }
+        let expired = r.expiry.map { $0 <= now() } ?? false
+        return CardState(request: r, canAnswer: r.answerable && !r.offline && !expired, sending: false, failure: nil, expired: expired)
+    }
+
+    /// A tap on the card: the approval sheet at the session's request.
+    public func open(_ target: SessionTarget) {
+        guard let r = card(for: target)?.request else { return }
+        if sheet.show(id: r.id) { presenting = true }
+    }
+
+    /// Allow or Deny from the card. It answers through the sheet's path,
+    /// so the rules are the same: one answer, the expiry, answered elsewhere.
+    public func answer(_ target: SessionTarget, allow: Bool) async {
+        // Never another session's request under this card's Allow.
+        guard let r = card(for: target)?.request, sheet.show(id: r.id), sheet.current?.id == r.id else { return }
+        if allow { await sheet.allow() } else { await sheet.deny() }
     }
 
     // MARK: - Answers from outside the app's windows

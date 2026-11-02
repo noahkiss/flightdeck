@@ -256,6 +256,47 @@ final class ApprovalFixTests: XCTestCase {
         await fleet.setActive(false)
     }
 
+    /// The chat view's request card answers in place (app.md 4.2): Deny from
+    /// the card reaches the hab for that session's request only, and a
+    /// failure shows on the card.
+    func testChatCardAnswersInPlace() async {
+        let hab = await blockedHab(requests: [("%1", "req-1", Date()), ("%2", "req-2", Date())])
+        let fleet = Fleet()
+        fleet.add(HabConnection(id: "h", transport: hab.transport(), timing: fastTiming()), label: "desk")
+        let c = ApprovalCenter(board: fleet.board, answerer: ApprovalAnswerer(live: { _ in nil }, oneShot: { _ in hab.transport() }, clientLabel: "phone"), defaults: emptyDefaults())
+        c.isUnlocked = { true }
+        fleet.approvals = c
+        await fleet.setActive(true)
+        await eventually("online") { fleet.board.onlineCount == 1 }
+        let second = SessionTarget(habID: "h", session: "s2", pane: "%2")
+        let card = c.card(for: second)
+        XCTAssertEqual(card?.request.requestID, "req-2")
+        XCTAssertEqual(card?.canAnswer, true)
+        XCTAssertNil(c.card(for: SessionTarget(habID: "h", session: "s9", pane: "%9")), "no card for a session with no request")
+
+        await hab.failNextAnswer(kind: .unavailable, hint: "hab busy")
+        await c.answer(second, allow: true)
+        XCTAssertEqual(c.card(for: second)?.failure, "hab busy")
+        XCTAssertEqual(c.card(for: second)?.canAnswer, true, "the buttons stay on to try again")
+        XCTAssertFalse(c.presenting, "answering on the card opens no sheet")
+
+        await c.answer(second, allow: false)
+        let answers = await hab.answers
+        XCTAssertEqual(answers.map(\.request), ["req-2", "req-2"])
+        XCTAssertEqual(answers.last?.choice, .deny)
+        XCTAssertEqual(answers.last?.pane, "%2")
+
+        // A tap on the card opens the sheet at that request.
+        c.open(SessionTarget(habID: "h", session: "s1", pane: "%1"))
+        XCTAssertTrue(c.presenting)
+        XCTAssertEqual(c.sheet.current?.requestID, "req-1")
+        // A session with no request opens nothing in its place.
+        c.presenting = false
+        c.open(SessionTarget(habID: "h", session: "s9", pane: "%9"))
+        XCTAssertFalse(c.presenting)
+        await fleet.setActive(false)
+    }
+
     /// A request that closes on the board withdraws its delivered banners.
     func testClosedRequestWithdrawsBanners() async {
         let hab = await blockedHab()

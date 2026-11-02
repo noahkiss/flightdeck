@@ -2,6 +2,11 @@ import FlightdeckShared
 import HabAPI
 import SwiftUI
 
+extension EnvironmentValues {
+    /// The app's approvals: the chat view's request card answers through it.
+    @Entry public var approvals: ApprovalCenter? = nil
+}
+
 /// The approval sheet (app.md 7.2): one request, its facts, the exact request,
 /// the expiry, and Deny and Allow. Plans and questions from Claude show as
 /// structured answers (landscape.md 4.4).

@@ -358,8 +358,15 @@ rows; search field; usage bars in the footer); `hab-logic-api.md` 5, 6.4; `harne
 |---|---|
 | `idle`, `done` | Message sent; its status clears when the agent starts working |
 | `working` | "Sends after this turn"; the owner can cancel it until then |
-| `blocked` | Send is off. The pending request is shown above the composer instead |
+| `blocked` | Send is off. The pending request is shown above the composer instead, as a card that answers in place |
 | `none`, `exited` | Send is off. "Start" or "Resume" is offered |
+
+- **The request card answers in place.** A permission shows Deny and Allow on the card; a plan
+  shows Keep planning and Approve plan; questions show Answer, which opens the approval sheet. A
+  tap on the card opens the approval sheet (7.2) at that request, with every choice it offers. The
+  card answers through the sheet's path, so the same rules hold: one answer, the expiry, answered
+  elsewhere. A failed answer shows its reason on the card and leaves the buttons on. An expired
+  request, or one with no request id, says to answer in the terminal and offers Open terminal.
 
 - If the hab reports "not delivered" (no working signal and no new user record in a few seconds),
   the message shows "not delivered" with a retry button. The app never retries on its own.
@@ -1209,7 +1216,7 @@ Live Activity after an answer, so 7.5 keeps the behaviour from Moshi's docs.
 
 | Surface | Shows | Answers |
 |---|---|---|
-| Chat view | The request as a footer on its tool card: tool, exact command or file list, working directory | All choices the harness offers |
+| Chat view | The request as a card above the composer: title, exact command, working directory (4.2) | Allow, Deny, plan choices on the card; a tap opens the approval sheet |
 | Status board | The row in rank 1 with its title and command | Tap opens the approval sheet |
 | Approval sheet | Everything in 7.2 | Allow, Deny; "Open chat" for broader choices |
 | Push banner and lock screen | Project, model, context bar, title, the command (shortened to fit) | Allow, Deny; a text reply for questions |

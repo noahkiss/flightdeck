@@ -703,7 +703,7 @@ struct ComposerView: View {
         let gate = model.gate
         VStack(alignment: .leading, spacing: 6) {
             if gate == .blocked, let a = model.context.agent {
-                PendingRequestView(agent: a)
+                PendingRequestView(agent: a, target: model.target, openTerminal: openTerminal)
             }
             if gate == .noAgent {
                 HStack {
@@ -856,15 +856,51 @@ struct ComposerView: View {
     }
 }
 
-/// The pending request, shown above the composer while the agent is blocked.
+/// The pending request, shown above the composer while the agent is blocked
+/// (app.md 4.2). It answers in place: Allow and Deny (Approve plan and Keep
+/// planning for a plan) on the card, and a tap opens the approval sheet with
+/// the full request and every choice it offers.
 struct PendingRequestView: View {
     let agent: AgentState
+    var target: SessionTarget?
+    var openTerminal: (() -> Void)?
+    @Environment(\.approvals) private var approvals
 
     var body: some View {
+        let state = target.flatMap { approvals?.card(for: $0) }
+        VStack(alignment: .leading, spacing: 6) {
+            if let state, let target {
+                Button {
+                    approvals?.open(target)
+                } label: {
+                    facts(state)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens the request")
+                actions(state)
+            } else {
+                facts(nil)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func facts(_ state: ApprovalCenter.CardState?) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Label(title, systemImage: agent.kind == .question ? "questionmark.bubble" : agent.kind == .auth ? "person.badge.key" : "hand.raised")
-                .font(.callout.weight(.medium))
-                .foregroundStyle(.orange)
+            HStack {
+                Label(state?.request.title ?? title, systemImage: agent.kind == .question ? "questionmark.bubble" : agent.kind == .auth ? "person.badge.key" : "hand.raised")
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.orange)
+                Spacer()
+                if state != nil {
+                    Image(systemName: "chevron.up")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
+            }
             if let c = agent.request?.command {
                 Text(c)
                     .font(.caption.monospaced())
@@ -876,9 +912,64 @@ struct PendingRequestView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private func actions(_ state: ApprovalCenter.CardState) -> some View {
+        let r = state.request
+        if let f = state.failure {
+            Text(f).font(.caption).foregroundStyle(.red)
+        }
+        if state.expired {
+            HStack {
+                Text("Expired: answer in the terminal.").font(.caption).foregroundStyle(.orange)
+                Spacer()
+                if let openTerminal { Button("Open terminal", action: openTerminal) }
+            }
+        } else if state.sending {
+            ProgressView().frame(maxWidth: .infinity)
+        } else if case .questions = r.form {
+            Button {
+                if let target { approvals?.open(target) }
+            } label: {
+                Text("Answer").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!state.canAnswer)
+        } else if r.answerable {
+            HStack(spacing: 10) {
+                Button(role: .destructive) {
+                    answer(allow: false)
+                } label: {
+                    Text(r.form.isPlan ? "Keep planning" : "Deny").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                Button {
+                    answer(allow: true)
+                } label: {
+                    Text(r.form.isPlan ? "Approve plan" : "Allow").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .disabled(!state.canAnswer)
+        } else if r.offline {
+            Text("The hab is offline.").font(.caption).foregroundStyle(.secondary)
+        } else {
+            HStack {
+                Text(r.kind == .question ? "Answer in the terminal." : r.kind == .auth ? "Sign in in the terminal." : "Needs you in the terminal.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if let openTerminal { Button("Open terminal", action: openTerminal) }
+            }
+        }
+    }
+
+    private func answer(allow: Bool) {
+        guard let target, let approvals else { return }
+        Task { await approvals.answer(target, allow: allow) }
     }
 
     private var title: String {
