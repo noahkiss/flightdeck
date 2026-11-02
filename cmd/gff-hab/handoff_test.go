@@ -26,6 +26,8 @@ type fakeChannelHab struct {
 	self  string // the calling pane's session: a send to it is refused, as channels does
 }
 
+func (f *fakeChannelHab) fromPane() bool { return true }
+
 func (f *fakeChannelHab) Call(ctx context.Context, method string, params, result any) error {
 	switch method {
 	case "channel.send":
@@ -215,6 +217,16 @@ func TestHandOffSkipsSelf(t *testing.T) {
 	_, text, err = runAction(t, f, "hand_off", toolArgs{"project": "app", "agent": "app-ui", "message": "x"})
 	if err != nil || !strings.Contains(text, "app-ui is your own session: nothing was sent") {
 		t.Fatalf("named self: %v\n%s", err, text)
+	}
+}
+
+// TestHandOffOutsidePane: through the control socket, where no session is the caller, hand_off
+// refuses at once with a clear message and reads nothing.
+func TestHandOffOutsidePane(t *testing.T) {
+	f := twoHosts() // a plain control-socket caller
+	_, _, err := runAction(t, f, "hand_off", toolArgs{"project": "app", "message": "x"})
+	if errKind(err) != api.ErrorKindInvalid || !strings.Contains(err.Error(), "hand_off needs to run from a session's pane") || len(f.calls) != 0 {
+		t.Fatalf("outside a pane: %v, calls %v", err, f.calls)
 	}
 }
 

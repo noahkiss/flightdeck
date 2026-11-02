@@ -200,6 +200,12 @@ func countTier(ts []handOffTarget, tier func(handOffTarget) int, n int) int {
 	return c
 }
 
+// paneDoor is a caller that reaches the hab through a pane's GFF_HAB route, where the hab knows
+// the calling session.
+type paneDoor interface{ fromPane() bool }
+
+func (hookCaller) fromPane() bool { return true }
+
 // runHandOff sends the user's request to the agent already on a project, over channels, with
 // no confirmation (capcom.md 3.2, owner 2026-11-01). The sender is the calling pane's session.
 func runHandOff(ctx context.Context, c caller, a toolArgs) (any, string, error) {
@@ -209,6 +215,9 @@ func runHandOff(ctx context.Context, c caller, a toolArgs) (any, string, error) 
 	}
 	if len(text) > channels.MaxText {
 		return nil, "", control.Errorf(api.ErrorKindInvalid, "the message is %d bytes; at most %d", len(text), channels.MaxText)
+	}
+	if p, ok := c.(paneDoor); !ok || !p.fromPane() {
+		return nil, "", control.Errorf(api.ErrorKindInvalid, "hand_off needs to run from a session's pane: your session is the sender. Outside one, gff-hab send -from <session> sends as a named session")
 	}
 	cl, err := readCatalog(ctx, c)
 	if err != nil {

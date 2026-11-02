@@ -586,9 +586,10 @@ change: `hand_off` uses `catalog.list`, `channel.send` and `channel.status`; `fi
   second are rare, and the other candidates are listed, so Capcom can still ask.
 - **Sending.** `channel.send` to the agent's address (`label/name` on a peer, the bare name on
   this hab), through the pane route, so the calling pane's session is the sender and the
-  target sees the agent envelope with that address (`mesh.md` 6.5). Outside a pane the hab
-  refuses the send for lack of `from`; the tool takes no `from`, since an MCP server always runs
-  in a pane. No confirmation (owner, 2026-11-01).
+  target sees the agent envelope with that address (`mesh.md` 6.5). Outside a pane (`gff-hab
+  mcp` or `gff-hab act` on the control socket) no session is the caller, so the tool refuses at
+  once, before it reads anything: "hand_off needs to run from a session's pane", pointing at
+  `gff-hab send -from`. It takes no `from` of its own. No confirmation (owner, 2026-11-01).
 - **Never the caller.** `hand_off` is in every agent's kit, and an agent on the project that
   calls it is busy, so it would often be the newest busy candidate. Channels refuse a session's
   message to itself (`mesh.md` 6.5); the tool takes that refusal as "this is the caller", drops
