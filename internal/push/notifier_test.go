@@ -29,14 +29,14 @@ var (
 	allKinds = []string{KindPermission, KindQuestion, KindAuth, KindError}
 )
 
-func newNotifierRig(t *testing.T) *notifierRig {
+func newNotifierRig(t *testing.T, opts ...func(*NotifierConfig)) *notifierRig {
 	r := &notifierRig{testRig: newRig(t), connected: map[string]bool{}}
 	s, err := OpenStore(filepath.Join(t.TempDir(), "push"), r.clock.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	r.store = s
-	r.n = NewNotifier(NotifierConfig{
+	cfg := NotifierConfig{
 		Sender: r.client, Store: s, Hab: "laptop", Now: r.clock.Now, Sleep: func(context.Context, time.Duration) {},
 		Where: func(pane, session string) Where {
 			return Where{Session: "s1", SessionName: "fix-login", Project: "web-app", Harness: "claude"}
@@ -47,7 +47,11 @@ func newNotifierRig(t *testing.T) *notifierRig {
 			r.logs = append(r.logs, f)
 			r.mu.Unlock()
 		},
-	})
+	}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	r.n = NewNotifier(cfg)
 	t.Cleanup(r.n.Close)
 	return r
 }

@@ -23,7 +23,37 @@ const (
 	CategoryApproval = "approval"      // Approve, Deny
 	CategoryDeny     = "approval-deny" // Deny, Open on iPhone: the command does not fit, or is hidden
 	CategoryOpen     = "open"          // Open on iPhone
+	// The same sets with "Ask" last, sent while some host runs Capcom (capcom.md 8.5), and ask
+	// alone for a banner that had no actions.
+	CategoryApprovalAsk = "approval-ask"      // Approve, Deny, Ask
+	CategoryDenyAsk     = "approval-deny-ask" // Deny, Open on iPhone, Ask
+	CategoryOpenAsk     = "open-ask"          // Open on iPhone, Ask
+	CategoryAsk         = "ask"               // Ask
 )
+
+// AskCategory is category with the Ask action added.
+func AskCategory(category string) string {
+	switch category {
+	case CategoryApproval:
+		return CategoryApprovalAsk
+	case CategoryDeny:
+		return CategoryDenyAsk
+	case CategoryOpen:
+		return CategoryOpenAsk
+	case "":
+		return CategoryAsk
+	}
+	return category
+}
+
+// Ask is what a banner's Ask action hands to capcom.open as its one context item (capcom.md
+// 8.5): a notice id, with the device id of the hab that raised it when that hab is not the
+// Capcom home host.
+type Ask struct {
+	Kind string `json:"kind"`
+	Ref  string `json:"ref"`
+	Host string `json:"host,omitempty"`
+}
 
 // Kinds of push, as push.register names them, plus notice for notice.raise.
 const (
@@ -260,6 +290,10 @@ type Meta struct {
 	Request   string `json:"request,omitempty"`
 	ExpiresAt string `json:"expires_at,omitempty"`
 	Notice    string `json:"notice,omitempty"`
+	// Context is the Ask action's context item, and CapcomHome the device id of the hab that
+	// runs Capcom, where capcom.open goes. Both absent: no host runs Capcom, and no Ask.
+	Context    *Ask   `json:"capcom_context,omitempty"`
+	CapcomHome string `json:"capcom_home,omitempty"`
 }
 
 // AlertPayload is the JSON of an alert push. The phone's notification service extension adds

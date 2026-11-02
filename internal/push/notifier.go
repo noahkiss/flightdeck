@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -55,6 +56,15 @@ type NotifierConfig struct {
 	// Sleep is the rate-limit wait; it returns early when ctx ends. Default: a timer.
 	Sleep func(ctx context.Context, d time.Duration)
 	Logf  func(string, ...any)
+	// Capcom returns the device id of the host that runs Capcom, or "" when none does. With
+	// one, each banner carries the Ask action and its context (capcom.md 8.5). Nil: no Ask.
+	Capcom func() string
+	// Self is this hab's device id: the context's host when Capcom runs elsewhere.
+	Self string
+	// Keep records an agent-state banner as a notice and returns its id, so its Ask action
+	// names a notice the Capcom home can read; "" when it could not. Nil: agent-state banners
+	// carry no Ask.
+	Keep func(Notice) string
 }
 
 // Notice is a notification raised through notice.raise or by the hab itself.
@@ -401,7 +411,11 @@ func (n *Notifier) Raise(no Notice) int {
 			w.Hab, w.Session = n.cfg.Hab, no.Session
 		}
 		b := NoticeBanner(w, no.Title, no.Body, no.Level)
-		payload := AlertPayload(b, Meta{Hab: n.cfg.Hab, Session: no.Session, Notice: no.ID}, no.Session)
+		meta := Meta{Hab: n.cfg.Hab, Session: no.Session, Notice: no.ID}
+		if meta.Context, meta.CapcomHome = n.ask(no.ID); meta.Context != nil {
+			b.Category = AskCategory(b.Category)
+		}
+		payload := AlertPayload(b, meta, no.Session)
 		for _, t := range to {
 			n.send(Message{Token: t.token, Environment: t.env, Type: TypeAlert, Priority: priority(b.Level), CollapseID: "n-" + no.ID, Expiration: n.cfg.Now().Add(alertKeep), Payload: payload}, true)
 		}
@@ -409,6 +423,47 @@ func (n *Notifier) Raise(no Notice) int {
 	n.mu.Unlock()
 	n.signal()
 	return len(to)
+}
+
+// ask returns the Ask action's context for notice id, and the Capcom home's device id; nil
+// when no host runs Capcom.
+func (n *Notifier) ask(id string) (*Ask, string) {
+	if n.cfg.Capcom == nil || id == "" {
+		return nil, ""
+	}
+	home := n.cfg.Capcom()
+	if home == "" {
+		return nil, ""
+	}
+	a := &Ask{Kind: "notification", Ref: id}
+	if home != n.cfg.Self {
+		a.Host = n.cfg.Self
+	}
+	return a, home
+}
+
+// keptNotice is the notice an agent-state banner is recorded as: the banner's words with the
+// commands shown, and a permission request's whole command or file list as the body.
+func keptNotice(kind string, st api.AgentState, w Where) Notice {
+	var b Banner
+	switch kind {
+	case KindPermission:
+		b = PermissionBanner(w, st.Request, false)
+		if r := st.Request; r != nil && r.Command != "" {
+			b.Body = r.Command
+		} else if r != nil && len(r.Files) > 0 {
+			b.Body = strings.Join(r.Files, "\n")
+		}
+	case KindQuestion:
+		b = QuestionBanner(w)
+	case KindAuth:
+		b = AuthBanner(w)
+	case KindError:
+		b = ErrorBanner(w)
+	case KindDone:
+		b = DoneBanner(w)
+	}
+	return Notice{Title: b.Title, Body: b.Body, Level: b.Level, Session: w.Session}
 }
 
 func (n *Notifier) run() {
@@ -567,6 +622,9 @@ func (n *Notifier) banner(st api.AgentState, w Where) {
 			expires = t
 		}
 	}
+	// The banner is kept as a notice, once, when it first goes to a device: its Ask action
+	// names that notice.
+	kept := n.cfg.Keep == nil || n.cfg.Capcom == nil
 	var out *sent
 	if kind == KindPermission || kind == KindQuestion {
 		out = &sent{kind: string(st.Kind), request: requestID(st), collapse: collapse, req: st.Request, expires: expires}
@@ -594,6 +652,15 @@ func (n *Notifier) banner(st api.AgentState, w Where) {
 			b = ErrorBanner(w)
 		case KindDone:
 			b = DoneBanner(w)
+		}
+		if !kept {
+			kept = true
+			if n.cfg.Capcom() != "" {
+				meta.Context, meta.CapcomHome = n.ask(n.cfg.Keep(keptNotice(kind, st, w)))
+			}
+		}
+		if meta.Context != nil {
+			b.Category = AskCategory(b.Category)
 		}
 		payload := AlertPayload(b, meta, w.Session)
 		if n.send(Message{Token: d.Token, Environment: d.Environment, Type: TypeAlert, Priority: priority(b.Level), CollapseID: collapse, Expiration: expires, Payload: payload}, true) && out != nil {
