@@ -163,7 +163,43 @@ type CatalogUpdated struct {
 // --- Capcom (capcom.md 7, 8.3) ---
 
 type CapcomOpenParams struct {
-	New bool `json:"new,omitempty" doc:"Start a fresh Capcom session in a new folder; the standing one stays resumable."`
+	New     bool               `json:"new,omitempty" doc:"Start a fresh Capcom session in a new folder; the standing one stays resumable."`
+	Context []CapcomContextRef `json:"context,omitempty" doc:"Context to attach to the returned session's next message, in order, as capcom.attach takes it (capcom.md 8.1). A refused item fails the call; items checked before the open fail it before any start. A file names an attachment of the returned session, or a path under its folder."`
+}
+
+// CapcomContextKind is what an attached context item names (capcom.md 8.1). Closed: the hab
+// refuses an unknown word.
+type CapcomContextKind string
+
+// CapcomContextRef names one thing to attach to a Capcom message. The hab resolves it itself.
+type CapcomContextRef struct {
+	Kind CapcomContextKind `json:"kind"`
+	Ref  string            `json:"ref" doc:"notification: a notice id. session: a session id on this hab. file: an attachment id from attachment.put for the Capcom session, or an absolute path under its folder. command: <pane id>:<command id>, from command.list. logbook: a record id."`
+	Host string            `json:"host,omitempty" doc:"notification only: a peer label or this hab's host id, as notice.get takes it. Absent: this hab. The other kinds name this hab's own things."`
+}
+
+// CapcomContextItem is one item attached to a Capcom session's next message, for the client's
+// chip.
+type CapcomContextItem struct {
+	Kind  CapcomContextKind `json:"kind"`
+	Ref   string            `json:"ref" doc:"As attached."`
+	Host  string            `json:"host" doc:"The label of the host that resolved it."`
+	Title string            `json:"title" doc:"A short label: the notice title, the session name, the file name or the command line. At most 120 characters."`
+}
+
+type CapcomAttachParams struct {
+	Session string            `json:"session" doc:"A Capcom session on this hab."`
+	Kind    CapcomContextKind `json:"kind"`
+	Ref     string            `json:"ref" doc:"As in CapcomContextRef."`
+	Host    string            `json:"host,omitempty" doc:"As in CapcomContextRef."`
+}
+
+// CapcomAttached answers capcom.attach with everything now pending for the session's next
+// message, in delivery order.
+type CapcomAttached struct {
+	Seq
+	Session string              `json:"session"`
+	Pending []CapcomContextItem `json:"pending"`
 }
 
 // CapcomOpened answers capcom.open with the standing Capcom session.
@@ -173,6 +209,8 @@ type CapcomOpened struct {
 	Pane    string `json:"pane"`
 	Started bool   `json:"started,omitempty" doc:"This call started the session, or resumed it after an exit."`
 	Dir     string `json:"dir" doc:"The session's folder on the home host."`
+	// Pending is field set 2: the context waiting for the session's next message (capcom.md 8.1).
+	Pending []CapcomContextItem `json:"pending,omitempty" doc:"Context attached to the session's next message, in delivery order. Absent when none waits."`
 }
 
 type CapcomAssignParams struct {

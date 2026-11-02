@@ -123,6 +123,7 @@ var Methods = []Method{
 	{"settings.get", "Read every hab-side setting, or the named ones (app.md 20.5). Needs the settings capability.", SettingsGetParams{}, SettingsResult{}},
 	{"settings.set", "Write hab-side settings, all or nothing, each with the revision last seen (app.md 20.5). Needs the settings capability.", SettingsSetParams{}, SettingsResult{}},
 	{"capcom.open", "Return the standing Capcom session on this home host, starting or resuming it as needed; new starts a fresh one (capcom.md 7.2). Needs the capcom capability.", CapcomOpenParams{}, CapcomOpened{}},
+	{"capcom.attach", "Attach context to a Capcom session's next message: a notification, a session, a file, a console command or a Logbook record. The hab resolves the ref at once and delivers it as a block before the owner's text at the next session.send, then drops it; at most 8 items wait, and the same item twice is kept once (capcom.md 8.1). Needs the capcom capability.", CapcomAttachParams{}, CapcomAttached{}},
 	{"capcom.assign", "Make a host the Capcom home host, with a counter above every one seen (capcom.md 7.3). Needs the capcom capability.", CapcomAssignParams{}, CapcomAssigned{}},
 	{"worktree.remove", "Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).", WorktreeRemoveParams{}, WorktreeRemoved{}},
 	{"transcript.list", "Past and current harness sessions from their native transcripts, newest first, on every host or one (capcom.md 4). Needs the read-tools capability.", TranscriptListParams{}, TranscriptSessions{}},
@@ -262,6 +263,8 @@ var Enums = map[string][]string{
 	"RoundOnFinish":    {"close", "keep"},
 	"RoundNotify":      {"failures", "always", "never"},
 	"RoundRunState":    {"queued", "waiting", "running", "blocked", "succeeded", "failed", "timed_out", "skipped", "taken_over"},
+	// Sets added for the Capcom entry API (capcom.md 8.1).
+	"CapcomContextKind": {"notification", "session", "file", "command", "logbook"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per

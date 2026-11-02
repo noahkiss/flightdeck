@@ -38,6 +38,14 @@ const (
 )
 
 const (
+	CapcomContextKindNotification CapcomContextKind = "notification"
+	CapcomContextKindSession      CapcomContextKind = "session"
+	CapcomContextKindFile         CapcomContextKind = "file"
+	CapcomContextKindCommand      CapcomContextKind = "command"
+	CapcomContextKindLogbook      CapcomContextKind = "logbook"
+)
+
+const (
 	ChannelStateQueued       ChannelState = "queued"
 	ChannelStateHanded       ChannelState = "handed"
 	ChannelStateDelivered    ChannelState = "delivered"
@@ -922,6 +930,13 @@ func (c Client) SettingsSet(ctx context.Context, params SettingsSetParams) (Sett
 func (c Client) CapcomOpen(ctx context.Context, params CapcomOpenParams) (CapcomOpened, error) {
 	var result CapcomOpened
 	err := c.Caller.Call(ctx, "capcom.open", params, &result)
+	return result, err
+}
+
+// CapcomAttach calls capcom.attach. Attach context to a Capcom session's next message: a notification, a session, a file, a console command or a Logbook record. The hab resolves the ref at once and delivers it as a block before the owner's text at the next session.send, then drops it; at most 8 items wait, and the same item twice is kept once (capcom.md 8.1). Needs the capcom capability.
+func (c Client) CapcomAttach(ctx context.Context, params CapcomAttachParams) (CapcomAttached, error) {
+	var result CapcomAttached
+	err := c.Caller.Call(ctx, "capcom.attach", params, &result)
 	return result, err
 }
 

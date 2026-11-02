@@ -108,6 +108,7 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.settingsGet)
         result(HabMethods.settingsSet)
         result(HabMethods.capcomOpen)
+        result(HabMethods.capcomAttach)
         result(HabMethods.capcomAssign)
         result(HabMethods.habPermissions)
         result(HabMethods.detectExplain)

@@ -344,15 +344,117 @@ public struct CapcomAssigned: Codable, Sendable, Hashable {
     }
 }
 
+public struct CapcomAttachParams: Codable, Sendable, Hashable {
+    /// As in CapcomContextRef.
+    public var host: String?
+    public var kind: CapcomContextKind
+    /// As in CapcomContextRef.
+    public var ref: String
+    /// A Capcom session on this hab.
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case host = "host"
+        case kind = "kind"
+        case ref = "ref"
+        case session = "session"
+    }
+
+    public init(host: String? = nil, kind: CapcomContextKind, ref: String, session: String) {
+        self.host = host
+        self.kind = kind
+        self.ref = ref
+        self.session = session
+    }
+}
+
+public struct CapcomAttached: Codable, Sendable, Hashable {
+    public var pending: [CapcomContextItem]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case pending = "pending"
+        case seq = "seq"
+        case session = "session"
+    }
+
+    public init(pending: [CapcomContextItem], seq: UInt64, session: String) {
+        self.pending = pending
+        self.seq = seq
+        self.session = session
+    }
+}
+
+public struct CapcomContextItem: Codable, Sendable, Hashable {
+    /// The label of the host that resolved it.
+    public var host: String
+    public var kind: CapcomContextKind
+    /// As attached.
+    public var ref: String
+    /// A short label: the notice title, the session name, the file name or the command line. At most 120 characters.
+    public var title: String
+
+    enum CodingKeys: String, CodingKey {
+        case host = "host"
+        case kind = "kind"
+        case ref = "ref"
+        case title = "title"
+    }
+
+    public init(host: String, kind: CapcomContextKind, ref: String, title: String) {
+        self.host = host
+        self.kind = kind
+        self.ref = ref
+        self.title = title
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct CapcomContextKind: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let notification = CapcomContextKind(rawValue: "notification")
+    public static let session = CapcomContextKind(rawValue: "session")
+    public static let file = CapcomContextKind(rawValue: "file")
+    public static let command = CapcomContextKind(rawValue: "command")
+    public static let logbook = CapcomContextKind(rawValue: "logbook")
+}
+
+public struct CapcomContextRef: Codable, Sendable, Hashable {
+    /// notification only: a peer label or this hab's host id, as notice.get takes it. Absent: this hab. The other kinds name this hab's own things.
+    public var host: String?
+    public var kind: CapcomContextKind
+    /// notification: a notice id. session: a session id on this hab. file: an attachment id from attachment.put for the Capcom session, or an absolute path under its folder. command: <pane id>:<command id>, from command.list. logbook: a record id.
+    public var ref: String
+
+    enum CodingKeys: String, CodingKey {
+        case host = "host"
+        case kind = "kind"
+        case ref = "ref"
+    }
+
+    public init(host: String? = nil, kind: CapcomContextKind, ref: String) {
+        self.host = host
+        self.kind = kind
+        self.ref = ref
+    }
+}
+
 public struct CapcomOpenParams: Codable, Sendable, Hashable {
+    /// Context to attach to the returned session's next message, in order, as capcom.attach takes it (capcom.md 8.1). A refused item fails the call; items checked before the open fail it before any start. A file names an attachment of the returned session, or a path under its folder.
+    public var context: [CapcomContextRef]?
     /// Start a fresh Capcom session in a new folder; the standing one stays resumable.
     public var new: Bool?
 
     enum CodingKeys: String, CodingKey {
+        case context = "context"
         case new = "new"
     }
 
-    public init(new: Bool? = nil) {
+    public init(context: [CapcomContextRef]? = nil, new: Bool? = nil) {
+        self.context = context
         self.new = new
     }
 }
@@ -361,6 +463,8 @@ public struct CapcomOpened: Codable, Sendable, Hashable {
     /// The session's folder on the home host.
     public var dir: String
     public var pane: String
+    /// Context attached to the session's next message, in delivery order. Absent when none waits.
+    public var pending: [CapcomContextItem]?
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
     public var session: String
@@ -370,14 +474,16 @@ public struct CapcomOpened: Codable, Sendable, Hashable {
     enum CodingKeys: String, CodingKey {
         case dir = "dir"
         case pane = "pane"
+        case pending = "pending"
         case seq = "seq"
         case session = "session"
         case started = "started"
     }
 
-    public init(dir: String, pane: String, seq: UInt64, session: String, started: Bool? = nil) {
+    public init(dir: String, pane: String, pending: [CapcomContextItem]? = nil, seq: UInt64, session: String, started: Bool? = nil) {
         self.dir = dir
         self.pane = pane
+        self.pending = pending
         self.seq = seq
         self.session = session
         self.started = started
@@ -6025,6 +6131,8 @@ public enum HabMethods {
     public static let settingsSet = HabMethod<SettingsSetParams, SettingsResult>(name: "settings.set")
     /// Return the standing Capcom session on this home host, starting or resuming it as needed; new starts a fresh one (capcom.md 7.2). Needs the capcom capability.
     public static let capcomOpen = HabMethod<CapcomOpenParams, CapcomOpened>(name: "capcom.open")
+    /// Attach context to a Capcom session's next message: a notification, a session, a file, a console command or a Logbook record. The hab resolves the ref at once and delivers it as a block before the owner's text at the next session.send, then drops it; at most 8 items wait, and the same item twice is kept once (capcom.md 8.1). Needs the capcom capability.
+    public static let capcomAttach = HabMethod<CapcomAttachParams, CapcomAttached>(name: "capcom.attach")
     /// Make a host the Capcom home host, with a counter above every one seen (capcom.md 7.3). Needs the capcom capability.
     public static let capcomAssign = HabMethod<CapcomAssignParams, CapcomAssigned>(name: "capcom.assign")
     /// Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).
