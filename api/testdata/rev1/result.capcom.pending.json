@@ -1,0 +1,22 @@
+{
+  "pending": [
+    {
+      "host": "host-6",
+      "kind": "logbook",
+      "ref": "ref-5",
+      "title": "title-7",
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "session": "session-4",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

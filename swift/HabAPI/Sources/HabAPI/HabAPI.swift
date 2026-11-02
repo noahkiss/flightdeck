@@ -514,6 +514,19 @@ public struct CapcomOpened: Codable, Sendable, Hashable {
     }
 }
 
+public struct CapcomPendingParams: Codable, Sendable, Hashable {
+    /// A Capcom session on this hab.
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case session = "session"
+    }
+
+    public init(session: String) {
+        self.session = session
+    }
+}
+
 public struct Catalog: Codable, Sendable, Hashable {
     /// Quick actions the user declared for this host.
     public var actions: [CatalogAction]
@@ -6163,6 +6176,8 @@ public enum HabMethods {
     public static let capcomAttach = HabMethod<CapcomAttachParams, CapcomAttached>(name: "capcom.attach")
     /// Remove one item from the context waiting for a Capcom session's next message, and return what still waits; an item that does not wait answers not_found (capcom.md 8.4). Needs the capcom capability.
     public static let capcomDetach = HabMethod<CapcomDetachParams, CapcomAttached>(name: "capcom.detach")
+    /// Read the context waiting for a Capcom session's next message, in delivery order. Read-only: it starts, resumes and changes nothing (capcom.md 8.4). Needs the capcom capability.
+    public static let capcomPending = HabMethod<CapcomPendingParams, CapcomAttached>(name: "capcom.pending")
     /// Make a host the Capcom home host, with a counter above every one seen (capcom.md 7.3). Needs the capcom capability.
     public static let capcomAssign = HabMethod<CapcomAssignParams, CapcomAssigned>(name: "capcom.assign")
     /// Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).

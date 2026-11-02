@@ -86,6 +86,20 @@ func (c *capcomService) addPending(session string, items []capcom.Item) ([]api.C
 	return nil, control.Errorf(api.ErrorKindNotFound, "session %s is no longer a Capcom session on this hab", session)
 }
 
+// Pending answers capcom.pending: what waits for the session's next message, read-only. A
+// session with no Capcom record answers invalid, as attach and detach do.
+func (c *capcomService) Pending(session string) (api.CapcomAttached, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range c.st.Sessions {
+		if rec := &c.st.Sessions[i]; rec.ID == session {
+			return api.CapcomAttached{Session: session, Pending: apiPending(rec.Pending)}, nil
+		}
+	}
+	return api.CapcomAttached{}, control.Errorf(api.ErrorKindInvalid,
+		"session %s is not a Capcom session on this hab", session)
+}
+
 // Detach answers capcom.detach: one pending item leaves the list, matched by kind, ref and
 // host (absent, self, this hab's label or device id: this hab). The list is saved before the
 // answer; a failed save keeps the item.

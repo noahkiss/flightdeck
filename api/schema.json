@@ -2162,6 +2162,30 @@
       }
     },
     {
+      "name": "capcom.pending",
+      "summary": "Read the context waiting for a Capcom session's next message, in delivery order. Read-only: it starts, resumes and changes nothing (capcom.md 8.4). Needs the capcom capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session",
+          "description": "A Capcom session on this hab.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CapcomAttached"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CapcomPendingParams"
+      }
+    },
+    {
       "name": "capcom.assign",
       "summary": "Make a host the Capcom home host, with a counter above every one seen (capcom.md 7.3). Needs the capcom capability.",
       "paramStructure": "by-name",
@@ -3798,6 +3822,18 @@
           "session",
           "pane",
           "dir"
+        ]
+      },
+      "CapcomPendingParams": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string",
+            "description": "A Capcom session on this hab."
+          }
+        },
+        "required": [
+          "session"
         ]
       },
       "Catalog": {

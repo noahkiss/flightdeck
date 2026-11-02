@@ -348,6 +348,40 @@ func TestCapcomContext(t *testing.T) {
 	if p := mustOpen(t, c, false).Pending; len(p) != capcom.MaxPending-2 || p[0].Title != "Notice 1" {
 		t.Fatalf("pending after two detaches: %+v", p)
 	}
+	// capcom.pending reads the same list, read-only; another session is invalid.
+	var read api.CapcomAttached
+	if err := c.Call(ctx2, "capcom.pending", api.CapcomPendingParams{Session: op.Session}, &read); err != nil ||
+		len(read.Pending) != capcom.MaxPending-2 || read.Pending[0].Title != "Notice 1" || read.Session != op.Session {
+		t.Fatalf("capcom.pending: %v %+v", err, read)
+	}
+	if err := c.Call(ctx2, "capcom.pending", api.CapcomPendingParams{Session: worker.Session}, nil); errKind(err) != api.ErrorKindInvalid {
+		t.Fatalf("capcom.pending on a session that is not Capcom's: %v", err)
+	}
+}
+
+// TestCapcomPending: capcom.pending answers what waits from the record alone. It starts and
+// resumes nothing, so it needs no store or holder; a session with no record is invalid, and an
+// empty list is an empty array.
+func TestCapcomPending(t *testing.T) {
+	cc := &capcomService{state: t.TempDir(), host: "boxa", self: "dev-a", logf: t.Logf}
+	cc.st.Sessions = []capcom.Session{
+		{ID: "s1", Pending: []capcom.Item{{Kind: capcom.KindNotification, Ref: "n1", Host: "bee", Title: "Build failed"}}},
+		{ID: "s2"},
+	}
+	res, err := cc.Pending("s1")
+	if err != nil || res.Session != "s1" || len(res.Pending) != 1 || res.Pending[0].Title != "Build failed" || res.Pending[0].Host != "bee" {
+		t.Fatalf("pending: %v %+v", err, res)
+	}
+	res, err = cc.Pending("s2")
+	if err != nil || res.Pending == nil || len(res.Pending) != 0 {
+		t.Fatalf("empty pending: %v %+v", err, res)
+	}
+	if _, err := cc.Pending("nope"); errKind(err) != api.ErrorKindInvalid {
+		t.Fatalf("unknown session: %v", err)
+	}
+	if len(cc.st.Sessions) != 2 || cc.st.Standing != "" {
+		t.Fatalf("pending changed the state: %+v", cc.st)
+	}
 }
 
 func capcomOpenWith(t *testing.T, c *control.Client, p api.CapcomOpenParams) (api.CapcomOpened, error) {

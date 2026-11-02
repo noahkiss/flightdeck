@@ -194,6 +194,11 @@ type CapcomAttachParams struct {
 	Host    string            `json:"host,omitempty" doc:"As in CapcomContextRef."`
 }
 
+// CapcomPendingParams names a Capcom session whose waiting context to read.
+type CapcomPendingParams struct {
+	Session string `json:"session" doc:"A Capcom session on this hab."`
+}
+
 // CapcomDetachParams names one pending item to remove, as it was attached.
 type CapcomDetachParams struct {
 	Session string            `json:"session" doc:"A Capcom session on this hab."`

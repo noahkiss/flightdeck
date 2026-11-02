@@ -947,6 +947,13 @@ func (c Client) CapcomDetach(ctx context.Context, params CapcomDetachParams) (Ca
 	return result, err
 }
 
+// CapcomPending calls capcom.pending. Read the context waiting for a Capcom session's next message, in delivery order. Read-only: it starts, resumes and changes nothing (capcom.md 8.4). Needs the capcom capability.
+func (c Client) CapcomPending(ctx context.Context, params CapcomPendingParams) (CapcomAttached, error) {
+	var result CapcomAttached
+	err := c.Caller.Call(ctx, "capcom.pending", params, &result)
+	return result, err
+}
+
 // CapcomAssign calls capcom.assign. Make a host the Capcom home host, with a counter above every one seen (capcom.md 7.3). Needs the capcom capability.
 func (c Client) CapcomAssign(ctx context.Context, params CapcomAssignParams) (CapcomAssigned, error) {
 	var result CapcomAssigned
