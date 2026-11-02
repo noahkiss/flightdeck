@@ -115,14 +115,51 @@ func CheckListen(addr netip.Addr) error {
 	return fmt.Errorf("%s is not a LAN, tailnet or loopback address", addr)
 }
 
-// LocalAddrs lists the addresses of this host's up interfaces that qualify, at most MaxEndpoints,
-// IPv4 first.
+// IfAddr is one address of an up interface, with its prefix length.
+type IfAddr struct {
+	Name   string
+	Prefix netip.Prefix
+}
+
+// bridgeNames start the names of container and VM bridges, which other machines' containers and
+// VMs reach: a window never binds them on its own.
+var bridgeNames = []string{"docker", "br-", "veth", "virbr", "vmnet"}
+
+// tailnetLike says whether a CGNAT address looks like a tailnet's: a /32, or an interface named
+// tailscale* or utun*. Other CGNAT addresses may be an ISP's shared space that other
+// subscribers reach.
+func tailnetLike(ia IfAddr) bool {
+	return ia.Prefix.Bits() == 32 || strings.HasPrefix(ia.Name, "tailscale") || strings.HasPrefix(ia.Name, "utun")
+}
+
+// PickLocal keeps the interface addresses a window binds on its own: what Qualifies allows, minus
+// container and VM bridges, and minus CGNAT addresses that do not look like a tailnet's. IPv4
+// first, at most MaxEndpoints.
+func PickLocal(ifs []IfAddr) []netip.Addr {
+	var keep []netip.Addr
+	for _, ia := range ifs {
+		bridge := false
+		for _, p := range bridgeNames {
+			if strings.HasPrefix(ia.Name, p) {
+				bridge = true
+			}
+		}
+		a := ia.Prefix.Addr().Unmap()
+		if bridge || (a.Is4() && cgnat.Contains(a) && !tailnetLike(ia)) {
+			continue
+		}
+		keep = append(keep, a)
+	}
+	return Pick(keep)
+}
+
+// LocalAddrs lists the addresses of this host's up interfaces that PickLocal keeps.
 func LocalAddrs() ([]netip.Addr, error) {
 	ifs, err := net.Interfaces()
 	if err != nil {
 		return nil, err
 	}
-	var all []netip.Addr
+	var all []IfAddr
 	for _, ifc := range ifs {
 		if ifc.Flags&net.FlagUp == 0 {
 			continue
@@ -132,14 +169,23 @@ func LocalAddrs() ([]netip.Addr, error) {
 			continue
 		}
 		for _, a := range addrs {
-			if n, ok := a.(*net.IPNet); ok {
-				if ip, ok := netip.AddrFromSlice(n.IP); ok {
-					all = append(all, ip.Unmap())
-				}
+			n, ok := a.(*net.IPNet)
+			if !ok {
+				continue
 			}
+			ip, ok := netip.AddrFromSlice(n.IP)
+			if !ok {
+				continue
+			}
+			ip = ip.Unmap()
+			ones, _ := n.Mask.Size()
+			if ip.Is4() && ones > 32 {
+				ones -= 96 // a 16-byte mask on an IPv4 address
+			}
+			all = append(all, IfAddr{Name: ifc.Name, Prefix: netip.PrefixFrom(ip, ones)})
 		}
 	}
-	return Pick(all), nil
+	return PickLocal(all), nil
 }
 
 // Pick keeps the addresses that qualify, without repeats, IPv4 first, at most MaxEndpoints.

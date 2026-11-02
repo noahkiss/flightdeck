@@ -171,3 +171,32 @@ func FuzzParseRequest(f *testing.F) {
 		}
 	})
 }
+
+func TestPickLocal(t *testing.T) {
+	ia := func(name, p string) IfAddr { return IfAddr{Name: name, Prefix: netip.MustParsePrefix(p)} }
+	got := PickLocal([]IfAddr{
+		ia("eth0", "100.64.7.9/10"),       // an ISP's shared CGNAT space: skipped
+		ia("wwan0", "100.72.0.5/22"),      // a cellular uplink in CGNAT space: skipped
+		ia("tailscale0", "100.64.0.7/32"), // a tailnet address: kept
+		ia("utun5", "100.64.0.8/10"),      // a tailnet on macOS by name: kept
+		ia("ts-any", "100.64.0.9/32"),     // a /32: kept
+		ia("en0", "192.168.1.5/24"),       // the LAN: kept
+		ia("docker0", "172.17.0.1/16"),    // container bridges: skipped
+		ia("br-1a2b3c", "172.18.0.1/16"),  //
+		ia("veth12ab", "10.200.0.1/24"),   //
+		ia("virbr0", "192.168.122.1/24"),  // VM bridges: skipped
+		ia("vmnet8", "172.16.50.1/24"),    //
+		ia("en0", "fd00::5/64"),           // ULA: kept
+		ia("docker0", "fd00:dead::1/64"),  // ULA on a bridge: skipped
+		ia("en0", "203.0.113.5/24"),       // public: skipped
+	})
+	want := []string{"100.64.0.7", "100.64.0.8", "100.64.0.9", "192.168.1.5", "fd00::5"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i].String() != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}

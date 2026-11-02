@@ -157,7 +157,11 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 	}
 	m := int(w.Lifetime() / time.Minute)
 	s := int(w.Lifetime()%time.Minute) / int(time.Second)
-	fmt.Fprintf(out, "Pairing window open for %d:%02d on %s.\n%s%s\nScan it in Flightdeck, or paste the link. Ctrl-C closes the window.\n", m, s, strings.Join(eps, ", "), code, link)
+	fmt.Fprintf(out, "Pairing window open for %d:%02d on %s.\n", m, s, strings.Join(eps, ", "))
+	if len(listen) == 0 {
+		fmt.Fprintln(out, "Those are this host's LAN and tailnet addresses. On a cloud host a private address can be reachable from the internet through the provider's NAT: pair there with -listen <tailnet ip>.")
+	}
+	fmt.Fprintf(out, "%s%s\nScan it in Flightdeck, or paste the link. Ctrl-C closes the window.\n", code, link)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -464,7 +464,7 @@ the key without trusting a value the phone could copy.
 
 | Rule | Value |
 |---|---|
-| Bind addresses | Every address of an up interface that is private IPv4 (10/8, 172.16/12, 192.168/16), the CGNAT range a tailnet uses (100.64/10), or IPv6 unique local (fc00::/7, the tailnet's range among them). Never loopback (unless named with `-listen`), link-local, multicast, a public address, or an unspecified address (`0.0.0.0`, `::`). One listener per address, eight at most |
+| Bind addresses | Every address of an up interface that is private IPv4 (10/8, 172.16/12, 192.168/16), a tailnet address in the CGNAT range (100.64/10), or IPv6 unique local (fc00::/7, the tailnet's range among them). A CGNAT address counts only on a tailnet-looking interface: a /32, or an interface named `tailscale*` or `utun*`. Elsewhere 100.64/10 may be an ISP's shared space, or a cellular or satellite uplink that other subscribers reach. Container and VM bridges (`docker*`, `br-*`, `veth*`, `virbr*`, `vmnet*`) are skipped: other containers and VMs reach them. Never loopback (unless named with `-listen`), link-local, multicast, a public address, or an unspecified address (`0.0.0.0`, `::`). One listener per address, eight at most. The terminal prints the addresses chosen |
 | `-listen addr` | Replaces the list; repeatable. An unspecified or public address is refused, even here |
 | Port | `-port`, else one free port the system picks for the first address, reused for the others where it is free |
 | Lifetime | At most five minutes (`-timeout`, capped at five). Closed after one pairing, a `declined` answer or Ctrl-C. Refused tokens never close it |
@@ -476,6 +476,13 @@ the key without trusting a value the phone could copy.
 | Client strings | Every string a client sent that reaches the terminal (the device name, a key type, a handshake error) goes through one sanitiser: cut to 64 bytes, then quoted, so control, format and invalid bytes print as escapes. A string the client sends can never move the cursor, draw, or retitle the terminal |
 
 When no address qualifies, `gff-hab pair` says so and names `-listen`.
+
+**Cloud hosts.** A cloud VM (EC2, GCP, Azure and the like) sees only its private VPC address, and
+the provider maps a public address 1:1 onto it. A window on that "private" address is then
+reachable from the internet wherever the security group allows the port. gff-hab cannot tell this
+case apart from a LAN. So when it picks the addresses itself, it prints them with a note: on a cloud
+host, pair with `-listen <tailnet ip>`. The token and the owner's confirmation still guard the
+window, but the owner's rule is that pairing never listens on a public address.
 
 The window is a short, owner-started listener on LAN and tailnet addresses, which the owner
 approved for pairing (2026-11-02). Enabling the embedded server for normal traffic stays a
@@ -519,6 +526,7 @@ fan-out to peers (6.6) and the `devices.*` API methods come with the embedded se
 
 ```
 Pairing window open for 5:00 on 192.0.2.10:47213, 198.51.100.7:47213.
+Those are this host's LAN and tailnet addresses. On a cloud host ... pair there with -listen <tailnet ip>.
 <QR code>
 flightdeck://pair?v=1&id=SHA256:...&ep=...&t=...&l=devbox
 Scan it in Flightdeck, or paste the link. Ctrl-C closes the window.
