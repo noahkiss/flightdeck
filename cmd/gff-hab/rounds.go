@@ -155,11 +155,15 @@ type roundsService struct {
 	watches map[string]*runWatch // run id to its watch
 	byPane  map[string]string    // pane id to run id
 	pending map[string]rounds.Run
-	ticker  *time.Ticker
+	// recheck is closed to stop the loop that looks at pending runs again; nil while none runs.
+	recheck chan struct{}
 	closed  bool
 
 	cancel context.CancelFunc
 	done   chan struct{}
+	// bg holds the work handed off the caller's goroutine: run ends, prunes and pane closes.
+	// Close waits for it, so nothing writes the state after Close returns.
+	bg sync.WaitGroup
 }
 
 var _ control.Rounds = (*roundsService)(nil)
@@ -177,6 +181,7 @@ func newRounds(cfg roundsConfig) (*roundsService, error) {
 	}
 	s := &roundsService{cfg: cfg, store: st, revs: map[string]uint64{}, watches: map[string]*runWatch{},
 		byPane: map[string]string{}, pending: map[string]rounds.Run{}, done: make(chan struct{})}
+	s.attachLostStarts()
 	for _, e := range st.List() {
 		s.revs[e.Round.ID] = 1
 	}
@@ -192,6 +197,35 @@ func newRounds(cfg roundsConfig) (*roundsService, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// attachLostStarts runs before the scheduler loads: a run saved as started with no session id
+// may still have its session, when gff-hab stopped after the spawn but before the scheduler
+// saved the id. The session record carries Session.round with the run id, so the run gets
+// that session back in the run log and is adopted at start, instead of failing "start lost"
+// while its program runs on untracked. A run with no such session fails "start lost" as
+// before (rounds.md 8.4).
+func (s *roundsService) attachLostStarts() {
+	live, err := s.store.Runs().Live()
+	if err != nil {
+		s.cfg.logf("rounds: live runs: %v", err)
+		return
+	}
+	for _, r := range live {
+		if r.State == rounds.RunQueued || r.SessionID != "" {
+			continue
+		}
+		ss, ok := s.cfg.store.SessionOfRun(r.ID)
+		if !ok {
+			continue
+		}
+		r.SessionID = ss.ID
+		if err := s.store.Runs().Update(r); err != nil {
+			s.cfg.logf("rounds: run %s: attach session %s: %v", r.ID, ss.ID, err)
+			continue
+		}
+		s.cfg.logf("rounds: run %s: its start was cut short; found its session %s", r.ID, ss.Name)
+	}
 }
 
 // start adopts the runs that were live when the last gff-hab stopped, then starts the tick.
@@ -217,8 +251,8 @@ func (s *roundsService) start() {
 	}()
 }
 
-// Close stops the tick and the timers. Runs stay as they are on disk; the next gff-hab adopts
-// them.
+// Close stops the tick and the timers, and waits for the work in flight. Runs stay as they are
+// on disk; the next gff-hab adopts them.
 func (s *roundsService) Close() {
 	if s.cancel != nil {
 		s.cancel()
@@ -229,10 +263,9 @@ func (s *roundsService) Close() {
 	for _, w := range s.watches {
 		w.timer.Stop()
 	}
-	if s.ticker != nil {
-		s.ticker.Stop()
-	}
+	s.stopRecheckLocked()
 	s.mu.Unlock()
+	s.bg.Wait()
 }
 
 // --- Run sessions ---
@@ -268,6 +301,7 @@ func (s *roundsService) Start(r rounds.Round, run rounds.Run) (string, error) {
 // watch follows a live run's pane: its exit ends the run, and the timeout hangs it up. A pane
 // that exited before the watch began ends the run at once.
 func (s *roundsService) watch(run rounds.Run, r rounds.Round, session, pane string) {
+	run.SessionID = session
 	w := &runWatch{run: run, round: r, session: session, pane: pane}
 	started := run.Created
 	if run.StartedAt != nil {
@@ -303,8 +337,19 @@ func (s *roundsService) finish(runID string, u rounds.RunUpdate) bool {
 	w.timer.Stop()
 	s.mu.Unlock()
 	u.SessionID = w.session
-	go s.update(runID, u)
+	s.bg.Go(func() { s.update(runID, u) })
 	return true
+}
+
+// unwatch stops watching a run without ending it.
+func (s *roundsService) unwatch(w *runWatch) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.watches[w.run.ID] == w {
+		delete(s.watches, w.run.ID)
+		delete(s.byPane, w.pane)
+		w.timer.Stop()
+	}
 }
 
 func (s *roundsService) update(runID string, u rounds.RunUpdate) {
@@ -371,11 +416,15 @@ func (s *roundsService) notice(n link.Notice) {
 	case link.PaneExited:
 		s.exited(pane, n.Pane.Exit)
 	case link.PaneGone:
-		if n.Pane.Lost && !n.Pane.Gone {
-			return // the holder connection ended; the pane may come back
-		}
 		w, ok := s.runOf(pane)
 		if !ok {
+			return
+		}
+		if n.Pane.Lost && !n.Pane.Gone {
+			// The holder connection ended. The pane comes back if the holder lives; if it
+			// died, the run fails "host restarted" once the link reaches every holder.
+			s.unwatch(w)
+			s.wait(w.run)
 			return
 		}
 		if n.Pane.Exited {
@@ -416,7 +465,8 @@ func (s *roundsService) adopt(run rounds.Run) {
 	if e, ok := s.store.Get(run.RoundID); ok {
 		r = e.Round
 	}
-	if _, ok := s.cfg.pane(ss.Pane); ok {
+	run.SessionID = ss.ID
+	if st, ok := s.cfg.pane(ss.Pane); ok && !st.Lost {
 		s.watch(run, r, ss.ID, ss.Pane)
 		return
 	}
@@ -430,19 +480,43 @@ func (s *roundsService) adopt(run rounds.Run) {
 	}
 	// A holder the link has not reached yet may have the pane: look again when a pane comes
 	// back, and every few seconds, until every holder is reached.
+	s.wait(run)
+}
+
+// wait keeps a run whose pane the link does not list now, and looks at it again when a pane
+// comes back and every roundsCheckEvery, until the pane is back or every holder is reached.
+func (s *roundsService) wait(run rounds.Run) {
 	s.mu.Lock()
-	s.pending[run.ID] = run
-	if s.ticker == nil && !s.closed {
-		s.ticker = time.NewTicker(roundsCheckEvery)
-		go func(t *time.Ticker) {
-			for range t.C {
-				if !s.checkPending() {
-					return
-				}
-			}
-		}(s.ticker)
+	defer s.mu.Unlock()
+	if s.closed {
+		return
 	}
-	s.mu.Unlock()
+	s.pending[run.ID] = run
+	if s.recheck != nil {
+		return
+	}
+	stop := make(chan struct{})
+	s.recheck = stop
+	go func() {
+		t := time.NewTicker(roundsCheckEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				s.checkPending()
+			}
+		}
+	}()
+}
+
+// stopRecheckLocked ends the loop of wait.
+func (s *roundsService) stopRecheckLocked() {
+	if s.recheck != nil {
+		close(s.recheck)
+		s.recheck = nil
+	}
 }
 
 func withSession(u rounds.RunUpdate, session string) rounds.RunUpdate {
@@ -464,12 +538,11 @@ func (s *roundsService) checkPending() bool {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.pending) == 0 && s.ticker != nil {
-		s.ticker.Stop()
-		s.ticker = nil
+	if len(s.pending) == 0 {
+		s.stopRecheckLocked()
 		return false
 	}
-	return len(s.pending) > 0
+	return true
 }
 
 // --- The scheduler's sink: events, and the end of a run ---
@@ -508,7 +581,7 @@ func (s *roundsService) RunChanged(r rounds.Run) {
 		w.timer.Stop()
 	}
 	s.mu.Unlock()
-	go s.prune(r.RoundID)
+	s.bg.Go(func() { s.prune(r.RoundID) })
 	if r.State != rounds.RunSucceeded || r.SessionID == "" {
 		return
 	}
@@ -525,13 +598,13 @@ func (s *roundsService) RunChanged(r rounds.Run) {
 	if !ok || ss.Pane == "" {
 		return
 	}
-	go func() {
+	s.bg.Go(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := s.cfg.closePane(ctx, ss.Pane); err != nil {
 			s.cfg.logf("rounds: run %s: close pane %s: %v", r.ID, ss.Pane, err)
 		}
-	}()
+	})
 }
 
 // prune applies the retention rule to a round's runs (rounds.md 7.6) and removes the session
@@ -938,31 +1011,42 @@ func canonicalPane(pane string) string {
 	return pane
 }
 
-// roundInput ends a run as taken over when a client types into its pane (pane.input).
+// roundInput ends a run as taken over when a client's pane.input reaches its pane. Refused
+// input takes nothing over.
 type roundInput struct {
 	control.Input
 	rounds *roundsService
 }
 
 func (i roundInput) QueueInput(ctx context.Context, client, pane string, data []byte) func() error {
-	i.rounds.takeOver(canonicalPane(pane), reasonTyped)
-	return i.Input.QueueInput(ctx, client, pane, data)
+	wait := i.Input.QueueInput(ctx, client, pane, data)
+	return func() error {
+		err := wait()
+		if err == nil {
+			i.rounds.takeOver(canonicalPane(pane), reasonTyped)
+		}
+		return err
+	}
 }
 
-// roundAgents ends a run as taken over when a client sends its session a message
-// (session.send). approval.answer is not a take over: it answers the run's own request.
+// roundAgents ends a run as taken over when a client's session.send delivers a message to its
+// session; a refused send takes nothing over. approval.answer is not a take over: it answers the run's own request.
 type roundAgents struct {
 	control.Agents
 	rounds *roundsService
 }
 
 func (a roundAgents) Send(ctx context.Context, client string, p api.SessionSendParams) error {
+	if err := a.Agents.Send(ctx, client, p); err != nil {
+		return err
+	}
 	a.rounds.takeOverSession(p.Session, reasonSent)
-	return a.Agents.Send(ctx, client, p)
+	return nil
 }
 
-// roundActions ends a run as taken over when a client closes its pane (pane.close). The hab's
-// own closes (a timeout, on_finish) go to the link directly.
+// roundActions ends a run as taken over when a client closes its pane (pane.close), before
+// the close: the hang-up's exit must not end the run as failed. The hab's own closes (a
+// timeout, on_finish) go to the link directly.
 type roundActions struct {
 	*actions
 	rounds *roundsService
@@ -977,21 +1061,43 @@ func (a roundActions) ClosePane(ctx context.Context, pane string) error {
 // (rounds.md 13). Only the pane route takes it.
 const TargetSelf = "self"
 
-// roundHook answers the round methods from a pane (rounds.md 13): the pane's session is the
-// creator, created_by, and the session target self names. A pane no session files creates as a
-// user would.
+// roundHook answers the round methods from a pane (rounds.md 13). The pane's session is the
+// creator (created_by). The pane route is narrower than the control socket: an agent, perhaps
+// in a harness sandbox, must not gain an unsandboxed scheduled command over a round it did not
+// make, nor aim a round at another session. So from a pane:
+//   - a round's target is the calling session only: "self" or its own id;
+//   - round.update, round.delete, round.pause, round.unpause and round.run act only on a round
+//     the calling session created; any other is refused with denied.
+//
+// round.list, round.get and round.runs read every round. A pane no session files creates as a
+// user would, cannot name a target, and edits nothing.
 func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 	return func(ctx context.Context, pane, method string, params json.RawMessage) (any, func(error), error) {
 		bad := func(err error) error { return control.Errorf(api.ErrorKindInvalid, "%s params: %v", method, err) }
 		ss, filed := store.SessionByPane(pane)
-		self := func(spec *api.RoundSpec) error {
-			if spec.Target != TargetSelf {
+		target := func(spec *api.RoundSpec) error {
+			switch {
+			case spec.Target == "":
+				return nil
+			case !filed && spec.Target == TargetSelf:
+				return control.Errorf(api.ErrorKindInvalid, "target self needs a pane that is a session")
+			case !filed:
+				return control.Errorf(api.ErrorKindDenied, "from a pane, a round may target only the calling session, and this pane is not a session")
+			case spec.Target == TargetSelf || spec.Target == ss.ID:
+				spec.Target = ss.ID
 				return nil
 			}
-			if !filed {
-				return control.Errorf(api.ErrorKindInvalid, "target self needs a pane that is a session")
+			return control.Errorf(api.ErrorKindDenied, "from a pane, a round may target only the calling session (self); %s is another session", spec.Target)
+		}
+		// own checks that the round exists and that the calling session created it.
+		own := func(ref api.RoundRef) error {
+			r, err := svc.Get(ref)
+			if err != nil {
+				return err
 			}
-			spec.Target = ss.ID
+			if !filed || r.CreatedBy != ss.ID {
+				return control.Errorf(api.ErrorKindDenied, "%s: from a pane, only rounds this session created can be changed or run; round %s was not; use the control socket", method, r.Name)
+			}
 			return nil
 		}
 		var ref api.RoundRef
@@ -1003,7 +1109,7 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, nil, bad(err)
 			}
-			if err := self(&p.Round); err != nil {
+			if err := target(&p.Round); err != nil {
 				return nil, nil, err
 			}
 			by := ""
@@ -1017,7 +1123,10 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 			if err := json.Unmarshal(params, &p); err != nil {
 				return nil, nil, bad(err)
 			}
-			if err := self(&p.Round); err != nil {
+			if err := own(api.RoundRef{ID: p.ID}); err != nil {
+				return nil, nil, err
+			}
+			if err := target(&p.Round); err != nil {
 				return nil, nil, err
 			}
 			r, err := svc.Update(ctx, p)
@@ -1033,10 +1142,14 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 		if err := json.Unmarshal(params, &ref); err != nil {
 			return nil, nil, bad(err)
 		}
-		switch method {
-		case "round.get":
+		if method == "round.get" {
 			r, err := svc.Get(ref)
 			return api.RoundResult{Round: r}, nil, err
+		}
+		if err := own(ref); err != nil {
+			return nil, nil, err
+		}
+		switch method {
 		case "round.delete":
 			return api.Empty{}, nil, svc.Delete(ref)
 		case "round.pause":

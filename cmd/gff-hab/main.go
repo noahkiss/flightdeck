@@ -1112,15 +1112,17 @@ func serve(args []string) error {
 	if agentSvc != nil {
 		hooks.SetHolder(agentSvc.holdPermission(s.Approvers))
 	}
+	if roundsSvc != nil {
+		// After the link watch, so no exit of an adopted run is missed, and before either
+		// server accepts a call, so a client's input to an adopted run takes it over.
+		roundsSvc.start()
+	}
 	go func() {
 		if err := hooks.Serve(hl); err != nil {
 			logger.Printf("%v: %v", errHookServe, err)
 		}
 	}()
 	defer hooks.Close()
-	if roundsSvc != nil {
-		roundsSvc.start() // after the link watch, so no exit of an adopted run is missed
-	}
 	logger.Printf("epoch %s build %s device %s listening on %s, hooks on %s", s.Epoch(), build, key.Fingerprint(), path, hpath)
 
 	stopped := make(chan struct{})

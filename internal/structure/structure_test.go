@@ -694,4 +694,10 @@ func TestSessionRound(t *testing.T) {
 	if !ok || got.Round == nil || got.Round.Run != "run-1" {
 		t.Fatalf("after restart: %+v", got)
 	}
+	if byRun, ok := s2.SessionOfRun("run-1"); !ok || byRun.ID != ss.ID {
+		t.Fatalf("session of run-1: %+v %v", byRun, ok)
+	}
+	if _, ok := s2.SessionOfRun("run-none"); ok {
+		t.Fatal("a session for an unknown run")
+	}
 }

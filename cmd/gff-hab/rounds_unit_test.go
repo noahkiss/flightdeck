@@ -46,12 +46,22 @@ func TestRoundSettings(t *testing.T) {
 // fakeRoundsService is a rounds service with no holder link: runs never start.
 func fakeRoundsService(t *testing.T, state string, notices *[]string) *roundsService {
 	t.Helper()
-	st, err := structure.Open(structure.Config{Dir: state, Holders: structure.NewFakeHolder()})
+	svc, _ := fakeRoundsServiceWith(t, state, structure.NewFakeHolder(), func(c *roundsConfig) {
+		c.notice = func(title, body string) { *notices = append(*notices, title) }
+	})
+	return svc
+}
+
+// fakeRoundsServiceWith is fakeRoundsService over holder, with edit changing the config
+// before the service opens.
+func fakeRoundsServiceWith(t *testing.T, state string, holder *structure.FakeHolder, edit func(*roundsConfig)) (*roundsService, *structure.Store) {
+	t.Helper()
+	st, err := structure.Open(structure.Config{Dir: state, Holders: holder})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(st.Close)
-	svc, err := newRounds(roundsConfig{
+	cfg := roundsConfig{
 		state: state, store: st, settings: roundsSettings{WakeSettle: -1},
 		create: func(context.Context, api.SessionCreateParams) (api.SessionCreated, error) {
 			return api.SessionCreated{}, errors.New("no holder")
@@ -61,14 +71,18 @@ func fakeRoundsService(t *testing.T, state string, notices *[]string) *roundsSer
 		closePane:  func(context.Context, string) error { return nil },
 		projectFor: func(context.Context, string) (string, error) { return "", errors.New("no git") },
 		publish:    func(structure.Event) {},
-		notice:     func(title, body string) { *notices = append(*notices, title) },
+		notice:     func(string, string) {},
 		logf:       t.Logf,
-	})
+	}
+	if edit != nil {
+		edit(&cfg)
+	}
+	svc, err := newRounds(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(svc.Close)
-	return svc
+	return svc, st
 }
 
 func TestRoundStateSetAside(t *testing.T) {

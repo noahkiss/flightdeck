@@ -619,6 +619,19 @@ func (s *Store) SessionByPane(pane string) (api.Session, bool) {
 	return sessionAPI(ss), true
 }
 
+// SessionOfRun returns the session record a round's run started (Session.round.run), exited
+// ones included.
+func (s *Store) SessionOfRun(run string) (api.Session, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, ss := range s.sessions {
+		if ss.Round != nil && ss.Round.Run == run {
+			return sessionAPI(ss), true
+		}
+	}
+	return api.Session{}, false
+}
+
 // Session returns the session record with id, exited ones included.
 func (s *Store) Session(id string) (api.Session, bool) {
 	s.mu.Lock()
