@@ -220,10 +220,10 @@ func TestScopeAllowDeny(t *testing.T) {
 		{filepath.Join(proj, ".env"), false, "read.deny"},
 		{filepath.Join(proj, "server.pem"), false, "read.deny"},
 		{filepath.Join(home, ".ssh", "id_ed25519"), false, "read.deny"},
-		{filepath.Join(secret, "notes.txt"), false, "read.deny"},           // the user's own deny entry
-		{filepath.Join(proj, "key-link"), false, "read.deny"},              // a link to a denied file
-		{filepath.Join(proj, "out-link", "x.txt"), false, "read.allow"},    // a link out of the root
-		{filepath.Join(root, "outside", "x.txt"), false, "read.allow"},     // never listed
+		{filepath.Join(secret, "notes.txt"), false, "read.deny"},        // the user's own deny entry
+		{filepath.Join(proj, "key-link"), false, "read.deny"},           // a link to a denied file
+		{filepath.Join(proj, "out-link", "x.txt"), false, "read.allow"}, // a link out of the root
+		{filepath.Join(root, "outside", "x.txt"), false, "read.allow"},  // never listed
 		{filepath.Join(proj, "src", "..", "..", ".ssh", "x"), false, "read.deny"},
 		{filepath.Join(root, "outside", "missing.txt"), false, "read.allow"}, // no file: still refused, not "not found"
 	}

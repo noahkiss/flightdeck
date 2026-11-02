@@ -19,8 +19,17 @@ import (
 // The token names the pane, so the pane's session is the caller.
 const ChannelPath = "/channel/"
 
-// ChannelMethods are the methods the route takes.
+// ChannelMethods are the channel methods the route takes.
 var ChannelMethods = []string{"channel.send", "channel.status", "channel.wait"}
+
+// ReadMethods are the read tool methods the route takes (capcom.md 4): the agent kit's MCP
+// server and CLI in a pane reach the hab through GFF_HAB.
+var ReadMethods = []string{"catalog.list", "peers.list", "transcript.list", "transcript.search", "transcript.read",
+	"notice.get", "file.read", "logbook.find", "logbook.get"}
+
+// ReadHandler answers one read tool call from a pane. An error that is a *control.Error keeps
+// its kind; any other is unavailable.
+type ReadHandler func(ctx context.Context, method string, params json.RawMessage) (result any, err error)
 
 // ChannelHandler answers one channel call from the pane. An error that is a *control.Error keeps
 // its kind; any other is unavailable. written, when not nil, is called once with the result of
@@ -29,6 +38,10 @@ type ChannelHandler func(ctx context.Context, pane, method string, params json.R
 
 // maxChannelBody bounds one channel call: a 64 KiB message as JSON, with room to spare.
 const maxChannelBody = 1 << 20
+
+// readWait bounds one read call on the route: the per-host budget, the forward's grace and a
+// margin.
+const readWait = 30 * time.Second
 
 // channelWait bounds one call on the route: the longest channel wait plus a margin.
 const channelWait = 610 * time.Second
@@ -46,6 +59,14 @@ type channelAnswer struct {
 type channelError struct {
 	Kind    api.ErrorKind `json:"kind"`
 	Message string        `json:"message"`
+}
+
+// SetReads sets the handler of the read methods on the route. With none, each answers
+// unavailable.
+func (s *Server) SetReads(h ReadHandler) {
+	s.mu.Lock()
+	s.reads = h
+	s.mu.Unlock()
 }
 
 // SetChannels sets the handler of the channel route. With none, every call answers unavailable.
@@ -87,12 +108,46 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		fail(api.ErrorKindInvalid, "not a channel call: %v", err)
 		return
 	}
-	known := false
+	known, read := false, false
 	for _, m := range ChannelMethods {
 		known = known || m == call.Method
 	}
+	for _, m := range ReadMethods {
+		read = read || m == call.Method
+	}
+	if read {
+		s.mu.Lock()
+		rh := s.reads
+		s.mu.Unlock()
+		if rh == nil {
+			fail(api.ErrorKindUnavailable, "%s needs the read tools, which this hab is running without", call.Method)
+			return
+		}
+		if len(call.Params) == 0 {
+			call.Params = json.RawMessage("{}")
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), readWait)
+		defer cancel()
+		res, err := rh(ctx, call.Method, call.Params)
+		if err != nil {
+			var ce *control.Error
+			if errors.As(err, &ce) {
+				fail(ce.Data.Kind, "%s", ce.Message)
+			} else {
+				fail(api.ErrorKindUnavailable, "%v", err)
+			}
+			return
+		}
+		b, err := json.Marshal(res)
+		if err != nil {
+			fail(api.ErrorKindUnavailable, "%v", err)
+			return
+		}
+		_ = answer(channelAnswer{Result: b})
+		return
+	}
 	if !known {
-		fail(api.ErrorKindInvalid, "%q is not one of %v", call.Method, ChannelMethods)
+		fail(api.ErrorKindInvalid, "%q is not one of %v or %v", call.Method, ChannelMethods, ReadMethods)
 		return
 	}
 	s.mu.Lock()

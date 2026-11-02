@@ -27,6 +27,7 @@ type pushService struct {
 	publish  func(structure.Event)
 	label    func(client string) string // the client's hello label
 	now      func() time.Time
+	notices  *noticeLog // the notices raised, for notice.get; nil: none kept
 }
 
 var _ control.Push = (*pushService)(nil)
@@ -196,6 +197,9 @@ func (s *pushService) Raise(client string, p api.NoticeRaiseParams) (api.NoticeR
 	rand.Read(b[:])
 	id := hex.EncodeToString(b[:])
 	n := api.Notice{ID: id, Title: p.Title, Body: p.Body, Level: level, Session: p.Session, At: s.now().UTC().Format(time.RFC3339)}
+	if s.notices != nil {
+		s.notices.add(n)
+	}
 	s.publish(structure.Event{Type: control.EventNoticeRaised, ID: id, Data: n})
 	pushed := 0
 	if s.notifier != nil {

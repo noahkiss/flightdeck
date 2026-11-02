@@ -17,6 +17,8 @@
 //	gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
 //	gff-hab manifests list    [-state dir]
 //	gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
+//	gff-hab read [-socket path] [-json] <tool> [-arg value]... [words]
+//	gff-hab mcp [serve] [-socket path] [--skill]
 //	gff-hab instructions render -config file [-state dir] [-host-id id] [-dry-run | -write target]
 //	gff-hab hook [-t ms] <harness> [event] < payload
 //	gff-hab hook -print <harness> [-command name]
@@ -97,6 +99,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/opencode"
 	"github.com/noahkiss/flightdeck/internal/panesize"
 	"github.com/noahkiss/flightdeck/internal/peers"
+	"github.com/noahkiss/flightdeck/internal/readtools"
 	"github.com/noahkiss/flightdeck/internal/service"
 	"github.com/noahkiss/flightdeck/internal/settings"
 	"github.com/noahkiss/flightdeck/internal/speech"
@@ -128,6 +131,8 @@ const usage = `usage:
   gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
   gff-hab manifests list    [-state dir]
   gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
+  gff-hab read [-socket path] [-json] <tool> [-arg value]... [words]
+  gff-hab mcp [serve] [-socket path] [--skill]
   gff-hab instructions render -config file [-state dir] [-host-id id] [-dry-run | -write target]
   gff-hab hook [-t ms] <harness> [event] < payload
   gff-hab hook -print <harness> [-command name]
@@ -188,6 +193,10 @@ func main() {
 		err = manifests(os.Args[2:], os.Stdout)
 	case "detect":
 		err = detectCmd(os.Args[2:], os.Stdout)
+	case "read":
+		err = readCmd(os.Args[2:], os.Stdout)
+	case "mcp":
+		err = mcpCmd(os.Args[2:], os.Stdin, os.Stdout)
 	case "instructions":
 		err = instructionsCmd(os.Args[2:], os.Stdout)
 	case "install":
@@ -461,6 +470,7 @@ func serve(args []string) error {
 		},
 	}, store, agents)
 	defer pushes.Close()
+	pushes.notices = &noticeLog{}
 	// A pane's hook token is a keyed hash of its uuid under the secret in the state directory, so
 	// it outlives a gff-hab restart. A token resolves only while the link follows the pane: a
 	// pane the link reports gone loses its token and its agent state.
@@ -794,6 +804,11 @@ func serve(args []string) error {
 	if pushes.Enabled() {
 		caps = append(caps, "push")
 	}
+	// The read tools (capcom.md 4): sessions and search over the native transcripts, transcript,
+	// notice and file reads, each under this hab's read scope, and across the peer links.
+	reads := newReads(readsSetup{self: key.Fingerprint(), host: *hostID, state: dir, configPath: cpath,
+		store: store, agents: agents, catalog: cs, peers: pm, notices: pushes.notices, getenv: os.Getenv, logf: logger.Printf})
+	caps = append(caps, readtools.Capability)
 	// The speech engine (voice.md): on when its helper is installed and the host setting allows.
 	var speechSvc control.Speech
 	sp, err := speechSetup(cpath, dir, store, speechEnv{getenv: os.Getenv, executable: os.Executable, memory: speech.HostMemory()}, logger.Printf)
@@ -836,6 +851,7 @@ func serve(args []string) error {
 		Speech:      speechSvc,
 		Attachments: attachments,
 		Settings:    setSvc,
+		Reads:       reads,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)
@@ -893,6 +909,7 @@ func serve(args []string) error {
 		return opened
 	}, logger.Printf)
 	hooks.SetChannels(channelHook(store, chSvc))
+	hooks.SetReads(readHook(reads, cs, pm, nil))
 	if agentSvc != nil {
 		hooks.SetHolder(agentSvc.holdPermission(s.Approvers))
 	}
