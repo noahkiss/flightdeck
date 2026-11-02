@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -222,16 +223,18 @@ func run(env Env) error {
 
 // door picks how calls reach Logbook: the pane route, the control socket, or the file.
 type door struct {
-	env    Env
-	socket string
-	state  string
-	remote Caller
-	closer func()
-	tried  bool
-	local  *lbsvc.Service
-	store  *logbook.Store
-	path   string
-	pane   bool
+	env     Env
+	socket  string
+	state   string
+	remote  Caller
+	closer  func()
+	local   *lbsvc.Service
+	store   *logbook.Store
+	path    string
+	picked  bool
+	inPane  bool  // $GFF_HAB is set
+	pane    bool  // calls go through the pane route
+	pickErr error // a $GFF_HAB that does not parse
 }
 
 func (d *door) close() {
@@ -249,10 +252,31 @@ func (h hookCaller) Call(ctx context.Context, method string, params, result any)
 	return hook.Call(ctx, h.addr, method, params, result)
 }
 
-// Call sends one call to the hab; when the hab cannot be reached it opens the file and runs the
-// call there. A write carries a key, so one the hab took before it went away is not applied
-// again from the file.
+// writeMethods change Logbook. In a pane they never reach the file (10.5).
+var writeMethods = []string{"logbook.write", "logbook.resolve"}
+
+func isWrite(method string) bool { return slices.Contains(writeMethods, method) }
+
+// paneRetry is how long a write from a pane waits for gff-hab to answer, and paneRetryEvery how
+// often it tries: a gff-hab restart is short, and the holder keeps the pane running (10.5).
+var (
+	paneRetry      = 15 * time.Second
+	paneRetryEvery = 250 * time.Millisecond
+)
+
+// Call sends one call to the hab. When the socket does not answer (nothing listens, or no socket
+// is there), a read opens the file and runs there; so does a write outside a pane, as a person. A
+// write from a pane never touches the file: it tries the hab again for up to paneRetry, then
+// fails. Any other error, such as an HTTP status from the pane route, is the hab's answer and is
+// returned as it is. A write carries a key, so one the hab took before it went away is not
+// applied again from the file.
 func (d *door) Call(ctx context.Context, method string, params, result any) error {
+	if err := d.pick(); err != nil {
+		return err
+	}
+	if d.pane && isWrite(method) {
+		return d.paneWrite(ctx, method, params, result)
+	}
 	if d.local == nil {
 		err := d.callRemote(ctx, method, params, result)
 		if err == nil || !unreachable(err) {
@@ -277,40 +301,100 @@ func (d *door) Call(ctx context.Context, method string, params, result any) erro
 	return json.Unmarshal(b, result)
 }
 
-func (d *door) callRemote(ctx context.Context, method string, params, result any) error {
-	if !d.tried {
-		d.tried = true
-		if addr := d.env.Getenv(hook.Env); addr != "" && d.socket == "" {
-			d.remote, d.pane = hookCaller{addr}, true
-		} else {
-			path := d.socket
-			if path == "" {
-				p, err := control.DefaultSocket(runtime.GOOS, d.env.Getenv, os.UserConfigDir)
-				if err != nil {
-					return unreachableError{err}
-				}
-				path = p
-			}
-			c, err := control.Dial(path)
-			if err != nil {
-				return unreachableError{err}
-			}
-			if _, err := c.Hello(ctx, d.env.Client, "", ""); err != nil {
-				c.Close()
-				return unreachableError{err}
-			}
-			d.remote, d.closer = c, func() { c.Close() }
+// paneWrite sends a pane's write to the hab, trying again while the hab's socket does not
+// answer, for up to paneRetry.
+func (d *door) paneWrite(ctx context.Context, method string, params, result any) error {
+	deadline := time.Now().Add(paneRetry)
+	for {
+		err := d.callRemote(ctx, method, params, result)
+		if err == nil || !unreachable(err) {
+			return err
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("gff-hab did not answer for %s (%v): nothing was written. A write from a pane goes only through gff-hab, never to the file; run it again once gff-hab runs", paneRetry, errors.Unwrap(err))
+		}
+		t := time.NewTimer(paneRetryEvery)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return ctx.Err()
+		case <-t.C:
 		}
 	}
+}
+
+// pick chooses the door once: the pane route when $GFF_HAB is set, else the control socket. In a
+// pane, --socket reaches the control socket for reads only: a write there would land as a
+// person, so it is refused, as confirm answer refuses (10.5). A $GFF_HAB that does not parse is
+// an error, never a reason to use the file.
+func (d *door) pick() error {
+	if d.picked {
+		return nil
+	}
+	d.picked = true
+	addr := d.env.Getenv(hook.Env)
+	if addr == "" {
+		return nil
+	}
+	d.inPane = true
+	if _, _, err := hook.ParseAddr(addr); err != nil {
+		d.pickErr = fmt.Errorf("$%s: %w", hook.Env, err)
+		return d.pickErr
+	}
+	if d.socket == "" {
+		d.remote, d.pane = hookCaller{addr}, true
+	}
+	return nil
+}
+
+func (d *door) callRemote(ctx context.Context, method string, params, result any) error {
+	if d.pickErr != nil {
+		return d.pickErr
+	}
+	if d.inPane && !d.pane && isWrite(method) {
+		return fmt.Errorf("%s from a pane goes through $%s, not --socket: over the control socket it would land as a person. Run it without --socket", method, hook.Env)
+	}
 	if d.remote == nil {
-		return unreachableError{errors.New("no hab")}
+		path := d.socket
+		if path == "" {
+			p, err := control.DefaultSocket(runtime.GOOS, d.env.Getenv, os.UserConfigDir)
+			if err != nil {
+				// No socket path: no gff-hab can listen at the default one.
+				return unreachableError{err}
+			}
+			path = p
+		}
+		c, err := control.Dial(path)
+		if err != nil {
+			if dialFailed(err) {
+				return unreachableError{err}
+			}
+			return err
+		}
+		if _, err := c.Hello(ctx, d.env.Client, "", ""); err != nil {
+			c.Close()
+			return fmt.Errorf("gff-hab at %s: %w", path, err)
+		}
+		d.remote, d.closer = c, func() { c.Close() }
 	}
 	err := d.remote.Call(ctx, method, params, result)
 	var ce *control.Error
-	if err != nil && !errors.As(err, &ce) {
+	var se *hook.StatusError
+	switch {
+	case err == nil, errors.As(err, &ce):
+		return err
+	case errors.As(err, &se):
+		return control.Errorf(api.ErrorKindUnavailable, "%v", se)
+	case d.pane && dialFailed(err):
 		return unreachableError{err}
 	}
 	return err
+}
+
+// dialFailed reports whether err is a socket that does not answer: nothing listens on it, or
+// there is no socket file. Only then is the hab down; any other error is an answer.
+func dialFailed(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT)
 }
 
 type unreachableError struct{ error }
@@ -327,6 +411,9 @@ func unreachable(err error) bool {
 func (d *door) openLocal(ctx context.Context, why error) error {
 	dir := d.state
 	if dir == "" {
+		dir = d.env.Getenv("GFF_HAB_STATE")
+	}
+	if dir == "" {
 		var err error
 		if dir, err = control.DefaultState(); err != nil {
 			return fmt.Errorf("gff-hab is not reachable (%v), and the state directory is unknown: %w", why, err)
@@ -334,7 +421,7 @@ func (d *door) openLocal(ctx context.Context, why error) error {
 	}
 	d.path = filepath.Join(dir, "logbook.db")
 	if _, err := os.Stat(d.path); err != nil {
-		return fmt.Errorf("gff-hab is not reachable (%v), and there is no Logbook file at %s: start gff-hab once to make it", why, d.path)
+		return fmt.Errorf("gff-hab is not reachable (%v), and there is no Logbook file at %s: start gff-hab once to make it, or name its state directory with --state", why, d.path)
 	}
 	st, err := logbook.Open(ctx, d.path, logbook.Options{})
 	if err != nil {
@@ -349,15 +436,12 @@ func (d *door) openLocal(ctx context.Context, why error) error {
 	return nil
 }
 
-// actor is who writes through the file: an agent in a pane (its harness from AGENT_KIND), else
-// a person at this host's shell. With the hab down nothing can vouch for the pane's session.
+// actor is who writes through the file: a person at this host's shell. A pane never writes the
+// file (Call), so the actor is never an agent.
 func (d *door) actor() api.LogbookActor {
 	host := d.env.Getenv("GFF_HAB_HOST_ID")
 	if host == "" {
 		host, _ = os.Hostname()
-	}
-	if d.env.Getenv(hook.Env) != "" {
-		return api.LogbookActor{Kind: "agent", Harness: d.env.Getenv("AGENT_KIND"), Host: host}
 	}
 	return api.LogbookActor{Kind: "person", Device: "cli", Host: host}
 }
@@ -440,7 +524,7 @@ func find(ctx context.Context, c *cli) (any, string, error) {
 		return nil, "", err
 	}
 	p := api.LogbookFindParams{Words: strings.Join(c.a.pos, " "), Type: f.Type, Status: f.Status, Project: f.Project, Tag: f.Tag,
-		Host: f.Host, Author: f.Author, Since: f.Since, Limit: f.Limit, Session: f.Session, General: f.General, Deleted: f.Deleted}
+		Host: f.Host, Author: f.Author, Since: f.Since, Limit: f.Limit, Session: f.Session, General: f.General, Deleted: f.Deleted, Flagged: f.Flagged}
 	var r api.LogbookRecords
 	if err := c.d.Call(ctx, "logbook.find", p, &r); err != nil {
 		return nil, "", err

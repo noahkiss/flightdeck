@@ -249,8 +249,20 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 	written(answer(channelAnswer{Result: b}))
 }
 
+// StatusError is an answer from the hab that is not 200: an unknown token, a body too large. The
+// hab was reached and refused the call, so a caller never treats it as a hab that is down.
+type StatusError struct {
+	Status string
+	Code   int
+	Body   string
+}
+
+func (e *StatusError) Error() string { return fmt.Sprintf("hab answered %s: %s", e.Status, e.Body) }
+
 // Call makes one channel call from a pane through the address in its GFF_HAB value, and decodes
-// the result into result. An answer with an error returns a *control.Error of its kind.
+// the result into result. An answer with an error returns a *control.Error of its kind; an HTTP
+// status other than 200 a *StatusError. Only an error from dialing the socket means the hab was
+// not reached.
 func Call(ctx context.Context, addr, method string, params, result any) error {
 	sock, token, err := ParseAddr(addr)
 	if err != nil {
@@ -286,7 +298,7 @@ func Call(ctx context.Context, addr, method string, params, result any) error {
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("hab answered %s: %s", resp.Status, bytes.TrimSpace(b))
+		return &StatusError{Status: resp.Status, Code: resp.StatusCode, Body: string(bytes.TrimSpace(b))}
 	}
 	var a channelAnswer
 	if err := json.Unmarshal(b, &a); err != nil {

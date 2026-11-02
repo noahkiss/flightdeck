@@ -2612,6 +2612,13 @@
           }
         },
         {
+          "name": "flagged",
+          "description": "As in logbook.list.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
           "name": "general",
           "description": "As in logbook.list.",
           "schema": {
@@ -7127,6 +7134,10 @@
             "type": "string"
           },
           "deleted": {
+            "type": "boolean",
+            "description": "As in logbook.list."
+          },
+          "flagged": {
             "type": "boolean",
             "description": "As in logbook.list."
           },

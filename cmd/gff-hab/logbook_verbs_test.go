@@ -181,6 +181,7 @@ func TestLogbookServe(t *testing.T) {
 // fakeAgent reports itself as an idle Claude Code over OSC 7501 and writes its GFF_HAB.
 const fakeAgent = `stty raw -echo
 printf '\033]7501;state=idle:app=claude\033\\'
+printf '%s' "$GFF_HAB_STATE" > "$DIR/state"
 printf '%s' "$GFF_HAB" > "$DIR/addr.tmp" && mv "$DIR/addr.tmp" "$DIR/addr"
 while [ ! -e "$DIR/end" ]; do sleep 0.05; done
 `
@@ -196,6 +197,11 @@ func TestLogbookPaneWrites(t *testing.T) {
 	waitUntil(t, "the pane's GFF_HAB", func() bool { b, err := os.ReadFile(addrFile); return err == nil && len(b) > 0 })
 	b, _ := os.ReadFile(addrFile)
 	pane := []string{"GFF_HAB=" + string(b), "GFF_HAB_SOCKET=" + filepath.Join(e.work, "none.sock")}
+	// gff-hab names its state folder in the pane, -state included, so the CLI's reads find the
+	// file while gff-hab is down.
+	if st, _ := os.ReadFile(filepath.Join(e.work, "state")); string(st) != e.state {
+		t.Fatalf("the pane's GFF_HAB_STATE: %q, want %q", st, e.state)
+	}
 	c := e.control()
 	waitUntil(t, "the pane's agent state", func() bool {
 		var s api.StructureResult
@@ -277,4 +283,70 @@ func runEnv(t *testing.T, env []string, args ...string) string {
 		t.Fatalf("gff-hab %v: %v %s", args, err, out)
 	}
 	return string(out)
+}
+
+// fakeCapcomPane is a stub Capcom harness that reports idle and writes its GFF_HAB beside it.
+const fakeCapcomPane = `#!/bin/sh
+stty raw -echo
+printf '\033]7501;state=idle:app=claude\033\\'
+printf '%s' "$GFF_HAB" > addr.tmp && mv addr.tmp addr
+exec cat >> in.log
+`
+
+// TestLogbookCapcomPane: from a Capcom session's pane, gff-hab files every write as a proposal
+// (capcom.md D3, D14) through the CLI and logbook_write, refuses its resolve, and no pane
+// decides a proposal: a set of its status is refused and the proposal stays pending.
+func TestLogbookCapcomPane(t *testing.T) {
+	e := newHolderEnv(t, 0)
+	binDir := filepath.Join(e.work, "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(binDir, "claude"), fakeCapcomPane)
+	if err := os.Chmod(filepath.Join(binDir, "claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	e.env = []string{"PATH=" + binDir + ":/usr/bin:/bin", "CLAUDE_CONFIG_DIR=" + shortDir(t)}
+	e.serve()
+	c := e.control()
+	run(t, "capcom", "assign", "-socket", e.sock, "self")
+	op, err := capcomOpenWith(t, c, api.CapcomOpenParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addrFile := filepath.Join(op.Dir, "addr")
+	waitUntil(t, "the Capcom pane's GFF_HAB", func() bool { b, err := os.ReadFile(addrFile); return err == nil && len(b) > 0 })
+	b, _ := os.ReadFile(addrFile)
+	pane := []string{"GFF_HAB=" + string(b), "GFF_HAB_SOCKET=" + filepath.Join(e.work, "none.sock")}
+
+	out, errs := lbOK(t, pane, "new", "task", "Renew the certificate")
+	if !strings.HasPrefix(out, "proposed: proposal-") || errs != "" {
+		t.Fatalf("a Capcom pane's new: %q %q", out, errs)
+	}
+	prop := strings.Fields(out)[1]
+	var rec api.LogbookRecordResult
+	call(t, c, "logbook.get", api.LogbookGetParams{ID: prop}, &rec)
+	if rec.Record.Type != "proposal" || rec.Record.Status != "pending" || rec.Record.CreatedBy == nil || rec.Record.CreatedBy.Session != op.Session {
+		t.Fatalf("the proposal: %+v", rec.Record)
+	}
+	out = runEnv(t, pane, "act", "logbook_write", "-action", "create", "-type", "task", "-title", "Another task")
+	if !strings.HasPrefix(out, "Proposed:") {
+		t.Fatalf("logbook_write from Capcom:\n%s", out)
+	}
+	var list api.LogbookRecords
+	call(t, c, "logbook.list", api.LogbookListParams{LogbookFilter: api.LogbookFilter{Type: "task"}}, &list)
+	if len(list.Records) != 0 {
+		t.Fatalf("a Capcom write landed: %+v", list.Records)
+	}
+	// No pane decides a proposal, and Capcom does not resolve.
+	if _, errs, code := lbRun(t, pane, "mark", prop, "rejected"); code != 3 || !strings.Contains(errs, "only a person decides a proposal") {
+		t.Fatalf("mark a proposal from the pane: %d %s", code, errs)
+	}
+	if _, errs, code := lbRun(t, pane, "resolve", prop, "title", "x"); code != 3 || !strings.Contains(errs, "wait for review") {
+		t.Fatalf("resolve from Capcom: %d %s", code, errs)
+	}
+	call(t, c, "logbook.get", api.LogbookGetParams{ID: prop}, &rec)
+	if rec.Record.Status != "pending" {
+		t.Fatalf("the proposal after the refusals: %+v", rec.Record)
+	}
 }

@@ -33,6 +33,7 @@ type LogbookFindParams struct {
 	Session string `json:"session,omitempty" doc:"As in logbook.list."`
 	General bool   `json:"general,omitempty" doc:"As in logbook.list."`
 	Deleted bool   `json:"deleted,omitempty" doc:"As in logbook.list."`
+	Flagged bool   `json:"flagged,omitempty" doc:"As in logbook.list."`
 }
 
 type LogbookListParams struct {

@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -436,8 +437,8 @@ type logbookWriteResult struct {
 	Proposal string   `json:"proposal,omitempty"`
 }
 
-// runLogbookWrite makes one Logbook write from an action (logbook.md 10.4). The key comes from
-// the calling pane and the arguments, so a retried call writes once.
+// runLogbookWrite makes one Logbook write from an action (logbook.md 10.4), under the caller's
+// key when it gives one, else a fresh one.
 func runLogbookWrite(ctx context.Context, c caller, a toolArgs) (any, string, error) {
 	action, id := a.str("action"), a.str("id")
 	set := func(field string, v any) api.LogbookChange {
@@ -510,14 +511,15 @@ func runLogbookWrite(ctx context.Context, c caller, a toolArgs) (any, string, er
 	default:
 		return nil, "", control.Errorf(api.ErrorKindInvalid, "action %q is not one of create, edit, note, mark, claim, link, supersede", action)
 	}
-	pane := ""
-	if p, ok := c.(paneKeyer); ok {
-		pane = p.paneKey()
+	// Each call is its own write: mark doing, mark blocked, mark doing again are three writes. A
+	// caller that retries a call whose answer it lost passes the same key, and the retry writes
+	// nothing new (logbook.md 10.5).
+	key := a.str("key")
+	if key == "" {
+		key = newWriteKey()
 	}
-	args, _ := json.Marshal(a)
-	sum := sha256.Sum256(append([]byte(pane+"\x00logbook_write\x00"), args...))
 	var r api.LogbookWritten
-	if err := c.Call(ctx, "logbook.write", api.LogbookWriteParams{IdempotencyKey: hex.EncodeToString(sum[:16]), Changes: chs}, &r); err != nil {
+	if err := c.Call(ctx, "logbook.write", api.LogbookWriteParams{IdempotencyKey: key, Changes: chs}, &r); err != nil {
 		return nil, "", err
 	}
 	res := logbookWriteResult{State: string(r.State), IDs: r.IDs, Proposal: r.Proposal}
@@ -525,6 +527,15 @@ func runLogbookWrite(ctx context.Context, c caller, a toolArgs) (any, string, er
 		return res, fmt.Sprintf("Proposed: the write waits for the user's review as proposal %s. Nothing changed in Logbook yet; do not write it again.\n", r.Proposal), nil
 	}
 	return res, fmt.Sprintf("Written: %s.\n", strings.Join(r.IDs, ", ")), nil
+}
+
+// newWriteKey is a fresh idempotency key for one write.
+func newWriteKey() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic(err) // crypto/rand does not fail on a supported system
+	}
+	return hex.EncodeToString(b)
 }
 
 // errKindOf returns an API error's kind, or "".

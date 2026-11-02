@@ -521,3 +521,34 @@ func TestHandOffEndToEnd(t *testing.T) {
 		t.Fatalf("a proposed task landed: %+v %v", tasks, err)
 	}
 }
+
+// keyRecorder records the key of each logbook.write.
+type keyRecorder struct{ keys []string }
+
+func (k *keyRecorder) Call(_ context.Context, method string, params, result any) error {
+	w := params.(api.LogbookWriteParams)
+	k.keys = append(k.keys, w.IdempotencyKey)
+	*result.(*api.LogbookWritten) = api.LogbookWritten{State: "applied", IDs: []string{"task-k3m9q2xz"}}
+	return nil
+}
+
+// TestLogbookWriteKeys: logbook_write's calls are separate writes, so mark doing, mark blocked,
+// mark doing makes three; a call with the caller's key keeps it, so a retry is one write.
+func TestLogbookWriteKeys(t *testing.T) {
+	k := &keyRecorder{}
+	for _, st := range []string{"doing", "blocked", "doing"} {
+		if _, _, err := runLogbookWrite(context.Background(), k, toolArgs{"action": "mark", "id": "task-k3m9q2xz", "status": st}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(k.keys) != 3 || k.keys[0] == k.keys[2] || k.keys[0] == k.keys[1] || len(k.keys[0]) != 32 {
+		t.Fatalf("keys of three calls: %q", k.keys)
+	}
+	k.keys = nil
+	for i := 0; i < 2; i++ {
+		runLogbookWrite(context.Background(), k, toolArgs{"action": "mark", "id": "task-k3m9q2xz", "status": "done", "key": "retry-1"})
+	}
+	if len(k.keys) != 2 || k.keys[0] != "retry-1" || k.keys[1] != "retry-1" {
+		t.Fatalf("the caller's key: %q", k.keys)
+	}
+}

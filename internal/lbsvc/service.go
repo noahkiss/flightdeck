@@ -124,7 +124,7 @@ func invalid(format string, args ...any) error {
 // Find searches by words; with none it lists, as List.
 func (s *Service) Find(ctx context.Context, p api.LogbookFindParams) (api.LogbookRecords, error) {
 	return s.search(ctx, p.Words, api.LogbookFilter{Type: p.Type, Status: p.Status, Project: p.Project, Tag: p.Tag,
-		Host: p.Host, Author: p.Author, Session: p.Session, Since: p.Since, General: p.General, Deleted: p.Deleted, Limit: p.Limit}, false)
+		Host: p.Host, Author: p.Author, Session: p.Session, Since: p.Since, General: p.General, Deleted: p.Deleted, Flagged: p.Flagged, Limit: p.Limit}, false)
 }
 
 // List lists records, newest change first.

@@ -3236,6 +3236,8 @@ public struct LogbookFindParams: Codable, Sendable, Hashable {
     /// As in logbook.list.
     public var deleted: Bool?
     /// As in logbook.list.
+    public var flagged: Bool?
+    /// As in logbook.list.
     public var general: Bool?
     public var host: String?
     public var limit: Int?
@@ -3253,6 +3255,7 @@ public struct LogbookFindParams: Codable, Sendable, Hashable {
     enum CodingKeys: String, CodingKey {
         case author = "author"
         case deleted = "deleted"
+        case flagged = "flagged"
         case general = "general"
         case host = "host"
         case limit = "limit"
@@ -3265,9 +3268,10 @@ public struct LogbookFindParams: Codable, Sendable, Hashable {
         case words = "words"
     }
 
-    public init(author: String? = nil, deleted: Bool? = nil, general: Bool? = nil, host: String? = nil, limit: Int? = nil, project: String? = nil, session: String? = nil, since: String? = nil, status: String? = nil, tag: String? = nil, type: String? = nil, words: String? = nil) {
+    public init(author: String? = nil, deleted: Bool? = nil, flagged: Bool? = nil, general: Bool? = nil, host: String? = nil, limit: Int? = nil, project: String? = nil, session: String? = nil, since: String? = nil, status: String? = nil, tag: String? = nil, type: String? = nil, words: String? = nil) {
         self.author = author
         self.deleted = deleted
+        self.flagged = flagged
         self.general = general
         self.host = host
         self.limit = limit

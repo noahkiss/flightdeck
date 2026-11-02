@@ -23,6 +23,7 @@ type spawner struct {
 	lk       *link.Link
 	tokens   *hook.Tokens
 	hookSock string    // absolute
+	state    string    // gff-hab's state directory, absolute: the panes' GFF_HAB_STATE ("" sets none)
 	spawning *spawning // the tokens' known set includes it (livePane)
 	// run starts the pane on the holder named instance ("" is the current one); nil is
 	// lk.SpawnOn. has reports whether a pane with the uuid exists; nil asks the link and its
@@ -80,7 +81,7 @@ func (s *spawner) spawnOn(ctx context.Context, instance string, sp hp.Spawn) (li
 	if sp.UUID == (hp.UUID{}) {
 		sp.UUID = newUUID()
 	}
-	sp.Env = paneEnv(sp.Env, hook.Addr(s.hookSock, s.tokens.Token(sp.UUID)))
+	sp.Env = paneEnv(sp.Env, hook.Addr(s.hookSock, s.tokens.Token(sp.UUID)), s.state)
 	if s.spawning != nil {
 		s.spawning.add(sp.UUID)
 		defer s.spawning.done(sp.UUID)
@@ -147,15 +148,25 @@ func (s *spawning) has(u hp.UUID) bool {
 	return s.m[u] > 0
 }
 
-// paneEnv returns env without any GFF_HAB entry, plus GFF_HAB=addr.
-func paneEnv(env []string, addr string) []string {
-	out := make([]string, 0, len(env)+1)
+// stateEnv names gff-hab's state directory in a pane, so the Logbook CLI's reads find the file
+// while gff-hab is down, whatever -state the hab runs with (logbook.md 10.5).
+const stateEnv = "GFF_HAB_STATE"
+
+// paneEnv returns env without any GFF_HAB entry, plus GFF_HAB=addr, and with state set,
+// GFF_HAB_STATE=state in place of any the env had.
+func paneEnv(env []string, addr, state string) []string {
+	out := make([]string, 0, len(env)+2)
 	for _, kv := range env {
-		if !strings.HasPrefix(kv, hook.Env+"=") {
-			out = append(out, kv)
+		if strings.HasPrefix(kv, hook.Env+"=") || (state != "" && strings.HasPrefix(kv, stateEnv+"=")) {
+			continue
 		}
+		out = append(out, kv)
 	}
-	return append(out, hook.Env+"="+addr)
+	out = append(out, hook.Env+"="+addr)
+	if state != "" {
+		out = append(out, stateEnv+"="+state)
+	}
+	return out
 }
 
 // newUUID returns a random (version 4) uuid.

@@ -581,8 +581,12 @@ func serve(args []string) error {
 		if err != nil {
 			home = "/"
 		}
+		absState, err := filepath.Abs(dir)
+		if err != nil {
+			return err
+		}
 		sessionActs = &actions{
-			sp:       &spawner{lk: lk, tokens: tokens, hookSock: hpath, spawning: spawning, logf: logger.Printf},
+			sp:       &spawner{lk: lk, tokens: tokens, hookSock: hpath, state: absState, spawning: spawning, logf: logger.Printf},
 			store:    store,
 			getenv:   os.Getenv,
 			environ:  func() []string { return basePaneEnv(os.Environ(), runtime.GOOS) },
