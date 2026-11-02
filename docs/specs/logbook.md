@@ -663,7 +663,8 @@ general case with no peers.
 - It is a levelled setting: `agents` at Safe, `off` at Balanced and Bypass permissions
   (`app.md` 20.3). The app writes it through `settings.set` (`app.md` 20.5).
 - Built: gff-hab stores and serves the setting, and the app writes it (task-yfmrj6yc). No
-  proposal reads it yet; that waits for Logbook.
+  write reads it yet: stage 4 stores a proposal only for `propose: true` (10.5); stage 7 reads the
+  setting.
 - Capcom files proposals by its own rule (`capcom.md` 6.2), whatever this setting says. See open
   question 15.1.
 
@@ -762,6 +763,38 @@ Few tools, each with a clear job:
 
 Decision: four MCP tools. Reason: a small surface is easier for an agent to pick from; the CLI keeps
 the full verb set for people and scripts.
+
+### 10.5 Built (stage 4)
+
+Task-0m8zy1we. Package `internal/lbsvc` serves the verbs over one store; gff-hab opens the replica
+in `cmd/gff-hab/logbook_open.go`; `internal/lbcli` is the CLI. The shapes are in `api/logbook.go`.
+
+| Item | Built |
+|---|---|
+| Methods | `logbook.find`, `.get`, `.list`, `.ready`, `.history`, `.write`, `.resolve`, `.projects`, `.status`. `logbook.brief` (stage 6), `logbook.decide` (stage 7) and `logbook.pull`, `logbook.push` (stage 3) are not in the schema yet |
+| Events | `logbook.updated {id, revision, type, project, deleted}` and `logbook.conflict {id, revision, flags}`, host scope only, not in the snapshot. The revision is the record's count of folded ops |
+| Capability | `logbook`, sent when `<state>/logbook.db` opens with the hab's device id as origin. A file that does not open leaves the hab without Logbook and logs why |
+| Pane route | Every method above. `logbook.find` and `logbook.get` moved from the read methods to `hook.LogbookMethods`, whose handler knows the pane |
+| CLI | `gff lb` (long form `gff logbook`), and `gff-hab lb`, the same code. Verbs of 10.2 that later stages own (`brief`, `approve`, `reject`, `project join`, `project rename`, `export`, `import`) say which stage builds them |
+| MCP | `logbook_search` and `logbook_read` (read tools, built with Capcom's tools), `logbook_write` (an action tool). `logbook_brief` waits for stage 6 |
+
+Where this spec was silent, stage 4 decided:
+
+| Point | Decision |
+|---|---|
+| Which binary | Both `gff lb` and `gff-hab lb`. The spec names `gff lb`; every pane already has `gff-hab` on its path (its hooks run it), and a Linux install copies only gff-hab and the holder. One package, two entry words |
+| Write shape | `logbook.write {idempotency_key, propose, changes, source}`. A change is `{op: create\|set\|add\|remove\|note\|forget, id, ...}`: a create takes the record fields and tags and links added in the same batch; set takes `field` and `value`; add and remove take `tag` or `link`; note takes `text`; forget takes `op_id`. The answer is `{state: applied\|proposed, ids, ops, proposal, repeated}`. Capcom's `file_record` shape is a subset |
+| Idempotency keys | In a `keys` table of the same file, written in the write's transaction, so a key holds across gff-hab and the CLI fallback. A repeat returns the first write's ids and ops with `repeated`; the same key with another request is `conflict`; a refused write keeps no key. Keys stay 90 days, for a phone that queued writes offline (14). At most 128 bytes, as on `session.create`. Keys never sync. The CLI sends a fresh key with each write, so a write the hab took just before it went away is not applied again from the file |
+| Actor | Pane route: `{agent, harness, session, pane, host}`: the Flightdeck session id, the harness from the pane's agent state, this hab's host id. The source's session is always set to the pane's. Control connection: `{person, device}` with the hello's label (else the client name), until pairing gives clients device ids. CLI fallback: an agent with `$AGENT_KIND` as harness inside a pane, else `{person, device: cli}`, with `$GFF_HAB_HOST_ID` or the system host name; nothing can vouch for a pane's session while gff-hab is down |
+| Writes over a peer link | Refused with `invalid`: a client writes on the hab it talks to, and sync carries the ops (2.5, D3). Reads over a peer link work |
+| Proposals | `propose: true` stores one pending proposal record: target `record`, the write's changes and source as its `draft`, the first create's project, and a title made from the first change. Nothing else lands. Stage 7 applies the draft on approve |
+| Capcom | A write from a Capcom session's pane is stored as a proposal even without `propose`, and `logbook.resolve` from it is refused: Capcom's records wait for review (`capcom.md` D3, D14) |
+| `claim` | Sets `assignee` to the word `self` and status `doing`; the hab replaces `self` with the writer's session, else its device |
+| Pane write limit | 60 writes (`logbook.write` and `logbook.resolve`) per pane in a sliding minute; the 61st answers `invalid` with a hint and writes nothing; gff-hab logs it once a minute per pane. A person is never limited. Not built yet: raising it in the hab's config, and the status board mark (14), which waits for the app's Logbook views (stage 8) |
+| Lists | `logbook.list` and `find` without words go newest change first; `find` with words best match first. Filters: type, status, project (through joins), tag, host (the actor's host or the create's origin), author (the actor's session, device or harness), session (the actor's or the source's: Capcom lists one conversation's proposals with it), since, general, flagged, deleted. Default 50, at most 500, with `more` |
+| Events for other writers | gff-hab reads `Changes` after each of its own writes and every second, so the CLI's writes to the file reach clients within a second. Events start from the file's end at gff-hab's start: a client takes a fresh read on a new epoch |
+| `logbook.conflict` | Sent when a record's set of flag kinds changes, any kind; an empty list means the last one went |
+| Not built | A corrupt `logbook.db` moved aside (14); `--host <label>` over SSH (10.1); the current project from the pane's session or the folder (10.2), which needs stage 5's identities |
 
 ---
 
@@ -1004,7 +1037,7 @@ Each stage gets a fresh-eyes review before it closes (core functionality).
 | 1 | Study (this task) | This spec | Exists; later stages listed with checks; no dependency on any personal tool |
 | 2 | Store package | `internal/logbook`: ops, HLC, fold, FTS, ids, record types and their rules (2, 4, 5), `rebuild`, two writers (4.3) | P2, P3, P6, P10 pass; every example in 6 is a unit test; a finding body `set` is refused; a newer op is kept and forwarded but not folded; `check-pure` passes |
 | 3 | Sync | `logbook.pull` and `logbook.push` on the peer link, version vectors, paging, wake-ups (7) | P1, P4, P5, P7, P8, P9 pass; an end-to-end test with two real habs over `ssh localhost` (skips without it) syncs 10,000 records and then a write in under 2 s; a hab rebuilt with a new key gets its old ops back |
-| 4 | CLI, API and MCP | `gff lb` verbs (10.2), `logbook.*` methods and events (10.3), the four MCP tools in `gff-hab mcp serve`, idempotency keys, the pane write limit | Golden messages for every new method and event (core test 5); the CLI writes while gff-hab is stopped and the hab syncs those ops after start; a repeated write key applies once; a write through a pane token records harness, session and host |
+| 4 | CLI, API and MCP | `gff lb` verbs (10.2), `logbook.*` methods and events (10.3), the four MCP tools in `gff-hab mcp serve`, idempotency keys, the pane write limit. Built: 10.5 | Golden messages for every new method and event (core test 5); the CLI writes while gff-hab is stopped and the hab syncs those ops after start; a repeated write key applies once; a write through a pane token records harness, session and host |
 | 5 | Projects | Identity set, first sight, join, remote change, private flag (3, 12.1) | SSH and HTTPS remotes of one repository match; two worktrees share a project; a remote rename keeps records; E9 holds across two habs |
 | 6 | Habits | Context mode in `gff-hab hook`, brief, reminder, closeout per harness (11), ledger entries | Fixture tests per harness give the exact injected text; the brief stays under 8 KB with 1,000 open tasks; with gff-hab stopped the brief still prints from the file within the 900 ms budget; closeout fires at most once per session; each habit's setting turns it off |
 | 7 | Approval | `logbook.approval`, proposals, decide, first-writer-wins, overruled approvals (9); memory proposals from Part 8 stored here | Under `agents`, an agent write returns `proposed` and lands only on approval; E10 holds across two habs; a reject that wins hides the approved record and flags it |

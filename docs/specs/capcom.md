@@ -293,8 +293,8 @@ O2). Logbook is readable everywhere, since every hab holds a replica.
 
 Package `internal/readtools`, wired into `gff-hab serve`. Capability `read-tools`. Methods
 `transcript.list`, `transcript.search`, `transcript.read`, `notice.get` and `file.read`;
-`logbook.find` and `logbook.get` answer `unavailable` until Logbook exists (`control.Logbook`
-has no implementation). Error kind `denied`. Doors: `gff-hab read <tool>`, the stdio MCP server
+`logbook.find` and `logbook.get` are Logbook's own methods, built with Logbook stage 4
+(`logbook.md` 10.5). Error kind `denied`. Doors: `gff-hab read <tool>`, the stdio MCP server
 `gff-hab mcp` (`gff-hab mcp serve` is the same command, for `logbook.md` 10.1), and the manual
 `gff-hab mcp --skill`.
 
@@ -634,10 +634,12 @@ change: `hand_off` uses `catalog.list`, `channel.send` and `channel.status`; `fi
   with `{idempotency_key, propose: true, changes: [{op: "create", type, project, title, body}],
   source: {message, quote}}`, and reads `{state, proposal, ids}`. `propose: true` makes a pending
   proposal whatever `logbook.approval` says (`logbook.md` 9.1: Capcom files proposals by its own
-  rule). The hab fills in the session from the pane's token (`logbook.md` 2.5). The shapes live
-  in `cmd/gff-hab` until Part 12 adds the method to the API; Part 12 must also add
-  `logbook.write` to the pane route, which takes only `logbook.find` and `logbook.get` today.
-  A hab that answers `applied` despite `propose` is reported as such, plainly.
+  rule). The hab fills in the session from the pane's token (`logbook.md` 2.5). The shapes are
+  the API's (`api.LogbookWriteParams`, `api.LogbookWritten`; `logbook.md` 10.5), and the pane
+  route takes `logbook.write` (Logbook stage 4). The answer also carries `ops` and `repeated`.
+  A hab that answers `applied` despite `propose` is reported as such, plainly. A write from a
+  Capcom session's pane is stored as a proposal even without `propose`, so `logbook_write`
+  cannot bypass review (D3, D14).
 - **The idempotency key** is the first 32 hex digits of a SHA-256 over the calling pane's
   `GFF_HAB` address, the type, project key, title, body and quote. A retry of the same draft
   from the same pane, such as a model that calls again after a timeout, is one proposal; a
@@ -811,7 +813,7 @@ takes `context`, a list of the same refs; all three results carry `pending`. CLI
 | Refs | `notification`: a notice id, with `host` for a peer's notice. `session`: a session id on this hab. `file`: an attachment id from `attachment.put` for the Capcom session, or an absolute path under its folder once links are resolved, naming a regular file. `command`: `<pane id>:<command id>`, as `command.list` gives them. `logbook`: a record id | One string per kind keeps the call small; the hab resolves each itself and never takes client text into a block |
 | Resolve when attached | The ref is resolved at `capcom.attach`, and at `capcom.open` before the open. `capcom.open` refuses a `file` item with `invalid` ("attach files with capcom.attach after the open"): its folder and attachments belong to the session. It also checks the count with what already waits on the standing conversation (after dedup) before the open. So a refused open starts and resumes nothing. An unknown ref is refused with `not_found`; a malformed one, or a file outside the folder, with `invalid` | The app learns at once that a chip cannot be attached, and a retried open never starts a conversation per try |
 | Another host | A notification with `host` goes through `notice.get`'s existing peer path (5.4). Any other kind naming another host is refused with `invalid`. No new mesh plumbing | Only `notice.get` reads a peer's records today. "Ask an agent" works around the gap: every banner it adds Ask to names a notice (8.5). A peer's session, file or command still has no read path to attach from |
-| Logbook | `logbook` answers `unavailable` until a hab offers Logbook (Part 12), as `file_record` does (6.5) | Part 12 owns the record shapes |
+| Logbook | `logbook` answers `unavailable`: attaching a record is not built yet, though Logbook stage 4 gives `logbook.get` to resolve it with | Part 12 owns the record shapes; the attach stage resolves the ref with `logbook.get` |
 | Not a Capcom session | `capcom.attach` on any other session is refused with `invalid` | Context belongs to a Capcom message |
 | Pending list | Per Capcom session, held by gff-hab, in attach order. At most 8 (`capcom.MaxPending`); one more is refused with `conflict` and nothing is added. The same kind, ref and host again is kept once, at its first place. `capcom.open` refuses more than 8 items with `invalid`, and items that would take the standing conversation past 8 with `conflict` | Bounded and predictable; a repeated tap is harmless |
 | What the app sees | `pending` in the `capcom.attach`, `capcom.detach`, `capcom.pending` and `capcom.open` results: kind, ref, host label and a short title (at most 120 characters) per item. No pending event. `capcom.pending {session}` reads the list from the session's record alone; a session with no Capcom record answers `invalid` | The chips need only this. A client refreshes them with `capcom.pending`, never with `capcom.open`, which may resume or start the standing conversation (coordinator, 2026-11-02) |
@@ -950,7 +952,7 @@ The Part 9 stages, with what this spec adds to each.
 |---|---|---|
 | Tools (task-m31qyr6v) | Read tools in the agent kit (4) and the read scope (5). Built; see 5.5 | Tests on fake catalog, transcript and Logbook data; a write through a read tool is refused; a read outside scope is denied without the pattern; a search with an offline and a slow peer returns partial results marked |
 | Session host (task-aqw4iowl) | The Capcom folder, manual and settings (7.1), kind `capcom`, standing and new conversations, home host assignment (7.3) | A `gff-hab` restart keeps Capcom running; a plain-terminal resume works from the folder; the manual and settings are rewritten at start; `gff-hab capcom assign` moves the mark, the old conversation stays resumable, and a host offline during the change drops its mark on its next link |
-| Hand off and file (task-9n47i6l8) | 3.2 and 3.4, the hand-off card as a record, the hand-off and proposal tools. Built; see 6.5. The card is the tool call in Capcom's transcript; `file_record` answers `unavailable` until Logbook (Part 12) | Hand-off to an idle fake agent delivers at once with no confirmation; to a working one queues; the card shows the exact text sent; a record lands as a proposal |
+| Hand off and file (task-9n47i6l8) | 3.2 and 3.4, the hand-off card as a record, the hand-off and proposal tools. Built; see 6.5. The card is the tool call in Capcom's transcript; `file_record` answers `unavailable` on a hab without Logbook, and files a pending proposal on one with it (Logbook stage 4) | Hand-off to an idle fake agent delivers at once with no confirmation; to a working one queues; the card shows the exact text sent; a record lands as a proposal |
 | Suggest and start (task-ph00sdci) | 3.3, ranking, seed, the confirmation mechanism (6.1) and the start and set-up tools, start by confirmation id, `confirm.start_elsewhere`. Built; see 6.4, with the confirmations' expiry, first-answer-wins and the CLI fallback | A host without a needed capability is not suggested and the reason names it; with the setting on, no session starts without a confirm; with it off, the start runs at once and its card shows as a record; a repeated confirm id starts one session |
 | Approval (task-3387vxca) | Review (6.2) over Logbook's `logbook.list` and `logbook.decide`, with `gff lb proposals` as the CLI; blocked on Logbook stage 7. Confirmations' expiry, first-answer-wins and CLI fallback came with "Suggest and start" (6.4) | Three proposals, one approved: only it applies; closing without review leaves all pending; an expired confirmation never runs; a second answer gets `conflict` |
 | Entry API (task-ilse43i7) | 8.3 calls and events, attached context blocks (8.1). Built; see 8.4 | Open, send, attach and confirm against a stub Capcom; the schema compat test passes |
@@ -967,9 +969,9 @@ Notes for those stages:
   `confirm.start_elsewhere`, in the "Suggest and start" stage, and let later stages add card
   kinds. Hand-off cards use the same card shape as a record, with no buttons.
 - The tools stage depends on the transcript index (Part 3, task-syy38i23) and Logbook (Part 12).
-  Until the index exists, the session list scans the native transcript files (5.5). Until
-  Logbook exists, `logbook.find`, `logbook.get` and the Logbook tools answer `unavailable`; Part
-  12 implements `control.Logbook` and owns the record shapes.
+  Until the index exists, the session list scans the native transcript files (5.5). Logbook
+  stage 4 implements `control.Logbook` with `internal/lbsvc` and owns the record shapes
+  (`logbook.md` 10.5); a hab whose Logbook file does not open answers `unavailable`.
 - The set-up card belongs to the mesh's set-up stage; Capcom only calls it. `set_up_project`
   answers `unavailable` until that stage (task-j600w23a) lands (6.4).
 - "Suggest and start" built the confirmations whole, expiry, first-answer-wins and the CLI
