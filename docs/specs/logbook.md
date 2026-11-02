@@ -663,9 +663,9 @@ general case with no peers.
   proposal records here. One switch replaces the per-harness switches (`app.md` 20.3).
 - It is a levelled setting: `agents` at Safe, `off` at Balanced and Bypass permissions
   (`app.md` 20.3). The app writes it through `settings.set` (`app.md` 20.5).
-- Built: gff-hab stores and serves the setting, and the app writes it (task-yfmrj6yc). No
-  write reads it yet: stage 4 stores a proposal only for `propose: true` (10.5); stage 7 reads the
-  setting.
+- Built: gff-hab stores and serves the setting, and the app writes it (task-yfmrj6yc). Stage 7
+  reads it at each write on a pane's route (9.4). Harness memory is not covered yet: the Part 8
+  hook that files memory proposals is not built.
 - Capcom files proposals by its own rule (`capcom.md` 6.2), whatever this setting says. See open
   question 15.1.
 
@@ -685,6 +685,39 @@ If two hosts decide one proposal while apart, the first decision stands (5.6). W
 over an approve that already made a record, that record is hidden like a deleted one and flagged
 "approval overruled". When an approve wins over a reject, the record appears when the approving
 host's ops arrive. Nothing is applied twice: the record's create is part of the approve batch.
+
+### 9.4 Built (stage 7)
+
+Task-y7ne09xq. The fold is in `internal/logbook` (`refold` and `overruled` in `apply.go`, `fold`
+in `fold.go`); `logbook.decide` is `Decide` in `internal/lbsvc`; the setting is read in
+`logbookHook` (`cmd/gff-hab/logbook_open.go`).
+
+| Item | Built |
+|---|---|
+| Setting | Under `agents`, every write on a pane's route is a proposal, as Capcom's always are. A write on the control connection, and the CLI outside a pane, land at once. gff-hab reads the setting at each pane call, so a change holds from the next write. Under `agents` a pane's `logbook.resolve` is refused, as Capcom's is |
+| Answer | A proposed write's answer carries `note`: nothing landed, the change waits for the user's approval as proposal `<id>`, the user sees it with their other approvals, do not ask again. The CLI prints it; `logbook_write` says the same |
+| `logbook.decide` | `{id, decision: approve\|reject, edits?, idempotency_key}`. Approve applies the draft's changes, or the edits in their place, in one batch with the decision; with edits the status is `edited`. Each create gets a `from` link to the proposal. Reject sets the status and `decided_by` only. The answer is `logbook.write`'s, with state `applied` or `rejected` and `proposal` set |
+| Actor | An approve batch's actor is the proposing agent (the proposal's `created_by`) with `approved_by` set to the deciding device; the API's `LogbookActor` gains `approved_by`. `decided_by` is the same device. A reject's actor is the person |
+| Who decides | Only a person. The pane route answers `logbook.decide` with `invalid` and names who can decide; the service refuses an agent actor and a pane too. Over a peer link it is a write, so `invalid` (10.5) |
+| First decision | The writer refuses a second decision it can see (5.6). Decisions made apart fold first writer wins, the later flagged `decided_twice` (E10) |
+| Overruled approve | An approve batch that is not its proposal's standing decision is overruled. A record it created is hidden like a deleted one (`deleted` reads true) and flagged `approval_overruled` with the decision that stood; a person's restore after it shows the record again, still flagged. A change it made to another record is not folded, and that record is flagged too. The record's revision goes up by one, so it never goes down |
+| Fold order | Proposals fold first; a record whose ops carry `approved_by` folds against its proposal's standing decision. A refolded proposal refolds what its approve batches touched, and `Changes` names those records, so events reach clients. A proposal this replica does not hold yet has no standing decision: its approves stand until it folds. The fold version is 2, so an older file is rebuilt at open |
+| Events | `logbook.updated` for the proposal when it is filed and when it is decided, and for each record the decision changes; `logbook.conflict` when a record gains `decided_twice` or `approval_overruled`. No new event: a client reads the proposal's status with `logbook.get` |
+| CLI | `proposals [filters]` (pending unless `--status` names another), `approve <id> [--title t] [--body text\|-] [--changes json\|-]`, `reject <id>`. `--title` and `--body` edit the draft's first create; `--changes` replaces the changes whole. In a pane both verbs go to the pane route, which refuses them, and never to the file |
+| Memory proposals | The store side only: a proposal's `expires` (RFC 3339, fixed at create), and `logbook.decide` refuses a pending proposal past it. A memory or flight rules proposal's approve records the decision and applies nothing: Part 8 writes the memory |
+
+Where this spec was silent, stage 7 decided. Each is a default the owner may revisit:
+
+| Point | Decision |
+|---|---|
+| Restore of an overruled record | A person's restore stamped after the approve shows the record again. The flag stays. Reason: the user can keep work that lost a race, as with "edited after delete" (5.6) |
+| An overruled change to another record | Not folded, rather than undone by a new op, so every replica agrees without a writer. The record keeps the ops and shows the flag |
+| Two approves made apart | The later approve is overruled like a reject's loser: its records are hidden, so nothing is applied twice |
+| Forget in an overruled approve | A forget in the draft still redacts its target: a redaction is never undone (5.7) |
+| `decided_by` from the app | The client's label, as the actor's device is until pairing gives clients device ids (10.5, Actor) |
+| Edits | `edits` replaces the draft's changes whole; the CLI's `--title` and `--body` build that list from the draft |
+| Resolve under `agents` | Refused from a pane, as Capcom's is: a resolve is a write, and a proposal of it would need its own draft shape |
+| Not built | Filing memory proposals (the Part 8 hook, `instructions-mcp-flight-rules.md` 12), marking a memory proposal `expired` when its time passes, `gff lb status` showing a hab whose setting differs (9.1), and the app's approvals view (stage 8) |
 
 ---
 
@@ -774,12 +807,12 @@ shapes are in `api/logbook.go`.
 
 | Item | Built |
 |---|---|
-| Methods | `logbook.find`, `.get`, `.list`, `.ready`, `.history`, `.write`, `.resolve`, `.projects`, `.status`. `logbook.pull` and `logbook.push` are stage 3's (7.6). `logbook.brief` (stage 6) and `logbook.decide` (stage 7) are not in the schema yet |
+| Methods | `logbook.find`, `.get`, `.list`, `.ready`, `.history`, `.write`, `.resolve`, `.projects`, `.status`. `logbook.pull` and `logbook.push` are stage 3's (7.6), `logbook.decide` stage 7's (9.4). `logbook.brief` (stage 6) is not in the schema yet |
 | Events | `logbook.updated {id, revision, type, project, deleted}` and `logbook.conflict {id, revision, flags}`, host scope only, not in the snapshot. The revision is the record's count of folded ops |
 | Capability | `logbook`, one capability for sync and the verbs, sent when `<state>/logbook.db` opens with the hab's device id as origin. A corrupt file, or one of another origin, is set aside first (7.6); a file that still does not open stops gff-hab with the reason |
 | Sync | Each write through the verbs nudges sync, which sends the new ops at once (7.2). Writes wait out the start hold, and a restored file refuses them with `unavailable` (7.6); the CLI's own store honours both, since both live in the file |
 | Pane route | Every method above. `logbook.find` and `logbook.get` moved from the read methods to `hook.LogbookMethods`, whose handler knows the pane |
-| CLI | `gff lb` (long form `gff logbook`), and `gff-hab lb`, the same code. Verbs of 10.2 that later stages own (`brief`, `approve`, `reject`, `project join`, `project rename`, `export`, `import`) say which stage builds them |
+| CLI | `gff lb` (long form `gff logbook`), and `gff-hab lb`, the same code. Verbs of 10.2 that later stages own (`brief`, `project join`, `project rename`, `export`, `import`) say which stage builds them. `approve` and `reject` are stage 7's (9.4) |
 | MCP | `logbook_search` and `logbook_read` (read tools, built with Capcom's tools), `logbook_write` (an action tool). `logbook_brief` waits for stage 6 |
 
 Where this spec was silent, stage 4 decided:
@@ -797,7 +830,7 @@ Where this spec was silent, stage 4 decided:
 | Proposals from a pane | An agent never decides a proposal: the pane route refuses a create of type `proposal` (a pane files one with `propose: true`), a set of `decided_by`, and a set or resolve of a proposal's `status`, with `invalid`. A person decides through the control connection or the CLI outside a pane |
 | Forget from a pane | A pane forgets only ops its own session wrote; a pane outside a session forgets nothing. Any other forget is refused with `invalid` and a hint that a person can forget it. A default the owner may revisit (5.7) |
 | Writes over a peer link | Refused with `invalid`: a client writes on the hab it talks to, and sync carries the ops (2.5, D3). Reads over a peer link work |
-| Proposals | `propose: true` stores one pending proposal record: target `record`, the write's changes and source as its `draft`, the first create's project, and a title made from the first change. Nothing else lands. Stage 7 applies the draft on approve |
+| Proposals | `propose: true` stores one pending proposal record: target `record`, the write's changes and source as its `draft`, the first create's project, and a title made from the first change. Nothing else lands. `logbook.decide` applies the draft on approve (9.4) |
 | Capcom | A write from a Capcom session's pane is stored as a proposal even without `propose`, and `logbook.resolve` from it is refused: Capcom's records wait for review (`capcom.md` D3, D14) |
 | `claim` | Sets `assignee` to the word `self` and status `doing`; the hab replaces `self` with the writer's session, else its device. A writer with neither, such as a pane outside a session, is refused with `invalid` |
 | Change caps | One `logbook.write` takes at most 200 changes, from any writer; more answers `invalid` with a hint to split it |
@@ -943,6 +976,8 @@ twice; an export or an index is not, and the user knows which machine should hol
 | `logbook.db` is restored from a backup, same device id | Writes wait or are refused until sync brings the newer own ops back from a peer (7.6, Restored file) |
 | `logbook.db` is corrupt on one hab | gff-hab refuses to open it, moves it aside, and pulls a full copy from a peer. With no peer it starts empty and says so. Local ops not yet synced are lost |
 | Clocks differ | HLC order (5.1); shown times come from the origin's clock |
+| Two hosts decide one proposal while apart | The first decision stands on both; the later is flagged "decided twice". An approve that lost has its record hidden and flagged "approval overruled" (9.3, 9.4) |
+| An agent tries to decide a proposal | Refused with `invalid`: the pane route never takes `logbook.decide`, and a set of a proposal's status from a pane is refused (10.5) |
 
 ---
 
@@ -1051,7 +1086,7 @@ Each stage gets a fresh-eyes review before it closes (core functionality).
 | 4 | CLI, API and MCP | `gff lb` verbs (10.2), `logbook.*` methods and events (10.3), the four MCP tools in `gff-hab mcp serve`, idempotency keys, the pane write limit. Built: 10.5 | Golden messages for every new method and event (core test 5); the CLI writes while gff-hab is stopped and the hab syncs those ops after start; a repeated write key applies once; a write through a pane token records harness, session and host |
 | 5 | Projects | Identity set, first sight, join, remote change, private flag (3, 12.1) | SSH and HTTPS remotes of one repository match; two worktrees share a project; a remote rename keeps records; E9 holds across two habs |
 | 6 | Habits | Context mode in `gff-hab hook`, brief, reminder, closeout per harness (11), ledger entries | Fixture tests per harness give the exact injected text; the brief stays under 8 KB with 1,000 open tasks; with gff-hab stopped the brief still prints from the file within the 900 ms budget; closeout fires at most once per session; each habit's setting turns it off |
-| 7 | Approval | `logbook.approval`, proposals, decide, first-writer-wins, overruled approvals (9); memory proposals from Part 8 stored here | Under `agents`, an agent write returns `proposed` and lands only on approval; E10 holds across two habs; a reject that wins hides the approved record and flags it |
+| 7 | Approval | `logbook.approval`, proposals, decide, first-writer-wins, overruled approvals (9); memory proposals from Part 8 stored here. Built: 9.4 | Under `agents`, an agent write returns `proposed` and lands only on approval; E10 holds across two habs; a reject that wins hides the approved record and flags it |
 | 8 | App views (Part 6) | A Logbook view: projects, lists with filters, record view with history and conflict banner, resolve; proposals in approvals; untriaged count on the status board; quick capture | The device smoke adds: create a task on the phone offline, see it on the Mac after reconnect; resolve a seeded conflict from the phone |
 | 9 | Always-on extras and export | Backup, git export, vector search (13); `export` and `import` | A backup restores to a working replica; the git export has one file per record and no forgotten text after a forget; with no vector hab the semantic flag answers the stated message; an import keeps ids |
 
