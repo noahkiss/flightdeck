@@ -34,6 +34,13 @@ struct SettingsPage: View {
                         }
                     }
                 }
+                if matches(AcknowledgementsView.title) {
+                    Section {
+                        NavigationLink(AcknowledgementsView.title) {
+                            AcknowledgementsView().navigationTitle(AcknowledgementsView.title)
+                        }
+                    }
+                }
             }
             .searchable(text: $query, prompt: "Search settings")
         }

@@ -21,6 +21,9 @@ targets:
     sources:
       - path: App/macOS
         excludes: ["*.entitlements", "Info.plist"]
+      # Third-party notices, written by `make notices`; the Acknowledgements page in Settings reads it.
+      - path: App/Acknowledgements.txt
+        buildPhase: resources
       - path: ../design/icons/AppIcon.icon
     dependencies:
       - package: FlightdeckKit
@@ -45,6 +48,8 @@ targets:
     sources:
       - path: App/iOS
         excludes: ["*.entitlements", "Info.plist"]
+      - path: App/Acknowledgements.txt
+        buildPhase: resources
       - path: Shared
       - path: ../design/icons/AppIcon.icon
     dependencies:
