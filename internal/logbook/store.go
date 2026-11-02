@@ -233,7 +233,7 @@ func (s *Store) init(ctx context.Context, origin string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, schema+foldedSchema); err != nil {
+	if _, err := tx.ExecContext(ctx, schema+foldedSchema+keysSchema); err != nil {
 		return fmt.Errorf("logbook: schema: %w", err)
 	}
 	m, err := readMeta(ctx, tx)

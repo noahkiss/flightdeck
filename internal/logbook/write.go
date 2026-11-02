@@ -37,6 +37,9 @@ type Step struct {
 type Batch struct {
 	Actor *Actor
 	Steps []Step
+	// Key, when set, is the write's idempotency key (keys.go), and KeyHash a hash of the request
+	// it came with. A key the file holds applies nothing and returns the first result.
+	Key, KeyHash string
 }
 
 // WriteResult names what a write made.
@@ -44,6 +47,9 @@ type WriteResult struct {
 	Ops []OpID
 	// Records lists the ids the batch touched, in step order, each once.
 	Records []string
+	// Repeated is true when the batch's key was used before: nothing was applied, and Ops and
+	// Records are the first write's.
+	Repeated bool `json:"-"`
 }
 
 // Create returns a create step for a new record with a minted id.
@@ -60,6 +66,9 @@ func (s *Store) Write(ctx context.Context, b Batch) (WriteResult, error) {
 	if len(b.Steps) == 0 {
 		return res, invalid("", "an empty batch")
 	}
+	if len(b.Key) > MaxKey {
+		return res, invalid("", "an idempotency key is at most %d bytes", MaxKey)
+	}
 	if err := s.waitHold(ctx); err != nil {
 		return res, err
 	}
@@ -73,6 +82,11 @@ func (s *Store) Write(ctx context.Context, b Batch) (WriteResult, error) {
 	m, err := readMeta(ctx, tx)
 	if err != nil {
 		return res, err
+	}
+	if b.Key != "" {
+		if r, found, err := keyed(ctx, tx, b.Key, b.KeyHash); found || err != nil {
+			return r, err
+		}
 	}
 	if g, err := originRow(ctx, tx, m.origin); err != nil {
 		return res, err
@@ -128,6 +142,11 @@ func (s *Store) Write(ctx context.Context, b Batch) (WriteResult, error) {
 	}
 	if forgot {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO fts(fts) VALUES('optimize')`); err != nil {
+			return res, err
+		}
+	}
+	if b.Key != "" {
+		if err := keep(ctx, tx, b.Key, b.KeyHash, res, s.now().UnixMilli()); err != nil {
 			return res, err
 		}
 	}
