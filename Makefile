@@ -144,7 +144,7 @@ test-pure:
 	CGO_ENABLED=0 $(GO) test ./...
 
 # Run the holder, structure, link, control, data stream, connection library, gff client core, pane size, command
-# marks, peers, catalog, Capcom, channels, harness, hook, git status, transcript, usage, service, push and speech tests three times under the race
+# marks, peers, catalog, Capcom, channels, harness, hook, git status, transcript, usage, service, push, speech and logbook tests three times under the race
 # detector. No libghostty needed.
 RACE_PKGS := ./internal/holder/... ./internal/holderproto/... ./internal/holderclient/... \
 	./internal/holderreg/... ./internal/structure/... ./internal/link/... \
@@ -152,7 +152,7 @@ RACE_PKGS := ./internal/holder/... ./internal/holderproto/... ./internal/holderc
 	./internal/cmdmarks/... ./internal/readtools/... ./internal/confirm/... ./internal/suggest/... \
 	./internal/harness/... ./internal/hook/... ./internal/opencode/... ./internal/gitstatus/... ./internal/worktree/... ./internal/transcript/... ./internal/usage/... \
 	./internal/service/... ./internal/grants/... ./internal/push/... ./internal/settings/... ./internal/rounds/... \
-	./internal/speech/... ./internal/speechproto/... ./internal/oggopus/... ./internal/attach/... \
+	./internal/speech/... ./internal/speechproto/... ./internal/oggopus/... ./internal/attach/... ./internal/logbook/... \
 	./cmd/...
 # cmd/gff-hab under -race -count=3 runs past go test's 10-minute default on a loaded machine.
 RACE_TIMEOUT ?= 30m

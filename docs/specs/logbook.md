@@ -350,6 +350,50 @@ for memory that works while gff-hab restarts; SQLite's lock makes two writers on
 Decision: the op log is the only durable truth. Reason: folding again is cheaper than migrations,
 and it lets an older hab carry a newer hab's ops without losing them.
 
+### 4.5 Built (stage 2)
+
+`internal/logbook` (task-5v03ztrf). The driver is `modernc.org/sqlite`, pure Go, with FTS5 built
+in. The file opens with a 5 s busy timeout, WAL, `synchronous=NORMAL` and `BEGIN IMMEDIATE` for
+every write.
+
+Where this spec was silent, stage 2 decided:
+
+| Point | Decision |
+|---|---|
+| Op envelope | Every op carries `v`, `o` (origin), `s` (seq), `w` and `c` (the stamp), `bl`, `k` (kind), `r` (record id) and `root`. These keys never change between versions, so an older build can order, apply and forward any op |
+| `root` | Every op names its record's create op. Two creates of one id (2.3) stay apart, and later ops reach the right record. The second record shows as `<id>-2`, then `-3`, in create stamp order |
+| Batches | Every op carries `bl`, the last seq of its batch. A replica folds an origin's ops up to the end of the last whole batch in its gap-free run. The version vector counts the gap-free run |
+| `prev` | A local `set` names every head of the field: the set ops no other set op on it saw. With no flag that is one op; where a conflict shows, it is every side |
+| Conflict flag | A field is flagged when it has two or more heads. So a set written where the flag shows clears it (5.2: resolve, or a later set that saw the winner), and a set written apart, that saw one side only, keeps it. P6 tests this rule. The create's value counts as the field's first set |
+| Delete | Local writes to a deleted record are refused, except a restore (`deleted` false) and `forget`. "Edited after delete" flags the record when `deleted` is true and another folded op on it has a later stamp than the winning delete |
+| Proposals | After create, only `status`, `decided_by` and `deleted` change. Decisions are `approved`, `edited`, `rejected` and `expired`. `decided_by` follows the batch of the decision that stands. These two fields raise "decided twice", never a last-writer conflict |
+| Findings | `title`, `body` and `type` are fixed. An incoming set of them is kept, not folded, and logged once when it is applied |
+| Retype | Only a task and an issue change type, into each other |
+| Superseded twice | Derived when the record is read, from the `supersedes` links of records not deleted. Deleting one successor clears it |
+| Projects | Type `project`, ids `proj-<8>`, the title is its name, set field `identities`. On fold, projects that share an identity, directly or through others, join: the oldest by create stamp is canonical. `Record.Project` is the canonical id, and a list by either id finds both. Stage 5 adds identity detection, first sight, `project join` and the private flag |
+| Forget | Targets a create (its text fields and source), a set of a text field, an append or an add. The value becomes `forgotten sha256:<hex of its JSON>`. Redaction is idempotent; an op that a held forget names is redacted before it is stored; the FTS index is optimised after a redaction. A repeat compares after redaction |
+| Shared origin | A second, different op with a held op id marks its origin shared; its further ops are refused. `Status.Shared` lists it |
+| Clock ahead | An op stamped over 1 hour past the receiver's clock marks its origin, logs once, and shows in `Status.Ahead` |
+| Own ops back | Ops of this replica's own origin that arrive from a peer past its next seq move the next seq past them |
+| Limits | Title one line of 1 to 200 characters; body and note at most 256 KiB; a tag one word of at most 40 characters; other text fields at most 4 KiB; priority 0 (none) to 3; triage `new` or empty; an identity one line of at most 1 KiB |
+| Property test counts | Stage 2 has no P1, so P2 runs after each of its own random histories: 3 to 5 replicas writing every op kind and exchanging pages that drop ops. Per push: P2 500 runs, P3 50 runs of 3 orders, P6 500 histories, P10 2 processes of 2 goroutines with 100 writes each. Nightly (`GFF_LOGBOOK_NIGHTLY=1`): 20,000, 5,000, 20,000 and 2,000. Under `-race` the run counts drop to a twentieth: the race build checks for data races on the same paths at a tenth of the speed, and `make test` runs the full counts |
+| Fold version | The file records the fold version. A build with another opens it with a rebuild, which also re-checks which ops it can fold (4.4) |
+
+Interfaces for the next stages:
+
+- **Stage 3 (sync).** `Vector()` returns the gap-free seq per origin. `OpsAfter(have, maxOps,
+  maxBytes)` returns the stored bytes of the ops `have` lacks, per origin in seq order, and whether
+  more remain: a pull's answer and a push's source. `Apply(ops)` stores ops as their bytes came,
+  folds what it can, and returns the counts stored, repeated and refused and the changed record
+  ids.
+- **Stage 4 (CLI, API, MCP).** `Open(path, Options{Origin: ""})` takes the origin from the file,
+  so the CLI writes while gff-hab is down. `Write(Batch{Actor, Steps})` returns op ids and record
+  ids; a refusal is an `*InvalidError` with a hint (the API's `invalid`), a missing record
+  `ErrNotFound`. Reads: `Get`, `History`, `List`, `Find`, `Status`. `Changes(cursor)` returns the
+  records whose ops arrived after a cursor, by any writer of the file, so gff-hab can emit events
+  for the CLI's writes. Idempotency keys belong in stage 4, in a table of the same file, written
+  in the write's transaction.
+
 ---
 
 ## 5. Merge rules
