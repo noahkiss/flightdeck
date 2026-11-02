@@ -427,8 +427,8 @@ Built choices (task-mthck7r4):
   serves bytes; the last run checks the SHA-256 (`hab-logic-api.md`, `attachment.*`). A run is
   at most 256 KiB, even when the hab allows 1 MiB, so each reply keeps liveness fed (10.5,
   Large writes on a slow uplink). Downloads (`attachment.get`) ask for at most 256 KiB per run
-  too, so each stays inside the 30 s call timeout on a slow downlink. One control message is at most 16 MiB, so a 25 MB file cannot go in one.
-  The hab needs the `attachments` capability; an older hab gets "this hab cannot take files;
+  too, so each stays inside the 30 s call timeout on a slow downlink. One control message is
+  at most 16 MiB, so a 25 MB file cannot go in one. The hab needs the `attachments` capability; an older hab gets "this hab cannot take files;
   update gff-hab" before any upload. The app uploads when the message goes out, so a queued
   message ("sends after this turn") uploads when the turn ends. A retry uploads only the
   files the hab does not hold yet. The row shows "Uploading 2 of 3, 40%". A put of the same
@@ -884,9 +884,10 @@ The terminal view and its data-stream client. Code in `apple/FlightdeckKit/Sourc
   The cap keeps a large paste alive over a slow uplink (10.5, Large writes on a slow uplink).
   Calls stay one at a time: two in flight could reach the hab in either order. When a call
   fails, the input stops at the failed call; nothing after it is sent, and the pump reports
-  once. The failed call itself may or may not have landed. One exception: when the dropped
-  bytes held the end of a bracketed paste (`ESC[201~`), that marker is sent next, so the
-  program does not stay in paste mode. A stray end marker is harmless. The terminal then shows
+  once. The failed call itself may or may not have landed. One exception: the pump tracks
+  whether the bytes the hab took leave the pane inside a bracketed paste. When the pane may be
+  left inside one, whether or not the hab took the failed call, the pump sends the end marker
+  (`ESC[201~`) next, so the program does not stay in paste mode. The terminal then shows
   "Some input was not sent." until dismissed. It adds "The connection dropped." when the
   connection ended or the call timed out, not when the hab refused the call.
   libghostty's replies to queries the hab leaves in the stream are dropped: OSC 52, colour and DCS
@@ -1655,7 +1656,8 @@ The first app stage: the connection to every hab and the status board. Code in
   liveness: the call timeout starts before the write, and the hab sets its own 45 s read
   deadline once per line (`internal/control/conn.go`). Both would still end a long message.
   The cost is one round trip per 64 KiB of a paste. The chat view's typed fallback (4.6)
-  sends its paste in the same 64 KiB calls, one after another. `attachment.get` asks for at
+  sends its paste in the same 64 KiB calls, one after another. When one fails mid-paste, it
+  tries once to send the end marker, then reports the failure. `attachment.get` asks for at
   most 256 KiB per run, so a slow downlink stays inside the call timeout.
   Two messages stay large, because splitting them needs an API change. `session.send` carries
   the whole composer text: 1 MiB of text needs about 35 KB/s to fit the 30 s call timeout.
