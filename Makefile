@@ -7,6 +7,10 @@ GHOSTTY_COMMIT := f54340ad77814fe319d136e5e915d6a48de8dd23
 GHOSTTY_SRC := build/ghostty-src
 GHOSTTY_PREFIX := $(CURDIR)/build/libghostty-vt
 GHOSTTY_STAMP := $(GHOSTTY_PREFIX)/.built-$(GHOSTTY_COMMIT)
+# Extra zig build flags for libghostty. CI and releases pass a fixed target and the baseline CPU
+# (docs/specs/ci-release.md 7.3); empty builds for this machine. The stamp does not record them:
+# run `make clean-libghostty` before building with other flags.
+GHOSTTY_ZIGFLAGS ?=
 
 # The ghostty build tag selects the cgo parser in internal/vt/ghostty.
 GHOSTTY_ENV := PKG_CONFIG_PATH=$(GHOSTTY_PREFIX)/share/pkgconfig CGO_ENABLED=1
@@ -74,7 +78,7 @@ $(GHOSTTY_STAMP):
 	git -C $(GHOSTTY_SRC) fetch -q --depth 1 origin $(GHOSTTY_COMMIT)
 	git -C $(GHOSTTY_SRC) checkout -q --detach $(GHOSTTY_COMMIT)
 	cd $(GHOSTTY_SRC) && $(ZIG) build -Demit-lib-vt -Demit-xcframework=false \
-		-Doptimize=ReleaseFast --prefix $(GHOSTTY_PREFIX)
+		-Doptimize=ReleaseFast $(GHOSTTY_ZIGFLAGS) --prefix $(GHOSTTY_PREFIX)
 	@touch $@
 
 clean-libghostty:

@@ -73,8 +73,10 @@ jobs:
           fi
           echo "full=$full" >> "$GITHUB_OUTPUT"
 
+  # The job name says which set ran: the release check accepts only a run with a passing
+  # "go (full) / ..." job (docs/specs/ci-release.md 7.4).
   go:
-    name: Go
+    name: go (${{ needs.plan.outputs.full == 'true' && 'full' || 'fast' }})
     needs: plan
     permissions:
       contents: read
@@ -83,8 +85,12 @@ jobs:
       generate-check: true
       mise: true
       cache-path: build/libghostty-vt
-      cache-key: ${{ needs.plan.outputs.ghostty_key }}-Linux-X64
+      cache-key: ${{ needs.plan.outputs.ghostty_key }}-Linux-X64-baseline
       cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
       # A hosted runner is slower than a dev box; the scale raises every test's upper bound.
-      commands: GFF_TEST_TIMEOUT_SCALE=3 make ${{ needs.plan.outputs.full == 'true' && 'ci-full' || 'ci-fast' }}
+      # GHOSTTY_ZIGFLAGS is inline because go-ci has no env input: on a cache miss, make builds
+      # the release's baseline libghostty, the one the -baseline key promises.
+      commands: >-
+        GFF_TEST_TIMEOUT_SCALE=3 make ${{ needs.plan.outputs.full == 'true' && 'ci-full' || 'ci-fast' }}
+        GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'
       timeout-minutes: 45

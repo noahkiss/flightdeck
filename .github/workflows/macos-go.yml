@@ -1,8 +1,9 @@
 # Go on macOS (docs/specs/ci-release.md 3.5): macOS PTYs and launchd differ from Linux, so the
 # holder packages run here when they change, plus a nightly run (owner decision, 2026-10-31).
 # A change: the holder group under -race three times, then every test with libghostty. The
-# nightly run adds core tests 2 and 13 under launchd (scripts/service-check.sh); it is skipped
-# when main has not moved since the last passing nightly run.
+# nightly run and a dispatch add core tests 2 and 13 under launchd (scripts/service-check.sh); a
+# scheduled run is skipped when main has not moved since the last passing nightly run. The paths
+# include the parser (internal/vt) and the build pins (Makefile, go.mod, go.sum, mise.toml).
 #
 # go-ci is pinned to the branch of noahkiss/workflows#15 (inputs runner, mise, cache-path,
 # cache-key, cancel-in-progress) until it merges; then back to @main.
@@ -19,7 +20,12 @@ on:
       - 'internal/link/**'
       - 'internal/service/**'
       - 'internal/grants/**'
+      - 'internal/vt/**'
       - 'cmd/gff-hab-holder/**'
+      - 'Makefile'
+      - 'go.mod'
+      - 'go.sum'
+      - 'mise.toml'
       - 'scripts/service-check.sh'
       - 'scripts/macos-bundle.sh'
       - '.github/workflows/macos-go.yml'
@@ -90,10 +96,10 @@ jobs:
       fmt: false
       mise: true
       cache-path: build/libghostty-vt
-      cache-key: ${{ needs.plan.outputs.ghostty_key }}-macOS-ARM64
+      cache-key: ${{ needs.plan.outputs.ghostty_key }}-macOS-ARM64-baseline
       cancel-in-progress: ${{ github.event_name != 'schedule' && github.ref != 'refs/heads/main' }}
       commands: |
         GFF_TEST_TIMEOUT_SCALE=3 go test -race -count=3 ./internal/holder/... ./internal/holderproto/... ./internal/holderclient/... ./internal/holderreg/... ./internal/link/... ./internal/service/... ./internal/grants/... ./cmd/gff-hab-holder/...
         GFF_TEST_TIMEOUT_SCALE=3 make test
-        ${{ github.event_name == 'schedule' && 'scripts/service-check.sh' || '' }}
+        ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'scripts/service-check.sh' || '' }}
       timeout-minutes: 60

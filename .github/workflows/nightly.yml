@@ -1,7 +1,9 @@
-# The slow Linux suites, once a night (docs/specs/ci-release.md 3.6): the holderproto fuzz
-# targets, the 200-cycle restart loop of core test 1, and core tests 2 and 13 under systemd
-# (scripts/service-check.sh). A night when main has not moved since the last passing run costs
-# one short job. A dispatch always runs.
+# The slow Linux suites, once a night (docs/specs/ci-release.md 3.6): the full Go set on main as
+# it is now (`make ci-full`, so a break from merge skew shows by the next morning), the
+# holderproto fuzz targets, the 200-cycle restart loop of core test 1, and core tests 2 and 13
+# under systemd (scripts/service-check.sh). A second job keeps the linux arm64 libghostty cache
+# warm for releases. A scheduled night when main has not moved since the last passing run costs
+# one short job; a dispatch always runs everything.
 #
 # go-ci is pinned to the branch of noahkiss/workflows#15 until it merges; then back to @main.
 name: Nightly
@@ -71,16 +73,38 @@ jobs:
       fmt: false
       mise: true
       cache-path: build/libghostty-vt
-      cache-key: ${{ needs.plan.outputs.ghostty_key }}-Linux-X64
+      cache-key: ${{ needs.plan.outputs.ghostty_key }}-Linux-X64-baseline
       cancel-in-progress: false
+      # GHOSTTY_ZIGFLAGS is inline because go-ci has no env input; the first make builds the
+      # baseline libghostty on a cache miss, and every later command reuses it.
       # A raw `-tags ghostty` command needs the Makefile's pkg-config path to find libghostty.
-      # service-check needs a systemd user manager, so the runner user gets lingering first.
+      # service-check needs a systemd user manager, so the runner user gets lingering first,
+      # and the job fails loudly when the user bus never appears.
       commands: |
-        make libghostty
+        GFF_TEST_TIMEOUT_SCALE=3 make ci-full GHOSTTY_ZIGFLAGS='-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline'
         make fuzz FUZZTIME=30s
         PKG_CONFIG_PATH="$PWD/build/libghostty-vt/share/pkgconfig" CGO_ENABLED=1 GFF_TEST_TIMEOUT_SCALE=3 GFF_RESTART_LOOP=200 go test -tags ghostty -run TestRestartLoop ./internal/link/
         sudo loginctl enable-linger "$USER"
         export XDG_RUNTIME_DIR="/run/user/$(id -u)"
         for _ in $(seq 30); do [ -S "$XDG_RUNTIME_DIR/bus" ] && break; sleep 1; done
+        [ -S "$XDG_RUNTIME_DIR/bus" ] || { echo "::error::no systemd user bus at $XDG_RUNTIME_DIR/bus after 30 s"; exit 1; }
         scripts/service-check.sh
-      timeout-minutes: 40
+      timeout-minutes: 75
+
+  # The linux arm64 release leg restores this entry; building it here keeps a release warm.
+  warm-arm64:
+    name: Warm the arm64 libghostty cache
+    needs: plan
+    if: needs.plan.outputs.run == 'true'
+    permissions:
+      contents: read
+    uses: noahkiss/workflows/.github/workflows/go-ci.yml@go-ci-runner-mise-cache
+    with:
+      runner: ubuntu-24.04-arm
+      fmt: false
+      mise: true
+      cache-path: build/libghostty-vt
+      cache-key: ${{ needs.plan.outputs.ghostty_key }}-Linux-ARM64-baseline
+      cancel-in-progress: false
+      commands: make libghostty GHOSTTY_ZIGFLAGS='-Dtarget=aarch64-linux-gnu.2.31 -Dcpu=baseline'
+      timeout-minutes: 30
