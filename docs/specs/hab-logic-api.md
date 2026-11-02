@@ -636,7 +636,8 @@ The schema lives in `api/` (layout and commands: `docs/layout.md`). Built choice
 
 Capability strings name optional features: `data-streams`, `snapshot-vt`, `snapshot-ghostty`,
 `agent-state`, `transcripts`, `devices`, `push`, `host-stats`, `mesh`, `idempotency-keys`, `usage`, `catalog`, `channels`,
-`speech`. `speech` means the hab's speech engine is installed and turned on, so `speech.prepare`
+`speech`, `capcom`. `capcom` means `capcom.open`, `capcom.assign` and `session.resume` of a
+Capcom session work, and the catalog carries the `capcom` section (`capcom.md` 7.6). `speech` means the hab's speech engine is installed and turned on, so `speech.prepare`
 and `speech.transcribe` work, though the model may still need its download (`voice.md`).
 `idempotency-keys` means the hab honours `idempotency_key` on `session.create` and
 `session.send` (3.9). `confirm` means `confirm.request`, `confirm.answer`, `confirm.list`,
@@ -659,7 +660,7 @@ replica and the `logbook.*` methods work (`logbook.md` 10.3); until then `logboo
 for features that a host may lack. They are not a second versioning scheme.
 
 Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt`,
-`transcripts` and `detect-explain` (`detect.explain` works). It always sends `mesh`, `idempotency-keys`,
+`transcripts`, `detect-explain` (`detect.explain` works) and `capcom`. It always sends `mesh`, `idempotency-keys`,
 `catalog`, `channels` and `usage` (`usage.list` and `usage.updated` work; readings arrive only through panes with the
 holder link), `settings`, `read-tools` and `confirm`. It sends `push` only when its push config loads and validates
 (3.9, Push), and `speech` only when the speech helper is found and the host setting leaves the
@@ -810,7 +811,7 @@ names the stage, and an event is defined but never sent.
 | `pane.close` | Release a pane; a running program gets a hang-up first | Yes (this stage) |
 | `session.rename` | Give a session a new name; a taken name is `conflict`, one outside the name charset `invalid` | Yes (task-98qp7he5) |
 | `session.close` | Remove a session record; a live pane keeps running, unfiled (2.2) | Yes (task-98qp7he5) |
-| `session.resume` | Start an exited session's harness again in a new pane, with its resume id | Part 4 stage 4 |
+| `session.resume` | Start an exited session's harness again in a new pane, with its resume id | Capcom sessions (task-aqw4iowl, `capcom.md` 7.6); the rest Part 4 stage 4 |
 | `session.interrupt` | Stop the current turn through the adapter (the chat view's Stop) | Part 4 stage 4 |
 | `session.send` | Send a message through the adapter, under the input rules | Yes, Claude Code (Part 4 stage 4) |
 | `approval.answer` | Answer a pending request by id; a closed or expired id is refused with `conflict` | Yes, Claude Code permissions (Part 4 stage 4) |
@@ -836,6 +837,7 @@ names the stage, and an event is defined but never sent.
 | `speech.prepare` | Load the speech engine and start the model download if needed; returns the engine state at once (capability `speech`; `voice.md`, API addition) | Yes (task-h011ghy9) |
 | `speech.transcribe` | Turn one recorded clip into text, one decode at a time in arrival order (capability `speech`; `voice.md`, API addition) | Yes (task-h011ghy9) |
 | `settings.get`, `settings.set` | Read hab-side settings, and write them all or nothing with a revision check; event `settings.updated` (capability `settings`; `app.md` 20.5) | Yes (task-yfmrj6yc) |
+| `capcom.open`, `capcom.assign` | Return or start the standing Capcom session; make a host the Capcom home host (capability `capcom`; `capcom.md` 7, 8.3) | Yes (task-aqw4iowl) |
 
 | Event | Purpose | Id | Sent from |
 |---|---|---|---|
@@ -916,7 +918,11 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   reaches the agent as its first message when the agent can take one, in a start envelope that
   names `seed_from` as the writer, on the owner's behalf (`capcom.md` 6.4). A seed that cannot
   be queued after the spawn is logged, not answered, so a retry never starts a second session.
-- **`session.resume`** takes `{session}` and returns the same ids as `session.create`.
+- **`session.resume`** takes `{session}` and returns the same ids as `session.create`. The
+  session keeps its id and gets a new pane; it must be exited (else `conflict`). Built for
+  Capcom sessions (task-aqw4iowl); any other session answers `unavailable` until Part 4 stage 4.
+  A session record carries the optional `kind` (`capcom`, an open word set) and `dir` (a Capcom
+  session's folder).
 - **`pane.close`** takes `{pane}` (the `PaneRef` of the size methods) and returns the seq only.
 - **`session.send`** returns the seq only, once the writes reached the program. Whether the
   message may go follows from the pane's agent state, which the client already holds: a busy

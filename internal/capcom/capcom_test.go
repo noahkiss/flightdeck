@@ -43,6 +43,10 @@ func TestLoadConfig(t *testing.T) {
 			}
 		})
 	}
+	c, problems, err := LoadConfig(filepath.Join("..", "..", "docs", "examples", "hab.toml"))
+	if err != nil || len(problems) != 0 || c.Harness != Claude {
+		t.Fatalf("the example config: %+v, %q, %v", c, problems, err)
+	}
 }
 
 func TestBeats(t *testing.T) {

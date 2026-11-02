@@ -567,6 +567,9 @@ merged view.
   active, "<label> is offline"). One per outage. Every time in this check is wall time with the
   monotonic reading stripped: Linux and macOS stop the monotonic clock during sleep, so a gap
   measured with it never shows a sleep, and a laptop would alert the moment it woke.
+- **Capcom.** A hab with the `capcom` capability adds a `capcom` section: the highest Capcom
+  assignment it has seen, the home host's device id at that assignment, and its own Capcom
+  sessions. A copy with a higher assignment replaces the hab's own view (`capcom.md` 7.6).
 - **`catalog.updated`.** Ephemeral, host scope only, id the device id. Sent when the own
   catalog or a copy changes, and when a copy is dropped (generation 0).
 

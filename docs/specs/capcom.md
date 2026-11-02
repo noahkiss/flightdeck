@@ -700,6 +700,36 @@ A harness may ask to trust a new folder on its first start in it *(gk)*. The pan
 blocked, and the user answers once in the terminal view. Flightdeck does not write the
 harness's global trust file to skip it; that is Part 8's question for user-level files.
 
+### 7.6 Built choices (task-aqw4iowl)
+
+Package `internal/capcom` (pure) and `cmd/gff-hab/capcom.go`. Capability `capcom`, sent by a hab
+with the holder link. Methods `capcom.open {new}` and `capcom.assign {host}`; `session.resume`
+works for Capcom sessions. CLI: `gff-hab capcom assign <peer label|self>` and
+`gff-hab capcom open [-new]`.
+
+| Choice | Detail | Reason |
+|---|---|---|
+| Folders | `<state>/capcom/<UTC time>-<6 hex>`, one per Capcom session, mode 0700 | Readable in a plain terminal; never reused |
+| Files per harness | Claude Code: `CLAUDE.md`, `.mcp.json`, `.claude/settings.local.json` (`enabledMcpjsonServers` and an allow rule for the server's tools). Codex: `AGENTS.md`, `.codex/config.toml`. opencode: `AGENTS.md`, `opencode.json` | Each harness's own project-level files. The local Claude settings file needs no project approval of `.mcp.json` |
+| MCP entry | Server `flightdeck`, command gff-hab's own path with links resolved, argument `mcp` | Stage 2 builds `gff-hab mcp`; a resolved path survives a moved link |
+| Rewrite | Manual and settings are written at every start and resume, through a temporary file and a rename; a link in their place is replaced, never written through. Other files stay | 9: a hand edit is undone; attachments are the user's |
+| Read-scope seam | `capcom.ReadScope{Deny}` goes to the writer. Claude Code gets `Read(...)` deny rules from it; Codex and opencode get none yet. gff-hab passes an empty scope until the read-scope stage | 5.3: a cheap guard on top of the read tools |
+| Harness | `[capcom] harness` in the hab's config file: `claude` (default), `codex` or `opencode`. Read at each new start; an unknown word is logged and the default runs. A resume keeps the harness the session started with | One key, so the default can change after the `/consensus` |
+| Start and resume | Claude Code starts with `--session-id <uuid>` and resumes with `--resume <uuid>`, so the resume id is known at once. Codex and opencode start plain; their resume id is taken from the pane's agent state (the native session id) and saved, and with none they resume the folder's latest (`codex resume --last`, `opencode --continue`). Codex and opencode go through `session.create`'s harness start (`--no-daemon`, the opencode wrapper) | No file in the user's harness folders is read or written to find the id |
+| Session record | `kind: capcom` and `dir` (the folder) on the session; name `capcom`, then `capcom-2` and on | Clients label it, and show the folder in its details for a plain-terminal resume |
+| Standing conversation | `capcom.open` returns the standing session when it runs, resumes it when it exited, and starts one when there is none or its record was closed. `new` starts a fresh one, which becomes the standing conversation | The last conversation the user chose is the one clients open by default |
+| Resume | The session keeps its id and gets a new pane; an exited pane the holder still keeps is released first. A gff-hab stopped between the record and the spawn keeps the record, exited | A resumed session existed before; dropping it would lose the conversation's entry |
+| Assignment | Every hab publishes its belief in its own catalog's `capcom` section: the highest assignment counter it has seen, and the home host's device id at that counter. A copy with a higher counter (a tie: the lower device id) replaces the belief. The mark is the home host's own catalog naming itself | Catalogs travel one hop (mesh 5.2); republishing the belief lets a change reach a host that links only to a third hab, with no second-hand copies |
+| Assign a peer | The hab that gets `capcom.assign {host: <label>}` forwards `capcom.assign {host: self, assignment: <floor>}` over its own link to that peer. The floor is one above every counter it has seen; the peer takes the higher of the floor and its own. An offline peer is refused with `unavailable` | The chosen hab sets its own mark; a host that cannot be reached cannot take it |
+| Losing the mark | A home host that adopts a later assignment clears its standing pointer. Its sessions stay, listed and resumable. A host that becomes home starts a fresh standing conversation at the next open; one re-assigned while it is home already keeps it | 7.3: re-assigning moves no conversation |
+| Not the home host | `capcom.open` answers `unavailable`, naming the home host by its label, or says to assign one when none is | The client opens Capcom on the hab the catalog names |
+| Catalog | The `capcom` section lists the belief and this host's Capcom sessions (id, name, harness, standing) whose records still exist | Clients find the home host and every Capcom session with its host (7.3) |
+
+Not built in this stage: the app's Capcom row, picker and label, and `gff`'s label (the hab
+side is done); `capcom.open`'s `context` (8.1, the entry API stage); hook entries in the
+folder's settings (Capcom gets the user's own hook install, as any session); `session.resume`
+for sessions that are not Capcom's (Part 4).
+
 ---
 
 ## 8. Attached context and the entry API
@@ -740,8 +770,8 @@ until its stage.
 
 | Call or event | Purpose |
 |---|---|
-| `capcom.open {new?, context?}` | Return the standing Capcom session, starting it if needed; `new` starts a fresh one. Optional context to attach |
-| `capcom.assign {host}` | Make `host` the home host (7.3); the CLI's `capcom assign` |
+| `capcom.open {new?, context?}` | Return the standing Capcom session, starting it if needed; `new` starts a fresh one. Optional context to attach. Built without `context` (7.6) |
+| `capcom.assign {host}` | Make `host` the home host (7.3); the CLI's `capcom assign`. Built (7.6) |
 | `capcom.attach {session, kind, ref}` | Attach context (8.1) to the next message |
 | `session.send` | Send the user's message, as for any session |
 | `confirm.answer {id, choice, edits?}` | Answer a confirmation: `confirm` or `cancel`, with the user's edits. Built (6.4) |

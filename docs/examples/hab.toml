@@ -56,6 +56,12 @@ helper = "/usr/local/bin/gff-hab-speech"
 # Decode threads. Leave it out for the CPU count, at most 4.
 threads = 4
 
+# The [capcom] section: the Capcom session host (docs/specs/capcom.md 7.6).
+[capcom]
+# The harness a new Capcom conversation runs: "claude" (the default), "codex" or "opencode".
+# A conversation keeps its harness when it resumes.
+harness = "claude"
+
 # The [settings] table: hab-side settings this host locks (docs/specs/app.md 20.5). A setting
 # named here is set by this file: the hab enforces the value and refuses writes from the app,
 # which shows the row read-only. Leave a setting out to let the app set it. Keys are quoted.
