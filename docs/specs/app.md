@@ -426,7 +426,8 @@ Built choices (task-mthck7r4):
 - **Upload.** `attachment.put`, then `attachment.write` runs in order, as `content.read`
   serves bytes; the last run checks the SHA-256 (`hab-logic-api.md`, `attachment.*`). A run is
   at most 256 KiB, even when the hab allows 1 MiB, so each reply keeps liveness fed (10.5,
-  Liveness). One control message is at most 16 MiB, so a 25 MB file cannot go in one.
+  Large writes on a slow uplink). Downloads (`attachment.get`) ask for at most 256 KiB per run
+  too, so each stays inside the 30 s call timeout on a slow downlink. One control message is at most 16 MiB, so a 25 MB file cannot go in one.
   The hab needs the `attachments` capability; an older hab gets "this hab cannot take files;
   update gff-hab" before any upload. The app uploads when the message goes out, so a queued
   message ("sends after this turn") uploads when the turn ends. A retry uploads only the
@@ -880,10 +881,14 @@ The terminal view and its data-stream client. Code in `apple/FlightdeckKit/Sourc
   `pane.take`. Pinch zoom with horizontal pan is not built yet.
 - **Input.** What libghostty writes goes to `pane.input` through one pump: one call in flight,
   keys typed meanwhile sent together in the next call, in order, at most 64 KiB per call.
-  The cap keeps a large paste alive over a slow uplink (10.5, Liveness). When a call fails, the
-  pump drops all input queued behind it and reports once. Sending the rest after a reconnect
-  would leave a gap in the middle of the input. The terminal then shows "Some input was not
-  sent: the connection dropped." until dismissed.
+  The cap keeps a large paste alive over a slow uplink (10.5, Large writes on a slow uplink).
+  Calls stay one at a time: two in flight could reach the hab in either order. When a call
+  fails, the input stops at the failed call; nothing after it is sent, and the pump reports
+  once. The failed call itself may or may not have landed. One exception: when the dropped
+  bytes held the end of a bracketed paste (`ESC[201~`), that marker is sent next, so the
+  program does not stay in paste mode. A stray end marker is harmless. The terminal then shows
+  "Some input was not sent." until dismissed. It adds "The connection dropped." when the
+  connection ended or the call timed out, not when the hab refused the call.
   libghostty's replies to queries the hab leaves in the stream are dropped: OSC 52, colour and DCS
   replies, device attributes, mode, keyboard flag, device status and size reports. A cursor
   position report looks like a modified F3, so it passes only from the owner.
@@ -1649,7 +1654,14 @@ The first app stage: the connection to every hab and the status board. Code in
   reply, so the link is still declared dead after 45 s. We did not count write progress as
   liveness: the call timeout starts before the write, and the hab sets its own 45 s read
   deadline once per line (`internal/control/conn.go`). Both would still end a long message.
-  The cost is one round trip per 64 KiB of a paste.
+  The cost is one round trip per 64 KiB of a paste. The chat view's typed fallback (4.6)
+  sends its paste in the same 64 KiB calls, one after another. `attachment.get` asks for at
+  most 256 KiB per run, so a slow downlink stays inside the call timeout.
+  Two messages stay large, because splitting them needs an API change. `session.send` carries
+  the whole composer text: 1 MiB of text needs about 35 KB/s to fit the 30 s call timeout.
+  `speech.transcribe` with pcm16 carries up to 1 MiB of audio (1.4 MB of base64): it needs
+  about 31 KB/s to arrive before the 45 s liveness window and the hab's read deadline end it.
+  An Opus clip is far smaller.
 - **Reconnect.** The first retry after a connection that stayed online for 10 s goes at once. A
   shorter one counts as a failure, so a hab that drops every connection after the snapshot is
   not hammered. Later retries wait 0.5 s doubling to 30 s, then a random point in the upper half
