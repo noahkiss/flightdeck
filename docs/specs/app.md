@@ -3364,24 +3364,33 @@ the badge), `Demo/FakeRounds.swift` (the fake hab). Tests: `RoundTests`,
   next action clears it. The app checks nothing the hab checks.
 - **Run now.** `round.run`. When the run's session exists on the board, it opens. Design
   call: the owner asked for a run now, so they want to watch it; a run skipped before it had a
-  session opens nothing.
+  session opens nothing. The wait lapses after 2 minutes, or when the owner opens a session
+  meanwhile: a run queued under the host's limit does not jump into view mid-task later.
 - **Delete asks first,** in a confirmation dialog: "A run in progress goes on to its end." No
-  other action asks (`rounds.md` 12).
+  other action asks (`rounds.md` 12). The yes takes the held round before the dialog closes.
 - **New round and Edit.** One form: the hab (new only), name (fixed on edit), mode; when (every
   with the preset menu, cron with a time zone field, once at a date, by hand) and Run now (new
   only); what (project and Agent or Command for fresh, the target session for resume and fork;
   agent, model, prompt); limits (timeout, run limit, notify, catch-up, what happens after a
   good run). The form refuses only a missing name, project, prompt, command, target or cron
   expression; the hab checks the rest. Fields the form does not show (`cwd`, `expires_at`,
-  `harness_args`, `wait`) stay as they were on edit. An edit sends the revision it was opened
-  at, so an edit made elsewhere meanwhile is refused with the hab's "read it again".
+  `harness_args`, `wait`) stay as they were on edit, and so does a timeout the stepper did not
+  move (the stepper counts whole minutes; the CLI can set seconds). A once trigger sends its
+  zone, as every and cron do. On a new round, a change of hab maps the project to that hab's
+  same project (or none) and clears the target session. An edit sends the revision it was
+  opened at, so an edit made elsewhere meanwhile is refused with the hab's "read it again".
 - **Always on** (`rounds.md` 9). On a new fresh round, when the chosen hab is not marked always
   on and another online hab is, with the project (same remote, or same name when neither has a
   remote), one line offers "Run it on <hab>? It is always on." The tap switches the form's hab
   and its project. The mark comes from the catalogs the Capcom center reads (4.10).
 - **Push.** The app registers kind `round`; the round's own `notify` decides what is sent. A
-  banner's Open (or a tap) that names a session and no request opens that session once its hab
-  shows it. This also opens `done` banners. `PushMeta` reads `round` and `run`.
+  hab built before the kind refuses the whole `push.register` as `invalid`; the app then
+  registers there again without `round`, so that hab's other pushes still come. A banner's
+  Open (or a tap) that names a session and no request opens that session once its hab shows
+  it. This also opens `done` banners. A `permission` or `question` banner with no request id
+  opens only the approval sheet's path, as before rounds. A tap whose hab is online without
+  the session is dropped, as the approval sheet drops a request its hab no longer has.
+  `PushMeta` reads `round` and `run`.
 
 ### 21.4 Live run panes
 
@@ -3393,7 +3402,11 @@ reports, mouse motion and wheel reports while the client owns the pane.
   is not known to have ended, `TerminalReplyFilter` drops focus reports, mouse motion and the
   wheel even for the owner. Clicks, keys and the owner's Shift+F3 pass: those are meant as
   input, and a take over by them is right. A run the app has not seen (an older run, a round
-  gone) counts as live until its session exits.
+  gone) is decided by what the snapshot holds. The hab runs one run per round at a time, so
+  when the round's last run is another run, this run has ended. When the round is gone, the
+  run counts as ended: a round deleted mid-run whose run still goes when the app reconnects
+  loses the filter, which beats keeping it on in that pane for good. With no last run yet,
+  the run counts as live until its session exits.
 - **Reason.** The hab cannot tell a focus report from typed bytes in `pane.input` without
   parsing the stream, and other clients (`gff`) send their own. The app knows what its
   terminal generated.
