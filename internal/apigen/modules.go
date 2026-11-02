@@ -576,7 +576,8 @@ func BlocksSwift() []byte {
 func swiftBlockName(t string) string { return camel(t, true) + "Block" }
 
 func swiftWordsName(blockType, field string) string {
-	return camel(blockType, true) + camel(field, true)
+	// Prefixed: SwiftUI has its own ButtonRole, and the app imports both.
+	return "Block" + camel(blockType, true) + camel(field, true)
 }
 
 func swiftFieldType(blockType string, f modules.Field) string {

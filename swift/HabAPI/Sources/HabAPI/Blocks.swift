@@ -173,35 +173,35 @@ public struct BlockTint: RawRepresentable, Codable, Sendable, Hashable {
 }
 
 /// An open word set: values outside the known list decode and round-trip unchanged.
-public struct StackAxis: RawRepresentable, Codable, Sendable, Hashable {
+public struct BlockStackAxis: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
-    public static let vertical = StackAxis(rawValue: "vertical")
-    public static let horizontal = StackAxis(rawValue: "horizontal")
+    public static let vertical = BlockStackAxis(rawValue: "vertical")
+    public static let horizontal = BlockStackAxis(rawValue: "horizontal")
 }
 
 /// An open word set: values outside the known list decode and round-trip unchanged.
-public struct TextStyle: RawRepresentable, Codable, Sendable, Hashable {
+public struct BlockTextStyle: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
-    public static let body = TextStyle(rawValue: "body")
-    public static let caption = TextStyle(rawValue: "caption")
-    public static let mono = TextStyle(rawValue: "mono")
-    public static let title = TextStyle(rawValue: "title")
+    public static let body = BlockTextStyle(rawValue: "body")
+    public static let caption = BlockTextStyle(rawValue: "caption")
+    public static let mono = BlockTextStyle(rawValue: "mono")
+    public static let title = BlockTextStyle(rawValue: "title")
 }
 
 /// An open word set: values outside the known list decode and round-trip unchanged.
-public struct ButtonRole: RawRepresentable, Codable, Sendable, Hashable {
+public struct BlockButtonRole: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
-    public static let normal = ButtonRole(rawValue: "normal")
-    public static let destructive = ButtonRole(rawValue: "destructive")
+    public static let normal = BlockButtonRole(rawValue: "normal")
+    public static let destructive = BlockButtonRole(rawValue: "destructive")
 }
 
 /// Children in a column or a row.
 public struct StackBlock: Codable, Sendable, Hashable {
     /// vertical (the default) or horizontal.
-    public var axis: StackAxis?
+    public var axis: BlockStackAxis?
     public var children: [Block]
     /// Space between children in steps: 4 points each in the app; a blank line or column per step in the terminal.
     public var gap: Int?
@@ -212,7 +212,7 @@ public struct StackBlock: Codable, Sendable, Hashable {
         case gap = "gap"
     }
 
-    public init(axis: StackAxis? = nil, children: [Block], gap: Int? = nil) {
+    public init(axis: BlockStackAxis? = nil, children: [Block], gap: Int? = nil) {
         self.axis = axis
         self.children = children
         self.gap = gap
@@ -272,14 +272,14 @@ public struct RowBlock: Codable, Sendable, Hashable {
 /// A run of text.
 public struct TextBlock: Codable, Sendable, Hashable {
     public var text: String
-    public var style: TextStyle?
+    public var style: BlockTextStyle?
 
     enum CodingKeys: String, CodingKey {
         case text = "text"
         case style = "style"
     }
 
-    public init(text: String, style: TextStyle? = nil) {
+    public init(text: String, style: BlockTextStyle? = nil) {
         self.text = text
         self.style = style
     }
@@ -364,7 +364,7 @@ public struct ButtonBlock: Codable, Sendable, Hashable {
     public var title: String
     public var symbol: String?
     public var action: BlockAction
-    public var role: ButtonRole?
+    public var role: BlockButtonRole?
     /// A question the client asks before it sends the action.
     public var confirm: String?
 
@@ -376,7 +376,7 @@ public struct ButtonBlock: Codable, Sendable, Hashable {
         case confirm = "confirm"
     }
 
-    public init(title: String, symbol: String? = nil, action: BlockAction, role: ButtonRole? = nil, confirm: String? = nil) {
+    public init(title: String, symbol: String? = nil, action: BlockAction, role: BlockButtonRole? = nil, confirm: String? = nil) {
         self.title = title
         self.symbol = symbol
         self.action = action
