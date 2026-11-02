@@ -170,8 +170,8 @@ final class TerminalModelTests: XCTestCase {
         m.containerChanged(CGSize(width: 640, height: 480))
         let want = m.sizing.desired
         TerminalModelTests.type(m, "b")
-        await eventually("owner again", timeout: 3) { m.sizing.isOwner }
-        await eventually("resized to this view", timeout: 3) { m.sizing.cols == want.cols && m.sizing.rows == want.rows }
+        await eventually("owner again") { m.sizing.isOwner }
+        await eventually("resized to this view") { m.sizing.cols == want.cols && m.sizing.rows == want.rows }
         m.stop()
     }
 
