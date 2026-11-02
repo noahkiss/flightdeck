@@ -135,8 +135,15 @@ var Methods = []Method{
 	{"transcript.read", "Read a page of a past or current session's messages, like chat.page (capcom.md 4). Needs the read-tools capability.", TranscriptReadParams{}, TranscriptPage{}},
 	{"notice.get", "Read a notice this hab raised, by id, with the session it is about (capcom.md 4). Needs the read-tools capability.", NoticeGetParams{}, NoticeRecord{}},
 	{"file.read", "Read a run of a text file inside the host's read scope (capcom.md 5). Needs the read-tools capability.", FileReadParams{}, FileData{}},
-	{"logbook.find", "Search or list Logbook records (logbook.md 10.3). Needs the logbook capability.", LogbookFindParams{}, LogbookRecords{}},
-	{"logbook.get", "Read one Logbook record (logbook.md 10.3). Needs the logbook capability.", LogbookGetParams{}, LogbookRecordResult{}},
+	{"logbook.find", "Search Logbook records by words, best match first; with no words, list them as logbook.list (logbook.md 10.3). Deleted records are left out unless asked for. Needs the logbook capability.", LogbookFindParams{}, LogbookRecords{}},
+	{"logbook.get", "Read one Logbook record with its links both ways, notes and flags (logbook.md 10.3). Needs the logbook capability.", LogbookGetParams{}, LogbookRecordResult{}},
+	{"logbook.list", "List Logbook records, newest change first, with filters: type, status, project, tag, host, author, session, since (logbook.md 10.3). Needs the logbook capability.", LogbookListParams{}, LogbookRecords{}},
+	{"logbook.ready", "Open tasks and issues with no open blocker, newest change first (logbook.md 10.2). Needs the logbook capability.", LogbookReadyParams{}, LogbookRecords{}},
+	{"logbook.history", "Every op on one record, losers and ops this build does not fold included, in stamp order (logbook.md 10.2). Needs the logbook capability.", LogbookHistoryParams{}, LogbookHistory{}},
+	{"logbook.write", "Apply one batch of changes, all or nothing, or with propose store it as a pending proposal (logbook.md 10.3, 9.2). On the pane route the hab records the pane's harness, session and host, and refuses a pane's writes past 60 a minute with invalid. Needs the logbook capability.", LogbookWriteParams{}, LogbookWritten{}},
+	{"logbook.resolve", "Settle a conflict flag: set the field to the given value, or to the value of a named op, as a write that saw every side (logbook.md 5.2). Needs the logbook capability.", LogbookResolveParams{}, LogbookWritten{}},
+	{"logbook.projects", "The Logbook projects with their identities (logbook.md 3). Needs the logbook capability.", LogbookProjectsParams{}, LogbookProjects{}},
+	{"logbook.status", "This replica's size and health: op and record counts, the version vector, waiting and unfolded ops, origins ahead or shared (logbook.md 10.2). Needs the logbook capability.", LogbookStatusParams{}, LogbookStatus{}},
 	{"confirm.request", "Ask for a start or set-up: with confirm.start_elsewhere on, open a confirmation for the user and wait up to wait_ms for the answer; off, run it at once and return the record (capcom.md 6.1). Needs the confirm capability.", ConfirmRequestParams{}, ConfirmRequested{}},
 	{"confirm.answer", "Answer an open confirmation: confirm, with the user's edits, or cancel. The first answer wins; a later one answers conflict. A confirm returns once the hab ran the action (capcom.md 6.1). Needs the confirm capability.", ConfirmAnswerParams{}, ConfirmationResult{}},
 	{"confirm.list", "The open confirmations, and with all the closed ones the hab keeps (capcom.md 6.1). Needs the confirm capability.", ConfirmListParams{}, ConfirmList{}},
@@ -186,6 +193,8 @@ var Events = []EventDef{
 	{"confirm.closed", "A confirmation closed: done, failed, cancelled, expired or unknown; every card withdraws its buttons; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral.", Confirmation{}},
 	{"round.updated", "A round was created, changed, paused, completed or deleted (data.deleted); the id is the round id (rounds.md 13). Host scope only. Not ephemeral: the rounds are in the host snapshot.", Round{}},
 	{"round.run_updated", "A run of a round changed state; the id is the run id (rounds.md 13). Host scope only. Ephemeral.", RoundRun{}},
+	{"logbook.updated", "A Logbook record changed, by any writer of the file: the API, the pane route, or the CLI while it wrote the file itself; the id is the record id and the revision its count of folded ops (logbook.md 10.3). Host scope only. Not in the snapshot: a client reads the records it shows.", LogbookUpdated{}},
+	{"logbook.conflict", "A Logbook record gained or lost a flag; the id is the record id (logbook.md 10.3). Host scope only.", LogbookConflict{}},
 	{"mesh.changed", "Sent only to a peer link that dialed this hab, subscribed or not: something waits for the dialer, so it pulls now; the id is this hab's device id (mesh.md 4.2, 6.5). Ephemeral.", MeshChanged{}},
 }
 
@@ -270,6 +279,9 @@ var Enums = map[string][]string{
 	"RoundNoticeKind":  {"run_failed", "run_succeeded", "paused", "skips", "target_gone", "state_set_aside"},
 	// Sets added for the Capcom entry API (capcom.md 8.1).
 	"CapcomContextKind": {"notification", "session", "file", "command", "logbook"},
+	// Sets added for Logbook (logbook.md 10.3).
+	"LogbookChangeOp":   {"create", "set", "add", "remove", "note", "forget"},
+	"LogbookWriteState": {"applied", "proposed"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per

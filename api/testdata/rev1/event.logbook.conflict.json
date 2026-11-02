@@ -1,0 +1,23 @@
+{
+  "data": {
+    "flags": [
+      "flags-5"
+    ],
+    "id": "id-3",
+    "revision": 4,
+    "x_unknown_field": "later"
+  },
+  "id": "id-8",
+  "revision": 6,
+  "seq": 7,
+  "type": "logbook.conflict",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

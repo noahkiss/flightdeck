@@ -1,0 +1,30 @@
+{
+  "ahead": [
+    "ahead-9"
+  ],
+  "ops": 5,
+  "origin": "origin-4",
+  "records": 6,
+  "seq": 3,
+  "shared": [
+    "shared-10"
+  ],
+  "unfolded": 7,
+  "vector": [
+    {
+      "origin": "origin-11",
+      "seq": 12,
+      "x_unknown_field": "later"
+    }
+  ],
+  "waiting": 8,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

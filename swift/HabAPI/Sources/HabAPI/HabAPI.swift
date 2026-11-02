@@ -3093,24 +3093,171 @@ public struct LinkedPeer: Codable, Sendable, Hashable {
     }
 }
 
+public struct LogbookActor: Codable, Sendable, Hashable {
+    public var device: String?
+    public var harness: String?
+    public var host: String?
+    /// agent or person.
+    public var kind: String?
+    public var pane: String?
+    public var session: String?
+
+    enum CodingKeys: String, CodingKey {
+        case device = "device"
+        case harness = "harness"
+        case host = "host"
+        case kind = "kind"
+        case pane = "pane"
+        case session = "session"
+    }
+
+    public init(device: String? = nil, harness: String? = nil, host: String? = nil, kind: String? = nil, pane: String? = nil, session: String? = nil) {
+        self.device = device
+        self.harness = harness
+        self.host = host
+        self.kind = kind
+        self.pane = pane
+        self.session = session
+    }
+}
+
+public struct LogbookChange: Codable, Sendable, Hashable {
+    public var assignee: String?
+    public var body: String?
+    public var component: String?
+    /// set: the field.
+    public var field: String?
+    /// The record. On create, an id to claim; absent mints one.
+    public var id: String?
+    /// add, remove: a link.
+    public var link: LogbookLink?
+    /// create: links to add.
+    public var links: [LogbookLink]?
+    public var op: LogbookChangeOp
+    /// forget: the op whose value is redacted everywhere (logbook.md 5.7).
+    public var opId: String?
+    public var pinned: Bool?
+    public var priority: Int?
+    public var project: String?
+    public var status: String?
+    /// add, remove: a tag.
+    public var tag: String?
+    /// create: tags to add.
+    public var tags: [String]?
+    /// note: the note.
+    public var text: String?
+    public var title: String?
+    public var triage: String?
+    /// create: the record type.
+    public var type: String?
+    /// set: the new value.
+    public var value: JSONValue?
+
+    enum CodingKeys: String, CodingKey {
+        case assignee = "assignee"
+        case body = "body"
+        case component = "component"
+        case field = "field"
+        case id = "id"
+        case link = "link"
+        case links = "links"
+        case op = "op"
+        case opId = "op_id"
+        case pinned = "pinned"
+        case priority = "priority"
+        case project = "project"
+        case status = "status"
+        case tag = "tag"
+        case tags = "tags"
+        case text = "text"
+        case title = "title"
+        case triage = "triage"
+        case type = "type"
+        case value = "value"
+    }
+
+    public init(assignee: String? = nil, body: String? = nil, component: String? = nil, field: String? = nil, id: String? = nil, link: LogbookLink? = nil, links: [LogbookLink]? = nil, op: LogbookChangeOp, opId: String? = nil, pinned: Bool? = nil, priority: Int? = nil, project: String? = nil, status: String? = nil, tag: String? = nil, tags: [String]? = nil, text: String? = nil, title: String? = nil, triage: String? = nil, type: String? = nil, value: JSONValue? = nil) {
+        self.assignee = assignee
+        self.body = body
+        self.component = component
+        self.field = field
+        self.id = id
+        self.link = link
+        self.links = links
+        self.op = op
+        self.opId = opId
+        self.pinned = pinned
+        self.priority = priority
+        self.project = project
+        self.status = status
+        self.tag = tag
+        self.tags = tags
+        self.text = text
+        self.title = title
+        self.triage = triage
+        self.type = type
+        self.value = value
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct LogbookChangeOp: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let create = LogbookChangeOp(rawValue: "create")
+    public static let set = LogbookChangeOp(rawValue: "set")
+    public static let add = LogbookChangeOp(rawValue: "add")
+    public static let remove = LogbookChangeOp(rawValue: "remove")
+    public static let note = LogbookChangeOp(rawValue: "note")
+    public static let forget = LogbookChangeOp(rawValue: "forget")
+}
+
+public struct LogbookConflict: Codable, Sendable, Hashable {
+    /// The flag kinds the record now has; empty when it has none.
+    public var flags: [String]
+    public var id: String
+    public var revision: Int
+
+    enum CodingKeys: String, CodingKey {
+        case flags = "flags"
+        case id = "id"
+        case revision = "revision"
+    }
+
+    public init(flags: [String], id: String, revision: Int) {
+        self.flags = flags
+        self.id = id
+        self.revision = revision
+    }
+}
+
 public struct LogbookFindParams: Codable, Sendable, Hashable {
     public var author: String?
+    /// As in logbook.list.
+    public var deleted: Bool?
+    /// As in logbook.list.
+    public var general: Bool?
     public var host: String?
     public var limit: Int?
     public var project: String?
+    /// As in logbook.list.
+    public var session: String?
     /// RFC 3339 time.
     public var since: String?
     public var status: String?
     public var tag: String?
     public var type: String?
-    /// Words to search for. Absent: list records.
+    /// Words to search for in title, body, notes and tags; every word must match. Absent: list records, as logbook.list.
     public var words: String?
 
     enum CodingKeys: String, CodingKey {
         case author = "author"
+        case deleted = "deleted"
+        case general = "general"
         case host = "host"
         case limit = "limit"
         case project = "project"
+        case session = "session"
         case since = "since"
         case status = "status"
         case tag = "tag"
@@ -3118,16 +3265,61 @@ public struct LogbookFindParams: Codable, Sendable, Hashable {
         case words = "words"
     }
 
-    public init(author: String? = nil, host: String? = nil, limit: Int? = nil, project: String? = nil, since: String? = nil, status: String? = nil, tag: String? = nil, type: String? = nil, words: String? = nil) {
+    public init(author: String? = nil, deleted: Bool? = nil, general: Bool? = nil, host: String? = nil, limit: Int? = nil, project: String? = nil, session: String? = nil, since: String? = nil, status: String? = nil, tag: String? = nil, type: String? = nil, words: String? = nil) {
         self.author = author
+        self.deleted = deleted
+        self.general = general
         self.host = host
         self.limit = limit
         self.project = project
+        self.session = session
         self.since = since
         self.status = status
         self.tag = tag
         self.type = type
         self.words = words
+    }
+}
+
+public struct LogbookFlag: Codable, Sendable, Hashable {
+    public var field: String?
+    public var kind: String
+    public var values: [LogbookFlagValue]?
+
+    enum CodingKeys: String, CodingKey {
+        case field = "field"
+        case kind = "kind"
+        case values = "values"
+    }
+
+    public init(field: String? = nil, kind: String, values: [LogbookFlagValue]? = nil) {
+        self.field = field
+        self.kind = kind
+        self.values = values
+    }
+}
+
+public struct LogbookFlagValue: Codable, Sendable, Hashable {
+    public var at: String
+    public var by: LogbookActor?
+    public var op: String
+    public var origin: String
+    public var value: JSONValue?
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case by = "by"
+        case op = "op"
+        case origin = "origin"
+        case value = "value"
+    }
+
+    public init(at: String, by: LogbookActor? = nil, op: String, origin: String, value: JSONValue? = nil) {
+        self.at = at
+        self.by = by
+        self.op = op
+        self.origin = origin
+        self.value = value
     }
 }
 
@@ -3140,6 +3332,237 @@ public struct LogbookGetParams: Codable, Sendable, Hashable {
 
     public init(id: String) {
         self.id = id
+    }
+}
+
+public struct LogbookHistory: Codable, Sendable, Hashable {
+    public var ops: [LogbookOp]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case ops = "ops"
+        case seq = "seq"
+    }
+
+    public init(ops: [LogbookOp], seq: UInt64) {
+        self.ops = ops
+        self.seq = seq
+    }
+}
+
+public struct LogbookHistoryParams: Codable, Sendable, Hashable {
+    public var id: String
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+    }
+
+    public init(id: String) {
+        self.id = id
+    }
+}
+
+public struct LogbookLink: Codable, Sendable, Hashable {
+    /// In a read: the target is on this replica. False shows as not here yet.
+    public var here: Bool?
+    /// supersedes, stage, part_of, blocks, relates, from or duplicates.
+    public var kind: String
+    /// A stage link's position.
+    public var pos: Int?
+    /// A record id.
+    public var to: String
+
+    enum CodingKeys: String, CodingKey {
+        case here = "here"
+        case kind = "kind"
+        case pos = "pos"
+        case to = "to"
+    }
+
+    public init(here: Bool? = nil, kind: String, pos: Int? = nil, to: String) {
+        self.here = here
+        self.kind = kind
+        self.pos = pos
+        self.to = to
+    }
+}
+
+public struct LogbookListParams: Codable, Sendable, Hashable {
+    /// Records created by this session id, client device id or harness.
+    public var author: String?
+    /// Include deleted records.
+    public var deleted: Bool?
+    /// Only records with a flag: a conflict, decided twice and the like (logbook.md 10.2 conflicts).
+    public var flagged: Bool?
+    /// Only records that belong to no project (logbook.md 3.2).
+    public var general: Bool?
+    /// Records created on this host: the writer's host id, or the creating hab's device id.
+    public var host: String?
+    /// At most this many; default 50, at most 500.
+    public var limit: Int?
+    /// A project id. A project joined into another matches both (logbook.md 5.6).
+    public var project: String?
+    /// Records that came from this session: written by it, or with it as their source. Capcom lists one conversation's proposals with it.
+    public var session: String?
+    /// RFC 3339 time: only records changed at or after it.
+    public var since: String?
+    public var status: String?
+    public var tag: String?
+    /// A record type: finding, task, plan, guide, issue, proposal or project.
+    public var type: String?
+
+    enum CodingKeys: String, CodingKey {
+        case author = "author"
+        case deleted = "deleted"
+        case flagged = "flagged"
+        case general = "general"
+        case host = "host"
+        case limit = "limit"
+        case project = "project"
+        case session = "session"
+        case since = "since"
+        case status = "status"
+        case tag = "tag"
+        case type = "type"
+    }
+
+    public init(author: String? = nil, deleted: Bool? = nil, flagged: Bool? = nil, general: Bool? = nil, host: String? = nil, limit: Int? = nil, project: String? = nil, session: String? = nil, since: String? = nil, status: String? = nil, tag: String? = nil, type: String? = nil) {
+        self.author = author
+        self.deleted = deleted
+        self.flagged = flagged
+        self.general = general
+        self.host = host
+        self.limit = limit
+        self.project = project
+        self.session = session
+        self.since = since
+        self.status = status
+        self.tag = tag
+        self.type = type
+    }
+}
+
+public struct LogbookNote: Codable, Sendable, Hashable {
+    public var at: String
+    public var by: LogbookActor?
+    public var op: String
+    public var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case by = "by"
+        case op = "op"
+        case text = "text"
+    }
+
+    public init(at: String, by: LogbookActor? = nil, op: String, text: String) {
+        self.at = at
+        self.by = by
+        self.op = op
+        self.text = text
+    }
+}
+
+public struct LogbookOp: Codable, Sendable, Hashable {
+    public var at: String
+    public var by: LogbookActor?
+    public var field: String?
+    /// This build folds the op. False: kept and forwarded for a newer build (logbook.md 4.4).
+    public var folded: Bool?
+    /// seq@origin.
+    public var id: String
+    /// create, set, add, remove, append or forget; another word from a newer build.
+    public var kind: String
+    /// A set: the ops whose value the writer saw. A remove: the adds it saw.
+    public var prev: [String]?
+    public var record: String
+    /// A forget: the op it redacts.
+    public var target: String?
+    public var value: JSONValue?
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case by = "by"
+        case field = "field"
+        case folded = "folded"
+        case id = "id"
+        case kind = "kind"
+        case prev = "prev"
+        case record = "record"
+        case target = "target"
+        case value = "value"
+    }
+
+    public init(at: String, by: LogbookActor? = nil, field: String? = nil, folded: Bool? = nil, id: String, kind: String, prev: [String]? = nil, record: String, target: String? = nil, value: JSONValue? = nil) {
+        self.at = at
+        self.by = by
+        self.field = field
+        self.folded = folded
+        self.id = id
+        self.kind = kind
+        self.prev = prev
+        self.record = record
+        self.target = target
+        self.value = value
+    }
+}
+
+public struct LogbookOrigin: Codable, Sendable, Hashable {
+    public var origin: String
+    /// The highest seq held with no gap below it.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case origin = "origin"
+        case seq = "seq"
+    }
+
+    public init(origin: String, seq: UInt64) {
+        self.origin = origin
+        self.seq = seq
+    }
+}
+
+public struct LogbookProject: Codable, Sendable, Hashable {
+    public var id: String
+    public var identities: [String]?
+    public var name: String
+    public var revision: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+        case identities = "identities"
+        case name = "name"
+        case revision = "revision"
+    }
+
+    public init(id: String, identities: [String]? = nil, name: String, revision: Int) {
+        self.id = id
+        self.identities = identities
+        self.name = name
+        self.revision = revision
+    }
+}
+
+public struct LogbookProjects: Codable, Sendable, Hashable {
+    public var projects: [LogbookProject]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case projects = "projects"
+        case seq = "seq"
+    }
+
+    public init(projects: [LogbookProject], seq: UInt64) {
+        self.projects = projects
+        self.seq = seq
+    }
+}
+
+public struct LogbookProjectsParams: Codable, Sendable, Hashable {
+    public init() {
     }
 }
 
@@ -3230,33 +3653,124 @@ public struct LogbookPushResult: Codable, Sendable, Hashable {
     }
 }
 
+public struct LogbookReadyParams: Codable, Sendable, Hashable {
+    public var limit: Int?
+    /// A project id. Absent: every project.
+    public var project: String?
+
+    enum CodingKeys: String, CodingKey {
+        case limit = "limit"
+        case project = "project"
+    }
+
+    public init(limit: Int? = nil, project: String? = nil) {
+        self.limit = limit
+        self.project = project
+    }
+}
+
 public struct LogbookRecord: Codable, Sendable, Hashable {
+    /// A task or issue: a session or a person.
+    public var assignee: String?
+    /// Other records' links to this one; to names the linking record.
+    public var backlinks: [LogbookLink]?
     /// Absent in a search result.
     public var body: String?
+    /// An issue: the tool, file or service that misbehaves.
+    public var component: String?
+    /// RFC 3339 time of the create.
+    public var created: String?
+    public var createdBy: LogbookActor?
+    /// A decided proposal: the deciding device.
+    public var decidedBy: String?
+    public var deleted: Bool?
+    /// A proposal: the full content it would apply, as logbook.write's changes.
+    public var draft: JSONValue?
+    /// What the user should look at: conflict, decided_twice, edited_after_delete, id_collision, superseded_twice.
+    public var flags: [LogbookFlag]?
     public var id: String
+    /// A project: its identities (logbook.md 3.1).
+    public var identities: [String]?
+    /// This record's links.
+    public var links: [LogbookLink]?
+    public var notes: [LogbookNote]?
+    /// A guide: in every brief for its project.
+    public var pinned: Bool?
+    /// A task or issue: 1 to 3.
+    public var priority: Int?
     public var project: String?
+    /// The record's count of folded ops: it never goes down. logbook.updated carries the same number.
+    public var revision: Int?
+    public var source: LogbookSource?
     public var status: String?
+    /// A finding: the findings that supersede it.
+    public var supersededBy: [String]?
+    public var tags: [String]?
+    /// A proposal: record, memory or flight_rules.
+    public var target: String?
     public var title: String
+    /// A task or issue: new until a person looked at it.
+    public var triage: String?
     public var type: String
-    /// RFC 3339 time.
+    /// RFC 3339 time of the last change.
     public var updated: String?
 
     enum CodingKeys: String, CodingKey {
+        case assignee = "assignee"
+        case backlinks = "backlinks"
         case body = "body"
+        case component = "component"
+        case created = "created"
+        case createdBy = "created_by"
+        case decidedBy = "decided_by"
+        case deleted = "deleted"
+        case draft = "draft"
+        case flags = "flags"
         case id = "id"
+        case identities = "identities"
+        case links = "links"
+        case notes = "notes"
+        case pinned = "pinned"
+        case priority = "priority"
         case project = "project"
+        case revision = "revision"
+        case source = "source"
         case status = "status"
+        case supersededBy = "superseded_by"
+        case tags = "tags"
+        case target = "target"
         case title = "title"
+        case triage = "triage"
         case type = "type"
         case updated = "updated"
     }
 
-    public init(body: String? = nil, id: String, project: String? = nil, status: String? = nil, title: String, type: String, updated: String? = nil) {
+    public init(assignee: String? = nil, backlinks: [LogbookLink]? = nil, body: String? = nil, component: String? = nil, created: String? = nil, createdBy: LogbookActor? = nil, decidedBy: String? = nil, deleted: Bool? = nil, draft: JSONValue? = nil, flags: [LogbookFlag]? = nil, id: String, identities: [String]? = nil, links: [LogbookLink]? = nil, notes: [LogbookNote]? = nil, pinned: Bool? = nil, priority: Int? = nil, project: String? = nil, revision: Int? = nil, source: LogbookSource? = nil, status: String? = nil, supersededBy: [String]? = nil, tags: [String]? = nil, target: String? = nil, title: String, triage: String? = nil, type: String, updated: String? = nil) {
+        self.assignee = assignee
+        self.backlinks = backlinks
         self.body = body
+        self.component = component
+        self.created = created
+        self.createdBy = createdBy
+        self.decidedBy = decidedBy
+        self.deleted = deleted
+        self.draft = draft
+        self.flags = flags
         self.id = id
+        self.identities = identities
+        self.links = links
+        self.notes = notes
+        self.pinned = pinned
+        self.priority = priority
         self.project = project
+        self.revision = revision
+        self.source = source
         self.status = status
+        self.supersededBy = supersededBy
+        self.tags = tags
+        self.target = target
         self.title = title
+        self.triage = triage
         self.type = type
         self.updated = updated
     }
@@ -3297,6 +3811,32 @@ public struct LogbookRecords: Codable, Sendable, Hashable {
     }
 }
 
+public struct LogbookResolveParams: Codable, Sendable, Hashable {
+    public var field: String
+    public var id: String
+    public var idempotencyKey: String?
+    /// The op id whose value to keep, from the conflict flag.
+    public var op: String?
+    /// The value to keep. Or name op.
+    public var value: JSONValue?
+
+    enum CodingKeys: String, CodingKey {
+        case field = "field"
+        case id = "id"
+        case idempotencyKey = "idempotency_key"
+        case op = "op"
+        case value = "value"
+    }
+
+    public init(field: String, id: String, idempotencyKey: String? = nil, op: String? = nil, value: JSONValue? = nil) {
+        self.field = field
+        self.id = id
+        self.idempotencyKey = idempotencyKey
+        self.op = op
+        self.value = value
+    }
+}
+
 public struct LogbookSeq: Codable, Sendable, Hashable {
     /// The origin hab's device id.
     public var origin: String
@@ -3310,6 +3850,161 @@ public struct LogbookSeq: Codable, Sendable, Hashable {
     public init(origin: String, seq: UInt64) {
         self.origin = origin
         self.seq = seq
+    }
+}
+
+public struct LogbookSource: Codable, Sendable, Hashable {
+    public var message: String?
+    public var quote: String?
+    /// Filled in by the hab from the pane's token on the pane route.
+    public var session: String?
+
+    enum CodingKeys: String, CodingKey {
+        case message = "message"
+        case quote = "quote"
+        case session = "session"
+    }
+
+    public init(message: String? = nil, quote: String? = nil, session: String? = nil) {
+        self.message = message
+        self.quote = quote
+        self.session = session
+    }
+}
+
+public struct LogbookStatus: Codable, Sendable, Hashable {
+    /// Origins whose clock ran more than an hour ahead.
+    public var ahead: [String]?
+    public var ops: Int
+    /// The device id this replica writes as.
+    public var origin: String
+    public var records: Int
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// Origins two hosts share; their further ops are refused.
+    public var shared: [String]?
+    /// Ops this build keeps but does not fold.
+    public var unfolded: Int?
+    public var vector: [LogbookOrigin]
+    /// Ops held behind a gap or an incomplete batch.
+    public var waiting: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case ahead = "ahead"
+        case ops = "ops"
+        case origin = "origin"
+        case records = "records"
+        case seq = "seq"
+        case shared = "shared"
+        case unfolded = "unfolded"
+        case vector = "vector"
+        case waiting = "waiting"
+    }
+
+    public init(ahead: [String]? = nil, ops: Int, origin: String, records: Int, seq: UInt64, shared: [String]? = nil, unfolded: Int? = nil, vector: [LogbookOrigin], waiting: Int? = nil) {
+        self.ahead = ahead
+        self.ops = ops
+        self.origin = origin
+        self.records = records
+        self.seq = seq
+        self.shared = shared
+        self.unfolded = unfolded
+        self.vector = vector
+        self.waiting = waiting
+    }
+}
+
+public struct LogbookStatusParams: Codable, Sendable, Hashable {
+    public init() {
+    }
+}
+
+public struct LogbookUpdated: Codable, Sendable, Hashable {
+    public var deleted: Bool?
+    public var id: String
+    public var project: String?
+    public var revision: Int
+    public var type: String
+
+    enum CodingKeys: String, CodingKey {
+        case deleted = "deleted"
+        case id = "id"
+        case project = "project"
+        case revision = "revision"
+        case type = "type"
+    }
+
+    public init(deleted: Bool? = nil, id: String, project: String? = nil, revision: Int, type: String) {
+        self.deleted = deleted
+        self.id = id
+        self.project = project
+        self.revision = revision
+        self.type = type
+    }
+}
+
+public struct LogbookWriteParams: Codable, Sendable, Hashable {
+    public var changes: [LogbookChange]
+    /// At most 128 bytes. A key the hab holds applies nothing again and answers the first write's result; with another request it answers conflict. Kept 90 days.
+    public var idempotencyKey: String?
+    /// Store the batch as a pending proposal, whatever logbook.approval says (logbook.md 9.1).
+    public var propose: Bool?
+    /// Where the records came from; set on each create, and on a proposal.
+    public var source: LogbookSource?
+
+    enum CodingKeys: String, CodingKey {
+        case changes = "changes"
+        case idempotencyKey = "idempotency_key"
+        case propose = "propose"
+        case source = "source"
+    }
+
+    public init(changes: [LogbookChange], idempotencyKey: String? = nil, propose: Bool? = nil, source: LogbookSource? = nil) {
+        self.changes = changes
+        self.idempotencyKey = idempotencyKey
+        self.propose = propose
+        self.source = source
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct LogbookWriteState: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let applied = LogbookWriteState(rawValue: "applied")
+    public static let proposed = LogbookWriteState(rawValue: "proposed")
+}
+
+public struct LogbookWritten: Codable, Sendable, Hashable {
+    /// The records the batch touched, in change order; for a proposal, the proposal.
+    public var ids: [String]
+    /// The op ids the batch made.
+    public var ops: [String]
+    /// With state proposed: the proposal's id.
+    public var proposal: String?
+    /// The idempotency key was used before: nothing was applied again; ids and ops are the first write's.
+    public var repeated: Bool?
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// applied: the changes landed. proposed: a pending proposal holds them.
+    public var state: LogbookWriteState
+
+    enum CodingKeys: String, CodingKey {
+        case ids = "ids"
+        case ops = "ops"
+        case proposal = "proposal"
+        case repeated = "repeated"
+        case seq = "seq"
+        case state = "state"
+    }
+
+    public init(ids: [String], ops: [String], proposal: String? = nil, repeated: Bool? = nil, seq: UInt64, state: LogbookWriteState) {
+        self.ids = ids
+        self.ops = ops
+        self.proposal = proposal
+        self.repeated = repeated
+        self.seq = seq
+        self.state = state
     }
 }
 
@@ -6398,10 +7093,24 @@ public enum HabMethods {
     public static let noticeGet = HabMethod<NoticeGetParams, NoticeRecord>(name: "notice.get")
     /// Read a run of a text file inside the host's read scope (capcom.md 5). Needs the read-tools capability.
     public static let fileRead = HabMethod<FileReadParams, FileData>(name: "file.read")
-    /// Search or list Logbook records (logbook.md 10.3). Needs the logbook capability.
+    /// Search Logbook records by words, best match first; with no words, list them as logbook.list (logbook.md 10.3). Deleted records are left out unless asked for. Needs the logbook capability.
     public static let logbookFind = HabMethod<LogbookFindParams, LogbookRecords>(name: "logbook.find")
-    /// Read one Logbook record (logbook.md 10.3). Needs the logbook capability.
+    /// Read one Logbook record with its links both ways, notes and flags (logbook.md 10.3). Needs the logbook capability.
     public static let logbookGet = HabMethod<LogbookGetParams, LogbookRecordResult>(name: "logbook.get")
+    /// List Logbook records, newest change first, with filters: type, status, project, tag, host, author, session, since (logbook.md 10.3). Needs the logbook capability.
+    public static let logbookList = HabMethod<LogbookListParams, LogbookRecords>(name: "logbook.list")
+    /// Open tasks and issues with no open blocker, newest change first (logbook.md 10.2). Needs the logbook capability.
+    public static let logbookReady = HabMethod<LogbookReadyParams, LogbookRecords>(name: "logbook.ready")
+    /// Every op on one record, losers and ops this build does not fold included, in stamp order (logbook.md 10.2). Needs the logbook capability.
+    public static let logbookHistory = HabMethod<LogbookHistoryParams, LogbookHistory>(name: "logbook.history")
+    /// Apply one batch of changes, all or nothing, or with propose store it as a pending proposal (logbook.md 10.3, 9.2). On the pane route the hab records the pane's harness, session and host, and refuses a pane's writes past 60 a minute with invalid. Needs the logbook capability.
+    public static let logbookWrite = HabMethod<LogbookWriteParams, LogbookWritten>(name: "logbook.write")
+    /// Settle a conflict flag: set the field to the given value, or to the value of a named op, as a write that saw every side (logbook.md 5.2). Needs the logbook capability.
+    public static let logbookResolve = HabMethod<LogbookResolveParams, LogbookWritten>(name: "logbook.resolve")
+    /// The Logbook projects with their identities (logbook.md 3). Needs the logbook capability.
+    public static let logbookProjects = HabMethod<LogbookProjectsParams, LogbookProjects>(name: "logbook.projects")
+    /// This replica's size and health: op and record counts, the version vector, waiting and unfolded ops, origins ahead or shared (logbook.md 10.2). Needs the logbook capability.
+    public static let logbookStatus = HabMethod<LogbookStatusParams, LogbookStatus>(name: "logbook.status")
     /// Ask for a start or set-up: with confirm.start_elsewhere on, open a confirmation for the user and wait up to wait_ms for the answer; off, run it at once and return the record (capcom.md 6.1). Needs the confirm capability.
     public static let confirmRequest = HabMethod<ConfirmRequestParams, ConfirmRequested>(name: "confirm.request")
     /// Answer an open confirmation: confirm, with the user's edits, or cancel. The first answer wins; a later one answers conflict. A confirm returns once the hab ran the action (capcom.md 6.1). Needs the confirm capability.
@@ -6488,6 +7197,10 @@ public enum HabEvent: Sendable, Hashable {
     case roundUpdated(Round)
     /// A run of a round changed state; the id is the run id (rounds.md 13). Host scope only. Ephemeral.
     case roundRunUpdated(RoundRun)
+    /// A Logbook record changed, by any writer of the file: the API, the pane route, or the CLI while it wrote the file itself; the id is the record id and the revision its count of folded ops (logbook.md 10.3). Host scope only. Not in the snapshot: a client reads the records it shows.
+    case logbookUpdated(LogbookUpdated)
+    /// A Logbook record gained or lost a flag; the id is the record id (logbook.md 10.3). Host scope only.
+    case logbookConflict(LogbookConflict)
     /// Sent only to a peer link that dialed this hab, subscribed or not: something waits for the dialer, so it pulls now; the id is this hab's device id (mesh.md 4.2, 6.5). Ephemeral.
     case meshChanged(MeshChanged)
     case unknown(type: String, data: JSONValue)
@@ -6519,6 +7232,8 @@ public enum HabEvent: Sendable, Hashable {
         case "confirm.closed": self = .confirmClosed(try event.data.decode(Confirmation.self))
         case "round.updated": self = .roundUpdated(try event.data.decode(Round.self))
         case "round.run_updated": self = .roundRunUpdated(try event.data.decode(RoundRun.self))
+        case "logbook.updated": self = .logbookUpdated(try event.data.decode(LogbookUpdated.self))
+        case "logbook.conflict": self = .logbookConflict(try event.data.decode(LogbookConflict.self))
         case "mesh.changed": self = .meshChanged(try event.data.decode(MeshChanged.self))
         default: self = .unknown(type: event.type, data: event.data)
         }

@@ -25,6 +25,8 @@ type Record struct {
 	// Fields holds every folded scalar with the op that set it.
 	Fields map[string]FieldValue
 	Tags   []string
+	// Identities are a project's identities (3.1).
+	Identities []string
 	// Links are this record's links; Here is false for a target this replica does not hold yet.
 	Links []RecordLink
 	// Backlinks are other records' links to this one; To names the linking record.
@@ -75,6 +77,12 @@ func (s *Store) Get(ctx context.Context, id string) (*Record, error) {
 		Revision: f.Revision}
 	for _, m := range f.Sets["tags"] {
 		r.Tags = append(r.Tags, m.Key)
+	}
+	for _, m := range f.Sets["identities"] {
+		var v string
+		if json.Unmarshal(m.Value, &v) == nil {
+			r.Identities = append(r.Identities, v)
+		}
 	}
 	for _, m := range f.Sets["links"] {
 		var l Link

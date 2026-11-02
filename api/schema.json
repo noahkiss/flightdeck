@@ -2595,13 +2595,27 @@
     },
     {
       "name": "logbook.find",
-      "summary": "Search or list Logbook records (logbook.md 10.3). Needs the logbook capability.",
+      "summary": "Search Logbook records by words, best match first; with no words, list them as logbook.list (logbook.md 10.3). Deleted records are left out unless asked for. Needs the logbook capability.",
       "paramStructure": "by-name",
       "params": [
         {
           "name": "author",
           "schema": {
             "type": "string"
+          }
+        },
+        {
+          "name": "deleted",
+          "description": "As in logbook.list.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "general",
+          "description": "As in logbook.list.",
+          "schema": {
+            "type": "boolean"
           }
         },
         {
@@ -2619,6 +2633,13 @@
         },
         {
           "name": "project",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "session",
+          "description": "As in logbook.list.",
           "schema": {
             "type": "string"
           }
@@ -2650,7 +2671,7 @@
         },
         {
           "name": "words",
-          "description": "Words to search for. Absent: list records.",
+          "description": "Words to search for in title, body, notes and tags; every word must match. Absent: list records, as logbook.list.",
           "schema": {
             "type": "string"
           }
@@ -2668,7 +2689,7 @@
     },
     {
       "name": "logbook.get",
-      "summary": "Read one Logbook record (logbook.md 10.3). Needs the logbook capability.",
+      "summary": "Read one Logbook record with its links both ways, notes and flags (logbook.md 10.3). Needs the logbook capability.",
       "paramStructure": "by-name",
       "params": [
         {
@@ -2687,6 +2708,283 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/LogbookGetParams"
+      }
+    },
+    {
+      "name": "logbook.list",
+      "summary": "List Logbook records, newest change first, with filters: type, status, project, tag, host, author, session, since (logbook.md 10.3). Needs the logbook capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "author",
+          "description": "Records created by this session id, client device id or harness.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "deleted",
+          "description": "Include deleted records.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "flagged",
+          "description": "Only records with a flag: a conflict, decided twice and the like (logbook.md 10.2 conflicts).",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "general",
+          "description": "Only records that belong to no project (logbook.md 3.2).",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "host",
+          "description": "Records created on this host: the writer's host id, or the creating hab's device id.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "description": "At most this many; default 50, at most 500.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "project",
+          "description": "A project id. A project joined into another matches both (logbook.md 5.6).",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "session",
+          "description": "Records that came from this session: written by it, or with it as their source. Capcom lists one conversation's proposals with it.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "since",
+          "description": "RFC 3339 time: only records changed at or after it.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "status",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "tag",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "type",
+          "description": "A record type: finding, task, plan, guide, issue, proposal or project.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/LogbookRecords"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/LogbookListParams"
+      }
+    },
+    {
+      "name": "logbook.ready",
+      "summary": "Open tasks and issues with no open blocker, newest change first (logbook.md 10.2). Needs the logbook capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "limit",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "project",
+          "description": "A project id. Absent: every project.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/LogbookRecords"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/LogbookReadyParams"
+      }
+    },
+    {
+      "name": "logbook.history",
+      "summary": "Every op on one record, losers and ops this build does not fold included, in stamp order (logbook.md 10.2). Needs the logbook capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/LogbookHistory"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/LogbookHistoryParams"
+      }
+    },
+    {
+      "name": "logbook.write",
+      "summary": "Apply one batch of changes, all or nothing, or with propose store it as a pending proposal (logbook.md 10.3, 9.2). On the pane route the hab records the pane's harness, session and host, and refuses a pane's writes past 60 a minute with invalid. Needs the logbook capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "changes",
+          "required": true,
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogbookChange"
+            }
+          }
+        },
+        {
+          "name": "idempotency_key",
+          "description": "At most 128 bytes. A key the hab holds applies nothing again and answers the first write's result; with another request it answers conflict. Kept 90 days.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "propose",
+          "description": "Store the batch as a pending proposal, whatever logbook.approval says (logbook.md 9.1).",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
+          "name": "source",
+          "description": "Where the records came from; set on each create, and on a proposal.",
+          "schema": {
+            "$ref": "#/components/schemas/LogbookSource"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/LogbookWritten"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/LogbookWriteParams"
+      }
+    },
+    {
+      "name": "logbook.resolve",
+      "summary": "Settle a conflict flag: set the field to the given value, or to the value of a named op, as a write that saw every side (logbook.md 5.2). Needs the logbook capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "field",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "id",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "idempotency_key",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "op",
+          "description": "The op id whose value to keep, from the conflict flag.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "value",
+          "description": "The value to keep. Or name op.",
+          "schema": {}
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/LogbookWritten"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/LogbookResolveParams"
+      }
+    },
+    {
+      "name": "logbook.projects",
+      "summary": "The Logbook projects with their identities (logbook.md 3). Needs the logbook capability.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/LogbookProjects"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/LogbookProjectsParams"
+      }
+    },
+    {
+      "name": "logbook.status",
+      "summary": "This replica's size and health: op and record counts, the version vector, waiting and unfolded ops, origins ahead or shared (logbook.md 10.2). Needs the logbook capability.",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/LogbookStatus"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/LogbookStatusParams"
       }
     },
     {
@@ -3290,6 +3588,20 @@
       "summary": "A run of a round changed state; the id is the run id (rounds.md 13). Host scope only. Ephemeral.",
       "data": {
         "$ref": "#/components/schemas/RoundRun"
+      }
+    },
+    {
+      "type": "logbook.updated",
+      "summary": "A Logbook record changed, by any writer of the file: the API, the pane route, or the CLI while it wrote the file itself; the id is the record id and the revision its count of folded ops (logbook.md 10.3). Host scope only. Not in the snapshot: a client reads the records it shows.",
+      "data": {
+        "$ref": "#/components/schemas/LogbookUpdated"
+      }
+    },
+    {
+      "type": "logbook.conflict",
+      "summary": "A Logbook record gained or lost a flag; the id is the record id (logbook.md 10.3). Host scope only.",
+      "data": {
+        "$ref": "#/components/schemas/LogbookConflict"
       }
     },
     {
@@ -6665,11 +6977,162 @@
           "host"
         ]
       },
+      "LogbookActor": {
+        "type": "object",
+        "properties": {
+          "device": {
+            "type": "string"
+          },
+          "harness": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "agent or person."
+          },
+          "pane": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string"
+          }
+        }
+      },
+      "LogbookChange": {
+        "type": "object",
+        "properties": {
+          "assignee": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "component": {
+            "type": "string"
+          },
+          "field": {
+            "type": "string",
+            "description": "set: the field."
+          },
+          "id": {
+            "type": "string",
+            "description": "The record. On create, an id to claim; absent mints one."
+          },
+          "link": {
+            "$ref": "#/components/schemas/LogbookLink",
+            "description": "add, remove: a link."
+          },
+          "links": {
+            "type": "array",
+            "description": "create: links to add.",
+            "items": {
+              "$ref": "#/components/schemas/LogbookLink"
+            }
+          },
+          "op": {
+            "$ref": "#/components/schemas/LogbookChangeOp"
+          },
+          "op_id": {
+            "type": "string",
+            "description": "forget: the op whose value is redacted everywhere (logbook.md 5.7)."
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "project": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string",
+            "description": "add, remove: a tag."
+          },
+          "tags": {
+            "type": "array",
+            "description": "create: tags to add.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "text": {
+            "type": "string",
+            "description": "note: the note."
+          },
+          "title": {
+            "type": "string"
+          },
+          "triage": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "description": "create: the record type."
+          },
+          "value": {
+            "description": "set: the new value."
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "LogbookChangeOp": {
+        "type": "string",
+        "x-known-values": [
+          "create",
+          "set",
+          "add",
+          "remove",
+          "note",
+          "forget"
+        ]
+      },
+      "LogbookConflict": {
+        "type": "object",
+        "properties": {
+          "flags": {
+            "type": "array",
+            "description": "The flag kinds the record now has; empty when it has none.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "flags"
+        ]
+      },
       "LogbookFindParams": {
         "type": "object",
         "properties": {
           "author": {
             "type": "string"
+          },
+          "deleted": {
+            "type": "boolean",
+            "description": "As in logbook.list."
+          },
+          "general": {
+            "type": "boolean",
+            "description": "As in logbook.list."
           },
           "host": {
             "type": "string"
@@ -6680,6 +7143,10 @@
           },
           "project": {
             "type": "string"
+          },
+          "session": {
+            "type": "string",
+            "description": "As in logbook.list."
           },
           "since": {
             "type": "string",
@@ -6696,9 +7163,52 @@
           },
           "words": {
             "type": "string",
-            "description": "Words to search for. Absent: list records."
+            "description": "Words to search for in title, body, notes and tags; every word must match. Absent: list records, as logbook.list."
           }
         }
+      },
+      "LogbookFlag": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogbookFlagValue"
+            }
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "LogbookFlagValue": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string"
+          },
+          "by": {
+            "$ref": "#/components/schemas/LogbookActor"
+          },
+          "op": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "value": {}
+        },
+        "required": [
+          "op",
+          "at",
+          "origin"
+        ]
       },
       "LogbookGetParams": {
         "type": "object",
@@ -6710,6 +7220,250 @@
         "required": [
           "id"
         ]
+      },
+      "LogbookHistory": {
+        "type": "object",
+        "properties": {
+          "ops": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogbookOp"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "ops"
+        ]
+      },
+      "LogbookHistoryParams": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "LogbookLink": {
+        "type": "object",
+        "properties": {
+          "here": {
+            "type": "boolean",
+            "description": "In a read: the target is on this replica. False shows as not here yet."
+          },
+          "kind": {
+            "type": "string",
+            "description": "supersedes, stage, part_of, blocks, relates, from or duplicates."
+          },
+          "pos": {
+            "type": "integer",
+            "format": "int64",
+            "description": "A stage link's position."
+          },
+          "to": {
+            "type": "string",
+            "description": "A record id."
+          }
+        },
+        "required": [
+          "kind",
+          "to"
+        ]
+      },
+      "LogbookListParams": {
+        "type": "object",
+        "properties": {
+          "author": {
+            "type": "string",
+            "description": "Records created by this session id, client device id or harness."
+          },
+          "deleted": {
+            "type": "boolean",
+            "description": "Include deleted records."
+          },
+          "flagged": {
+            "type": "boolean",
+            "description": "Only records with a flag: a conflict, decided twice and the like (logbook.md 10.2 conflicts)."
+          },
+          "general": {
+            "type": "boolean",
+            "description": "Only records that belong to no project (logbook.md 3.2)."
+          },
+          "host": {
+            "type": "string",
+            "description": "Records created on this host: the writer's host id, or the creating hab's device id."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "At most this many; default 50, at most 500."
+          },
+          "project": {
+            "type": "string",
+            "description": "A project id. A project joined into another matches both (logbook.md 5.6)."
+          },
+          "session": {
+            "type": "string",
+            "description": "Records that came from this session: written by it, or with it as their source. Capcom lists one conversation's proposals with it."
+          },
+          "since": {
+            "type": "string",
+            "description": "RFC 3339 time: only records changed at or after it."
+          },
+          "status": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "description": "A record type: finding, task, plan, guide, issue, proposal or project."
+          }
+        }
+      },
+      "LogbookNote": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string"
+          },
+          "by": {
+            "$ref": "#/components/schemas/LogbookActor"
+          },
+          "op": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "at",
+          "text"
+        ]
+      },
+      "LogbookOp": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string"
+          },
+          "by": {
+            "$ref": "#/components/schemas/LogbookActor"
+          },
+          "field": {
+            "type": "string"
+          },
+          "folded": {
+            "type": "boolean",
+            "description": "This build folds the op. False: kept and forwarded for a newer build (logbook.md 4.4)."
+          },
+          "id": {
+            "type": "string",
+            "description": "seq@origin."
+          },
+          "kind": {
+            "type": "string",
+            "description": "create, set, add, remove, append or forget; another word from a newer build."
+          },
+          "prev": {
+            "type": "array",
+            "description": "A set: the ops whose value the writer saw. A remove: the adds it saw.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "record": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string",
+            "description": "A forget: the op it redacts."
+          },
+          "value": {}
+        },
+        "required": [
+          "id",
+          "at",
+          "kind",
+          "record"
+        ]
+      },
+      "LogbookOrigin": {
+        "type": "object",
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The highest seq held with no gap below it."
+          }
+        },
+        "required": [
+          "origin",
+          "seq"
+        ]
+      },
+      "LogbookProject": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "identities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "revision"
+        ]
+      },
+      "LogbookProjects": {
+        "type": "object",
+        "properties": {
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogbookProject"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "projects"
+        ]
+      },
+      "LogbookProjectsParams": {
+        "type": "object"
       },
       "LogbookPullParams": {
         "type": "object",
@@ -6827,31 +7581,141 @@
           "vector"
         ]
       },
+      "LogbookReadyParams": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "project": {
+            "type": "string",
+            "description": "A project id. Absent: every project."
+          }
+        }
+      },
       "LogbookRecord": {
         "type": "object",
         "properties": {
+          "assignee": {
+            "type": "string",
+            "description": "A task or issue: a session or a person."
+          },
+          "backlinks": {
+            "type": "array",
+            "description": "Other records' links to this one; to names the linking record.",
+            "items": {
+              "$ref": "#/components/schemas/LogbookLink"
+            }
+          },
           "body": {
             "type": "string",
             "description": "Absent in a search result."
           },
+          "component": {
+            "type": "string",
+            "description": "An issue: the tool, file or service that misbehaves."
+          },
+          "created": {
+            "type": "string",
+            "description": "RFC 3339 time of the create."
+          },
+          "created_by": {
+            "$ref": "#/components/schemas/LogbookActor"
+          },
+          "decided_by": {
+            "type": "string",
+            "description": "A decided proposal: the deciding device."
+          },
+          "deleted": {
+            "type": "boolean"
+          },
+          "draft": {
+            "description": "A proposal: the full content it would apply, as logbook.write's changes."
+          },
+          "flags": {
+            "type": "array",
+            "description": "What the user should look at: conflict, decided_twice, edited_after_delete, id_collision, superseded_twice.",
+            "items": {
+              "$ref": "#/components/schemas/LogbookFlag"
+            }
+          },
           "id": {
             "type": "string"
+          },
+          "identities": {
+            "type": "array",
+            "description": "A project: its identities (logbook.md 3.1).",
+            "items": {
+              "type": "string"
+            }
+          },
+          "links": {
+            "type": "array",
+            "description": "This record's links.",
+            "items": {
+              "$ref": "#/components/schemas/LogbookLink"
+            }
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogbookNote"
+            }
+          },
+          "pinned": {
+            "type": "boolean",
+            "description": "A guide: in every brief for its project."
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int64",
+            "description": "A task or issue: 1 to 3."
           },
           "project": {
             "type": "string"
           },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The record's count of folded ops: it never goes down. logbook.updated carries the same number."
+          },
+          "source": {
+            "$ref": "#/components/schemas/LogbookSource"
+          },
           "status": {
             "type": "string"
           },
+          "superseded_by": {
+            "type": "array",
+            "description": "A finding: the findings that supersede it.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "target": {
+            "type": "string",
+            "description": "A proposal: record, memory or flight_rules."
+          },
           "title": {
             "type": "string"
+          },
+          "triage": {
+            "type": "string",
+            "description": "A task or issue: new until a person looked at it."
           },
           "type": {
             "type": "string"
           },
           "updated": {
             "type": "string",
-            "description": "RFC 3339 time."
+            "description": "RFC 3339 time of the last change."
           }
         },
         "required": [
@@ -6900,6 +7764,31 @@
           "records"
         ]
       },
+      "LogbookResolveParams": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "op": {
+            "type": "string",
+            "description": "The op id whose value to keep, from the conflict flag."
+          },
+          "value": {
+            "description": "The value to keep. Or name op."
+          }
+        },
+        "required": [
+          "id",
+          "field"
+        ]
+      },
       "LogbookSeq": {
         "type": "object",
         "properties": {
@@ -6915,6 +7804,184 @@
         "required": [
           "origin",
           "seq"
+        ]
+      },
+      "LogbookSource": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "quote": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string",
+            "description": "Filled in by the hab from the pane's token on the pane route."
+          }
+        }
+      },
+      "LogbookStatus": {
+        "type": "object",
+        "properties": {
+          "ahead": {
+            "type": "array",
+            "description": "Origins whose clock ran more than an hour ahead.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ops": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "origin": {
+            "type": "string",
+            "description": "The device id this replica writes as."
+          },
+          "records": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "shared": {
+            "type": "array",
+            "description": "Origins two hosts share; their further ops are refused.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unfolded": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Ops this build keeps but does not fold."
+          },
+          "vector": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogbookOrigin"
+            }
+          },
+          "waiting": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Ops held behind a gap or an incomplete batch."
+          }
+        },
+        "required": [
+          "seq",
+          "origin",
+          "ops",
+          "records",
+          "vector"
+        ]
+      },
+      "LogbookStatusParams": {
+        "type": "object"
+      },
+      "LogbookUpdated": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "type"
+        ]
+      },
+      "LogbookWriteParams": {
+        "type": "object",
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogbookChange"
+            }
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "At most 128 bytes. A key the hab holds applies nothing again and answers the first write's result; with another request it answers conflict. Kept 90 days."
+          },
+          "propose": {
+            "type": "boolean",
+            "description": "Store the batch as a pending proposal, whatever logbook.approval says (logbook.md 9.1)."
+          },
+          "source": {
+            "$ref": "#/components/schemas/LogbookSource",
+            "description": "Where the records came from; set on each create, and on a proposal."
+          }
+        },
+        "required": [
+          "changes"
+        ]
+      },
+      "LogbookWriteState": {
+        "type": "string",
+        "x-known-values": [
+          "applied",
+          "proposed"
+        ]
+      },
+      "LogbookWritten": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "description": "The records the batch touched, in change order; for a proposal, the proposal.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ops": {
+            "type": "array",
+            "description": "The op ids the batch made.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "proposal": {
+            "type": "string",
+            "description": "With state proposed: the proposal's id."
+          },
+          "repeated": {
+            "type": "boolean",
+            "description": "The idempotency key was used before: nothing was applied again; ids and ops are the first write's."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "state": {
+            "$ref": "#/components/schemas/LogbookWriteState",
+            "description": "applied: the changes landed. proposed: a pending proposal holds them."
+          }
+        },
+        "required": [
+          "seq",
+          "state",
+          "ids",
+          "ops"
         ]
       },
       "MailItem": {

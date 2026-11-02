@@ -165,6 +165,20 @@ const (
 )
 
 const (
+	LogbookChangeOpCreate LogbookChangeOp = "create"
+	LogbookChangeOpSet    LogbookChangeOp = "set"
+	LogbookChangeOpAdd    LogbookChangeOp = "add"
+	LogbookChangeOpRemove LogbookChangeOp = "remove"
+	LogbookChangeOpNote   LogbookChangeOp = "note"
+	LogbookChangeOpForget LogbookChangeOp = "forget"
+)
+
+const (
+	LogbookWriteStateApplied  LogbookWriteState = "applied"
+	LogbookWriteStateProposed LogbookWriteState = "proposed"
+)
+
+const (
 	MailKindMessage MailKind = "message"
 	MailKindStatus  MailKind = "status"
 )
@@ -399,6 +413,8 @@ const (
 	EventConfirmClosed    EventType = "confirm.closed"
 	EventRoundUpdated     EventType = "round.updated"
 	EventRoundRunUpdated  EventType = "round.run_updated"
+	EventLogbookUpdated   EventType = "logbook.updated"
+	EventLogbookConflict  EventType = "logbook.conflict"
 	EventMeshChanged      EventType = "mesh.changed"
 )
 
@@ -504,6 +520,14 @@ func (e Event) DecodeData() (any, error) {
 		return v, err
 	case EventRoundRunUpdated:
 		var v RoundRun
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventLogbookUpdated:
+		var v LogbookUpdated
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventLogbookConflict:
+		var v LogbookConflict
 		err := json.Unmarshal(e.Data, &v)
 		return v, err
 	case EventMeshChanged:
@@ -1028,17 +1052,66 @@ func (c Client) FileRead(ctx context.Context, params FileReadParams) (FileData, 
 	return result, err
 }
 
-// LogbookFind calls logbook.find. Search or list Logbook records (logbook.md 10.3). Needs the logbook capability.
+// LogbookFind calls logbook.find. Search Logbook records by words, best match first; with no words, list them as logbook.list (logbook.md 10.3). Deleted records are left out unless asked for. Needs the logbook capability.
 func (c Client) LogbookFind(ctx context.Context, params LogbookFindParams) (LogbookRecords, error) {
 	var result LogbookRecords
 	err := c.Caller.Call(ctx, "logbook.find", params, &result)
 	return result, err
 }
 
-// LogbookGet calls logbook.get. Read one Logbook record (logbook.md 10.3). Needs the logbook capability.
+// LogbookGet calls logbook.get. Read one Logbook record with its links both ways, notes and flags (logbook.md 10.3). Needs the logbook capability.
 func (c Client) LogbookGet(ctx context.Context, params LogbookGetParams) (LogbookRecordResult, error) {
 	var result LogbookRecordResult
 	err := c.Caller.Call(ctx, "logbook.get", params, &result)
+	return result, err
+}
+
+// LogbookList calls logbook.list. List Logbook records, newest change first, with filters: type, status, project, tag, host, author, session, since (logbook.md 10.3). Needs the logbook capability.
+func (c Client) LogbookList(ctx context.Context, params LogbookListParams) (LogbookRecords, error) {
+	var result LogbookRecords
+	err := c.Caller.Call(ctx, "logbook.list", params, &result)
+	return result, err
+}
+
+// LogbookReady calls logbook.ready. Open tasks and issues with no open blocker, newest change first (logbook.md 10.2). Needs the logbook capability.
+func (c Client) LogbookReady(ctx context.Context, params LogbookReadyParams) (LogbookRecords, error) {
+	var result LogbookRecords
+	err := c.Caller.Call(ctx, "logbook.ready", params, &result)
+	return result, err
+}
+
+// LogbookHistory calls logbook.history. Every op on one record, losers and ops this build does not fold included, in stamp order (logbook.md 10.2). Needs the logbook capability.
+func (c Client) LogbookHistory(ctx context.Context, params LogbookHistoryParams) (LogbookHistory, error) {
+	var result LogbookHistory
+	err := c.Caller.Call(ctx, "logbook.history", params, &result)
+	return result, err
+}
+
+// LogbookWrite calls logbook.write. Apply one batch of changes, all or nothing, or with propose store it as a pending proposal (logbook.md 10.3, 9.2). On the pane route the hab records the pane's harness, session and host, and refuses a pane's writes past 60 a minute with invalid. Needs the logbook capability.
+func (c Client) LogbookWrite(ctx context.Context, params LogbookWriteParams) (LogbookWritten, error) {
+	var result LogbookWritten
+	err := c.Caller.Call(ctx, "logbook.write", params, &result)
+	return result, err
+}
+
+// LogbookResolve calls logbook.resolve. Settle a conflict flag: set the field to the given value, or to the value of a named op, as a write that saw every side (logbook.md 5.2). Needs the logbook capability.
+func (c Client) LogbookResolve(ctx context.Context, params LogbookResolveParams) (LogbookWritten, error) {
+	var result LogbookWritten
+	err := c.Caller.Call(ctx, "logbook.resolve", params, &result)
+	return result, err
+}
+
+// LogbookProjects calls logbook.projects. The Logbook projects with their identities (logbook.md 3). Needs the logbook capability.
+func (c Client) LogbookProjects(ctx context.Context, params LogbookProjectsParams) (LogbookProjects, error) {
+	var result LogbookProjects
+	err := c.Caller.Call(ctx, "logbook.projects", params, &result)
+	return result, err
+}
+
+// LogbookStatus calls logbook.status. This replica's size and health: op and record counts, the version vector, waiting and unfolded ops, origins ahead or shared (logbook.md 10.2). Needs the logbook capability.
+func (c Client) LogbookStatus(ctx context.Context, params LogbookStatusParams) (LogbookStatus, error) {
+	var result LogbookStatus
+	err := c.Caller.Call(ctx, "logbook.status", params, &result)
 	return result, err
 }
 

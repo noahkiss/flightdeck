@@ -1,0 +1,123 @@
+{
+  "record": {
+    "assignee": "assignee-23",
+    "backlinks": [
+      {
+        "here": true,
+        "kind": "kind-34",
+        "pos": 36,
+        "to": "to-35",
+        "x_unknown_field": "later"
+      }
+    ],
+    "body": "body-9",
+    "component": "component-26",
+    "created": "created-13",
+    "created_by": {
+      "device": "device-19",
+      "harness": "harness-15",
+      "host": "host-18",
+      "kind": "kind-14",
+      "pane": "pane-17",
+      "session": "session-16",
+      "x_unknown_field": "later"
+    },
+    "decided_by": "decided_by-29",
+    "deleted": true,
+    "draft": {
+      "draft": 28,
+      "x_unknown_field": "later"
+    },
+    "flags": [
+      {
+        "field": "field-47",
+        "kind": "kind-46",
+        "values": [
+          {
+            "at": "at-49",
+            "by": {
+              "device": "device-56",
+              "harness": "harness-52",
+              "host": "host-55",
+              "kind": "kind-51",
+              "pane": "pane-54",
+              "session": "session-53",
+              "x_unknown_field": "later"
+            },
+            "op": "op-48",
+            "origin": "origin-57",
+            "value": {
+              "value": 50,
+              "x_unknown_field": "later"
+            },
+            "x_unknown_field": "later"
+          }
+        ],
+        "x_unknown_field": "later"
+      }
+    ],
+    "id": "id-4",
+    "identities": [
+      "identities-30"
+    ],
+    "links": [
+      {
+        "here": true,
+        "kind": "kind-31",
+        "pos": 33,
+        "to": "to-32",
+        "x_unknown_field": "later"
+      }
+    ],
+    "notes": [
+      {
+        "at": "at-38",
+        "by": {
+          "device": "device-45",
+          "harness": "harness-41",
+          "host": "host-44",
+          "kind": "kind-40",
+          "pane": "pane-43",
+          "session": "session-42",
+          "x_unknown_field": "later"
+        },
+        "op": "op-37",
+        "text": "text-39",
+        "x_unknown_field": "later"
+      }
+    ],
+    "pinned": true,
+    "priority": 24,
+    "project": "project-8",
+    "revision": 11,
+    "source": {
+      "message": "message-21",
+      "quote": "quote-22",
+      "session": "session-20",
+      "x_unknown_field": "later"
+    },
+    "status": "status-6",
+    "superseded_by": [
+      "superseded_by-58"
+    ],
+    "tags": [
+      "tags-12"
+    ],
+    "target": "target-27",
+    "title": "title-7",
+    "triage": "triage-25",
+    "type": "type-5",
+    "updated": "updated-10",
+    "x_unknown_field": "later"
+  },
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

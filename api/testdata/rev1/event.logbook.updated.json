@@ -1,0 +1,23 @@
+{
+  "data": {
+    "deleted": true,
+    "id": "id-3",
+    "project": "project-6",
+    "revision": 4,
+    "type": "type-5",
+    "x_unknown_field": "later"
+  },
+  "id": "id-9",
+  "revision": 7,
+  "seq": 8,
+  "type": "logbook.updated",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

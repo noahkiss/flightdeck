@@ -152,3 +152,10 @@ func (s *Store) Updated(ctx context.Context, r *Record) (int64, error) {
 		r.Created.Wall, r.Root.String()).Scan(&ms)
 	return ms, err
 }
+
+// Cursor is the file's current end for Changes: Changes(Cursor()) names only ops written after.
+func (s *Store) Cursor(ctx context.Context) (int64, error) {
+	var c int64
+	err := s.db.QueryRowContext(ctx, `SELECT coalesce(max(rowid), 0) FROM ops`).Scan(&c)
+	return c, err
+}

@@ -351,7 +351,7 @@ func addUnknown(v any, top bool) {
 
 // rawFields names nested fields of type RawJSON. Like an event's data, they keep extra fields on
 // a round trip.
-var rawFields = map[string]bool{"input": true, "value": true, "default": true} // PermissionRequest.Input, ChatTool.Input, Setting.Value and Default
+var rawFields = map[string]bool{"input": true, "value": true, "default": true, "draft": true} // PermissionRequest.Input, ChatTool.Input, Setting.Value and Default, LogbookRecord.Draft
 
 // stripUnknown removes the x_unknown_* fields from every object in v, recursively. Below a key
 // in keep (such as an event's data), or a key in rawFields, it leaves v as it is.

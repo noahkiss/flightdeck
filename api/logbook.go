@@ -1,0 +1,283 @@
+package api
+
+// --- Logbook (logbook.md 10.3). Needs the logbook capability. Times are RFC 3339 in UTC with
+// milliseconds, from the writing hab's clock. Record types, statuses and link kinds are the words
+// of logbook.md 2.2 and 2.4; a client shows an unknown one as given. ---
+
+// LogbookFilter narrows a list or a search. Empty fields match everything.
+type LogbookFilter struct {
+	Type    string `json:"type,omitempty" doc:"A record type: finding, task, plan, guide, issue, proposal or project."`
+	Status  string `json:"status,omitempty"`
+	Project string `json:"project,omitempty" doc:"A project id. A project joined into another matches both (logbook.md 5.6)."`
+	Tag     string `json:"tag,omitempty"`
+	Host    string `json:"host,omitempty" doc:"Records created on this host: the writer's host id, or the creating hab's device id."`
+	Author  string `json:"author,omitempty" doc:"Records created by this session id, client device id or harness."`
+	Session string `json:"session,omitempty" doc:"Records that came from this session: written by it, or with it as their source. Capcom lists one conversation's proposals with it."`
+	Since   string `json:"since,omitempty" doc:"RFC 3339 time: only records changed at or after it."`
+	General bool   `json:"general,omitempty" doc:"Only records that belong to no project (logbook.md 3.2)."`
+	Flagged bool   `json:"flagged,omitempty" doc:"Only records with a flag: a conflict, decided twice and the like (logbook.md 10.2 conflicts)."`
+	Deleted bool   `json:"deleted,omitempty" doc:"Include deleted records."`
+	Limit   int    `json:"limit,omitempty" doc:"At most this many; default 50, at most 500."`
+}
+
+type LogbookFindParams struct {
+	Words   string `json:"words,omitempty" doc:"Words to search for in title, body, notes and tags; every word must match. Absent: list records, as logbook.list."`
+	Type    string `json:"type,omitempty"`
+	Status  string `json:"status,omitempty"`
+	Project string `json:"project,omitempty"`
+	Tag     string `json:"tag,omitempty"`
+	Host    string `json:"host,omitempty"`
+	Author  string `json:"author,omitempty"`
+	Since   string `json:"since,omitempty" doc:"RFC 3339 time."`
+	Limit   int    `json:"limit,omitempty"`
+	Session string `json:"session,omitempty" doc:"As in logbook.list."`
+	General bool   `json:"general,omitempty" doc:"As in logbook.list."`
+	Deleted bool   `json:"deleted,omitempty" doc:"As in logbook.list."`
+}
+
+type LogbookListParams struct {
+	LogbookFilter
+}
+
+type LogbookReadyParams struct {
+	Project string `json:"project,omitempty" doc:"A project id. Absent: every project."`
+	Limit   int    `json:"limit,omitempty"`
+}
+
+// LogbookRecord is one Logbook record as a read returns it. A search or list fills the summary
+// fields only: id, type, status, title, project, updated, revision, deleted.
+type LogbookRecord struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Status  string `json:"status,omitempty"`
+	Title   string `json:"title"`
+	Project string `json:"project,omitempty"`
+	Body    string `json:"body,omitempty" doc:"Absent in a search result."`
+	Updated string `json:"updated,omitempty" doc:"RFC 3339 time of the last change."`
+	// Added by stage 4 (logbook.md 10.3).
+	Revision     int            `json:"revision,omitempty" doc:"The record's count of folded ops: it never goes down. logbook.updated carries the same number."`
+	Deleted      bool           `json:"deleted,omitempty"`
+	Tags         []string       `json:"tags,omitempty"`
+	Created      string         `json:"created,omitempty" doc:"RFC 3339 time of the create."`
+	CreatedBy    *LogbookActor  `json:"created_by,omitempty"`
+	Source       *LogbookSource `json:"source,omitempty"`
+	Assignee     string         `json:"assignee,omitempty" doc:"A task or issue: a session or a person."`
+	Priority     int            `json:"priority,omitempty" doc:"A task or issue: 1 to 3."`
+	Triage       string         `json:"triage,omitempty" doc:"A task or issue: new until a person looked at it."`
+	Component    string         `json:"component,omitempty" doc:"An issue: the tool, file or service that misbehaves."`
+	Pinned       bool           `json:"pinned,omitempty" doc:"A guide: in every brief for its project."`
+	Target       string         `json:"target,omitempty" doc:"A proposal: record, memory or flight_rules."`
+	Draft        RawJSON        `json:"draft,omitempty" doc:"A proposal: the full content it would apply, as logbook.write's changes."`
+	DecidedBy    string         `json:"decided_by,omitempty" doc:"A decided proposal: the deciding device."`
+	Identities   []string       `json:"identities,omitempty" doc:"A project: its identities (logbook.md 3.1)."`
+	Links        []LogbookLink  `json:"links,omitempty" doc:"This record's links."`
+	Backlinks    []LogbookLink  `json:"backlinks,omitempty" doc:"Other records' links to this one; to names the linking record."`
+	Notes        []LogbookNote  `json:"notes,omitempty"`
+	Flags        []LogbookFlag  `json:"flags,omitempty" doc:"What the user should look at: conflict, decided_twice, edited_after_delete, id_collision, superseded_twice."`
+	SupersededBy []string       `json:"superseded_by,omitempty" doc:"A finding: the findings that supersede it."`
+}
+
+// LogbookActor is who asked for a change (logbook.md 2.5): an agent through its pane, or a
+// person through a client device.
+type LogbookActor struct {
+	Kind    string `json:"kind,omitempty" doc:"agent or person."`
+	Harness string `json:"harness,omitempty"`
+	Session string `json:"session,omitempty"`
+	Pane    string `json:"pane,omitempty"`
+	Host    string `json:"host,omitempty"`
+	Device  string `json:"device,omitempty"`
+}
+
+// LogbookSource is where a record came from: a session, a message and a quote of the user's
+// words (logbook.md 2.5).
+type LogbookSource struct {
+	Session string `json:"session,omitempty" doc:"Filled in by the hab from the pane's token on the pane route."`
+	Message string `json:"message,omitempty"`
+	Quote   string `json:"quote,omitempty"`
+}
+
+// LogbookLink is a typed link (logbook.md 2.4).
+type LogbookLink struct {
+	Kind string `json:"kind" doc:"supersedes, stage, part_of, blocks, relates, from or duplicates."`
+	To   string `json:"to" doc:"A record id."`
+	Pos  int    `json:"pos,omitempty" doc:"A stage link's position."`
+	Here bool   `json:"here,omitempty" doc:"In a read: the target is on this replica. False shows as not here yet."`
+}
+
+// LogbookNote is one entry of a record's notes.
+type LogbookNote struct {
+	Op   string        `json:"op"`
+	At   string        `json:"at"`
+	Text string        `json:"text"`
+	By   *LogbookActor `json:"by,omitempty"`
+}
+
+// LogbookFlag marks something the user should look at, with each side.
+type LogbookFlag struct {
+	Kind   string             `json:"kind"`
+	Field  string             `json:"field,omitempty"`
+	Values []LogbookFlagValue `json:"values,omitempty"`
+}
+
+// LogbookFlagValue is one side of a flag: the op, its value, who made it and where.
+type LogbookFlagValue struct {
+	Op     string        `json:"op"`
+	At     string        `json:"at"`
+	Value  RawJSON       `json:"value,omitempty"`
+	By     *LogbookActor `json:"by,omitempty"`
+	Origin string        `json:"origin"`
+}
+
+// LogbookRecords answers logbook.find, logbook.list and logbook.ready.
+type LogbookRecords struct {
+	Seq
+	Records []LogbookRecord `json:"records"`
+	More    bool            `json:"more,omitempty"`
+}
+
+type LogbookGetParams struct {
+	ID string `json:"id"`
+}
+
+// LogbookRecordResult answers logbook.get.
+type LogbookRecordResult struct {
+	Seq
+	Record LogbookRecord `json:"record"`
+}
+
+type LogbookHistoryParams struct {
+	ID string `json:"id"`
+}
+
+// LogbookOp is one op as logbook.history shows it.
+type LogbookOp struct {
+	ID     string        `json:"id" doc:"seq@origin."`
+	At     string        `json:"at"`
+	Kind   string        `json:"kind" doc:"create, set, add, remove, append or forget; another word from a newer build."`
+	Record string        `json:"record"`
+	Field  string        `json:"field,omitempty"`
+	Value  RawJSON       `json:"value,omitempty"`
+	Prev   []string      `json:"prev,omitempty" doc:"A set: the ops whose value the writer saw. A remove: the adds it saw."`
+	Target string        `json:"target,omitempty" doc:"A forget: the op it redacts."`
+	By     *LogbookActor `json:"by,omitempty"`
+	Folded bool          `json:"folded,omitempty" doc:"This build folds the op. False: kept and forwarded for a newer build (logbook.md 4.4)."`
+}
+
+// LogbookHistory answers logbook.history: every op on the record, losers included, in stamp
+// order.
+type LogbookHistory struct {
+	Seq
+	Ops []LogbookOp `json:"ops"`
+}
+
+// LogbookChangeOp is one kind of change in logbook.write. A closed set.
+type LogbookChangeOp string
+
+// LogbookChange is one change of a write. create takes the record fields, and tags and links
+// added in the same batch; set takes field and value; add and remove take tag or link; note takes
+// text; forget takes op_id.
+type LogbookChange struct {
+	Op        LogbookChangeOp `json:"op"`
+	ID        string          `json:"id,omitempty" doc:"The record. On create, an id to claim; absent mints one."`
+	Type      string          `json:"type,omitempty" doc:"create: the record type."`
+	Project   string          `json:"project,omitempty"`
+	Title     string          `json:"title,omitempty"`
+	Body      string          `json:"body,omitempty"`
+	Status    string          `json:"status,omitempty"`
+	Assignee  string          `json:"assignee,omitempty"`
+	Priority  int             `json:"priority,omitempty"`
+	Triage    string          `json:"triage,omitempty"`
+	Component string          `json:"component,omitempty"`
+	Pinned    bool            `json:"pinned,omitempty"`
+	Tags      []string        `json:"tags,omitempty" doc:"create: tags to add."`
+	Links     []LogbookLink   `json:"links,omitempty" doc:"create: links to add."`
+	Field     string          `json:"field,omitempty" doc:"set: the field."`
+	Value     RawJSON         `json:"value,omitempty" doc:"set: the new value."`
+	Tag       string          `json:"tag,omitempty" doc:"add, remove: a tag."`
+	Link      *LogbookLink    `json:"link,omitempty" doc:"add, remove: a link."`
+	Text      string          `json:"text,omitempty" doc:"note: the note."`
+	OpID      string          `json:"op_id,omitempty" doc:"forget: the op whose value is redacted everywhere (logbook.md 5.7)."`
+}
+
+// LogbookWriteParams is one batch of changes: it lands all or nothing.
+type LogbookWriteParams struct {
+	IdempotencyKey string          `json:"idempotency_key,omitempty" doc:"At most 128 bytes. A key the hab holds applies nothing again and answers the first write's result; with another request it answers conflict. Kept 90 days."`
+	Propose        bool            `json:"propose,omitempty" doc:"Store the batch as a pending proposal, whatever logbook.approval says (logbook.md 9.1)."`
+	Changes        []LogbookChange `json:"changes"`
+	Source         *LogbookSource  `json:"source,omitempty" doc:"Where the records came from; set on each create, and on a proposal."`
+}
+
+// LogbookWriteState says what a write did. The server sends it, so the set is open.
+type LogbookWriteState string
+
+// LogbookWritten answers logbook.write and logbook.resolve.
+type LogbookWritten struct {
+	Seq
+	State    LogbookWriteState `json:"state" doc:"applied: the changes landed. proposed: a pending proposal holds them."`
+	IDs      []string          `json:"ids" doc:"The records the batch touched, in change order; for a proposal, the proposal."`
+	Ops      []string          `json:"ops" doc:"The op ids the batch made."`
+	Proposal string            `json:"proposal,omitempty" doc:"With state proposed: the proposal's id."`
+	Repeated bool              `json:"repeated,omitempty" doc:"The idempotency key was used before: nothing was applied again; ids and ops are the first write's."`
+}
+
+type LogbookResolveParams struct {
+	ID             string  `json:"id"`
+	Field          string  `json:"field"`
+	Value          RawJSON `json:"value,omitempty" doc:"The value to keep. Or name op."`
+	Op             string  `json:"op,omitempty" doc:"The op id whose value to keep, from the conflict flag."`
+	IdempotencyKey string  `json:"idempotency_key,omitempty"`
+}
+
+type LogbookProjectsParams struct{}
+
+// LogbookProject is one project (logbook.md 3).
+type LogbookProject struct {
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Identities []string `json:"identities,omitempty"`
+	Revision   int      `json:"revision"`
+}
+
+// LogbookProjects answers logbook.projects.
+type LogbookProjects struct {
+	Seq
+	Projects []LogbookProject `json:"projects"`
+}
+
+type LogbookStatusParams struct{}
+
+// LogbookOrigin is one origin's place in the version vector.
+type LogbookOrigin struct {
+	Origin string `json:"origin"`
+	Seq    uint64 `json:"seq" doc:"The highest seq held with no gap below it."`
+}
+
+// LogbookStatus answers logbook.status: the replica's size and health.
+type LogbookStatus struct {
+	Seq
+	Origin   string          `json:"origin" doc:"The device id this replica writes as."`
+	Ops      int             `json:"ops"`
+	Records  int             `json:"records"`
+	Unfolded int             `json:"unfolded,omitempty" doc:"Ops this build keeps but does not fold."`
+	Waiting  int             `json:"waiting,omitempty" doc:"Ops held behind a gap or an incomplete batch."`
+	Ahead    []string        `json:"ahead,omitempty" doc:"Origins whose clock ran more than an hour ahead."`
+	Shared   []string        `json:"shared,omitempty" doc:"Origins two hosts share; their further ops are refused."`
+	Vector   []LogbookOrigin `json:"vector"`
+}
+
+// LogbookUpdated is logbook.updated's data: a record changed, by any writer of the file.
+type LogbookUpdated struct {
+	ID       string `json:"id"`
+	Revision int    `json:"revision"`
+	Type     string `json:"type"`
+	Project  string `json:"project,omitempty"`
+	Deleted  bool   `json:"deleted,omitempty"`
+}
+
+// LogbookConflict is logbook.conflict's data: a record's flags changed. An empty list means the
+// last one went.
+type LogbookConflict struct {
+	ID       string   `json:"id"`
+	Revision int      `json:"revision"`
+	Flags    []string `json:"flags" doc:"The flag kinds the record now has; empty when it has none."`
+}
