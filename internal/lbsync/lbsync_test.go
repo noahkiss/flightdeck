@@ -202,7 +202,9 @@ func TestDialerPullsAndPushes(t *testing.T) {
 // wake-up; after the next pull, a write sends another. A device whose link did not take the
 // wake-up is told again at the next change. A hab this one pushes to gets none.
 func TestWakeOncePerPull(t *testing.T) {
-	a, b := newHab(t, "a"), newHab(t, "b")
+	var looks atomic.Int64
+	a := newHab(t, "a", func(h *hab, c *Config) { c.checked = func() { looks.Add(1) } })
+	b := newHab(t, "b")
 	dial(a, b)
 	waitFor(t, "a's first pull", func() bool {
 		b.svc.mu.Lock()
@@ -221,6 +223,21 @@ func TestWakeOncePerPull(t *testing.T) {
 	}
 	a.svc.Woken("b") // what mesh.changed does on a
 	waitFor(t, "a pulls the burst", func() bool { return seqOf(t, a, b.id) == 3 })
+	// The ops a stored start one more exchange on a, and its pull may land after the next
+	// write, which then needs no wake-up. So the next write waits until a's change loop has
+	// acted on the burst and that exchange has ended.
+	waitFor(t, "a's change loop acts on the burst", func() bool {
+		a.svc.mu.Lock()
+		defer a.svc.mu.Unlock()
+		return a.svc.last[b.id] == 3
+	})
+	n := looks.Load()
+	waitFor(t, "that look ends", func() bool { return looks.Load() > n })
+	waitFor(t, "a's follow-up exchange ends", func() bool {
+		a.svc.mu.Lock()
+		defer a.svc.mu.Unlock()
+		return len(a.svc.running) == 0
+	})
 	write(t, b, "after the pull")
 	b.svc.Changed()
 	waitFor(t, "a second wake-up", func() bool { return b.wakesOf(a.id) == 2 })
