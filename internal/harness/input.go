@@ -340,8 +340,9 @@ const planManual = "manually approve edits"
 var optionLine = regexp.MustCompile(`^[\s│]*(?:[❯›>]\s*)?([1-9])[.)]\s+(.+?)[\s│]*$`)
 
 // PlanApproveKey returns the key that picks "Yes, manually approve edits" in Claude Code's
-// plan dialog, read by its label from the visible rows. The dialog's first option clears the
-// context and turns on auto-accept, so "1" never approves a plan. It reports false when no row
+// plan dialog, read by its label from the visible rows. The dialog's first option turns on
+// auto-accept (and clears the context too, with Claude's clear-context setting on), so "1"
+// never approves a plan. It reports false when no row
 // or more than one row carries that label: the hab then sends nothing.
 func PlanApproveKey(rows []string) ([]byte, bool) {
 	var key []byte

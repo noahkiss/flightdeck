@@ -2601,8 +2601,8 @@ unlock rule). Tests: `TestBannerBudgets`, `TestToolBanners`, `TestPlanApproveKey
   each followed by a space, so "--force" keeps its dashes), emphasis marks dropped, a heading that
   only says "Plan" left out, lines joined with " · ". Approve shows only when the whole plan fits
   the body budget, as for a command. Approve picks "Yes, manually approve edits" by its label on
-  screen, never the dialog's first option, which clears the context and turns on auto-accept
-  (`harness-adapters.md`, Permission answers). The in-app "Approve plan" goes the same way.
+  screen, never the dialog's first option, which turns on auto-accept (and clears the context,
+  with Claude's clear-context setting on; `harness-adapters.md`, Permission answers). The in-app "Approve plan" goes the same way.
 - **Questions.** A Claude `AskUserQuestion` request takes the question budget: the first question
   as the title (8 words, 50 characters), with "(+1 more)" when more questions follow. Its options
   are numbered by their place in the body ("1 Clerk · 2 Auth.js"); an option with no label is left

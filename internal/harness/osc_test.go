@@ -192,8 +192,9 @@ func TestPermissionKeys(t *testing.T) {
 	}
 }
 
-// TestPlanApproveKey: the plan dialog's approve key is read by its label from a hand-written
-// screen of Claude Code 2.1.316's plan dialog, never "1" (clear context and auto-accept).
+// TestPlanApproveKey: the plan dialog's approve key is read by its label from hand-written
+// screens of Claude Code 2.1.316's plan dialog: the default three rows, and four rows with the
+// clear-context option first. Never "1", which turns on auto-accept.
 func TestPlanApproveKey(t *testing.T) {
 	b, err := os.ReadFile("testdata/claude-plan-dialog-2.1.316.txt")
 	if err != nil {
@@ -202,6 +203,14 @@ func TestPlanApproveKey(t *testing.T) {
 	rows := strings.Split(string(b), "\n")
 	if k, ok := PlanApproveKey(rows); !ok || string(k) != "3" {
 		t.Errorf("fixture: %q %v, want 3", k, ok)
+	}
+	// The default dialog has three rows: no clear-context option.
+	d, err := os.ReadFile("testdata/claude-plan-dialog-default-2.1.316.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k, ok := PlanApproveKey(strings.Split(string(d), "\n")); !ok || string(k) != "2" {
+		t.Errorf("default fixture: %q %v, want 2", k, ok)
 	}
 	// Options in another order still pick by label.
 	moved := []string{"  1. Yes, manually approve edits", "❯ 2. Yes, auto-accept edits", "  3. No, keep planning"}

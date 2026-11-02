@@ -336,8 +336,8 @@ func linkScreen(lk *link.Link) func(pane string) ([]string, error) {
 }
 
 // permissionKeys returns the keys that answer the pane's dialog. Approving a Claude Code plan
-// picks "Yes, manually approve edits" by its label on screen: the dialog's first option clears
-// the context and turns on auto-accept. With no such row on screen, nothing is sent.
+// picks "Yes, manually approve edits" by its label on screen: the dialog's first option turns
+// on auto-accept. With no such row on screen, nothing is sent.
 func (a *agentService) permissionKeys(pane string, st api.AgentState, allow bool) ([]byte, error) {
 	if allow && st.Harness == detect.KindClaude && st.Request != nil && st.Request.Tool == harness.ToolPlan {
 		var rows []string

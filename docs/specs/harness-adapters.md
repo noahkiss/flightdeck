@@ -1121,12 +1121,18 @@ Built choices (`approval.answer`, Claude Code and Codex):
   `unavailable`; Claude then shows its own dialog, and the owner answers again. It never
   retries as keys on its own.
 - Otherwise the dialog gets keys: `1` for allow (the dialog's first option, Yes), Esc for deny.
-  A Claude Code plan (`ExitPlanMode`) is the exception for allow: its first option is "Yes,
-  clear context and auto-accept edits". The hab reads the visible rows and sends the number of
-  the one option labelled "Yes, manually approve edits". With no such row, or two, it sends
-  nothing and answers `unavailable`, with a hint to approve in the terminal. Deny stays Esc ("No,
-  keep planning"). Fixture: `internal/harness/testdata/claude-plan-dialog-2.1.316.txt`, written
-  by hand.
+  A Claude Code plan (`ExitPlanMode`) is the exception for allow. Its first option turns on
+  auto-accept: by default the dialog has three rows ("Yes, auto-accept edits", "Yes, manually
+  approve edits", "No, keep planning"). With Claude's clear-context setting on, a fourth row comes
+  first: "Yes, clear context and auto-accept edits". The hab reads the visible rows and sends the
+  number of the one option labelled "Yes, manually approve edits". With no such row, or two, it
+  sends nothing and answers `unavailable`, with a hint to approve in the terminal. Deny stays Esc
+  ("No, keep planning"). Fixtures, written by hand: `claude-plan-dialog-default-2.1.316.txt`
+  (three rows, key 2) and `claude-plan-dialog-2.1.316.txt` (four rows, key 3) in
+  `internal/harness/testdata/`.
+- Through the blocking hook, a plan's allow is a bare `{"behavior":"allow"}`. Claude then
+  restores the mode from before plan mode (its `prePlanMode`), else the default mode. It never
+  clears the context (verified against 2.1.316).
   Keys go only while the pane shows that request as a hook reported it; after an OSC `clear`
   the answer is `conflict`, so keys never land in a shell. A waiting hook still takes it.
   When a blocking hook for the request gave up with no decision less than 1 second ago, the
