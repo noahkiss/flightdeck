@@ -67,6 +67,10 @@ public struct HabState: Sendable, Equatable {
     /// account key; no entry when there was none. A reading kept across a
     /// reconnect keeps the offset it came with, not the new connection's.
     public var usageClock: [String: TimeInterval] = [:]
+    /// The hab-side settings by id (app.md 20.5): from the host snapshot, then
+    /// `settings.updated` by revision. Kept while offline; empty from a hab
+    /// without the `settings` capability.
+    public var settings: [String: Setting] = [:]
 }
 
 /// Timings of the control connection. The defaults follow hab-logic-api.md 3.5
@@ -446,6 +450,7 @@ public actor HabConnection {
         // Every snapshot replaces this hab's objects. Within an epoch it is
         // newer than anything held; with a new epoch revisions may restart lower.
         state.store.reset(snap)
+        state.settings = Dictionary((snap.settings ?? []).map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
         state.snapshots += 1
         lastSeq = snap.seq
         snapshotApplied = true
@@ -520,10 +525,27 @@ public actor HabConnection {
             }
             return
         }
+        if e.type == "settings.updated" {
+            if applySetting(e) { publish() }
+            return
+        }
         if e.type == "content.updated", !contentTaps.isEmpty, let it = try? e.data.decode(ContentItem.self) {
             for (_, t) in contentTaps { t.yield(it) }
         }
         if state.store.apply(e) { publish() }
+    }
+
+    /// Applies a `settings.updated` event: a revision not higher than the one
+    /// held is ignored, as for any object within an epoch (hab-logic-api.md 3.5).
+    private func applySetting(_ e: Event) -> Bool {
+        guard let rev = e.revision, let d = try? e.data.decode(SettingUpdated.self) else { return false }
+        guard var s = state.settings[e.id] else { return false } // a setting this app did not get in the snapshot
+        guard rev > s.revision else { return false }
+        s.revision = rev
+        s.value = d.value
+        s.source = d.source
+        state.settings[e.id] = s
+        return true
     }
 
     // MARK: - Usage

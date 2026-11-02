@@ -30,6 +30,8 @@ public final class Fleet {
     public var usage: UsageCenter?
     /// Files opened from another app on their way to a session (app.md 4.4).
     public let files = SendFileCenter()
+    /// Settings and levels (app.md 20).
+    public var settings: SettingsCenter?
     /// `session.focus` reports for the session views on screen (app.md 8.6).
     public private(set) lazy var focus = FocusReporter { [weak self] habID, params in
         guard let conn = self?.connections.first(where: { $0.id == habID }) else { return }
@@ -85,6 +87,7 @@ public final class Fleet {
             var lastSnapshot = 0
             for await s in conn.updates {
                 b.update(conn.id, s)
+                self?.settings?.update(habID: conn.id, label: b.habs.first { $0.id == conn.id }?.label ?? conn.id, state: s)
                 self?.refreshChats(habID: conn.id)
                 if let u = self?.usage {
                     u.update(habID: conn.id, label: b.habs.first { $0.id == conn.id }?.label ?? conn.id, state: s)
@@ -116,6 +119,7 @@ public final class Fleet {
         push?.forget(id: id)
         book?.forget(connection: id)
         usage?.book.forget(habID: id)
+        settings?.forget(habID: id)
     }
 
     /// A connection reached online: note its host id for background answers,
@@ -131,6 +135,9 @@ public final class Fleet {
         Task { @MainActor [weak self] in
             await self?.push?.settle(id: id)
             self?.focus.connectionOnline(habID: id)
+        }
+        Task { @MainActor [weak self] in
+            await self?.settings?.connectionOnline(habID: id)
         }
     }
 

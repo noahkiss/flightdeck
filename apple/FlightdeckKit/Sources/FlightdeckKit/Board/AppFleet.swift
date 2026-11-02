@@ -35,7 +35,34 @@ public enum AppFleet {
         addSSH(to: fleet, environment: env)
         pruneUsage(fleet)
         addPush(to: fleet, environment: env)
+        addSettings(to: fleet, defaults: defaults)
         return fleet
+    }
+
+    /// Settings and levels (app.md 20): the hab-side writes go through each
+    /// hab's connection; the app-side rows read and write where they live.
+    @MainActor
+    static func addSettings(to fleet: Fleet, defaults: UserDefaults) {
+        let center = SettingsCenter(defaults: defaults) { [weak fleet] habID, params in
+            guard let conn = await fleet?.connections.first(where: { $0.id == habID }) else {
+                throw TransportError("that hab is no longer in the app")
+            }
+            return try await conn.call(HabMethods.settingsSet, params)
+        }
+        let voice = fleet.voice.settings
+        center.ports[SettingsRegistry.voiceYesAllows] = AppSettingPort(
+            get: { .bool(voice.value.yesAllows) },
+            set: { v in if case .bool(let b) = v { voice.value.yesAllows = b } }
+        )
+        #if os(iOS)
+        if let ssh = fleet.ssh {
+            center.ports[SettingsRegistry.sshRequireFaceID] = AppSettingPort(
+                get: { .bool(ssh.faceID) },
+                set: { v in if case .bool(let b) = v { try await ssh.setFaceID(b) } }
+            )
+        }
+        #endif
+        fleet.settings = center
     }
 
     /// Usage readings and alerts. Demo mode posts no notification and keeps

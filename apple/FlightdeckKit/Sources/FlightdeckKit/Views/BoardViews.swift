@@ -141,7 +141,7 @@ public struct BoardScreen: View {
                 }
                 .sheet(isPresented: $showConnections) {
                     NavigationStack {
-                        ConnectionsList(board: board, push: fleet?.push, usage: fleet?.usage, openUsage: { showUsage(nil) })
+                        ConnectionsList(board: board, push: fleet?.push, usage: fleet?.usage, settings: fleet?.settings, openUsage: { showUsage(nil) })
                             .navigationTitle("Connections")
                             .toolbar {
                                 ToolbarItem(placement: .confirmationAction) {
@@ -174,7 +174,7 @@ public struct BoardScreen: View {
                     VStack(spacing: 0) {
                         SessionCardsPlaceholder()
                         Divider()
-                        ConnectionsList(board: board, push: fleet?.push, usage: fleet?.usage)
+                        ConnectionsList(board: board, push: fleet?.push, usage: fleet?.usage, settings: fleet?.settings)
                     }
                     .frame(minWidth: 260, idealWidth: 300, maxWidth: 360)
                 }
@@ -311,6 +311,7 @@ struct ConnectionsList: View {
     let board: Board
     var push: PushRegistrar?
     var usage: UsageCenter?
+    var settings: SettingsCenter?
     /// Opens the usage sheet; the board closes this list first when it is a sheet.
     var openUsage: (() -> Void)?
     @Environment(\.sshSetup) private var ssh
@@ -318,6 +319,7 @@ struct ConnectionsList: View {
     @State private var showSSH = false
     @State private var showNotifications = false
     @State private var showVoice = false
+    @State private var showSettings = false
 
     var body: some View {
         List {
@@ -348,10 +350,13 @@ struct ConnectionsList: View {
                 }
             }
             Section {
-                if ssh != nil {
+                if settings != nil {
+                    Button("Settings") { showSettings = true }
+                }
+                if ssh != nil, settings == nil {
                     Button("SSH keys and habs") { showSSH = true }
                 }
-                if push != nil {
+                if push != nil, settings == nil {
                     Button("Notifications") { showNotifications = true }
                 }
                 if usage != nil {
@@ -359,9 +364,28 @@ struct ConnectionsList: View {
                         if let openUsage { openUsage() } else { usage?.book.present(account: nil) }
                     }
                 }
-                if voice != nil {
+                if voice != nil, settings == nil {
                     Button("Voice") { showVoice = true }
                 }
+            }
+        }
+        .sheet(isPresented: $showSettings) {
+            if let settings {
+                NavigationStack {
+                    SettingsPage(center: settings, board: board, push: push, openUsage: usage == nil ? nil : {
+                        showSettings = false
+                        if let openUsage { openUsage() } else { usage?.book.present(account: nil) }
+                    })
+                    .navigationTitle("Settings")
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showSettings = false }
+                        }
+                    }
+                }
+                #if os(macOS)
+                .frame(minWidth: 480, minHeight: 560)
+                #endif
             }
         }
         .sheet(isPresented: $showVoice) {

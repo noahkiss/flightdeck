@@ -39,11 +39,13 @@ public enum VoiceGrammar {
 
     /// The answer to "Allow or deny?", or nil when it is not a clear match.
     /// It is asked only after a read-back, and counts only for that request,
-    /// so "yes" is an Allow (owner, 2026-11-01). A lone yes in an ordinary
-    /// turn is a message, never an answer.
-    public static func answer(_ utterance: String) -> Answer? {
+    /// so "yes" is an Allow (owner, 2026-11-01) unless `yesAllows` is off
+    /// (`voice.yes_allows`, app.md 20.3): then "yes" is no match, and voice
+    /// mode asks again. A lone yes in an ordinary turn is a message, never an answer.
+    public static func answer(_ utterance: String, yesAllows: Bool = true) -> Answer? {
         switch normalize(utterance) {
-        case "allow", "approve", "allow it", "approve it", "yes": return .allow
+        case "allow", "approve", "allow it", "approve it": return .allow
+        case "yes": return yesAllows ? .allow : nil
         case "deny", "no", "deny it": return .deny
         default: return nil
         }

@@ -1,0 +1,327 @@
+import Foundation
+import HabAPI
+import XCTest
+@testable import FlightdeckKit
+
+/// Settings and levels (app.md 20): level matching, Custom, exceptions, the
+/// queue, drop-and-resend, the new-hab check, and the center's level pick.
+final class SettingsTests: XCTestCase {
+    typealias R = SettingsRegistry
+
+    func setting(_ id: String, _ v: JSONValue, rev: UInt64 = 1, source: SettingSource = .default) -> Setting {
+        let d = R.def(id)?.levels?[.balanced] ?? v
+        return Setting(default: d, id: id, revision: rev, source: source, value: v)
+    }
+
+    /// A hab at Balanced: every levelled hab-side row at its default.
+    func balancedHab(_ id: String = "h1", label: String = "alpha", online: Bool = true, epoch: String = "e1") -> HabSettingsView {
+        var s: [String: Setting] = [:]
+        for d in R.levelledHabSide { s[d.id] = setting(d.id, d.levels![.balanced]!) }
+        return HabSettingsView(habID: id, label: label, online: online, hasSettings: true, epoch: epoch, settings: s)
+    }
+
+    func app(_ level: SettingLevel) -> [String: JSONValue] {
+        var out: [String: JSONValue] = [:]
+        for d in R.levelled where d.store == .app { out[d.id] = d.levels![level]! }
+        return out
+    }
+
+    // MARK: - Level matching
+
+    func testEachColumnMatchesItsLevel() {
+        XCTAssertEqual(LevelMatcher.match(app: app(.balanced), habs: [balancedHab()]).level, .balanced)
+        var h = balancedHab()
+        for d in R.levelledHabSide { h.settings[d.id]?.value = d.levels![.safe]! }
+        XCTAssertEqual(LevelMatcher.match(app: app(.safe), habs: [h]).level, .safe)
+        XCTAssertEqual(LevelMatcher.match(app: app(.safe), habs: [h]).title, "Safe")
+    }
+
+    func testOneChangedRowIsCustomAndBackIsTheLevel() {
+        var a = app(.balanced)
+        a[R.voiceYesAllows] = .bool(false)
+        XCTAssertNil(LevelMatcher.match(app: a, habs: [balancedHab()]).level)
+        XCTAssertEqual(LevelMatcher.match(app: a, habs: [balancedHab()]).title, "Custom")
+        a[R.voiceYesAllows] = .bool(true)
+        XCTAssertEqual(LevelMatcher.match(app: a, habs: [balancedHab()]).level, .balanced)
+    }
+
+    /// A setting the device does not show (Face ID on the Mac) is left out.
+    func testRowNotShownIsLeftOut() {
+        var a = app(.balanced)
+        a[R.sshRequireFaceID] = nil
+        XCTAssertEqual(LevelMatcher.match(app: a, habs: [balancedHab()]).level, .balanced)
+    }
+
+    /// A hab-side write from another device flips the picker to Custom.
+    func testOnlineHabValueBreaksTheMatch() {
+        var h = balancedHab()
+        h.settings[R.logbookApproval]?.value = .string("agents")
+        h.settings[R.logbookApproval]?.source = .client
+        XCTAssertNil(LevelMatcher.match(app: app(.balanced), habs: [h, balancedHab("h2", label: "beta")]).level)
+    }
+
+    /// A locked row and an offline hab do not break the match; each that
+    /// differs is an exception.
+    func testLockedAndOfflineRowsAreExceptions() {
+        var safe = balancedHab()
+        for d in R.levelledHabSide { safe.settings[d.id]?.value = d.levels![.safe]! }
+        var locked = safe
+        locked.habID = "h2"
+        locked.label = "beta"
+        locked.settings[R.startElsewhere] = setting(R.startElsewhere, .bool(false), rev: 2, source: .config)
+        var offline = balancedHab("h3", label: "gamma", online: false)
+        offline.settings[R.startElsewhere]?.value = .bool(true)
+        let st = LevelMatcher.match(app: app(.safe), habs: [safe, locked, offline])
+        XCTAssertEqual(st.level, .safe)
+        XCTAssertEqual(st.exceptions.map(\.habLabel), ["beta", "gamma"])
+        XCTAssertEqual(st.exceptions.map(\.reason), [.locked, .offline])
+        XCTAssertEqual(st.exceptions.first?.settingID, R.startElsewhere)
+        XCTAssertEqual(st.title, "Safe, 2 exceptions")
+    }
+
+    func testUnknownSourceReadsAsLocked() {
+        XCTAssertTrue(setting(R.startElsewhere, .bool(true), source: SettingSource(rawValue: "policy")).isLocked)
+        XCTAssertFalse(setting(R.startElsewhere, .bool(true), source: .client).isLocked)
+    }
+
+    /// A hab without `settings` is left out; an offline hab's queued value counts.
+    func testHabWithoutSettingsAndQueuedValue() {
+        let bare = HabSettingsView(habID: "old", label: "old", online: true, hasSettings: false)
+        XCTAssertEqual(LevelMatcher.match(app: app(.balanced), habs: [balancedHab(), bare]).level, .balanced)
+        let off = balancedHab("h2", label: "beta", online: false)
+        let q = QueuedSettingWrite(habID: "h2", settingID: R.logbookApproval, value: .string("agents"), revision: 1, epoch: "e1", seen: .string("off"))
+        let st = LevelMatcher.match(app: app(.balanced), habs: [balancedHab(), off], queued: [q])
+        XCTAssertEqual(st.level, .balanced)
+        XCTAssertEqual(st.exceptions.count, 1, "the queued value differs on the offline hab")
+    }
+
+    /// Two columns that the rows share: the picked level shows.
+    func testPreferredLevelWinsATie() {
+        let lockedEverywhere = HabSettingsView(habID: "h", label: "h", online: true, hasSettings: true, settings: [
+            R.startElsewhere: setting(R.startElsewhere, .bool(true), source: .config),
+        ])
+        XCTAssertEqual(LevelMatcher.match(defs: [R.def(R.startElsewhere)!], app: [:], habs: [lockedEverywhere], prefer: .bypass).level, .bypass)
+        XCTAssertEqual(LevelMatcher.match(defs: [R.def(R.startElsewhere)!], app: [:], habs: [lockedEverywhere]).level, .safe)
+    }
+
+    func testRowStatusDiffersAndLocked() {
+        var b = balancedHab("h2", label: "beta")
+        b.settings[R.approvalMaxAge] = setting(R.approvalMaxAge, .int(5), rev: 2, source: .config)
+        let row = LevelMatcher.row(R.approvalMaxAge, habs: [balancedHab(), b])
+        XCTAssertEqual(row.value, .int(60))
+        XCTAssertEqual(row.differsOn, ["beta"])
+        XCTAssertEqual(row.lockedOn, ["beta"])
+        XCTAssertTrue(LevelMatcher.row("newer.setting", habs: [balancedHab()]).unavailable)
+    }
+
+    // MARK: - Queue
+
+    func testQueueReplacesAndSurvivesARelaunch() throws {
+        let d = try XCTUnwrap(UserDefaults(suiteName: "SettingsTests.queue"))
+        d.removePersistentDomain(forName: "SettingsTests.queue")
+        var q = SettingsQueue()
+        q.put(QueuedSettingWrite(habID: "h", settingID: R.startElsewhere, value: .bool(false), revision: 1, epoch: "e", seen: .bool(true)))
+        q.put(QueuedSettingWrite(habID: "h", settingID: R.startElsewhere, value: .bool(true), revision: 1, epoch: "e", seen: .bool(true)))
+        q.put(QueuedSettingWrite(habID: "g", settingID: R.startElsewhere, value: .bool(false), revision: 3, epoch: "x", seen: nil))
+        XCTAssertEqual(q.items.count, 2)
+        XCTAssertEqual(q.items(for: "h").first?.value, .bool(true))
+        q.save(d)
+        XCTAssertEqual(SettingsQueue.load(d), q)
+    }
+
+    // MARK: - Connect plan
+
+    func testSameEpochSendsWithItsRevision() {
+        var h = balancedHab()
+        h.settings[R.startElsewhere]?.revision = 4
+        let q = QueuedSettingWrite(habID: "h1", settingID: R.startElsewhere, value: .bool(false), revision: 3, epoch: "e1", seen: .bool(true))
+        let p = SettingsWrites.connectPlan(hab: h, queued: [q], picked: nil)
+        XCTAssertEqual(p.send, [SettingWrite(id: R.startElsewhere, revision: 3, value: .bool(false))], "the hab answers conflict if another device wrote since")
+        XCTAssertEqual(p.settled, [R.startElsewhere])
+    }
+
+    func testNewEpochComparesTheSnapshotValue() {
+        var h = balancedHab(epoch: "e2")
+        h.settings[R.startElsewhere]?.revision = 1
+        let kept = QueuedSettingWrite(habID: "h1", settingID: R.startElsewhere, value: .bool(false), revision: 9, epoch: "e1", seen: .bool(true))
+        XCTAssertEqual(SettingsWrites.connectPlan(hab: h, queued: [kept], picked: nil).send,
+                       [SettingWrite(id: R.startElsewhere, revision: 1, value: .bool(false))])
+        let lost = QueuedSettingWrite(habID: "h1", settingID: R.startElsewhere, value: .bool(false), revision: 9, epoch: "e1", seen: .bool(false))
+        h.settings[R.startElsewhere]?.value = .bool(true)
+        h.settings[R.startElsewhere]?.source = .client
+        let p = SettingsWrites.connectPlan(hab: h, queued: [lost], picked: nil)
+        XCTAssertTrue(p.send.isEmpty)
+        XCTAssertEqual(p.dropped, [DroppedSetting(settingID: R.startElsewhere, habID: "h1", reason: .changedElsewhere)])
+    }
+
+    func testQueuedWriteToALockedRowDrops() {
+        var h = balancedHab()
+        h.settings[R.logbookApproval] = setting(R.logbookApproval, .string("off"), rev: 2, source: .config)
+        let q = QueuedSettingWrite(habID: "h1", settingID: R.logbookApproval, value: .string("agents"), revision: 1, epoch: "e1", seen: .string("off"))
+        XCTAssertEqual(SettingsWrites.connectPlan(hab: h, queued: [q], picked: nil).dropped.map(\.reason), [.locked])
+    }
+
+    /// The new-hab check: a row still at `default` takes the picked level;
+    /// a client-written or locked row stands; a queued row is left to the queue.
+    func testNewHabCheck() {
+        var h = balancedHab()
+        h.settings[R.approvalMaxAge] = setting(R.approvalMaxAge, .int(30), rev: 3, source: .client)
+        h.settings[R.startElsewhere] = setting(R.startElsewhere, .bool(true), rev: 2, source: .config)
+        let q = QueuedSettingWrite(habID: "h1", settingID: R.logbookApproval, value: .string("off"), revision: 1, epoch: "e1", seen: .string("off"))
+        XCTAssertTrue(SettingsWrites.connectPlan(hab: h, queued: [q], picked: .safe).send.isEmpty, "logbook is queued; the others stand")
+        let p = SettingsWrites.connectPlan(hab: h, queued: [], picked: .safe)
+        XCTAssertEqual(p.send, [SettingWrite(id: R.logbookApproval, revision: 1, value: .string("agents"))])
+        XCTAssertTrue(SettingsWrites.connectPlan(hab: balancedHab(), queued: [], picked: .balanced).send.isEmpty)
+        XCTAssertTrue(SettingsWrites.connectPlan(hab: balancedHab(), queued: [], picked: nil).send.isEmpty)
+        let bare = HabSettingsView(habID: "old", label: "old", online: true, hasSettings: false)
+        XCTAssertTrue(SettingsWrites.connectPlan(hab: bare, queued: [], picked: .safe).send.isEmpty)
+    }
+
+    // MARK: - Drop and resend once
+
+    func refusal(_ kind: ErrorKind, _ id: String) -> RPCError {
+        RPCError(code: -32000, message: kind.rawValue, data: ErrorData(hint: kind.rawValue, id: id, kind: kind, seq: 1))
+    }
+
+    func rows(_ ids: String...) -> [SettingWrite] { ids.map { SettingWrite(id: $0, revision: 1, value: .bool(true)) } }
+
+    func testDropAndResendOnce() async {
+        var calls: [[String]] = []
+        let out = await SettingsWrites.send(rows("a", "b", "c"), habID: "h") { p in
+            calls.append(p.values.map(\.id))
+            if calls.count == 1 { throw self.refusal(.conflict, "b") }
+            return SettingsResult(seq: 1, settings: p.values.map { self.setting($0.id, $0.value, rev: 2, source: .client) })
+        }
+        XCTAssertEqual(calls, [["a", "b", "c"], ["a", "c"]], "the rest goes once more, revisions unchanged")
+        XCTAssertEqual(out.written.map(\.id), ["a", "c"])
+        XCTAssertEqual(out.dropped, [DroppedSetting(settingID: "b", habID: "h", reason: .changedElsewhere)])
+    }
+
+    func testSecondRefusalEndsTheTry() async {
+        var n = 0
+        let out = await SettingsWrites.send(rows("a", "b", "c"), habID: "h") { _ in
+            n += 1
+            throw n == 1 ? self.refusal(.locked, "a") : self.refusal(.notFound, "c")
+        }
+        XCTAssertEqual(n, 2)
+        XCTAssertTrue(out.written.isEmpty)
+        XCTAssertEqual(out.dropped.map(\.reason), [.locked, .notOnHab, .notTried])
+        XCTAssertEqual(out.dropped.map(\.settingID), ["a", "c", "b"])
+    }
+
+    func testTransportFailureLeavesRowsUnreached() async {
+        let out = await SettingsWrites.send(rows("a"), habID: "h") { _ in throw TransportError("gone") }
+        XCTAssertEqual(out.unreached.map(\.id), ["a"])
+    }
+
+    func testNotice() {
+        XCTAssertEqual(SettingsWrites.levelNotice(.safe, changed: 3, total: 3, sentences: []), "Safe: 3 settings changed")
+        let s = SettingsWrites.sentence(DroppedSetting(settingID: R.logbookApproval, habID: "h", reason: .changedElsewhere), habLabel: "alpha")
+        XCTAssertEqual(SettingsWrites.levelNotice(.safe, changed: 2, total: 3, sentences: [s]),
+                       "Safe: 2 of 3 changed. Require approval for memories on alpha was changed from another device.")
+    }
+
+    // MARK: - Center
+
+    @MainActor
+    func center(_ suite: String, setter: @escaping (String, SettingsSetParams) async throws -> SettingsResult) throws -> (SettingsCenter, UserDefaults) {
+        let d = try XCTUnwrap(UserDefaults(suiteName: suite))
+        d.removePersistentDomain(forName: suite)
+        return (SettingsCenter(defaults: d, setter: setter), d)
+    }
+
+    func state(_ v: HabSettingsView) -> HabState {
+        var s = HabState()
+        s.status = v.online ? .online : .offline
+        s.welcome = Welcome(build: "test", capabilities: v.hasSettings ? ["settings"] : [], clientId: "c", epoch: v.epoch ?? "e",
+                            host: HostInfo(id: v.label), reconnectToken: "t", revision: 1, seq: 0)
+        s.settings = v.settings
+        return s
+    }
+
+    /// A level pick writes each online hab at once, queues the offline one,
+    /// applies the app-side rows, keeps a refused Face ID row, and names it.
+    @MainActor
+    func testPickWritesQueuesAndReports() async throws {
+        var sent: [String: [SettingWrite]] = [:]
+        let (c, d) = try center("SettingsTests.pick") { hab, p in
+            sent[hab, default: []] += p.values
+            return SettingsResult(seq: 1, settings: [])
+        }
+        var yes = true
+        var faceID = false
+        c.ports[R.voiceYesAllows] = AppSettingPort(get: { .bool(yes) }, set: { if case .bool(let b) = $0 { yes = b } })
+        c.ports[R.sshRequireFaceID] = AppSettingPort(get: { .bool(faceID) }, set: { _ in throw TransportError("refused") })
+        let on = balancedHab()
+        let off = balancedHab("h2", label: "beta", online: false)
+        c.update(habID: on.habID, label: on.label, state: state(on))
+        c.update(habID: off.habID, label: off.label, state: state(off))
+        await c.pick(.safe)
+        XCTAssertEqual(sent["h1"], [SettingWrite(id: R.logbookApproval, revision: 1, value: .string("agents"))])
+        XCTAssertNil(sent["h2"])
+        XCTAssertEqual(c.queue.items.map(\.habID), ["h2"])
+        XCTAssertFalse(yes)
+        XCTAssertFalse(faceID)
+        #if os(iOS)
+        XCTAssertTrue(c.notice?.hasPrefix("Safe: 1 of 2 changed.") ?? false, c.notice ?? "")
+        #endif
+        XCTAssertTrue(c.notice?.contains("beta gets the change when it connects.") ?? false, c.notice ?? "")
+        XCTAssertEqual(SettingsQueue.load(d).items.count, 1, "the queue is saved")
+        XCTAssertEqual(d.string(forKey: SettingsCenter.levelKey), "safe")
+
+        // The offline hab connects in the same epoch: its queued write goes, and the queue empties.
+        c.update(habID: "h2", label: "beta", state: state(balancedHab("h2", label: "beta")))
+        await c.connectionOnline(habID: "h2")
+        XCTAssertEqual(sent["h2"], [SettingWrite(id: R.logbookApproval, revision: 1, value: .string("agents"))])
+        XCTAssertTrue(c.queue.items.isEmpty)
+    }
+
+    /// The new-hab check runs on every connect with the last picked level.
+    @MainActor
+    func testConnectAppliesThePickedLevelToDefaults() async throws {
+        var sent: [SettingWrite] = []
+        let d = try XCTUnwrap(UserDefaults(suiteName: "SettingsTests.newhab"))
+        d.removePersistentDomain(forName: "SettingsTests.newhab")
+        d.set("bypass", forKey: SettingsCenter.levelKey)
+        let c2 = SettingsCenter(defaults: d) { _, p in sent += p.values; return SettingsResult(seq: 1, settings: []) }
+        let h = balancedHab()
+        c2.update(habID: h.habID, label: h.label, state: state(h))
+        await c2.connectionOnline(habID: h.habID)
+        XCTAssertEqual(Set(sent.map(\.id)), [R.startElsewhere, R.approvalMaxAge])
+    }
+
+    /// A refused queued write on connect is dropped and named in the notice.
+    @MainActor
+    func testConnectDropAndNotice() async throws {
+        let d = try XCTUnwrap(UserDefaults(suiteName: "SettingsTests.drop"))
+        d.removePersistentDomain(forName: "SettingsTests.drop")
+        var q = SettingsQueue()
+        q.put(QueuedSettingWrite(habID: "h1", settingID: R.startElsewhere, value: .bool(false), revision: 1, epoch: "e1", seen: .bool(true)))
+        q.save(d)
+        let c2 = SettingsCenter(defaults: d) { _, _ in throw self.refusal(.conflict, R.startElsewhere) }
+        XCTAssertEqual(c2.queue.items.count, 1, "the queue survives a relaunch")
+        let h = balancedHab()
+        c2.update(habID: h.habID, label: h.label, state: state(h))
+        await c2.connectionOnline(habID: h.habID)
+        XCTAssertTrue(c2.queue.items.isEmpty)
+        XCTAssertEqual(c2.notice, "Confirm before an agent starts work on another host on alpha was changed from another device.")
+    }
+
+    // MARK: - Voice
+
+    func testYesAllows() {
+        XCTAssertEqual(VoiceGrammar.answer("Yes."), .allow)
+        XCTAssertNil(VoiceGrammar.answer("yes", yesAllows: false))
+        XCTAssertEqual(VoiceGrammar.answer("allow it", yesAllows: false), .allow)
+        XCTAssertEqual(VoiceGrammar.answer("no", yesAllows: false), .deny)
+    }
+
+    /// Voice settings saved by an older app, with no yesAllows, keep every value.
+    func testVoiceSettingsReadOlderData() throws {
+        let old = #"{"habEngine":false,"parakeetEngine":true,"appleEngine":true,"askSummary":false,"spokenCommands":true,"confirmBeforeSend":true,"bargeIn":false,"noisyRoom":true,"silence":2.5}"#
+        let v = try JSONDecoder().decode(VoiceSettings.self, from: Data(old.utf8))
+        XCTAssertFalse(v.habEngine)
+        XCTAssertEqual(v.silence, 2.5)
+        XCTAssertTrue(v.yesAllows)
+    }
+}

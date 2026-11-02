@@ -545,7 +545,7 @@ public final class VoiceModel {
     }
 
     private func heardAnswer(_ text: String, for id: String) async {
-        guard let ans = VoiceGrammar.answer(text) else {
+        guard let ans = VoiceGrammar.answer(text, yesAllows: settings.yesAllows) else {
             answerAttempts += 1
             if answerAttempts == 1 {
                 await askAloud(requestMayAllow ? "Allow or deny?" : "Say deny, or tap.", for: id)

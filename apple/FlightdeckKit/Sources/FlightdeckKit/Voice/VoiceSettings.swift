@@ -19,8 +19,31 @@ public struct VoiceSettings: Codable, Equatable, Sendable {
     public var noisyRoom = false
     /// Silence that ends a turn, in seconds.
     public var silence: Double = 1.2
+    /// "Yes" answers Allow to "Allow or deny?"; off, only "allow" and
+    /// "approve" do (the levelled setting `voice.yes_allows`, app.md 20.3).
+    public var yesAllows = true
 
     public init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case habEngine, parakeetEngine, appleEngine, askSummary, spokenCommands, confirmBeforeSend, bargeIn, noisyRoom, silence, yesAllows
+    }
+
+    /// Reads saved settings; a field an older app did not save keeps its default.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = VoiceSettings()
+        habEngine = try c.decodeIfPresent(Bool.self, forKey: .habEngine) ?? d.habEngine
+        parakeetEngine = try c.decodeIfPresent(Bool.self, forKey: .parakeetEngine) ?? d.parakeetEngine
+        appleEngine = try c.decodeIfPresent(Bool.self, forKey: .appleEngine) ?? d.appleEngine
+        askSummary = try c.decodeIfPresent(Bool.self, forKey: .askSummary) ?? d.askSummary
+        spokenCommands = try c.decodeIfPresent(Bool.self, forKey: .spokenCommands) ?? d.spokenCommands
+        confirmBeforeSend = try c.decodeIfPresent(Bool.self, forKey: .confirmBeforeSend) ?? d.confirmBeforeSend
+        bargeIn = try c.decodeIfPresent(Bool.self, forKey: .bargeIn) ?? d.bargeIn
+        noisyRoom = try c.decodeIfPresent(Bool.self, forKey: .noisyRoom) ?? d.noisyRoom
+        silence = try c.decodeIfPresent(Double.self, forKey: .silence) ?? d.silence
+        yesAllows = try c.decodeIfPresent(Bool.self, forKey: .yesAllows) ?? d.yesAllows
+    }
 
     /// The enabled engines, in the fallback order.
     public var enabledEngines: [SpeechEngineKind] {
