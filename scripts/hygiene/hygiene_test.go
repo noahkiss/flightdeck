@@ -52,7 +52,7 @@ func newRepo(t *testing.T) *repo {
 		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.invalid",
 		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.invalid",
 		"GFF_HYGIENE_PATTERNS=", "GFF_HYGIENE_PATTERNS_FILE=",
-		"GFF_HYGIENE_PR_TITLE=", "GFF_HYGIENE_PR_BODY=",
+		"GFF_HYGIENE_PR_TITLE=", "GFF_HYGIENE_PR_BODY=", "GFF_HYGIENE_REF=", "GFF_HYGIENE_AWK=",
 	)
 	r.git("init", "-q", "-b", "main")
 	return r
@@ -97,6 +97,13 @@ func (r *repo) scan(extraEnv []string, args ...string) (int, string) {
 		dcode, dout := r.run([]string{dash}, extraEnv, args...)
 		if dcode != code || dout != out {
 			r.t.Fatalf("dash differs: exit %d vs %d\n--- sh\n%s--- dash\n%s", code, dcode, out, dout)
+		}
+	}
+	// CI runs the scan with gawk (hygiene.yml); where gawk is installed, it must agree.
+	if gawk, err := exec.LookPath("gawk"); err == nil {
+		gcode, gout := r.run(nil, append(append([]string{}, extraEnv...), "GFF_HYGIENE_AWK="+gawk), args...)
+		if gcode != code || gout != out {
+			r.t.Fatalf("gawk differs: exit %d vs %d\n--- awk\n%s--- gawk\n%s", code, gcode, out, gout)
 		}
 	}
 	return code, out
@@ -188,11 +195,60 @@ func TestPrivatePatternFromEnvAndFile(t *testing.T) {
 	code, out = r.scan([]string{"GFF_HYGIENE_PATTERNS_FILE=" + pf}, "--staged")
 	want(t, code, out, 1, "b.md:1: host-name")
 
-	code, out = r.scan([]string{"GFF_HYGIENE_PATTERNS=no tab here\n" + fakeRule}, "--staged")
-	want(t, code, out, 1, "b.md:1: host-name")
-	if !strings.Contains(out, "skipped") {
-		t.Fatalf("a bad pattern line was not reported:\n%s", out)
+}
+
+// A rule that is malformed, does not compile, or matches every line stops the scan. The error
+// names the rule's number only: awk prints a bad regex in its own message, so none may reach the
+// output.
+func TestBadPrivateRulesStopTheScan(t *testing.T) {
+	r := newRepo(t)
+	r.write("b.md", "deploy to "+fakeHost+" tonight\n")
+	r.git("add", "-A")
+	for _, tc := range []struct{ name, rules, wantIndex string }{
+		{"no tab", "# c\nqzx-fakehost-no-tab\n" + fakeRule, "rule 1"},
+		{"bad regex", fakeRule + "\nleak\t" + "qzx-fake" + "host-(", "rule 2"},
+		{"bad bracket", "leak\t" + "qzx-fake" + "host-[0-9", "rule 1"},
+		{"matches empty", fakeRule + "\nall\t" + "(qzx-fakehost)*", "rule 2"},
+		{"bad name", "host name\t" + "qzx-fakehost", "rule 1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, out := r.scan([]string{"GFF_HYGIENE_PATTERNS=" + tc.rules}, "--staged")
+			want(t, code, out, 2)
+			if !strings.Contains(out, tc.wantIndex) {
+				t.Fatalf("error does not name %s:\n%s", tc.wantIndex, out)
+			}
+			for _, s := range []string{"qzx", "fakehost", "(", "["} {
+				if strings.Contains(out, s) {
+					t.Fatalf("error holds %q:\n%s", s, out)
+				}
+			}
+		})
 	}
+}
+
+// A built-in rule for the tailnet: its IPv6 prefix and its DNS names.
+func TestTailnetRules(t *testing.T) {
+	r := newRepo(t)
+	r.write("a.txt", "ok\nreach "+"fd7a"+":115c:a1e0::5 now\nssh box."+"example-tail"+".ts"+".net\nFD7A"+":115C:A1E0:ab\n")
+	r.git("add", "-A")
+	code, out := r.scan(nil, "--staged")
+	want(t, code, out, 1, "a.txt:2: tailnet-ipv6", "a.txt:3: tailnet-name", "a.txt:4: tailnet-ipv6")
+	if strings.Contains(out, "example-tail") || strings.Contains(out, "a1e0") {
+		t.Fatalf("output holds planted text:\n%s", out)
+	}
+}
+
+// A path that hits is withheld everywhere it would be printed, and still fails the scan.
+func TestPathHitIsWithheld(t *testing.T) {
+	r := newRepo(t)
+	r.write("notes/"+fakeHost+".md", "clean\nnext "+privIP+"\n")
+	r.git("add", "-A")
+	code, out := r.scan([]string{"GFF_HYGIENE_PATTERNS=" + fakeRule}, "--staged")
+	want(t, code, out, 1, "<path withheld>: host-name (file path)", "<path withheld>:2: private-ipv4")
+	base := r.commit("add notes")
+	_ = base
+	code, out = r.scan([]string{"GFF_HYGIENE_PATTERNS=" + fakeRule}, "--tree")
+	want(t, code, out, 1, "<path withheld>: host-name (file path)")
 }
 
 func TestAllowFileCoversBuiltInOnly(t *testing.T) {
@@ -223,7 +279,7 @@ func TestRangeDiffMessagesAndPullRequest(t *testing.T) {
 		"GFF_HYGIENE_PR_BODY=line one\nruns on " + fakeHost,
 	}, "--range", base+".."+head)
 	want(t, code, out, 1,
-		"keep.txt:3: private-ipv4",
+		"keep.txt (commit "+short+"):3: private-ipv4",
 		"commit "+short+":1: host-name",
 		"commit "+short+":3: cgnat-ipv4",
 		"pull request body:2: host-name")
@@ -237,6 +293,34 @@ func TestRangeDiffMessagesAndPullRequest(t *testing.T) {
 	fix := r.commit("tidy")
 	code, out = r.scan(nil, "--range", head+".."+fix)
 	want(t, code, out, 0)
+}
+
+// A leak one commit adds and a later commit removes was still pushed: the range fails on it.
+func TestRangeScansEveryCommit(t *testing.T) {
+	r := newRepo(t)
+	r.write("a.txt", "one\n")
+	base := r.commit("start")
+	r.write("a.txt", "one\n"+privIP+"\n")
+	leak := r.commit("oops")
+	r.write("a.txt", "one\n")
+	head := r.commit("remove it")
+	short := r.git("rev-parse", "--short", leak)
+	code, out := r.scan(nil, "--range", base+".."+head)
+	want(t, code, out, 1, "a.txt (commit "+short+"):2: private-ipv4")
+}
+
+// Author and committer identities, and the branch or tag name, are pushed text too.
+func TestRangeScansIdentityAndRef(t *testing.T) {
+	r := newRepo(t)
+	base := r.commit("start")
+	r.env = append(r.env, "GIT_AUTHOR_EMAIL=me@"+fakeHost+".local")
+	head := r.commit("clean message")
+	short := r.git("rev-parse", "--short", head)
+	code, out := r.scan([]string{"GFF_HYGIENE_PATTERNS=" + fakeRule, "GFF_HYGIENE_REF=topic/" + fakeHost}, "--range", base+".."+head)
+	want(t, code, out, 1, "commit "+short+" author:1: host-name", "ref name:1: host-name")
+	if strings.Contains(out, "committer") {
+		t.Fatalf("a clean committer was reported:\n%s", out)
+	}
 }
 
 func TestRangeIgnoresWhatTheBaseGained(t *testing.T) {
@@ -266,7 +350,26 @@ func TestTreeAndMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, out = r.scan(nil, "--message", msg)
-	want(t, code, out, 1, "commit message:2: private-ipv4")
+	want(t, code, out, 1, "commit message:3: private-ipv4")
+
+	// `git commit -v` puts the diff below the scissors line; removing a leak must not be blocked.
+	scissors := "remove the old address\n\n# ------------------------ >8 ------------------------\n# Do not modify or remove the line above.\ndiff --git a/a b/a\n-" + privIP + "\n"
+	if err := os.WriteFile(msg, []byte(scissors), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out = r.scan(nil, "--message", msg)
+	want(t, code, out, 0)
+
+	// core.commentChar picks the comment lines git drops.
+	r.git("config", "core.commentChar", ";")
+	if err := os.WriteFile(msg, []byte("subject\n; "+privIP+" is a comment here\n# "+privIP+" is not\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out = r.scan(nil, "--message", msg)
+	want(t, code, out, 1, "commit message:3: private-ipv4")
+	if strings.Contains(out, "message:2:") {
+		t.Fatalf("a comment line was scanned:\n%s", out)
+	}
 }
 
 func TestInstallHooks(t *testing.T) {
