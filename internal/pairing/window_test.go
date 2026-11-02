@@ -581,3 +581,20 @@ func TestPrintable(t *testing.T) {
 		}
 	}
 }
+
+// TestAdmitOutlivesTheWindow: the window ends while Admit writes the key. Once Admit started, the
+// result is paired, for the phone and for Wait, never expired.
+func TestAdmitOutlivesTheWindow(t *testing.T) {
+	var f *fixture
+	f = openWith(t, 400*time.Millisecond, yes, func(Device) {
+		<-f.w.ctx.Done() // the window's lifetime ends while the key is written
+		time.Sleep(100 * time.Millisecond)
+	})
+	as, status := pairWith(t, f, phoneKey(t), request(EncodeToken(f.w.Offer().Token), "phone"), nil)
+	if len(as) != 2 || as[1].State != "paired" || status != 0 {
+		t.Fatalf("answers %+v status %d", as, status)
+	}
+	if dev, err := f.wait(t); err != nil || dev == nil || f.admits.Load() != 1 {
+		t.Fatalf("Wait %v %v, admits %d", dev, err, f.admits.Load())
+	}
+}

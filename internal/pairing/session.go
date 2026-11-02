@@ -124,6 +124,8 @@ func (w *Window) pair(conn *ssh.ServerConn, c net.Conn, key ssh.PublicKey, fp st
 		return
 	}
 	w.done = true
+	// From here the outcome is this device's, whatever ends the window meanwhile (Wait).
+	w.admitting = err == nil && yes
 	w.mu.Unlock()
 	if err != nil || !yes {
 		end(refused(ReasonDeclined))

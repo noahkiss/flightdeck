@@ -83,6 +83,7 @@ type Window struct {
 	mu        sync.Mutex
 	pending   bool               // a device waits for the owner
 	done      bool               // the token is burned
+	admitting bool               // the owner said yes and Admit runs: its result is the window\'s result
 	badTokens map[netip.Addr]int // refused tokens per source address
 	conns     map[netip.Addr]int // open connections per source address
 	refusals  int
@@ -196,16 +197,25 @@ func (w *Window) Wait(ctx context.Context) (*Device, error) {
 	var r result
 	select {
 	case r = <-w.result:
+		w.mu.Lock()
+		w.done = true
+		w.mu.Unlock()
 	case <-w.ctx.Done():
-		if ctx.Err() != nil {
+		// Once Admit has started, its result is the window's result: the key may already be in
+		// the file, so the owner must hear what happened, never expired.
+		w.mu.Lock()
+		admitting := w.admitting
+		w.done = true
+		w.mu.Unlock()
+		switch {
+		case admitting:
+			r = <-w.result
+		case ctx.Err() != nil:
 			r.err = ctx.Err()
-		} else {
+		default:
 			r.err = ErrExpired
 		}
 	}
-	w.mu.Lock()
-	w.done = true
-	w.mu.Unlock()
 	w.closeListeners()
 	// End a pending question, so its phone hears expired; give each phone a moment to read its
 	// answer and hang up; then close what is left.
