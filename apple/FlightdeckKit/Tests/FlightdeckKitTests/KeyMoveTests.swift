@@ -46,6 +46,9 @@ final class KeyMoveTests: XCTestCase {
     func testMoveOffersBothKeysThenFinishes() async throws {
         let (store, oldRaw) = try legacyStore()
         let keys = DeviceKeys(store: store, preferEnclave: false)
+        // Unlocked, so the old key is offered too. The default reads UIKit,
+        // which a package test on the iOS Simulator does not have: it reads locked.
+        keys.isUnlocked = { true }
         let old = try keys.defaultKey()
         XCTAssertFalse(old.signsWhileLocked)
         XCTAssertEqual(keys.lockedSigning(keyID: DeviceKeys.defaultID, entry: "e1"), .keyLocked)
@@ -283,6 +286,8 @@ final class KeyMoveTests: XCTestCase {
     func testCarrierOffersNewKeyThenOld() async throws {
         let (store, _) = try legacyStore()
         let keys = DeviceKeys(store: store, preferEnclave: false)
+        // Unlocked, so the old key is offered after the new one (see above).
+        keys.isUnlocked = { true }
         let old = try keys.defaultKey()
         let next = try XCTUnwrap(try keys.startKeyMove())
 
