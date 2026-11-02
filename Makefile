@@ -45,12 +45,17 @@ endif
 # build/opus-static that names the system's libopus.a. Under the hardened runtime, library
 # validation refuses a library another team (or nobody) signed, so a helper signed into
 # GFF Hab.app may load only system libraries; and the bundle then runs on Macs without libopus.
+# The go build cache does not see a pkg-config file change, so a helper built before with a
+# dynamic libopus would stay cached. CGO_LDFLAGS is part of the cache key: it carries
+# -L<build/opus-static>, a folder that holds only opus.pc and so changes nothing in the link,
+# as a marker that keeps static and dynamic builds apart.
 ifeq ($(SPEECH_OS),Darwin)
 OPUS_STATIC := $(CURDIR)/build/opus-static
 SPEECH_OPUS := opus-static
+SPEECH_LDFLAGS := CGO_LDFLAGS="-O2 -g -L$(OPUS_STATIC)"
 endif
 # The speech build tag selects cmd/gff-hab-speech; pkg-config finds sherpa-onnx and opus.
-SPEECH_ENV := PKG_CONFIG_PATH=$(if $(OPUS_STATIC),$(OPUS_STATIC):)$(SHERPA_PREFIX)/lib/pkgconfig$(if $(PKG_CONFIG_PATH),:$(PKG_CONFIG_PATH)) CGO_ENABLED=1
+SPEECH_ENV := PKG_CONFIG_PATH=$(if $(OPUS_STATIC),$(OPUS_STATIC):)$(SHERPA_PREFIX)/lib/pkgconfig$(if $(PKG_CONFIG_PATH),:$(PKG_CONFIG_PATH)) $(SPEECH_LDFLAGS) CGO_ENABLED=1
 
 .PHONY: gen test test-pure race fuzz check-gen check-pure release-schema libghostty build vet clean-libghostty \
 	sherpa-onnx speech-helper test-speech clean-sherpa-onnx opus-static
@@ -100,6 +105,7 @@ clean-sherpa-onnx:
 
 # macOS: write build/opus-static/opus.pc, which links the libopus.a beside the system's libopus.
 opus-static:
+	@test -n "$(OPUS_STATIC)" || { echo "opus-static is for macOS only: Linux links the system's libopus"; exit 1; }
 	@libdir=$$(pkg-config --variable=libdir opus) && test -f "$$libdir/libopus.a" || \
 		{ echo "no libopus.a in the folder pkg-config opus names; install libopus with its static library"; exit 1; }; \
 	mkdir -p $(OPUS_STATIC) && \
@@ -109,10 +115,8 @@ opus-static:
 # Build the speech helper into build/gff-hab-speech. Install it beside gff-hab, or point
 # $GFF_HAB_SPEECH_HELPER or [speech] helper in the hab's config file at it. On macOS,
 # scripts/macos-bundle.sh puts it beside gff-hab in GFF Hab.app.
-# -a: the go build cache does not see a pkg-config file change (a dynamic libopus build stays
-# cached), so the helper is rebuilt whole each time, in seconds.
 speech-helper: sherpa-onnx $(SPEECH_OPUS)
-	$(SPEECH_ENV) $(GO) build -a -tags speech -o build/gff-hab-speech ./cmd/gff-hab-speech
+	$(SPEECH_ENV) $(GO) build -tags speech -o build/gff-hab-speech ./cmd/gff-hab-speech
 
 # Run the helper's own tests (Opus decode; recognition when $GFF_SPEECH_MODEL_DIR names the model,
 # with a clip from macOS say or the WAV $GFF_SPEECH_TEST_WAV names).

@@ -22,9 +22,11 @@
 #
 # The binaries come from -bin-dir (gff-hab and gff-hab-holder, and gff when present), else this
 # script builds them for this Mac with libghostty (make libghostty, go build -tags ghostty).
-# The speech helper comes from -speech-helper, else gff-hab-speech in -bin-dir, else
-# build/gff-hab-speech when `make speech-helper` made it; with none, GFF Hab.app holds gff-hab
-# alone. The script never builds the helper: it needs sherpa-onnx and libopus.
+# The speech helper comes from -speech-helper, else gff-hab-speech in -bin-dir, else (with no
+# -bin-dir) build/gff-hab-speech when `make speech-helper` made it; with none, GFF Hab.app holds
+# gff-hab alone. A helper that links a library outside the system is refused, or, in a dev build
+# when it was not named, left out with a warning. The script never builds the helper: it needs
+# sherpa-onnx and libopus.
 #
 # Settings come from the environment. Nothing names a person, a team or a key:
 #
@@ -111,7 +113,9 @@ rm -rf "$dist" "$out/gff-macos.zip"
 mkdir -p "$dist"
 
 # 1. The binaries.
+own_build=0 # this script builds the binaries; only then does build/gff-hab-speech count
 if [ -z "$bindir" ]; then
+	own_build=1
 	bindir=$work/bin
 	mkdir -p "$bindir"
 	make -C "$repo" libghostty >/dev/null
@@ -125,15 +129,33 @@ fi
 for b in gff-hab gff-hab-holder; do
 	[ -x "$bindir/$b" ] || fail "no $b in $bindir"
 done
+speech_given=0
 if [ -n "$speech" ]; then
 	[ -f "$speech" ] && [ -x "$speech" ] || fail "-speech-helper $speech is not an executable file"
+	speech_given=1
 elif [ -x "$bindir/gff-hab-speech" ]; then
 	speech=$bindir/gff-hab-speech
-elif [ -x "$repo/build/gff-hab-speech" ]; then
+elif [ "$own_build" = 1 ] && [ -x "$repo/build/gff-hab-speech" ]; then
 	speech=$repo/build/gff-hab-speech
 fi
+# Under the hardened runtime the helper may load only system libraries: library validation
+# refuses a library signed by another team or ad hoc, so such a helper never starts, on this Mac
+# or another. One that was named is an error; in a dev build one that was found is left out.
+if [ -n "$speech" ]; then
+	libs=$(otool -L "$speech" | tail -n +2 | awk '{print $1}' | grep -Ev '^(/usr/lib/|/System/Library/)' || true)
+	if [ -n "$libs" ]; then
+		why="$speech links libraries outside the system ($(echo $libs)), which the hardened runtime refuses; rebuild it with make speech-helper, which links libopus statically"
+		if [ "$dev" = 1 ] && [ "$speech_given" = 0 ]; then
+			say "warning: leaving the speech helper out: $why"
+			speech=
+		else
+			fail "$why"
+		fi
+	fi
+fi
 
-# 2. The bundles (3.3): Info.plist, the executable, nothing else.
+# 2. The bundles (3.3): Info.plist, the executable and, in GFF Hab.app, the speech helper when
+# there is one; nothing else.
 plist_string() { printf '\t<key>%s</key>\n\t<string>%s</string>\n' "$1" "$2"; }
 
 # write_bundle <name> <executable> <bundle id> <usage keys...>: usage strings come from usage().
@@ -194,16 +216,6 @@ if [ -n "$speech" ]; then
 	helper="$dist/GFF Hab.app/Contents/MacOS/gff-hab-speech"
 	cp "$speech" "$helper"
 	chmod 755 "$helper"
-	# Under the hardened runtime a release helper may load only system libraries: library
-	# validation refuses one signed by anyone else, and another Mac has no such file anyway.
-	libs=$(otool -L "$helper" | tail -n +2 | awk '{print $1}' | grep -Ev '^(/usr/lib/|/System/Library/)' || true)
-	if [ -n "$libs" ]; then
-		if [ "$dev" = 1 ]; then
-			say "warning: the speech helper links libraries outside the system, so this bundle runs on this Mac only: $(echo $libs)"
-		else
-			fail "the speech helper links libraries outside the system ($(echo $libs)); link them statically for a release"
-		fi
-	fi
 fi
 has_gff=0
 if [ -x "$bindir/gff" ]; then
