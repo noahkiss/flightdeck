@@ -512,7 +512,12 @@ The key lands in two places:
    - The comment starts with `flightdeck:` and names the device. `gff-hab devices revoke` finds the
      line by its key and that prefix.
    - Other lines are never changed or reordered. The file gets one line at its end, with a newline
-     added first when the last line had none. A key already in the file is not added again.
+     added first when the last line had none.
+   - A key already on another line is refused: no line is added, the device is not recorded, the
+     phone hears `failed`, and the terminal says to remove that line (`gff-hab devices revoke` for
+     a device paired before) or pair with another key. That line may carry no restriction, so
+     recording the device as forced-command, or claiming a later revoke removed it, would be
+     wrong.
    - The write goes through a temporary file in the same folder and a rename. The file ends at mode
      0600. A missing `~/.ssh` is made at 0700. A symbolic link is followed, and the rename replaces
      the file it points to. If the file changed between the read and the rename, the write starts

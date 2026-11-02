@@ -28,6 +28,9 @@ type pairOpts struct {
 	replies func(code string) []string
 	// early is typed before the phone connects, when not empty.
 	early func(code string) string
+	// existing, when not nil, makes a line of authorized_keys from the phone's key, written
+	// before pair runs.
+	existing func(authorizedKey string) string
 }
 
 // pairResult is what pairRun saw.
@@ -47,7 +50,14 @@ func pairRun(t *testing.T, o pairOpts) pairResult {
 	state := filepath.Join(dir, "state")
 	keys := filepath.Join(dir, "home", "user", ".ssh", "authorized_keys")
 	os.MkdirAll(filepath.Dir(keys), 0o700)
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	signer, _ := ssh.NewSignerFromKey(k)
+	fp := ssh.FingerprintSHA256(signer.PublicKey())
+	code := fp[len(fp)-4:]
 	before := "# mine\nssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJOC+phHPRbstZI8r/1OhXthhMlhAMU1TiRPPAyXm4+h laptop"
+	if o.existing != nil {
+		before += "\n" + o.existing(strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey()))))
+	}
 	os.WriteFile(keys, []byte(before), 0o600)
 	sshd := filepath.Join(dir, "sshd")
 	os.MkdirAll(sshd, 0o700)
@@ -55,10 +65,6 @@ func pairRun(t *testing.T, o pairOpts) pairResult {
 	hostPub, _ := ssh.NewPublicKey(hpk)
 	os.WriteFile(filepath.Join(sshd, "ssh_host_ed25519_key.pub"), ssh.MarshalAuthorizedKey(hostPub), 0o644)
 	os.WriteFile(filepath.Join(sshd, "ssh_host_rsa_key.pub"), []byte("ssh-rsa AAAA bad\n"), 0o644)
-	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	signer, _ := ssh.NewSignerFromKey(k)
-	fp := ssh.FingerprintSHA256(signer.PublicKey())
-	code := fp[len(fp)-4:]
 
 	outR, outW := io.Pipe()
 	inR, inW := io.Pipe()
@@ -229,6 +235,19 @@ func TestPairCommandIgnoresEarlyInput(t *testing.T) {
 	r := pairRun(t, pairOpts{early: func(code string) string { return code }, replies: typed("")})
 	if r.err == nil || r.last.Reason != pairing.ReasonDeclined || r.added != "" {
 		t.Fatalf("err %v, answer %+v, added %q", r.err, r.last, r.added)
+	}
+}
+
+// TestPairCommandKeyAlreadyThere: a line that already holds the phone's key (here with no
+// restriction) is not a forced-command pairing: pair refuses, records nothing and says why.
+func TestPairCommandKeyAlreadyThere(t *testing.T) {
+	r := pairRun(t, pairOpts{replies: theCode, existing: func(k string) string { return k + " phone-by-hand" }})
+	if r.err == nil || r.last.Reason != pairing.ReasonFailed || r.added != "" || !strings.Contains(r.out, "already on another line") {
+		t.Fatalf("err %v, answer %+v, added %q\n%s", r.err, r.last, r.added, r.out)
+	}
+	var out bytes.Buffer
+	if err := devicesCmd([]string{"list", "-state", r.state}, &out); err != nil || !strings.Contains(out.String(), "no devices") {
+		t.Fatalf("devices list: %v\n%s", err, out.String())
 	}
 }
 

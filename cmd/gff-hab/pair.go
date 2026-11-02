@@ -120,8 +120,14 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 			if err != nil {
 				return pairing.Paired{}, err
 			}
-			if _, err := devicestore.AppendAuthorizedKey(*authKeys, d.Key, line); err != nil {
+			added, err := devicestore.AppendAuthorizedKey(*authKeys, d.Key, line)
+			if err != nil {
 				return pairing.Paired{}, err
+			}
+			if !added {
+				// Another line already holds this key, maybe with no restriction: recording
+				// the device as forced-command, or revoking it later, would be wrong.
+				return pairing.Paired{}, fmt.Errorf("this key is already on another line of %s, so no restricted line was added. Remove that line (gff-hab devices revoke, for a device paired before) or pair with another key, then run gff-hab pair again", *authKeys)
 			}
 			err = store.Add(devicestore.Record{
 				ID: d.Fingerprint, Label: d.Name, Kind: d.Kind, PairedAt: now.UTC().Format(time.RFC3339),
