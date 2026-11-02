@@ -1,0 +1,388 @@
+package pairing
+
+import (
+	"bufio"
+	"context"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/netip"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"golang.org/x/crypto/ssh"
+)
+
+type fixture struct {
+	w       *Window
+	hostPub ssh.PublicKey
+	admits  atomic.Int32
+	done    chan struct{}
+	dev     *Device
+	err     error
+}
+
+// open starts a window on loopback with confirm as the owner.
+func open(t *testing.T, life time.Duration, confirm func(context.Context, Device) (bool, error)) *fixture {
+	t.Helper()
+	_, hk, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fixture{done: make(chan struct{})}
+	w, err := Open(Config{
+		HostKey:  hk,
+		Label:    "devbox",
+		Listen:   []netip.Addr{netip.MustParseAddr("127.0.0.1")},
+		Lifetime: life,
+		Confirm:  confirm,
+		Admit: func(d Device) (Paired, error) {
+			f.admits.Add(1)
+			return Paired{User: "user", SSH: SSHInfo{Endpoints: []string{"192.0.2.10:22"}, HostKeys: []string{"ssh-ed25519 AAAA"}}, ForcedCommand: true}, nil
+		},
+		Logf: func(format string, a ...any) { t.Logf("window: "+format, a...) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.w = w
+	signer, _ := ssh.NewSignerFromKey(hk)
+	f.hostPub = signer.PublicKey()
+	go func() {
+		f.dev, f.err = w.Wait(context.Background())
+		close(f.done)
+	}()
+	t.Cleanup(func() {
+		select {
+		case <-f.done:
+		case <-time.After(10 * time.Second):
+			t.Error("the window did not close")
+		}
+	})
+	return f
+}
+
+func (f *fixture) wait(t *testing.T) (*Device, error) {
+	t.Helper()
+	select {
+	case <-f.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Wait did not return")
+	}
+	return f.dev, f.err
+}
+
+func phoneKey(t *testing.T) ssh.Signer {
+	t.Helper()
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := ssh.NewSignerFromKey(k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func dial(f *fixture, key ssh.Signer, hostPub ssh.PublicKey) (*ssh.Client, error) {
+	return ssh.Dial("tcp", f.w.Offer().Endpoints[0], &ssh.ClientConfig{
+		User:            "anyone",
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(key)},
+		HostKeyCallback: ssh.FixedHostKey(hostPub),
+		Timeout:         5 * time.Second,
+	})
+}
+
+// pairWith runs one exchange as the phone, on a raw session channel as the app opens one: it
+// sends line, reads every answer, and returns them with the exit status (-1 when none came).
+func pairWith(t *testing.T, f *fixture, key ssh.Signer, line string, onWaiting func()) ([]Answer, int) {
+	t.Helper()
+	c, err := dial(f, key, f.hostPub)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+	ch, reqs, err := c.OpenChannel("session", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := make(chan int, 1)
+	go func() {
+		got := -1
+		for r := range reqs {
+			var st struct{ Status uint32 }
+			if r.Type == "exit-status" && ssh.Unmarshal(r.Payload, &st) == nil {
+				got = int(st.Status)
+			}
+			if r.WantReply {
+				r.Reply(false, nil)
+			}
+		}
+		status <- got
+	}()
+	ok, err := ch.SendRequest("subsystem", true, ssh.Marshal(struct{ Name string }{Subsystem}))
+	if err != nil || !ok {
+		t.Fatalf("subsystem: %v %v", ok, err)
+	}
+	fmt.Fprintln(ch, line)
+	var as []Answer
+	sc := bufio.NewScanner(ch)
+	for sc.Scan() {
+		var a Answer
+		if err := json.Unmarshal(sc.Bytes(), &a); err != nil {
+			t.Fatalf("answer %q: %v", sc.Text(), err)
+		}
+		as = append(as, a)
+		if a.State == "waiting" && onWaiting != nil {
+			onWaiting()
+		}
+	}
+	ch.Close()
+	c.Close()
+	return as, <-status
+}
+
+func request(tok, name string) string {
+	b, _ := json.Marshal(map[string]any{"v": 1, "token": tok, "name": name, "kind": "phone"})
+	return string(b)
+}
+
+func yes(context.Context, Device) (bool, error) { return true, nil }
+
+func TestGoodTokenPairs(t *testing.T) {
+	var asked Device
+	f := open(t, time.Minute, func(_ context.Context, d Device) (bool, error) { asked = d; return true, nil })
+	key := phoneKey(t)
+	as, status := pairWith(t, f, key, request(EncodeToken(f.w.Offer().Token), "Owner's\x1b[2J iPhone"), nil)
+	if len(as) != 2 || as[0].State != "waiting" || as[1].State != "paired" || status != 0 {
+		t.Fatalf("answers %+v status %d", as, status)
+	}
+	p := as[1]
+	fp := ssh.FingerprintSHA256(key.PublicKey())
+	if p.DeviceID != fp || p.Hab.ID != f.w.Offer().DeviceID || p.Hab.Label != "devbox" || p.User != "user" ||
+		p.SSH.Endpoints[0] != "192.0.2.10:22" || !p.ForcedCommand {
+		t.Fatalf("paired answer %+v", p)
+	}
+	if asked.Name != "Owner's[2J iPhone" || asked.Fingerprint != fp || asked.Kind != KindPhone {
+		t.Fatalf("owner was asked about %+v", asked)
+	}
+	dev, err := f.wait(t)
+	if err != nil || dev.Fingerprint != fp || f.admits.Load() != 1 {
+		t.Fatalf("Wait %v %v, admits %d", dev, err, f.admits.Load())
+	}
+	// Second use: the window is closed.
+	if _, err := dial(f, phoneKey(t), f.hostPub); err == nil {
+		t.Fatal("the window still accepts connections after a pairing")
+	}
+}
+
+func TestWrongTokenRefused(t *testing.T) {
+	f := open(t, time.Minute, yes)
+	other, _ := NewToken()
+	for _, tok := range []string{EncodeToken(other), "short", strings.Repeat("A", 22)} {
+		as, status := pairWith(t, f, phoneKey(t), request(tok, "phone"), nil)
+		if len(as) != 1 || as[0].Reason != ReasonToken || status != 1 {
+			t.Fatalf("token %q: answers %+v status %d", tok, as, status)
+		}
+	}
+	if f.admits.Load() != 0 {
+		t.Fatal("a wrong token admitted a key")
+	}
+	// The window is still open for the right token.
+	as, _ := pairWith(t, f, phoneKey(t), request(EncodeToken(f.w.Offer().Token), "phone"), nil)
+	if as[len(as)-1].State != "paired" {
+		t.Fatalf("after wrong tokens: %+v", as)
+	}
+	f.wait(t)
+}
+
+func TestTooManyWrongTokensClose(t *testing.T) {
+	f := open(t, time.Minute, yes)
+	bad, _ := NewToken()
+	for range maxBadTokens {
+		pairWith(t, f, phoneKey(t), request(EncodeToken(bad), "phone"), nil)
+	}
+	if _, err := f.wait(t); !errors.Is(err, ErrTooMany) {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestExpired(t *testing.T) {
+	f := open(t, 300*time.Millisecond, yes)
+	if _, err := f.wait(t); !errors.Is(err, ErrExpired) {
+		t.Fatalf("err %v", err)
+	}
+	if _, err := dial(f, phoneKey(t), f.hostPub); err == nil {
+		t.Fatal("an expired window accepted a connection")
+	}
+}
+
+// TestExpiresWhileAsking: the owner never answers; the phone gets expired when the window ends.
+func TestExpiresWhileAsking(t *testing.T) {
+	f := open(t, 500*time.Millisecond, func(ctx context.Context, _ Device) (bool, error) {
+		<-ctx.Done()
+		return false, ctx.Err()
+	})
+	as, status := pairWith(t, f, phoneKey(t), request(EncodeToken(f.w.Offer().Token), "phone"), nil)
+	if len(as) != 2 || as[1].Reason != ReasonExpired || status == 0 {
+		t.Fatalf("answers %+v status %d", as, status)
+	}
+	if _, err := f.wait(t); !errors.Is(err, ErrExpired) || f.admits.Load() != 0 {
+		t.Fatalf("err %v admits %d", err, f.admits.Load())
+	}
+}
+
+func TestDeclinedAtPrompt(t *testing.T) {
+	f := open(t, time.Minute, func(context.Context, Device) (bool, error) { return false, nil })
+	as, status := pairWith(t, f, phoneKey(t), request(EncodeToken(f.w.Offer().Token), "phone"), nil)
+	if len(as) != 2 || as[1].Reason != ReasonDeclined || status != 1 {
+		t.Fatalf("answers %+v status %d", as, status)
+	}
+	if _, err := f.wait(t); !errors.Is(err, ErrDeclined) || f.admits.Load() != 0 {
+		t.Fatalf("err %v admits %d", err, f.admits.Load())
+	}
+}
+
+// TestBusyThenUsed: a second device with the token while the first waits gets busy; once the
+// first pairs, the token is spent.
+func TestBusyThenUsed(t *testing.T) {
+	release := make(chan struct{})
+	f := open(t, time.Minute, func(ctx context.Context, _ Device) (bool, error) {
+		<-release
+		return true, nil
+	})
+	tok := request(EncodeToken(f.w.Offer().Token), "phone")
+	firstDone := make(chan []Answer)
+	waiting := make(chan struct{})
+	go func() {
+		as, _ := pairWith(t, f, phoneKey(t), tok, func() { close(waiting) })
+		firstDone <- as
+	}()
+	<-waiting
+	as, _ := pairWith(t, f, phoneKey(t), tok, nil)
+	if len(as) != 1 || as[0].Reason != ReasonBusy {
+		t.Fatalf("second device: %+v", as)
+	}
+	close(release)
+	if as := <-firstDone; as[len(as)-1].State != "paired" {
+		t.Fatalf("first device: %+v", as)
+	}
+	f.wait(t)
+	if f.admits.Load() != 1 {
+		t.Fatalf("admits %d", f.admits.Load())
+	}
+}
+
+func TestOnlyTheSubsystem(t *testing.T) {
+	f := open(t, time.Minute, yes)
+	defer func() {
+		pairWith(t, f, phoneKey(t), request(EncodeToken(f.w.Offer().Token), "phone"), nil)
+		f.wait(t)
+	}()
+	c, err := dial(f, phoneKey(t), f.hostPub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	for _, try := range []func(*ssh.Session) error{
+		func(s *ssh.Session) error { return s.Run("gff-hab connect") },
+		func(s *ssh.Session) error { return s.Shell() },
+		func(s *ssh.Session) error { return s.RequestPty("xterm", 24, 80, ssh.TerminalModes{}) },
+		func(s *ssh.Session) error { return s.RequestSubsystem("sftp") },
+		func(s *ssh.Session) error { return s.Setenv("A", "b") },
+	} {
+		s, err := c.NewSession()
+		if err != nil {
+			// Only one session channel per connection: a fresh connection for each try.
+			c.Close()
+			if c, err = dial(f, phoneKey(t), f.hostPub); err != nil {
+				t.Fatal(err)
+			}
+			if s, err = c.NewSession(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := try(s); err == nil {
+			t.Fatal("a request other than the pairing subsystem was accepted")
+		}
+		s.Close()
+	}
+	if _, err := c.Dial("tcp", "127.0.0.1:22"); err == nil {
+		t.Fatal("a forwarding channel was accepted")
+	}
+	if ok, _, _ := c.SendRequest("tcpip-forward", true, nil); ok {
+		t.Fatal("a global request was accepted")
+	}
+}
+
+func TestHostKeyPinnedAndKeyTypes(t *testing.T) {
+	f := open(t, time.Minute, yes)
+	defer func() {
+		pairWith(t, f, phoneKey(t), request(EncodeToken(f.w.Offer().Token), "phone"), nil)
+		f.wait(t)
+	}()
+	if _, err := dial(f, phoneKey(t), phoneKey(t).PublicKey()); err == nil {
+		t.Fatal("a different host key was accepted by the phone")
+	}
+	rk, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs, _ := ssh.NewSignerFromKey(rk)
+	if c, err := dial(f, rs, f.hostPub); err == nil {
+		c.Close()
+		t.Fatal("an RSA key passed auth")
+	}
+	if c, err := ssh.Dial("tcp", f.w.Offer().Endpoints[0], &ssh.ClientConfig{User: "u", Auth: []ssh.AuthMethod{ssh.Password("x")},
+		HostKeyCallback: ssh.FixedHostKey(f.hostPub), Timeout: 5 * time.Second}); err == nil {
+		c.Close()
+		t.Fatal("password auth passed")
+	}
+}
+
+func TestBadRequests(t *testing.T) {
+	f := open(t, time.Minute, yes)
+	tok := EncodeToken(f.w.Offer().Token)
+	for line, reason := range map[string]string{
+		`not json`:                                       ReasonRequest,
+		`{"v":2,"token":"x","name":"n"}`:                 ReasonVersion,
+		`{"v":1,"token":"` + tok + `"}`:                  ReasonRequest,
+		`{"v":1,"token":"` + tok + `","name":"\u0000‮"}`: ReasonRequest,
+		strings.Repeat("x", MaxRequest+10):               ReasonRequest,
+	} {
+		as, _ := pairWith(t, f, phoneKey(t), line, nil)
+		if len(as) != 1 || as[0].Reason != reason {
+			t.Errorf("%.40q: %+v, want %s", line, as, reason)
+		}
+	}
+	pairWith(t, f, phoneKey(t), request(tok, "phone"), nil)
+	f.wait(t)
+}
+
+func TestOpenRefusesEveryInterface(t *testing.T) {
+	_, hk, _ := ed25519.GenerateKey(rand.Reader)
+	for _, a := range []string{"0.0.0.0", "::", "8.8.8.8", "2001:db8::1"} {
+		if _, err := Open(Config{HostKey: hk, Listen: []netip.Addr{netip.MustParseAddr(a)}}); err == nil {
+			t.Errorf("Open listened on %s", a)
+		}
+	}
+	if _, err := Open(Config{HostKey: hk}); err == nil {
+		t.Error("Open with no address")
+	}
+	f := open(t, time.Minute, yes)
+	for _, a := range f.w.Addrs() {
+		if !strings.HasPrefix(a.String(), "127.0.0.1:") {
+			t.Fatalf("listening on %s", a)
+		}
+	}
+	pairWith(t, f, phoneKey(t), request(EncodeToken(f.w.Offer().Token), "phone"), nil)
+	f.wait(t)
+}
