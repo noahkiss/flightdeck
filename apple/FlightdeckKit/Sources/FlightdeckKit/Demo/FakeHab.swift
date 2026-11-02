@@ -198,6 +198,23 @@ public actor FakeHab {
     public private(set) var capcomDetaches: [CapcomDetachParams] = []
     /// The context each `session.send` to a Capcom session carried, in send order.
     public private(set) var capcomDelivered: [[CapcomContextItem]] = []
+    /// How many `capcom.pending` calls were answered.
+    public private(set) var capcomPendingReads = 0
+    /// How many times `capcom.open` resumed an exited standing conversation.
+    public private(set) var capcomResumes = 0
+
+    /// Ends a Capcom session's program, as an exit or a reboot would; the record stays.
+    public func exitCapcomSession(_ id: String) async {
+        guard var s = sessions[id] else { return }
+        s.state = .exited
+        s.exit = ExitStatus(code: 0)
+        await put(s)
+    }
+    /// Attaches an item as another client would, with no reply to this app.
+    public func attachElsewhere(session: String, notice: String) throws {
+        let it = try resolve(CapcomContextRef(kind: .notification, ref: notice), session: session)
+        capcomWaiting[session] = try adding([it], to: session)
+    }
 
     /// Adds a notice the Capcom calls resolve.
     public func addNotice(id: String, title: String) { noticeTitles[id] = title }
@@ -810,7 +827,7 @@ public actor FakeHab {
             notices.append(p)
             noticeTitles["n\(notices.count)"] = p.title
             await reply(c, id: id, result: NoticeRaised(id: "n\(notices.count)", pushed: 0, seq: c.seq))
-        case HabMethods.capcomOpen.name, HabMethods.capcomAttach.name, HabMethods.capcomDetach.name:
+        case HabMethods.capcomOpen.name, HabMethods.capcomAttach.name, HabMethods.capcomDetach.name, HabMethods.capcomPending.name:
             await capcomCall(method, params, c, id: id)
         case HabMethods.confirmAnswer.name where capabilities.contains(ConfirmBook.capability):
             guard let p = try? params.decode(ConfirmAnswerParams.self) else {
@@ -930,12 +947,26 @@ public actor FakeHab {
                     await put(Session(dir: "/state/capcom/\(capcomCount)", id: sid, kind: .capcom, name: name, pane: pane, revision: 0, state: .running))
                     await put(Fixture.pane(pane, session: sid))
                     await put(Fixture.agent(pane: pane, harness: "claude", state: .idle))
+                } else if let sid = capcomStanding, var s = sessions[sid], s.state == .exited {
+                    // The real hab resumes an exited standing conversation (capcom.md 7.6).
+                    if !items.isEmpty { _ = try adding(items, to: sid) }
+                    s.state = .running
+                    s.exit = nil
+                    started = true
+                    capcomResumes += 1
+                    await put(s)
                 }
                 guard let sid = capcomStanding, let s = sessions[sid] else { throw Failure(kind: .unavailable, hint: "no Capcom session") }
                 let list = try adding(items, to: sid)
                 capcomWaiting[sid] = list.isEmpty ? nil : list
                 await reply(c, id: id, result: CapcomOpened(dir: s.dir ?? "", pane: s.pane ?? "", pending: list.isEmpty ? nil : list,
                                                            seq: c.seq, session: sid, started: started ? true : nil))
+            case HabMethods.capcomPending.name:
+                // Read-only: it starts, resumes and changes nothing.
+                let p = try decode(CapcomPendingParams.self, params, method)
+                capcomPendingReads += 1
+                try capcomSession(p.session)
+                await reply(c, id: id, result: CapcomAttached(pending: capcomWaiting[p.session] ?? [], seq: c.seq, session: p.session))
             case HabMethods.capcomAttach.name:
                 let p = try decode(CapcomAttachParams.self, params, method)
                 capcomAttaches.append(p)
@@ -970,8 +1001,8 @@ public actor FakeHab {
     }
 
     private func capcomSession(_ id: String) throws {
-        guard let s = sessions[id] else { throw Failure(kind: .notFound, hint: "no session \(id)") }
-        guard s.kind == .capcom else { throw Failure(kind: .invalid, hint: "session \(id) is not a Capcom session") }
+        // The real hab answers invalid for any session with no Capcom record, unknown ones too.
+        guard sessions[id]?.kind == .capcom else { throw Failure(kind: .invalid, hint: "session \(id) is not a Capcom session on this hab") }
     }
 
     /// The label of the host a ref names: this hab for none, `self`, its host id or device id.
