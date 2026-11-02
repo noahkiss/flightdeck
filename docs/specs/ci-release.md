@@ -367,7 +367,7 @@ is public once a release ships. It still stays out of the repo, as `macos-identi
 
 | Name | Kind | Value lives in | Used by |
 |---|---|---|---|
-| `HOMEBREW_TAP_TOKEN` | Secret | 1Password, the GitHub account item, its fine-grained tap publisher token field. It can dispatch workflows on `noahkiss/homebrew-tap` and nothing else | `release.yml` and `app-release.yml` tap bumps |
+| `HOMEBREW_TAP_TOKEN` | Secret | 1Password, the GitHub account item, its fine-grained tap publisher token field. A fine-grained PAT with access to `noahkiss/homebrew-tap` only, with the Actions permission read and write (what `dispatch-and-wait.yml` needs to start and watch the run), and nothing else | `release.yml` and `app-release.yml` tap bumps |
 | `HYGIENE_PATTERNS` | Secret | 1Password, the hygiene patterns item (a note field) | `hygiene.yml` |
 
 **1Password references.** A reference in a pushed file uses ids only,
@@ -567,10 +567,10 @@ in the libghostty rule. The release values:
    the run that published. A new dispatch would stop at `verify`: the release exists.
 
 **Order before the first final tag.** `bump-tap` dispatches the tap's `bump.yml` with
-`formula: gff`. The tap holds no `gff` formula yet, and `bump.yml` needs E7 and E8 (11.2) for
-it. So these land in the tap first: the `gff` formula in the shape of 8.2, and E7 and E8 merged.
-Until then, release only `-rc.` tags, which skip `bump-tap`. A final tag before that publishes the
-release, then fails at `bump-tap` with the release already public.
+`formula: gff`. E7 and E8 are merged in the tap (noahkiss/homebrew-tap#10). The `gff` formula is
+in noahkiss/homebrew-tap#11 (8.4), and the secret `HOMEBREW_TAP_TOKEN` (6.2) is not set yet.
+Both must be in place first. Until then, release only `-rc.` tags, which skip `bump-tap`. A final
+tag before that publishes the release, then fails at `bump-tap` with the release already public.
 
 **The CI rule.** Path filters often leave the tagged commit with no run of its own (a docs-only
 commit gets no `ci.yml` run; most commits get no `apple.yml` run). So `verify` accepts either:
@@ -668,14 +668,25 @@ bundle's short version or the app's marketing version. It stays in the tag, the 
 
 | Tap entry | Installs | Bumped by |
 |---|---|---|
-| Formula `gff` (Q4) | Linux: the three binaries into `bin`. macOS: `GFF Hab.app` and `GFF Holder.app` into `libexec`, `gff` and a `gff-hab` link into `bin` | `release.yml`, on a final `v*` tag |
+| Formula `gff` (Q4) | Linux: the three binaries into `bin`. macOS: `GFF Hab.app`, `GFF Holder.app` and `gff` into `libexec`, and links `gff`, `gff-hab` and `gff-hab-holder` in `bin` | `release.yml`, on a final `v*` tag |
 | Cask `flightdeck` | The Mac app | `app-release.yml`, on a final `app-v*` tag |
 
 On macOS the hab installs from the formula's bundles: `gff-hab install` copies them into
 `<state>/builds` and never runs them from the Homebrew prefix (`macos-identity.md` 3.4). The
-formula's `test do` block runs `gff-hab version` and `gff version`.
+formula's `test do` block runs `--version` on all three binaries and requires
+`<name> <version>`, so a release whose binaries report another version fails the tap's verify.
 
-### 8.2 `bump.yml` fits the cask, not yet the formula
+**As built (macOS layout).** `gff-hab install` resolves its own executable through links
+(`filepath.EvalSymlinks`), takes `GFF Holder.app` beside the `GFF Hab.app` it is in, and takes
+the `gff` beside `GFF Hab.app` as the client to copy (`cmd/gff-hab/install.go`, `sources` and
+`clientSource`). So the formula keeps the darwin archive's three items together in `libexec`,
+as the archive holds them, and `bin` holds links only: `gff` to `libexec/gff`, `gff-hab` and
+`gff-hab-holder` to the executables inside the bundles. `gff` installed straight into `bin`
+would leave install with no client to copy. Homebrew changes nothing inside the bundles: their
+signatures still verify after `brew install` (proved with dev-signed bundles, 8.4). The formula's
+caveats name `gff-hab install` as the next step.
+
+### 8.2 `bump.yml` and the formula's shape
 
 The tap's `bump.yml` takes `{formula, tag}`, rewrites one `url` and one `sha256`, hashes the asset
 it downloads, proves the result with `brew install` and `brew test` on macOS and Linux, then
@@ -720,6 +731,21 @@ noahkiss/homebrew-tap#10.
 A formula with one `url` takes today's path unchanged. The verify legs stay as they are:
 `brew readall`, then `brew install` and `brew test` on both platforms.
 
+**As built (the formula).** The shape above, with two changes the built `bump.yml` and `brew
+audit --strict` called for:
+
+- **Literal urls, no `version` line.** The built `bump.yml` reads the old tag off the top-level
+  url and swaps the old tag and old version as literal strings in every url, as the zellij
+  formulae work. So the urls name the version outright instead of interpolating `#{version}`.
+  Homebrew reads the version from a GitHub release url (`0.1.0`, `1.2.3-rc.1`), and `brew audit
+  --strict` refuses a `version` line that repeats it.
+- **No version in a comment.** `bump.yml` refuses a rewrite that leaves the old version anywhere
+  in the file. The local proof (8.4) caught a comment that named it.
+
+The tap had no rule for a formula with no release yet. The formula went in with `v0.0.0` urls and
+zero shas, so `brew install` fails until the first bump rewrites it. `bump.yml` downloads the new
+assets only, never the old ones, so a placeholder bumps like any other version.
+
 The tap's other bump workflows are not a fit: each is tied to one producer's formulas.
 
 ### 8.3 The caller
@@ -744,6 +770,32 @@ The tap's other bump workflows are not a fit: each is tied to one producer's for
 condition reads `verify`'s outputs, so a dispatch and a push decide the same way. 7.4 says what
 must land in the tap before the first final tag. A red
 bump fails the release run, with the tap run's URL in the step summary.
+
+### 8.4 Local proof of the formula
+
+No release existed when the formula was written, so it was proved on an arm64 Mac against a
+local stand-in of a `v0.1.0` release:
+
+1. `make release-build RELEASE_VERSION=0.1.0`, then `scripts/macos-bundle.sh -dev -bin-dir
+   build/release -version 0.1.0`, then the darwin `Pack` step of `release.yml` (`ditto`, `tar
+   --no-xattrs --no-mac-metadata`, `shasum -a 256`). Linux archives were shell stand-ins in the
+   release layout, for the rewrite only.
+2. The archives served from a local HTTP server on 127.0.0.1, at the
+   `<owner>/<repo>/releases/download/<tag>/` path GitHub uses.
+3. `bump.yml`'s own "Rewrite the formula" step (extracted with `yq`, GNU sed on PATH), run with
+   `TAG=v0.1.0` on a copy of the formula whose urls name the local server. It rewrote all three
+   urls and shas and checked each asset against its `.sha256`.
+4. In a temporary local tap: `brew readall`, `brew style` and `brew audit --strict` on the
+   placeholder formula; `brew audit --strict`, `brew install --build-from-source` and `brew test`
+   on the rewritten one. Then `codesign --verify --strict` on both bundles and `gff` inside the
+   keg, and `gff-hab install -dry-run` through the `bin` link, which resolved the keg's bundles
+   and wrote nothing.
+
+One stand-in difference: Homebrew reads the version from a `github.com` release url, but from a
+`127.0.0.1` url it reads `64` (from `arm64`). The stand-in copy alone carried a `version` line.
+
+Not proved here: an install on Linux. The tap's `ubuntu-latest` verify leg installs the real
+`linux_amd64` asset at the first bump; the `linux_arm64` branch is loaded, not installed.
 
 ---
 
@@ -1006,7 +1058,7 @@ decision). Until then `app-release.yml` runs only with `upload: false`. The manu
 | TestFlight upload and Mac notarization | None yet | Stage 4 adds composite actions (11.2); not a reusable workflow |
 | Sign and notarize the helper bundles | `actions/macos-sign-notarize` | Not used: it signs one item with a `.p12` secret, while `macos-bundle.sh` signs two bundles and a binary, compares requirements and staples. The script stays the one copy |
 | Tap bump | `dispatch-and-wait.yml` | Fits as it is |
-| Tap side | the tap's `bump.yml` | Needs `tag_prefix` and the per-platform formula (8.2) |
+| Tap side | the tap's `bump.yml` | Fits since `tag_prefix` and the per-platform formula landed (8.2) |
 | Release attach | `actions/release-attach` | Not used: it is shaped for one Tauri app and waits for CI by itself. `publish` (7.4) is a few lines of `gh release` |
 | Hygiene scan | None | Stays inline: a script in this repo, no workflow fits even with an input. A shared `hygiene-scan` could come later, once a second repo wants it |
 
