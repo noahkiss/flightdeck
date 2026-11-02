@@ -34,6 +34,11 @@ public final class Fleet {
     public var settings: SettingsCenter?
     /// Confirmation cards (capcom.md 6.1).
     public var confirms: ConfirmCenter?
+    /// Opens Capcom with context attached (capcom.md 8.2, 8.4).
+    public private(set) lazy var capcom = CapcomCenter(
+        connection: { [weak self] id in self?.connections.first { $0.id == id } },
+        chat: { [unowned self] t in self.chat(for: t) },
+        label: { [weak self] id in self?.board.habs.first { $0.id == id }?.label ?? id })
     /// The app icon or Dock tile badge (app.md 7.9); nil sets none.
     public var badge: AppBadge? {
         didSet { badgeChanged() }
@@ -253,10 +258,15 @@ public final class Fleet {
 
     private var chats: [WeakChat] = []
 
-    /// The chat model of a session, shared while any view holds it.
+    /// The chat model of a session, shared while any view holds it. A session is one model
+    /// whatever pane a caller names with it.
     public func chat(for target: SessionTarget) -> ChatModel {
         chats.removeAll { $0.model == nil }
-        if let m = chats.first(where: { $0.model?.target == target })?.model { return m }
+        if let m = chats.first(where: { w in
+            guard let t = w.model?.target else { return false }
+            if let s = target.session { return t.habID == target.habID && t.session == s }
+            return t == target
+        })?.model { return m }
         let conn = connections.first { $0.id == target.habID }
         let m = ChatModel(target: target, connection: conn)
         m.onSent = { [weak self] t in self?.activities?.noteSent(t) }

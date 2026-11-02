@@ -37,6 +37,12 @@ public struct ChatView: View {
         .onChange(of: sendFiles?.handed) { _, _ in
             attachments += sendFiles?.take(for: model.target) ?? []
         }
+        // A Capcom composer attaches files as context chips (capcom.md 8.1).
+        .onChange(of: attachments, initial: true) { _, files in
+            guard model.context.isCapcom, !files.isEmpty else { return }
+            attachments = []
+            Task { for f in files { await model.attachFile(f) } }
+        }
         .onDisappear { model.stop() }
     }
 }
@@ -566,6 +572,9 @@ struct OutgoingView: View {
                     }
                     .opacity(0.8)
                 }
+                if !outgoing.context.isEmpty {
+                    CapcomSentChips(items: outgoing.context, hostID: model.context.hostID)
+                }
                 if !outgoing.text.isEmpty {
                     Text(SpokenText.hidingSummaryRequest(outgoing.text))
                         .padding(.horizontal, 12)
@@ -667,6 +676,9 @@ struct ComposerView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if model.context.isCapcom && !model.pending.isEmpty {
+                CapcomChipStrip(model: model)
+            }
             if !attachments.isEmpty {
                 DraftStrip(attachments: $attachments)
             }
@@ -716,7 +728,7 @@ struct ComposerView: View {
                     Image(systemName: "arrow.up.circle.fill").font(.title2)
                 }
                 .buttonStyle(.borderless)
-                .disabled(!gate.allowsSend || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty))
+                .disabled(!gate.allowsSend || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty && !model.sendsContextAlone))
                 .keyboardShortcut(.return, modifiers: .command)
                 .accessibilityLabel("Send")
             }

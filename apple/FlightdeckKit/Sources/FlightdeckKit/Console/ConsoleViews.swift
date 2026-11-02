@@ -6,6 +6,7 @@ import SwiftUI
 public struct ConsoleSheet: View {
     let target: SessionTarget
     @Environment(\.habConnections) private var habs
+    @Environment(\.capcom) private var capcom
     @Environment(\.dismiss) private var dismiss
     @State private var model: ConsoleModel?
     @State private var failure: String?
@@ -19,7 +20,7 @@ public struct ConsoleSheet: View {
         NavigationStack {
             Group {
                 if let model {
-                    ConsoleView(model: model) { attempt += 1 }
+                    ConsoleView(model: model, restart: { attempt += 1 }, attachToCapcom: capcom.map { c in { card in attach(card, pane: model.pane, center: c) } })
                         .id(model.pane)
                 } else if let failure {
                     ContentUnavailableView {
@@ -49,6 +50,13 @@ public struct ConsoleSheet: View {
         .task(id: attempt) { await open() }
     }
 
+    /// Opens Capcom with the command attached (capcom.md 8.4), on this session's hab.
+    private func attach(_ card: ConsoleCard, pane: String, center: CapcomCenter) {
+        let hab = target.habID
+        dismiss()
+        Task { await center.open(habID: hab, context: [CapcomContextRef(kind: .command, ref: "\(pane):\(card.id)")]) }
+    }
+
     private func open() async {
         guard let session = target.session, let conn = habs.find(target.habID) else {
             failure = "This session's hab is not connected."
@@ -72,12 +80,15 @@ public struct ConsoleView: View {
     @Bindable var model: ConsoleModel
     /// Starts a new shell after this one exited.
     var restart: (() -> Void)?
+    /// Opens Capcom with a command attached; nil offers no such action.
+    var attachToCapcom: ((ConsoleCard) -> Void)?
     @State private var setupShown = false
     @FocusState private var inputFocused: Bool
 
-    public init(model: ConsoleModel, restart: (() -> Void)? = nil) {
+    public init(model: ConsoleModel, restart: (() -> Void)? = nil, attachToCapcom: ((ConsoleCard) -> Void)? = nil) {
         self.model = model
         self.restart = restart
+        self.attachToCapcom = attachToCapcom
     }
 
     public var body: some View {
@@ -149,6 +160,11 @@ public struct ConsoleView: View {
                         ForEach(model.list.cards) { card in
                             CommandCardView(card: card, expanded: model.expanded.contains(card.id)) {
                                 model.toggle(card.id)
+                            }
+                            .contextMenu {
+                                if let attachToCapcom {
+                                    Button("Attach to Capcom", systemImage: "paperclip") { attachToCapcom(card) }
+                                }
                             }
                             .id(card.id)
                         }

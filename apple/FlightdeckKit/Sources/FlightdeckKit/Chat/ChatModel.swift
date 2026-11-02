@@ -17,6 +17,10 @@ public struct ChatContext: Equatable, Sendable {
     public var pane: String?
     /// The session is another session's console (app.md 6.3).
     public var isConsole = false
+    /// The session is a Capcom session (capcom.md 7.2): its composer holds context chips.
+    public var isCapcom = false
+    /// The hab's host id, which names this hab in a chip's host.
+    public var hostID = ""
 
     public init() {}
 
@@ -89,6 +93,8 @@ public struct Outgoing: Identifiable, Equatable, Sendable {
     public var uploaded: [UploadedAttachment] = []
     /// Bytes of the attachment uploading now that the hab holds.
     public var uploadedBytes = 0
+    /// The Capcom context chips the send carried (capcom.md 8.4); set when it goes out.
+    public var context: [CapcomContextItem] = []
 
     /// Bytes of every attachment.
     public var attachmentBytes: Int { attachments.reduce(0) { $0 + $1.data.count } }
@@ -124,7 +130,15 @@ public final class ChatModel {
     public private(set) var context = ChatContext()
     public private(set) var outgoing: [Outgoing] = []
     /// The last send or stop error, shown under the composer.
-    public private(set) var notice: String?
+    public internal(set) var notice: String?
+    /// The context waiting for a Capcom session's next message, as the hab listed it last
+    /// (capcom.md 8.4): the composer's chips, in delivery order.
+    public internal(set) var pending: [CapcomContextItem] = []
+    /// A Capcom call is on its way: the chip controls wait for it.
+    public internal(set) var capcomBusy = false
+    /// Files this model attached as chips, by attachment id, so "New conversation" can
+    /// attach them again to the new session.
+    @ObservationIgnored var chipFiles: [String: DraftAttachment] = [:]
 
     /// Page size of `chat.page`.
     @ObservationIgnored public var pageSize = 50
@@ -139,7 +153,7 @@ public final class ChatModel {
     /// Thumbnails of the attachments on chat messages (app.md 4.4).
     public let images: AttachmentImages
 
-    @ObservationIgnored private let connection: HabConnection?
+    @ObservationIgnored let connection: HabConnection?
     @ObservationIgnored private var index: [String: Int] = [:]
     @ObservationIgnored private var cursor: String?
     @ObservationIgnored private var listen: Task<Void, Never>?
@@ -190,6 +204,7 @@ public final class ChatModel {
             }
         }
         Task { await self.loadTail() }
+        Task { await self.refreshPending() }
     }
 
     /// Stops listening once no view shows the model. The messages stay for a quick return.
@@ -211,6 +226,9 @@ public final class ChatModel {
         guard c != old else { return }
         context = c
         content.update(c)
+        if started, c.online, c.isCapcom, !old.online || !old.isCapcom {
+            Task { await self.refreshPending() }
+        }
         if started, c.online, !old.online {
             Task { await self.catchUp() }
         } else if started, c.online, let native = c.agent?.session, native != tailNative {
@@ -412,12 +430,16 @@ public final class ChatModel {
 
     public var gate: SendGate { SendGate.of(context) }
 
+    /// Whether Send works with no text: a Capcom session with chips waiting sends them alone
+    /// (capcom.md 8.4).
+    public var sendsContextAlone: Bool { context.isCapcom && !pending.isEmpty }
+
     /// Sends the owner's text and attachments under the send gate. Empty text with no
-    /// attachments does nothing. Voice mode sends with origin `dictated`. A file over the limit
-    /// is refused here, before any upload, with the limit named.
+    /// attachments does nothing, unless Capcom chips wait. Voice mode sends with origin
+    /// `dictated`. A file over the limit is refused here, before any upload, with the limit named.
     public func send(_ text: String, attachments: [DraftAttachment] = [], origin: SendOrigin = .typed) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty || !attachments.isEmpty, gate.allowsSend else { return }
+        guard !t.isEmpty || !attachments.isEmpty || sendsContextAlone, gate.allowsSend else { return }
         if let r = attachments.lazy.compactMap(AttachmentLimits.refusal).first {
             notice = r
             return
@@ -483,18 +505,24 @@ public final class ChatModel {
         let text = outgoing[i].text
         let origin = outgoing[i].origin
         outgoing[i].status = .sending
+        // The chips the hab adds to this send: the ones waiting as it goes out.
+        var carried: [CapcomContextItem] = []
         do {
             let stored = try await upload(id, session: session, connection: conn)
+            carried = context.isCapcom ? pending : []
+            if let j = outgoing.firstIndex(where: { $0.id == id }) { outgoing[j].context = carried }
             do {
                 _ = try await conn.call(HabMethods.sessionSend, SessionSendParams(
                     attachments: stored.isEmpty ? nil : stored.map(\.id), origin: origin, session: session, text: text))
-            } catch let e as RPCError where e.kind == .unavailable && typesWithoutAdapter {
+            } catch let e as RPCError where e.kind == .unavailable && typesWithoutAdapter && carried.isEmpty {
                 // The harness has no adapter on this hab yet: type it as the adapter would.
                 guard let pane = context.pane else { throw e }
                 try await Self.type(Self.typedInput(AttachmentText.message(text, paths: stored.map(\.path)))) { chunk in
                     _ = try await conn.call(HabMethods.paneInput, InputParams(data: chunk, pane: pane))
                 }
             }
+            // The hab dropped exactly those items; ones attached meanwhile still wait.
+            if !carried.isEmpty { dropChips(carried) }
             guard let j = outgoing.firstIndex(where: { $0.id == id }) else { return }
             outgoing[j].status = .sent
             outgoing[j].sentAt = Date()
@@ -654,6 +682,8 @@ extension ChatContext {
         c.model = session?.model
         c.sessionExited = session?.state == .exited
         c.isConsole = session.map { ConsoleOpener.isConsole($0, in: store) } ?? false
+        c.isCapcom = session?.kind == .capcom
+        c.hostID = hab.state.welcome?.host.id ?? store.host ?? ""
         c.title = session.map { ($0.title?.isEmpty == false ? $0.title! : $0.name) } ?? (c.pane.map { "Pane \($0)" } ?? "Session")
         return c
     }

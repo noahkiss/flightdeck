@@ -21,6 +21,7 @@ public struct FlightdeckRoot: View {
             .environment(\.voiceKit, fleet.voice)
             .environment(\.sendFiles, fleet.files)
             .environment(\.confirmations, fleet.confirms)
+            .environment(\.capcom, fleet.capcom)
             .sshSheets(fleet.ssh)
             .onAppear { fleet.windowOpened() }
             .onDisappear { fleet.windowClosed() }
@@ -33,6 +34,7 @@ public struct FlightdeckRoot: View {
             .environment(\.voiceKit, fleet.voice)
             .environment(\.sendFiles, fleet.files)
             .environment(\.confirmations, fleet.confirms)
+            .environment(\.capcom, fleet.capcom)
             .sshSheets(fleet.ssh)
         #endif
     }
@@ -183,6 +185,7 @@ public struct BoardScreen: View {
         }
         .modifier(ApprovalSheetHost(center: fleet?.approvals, openChat: openChat))
         .modifier(SendFileSheetHost(center: fleet?.files, board: board))
+        .modifier(CapcomHost(center: fleet?.capcom, board: board, opened: $opened))
         // A file sent to a session from the send sheet opens that session (app.md 4.4).
         .onChange(of: fleet?.files.openRequest) { _, t in
             guard let t else { return }
