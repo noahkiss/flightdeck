@@ -1,0 +1,60 @@
+# Refuse local-context leaks on every push and pull request, docs included
+# (docs/specs/ci-release.md 9). No path filter: docs are where leaks happen most.
+# Private rules come from the repo secret HYGIENE_PATTERNS; a fork's pull request gets none and
+# runs the built-in rules only. A hit prints file, line and rule name, never the matched text.
+name: Hygiene
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: hygiene-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Hygiene scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Scan
+        # Every event value reaches the script through env, never interpolated into it.
+        env:
+          GFF_HYGIENE_PATTERNS: ${{ secrets.HYGIENE_PATTERNS }}
+          GFF_HYGIENE_PR_TITLE: ${{ github.event.pull_request.title }}
+          GFF_HYGIENE_PR_BODY: ${{ github.event.pull_request.body }}
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after || github.sha }}
+        run: |
+          set -eu
+          zero=0000000000000000000000000000000000000000
+          if [ "$EVENT" = pull_request ]; then
+            exec scripts/hygiene-scan.sh --range "$PR_BASE..$PR_HEAD"
+          fi
+          if [ "$EVENT" = push ] && [ -n "$BEFORE" ] && [ "$BEFORE" != "$zero" ] &&
+            git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            exec scripts/hygiene-scan.sh --range "$BEFORE..$AFTER"
+          fi
+          # A new branch or tag, a dispatch, or a force push whose old head is gone: the whole
+          # tree, then every commit message not on main.
+          rc=0
+          scripts/hygiene-scan.sh --tree || rc=$?
+          if git rev-parse --verify --quiet origin/main >/dev/null; then
+            r=0
+            scripts/hygiene-scan.sh --range "origin/main..$AFTER" || r=$?
+            if [ "$r" -gt "$rc" ]; then rc=$r; fi
+          fi
+          exit "$rc"
