@@ -132,7 +132,7 @@ spec reserves its secret names in section 6 only.
 |---|---|---|
 | Docs | `**/*.md`, `docs/**` except `docs/examples/**`, `LICENSE`, `NOTICE` | Nothing builds them. Only the hygiene scan runs |
 | Go | everything not in Docs, `apple/` or `design/`; `docs/examples/**` included | `ci.yml`. Go tests load the example config files in `docs/examples/` |
-| Apple | `apple/**`, `swift/**`, `api/**`, `design/icons/**`, `api/testdata/**`, `internal/transcript/testdata/**`, `cmd/gff-hab/testdata/console/**`, `.github/workflows/apple.yml` | The Swift package is generated from `api/`. `GoldenTests`, `ChatSnapshotTests` and `ConsoleTests` read those Go testdata folders. The project uses the app icon in `design/icons/` |
+| Apple | `apple/**`, `swift/HabAPI/**`, `api/**`, `design/icons/**`, `api/testdata/**`, `internal/transcript/testdata/**`, `cmd/gff-hab/testdata/console/**`, `.github/workflows/apple.yml` | The Swift package is generated from `api/`. `GoldenTests`, `ChatSnapshotTests` and `ConsoleTests` read those Go testdata folders. The project uses the app icon in `design/icons/` |
 | Holder | `internal/holder/**`, `internal/holderproto/**`, `internal/holderclient/**`, `internal/holderreg/**`, `internal/link/**`, `internal/service/**`, `internal/grants/**`, `cmd/gff-hab-holder/**`, `scripts/service-check.sh`, `scripts/macos-bundle.sh`, `.github/workflows/macos-go.yml` | macOS PTYs and launchd differ from Linux (`testing.md`, Layers) |
 
 `swift/` stays in the Go group too: `make check-gen` diffs `api` and `swift`, so a hand edit to
@@ -207,18 +207,22 @@ steps from its inputs:
 1. Check out. Select `/Applications/Xcode_27.1.app` by path (`xcode-app`, through
    `DEVELOPER_DIR`); fail when it is missing (never the image default, never a beta or release
    candidate). The runner is `xcode-27` (4).
-2. Write `~/.netrc` for `api.github.com` with `github.token`, so Swift Package Manager's binary
-   downloads (libghostty-spm) do not hit the anonymous rate limit. Removed at the end.
+2. No `~/.netrc` (`netrc` stays off). That input writes one for `api.github.com` only, which
+   SwiftPM calls for package collection metadata. It does not cover git clones or the binary
+   targets' downloads from `github.com` release URLs (libghostty-spm, FluidAudio), and release
+   asset downloads are not under the API rate limit.
 3. Restore the SwiftPM cache (section 5).
 4. `cd swift/HabAPI && swift test` (the Swift half of core test 5).
 5. `cd apple/FlightdeckKit && swift test`.
-6. `apple/scripts/generate.sh` (XcodeGen, pinned release).
+6. `apple/scripts/generate.sh` (XcodeGen, pinned release; it copies the Kit's `Package.resolved`
+   into the project, section 5).
 7. `xcodebuild -project apple/Flightdeck.xcodeproj -scheme FlightdeckiOS -destination 'generic/platform=iOS Simulator' build`.
 8. `xcodebuild ... -scheme FlightdeckMac -destination 'generic/platform=macOS' build` (ad hoc
    signed; no `Local.xcconfig` in CI).
 9. `xcodebuild -scheme FlightdeckKit-Package -destination <iPhone simulator> test` in
-   `apple/FlightdeckKit`: the Kit's tests on an iOS Simulator, the newest iOS runtime's first
-   available iPhone. Step 5 runs them on macOS; this catches iOS-only breaks.
+   `apple/FlightdeckKit`: the Kit's tests on an iOS Simulator: the first iPhone, by name, of
+   the newest iOS runtime no newer than the selected Xcode's simulator SDK. Runtimes are
+   system-wide, and the image's 27.2 RC can bring a runtime Xcode 27.1 cannot test on. Step 5 runs them on macOS; this catches iOS-only breaks.
 10. Each `xcodebuild` log is filtered to errors, signing warnings and failed tests; the full logs
     are uploaded as an artifact on failure.
 
@@ -303,7 +307,7 @@ build.
 | Go modules and build cache | `go.sum` | Built into go-ci (`setup-go`) | go-ci saves it on every run |
 | libghostty-vt | `libghostty-<GHOSTTY_COMMIT>-zig<version>-<os>-<arch>-baseline`, built by a `plan` step | `build/libghostty-vt` | Keyed on the two pins, not on a hash of the whole Makefile, which changes often. A pin change misses the cache, as it should. Needs the go-ci `cache-path` and `cache-key` inputs (11.2) |
 | zig | `mise.toml` | `jdx/mise-action` cache | Needs the go-ci `mise` input |
-| SwiftPM | Runner OS and arch, the Xcode build version, and `hashFiles('apple/FlightdeckKit/Package.resolved')` | `~/Library/Caches/org.swift.swiftpm` (for `swift test`) and the `-clonedSourcePackagesDirPath` folder (for `xcodebuild`) | Built into `xcode-ci` (`spm-cache-key-file`). Restore key without the hash, as the reference does. Saved on a miss, also after a failed build; never from a tag. The Xcode project's own `Package.resolved` is not committed (the project is generated), so the Kit's is the key |
+| SwiftPM | Runner OS and arch, the Xcode build version, and `hashFiles('apple/FlightdeckKit/Package.resolved')` | `~/Library/Caches/org.swift.swiftpm` (for `swift test`) and the `-clonedSourcePackagesDirPath` folder (for `xcodebuild`) | Built into `xcode-ci` (`spm-cache-key-file`). Restore key without the hash, as the reference does. Saved on a miss once the builds and tests ran, also when one failed; never after an earlier step failed (the cloned packages folder can be empty, and an exact-key entry is not saved again), never from a tag. The project's only package is the Kit, so `generate.sh` copies the Kit's `Package.resolved` into the generated project (`project.xcworkspace/xcshareddata/swiftpm/`): `xcodebuild` resolves the same pins as `swift test`, and the Kit's file is a true key |
 | XcodeGen | Its pinned version in `generate.sh` | The download folder | Small; optional |
 | fastlane gems | `Gemfile.lock` | `ruby/setup-ruby` `bundler-cache` | Release jobs only. The Gemfile lives under `.github/fastlane/` |
 
@@ -386,7 +390,7 @@ token's narrow scope makes that acceptable. A pull request from a fork never rec
 | Bundle id prefix | `apple/Config/Names.xcconfig` (`APP_BUNDLE_PREFIX`), already public |
 | Signing identity names | Constants: `Apple Distribution`, `Developer ID Application`; the keychain picks the one certificate of each kind |
 | Notary credentials for `macos-bundle.sh` | A `notarytool store-credentials` profile written into the job's throwaway keychain from the three upload values |
-| `GITHUB_TOKEN` | The job token: release create and upload, the SwiftPM netrc, run lookups |
+| `GITHUB_TOKEN` | The job token: release create and upload, run lookups |
 
 ---
 
@@ -858,7 +862,7 @@ The `ios` job:
 
 1. Check out the tag. Select `/Applications/Xcode_27.1.app` by path (4); fail when missing.
 2. Ruby and fastlane from `.github/fastlane/Gemfile` (bundler cache).
-3. `~/.netrc` for SwiftPM; restore the SwiftPM cache.
+3. Restore the SwiftPM cache. No `~/.netrc` (3.4, step 2).
 4. A throwaway keychain with a random password. The API key goes to a `0600` file under
    `$RUNNER_TEMP` only for the export step, which deletes it.
 5. `fastlane match appstore --readonly --git_url "$MATCH_GIT_URL" --git_branch main --skip_docs
@@ -881,7 +885,7 @@ The `ios` job:
 9. Export with `method` `app-store-connect`, `destination` `upload`, manual signing and a
    `provisioningProfiles` map per bundle id; authenticate with the API key. With the dispatch
    input `upload: false`, export with `destination` `export` instead and upload nothing.
-10. Always: delete the keychain, the key files and `~/.netrc`; upload the logs (the action's
+10. Always: delete the keychain and the key files; upload the logs (the action's
     `log-dir`) as an artifact.
 
 The internal TestFlight group receives every build without a step here. Its setup is a one-off
@@ -954,7 +958,7 @@ keeps today's behaviour, so no existing caller changes. The owner reviews each b
 | E2 | `go-ci.yml` | `cache-path` and `cache-key` (strings): an `actions/cache` restore before the commands and a save after, on the default branch only (as `rust-ci` saves) | `''` (no step) |
 | E3 | `go-ci.yml` | `runner` (string), as `rust-ci` has | `ubuntu-latest` |
 | E4 | `go-ci.yml` | The job's concurrency group gains `${{ github.workflow }}` and the runner OS, so two workflows (or a Linux and a macOS call) on one ref no longer cancel each other; and a `cancel-in-progress` input (boolean expression), so a caller keeps `main` and scheduled runs from being cancelled (2) | `cancel-in-progress: true`, today's behaviour. The group name changes for every caller, but each caller's runs still share one group, so nothing else changes |
-| E5 | new `xcode-ci.yml` | Reusable workflow: Xcode by path (`xcode-app`), optional `generate` command, `project`, `swift-test-dirs` (one per line), `builds` and `tests` (`scheme \| destination [\| package folder]` per line; the destination `ios-simulator` picks an iPhone), `xcodebuild-args`, `spm-cache-key-file`, `netrc`, `logs-name`, `runner` (default `macos-26`; this repo passes `xcode-27`), `timeout-minutes`, `cancel-in-progress`. No secrets | New file |
+| E5 | new `xcode-ci.yml` | Reusable workflow: Xcode by path (`xcode-app`), optional `generate` command, `project`, `swift-test-dirs` (one per line), `builds` and `tests` (`scheme \| destination [\| package folder]` per line; the destination `ios-simulator` picks an iPhone), `xcodebuild-args`, `spm-cache-key-file`, `netrc` (default off), `logs-name`, `runner` (default `macos-26`; this repo passes `xcode-27`), `timeout-minutes`, `cancel-in-progress`. No secrets | New file |
 | E6 | new composite actions | `actions/xcode-match-signing` (throwaway keychain, match read-only per type, platform and id list, a check that each profile arrived, a manual-signing xcconfig that looks up each target's profile by bundle id, outputs `xcconfig` and `profiles`; `cleanup: 'true'` in an `if: always()` step deletes the keychain and keys, since a composite action has no post step) and `actions/xcode-archive-upload` (archive with that xcconfig and the versions, export with a `provisioningProfiles` map for `app-store-connect` upload or export, or for `developer-id` with notarize and staple; it writes and deletes the API key file itself). Composite, run as steps in the caller's job, because environment secrets do not reach a reusable workflow from another repo | New files |
 | E7 | tap `bump.yml` | `tag_prefix` input (8.2) | `v` |
 | E8 | tap `bump.yml` | Per-platform formula: every url's sha from its `.sha256` asset, the top-level fallback included; a url with no such asset hashed directly (8.2) | Single-url path unchanged |
