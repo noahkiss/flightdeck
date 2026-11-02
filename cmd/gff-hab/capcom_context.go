@@ -71,8 +71,15 @@ func (c *capcomService) addPending(session string, items []capcom.Item) ([]api.C
 			}
 		}
 		if len(pending) != len(rec.Pending) {
+			// Saved before it counts: a failed save keeps nothing, so a restart never loses
+			// an item the client was told is waiting.
+			old := rec.Pending
 			rec.Pending = pending
-			c.saveLocked()
+			if err := c.trySaveLocked(); err != nil {
+				rec.Pending = old
+				c.logf("capcom: save: %v", err)
+				return nil, control.Errorf(api.ErrorKindUnavailable, "session %s: the context could not be saved (%v); nothing was attached", session, err)
+			}
 		}
 		return apiPending(pending), nil
 	}

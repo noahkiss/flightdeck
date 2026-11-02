@@ -319,3 +319,26 @@ func TestCapcomContextSendFails(t *testing.T) {
 		t.Fatalf("plain send: %v %q", err, rec.texts)
 	}
 }
+
+// TestCapcomContextSaveFails: an attach whose capcom.json write fails answers unavailable and
+// keeps nothing.
+func TestCapcomContextSaveFails(t *testing.T) {
+	dir := t.TempDir()
+	cc := &capcomService{state: dir, logf: t.Logf}
+	cc.st.Sessions = []capcom.Session{{ID: "s1"}}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	_, err := cc.addPending("s1", []capcom.Item{{Kind: capcom.KindSession, Ref: "s2", Host: "box"}})
+	if errKind(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "nothing was attached") {
+		t.Fatalf("attach with a failed save: %v", err)
+	}
+	if p := cc.pending("s1"); len(p) != 0 {
+		t.Fatalf("pending after a failed save: %+v", p)
+	}
+	os.Chmod(dir, 0o700)
+	if p, err := cc.addPending("s1", []capcom.Item{{Kind: capcom.KindSession, Ref: "s2", Host: "box"}}); err != nil || len(p) != 1 {
+		t.Fatalf("attach after the disk came back: %v %+v", err, p)
+	}
+}

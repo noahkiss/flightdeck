@@ -114,10 +114,13 @@ var _ control.Capcom = (*capcomService)(nil)
 
 // saveLocked writes capcom.json. The caller holds c.mu.
 func (c *capcomService) saveLocked() {
-	if err := capcom.SaveState(c.state, c.st); err != nil {
+	if err := c.trySaveLocked(); err != nil {
 		c.logf("capcom: save: %v", err)
 	}
 }
+
+// trySaveLocked writes capcom.json and returns the error. The caller holds c.mu.
+func (c *capcomService) trySaveLocked() error { return capcom.SaveState(c.state, c.st) }
 
 // adoptLocked takes b when it beats the belief held. A home host that sees a later assignment
 // drops its mark, and its standing conversation stays resumable in the list: the next open on
