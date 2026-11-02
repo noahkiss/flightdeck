@@ -400,6 +400,11 @@ running it where the user can see it.
 - A taken-over run counts as finished for `max_runs`. It is neither a success nor a failure.
 - In `resume` mode the target is already the user's session; typing there after the prompt went in
   marks the run `taken_over` too, and nothing else changes.
+- Built (stage 3): a client's `pane.input` or `session.send` takes the run over only once the
+  input reached the pane or the adapter delivered the message; refused input or a refused send
+  takes nothing over. A client's `pane.close` takes the run over before the close, so the
+  hang-up's exit does not end the run as failed. The hab's own closes (a timeout,
+  `on_finish close`) take nothing over.
 
 ### 7.6 After the run
 
@@ -545,7 +550,17 @@ API.
   "run session gone". A pane no holder has, once the link has reached every registered holder,
   fails the run, "host restarted"; until then the run waits, looked at again when a pane comes
   back and every 2 s. A run's values in flight are not stored: after a restart the stored
-  round's timeout and `on_finish` apply.
+  round's timeout and `on_finish` apply. While gff-hab runs, a run whose holder connection ends
+  waits the same way: a holder that lives comes back and the run goes on; a holder that died
+  leaves no pane once the link reaches every holder, and the run fails "host restarted".
+- Built (stage 3), a start cut short: the scheduler saves the session id after the spawn. When
+  gff-hab stops in between, the program runs on and its session record names the run
+  (`Session.round`). Before the scheduler loads, gff-hab looks for that session and writes its
+  id into the run, which is then adopted as above; only a run with no such session fails
+  "start lost". Reason for a pass before the scheduler, not a lookup hook in it: the run log
+  stays the one source the scheduler reads, and the scheduler needs no knowledge of sessions.
+- Built (stage 3): gff-hab adopts the live runs before the control and hook servers take
+  calls, so a client's input to an adopted run always takes it over.
 
 Decision: a hab restart catches up instead of skipping. Reason: Paseo skips overdue slots after a
 daemon restart, but our gff-hab restarts on every update and on purpose any time; skipping would
@@ -779,15 +794,24 @@ Built (stage 3, task-ams092is). Where this spec left a choice open:
   to `host` scopes only; the snapshot holds the rounds with their newest run.
 - **Runs by hand.** `round.run` and `run_now` make a run with no slot and trigger `manual`. It
   waits under the host limit and the wake settle as any queued run. A paused or completed round
-  refuses a run by hand with `conflict`, as a live run does.
+  refuses a run by hand with `conflict`, as a live run does. `round.run` (and `round.create`
+  with `run_now`) answers after the run's session is spawned, or once the run is queued: the
+  start runs on the call's own goroutine, off the connection's read loop.
 - **Command runs.** The run's `session.create` goes through the hab's own idempotency table with
   the key `round-run-<run id>`, is named after the round (`-2`, `-3` when taken), and carries
   `Session.round`, saved with the session record. Exit 0 succeeds; another status fails with
   "exit status N" or "ended by SIGNAL"; a pane gone with no exit fails. At the timeout the run
   ends `timed_out` at once and the pane gets `pane.close`.
-- **Take over.** A client's `pane.input`, `session.send` or `pane.close` on a run session ends
-  the run `taken_over` before the call runs. `approval.answer` is not a take over. The hab's own
-  closes (a timeout, `on_finish close`) are not either.
+- **Take over.** A client's `pane.input` or `session.send` that succeeds on a run session ends
+  the run `taken_over`; a client's `pane.close` ends it before the close (7.5). `approval.answer`
+  is not a take over. The hab's own closes (a timeout, `on_finish close`) are not either.
+- **The pane route is narrower.** From a pane (`$GFF_HAB`), a round's `target` may only be the
+  calling session (`self` or its own id), and `round.update`, `round.delete`, `round.pause`,
+  `round.unpause` and `round.run` act only on rounds the calling session created; anything
+  else is refused with `denied`. `round.list`, `round.get` and `round.runs` read every round.
+  The control socket, the user's own clients, keeps full access. Reason: an agent, possibly in
+  a harness sandbox, must not gain an unsandboxed scheduled command over someone else's round,
+  nor aim a round at another session. The owner may loosen this later.
 - **Not built yet.** A round with a prompt, or in `resume` or `fork` mode, can be created, read
   and edited (so `--target self` works), but its run fails, "prompt rounds need harness runs",
   until stage 4. The scheduler's notices are logged until stage 6; a set-aside state file raises
@@ -800,7 +824,13 @@ Built (stage 3, task-ams092is). Where this spec left a choice open:
   the defaults before it compares, so a file that leaves them out matches; a round with no
   `zone` keeps the hab's. It creates rounds only in the file, updates the ones that differ (a
   changed `paused` pauses or unpauses), deletes the ones only on the hab, prints the plan, and
-  asks unless `-yes`.
+  asks unless `-yes`. After the yes it reads the rounds again and plans again: the same plan
+  applies with the revisions read now; a different one (a run ended, another client edited a
+  round) is shown and asked again.
+- **The CLI.** `round add` with no `-project` takes the current folder, from a pane or on the
+  local socket; with `-via` it is refused, since that folder is on the client's machine, and
+  `-project` must be absolute. `round edit -paused` is refused: `round pause` and
+  `round unpause` change the mark.
 - **Config.** `[rounds]` in the hab's config file: `max_running` (from 1) and `wake_settle` (a
   duration; `"0s"` for none). gff-hab runs rounds only with the holder link.
 
