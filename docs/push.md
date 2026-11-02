@@ -123,6 +123,7 @@ open clients, and a push to each registered device that is not in use right now.
 ## What a push holds
 
 A push passes through Apple. In this release its text is plain: the title, the project and hab,
-and a shortened command. The app's setting "Show commands in notifications" turns the command
-off; banners then say "Approval needed" and offer no Approve. Sealed payloads are a later step
-(`app.md` 18.9).
+and what the agent asks for, shortened. That is a command, file names, the start of a plan, a
+question and its options, or a fetched URL. The app's setting "Show commands in notifications"
+turns all of that off: banners then say "Approval needed" (or "Question waiting") and offer no
+Approve. Sealed payloads are a later step (`app.md` 18.9).

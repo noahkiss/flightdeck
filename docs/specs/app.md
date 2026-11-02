@@ -2588,36 +2588,51 @@ Budgets are maximums. The hab counts words and characters; it keeps to both.
 ### 16.4 Built choices (task-46oedzhy)
 
 No Watch target: every notification is a mirrored iPhone banner. Code: `internal/push/banner.go`
-(hab text) and `Push/ApprovalCenter.swift` (the unlock rule). Tests: `TestBannerBudgets`,
-`TestToolBanners`, `ApprovalFixTests.testLockedBannerAnswerRefused`.
+(hab text), `internal/harness/input.go` (the plan key) and `Push/ApprovalCenter.swift` (the
+unlock rule). Tests: `TestBannerBudgets`, `TestToolBanners`, `TestPlanApproveKey`,
+`TestPlanAnswerKeys`, `ApprovalFixTests.testLockedBannerAnswerRefused`.
 
 - **Already in place before this task.** The hab fits every banner to 16.2 (`Fit`,
   `ShortCommand`), offers Approve only for a command shown whole, and leaves the expiry to the
   phone's notification service extension. The app registers the categories of 8.7 and 8.8, with
   "Open on iPhone" on iOS.
 - **Plans.** A Claude `ExitPlanMode` request reads "Approve plan?". The body is the plan in plain
-  words: Markdown marks and list numbers dropped, a heading that only says "Plan" left out, lines
-  joined with " · ". Approve shows only when the whole plan fits the body budget, as for a command.
+  words: one Markdown mark at the start of each line dropped (heading, quote, bullet, list number,
+  each followed by a space, so "--force" keeps its dashes), emphasis marks dropped, a heading that
+  only says "Plan" left out, lines joined with " · ". Approve shows only when the whole plan fits
+  the body budget, as for a command. Approve picks "Yes, manually approve edits" by its label on
+  screen, never the dialog's first option, which clears the context and turns on auto-accept
+  (`harness-adapters.md`, Permission answers). The in-app "Approve plan" goes the same way.
 - **Questions.** A Claude `AskUserQuestion` request takes the question budget: the first question
-  as the title (8 words, 50 characters), its options numbered in the body ("1 Clerk · 2 Auth.js").
-  The category is `open`: the hab cannot answer a question yet (`approval.answer` refuses
-  `answer`), and Deny would read as a refusal to answer. Options become actions once the hab
-  answers questions; that is not built.
+  as the title (8 words, 50 characters), with "(+1 more)" when more questions follow. Its options
+  are numbered by their place in the body ("1 Clerk · 2 Auth.js"); an option with no label is left
+  out. The category is `open`: Deny would read as a refusal to answer.
+- **Limit: no options as actions.** The bm task asks for a question's options as banner actions.
+  The hab refuses `approval.answer` with `answer` until the Claude adapter answers questions, so
+  no option can be sent from a banner. Options become actions once the hab takes choice answers.
 - **Other tools.** An MCP tool reads in words, "Allow github create issue?", never
-  `mcp__github__create_issue`. A request whose input has a `url` reads "Fetch <host>?", with the
-  URL without its scheme as the body, and Approve when it fits whole.
-- **Answered.** The replacement for a plan or a question says "Allowed: plan" or "Denied: question".
+  `mcp__github__create_issue`. A `WebFetch` request reads "Fetch <host>?", with the URL without its
+  scheme as the body, and Approve when it fits whole. Another tool with a `url` input (a browser or
+  webhook MCP tool) keeps "Allow <tool>?" and no Approve: its other arguments are not shown.
+- **Answered.** The replacement names what was answered: "Allowed: plan", "Denied: github create
+  issue", "Allowed: fetch docs.example.com". A question is answered, not allowed: its replacement
+  body is the question, fitted.
+- **Hidden commands.** With "Show commands in notifications" off, a plan, a question and a URL are
+  hidden too. A question banner then reads "Question waiting".
 - **Locked phone.** iOS mirrors a banner to the Watch only while the phone is locked, and the
-  device key signs only while the phone is unlocked (`transport.md` 7.2). So a banner action on a
-  locked phone, from the Watch or the lock screen, sends nothing. It posts "Unlock iPhone to
-  answer" ("Unlock iPad" on an iPad) with the hab's label, which opens the request, and keeps the
-  request for the foreground prompt. The Live Activity buttons follow the same rule. The check
-  reads `isProtectedDataAvailable` in the shared package, so it holds on a background launch,
-  before any scene exists. Design call: before this, a locked answer failed at the signature and
-  posted a misleading "Could not reach".
-- **Action order.** Deny stays first, then Approve, as 8.7 registers them; 16.2 listed them the
-  other way round. Design call: the first action sits nearest the text on the Watch, and the
-  safer answer goes there.
+  device key signs only while the phone is unlocked (`transport.md` 7.2). So a banner action from
+  the Watch sends nothing. (On the phone's lock screen, Approve and Deny ask for unlock first.) It
+  posts "Unlock iPhone to answer" ("Unlock iPad" on an iPad) with the hab's label, which opens the
+  request, and keeps the request for the foreground prompt. The Live Activity buttons follow the
+  same rule. The check reads `isProtectedDataAvailable` in the shared package, so it holds on a
+  background launch, before any scene exists. Design call: before this, a locked answer failed at
+  the signature and posted a misleading "Could not reach".
+- **Limit: the device key's access class waits for the owner.** Until the owner decides whether
+  the device key may sign after first unlock, a Watch answer shows "Unlock iPhone to answer"
+  instead of answering.
+- **Action order.** Deny first, then Approve, as 8.7 registers them; 16.2 listed them the other way
+  round. Coordinator call (2026-11-02): the first action sits nearest the text on the Watch, and
+  the safer answer goes there.
 
 Sources: owner decision 2026-10-31 (no Watch app; notifications designed for the Watch); Moshi App
 Store screens (Watch approval: project and model under the title, the command, Approve and Deny);
