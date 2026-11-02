@@ -27,6 +27,8 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
     private var playFormat: AVAudioFormat?
     /// Whether the speaker side is used (voice mode) or only the microphone (dictation).
     private let speaks: Bool
+    /// The owner's voice from Settings; nil picks the best installed one.
+    var voiceID: () -> String? = { nil }
     private let log = Logger(subsystem: "com.flightdeck.app", category: "voice")
 
     public init(speaks: Bool) {
@@ -212,7 +214,7 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
         speakID += 1
         let id = speakID
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = Self.voice()
+        utterance.voice = SpeechVoices.system(chosen: voiceID())
         // A watchdog: if the synthesizer never ends (no voice, an engine
         // restart), give up after the expected time plus a margin.
         let words = text.split(separator: " ").count
@@ -287,18 +289,6 @@ public final class VoiceAudio: VoiceInput, VoiceSpeaker {
             }
             player.scheduleBuffer(b)
         }
-    }
-
-    /// A premium English voice when one is installed, else an enhanced one.
-    static func voice() -> AVSpeechSynthesisVoice? {
-        let en = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("en") }
-        let preferred = Locale.current.language.languageCode?.identifier == "en" ? AVSpeechSynthesisVoice.currentLanguageCode() : "en-US"
-        for q in [AVSpeechSynthesisVoiceQuality.premium, .enhanced] {
-            if let v = en.first(where: { $0.quality == q && $0.language == preferred }) ?? en.first(where: { $0.quality == q }) {
-                return v
-            }
-        }
-        return AVSpeechSynthesisVoice(language: preferred)
     }
 
     nonisolated static func convert(_ buffer: AVAudioPCMBuffer, with converter: AVAudioConverter, to format: AVAudioFormat) -> AVAudioPCMBuffer? {

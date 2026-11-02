@@ -22,11 +22,14 @@ public struct VoiceSettings: Codable, Equatable, Sendable {
     /// "Yes" answers Allow to "Allow or deny?"; off, only "allow" and
     /// "approve" do (the levelled setting `voice.yes_allows`, app.md 20.3).
     public var yesAllows = true
+    /// The system voice voice mode speaks with, by identifier; nil picks the
+    /// best installed one (`SpeechVoices`).
+    public var speechVoice: String?
 
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case habEngine, parakeetEngine, appleEngine, askSummary, spokenCommands, confirmBeforeSend, bargeIn, noisyRoom, silence, yesAllows
+        case habEngine, parakeetEngine, appleEngine, askSummary, spokenCommands, confirmBeforeSend, bargeIn, noisyRoom, silence, yesAllows, speechVoice
     }
 
     /// Reads saved settings; a field an older app did not save keeps its default.
@@ -43,6 +46,7 @@ public struct VoiceSettings: Codable, Equatable, Sendable {
         noisyRoom = try c.decodeIfPresent(Bool.self, forKey: .noisyRoom) ?? d.noisyRoom
         silence = try c.decodeIfPresent(Double.self, forKey: .silence) ?? d.silence
         yesAllows = try c.decodeIfPresent(Bool.self, forKey: .yesAllows) ?? d.yesAllows
+        speechVoice = try c.decodeIfPresent(String.self, forKey: .speechVoice)
     }
 
     /// The enabled engines, in the fallback order.

@@ -112,6 +112,32 @@ final class VoiceTextTests: XCTestCase {
         XCTAssertNil(SpokenText.splittingSummary("Spoken summary: see\n```\nx\n```").summary)
     }
 
+    /// Automatic picks premium, then enhanced, then default, the exact region
+    /// first; a chosen voice wins while it is installed (app.md 13.7).
+    func testBestVoicePrefersQuality() {
+        typealias V = SpeechVoices.Voice
+        let compact = V(id: "c", name: "Samantha", language: "en-US", quality: 1)
+        let enhancedGB = V(id: "eg", name: "Daniel", language: "en-GB", quality: 2)
+        let enhancedUS = V(id: "eu", name: "Ava", language: "en-US", quality: 2)
+        let premiumAU = V(id: "pa", name: "Lee", language: "en-AU", quality: 3)
+        let french = V(id: "f", name: "Thomas", language: "fr-FR", quality: 3)
+        XCTAssertEqual(SpeechVoices.best([compact, enhancedGB, enhancedUS, french], language: "en-US"), enhancedUS)
+        XCTAssertEqual(SpeechVoices.best([compact, enhancedGB, premiumAU], language: "en-US"), premiumAU, "quality over region")
+        XCTAssertEqual(SpeechVoices.best([compact], language: "en-US"), compact)
+        XCTAssertNil(SpeechVoices.best([french], language: "en-US"))
+        XCTAssertEqual(SpeechVoices.candidates([compact, french, enhancedGB], language: "en_US").map(\.id), ["eg", "c"])
+        XCTAssertEqual(SpeechVoices.pick([compact, enhancedUS], chosen: "c", language: "en-US"), compact)
+        XCTAssertEqual(SpeechVoices.pick([compact, enhancedUS], chosen: "gone", language: "en-US"), enhancedUS, "an uninstalled choice falls back")
+        XCTAssertEqual(premiumAU.qualityText, "Premium")
+
+        // The setting round-trips, and older saved settings read as automatic.
+        var s = VoiceSettings()
+        s.speechVoice = "eu"
+        let back = try? JSONDecoder().decode(VoiceSettings.self, from: JSONEncoder().encode(s))
+        XCTAssertEqual(back?.speechVoice, "eu")
+        XCTAssertNil((try? JSONDecoder().decode(VoiceSettings.self, from: Data("{}".utf8)))?.speechVoice)
+    }
+
     func testCapSaysTheRestIsInTheChat() {
         let text = (1...30).map { "Sentence number \($0) is here." }.joined(separator: " ")
         let s = SpokenText.speakable(text, capWords: 20)

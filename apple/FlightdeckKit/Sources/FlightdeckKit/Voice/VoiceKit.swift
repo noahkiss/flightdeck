@@ -143,6 +143,9 @@ public final class VoiceKit {
     /// Voice mode for a session.
     public func voiceModel(chat: ChatModel, connection: HabConnection?) -> VoiceModel {
         let audio = makeAudio(true)
+        if let real = audio as? VoiceAudio {
+            real.voiceID = { [settings] in settings.value.speechVoice }
+        }
         let m = VoiceModel(chat: chat, engines: engines(connection: connection, session: chat.target.session, holder: "voice-" + UUID().uuidString),
                            input: audio, speaker: audio, settings: settings.value) { params in
             guard let connection else { throw ConnectionClosed(detail: "no connection") }

@@ -1,3 +1,4 @@
+import AVFoundation
 import HabAPI
 import SwiftUI
 #if os(iOS)
@@ -523,6 +524,7 @@ public struct VoiceSettingsView: View {
             } footer: {
                 Text(settings.value.enabledEngines.isEmpty ? "Voice mode and dictation are off." : "Tried in this order.")
             }
+            SpokenVoiceSection(settings: settings)
             Section("Voice mode") {
                 Toggle("Ask for a spoken summary", isOn: $settings.value.askSummary)
                 Toggle("Spoken commands", isOn: $settings.value.spokenCommands)
@@ -562,5 +564,49 @@ public struct VoiceSettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.red)
         }
+    }
+}
+
+/// Settings › Voice › Spoken voice: the installed voices for the language,
+/// with their quality, and a preview (app.md 13.7).
+struct SpokenVoiceSection: View {
+    @Bindable var settings: VoiceSettingsStore
+    @State private var voices: [SpeechVoices.Voice] = []
+    @State private var language = "en-US"
+    @State private var previewer = VoicePreviewer()
+
+    var body: some View {
+        Section {
+            Picker("Voice", selection: $settings.value.speechVoice) {
+                Text(automaticText).tag(String?.none)
+                ForEach(voices) { v in
+                    Text("\(v.name) · \(v.qualityText)").tag(Optional(v.id))
+                }
+            }
+            Button("Preview", systemImage: "play.circle") { preview() }
+        } header: {
+            Text("Spoken voice")
+        } footer: {
+            #if os(iOS)
+            Text("Premium and enhanced voices download in iOS Settings › Accessibility › Spoken Content › Voices. Speech stays on this device.")
+            #else
+            Text("Premium and enhanced voices download in System Settings › Accessibility › Spoken Content › System voice. Speech stays on this device.")
+            #endif
+        }
+        .onAppear(perform: load)
+    }
+
+    private var automaticText: String {
+        guard let b = SpeechVoices.best(voices, language: language) else { return "Automatic" }
+        return "Automatic (\(b.name) · \(b.qualityText))"
+    }
+
+    private func load() {
+        language = SpeechVoices.language
+        voices = SpeechVoices.candidates(SpeechVoices.installed(), language: language)
+    }
+
+    private func preview() {
+        previewer.play("The tests pass. Nothing else changed.", voice: SpeechVoices.system(chosen: settings.value.speechVoice))
     }
 }

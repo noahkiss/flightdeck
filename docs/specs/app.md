@@ -2347,6 +2347,15 @@ Code in `apple/FlightdeckKit` (`Voice/`, `Views/VoiceViews.swift`) and the
   hab's limit, with "The turn reached 120 s and ended there."; its start is kept. A route
   change while the owner speaks ends the turn with the audio so far, and rebuilds the live
   recognizer for the new input.
+- **Spoken voice.** Speech uses the system's installed voices, on the device
+  (`SpeechVoices`). Automatic picks the best voice for the device's language (US English when it
+  has none): premium, then enhanced, then default, the exact region first, then by name.
+  Novelty and personal voices are left out. Settings › Voice › Spoken voice lists the installed
+  voices for the language with their quality, has Preview, and says that premium and enhanced
+  voices download in the system's Accessibility settings (Spoken Content). A chosen voice that
+  is no longer installed falls back to Automatic. Preview plays with `playback` and
+  `spokenAudio` while voice mode is closed, and ends its session with
+  `notifyOthersOnDeactivation`.
 - **Audio session.** The owner turned voice on, so its speech plays with the silent switch on, as
   a navigation or podcast app does. Voice mode sets `playAndRecord` with the `voiceChat` mode and
   `defaultToSpeaker`, `allowBluetoothHFP`, `allowBluetoothA2DP` and `duckOthers`; dictation sets
