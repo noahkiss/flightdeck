@@ -84,6 +84,21 @@ func TestRoundsStale(t *testing.T) {
 	if n := name(RoundRows([]hosts.Host{never}, cats(drop))); n != "theirs" {
 		t.Fatalf("never reached: %s", n)
 	}
+	// A second label for hab A that was never reached shows no second copy of its rounds:
+	// not beside an online or held label for A, and not beside another unreached label for A.
+	online := held
+	online.Status, online.Since, online.Label = hosts.Online, time.Time{}, "b"
+	if rows := RoundRows([]hosts.Host{online, never}, cats(drop)); len(rows) != 1 || rows[0].Host != "b" || rows[0].Stale {
+		t.Fatalf("online label and never reached: %+v", rows)
+	}
+	if rows := RoundRows([]hosts.Host{never, held}, cats(drop.Add(-time.Minute))); len(rows) != 1 || rows[0].Name != "mine" {
+		t.Fatalf("held label and never reached: %+v", rows)
+	}
+	never2 := never
+	never2.Label = "c"
+	if rows := RoundRows([]hosts.Host{never, never2}, cats(drop)); len(rows) != 1 || rows[0].Host != "a" {
+		t.Fatalf("two never reached: %+v", rows)
+	}
 	failed := held
 	failed.Status = hosts.Failed
 	if rows := RoundRows([]hosts.Host{failed}, cats(drop.Add(time.Minute))); len(rows) != 0 {

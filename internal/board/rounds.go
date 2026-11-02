@@ -78,9 +78,23 @@ type Catalogs func(deviceID string) (CatalogCopy, bool)
 func RoundRows(hs []hosts.Host, cats Catalogs) []RoundRow {
 	var out []RoundRow
 	shown := merge.Shown(hs)
+	// One hab reached by two labels shows once. merge.Shown knows only welcomes; a label never
+	// reached shows the hab it pins only when no shown label reached it, and only once.
+	reached := map[string]bool{}
+	for i, h := range hs {
+		if shown[i] && h.DeviceID() != "" {
+			reached[h.DeviceID()] = true
+		}
+	}
 	for i, h := range hs {
 		if !shown[i] || h.Status == hosts.Failed {
 			continue
+		}
+		if h.DeviceID() == "" && h.Pinned != "" {
+			if reached[h.Pinned] {
+				continue
+			}
+			reached[h.Pinned] = true
 		}
 		if h.Online() {
 			out = append(out, liveRounds(h, false, time.Time{})...)
