@@ -133,13 +133,26 @@ jobs:
       contents: read
     env:
       VERSION: ${{ needs.verify.outputs.version }}
-      BUILD: ${{ needs.verify.outputs.build }}
       APP_ID: ${{ needs.verify.outputs.prefix }}.flightdeck
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # verify's build number on the first attempt, so both jobs match. A re-run of a failed job
+      # reuses verify's outputs, so it takes the UTC minute now instead: later, so still higher,
+      # and never the number of a build an earlier attempt may have uploaded (10.3).
+      - name: Build number
+        env:
+          FIRST: ${{ needs.verify.outputs.build }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          build=$FIRST
+          [ "$ATTEMPT" = 1 ] || build=$(date -u +%Y%m%d%H%M)
+          echo "BUILD=$build" >> "$GITHUB_ENV"
+          echo "Build number $build (attempt $ATTEMPT)."
 
       # DEVELOPER_DIR picks the Xcode without changing the runner's global choice.
       - name: Select Xcode
@@ -316,13 +329,26 @@ jobs:
       contents: read
     env:
       VERSION: ${{ needs.verify.outputs.version }}
-      BUILD: ${{ needs.verify.outputs.build }}
       APP_ID: ${{ needs.verify.outputs.prefix }}.flightdeck
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # verify's build number on the first attempt, so both jobs match. A re-run of a failed job
+      # reuses verify's outputs, so it takes the UTC minute now instead: later, so still higher,
+      # and never the number of a build an earlier attempt may have uploaded (10.3).
+      - name: Build number
+        env:
+          FIRST: ${{ needs.verify.outputs.build }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          build=$FIRST
+          [ "$ATTEMPT" = 1 ] || build=$(date -u +%Y%m%d%H%M)
+          echo "BUILD=$build" >> "$GITHUB_ENV"
+          echo "Build number $build (attempt $ATTEMPT)."
 
       - name: Select Xcode
         run: |
@@ -427,13 +453,15 @@ jobs:
           [ "$(sed -n 's/^TeamIdentifier=//p' <<< "$info")" = "$TEAM" ] || { echo "::error::The app is not signed by the release team."; exit 1; }
           grep -Eq '^CodeDirectory .*flags=0x[0-9a-f]*\(.*runtime.*\)' <<< "$info" || { echo "::error::The app lacks the hardened runtime."; exit 1; }
           grep -q '^Timestamp=' <<< "$info" || { echo "::error::The app's signature has no secure timestamp."; exit 1; }
-          if codesign -d --entitlements :- "$APP" 2>/dev/null | grep -q 'get-task-allow'; then
+          ents=$(codesign -d --entitlements :- "$APP" 2>/dev/null) || { echo "::error::Cannot read the app's entitlements."; exit 1; }
+          if grep -q 'get-task-allow' <<< "$ents"; then
             echo "::error::The app carries get-task-allow, which notarization refuses."
             exit 1
           fi
           n=0
           while IFS= read -r -d '' f; do
-            file -b "$f" | grep -q 'Mach-O' || continue
+            kind=$(file -b "$f")
+            [[ "$kind" == *Mach-O* ]] || continue
             archs=$(lipo -archs "$f")
             [ "$archs" = arm64 ] || { echo "::error::${f#"$APP"/} is $archs, not arm64 only."; exit 1; }
             n=$((n + 1))
