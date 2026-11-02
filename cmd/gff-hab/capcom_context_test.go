@@ -12,6 +12,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/capcom"
+	"github.com/noahkiss/flightdeck/internal/catalog"
 	"github.com/noahkiss/flightdeck/internal/control"
 )
 
@@ -431,6 +432,18 @@ func TestCapcomContextSaveFails(t *testing.T) {
 	os.Chmod(dir, 0o700)
 	if p, err := cc.addPending("s1", []capcom.Item{{Kind: capcom.KindSession, Ref: "s2", Host: "box"}}); err != nil || len(p) != 1 {
 		t.Fatalf("attach after the disk came back: %v %+v", err, p)
+	}
+}
+
+// TestCapcomDetachByDeviceID: a peer's notice attached by its device id, as a banner names it,
+// is held under the peer's label; a detach by the same device id finds it (capcom.md 8.5).
+func TestCapcomDetachByDeviceID(t *testing.T) {
+	cc := &capcomService{state: t.TempDir(), host: "boxa", self: "dev-a", logf: t.Logf,
+		links: func() []catalog.Link { return []catalog.Link{{Label: "bee", DeviceID: "dev-b"}} }}
+	cc.st.Sessions = []capcom.Session{{ID: "s1", Pending: []capcom.Item{{Kind: capcom.KindNotification, Ref: "n1", Host: "bee"}}}}
+	res, err := cc.Detach(api.CapcomDetachParams{Session: "s1", Kind: "notification", Ref: "n1", Host: "dev-b"})
+	if err != nil || len(res.Pending) != 0 {
+		t.Fatalf("detach by device id: %v %+v", err, res)
 	}
 }
 
