@@ -91,7 +91,6 @@ type Service struct {
 	again   map[string]bool           // links whose exchange runs once more when it ends
 	stats   map[string]Stats          // by link label
 	wanted  map[string]bool           // links whose peer sent mesh.changed with logbook
-	urgent  map[string]bool           // links whose next exchange runs past any backoff
 	nudge   map[string]chan struct{}  // by label: ends a backoff wait when a wake-up comes
 	page    map[string]int            // by label: the page size in bytes the link asks for
 	late    map[string]chan struct{}  // by label: closed when a call given up on has its answer
@@ -150,7 +149,7 @@ func New(cfg Config) (*Service, error) {
 	s := &Service{cfg: cfg, last: v,
 		have: map[string]logbook.Vector{}, woken: map[string]bool{}, fails: map[string]*failure{},
 		online: map[string]bool{}, running: map[string]bool{}, again: map[string]bool{}, stats: map[string]Stats{}, wanted: map[string]bool{},
-		urgent: map[string]bool{}, nudge: map[string]chan struct{}{}, page: map[string]int{}, late: map[string]chan struct{}{},
+		nudge: map[string]chan struct{}{}, page: map[string]int{}, late: map[string]chan struct{}{},
 		kick: make(chan struct{}, 1), changed: make(chan struct{}, 1), wake: make(chan struct{}, 1), done: make(chan struct{})}
 	s.ctx, s.stop = context.WithCancel(context.Background())
 	// The start hold (logbook.md 7.6, Restored file): with peers listed, writes wait until the
@@ -359,7 +358,6 @@ func (s *Service) start(l Link, urgent bool) {
 	if s.running[l.Label] {
 		s.again[l.Label] = true
 		if urgent {
-			s.urgent[l.Label] = true
 			signal(s.nudge[l.Label])
 		}
 		s.mu.Unlock()
@@ -368,18 +366,20 @@ func (s *Service) start(l Link, urgent bool) {
 	s.running[l.Label] = true
 	nudge := make(chan struct{}, 1)
 	s.nudge[l.Label] = nudge
-	delete(s.urgent, l.Label)
 	s.mu.Unlock()
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 		for {
+			// A wake-up that came before this exchange is served by it.
+			select {
+			case <-nudge:
+			default:
+			}
 			ok := s.exchange(l)
 			s.mu.Lock()
 			again := s.again[l.Label] && s.ctx.Err() == nil
-			urgent := s.urgent[l.Label]
 			delete(s.again, l.Label)
-			delete(s.urgent, l.Label)
 			if !again {
 				delete(s.running, l.Label)
 				delete(s.nudge, l.Label)
@@ -387,9 +387,9 @@ func (s *Service) start(l Link, urgent bool) {
 				return
 			}
 			s.mu.Unlock()
-			if !ok && !urgent {
-				// A change asked for another while this one failed: run it when the backoff
-				// ends, or at once when a wake-up comes meanwhile.
+			if !ok {
+				// Another was asked for while this one failed: run it when the backoff ends, or
+				// at once when a wake-up came during the exchange or comes during the wait.
 				if !s.sleepBackoff(l.Label, nudge) {
 					s.mu.Lock()
 					delete(s.running, l.Label)

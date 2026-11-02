@@ -17,6 +17,14 @@ import (
 	"github.com/noahkiss/flightdeck/internal/logbook"
 )
 
+// gate is a channel a test opens once. Each test defers open, so a hook blocked on the
+// channel never holds Close up after a test fails.
+func gate() (ch chan struct{}, open func()) {
+	ch = make(chan struct{})
+	var once sync.Once
+	return ch, func() { once.Do(func() { close(ch) }) }
+}
+
 func setBefore(c *caller, f func(method string) error) { c.before.Store(&f) }
 func setAfter(c *caller, f func(method string))        { c.after.Store(&f) }
 
@@ -124,8 +132,10 @@ func TestWakeDuringFailingExchange(t *testing.T) {
 	waitFor(t, "first exchange", func() bool { _, ok := a.svc.LinkStats()["b"]; return ok })
 
 	// blockOnce makes the next pull wait for release and then fail; later calls go through.
-	blockOnce := func() (entered, release chan struct{}) {
-		entered, release = make(chan struct{}), make(chan struct{})
+	blockOnce := func() (entered chan struct{}, open func()) {
+		entered = make(chan struct{})
+		release, open := gate()
+		t.Cleanup(open)
 		var once atomic.Bool
 		setBefore(l, func(method string) error {
 			if method != "logbook.pull" || !once.CompareAndSwap(false, true) {
@@ -135,22 +145,24 @@ func TestWakeDuringFailingExchange(t *testing.T) {
 			<-release
 			return errors.New("the link failed")
 		})
-		return entered, release
+		return entered, open
 	}
 
 	// 1. A wake-up during the failing exchange.
 	idle()
 	entered, release := blockOnce()
+	defer release()
 	write(t, a, "one")
 	a.svc.Woken("b")
 	<-entered
 	a.svc.Woken("b")
-	close(release)
+	release()
 	waitFor(t, "b gets the op past the backoff", func() bool { return seqOf(t, b, a.id) == 1 })
 
 	// 2. A change during the failing exchange waits out the backoff; a wake-up ends the wait.
 	idle()
 	entered, release = blockOnce()
+	defer release()
 	a.svc.Woken("b")
 	<-entered
 	write(t, a, "two")
@@ -160,7 +172,7 @@ func TestWakeDuringFailingExchange(t *testing.T) {
 		defer a.svc.mu.Unlock()
 		return a.svc.again["b"]
 	})
-	close(release)
+	release()
 	waitFor(t, "the failure", func() bool { return a.svc.LinkStats()["b"].Err != "" })
 	time.Sleep(50 * time.Millisecond)
 	if seqOf(t, b, a.id) != 1 {
@@ -168,14 +180,63 @@ func TestWakeDuringFailingExchange(t *testing.T) {
 	}
 	a.svc.Woken("b")
 	waitFor(t, "b gets the op after the wake-up ends the wait", func() bool { return seqOf(t, b, a.id) == 2 })
+
+	// 3. A wake-up during an exchange that succeeds is spent by the next one: if that one
+	// fails, a change during it still waits out the backoff.
+	idle()
+	in1, in2 := make(chan struct{}), make(chan struct{})
+	rel1, open1 := gate()
+	defer open1()
+	rel2, open2 := gate()
+	defer open2()
+	var n atomic.Int32
+	setBefore(l, func(method string) error {
+		if method != "logbook.pull" {
+			return nil
+		}
+		switch n.Add(1) {
+		case 1:
+			close(in1)
+			<-rel1
+		case 2:
+			close(in2)
+			<-rel2
+			return errors.New("the link failed")
+		}
+		return nil
+	})
+	a.svc.Woken("b")
+	<-in1
+	a.svc.Woken("b") // runs the second exchange
+	waitFor(t, "the wake-up asks for another exchange", func() bool {
+		a.svc.mu.Lock()
+		defer a.svc.mu.Unlock()
+		return a.svc.again["b"]
+	})
+	open1()
+	<-in2
+	write(t, a, "three")
+	a.svc.Changed()
+	waitFor(t, "the change asks for another exchange", func() bool {
+		a.svc.mu.Lock()
+		defer a.svc.mu.Unlock()
+		return a.svc.again["b"]
+	})
+	open2()
+	waitFor(t, "the failure", func() bool { return a.svc.LinkStats()["b"].Err != "" })
+	time.Sleep(50 * time.Millisecond)
+	if seqOf(t, b, a.id) != 2 {
+		t.Fatal("a spent wake-up ran the change past the backoff")
+	}
 }
 
 // A hab that pushes is never woken for its own pushed ops, and a hab's have counts the page it
 // was served.
 func TestNoEchoWake(t *testing.T) {
-	a, b := newHab(t, "a"), newHab(t, "b")
+	a := newHab(t, "a", func(_ *hab, c *Config) { c.Path = "" })
+	b := newHab(t, "b")
 	write(t, b, "on b")
-	dial(a, b)
+	l := dial(a, b)
 	waitFor(t, "a's first pull", func() bool { return seqOf(t, a, b.id) == 1 })
 	b.svc.mu.Lock()
 	served := b.svc.have[a.id][b.id]
@@ -188,6 +249,24 @@ func TestNoEchoWake(t *testing.T) {
 		a.svc.Changed()
 		waitFor(t, "b gets it", func() bool { return seqOf(t, b, a.id) == uint64(i+1) })
 	}
+	// An op a writes after its pull and before its push, in one exchange: the pull's have
+	// lacks it, the push carries it.
+	l.before.Store(nil)
+	entered := make(chan struct{})
+	release, open := gate()
+	defer open()
+	var once atomic.Bool
+	setAfter(l, func(method string) {
+		if method == "logbook.pull" && once.CompareAndSwap(false, true) {
+			close(entered)
+			<-release
+		}
+	})
+	a.svc.Woken("b")
+	<-entered
+	write(t, a, "between pull and push")
+	open()
+	waitFor(t, "b gets it", func() bool { return seqOf(t, b, a.id) == 4 })
 	time.Sleep(150 * time.Millisecond)
 	if n := b.wakesOf(a.id); n != 0 {
 		t.Fatalf("b woke a %d times for a's own pushes", n)
@@ -219,7 +298,9 @@ func TestRequestDuringExchange(t *testing.T) {
 	b := newHab(t, "b")
 	l := dial(a, b)
 	waitFor(t, "first exchange", func() bool { _, ok := a.svc.LinkStats()["b"]; return ok })
-	entered, release := make(chan struct{}), make(chan struct{})
+	entered := make(chan struct{})
+	release, open := gate()
+	defer open()
 	var once atomic.Bool
 	setAfter(l, func(method string) {
 		if method == "logbook.pull" && once.CompareAndSwap(false, true) {
@@ -231,7 +312,7 @@ func TestRequestDuringExchange(t *testing.T) {
 	<-entered // b answered the pull; the answer is on its way back
 	write(t, b, "after the answer")
 	a.svc.Woken("b")
-	close(release)
+	open()
 	waitFor(t, "a gets the op in the exchange run once more", func() bool { return seqOf(t, a, b.id) == 1 })
 }
 
@@ -273,7 +354,9 @@ func TestRecheckAfterFileChange(t *testing.T) {
 // nothing waits; with only an offline peer, the hold runs out.
 func TestStartHold(t *testing.T) {
 	b := newHab(t, "b")
-	entered, release := make(chan struct{}), make(chan struct{})
+	entered := make(chan struct{})
+	release, open := gate()
+	defer open()
 	var once atomic.Bool
 	var l *caller
 	a := newHab(t, "a", func(h *hab, c *Config) {
@@ -299,7 +382,7 @@ func TestStartHold(t *testing.T) {
 		t.Fatalf("a write did not wait for the first exchange: %v", err)
 	case <-time.After(200 * time.Millisecond):
 	}
-	close(release)
+	open()
 	select {
 	case err := <-done:
 		if err != nil {
