@@ -656,13 +656,16 @@ server is on and the `devices.*` methods work. `push` means the hab has working 
 (`app.md` 20.5). `read-tools` means `transcript.list`, `transcript.search`, `transcript.read`,
 `notice.get` and `file.read` work (`capcom.md` 4, 5.5). `logbook` means the hab has a Logbook
 replica and the `logbook.*` methods work (`logbook.md` 10.3); until then `logbook.find` and
-`logbook.get` answer `unavailable`. A client checks for a capability before it uses the feature. Capabilities are
+`logbook.get` answer `unavailable`. `rounds` means the `round.*` methods, the `round.updated` and
+`round.run_updated` events, the rounds in a `host` snapshot and `Session.round` work (`rounds.md` 13).
+A client checks for a capability before it uses the feature. Capabilities are
 for features that a host may lack. They are not a second versioning scheme.
 
 Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt`,
 `transcripts`, `detect-explain` (`detect.explain` works) and `capcom`. It always sends `mesh`, `idempotency-keys`,
 `catalog`, `channels` and `usage` (`usage.list` and `usage.updated` work; readings arrive only through panes with the
-holder link), `settings`, `read-tools` and `confirm`. It sends `push` only when its push config loads and validates
+holder link), `settings`, `read-tools` and `confirm`. With the holder link on it also sends
+`rounds`. It sends `push` only when its push config loads and validates
 (3.9, Push), and `speech` only when the speech helper is found and the host setting leaves the
 engine on (`voice.md`, Built choices).
 

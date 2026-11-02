@@ -75,3 +75,10 @@ harness = "claude"
 # "logbook.approval" = "off"
 # Wait this many seconds for the app's answer to a permission hook: 0 for off, else 1 to 120.
 # "hab.permission_wait" = 30
+
+# The [rounds] section: scheduled runs (docs/specs/rounds.md 7.2, 8.3).
+[rounds]
+# At most this many runs at once on this host; others wait as queued.
+max_running = 2
+# How long due runs wait after a wake or a gff-hab start; "0s" for none.
+wake_settle = "30s"

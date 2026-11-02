@@ -539,6 +539,13 @@ API.
   failure. Stage 3 must also fail a running run whose session the holder no longer has.
 - **Host reboot.** Run sessions end with the holder. A run that was live is marked `failed`, "host
   restarted". Due slots run once after start, under the settle rule.
+- Built (stage 3): at start gff-hab looks at each live run that has a session. A pane the link
+  has is watched again, with the timeout counted from `started_at`. A pane that exited while
+  gff-hab was down ends the run by its exit status. A session record that is gone fails the run,
+  "run session gone". A pane no holder has, once the link has reached every registered holder,
+  fails the run, "host restarted"; until then the run waits, looked at again when a pane comes
+  back and every 2 s. A run's values in flight are not stored: after a restart the stored
+  round's timeout and `on_finish` apply.
 
 Decision: a hab restart catches up instead of skipping. Reason: Paseo skips overdue slots after a
 daemon restart, but our gff-hab restarts on every update and on purpose any time; skipping would
@@ -755,6 +762,47 @@ them all at once (`mesh.md` 6.5 did the same for channels).
 | `gff round runs <name>` | Run history |
 | `gff round move <name> --host <label>` | Move a `fresh` round to another runner (9) |
 | `gff round export`, `gff round apply <file>` | Print as TOML, or make the hab match a file (3) |
+
+Built (stage 3, task-ams092is). Where this spec left a choice open:
+
+- **Shapes.** `round.create` and `round.update` take a `RoundSpec`: the definition fields, with
+  durations as `timeout_ms` and `wait_ms`, times as RFC 3339, and a trigger of `kind`, `cron`,
+  `zone`, `at`, and `every` (a preset, stored as the cron it compiles to). A project is named by
+  `project` (id), `project_dir` (found or made as `session.create` does) or `project_remote`;
+  a round read back carries both `project` and, when the project has one, `project_remote`.
+  `round.get`, `pause`, `unpause`, `run`, `delete` and `runs` name a round by `id` or `name`.
+  `round.update` replaces the whole definition, keeps the pause mark (pause and unpause change
+  it), and with `revision` refuses a stale edit with `conflict`.
+- **Revisions.** A round's revision starts at 1 when gff-hab starts and rises by one on each
+  `round.updated`, compared within an epoch as the settings are. A delete is a `round.updated`
+  with `deleted: true` at the next revision; there is no `round.deleted`. Both round events go
+  to `host` scopes only; the snapshot holds the rounds with their newest run.
+- **Runs by hand.** `round.run` and `run_now` make a run with no slot and trigger `manual`. It
+  waits under the host limit and the wake settle as any queued run. A paused or completed round
+  refuses a run by hand with `conflict`, as a live run does.
+- **Command runs.** The run's `session.create` goes through the hab's own idempotency table with
+  the key `round-run-<run id>`, is named after the round (`-2`, `-3` when taken), and carries
+  `Session.round`, saved with the session record. Exit 0 succeeds; another status fails with
+  "exit status N" or "ended by SIGNAL"; a pane gone with no exit fails. At the timeout the run
+  ends `timed_out` at once and the pane gets `pane.close`.
+- **Take over.** A client's `pane.input`, `session.send` or `pane.close` on a run session ends
+  the run `taken_over` before the call runs. `approval.answer` is not a take over. The hab's own
+  closes (a timeout, `on_finish close`) are not either.
+- **Not built yet.** A round with a prompt, or in `resume` or `fork` mode, can be created, read
+  and edited (so `--target self` works), but its run fails, "prompt rounds need harness runs",
+  until stage 4. The scheduler's notices are logged until stage 6; a set-aside state file raises
+  one notice.
+- **Retention.** The prune of 7.6 runs when a run ends and at start; it removes the session
+  records of the runs it drops when they have exited.
+- **Export and apply.** The file is `[[rounds]]` tables with the definition fields, the trigger
+  as `cron`, `every`, `at` or `manual = true`, `zone`, durations as Go text (`timeout = "1h0m0s"`),
+  the project as `project_remote` (or `project` when it has no remote), and `paused`. Apply fills
+  the defaults before it compares, so a file that leaves them out matches; a round with no
+  `zone` keeps the hab's. It creates rounds only in the file, updates the ones that differ (a
+  changed `paused` pauses or unpauses), deletes the ones only on the hab, prints the plan, and
+  asks unless `-yes`.
+- **Config.** `[rounds]` in the hab's config file: `max_running` (from 1) and `wake_settle` (a
+  duration; `"0s"` for none). gff-hab runs rounds only with the holder link.
 
 ---
 
