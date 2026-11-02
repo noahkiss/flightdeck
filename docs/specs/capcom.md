@@ -153,7 +153,9 @@ The user wants work done in a project where an agent already runs.
 1. Capcom finds the project's running agents in the catalog: name, host, harness, state, last
    activity.
 2. It picks one, by these rules in order: an agent the user named; an idle or done agent; the
-   most recently active one. With two or more equal candidates it lists them and asks.
+   most recently active one. A name that runs on two hosts is refused with both addresses.
+   With no name it picks by the fixed rule and names the other candidates in its answer, so
+   the user can redirect; it does not stop to ask (lead's call, 2026-11-01; built as 6.5).
 3. It drafts the message. The draft holds the request in the user's words plus any context
    Capcom gathered, and names Capcom as the sender.
 4. It sends at once, with no confirmation (owner, 2026-11-01). `gff-hab` sends through
@@ -754,7 +756,7 @@ until its stage.
 | A peer is offline during a search | Its hits are missing; the result lists it as offline |
 | A read is denied | The tool returns the denial; Capcom tells the user and stops that line (5.2) |
 | No agent on the project | Capcom offers to start one (3.3) |
-| Two agents on the project | Capcom picks by 3.2's rules, or lists them and asks |
+| Two agents on the project | Capcom picks by 3.2's rules and names the other in its answer; a name on two hosts is refused with both addresses |
 | The target agent is blocked on a permission | The hand-off queues; its card says so; Capcom points the user to the open approval |
 | The target agent exited | Capcom offers to resume it, or to start a new seeded session |
 | The project is on no online host | Capcom says so and offers set-up on a host that fits |
