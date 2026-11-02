@@ -200,7 +200,7 @@ func label(h api.CatalogEntry) string {
 // placeProject finds the project's folders on the host and sets the tier and the folder.
 func placeProject(s *scored, cl api.CatalogList, device string, r Request) {
 	for _, p := range cl.Projects {
-		if !matches(p, r.Project) {
+		if !Matches(p, r.Project) {
 			continue
 		}
 		for _, l := range p.Locations {
@@ -243,9 +243,9 @@ func branchName(b string) string {
 	return "branch " + b
 }
 
-// matches reports whether a project group is the one named: by name, remote, or a folder.
-func matches(p api.CatalogProjectGroup, want string) bool {
-	if strings.EqualFold(p.Name, want) || (p.Remote != "" && strings.EqualFold(p.Remote, want)) {
+// Matches reports whether a project group is the one named: by name, key, remote, or a folder.
+func Matches(p api.CatalogProjectGroup, want string) bool {
+	if strings.EqualFold(p.Name, want) || p.Key == want || (p.Remote != "" && strings.EqualFold(p.Remote, want)) {
 		return true
 	}
 	for _, l := range p.Locations {
