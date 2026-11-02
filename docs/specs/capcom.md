@@ -631,6 +631,11 @@ change: `hand_off` uses `catalog.list`, `channel.send` and `channel.status`; `fi
   in `cmd/gff-hab` until Part 12 adds the method to the API; Part 12 must also add
   `logbook.write` to the pane route, which takes only `logbook.find` and `logbook.get` today.
   A hab that answers `applied` despite `propose` is reported as such, plainly.
+- **The idempotency key** is the first 32 hex digits of a SHA-256 over the calling pane's
+  `GFF_HAB` address, the type, project key, title, body and quote. A retry of the same draft
+  from the same pane, such as a model that calls again after a timeout, is one proposal; a
+  changed draft, or the same text from another session, is a new one. Only the hash leaves
+  the tool.
 
 Limits, at the bar of herdr, Paseo and Rex:
 

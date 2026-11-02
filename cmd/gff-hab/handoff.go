@@ -3,7 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
-	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -205,6 +205,12 @@ func countTier(ts []handOffTarget, tier func(handOffTarget) int, n int) int {
 type paneDoor interface{ fromPane() bool }
 
 func (hookCaller) fromPane() bool { return true }
+
+// paneKeyer names the calling pane for an idempotency key: the pane's GFF_HAB address, which
+// is unique per pane. Only its hash leaves the process.
+type paneKeyer interface{ paneKey() string }
+
+func (h hookCaller) paneKey() string { return h.addr }
 
 // runHandOff sends the user's request to the agent already on a project, over channels, with
 // no confirmation (capcom.md 3.2, owner 2026-11-01). The sender is the calling pane's session.
@@ -427,9 +433,15 @@ func runFileRecord(ctx context.Context, c caller, a toolArgs) (any, string, erro
 		}
 		project = key
 	}
-	k := make([]byte, 16)
-	rand.Read(k)
-	w := logbookWrite{IdempotencyKey: hex.EncodeToString(k), Propose: true,
+	// The key comes from the draft and the calling pane, so a retry of the same draft (a model
+	// that calls again after a timeout) is one proposal, and two sessions filing the same text
+	// are two.
+	pane := ""
+	if p, ok := c.(paneKeyer); ok {
+		pane = p.paneKey()
+	}
+	sum := sha256.Sum256([]byte(strings.Join([]string{pane, typ, project, title, body, quote}, "\x00")))
+	w := logbookWrite{IdempotencyKey: hex.EncodeToString(sum[:16]), Propose: true,
 		Changes: []logbookChange{{Op: "create", Type: typ, Project: project, Title: title, Body: body}},
 		Source:  &logbookSource{Message: a.str("source_message"), Quote: quote}}
 	var r logbookWritten

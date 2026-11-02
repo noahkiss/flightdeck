@@ -286,7 +286,10 @@ type fakeLogbookHab struct {
 	mu        sync.Mutex
 	records   []api.LogbookRecord
 	proposals []logbookWrite
+	pane      string // the calling pane, for the idempotency key
 }
+
+func (f *fakeLogbookHab) paneKey() string { return f.pane }
 
 func (f *fakeLogbookHab) Call(ctx context.Context, method string, params, result any) error {
 	if method != "logbook.find" && method != "logbook.write" {
@@ -309,6 +312,12 @@ func (f *fakeLogbookHab) Call(ctx context.Context, method string, params, result
 			f.records = append(f.records, api.LogbookRecord{ID: c.Type + "-k3m9q2xz", Type: c.Type, Title: c.Title, Status: "open"})
 			*result.(*logbookWritten) = logbookWritten{State: "applied", IDs: []string{c.Type + "-k3m9q2xz"}}
 			return nil
+		}
+		for i, p := range f.proposals { // a repeated key gets its first answer
+			if p.IdempotencyKey == w.IdempotencyKey {
+				*result.(*logbookWritten) = logbookWritten{State: "proposed", Proposal: fmt.Sprintf("proposal-%08d", i+1)}
+				return nil
+			}
 		}
 		f.proposals = append(f.proposals, w)
 		*result.(*logbookWritten) = logbookWritten{State: "proposed", Proposal: fmt.Sprintf("proposal-%08d", len(f.proposals))}
@@ -366,6 +375,28 @@ func TestFileRecord(t *testing.T) {
 	}
 	if len(lb.proposals) != 1 {
 		t.Fatalf("a refused draft was filed: %v", lb.proposals)
+	}
+}
+
+// TestFileRecordRetry: a retry of the same draft from the same pane carries the same key, so it
+// is one proposal; a changed draft, or the same draft from another pane, is a new one.
+func TestFileRecordRetry(t *testing.T) {
+	lb := &fakeLogbookHab{fakeReadHab: twoHosts(), pane: "/run/hook.sock#token-a"}
+	args := toolArgs{"type": "finding", "title": "The cache is cold at start", "quote": "note that the cache starts cold"}
+	for i := 0; i < 2; i++ {
+		if res, _, err := runAction(t, lb, "file_record", args); err != nil || res.(fileRecordResult).Proposal != "proposal-00000001" {
+			t.Fatalf("try %d: %+v %v", i, res, err)
+		}
+	}
+	if len(lb.proposals) != 1 {
+		t.Fatalf("a retry filed again: %d proposals", len(lb.proposals))
+	}
+	args["title"] = "The cache is cold at every start"
+	runAction(t, lb, "file_record", args)
+	lb.pane = "/run/hook.sock#token-b"
+	runAction(t, lb, "file_record", args)
+	if len(lb.proposals) != 3 || lb.proposals[1].IdempotencyKey == lb.proposals[2].IdempotencyKey {
+		t.Fatalf("a new draft or another pane did not file anew: %+v", lb.proposals)
 	}
 }
 
