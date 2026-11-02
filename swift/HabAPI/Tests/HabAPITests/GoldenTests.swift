@@ -107,6 +107,8 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.worktreeRemove)
         result(HabMethods.settingsGet)
         result(HabMethods.settingsSet)
+        result(HabMethods.capcomOpen)
+        result(HabMethods.capcomAssign)
         result(HabMethods.habPermissions)
         result(HabMethods.detectExplain)
         result(HabMethods.channelSend)

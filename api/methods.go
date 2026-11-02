@@ -122,6 +122,8 @@ var Methods = []Method{
 	{"worktree.setup", "Start a worktree's setup script in a session now: the yes to a pending setup, or a rerun (spec 3.10).", WorktreeSetupParams{}, WorktreeSetupResult{}},
 	{"settings.get", "Read every hab-side setting, or the named ones (app.md 20.5). Needs the settings capability.", SettingsGetParams{}, SettingsResult{}},
 	{"settings.set", "Write hab-side settings, all or nothing, each with the revision last seen (app.md 20.5). Needs the settings capability.", SettingsSetParams{}, SettingsResult{}},
+	{"capcom.open", "Return the standing Capcom session on this home host, starting or resuming it as needed; new starts a fresh one (capcom.md 7.2). Needs the capcom capability.", CapcomOpenParams{}, CapcomOpened{}},
+	{"capcom.assign", "Make a host the Capcom home host, with a counter above every one seen (capcom.md 7.3). Needs the capcom capability.", CapcomAssignParams{}, CapcomAssigned{}},
 	{"worktree.remove", "Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).", WorktreeRemoveParams{}, WorktreeRemoved{}},
 	{"transcript.list", "Past and current harness sessions from their native transcripts, newest first, on every host or one (capcom.md 4). Needs the read-tools capability.", TranscriptListParams{}, TranscriptSessions{}},
 	{"transcript.search", "Search past transcripts by words, newest first, at most 50 hits and 5 s per host; partial and offline hosts marked (capcom.md 4). Needs the read-tools capability.", TranscriptSearchParams{}, TranscriptHits{}},
@@ -240,6 +242,8 @@ var Enums = map[string][]string{
 	"ConfirmKind":   {"start", "setup"},
 	"ConfirmState":  {"open", "running", "done", "failed", "cancelled", "expired", "unknown"},
 	"ConfirmChoice": {"confirm", "cancel"},
+	// Sets added for Capcom (capcom.md 2.1).
+	"SessionKind": {"capcom"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per
@@ -278,5 +282,7 @@ var Translators = map[int]Translator{}
 // transcript.search, transcript.read, notice.get and file.read work (capcom.md 4). "logbook" means
 // the hab has a Logbook replica and the logbook.* methods work (logbook.md 10.3). "confirm" means
 // the confirm.* methods and events work, the host snapshot carries the open confirmations, and
-// session.create takes model and seed (capcom.md 6.1).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm"}
+// session.create takes model and seed (capcom.md 6.1). "capcom" means capcom.open, capcom.assign
+// and session.resume of a Capcom session work, and the catalog carries the capcom section
+// (capcom.md 7).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom"}

@@ -20,6 +20,25 @@ type Catalog struct {
 	AlwaysOn     bool                `json:"always_on,omitempty" doc:"The user marked this host always on (mesh.md 8)."`
 	Peers        []string            `json:"peers" doc:"The device ids in this hab's peer list."`
 	Watches      []string            `json:"watches" doc:"The peers marked always on that this hab watches: each is in its peer list and its copy carries the mark (mesh.md 8)."`
+	Capcom       *CatalogCapcom      `json:"capcom,omitempty" doc:"The Capcom home host as this hab knows it, and the Capcom sessions on this host (capcom.md 7.3). Absent from a hab without the capcom capability, and while no host was ever assigned and this host has no Capcom session."`
+}
+
+// CatalogCapcom is one hab's view of the Capcom assignment, and its own Capcom sessions. Every
+// hab publishes the highest assignment it has seen; the home host's own catalog carries the
+// mark (home is its own device id). Across catalogs the highest assignment wins, and on a tie
+// the lower home device id.
+type CatalogCapcom struct {
+	Assignment uint64                 `json:"assignment" doc:"The highest assignment counter this hab has seen; 0 for none."`
+	Home       string                 `json:"home,omitempty" doc:"The device id of the home host at that assignment."`
+	Sessions   []CatalogCapcomSession `json:"sessions" doc:"The Capcom sessions on this host, the standing one marked."`
+}
+
+// CatalogCapcomSession is one Capcom session on the publishing host.
+type CatalogCapcomSession struct {
+	Session  string `json:"session" doc:"The session id on its host."`
+	Name     string `json:"name"`
+	Harness  string `json:"harness"`
+	Standing bool   `json:"standing,omitempty" doc:"The standing conversation, which capcom.open returns."`
 }
 
 // CatalogSystem is the host's detected system facts. A fact that could not be read is absent.
@@ -139,4 +158,32 @@ type CatalogLocation struct {
 type CatalogUpdated struct {
 	DeviceID   string `json:"device_id"`
 	Generation uint64 `json:"generation"`
+}
+
+// --- Capcom (capcom.md 7, 8.3) ---
+
+type CapcomOpenParams struct {
+	New bool `json:"new,omitempty" doc:"Start a fresh Capcom session in a new folder; the standing one stays resumable."`
+}
+
+// CapcomOpened answers capcom.open with the standing Capcom session.
+type CapcomOpened struct {
+	Seq
+	Session string `json:"session"`
+	Pane    string `json:"pane"`
+	Started bool   `json:"started,omitempty" doc:"This call started the session, or resumed it after an exit."`
+	Dir     string `json:"dir" doc:"The session's folder on the home host."`
+}
+
+type CapcomAssignParams struct {
+	Host string `json:"host" doc:"self, a peer label from this hab's peer list, or a device id."`
+	// Assignment is set by a hab that forwards an assignment to the chosen peer.
+	Assignment uint64 `json:"assignment,omitempty" doc:"The lowest counter to use. A hab that forwards an assignment to the chosen peer sends one above every counter it has seen."`
+}
+
+// CapcomAssigned answers capcom.assign with the assignment now in force.
+type CapcomAssigned struct {
+	Seq
+	Home       string `json:"home" doc:"The home host's device id."`
+	Assignment uint64 `json:"assignment"`
 }

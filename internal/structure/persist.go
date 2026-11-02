@@ -70,6 +70,12 @@ type sessionRecord struct {
 	// the holders have not reported yet. The first sight of the pane clears it. Only a marked
 	// session can be dropped at start as never spawned. Not in the API.
 	Spawning bool `json:"spawning,omitempty"`
+	// Resuming goes with Spawning when an exited session was pointed at a new pane
+	// (ResumeSession). Such a session is never dropped at start; it shows exited. Not in the API.
+	Resuming bool `json:"resuming,omitempty"`
+	// Kind and Dir mark a Capcom session (capcom.md 2.1, 7.4).
+	Kind string `json:"kind,omitempty"`
+	Dir  string `json:"dir,omitempty"`
 }
 
 // paneRecord keeps what gff-hab owns about a pane: its revision, plus the last size and build it

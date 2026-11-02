@@ -311,6 +311,12 @@ func (s *Store) reconcile(st *stateFile, live []HolderPane, complete bool) {
 		if !complete || adding[ss.Pane] {
 			continue
 		}
+		if ss.Resuming {
+			// A resumed session keeps its record: it existed before the spawn. It shows exited
+			// below, and can be resumed again.
+			ss.Spawning, ss.Resuming = false, false
+			continue
+		}
 		s.sessions = slices.DeleteFunc(s.sessions, func(x *sessionRecord) bool { return x == ss })
 		events = append(events, Event{SessionDeleted, ss.ID, ss.Revision + 1, api.Deleted{}})
 		if p := s.project(ss.Project); p != nil {
@@ -527,6 +533,9 @@ type SessionSpec struct {
 	// session set, follows when the holder reports it. A caller whose spawn fails closes the
 	// session again.
 	NewPane bool
+	// Kind and Dir mark a Capcom session (capcom.md 2.1, 7.4): kind capcom and its folder.
+	Kind string
+	Dir  string
 }
 
 // CreateSession adds a session record for a live pane, or for a pane about to be spawned
@@ -561,7 +570,7 @@ func (s *Store) CreateSession(spec SessionSpec) (api.Session, error) {
 		return api.Session{}, fmt.Errorf("%w: pane %s belongs to session %s", ErrConflict, spec.Pane, other.ID)
 	}
 	ss := &sessionRecord{ID: newID("s"), Revision: 1, Name: spec.Name, Project: spec.Project, Pane: spec.Pane, State: stateRunning,
-		Spawning: spec.NewPane}
+		Spawning: spec.NewPane, Kind: spec.Kind, Dir: spec.Dir}
 	if ps != nil && ps.exit != nil {
 		ss.State = stateExited
 		ss.Exit = copyExit(ps.exit)
@@ -708,6 +717,53 @@ func (s *Store) CloseSession(id string) error {
 	return nil
 }
 
+// ResumeSession points an exited session at a new pane the caller spawns right after this call
+// (session.resume, hab-logic-api.md 3.9). The session keeps its id, name and project, and runs
+// again. The old pane, when it is still live, becomes unfiled; the caller closes it. Like a
+// create, the record carries the spawning mark until the pane is seen; unlike a create, a
+// gff-hab that stops before the spawn keeps the record, exited.
+func (s *Store) ResumeSession(id, pane string) (api.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ss := s.session(id)
+	switch {
+	case ss == nil:
+		return api.Session{}, fmt.Errorf("%w: session %s", ErrNotFound, id)
+	case ss.State != stateExited:
+		return api.Session{}, fmt.Errorf("%w: session %s is running", ErrConflict, id)
+	case pane == "":
+		return api.Session{}, fmt.Errorf("%w: a new pane needs its id", ErrInvalid)
+	case s.panes[pane] != nil || s.buried(pane):
+		return api.Session{}, fmt.Errorf("%w: pane %s was used already", ErrConflict, pane)
+	}
+	old := ss.Pane
+	ss.Pane, ss.State, ss.Exit = pane, stateRunning, nil
+	ss.Spawning, ss.Resuming = true, true
+	ss.Revision++
+	events := []Event{s.sessionEvent(ss)}
+	if ps := s.panes[old]; ps != nil && old != "" {
+		ps.rec.Revision++
+		events = append(events, s.paneEvent(old))
+	}
+	s.commit(events)
+	return sessionAPI(ss), nil
+}
+
+// ResumeFailed undoes ResumeSession after a spawn that never ran: the session is exited again,
+// with no pane. It does nothing when the session no longer names pane.
+func (s *Store) ResumeFailed(id, pane string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ss := s.session(id)
+	if ss == nil || ss.Pane != pane {
+		return
+	}
+	ss.Pane, ss.State, ss.Exit = "", stateExited, nil
+	ss.Spawning, ss.Resuming = false, false
+	ss.Revision++
+	s.commit([]Event{s.sessionEvent(ss)})
+}
+
 // --- Holder notices ---
 
 func (s *Store) handle(n Notice) {
@@ -775,7 +831,7 @@ func (s *Store) paneSeen(hp HolderPane) {
 		s.panes[hp.ID] = ps
 		var events []Event
 		if ss := s.sessionByPane(hp.ID); ss != nil {
-			ss.Spawning = false // the pane ran; the commit below saves that
+			ss.Spawning, ss.Resuming = false, false // the pane ran; the commit below saves that
 		}
 		// A session marked exited with no status lost its pane to a holder that dropped out.
 		// The pane is back, so the program still runs.
@@ -987,6 +1043,7 @@ func sessionAPI(ss *sessionRecord) api.Session {
 	return api.NonNil(api.Session{
 		ID: ss.ID, Revision: ss.Revision, Name: ss.Name, Project: ss.Project, Pane: ss.Pane,
 		State: api.SessionState(ss.State), Exit: copyExit(ss.Exit),
+		Kind: api.SessionKind(ss.Kind), Dir: ss.Dir,
 	})
 }
 

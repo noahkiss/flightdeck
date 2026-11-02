@@ -34,7 +34,8 @@
     "settings",
     "read-tools",
     "logbook",
-    "confirm"
+    "confirm",
+    "capcom"
   ],
   "methods": [
     {
@@ -2025,6 +2026,61 @@
       }
     },
     {
+      "name": "capcom.open",
+      "summary": "Return the standing Capcom session on this home host, starting or resuming it as needed; new starts a fresh one (capcom.md 7.2). Needs the capcom capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "new",
+          "description": "Start a fresh Capcom session in a new folder; the standing one stays resumable.",
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CapcomOpened"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CapcomOpenParams"
+      }
+    },
+    {
+      "name": "capcom.assign",
+      "summary": "Make a host the Capcom home host, with a counter above every one seen (capcom.md 7.3). Needs the capcom capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "assignment",
+          "description": "The lowest counter to use. A hab that forwards an assignment to the chosen peer sends one above every counter it has seen.",
+          "schema": {
+            "type": "integer",
+            "format": "uint64"
+          }
+        },
+        {
+          "name": "host",
+          "description": "self, a peer label from this hab's peer list, or a device id.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CapcomAssigned"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/CapcomAssignParams"
+      }
+    },
+    {
       "name": "worktree.remove",
       "summary": "Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).",
       "paramStructure": "by-name",
@@ -3126,6 +3182,85 @@
           "auth"
         ]
       },
+      "CapcomAssignParams": {
+        "type": "object",
+        "properties": {
+          "assignment": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The lowest counter to use. A hab that forwards an assignment to the chosen peer sends one above every counter it has seen."
+          },
+          "host": {
+            "type": "string",
+            "description": "self, a peer label from this hab's peer list, or a device id."
+          }
+        },
+        "required": [
+          "host"
+        ]
+      },
+      "CapcomAssigned": {
+        "type": "object",
+        "properties": {
+          "assignment": {
+            "type": "integer",
+            "format": "uint64"
+          },
+          "home": {
+            "type": "string",
+            "description": "The home host's device id."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "home",
+          "assignment"
+        ]
+      },
+      "CapcomOpenParams": {
+        "type": "object",
+        "properties": {
+          "new": {
+            "type": "boolean",
+            "description": "Start a fresh Capcom session in a new folder; the standing one stays resumable."
+          }
+        }
+      },
+      "CapcomOpened": {
+        "type": "object",
+        "properties": {
+          "dir": {
+            "type": "string",
+            "description": "The session's folder on the home host."
+          },
+          "pane": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "type": "string"
+          },
+          "started": {
+            "type": "boolean",
+            "description": "This call started the session, or resumed it after an exit."
+          }
+        },
+        "required": [
+          "seq",
+          "session",
+          "pane",
+          "dir"
+        ]
+      },
       "Catalog": {
         "type": "object",
         "properties": {
@@ -3157,6 +3292,10 @@
             "items": {
               "$ref": "#/components/schemas/CatalogCapability"
             }
+          },
+          "capcom": {
+            "$ref": "#/components/schemas/CatalogCapcom",
+            "description": "The Capcom home host as this hab knows it, and the Capcom sessions on this host (capcom.md 7.3). Absent from a hab without the capcom capability, and while no host was ever assigned and this host has no Capcom session."
           },
           "device_id": {
             "type": "string",
@@ -3294,6 +3433,55 @@
         },
         "required": [
           "name"
+        ]
+      },
+      "CatalogCapcom": {
+        "type": "object",
+        "properties": {
+          "assignment": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The highest assignment counter this hab has seen; 0 for none."
+          },
+          "home": {
+            "type": "string",
+            "description": "The device id of the home host at that assignment."
+          },
+          "sessions": {
+            "type": "array",
+            "description": "The Capcom sessions on this host, the standing one marked.",
+            "items": {
+              "$ref": "#/components/schemas/CatalogCapcomSession"
+            }
+          }
+        },
+        "required": [
+          "assignment",
+          "sessions"
+        ]
+      },
+      "CatalogCapcomSession": {
+        "type": "object",
+        "properties": {
+          "harness": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string",
+            "description": "The session id on its host."
+          },
+          "standing": {
+            "type": "boolean",
+            "description": "The standing conversation, which capcom.open returns."
+          }
+        },
+        "required": [
+          "session",
+          "name",
+          "harness"
         ]
       },
       "CatalogEntry": {
@@ -6953,11 +7141,19 @@
             "format": "int64",
             "description": "How full the context window is, in whole percent of the current model's window. Absent when unknown; never guessed."
           },
+          "dir": {
+            "type": "string",
+            "description": "The hab-owned folder a Capcom session runs in; a plain terminal resumes the harness from there. Absent for other sessions."
+          },
           "exit": {
             "$ref": "#/components/schemas/ExitStatus"
           },
           "id": {
             "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SessionKind",
+            "description": "capcom for a Capcom session, which clients label Capcom. Absent for an ordinary session."
           },
           "model": {
             "type": "string",
@@ -7095,6 +7291,12 @@
         "required": [
           "session",
           "active"
+        ]
+      },
+      "SessionKind": {
+        "type": "string",
+        "x-known-values": [
+          "capcom"
         ]
       },
       "SessionRef": {

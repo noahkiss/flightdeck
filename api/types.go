@@ -106,7 +106,15 @@ type Session struct {
 	Title      string `json:"title,omitempty" doc:"The agent session's title, from its adapter. Absent when the harness has none."`
 	Model      string `json:"model,omitempty" doc:"The model in use, as the harness names it."`
 	ContextPct *int   `json:"context_pct,omitempty" doc:"How full the context window is, in whole percent of the current model's window. Absent when unknown; never guessed."`
+	// Kind and Dir mark a Capcom session (capcom.md 2.1, 7.4). Optional, so a newer client
+	// reads a session from an older revision 1 hab.
+	Kind SessionKind `json:"kind,omitempty" doc:"capcom for a Capcom session, which clients label Capcom. Absent for an ordinary session."`
+	Dir  string      `json:"dir,omitempty" doc:"The hab-owned folder a Capcom session runs in; a plain terminal resumes the harness from there. Absent for other sessions."`
 }
+
+// SessionKind says what a session is for, beyond running a program. Open: a client shows an
+// unknown kind as an ordinary session.
+type SessionKind string
 
 type Pane struct {
 	ID          string `json:"id" doc:"Holder pane id, never reused."`

@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -307,6 +307,83 @@ public struct BlockedKind: RawRepresentable, Codable, Sendable, Hashable {
     public static let auth = BlockedKind(rawValue: "auth")
 }
 
+public struct CapcomAssignParams: Codable, Sendable, Hashable {
+    /// The lowest counter to use. A hab that forwards an assignment to the chosen peer sends one above every counter it has seen.
+    public var assignment: UInt64?
+    /// self, a peer label from this hab's peer list, or a device id.
+    public var host: String
+
+    enum CodingKeys: String, CodingKey {
+        case assignment = "assignment"
+        case host = "host"
+    }
+
+    public init(assignment: UInt64? = nil, host: String) {
+        self.assignment = assignment
+        self.host = host
+    }
+}
+
+public struct CapcomAssigned: Codable, Sendable, Hashable {
+    public var assignment: UInt64
+    /// The home host's device id.
+    public var home: String
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case assignment = "assignment"
+        case home = "home"
+        case seq = "seq"
+    }
+
+    public init(assignment: UInt64, home: String, seq: UInt64) {
+        self.assignment = assignment
+        self.home = home
+        self.seq = seq
+    }
+}
+
+public struct CapcomOpenParams: Codable, Sendable, Hashable {
+    /// Start a fresh Capcom session in a new folder; the standing one stays resumable.
+    public var new: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case new = "new"
+    }
+
+    public init(new: Bool? = nil) {
+        self.new = new
+    }
+}
+
+public struct CapcomOpened: Codable, Sendable, Hashable {
+    /// The session's folder on the home host.
+    public var dir: String
+    public var pane: String
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    public var session: String
+    /// This call started the session, or resumed it after an exit.
+    public var started: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case dir = "dir"
+        case pane = "pane"
+        case seq = "seq"
+        case session = "session"
+        case started = "started"
+    }
+
+    public init(dir: String, pane: String, seq: UInt64, session: String, started: Bool? = nil) {
+        self.dir = dir
+        self.pane = pane
+        self.seq = seq
+        self.session = session
+        self.started = started
+    }
+}
+
 public struct Catalog: Codable, Sendable, Hashable {
     /// Quick actions the user declared for this host.
     public var actions: [CatalogAction]
@@ -318,6 +395,8 @@ public struct Catalog: Codable, Sendable, Hashable {
     public var at: String
     /// Detected and declared capability words, sorted.
     public var capabilities: [CatalogCapability]
+    /// The Capcom home host as this hab knows it, and the Capcom sessions on this host (capcom.md 7.3). Absent from a hab without the capcom capability, and while no host was ever assigned and this host has no Capcom session.
+    public var capcom: CatalogCapcom?
     /// The publishing hab's device id.
     public var deviceId: String
     /// Raised on every change of this catalog; kept across restarts.
@@ -344,6 +423,7 @@ public struct Catalog: Codable, Sendable, Hashable {
         case alwaysOn = "always_on"
         case at = "at"
         case capabilities = "capabilities"
+        case capcom = "capcom"
         case deviceId = "device_id"
         case generation = "generation"
         case harnesses = "harnesses"
@@ -356,12 +436,13 @@ public struct Catalog: Codable, Sendable, Hashable {
         case watches = "watches"
     }
 
-    public init(actions: [CatalogAction], agents: [CatalogAgent], alwaysOn: Bool? = nil, at: String, capabilities: [CatalogCapability], deviceId: String, generation: UInt64, harnesses: [CatalogTool], host: String, peers: [String], projects: [CatalogProject], services: [CatalogService], system: CatalogSystem, toolchains: [CatalogTool], watches: [String]) {
+    public init(actions: [CatalogAction], agents: [CatalogAgent], alwaysOn: Bool? = nil, at: String, capabilities: [CatalogCapability], capcom: CatalogCapcom? = nil, deviceId: String, generation: UInt64, harnesses: [CatalogTool], host: String, peers: [String], projects: [CatalogProject], services: [CatalogService], system: CatalogSystem, toolchains: [CatalogTool], watches: [String]) {
         self.actions = actions
         self.agents = agents
         self.alwaysOn = alwaysOn
         self.at = at
         self.capabilities = capabilities
+        self.capcom = capcom
         self.deviceId = deviceId
         self.generation = generation
         self.harnesses = harnesses
@@ -433,6 +514,50 @@ public struct CatalogCapability: Codable, Sendable, Hashable {
         self.declared = declared
         self.detected = detected
         self.name = name
+    }
+}
+
+public struct CatalogCapcom: Codable, Sendable, Hashable {
+    /// The highest assignment counter this hab has seen; 0 for none.
+    public var assignment: UInt64
+    /// The device id of the home host at that assignment.
+    public var home: String?
+    /// The Capcom sessions on this host, the standing one marked.
+    public var sessions: [CatalogCapcomSession]
+
+    enum CodingKeys: String, CodingKey {
+        case assignment = "assignment"
+        case home = "home"
+        case sessions = "sessions"
+    }
+
+    public init(assignment: UInt64, home: String? = nil, sessions: [CatalogCapcomSession]) {
+        self.assignment = assignment
+        self.home = home
+        self.sessions = sessions
+    }
+}
+
+public struct CatalogCapcomSession: Codable, Sendable, Hashable {
+    public var harness: String
+    public var name: String
+    /// The session id on its host.
+    public var session: String
+    /// The standing conversation, which capcom.open returns.
+    public var standing: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case harness = "harness"
+        case name = "name"
+        case session = "session"
+        case standing = "standing"
+    }
+
+    public init(harness: String, name: String, session: String, standing: Bool? = nil) {
+        self.harness = harness
+        self.name = name
+        self.session = session
+        self.standing = standing
     }
 }
 
@@ -3903,8 +4028,12 @@ public struct SendOrigin: RawRepresentable, Codable, Sendable, Hashable {
 public struct Session: Codable, Sendable, Hashable {
     /// How full the context window is, in whole percent of the current model's window. Absent when unknown; never guessed.
     public var contextPct: Int?
+    /// The hab-owned folder a Capcom session runs in; a plain terminal resumes the harness from there. Absent for other sessions.
+    public var dir: String?
     public var exit: ExitStatus?
     public var id: String
+    /// capcom for a Capcom session, which clients label Capcom. Absent for an ordinary session.
+    public var kind: SessionKind?
     /// The model in use, as the harness names it.
     public var model: String?
     /// Unique on the host.
@@ -3919,8 +4048,10 @@ public struct Session: Codable, Sendable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case contextPct = "context_pct"
+        case dir = "dir"
         case exit = "exit"
         case id = "id"
+        case kind = "kind"
         case model = "model"
         case name = "name"
         case pane = "pane"
@@ -3930,10 +4061,12 @@ public struct Session: Codable, Sendable, Hashable {
         case title = "title"
     }
 
-    public init(contextPct: Int? = nil, exit: ExitStatus? = nil, id: String, model: String? = nil, name: String, pane: String? = nil, project: String? = nil, revision: UInt64, state: SessionState, title: String? = nil) {
+    public init(contextPct: Int? = nil, dir: String? = nil, exit: ExitStatus? = nil, id: String, kind: SessionKind? = nil, model: String? = nil, name: String, pane: String? = nil, project: String? = nil, revision: UInt64, state: SessionState, title: String? = nil) {
         self.contextPct = contextPct
+        self.dir = dir
         self.exit = exit
         self.id = id
+        self.kind = kind
         self.model = model
         self.name = name
         self.pane = pane
@@ -4040,6 +4173,13 @@ public struct SessionFocusParams: Codable, Sendable, Hashable {
         self.active = active
         self.session = session
     }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct SessionKind: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let capcom = SessionKind(rawValue: "capcom")
 }
 
 public struct SessionRef: Codable, Sendable, Hashable {
@@ -5302,6 +5442,10 @@ public enum HabMethods {
     public static let settingsGet = HabMethod<SettingsGetParams, SettingsResult>(name: "settings.get")
     /// Write hab-side settings, all or nothing, each with the revision last seen (app.md 20.5). Needs the settings capability.
     public static let settingsSet = HabMethod<SettingsSetParams, SettingsResult>(name: "settings.set")
+    /// Return the standing Capcom session on this home host, starting or resuming it as needed; new starts a fresh one (capcom.md 7.2). Needs the capcom capability.
+    public static let capcomOpen = HabMethod<CapcomOpenParams, CapcomOpened>(name: "capcom.open")
+    /// Make a host the Capcom home host, with a counter above every one seen (capcom.md 7.3). Needs the capcom capability.
+    public static let capcomAssign = HabMethod<CapcomAssignParams, CapcomAssigned>(name: "capcom.assign")
     /// Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).
     public static let worktreeRemove = HabMethod<WorktreeRemoveParams, WorktreeRemoved>(name: "worktree.remove")
     /// Past and current harness sessions from their native transcripts, newest first, on every host or one (capcom.md 4). Needs the read-tools capability.

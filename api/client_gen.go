@@ -251,6 +251,10 @@ const (
 )
 
 const (
+	SessionKindCapcom SessionKind = "capcom"
+)
+
+const (
 	SessionStateRunning SessionState = "running"
 	SessionStateExited  SessionState = "exited"
 )
@@ -861,6 +865,20 @@ func (c Client) SettingsGet(ctx context.Context, params SettingsGetParams) (Sett
 func (c Client) SettingsSet(ctx context.Context, params SettingsSetParams) (SettingsResult, error) {
 	var result SettingsResult
 	err := c.Caller.Call(ctx, "settings.set", params, &result)
+	return result, err
+}
+
+// CapcomOpen calls capcom.open. Return the standing Capcom session on this home host, starting or resuming it as needed; new starts a fresh one (capcom.md 7.2). Needs the capcom capability.
+func (c Client) CapcomOpen(ctx context.Context, params CapcomOpenParams) (CapcomOpened, error) {
+	var result CapcomOpened
+	err := c.Caller.Call(ctx, "capcom.open", params, &result)
+	return result, err
+}
+
+// CapcomAssign calls capcom.assign. Make a host the Capcom home host, with a counter above every one seen (capcom.md 7.3). Needs the capcom capability.
+func (c Client) CapcomAssign(ctx context.Context, params CapcomAssignParams) (CapcomAssigned, error) {
+	var result CapcomAssigned
+	err := c.Caller.Call(ctx, "capcom.assign", params, &result)
 	return result, err
 }
 

@@ -1145,7 +1145,6 @@ const (
 // later names the stage that builds each method this build defines but does not serve yet
 // (spec 3.9). Each answers unavailable with a hint that names it.
 var later = map[string]string{
-	"session.resume":    "Part 4 stage 4 (harness adapters: state and input)",
 	"session.interrupt": "Part 4 stage 4 (harness adapters: state and input)",
 	"hab.stats":         "Part 5 stage 5 (system info)",
 }
@@ -1267,6 +1266,10 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		return c.dispatchCatalog(m, s)
 	case "settings.get", "settings.set":
 		return c.dispatchSettings(m, s)
+	case "capcom.open", "capcom.assign":
+		return c.dispatchCapcom(m, s)
+	case "session.resume":
+		return c.dispatchResume(m, s)
 	case "peers.list":
 		var p api.PeersListParams
 		if e := c.decodeUp(m, &p); e != nil {
