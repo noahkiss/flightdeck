@@ -1001,7 +1001,10 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   when its session is in scope. `gff-hab show` is the command line of `content.show`.
 - **`push.register`** `environment` is `development` or `production`; `kinds` are `permission`,
   `question`, `auth`, `error`, `done` and `usage`. Added by the push stage, optional:
-  `hide_commands`, the app's "show commands in notifications" turned off (`app.md` 8.3).
+  `hide_commands`, the app's "show commands in notifications" turned off (`app.md` 8.3). Added
+  by "Ask an agent", optional: `features`, words for what the app's categories can do; `ask`
+  means it registered the Ask categories (`capcom.md` 8.5). Unknown words are kept and
+  ignored.
 - **`notice.raise`** takes `title`, and the optional `body`, `level` (`passive`, `active`, the
   default, or `time-sensitive`) and `session`. It returns the notice `id` and `pushed`, the
   number of devices the push goes to (0 without push). A `script` or `cli` client may call it;
@@ -1187,8 +1190,8 @@ a key it sends the same call again, and the hab runs it at most once. Built choi
   `buttons`, `since`, `others` (other blocked panes on this hab), `hab` and `harness`.
 - **Payload.** `aps` holds `alert` (`title`, `subtitle`, `body`), `interruption-level`,
   `category` (`approval`: Approve and Deny; `approval-deny`: Deny and Open; `open`; while some
-  host runs Capcom, `approval-ask`, `approval-deny-ask`, `open-ask` and `ask`, each with Ask
-  last, `capcom.md` 8.5),
+  host runs Capcom and the device registered the `ask` feature, `approval-ask`,
+  `approval-deny-ask`, `open-ask` and `ask`, each with Ask last, `capcom.md` 8.5),
   `thread-id` (the session), `sound` except when passive, and `mutable-content` 1, so the
   notification service extension can add the expiry as a local clock time. A `flightdeck`
   object carries `v` (1), `kind`, `hab`, `session`, `pane`, `state`, `request`, `expires_at`
