@@ -175,7 +175,7 @@ type CapcomContextKind string
 type CapcomContextRef struct {
 	Kind CapcomContextKind `json:"kind"`
 	Ref  string            `json:"ref" doc:"notification: a notice id. session: a session id on this hab. file: an attachment id from attachment.put for the Capcom session, or an absolute path under its folder. command: <pane id>:<command id>, from command.list. logbook: a record id."`
-	Host string            `json:"host,omitempty" doc:"notification only: a peer label or this hab's host id, as notice.get takes it. Absent: this hab. The other kinds name this hab's own things."`
+	Host string            `json:"host,omitempty" doc:"notification only: a peer label or device id, or this hab's host id or device id, as notice.get takes it; a push's capcom_context gives a device id. Absent: this hab. The other kinds name this hab's own things."`
 }
 
 // CapcomContextItem is one item attached to a Capcom session's next message, for the client's

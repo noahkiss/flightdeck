@@ -423,7 +423,7 @@ public struct CapcomContextKind: RawRepresentable, Codable, Sendable, Hashable {
 }
 
 public struct CapcomContextRef: Codable, Sendable, Hashable {
-    /// notification only: a peer label or this hab's host id, as notice.get takes it. Absent: this hab. The other kinds name this hab's own things.
+    /// notification only: a peer label or device id, or this hab's host id or device id, as notice.get takes it; a push's capcom_context gives a device id. Absent: this hab. The other kinds name this hab's own things.
     public var host: String?
     public var kind: CapcomContextKind
     /// notification: a notice id. session: a session id on this hab. file: an attachment id from attachment.put for the Capcom session, or an absolute path under its folder. command: <pane id>:<command id>, from command.list. logbook: a record id.
@@ -2851,7 +2851,7 @@ public struct FileData: Codable, Sendable, Hashable {
 }
 
 public struct FileReadParams: Codable, Sendable, Hashable {
-    /// A peer label or this hab's host id. Absent: this hab.
+    /// A peer label or device id, this hab's host id or device id, or self. Absent: this hab.
     public var host: String?
     /// Most bytes to return. Default 65536, at most 262144.
     public var limit: Int?
@@ -3300,7 +3300,7 @@ public struct Notice: Codable, Sendable, Hashable {
 }
 
 public struct NoticeGetParams: Codable, Sendable, Hashable {
-    /// A peer label or this hab's host id. Absent: this hab.
+    /// A peer label or device id, this hab's host id or device id, or self. Absent: this hab.
     public var host: String?
     /// The notice id, from notice.raise or a notice.raised event.
     public var id: String
@@ -5392,7 +5392,7 @@ public struct TranscriptHits: Codable, Sendable, Hashable {
 public struct TranscriptListParams: Codable, Sendable, Hashable {
     /// claude or codex.
     public var harness: String?
-    /// A peer label or this hab's host id. Absent: every host.
+    /// A peer label or device id, this hab's host id or device id, or self. Absent: every host.
     public var host: String?
     /// Most sessions to return. Default 50, at most 200.
     public var limit: Int?
@@ -5479,7 +5479,7 @@ public struct TranscriptReadParams: Codable, Sendable, Hashable {
     public var before: String?
     /// claude or codex. Absent: found from the session.
     public var harness: String?
-    /// A peer label or this hab's host id. Absent: this hab.
+    /// A peer label or device id, this hab's host id or device id, or self. Absent: this hab.
     public var host: String?
     /// Most messages to return. Default 50, at most 200.
     public var limit: Int?
@@ -5506,7 +5506,7 @@ public struct TranscriptReadParams: Codable, Sendable, Hashable {
 public struct TranscriptSearchParams: Codable, Sendable, Hashable {
     /// claude or codex.
     public var harness: String?
-    /// A peer label or this hab's host id. Absent: every host.
+    /// A peer label or device id, this hab's host id or device id, or self. Absent: every host.
     public var host: String?
     /// Most hits to return. Default 50, at most 50.
     public var limit: Int?

@@ -103,10 +103,12 @@ type target struct {
 }
 
 // targets picks the hosts for a read: host "" is every host when all is set, else this hab.
-// local answers from this hab only (a call over a peer link: one hop).
+// A host is a peer label, a peer's device id, this hab's host id or device id, or self: a
+// push names its hab by device id, since the hab that reads it may know that hab by another
+// label (capcom.md 8.5). local answers from this hab only (a call over a peer link: one hop).
 func (s *Service) targets(host string, all, local bool) ([]target, error) {
 	self := target{host: api.ReadHost{Label: s.cfg.Host, DeviceID: s.cfg.Self, Own: true, State: api.ReadHostStateOk}}
-	if local || host == s.cfg.Host || host == "self" || (host == "" && !all) {
+	if local || host == s.cfg.Host || host == "self" || (host != "" && host == s.cfg.Self) || (host == "" && !all) {
 		return []target{self}, nil
 	}
 	out := []target{}
@@ -125,12 +127,16 @@ func (s *Service) targets(host string, all, local bool) ([]target, error) {
 	}
 	found := false
 	for _, p := range s.cfg.Peers.List().Peers {
-		if host != "" && p.Label != host {
+		l, ok := links[p.Label]
+		byID := host != "" && p.Label != host && (host == p.DeviceID || (ok && host == l.DeviceID))
+		if host != "" && p.Label != host && !byID {
 			continue
+		}
+		if byID && found {
+			continue // one hab under two labels: the first answers
 		}
 		found = true
 		t := target{host: api.ReadHost{Label: p.Label, DeviceID: p.DeviceID}}
-		l, ok := links[p.Label]
 		switch {
 		case !ok || !l.Online || l.Caller == nil:
 			t.host.State = api.ReadHostStateOffline
@@ -683,7 +689,7 @@ func (s *Service) Notice(ctx context.Context, local bool, p api.NoticeGetParams)
 	}
 	n, ok := s.cfg.Notice(p.ID)
 	if !ok {
-		return api.NoticeRecord{}, control.Errorf(api.ErrorKindNotFound, "%s has no notice %s; notices are kept in memory since its hab started", s.cfg.Host, p.ID)
+		return api.NoticeRecord{}, control.Errorf(api.ErrorKindNotFound, "%s has no notice %s; its hab keeps the last 500 notices of the last 7 days", s.cfg.Host, p.ID)
 	}
 	res := api.NoticeRecord{Host: s.cfg.Host, Notice: n}
 	if n.Session != "" && s.cfg.Session != nil {

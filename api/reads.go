@@ -22,7 +22,7 @@ type ReadHost struct {
 }
 
 type TranscriptListParams struct {
-	Host    string `json:"host,omitempty" doc:"A peer label or this hab's host id. Absent: every host."`
+	Host    string `json:"host,omitempty" doc:"A peer label or device id, this hab's host id or device id, or self. Absent: every host."`
 	Project string `json:"project,omitempty" doc:"A project name, or a folder: sessions in it or under it."`
 	Harness string `json:"harness,omitempty" doc:"claude or codex."`
 	Since   string `json:"since,omitempty" doc:"RFC 3339 time: sessions written to at or after it."`
@@ -61,7 +61,7 @@ type TranscriptLive struct {
 
 type TranscriptSearchParams struct {
 	Words   string `json:"words" doc:"Words that must all appear in a message, any case. Double quotes keep a phrase together."`
-	Host    string `json:"host,omitempty" doc:"A peer label or this hab's host id. Absent: every host."`
+	Host    string `json:"host,omitempty" doc:"A peer label or device id, this hab's host id or device id, or self. Absent: every host."`
 	Project string `json:"project,omitempty" doc:"A project name, or a folder."`
 	Harness string `json:"harness,omitempty" doc:"claude or codex."`
 	Since   string `json:"since,omitempty" doc:"RFC 3339 time: transcripts written to at or after it."`
@@ -91,7 +91,7 @@ type TranscriptHit struct {
 }
 
 type TranscriptReadParams struct {
-	Host    string `json:"host,omitempty" doc:"A peer label or this hab's host id. Absent: this hab."`
+	Host    string `json:"host,omitempty" doc:"A peer label or device id, this hab's host id or device id, or self. Absent: this hab."`
 	Session string `json:"session" doc:"The harness's own session id, or a Flightdeck session id or name on that host."`
 	Harness string `json:"harness,omitempty" doc:"claude or codex. Absent: found from the session."`
 	Before  string `json:"before,omitempty" doc:"Message id: return the messages before it. Absent means the tail."`
@@ -111,7 +111,7 @@ type TranscriptPage struct {
 
 type NoticeGetParams struct {
 	ID   string `json:"id" doc:"The notice id, from notice.raise or a notice.raised event."`
-	Host string `json:"host,omitempty" doc:"A peer label or this hab's host id. Absent: this hab."`
+	Host string `json:"host,omitempty" doc:"A peer label or device id, this hab's host id or device id, or self. Absent: this hab."`
 }
 
 // NoticeRecord answers notice.get: a notice this hab raised, and the session it is about.
@@ -123,7 +123,7 @@ type NoticeRecord struct {
 }
 
 type FileReadParams struct {
-	Host   string `json:"host,omitempty" doc:"A peer label or this hab's host id. Absent: this hab."`
+	Host   string `json:"host,omitempty" doc:"A peer label or device id, this hab's host id or device id, or self. Absent: this hab."`
 	Path   string `json:"path" doc:"An absolute path, or one under ~/ on that host."`
 	Offset int64  `json:"offset,omitempty" doc:"Byte offset to start at."`
 	Limit  int    `json:"limit,omitempty" doc:"Most bytes to return. Default 65536, at most 262144."`

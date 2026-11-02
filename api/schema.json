@@ -2242,7 +2242,7 @@
         },
         {
           "name": "host",
-          "description": "A peer label or this hab's host id. Absent: every host.",
+          "description": "A peer label or device id, this hab's host id or device id, or self. Absent: every host.",
           "schema": {
             "type": "string"
           }
@@ -2301,7 +2301,7 @@
         },
         {
           "name": "host",
-          "description": "A peer label or this hab's host id. Absent: every host.",
+          "description": "A peer label or device id, this hab's host id or device id, or self. Absent: every host.",
           "schema": {
             "type": "string"
           }
@@ -2368,7 +2368,7 @@
         },
         {
           "name": "host",
-          "description": "A peer label or this hab's host id. Absent: this hab.",
+          "description": "A peer label or device id, this hab's host id or device id, or self. Absent: this hab.",
           "schema": {
             "type": "string"
           }
@@ -2407,7 +2407,7 @@
       "params": [
         {
           "name": "host",
-          "description": "A peer label or this hab's host id. Absent: this hab.",
+          "description": "A peer label or device id, this hab's host id or device id, or self. Absent: this hab.",
           "schema": {
             "type": "string"
           }
@@ -2438,7 +2438,7 @@
       "params": [
         {
           "name": "host",
-          "description": "A peer label or this hab's host id. Absent: this hab.",
+          "description": "A peer label or device id, this hab's host id or device id, or self. Absent: this hab.",
           "schema": {
             "type": "string"
           }
@@ -3697,7 +3697,7 @@
         "properties": {
           "host": {
             "type": "string",
-            "description": "notification only: a peer label or this hab's host id, as notice.get takes it. Absent: this hab. The other kinds name this hab's own things."
+            "description": "notification only: a peer label or device id, or this hab's host id or device id, as notice.get takes it; a push's capcom_context gives a device id. Absent: this hab. The other kinds name this hab's own things."
           },
           "kind": {
             "$ref": "#/components/schemas/CapcomContextKind"
@@ -6295,7 +6295,7 @@
         "properties": {
           "host": {
             "type": "string",
-            "description": "A peer label or this hab's host id. Absent: this hab."
+            "description": "A peer label or device id, this hab's host id or device id, or self. Absent: this hab."
           },
           "limit": {
             "type": "integer",
@@ -6770,7 +6770,7 @@
         "properties": {
           "host": {
             "type": "string",
-            "description": "A peer label or this hab's host id. Absent: this hab."
+            "description": "A peer label or device id, this hab's host id or device id, or self. Absent: this hab."
           },
           "id": {
             "type": "string",
@@ -8991,7 +8991,7 @@
           },
           "host": {
             "type": "string",
-            "description": "A peer label or this hab's host id. Absent: every host."
+            "description": "A peer label or device id, this hab's host id or device id, or self. Absent: every host."
           },
           "limit": {
             "type": "integer",
@@ -9086,7 +9086,7 @@
           },
           "host": {
             "type": "string",
-            "description": "A peer label or this hab's host id. Absent: this hab."
+            "description": "A peer label or device id, this hab's host id or device id, or self. Absent: this hab."
           },
           "limit": {
             "type": "integer",
@@ -9111,7 +9111,7 @@
           },
           "host": {
             "type": "string",
-            "description": "A peer label or this hab's host id. Absent: every host."
+            "description": "A peer label or device id, this hab's host id or device id, or self. Absent: every host."
           },
           "limit": {
             "type": "integer",

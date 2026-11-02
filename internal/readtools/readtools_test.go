@@ -148,6 +148,10 @@ func (p peerCaller) Call(ctx context.Context, method string, params, result any)
 		var q api.FileReadParams
 		json.Unmarshal(b, &q)
 		res, err = p.s.File(ctx, true, q)
+	case "notice.get":
+		var q api.NoticeGetParams
+		json.Unmarshal(b, &q)
+		res, err = p.s.Notice(ctx, true, q)
 	default:
 		return fmt.Errorf("method %q does not exist", method)
 	}
@@ -779,6 +783,37 @@ func TestNoticeGet(t *testing.T) {
 	}
 	if _, err := s.Notice(context.Background(), false, api.NoticeGetParams{ID: "n2"}); kindOf(err) != api.ErrorKindNotFound {
 		t.Errorf("missing: %v", err)
+	}
+}
+
+// TestNoticeGetByDeviceID: a push names its hab by device id (capcom.md 8.5), so notice.get
+// takes a peer's or this hab's device id as the host, and answers with the label it knows.
+func TestNoticeGetByDeviceID(t *testing.T) {
+	notice := func(host string) func(string) (api.Notice, bool) {
+		return func(id string) (api.Notice, bool) { return api.Notice{ID: id, Title: "on " + host}, id == "n1" }
+	}
+	b := New(Config{Host: "boxb", Self: "dev-b", Notice: notice("boxb")})
+	a := New(Config{Host: "boxa", Self: "dev-a", Notice: notice("boxa"), Peers: fakePeers{
+		list: []api.Peer{
+			{Label: "b", DeviceID: "dev-b", State: api.PeerStateOnline},
+			{Label: "b-again", DeviceID: "dev-b", State: api.PeerStateOnline},
+			{Label: "c", State: api.PeerStateOnline}, // not pinned yet: its link knows the id
+		},
+		links: []Link{
+			{Label: "b", DeviceID: "dev-b", Online: true, Caps: []string{Capability}, Caller: peerCaller{b}},
+			{Label: "b-again", DeviceID: "dev-b", Online: true, Caps: []string{Capability}, Caller: peerCaller{b}},
+			{Label: "c", DeviceID: "dev-c", Online: true, Caps: []string{Capability}, Caller: peerCaller{b}},
+		},
+	}})
+	ctx := context.Background()
+	for host, want := range map[string]string{"dev-b": "b", "b": "b", "dev-c": "c", "dev-a": "boxa", "self": "boxa"} {
+		r, err := a.Notice(ctx, false, api.NoticeGetParams{ID: "n1", Host: host})
+		if err != nil || r.Host != want {
+			t.Errorf("host %s: %v %+v, want host %s", host, err, r, want)
+		}
+	}
+	if _, err := a.Notice(ctx, false, api.NoticeGetParams{ID: "n1", Host: "dev-x"}); kindOf(err) != api.ErrorKindNotFound {
+		t.Errorf("unknown device id: %v", err)
 	}
 }
 

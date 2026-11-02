@@ -488,6 +488,15 @@ func TestReadToolsOverSSH(t *testing.T) {
 	if r := c.tool("notice_read", map[string]any{"id": raised.ID}); r.IsError || !strings.Contains(r.text(), "Build failed") {
 		t.Errorf("notice: %s", r.text())
 	}
+	// A notice b raised is read from a by b's device id, as a push names its hab (capcom.md
+	// 8.5), and answers with the label a knows b by.
+	var onB api.NoticeRaised
+	json.Unmarshal([]byte(run(t, "api", "call", "-socket", sockB, "notice.raise", `{"title":"Disk almost full"}`)), &onB)
+	var rec api.NoticeRecord
+	q, _ := json.Marshal(api.NoticeGetParams{ID: onB.ID, Host: welcome(t, sockB).DeviceID})
+	if err := json.Unmarshal([]byte(run(t, "api", "call", "-socket", sockA, "notice.get", string(q))), &rec); err != nil || rec.Host != "bee" || rec.Notice.Title != "Disk almost full" {
+		t.Errorf("b's notice by device id: %v %+v", err, rec)
+	}
 	// Logbook answers unavailable until it exists.
 	if r := c.tool("logbook_search", map[string]any{"words": "cache"}); !r.IsError || !strings.Contains(r.text(), "unavailable") {
 		t.Errorf("logbook: %s", r.text())
