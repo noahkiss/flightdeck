@@ -302,7 +302,7 @@ build.
 | zig | `mise.toml` | `jdx/mise-action` cache | Needs the go-ci `mise` input |
 | SwiftPM | `hashFiles('apple/FlightdeckKit/Package.resolved')` | `-clonedSourcePackagesDirPath` folder | Restore key without the hash, as the reference does |
 | XcodeGen | Its pinned version in `generate.sh` | The download folder | Small; optional |
-| fastlane gems | `Gemfile.lock` | `ruby/setup-ruby` `bundler-cache` | Release jobs only. The Gemfile lives under `.github/fastlane/` |
+| fastlane gems | None | `bundle install` in the job | Release jobs only. The Gemfile and its lock live under `.github/fastlane/`. No cache: a cache saved on a tag is visible to that tag only, and no `main` run installs these gems, so every release would save an entry nobody reads. A cold install costs about a minute |
 
 **Tests and releases share one libghostty build.** Every CI job builds libghostty with its
 platform's release `GHOSTTY_ZIGFLAGS` (7.3), so one cache entry per platform serves the tests and
@@ -328,7 +328,23 @@ the vault or the item. 1Password references written to any pushed file use ids o
 
 Limited to the release tag patterns (7.1), which also admit the dry-run tags `v*-dry.*` and
 `app-v*-dry.*` (7.6): the deployment rules are `v*` and `app-v*`, so they do. Only the jobs that
-sign or upload name it.
+sign, or upload to App Store Connect, name it. `publish` uses the job token.
+
+**Both deployment rules are of type `tag`. No branch rule exists.** `verify` refuses a run that is
+not on a tag, but that check lives in the workflow file of the ref being run. A branch named
+`v-test`, dispatched with an edited `release.yml` that drops `verify`, meets only the
+environment's rule; a branch-type `v*` rule would admit it. The environment is set once by hand:
+
+```sh
+gh api -X PUT repos/<owner>/<repo>/environments/release \
+  -F 'deployment_branch_policy[protected_branches]=false' \
+  -F 'deployment_branch_policy[custom_branch_policies]=true'
+gh api -X POST repos/<owner>/<repo>/environments/release/deployment-branch-policies -f name='v*' -f type=tag
+gh api -X POST repos/<owner>/<repo>/environments/release/deployment-branch-policies -f name='app-v*' -f type=tag
+gh api repos/<owner>/<repo>/environments/release/deployment-branch-policies --jq '.branch_policies[] | "\(.type) \(.name)"'
+```
+
+The last command must print exactly `tag v*` and `tag app-v*`.
 
 | Name | Kind | Value lives in | Used by |
 |---|---|---|---|
@@ -424,7 +440,9 @@ both halves, and the App Store version must rise with every hab fix.
 | `SHA256SUMS` | Every asset's line |
 
 Each archive holds one folder named as the archive without `.tar.gz`, and the files inside it.
-Homebrew strips a single top folder, so the formula sees the files directly.
+Homebrew strips a single top folder, so the formula sees the files directly. The darwin archive
+is written with `--no-xattrs --no-mac-metadata` and `COPYFILE_DISABLE=1`, so it carries no
+extended attribute headers and no `._` files.
 
 The speech helper (`gff-hab-speech`) is not in a release yet. `gff-hab install` does not copy it,
 and its libopus link is dynamic (`voice.md`). It joins when that is settled.
@@ -455,7 +473,7 @@ in the libghostty rule. The release values:
 |---|---|---|
 | linux/amd64 | `-Dtarget=x86_64-linux-gnu.2.31 -Dcpu=baseline` | `CC="zig cc -target x86_64-linux-gnu.2.31"` |
 | linux/arm64 | `-Dtarget=aarch64-linux-gnu.2.31 -Dcpu=baseline` | `CC="zig cc -target aarch64-linux-gnu.2.31"` |
-| darwin/arm64 | none | `MACOSX_DEPLOYMENT_TARGET=13.0`, and `-mmacosx-version-min=13.0` in `CGO_CFLAGS` and `CGO_LDFLAGS` |
+| darwin/arm64 | none | `MACOSX_DEPLOYMENT_TARGET=13.0`, and `-mmacosx-version-min=13.0` in `CGO_CFLAGS` and `CGO_LDFLAGS`, all set by `make release-build` |
 
 - **Why fixed targets.** With no `-Dtarget`, zig builds for the host, CPU features included. A
   release built on a new runner CPU could then crash with an illegal instruction on an older
@@ -467,8 +485,10 @@ in the libghostty rule. The release values:
 - **The macOS floor is 13.0.** When Ghostty's build targets macOS on a Mac, it replaces the target
   with its own: a generic CPU and macOS 13.0 as the minimum, the oldest macOS Apple still
   supports. A `-Dtarget=aarch64-macos.12.0` would be replaced the same way, so the darwin leg
-  passes no flags, and 13.0 is the true floor. The leg sets `MACOSX_DEPLOYMENT_TARGET=13.0` for
-  cgo and the link, and the same minimum in `CGO_CFLAGS` and `CGO_LDFLAGS`. Found while building:
+  passes no flags, and 13.0 is the true floor. On macOS, `make release-build` itself exports
+  `MACOSX_DEPLOYMENT_TARGET=13.0` for cgo and the link, and the same minimum in `CGO_CFLAGS` and
+  `CGO_LDFLAGS` (target-specific variables), so a local build matches the release and the job
+  sets nothing. Found while building:
   the Go build cache does not key on `MACOSX_DEPLOYMENT_TARGET`, so cgo objects compiled earlier
   for the host's macOS were linked in, and the linker warned that they were built for a newer
   macOS. The `CGO_` flags are part of the cache key. `scripts/macos-bundle.sh` declares
@@ -499,8 +519,8 @@ in the libghostty rule. The release values:
 
 1. **`verify`** (ubuntu, `actions: write`). The tag matches
    `^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$` (or the dry-run form, 7.6). The checkout is the tag's
-   commit. The tagged commit is on `main`. The tagged code has passed `ci.yml` (the CI rule
-   below). `make release-schema` leaves `api/released/` unchanged, so the schema of this revision
+   commit. The tagged commit is on `main`. No release exists for the tag (not on a dry run). The
+   tagged code has passed `ci.yml` (the CI rule below). `make release-schema` leaves `api/released/` unchanged, so the schema of this revision
    is recorded. Outputs `version` and `tap_inputs`. Each failure says which check failed and what
    to do.
 2. **`linux`** (matrix: amd64, arm64; `needs: verify`). Restore the libghostty cache, build (7.3),
@@ -526,7 +546,7 @@ in the libghostty rule. The release values:
    the keychain and keys in an `always()` step. Timeout 45 minutes.
 
    Details the build settled: fastlane comes from `.github/fastlane/Gemfile` (pinned, with its
-   `Gemfile.lock`) through `ruby/setup-ruby` with the bundler cache. match gets `--app_identifier
+   `Gemfile.lock`), installed with `bundle install` (frozen) after `ruby/setup-ruby`, no cache (5). match gets `--app_identifier
    <prefix>.hab`, `--team_id`, and `--keychain_name` and `--keychain_password` for the throwaway
    keychain; it clones the store with `GIT_SSH_COMMAND` naming the deploy key and GitHub's
    published host key, and the key file is removed right after. `GFF_SIGN_IDENTITY` is the
@@ -536,10 +556,21 @@ in the libghostty rule. The release values:
 4. **`publish`** (ubuntu, `needs: [linux, darwin]`, `contents: write`; skipped on a dry run). Download the artifacts,
    check each `.sha256`, write `SHA256SUMS`, create the GitHub release as a draft, attach every
    asset, then publish it. When a release for the tag already exists, draft or not, `publish`
-   fails and touches nothing, so no asset is ever replaced. An `-rc.` tag publishes as a prerelease. Release notes come
+   fails and touches nothing, so no asset is ever replaced. `verify` makes the same check first,
+   on any run that is not a dry run, so an existing release fails in seconds rather than after
+   the builds and the notary. Before it creates the release, `publish` resolves the tag again
+   (`gh api repos/<repo>/commits/<tag>`) and refuses when it no longer names the commit the run
+   built: the release attaches to wherever the tag points now. An `-rc.` tag publishes as a prerelease. Release notes come
    from `--generate-notes`.
 5. **`bump-tap`** (`needs: [verify, publish]`, not on an `-rc.` tag or a dry run):
-   `dispatch-and-wait.yml` (section 8).
+   `dispatch-and-wait.yml` (section 8). A red `bump-tap` is retried with "Re-run failed jobs" on
+   the run that published. A new dispatch would stop at `verify`: the release exists.
+
+**Order before the first final tag.** `bump-tap` dispatches the tap's `bump.yml` with
+`formula: gff`. The tap holds no `gff` formula yet, and `bump.yml` needs E7 and E8 (11.2) for
+it. So these land in the tap first: the `gff` formula in the shape of 8.2, and E7 and E8 merged.
+Until then, release only `-rc.` tags, which skip `bump-tap`. A final tag before that publishes the
+release, then fails at `bump-tap` with the release already public.
 
 **The CI rule.** Path filters often leave the tagged commit with no run of its own (a docs-only
 commit gets no `ci.yml` run; most commits get no `apple.yml` run). So `verify` accepts either:
@@ -563,7 +594,9 @@ from the workflow file's own `paths` list, so the two never drift, and matches e
 against the globs in order, last match wins, as GitHub does. The matcher is
 `internal/pathfilter` (run as `go run ./internal/pathfilter/cmd -patterns <file>`); `verify`
 reads the list with `yq '.on.push.paths[]'` and diffs with `--no-renames`, so a moved file counts
-at both its old and its new path. `verify` has a 75-minute timeout, room for one dispatched full
+at both its old and its new path, with `core.quotePath=false`, so a path with non-ASCII bytes is
+not quoted past the negations. A dispatched run is looked up from a minute before the dispatch, so
+a runner clock ahead of GitHub's still finds it. `verify` has a 75-minute timeout, room for one dispatched full
 run. `verify` checks out the full history
 (`fetch-depth: 0`), so the ancestor test and the diff see every commit.
 
@@ -688,8 +721,10 @@ The tap's other bump workflows are not a fit: each is tied to one producer's for
 
 ```yaml
   bump-tap:
+    name: Bump the tap
     needs: [verify, publish]
-    if: ${{ !contains(github.ref_name, '-rc.') && !inputs.dry_run }}
+    if: ${{ needs.verify.outputs.prerelease != 'true' && needs.verify.outputs.dry_run != 'true' }}
+    permissions: {}
     uses: noahkiss/workflows/.github/workflows/dispatch-and-wait.yml@main
     with:
       repo: noahkiss/homebrew-tap
@@ -700,7 +735,9 @@ The tap's other bump workflows are not a fit: each is tied to one producer's for
       token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 ```
 
-`verify` builds `tap_inputs` with `jq -cn`, so the `uses:` job has no quoting to get wrong. A red
+`verify` builds `tap_inputs` with `jq -cn`, so the `uses:` job has no quoting to get wrong. The
+condition reads `verify`'s outputs, so a dispatch and a push decide the same way. 7.4 says what
+must land in the tap before the first final tag. A red
 bump fails the release run, with the tap run's URL in the step summary.
 
 ---
