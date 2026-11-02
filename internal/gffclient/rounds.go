@@ -360,7 +360,12 @@ func roundText(now time.Time, r board.RoundRow) string {
 	if r.Paused || r.Completed {
 		next = time.Time{} // it will not run then
 	}
-	// The trigger comes last: a zone name is long, and a cut one is wrong.
+	// The trigger comes last: a zone name is long, and a cut one is wrong. Why it no longer
+	// compiles follows it.
+	trigger := r.Trigger
+	if r.TriggerError != "" {
+		trigger += ": " + r.TriggerError
+	}
 	return fmt.Sprintf("  %-20s %-7s %-10s %-28s %-22s %s", middle(r.Name, 20), middle(string(r.Mode), 7),
-		middle(r.Host, 10), middle(nextText(now, next, r.Zone), 28), middle(mark, 22), r.Trigger)
+		middle(r.Host, 10), middle(nextText(now, next, r.Zone), 28), middle(mark, 22), trigger)
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/board"
 	"github.com/noahkiss/flightdeck/internal/hosts"
 )
 
@@ -263,4 +264,21 @@ func TestBoardScrollsToRound(t *testing.T) {
 	hst.waitScreen("back at the top", func(s string) bool {
 		return line(s, "  zeta ") < 0 && strings.Contains(s, "s01")
 	})
+}
+
+// TestRoundTextTriggerError: a round whose trigger no longer compiles says so in its mark, with
+// the hab's reason after the trigger.
+func TestRoundTextTriggerError(t *testing.T) {
+	r := cronRound("r1", "nightly", time.Time{})
+	r.Trigger.Zone = "Mars/Olympus"
+	r.TriggerError = "unknown time zone Mars/Olympus"
+	h := hosts.Host{Label: "a", Status: hosts.Online, Structure: api.Structure{Rounds: []api.Round{r}}}
+	rows := board.RoundRows([]hosts.Host{h}, nil)
+	if len(rows) != 1 || rows[0].Mark() != "trigger error" {
+		t.Fatalf("rows %+v", rows)
+	}
+	text := roundText(time.Now(), rows[0])
+	if !strings.Contains(text, "trigger error") || !strings.HasSuffix(text, "in Mars/Olympus: unknown time zone Mars/Olympus") {
+		t.Fatalf("row text %q", text)
+	}
 }

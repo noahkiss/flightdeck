@@ -34,6 +34,9 @@ type RoundRow struct {
 	Completed bool
 	// Reason is why the round paused or completed itself, when the hab says.
 	Reason string
+	// TriggerError says the stored trigger no longer compiles on its host; the round is not
+	// scheduled until an edit fixes it. Empty from a catalog copy.
+	TriggerError string
 	// LastRun is the newest run's state; empty before the first run.
 	LastRun api.RoundRunState
 	// LastSession is the newest run's session id, when known.
@@ -47,13 +50,16 @@ type RoundRow struct {
 	HostStatus hosts.Status
 }
 
-// Mark is the row's mark in the spec's words: Paused, Completed, else the last run's state.
+// Mark is the row's mark in the spec's words: Paused, Completed, "trigger error" when the
+// trigger no longer compiles, else the last run's state.
 func (r RoundRow) Mark() string {
 	switch {
 	case r.Completed:
 		return "completed"
 	case r.Paused:
 		return "paused"
+	case r.TriggerError != "":
+		return "trigger error"
 	case r.LastRun != "":
 		return string(r.LastRun)
 	}
@@ -135,14 +141,13 @@ func liveRounds(h hosts.Host, stale bool, since time.Time) []RoundRow {
 		r := RoundRow{RoundKey: RoundKey{Host: h.Label, Round: x.ID}, Name: x.Name, Mode: x.Mode,
 			Trigger: rounds.TriggerWords(string(x.Trigger.Kind), x.Trigger.Cron, x.Trigger.Zone, x.Trigger.At),
 			Zone:    x.Trigger.Zone, Project: projects[x.Project], Next: parseTime(x.NextSlot),
-			Paused: x.Paused, Completed: x.Completed, Stale: stale, Since: since, HostStatus: h.Status}
+			Paused: x.Paused, Completed: x.Completed, TriggerError: x.TriggerError, Stale: stale, Since: since,
+			HostStatus: h.Status}
 		switch {
 		case x.Completed:
 			r.Reason = x.CompletedReason
 		case x.Paused:
 			r.Reason = x.PausedReason
-		case x.TriggerError != "":
-			r.Reason = x.TriggerError
 		}
 		if x.LastRun != nil {
 			r.LastRun, r.LastSession = x.LastRun.State, x.LastRun.Session
