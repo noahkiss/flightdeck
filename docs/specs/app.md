@@ -873,7 +873,11 @@ and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row a
   needed (`capcom.md` 7.6). It shows the result's session with its chips; the board opens
   nothing. An open refused with `unavailable` (the home moved) reads every catalog again and
   tries the new home once. A home that moves while an open is on its way gets its own open
-  after it.
+  after it. An open that failed because the link dropped is tried once more by itself when the
+  home is online again, instead of holding "Could not open Capcom" until Try again.
+- **One open per view.** Each Capcom view has its own token, so views count per window. The
+  appear and disappear hooks sit on a container that does not change when the content swaps
+  between a state and the conversation, and a repeated appear of the same view opens nothing.
 - **Follows the hab.** Every `capcom.open` result is the home's standing conversation, a `new`
   one too, so each successful open (Ask, Attach to Capcom, New conversation, the view) makes it
   the view's conversation. Design call: the view never shows a conversation the hab no longer
@@ -891,8 +895,8 @@ and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row a
   board row too. Files, voice, the console and the chips' remove buttons stay as built (4.9).
 - **New conversation.** A toolbar button ("New conversation", the compose symbol) on every
   Capcom session (8.8). The draft now lives in the session view, so the button carries it.
-  From the Capcom view, the view shows the new one in its place. From a Capcom session's board
-  row, the board opens the new one as before.
+  From a Capcom view, that view shows the new one in its place. From a Capcom session's board
+  row, in any window, the board opens the new one as before.
 - **Navigation.** iPhone: the row pushes the Capcom view on the board's stack. iPad and Mac:
   the board list stays on the left and the Capcom view takes the session's place on the right;
   its close button returns to the board. The Capcom view and an open session never show at
