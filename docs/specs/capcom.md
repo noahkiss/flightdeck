@@ -467,7 +467,8 @@ into `gff-hab serve`. Capability `confirm`. Methods `confirm.request`, `confirm.
 confirmations in a `host` snapshot (`confirmations`); `model`, `seed` and `seed_from` on
 `session.create`. Doors: the tools `suggest_host` and `confirmation_read` (read tools) and
 `start_session` and `set_up_project` (action tools) in `gff-hab mcp`, `gff-hab read` and
-`gff-hab act`; the CLI fallback `gff-hab confirm list|show|answer`.
+`gff-hab act`; the CLI fallback `gff-hab confirm list|show|answer`. The app shows the cards,
+takes edits and answers (`app.md` 7.9).
 
 - **Where a confirmation lives.** On the requesting agent's own hab, which raises the card to its
   own clients and runs the action. A start on a peer goes over the link this hab dialed to it,

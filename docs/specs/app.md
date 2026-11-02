@@ -1112,6 +1112,51 @@ live-activity, apple-watch, hooks; Happy source (inline permission footer and it
 choices); `harness-adapters.md` (Permission answers, Rule 2, Fields); `transport.md` 7.2;
 platform facts in 1.5 *(gk)*.
 
+### 7.9 Confirmation cards (built)
+
+The cards of `capcom.md` 6.1 and 6.3: a start an agent asks for on another host, while
+`confirm.start_elsewhere` is on, or the record of one that ran at once.
+`FlightdeckKit/Confirm/` holds the model (`ConfirmBook`, `ConfirmCenter`); the view is
+`Views/ConfirmViews.swift`.
+
+- **Source.** Each connection keeps its hab's confirmations in `HabState.confirmations`: the
+  host snapshot's `confirmations`, then `confirm.requested` and `confirm.closed` in seq order.
+  Only a hab whose welcome lists `confirm` fills it; from any other hab the app shows no card
+  and ignores the events.
+- **Where a card shows.** Capcom's cards show in the Capcom view. Another agent's card shows in
+  its session view, above the chat, and in the approvals area: a "Confirm" section at the top
+  of the status board. A card from outside a pane names no session and shows in the approvals
+  area only. Design call: no hab marks a Capcom session yet (`capcom.md` 7.2), so until one
+  does, the center sees no Capcom session and Capcom's cards show as any agent's. The Capcom
+  view embeds `ConfirmCardList` when it exists.
+- **What a start card shows.** Host, project, folder, branch, harness, model when set, name,
+  then the seed. The byline names the requesting session and the hab.
+- **Edits.** Edit opens fields for host, folder, harness, model and seed. Host is a picker of
+  `confirm.list` targets (a target that is not ready shows its reason and cannot be picked),
+  or a text field when the hab lists none. Only changed fields go in `edits`; a new host
+  always carries the folder, and Confirm says "Give the folder on the new host" when it is
+  empty. An emptied field keeps the card's value, as the hab does. A seed over 8000
+  characters turns Confirm off with the reason. With changes, the button reads "Confirm with
+  changes", and the card shows the start as it will run; a new host or folder hides project
+  and branch, which the hab fills in again.
+- **Countdown.** "Expires in 4m 12s" from `expires_at`, corrected by the clock offset
+  measured at hello (14.6). At zero the buttons turn off and the card says "Expired: nothing
+  runs"; the hab's `confirm.closed` withdraws it.
+- **Answers.** `confirm.answer` goes over the live connection with a 75 s limit, since a
+  confirm returns only once the hab ran the start (60 s, `capcom.md` 6.4). A `conflict`
+  shows "Already answered" and turns the buttons off. Any other refusal shows the hab's hint
+  and leaves the buttons on. An offline hab's card shows "Offline" with the buttons off.
+- **Records.** A record (`record: true`) shows "Ran without asking" and no buttons. It never
+  shows in the approvals area.
+- **Withdraw.** `confirm.closed` takes a card out of the approvals area at once. Design call:
+  the session view keeps the last 3 closed cards of that session as one line each, with the
+  outcome ("Started claude-3fa9c2 on boxb", "Cancelled", "Expired: nothing ran"), so a record
+  does not vanish the moment its start ends. The app keeps the last 50 closed cards per hab,
+  within one epoch; a new epoch drops them, and a reconnect in the same epoch keeps them.
+- **Not built.** No push or Live Activity for a confirmation, and the status board's
+  needs-you count leaves confirmations out. The set-up card shows its fields; the hab
+  refuses set-ups until the mesh stage builds them.
+
 ---
 
 ## 8. Push
