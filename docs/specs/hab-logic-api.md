@@ -444,6 +444,15 @@ when each drop moved the whole list), not a stall of the link's event loop.
 checkpoint keeps it and goes on from the saved state. A screen rebuilt from the ring alone
 rebuilds the list from the marks still in the ring.
 
+**Shells.** zsh, and bash 4.4 or newer. bash sends `C` from `PS0`, which bash 4.4 added. An older
+bash (macOS ships bash 3.2 as `/bin/bash`) ignores `PS0`, so it sends `A`, `B` and `D` but never
+`C`. The tracker starts a command only at `C`, so such a pane lists no commands; this is not an
+error. The console's bash lines say "bash 4.4 or newer" (`app.md` 6), and the end-to-end tests
+skip below 4.4 and say so. A `DEBUG` trap could send `C` on bash 3.2, but it runs before every
+simple command and clashes with the user's own trap. None of the reference tools ships one
+(`landscape.md`: herdr ships no shell integration, Rex reads only `A`, Paseo uses OSC 633), so
+Flightdeck does not either.
+
 **Reading a command's bytes.** `command.output` asks the pane's holder for a bounded replay
 (holder protocol 6, replay with *has to*) of the command's output range, at most 1 MiB per
 call. A running command's range ends at the bytes gff-hab holds now. When the ring has lost part
@@ -499,7 +508,10 @@ Decision: proposed (this stage). Calls and the event: 3.9.
 - **Test snippet.** `cmd/gff-hab/testdata/marks` holds a bash rcfile and a zsh `.zshrc` that emit
   the marks; they are test fixtures, not the console's snippet. zsh prints its partial-line mark
   (`PROMPT_SP`, `PROMPT_CR`) before `precmd`, so that mark would land inside a command's output
-  range before `D`; the fixture turns both off. The shipped snippet has to deal with it.
+  range before `D`; the fixture turns both off. The shipped snippet has to deal with it. The
+  bash tests pick their bash in a fixed order and log its path and version: `$GFF_TEST_BASH`
+  (failing when older than 4.4), else the first bash 4.4 or newer of bash on PATH,
+  `/opt/homebrew/bin/bash`, `/usr/local/bin/bash` and `/bin/bash`. With none, they skip.
 - **Not built here:** text from bash (bash sends no command line in its marks without more
   setup), and a nonce against fake marks (see the hard gate above). zsh's `PROMPT_SP` mark
   landing inside an output range before `D` is fixed later in the console snippet (for example,
