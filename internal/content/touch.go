@@ -30,7 +30,8 @@ type Edit struct {
 // Touches derives the files a conversation's tool calls touched (app.md 4.7): Claude Code's
 // Write, Edit, MultiEdit, NotebookEdit and image Reads, Codex's apply_patch, view_image and
 // image_gen. A relative path is taken from cwd; one that stays relative is left out. A call
-// that failed or was denied changed nothing, so it counts only as a read of an image.
+// that failed or was denied changed nothing, so it counts only as a read of an image. A call
+// still running (waiting for approval, or not finished) has changed nothing yet either.
 func Touches(msgs []api.ChatMessage, cwd string) []Touch {
 	var out []Touch
 	index := map[string]int{}
@@ -54,7 +55,7 @@ func Touches(msgs []api.ChatMessage, cwd string) []Touch {
 			continue
 		}
 		tool := m.Tool
-		ok := tool.Status != api.ToolStatusError && tool.Status != api.ToolStatusDenied
+		ok := tool.Status != api.ToolStatusError && tool.Status != api.ToolStatusDenied && tool.Status != api.ToolStatusRunning
 		var in map[string]json.RawMessage
 		_ = json.Unmarshal(tool.Input, &in)
 		switch tool.Name {

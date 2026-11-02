@@ -49,6 +49,8 @@ func TestTouches(t *testing.T) {
 		tool("m10", "Write", "denied", map[string]string{"file_path": "/home/x/.ssh/authorized_keys", "content": "k"}),
 		tool("m11", "Write", "error", map[string]string{"file_path": "/w/failed.txt", "content": "k"}),
 		tool("m12", "Write", "denied", map[string]string{"file_path": "/w/denied.png", "content": "png"}),
+		tool("m13", "Edit", "running", map[string]string{"file_path": "/w/pending.go", "old_string": "a", "new_string": "b"}),
+		tool("m14", "Write", "running", map[string]string{"file_path": "/w/pending.txt", "content": "k"}),
 	}
 	got := map[string]Touch{}
 	for _, t := range Touches(msgs, "/w") {
@@ -70,6 +72,11 @@ func TestTouches(t *testing.T) {
 	}
 	if _, ok := got["/w/denied.go"]; ok {
 		t.Error("a denied edit counts")
+	}
+	for _, p := range []string{"/w/pending.go", "/w/pending.txt"} {
+		if _, ok := got[p]; ok {
+			t.Errorf("a call waiting for approval lists %s as changed before it ran", p)
+		}
 	}
 	if s := got["/w/shots/s.png"]; !s.Image || s.Changed {
 		t.Errorf("relative image read: %+v", s)
