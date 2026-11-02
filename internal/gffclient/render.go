@@ -44,12 +44,17 @@ func (c *canvas) set(x, y int, hc hcell) {
 	c.next[y*c.w+x] = hc
 }
 
-// text writes s from x on row y within width w, in style st, padding with spaces.
+// text writes s from x on row y within width w, in style st, padding with spaces. A control
+// character (C0, DEL, C1) draws as U+FFFD, so no text reaches the host terminal as a control,
+// whoever wrote it.
 func (c *canvas) text(x, y, w int, s string, st vt.Style) {
 	i := 0
 	for _, r := range s {
 		if i >= w {
 			break
+		}
+		if r < 0x20 || r == 0x7f || r >= 0x80 && r < 0xa0 {
+			r = '\uFFFD'
 		}
 		c.set(x+i, y, hcell{text: string(r), style: st})
 		i++

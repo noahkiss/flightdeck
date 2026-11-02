@@ -84,9 +84,11 @@ type workspaceUI struct {
 	pendRun  pendingRun
 
 	// Modules (modules.go).
-	onMod   bool             // the board's selection is on a module target
-	selMod  modStop          // that target
-	modFold map[modStop]bool // sections the owner folded or unfolded, by card and ref
+	onMod    bool             // the board's selection is on a module target
+	selMod   modStop          // that target
+	modFold  map[modStop]bool // sections the owner folded or unfolded, by card and ref
+	modSeen  modSeen          // the selected target as last drawn
+	modMoved bool             // the owner moved the selection since it was drawn
 }
 
 func (u *workspaceUI) init(c *client) {
@@ -561,6 +563,9 @@ func (u *workspaceUI) key(k key) {
 	act := u.c.cfg.Keymap.lookup(m, name)
 	if u.mode == modeBoard && act != actUp && act != actDown && act != actBack && u.modKey(k, act) {
 		return
+	}
+	if u.mode == modeBoard && u.onMod && (act == actRename || act == actClose) {
+		return // the selection is on a module target, which has no name or pane
 	}
 	switch act {
 	case actUp:

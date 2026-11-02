@@ -223,3 +223,239 @@ func TestModStyle(t *testing.T) {
 		t.Errorf("unknown tint: %+v", st)
 	}
 }
+
+// liveModules is a ModuleSource whose cards a test sets, and which records the actions.
+type liveModules struct {
+	mu      sync.Mutex
+	cards   []ModuleCard
+	acts    []string
+	changed chan struct{}
+}
+
+func newLiveModules(cards ...ModuleCard) *liveModules {
+	return &liveModules{cards: cards, changed: make(chan struct{}, 1)}
+}
+
+func (s *liveModules) Cards(string) []ModuleCard {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]ModuleCard(nil), s.cards...)
+}
+
+func (s *liveModules) Act(_ context.Context, host, module string, a modules.Action) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.acts = append(s.acts, host+"/"+module+" "+a.Name)
+	return nil
+}
+
+func (s *liveModules) Changed() <-chan struct{} { return s.changed }
+
+func (s *liveModules) setTree(i int, tree string) {
+	s.mu.Lock()
+	s.cards[i].Tree, s.cards[i].At = []byte(tree), time.Now()
+	s.mu.Unlock()
+	select {
+	case s.changed <- struct{}{}:
+	default:
+	}
+}
+
+func (s *liveModules) actions() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.acts...)
+}
+
+// TestModuleTextNeverControls: a manifest name, a field placeholder, a confirm question and the
+// text of client.copy, each holding ESC and U+009B (CSI), never reach the host terminal as
+// controls: the bytes gff writes hold none of the module's sequences.
+func TestModuleTextNeverControls(t *testing.T) {
+	const evil = "\x1b]0;pwn\x07\u009b6n\x1b[99X"
+	tree := `{"type":"stack","children":[
+		{"type":"field","id":"f","placeholder":` + jsonString(evil+"ph") + `,"action":{"name":"set"}},
+		{"type":"button","id":"b","title":"Go","confirm":` + jsonString(evil+"sure") + `,"action":{"name":"go"}},
+		{"type":"button","id":"c","title":"Copy","action":{"name":"client.copy","args":{"text":` + jsonString(evil+"clip") + `}}},
+		{"type":"button","id":"u","title":"Url","action":{"name":"client.open_url","args":{"url":` + jsonString("https://example.com/"+evil) + `}}},
+		{"type":"button","id":"v","title":"Visit","action":{"name":"client.open_url","args":{"url":"https://example.com/\u009b6n\u202e"}}}]}`
+	src := newLiveModules(ModuleCard{Host: "one", Module: "m", Name: evil + "Name", Tree: []byte(tree), At: time.Now()})
+	hst := newHost(t, 100, 30, false)
+	startWorkspaceWith(t, hst, func(c *Config) { c.Modules = src }, moduleHost(t, ModulesCapability))
+	hst.typ(cmdKey + "g")
+	hst.waitScreen("the card", func(s string) bool { return strings.Contains(s, "�]0;pwn��6n�[99XName · one") })
+	hst.typ("\r")
+	hst.waitScreen("the field's prompt", func(s string) bool { return strings.Contains(s, "�]0;pwn��6n�[99Xph: ") })
+	hst.typ("\x1b")
+	hst.typ("g")
+	hst.waitScreen("the confirm", func(s string) bool { return strings.Contains(s, "�]0;pwn��6n�[99Xsure (y/n)") })
+	hst.typ("n")
+	hst.typ("c")
+	hst.waitScreen("the copy note", func(s string) bool { return strings.Contains(s, "copied 20 chars: �]0;pwn��6n�[99Xclip") })
+	// url.Parse refuses a control character; U+009B and a bidi override go percent-encoded.
+	hst.typ("u")
+	hst.waitScreen("the refused link", func(s string) bool { return strings.Contains(s, "not an https link") })
+	hst.typ("v")
+	hst.waitScreen("the link", func(s string) bool {
+		return strings.Contains(s, "example.com · https://example.com/%C2%9B6n%E2%80%AE")
+	})
+	out := hst.output()
+	for _, bad := range []string{"\x1b]0;", "\u009b", "\x9b6n", "\x1b[99X"} {
+		if bytes.Contains(out, []byte(bad)) {
+			t.Errorf("gff wrote the module's %q", bad)
+		}
+	}
+	if n := bytes.Count(out, []byte("\x1b]52;")); n != 1 {
+		t.Errorf("%d OSC 52 writes, want 1", n)
+	}
+	if len(src.actions()) != 0 {
+		t.Errorf("actions sent: %q", src.actions())
+	}
+}
+
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// TestModuleHintsOnSelectedCard: only the card that holds the selection draws its key hints,
+// and a hint acts on that card; the other card shows "›".
+func TestModuleHintsOnSelectedCard(t *testing.T) {
+	btn := func(title string) string {
+		return `{"type":"button","id":"x","title":"` + title + `","action":{"name":"` + strings.ToLower(title) + `"}}`
+	}
+	src := newLiveModules(
+		ModuleCard{Host: "one", Module: "a", Name: "First", Tree: []byte(btn("Erase")), At: time.Now()},
+		ModuleCard{Host: "one", Module: "b", Name: "Second", Tree: []byte(btn("Edit")), At: time.Now()})
+	hst := newHost(t, 100, 30, false)
+	startWorkspaceWith(t, hst, func(c *Config) { c.Modules = src }, moduleHost(t, ModulesCapability))
+	hst.typ(cmdKey + "g")
+	hst.waitScreen("hints on the first card only", func(s string) bool {
+		return strings.Contains(s, "e Erase") && strings.Contains(s, "› Edit")
+	})
+	hst.typ("j")
+	hst.waitScreen("hints on the second card only", func(s string) bool {
+		return strings.Contains(s, "› Erase") && strings.Contains(s, "e Edit")
+	})
+	hst.typ("e")
+	waitUntil(t, "the second card's action", func() bool { return len(src.actions()) == 1 })
+	if got := src.actions(); got[0] != "one/b edit" {
+		t.Errorf("actions %q", got)
+	}
+}
+
+// TestModuleEnterAfterChange: Enter right after the selected target changed under the owner is
+// ignored once; the next Enter presses what is drawn.
+func TestModuleEnterAfterChange(t *testing.T) {
+	btn := func(title string) string {
+		return `{"type":"button","id":"x","title":"` + title + `","action":{"name":"` + strings.ToLower(title) + `"}}`
+	}
+	src := newLiveModules(ModuleCard{Host: "one", Module: "a", Name: "First", Tree: []byte(btn("Start")), At: time.Now()})
+	hst := newHost(t, 100, 30, false)
+	startWorkspaceWith(t, hst, func(c *Config) { c.Modules = src }, moduleHost(t, ModulesCapability))
+	hst.typ(cmdKey + "g")
+	hst.waitScreen("the button", func(s string) bool { return strings.Contains(s, "s Start") })
+	src.setTree(0, btn("Remove"))
+	hst.waitScreen("the new button", func(s string) bool { return strings.Contains(s, "e Remove") })
+	hst.typ("\r")
+	hst.waitScreen("the note", func(s string) bool { return strings.Contains(s, "the selection changed; press again") })
+	if got := src.actions(); len(got) != 0 {
+		t.Fatalf("Enter after a change sent %q", got)
+	}
+	hst.typ("\r")
+	waitUntil(t, "the action", func() bool { return len(src.actions()) == 1 })
+	if got := src.actions(); got[0] != "one/a remove" {
+		t.Errorf("actions %q", got)
+	}
+}
+
+// TestModuleCardKeepsSessionKeys: with the selection on a module target, the rename and close
+// keys do nothing to the session row under it.
+func TestModuleCardKeepsSessionKeys(t *testing.T) {
+	a := fakeHab(t, shortDir(t), "a")
+	a.Capabilities = []string{ModulesCapability}
+	a.Stop()
+	if err := a.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := a.AddSession("sh"); err != nil {
+		t.Fatal(err)
+	}
+	src := newLiveModules(ModuleCard{Host: "one", Module: "a", Name: "First", At: time.Now(),
+		Tree: []byte(`{"type":"button","id":"x","title":"Go","action":{"name":"go"}}`)})
+	hst := newHost(t, 100, 30, false)
+	// The default board binds no rename or close key; a keymap may.
+	km := DefaultKeymap()
+	km.bind(ModeBoard, "N", actRename)
+	km.bind(ModeBoard, "X", actClose)
+	startWorkspaceWith(t, hst, func(c *Config) { c.Modules, c.Keymap = src, km },
+		hosts.Spec{Label: "one", Endpoints: []hosts.Endpoint{{Kind: hosts.EndpointSocket, Value: a.Sock}}})
+	hst.typ(cmdKey + "g")
+	hst.waitScreen("the session and the card", func(s string) bool {
+		return line(s, " sh ") > 0 && line(s, "First · one") > 0
+	})
+	// On the session row the keys work.
+	hst.typ("kkN")
+	hst.waitScreen("the rename prompt", func(s string) bool { return strings.Contains(s, "rename sh on one") })
+	hst.typ("\x1b")
+	hst.waitScreen("the prompt gone", func(s string) bool { return !strings.Contains(s, "rename sh") })
+	// Move the selection onto the card: down past the session row.
+	hst.typ("jj")
+	hst.waitScreen("the selection on the card", func(s string) bool { return strings.Contains(s, "g Go") })
+	hst.typ("NX")
+	time.Sleep(100 * time.Millisecond)
+	if s := hst.screen(); strings.Contains(s, "rename") || strings.Contains(s, "end sh") {
+		t.Errorf("a session key acted under a module target:\n%s", s)
+	}
+	if len(src.actions()) != 0 || len(a.Sessions()) != 1 {
+		t.Errorf("actions %q, sessions %d", src.actions(), len(a.Sessions()))
+	}
+}
+
+// TestModuleClientActions: client.copy sends nothing for empty or too long text, and
+// client.open_url shows only an https link.
+func TestModuleClientActions(t *testing.T) {
+	tree := `{"type":"stack","children":[
+		{"type":"button","id":"e","title":"Empty","action":{"name":"client.copy","args":{"text":""}}},
+		{"type":"button","id":"n","title":"Number","action":{"name":"client.copy","args":{"text":5}}},
+		{"type":"button","id":"h","title":"Http","action":{"name":"client.open_url","args":{"url":"http://example.com/x"}}},
+		{"type":"button","id":"s","title":"Secure","action":{"name":"client.open_url","args":{"url":"https://example.com/a/very/long/path"}}}]}`
+	src := newLiveModules(ModuleCard{Host: "one", Module: "m", Name: "M", Tree: []byte(tree), At: time.Now()})
+	hst := newHost(t, 100, 30, false)
+	startWorkspaceWith(t, hst, func(c *Config) { c.Modules = src }, moduleHost(t, ModulesCapability))
+	hst.typ(cmdKey + "g")
+	hst.waitScreen("the card", func(s string) bool { return strings.Contains(s, "e Empty") })
+	hst.typ("e")
+	hst.waitScreen("nothing to copy", func(s string) bool { return strings.Contains(s, "nothing to copy") })
+	hst.typ("h")
+	hst.waitScreen("not https", func(s string) bool { return strings.Contains(s, "not an https link") })
+	hst.typ("n")
+	hst.waitScreen("a number copies nothing", func(s string) bool { return strings.Contains(s, "nothing to copy") })
+	hst.typ("s")
+	hst.waitScreen("the host first", func(s string) bool {
+		return strings.Contains(s, "example.com · https://example.com/a/very/long/path")
+	})
+	if bytes.Contains(hst.output(), []byte("\x1b]52;")) {
+		t.Error("an OSC 52 was written")
+	}
+	// A tree cannot hold text past the cap (its own limit is smaller); a source that bypasses
+	// the tree still cannot.
+	u := &workspaceUI{c: &client{}}
+	u.clientAction(ModuleCard{}, modules.Action{Name: "client.copy", Args: map[string]any{"text": strings.Repeat("x", copyMax+1)}})
+	if u.c.out.Len() != 0 || u.msg != "not copied: 75777 bytes; the limit is 75776" {
+		t.Errorf("too long: wrote %d bytes, note %q", u.c.out.Len(), u.msg)
+	}
+}
+
+// TestCanvasTextControls: the canvas draws any control character as U+FFFD, whoever passes it.
+func TestCanvasTextControls(t *testing.T) {
+	var c canvas
+	c.resize(10, 1)
+	c.text(0, 0, 10, "a\x1b[\u009b\x7f\x00b", vt.Style{})
+	var got string
+	for _, hc := range c.next[:7] {
+		got += hc.text
+	}
+	if got != "a�[���b" {
+		t.Errorf("cells %q", got)
+	}
+}

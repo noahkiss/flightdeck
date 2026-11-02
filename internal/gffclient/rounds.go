@@ -185,7 +185,7 @@ func (u *workspaceUI) moveBoard(d int) {
 		i = j
 	}
 	i = min(max(i+d, 0), n-1)
-	u.onMod = false
+	u.onMod, u.modMoved = false, true
 	switch {
 	case i < len(rows):
 		u.onRound, u.sel = false, rows[i].Key
