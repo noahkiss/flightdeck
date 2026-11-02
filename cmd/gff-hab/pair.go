@@ -51,6 +51,7 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 	sshPort := fs.Int("ssh-port", 22, "the system sshd's port, told to the device")
 	sshdKeys := fs.String("sshd-keys", "/etc/ssh", "folder with the system sshd's ssh_host_*_key.pub files")
 	noTTY := fs.Bool("no-tty", false, "read the confirmation from a stdin that is not a terminal")
+	showLink := fs.Bool("link", false, "also print the code as a flightdeck://pair link to paste")
 	fs.Parse(args)
 	if fs.NArg() != 0 {
 		return errors.New("usage: gff-hab pair [-label name] [-listen addr]... [-port n] [-timeout d] [-authorized-keys path] [-command cmd]")
@@ -82,6 +83,9 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 			return err
 		}
 		*authKeys = filepath.Join(home, ".ssh", "authorized_keys")
+	}
+	for _, l := range strictModesWarnings(*authKeys) {
+		fmt.Fprintln(out, l)
 	}
 	if *command == "" {
 		if *command, err = connectCommand(*sock); err != nil {
@@ -161,7 +165,13 @@ func pairCmd(args []string, in io.Reader, out io.Writer) error {
 	if len(listen) == 0 {
 		fmt.Fprintln(out, "Those are this host's LAN and tailnet addresses. On a cloud host a private address can be reachable from the internet through the provider's NAT: pair there with -listen <tailnet ip>.")
 	}
-	fmt.Fprintf(out, "%s%s\nScan it in Flightdeck, or paste the link. Ctrl-C closes the window.\n", code, link)
+	// The link holds the token in plain text, which stays in the terminal's scrollback: only on
+	// request.
+	if *showLink {
+		fmt.Fprintf(out, "%s%s\nScan it in Flightdeck, or paste the link. Ctrl-C closes the window.\n", code, link)
+	} else {
+		fmt.Fprintf(out, "%sScan it in Flightdeck. Ctrl-C closes the window.\n", code)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -247,6 +257,26 @@ func lineReader(r io.Reader) <-chan stampedLine {
 		}
 	}()
 	return ch
+}
+
+// strictModesWarnings names the folder of the key file, and the home folder when it holds that
+// folder, when group or others can write it: sshd's StrictModes then ignores every key under it,
+// and the phone would fail later with no hint. The file itself is rewritten at 0600.
+func strictModesWarnings(authKeys string) []string {
+	dir := filepath.Dir(authKeys)
+	dirs := []string{dir}
+	if home, err := os.UserHomeDir(); err == nil && filepath.Dir(dir) == filepath.Clean(home) {
+		dirs = append(dirs, home)
+	}
+	var out []string
+	for _, d := range dirs {
+		fi, err := os.Stat(d)
+		if err != nil || fi.Mode().Perm()&0o022 == 0 {
+			continue
+		}
+		out = append(out, fmt.Sprintf("warning: group or others can write %s (mode %04o), so sshd ignores the keys under it; run chmod go-w %s", d, fi.Mode().Perm(), d))
+	}
+	return out
 }
 
 // stdinIsTerminal says whether r is a terminal.

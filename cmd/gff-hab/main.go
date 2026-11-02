@@ -10,7 +10,7 @@
 //	gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
 //	gff-hab peers    [-socket path] [-json]
 //	gff-hab peers accept [-socket path] <label>
-//	gff-hab pair     [-state dir] [-label name] [-listen addr]... [-port n] [-timeout d] [-authorized-keys path] [-command cmd]
+//	gff-hab pair     [-state dir] [-label name] [-listen addr]... [-port n] [-timeout d] [-authorized-keys path] [-command cmd] [-link] [-no-tty]
 //	gff-hab devices list|revoke [-state dir] [-json] [<id|label>]
 //	gff-hab notify   [-socket path | -via command] [-level l] [-session id] <title> [body]
 //	gff-hab send     [-socket path | -via command] [-from session] [-reply-to id] [-wait d] <address> <text... | ->
@@ -133,7 +133,7 @@ const usage = `usage:
   gff-hab events   [-socket path | -via command] [-scope host|projects:id,...|sessions:id,...]
   gff-hab peers    [-socket path] [-json]
   gff-hab peers accept [-socket path] <label>
-  gff-hab pair     [-state dir] [-label name] [-listen addr]... [-port n] [-timeout d] [-authorized-keys path] [-command cmd] [-ssh-port n] [-sshd-keys dir]
+  gff-hab pair     [-state dir] [-label name] [-listen addr]... [-port n] [-timeout d] [-authorized-keys path] [-command cmd] [-ssh-port n] [-sshd-keys dir] [-link] [-no-tty]
   gff-hab devices list [-state dir] [-json]
   gff-hab devices revoke [-state dir] <id|label>
   gff-hab notify   [-socket path | -via command] [-level passive|active|time-sensitive] [-session id] <title> [body]

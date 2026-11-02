@@ -71,7 +71,7 @@ func pairRun(t *testing.T, o pairOpts) pairResult {
 	done := make(chan error, 1)
 	go func() {
 		done <- pairCmd([]string{"-state", state, "-listen", "127.0.0.1", "-timeout", "30s", "-authorized-keys", keys,
-			"-command", "/usr/local/bin/gff-hab connect", "-sshd-keys", sshd, "-label", "devbox", "-no-tty"}, inR, outW)
+			"-command", "/usr/local/bin/gff-hab connect", "-sshd-keys", sshd, "-label", "devbox", "-no-tty", "-link"}, inR, outW)
 		outW.Close()
 	}()
 	// The terminal: a link line, and each prompt (which ends with no newline).
@@ -248,6 +248,35 @@ func TestPairCommandKeyAlreadyThere(t *testing.T) {
 	var out bytes.Buffer
 	if err := devicesCmd([]string{"list", "-state", r.state}, &out); err != nil || !strings.Contains(out.String(), "no devices") {
 		t.Fatalf("devices list: %v\n%s", err, out.String())
+	}
+}
+
+// TestPairCommandNoLinkByDefault: without -link the terminal shows the QR code only, never the
+// token in text.
+func TestPairCommandNoLinkByDefault(t *testing.T) {
+	dir := t.TempDir()
+	in, inW := io.Pipe()
+	defer inW.Close()
+	var out bytes.Buffer
+	err := pairCmd([]string{"-state", filepath.Join(dir, "state"), "-listen", "127.0.0.1", "-timeout", "300ms", "-no-tty",
+		"-authorized-keys", filepath.Join(dir, "ak"), "-sshd-keys", dir}, in, &out)
+	if err == nil || !strings.Contains(err.Error(), "expired") || strings.Contains(out.String(), "flightdeck://") || !strings.Contains(out.String(), "Scan it in Flightdeck.") {
+		t.Fatalf("err %v\n%s", err, out.String())
+	}
+}
+
+func TestStrictModesWarnings(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".ssh")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	keys := filepath.Join(dir, "authorized_keys")
+	if w := strictModesWarnings(keys); len(w) != 0 {
+		t.Fatalf("a 0700 folder: %q", w)
+	}
+	os.Chmod(dir, 0o775)
+	if w := strictModesWarnings(keys); len(w) != 1 || !strings.Contains(w[0], "chmod go-w "+dir) {
+		t.Fatalf("a 0775 folder: %q", w)
 	}
 }
 

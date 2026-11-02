@@ -379,8 +379,8 @@ pairing window is built now. The phone works today through the system sshd.
 1. The owner runs `gff-hab pair` on the hab.
 2. gff-hab opens a **pairing window**: an SSH listener on `golang.org/x/crypto/ssh`, with the hab's
    own host key (5), bound to the host's LAN and tailnet addresses only (6.1.3).
-3. It prints the offer as a QR code and as the link in text (6.1.1): the window's endpoints, the
-   hab's device id, and a one-time 128-bit token.
+3. It prints the offer as a QR code (6.1.1): the window's endpoints, the hab's device id, and a
+   one-time 128-bit token. `-link` also prints it as a link to paste.
 4. The phone scans the code, opens SSH to an endpoint and pins the hab's host key from the code. A
    different host key fails the connection before authentication.
 5. The phone authenticates with its own key (public-key auth proves it holds the key), opens the
@@ -424,7 +424,9 @@ flightdeck://pair?v=1&id=SHA256:<43 chars>&ep=<host:port>&ep=...&t=<token>&l=<la
 Values are percent-encoded as in any URL query. Unknown keys are ignored, so a later hab can add
 some. The app refuses a code that repeats `v`, `id`, `t` or `l`. It finds the link inside pasted
 text. The iOS app opens `flightdeck:` links. The terminal prints the QR code with error correction
-level M in half-block characters, with a quiet zone, then the link on its own line.
+level M in half-block characters, with a quiet zone. The link, which holds the token in plain
+text, is printed on its own line only with `-link`: otherwise the token would stay in the
+terminal's scrollback, or a Flightdeck pane's ring, after the window closes.
 
 Built: the app's parser (`PairingCode`, task-iv89iwd8) and the hab's encoder (`internal/pairing`).
 
@@ -520,7 +522,9 @@ The key lands in two places:
      recording the device as forced-command, or claiming a later revoke removed it, would be
      wrong.
    - The write goes through a temporary file in the same folder and a rename. The file ends at mode
-     0600. A missing `~/.ssh` is made at 0700. A symbolic link is followed, and the rename replaces
+     0600. Before the window opens, `pair` warns when group or others can write the file's folder
+     (or the home folder above `~/.ssh`): sshd's `StrictModes` then ignores the key, and the phone
+     would fail later with no hint. The warning names the `chmod go-w` to run. A missing `~/.ssh` is made at 0700. A symbolic link is followed, and the rename replaces
      the file it points to. If the file changed between the read and the rename, the write starts
      again, at most three times.
 2. **gff-hab's own device list**, `<state>/devices.json` (0600): id, label, kind, paired at, the key
@@ -538,8 +542,7 @@ fan-out to peers (6.6) and the `devices.*` API methods come with the embedded se
 Pairing window open for 5:00 on 192.0.2.10:47213, 198.51.100.7:47213.
 Those are this host's LAN and tailnet addresses. On a cloud host ... pair there with -listen <tailnet ip>.
 <QR code>
-flightdeck://pair?v=1&id=SHA256:...&ep=...&t=...&l=devbox
-Scan it in Flightdeck, or paste the link. Ctrl-C closes the window.
+Scan it in Flightdeck. Ctrl-C closes the window.
 
 Pair "Owner's iPhone" (phone)?
   key  ecdsa-sha2-nistp256 SHA256:...????
