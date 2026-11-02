@@ -88,6 +88,7 @@ type agentSource struct {
 	agents   *harness.Store
 	settings *settings.Service // nil: no settings in the snapshot
 	confirms confirmService    // nil: no confirmations in the snapshot
+	rounds   *roundsService    // nil: no rounds in the snapshot
 }
 
 func (a agentSource) Snapshot(host api.HostInfo) api.Structure {
@@ -99,6 +100,11 @@ func (a agentSource) Snapshot(host api.HostInfo) api.Structure {
 	if a.confirms != nil {
 		if open := openOnly(a.confirms.List(false)); len(open) > 0 {
 			st.Confirmations = open
+		}
+	}
+	if a.rounds != nil {
+		if rs := a.rounds.List(); len(rs) > 0 {
+			st.Rounds = rs
 		}
 	}
 	return st

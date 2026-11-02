@@ -152,9 +152,15 @@ func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, 
 	}
 
 	argv := l.spawn.Argv
+	// A round's run session is named after the round and marked with it (rounds.md 7.2).
+	base := filepath.Base(argv[0])
+	rs, isRun := roundStartFrom(ctx)
+	if isRun {
+		base = rs.name
+	}
 	name := p.Name
 	if name == "" {
-		name = a.freeName(filepath.Base(argv[0]))
+		name = a.freeName(base)
 	} else if !channels.ValidName(name) {
 		return "", "", control.Errorf(api.ErrorKindInvalid, "session name %q: use %s", name, channels.NameRule)
 	} else if _, taken := a.store.SessionByName(name); taken {
@@ -165,10 +171,13 @@ func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, 
 
 	pane := l.spawn.UUID.String()
 	spec := structure.SessionSpec{Name: name, Project: project, Pane: pane, Index: -1, NewPane: true, Kind: kind, Dir: dir}
+	if isRun {
+		spec.Round = &rs.ref
+	}
 	ss, err := a.store.CreateSession(spec)
 	// A picked name another create took between freeName and the record: pick again.
 	for try := 0; try < freeNameRetries && p.Name == "" && errors.Is(err, structure.ErrConflict); try++ {
-		spec.Name = a.freeName(filepath.Base(argv[0]))
+		spec.Name = a.freeName(base)
 		ss, err = a.store.CreateSession(spec)
 	}
 	if err != nil {

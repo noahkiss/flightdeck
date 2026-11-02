@@ -146,6 +146,7 @@ const usage = `usage:
   gff-hab confirm list   [-socket path] [-all] [-json]
   gff-hab confirm show   [-socket path] [-json] <id>
   gff-hab confirm answer [-socket path] [-host h -folder f] [-harness h] [-model m] [-seed text | -seed-file path] <id> confirm|cancel
+  gff-hab round ls|show|add|edit|rm|pause|unpause|run|runs|export|apply [-socket path | -via command] ...
   gff-hab mcp [serve] [-socket path] [--skill]
   gff-hab instructions render -config file [-state dir] [-host-id id] [-dry-run | -write target]
   gff-hab hook [-t ms] <harness> [event] < payload
@@ -220,6 +221,8 @@ func main() {
 		err = actCmd(os.Args[2:], os.Stdout)
 	case "confirm":
 		err = confirmCmd(os.Args[2:], os.Stdout)
+	case "round":
+		err = roundCmd(os.Args[2:], os.Stdin, os.Stdout)
 	case "mcp":
 		err = mcpCmd(os.Args[2:], os.Stdin, os.Stdout)
 	case "instructions":
@@ -951,11 +954,65 @@ func serve(args []string) error {
 		speechSvc = sp
 		caps = append(caps, "speech")
 	}
+	// Rounds (rounds.md): scheduled runs in holder panes, from <state>/rounds. They need the
+	// holder link: a run is a session.
+	var roundsSvc *roundsService
+	var roundsCtl control.Rounds
+	if lk != nil {
+		rset, err := loadRoundsSettings(cpath)
+		if err != nil {
+			return err
+		}
+		sa := acts.(*actions)
+		roundsSvc, err = newRounds(roundsConfig{
+			state: dir, settings: rset, store: store,
+			create: func(ctx context.Context, p api.SessionCreateParams) (api.SessionCreated, error) {
+				if s := srv.Load(); s != nil {
+					return s.CreateSession(ctx, p)
+				}
+				return api.SessionCreated{}, control.Errorf(api.ErrorKindUnavailable, "the control server is not running yet")
+			},
+			pane: func(id string) (link.PaneStatus, bool) {
+				u, ok := parseUUID(id)
+				if !ok {
+					return link.PaneStatus{}, false
+				}
+				return lk.Pane(u)
+			},
+			complete:  func() bool { return structure.Complete(lk.Structure()) },
+			closePane: sa.ClosePane,
+			projectFor: func(ctx context.Context, dir string) (string, error) {
+				id, _, err := sa.projectFor(ctx, dir)
+				return id, err
+			},
+			publish: func(e structure.Event) {
+				if s := srv.Load(); s != nil {
+					s.Publish(e)
+				}
+			},
+			notice: func(title, body string) {
+				if _, err := pushes.Raise("", api.NoticeRaiseParams{Title: title, Body: body, Level: api.NoticeLevelActive}); err != nil {
+					logger.Printf("rounds: notice: %v", err)
+				}
+			},
+			tick: roundTick(),
+			logf: logger.Printf,
+		})
+		if err != nil {
+			return err
+		}
+		defer roundsSvc.Close()
+		roundsCtl = roundsSvc
+		acts = roundActions{actions: sa, rounds: roundsSvc}
+		input = roundInput{Input: input, rounds: roundsSvc}
+		agentCalls = roundAgents{Agents: agentCalls, rounds: roundsSvc}
+		caps = append(caps, "rounds")
+	}
 	s := control.New(control.Config{
 		Build:        build,
 		Host:         api.HostInfo{ID: *hostID},
 		DeviceID:     key.Fingerprint(),
-		Source:       agentSource{store: store, agents: agents, settings: setSvc, confirms: cfSvc},
+		Source:       agentSource{store: store, agents: agents, settings: setSvc, confirms: cfSvc, rounds: roundsSvc},
 		Capabilities: caps,
 		Actions:      acts,
 		Data:         data,
@@ -985,6 +1042,7 @@ func serve(args []string) error {
 		Reads:       reads,
 		Confirm:     cfSvc,
 		Capcom:      capcomCtl,
+		Rounds:      roundsCtl,
 	})
 	srv.Store(s)
 	l, err := control.Listen(path)
@@ -997,6 +1055,10 @@ func serve(args []string) error {
 		return err
 	}
 	if lk != nil {
+		if roundsSvc != nil {
+			stopRounds := lk.Watch(roundsSvc.notice)
+			defer stopRounds()
+		}
 		stopWatch := lk.Watch(func(n link.Notice) {
 			switch n.Kind {
 			case link.PaneAdded: // a holder reached late: its opencode panes are followed now
@@ -1044,6 +1106,9 @@ func serve(args []string) error {
 	hooks.SetChannels(channelHook(store, chSvc))
 	hooks.SetReads(readHook(reads, cs, pm, nil))
 	hooks.SetConfirm(confirmHook(store, cfSvc))
+	if roundsSvc != nil {
+		hooks.SetRounds(roundHook(store, roundsSvc))
+	}
 	if agentSvc != nil {
 		hooks.SetHolder(agentSvc.holdPermission(s.Approvers))
 	}
@@ -1053,6 +1118,9 @@ func serve(args []string) error {
 		}
 	}()
 	defer hooks.Close()
+	if roundsSvc != nil {
+		roundsSvc.start() // after the link watch, so no exit of an adopted run is missed
+	}
 	logger.Printf("epoch %s build %s device %s listening on %s, hooks on %s", s.Epoch(), build, key.Fingerprint(), path, hpath)
 
 	stopped := make(chan struct{})
