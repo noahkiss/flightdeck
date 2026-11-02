@@ -98,7 +98,7 @@ struct RoundRowView: View {
 
     private var detail: String {
         let r = row.round
-        var parts = [r.mode.rawValue, RoundText.trigger(r.trigger)]
+        var parts = [r.mode.rawValue, RoundText.trigger(r.trigger, now: now)]
         if row.mark == nil, let n = r.nextSlot {
             parts.append("next " + RoundText.slot(n, roundZone: r.trigger.zone, now: now))
         }
@@ -195,7 +195,7 @@ struct RoundPage: View {
         .confirmationDialog("Delete round \(r.name)?", isPresented: Binding(
             get: { center.deleteAsk?.id == row.id }, set: { if !$0 { center.deleteAsk = nil } }
         ), titleVisibility: .visible) {
-            Button("Delete", role: .destructive) { Task { await center.confirmDelete() } }
+            Button("Delete", role: .destructive) { center.confirmDelete() }
             Button("Cancel", role: .cancel) { center.deleteAsk = nil }
         } message: {
             Text("A run in progress goes on to its end.")
@@ -286,7 +286,7 @@ struct RoundFormSheet: View {
             Form {
                 Section {
                     if !draft.isEdit {
-                        Picker("Hab", selection: $draft.habID) {
+                        Picker("Hab", selection: Binding(get: { draft.habID }, set: { center.move(&draft, to: $0) })) {
                             ForEach(center.habs.filter(\.online)) { Text($0.label).tag($0.id) }
                         }
                     }
@@ -401,11 +401,7 @@ struct RoundFormSheet: View {
         draft.isEdit ? nil : center.suggestion(habID: draft.habID, project: draft.project)
     }
 
-    private func moveTo(_ h: RoundHab) {
-        let p = draft.project.flatMap { store?.projects[$0] }
-        draft.habID = h.id
-        draft.project = p.flatMap { RoundCenter.project(like: $0, in: center.store(habID: h.id) ?? HabStore()) }?.id
-    }
+    private func moveTo(_ h: RoundHab) { center.move(&draft, to: h.id) }
 
     private func save() async {
         switch draft.spec() {

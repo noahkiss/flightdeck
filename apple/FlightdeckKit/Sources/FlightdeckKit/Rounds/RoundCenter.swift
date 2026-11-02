@@ -38,7 +38,7 @@ public struct RoundHab: Identifiable, Hashable, Sendable {
 @Observable
 public final class RoundCenter {
     /// The welcome capability that says a hab runs rounds.
-    public static let capability = "rounds"
+    public nonisolated static let capability = "rounds"
 
     /// Run sessions show on the board; off hides them (rounds.md 10.3). Kept in the defaults.
     public var showRunSessions: Bool {
@@ -57,8 +57,14 @@ public final class RoundCenter {
     @ObservationIgnored private let connection: @MainActor (String) -> HabConnection?
     @ObservationIgnored private let alwaysOn: @MainActor () -> Set<String>
     @ObservationIgnored private let defaults: UserDefaults
-    /// A run started here whose session opens once it exists: hab id and run id.
-    @ObservationIgnored private var follow: (habID: String, run: String)?
+    /// A run started here whose session opens once it exists: hab id, run id, and when the
+    /// owner asked. It lapses after `followLimit`.
+    @ObservationIgnored private var follow: (habID: String, run: String, at: Date)?
+    /// How long a run started here may take to get its session and still open it. A run
+    /// queued under the host's limit that starts later does not jump into view mid-task.
+    static let followLimit: TimeInterval = 120
+    /// The clock `follow` is timed by; tests move it.
+    @ObservationIgnored var now: @MainActor () -> Date = { Date() }
     /// A notification's session, opened once its hab shows the row: host id and session id.
     @ObservationIgnored private var pendingOpen: (host: String, session: String)?
 
@@ -135,7 +141,16 @@ public final class RoundCenter {
         if let run = h.state.roundRuns[ref.run] ?? h.state.rounds[ref.round]?.lastRun.flatMap({ $0.id == ref.run ? $0 : nil }) {
             return !run.state.isFinal
         }
-        // Not seen: an older run, or a run of a round that is gone. A session that exited ran out.
+        guard let round = h.state.rounds[ref.round] else {
+            // The round is gone and this connection never saw the run: ended. A run of a
+            // round deleted mid-run that is still going when the app reconnects loses the
+            // filter; the other choice keeps it on in that pane for good.
+            return false
+        }
+        // The hab runs one run per round at a time, so a round whose last run is another
+        // one has ended this run. With no last run yet, the run counts as live until its
+        // session exits.
+        if round.lastRun != nil { return false }
         return s.state != .exited
     }
 
@@ -157,7 +172,7 @@ public final class RoundCenter {
     public func runNow(_ row: RoundRow) async {
         await act(row) { conn in
             let r = try await conn.call(HabMethods.roundRun, RoundRef(id: row.round.id))
-            self.follow = (row.habID, r.run.id)
+            self.follow = (row.habID, r.run.id, self.now())
             self.boardChanged()
         }
     }
@@ -171,10 +186,17 @@ public final class RoundCenter {
     /// Delete asks first: this only holds the question.
     public func askDelete(_ row: RoundRow) { deleteAsk = row }
 
-    /// The owner said yes to the held Delete.
-    public func confirmDelete() async {
-        guard let row = deleteAsk else { return }
+    /// The owner said yes to the held Delete. It takes the held row at once and starts the
+    /// call: the dialog clears `deleteAsk` as it closes, before any task it starts can run.
+    @discardableResult
+    public func confirmDelete() -> Task<Void, Never>? {
+        guard let row = deleteAsk else { return nil }
         deleteAsk = nil
+        return Task { await delete(row) }
+    }
+
+    /// `round.delete`; a refusal shows under the round.
+    public func delete(_ row: RoundRow) async {
         await act(row) { conn in
             _ = try await conn.call(HabMethods.roundDelete, RoundRef(id: row.round.id))
         }
@@ -188,7 +210,7 @@ public final class RoundCenter {
         do {
             let r = try await conn.call(HabMethods.roundCreate, RoundCreateParams(round: spec, runNow: runNow ? true : nil))
             if let run = r.run {
-                follow = (habID, run.id)
+                follow = (habID, run.id, now())
                 boardChanged()
             }
             return r.round
@@ -252,8 +274,11 @@ public final class RoundCenter {
 
     /// A notification tap that names a session and no request: open that session once its
     /// hab shows it (rounds.md 10.2: a round banner's Open names the run session).
+    /// A `permission` or `question` banner with no request id is the approval sheet's alone
+    /// (`ApprovalCenter.open`), so one tap opens one thing.
     public func open(_ meta: PushMeta) {
-        guard meta.request == nil, let s = meta.session, !s.isEmpty else { return }
+        guard meta.request == nil, meta.kind != "permission", meta.kind != "question",
+              let s = meta.session, !s.isEmpty else { return }
         pendingOpen = (meta.hab, s)
         boardChanged()
     }
@@ -261,6 +286,7 @@ public final class RoundCenter {
     /// The board changed: open a followed run's session or a notification's session once the
     /// board has its row.
     public func boardChanged() {
+        if let f = follow, now().timeIntervalSince(f.at) > Self.followLimit { follow = nil }
         if let f = follow, let h = board.habs.first(where: { $0.id == f.habID }) {
             let run = h.state.roundRuns[f.run] ?? h.state.rounds.values.compactMap(\.lastRun).first { $0.id == f.run }
             if let s = run?.session, let row = board.rows.first(where: { $0.target.habID == f.habID && $0.target.session == s }) {
@@ -277,9 +303,22 @@ public final class RoundCenter {
                     openRequest = row.target
                     break
                 }
+                // Online without the session: it is gone (closed, or pruned), so drop the tap
+                // as the approval sheet drops a request its hab no longer has.
+                if h.state.status == .online, h.state.store.sessions[p.session] == nil {
+                    pendingOpen = nil
+                    break
+                }
             }
         }
     }
+
+    /// The owner opened a session: a run started here no longer opens over it. A followed
+    /// run that opens its own session clears `follow` before it asks.
+    public func sessionOpened() { follow = nil }
+
+    /// Whether a run started here still waits to open its session.
+    var following: Bool { follow != nil }
 
     // MARK: - Always on (rounds.md 9)
 
@@ -295,6 +334,16 @@ public final class RoundCenter {
             return RoundHab(id: other.id, label: other.label, online: true, rows: [])
         }
         return nil
+    }
+
+    /// Moves a new round's form to another hab: the project becomes that hab's same project
+    /// (or none), and the target session, which only the old hab has, is cleared.
+    public func move(_ d: inout RoundDraft, to habID: String) {
+        guard d.habID != habID else { return }
+        let p = d.project.flatMap { store(habID: d.habID)?.projects[$0] }
+        d.habID = habID
+        d.project = p.flatMap { Self.project(like: $0, in: store(habID: habID) ?? HabStore()) }?.id
+        d.target = nil
     }
 
     /// The project on another hab that is `p`: the same remote, else the same name when

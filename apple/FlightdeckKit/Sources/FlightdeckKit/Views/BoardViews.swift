@@ -210,13 +210,20 @@ public struct BoardScreen: View {
         .modifier(SendFileSheetHost(center: fleet?.files, board: board))
         .modifier(CapcomHost(center: fleet?.capcom, board: board, opened: $opened))
         // One detail at a time: a session or the Capcom view.
-        .onChange(of: opened) { _, r in if r != nil { capcomShown = false } }
+        .onChange(of: opened) { _, r in
+            guard r != nil else { return }
+            capcomShown = false
+            fleet?.rounds.sessionOpened()
+        }
         .onChange(of: capcomShown) { _, on in if on { opened = nil } }
         // A round's run session: Run now, a run in the history, or a round notification (app.md 21).
         .onChange(of: fleet?.rounds.openRequest) { _, t in
             guard let t else { return }
             fleet?.rounds.openRequest = nil
-            if let row = board.rows.first(where: { $0.target.habID == t.habID && $0.target.session == t.session }) { opened = row }
+            if let row = board.rows.first(where: { $0.target.habID == t.habID && $0.target.session == t.session }) {
+                board.open(row)
+                opened = row
+            }
         }
         // A file sent to a session from the send sheet opens that session (app.md 4.4).
         .onChange(of: fleet?.files.openRequest) { _, t in
