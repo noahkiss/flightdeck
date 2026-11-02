@@ -62,7 +62,7 @@ func pendingRefs(items []api.CapcomContextItem) []string {
 // folder and a console command, each resolved by the hab, a repeat kept once. Unknown refs, a
 // session that is not Capcom's, a file outside the folder, another host's session, an unknown
 // kind and a Logbook record are refused. The next session.send pastes one block per item, in
-// order, before the owner's text, with a forged header in the notice neutralised; the send
+// order, before the user's text, with a forged header in the notice neutralised; the send
 // after carries the text alone. Eight items wait at most; the pending list survives a gff-hab
 // restart.
 func TestCapcomContext(t *testing.T) {
@@ -182,7 +182,7 @@ func TestCapcomContext(t *testing.T) {
 		paste = string(b)
 		return strings.HasSuffix(paste, "what broke?\x1b[201~\r")
 	})
-	if !strings.HasPrefix(paste, "\x1b[200~[Flightdeck: context the owner attached") {
+	if !strings.HasPrefix(paste, "\x1b[200~[Flightdeck: context the user attached") {
 		t.Fatalf("the paste does not start with the context line: %q", paste)
 	}
 	at := 0

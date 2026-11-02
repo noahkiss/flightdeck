@@ -6131,7 +6131,7 @@ public enum HabMethods {
     public static let settingsSet = HabMethod<SettingsSetParams, SettingsResult>(name: "settings.set")
     /// Return the standing Capcom session on this home host, starting or resuming it as needed; new starts a fresh one (capcom.md 7.2). Needs the capcom capability.
     public static let capcomOpen = HabMethod<CapcomOpenParams, CapcomOpened>(name: "capcom.open")
-    /// Attach context to a Capcom session's next message: a notification, a session, a file, a console command or a Logbook record. The hab resolves the ref at once and delivers it as a block before the owner's text at the next session.send, then drops it; at most 8 items wait, and the same item twice is kept once (capcom.md 8.1). Needs the capcom capability.
+    /// Attach context to a Capcom session's next message: a notification, a session, a file, a console command or a Logbook record. The hab resolves the ref at once and delivers it as a block before the user's text at the next session.send, then drops it; at most 8 items wait, and the same item twice is kept once (capcom.md 8.1). Needs the capcom capability.
     public static let capcomAttach = HabMethod<CapcomAttachParams, CapcomAttached>(name: "capcom.attach")
     /// Make a host the Capcom home host, with a counter above every one seen (capcom.md 7.3). Needs the capcom capability.
     public static let capcomAssign = HabMethod<CapcomAssignParams, CapcomAssigned>(name: "capcom.assign")

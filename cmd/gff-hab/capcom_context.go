@@ -18,7 +18,7 @@ import (
 
 // Attached context for Capcom (capcom.md 8.1): capcom.attach and capcom.open's context resolve
 // each ref on this hab when attached and keep the result in capcom.json; the next session.send
-// to the session delivers it as blocks before the owner's text, once.
+// to the session delivers it as blocks before the user's text, once.
 
 // capcomResolvers are what the context kinds read. Each may be nil: its kind then answers
 // unavailable.
@@ -306,7 +306,7 @@ func commandByID(cs control.Commands) func(pane string, id uint64) (api.Command,
 	}
 }
 
-// capcomSender delivers a Capcom session's pending context with the owner's next message: the
+// capcomSender delivers a Capcom session's pending context with the user's next message: the
 // blocks go before the text in the same paste, and leave the list only once the send reports
 // success (capcom.md 8.1). Channel mail goes to agentService directly and never takes them.
 type capcomSender struct {
