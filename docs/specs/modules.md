@@ -459,21 +459,33 @@ targets a key can act on. It knows no screen: a span carries a tint word, and `g
 Rules:
 
 - **One column per character**, as `gff`'s canvas draws. The symbol table (6.3) holds only
-  characters that are one column wide in common terminal fonts; emoji are left out.
+  characters that are one column wide in common terminal fonts; emoji are left out. Module text
+  keeps only characters that draw as one column everywhere (next rule).
 - **Cut, never wrap.** Every line is cut at the width with "…" in its last column.
-- **No control characters.** A tab becomes a space; every other C0, DEL or C1 character becomes
-  U+FFFD. A tree is data; no byte of it reaches the host terminal as a control.
+- **No control or odd-width characters.** In every piece of module text the client shows (drawn
+  spans, a target's title and confirm question, which prompts use), a tab becomes a space and
+  each of these becomes U+FFFD: C0, DEL and C1 controls; format characters (bidi overrides and
+  isolates, the marks U+200E, U+200F and U+061C, zero width spaces and joiners, U+FEFF); line and
+  paragraph separators; combining marks and variation selectors (zero columns); wide and
+  fullwidth characters, emoji and regional indicators (two columns); private use and unassigned
+  code points. A tree is data: no byte of it reaches the host terminal as a control, a row never
+  shifts the cells after it, and a bidi terminal cannot reorder a row. The `gff` client also
+  cleans the manifest name and every message, and its canvas draws any control as U+FFFD.
 - **Lenient.** Unknown fields are ignored; unknown words draw as the field's default through the
   generated `Drawn<Field>()` accessors (6.4). A tree that does not decode as blocks, has a block
-  with no type, or passes the tree limits (8.1) draws as one error line, `module error: <why>`,
+  with no type, has two blocks with one id, or passes the tree limits (8.1) draws as one error
+  line, `module error: <why>`,
   in the error tint. Every invalid fixture draws without a panic, and within the width.
 - **Targets** are buttons, toggles, fields, rows with an action, and sections with an id, in tree
-  order. Each has a ref, its id or `#<n>` by its place, which keys focus and folding. A target
+  order. Each has a ref, its id or `#<kind>:<title>:<n>` with `n` its order among targets of that
+  kind and title, which keys focus and folding; a target added above does not move it. A target
   inside a folded section is not drawn and cannot be pressed. A button there keeps its letter,
   so the other keys do not move when a section folds.
-- **Key hints.** In tree order, each button takes the first letter or digit of its title (ASCII,
-  case-sensitive) that no earlier button and no reserved key took, else the first free digit 1 to
-  9, else none. The client passes its own keys as reserved. The same tree gets the same keys on
+- **Key hints.** In tree order, each button takes the first ASCII letter or digit of its title,
+  lowercased, that no earlier button and no reserved key took, else the first free digit 1 to
+  9, else none. Hints are always lowercase, so `R` never presses an `r` hint; a reserved key
+  blocks only its own case. The client passes its own keys as reserved. With `NoHints` every
+  button draws `›` and keeps its key (`gff` draws hints only on the card with the selection). The same tree gets the same keys on
   every render, so a key does not move under the owner's finger.
 - **What a target sends.** A button and a row send their action. A toggle adds `value`, the new
   state, to a copy of the args; a field adds `text`. A `client.*` action is the client's (6.2).
@@ -489,7 +501,7 @@ Not built in this stage, with the reason:
 | Mouse clicks | `gff` reads no mouse input anywhere yet (`gff-client.md` 4.3). A line carries its target's index, so a click maps to a target when mouse input comes |
 | A pager for `log`, the `host`, `session` and `sheet` places | Each belongs to a view `gff` does not have yet; the board card is the place with a home |
 | Optimistic toggles | The card waits for the next tree; with the module host in-process, that is one render |
-| Width of wide characters (CJK, emoji) | `gff`'s canvas counts one column per character everywhere; a fix there fixes both |
+| Drawing wide characters (CJK, emoji) | `gff`'s canvas counts one column per character, so module text shows each as U+FFFD instead (the rule above). A width-aware canvas would let them draw, in module text and everywhere else |
 
 **For the hab API (stage 5 wiring).** The renderer and the board card are built and tested
 against `internal/modhost` in-process. To reach them from a hab, the API needs:

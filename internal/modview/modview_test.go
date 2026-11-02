@@ -276,7 +276,7 @@ func TestKeys(t *testing.T) {
 	for _, tg := range v.Targets {
 		keys += string(tg.Key)
 	}
-	// Keys are case-sensitive: R is reserved, r is free. "Kill" skips the reserved k; "!!" has
+	// Hints are lowercase, and a reserved key blocks only its own case: R is reserved, r is free. "Kill" skips the reserved k; "!!" has
 	// no letter and takes the first digit.
 	if keys != "rei1" {
 		t.Errorf("keys %q, want rei1", keys)

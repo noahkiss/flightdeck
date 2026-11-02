@@ -779,7 +779,7 @@ Modules placed on the `board` (`modules.md` 5) show on the status board as cards
 `internal/gffclient/modules.go`.
 
 - **Where.** Below the Rounds list, under a "Modules" label: one card per module, a heading
-  `<name> · <host>`, then the tree indented four columns. Design call: the board is the one
+  `<name> · <host>`, cleaned as module text is, then the tree indented four columns. Design call: the board is the one
   place `gff` has that matches a module place; the `host`, `session` and `sheet` places wait for
   their views.
 - **When.** Only for a host whose welcome lists `modules`. `Config.Modules`, a `ModuleSource`,
@@ -792,12 +792,22 @@ Modules placed on the `board` (`modules.md` 5) show on the status board as cards
   under it, in the error tint (`modules.md` 8.3). A tree that cannot be drawn is one error line.
 - **Selection.** `j` and `k` move from the session rows to the round rows, then through every
   card's targets. With no session or round, the selection starts on the first target. The
-  focused target draws inverted, as a selected row does. `t` on a target does nothing.
+  focused target draws inverted, as a selected row does. `t` on a target does nothing, and so
+  do the rename and close keys when a keymap binds them on the board: the session row under the
+  selection is not the target.
 - **Keys on a card.** While the selection is in a card, a button's key hint presses it and moves
-  the selection to it. Enter presses the selected target; Space too. Key hints never take a key
-  the board binds (`j`, `k`, `t`, `r`, `p`, `R`, `q` by default, or what `[keys.board]` sets), so
-  the board's keys keep working everywhere. Design call: hints act on the card that holds the
-  selection, so two cards may use the same letter.
+  the selection to it. Enter presses the selected target; Space too. Key hints never take a
+  single-character key the board binds (`j`, `k`, `t`, `r`, `p`, `R`, `q` by default, or what
+  `[keys.board]` sets), so the board's keys keep working everywhere. Design call: hints act on the
+  card that holds the selection, so two cards may use the same letter. Only that card draws its
+  hints; every other card shows `›` for its buttons, so a hint on screen always does what it
+  says.
+- **A target that changed.** A target keeps its place by its id, else by its kind, title and
+  order among targets of that title, so a target added above it does not move the selection.
+  When the selected target changes without the owner moving the selection (a new title, action
+  or question, or the target went and the selection moved on), one Enter or Space within a
+  second of the change is ignored with "the selection changed; press again". The confirm prompt
+  keeps the target it asked about.
 - **Pressing.** A button with `confirm` asks its question on the bottom row (y/n). A field asks
   for its text on the bottom row, labelled with its placeholder. A section with an id folds or
   unfolds; the fold is kept for the gff process. Each module action goes to the source off the
@@ -806,9 +816,18 @@ Modules placed on the `board` (`modules.md` 5) show on the status board as cards
 - **Client actions** (`modules.md` 6.2) never reach the module. `client.open_session` and
   `client.open_pane` open that session or pane of the card's host, as the sidebar's Enter does.
   `client.copy` writes OSC 52, base64-encoded, so the host terminal copies, also over ssh, and
-  says "copied". `client.open_url` shows the link on the bottom row: `gff` cannot know where a
-  browser runs, and the host terminal can open a shown link. Since nothing opens, no question is
-  asked.
+  says `copied <n> chars: <start>`, the first 24 columns cleaned, so the owner sees what a button
+  put on the clipboard. Empty or non-string text sends nothing ("nothing to copy": an empty OSC 52
+  clears the clipboard on some terminals); text over 74 KiB sends nothing (about 100 KB of OSC 52,
+  which common terminals take; a tree's own 64 KiB limit keeps a module below it).
+  `client.open_url` shows an https link on the bottom row as `<host> · <link>`, cleaned and cut
+  at 120 columns, so a long path cannot hide the host; any other scheme, a link with a user part
+  or one that does not parse shows "not an https link". `gff` cannot know where a browser runs,
+  and the host terminal can open a shown link. Since nothing opens, no question is asked.
+- **No control path.** The heading, prompts (a field's placeholder, a confirm question) and every
+  bottom-row message take cleaned text (`modules.md` 6.6). Under that, `gff`'s canvas draws any
+  C0, DEL or C1 character as U+FFFD, whoever passes it, so no text reaches the host terminal as a
+  control.
 - **Colours.** Tints map to the host's ANSI palette: `accent` blue, `working` and `warning`
   yellow, `blocked` bold red, `error` red, `done` green, `muted` faint, `idle` plain. A raw
   `#RRGGBB` takes the nearest of the eight basic colours. Theme tokens come with the theme
@@ -819,6 +838,12 @@ Modules placed on the `board` (`modules.md` 5) show on the status board as cards
 | `gffclient` `TestModuleCard` | A sample module (`testdata/modules/counter`) run by `internal/modhost` behind a fake hab with `modules`: the card under Modules; its key hint runs `act` and the new count shows; the toggle by Enter and by Space; the field's text through the prompt; a confirm answered no sends nothing and yes sends; `client.copy` writes OSC 52 and never reaches the module; the actions reach the module in order with their added `value` and `text`; a render that fails keeps the last tree with the error under it |
 | `gffclient` `TestModuleCardHidden` | No Modules section for a hab whose welcome lacks the capability; a tree that does not decode shows one error line under its heading |
 | `gffclient` `TestModStyle` | Tints to palette colours, a raw colour to the nearest, an unknown tint plain |
+| `gffclient` `TestModuleTextNeverControls` | ESC, OSC and U+009B in the manifest name, a field placeholder, a confirm question, `client.copy`'s text and `client.open_url`'s link: the screen shows U+FFFD, the bytes `gff` writes hold none of the module's sequences, one OSC 52 |
+| `gffclient` `TestModuleHintsOnSelectedCard` | Two cards with one letter each: only the card with the selection draws its hint, the other `›`; the hint acts on the selected card |
+| `gffclient` `TestModuleEnterAfterChange` | A button replaced under the selection: the first Enter is ignored with the note, the second presses the new button |
+| `gffclient` `TestModuleCardKeepsSessionKeys` | Rename and close bound on the board: they act on a session row, and do nothing with the selection on a module target |
+| `gffclient` `TestModuleClientActions` | `client.copy` with empty, non-string and over-cap text sends nothing; `client.open_url` refuses http and shows an https link host first |
+| `gffclient` `TestCanvasTextControls` | The canvas draws C0, DEL and C1 as U+FFFD |
 | `modview` tests | `modules.md` 6.6 |
 
 ---
