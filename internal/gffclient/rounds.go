@@ -347,6 +347,11 @@ func roundText(now time.Time, r board.RoundRow) string {
 	if r.Stale {
 		mark += " · stale " + ago(now, r.Since)
 	}
-	return fmt.Sprintf("  %-20s %-7s %-10s %-24s %-28s %s", middle(r.Name, 20), middle(string(r.Mode), 7),
-		middle(r.Host, 10), middle(r.Trigger, 24), middle(nextText(now, r.Next, r.Zone), 28), mark)
+	next := r.Next
+	if r.Paused || r.Completed {
+		next = time.Time{} // it will not run then
+	}
+	// The trigger comes last: a zone name is long, and a cut one is wrong.
+	return fmt.Sprintf("  %-20s %-7s %-10s %-28s %-22s %s", middle(r.Name, 20), middle(string(r.Mode), 7),
+		middle(r.Host, 10), middle(nextText(now, next, r.Zone), 28), middle(mark, 22), r.Trigger)
 }
