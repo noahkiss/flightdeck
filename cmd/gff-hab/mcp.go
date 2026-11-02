@@ -28,9 +28,11 @@ var mcpVersions = []string{"2025-06-18", "2025-03-26", "2024-11-05"}
 const mcpCallTime = 40 * time.Second
 
 // mcpRules is the part of the manual every client gets in the initialize answer.
-const mcpRules = `Flightdeck tools: read hosts, projects, running agents, past sessions and transcripts, notifications, files and Logbook on every connected host; suggest a host; start a session there.
+const mcpRules = `Flightdeck tools: read hosts, projects, running agents, past sessions and transcripts, notifications, files and Logbook on every connected host; suggest a host; start a session there; hand a request to the agent on a project; file a Logbook record.
 - The read tools only read. None of them writes, starts or sends anything.
-- Two action tools change things: start_session starts an agent session on a host, and set_up_project sets a project up on one. Use them only for work the user asked for. Run suggest_host first and tell the user which host and why.
+- Four action tools change things. Use them only for what the user asked in this conversation. start_session starts an agent session on a host, and set_up_project sets a project up on one: run suggest_host first and tell the user which host and why. hand_off sends a request to the agent already on a project. file_record files a Logbook record as a proposal for the user's review.
+- When an agent already runs on the project, hand_off to it rather than starting another. Tell the user where the request went, why that agent, and whether it was delivered or waits until the agent is idle. When hand_off says no agent runs there, offer suggest_host and start_session.
+- file_record files a proposal, never a record: tell the user in one line that it waits for review, and do not file it again. When it answers unavailable, nothing was filed; say so.
 - A start may need the owner's confirmation in Flightdeck. When start_session says it is still waiting, do not ask again: the answer reaches you as a message from Flightdeck, and confirmation_read shows where it stands.
 - You cannot confirm your own start. No tool answers a confirmation; only the owner does, in Flightdeck.
 - Write the seed as the whole brief: the goal, decisions so far, open questions and where they came from, at most 8000 characters. The new session sees nothing else of this conversation.
@@ -191,7 +193,7 @@ func (m *mcpServer) handle(line []byte) {
 		}
 		t, ok := findIn(allTools(), p.Name)
 		if !ok {
-			m.fail(msg.ID, rpcInvalidParams, "no tool %q: the read tools only read, and none writes; the only actions are start_session and set_up_project", p.Name)
+			m.fail(msg.ID, rpcInvalidParams, "no tool %q: the read tools only read, and none writes; the only actions are start_session, hand_off, file_record and set_up_project", p.Name)
 			return
 		}
 		a := toolArgs{}
@@ -290,7 +292,7 @@ func mcpTools() []map[string]any {
 // skillText is the manual for the tools, built from the same tables as the MCP server.
 func skillText() string {
 	var b strings.Builder
-	b.WriteString("---\nname: flightdeck-tools\ndescription: Read Flightdeck's hosts, projects, running agents, past sessions and transcripts, notifications, files and Logbook on every connected host, suggest the host that fits new work, and start a seeded session there. Use before you answer where something runs, what an agent did or decided, or which host fits a job, and when the user asks to start work elsewhere.\n---\n\n")
+	b.WriteString("---\nname: flightdeck-tools\ndescription: Read Flightdeck's hosts, projects, running agents, past sessions and transcripts, notifications, files and Logbook on every connected host, suggest the host that fits new work, start a seeded session there, hand a request to the agent already on a project, and file a Logbook record for review. Use before you answer where something runs, what an agent did or decided, or which host fits a job, and when the user asks to start work elsewhere, pass work to a project's agent, or note something down.\n---\n\n")
 	b.WriteString("# Flightdeck tools\n\n")
 	b.WriteString("These tools come from the hab, Flightdeck's server on this host. Use them as MCP tools (`gff-hab mcp`) or from a shell (`gff-hab read <tool>` for a read tool, `gff-hab act <tool>` for an action tool). Each host's own hab answers for its data, under its own read scope.\n\n")
 	b.WriteString("## Rules\n\n")
