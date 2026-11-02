@@ -861,16 +861,27 @@ and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row a
   the app runs shows at the next connection, at "Check again", or when the old home refuses
   the open (below).
 - **States.** Loading: a hab is connecting, or a catalog read is on its way, and no home is
-  known. No Capcom host: every hab that answered names none; "Check again" reads every online
-  hab's catalog again. No hab online: nothing answered and nothing is connecting. Not in this
+  known. No Capcom host: every online hab answered and none names a home; "Check again" reads
+  every online hab's catalog again. No hab online: no hab is online or connecting, and no kept
+  belief names a home; a kept "none" from a hab now offline does not count as an answer. Not in this
   app: the home's device id names no hab here. Offline: the home is a hab here that is not
   online; the view opens the conversation by itself once it is. A refused open shows the hab's
   text with "Try again".
-- **Opening.** The view calls `capcom.open` with no context on the home whenever it appears
-  and whenever the state changes, so it starts or resumes the standing conversation as needed
-  (`capcom.md` 7.6). It shows the result's session with its chips; the board opens nothing.
-  An open refused with `unavailable` (the home moved) reads every catalog again and tries the
-  new home once. Design call: opening the view is the user's request to talk to Capcom, so a
+- **Opening.** The view calls `capcom.open` with no context on the home when it appears. While
+  a Capcom view is on screen, the center opens again whenever the state changes (checked at
+  every board change and catalog read), so it starts or resumes the standing conversation as
+  needed (`capcom.md` 7.6). It shows the result's session with its chips; the board opens
+  nothing. An open refused with `unavailable` (the home moved) reads every catalog again and
+  tries the new home once. A home that moves while an open is on its way gets its own open
+  after it.
+- **Follows the hab.** Every `capcom.open` result is the home's standing conversation, a `new`
+  one too, so each successful open (Ask, Attach to Capcom, New conversation, the view) makes it
+  the view's conversation. Design call: the view never shows a conversation the hab no longer
+  treats as standing, which "Ask an agent" would then miss.
+- **An exited conversation.** While the view is on screen, a standing conversation that exits
+  is resumed with `capcom.open`, at most once per 60 s for the same session. Design call: a
+  harness that exits at once is not restarted in a loop; leaving and reopening the view, or a
+  state change, resumes it again. Design call: opening the view is the user's request to talk to Capcom, so a
   resume here is expected; merely viewing an older Capcom session still never resumes it (4.9).
 - **The view.** The session view of the Capcom session, in a Capcom style. On iPhone it is
   chat first with the Chat and Terminal switch, as for any session. On iPad and Mac the chat
@@ -880,8 +891,8 @@ and the entry's states, on `CapcomCenter`), `Views/CapcomViews.swift` (the row a
   board row too. Files, voice, the console and the chips' remove buttons stay as built (4.9).
 - **New conversation.** A toolbar button ("New conversation", the compose symbol) on every
   Capcom session (8.8). The draft now lives in the session view, so the button carries it.
-  From the standing conversation, the view shows the new one in its place. From an older
-  Capcom session, the board opens the new one as before.
+  From the Capcom view, the view shows the new one in its place. From a Capcom session's board
+  row, the board opens the new one as before.
 - **Navigation.** iPhone: the row pushes the Capcom view on the board's stack. iPad and Mac:
   the board list stays on the left and the Capcom view takes the session's place on the right;
   its close button returns to the board. The Capcom view and an open session never show at
