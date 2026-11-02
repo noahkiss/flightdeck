@@ -41,6 +41,12 @@ func startWorkspace(t *testing.T, hst *host, socks ...string) {
 		specs = append(specs, hosts.Spec{Label: []string{"one", "two", "three"}[i],
 			Endpoints: []hosts.Endpoint{{Kind: hosts.EndpointSocket, Value: sock}}})
 	}
+	startWorkspaceSpecs(t, hst, specs...)
+}
+
+// startWorkspaceSpecs runs gff's workspace over the given hosts.
+func startWorkspaceSpecs(t *testing.T, hst *host, specs ...hosts.Spec) {
+	t.Helper()
 	set, err := hosts.Open(hosts.Config{
 		Source: hosts.Static(specs),
 		Client: api.ClientInfo{Name: "gff", Version: "test", Kind: api.ClientKindTerminal},

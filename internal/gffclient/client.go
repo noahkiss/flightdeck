@@ -902,6 +902,7 @@ func (c *client) update(u hosts.Update) error {
 		hs.me = u.Welcome.ClientID
 		if c.ws {
 			c.ui.listUsage(hs)
+			c.ui.listCatalog(hs)
 		}
 		if u.NewEpoch {
 			// A new hab process keeps no desired sizes and no owners: ask again.

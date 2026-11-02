@@ -71,6 +71,15 @@ type workspaceUI struct {
 	sysAt   time.Time   // when the last reading started
 	sysBusy bool        // a reading is out
 	pasting bool        // inside a bracketed paste that came to the sidebar, board or a prompt
+
+	// Rounds (rounds.go).
+	showRuns bool             // run sessions show; off hides those that do not need the owner
+	rounds   []board.RoundRow // every round on every host, ordered
+	onRound  bool             // the board's selection is on a round row
+	selRound board.RoundKey
+	cats     map[string]catCopy // device id -> the newest catalog copy
+	catBusy  map[string]int     // host -> 1 a catalog read is out, 2 and another is due
+	pendRun  pendingRun
 }
 
 func (u *workspaceUI) init(c *client) {
@@ -78,6 +87,8 @@ func (u *workspaceUI) init(c *client) {
 	u.group = board.GroupProject
 	u.seen = map[string]string{}
 	u.focusAt = map[string]string{}
+	u.showRuns = true
+	u.cats, u.catBusy = map[string]catCopy{}, map[string]int{}
 	u.order.Now = func() time.Time { return c.cfg.Now() }
 	if c.ws && len(c.cfg.Panes) == 0 {
 		u.mode = modeSidebar // nothing on screen yet: start where sessions are picked
@@ -103,9 +114,13 @@ func (u *workspaceUI) refresh() {
 		return
 	}
 	u.dirty = false
-	u.rows = board.Rows(u.c.cfg.Hosts.Hosts(), u.seenFn)
+	hs := u.c.cfg.Hosts.Hosts()
+	u.rows = board.Rows(hs, u.seenFn)
 	u.order.Sort(u.rows)
+	u.rounds = board.RoundRows(hs, u.catalog)
+	board.SortRounds(u.rounds)
 	u.markSeen()
+	u.openPending()
 }
 
 func (u *workspaceUI) seenFn(host, pane string, a *api.AgentState) bool {
@@ -152,7 +167,7 @@ func (u *workspaceUI) focusChanged() { u.dirty = true }
 func (u *workspaceUI) visible() []board.Group {
 	var rows []board.Row
 	for _, r := range u.rows {
-		if board.Match(r, u.filter) {
+		if board.Match(r, u.filter) && board.ShowRuns(r, u.showRuns) {
 			rows = append(rows, r)
 		}
 	}
@@ -186,6 +201,10 @@ func (u *workspaceUI) selected() (board.Row, int, bool) {
 }
 
 func (u *workspaceUI) move(d int) {
+	if u.mode == modeBoard {
+		u.moveBoard(d)
+		return
+	}
 	rows := u.flat()
 	_, i, ok := u.selected()
 	if !ok {
@@ -211,6 +230,8 @@ func (u *workspaceUI) event(hs *hostState, e api.Event) {
 				}
 			}
 		}
+	case api.EventCatalogUpdated:
+		u.listCatalog(hs)
 	case api.EventUsageUpdated:
 		var a api.UsageAccount
 		if json.Unmarshal(e.Data, &a) == nil && a.Key != "" {
@@ -282,6 +303,8 @@ func (u *workspaceUI) command(act string) bool {
 	switch act {
 	case actBack, actSession, actPaneMode, actTabMode, actLock, actUnlock:
 		// Mode keys: the key reader moved the mode, and the bar shows it.
+	case actRunSessions:
+		u.toggleRuns()
 	case actWarnings:
 		if w := u.warnings(); len(w) > 0 {
 			u.msg = strings.Join(w, " · ")
@@ -372,6 +395,7 @@ func (u *workspaceUI) switchTab(i int) {
 // current tab, or to a new tab (gff-client.md 4.1).
 func (u *workspaceUI) open(r board.Row, newTab bool) {
 	c := u.c
+	u.pendRun = pendingRun{} // the owner opened a session: a Run now's run no longer jumps into view
 	switch {
 	case r.Pane == "" || r.State == api.SessionStateExited:
 		u.msg = r.Name + " has exited; resume is not built yet"
@@ -527,7 +551,7 @@ func (u *workspaceUI) key(k key) {
 	if u.mode == modeBoard {
 		m = ModeBoard
 	}
-	switch u.c.cfg.Keymap.lookup(m, name) {
+	switch act := u.c.cfg.Keymap.lookup(m, name); act {
 	case actUp:
 		u.move(-1)
 	case actDown:
@@ -535,14 +559,19 @@ func (u *workspaceUI) key(k key) {
 	case actBack:
 		u.mode = modePanes
 		u.c.layoutChanged()
-	case actOpen:
-		if r, _, ok := u.selected(); ok {
-			u.open(r, false)
+	case actOpen, actOpenTab:
+		newTab := act == actOpenTab
+		if rr, ok := u.selectedRound(); ok {
+			u.openRound(rr, newTab)
+		} else if r, _, ok := u.selected(); ok {
+			u.open(r, newTab)
 		}
-	case actOpenTab:
-		if r, _, ok := u.selected(); ok {
-			u.open(r, true)
-		}
+	case actRunNow:
+		u.runNow()
+	case actPause:
+		u.pauseRound()
+	case actRunSessions:
+		u.toggleRuns()
 	case actNew:
 		u.newSession()
 	case actRename:
@@ -864,6 +893,9 @@ func (u *workspaceUI) drawSidebar(a rect) {
 	if u.filterOn || u.filter != "" {
 		line(" /"+u.filter, vt.Style{})
 	}
+	if !u.showRuns {
+		line(" "+roundBadge+" run sessions hidden", dimStyle)
+	}
 	hs := c.cfg.Hosts.Hosts()
 	var problems []string
 	for _, h := range hs {
@@ -894,6 +926,9 @@ func (u *workspaceUI) drawSidebar(a rect) {
 			}
 			mark := [...]string{" ", "·", "▸"}[u.inView(r)]
 			name := middle(r.Name, a.w-4-min(len(r.Host), 8))
+			if r.RunSession() {
+				name = roundBadge + middle(r.Name, a.w-5-min(len(r.Host), 8))
+			}
 			text := mark + stateMark(r) + " " + name
 			host := r.Host
 			if len([]rune(host)) > 8 {
@@ -926,7 +961,12 @@ func (u *workspaceUI) drawBoard(a rect) {
 			y++
 		}
 	}
-	line(" status board · Enter opens · Esc returns", boldStyle)
+	head := " status board · Enter opens · Esc returns"
+	if !u.showRuns {
+		head += " · " + roundBadge + " run sessions hidden"
+	}
+	line(head, boldStyle)
+	u.fixBoardSel()
 	sel, _, _ := u.selected()
 	section := ""
 	now := c.cfg.Now()
@@ -948,13 +988,20 @@ func (u *workspaceUI) drawBoard(a rect) {
 			if r.Offline() {
 				when = "offline " + ago(now, r.HostSince)
 			}
-			text := fmt.Sprintf("%s %-20s %-14s %-10s %-9s %-18s %-10s %s", stateMark(r), middle(r.Name, 20),
-				middle(proj, 14), middle(r.Host, 10), middle(harness, 9), middle(r.StateWord(), 18), when, r.Context())
+			name, ctx := middle(r.Name, 20), r.Context()
+			if r.RunSession() {
+				name = roundBadge + middle(r.Name, 19)
+				if ctx == "" {
+					ctx = "round " + r.RoundName
+				}
+			}
+			text := fmt.Sprintf("%s %-20s %-14s %-10s %-9s %-18s %-10s %s", stateMark(r), name,
+				middle(proj, 14), middle(r.Host, 10), middle(harness, 9), middle(r.StateWord(), 18), when, ctx)
 			st := rankStyles[r.Rank]
 			if r.Offline() {
 				st = dimStyle
 			}
-			if r.Key == sel.Key {
+			if r.Key == sel.Key && !u.onRound {
 				st = selStyle
 			}
 			line(text, st)
@@ -962,6 +1009,19 @@ func (u *workspaceUI) drawBoard(a rect) {
 	}
 	if len(u.rows) == 0 {
 		line(" no sessions on any online host", dimStyle)
+	}
+	if rounds := u.visibleRounds(); len(rounds) > 0 {
+		line(" Rounds", boldStyle)
+		for _, r := range rounds {
+			st := vt.Style{}
+			if r.Stale || r.Paused || r.Completed {
+				st = dimStyle
+			}
+			if u.onRound && r.RoundKey == u.selRound {
+				st = selStyle
+			}
+			line(roundText(now, r), st)
+		}
 	}
 }
 

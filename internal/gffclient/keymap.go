@@ -78,6 +78,11 @@ const (
 	actClose     = "close-session"
 	actFilter    = "filter"
 	actGroup     = "group"
+	// Rounds (rounds.md 10.3): hide or show run sessions; on the board, run the selected
+	// round now, and pause or unpause it.
+	actRunSessions = "run-sessions"
+	actRunNow      = "run-now"
+	actPause       = "pause"
 	// Focus moves by direction, as zellij's Alt keys. Left and right fall to the previous or
 	// next tab at the edge (zellij's MoveFocusOrTab); up and down stop there.
 	actFocusLeft  = "focus-left"
@@ -100,6 +105,7 @@ var actionLabels = map[string]string{
 	actOpenTab: "open in new tab", actNew: "new", actRename: "rename", actClose: "close", actFilter: "filter",
 	actGroup: "group", actFocusLeft: "move focus", actFocusRight: "move focus", actFocusUp: "move focus",
 	actFocusDown: "move focus", actMoveTabLeft: "move tab", actMoveTabRight: "move tab",
+	actRunSessions: "run sessions", actRunNow: "run now", actPause: "pause",
 }
 
 func init() {
@@ -114,6 +120,10 @@ func modeAllows(m Mode, act string) bool {
 	switch act {
 	case actUp, actDown, actOpen, actOpenTab, actNew, actRename, actClose, actFilter, actGroup:
 		return m == ModeSidebar || m == ModeBoard && (act == actUp || act == actDown || act == actOpen || act == actOpenTab)
+	case actRunNow, actPause:
+		return m == ModeBoard
+	case actRunSessions:
+		return m != ModeLocked
 	case actUnlock:
 		return m == ModeLocked
 	case actBack:
@@ -292,7 +302,7 @@ func DefaultKeymap() *Keymap {
 	}
 	add(ModeLocked, "ctrl-g", actUnlock)
 	add(ModeSession, "w", actSidebar, "g", actBoard, "b", actBars, "!", actWarnings,
-		"r", actRedraw, "n", actNudge, "f", actFit, "d", actDetach, "esc", actBack)
+		"r", actRedraw, "n", actNudge, "f", actFit, "d", actDetach, "R", actRunSessions, "esc", actBack)
 	add(ModePane, "p", actFocusNext, "tab", actFocusNext, "f", actZoom, "s", actSplit, "x", actCloseView,
 		"esc", actBack, "enter", actBack)
 	add(ModeTab, "n", actNewTab, "h", actPrevTab, "left", actPrevTab, "k", actPrevTab, "up", actPrevTab,
@@ -314,9 +324,10 @@ func DefaultKeymap() *Keymap {
 	km.bindShared("alt-i", actMoveTabLeft)
 	km.bindShared("alt-o", actMoveTabRight)
 	add(ModeSidebar, "up", actUp, "k", actUp, "down", actDown, "j", actDown, "enter", actOpen, "t", actOpenTab,
-		"n", actNew, "r", actRename, "x", actClose, "/", actFilter, "p", actGroup, "esc", actBack, "q", actBack)
-	add(ModeBoard, "up", actUp, "k", actUp, "down", actDown, "j", actDown, "enter", actOpen, "t", actOpenTab,
+		"n", actNew, "r", actRename, "x", actClose, "/", actFilter, "p", actGroup, "R", actRunSessions,
 		"esc", actBack, "q", actBack)
+	add(ModeBoard, "up", actUp, "k", actUp, "down", actDown, "j", actDown, "enter", actOpen, "t", actOpenTab,
+		"r", actRunNow, "p", actPause, "R", actRunSessions, "esc", actBack, "q", actBack)
 	return km
 }
 
