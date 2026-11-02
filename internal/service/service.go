@@ -35,6 +35,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/noahkiss/flightdeck/internal/holderreg"
 )
@@ -57,6 +58,8 @@ const DefaultPrefix = "flightdeck"
 const (
 	HabBinary    = "gff-hab"
 	HolderBinary = "gff-hab-holder"
+	// ClientBinary is the terminal client. On macOS install copies it into <state>/bin.
+	ClientBinary = "gff"
 )
 
 // Runner runs a command and returns its combined output.
@@ -108,6 +111,10 @@ type Config struct {
 	// HabBundleID and HolderBundleID are the bundle ids of the build's helper bundles. Each
 	// launchd plist names its own in AssociatedBundleIdentifiers (macos-identity.md 6.1).
 	HabBundleID, HolderBundleID string
+	// DefaultSocket means Socket is gff-hab's default path, not one the user passed (-socket or
+	// $GFF_HAB_SOCKET). Install then tightens the socket's folder to 0700 when other users can
+	// open it; a folder the user named is tightened only when install made it.
+	DefaultSocket bool
 }
 
 var prefixRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -441,6 +448,9 @@ func globEscape(s string) string {
 type Options struct {
 	// HabSource and HolderSource are the binaries Install copies.
 	HabSource, HolderSource string
+	// ClientSource is the gff binary Install copies into <state>/bin on launchd. Empty means
+	// none: install says so and goes on. Systemd ignores it.
+	ClientSource string
 	// Run runs commands. Nil means Exec.
 	Run Runner
 	// Out receives what the user should read: the linger hint, what was done.
@@ -502,6 +512,9 @@ func Install(ctx context.Context, c Config, o Options) error {
 	if err != nil {
 		return err
 	}
+	if err := checkSocketDir(c, m); err != nil {
+		return err
+	}
 	if c.Init == Launchd {
 		if err := checkGUI(ctx, c, o.Run); err != nil {
 			return err
@@ -514,6 +527,9 @@ func Install(ctx context.Context, c Config, o Options) error {
 	}
 	m.addDirs(created...)
 	if err := m.save(c); err != nil {
+		return err
+	}
+	if err := privateSocketDir(c, m, o.Out); err != nil {
 		return err
 	}
 	if c.Init == Launchd {
@@ -531,6 +547,9 @@ func Install(ctx context.Context, c Config, o Options) error {
 		// Not fatal: the job's first start registers the bundles too.
 		if err := registerBuild(ctx, o.Run, c.BuildDir()); err != nil {
 			fmt.Fprintf(o.Out, "warning: %v\n", err)
+		}
+		if err := installClient(c, o, m); err != nil {
+			return err
 		}
 	} else if err := installBinaries(c, o, m); err != nil {
 		return err
@@ -573,6 +592,98 @@ func Install(ctx context.Context, c Config, o Options) error {
 		return err
 	}
 	return installSystemd(ctx, c, o)
+}
+
+// The control socket's folder. gff-hab refuses a socket folder other users can open
+// (control.Listen), so install makes it, or tightens it, first. A missing folder is made with
+// mode 0700 and recorded. A folder that is there and open to others is set to 0700 when it is
+// the default socket's folder or one an earlier install made. A folder the user named is left
+// alone, and install fails with the chmod that fixes it, before it writes anything, rather than
+// start a job that cannot listen.
+
+// checkSocketDir fails, changing nothing, when the socket folder is there and install may not
+// make it fit: not a directory, another user's, or open to others and named by the user.
+func checkSocketDir(c Config, m *manifest) error {
+	dir := filepath.Dir(c.Socket)
+	fi, err := os.Lstat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("service: socket folder %s is not a directory", dir)
+	}
+	if !ownedByMe(fi) {
+		return fmt.Errorf("service: socket folder %s is not owned by this user, and gff-hab cannot listen there; pick another -socket", dir)
+	}
+	if perm := fi.Mode().Perm(); perm&0o077 != 0 && !c.DefaultSocket && !slices.Contains(m.Dirs, dir) {
+		return fmt.Errorf("service: socket folder %s is open to other users (mode %v), and gff-hab refuses it; run chmod 700 %q, or pick another -socket", dir, perm, dir)
+	}
+	return nil
+}
+
+// privateSocketDir makes the socket folder with mode 0700, or sets one checkSocketDir passed to
+// 0700, and says so.
+func privateSocketDir(c Config, m *manifest, out io.Writer) error {
+	dir := filepath.Dir(c.Socket)
+	if err := m.mkdirAll(c, dir, 0o700); err != nil {
+		return err
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	perm := fi.Mode().Perm()
+	if perm&0o077 == 0 {
+		return nil
+	}
+	if err := os.Chmod(dir, perm&^0o077); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "set socket folder %s to mode %v (it was %v): gff-hab refuses a socket folder other users can open\n", dir, perm&^0o077, perm)
+	return nil
+}
+
+// ownedByMe reports whether fi belongs to the running user.
+func ownedByMe(fi os.FileInfo) bool {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && int(st.Uid) == os.Getuid()
+}
+
+// installClient copies gff into <state>/bin (launchd), and prints one line: where gff is, with
+// the PATH line to add when the jobs' PATH (the installing shell's) lacks that folder. gff runs
+// from the user's terminal and needs no bundle (macos-identity.md 3.2), so a plain copy will do;
+// the copy keeps its signature.
+func installClient(c Config, o Options, m *manifest) error {
+	if o.ClientSource == "" {
+		fmt.Fprintf(o.Out, "no %s to install (pass -gff-bin): installed the hab only\n", ClientBinary)
+		return nil
+	}
+	if err := m.mkdirAll(c, c.BinDir(), 0o700); err != nil {
+		return err
+	}
+	dst := filepath.Join(c.BinDir(), ClientBinary)
+	if !sameFile(o.ClientSource, dst) {
+		if err := m.willWrite(c, dst); err != nil {
+			return err
+		}
+	}
+	if err := copyBinary(o.ClientSource, dst); err != nil {
+		return err
+	}
+	if slices.Contains(filepath.SplitList(c.Path), c.BinDir()) {
+		fmt.Fprintf(o.Out, "installed %s in %s\n", ClientBinary, c.BinDir())
+	} else {
+		fmt.Fprintf(o.Out, "installed %s in %s; to run it by name, add this to your shell profile: export PATH=%s:\"$PATH\"\n", ClientBinary, c.BinDir(), shellQuote(c.BinDir()))
+	}
+	return nil
+}
+
+// shellQuote quotes s for a POSIX shell, in single quotes.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // installBinaries copies both binaries into <state>/bin (systemd).

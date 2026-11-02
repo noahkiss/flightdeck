@@ -86,6 +86,7 @@ func (f *serviceFlags) config(in service.Init) (service.Config, error) {
 	if c.Socket, err = socketPath(*f.socket); err != nil {
 		return c, err
 	}
+	c.DefaultSocket = *f.socket == "" && os.Getenv("GFF_HAB_SOCKET") == ""
 	c.UnitDir = *f.unitDir
 	if c.UnitDir == "" {
 		if c.UnitDir, err = defaultUnitDir(in, os.Getenv, os.UserHomeDir); err != nil {
@@ -157,6 +158,7 @@ func install(args []string, stdout io.Writer) error {
 	sf := addServiceFlags(fs, "init system: systemd or launchd (default: this system's)")
 	habBin := fs.String("hab-bin", "", "gff-hab to install; on macOS its GFF Hab.app or the executable in it (default: this one)")
 	holderBin := fs.String("holder-bin", "", "gff-hab-holder to install; on macOS its GFF Holder.app (default: beside gff-hab or its bundle, else on PATH)")
+	gffBin := fs.String("gff-bin", "", "macOS: the gff client to copy into <state>/bin (default: gff beside GFF Hab.app, when there is one)")
 	dry := fs.Bool("dry-run", false, "print the job files and change nothing")
 	fs.Parse(args)
 	c, err := installConfig(sf)
@@ -186,9 +188,39 @@ func install(args []string, stdout io.Writer) error {
 		}
 		return nil
 	}
+	var client string
+	if c.Init == service.Launchd {
+		if client, err = clientSource(*gffBin, hab); err != nil {
+			return err
+		}
+	}
 	return service.Install(context.Background(), c, service.Options{
-		HabSource: hab, HolderSource: holderSrc, Out: stdout,
+		HabSource: hab, HolderSource: holderSrc, ClientSource: client, Out: stdout,
 	})
+}
+
+// clientSource finds the gff to install on macOS: the flag, else gff beside the GFF Hab.app that
+// hab is or is in (the layout scripts/macos-bundle.sh writes), else none.
+func clientSource(flagValue, hab string) (string, error) {
+	if flagValue != "" {
+		fi, err := os.Stat(flagValue)
+		if err != nil {
+			return "", err
+		}
+		if !fi.Mode().IsRegular() {
+			return "", fmt.Errorf("-gff-bin %s is not a file", flagValue)
+		}
+		return filepath.Abs(flagValue)
+	}
+	root, err := service.BundleRoot(hab)
+	if err != nil {
+		return "", err
+	}
+	p := filepath.Join(filepath.Dir(root), service.ClientBinary)
+	if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
+		return p, nil
+	}
+	return "", nil
 }
 
 // grantsNotice resolves the opt-in grant list the jobs get: $GFF_MACOS_GRANTS when set, else the

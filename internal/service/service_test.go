@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -870,5 +871,192 @@ func writeEntry(t *testing.T, dir, instance string, pid int) {
 	e := holderreg.Entry{Instance: instance, Build: "b", Pid: pid, Socket: holderreg.SocketPath(dir, instance), Started: time.Now()}
 	if err := holderreg.Write(dir, e); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestInstallSocketFolder: gff-hab refuses a socket folder other users can open, so install makes
+// the folder 0700, or tightens the default one a user made first (say with mkdir, for hab.toml).
+// A folder the user named and install did not make is left alone: install fails before it
+// writes anything, and says how to fix it. A folder install made is removed at uninstall; one the
+// user made stays.
+func TestInstallSocketFolder(t *testing.T) {
+	mode := func(t *testing.T, p string) os.FileMode {
+		t.Helper()
+		fi, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fi.Mode().Perm()
+	}
+	t.Run("missing", func(t *testing.T) {
+		root := t.TempDir()
+		c := testConfig(Systemd, root)
+		hab, holder := writeBinaries(t, filepath.Join(root, "src"))
+		f := newFakeInit(t, c)
+		if err := Install(context.Background(), c, Options{HabSource: hab, HolderSource: holder, Run: f.run}); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Dir(c.Socket)
+		if m := mode(t, dir); m != 0o700 {
+			t.Errorf("made the socket folder with mode %v", m)
+		}
+		if err := Uninstall(context.Background(), c, Options{Run: f.run}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Lstat(dir); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("uninstall left the socket folder install made: %v", err)
+		}
+	})
+	for _, def := range []bool{true, false} {
+		t.Run(fmt.Sprintf("open default=%v", def), func(t *testing.T) {
+			root := t.TempDir()
+			c := testConfig(Systemd, root)
+			c.DefaultSocket = def
+			hab, holder := writeBinaries(t, filepath.Join(root, "src"))
+			dir := filepath.Dir(c.Socket)
+			if err := os.Mkdir(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			os.Chmod(dir, 0o755) // past the umask
+			os.WriteFile(filepath.Join(dir, "hab.toml"), []byte("# mine\n"), 0o644)
+			before := tree(t, root)
+			f := newFakeInit(t, c)
+			var out strings.Builder
+			err := Install(context.Background(), c, Options{HabSource: hab, HolderSource: holder, Run: f.run, Out: &out})
+			if !def {
+				if err == nil || !strings.Contains(err.Error(), "chmod 700") || !strings.Contains(err.Error(), dir) {
+					t.Fatalf("install over an open folder the user named: %v", err)
+				}
+				if m := mode(t, dir); m != 0o755 {
+					t.Errorf("changed the mode of a folder the user named to %v", m)
+				}
+				if !slices.Equal(tree(t, root), before) || len(f.cmds) != 0 {
+					t.Errorf("a refused install changed something; ran %v", f.cmds)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if m := mode(t, dir); m != 0o700 {
+				t.Errorf("socket folder mode %v after install, want 0700", m)
+			}
+			if !strings.Contains(out.String(), dir) || !strings.Contains(out.String(), "-rwxr-xr-x") {
+				t.Errorf("install did not say it changed the folder: %q", out.String())
+			}
+			// A second install finds it private and says nothing about it.
+			out.Reset()
+			if err := Install(context.Background(), c, Options{HabSource: hab, HolderSource: holder, Run: f.run, Out: &out}); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(out.String(), "socket folder") {
+				t.Errorf("second install: %q", out.String())
+			}
+			if err := Uninstall(context.Background(), c, Options{Run: f.run}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "hab.toml")); err != nil {
+				t.Errorf("uninstall removed the user's folder or file: %v", err)
+			}
+		})
+	}
+	t.Run("made by an earlier install", func(t *testing.T) {
+		root := t.TempDir()
+		c := testConfig(Systemd, root)
+		hab, holder := writeBinaries(t, filepath.Join(root, "src"))
+		f := newFakeInit(t, c)
+		if err := Install(context.Background(), c, Options{HabSource: hab, HolderSource: holder, Run: f.run}); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Dir(c.Socket)
+		os.Chmod(dir, 0o755)
+		if err := Install(context.Background(), c, Options{HabSource: hab, HolderSource: holder, Run: f.run}); err != nil {
+			t.Fatal(err)
+		}
+		if m := mode(t, dir); m != 0o700 {
+			t.Errorf("socket folder mode %v after reinstall, want 0700", m)
+		}
+	})
+	t.Run("not a folder", func(t *testing.T) {
+		root := t.TempDir()
+		c := testConfig(Systemd, root)
+		c.DefaultSocket = true
+		hab, holder := writeBinaries(t, filepath.Join(root, "src"))
+		os.WriteFile(filepath.Dir(c.Socket), []byte("x"), 0o600)
+		f := newFakeInit(t, c)
+		if err := Install(context.Background(), c, Options{HabSource: hab, HolderSource: holder, Run: f.run}); err == nil {
+			t.Fatal("install over a socket folder that is a file succeeded")
+		}
+	})
+}
+
+// TestInstallClient: on launchd install copies gff into <state>/bin, records it, and prints one
+// line with the PATH line to add when the jobs' PATH lacks that folder (quoted for a shell: the
+// macOS state folder has a space in it). Uninstall removes the copy and the folder. No gff means
+// one line and an install of the hab alone. Systemd copies no gff.
+func TestInstallClient(t *testing.T) {
+	root := t.TempDir()
+	c := testConfig(Launchd, root)
+	hab, holder := writeBundles(t, filepath.Join(root, "src"), "a")
+	client := filepath.Join(root, "src", "gff")
+	os.WriteFile(client, []byte("#!/bin/sh\necho gff\n"), 0o755)
+	before := tree(t, root)
+	f := newFakeInit(t, c)
+	var out strings.Builder
+	if err := Install(context.Background(), c, Options{HabSource: hab, HolderSource: holder, ClientSource: client, Run: f.run, Out: &out}); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(c.BinDir(), ClientBinary)
+	if b, err := os.ReadFile(dst); err != nil || string(b) != "#!/bin/sh\necho gff\n" {
+		t.Fatalf("installed gff: %q %v", b, err)
+	}
+	want := "export PATH='" + c.BinDir() + "':\"$PATH\""
+	if n := strings.Count(out.String(), "export PATH"); n != 1 || !strings.Contains(out.String(), want) {
+		t.Errorf("output %q: want one PATH line with %q", out.String(), want)
+	}
+	listed, err := Files(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(listed, dst) || !slices.Contains(listed, c.BinDir()) {
+		t.Errorf("Files does not list %s and its folder: %v", dst, listed)
+	}
+	// With the folder on PATH, no hint.
+	c.Path = c.BinDir() + ":/usr/bin:/bin"
+	out.Reset()
+	if err := Install(context.Background(), c, Options{HabSource: hab, HolderSource: holder, ClientSource: client, Run: f.run, Out: &out}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "export PATH") || !strings.Contains(out.String(), "installed gff in") {
+		t.Errorf("output with the folder on PATH: %q", out.String())
+	}
+	if err := Uninstall(context.Background(), c, Options{Run: f.run}); err != nil {
+		t.Fatal(err)
+	}
+	if after := tree(t, root); !slices.Equal(after, before) {
+		t.Errorf("before install:\n%s\nafter uninstall:\n%s", strings.Join(before, "\n"), strings.Join(after, "\n"))
+	}
+
+	// No gff: one line, and the hab installs.
+	out.Reset()
+	if err := Install(context.Background(), c, Options{HabSource: hab, HolderSource: holder, Run: f.run, Out: &out}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "no gff to install") {
+		t.Errorf("output with no gff: %q", out.String())
+	}
+	if _, err := os.Lstat(dst); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("gff with no source: %v", err)
+	}
+
+	// Systemd: no gff copy.
+	sroot := t.TempDir()
+	sc := testConfig(Systemd, sroot)
+	shab, sholder := writeBinaries(t, filepath.Join(sroot, "src"))
+	if err := Install(context.Background(), sc, Options{HabSource: shab, HolderSource: sholder, ClientSource: client, Run: newFakeInit(t, sc).run}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(sc.BinDir(), ClientBinary)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("systemd install copied gff: %v", err)
 	}
 }
