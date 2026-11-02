@@ -23,11 +23,11 @@ type Query struct {
 	Session string
 	// SinceMS keeps records whose last folded op is at or after this wall time, in ms.
 	SinceMS int64
-	General   bool // only records with no project (3.2)
-	Flagged   bool // only records with a flag: a conflict and the like (10.2 conflicts)
-	Ready     bool // open tasks and issues with no open blocker (10.2 ready)
-	Deleted   bool // include deleted records
-	Limit     int  // default 50
+	General bool // only records with no project (3.2)
+	Flagged bool // only records with a flag: a conflict and the like (10.2 conflicts)
+	Ready   bool // open tasks and issues with no open blocker (10.2 ready)
+	Deleted bool // include deleted records
+	Limit   int  // default 50
 }
 
 // Item is one line of a Search answer.
