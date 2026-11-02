@@ -23,37 +23,6 @@ import (
 // folders (capcom.md 7.1); the read scope allows it by default.
 const capcomDir = "capcom"
 
-// noticeKeep is how many raised notices notice.get can read back.
-const noticeKeep = 500
-
-// noticeLog keeps the last notices this hab raised, in memory, for notice.get.
-type noticeLog struct {
-	mu    sync.Mutex
-	order []string
-	byID  map[string]api.Notice
-}
-
-func (l *noticeLog) add(n api.Notice) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.byID == nil {
-		l.byID = map[string]api.Notice{}
-	}
-	l.byID[n.ID] = n
-	l.order = append(l.order, n.ID)
-	if len(l.order) > noticeKeep {
-		delete(l.byID, l.order[0])
-		l.order = l.order[1:]
-	}
-}
-
-func (l *noticeLog) get(id string) (api.Notice, bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	n, ok := l.byID[id]
-	return n, ok
-}
-
 // readPeers is the peer list as the read tools reach it.
 type readPeers struct{ m *peers.Manager }
 
