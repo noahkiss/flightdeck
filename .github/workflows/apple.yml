@@ -1,0 +1,54 @@
+# The Apple build (docs/specs/ci-release.md 3.4): the Swift package tests, then the Xcode
+# project generated from apple/project.yml, built for the iOS Simulator and for macOS, and the
+# Kit package's tests on an iOS Simulator. No signing, no secrets; the Mac app signs ad hoc (no
+# Local.xcconfig in CI). It runs only when the app, the Swift package, the schema it is generated
+# from, or the Go testdata the Swift tests read change. The live tests skip: they need a real hab.
+#
+# xcode-ci is pinned to the branch of noahkiss/workflows#16 until it merges; then back to @main.
+name: Apple
+
+on:
+  push:
+    branches: [main]
+    paths: &apple
+      - 'apple/**'
+      - 'swift/**'
+      - 'api/**'
+      - 'design/icons/**'
+      - 'internal/transcript/testdata/**'
+      - 'cmd/gff-hab/testdata/console/**'
+      - '.github/workflows/apple.yml'
+  pull_request:
+    paths: *apple
+  workflow_dispatch:
+
+concurrency:
+  group: apple-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
+permissions: {}
+
+jobs:
+  apple:
+    name: Apple
+    permissions:
+      contents: read
+    # TODO: repoint to @main once noahkiss/workflows#16 merges.
+    uses: noahkiss/workflows/.github/workflows/xcode-ci.yml@xcode-ci
+    with:
+      # Xcode 27.1 by path on the xcode-27 image; never the image default or a beta (spec 4).
+      runner: xcode-27
+      xcode-app: /Applications/Xcode_27.1.app
+      swift-test-dirs: |
+        swift/HabAPI
+        apple/FlightdeckKit
+      generate: apple/scripts/generate.sh
+      project: apple/Flightdeck.xcodeproj
+      builds: |
+        FlightdeckiOS | generic/platform=iOS Simulator
+        FlightdeckMac | generic/platform=macOS
+      tests: |
+        FlightdeckKit-Package | ios-simulator | apple/FlightdeckKit
+      spm-cache-key-file: apple/FlightdeckKit/Package.resolved
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+      timeout-minutes: 60
