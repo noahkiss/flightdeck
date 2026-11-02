@@ -280,21 +280,26 @@ endpoints = ["` + filepath.Join(d, "missing.sock") + `", "` + filepath.Join(d, "
 	}
 	// The first pin reconnects once (mesh.md 4.4). Until a's new link is up, b's inbound link
 	// alone keeps the row online, with no endpoint in use or the missing one being tried. So the
-	// endpoint is awaited with a's own link up, not read once.
+	// endpoint is awaited with a's own link up, not read once. The live row can show this while
+	// a's pump is still writing the pin, before it has published anything for that link, so the
+	// wait is on the last peer.updated event too, not on the row alone.
 	var pa api.Peer
-	wait(t, "b online again after the pin, over a's own link to b.sock", func() bool {
+	wait(t, "b online again after the pin, over a's own link to b.sock, and published", func() bool {
 		h, _ := a.m.set.Host("b")
 		pa, _ = peer(a.m.List(), "b")
-		return h.Online() && pa.State == api.PeerStateOnline && pa.Inbound && pa.Endpoint == filepath.Join(d, "b.sock")
+		ev, _ := a.last("b")
+		return h.Online() && pa.State == api.PeerStateOnline && pa.Inbound && pa.Endpoint == filepath.Join(d, "b.sock") &&
+			samePeer(ev, pa)
 	})
 	if pa.Host != "b" || pa.LastSeen == "" || pa.DeviceID != b.id {
 		t.Fatalf("a's row for b: %+v", pa)
 	}
 
 	b.stop()
-	wait(t, "a sees b offline", func() bool {
+	wait(t, "a sees b offline, and published it", func() bool {
 		p, _ := peer(a.m.List(), "b")
-		return p.State == api.PeerStateOffline && p.LastSeen != ""
+		ev, _ := a.last("b")
+		return p.State == api.PeerStateOffline && p.LastSeen != "" && ev.State == api.PeerStateOffline
 	})
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -306,6 +311,77 @@ endpoints = ["` + filepath.Join(d, "missing.sock") + `", "` + filepath.Join(d, "
 	}
 	if !saw[api.PeerStateOnline] || !saw[api.PeerStateOffline] {
 		t.Fatalf("peer.updated events for b: %+v", a.evs)
+	}
+}
+
+// last is the last peer.updated event the hab published for label.
+func (h *hab) last(label string) (api.Peer, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := len(h.evs) - 1; i >= 0; i-- {
+		if h.evs[i].Label == label {
+			return h.evs[i], true
+		}
+	}
+	return api.Peer{}, false
+}
+
+// TestPublishInOrder: peer.updated events go out in the order their rows were made, so the
+// last one is the peer's state. A link from the peer comes up and its online row is held in
+// Publish while the link ends; the offline row must not go out before the online one.
+func TestPublishInOrder(t *testing.T) {
+	d := shortDir(t)
+	const id = "SHA256:bbbbbbbbbbbb"
+	file := filepath.Join(d, "peers.toml")
+	write(t, file, `[[peers]]
+label = "b"
+device_id = "`+id+`"
+endpoints = ["`+filepath.Join(d, "missing.sock")+`"]
+`)
+	var mu sync.Mutex
+	var evs []api.Peer
+	hold, held := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	m, err := Open(Config{Path: file, Self: "SHA256:aaaaaaaaaaaa", Host: "a", Build: "test",
+		Publish: func(p api.Peer) {
+			if p.Inbound {
+				once.Do(func() { close(held); <-hold })
+			}
+			mu.Lock()
+			evs = append(evs, p)
+			mu.Unlock()
+		},
+		Conn: func(c *habconn.Config) { c.MinBackoff, c.MaxBackoff = 10*time.Millisecond, 100*time.Millisecond }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	count := func() int { mu.Lock(); defer mu.Unlock(); return len(evs) }
+	wait(t, "b offline published", func() bool { return count() > 0 })
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); m.Linked(1, api.PeerHello{DeviceID: id, Host: "b"}) }()
+	<-held // the online row is made and held in Publish
+	n := count()
+	go func() { defer wg.Done(); m.Unlinked(1) }()
+	// Give an offline event in the wrong order time to go out while the online one is held.
+	// With the order kept, Unlinked waits and no event comes.
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for count() == n && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(hold)
+	wg.Wait()
+
+	row, _ := peer(m.List(), "b")
+	mu.Lock()
+	defer mu.Unlock()
+	if row.State != api.PeerStateOffline || row.Inbound {
+		t.Fatalf("row %+v", row)
+	}
+	if last := evs[len(evs)-1]; last.State != api.PeerStateOffline || last.Inbound {
+		t.Fatalf("last peer.updated %+v is not the row %+v; events %+v", last, row, evs)
 	}
 }
 

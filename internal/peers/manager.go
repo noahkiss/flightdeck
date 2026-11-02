@@ -27,7 +27,8 @@ type Config struct {
 	Self  string // this hab's device id
 	Host  string // this hab's host id
 	Build string // this hab's build, sent as the client version
-	// Publish, when set, gets each peer whose state changed: the peer.updated event.
+	// Publish, when set, gets each peer whose state changed: the peer.updated event. Calls come
+	// one at a time, in the order the rows were made, so the last one is the peer's state.
 	Publish func(api.Peer)
 	// Event, when set, gets each event a peer sent over the link this hab dialed, with the
 	// peer's label: mesh.changed (mesh.md 4.2). Links subscribe to nothing, so no other events
@@ -47,6 +48,11 @@ type Manager struct {
 	set  *hosts.Set
 	done chan struct{}
 	wg   sync.WaitGroup
+
+	// pubMu is held by publish from reading a peer's row to handing it to Publish. The pump,
+	// the file watch and the control server's link calls all publish; without it two calls
+	// could hand on their rows in the other order, and the last peer.updated would be stale.
+	pubMu sync.Mutex
 
 	mu        sync.Mutex
 	problems  []string
@@ -407,8 +413,11 @@ func (m *Manager) Accept(label string) (api.PeerAccepted, error) {
 	return api.PeerAccepted{Label: label, Old: dc.Pinned, New: dc.Got}, nil
 }
 
-// publish sends peer.updated for one peer when its row changed.
+// publish sends peer.updated for one peer when its row changed. Calls run one at a time, so
+// the events go out in the order their rows were made.
 func (m *Manager) publish(label string) {
+	m.pubMu.Lock()
+	defer m.pubMu.Unlock()
 	h, ok := m.set.Host(label)
 	if !ok {
 		return

@@ -305,7 +305,8 @@ Package `internal/peers`, wired into `gff-hab serve`. Commands: `gff-hab peers` 
 - **Unlisted links.** A hab that links in and is not in the list shows in `peers.list` as
   `unlisted`, with its claimed device id and host id. The add action waits for `peers add`.
 - **`peer.updated`.** Ephemeral, id is the label, host scope only. Sent when a peer's row
-  changes; a moving `last_seen` alone sends nothing.
+  changes; a moving `last_seen` alone sends nothing. The events go out in the order the rows
+  changed, so the last one always matches `peers.list`.
 - **Accept goes through the running hab.** Only it holds the id the peer presented. The command
   prints both ids and asks no question: running it is the owner's deliberate act.
 - **Last seen** is kept in memory. A gff-hab restart forgets it until the peer is seen again.
