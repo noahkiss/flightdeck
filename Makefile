@@ -148,7 +148,7 @@ test-pure:
 RACE_PKGS := ./internal/holder/... ./internal/holderproto/... ./internal/holderclient/... \
 	./internal/holderreg/... ./internal/structure/... ./internal/link/... \
 	./internal/control/... ./internal/datastream/... ./internal/habconn/... ./internal/hosts/... ./internal/merge/... ./internal/peers/... ./internal/catalog/... ./internal/channels/... ./internal/board/... ./internal/gffclient/... ./internal/panesize/... ./internal/termq/... \
-	./internal/cmdmarks/... \
+	./internal/cmdmarks/... ./internal/readtools/... \
 	./internal/harness/... ./internal/hook/... ./internal/opencode/... ./internal/gitstatus/... ./internal/worktree/... ./internal/transcript/... ./internal/usage/... \
 	./internal/service/... ./internal/grants/... ./internal/push/... ./internal/settings/... \
 	./internal/speech/... ./internal/speechproto/... ./internal/oggopus/... ./internal/attach/... \

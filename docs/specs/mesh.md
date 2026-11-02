@@ -480,7 +480,8 @@ need for a handful of machines.
 
 Package `internal/catalog`, wired into `gff-hab serve`. Capability `catalog`. Methods
 `catalog.get`, `catalog.put` and `catalog.list`; event `catalog.updated`. Example config:
-`docs/examples/hab.toml`. Until the agent kit exists, `gff-hab api call catalog.list` reads the
+`docs/examples/hab.toml`. Agents read it through the read tools (`gff-hab read hosts`, `projects`
+and `agents`, or `gff-hab mcp`; `capcom.md` 5.5). `gff-hab api call catalog.list` reads the
 merged view.
 
 - **The hab's own config file.** `-config`, else `$GFF_HAB_CONFIG`, else `gff/hab.toml` in the
@@ -574,7 +575,9 @@ Not built in this stage:
 - The `mesh.changed` wake-up for the catalog (4.2; mail has it, 6.5). The dialer pulls every
   15 s instead of 60 s, so a catalog change on the dialed hab reaches it in at most 15 s; a
   change on the dialer goes out at once.
-- The agent kit (`gff hosts`, `gff projects`, MCP tools; task-6ho9972u, Part 4).
+- The agent kit's `gff hosts` and `gff projects` (task-6ho9972u, Part 4). The read tools serve the
+  same facts now: `gff-hab read hosts`, `projects`, `agents` and the MCP server `gff-hab mcp`
+  (`capcom.md` 5.5).
 - GPU models, battery state, Xcode simulators, attached devices, whether hooks are set up, and
   the embedded server's endpoints.
 - A dirty read on a hook event in that project: dirty state is up to 5 minutes old.

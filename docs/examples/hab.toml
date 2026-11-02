@@ -28,6 +28,17 @@ health = "http://localhost:2799/health"
 name = "update"
 command = "make update"
 
+# The [read] section: the read scope of the agent kit's read tools (docs/specs/capcom.md 5).
+# Both lists add to the defaults. The default roots are this host's project folders, the
+# harnesses' transcript folders and Capcom's folder. The default deny list covers SSH and cloud
+# credential folders, .env files and private key files. Deny wins, after links are resolved.
+[read]
+# More roots the read tools may read under: absolute, or under ~/.
+allow = ["~/notes"]
+# Paths or patterns refused even under a root. A word with no slash matches any part of a path;
+# one that starts with / or ~/ matches from the start.
+deny = ["~/code/payroll", "*.sqlite"]
+
 # The [speech] section: the hab speech engine (docs/specs/voice.md, Hab speech engine).
 [speech]
 # On or off. Leave it out for the default: on for a host sold as 4 GB or more.

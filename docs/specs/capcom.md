@@ -287,6 +287,88 @@ content past the conversation. Capcom reads every connected peer, within each pe
 with the default deny list in 5.1 (owner, 2026-11-01; 11, O2). Logbook is readable everywhere,
 since every hab holds a replica.
 
+### 5.5 Built choices (task-m31qyr6v)
+
+Package `internal/readtools`, wired into `gff-hab serve`. Capability `read-tools`. Methods
+`transcript.list`, `transcript.search`, `transcript.read`, `notice.get` and `file.read`;
+`logbook.find` and `logbook.get` answer `unavailable` until Logbook exists (`control.Logbook`
+has no implementation). Error kind `denied`. Doors: `gff-hab read <tool>`, the stdio MCP server
+`gff-hab mcp` (`gff-hab mcp serve` is the same command, for `logbook.md` 10.1), and the manual
+`gff-hab mcp --skill`.
+
+- **Ten tools, one table.** `hosts`, `projects`, `agents`, `sessions`, `transcript_search`,
+  `transcript_read`, `notice_read`, `file_read`, `logbook_search`, `logbook_read`. The MCP
+  server, the CLI and the manual come from one table in `cmd/gff-hab/tools.go`. A test checks
+  that the manual names exactly the listed tools and their arguments. The catalog tools read
+  `catalog.list` and `peers.list`; they need no new method.
+- **How a tool reaches the hab.** In a pane, through `GFF_HAB`: the pane's hook route takes the
+  read methods beside the channel methods (`hook.ReadMethods`). Elsewhere, `-socket`, else
+  `$GFF_HAB_SOCKET`, else the default control socket. So `gff-hab mcp` in a harness's settings
+  needs no flag.
+- **Sessions come from the native files.** The transcript index (`mesh.md` 9, task-syy38i23) is
+  not built yet. Until it is, `transcript.list` scans `projects/*/*.jsonl` under the Claude
+  config folder, and `sessions/YYYY/MM/DD/rollout-*.jsonl` and `archived_sessions/` under the
+  Codex home. It keeps each file's id, folder, start and title until the file's size or time
+  changes. `readtools.Transcripts` is the seam the index replaces. opencode writes no transcript
+  file we read (its conversation comes from its live server), so past opencode sessions are not
+  listed or searched yet.
+- **Search.** Every word must appear in one message, in any case; double quotes keep a phrase
+  together. A file whose bytes lack a word is not parsed. Transcripts go newest written first,
+  and messages newest first within each. A message matches on its text, a tool's name, target
+  and output, and plan steps. The snippet holds up to 240 characters around the first match.
+- **Across hosts.** A read with no host goes to every host at once: this hab, and each listed
+  peer over the link this hab dialed, with the peer's 5 s plus 1 s. A call that arrives over a
+  peer link (client kind `hab`) is answered by that hab alone, so a read travels one hop. Host
+  states: `ok`; `partial` (it ran out of its 5 s, or did not answer in time); `offline` (with the
+  peer row's reason); `update_needed` (no `read-tools`); `error`. Rows carry this hab's label for
+  each peer.
+- **The narrowest forward is none.** The peer link already carries any call from the hab that
+  dialed it, so no forward was added. A peer whose only link is the one it dialed in cannot be
+  called from here: it shows `offline`, "only its own link to this hab is up". herdr, Paseo and
+  Rex read no other host's transcripts, so this is at the bar.
+- **The scope keys.** `[read]` in `hab.toml`. `allow` (absolute or `~/` roots) and `deny`
+  (patterns) both add to the defaults; a deny entry narrows a default root. Default roots: the
+  folders of this hab's catalog and structure projects, Claude's `projects/`, Codex's `sessions/`
+  and `archived_sessions/`, and `<state>/capcom` for the session host stage (7.1). The default
+  deny list is `readtools.DefaultDeny`: `.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube`, `.docker`,
+  `.config/gcloud`, `.oci`, `.env`, `.env.*`, `.netrc`, `.git-credentials`, `.pgpass`,
+  `.credentials.json`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `id_rsa*`, `id_dsa*`, `id_ecdsa*` and
+  `id_ed25519*`. It cannot be turned off. A pattern with no slash matches any part of a path; one
+  with a slash matches consecutive parts; one that starts with `/` or `~/` matches from the start
+  of the path. Each part is a glob.
+- **The check.** The hab cleans the path, checks the deny list, resolves every link (a missing
+  tail is kept as written), checks the deny list again, then checks the resolved path against
+  each root, as written and resolved. A missing path outside the scope is denied, not
+  `not_found`, so a read never shows what exists there. The denial names the host and the list
+  that refused it (`read.allow` or `read.deny`), never the pattern.
+- **Config changes.** The hab reads the file again at the next read after its size or time
+  changes. A file that does not parse keeps the last good `[read]` section. At start, with no
+  good section, every read is refused until the file parses: the user's own deny entries are
+  unknown, so the hab fails closed.
+- **Transcripts and the scope.** A transcript is left out of lists and searches when its file is
+  outside the scope or its recorded folder matches the deny list. A folder that is only outside
+  `allow` does not leave it out: most sessions run in folders no project lists. `left_out`
+  counts transcripts, not hits; counting hits would mean reading denied data.
+- **Files.** `file.read` opens the file read-only and returns text runs of at most 256 KiB
+  (default 64 KiB). A run that ends inside a character drops it. A file with a NUL byte or
+  invalid UTF-8 returns `binary` and no bytes. A folder is refused.
+- **Notices.** The hab keeps the last 500 notices it raised, in memory, for `notice.get`. A
+  restart forgets them.
+- **Read tools never write.** The MCP server and the CLI refuse any argument a tool does not
+  declare ("a read tool; it takes no argument ... and never writes") before anything reaches the
+  hab, and refuse a tool they do not list. Each tool declares `readOnlyHint` and a closed input
+  schema. The hab side has no write path in these methods.
+- **The manual.** `gff-hab mcp --skill` prints a skill file: front matter, the rules, then each
+  tool with its arguments and shell line. The MCP initialize answer carries the same rules as its
+  instructions.
+
+Limits, at the bar of herdr, Paseo and Rex:
+
+- A search reads each candidate file whole. A host with many large transcripts may answer
+  `partial` at 5 s. A droppable index (D10) is the fix when that bites.
+- Words a harness writes as JSON escapes (some non-ASCII text) are missed by the byte check.
+- A notice raised before the last restart answers `not_found`.
+
 ---
 
 ## 6. Confirmations and approval
@@ -532,22 +614,29 @@ The Part 9 stages, with what this spec adds to each.
 
 | Stage | Builds | Acceptance checks |
 |---|---|---|
-| Tools (task-m31qyr6v) | Read tools in the agent kit (4), the read scope (5), the action and proposal tools that create confirmations and proposals | Tests on fake catalog, index and Logbook; a write through a read tool is refused; a read outside scope is denied without the pattern; a search with an offline and a slow peer returns partial results marked |
+| Tools (task-m31qyr6v) | Read tools in the agent kit (4) and the read scope (5). Built; see 5.5 | Tests on fake catalog, transcript and Logbook data; a write through a read tool is refused; a read outside scope is denied without the pattern; a search with an offline and a slow peer returns partial results marked |
 | Session host (task-aqw4iowl) | The Capcom folder, manual and settings (7.1), kind `capcom`, standing and new conversations, home host assignment (7.3) | A `gff-hab` restart keeps Capcom running; a plain-terminal resume works from the folder; the manual and settings are rewritten at start; `gff-hab capcom assign` moves the mark, the old conversation stays resumable, and a host offline during the change drops its mark on its next link |
-| Hand off and file (task-9n47i6l8) | 3.2 and 3.4, the hand-off card as a record | Hand-off to an idle fake agent delivers at once with no confirmation; to a working one queues; the card shows the exact text sent; a record lands as a proposal |
-| Suggest and start (task-ph00sdci) | 3.3, ranking, seed, start by confirmation id, `confirm.start_elsewhere` | A host without a needed capability is not suggested and the reason names it; with the setting on, no session starts without a confirm; with it off, the start runs at once and its card shows as a record; a repeated confirm id starts one session |
+| Hand off and file (task-9n47i6l8) | 3.2 and 3.4, the hand-off card as a record, the hand-off and proposal tools | Hand-off to an idle fake agent delivers at once with no confirmation; to a working one queues; the card shows the exact text sent; a record lands as a proposal |
+| Suggest and start (task-ph00sdci) | 3.3, ranking, seed, the confirmation mechanism (6.1) and the start and set-up tools, start by confirmation id, `confirm.start_elsewhere` | A host without a needed capability is not suggested and the reason names it; with the setting on, no session starts without a confirm; with it off, the start runs at once and its card shows as a record; a repeated confirm id starts one session |
 | Approval (task-3387vxca) | Review (6.2), confirmations' expiry and first-answer-wins (6.1), CLI fallback | Three proposals, one approved: only it applies; closing without review leaves all pending; an expired confirmation never runs; a second answer gets `conflict` |
 | Entry API (task-ilse43i7) | 8.3 calls and events, attached context blocks (8.1) | Open, send, attach and confirm against a stub Capcom; the schema compat test passes |
 | "Ask an agent" (task-3687ti3z) | 8.2 | The action payload carries the notification id and the hab resolves it; it lands in the standing conversation with the event attached; "New conversation" moves the event and draft to a fresh one; no reachable hab gives a clear message |
 
 Notes for those stages:
 
+- The tools stage built the read tools and the read scope only. The action tools, the proposal
+  tools and the confirmation mechanism moved to the stages after the session host: hand-off and
+  proposal tools to "Hand off and file", the confirmation mechanism with start and set-up to
+  "Suggest and start", and expiry and first-answer-wins to "Approval" (lead's call, 2026-11-01:
+  the tools stage was too big otherwise).
 - The confirmation mechanism (6.1) is shared by start and set-up, for Capcom and for any agent
   that starts work on another host (the mesh spec). Build it once, with
-  `confirm.start_elsewhere`, in the tools stage, and let later stages add card kinds. Hand-off
-  cards use the same card shape as a record, with no buttons.
-- The tools stage depends on the transcript index (Part 3) and Logbook (Part 12). Until Logbook
-  exists, the Logbook tools answer `unavailable`.
+  `confirm.start_elsewhere`, in the "Suggest and start" stage, and let later stages add card
+  kinds. Hand-off cards use the same card shape as a record, with no buttons.
+- The tools stage depends on the transcript index (Part 3, task-syy38i23) and Logbook (Part 12).
+  Until the index exists, the session list scans the native transcript files (5.5). Until
+  Logbook exists, `logbook.find`, `logbook.get` and the Logbook tools answer `unavailable`; Part
+  12 implements `control.Logbook` and owns the record shapes.
 - The set-up card belongs to the mesh's set-up stage; Capcom only calls it.
 
 ---

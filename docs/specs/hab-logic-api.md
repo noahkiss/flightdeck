@@ -638,13 +638,16 @@ its dialer (`mesh.md` 6.5). `mesh.changed` is the one event a connection gets wi
 server is on and the `devices.*` methods work. `push` means the hab has working push config;
 `host-stats` means `hab.stats` works (3.9). `settings` means the hab-side settings work:
 `settings.get`, `settings.set`, `settings.updated`, and `settings` in a `host` snapshot
-(`app.md` 20.5). A client checks for a capability before it uses the feature. Capabilities are
+(`app.md` 20.5). `read-tools` means `transcript.list`, `transcript.search`, `transcript.read`,
+`notice.get` and `file.read` work (`capcom.md` 4, 5.5). `logbook` means the hab has a Logbook
+replica and the `logbook.*` methods work (`logbook.md` 10.3); until then `logbook.find` and
+`logbook.get` answer `unavailable`. A client checks for a capability before it uses the feature. Capabilities are
 for features that a host may lack. They are not a second versioning scheme.
 
 Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt`,
 `transcripts` and `detect-explain` (`detect.explain` works). It always sends `mesh`, `idempotency-keys`,
 `catalog`, `channels` and `usage` (`usage.list` and `usage.updated` work; readings arrive only through panes with the
-holder link), and `settings`. It sends `push` only when its push config loads and validates
+holder link), `settings` and `read-tools`. It sends `push` only when its push config loads and validates
 (3.9, Push), and `speech` only when the speech helper is found and the host setting leaves the
 engine on (`voice.md`, Built choices).
 
@@ -723,6 +726,9 @@ With the `settings` capability: kind `locked`, a setting set in the hab's config
 names the first refused row on every `settings.set` error the settings service raises; a
 `settings.set` refused before any row is read (params that do not decode, no `settings`
 capability) carries none. Kinds are a server-sent word set, so adding one needs no revision.
+
+With the `read-tools` capability: kind `denied`, a read the host's read scope refused
+(`capcom.md` 5.2). The hint names the host and the list that refused it, never the pattern.
 
 ### 3.7 Reconnect
 
