@@ -458,9 +458,18 @@ API.
 - The scheduler in `gff-hab` ticks every 30 s and compares **wall-clock** time with each round's
   next slot.
 - **Wake detection.** At each tick it compares the wall-clock gap since the last tick with the
-  monotonic gap. The monotonic clock Go uses stops during sleep on macOS and Linux *(verify in the
-  core stage)*; a wall-clock gap more than 60 s longer means the host slept. This needs no cgo, so
-  it keeps the `check-pure` rule (`AGENTS.md`).
+  monotonic gap. A wall-clock gap more than 60 s longer means the host slept. This needs no cgo,
+  so it keeps the `check-pure` rule (`AGENTS.md`).
+- **Go's monotonic clock stops during sleep** on both systems. Checked in the Go 1.27 runtime
+  source. Linux: `runtime.nanotime1` reads `CLOCK_MONOTONIC` (`src/runtime/sys_linux_amd64.s`,
+  `sys_linux_arm64.s`), which does not count suspend; `CLOCK_BOOTTIME` would. macOS:
+  `nanotime1` (`src/runtime/sys_darwin.go`) calls `mach_absolute_time`
+  (`sys_darwin_amd64.s`, `sys_darwin_arm64.s`), which does not advance while the Mac sleeps;
+  `mach_continuous_time` would. `time.Now` takes its monotonic reading from `nanotime`.
+- **The first tick after start counts as a wake.** A restart is then treated like a short sleep
+  (8.4), with the settle.
+- **The clock is injected.** The scheduler reads the wall clock and the monotonic reading through
+  one interface, so tests move them apart on a fake clock.
 - A timer set for "one hour from now" would fire an hour of awake time later on a sleeping
   laptop. Wall-clock comparison avoids that.
 
@@ -473,7 +482,17 @@ API.
   slots".
 - `catch_up = skip` drops the missed slots instead: the next slot moves past now and no run
   starts. Use it for jobs that only make sense on time.
-- A `once` round missed while asleep runs at wake, or completes unrun with `skip`.
+- A `once` round missed while asleep runs at wake, or completes unrun with `skip`. A `once`
+  round completes when its run ends.
+- **On time or missed.** A slot is on time when it came due since the tick before, with no wake
+  between. Every slot found at a wake tick is a missed one. `skip` drops missed slots only.
+- **Coalescing.** A slot due while the round's run is `queued` or `waiting` joins that run: the
+  run takes the later slot and adds to `missed`. A slot due while the run is `running` or
+  `blocked` stays due, and runs once when that run ends. An on-time slot held this way runs even
+  with `skip`; the hab keeps that mark in memory only, so after a restart `skip` drops it.
+- **Counting bound.** `missed` counts up to 10,000 slots. A 1-minute round asleep for a year
+  has 525,600; the run still serves the latest slot. Reason: one tick never walks a year of
+  slots.
 
 ### 8.3 Settle after wake
 
@@ -482,6 +501,9 @@ API.
 - Runs due at wake start oldest slot first, within the host limit (7.2).
 - A run that fails in the first 2 minutes after a wake, with a harness that reports a network or
   sign-in error, is tried once more 2 minutes later. Other failures are not retried (10.1).
+  The retry serves the same slot, and the failure still counts toward the pause. A new slot due
+  before the retry replaces it. The plan lives in memory: a restart drops it.
+- The settle ends at the first tick on or after it, so a run due at wake starts 30 s later.
 
 ### 8.4 Restarts
 
@@ -500,7 +522,8 @@ lose runs for reasons the user never sees. A restart is treated like a short sle
 - **The clock jumps forward** (manual change, a long NTP fix): treated as a sleep. One catch-up
   run at most.
 - **The clock jumps back.** The next slot stays. A slot at or before the last served slot never
-  runs again, so no slot runs twice.
+  runs again, so no slot runs twice. A next slot at or before the last served one (an edit while
+  the clock is back) moves to the first slot after the last served one, with no run.
 - **The time zone database changes.** Next slots are recomputed at start.
 
 ---
@@ -546,6 +569,13 @@ coordinator.
   removed) completes, as in Paseo, with one notification. A `fresh` round whose project folder is
   missing skips that run; after 5 such skips it pauses.
 - **Limits reached.** A round that hits `max_runs` or `expires_at` completes quietly.
+- **What counts.** A success clears both counts. A failure or timeout adds a failure and clears
+  the skips. A take over clears the skips. A skip adds a skip. A run the scheduler ends itself
+  (the round paused, expired, completed or deleted before the run started) counts for nothing.
+  `max_runs` counts succeeded, failed, timed-out and taken-over runs; a skipped run never ran.
+- **Pause by the user.** A queued or waiting run ends `skipped`, "paused". Slots that pass while
+  a round is paused never run; unpause sets the next slot from now and clears both counts.
+- **`notify = never`** is applied by the scheduler: it asks for no notice but the self-pause.
 
 Decision: pause after 5 failures in a row. Reason: a broken unattended job costs tokens each slot;
 this is a cheap guard. Paseo has none, but the owner allows cheap guards.

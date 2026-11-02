@@ -1,6 +1,7 @@
 // Package rounds holds the round definition and its checks, the cron and zone rules that
-// compute a round's slots, and the rounds store with its run log (docs/specs/rounds.md 2, 3,
-// 4.1, 4.2, 7.6, 7.7). The scheduler, the API and run sessions build on it in later stages.
+// compute a round's slots, the rounds store with its run log (docs/specs/rounds.md 2, 3,
+// 4.1, 4.2, 7.6, 7.7), and the scheduler (7.2, 8, 10.1). The API and run sessions build on it
+// in later stages.
 package rounds
 
 import (
