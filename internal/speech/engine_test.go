@@ -788,4 +788,22 @@ func TestFindHelper(t *testing.T) {
 	if got := FindHelper(Settings{}, noenv, func() (string, error) { return "/nonexistent/gff-hab", nil }); got != "" {
 		t.Fatalf("none: %q", got)
 	}
+	// The macOS bundle: the helper beside gff-hab in GFF Hab.app/Contents/MacOS, found from the
+	// bundle path and from a link to gff-hab in another folder.
+	macos := filepath.Join(t.TempDir(), "GFF Hab.app", "Contents", "MacOS")
+	os.MkdirAll(macos, 0o755)
+	os.WriteFile(filepath.Join(macos, "gff-hab"), []byte("#!/bin/sh\n"), 0o755)
+	os.WriteFile(filepath.Join(macos, HelperName), []byte("#!/bin/sh\n"), 0o755)
+	inBundle := func() (string, error) { return filepath.Join(macos, "gff-hab"), nil }
+	if got := FindHelper(Settings{}, noenv, inBundle); got != filepath.Join(macos, HelperName) {
+		t.Fatalf("in the bundle: %q", got)
+	}
+	link := filepath.Join(t.TempDir(), "gff-hab")
+	if err := os.Symlink(filepath.Join(macos, "gff-hab"), link); err != nil {
+		t.Fatal(err)
+	}
+	got := FindHelper(Settings{}, noenv, func() (string, error) { return link, nil })
+	if real, _ := filepath.EvalSymlinks(filepath.Join(macos, HelperName)); got != real {
+		t.Fatalf("through a link: %q, want %q", got, real)
+	}
 }

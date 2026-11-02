@@ -87,6 +87,9 @@ func (s Settings) ThreadCount() int {
 
 // FindHelper returns the helper program: the setting, else $GFF_HAB_SPEECH_HELPER, else
 // gff-hab-speech beside the running gff-hab, else on PATH. It returns "" when there is none.
+// "Beside" covers the macOS bundle, where the helper sits next to gff-hab in
+// GFF Hab.app/Contents/MacOS, and a gff-hab run through a link: the folder of the link, then the
+// folder of the file it leads to.
 func FindHelper(s Settings, getenv func(string) string, executable func() (string, error)) string {
 	for _, p := range []string{s.Helper, getenv("GFF_HAB_SPEECH_HELPER")} {
 		if p != "" {
@@ -97,8 +100,14 @@ func FindHelper(s Settings, getenv func(string) string, executable func() (strin
 		}
 	}
 	if exe, err := executable(); err == nil {
-		if p := filepath.Join(filepath.Dir(exe), HelperName); isExec(p) {
-			return p
+		dirs := []string{filepath.Dir(exe)}
+		if real, err := filepath.EvalSymlinks(exe); err == nil {
+			dirs = append(dirs, filepath.Dir(real))
+		}
+		for _, d := range dirs {
+			if p := filepath.Join(d, HelperName); isExec(p) {
+				return p
+			}
 		}
 	}
 	if p, err := exec.LookPath(HelperName); err == nil {
