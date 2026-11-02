@@ -220,8 +220,8 @@ final class GoldenTests: XCTestCase {
     }
 
     /// Nested fields that hold any JSON value. Like an event's data, they keep extra fields.
-    // PermissionRequest.input, ChatTool.input, Setting.value and Setting.default
-    static let rawFields: Set<String> = ["input", "value", "default"]
+    // PermissionRequest.input, ChatTool.input, Setting.value and Setting.default, LogbookRecord.draft
+    static let rawFields: Set<String> = ["input", "value", "default", "draft"]
 
     /// Removes the x_unknown_* fields from every object. Below the key `keep`, or a key in
     /// `rawFields`, it leaves the value as it is.
