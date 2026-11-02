@@ -841,7 +841,7 @@ Limits, at the bar of herdr, Rex and Paseo:
 The hab half of "Ask an agent" (8.2). Code: `internal/push` (`banner.go`: the categories,
 `Ask`, the payload fields; `notifier.go`: the context and the kept notices),
 `cmd/gff-hab/notices.go` (the saved notice store), `cmd/gff-hab/push.go` (`keep`), and the host
-lookup of `internal/readtools`. The app half is task-3687ti3z's app work.
+lookup of `internal/readtools`. The app half is built: `app.md` 8.8, with the chips in 4.9.
 
 | Choice | Detail | Reason |
 |---|---|---|

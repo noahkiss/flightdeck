@@ -807,7 +807,7 @@ Capcom session's chat view is the Capcom view: a session with kind `capcom` gets
   `attachment.put` for the Capcom session, then `capcom.attach` with the attachment id. Design
   call: a file is context (`capcom.md` 8.1), so it waits with the other chips rather than riding
   the next send as an attachment. The model keeps the bytes of the files it attached, so "New
-  conversation" (8.6) can attach them again.
+  conversation" (8.8) can attach them again.
 - **Commands.** A console command card's context menu has "Attach to Capcom": `capcom.open`
   with `{kind: command, ref: "<pane>:<command id>"}` on the console's hab, then the board opens
   the Capcom session. A hab that is not the Capcom home answers `unavailable` naming the home;
@@ -1409,7 +1409,7 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
   `question` (Reply as text, Open). Approve, Deny and Reply need unlock (7.6). Open reads "Open on
   iPhone" on iOS, for the mirrored Watch banner (16.2). The Reply action is on `question` only:
   `approval.answer` takes text only with the `answer` choice, and the hab sends no `question`
-  category until it answers questions.
+  category until it answers questions. The four Ask sets and the `ask` feature are in 8.8.
 - **Answers.** An action maps to `approval.answer` with the push's pane and request id and `via`
   `banner`; a push with no request id opens the app instead. The answer goes on the live
   connection when the hab is online in this process, else on a one-shot connection
@@ -1486,6 +1486,44 @@ the iOS targets `NotificationService` and `FlightdeckWidgets`.
   local button drop, end and unregister; unlock refusal, stale taps, withdrawal, the dropped
   live connection, the hab book, plan text). `LiveTests.testLivePushRegister` runs
   against a real gff-hab with push config (`FLIGHTDECK_LIVE_SOCKET`, `FLIGHTDECK_LIVE_PUSH=1`).
+
+### 8.8 Built choices (task-3687ti3z, app side): Ask an agent
+
+The app half of "Ask an agent" (`capcom.md` 8.2, 8.5). Code: `Push/ApprovalAnswers.swift`
+(categories, the `ask` intent, the feature list), `SSH/HabActions.swift`, `Chat/CapcomCenter.swift`,
+`FlightdeckShared/PushMeta.swift` (`capcom_context`, `capcom_home`), `Push/HabBook.swift` (device
+ids). Tests: `CapcomAskTests`; the chips themselves are 4.9.
+
+- **Categories and feature, one build.** The app registers `approval-ask` (Deny, Approve, Ask),
+  `approval-deny-ask` (Deny, Open, Ask), `open-ask` (Open, Ask) and `ask` (Ask) beside the
+  older sets, and every `push.register` lists `features: ["ask"]`. Both come from the same
+  build, so no hab sends a category this app has not registered. Ask is last, titled "Ask an
+  agent", and opens the app (`foreground`); Approve and Deny keep their unlock rule. The Mac
+  registers the same sets.
+- **The action.** Ask reads `capcom_context` and `capcom_home` from the `flightdeck` object and
+  calls `capcom.open {context: [capcom_context]}` on the hab whose device id is `capcom_home`,
+  passing the item's kind, ref and host unchanged. The result's session opens on the board with
+  `pending` as chips (4.9); Send with no text sends the event alone. Ask never calls
+  `approval.answer`: the request stays open for the sheet.
+- **Finding the hab.** A live welcome's `device_id`, else the hab book: each entry now keeps the
+  hab's device id beside its host id, written as each hab comes online. Design call: a cold
+  launch from a banner has no welcomes yet, and the book already maps ids to connections.
+- **Waiting.** The action foregrounds the app, which connects every hab. When the Capcom host
+  is not online yet, the Ask waits up to 20 s for it, then shows "Could not reach <hab> to ask
+  an agent." Nothing retries after that. Design call: 20 s matches the one-shot answer's limit
+  (8.7).
+- **Failures.** One alert, "Could not open Capcom", with: "The hab that runs Capcom is not in this
+  app." (no hab with that device id), "This notification names no Capcom host." (no context in
+  the payload), "Could not reach <hab> to ask an agent." (not online in time, or the connection
+  dropped), or the hab's own text for a refusal (`unavailable` naming the new home after a
+  re-assignment, `not_found` for a notice the home cannot read).
+- **New conversation.** Beside the chips. It calls `capcom.open {new: true}` with the chips that
+  can move (a file chip cannot: its ref names the old session's attachment), detaches each moved
+  chip from the old conversation, opens the new one with the typed draft in its composer, and
+  uploads and attaches the moved files again there. A refused open changes nothing and shows the
+  hab's text under the composer. Design call: the old conversation's chips are detached after
+  the new open succeeds, so a refusal never loses context; a failed detach leaves that chip in
+  both.
 
 Sources: owner decision (each user brings their own APNs setup; fail gracefully without it); Moshi
 docs, hooks and notifications (which events raise a banner, never drop an approval silently,
