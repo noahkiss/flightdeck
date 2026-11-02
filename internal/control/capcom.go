@@ -23,10 +23,13 @@ type ContextSender interface {
 	SendsContext(session string) bool
 }
 
-// sendsContext reports whether the Agents service would deliver context alone to session.
-func (c *conn) sendsContext(session string) bool {
+// sendsContext reports whether an empty send to session may go on to the Agents service: it
+// would deliver context alone. A keyed one always goes on, so a retry after the context left
+// still gets the first answer from the idempotency table; with nothing waiting, the
+// ContextSender refuses it there.
+func (c *conn) sendsContext(session, key string) bool {
 	cs, ok := c.s.cfg.Agents.(ContextSender)
-	return ok && cs.SendsContext(session)
+	return ok && (key != "" || cs.SendsContext(session))
 }
 
 // checkContext refuses a context ref with no ref or an unknown kind.

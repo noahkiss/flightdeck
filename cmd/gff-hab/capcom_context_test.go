@@ -243,8 +243,12 @@ func TestCapcomContext(t *testing.T) {
 	if err := c.Call(ctx, "session.send", api.SessionSendParams{Session: worker.Session}, nil); errKind(err) != api.ErrorKindInvalid {
 		t.Fatalf("empty send to a non-Capcom session: %v", err)
 	}
+	if err := c.Call(ctx, "session.send", api.SessionSendParams{Session: worker.Session, IdempotencyKey: "empty-to-worker"}, nil); errKind(err) != api.ErrorKindInvalid {
+		t.Fatalf("keyed empty send to a non-Capcom session: %v", err)
+	}
+	contextOnly := api.SessionSendParams{Session: op.Session, IdempotencyKey: "context-only"}
 	waitUntil(t, "the context-only send", func() bool {
-		err := c.Call(ctx, "session.send", api.SessionSendParams{Session: op.Session}, nil)
+		err := c.Call(ctx, "session.send", contextOnly, nil)
 		if errKind(err) == api.ErrorKindInvalid {
 			t.Fatalf("context-only send: %v", err)
 		}
@@ -256,6 +260,14 @@ func TestCapcomContext(t *testing.T) {
 	})
 	if p := mustOpen(t, c, false).Pending; len(p) != 0 {
 		t.Fatalf("pending after the context-only send: %+v", p)
+	}
+	// Its retry with the same key gets the first answer, though nothing waits now.
+	before, _ := os.ReadFile(inLog)
+	if err := c.Call(ctx, "session.send", contextOnly, nil); err != nil {
+		t.Fatalf("retried context-only send: %v", err)
+	}
+	if after, _ := os.ReadFile(inLog); string(after) != string(before) {
+		t.Fatalf("the retry pasted again: %q", string(after)[len(before):])
 	}
 
 	// Channel mail to the Capcom session never takes the context: it waits for the user's
