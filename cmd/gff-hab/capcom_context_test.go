@@ -173,7 +173,8 @@ func TestCapcomContext(t *testing.T) {
 		t.Fatalf("pending %v, want %v", got, want)
 	}
 
-	if err := c.Call(ctx, "session.send", api.SessionSendParams{Session: op.Session, Text: "what broke?"}, nil); err != nil {
+	first := api.SessionSendParams{Session: op.Session, Text: "what broke?", IdempotencyKey: "first-message"}
+	if err := c.Call(ctx, "session.send", first, nil); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	var paste string
@@ -182,6 +183,13 @@ func TestCapcomContext(t *testing.T) {
 		paste = string(b)
 		return strings.HasSuffix(paste, "what broke?\x1b[201~\r")
 	})
+	// A retry with the same key gets the first answer and pastes nothing again.
+	if err := c.Call(ctx, "session.send", first, nil); err != nil {
+		t.Fatalf("retried send: %v", err)
+	}
+	if b, _ := os.ReadFile(inLog); string(b) != paste {
+		t.Fatalf("the retry pasted again:\n%q", string(b)[len(paste):])
+	}
 	if !strings.HasPrefix(paste, "\x1b[200~[Flightdeck: context the user attached") {
 		t.Fatalf("the paste does not start with the context line: %q", paste)
 	}
@@ -248,6 +256,24 @@ func TestCapcomContext(t *testing.T) {
 	})
 	if p := mustOpen(t, c, false).Pending; len(p) != 0 {
 		t.Fatalf("pending after the context-only send: %+v", p)
+	}
+
+	// Channel mail to the Capcom session never takes the context: it waits for the user's
+	// next message.
+	if _, err := attachCtx(t, c, api.CapcomAttachParams{Session: op.Session, Kind: "session", Ref: worker.Session}); err != nil {
+		t.Fatal(err)
+	}
+	run(t, "send", "-socket", e.sock, "-from", "worker", "capcom", "mail from the worker")
+	waitUntil(t, "the channel mail", func() bool {
+		b, _ := os.ReadFile(inLog)
+		return strings.Contains(string(b), "mail from the worker")
+	})
+	b, _ := os.ReadFile(inLog)
+	if mail := string(b)[strings.LastIndex(string(b), "\x1b[200~"):]; strings.Contains(mail, "[begin context") {
+		t.Fatalf("the mail carried the context:\n%s", mail)
+	}
+	if p := mustOpen(t, c, false).Pending; len(p) != 1 {
+		t.Fatalf("pending after channel mail: %+v", p)
 	}
 
 	// The CLI attaches too.
