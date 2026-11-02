@@ -175,6 +175,43 @@ public actor FakeHab {
     public private(set) var answers: [ApprovalAnswerParams] = []
     /// Every `notice.raise` received, oldest first.
     public private(set) var notices: [NoticeRaiseParams] = []
+
+    // MARK: Capcom (capcom.md 7.6, 8.4), with the capability `capcom`
+
+    /// Notices `capcom.open` and `capcom.attach` resolve, by id: the raised ones and `addNotice`.
+    private var noticeTitles: [String: String] = [:]
+    /// Peers a notification's `host` may name, by label or device id, to the label.
+    private var capcomPeers: [String: String] = [:]
+    /// Console commands a `command` ref resolves, by `<pane>:<id>`, to their line.
+    private var capcomCommands: [String: String] = [:]
+    /// The standing Capcom session.
+    public private(set) var capcomStanding: String?
+    private var capcomCount = 0
+    /// What waits for each Capcom session's next message.
+    private var capcomWaiting: [String: [CapcomContextItem]] = [:]
+    private var nextCapcomFailure: Failure?
+    /// Every `capcom.open` received, oldest first.
+    public private(set) var capcomOpens: [CapcomOpenParams] = []
+    /// Every `capcom.attach` received, oldest first.
+    public private(set) var capcomAttaches: [CapcomAttachParams] = []
+    /// Every `capcom.detach` received, oldest first.
+    public private(set) var capcomDetaches: [CapcomDetachParams] = []
+    /// The context each `session.send` to a Capcom session carried, in send order.
+    public private(set) var capcomDelivered: [[CapcomContextItem]] = []
+
+    /// Adds a notice the Capcom calls resolve.
+    public func addNotice(id: String, title: String) { noticeTitles[id] = title }
+    /// Lets a notification's `host` name this peer, by label or device id.
+    public func addCapcomPeer(label: String, deviceID: String) {
+        capcomPeers[label] = label
+        capcomPeers[deviceID] = label
+    }
+    /// Adds a console command a `command` ref resolves.
+    public func addCapcomCommand(pane: String, id: UInt64, line: String) { capcomCommands["\(pane):\(id)"] = line }
+    /// Makes the next Capcom call fail with this error.
+    public func failNextCapcom(kind: ErrorKind, hint: String) { nextCapcomFailure = Failure(kind: kind, hint: hint) }
+    /// What waits for a Capcom session's next message.
+    public func capcomPending(_ session: String) -> [CapcomContextItem] { capcomWaiting[session] ?? [] }
     private var nextAnswerFailure: Failure?
 
     /// Makes the next `approval.answer` fail with this error.
@@ -719,7 +756,17 @@ public actor FakeHab {
                 await fail(c, id: id, kind: .notFound, hint: "no attachment \(missing) for session \(p.session)")
                 break
             }
+            // The real hab's rule (capcom.md 8.4): an empty send only carries waiting context.
+            let carried = capcomWaiting[p.session] ?? []
+            if p.text.isEmpty, (p.attachments ?? []).isEmpty, carried.isEmpty {
+                await fail(c, id: id, kind: .invalid, hint: "empty message")
+                break
+            }
             sends.append(p)
+            if sessions[p.session]?.kind == .capcom {
+                capcomDelivered.append(carried)
+                capcomWaiting[p.session] = nil
+            }
             await reply(c, id: id, result: Empty(seq: c.seq))
             if let hook = onSend { Task { await hook(p) } }
         case HabMethods.pushRegister.name, HabMethods.pushRegisterActivity.name:
@@ -761,7 +808,10 @@ public actor FakeHab {
                 break
             }
             notices.append(p)
+            noticeTitles["n\(notices.count)"] = p.title
             await reply(c, id: id, result: NoticeRaised(id: "n\(notices.count)", pushed: 0, seq: c.seq))
+        case HabMethods.capcomOpen.name, HabMethods.capcomAttach.name, HabMethods.capcomDetach.name:
+            await capcomCall(method, params, c, id: id)
         case HabMethods.confirmAnswer.name where capabilities.contains(ConfirmBook.capability):
             guard let p = try? params.decode(ConfirmAnswerParams.self) else {
                 await fail(c, id: id, kind: .invalid, hint: "bad confirm.answer params")
@@ -845,6 +895,130 @@ public actor FakeHab {
             await fail(c, id: id, kind: .unavailable, hint: "the fake hab does not serve \(method)")
         }
         return true
+    }
+
+    /// The Capcom entry calls, by the real hab's rules (capcom.md 8.4): refs resolve at once,
+    /// at most 8 items wait, the same item twice is kept once, and `open` refuses a file.
+    private func capcomCall(_ method: String, _ params: JSONValue, _ c: Conn, id: Int) async {
+        guard capabilities.contains("capcom") else {
+            return await fail(c, id: id, kind: .unavailable, hint: "this hab runs no Capcom")
+        }
+        if let f = nextCapcomFailure {
+            nextCapcomFailure = nil
+            return await fail(c, id: id, kind: f.kind, hint: f.hint)
+        }
+        do {
+            switch method {
+            case HabMethods.capcomOpen.name:
+                let p = try decode(CapcomOpenParams.self, params, method)
+                capcomOpens.append(p)
+                let refs = p.context ?? []
+                guard refs.count <= 8 else { throw Failure(kind: .invalid, hint: "at most 8 context items") }
+                if refs.contains(where: { $0.kind == .file }) {
+                    throw Failure(kind: .invalid, hint: "attach files with capcom.attach after the open")
+                }
+                let items = try refs.map { try resolve($0, session: nil) }
+                var started = false
+                if p.new == true || capcomStanding.flatMap({ sessions[$0] }) == nil {
+                    capcomCount += 1
+                    let sid = "capcom-s\(capcomCount)"
+                    let pane = "%c\(capcomCount)"
+                    let name = capcomCount == 1 ? "capcom" : "capcom-\(capcomCount)"
+                    if !items.isEmpty { _ = try adding(items, to: sid) }
+                    capcomStanding = sid
+                    started = true
+                    await put(Session(dir: "/state/capcom/\(capcomCount)", id: sid, kind: .capcom, name: name, pane: pane, revision: 0, state: .running))
+                    await put(Fixture.pane(pane, session: sid))
+                    await put(Fixture.agent(pane: pane, harness: "claude", state: .idle))
+                }
+                guard let sid = capcomStanding, let s = sessions[sid] else { throw Failure(kind: .unavailable, hint: "no Capcom session") }
+                let list = try adding(items, to: sid)
+                capcomWaiting[sid] = list.isEmpty ? nil : list
+                await reply(c, id: id, result: CapcomOpened(dir: s.dir ?? "", pane: s.pane ?? "", pending: list.isEmpty ? nil : list,
+                                                           seq: c.seq, session: sid, started: started ? true : nil))
+            case HabMethods.capcomAttach.name:
+                let p = try decode(CapcomAttachParams.self, params, method)
+                capcomAttaches.append(p)
+                try capcomSession(p.session)
+                let item = try resolve(CapcomContextRef(host: p.host, kind: p.kind, ref: p.ref), session: p.session)
+                let list = try adding([item], to: p.session)
+                capcomWaiting[p.session] = list
+                await reply(c, id: id, result: CapcomAttached(pending: list, seq: c.seq, session: p.session))
+            default:
+                let p = try decode(CapcomDetachParams.self, params, method)
+                capcomDetaches.append(p)
+                try capcomSession(p.session)
+                let host = try hostLabel(p.host, kind: .notification)
+                var list = capcomWaiting[p.session] ?? []
+                guard let i = list.firstIndex(where: { $0.kind == p.kind && $0.ref == p.ref && $0.host == host }) else {
+                    throw Failure(kind: .notFound, hint: "no \(p.kind.rawValue) \(p.ref) waits for session \(p.session)")
+                }
+                list.remove(at: i)
+                capcomWaiting[p.session] = list.isEmpty ? nil : list
+                await reply(c, id: id, result: CapcomAttached(pending: list, seq: c.seq, session: p.session))
+            }
+        } catch let f as Failure {
+            await fail(c, id: id, kind: f.kind, hint: f.hint)
+        } catch {
+            await fail(c, id: id, kind: .invalid, hint: "bad \(method) params")
+        }
+    }
+
+    private func decode<T: Decodable>(_ t: T.Type, _ params: JSONValue, _ method: String) throws -> T {
+        guard let p = try? params.decode(T.self) else { throw Failure(kind: .invalid, hint: "bad \(method) params") }
+        return p
+    }
+
+    private func capcomSession(_ id: String) throws {
+        guard let s = sessions[id] else { throw Failure(kind: .notFound, hint: "no session \(id)") }
+        guard s.kind == .capcom else { throw Failure(kind: .invalid, hint: "session \(id) is not a Capcom session") }
+    }
+
+    /// The label of the host a ref names: this hab for none, `self`, its host id or device id.
+    private func hostLabel(_ host: String?, kind: CapcomContextKind) throws -> String {
+        guard let h = host, !h.isEmpty, h != "self", h != hostID, h != "SHA256:fake-" + hostID else { return hostID }
+        guard kind == .notification else { throw Failure(kind: .invalid, hint: "only a notification may name another host") }
+        guard let label = capcomPeers[h] else { throw Failure(kind: .notFound, hint: "no host \(h) in this hab's peer list") }
+        return label
+    }
+
+    private func resolve(_ r: CapcomContextRef, session: String?) throws -> CapcomContextItem {
+        let host = try hostLabel(r.host, kind: r.kind)
+        let title: String
+        switch r.kind {
+        case .notification:
+            // A peer's notice: the fake resolves any id there.
+            guard host == hostID else { return CapcomContextItem(host: host, kind: r.kind, ref: r.ref, title: "Notice \(r.ref)") }
+            guard let t = noticeTitles[r.ref] else { throw Failure(kind: .notFound, hint: "no notice \(r.ref)") }
+            title = t
+        case .session:
+            guard let s = sessions[r.ref] else { throw Failure(kind: .notFound, hint: "no session \(r.ref)") }
+            title = s.name
+        case .command:
+            guard r.ref.split(separator: ":").count == 2 else { throw Failure(kind: .invalid, hint: "a command ref is <pane>:<command id>") }
+            guard let line = capcomCommands[r.ref] else { throw Failure(kind: .notFound, hint: "no command \(r.ref)") }
+            title = line
+        case .file:
+            guard let f = storedFiles[r.ref], f.put.session == session else {
+                throw Failure(kind: .notFound, hint: "no attachment \(r.ref) for session \(session ?? "")")
+            }
+            title = f.put.name
+        case .logbook:
+            throw Failure(kind: .unavailable, hint: "this hab offers no Logbook")
+        default:
+            throw Failure(kind: .invalid, hint: "unknown kind \(r.kind.rawValue)")
+        }
+        return CapcomContextItem(host: host, kind: r.kind, ref: r.ref, title: String(title.prefix(120)))
+    }
+
+    /// The waiting list with `items` added, each once; past 8 it is refused and adds nothing.
+    private func adding(_ items: [CapcomContextItem], to session: String) throws -> [CapcomContextItem] {
+        var list = capcomWaiting[session] ?? []
+        for it in items where !list.contains(where: { $0.kind == it.kind && $0.ref == it.ref && $0.host == it.host }) {
+            list.append(it)
+        }
+        guard list.count <= 8 else { throw Failure(kind: .conflict, hint: "8 context items already wait") }
+        return list
     }
 
     /// The attachment methods, by the real hab's rules: runs in order, the hash checked at the end.
