@@ -130,7 +130,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # A dry run may build an unreleased revision, so it skips the schema check (7.6).
       - name: Check the released schema is recorded
+        if: ${{ steps.tag.outputs.dry_run != 'true' }}
         run: |
           set -euo pipefail
           make release-schema

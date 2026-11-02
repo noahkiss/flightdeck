@@ -521,7 +521,7 @@ in the libghostty rule. The release values:
    `^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$` (or the dry-run form, 7.6). The checkout is the tag's
    commit. The tagged commit is on `main`. No release exists for the tag (not on a dry run). The
    tagged code has passed `ci.yml` (the CI rule below). `make release-schema` leaves `api/released/` unchanged, so the schema of this revision
-   is recorded. Outputs `version` and `tap_inputs`. Each failure says which check failed and what
+   is recorded (not on a dry run). Outputs `version` and `tap_inputs`. Each failure says which check failed and what
    to do.
 2. **`linux`** (matrix: amd64, arm64; `needs: verify`). Restore the libghostty cache, build (7.3),
    pack the tarball and its `.sha256`, then smoke-test the unpacked tarball with
@@ -630,6 +630,11 @@ signing jobs need its secrets. Two ways:
   commit, dispatch with that ref and `dry_run: true`, then delete the tag. The push trigger
   excludes these tags (`tags: ['v*', '!v*-dry.*']`), so the push starts nothing. `verify` accepts
   a `-dry.` tag only with `dry_run: true`, and then skips the on-`main` and CI checks.
+
+Every dry run skips two `verify` checks: no release exists for the tag, and the released schema
+is recorded. A dry run may build a revision whose schema `api/released/` does not hold yet. A real
+release of that revision needs `make release-schema` run and `api/released/` committed on `main`
+first.
 
 Design call: dry runs use `-dry.` tags, not a branch the `release` environment admits. The
 environment stays limited to tags, so a dry run reaches the signing secrets only the way a release
