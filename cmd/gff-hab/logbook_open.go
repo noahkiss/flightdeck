@@ -11,6 +11,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/lbsvc"
 	"github.com/noahkiss/flightdeck/internal/logbook"
+	"github.com/noahkiss/flightdeck/internal/settings"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
@@ -44,13 +45,18 @@ func startLogbookVerbs(ctx context.Context, st *logbook.Store, synced func(), pu
 
 // logbookHook answers the Logbook methods on a pane's route: the pane's session, harness and
 // this host are the writer (logbook.md 2.5), and the pane's writes count against its limit (14).
-// A Capcom session's writes are stored as proposals (capcom.md D3, D14).
-func logbookHook(svc *lbsvc.Service, store *structure.Store, agents *harness.Store, host string) hook.ChannelHandler {
+// A Capcom session's writes are stored as proposals (capcom.md D3, D14), and so is every pane's
+// while approval reports true: logbook.approval is agents (9.1). It is read at each call, so a
+// change of the setting holds from the next write.
+func logbookHook(svc *lbsvc.Service, store *structure.Store, agents *harness.Store, host string, approval func() bool) hook.ChannelHandler {
 	return func(ctx context.Context, pane, method string, params json.RawMessage) (any, func(error), error) {
 		pn := lbsvc.Pane{ID: pane, Host: host}
 		if s, ok := store.SessionByPane(pane); ok {
 			pn.Session = s.ID
 			pn.Propose = s.Kind == api.SessionKindCapcom
+		}
+		if approval != nil && approval() {
+			pn.Propose = true
 		}
 		if agents != nil {
 			if a, ok := agents.Get(pane); ok {
@@ -59,6 +65,14 @@ func logbookHook(svc *lbsvc.Service, store *structure.Store, agents *harness.Sto
 		}
 		res, err := svc.Dispatch(ctx, lbsvc.PaneActor(pn), &pn, method, params)
 		return res, nil, err
+	}
+}
+
+// approvalAgents reports whether logbook.approval is agents, from the hab-side settings.
+func approvalAgents(value func(id string) json.RawMessage) func() bool {
+	return func() bool {
+		var v string
+		return json.Unmarshal(value(settings.LogbookApproval), &v) == nil && v == "agents"
 	}
 }
 

@@ -130,3 +130,57 @@ func TestFileFallback(t *testing.T) {
 		t.Fatalf("an unknown verb: %d", code)
 	}
 }
+
+// TestProposalVerbs: proposals lists the pending ones; approve applies the draft, with --title
+// editing its new record; reject decides one and applies nothing. Through the file, as a person.
+func TestProposalVerbs(t *testing.T) {
+	state := t.TempDir()
+	st, err := logbook.Open(context.Background(), filepath.Join(state, "logbook.db"), logbook.Options{Origin: "SHA256:hab"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	propose := func(title string) string {
+		t.Helper()
+		out, errs, code := runCLI(t, state, "", "new", "task", title, "--propose")
+		id, _, _ := strings.Cut(strings.TrimPrefix(out, "proposed: "), "\n")
+		if code != 0 || !strings.HasPrefix(id, "proposal-") {
+			t.Fatalf("propose: %d %q %q", code, out, errs)
+		}
+		return id
+	}
+	x, y := propose("renew the cert"), propose("unwanted")
+	out, _, _ := runCLI(t, state, "", "proposals")
+	if !strings.Contains(out, x) || !strings.Contains(out, y) {
+		t.Fatalf("proposals:\n%s", out)
+	}
+	out, errs, code := runCLI(t, state, "", "approve", x, "--title", "renew the TLS cert")
+	if code != 0 || !strings.HasPrefix(out, "approved: "+x+"\n") || !strings.Contains(out, "task-") {
+		t.Fatalf("approve: %d %q %q", code, out, errs)
+	}
+	if out, _, _ := runCLI(t, state, "", "ls", "--type", "task"); !strings.Contains(out, "renew the TLS cert") {
+		t.Fatalf("tasks after approve:\n%s", out)
+	}
+	if out, _, code := runCLI(t, state, "", "reject", y); code != 0 || out != "rejected: "+y+"\n" {
+		t.Fatalf("reject: %d %q", code, out)
+	}
+	out, _, _ = runCLI(t, state, "", "proposals")
+	if !strings.Contains(out, "no records") {
+		t.Fatalf("pending after both decided:\n%s", out)
+	}
+	if out, _, _ := runCLI(t, state, "", "proposals", "--status", "edited"); !strings.Contains(out, x) {
+		t.Fatalf("proposals --status edited:\n%s", out)
+	}
+	if out, _, _ := runCLI(t, state, "", "show", x); !strings.Contains(out, "decided by: cli") {
+		t.Fatalf("show:\n%s", out)
+	}
+	if _, errs, code := runCLI(t, state, "", "reject", x); code != 3 || !strings.Contains(errs, "decided") {
+		t.Fatalf("a second decision: %d %s", code, errs)
+	}
+	if _, _, code := runCLI(t, state, "", "reject", x, "--title", "t"); code != 64 {
+		t.Fatalf("reject --title: %d", code)
+	}
+	if out, _, _ := runCLI(t, state, "", "ls", "--type", "task"); strings.Contains(out, "unwanted") {
+		t.Fatalf("a rejected proposal landed:\n%s", out)
+	}
+}

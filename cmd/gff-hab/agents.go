@@ -624,8 +624,9 @@ func permissionWaitLock(flagValue time.Duration, flagGiven bool, getenv func(str
 }
 
 // applySetting hands a hab-side setting's value to the code that enforces it (app.md 20.5).
-// Only hab.permission_wait has a consumer today; confirm.start_elsewhere (Capcom),
-// approval.max_age (request expiry) and logbook.approval (Logbook) are stored and served only.
+// Only hab.permission_wait has a consumer here; logbook.approval is read at each pane write
+// (logbookHook), confirm.start_elsewhere by the confirmations, and approval.max_age is stored
+// and served only.
 func applySetting(gate *harness.Gate, id string, v json.RawMessage) {
 	if id == settings.PermissionWait {
 		var secs int

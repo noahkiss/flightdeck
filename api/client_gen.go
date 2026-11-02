@@ -175,8 +175,14 @@ const (
 )
 
 const (
+	LogbookDecisionApprove LogbookDecision = "approve"
+	LogbookDecisionReject  LogbookDecision = "reject"
+)
+
+const (
 	LogbookWriteStateApplied  LogbookWriteState = "applied"
 	LogbookWriteStateProposed LogbookWriteState = "proposed"
+	LogbookWriteStateRejected LogbookWriteState = "rejected"
 )
 
 const (
@@ -1112,6 +1118,13 @@ func (c Client) LogbookWrite(ctx context.Context, params LogbookWriteParams) (Lo
 func (c Client) LogbookResolve(ctx context.Context, params LogbookResolveParams) (LogbookWritten, error) {
 	var result LogbookWritten
 	err := c.Caller.Call(ctx, "logbook.resolve", params, &result)
+	return result, err
+}
+
+// LogbookDecide calls logbook.decide. Decide a pending proposal (logbook.md 9.2). approve applies its draft, or the edits given, as the proposing agent's write with approved_by set to this device, in one batch with the decision; each record it makes links to the proposal with from. reject records the decision only. The first decision stands; one made elsewhere later is flagged decided_twice (5.6). Refused on the pane route: only a person decides. Needs the logbook capability.
+func (c Client) LogbookDecide(ctx context.Context, params LogbookDecideParams) (LogbookWritten, error) {
+	var result LogbookWritten
+	err := c.Caller.Call(ctx, "logbook.decide", params, &result)
 	return result, err
 }
 

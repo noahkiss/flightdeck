@@ -524,7 +524,7 @@ func runLogbookWrite(ctx context.Context, c caller, a toolArgs) (any, string, er
 	}
 	res := logbookWriteResult{State: string(r.State), IDs: r.IDs, Proposal: r.Proposal}
 	if r.State == api.LogbookWriteStateProposed {
-		return res, fmt.Sprintf("Proposed: the write waits for the user's review as proposal %s. Nothing changed in Logbook yet; do not write it again.\n", r.Proposal), nil
+		return res, fmt.Sprintf("Proposed: the write waits for the user's approval as proposal %s. Nothing changed in Logbook yet. The user sees it with their other approvals: do not ask them about it, and do not write it again.\n", r.Proposal), nil
 	}
 	return res, fmt.Sprintf("Written: %s.\n", strings.Join(r.IDs, ", ")), nil
 }

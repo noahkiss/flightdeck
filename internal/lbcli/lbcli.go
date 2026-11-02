@@ -66,7 +66,12 @@ const usage = `usage: %[1]s [--json] [--socket path] [--state dir] <verb> [args]
   forget <op id> [--yes]          redact a value everywhere; asks first
   conflicts                       records with a flag
   resolve <id> <field> <value or op id>
-  proposals                       pending proposals
+  proposals [filters]             proposals: pending ones unless --status names another
+  approve <id> [--title t] [--body text|-] [--changes json|-]
+                                  apply a proposal's draft, or the draft edited: --title
+                                  and --body change its first new record, --changes
+                                  replaces its changes (a JSON list, as logbook.write's)
+  reject <id>                     decide a proposal: nothing it holds lands
   projects                        projects and their identities
   status                          replica size, version vector, waiting ops
 
@@ -81,8 +86,6 @@ outside a pane. A write from a pane waits up to 15 s for gff-hab, then fails.
 // later names the verbs of later stages (logbook.md 18).
 var later = map[string]string{
 	"brief":   "the brief comes with Logbook stage 6 (habits)",
-	"approve": "deciding a proposal comes with Logbook stage 7 (approval)",
-	"reject":  "deciding a proposal comes with Logbook stage 7 (approval)",
 	"project": "joining and renaming projects come with Logbook stage 5 (projects)",
 	"export":  "export comes with Logbook stage 9",
 	"import":  "import comes with Logbook stage 9",
@@ -255,7 +258,7 @@ func (h hookCaller) Call(ctx context.Context, method string, params, result any)
 }
 
 // writeMethods change Logbook. In a pane they never reach the file (10.5).
-var writeMethods = []string{"logbook.write", "logbook.resolve"}
+var writeMethods = []string{"logbook.write", "logbook.resolve", "logbook.decide"}
 
 func isWrite(method string) bool { return slices.Contains(writeMethods, method) }
 
@@ -467,7 +470,7 @@ func init() {
 		"new": newRecord, "edit": edit, "note": note, "mark": mark, "done": done, "claim": claim,
 		"link": link, "unlink": link, "supersede": supersede, "delete": del, "restore": del,
 		"forget": forget, "conflicts": conflicts, "resolve": resolve, "proposals": proposals,
-		"projects": projects, "status": status,
+		"approve": decide, "reject": decide, "projects": projects, "status": status,
 	}
 }
 
@@ -581,15 +584,114 @@ func conflicts(ctx context.Context, c *cli) (any, string, error) {
 }
 
 func proposals(ctx context.Context, c *cli) (any, string, error) {
-	if err := c.a.allow("proposals", "project", "session", "limit"); err != nil {
+	if err := c.a.allow("proposals", "status", "project", "host", "author", "session", "since", "flagged", "deleted", "limit"); err != nil {
 		return nil, "", usageError{err}
 	}
 	f, err := c.filter()
 	if err != nil {
 		return nil, "", err
 	}
-	f.Type, f.Status = logbook.TypeProposal, "pending"
+	f.Type = logbook.TypeProposal
+	if f.Status == "" {
+		f.Status = "pending"
+	}
 	return c.listWith(ctx, f)
+}
+
+// decide approves or rejects a proposal (9.2). Only a person decides: in a pane the hab refuses
+// it, and it never reaches the file there.
+func decide(ctx context.Context, c *cli) (any, string, error) {
+	verb := c.verb
+	names := []string{}
+	if verb == "approve" {
+		names = []string{"title", "body", "changes"}
+	}
+	if err := c.a.allow(verb, names...); err != nil {
+		return nil, "", usageError{err}
+	}
+	if err := c.need(verb, 1, "a proposal id"); err != nil {
+		return nil, "", err
+	}
+	if len(c.a.pos) > 1 {
+		return nil, "", usageError{fmt.Errorf("%s takes one proposal id", verb)}
+	}
+	var k [16]byte
+	_, _ = rand.Read(k[:])
+	p := api.LogbookDecideParams{ID: c.a.pos[0], Decision: api.LogbookDecisionReject, IdempotencyKey: "cli-" + hex.EncodeToString(k[:])}
+	if verb == "approve" {
+		p.Decision = api.LogbookDecisionApprove
+		edits, err := c.edits(ctx, p.ID)
+		if err != nil {
+			return nil, "", err
+		}
+		p.Edits = edits
+	}
+	var r api.LogbookWritten
+	if err := c.d.Call(ctx, "logbook.decide", p, &r); err != nil {
+		return nil, "", err
+	}
+	if r.State == api.LogbookWriteStateRejected {
+		return r, fmt.Sprintf("rejected: %s\n", p.ID), nil
+	}
+	var made []string
+	for _, id := range r.IDs {
+		if id != p.ID {
+			made = append(made, id)
+		}
+	}
+	text := fmt.Sprintf("approved: %s\n", p.ID)
+	if len(made) > 0 {
+		text += strings.Join(made, "\n") + "\n"
+	}
+	return r, text, nil
+}
+
+// edits reads approve's edit flags: --changes replaces the draft's changes; --title and --body
+// change the first create in the draft, which edits reads from the proposal. None: nil, the draft
+// as it is.
+func (c *cli) edits(ctx context.Context, id string) ([]api.LogbookChange, error) {
+	if c.a.has("changes") {
+		if c.a.has("title") || c.a.has("body") {
+			return nil, usageError{errors.New("--changes replaces the draft whole: give it or --title and --body, not both")}
+		}
+		v, err := c.text(c.a.str("changes"))
+		if err != nil {
+			return nil, err
+		}
+		var chs []api.LogbookChange
+		if err := json.Unmarshal([]byte(v), &chs); err != nil || len(chs) == 0 {
+			return nil, usageError{fmt.Errorf("--changes is a JSON list of changes, as logbook.write takes: %v", err)}
+		}
+		return chs, nil
+	}
+	if !c.a.has("title") && !c.a.has("body") {
+		return nil, nil
+	}
+	var r api.LogbookRecordResult
+	if err := c.d.Call(ctx, "logbook.get", api.LogbookGetParams{ID: id}, &r); err != nil {
+		return nil, err
+	}
+	var draft struct {
+		Changes []api.LogbookChange `json:"changes"`
+	}
+	if err := json.Unmarshal(r.Record.Draft, &draft); err != nil {
+		return nil, fmt.Errorf("%s's draft does not read as changes: %v", id, err)
+	}
+	i := slices.IndexFunc(draft.Changes, func(ch api.LogbookChange) bool { return ch.Op == api.LogbookChangeOpCreate })
+	if i < 0 {
+		return nil, usageError{fmt.Errorf("%s's draft makes no record: --title and --body edit a new record; use --changes", id)}
+	}
+	if c.a.has("title") {
+		draft.Changes[i].Title = c.a.str("title")
+	}
+	if c.a.has("body") {
+		b, err := c.text(c.a.str("body"))
+		if err != nil {
+			return nil, err
+		}
+		draft.Changes[i].Body = b
+	}
+	return draft.Changes, nil
 }
 
 func who(a *api.LogbookActor) string {
@@ -601,6 +703,9 @@ func who(a *api.LogbookActor) string {
 		if p != "" {
 			parts = append(parts, p)
 		}
+	}
+	if a.ApprovedBy != "" {
+		parts = append(parts, "approved by "+a.ApprovedBy)
 	}
 	return strings.Join(parts, " ")
 }
@@ -636,6 +741,8 @@ func show(ctx context.Context, c *cli) (any, string, error) {
 	}
 	field("component", x.Component)
 	field("target", x.Target)
+	field("decided by", x.DecidedBy)
+	field("expires", x.Expires)
 	field("created", x.Created+" by "+who(x.CreatedBy))
 	field("updated", x.Updated)
 	if x.Source != nil {
@@ -726,6 +833,9 @@ func (c *cli) write(ctx context.Context, p api.LogbookWriteParams) (api.LogbookW
 		return r, "", err
 	}
 	if r.State == api.LogbookWriteStateProposed {
+		if r.Note != "" {
+			return r, fmt.Sprintf("proposed: %s\n%s\n", r.Proposal, r.Note), nil
+		}
 		return r, fmt.Sprintf("proposed: %s waits for review\n", r.Proposal), nil
 	}
 	return r, strings.Join(r.IDs, "\n") + "\n", nil

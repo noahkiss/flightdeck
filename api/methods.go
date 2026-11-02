@@ -143,6 +143,7 @@ var Methods = []Method{
 	{"logbook.history", "Every op on one record, losers and ops this build does not fold included, in stamp order (logbook.md 10.2). Needs the logbook capability.", LogbookHistoryParams{}, LogbookHistory{}},
 	{"logbook.write", "Apply one batch of changes, all or nothing, or with propose store it as a pending proposal (logbook.md 10.3, 9.2). On the pane route the hab records the pane's harness, session and host, and refuses a pane's writes past 60 a minute with invalid. Needs the logbook capability.", LogbookWriteParams{}, LogbookWritten{}},
 	{"logbook.resolve", "Settle a conflict flag: set the field to the given value, or to the value of a named op, as a write that saw every side (logbook.md 5.2). Needs the logbook capability.", LogbookResolveParams{}, LogbookWritten{}},
+	{"logbook.decide", "Decide a pending proposal (logbook.md 9.2). approve applies its draft, or the edits given, as the proposing agent's write with approved_by set to this device, in one batch with the decision; each record it makes links to the proposal with from. reject records the decision only. The first decision stands; one made elsewhere later is flagged decided_twice (5.6). Refused on the pane route: only a person decides. Needs the logbook capability.", LogbookDecideParams{}, LogbookWritten{}},
 	{"logbook.projects", "The Logbook projects with their identities (logbook.md 3). Needs the logbook capability.", LogbookProjectsParams{}, LogbookProjects{}},
 	{"logbook.status", "This replica's size and health: op and record counts, the version vector, waiting and unfolded ops, origins ahead or shared (logbook.md 10.2). Needs the logbook capability.", LogbookStatusParams{}, LogbookStatus{}},
 	{"confirm.request", "Ask for a start or set-up: with confirm.start_elsewhere on, open a confirmation for the user and wait up to wait_ms for the answer; off, run it at once and return the record (capcom.md 6.1). Needs the confirm capability.", ConfirmRequestParams{}, ConfirmRequested{}},
@@ -283,7 +284,9 @@ var Enums = map[string][]string{
 	"CapcomContextKind": {"notification", "session", "file", "command", "logbook"},
 	// Sets added for Logbook (logbook.md 10.3).
 	"LogbookChangeOp":   {"create", "set", "add", "remove", "note", "forget"},
-	"LogbookWriteState": {"applied", "proposed"},
+	"LogbookWriteState": {"applied", "proposed", "rejected"},
+	// Sets added for Logbook approval (logbook.md 9.2).
+	"LogbookDecision": {"approve", "reject"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per

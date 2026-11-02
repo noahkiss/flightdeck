@@ -17,6 +17,7 @@ type Logbook interface {
 	History(ctx context.Context, p api.LogbookHistoryParams) (api.LogbookHistory, error)
 	Write(ctx context.Context, a api.LogbookActor, p api.LogbookWriteParams) (api.LogbookWritten, error)
 	Resolve(ctx context.Context, a api.LogbookActor, p api.LogbookResolveParams) (api.LogbookWritten, error)
+	Decide(ctx context.Context, a api.LogbookActor, p api.LogbookDecideParams) (api.LogbookWritten, error)
 	Projects(ctx context.Context) (api.LogbookProjects, error)
 	Status(ctx context.Context) (api.LogbookStatus, error)
 }
@@ -30,7 +31,7 @@ const (
 func isLogbookMethod(m string) bool {
 	switch m {
 	case "logbook.find", "logbook.get", "logbook.list", "logbook.ready", "logbook.history", "logbook.write",
-		"logbook.resolve", "logbook.projects", "logbook.status":
+		"logbook.resolve", "logbook.decide", "logbook.projects", "logbook.status":
 		return true
 	}
 	return false
@@ -46,7 +47,7 @@ func (c *conn) handleLogbook(m message) {
 	c.mu.Unlock()
 	var call func(ctx context.Context) (any, error)
 	var e *Error
-	write := m.Method == "logbook.write" || m.Method == "logbook.resolve"
+	write := m.Method == "logbook.write" || m.Method == "logbook.resolve" || m.Method == "logbook.decide"
 	switch m.Method {
 	case "logbook.find":
 		var p api.LogbookFindParams
@@ -82,6 +83,11 @@ func (c *conn) handleLogbook(m message) {
 		var p api.LogbookResolveParams
 		if e = c.decodeUp(m, &p); e == nil && lb != nil {
 			call = func(ctx context.Context) (any, error) { return lb.Resolve(ctx, who, p) }
+		}
+	case "logbook.decide":
+		var p api.LogbookDecideParams
+		if e = c.decodeUp(m, &p); e == nil && lb != nil {
+			call = func(ctx context.Context) (any, error) { return lb.Decide(ctx, who, p) }
 		}
 	case "logbook.projects":
 		var p api.LogbookProjectsParams

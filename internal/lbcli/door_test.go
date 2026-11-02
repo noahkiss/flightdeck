@@ -226,3 +226,20 @@ func TestFindFlagged(t *testing.T) {
 		t.Fatalf("find:\n%s", out)
 	}
 }
+
+// In a pane with gff-hab down, approve and reject wait for gff-hab and never decide through the
+// file: only a person decides, and the pane's hab refuses it (logbook.md 9.2).
+func TestPaneDecideNeverTouchesFile(t *testing.T) {
+	fastRetry(t, 300*time.Millisecond)
+	state := newState(t)
+	sock := filepath.Join(shortDir(t), "hook.sock") // nothing listens
+	env := map[string]string{hook.Env: hook.Addr(sock, token), "GFF_HAB_STATE": state}
+	for _, verb := range []string{"approve", "reject"} {
+		if _, errs, code := inPane(t, env, verb, "proposal-aaaaaaaa"); code != 1 || !strings.Contains(errs, "nothing was written") {
+			t.Fatalf("%s: %d %s", verb, code, errs)
+		}
+	}
+	if n := opsIn(t, state); n != 0 {
+		t.Fatalf("the file gained %d ops", n)
+	}
+}

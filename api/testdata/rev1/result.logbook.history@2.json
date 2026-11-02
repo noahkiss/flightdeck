@@ -1,0 +1,41 @@
+{
+  "ops": [
+    {
+      "at": "at-5",
+      "by": {
+        "approved_by": "approved_by-18",
+        "device": "device-17",
+        "harness": "harness-13",
+        "host": "host-16",
+        "kind": "kind-12",
+        "pane": "pane-15",
+        "session": "session-14",
+        "x_unknown_field": "later"
+      },
+      "field": "field-8",
+      "folded": true,
+      "id": "id-4",
+      "kind": "kind-6",
+      "prev": [
+        "prev-10"
+      ],
+      "record": "record-7",
+      "target": "target-11",
+      "value": {
+        "value": 9,
+        "x_unknown_field": "later"
+      },
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

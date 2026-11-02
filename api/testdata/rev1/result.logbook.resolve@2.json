@@ -1,0 +1,22 @@
+{
+  "ids": [
+    "ids-4"
+  ],
+  "note": "note-7",
+  "ops": [
+    "ops-5"
+  ],
+  "proposal": "proposal-6",
+  "repeated": true,
+  "seq": 3,
+  "state": "rejected",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

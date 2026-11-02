@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +81,15 @@ func TestChannelRoute(t *testing.T) {
 	}
 	if err := Call(ctx, addr, "confirm.answer", api.ConfirmAnswerParams{ID: "x", Choice: "confirm"}, nil); !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindInvalid {
 		t.Fatalf("confirm.answer on the route: %v", err)
+	}
+	// Only a person decides a proposal: logbook.decide is refused even with a Logbook handler.
+	s.SetLogbook(func(context.Context, string, string, json.RawMessage) (any, func(error), error) {
+		t.Error("logbook.decide reached the Logbook handler")
+		return nil, nil, nil
+	})
+	err = Call(ctx, addr, "logbook.decide", api.LogbookDecideParams{ID: "proposal-x", Decision: "approve"}, nil)
+	if !errors.As(err, &ce) || ce.Data.Kind != api.ErrorKindInvalid || !strings.Contains(ce.Message, "only a person decides") {
+		t.Fatalf("logbook.decide on the route: %v", err)
 	}
 }
 

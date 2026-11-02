@@ -196,6 +196,10 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		_ = answer(channelAnswer{Result: b})
 		return
 	}
+	if call.Method == "logbook.decide" {
+		fail(api.ErrorKindInvalid, "only a person decides a proposal (logbook.md 9.2): logbook.decide is not on a pane's route. The user approves or rejects it with gff lb approve or reject, run outside a pane, or in the app")
+		return
+	}
 	if !known && !conf && !round && !lb {
 		fail(api.ErrorKindInvalid, "%q is not one of %v, %v, %v, %v or %v", call.Method, ChannelMethods, ReadMethods, ConfirmMethods, RoundMethods, LogbookMethods)
 		return

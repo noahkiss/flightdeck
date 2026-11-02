@@ -3099,6 +3099,8 @@ public struct LinkedPeer: Codable, Sendable, Hashable {
 }
 
 public struct LogbookActor: Codable, Sendable, Hashable {
+    /// A change an approved proposal made: the device that approved it. The actor stays the proposing agent.
+    public var approvedBy: String?
     public var device: String?
     public var harness: String?
     public var host: String?
@@ -3108,6 +3110,7 @@ public struct LogbookActor: Codable, Sendable, Hashable {
     public var session: String?
 
     enum CodingKeys: String, CodingKey {
+        case approvedBy = "approved_by"
         case device = "device"
         case harness = "harness"
         case host = "host"
@@ -3116,7 +3119,8 @@ public struct LogbookActor: Codable, Sendable, Hashable {
         case session = "session"
     }
 
-    public init(device: String? = nil, harness: String? = nil, host: String? = nil, kind: String? = nil, pane: String? = nil, session: String? = nil) {
+    public init(approvedBy: String? = nil, device: String? = nil, harness: String? = nil, host: String? = nil, kind: String? = nil, pane: String? = nil, session: String? = nil) {
+        self.approvedBy = approvedBy
         self.device = device
         self.harness = harness
         self.host = host
@@ -3234,6 +3238,38 @@ public struct LogbookConflict: Codable, Sendable, Hashable {
         self.id = id
         self.revision = revision
     }
+}
+
+public struct LogbookDecideParams: Codable, Sendable, Hashable {
+    public var decision: LogbookDecision
+    /// approve: the changes to apply in place of the draft's. The proposal is then edited, not approved.
+    public var edits: [LogbookChange]?
+    /// The proposal.
+    public var id: String
+    /// As in logbook.write.
+    public var idempotencyKey: String?
+
+    enum CodingKeys: String, CodingKey {
+        case decision = "decision"
+        case edits = "edits"
+        case id = "id"
+        case idempotencyKey = "idempotency_key"
+    }
+
+    public init(decision: LogbookDecision, edits: [LogbookChange]? = nil, id: String, idempotencyKey: String? = nil) {
+        self.decision = decision
+        self.edits = edits
+        self.id = id
+        self.idempotencyKey = idempotencyKey
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct LogbookDecision: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let approve = LogbookDecision(rawValue: "approve")
+    public static let reject = LogbookDecision(rawValue: "reject")
 }
 
 public struct LogbookFindParams: Codable, Sendable, Hashable {
@@ -3695,7 +3731,9 @@ public struct LogbookRecord: Codable, Sendable, Hashable {
     public var deleted: Bool?
     /// A proposal: the full content it would apply, as logbook.write's changes.
     public var draft: JSONValue?
-    /// What the user should look at: conflict, decided_twice, edited_after_delete, id_collision, superseded_twice.
+    /// A memory proposal: RFC 3339 time after which it can no longer be decided (logbook.md 9.2).
+    public var expires: String?
+    /// What the user should look at: conflict, decided_twice, edited_after_delete, id_collision, superseded_twice, approval_overruled.
     public var flags: [LogbookFlag]?
     public var id: String
     /// A project: its identities (logbook.md 3.1).
@@ -3734,6 +3772,7 @@ public struct LogbookRecord: Codable, Sendable, Hashable {
         case decidedBy = "decided_by"
         case deleted = "deleted"
         case draft = "draft"
+        case expires = "expires"
         case flags = "flags"
         case id = "id"
         case identities = "identities"
@@ -3754,7 +3793,7 @@ public struct LogbookRecord: Codable, Sendable, Hashable {
         case updated = "updated"
     }
 
-    public init(assignee: String? = nil, backlinks: [LogbookLink]? = nil, body: String? = nil, component: String? = nil, created: String? = nil, createdBy: LogbookActor? = nil, decidedBy: String? = nil, deleted: Bool? = nil, draft: JSONValue? = nil, flags: [LogbookFlag]? = nil, id: String, identities: [String]? = nil, links: [LogbookLink]? = nil, notes: [LogbookNote]? = nil, pinned: Bool? = nil, priority: Int? = nil, project: String? = nil, revision: Int? = nil, source: LogbookSource? = nil, status: String? = nil, supersededBy: [String]? = nil, tags: [String]? = nil, target: String? = nil, title: String, triage: String? = nil, type: String, updated: String? = nil) {
+    public init(assignee: String? = nil, backlinks: [LogbookLink]? = nil, body: String? = nil, component: String? = nil, created: String? = nil, createdBy: LogbookActor? = nil, decidedBy: String? = nil, deleted: Bool? = nil, draft: JSONValue? = nil, expires: String? = nil, flags: [LogbookFlag]? = nil, id: String, identities: [String]? = nil, links: [LogbookLink]? = nil, notes: [LogbookNote]? = nil, pinned: Bool? = nil, priority: Int? = nil, project: String? = nil, revision: Int? = nil, source: LogbookSource? = nil, status: String? = nil, supersededBy: [String]? = nil, tags: [String]? = nil, target: String? = nil, title: String, triage: String? = nil, type: String, updated: String? = nil) {
         self.assignee = assignee
         self.backlinks = backlinks
         self.body = body
@@ -3764,6 +3803,7 @@ public struct LogbookRecord: Codable, Sendable, Hashable {
         self.decidedBy = decidedBy
         self.deleted = deleted
         self.draft = draft
+        self.expires = expires
         self.flags = flags
         self.id = id
         self.identities = identities
@@ -3982,11 +4022,14 @@ public struct LogbookWriteState: RawRepresentable, Codable, Sendable, Hashable {
     public init(rawValue: String) { self.rawValue = rawValue }
     public static let applied = LogbookWriteState(rawValue: "applied")
     public static let proposed = LogbookWriteState(rawValue: "proposed")
+    public static let rejected = LogbookWriteState(rawValue: "rejected")
 }
 
 public struct LogbookWritten: Codable, Sendable, Hashable {
     /// The records the batch touched, in change order; for a proposal, the proposal.
     public var ids: [String]
+    /// Words for the writer to read. With state proposed: the change waits for the user's approval, and the writer should not ask again.
+    public var note: String?
     /// The op ids the batch made.
     public var ops: [String]
     /// With state proposed: the proposal's id.
@@ -3995,11 +4038,12 @@ public struct LogbookWritten: Codable, Sendable, Hashable {
     public var repeated: Bool?
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
-    /// applied: the changes landed. proposed: a pending proposal holds them.
+    /// applied: the changes landed. proposed: a pending proposal holds them. rejected: logbook.decide rejected the proposal.
     public var state: LogbookWriteState
 
     enum CodingKeys: String, CodingKey {
         case ids = "ids"
+        case note = "note"
         case ops = "ops"
         case proposal = "proposal"
         case repeated = "repeated"
@@ -4007,8 +4051,9 @@ public struct LogbookWritten: Codable, Sendable, Hashable {
         case state = "state"
     }
 
-    public init(ids: [String], ops: [String], proposal: String? = nil, repeated: Bool? = nil, seq: UInt64, state: LogbookWriteState) {
+    public init(ids: [String], note: String? = nil, ops: [String], proposal: String? = nil, repeated: Bool? = nil, seq: UInt64, state: LogbookWriteState) {
         self.ids = ids
+        self.note = note
         self.ops = ops
         self.proposal = proposal
         self.repeated = repeated
@@ -7177,6 +7222,8 @@ public enum HabMethods {
     public static let logbookWrite = HabMethod<LogbookWriteParams, LogbookWritten>(name: "logbook.write")
     /// Settle a conflict flag: set the field to the given value, or to the value of a named op, as a write that saw every side (logbook.md 5.2). Needs the logbook capability.
     public static let logbookResolve = HabMethod<LogbookResolveParams, LogbookWritten>(name: "logbook.resolve")
+    /// Decide a pending proposal (logbook.md 9.2). approve applies its draft, or the edits given, as the proposing agent's write with approved_by set to this device, in one batch with the decision; each record it makes links to the proposal with from. reject records the decision only. The first decision stands; one made elsewhere later is flagged decided_twice (5.6). Refused on the pane route: only a person decides. Needs the logbook capability.
+    public static let logbookDecide = HabMethod<LogbookDecideParams, LogbookWritten>(name: "logbook.decide")
     /// The Logbook projects with their identities (logbook.md 3). Needs the logbook capability.
     public static let logbookProjects = HabMethod<LogbookProjectsParams, LogbookProjects>(name: "logbook.projects")
     /// This replica's size and health: op and record counts, the version vector, waiting and unfolded ops, origins ahead or shared (logbook.md 10.2). Needs the logbook capability.

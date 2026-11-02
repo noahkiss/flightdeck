@@ -136,6 +136,7 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.logbookHistory)
         result(HabMethods.logbookWrite)
         result(HabMethods.logbookResolve)
+        result(HabMethods.logbookDecide)
         result(HabMethods.logbookProjects)
         result(HabMethods.logbookStatus)
         result(HabMethods.confirmRequest)

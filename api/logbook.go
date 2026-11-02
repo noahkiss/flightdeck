@@ -70,11 +70,12 @@ type LogbookRecord struct {
 	Target       string         `json:"target,omitempty" doc:"A proposal: record, memory or flight_rules."`
 	Draft        RawJSON        `json:"draft,omitempty" doc:"A proposal: the full content it would apply, as logbook.write's changes."`
 	DecidedBy    string         `json:"decided_by,omitempty" doc:"A decided proposal: the deciding device."`
+	Expires      string         `json:"expires,omitempty" doc:"A memory proposal: RFC 3339 time after which it can no longer be decided (logbook.md 9.2)."`
 	Identities   []string       `json:"identities,omitempty" doc:"A project: its identities (logbook.md 3.1)."`
 	Links        []LogbookLink  `json:"links,omitempty" doc:"This record's links."`
 	Backlinks    []LogbookLink  `json:"backlinks,omitempty" doc:"Other records' links to this one; to names the linking record."`
 	Notes        []LogbookNote  `json:"notes,omitempty"`
-	Flags        []LogbookFlag  `json:"flags,omitempty" doc:"What the user should look at: conflict, decided_twice, edited_after_delete, id_collision, superseded_twice."`
+	Flags        []LogbookFlag  `json:"flags,omitempty" doc:"What the user should look at: conflict, decided_twice, edited_after_delete, id_collision, superseded_twice, approval_overruled."`
 	SupersededBy []string       `json:"superseded_by,omitempty" doc:"A finding: the findings that supersede it."`
 }
 
@@ -87,6 +88,8 @@ type LogbookActor struct {
 	Pane    string `json:"pane,omitempty"`
 	Host    string `json:"host,omitempty"`
 	Device  string `json:"device,omitempty"`
+	// Added by stage 7 (logbook.md 9.2).
+	ApprovedBy string `json:"approved_by,omitempty" doc:"A change an approved proposal made: the device that approved it. The actor stays the proposing agent."`
 }
 
 // LogbookSource is where a record came from: a session, a message and a quote of the user's
@@ -211,14 +214,16 @@ type LogbookWriteParams struct {
 // LogbookWriteState says what a write did. The server sends it, so the set is open.
 type LogbookWriteState string
 
-// LogbookWritten answers logbook.write and logbook.resolve.
+// LogbookWritten answers logbook.write, logbook.resolve and logbook.decide.
 type LogbookWritten struct {
 	Seq
-	State    LogbookWriteState `json:"state" doc:"applied: the changes landed. proposed: a pending proposal holds them."`
+	State    LogbookWriteState `json:"state" doc:"applied: the changes landed. proposed: a pending proposal holds them. rejected: logbook.decide rejected the proposal."`
 	IDs      []string          `json:"ids" doc:"The records the batch touched, in change order; for a proposal, the proposal."`
 	Ops      []string          `json:"ops" doc:"The op ids the batch made."`
 	Proposal string            `json:"proposal,omitempty" doc:"With state proposed: the proposal's id."`
 	Repeated bool              `json:"repeated,omitempty" doc:"The idempotency key was used before: nothing was applied again; ids and ops are the first write's."`
+	// Added by stage 7 (logbook.md 9.1).
+	Note string `json:"note,omitempty" doc:"Words for the writer to read. With state proposed: the change waits for the user's approval, and the writer should not ask again."`
 }
 
 type LogbookResolveParams struct {
@@ -227,6 +232,18 @@ type LogbookResolveParams struct {
 	Value          RawJSON `json:"value,omitempty" doc:"The value to keep. Or name op."`
 	Op             string  `json:"op,omitempty" doc:"The op id whose value to keep, from the conflict flag."`
 	IdempotencyKey string  `json:"idempotency_key,omitempty"`
+}
+
+// LogbookDecision is how logbook.decide decides a proposal. A closed set.
+type LogbookDecision string
+
+// LogbookDecideParams decides one pending proposal (logbook.md 9.2). Only a person decides: the
+// pane route refuses it.
+type LogbookDecideParams struct {
+	ID             string          `json:"id" doc:"The proposal."`
+	Decision       LogbookDecision `json:"decision"`
+	Edits          []LogbookChange `json:"edits,omitempty" doc:"approve: the changes to apply in place of the draft's. The proposal is then edited, not approved."`
+	IdempotencyKey string          `json:"idempotency_key,omitempty" doc:"As in logbook.write."`
 }
 
 type LogbookProjectsParams struct{}

@@ -1324,7 +1324,7 @@ func serve(args []string) error {
 	hooks.SetChannels(channelHook(store, chSvc))
 	hooks.SetReads(readHook(reads, cs, pm))
 	hooks.SetConfirm(confirmHook(store, cfSvc))
-	hooks.SetLogbook(logbookHook(lbVerbs, store, agents, *hostID))
+	hooks.SetLogbook(logbookHook(lbVerbs, store, agents, *hostID, approvalAgents(setSvc.Value)))
 	if roundsSvc != nil {
 		hooks.SetRounds(roundHook(store, roundsSvc))
 	}

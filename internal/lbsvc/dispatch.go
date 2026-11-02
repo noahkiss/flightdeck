@@ -9,11 +9,10 @@ import (
 	"github.com/noahkiss/flightdeck/internal/control"
 )
 
-// Methods are the logbook.* methods stage 4 serves (10.3). logbook.brief comes with the habits
-// (stage 6), logbook.decide with approval (stage 7), logbook.pull and logbook.push with sync
-// (stage 3).
+// Methods are the logbook.* methods the service serves (10.3). logbook.brief comes with the
+// habits (stage 6), logbook.pull and logbook.push with sync (stage 3).
 var Methods = []string{"logbook.find", "logbook.get", "logbook.list", "logbook.ready", "logbook.history",
-	"logbook.write", "logbook.resolve", "logbook.projects", "logbook.status"}
+	"logbook.write", "logbook.resolve", "logbook.decide", "logbook.projects", "logbook.status"}
 
 // IsMethod reports whether m is one of Methods.
 func IsMethod(m string) bool { return slices.Contains(Methods, m) }
@@ -78,7 +77,7 @@ func (s *Service) Dispatch(ctx context.Context, a api.LogbookActor, pane *Pane, 
 		}
 		if pane != nil {
 			if pane.Propose {
-				return nil, control.Errorf(api.ErrorKindInvalid, "this session's writes wait for review: write the value with logbook.write, which files a proposal")
+				return nil, control.Errorf(api.ErrorKindInvalid, "this session's writes wait for the user's review: write the value with logbook.write, which files a proposal")
 			}
 			if err := s.paneSet(ctx, p.ID, p.Field, false); err != nil {
 				return nil, control.Errorf(api.ErrorKindInvalid, "%v", err)
@@ -89,6 +88,15 @@ func (s *Service) Dispatch(ctx context.Context, a api.LogbookActor, pane *Pane, 
 			a = PaneActor(*pane)
 		}
 		return s.Resolve(ctx, a, p)
+	case "logbook.decide":
+		var p api.LogbookDecideParams
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		if pane != nil {
+			return nil, control.Errorf(api.ErrorKindInvalid, "only a person decides a proposal (logbook.md 9.2): the user approves or rejects it")
+		}
+		return s.Decide(ctx, a, p)
 	case "logbook.projects":
 		return s.Projects(ctx)
 	case "logbook.status":

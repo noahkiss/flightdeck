@@ -244,7 +244,8 @@ type Pane struct {
 	Harness string
 	Host    string
 	// Propose makes every write from the pane a pending proposal: a Capcom session's records
-	// wait for review (capcom.md D3, D14).
+	// wait for review (capcom.md D3, D14), and under logbook.approval = agents every agent's do
+	// (9.1).
 	Propose bool
 }
 
@@ -427,8 +428,146 @@ func (s *Service) write(ctx context.Context, a api.LogbookActor, p api.LogbookWr
 	out := written(res, state)
 	if p.Propose && len(res.Records) > 0 {
 		out.Proposal = res.Records[0]
+		out.Note = ProposedNote(out.Proposal)
 	}
 	return out, nil
+}
+
+// ProposedNote is what a writer whose change became a proposal reads (9.1): it waits for the
+// user, who sees it with the other approvals, so the agent should not ask again.
+func ProposedNote(id string) string {
+	return "Nothing landed yet: the change waits for the user's approval as proposal " + id +
+		". The user sees it with their other approvals, so do not ask them about it again; go on with your work."
+}
+
+// Decide decides a pending proposal (9.2). approve applies the draft, or the edits given, as the
+// proposing agent's write with approved_by set to the deciding device, in one batch with the
+// decision; each record it makes links to the proposal with from. reject sets the decision only.
+// The store refuses a second decision it can see (5.6). Only a person decides: the pane route
+// never reaches it, and Dispatch refuses it with a pane.
+func (s *Service) Decide(ctx context.Context, a api.LogbookActor, p api.LogbookDecideParams) (api.LogbookWritten, error) {
+	if p.ID == "" {
+		return api.LogbookWritten{}, invalid("logbook.decide needs a proposal id")
+	}
+	if p.Decision != api.LogbookDecisionApprove && p.Decision != api.LogbookDecisionReject {
+		return api.LogbookWritten{}, invalid("decision %q is not one of %s", p.Decision, strings.Join(api.Enums["LogbookDecision"], ", "))
+	}
+	if p.Decision == api.LogbookDecisionReject && len(p.Edits) > 0 {
+		return api.LogbookWritten{}, invalid("a reject takes no edits")
+	}
+	if len(p.Edits) > MaxChanges {
+		return api.LogbookWritten{}, invalid("edits take at most %d changes, and these have %d", MaxChanges, len(p.Edits))
+	}
+	if len(p.IdempotencyKey) > logbook.MaxKey {
+		return api.LogbookWritten{}, invalid("an idempotency key is at most %d bytes", logbook.MaxKey)
+	}
+	if a.Kind == "agent" {
+		return api.LogbookWritten{}, invalid("only a person decides a proposal")
+	}
+	device := a.Device
+	if device == "" {
+		return api.LogbookWritten{}, invalid("logbook.decide needs the deciding device: this connection has no label")
+	}
+	r, err := s.st.Get(ctx, p.ID)
+	if err != nil {
+		return api.LogbookWritten{}, apiErr(err)
+	}
+	if r.Type != logbook.TypeProposal {
+		return api.LogbookWritten{}, invalid("%s is a %s, not a proposal", r.ID, r.Type)
+	}
+	if r.Deleted {
+		return api.LogbookWritten{}, invalid("%s is deleted: restore it first", r.ID)
+	}
+	if r.Status == "pending" {
+		if exp := str(r.Fields["expires"].Value); exp != "" {
+			if t, err := time.Parse(time.RFC3339Nano, exp); err == nil && !s.cfg.Now().Before(t) {
+				return api.LogbookWritten{}, invalid("%s expired at %s and can no longer be decided", r.ID, exp)
+			}
+		}
+	}
+	status := "rejected"
+	who := storeActor(a)
+	var steps []logbook.Step
+	if p.Decision == api.LogbookDecisionApprove {
+		status = "approved"
+		if len(p.Edits) > 0 {
+			status = "edited"
+		}
+		if target := str(r.Fields["target"].Value); target == "" || target == "record" {
+			steps, who, err = s.draftSteps(r, p.Edits, device)
+			if err != nil {
+				return api.LogbookWritten{}, err
+			}
+		}
+		// A memory or flight rules proposal records the decision only: Part 8 writes the file
+		// (instructions-mcp-flight-rules.md 12).
+	}
+	steps = append(steps,
+		logbook.Step{Kind: logbook.KindSet, Record: r.ID, Field: "status", Value: status},
+		logbook.Step{Kind: logbook.KindSet, Record: r.ID, Field: "decided_by", Value: device})
+	b := logbook.Batch{Actor: who, Steps: steps}
+	if p.IdempotencyKey != "" {
+		b.Key, b.KeyHash = p.IdempotencyKey, hashOf("logbook.decide", p)
+	}
+	res, err := s.st.Write(ctx, b)
+	if err != nil {
+		return api.LogbookWritten{}, apiErr(err)
+	}
+	s.wrote(ctx)
+	state := api.LogbookWriteStateApplied
+	if status == "rejected" {
+		state = api.LogbookWriteStateRejected
+	}
+	out := written(res, state)
+	out.Proposal = r.ID
+	return out, nil
+}
+
+// draftSteps turns a proposal's draft, or the person's edits in its place, into the approve
+// batch's steps, and returns the batch's actor: the proposing agent, with approved_by the
+// deciding device (9.2). Each record the batch makes links to the proposal with from.
+func (s *Service) draftSteps(r *logbook.Record, edits []api.LogbookChange, device string) ([]logbook.Step, *logbook.Actor, error) {
+	var draft struct {
+		Changes []api.LogbookChange `json:"changes"`
+		Source  *api.LogbookSource  `json:"source,omitempty"`
+	}
+	if err := json.Unmarshal(r.Fields["draft"].Value, &draft); err != nil {
+		return nil, nil, invalid("%s's draft does not read as changes: %v", r.ID, err)
+	}
+	who := &logbook.Actor{}
+	if r.CreatedBy != nil {
+		*who = *r.CreatedBy
+	}
+	who.ApprovedBy = device
+	changes := draft.Changes
+	if len(edits) > 0 {
+		var err error
+		if changes, err = selfAssignee(edits, *actor(who)); err != nil {
+			return nil, nil, err
+		}
+	}
+	if len(changes) == 0 {
+		return nil, nil, invalid("%s's draft holds no changes: reject it, or approve it with edits", r.ID)
+	}
+	steps, err := Steps(changes, draft.Source)
+	if err != nil {
+		return nil, nil, err
+	}
+	var out []logbook.Step
+	for _, st := range steps {
+		out = append(out, st)
+		if st.Kind == logbook.KindCreate {
+			out = append(out, logbook.Step{Kind: logbook.KindAdd, Record: st.Record, Field: "links",
+				Value: logbook.Link{Kind: logbook.LinkFrom, To: r.ID}})
+		}
+	}
+	return out, who, nil
+}
+
+func str(v json.RawMessage) string {
+	var s string
+	_ = json.Unmarshal(v, &s)
+	return s
 }
 
 // Self is the assignee word for the writer itself (10.2 claim): the pane's session, or the
@@ -527,6 +666,9 @@ func hashOf(method string, p any) string {
 		v.IdempotencyKey = ""
 		p = v
 	case api.LogbookResolveParams:
+		v.IdempotencyKey = ""
+		p = v
+	case api.LogbookDecideParams:
 		v.IdempotencyKey = ""
 		p = v
 	}
@@ -665,7 +807,7 @@ func storeActor(a api.LogbookActor) *logbook.Actor {
 	if a == (api.LogbookActor{}) {
 		return nil
 	}
-	return &logbook.Actor{Kind: a.Kind, Harness: a.Harness, Session: a.Session, Pane: a.Pane, Host: a.Host, Device: a.Device}
+	return &logbook.Actor{Kind: a.Kind, Harness: a.Harness, Session: a.Session, Pane: a.Pane, Host: a.Host, Device: a.Device, ApprovedBy: a.ApprovedBy}
 }
 
 // --- events ---
@@ -743,7 +885,7 @@ func actor(a *logbook.Actor) *api.LogbookActor {
 	if a == nil {
 		return nil
 	}
-	return &api.LogbookActor{Kind: a.Kind, Harness: a.Harness, Session: a.Session, Pane: a.Pane, Host: a.Host, Device: a.Device}
+	return &api.LogbookActor{Kind: a.Kind, Harness: a.Harness, Session: a.Session, Pane: a.Pane, Host: a.Host, Device: a.Device, ApprovedBy: a.ApprovedBy}
 }
 
 // Record is the API shape of a folded record. updated is its last change in ms.
@@ -757,6 +899,7 @@ func Record(r *logbook.Record, updated int64) api.LogbookRecord {
 		return v
 	}
 	out.Assignee, out.Triage, out.Component, out.Target, out.DecidedBy = str("assignee"), str("triage"), str("component"), str("target"), str("decided_by")
+	out.Expires = str("expires")
 	_ = json.Unmarshal(r.Fields["priority"].Value, &out.Priority)
 	_ = json.Unmarshal(r.Fields["pinned"].Value, &out.Pinned)
 	if d := r.Fields["draft"].Value; len(d) > 0 {

@@ -3003,6 +3003,54 @@
       }
     },
     {
+      "name": "logbook.decide",
+      "summary": "Decide a pending proposal (logbook.md 9.2). approve applies its draft, or the edits given, as the proposing agent's write with approved_by set to this device, in one batch with the decision; each record it makes links to the proposal with from. reject records the decision only. The first decision stands; one made elsewhere later is flagged decided_twice (5.6). Refused on the pane route: only a person decides. Needs the logbook capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "decision",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/LogbookDecision"
+          }
+        },
+        {
+          "name": "edits",
+          "description": "approve: the changes to apply in place of the draft's. The proposal is then edited, not approved.",
+          "schema": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogbookChange"
+            }
+          }
+        },
+        {
+          "name": "id",
+          "description": "The proposal.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "idempotency_key",
+          "description": "As in logbook.write.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/LogbookWritten"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/LogbookDecideParams"
+      }
+    },
+    {
       "name": "logbook.projects",
       "summary": "The Logbook projects with their identities (logbook.md 3). Needs the logbook capability.",
       "paramStructure": "by-name",
@@ -7030,6 +7078,10 @@
       "LogbookActor": {
         "type": "object",
         "properties": {
+          "approved_by": {
+            "type": "string",
+            "description": "A change an approved proposal made: the device that approved it. The actor stays the proposing agent."
+          },
           "device": {
             "type": "string"
           },
@@ -7168,6 +7220,40 @@
           "id",
           "revision",
           "flags"
+        ]
+      },
+      "LogbookDecideParams": {
+        "type": "object",
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/LogbookDecision"
+          },
+          "edits": {
+            "type": "array",
+            "description": "approve: the changes to apply in place of the draft's. The proposal is then edited, not approved.",
+            "items": {
+              "$ref": "#/components/schemas/LogbookChange"
+            }
+          },
+          "id": {
+            "type": "string",
+            "description": "The proposal."
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "As in logbook.write."
+          }
+        },
+        "required": [
+          "id",
+          "decision"
+        ]
+      },
+      "LogbookDecision": {
+        "type": "string",
+        "x-known-values": [
+          "approve",
+          "reject"
         ]
       },
       "LogbookFindParams": {
@@ -7687,9 +7773,13 @@
           "draft": {
             "description": "A proposal: the full content it would apply, as logbook.write's changes."
           },
+          "expires": {
+            "type": "string",
+            "description": "A memory proposal: RFC 3339 time after which it can no longer be decided (logbook.md 9.2)."
+          },
           "flags": {
             "type": "array",
-            "description": "What the user should look at: conflict, decided_twice, edited_after_delete, id_collision, superseded_twice.",
+            "description": "What the user should look at: conflict, decided_twice, edited_after_delete, id_collision, superseded_twice, approval_overruled.",
             "items": {
               "$ref": "#/components/schemas/LogbookFlag"
             }
@@ -7993,7 +8083,8 @@
         "type": "string",
         "x-known-values": [
           "applied",
-          "proposed"
+          "proposed",
+          "rejected"
         ]
       },
       "LogbookWritten": {
@@ -8005,6 +8096,10 @@
             "items": {
               "type": "string"
             }
+          },
+          "note": {
+            "type": "string",
+            "description": "Words for the writer to read. With state proposed: the change waits for the user's approval, and the writer should not ask again."
           },
           "ops": {
             "type": "array",
@@ -8028,7 +8123,7 @@
           },
           "state": {
             "$ref": "#/components/schemas/LogbookWriteState",
-            "description": "applied: the changes landed. proposed: a pending proposal holds them."
+            "description": "applied: the changes landed. proposed: a pending proposal holds them. rejected: logbook.decide rejected the proposal."
           }
         },
         "required": [
