@@ -84,6 +84,26 @@ const (
 )
 
 const (
+	ConfirmChoiceConfirm ConfirmChoice = "confirm"
+	ConfirmChoiceCancel  ConfirmChoice = "cancel"
+)
+
+const (
+	ConfirmKindStart ConfirmKind = "start"
+	ConfirmKindSetup ConfirmKind = "setup"
+)
+
+const (
+	ConfirmStateOpen      ConfirmState = "open"
+	ConfirmStateRunning   ConfirmState = "running"
+	ConfirmStateDone      ConfirmState = "done"
+	ConfirmStateFailed    ConfirmState = "failed"
+	ConfirmStateCancelled ConfirmState = "cancelled"
+	ConfirmStateExpired   ConfirmState = "expired"
+	ConfirmStateUnknown   ConfirmState = "unknown"
+)
+
+const (
 	ContentChangeAdded     ContentChange = "added"
 	ContentChangeModified  ContentChange = "modified"
 	ContentChangeDeleted   ContentChange = "deleted"
@@ -291,28 +311,30 @@ const (
 
 // Event types.
 const (
-	EventProjectUpdated  EventType = "project.updated"
-	EventProjectDeleted  EventType = "project.deleted"
-	EventSessionUpdated  EventType = "session.updated"
-	EventSessionDeleted  EventType = "session.deleted"
-	EventPaneUpdated     EventType = "pane.updated"
-	EventPaneDeleted     EventType = "pane.deleted"
-	EventPaneOwner       EventType = "pane.owner"
-	EventPaneActivity    EventType = "pane.activity"
-	EventAgentState      EventType = "agent.state"
-	EventPaneBell        EventType = "pane.bell"
-	EventPaneOutput      EventType = "pane.output"
-	EventChatMessage     EventType = "chat.message"
-	EventSessionTurnEnd  EventType = "session.turn_end"
-	EventUsageUpdated    EventType = "usage.updated"
-	EventCommandUpdated  EventType = "command.updated"
-	EventPeerUpdated     EventType = "peer.updated"
-	EventCatalogUpdated  EventType = "catalog.updated"
-	EventNoticeRaised    EventType = "notice.raised"
-	EventContentUpdated  EventType = "content.updated"
-	EventSettingsUpdated EventType = "settings.updated"
-	EventChannelMessage  EventType = "channel.message"
-	EventMeshChanged     EventType = "mesh.changed"
+	EventProjectUpdated   EventType = "project.updated"
+	EventProjectDeleted   EventType = "project.deleted"
+	EventSessionUpdated   EventType = "session.updated"
+	EventSessionDeleted   EventType = "session.deleted"
+	EventPaneUpdated      EventType = "pane.updated"
+	EventPaneDeleted      EventType = "pane.deleted"
+	EventPaneOwner        EventType = "pane.owner"
+	EventPaneActivity     EventType = "pane.activity"
+	EventAgentState       EventType = "agent.state"
+	EventPaneBell         EventType = "pane.bell"
+	EventPaneOutput       EventType = "pane.output"
+	EventChatMessage      EventType = "chat.message"
+	EventSessionTurnEnd   EventType = "session.turn_end"
+	EventUsageUpdated     EventType = "usage.updated"
+	EventCommandUpdated   EventType = "command.updated"
+	EventPeerUpdated      EventType = "peer.updated"
+	EventCatalogUpdated   EventType = "catalog.updated"
+	EventNoticeRaised     EventType = "notice.raised"
+	EventContentUpdated   EventType = "content.updated"
+	EventSettingsUpdated  EventType = "settings.updated"
+	EventChannelMessage   EventType = "channel.message"
+	EventConfirmRequested EventType = "confirm.requested"
+	EventConfirmClosed    EventType = "confirm.closed"
+	EventMeshChanged      EventType = "mesh.changed"
 )
 
 // DecodeData decodes e.Data into the type its event type names. It returns
@@ -401,6 +423,14 @@ func (e Event) DecodeData() (any, error) {
 		return v, err
 	case EventChannelMessage:
 		var v ChannelRecord
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventConfirmRequested:
+		var v Confirmation
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventConfirmClosed:
+		var v Confirmation
 		err := json.Unmarshal(e.Data, &v)
 		return v, err
 	case EventMeshChanged:
@@ -887,5 +917,33 @@ func (c Client) LogbookFind(ctx context.Context, params LogbookFindParams) (Logb
 func (c Client) LogbookGet(ctx context.Context, params LogbookGetParams) (LogbookRecordResult, error) {
 	var result LogbookRecordResult
 	err := c.Caller.Call(ctx, "logbook.get", params, &result)
+	return result, err
+}
+
+// ConfirmRequest calls confirm.request. Ask for a start or set-up: with confirm.start_elsewhere on, open a confirmation for the user and wait up to wait_ms for the answer; off, run it at once and return the record (capcom.md 6.1). Needs the confirm capability.
+func (c Client) ConfirmRequest(ctx context.Context, params ConfirmRequestParams) (ConfirmRequested, error) {
+	var result ConfirmRequested
+	err := c.Caller.Call(ctx, "confirm.request", params, &result)
+	return result, err
+}
+
+// ConfirmAnswer calls confirm.answer. Answer an open confirmation: confirm, with the user's edits, or cancel. The first answer wins; a later one answers conflict. A confirm returns once the hab ran the action (capcom.md 6.1). Needs the confirm capability.
+func (c Client) ConfirmAnswer(ctx context.Context, params ConfirmAnswerParams) (ConfirmationResult, error) {
+	var result ConfirmationResult
+	err := c.Caller.Call(ctx, "confirm.answer", params, &result)
+	return result, err
+}
+
+// ConfirmList calls confirm.list. The open confirmations, and with all the closed ones the hab keeps (capcom.md 6.1). Needs the confirm capability.
+func (c Client) ConfirmList(ctx context.Context, params ConfirmListParams) (ConfirmList, error) {
+	var result ConfirmList
+	err := c.Caller.Call(ctx, "confirm.list", params, &result)
+	return result, err
+}
+
+// ConfirmGet calls confirm.get. One confirmation by id, open or closed (capcom.md 6.1). Needs the confirm capability.
+func (c Client) ConfirmGet(ctx context.Context, params ConfirmGetParams) (ConfirmationResult, error) {
+	var result ConfirmationResult
+	err := c.Caller.Call(ctx, "confirm.get", params, &result)
 	return result, err
 }

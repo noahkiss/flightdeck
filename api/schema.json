@@ -33,7 +33,8 @@
     "attachments",
     "settings",
     "read-tools",
-    "logbook"
+    "logbook",
+    "confirm"
   ],
   "methods": [
     {
@@ -487,6 +488,13 @@
           }
         },
         {
+          "name": "model",
+          "description": "With harness: the model to start it with, passed as --model. Needs the confirm capability.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
           "name": "name",
           "description": "Session name, unique on the host. Default: the program's base name, with -2, -3 and so on when taken.",
           "schema": {
@@ -513,6 +521,20 @@
           "schema": {
             "type": "integer",
             "format": "int64"
+          }
+        },
+        {
+          "name": "seed",
+          "description": "The session's first message, at most 8000 characters. The hab delivers it once the agent can take it, marked as written by seed_from on the owner's behalf. Needs harness and the confirm capability.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "seed_from",
+          "description": "Who wrote the seed, as host/session, shown in its envelope.",
+          "schema": {
+            "type": "string"
           }
         }
       ],
@@ -2392,6 +2414,141 @@
       "x-params": {
         "$ref": "#/components/schemas/LogbookGetParams"
       }
+    },
+    {
+      "name": "confirm.request",
+      "summary": "Ask for a start or set-up: with confirm.start_elsewhere on, open a confirmation for the user and wait up to wait_ms for the answer; off, run it at once and return the record (capcom.md 6.1). Needs the confirm capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "from",
+          "description": "The requesting session's name on this hab. The hook endpoint fills it from the pane's token.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "kind",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/ConfirmKind"
+          }
+        },
+        {
+          "name": "setup",
+          "description": "Kind setup.",
+          "schema": {
+            "$ref": "#/components/schemas/ConfirmSetup"
+          }
+        },
+        {
+          "name": "start",
+          "description": "Kind start.",
+          "schema": {
+            "$ref": "#/components/schemas/ConfirmStart"
+          }
+        },
+        {
+          "name": "wait_ms",
+          "description": "Wait up to this long for the answer; 0 answers at once. At most 120000. With no answer by then, the answer reaches the requesting session later as a message from Flightdeck.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ConfirmRequested"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/ConfirmRequestParams"
+      }
+    },
+    {
+      "name": "confirm.answer",
+      "summary": "Answer an open confirmation: confirm, with the user's edits, or cancel. The first answer wins; a later one answers conflict. A confirm returns once the hab ran the action (capcom.md 6.1). Needs the confirm capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "choice",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/ConfirmChoice"
+          }
+        },
+        {
+          "name": "edits",
+          "description": "With choice confirm: the user's changes.",
+          "schema": {
+            "$ref": "#/components/schemas/ConfirmEdits"
+          }
+        },
+        {
+          "name": "id",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ConfirmationResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/ConfirmAnswerParams"
+      }
+    },
+    {
+      "name": "confirm.list",
+      "summary": "The open confirmations, and with all the closed ones the hab keeps (capcom.md 6.1). Needs the confirm capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "all",
+          "description": "Also list closed confirmations the hab still keeps, newest first after the open ones.",
+          "schema": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ConfirmList"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/ConfirmListParams"
+      }
+    },
+    {
+      "name": "confirm.get",
+      "summary": "One confirmation by id, open or closed (capcom.md 6.1). Needs the confirm capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ConfirmationResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/ConfirmGetParams"
+      }
     }
   ],
   "x-notifications": [
@@ -2563,6 +2720,20 @@
       "summary": "A message this hab sent changed state; the id is the message id (mesh.md 6.5). Host scope only. Ephemeral.",
       "data": {
         "$ref": "#/components/schemas/ChannelRecord"
+      }
+    },
+    {
+      "type": "confirm.requested",
+      "summary": "A confirmation opened, or a start ran at once as a record; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral: the open ones are in the host snapshot.",
+      "data": {
+        "$ref": "#/components/schemas/Confirmation"
+      }
+    },
+    {
+      "type": "confirm.closed",
+      "summary": "A confirmation closed: done, failed, cancelled, expired or unknown; every card withdraws its buttons; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/Confirmation"
       }
     },
     {
@@ -4127,6 +4298,338 @@
           "running",
           "done",
           "unknown"
+        ]
+      },
+      "ConfirmAnswerParams": {
+        "type": "object",
+        "properties": {
+          "choice": {
+            "$ref": "#/components/schemas/ConfirmChoice"
+          },
+          "edits": {
+            "$ref": "#/components/schemas/ConfirmEdits",
+            "description": "With choice confirm: the user's changes."
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "choice"
+        ]
+      },
+      "ConfirmChoice": {
+        "type": "string",
+        "x-known-values": [
+          "confirm",
+          "cancel"
+        ]
+      },
+      "ConfirmEdits": {
+        "type": "object",
+        "properties": {
+          "folder": {
+            "type": "string"
+          },
+          "harness": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string",
+            "description": "Another target hab. Give folder with it."
+          },
+          "model": {
+            "type": "string"
+          },
+          "seed": {
+            "type": "string",
+            "description": "The edited seed, at most 8000 characters."
+          }
+        }
+      },
+      "ConfirmGetParams": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "ConfirmKind": {
+        "type": "string",
+        "x-known-values": [
+          "start",
+          "setup"
+        ]
+      },
+      "ConfirmList": {
+        "type": "object",
+        "properties": {
+          "confirmations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Confirmation"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "confirmations"
+        ]
+      },
+      "ConfirmListParams": {
+        "type": "object",
+        "properties": {
+          "all": {
+            "type": "boolean",
+            "description": "Also list closed confirmations the hab still keeps, newest first after the open ones."
+          }
+        }
+      },
+      "ConfirmRequestParams": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "The requesting session's name on this hab. The hook endpoint fills it from the pane's token."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ConfirmKind"
+          },
+          "setup": {
+            "$ref": "#/components/schemas/ConfirmSetup",
+            "description": "Kind setup."
+          },
+          "start": {
+            "$ref": "#/components/schemas/ConfirmStart",
+            "description": "Kind start."
+          },
+          "wait_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Wait up to this long for the answer; 0 answers at once. At most 120000. With no answer by then, the answer reaches the requesting session later as a message from Flightdeck."
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "ConfirmRequested": {
+        "type": "object",
+        "properties": {
+          "confirmation": {
+            "$ref": "#/components/schemas/Confirmation"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "confirmation"
+        ]
+      },
+      "ConfirmResult": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "The target hab, as this hab labels it."
+          },
+          "name": {
+            "type": "string",
+            "description": "The new session's name."
+          },
+          "pane": {
+            "type": "string",
+            "description": "The new session's pane id."
+          },
+          "seed_problem": {
+            "type": "string",
+            "description": "Why the seed could not be queued; the session runs without it."
+          },
+          "session": {
+            "type": "string",
+            "description": "The new session's id on the target hab."
+          }
+        },
+        "required": [
+          "host",
+          "session",
+          "pane"
+        ]
+      },
+      "ConfirmSetup": {
+        "type": "object",
+        "properties": {
+          "bootstrap": {
+            "type": "string",
+            "description": "The bootstrap command the project declares. Filled by the hab."
+          },
+          "branch": {
+            "type": "string",
+            "description": "The ref to check out."
+          },
+          "host": {
+            "type": "string",
+            "description": "The target hab: a peer label, or this hab's host id."
+          },
+          "repository": {
+            "type": "string",
+            "description": "The repository to clone or fetch."
+          }
+        },
+        "required": [
+          "host",
+          "repository"
+        ]
+      },
+      "ConfirmStart": {
+        "type": "object",
+        "properties": {
+          "branch": {
+            "type": "string",
+            "description": "The folder's branch, from the catalog. Filled by the hab."
+          },
+          "folder": {
+            "type": "string",
+            "description": "The absolute project folder on the target host. The session starts there, in its project."
+          },
+          "harness": {
+            "type": "string",
+            "description": "The harness to start: claude, codex or opencode."
+          },
+          "host": {
+            "type": "string",
+            "description": "The target hab: a peer label from the peer list, or this hab's host id. In confirm.request an empty host means this hab."
+          },
+          "model": {
+            "type": "string",
+            "description": "A model for the harness, as the harness names it."
+          },
+          "name": {
+            "type": "string",
+            "description": "The new session's name. Absent: the target hab picks one."
+          },
+          "project": {
+            "type": "string",
+            "description": "The project's name, from the catalog. Filled by the hab."
+          },
+          "seed": {
+            "type": "string",
+            "description": "The first message of the new session, at most 8000 characters. The target hab delivers it once the agent can take it, marked as from the requesting session on the owner's behalf."
+          }
+        },
+        "required": [
+          "host",
+          "folder",
+          "harness"
+        ]
+      },
+      "ConfirmState": {
+        "type": "string",
+        "x-known-values": [
+          "open",
+          "running",
+          "done",
+          "failed",
+          "cancelled",
+          "expired",
+          "unknown"
+        ]
+      },
+      "Confirmation": {
+        "type": "object",
+        "properties": {
+          "answered_by": {
+            "type": "string",
+            "description": "The client id that answered it."
+          },
+          "closed": {
+            "type": "string",
+            "description": "RFC 3339 time it closed."
+          },
+          "created": {
+            "type": "string",
+            "description": "RFC 3339 time the hab took the request."
+          },
+          "edited": {
+            "type": "boolean",
+            "description": "The user changed the action before confirming it."
+          },
+          "expires_at": {
+            "type": "string",
+            "description": "RFC 3339 time an open confirmation expires, 60 minutes after it opened. An expired one never runs."
+          },
+          "from": {
+            "type": "string",
+            "description": "The requesting session's name on this hab. Absent for a request from outside a pane."
+          },
+          "id": {
+            "type": "string",
+            "description": "128 random bits as 32 hex digits. The idempotency key of the start's session.create on the target hab."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ConfirmKind"
+          },
+          "reason": {
+            "type": "string",
+            "description": "States failed and unknown: why, with the target hab's error. State expired or cancelled: a short note."
+          },
+          "record": {
+            "type": "boolean",
+            "description": "The action ran at once, with no question: confirm.start_elsewhere is off, or the start is on the agent's own host. The card is a record with no buttons."
+          },
+          "result": {
+            "$ref": "#/components/schemas/ConfirmResult",
+            "description": "State done: what the start made."
+          },
+          "setup": {
+            "$ref": "#/components/schemas/ConfirmSetup",
+            "description": "Kind setup: the set-up as it will run."
+          },
+          "start": {
+            "$ref": "#/components/schemas/ConfirmStart",
+            "description": "Kind start: the start as it will run, or ran."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ConfirmState",
+            "description": "open: waits for the user. running: confirmed, the hab runs it. done, failed, cancelled, expired, unknown: closed. unknown: the hab lost the answer, such as a peer link that dropped mid-start."
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "state",
+          "created"
+        ]
+      },
+      "ConfirmationResult": {
+        "type": "object",
+        "properties": {
+          "confirmation": {
+            "$ref": "#/components/schemas/Confirmation"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "confirmation"
         ]
       },
       "ContentChange": {
@@ -6501,6 +7004,10 @@
             "type": "string",
             "description": "A key the client makes for this create, at most 128 bytes. A repeat with the same key gets the first create's ids and starts nothing."
           },
+          "model": {
+            "type": "string",
+            "description": "With harness: the model to start it with, passed as --model. Needs the confirm capability."
+          },
           "name": {
             "type": "string",
             "description": "Session name, unique on the host. Default: the program's base name, with -2, -3 and so on when taken."
@@ -6517,6 +7024,14 @@
             "type": "integer",
             "format": "int64",
             "description": "Initial height. Default 24."
+          },
+          "seed": {
+            "type": "string",
+            "description": "The session's first message, at most 8000 characters. The hab delivers it once the agent can take it, marked as written by seed_from on the owner's behalf. Needs harness and the confirm capability."
+          },
+          "seed_from": {
+            "type": "string",
+            "description": "Who wrote the seed, as host/session, shown in its envelope."
           }
         }
       },
@@ -6526,6 +7041,10 @@
           "pane": {
             "type": "string",
             "description": "Pane id."
+          },
+          "seed_problem": {
+            "type": "string",
+            "description": "Why the seed was not queued; the session runs without it."
           },
           "seq": {
             "type": "integer",
@@ -6902,6 +7421,13 @@
             "description": "The current agent state of each pane that has one (harness-adapters.md, State event model). Absent from a hab without the agent-state capability.",
             "items": {
               "$ref": "#/components/schemas/AgentState"
+            }
+          },
+          "confirmations": {
+            "type": "array",
+            "description": "The open confirmations (capcom.md 6.1), in a host scope snapshot only. Absent when none is open, and from a hab without the confirm capability.",
+            "items": {
+              "$ref": "#/components/schemas/Confirmation"
             }
           },
           "host": {

@@ -1,0 +1,55 @@
+{
+  "data": {
+    "answered_by": "answered_by-20",
+    "closed": "closed-19",
+    "created": "created-17",
+    "edited": true,
+    "expires_at": "expires_at-18",
+    "from": "from-4",
+    "id": "id-3",
+    "kind": "setup",
+    "reason": "reason-26",
+    "record": true,
+    "result": {
+      "host": "host-21",
+      "name": "name-23",
+      "pane": "pane-24",
+      "seed_problem": "seed_problem-25",
+      "session": "session-22",
+      "x_unknown_field": "later"
+    },
+    "setup": {
+      "bootstrap": "bootstrap-16",
+      "branch": "branch-15",
+      "host": "host-13",
+      "repository": "repository-14",
+      "x_unknown_field": "later"
+    },
+    "start": {
+      "branch": "branch-8",
+      "folder": "folder-6",
+      "harness": "harness-9",
+      "host": "host-5",
+      "model": "model-10",
+      "name": "name-11",
+      "project": "project-7",
+      "seed": "seed-12",
+      "x_unknown_field": "later"
+    },
+    "state": "unknown",
+    "x_unknown_field": "later"
+  },
+  "id": "id-29",
+  "revision": 27,
+  "seq": 28,
+  "type": "confirm.requested",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

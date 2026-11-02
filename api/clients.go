@@ -18,6 +18,10 @@ type SessionCreateParams struct {
 	Rows       int      `json:"rows,omitempty" doc:"Initial height. Default 24."`
 	// IdempotencyKey makes a retried create start one session (spec 3.9, Idempotency keys).
 	IdempotencyKey string `json:"idempotency_key,omitempty" doc:"A key the client makes for this create, at most 128 bytes. A repeat with the same key gets the first create's ids and starts nothing."`
+	// Model and Seed come with the confirm capability (capcom.md 3.3).
+	Model    string `json:"model,omitempty" doc:"With harness: the model to start it with, passed as --model. Needs the confirm capability."`
+	Seed     string `json:"seed,omitempty" doc:"The session's first message, at most 8000 characters. The hab delivers it once the agent can take it, marked as written by seed_from on the owner's behalf. Needs harness and the confirm capability."`
+	SeedFrom string `json:"seed_from,omitempty" doc:"Who wrote the seed, as host/session, shown in its envelope."`
 }
 
 // SessionCreated names the session and pane a create or resume made.
@@ -25,6 +29,9 @@ type SessionCreated struct {
 	Seq
 	Session string `json:"session" doc:"Session id."`
 	Pane    string `json:"pane" doc:"Pane id."`
+	// SeedProblem is set when a create with a seed started the session but could not queue
+	// the seed.
+	SeedProblem string `json:"seed_problem,omitempty" doc:"Why the seed was not queued; the session runs without it."`
 }
 
 // SessionRef names one session.

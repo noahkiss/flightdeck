@@ -130,6 +130,10 @@ var Methods = []Method{
 	{"file.read", "Read a run of a text file inside the host's read scope (capcom.md 5). Needs the read-tools capability.", FileReadParams{}, FileData{}},
 	{"logbook.find", "Search or list Logbook records (logbook.md 10.3). Needs the logbook capability.", LogbookFindParams{}, LogbookRecords{}},
 	{"logbook.get", "Read one Logbook record (logbook.md 10.3). Needs the logbook capability.", LogbookGetParams{}, LogbookRecordResult{}},
+	{"confirm.request", "Ask for a start or set-up: with confirm.start_elsewhere on, open a confirmation for the user and wait up to wait_ms for the answer; off, run it at once and return the record (capcom.md 6.1). Needs the confirm capability.", ConfirmRequestParams{}, ConfirmRequested{}},
+	{"confirm.answer", "Answer an open confirmation: confirm, with the user's edits, or cancel. The first answer wins; a later one answers conflict. A confirm returns once the hab ran the action (capcom.md 6.1). Needs the confirm capability.", ConfirmAnswerParams{}, ConfirmationResult{}},
+	{"confirm.list", "The open confirmations, and with all the closed ones the hab keeps (capcom.md 6.1). Needs the confirm capability.", ConfirmListParams{}, ConfirmList{}},
+	{"confirm.get", "One confirmation by id, open or closed (capcom.md 6.1). Needs the confirm capability.", ConfirmGetParams{}, ConfirmationResult{}},
 }
 
 // Notifications is every notification the server sends on a control connection.
@@ -162,6 +166,8 @@ var Events = []EventDef{
 	{"content.updated", "A session showed a file (content.show); the id is the item id. Ephemeral.", ContentItem{}},
 	{"settings.updated", "A hab-side setting changed: by a client or by a config read; the id is the setting id (app.md 20.5). Host scope only. Not ephemeral: the settings are in the host snapshot.", SettingUpdated{}},
 	{"channel.message", "A message this hab sent changed state; the id is the message id (mesh.md 6.5). Host scope only. Ephemeral.", ChannelRecord{}},
+	{"confirm.requested", "A confirmation opened, or a start ran at once as a record; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral: the open ones are in the host snapshot.", Confirmation{}},
+	{"confirm.closed", "A confirmation closed: done, failed, cancelled, expired or unknown; every card withdraws its buttons; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral.", Confirmation{}},
 	{"mesh.changed", "Sent only to a peer link that dialed this hab, subscribed or not: something waits for the dialer, so it pulls now; the id is this hab's device id (mesh.md 4.2, 6.5). Ephemeral.", MeshChanged{}},
 }
 
@@ -230,6 +236,10 @@ var Enums = map[string][]string{
 	"SettingSource": {"default", "client", "config"},
 	// Sets added for the read tools (capcom.md 4).
 	"ReadHostState": {"ok", "partial", "offline", "update_needed", "error"},
+	// Sets added for confirmations (capcom.md 6.1).
+	"ConfirmKind":   {"start", "setup"},
+	"ConfirmState":  {"open", "running", "done", "failed", "cancelled", "expired", "unknown"},
+	"ConfirmChoice": {"confirm", "cancel"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per
@@ -266,5 +276,7 @@ var Translators = map[int]Translator{}
 // (app.md 4.4). "settings" means settings.get, settings.set and the settings.updated event work,
 // and the host snapshot carries the settings (app.md 20.5). "read-tools" means transcript.list,
 // transcript.search, transcript.read, notice.get and file.read work (capcom.md 4). "logbook" means
-// the hab has a Logbook replica and the logbook.* methods work (logbook.md 10.3).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook"}
+// the hab has a Logbook replica and the logbook.* methods work (logbook.md 10.3). "confirm" means
+// the confirm.* methods and events work, the host snapshot carries the open confirmations, and
+// session.create takes model and seed (capcom.md 6.1).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm"}

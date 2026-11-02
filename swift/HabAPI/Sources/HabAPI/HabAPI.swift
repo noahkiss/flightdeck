@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -1376,6 +1376,340 @@ public struct CommandState: RawRepresentable, Codable, Sendable, Hashable {
     public static let running = CommandState(rawValue: "running")
     public static let done = CommandState(rawValue: "done")
     public static let unknown = CommandState(rawValue: "unknown")
+}
+
+public struct ConfirmAnswerParams: Codable, Sendable, Hashable {
+    public var choice: ConfirmChoice
+    /// With choice confirm: the user's changes.
+    public var edits: ConfirmEdits?
+    public var id: String
+
+    enum CodingKeys: String, CodingKey {
+        case choice = "choice"
+        case edits = "edits"
+        case id = "id"
+    }
+
+    public init(choice: ConfirmChoice, edits: ConfirmEdits? = nil, id: String) {
+        self.choice = choice
+        self.edits = edits
+        self.id = id
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct ConfirmChoice: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let confirm = ConfirmChoice(rawValue: "confirm")
+    public static let cancel = ConfirmChoice(rawValue: "cancel")
+}
+
+public struct ConfirmEdits: Codable, Sendable, Hashable {
+    public var folder: String?
+    public var harness: String?
+    /// Another target hab. Give folder with it.
+    public var host: String?
+    public var model: String?
+    /// The edited seed, at most 8000 characters.
+    public var seed: String?
+
+    enum CodingKeys: String, CodingKey {
+        case folder = "folder"
+        case harness = "harness"
+        case host = "host"
+        case model = "model"
+        case seed = "seed"
+    }
+
+    public init(folder: String? = nil, harness: String? = nil, host: String? = nil, model: String? = nil, seed: String? = nil) {
+        self.folder = folder
+        self.harness = harness
+        self.host = host
+        self.model = model
+        self.seed = seed
+    }
+}
+
+public struct ConfirmGetParams: Codable, Sendable, Hashable {
+    public var id: String
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+    }
+
+    public init(id: String) {
+        self.id = id
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct ConfirmKind: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let start = ConfirmKind(rawValue: "start")
+    public static let setup = ConfirmKind(rawValue: "setup")
+}
+
+public struct ConfirmList: Codable, Sendable, Hashable {
+    public var confirmations: [Confirmation]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case confirmations = "confirmations"
+        case seq = "seq"
+    }
+
+    public init(confirmations: [Confirmation], seq: UInt64) {
+        self.confirmations = confirmations
+        self.seq = seq
+    }
+}
+
+public struct ConfirmListParams: Codable, Sendable, Hashable {
+    /// Also list closed confirmations the hab still keeps, newest first after the open ones.
+    public var all: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case all = "all"
+    }
+
+    public init(all: Bool? = nil) {
+        self.all = all
+    }
+}
+
+public struct ConfirmRequestParams: Codable, Sendable, Hashable {
+    /// The requesting session's name on this hab. The hook endpoint fills it from the pane's token.
+    public var from: String?
+    public var kind: ConfirmKind
+    /// Kind setup.
+    public var setup: ConfirmSetup?
+    /// Kind start.
+    public var start: ConfirmStart?
+    /// Wait up to this long for the answer; 0 answers at once. At most 120000. With no answer by then, the answer reaches the requesting session later as a message from Flightdeck.
+    public var waitMs: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case from = "from"
+        case kind = "kind"
+        case setup = "setup"
+        case start = "start"
+        case waitMs = "wait_ms"
+    }
+
+    public init(from: String? = nil, kind: ConfirmKind, setup: ConfirmSetup? = nil, start: ConfirmStart? = nil, waitMs: Int? = nil) {
+        self.from = from
+        self.kind = kind
+        self.setup = setup
+        self.start = start
+        self.waitMs = waitMs
+    }
+}
+
+public struct ConfirmRequested: Codable, Sendable, Hashable {
+    public var confirmation: Confirmation
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case confirmation = "confirmation"
+        case seq = "seq"
+    }
+
+    public init(confirmation: Confirmation, seq: UInt64) {
+        self.confirmation = confirmation
+        self.seq = seq
+    }
+}
+
+public struct ConfirmResult: Codable, Sendable, Hashable {
+    /// The target hab, as this hab labels it.
+    public var host: String
+    /// The new session's name.
+    public var name: String?
+    /// The new session's pane id.
+    public var pane: String
+    /// Why the seed could not be queued; the session runs without it.
+    public var seedProblem: String?
+    /// The new session's id on the target hab.
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case host = "host"
+        case name = "name"
+        case pane = "pane"
+        case seedProblem = "seed_problem"
+        case session = "session"
+    }
+
+    public init(host: String, name: String? = nil, pane: String, seedProblem: String? = nil, session: String) {
+        self.host = host
+        self.name = name
+        self.pane = pane
+        self.seedProblem = seedProblem
+        self.session = session
+    }
+}
+
+public struct ConfirmSetup: Codable, Sendable, Hashable {
+    /// The bootstrap command the project declares. Filled by the hab.
+    public var bootstrap: String?
+    /// The ref to check out.
+    public var branch: String?
+    /// The target hab: a peer label, or this hab's host id.
+    public var host: String
+    /// The repository to clone or fetch.
+    public var repository: String
+
+    enum CodingKeys: String, CodingKey {
+        case bootstrap = "bootstrap"
+        case branch = "branch"
+        case host = "host"
+        case repository = "repository"
+    }
+
+    public init(bootstrap: String? = nil, branch: String? = nil, host: String, repository: String) {
+        self.bootstrap = bootstrap
+        self.branch = branch
+        self.host = host
+        self.repository = repository
+    }
+}
+
+public struct ConfirmStart: Codable, Sendable, Hashable {
+    /// The folder's branch, from the catalog. Filled by the hab.
+    public var branch: String?
+    /// The absolute project folder on the target host. The session starts there, in its project.
+    public var folder: String
+    /// The harness to start: claude, codex or opencode.
+    public var harness: String
+    /// The target hab: a peer label from the peer list, or this hab's host id. In confirm.request an empty host means this hab.
+    public var host: String
+    /// A model for the harness, as the harness names it.
+    public var model: String?
+    /// The new session's name. Absent: the target hab picks one.
+    public var name: String?
+    /// The project's name, from the catalog. Filled by the hab.
+    public var project: String?
+    /// The first message of the new session, at most 8000 characters. The target hab delivers it once the agent can take it, marked as from the requesting session on the owner's behalf.
+    public var seed: String?
+
+    enum CodingKeys: String, CodingKey {
+        case branch = "branch"
+        case folder = "folder"
+        case harness = "harness"
+        case host = "host"
+        case model = "model"
+        case name = "name"
+        case project = "project"
+        case seed = "seed"
+    }
+
+    public init(branch: String? = nil, folder: String, harness: String, host: String, model: String? = nil, name: String? = nil, project: String? = nil, seed: String? = nil) {
+        self.branch = branch
+        self.folder = folder
+        self.harness = harness
+        self.host = host
+        self.model = model
+        self.name = name
+        self.project = project
+        self.seed = seed
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct ConfirmState: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let `open` = ConfirmState(rawValue: "open")
+    public static let running = ConfirmState(rawValue: "running")
+    public static let done = ConfirmState(rawValue: "done")
+    public static let failed = ConfirmState(rawValue: "failed")
+    public static let cancelled = ConfirmState(rawValue: "cancelled")
+    public static let expired = ConfirmState(rawValue: "expired")
+    public static let unknown = ConfirmState(rawValue: "unknown")
+}
+
+public struct Confirmation: Codable, Sendable, Hashable {
+    /// The client id that answered it.
+    public var answeredBy: String?
+    /// RFC 3339 time it closed.
+    public var closed: String?
+    /// RFC 3339 time the hab took the request.
+    public var created: String
+    /// The user changed the action before confirming it.
+    public var edited: Bool?
+    /// RFC 3339 time an open confirmation expires, 60 minutes after it opened. An expired one never runs.
+    public var expiresAt: String?
+    /// The requesting session's name on this hab. Absent for a request from outside a pane.
+    public var from: String?
+    /// 128 random bits as 32 hex digits. The idempotency key of the start's session.create on the target hab.
+    public var id: String
+    public var kind: ConfirmKind
+    /// States failed and unknown: why, with the target hab's error. State expired or cancelled: a short note.
+    public var reason: String?
+    /// The action ran at once, with no question: confirm.start_elsewhere is off, or the start is on the agent's own host. The card is a record with no buttons.
+    public var record: Bool?
+    /// State done: what the start made.
+    public var result: ConfirmResult?
+    /// Kind setup: the set-up as it will run.
+    public var setup: ConfirmSetup?
+    /// Kind start: the start as it will run, or ran.
+    public var start: ConfirmStart?
+    /// open: waits for the user. running: confirmed, the hab runs it. done, failed, cancelled, expired, unknown: closed. unknown: the hab lost the answer, such as a peer link that dropped mid-start.
+    public var state: ConfirmState
+
+    enum CodingKeys: String, CodingKey {
+        case answeredBy = "answered_by"
+        case closed = "closed"
+        case created = "created"
+        case edited = "edited"
+        case expiresAt = "expires_at"
+        case from = "from"
+        case id = "id"
+        case kind = "kind"
+        case reason = "reason"
+        case record = "record"
+        case result = "result"
+        case setup = "setup"
+        case start = "start"
+        case state = "state"
+    }
+
+    public init(answeredBy: String? = nil, closed: String? = nil, created: String, edited: Bool? = nil, expiresAt: String? = nil, from: String? = nil, id: String, kind: ConfirmKind, reason: String? = nil, record: Bool? = nil, result: ConfirmResult? = nil, setup: ConfirmSetup? = nil, start: ConfirmStart? = nil, state: ConfirmState) {
+        self.answeredBy = answeredBy
+        self.closed = closed
+        self.created = created
+        self.edited = edited
+        self.expiresAt = expiresAt
+        self.from = from
+        self.id = id
+        self.kind = kind
+        self.reason = reason
+        self.record = record
+        self.result = result
+        self.setup = setup
+        self.start = start
+        self.state = state
+    }
+}
+
+public struct ConfirmationResult: Codable, Sendable, Hashable {
+    public var confirmation: Confirmation
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case confirmation = "confirmation"
+        case seq = "seq"
+    }
+
+    public init(confirmation: Confirmation, seq: UInt64) {
+        self.confirmation = confirmation
+        self.seq = seq
+    }
 }
 
 /// An open word set: values outside the known list decode and round-trip unchanged.
@@ -3602,6 +3936,8 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
     public var harness: String?
     /// A key the client makes for this create, at most 128 bytes. A repeat with the same key gets the first create's ids and starts nothing.
     public var idempotencyKey: String?
+    /// With harness: the model to start it with, passed as --model. Needs the confirm capability.
+    public var model: String?
     /// Session name, unique on the host. Default: the program's base name, with -2, -3 and so on when taken.
     public var name: String?
     /// Project id to file the session in. Give project or project_dir, or neither for an unfiled session.
@@ -3610,6 +3946,10 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
     public var projectDir: String?
     /// Initial height. Default 24.
     public var rows: Int?
+    /// The session's first message, at most 8000 characters. The hab delivers it once the agent can take it, marked as written by seed_from on the owner's behalf. Needs harness and the confirm capability.
+    public var seed: String?
+    /// Who wrote the seed, as host/session, shown in its envelope.
+    public var seedFrom: String?
 
     enum CodingKeys: String, CodingKey {
         case argv = "argv"
@@ -3618,29 +3958,37 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
         case env = "env"
         case harness = "harness"
         case idempotencyKey = "idempotency_key"
+        case model = "model"
         case name = "name"
         case project = "project"
         case projectDir = "project_dir"
         case rows = "rows"
+        case seed = "seed"
+        case seedFrom = "seed_from"
     }
 
-    public init(argv: [String]? = nil, cols: Int? = nil, cwd: String? = nil, env: [String]? = nil, harness: String? = nil, idempotencyKey: String? = nil, name: String? = nil, project: String? = nil, projectDir: String? = nil, rows: Int? = nil) {
+    public init(argv: [String]? = nil, cols: Int? = nil, cwd: String? = nil, env: [String]? = nil, harness: String? = nil, idempotencyKey: String? = nil, model: String? = nil, name: String? = nil, project: String? = nil, projectDir: String? = nil, rows: Int? = nil, seed: String? = nil, seedFrom: String? = nil) {
         self.argv = argv
         self.cols = cols
         self.cwd = cwd
         self.env = env
         self.harness = harness
         self.idempotencyKey = idempotencyKey
+        self.model = model
         self.name = name
         self.project = project
         self.projectDir = projectDir
         self.rows = rows
+        self.seed = seed
+        self.seedFrom = seedFrom
     }
 }
 
 public struct SessionCreated: Codable, Sendable, Hashable {
     /// Pane id.
     public var pane: String
+    /// Why the seed was not queued; the session runs without it.
+    public var seedProblem: String?
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
     /// Session id.
@@ -3648,12 +3996,14 @@ public struct SessionCreated: Codable, Sendable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case pane = "pane"
+        case seedProblem = "seed_problem"
         case seq = "seq"
         case session = "session"
     }
 
-    public init(pane: String, seq: UInt64, session: String) {
+    public init(pane: String, seedProblem: String? = nil, seq: UInt64, session: String) {
         self.pane = pane
+        self.seedProblem = seedProblem
         self.seq = seq
         self.session = session
     }
@@ -4002,6 +4352,8 @@ public struct StructureGetParams: Codable, Sendable, Hashable {
 public struct StructureResult: Codable, Sendable, Hashable {
     /// The current agent state of each pane that has one (harness-adapters.md, State event model). Absent from a hab without the agent-state capability.
     public var agents: [AgentState]?
+    /// The open confirmations (capcom.md 6.1), in a host scope snapshot only. Absent when none is open, and from a hab without the confirm capability.
+    public var confirmations: [Confirmation]?
     public var host: HostInfo
     public var panes: [Pane]
     public var projects: [Project]
@@ -4013,6 +4365,7 @@ public struct StructureResult: Codable, Sendable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case agents = "agents"
+        case confirmations = "confirmations"
         case host = "host"
         case panes = "panes"
         case projects = "projects"
@@ -4021,8 +4374,9 @@ public struct StructureResult: Codable, Sendable, Hashable {
         case settings = "settings"
     }
 
-    public init(agents: [AgentState]? = nil, host: HostInfo, panes: [Pane], projects: [Project], seq: UInt64, sessions: [Session], settings: [Setting]? = nil) {
+    public init(agents: [AgentState]? = nil, confirmations: [Confirmation]? = nil, host: HostInfo, panes: [Pane], projects: [Project], seq: UInt64, sessions: [Session], settings: [Setting]? = nil) {
         self.agents = agents
+        self.confirmations = confirmations
         self.host = host
         self.panes = panes
         self.projects = projects
@@ -4947,6 +5301,14 @@ public enum HabMethods {
     public static let logbookFind = HabMethod<LogbookFindParams, LogbookRecords>(name: "logbook.find")
     /// Read one Logbook record (logbook.md 10.3). Needs the logbook capability.
     public static let logbookGet = HabMethod<LogbookGetParams, LogbookRecordResult>(name: "logbook.get")
+    /// Ask for a start or set-up: with confirm.start_elsewhere on, open a confirmation for the user and wait up to wait_ms for the answer; off, run it at once and return the record (capcom.md 6.1). Needs the confirm capability.
+    public static let confirmRequest = HabMethod<ConfirmRequestParams, ConfirmRequested>(name: "confirm.request")
+    /// Answer an open confirmation: confirm, with the user's edits, or cancel. The first answer wins; a later one answers conflict. A confirm returns once the hab ran the action (capcom.md 6.1). Needs the confirm capability.
+    public static let confirmAnswer = HabMethod<ConfirmAnswerParams, ConfirmationResult>(name: "confirm.answer")
+    /// The open confirmations, and with all the closed ones the hab keeps (capcom.md 6.1). Needs the confirm capability.
+    public static let confirmList = HabMethod<ConfirmListParams, ConfirmList>(name: "confirm.list")
+    /// One confirmation by id, open or closed (capcom.md 6.1). Needs the confirm capability.
+    public static let confirmGet = HabMethod<ConfirmGetParams, ConfirmationResult>(name: "confirm.get")
 }
 
 public enum HabNotification {
@@ -4999,6 +5361,10 @@ public enum HabEvent: Sendable, Hashable {
     case settingsUpdated(SettingUpdated)
     /// A message this hab sent changed state; the id is the message id (mesh.md 6.5). Host scope only. Ephemeral.
     case channelMessage(ChannelRecord)
+    /// A confirmation opened, or a start ran at once as a record; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral: the open ones are in the host snapshot.
+    case confirmRequested(Confirmation)
+    /// A confirmation closed: done, failed, cancelled, expired or unknown; every card withdraws its buttons; the id is the confirmation id (capcom.md 6.1). Host scope only. Ephemeral.
+    case confirmClosed(Confirmation)
     /// Sent only to a peer link that dialed this hab, subscribed or not: something waits for the dialer, so it pulls now; the id is this hab's device id (mesh.md 4.2, 6.5). Ephemeral.
     case meshChanged(MeshChanged)
     case unknown(type: String, data: JSONValue)
@@ -5026,6 +5392,8 @@ public enum HabEvent: Sendable, Hashable {
         case "content.updated": self = .contentUpdated(try event.data.decode(ContentItem.self))
         case "settings.updated": self = .settingsUpdated(try event.data.decode(SettingUpdated.self))
         case "channel.message": self = .channelMessage(try event.data.decode(ChannelRecord.self))
+        case "confirm.requested": self = .confirmRequested(try event.data.decode(Confirmation.self))
+        case "confirm.closed": self = .confirmClosed(try event.data.decode(Confirmation.self))
         case "mesh.changed": self = .meshChanged(try event.data.decode(MeshChanged.self))
         default: self = .unknown(type: event.type, data: event.data)
         }

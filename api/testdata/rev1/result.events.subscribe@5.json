@@ -1,0 +1,165 @@
+{
+  "agents": [
+    {
+      "at": "at-48",
+      "harness": "harness-35",
+      "hooks": "missing",
+      "kind": "auth",
+      "last": "exited",
+      "pane": "pane-33",
+      "request": {
+        "command": "command-39",
+        "context_line": "context_line-45",
+        "cwd": "cwd-41",
+        "description": "description-44",
+        "expires_at": "expires_at-46",
+        "files": [
+          "files-40"
+        ],
+        "id": "id-37",
+        "input": {
+          "input": 42,
+          "x_unknown_field": "later"
+        },
+        "input_truncated": true,
+        "title": "title-43",
+        "tool": "tool-38",
+        "x_unknown_field": "later"
+      },
+      "revision": 34,
+      "session": "session-36",
+      "source": "spawn",
+      "state": "exited",
+      "turn": "turn-47",
+      "version": "version-49",
+      "warning": {
+        "reason": "reason-52",
+        "tested": "tested-51",
+        "version": "version-50",
+        "x_unknown_field": "later"
+      },
+      "x_unknown_field": "later"
+    }
+  ],
+  "confirmations": [
+    {
+      "answered_by": "answered_by-74",
+      "closed": "closed-73",
+      "created": "created-71",
+      "edited": true,
+      "expires_at": "expires_at-72",
+      "from": "from-58",
+      "id": "id-57",
+      "kind": "setup",
+      "reason": "reason-80",
+      "record": true,
+      "result": {
+        "host": "host-75",
+        "name": "name-77",
+        "pane": "pane-78",
+        "seed_problem": "seed_problem-79",
+        "session": "session-76",
+        "x_unknown_field": "later"
+      },
+      "setup": {
+        "bootstrap": "bootstrap-70",
+        "branch": "branch-69",
+        "host": "host-67",
+        "repository": "repository-68",
+        "x_unknown_field": "later"
+      },
+      "start": {
+        "branch": "branch-62",
+        "folder": "folder-60",
+        "harness": "harness-63",
+        "host": "host-59",
+        "model": "model-64",
+        "name": "name-65",
+        "project": "project-61",
+        "seed": "seed-66",
+        "x_unknown_field": "later"
+      },
+      "state": "unknown",
+      "x_unknown_field": "later"
+    }
+  ],
+  "host": {
+    "id": "id-4",
+    "x_unknown_field": "later"
+  },
+  "panes": [
+    {
+      "cols": 28,
+      "holder_build": "holder_build-27",
+      "id": "id-25",
+      "offset": 31,
+      "owner": "owner-30",
+      "revision": 26,
+      "rows": 29,
+      "session": "session-32",
+      "x_unknown_field": "later"
+    }
+  ],
+  "projects": [
+    {
+      "ahead": 13,
+      "behind": 14,
+      "branch": "branch-11",
+      "head": "head-12",
+      "id": "id-5",
+      "name": "name-7",
+      "remote": "remote-8",
+      "revision": 6,
+      "root_commit": "root_commit-9",
+      "sessions": [
+        "sessions-10"
+      ],
+      "x_unknown_field": "later"
+    }
+  ],
+  "seq": 3,
+  "sessions": [
+    {
+      "context_pct": 24,
+      "exit": {
+        "code": 20,
+        "signal": "signal-21",
+        "x_unknown_field": "later"
+      },
+      "id": "id-15",
+      "model": "model-23",
+      "name": "name-17",
+      "pane": "pane-19",
+      "project": "project-18",
+      "revision": 16,
+      "state": "exited",
+      "title": "title-22",
+      "x_unknown_field": "later"
+    }
+  ],
+  "settings": [
+    {
+      "default": {
+        "default": 55,
+        "x_unknown_field": "later"
+      },
+      "id": "id-53",
+      "revision": 56,
+      "source": "config",
+      "value": {
+        "value": 54,
+        "x_unknown_field": "later"
+      },
+      "x_unknown_field": "later"
+    }
+  ],
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

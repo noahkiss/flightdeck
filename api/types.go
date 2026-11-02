@@ -126,6 +126,9 @@ type Structure struct {
 	Panes    []Pane       `json:"panes"`
 	Agents   []AgentState `json:"agents,omitempty" doc:"The current agent state of each pane that has one (harness-adapters.md, State event model). Absent from a hab without the agent-state capability."`
 	Settings []Setting    `json:"settings,omitempty" doc:"The hab-side settings (app.md 20.5), in a host scope snapshot only. Absent from a hab without the settings capability."`
+	// Confirmations are the open ones (capcom.md 6.1), so a client shows each card after a
+	// (re)subscribe with no read.
+	Confirmations []Confirmation `json:"confirmations,omitempty" doc:"The open confirmations (capcom.md 6.1), in a host scope snapshot only. Absent when none is open, and from a hab without the confirm capability."`
 }
 
 // --- Agent state (docs/specs/harness-adapters.md, State event model) ---
