@@ -147,7 +147,9 @@ final class LiveTests: XCTestCase {
         await fleet.setActive(false)
     }
 
+    #if os(macOS)
     /// The app's Rounds list against `gff-hab round ls` on a real hab (rounds.md 13, app.md 21).
+    /// macOS only: it runs the gff-hab binary.
     @MainActor
     func testLiveRounds() async throws {
         guard let path = env["FLIGHTDECK_LIVE_SOCKET"], !path.isEmpty,
@@ -207,6 +209,7 @@ final class LiveTests: XCTestCase {
         try await compare("after Run now")
         await fleet.setActive(false)
     }
+    #endif
 
     /// Hello, subscribe with scope host, a ping, then a clean stop with no stream left open.
     private func check(_ t: Transport) async throws {
