@@ -271,12 +271,14 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(c.queue.items.map(\.habID), ["h2", "h2"])
         XCTAssertFalse(yes)
         XCTAssertFalse(faceID)
+        // Rows count once each, however many habs take them: the two hab-side rows, "Yes"
+        // counts as Allow, and on iOS the refused Face ID row (macOS does not show it).
         #if os(iOS)
-        // Three rows: the hab's, "Yes" counts as Allow, and the refused Face ID row.
-        XCTAssertTrue(c.notice?.hasPrefix("Safe: 2 of 3 changed.") ?? false, c.notice ?? "")
-        XCTAssertTrue(c.notice?.contains("Require Face ID for SSH keys did not change: authentication was refused.") ?? false, c.notice ?? "")
+        XCTAssertEqual(c.notice, "Safe: 3 of 4 changed. Require Face ID for SSH keys did not change: authentication was refused. "
+                       + "beta gets the change when it connects.")
+        #else
+        XCTAssertEqual(c.notice, "Safe: 3 settings changed. beta gets the change when it connects.")
         #endif
-        XCTAssertTrue(c.notice?.contains("beta gets the change when it connects.") ?? false, c.notice ?? "")
         XCTAssertEqual(SettingsQueue.load(d).items.count, 2, "the queue is saved")
         XCTAssertEqual(d.string(forKey: SettingsCenter.levelKey), "safe")
 
