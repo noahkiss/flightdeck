@@ -6,6 +6,8 @@
 # <dir> holds gff, gff-hab and gff-hab-holder (a Linux archive), or gff, GFF Hab.app and
 # GFF Holder.app (a darwin archive). The checks:
 #
+#   - LICENSE and NOTICE sit in <dir> and, on macOS, in each bundle's Contents/Resources, and
+#     NOTICE has an entry for libghostty, Ghostty and golang.org/x/sys
 #   - each binary's `version` prints "<name> <version>"
 #   - gff-hab and gff carry the ghostty build tag (go version -m), so they parse with libghostty
 #   - Linux: gff-hab links no libghostty and needs no glibc newer than 2.31; gff-hab-holder is
@@ -38,6 +40,21 @@ gff=$dir/gff
 for b in "$hab" "$holder" "$gff"; do
 	[ -x "$b" ] || fail "no executable $b"
 done
+
+# 0. The licence and the third-party notices (7.5): beside the binaries, and in each bundle.
+notice_dirs=("$dir")
+if [ "$os" = Darwin ]; then
+	notice_dirs+=("$dir/GFF Hab.app/Contents/Resources" "$dir/GFF Holder.app/Contents/Resources")
+fi
+for d in "${notice_dirs[@]}"; do
+	for f in LICENSE NOTICE; do
+		[ -s "$d/$f" ] || fail "no $f in $d"
+	done
+	for c in go.mitchellh.com/libghostty Ghostty golang.org/x/sys; do
+		grep -qx "$c" "$d/NOTICE" || fail "$d/NOTICE has no entry for $c"
+	done
+done
+say "LICENSE and NOTICE are in place"
 
 # 1. The version each binary reports.
 for b in "$gff" "$hab" "$holder"; do

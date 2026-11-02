@@ -11,6 +11,8 @@
 #                    helper Contents/MacOS/gff-hab-speech (identifier <prefix>.hab-speech) when
 #                    there is one
 #   gff              the bare client, identifier <prefix>.gff (only when cmd/gff exists)
+#   LICENSE, NOTICE  the repository's licence and third-party notices, also in each bundle's
+#                    Contents/Resources (docs/specs/ci-release.md 7.5)
 #
 # and <out>/gff-macos.zip, the stapled set for distribution.
 #
@@ -154,8 +156,8 @@ if [ -n "$speech" ]; then
 	fi
 fi
 
-# 2. The bundles (3.3): Info.plist, the executable and, in GFF Hab.app, the speech helper when
-# there is one; nothing else.
+# 2. The bundles (3.3): Info.plist, the executable, LICENSE and NOTICE in Contents/Resources and,
+# in GFF Hab.app, the speech helper when there is one; nothing else.
 plist_string() { printf '\t<key>%s</key>\n\t<string>%s</string>\n' "$1" "$2"; }
 
 # write_bundle <name> <executable> <bundle id> <usage keys...>: usage strings come from usage().
@@ -181,6 +183,8 @@ write_bundle() {
 	mkdir -p "$b/Contents/MacOS"
 	cp "$bindir/$exe" "$b/Contents/MacOS/$exe"
 	chmod 755 "$b/Contents/MacOS/$exe"
+	mkdir -p "$b/Contents/Resources"
+	cp "$repo/LICENSE" "$repo/NOTICE" "$b/Contents/Resources/"
 	{
 		printf '<?xml version="1.0" encoding="UTF-8"?>\n'
 		printf '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
@@ -222,6 +226,7 @@ if [ -x "$bindir/gff" ]; then
 	cp "$bindir/gff" "$dist/gff"
 	has_gff=1
 fi
+cp "$repo/LICENSE" "$repo/NOTICE" "$dist/"
 
 # The holder's entitlements (4.2): what a terminal app carries, so a program in a pane can ask.
 # Full Disk Access needs no entitlement. gff-hab, the speech helper and gff carry none.
