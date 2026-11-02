@@ -272,15 +272,15 @@ func (c *conn) deliverLocked(pe pubEvent) {
 func (c *conn) notifyLink(device string, pe pubEvent) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closing || device == "" || c.linkFrom != device || c.seeding {
+	if c.closing || device == "" || c.kind != api.ClientKindHab || c.linkFrom != device || c.seeding {
 		return false
 	}
-	c.queueEventLocked(pe)
-	return true
+	return c.queueEventLocked(pe)
 }
 
-// queueEventLocked gives an event the next seq and queues it.
-func (c *conn) queueEventLocked(pe pubEvent) {
+// queueEventLocked gives an event the next seq and queues it. It reports false when it
+// dropped the event: no translation to the connection's revision keeps it.
+func (c *conn) queueEventLocked(pe pubEvent) bool {
 	e := api.Event{Seq: c.seq + 1, Type: pe.ev.Type, ID: pe.ev.ID, Data: pe.data}
 	if !structure.Ephemeral(pe.ev.Type) { // an ephemeral event carries no revision (spec 3.9)
 		rev := pe.ev.Revision
@@ -289,13 +289,14 @@ func (c *conn) queueEventLocked(pe pubEvent) {
 	e, ok, err := downEvent(c.revision, e)
 	if err != nil {
 		c.s.cfg.Logf("translate event %s: %v", e.Type, err)
-		return
+		return false
 	}
 	if !ok {
-		return
+		return false
 	}
 	c.seq++
 	c.enqueueLocked(notification("event", e))
+	return true
 }
 
 // downEvent translates an event from api.Revision down to rev (spec 3.3).

@@ -810,20 +810,26 @@ the rest of client kind `hab`.
   round. So the hab that holds the mail tells it at once:
   - When an item joins the outbox for a device and is saved, the hab sends the event
     `mesh.changed` (id: its own device id, `reasons: ["mail"]`) to every peer link that device
-    dialed to it. The event goes to the link whether or not it subscribed, with the link's next
-    seq; a link in the middle of a subscribe gets none. No other client gets it.
+    dialed to it: a connection of client kind `hab` whose hello named that device. The event
+    goes to the link whether or not it subscribed, with the link's next seq; a link in the middle
+    of a subscribe gets none. No other client gets it, a client of another kind with a `peer`
+    field included.
   - **One per pull.** After a wake-up the hab sends no other to that device until the device
     calls `mail.pull`. A burst of sends wakes the peer once; mail added after its pull wakes it
     again. A hab with no traffic sends none.
-  - **No wake-up where push works.** When this hab holds an online link to the device, its own
-    round pushes, so it sends none. A device with no link to this hab gets none, and the next
-    item tries again.
+  - **No wake-up where push works.** When this hab holds an online link to the device and that
+    link is not waiting out a backoff, its own round pushes, so it sends none. A link in backoff
+    pushes nothing now, so the hab wakes the device instead. A device with no link to this hab
+    gets none, and the next item tries again.
   - **The dialer** takes `mesh.changed` with `mail` from a link it dialed and runs an exchange
     over that link at once, past any backoff. A link has at most one exchange in flight: a
     wake-up or a round that comes during one makes that exchange run once more when it ends.
-    So a peer never has two pulls in flight from one hab.
+    When that exchange failed, the extra run waits for the end of the link's backoff (1 s,
+    doubled for each failure in a row, up to 60 s) and does not repeat on its own. So a peer
+    never has two pulls in flight from one hab, and a failing link is not tried in a loop.
   - **A missed wake-up** (the link dropped, an older dialer) costs at most one round (15 s): the
-    dialer's next pull takes the mail and lets the next item wake it again.
+    dialer's next pull takes the mail and lets the next item wake it again. While the link's
+    calls fail, the mail waits for the backoff as well, as every exchange over that link does.
 
   Decision: an event sent to the peer link outside the subscription, not a subscription scope
   and not a new method. Reason: the dialer subscribes to nothing (4.2), and an unknown event type

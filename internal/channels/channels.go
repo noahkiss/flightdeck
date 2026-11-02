@@ -1176,15 +1176,42 @@ func (s *Service) run(ctx context.Context, l Link) {
 	for {
 		ok := s.exchange(ctx, l)
 		s.mu.Lock()
-		more := s.again[l.Label] && ok && ctx.Err() == nil
+		again := s.again[l.Label] && ctx.Err() == nil
 		delete(s.again, l.Label)
-		if !more {
-			delete(s.running, l.Label)
+		if again && ok {
 			s.mu.Unlock()
-			return
+			continue
+		}
+		delete(s.running, l.Label)
+		var wait time.Duration
+		if again {
+			// The exchange failed while a wake-up or a round asked for another: keep the
+			// request, and make it once the link's backoff ends, not at the next round.
+			if f := s.fails[l.Label]; f != nil {
+				wait = f.next.Sub(s.cfg.Now())
+			}
 		}
 		s.mu.Unlock()
+		if again {
+			s.retryAfter(l.Label, wait)
+		}
+		return
 	}
+}
+
+// retryAfter asks for an exchange over the link labelled label once d has passed.
+func (s *Service) retryAfter(label string, d time.Duration) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		t := time.NewTimer(max(d, 0))
+		defer t.Stop()
+		select {
+		case <-s.done:
+		case <-t.C:
+			s.Woken(label)
+		}
+	}()
 }
 
 // --- The mesh.changed wake-up (mesh.md 6.5) ---
@@ -1237,7 +1264,10 @@ func (s *Service) wakeLoop() {
 		pushed := map[string]bool{}
 		if s.cfg.Peers != nil {
 			for _, l := range s.cfg.Peers.Links() {
-				if s.up(l) {
+				s.mu.Lock()
+				backoff := s.fails[l.Label] != nil
+				s.mu.Unlock()
+				if s.up(l) && !backoff { // a link in backoff pushes nothing now: wake instead
 					pushed[l.DeviceID] = true
 				}
 			}

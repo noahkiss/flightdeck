@@ -46,6 +46,12 @@ func TestNotifyLink(t *testing.T) {
 		return c
 	}
 	peer, other := link("SHA256:peer"), link("SHA256:other")
+	// A client of another kind that names the same device in a peer field is no link.
+	fake := dial(t, path)
+	if _, err := fake.HelloAs(ctx(t), api.HelloParams{Client: api.ClientInfo{Name: "app", Version: "0", Kind: api.ClientKindApp},
+		Peer: &api.PeerHello{DeviceID: "SHA256:peer", Host: "laptop"}}); err != nil {
+		t.Fatal(err)
+	}
 	app := dial(t, path)
 	if _, err := app.Hello(ctx(t), api.ClientInfo{Name: "app", Version: "0", Kind: api.ClientKindApp}, "", ""); err != nil {
 		t.Fatal(err)
