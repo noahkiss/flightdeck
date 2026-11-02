@@ -285,8 +285,7 @@ Capcom on one host reads another host's data only through that host's hab, under
 scope. The home host never applies its own scope to a peer's data, and never keeps a peer's
 content past the conversation. Capcom reads every connected peer, within each peer's own scope,
 with the default deny list in 5.1 unless that peer's config sets its own (owner, 2026-11-01; 11,
-O2). Logbook is readable everywhere,
-since every hab holds a replica.
+O2). Logbook is readable everywhere, since every hab holds a replica.
 
 ### 5.5 Built choices (task-m31qyr6v)
 
@@ -331,9 +330,13 @@ has no implementation). Error kind `denied`. Doors: `gff-hab read <tool>`, the s
   default roots. `deny` (patterns) replaces the default deny list: with no `deny` key the hab
   uses the default list, `deny = [...]` uses only the listed patterns, and `deny = []` turns
   the default list off (lead, 2026-11-01: a power-user default; Paseo and Rex have no deny list
-  at all). A deny entry narrows a root, default or not. Default roots: the
-  folders of this hab's catalog and structure projects, Claude's `projects/`, Codex's `sessions/`
-  and `archived_sessions/`, and `<state>/capcom` for the session host stage (7.1). The default
+  at all). A deny entry narrows a root, default or not. When the config sets `deny`, gff-hab logs
+  one line at each load: how many default patterns the list leaves out, or that `deny = []`
+  turns the default list off. A blank entry, and an exemption with a slash or `~`, are reported
+  as config problems and left out; a list whose every entry is bad keeps the default list, so a
+  typo never turns it off. Default roots: the folders of this hab's catalog and structure
+  projects, Claude's `projects/`, Codex's `sessions/` and `archived_sessions/`, and
+  `<state>/capcom` for the session host stage (7.1). The default
   deny list is `readtools.DefaultDeny`: `.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube`, `.docker`,
   `.config/gcloud`, `.oci`, `.env`, `.env.*`, `!.env.example`, `!.env.sample`,
   `!.env.template`, `.netrc`, `.git-credentials`, `.pgpass`, `.credentials.json`, `*.pem`,
@@ -343,10 +346,12 @@ has no implementation). Error kind `denied`. Doors: `gff-hab read <tool>`, the s
   slash matches consecutive parts; one that starts with `/` or `~/` matches from the start of the
   path. Each part is a glob. A pattern that starts with `!` is an exemption: a slash-free word
   that exempts each part it matches from the other slash-free patterns. It never lifts a folder
-  pattern, so `.ssh/.env.example` and `.env/.env.example` stay refused. A configured list may
-  carry its own exemptions; copy the default list to keep the templates readable. Patterns match in any case: macOS and Windows file systems
-  ignore case, so `.ENV` opens `.env`. Both sides are case folded, not only lower-cased, so
-  `.ſsh` (long s) matches `.ssh` too.
+  pattern, so `.ssh/.env.example` and `.env/.env.example` stay refused. Order does not matter,
+  unlike gitignore: an exemption anywhere in the list applies to every slash-free pattern. A
+  configured list may carry its own exemptions; copy the default list to keep the templates
+  readable. Patterns match in any case: macOS and Windows file systems ignore case, so `.ENV`
+  opens `.env`. Both sides are case folded, not only lower-cased, so `.ſsh` (long s) matches
+  `.ssh` too.
 - **The check.** The hab cleans the path, checks the deny list, resolves every link (a missing
   tail is kept as written), checks the resolved path against each root, as written and
   resolved, then checks the deny list again. A missing path outside the scope is denied, not
