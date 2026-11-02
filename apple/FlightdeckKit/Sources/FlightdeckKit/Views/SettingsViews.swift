@@ -47,7 +47,7 @@ struct SettingsPage: View {
     /// own page shows only where that page is linked.
     private func rows(in area: SettingArea) -> [SettingDef] {
         SettingsRegistry.all.filter { d in
-            guard d.area == area, d.shownHere, matches(d.title) || matches(d.id) else { return false }
+            guard d.area == area, d.shownHere, d.built, matches(d.title) || matches(d.id) else { return false }
             if d.id == SettingsRegistry.sshRequireFaceID { return ssh != nil }
             if d.kind == .page { return !availableLinks(area).isEmpty }
             return true

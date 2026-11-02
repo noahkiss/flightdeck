@@ -568,6 +568,8 @@ general case with no peers.
   proposal records here. One switch replaces the per-harness switches (`app.md` 20.3).
 - It is a levelled setting: `agents` at Safe, `off` at Balanced and Bypass permissions
   (`app.md` 20.3). The app writes it through `settings.set` (`app.md` 20.5).
+- Built: gff-hab stores and serves the setting, and the app writes it (task-yfmrj6yc). No
+  proposal reads it yet; that waits for Logbook.
 - Capcom files proposals by its own rule (`capcom.md` 6.2), whatever this setting says. See open
   question 15.1.
 

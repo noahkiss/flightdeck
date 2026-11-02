@@ -1082,6 +1082,7 @@ The study recommended no extra gate (the harness's own tool prompt only, as in P
   (`app.md` 20.5): the app writes it, and a value in the hab's config file locks it. Off, the
   action runs at once and the card shows as a record.
 - The level picker sets it: on at Safe and Balanced, off at Bypass permissions (`app.md` 20.3).
+- Built: gff-hab stores and serves the setting (task-yfmrj6yc); the card waits for Capcom.
 - Handing work to an agent already on a project needs no card (owner, 2026-11-01).
 
 ---

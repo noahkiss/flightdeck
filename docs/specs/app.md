@@ -2559,14 +2559,12 @@ notifications. None of their private detail is reproduced here.
 
 Owner decisions, 2026-11-01. Flightdeck is a power-user system: it adds few confirmations, and
 few of its choices are settings. One level picker sets the few levelled settings at once. This
-section is the registry; the sections it links hold each setting's behaviour. Built: nothing of
-this section yet (task-yfmrj6yc). Today each built setting has its own switch where its section
-says.
+section is the registry; the sections it links hold each setting's behaviour. Built
+(task-yfmrj6yc): the hab-side settings and their API (20.5), the registry, the level picker, the
+queue, the new-hab check and the Settings page. What is not built is listed in 20.8.
 
-`ssh.require_face_id` depends on the Face ID branch (not yet on main):
-it makes Face ID one app-level check before each dial, over every key, so a change never makes
-a new key. Until it lands, 10.6 and 10.7 on main still describe per-key switches and an enclave
-flag on the generated key.
+`ssh.require_face_id` is the app-level Face ID check of 10.7: one check before each dial, over
+every key, so a change never makes a new key.
 
 ### 20.1 What becomes a setting
 
@@ -2618,7 +2616,7 @@ flag on the generated key.
   keeps it on. Turning it on asks nothing and makes no new key.
 - **The cost of Safe.** With `ssh.require_face_id` on, every dial asks for Face ID. A banner,
   Watch or Live Activity answer to an SSH hab then fails at once with "Open Flightdeck to answer"
-  (10.6 on the Face ID branch), since a background action cannot ask.
+  (10.6), since a background action cannot ask.
 - **Levels are per device.** The app keeps the last picked level in its defaults. A phone at Safe
   and a Mac at Balanced is fine for app-side settings. Hab-side settings are shared: the last
   write wins (20.5).
@@ -2645,7 +2643,7 @@ flag on the generated key.
 | `approval.max_age` | Remote answers expire after | Approvals | integer minutes, 0 = never, else 1 to 1440 | 60 | 60 | 0 | Hab, every hab | 7.4 |
 | `logbook.approval` | Require approval for memories | Agents | `"off"` or `"agents"` | `"agents"` | `"off"` | `"off"` | Hab, every hab | `logbook.md` 9.1, `instructions-mcp-flight-rules.md` 12 |
 | `voice.yes_allows` | "Yes" counts as Allow | Voice | bool | Off | On | On | App, this device | 13.3, 13.7 |
-| `ssh.require_face_id` | Require Face ID for SSH keys | Security | bool | On | Off | Off | App, Keychain item; iOS only | 10.7 (Face ID branch) |
+| `ssh.require_face_id` | Require Face ID for SSH keys | Security | bool | On | Off | Off | App, Keychain item; iOS only | 10.7 |
 
 - **`confirm.start_elsewhere`** stays on in Balanced. Capcom's tools are allowed in its own
   folder (`capcom.md` 7.1), so no harness prompt stands before a start on another host. Off: the
@@ -2662,10 +2660,10 @@ flag on the generated key.
 - **`voice.yes_allows`** off: only "allow", "approve", "allow it" and "approve it" answer Allow,
   and "yes" makes the app ask again. The deny words are the same at every level.
 - **`ssh.require_face_id`** is one app-level check over the generated key and every imported key
-  (10.7 on the Face ID branch). It keeps its level: a change keeps every key and its public
-  line, and starts no reconnect. It replaces the Face ID setting that 7.6 named for approvals
-  and app open (20.6). The Mac app shows no row (the branch puts it on iOS only), so a level
-  pick on the Mac leaves it alone.
+  (10.7). It keeps its level: a change keeps every key and its public line, and starts no
+  reconnect. It replaces the Face ID setting that 7.6 named for approvals and app open (20.6).
+  The Mac app shows no row (10.7 puts it on iOS only), so a level pick on the Mac leaves it
+  alone.
 
 ### 20.4 Preferences: settings with no level
 
@@ -2815,3 +2813,54 @@ Each candidate below is a fixed behaviour now.
 - **A hab-side row** says where it is stored: "On every hab" or "On <hab>".
 - **Today's pages** (Settings › Notifications, › Voice, › SSH and the usage warnings) become
   groups of this page. Their sections keep the wording of each row.
+
+### 20.8 Built choices in the app (task-yfmrj6yc)
+
+`FlightdeckKit/Settings/`: the registry (`SettingsRegistry`), the level rule (`LevelMatcher`),
+the writes and the queue (`SettingsWrites`, `SettingsQueue`) and their glue (`SettingsCenter`).
+The page is `Views/SettingsViews.swift`.
+
+- **Where values come from.** Each connection keeps its hab's settings from the host snapshot,
+  then `settings.updated` by revision (`HabState.settings`). The app-side rows read and write
+  where they already live: `voice.yes_allows` in the voice settings, `ssh.require_face_id`
+  through the SSH setup's Face ID switch, which asks before it turns off.
+- **A queued value counts.** An offline hab's row shows, and matches, the value queued for it.
+- **A tie.** When the rows match two columns (every hab-side row locked, say), the picker shows
+  the last picked level.
+- **A level pick writes only rows that differ.** A row already at the level's value is left as
+  it is, so its source stays `default` and the new-hab check can still move it. The notice counts
+  settings, not habs: "Safe: 3 settings changed".
+- **No queue without a snapshot.** A hab whose settings the app has not seen since launch (it was
+  offline throughout) gets nothing queued; at its connect the new-hab check gives each row still at
+  `default` the picked level's value. A row a client wrote stands and shows "Differs on <hab>".
+- **No level picked yet.** The new-hab check writes nothing, since the hab's defaults are the
+  Balanced column.
+- **A call that does not reach the hab** (the connection dropped) queues its rows, as for an
+  offline hab. Any other refusal without a row id ends the try and names every row.
+- **The connect step.** At the first snapshot after each hello: the queued writes for that hab
+  and the new-hab rows go in one `settings.set`, with drop-and-resend-once. A queued write whose
+  value is already in place is cleared with nothing sent.
+- **The exception count** is a button under the picker; it scrolls to the first exception's row.
+- **The entry point.** The connections list has one Settings button, which opens the page. The
+  old Notifications, Voice and SSH buttons show only when there is no settings center.
+- **Voice settings saved by an older app** keep every value: a missing field takes its default.
+
+### 20.9 Not built yet
+
+- **Today's pages as groups.** Notifications, Voice, SSH keys and the usage warnings open as
+  pages linked from their group, not as rows inline. Their rows are in the registry, so search
+  finds them and shows the link.
+- **The hab consumers** of `confirm.start_elsewhere` (Capcom), `approval.max_age` (the request
+  expiry of 7.4) and `logbook.approval` (Logbook). The hab stores and serves each, and the app
+  writes them.
+- **The Habs group** shows only the SSH page link. Each hab's push status stays on the
+  Notifications page; the Capcom host picker waits for Capcom.
+- **Rows with no control yet:** `notify.command_done`, `notify.tap`, `widget.hide_titles`,
+  `mac.keep_connected` and `voice.language` are in the registry, marked not built, and the page
+  leaves them out until their controls exist.
+- **The lock screen switch.** "Approve from the lock screen without unlocking" still shows on
+  the Notifications page, and the Live Activity still reads it, though 20.6 drops it. Removing
+  it takes the second Allow intent out of the widget too, so it waits for its own change.
+- **`gff lb status`** waits for Logbook.
+- **Pushed preferences** (20.4) still reach each hab through `push.register` as before; the
+  usage thresholds are not sent yet.

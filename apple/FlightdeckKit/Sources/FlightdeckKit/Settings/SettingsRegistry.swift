@@ -77,6 +77,8 @@ public struct SettingDef: Identifiable, Sendable {
     public var levels: [SettingLevel: JSONValue]?
     /// Shown on iPhone and iPad only.
     public var iOSOnly = false
+    /// False while the row has no control in the app yet (app.md 20.9): the page leaves it out.
+    public var built = true
 
     public var isLevelled: Bool { levels != nil }
     public var isHabSide: Bool { store != .app }
@@ -120,15 +122,15 @@ public enum SettingsRegistry {
     public static let preferences: [SettingDef] = [
         SettingDef(id: "notify.done", title: "Notify when a turn finishes", area: .notifications, kind: .page, store: .app),
         SettingDef(id: "notify.show_commands", title: "Show commands in notifications", area: .notifications, kind: .page, store: .app),
-        SettingDef(id: "notify.command_done", title: "Notify when a long command finishes", area: .notifications, kind: .page, store: .app),
-        SettingDef(id: "notify.tap", title: "Open a notification in", area: .notifications, kind: .page, store: .app),
+        SettingDef(id: "notify.command_done", title: "Notify when a long command finishes", area: .notifications, kind: .page, store: .app, built: false),
+        SettingDef(id: "notify.tap", title: "Open a notification in", area: .notifications, kind: .page, store: .app, built: false),
         SettingDef(id: "usage.warnings", title: "Usage warnings, with thresholds", area: .usage, kind: .page, store: .app),
-        SettingDef(id: "widget.hide_titles", title: "Hide titles on the Lock Screen", area: .widgets, kind: .page, store: .app),
-        SettingDef(id: "mac.keep_connected", title: "Stay connected in the background", area: .connection, kind: .page, store: .app),
+        SettingDef(id: "widget.hide_titles", title: "Hide titles on the Lock Screen", area: .widgets, kind: .page, store: .app, built: false),
+        SettingDef(id: "mac.keep_connected", title: "Stay connected in the background", area: .connection, kind: .page, store: .app, built: false),
         SettingDef(id: permissionWait, title: "Answer permissions from the app (blocking hook)", area: .approvals,
                    kind: .integer(0...120, unit: "s"), store: .oneHab),
         SettingDef(id: "voice.*", title: "Engines, summary request, spoken commands, confirm before send, barge-in, noisy room, pause", area: .voice, kind: .page, store: .app),
-        SettingDef(id: "voice.language", title: "Dictation language", area: .voice, kind: .page, store: .app),
+        SettingDef(id: "voice.language", title: "Dictation language", area: .voice, kind: .page, store: .app, built: false),
     ]
 
     public static let all: [SettingDef] = levelled + preferences

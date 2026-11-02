@@ -313,6 +313,8 @@ produces several, and a list is faster to judge than a string of interruptions.
   at once and shows the card as a record. It is a levelled setting: on at Safe and Balanced,
   off at Bypass permissions (`app.md` 20.3). The app writes it to every hab through
   `settings.set` (`app.md` 20.5).
+- Built: gff-hab stores and serves the setting, and the app writes it (task-yfmrj6yc). No
+  confirmation reads it yet; that waits for Capcom.
 - With the setting on, a start or set-up tool does not act. It asks the hab for a confirmation
   and returns its id.
 - The hab raises a confirmation card in the Capcom view on every client (for another agent, in
