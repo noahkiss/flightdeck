@@ -56,6 +56,9 @@ type sim struct {
 	secrets  []string
 	gen      int // names rebuilt replicas
 	repeated int // repeats delivered, for the log
+	// page is what each link asks for per page: in half the runs 3 ops or 2 KiB, so exchanges
+	// page through More, pass the byte bound and cut origins mid-run.
+	page Limits
 }
 
 func newSim(t *testing.T, rng *rand.Rand, o simOpts) *sim {
@@ -68,6 +71,9 @@ func newSim(t *testing.T, rng *rand.Rand, o simOpts) *sim {
 	}
 	s := &sim{world: w, o: o, cut: map[[2]int]bool{}, down: map[int]bool{},
 		written: map[OpID]bool{}, lost: map[OpID]bool{}}
+	if rng.Intn(2) == 0 {
+		s.page = Limits{Ops: 3, Bytes: 2 << 10}
+	}
 	n := len(w.reps)
 	s.epoch = make([]int, n)
 	s.ownSeen = make([]uint64, n)
@@ -108,15 +114,17 @@ type remote struct {
 	faulty   bool
 }
 
-func (r remote) Pull(ctx context.Context, have Vector, skip []string) (PullAnswer, error) {
+func (r remote) Pull(ctx context.Context, have Vector, skip []string, lim Limits) (PullAnswer, error) {
 	var a PullAnswer
 	err := r.s.carry(r.from, r.to, r.faulty, func(to *replica) error {
 		var err error
-		a, err = to.ServePull(ctx, have, skip)
+		a, err = to.ServePull(ctx, have, skip, lim)
 		return err
 	})
 	return a, err
 }
+
+func (r remote) Page() Limits { return r.s.page }
 
 func (r remote) Push(ctx context.Context, ops [][]byte) (PushAnswer, error) {
 	var a PushAnswer

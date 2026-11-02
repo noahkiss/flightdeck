@@ -3146,16 +3146,24 @@ public struct LogbookGetParams: Codable, Sendable, Hashable {
 public struct LogbookPullParams: Codable, Sendable, Hashable {
     /// The caller's version vector. An origin it does not list counts as 0.
     public var have: [LogbookSeq]
-    /// Origins the caller refuses (two hosts share them, logbook.md 7.4); none of their ops are sent.
+    /// The most op bytes the answer may hold; one larger op still comes alone. 0, or above 1 MiB, means 1 MiB.
+    public var maxBytes: Int?
+    /// The most ops the answer may hold. 0, or above 2,000, means 2,000.
+    public var maxOps: Int?
+    /// Origins the caller refuses (two hosts share them, logbook.md 7.4), or passes over in this exchange; none of their ops are sent.
     public var skip: [String]?
 
     enum CodingKeys: String, CodingKey {
         case have = "have"
+        case maxBytes = "max_bytes"
+        case maxOps = "max_ops"
         case skip = "skip"
     }
 
-    public init(have: [LogbookSeq], skip: [String]? = nil) {
+    public init(have: [LogbookSeq], maxBytes: Int? = nil, maxOps: Int? = nil, skip: [String]? = nil) {
         self.have = have
+        self.maxBytes = maxBytes
+        self.maxOps = maxOps
         self.skip = skip
     }
 }
@@ -3163,7 +3171,7 @@ public struct LogbookPullParams: Codable, Sendable, Hashable {
 public struct LogbookPullResult: Codable, Sendable, Hashable {
     /// More ops follow: pull again with the new vector.
     public var more: Bool?
-    /// Op bytes as stored, per origin in seq order: at most 2,000 ops or 4 MiB, or one larger op.
+    /// Op bytes as stored, per origin in seq order: at most 2,000 ops or 1 MiB, or one larger op.
     public var ops: [Data]
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
@@ -3190,7 +3198,7 @@ public struct LogbookPullResult: Codable, Sendable, Hashable {
 }
 
 public struct LogbookPushParams: Codable, Sendable, Hashable {
-    /// Op bytes as stored, per origin in seq order: at most 2,000 ops or 4 MiB, or one larger op.
+    /// Op bytes as stored, per origin in seq order: at most 2,000 ops or 1 MiB, or one larger op.
     public var ops: [Data]
 
     enum CodingKeys: String, CodingKey {

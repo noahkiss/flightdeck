@@ -31,6 +31,9 @@ type ApplyResult struct {
 	// Changed lists, sorted, the ids of records whose folded state may have changed: the ids
 	// they had before and after, so a record an id collision renames shows under both.
 	Changed []string
+
+	// ownMax is the highest seq of this replica's own origin among the ops given.
+	ownMax uint64
 }
 
 // Apply stores ops a peer sent, as their bytes came, and folds the ones it can (7.1): ops of one
@@ -65,6 +68,9 @@ func (s *Store) Apply(ctx context.Context, raws [][]byte) (ApplyResult, error) {
 		if err != nil {
 			res.Refused++
 			continue
+		}
+		if o.Origin == m.origin {
+			res.ownMax = max(res.ownMax, o.Seq)
 		}
 		g, err := originRow(ctx, tx, o.Origin)
 		if err != nil {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -243,40 +244,50 @@ func (s *Store) Vector(ctx context.Context) (Vector, error) {
 // whether more remain. Ops it does not fold are served like any other (4.4). This is stage 3's
 // answer to logbook.pull and the source of logbook.push.
 func (s *Store) OpsAfter(ctx context.Context, have Vector, maxOps, maxBytes int) ([][]byte, bool, error) {
+	ops, _, more, err := s.opsAfter(ctx, have, maxOps, maxBytes)
+	return ops, more, err
+}
+
+// opsAfter is OpsAfter that also returns, per origin in the page, the last seq it holds: a
+// page is a gap-free run per origin from have, so the caller holds up to it once it lands.
+func (s *Store) opsAfter(ctx context.Context, have Vector, maxOps, maxBytes int) ([][]byte, Vector, bool, error) {
 	mine, err := s.Vector(ctx)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	var out [][]byte
+	last := Vector{}
 	size := 0
 	for _, origin := range sortedKeys(mine) {
 		if mine[origin] <= have[origin] {
 			continue
 		}
-		rows, err := s.db.QueryContext(ctx, `SELECT raw FROM ops WHERE origin = ? AND seq > ? AND seq <= ? ORDER BY seq`,
+		rows, err := s.db.QueryContext(ctx, `SELECT seq, raw FROM ops WHERE origin = ? AND seq > ? AND seq <= ? ORDER BY seq`,
 			origin, have[origin], mine[origin])
 		if err != nil {
-			return nil, false, err
+			return nil, nil, false, err
 		}
 		for rows.Next() {
+			var seq uint64
 			var raw []byte
-			if err := rows.Scan(&raw); err != nil {
+			if err := rows.Scan(&seq, &raw); err != nil {
 				rows.Close()
-				return nil, false, err
+				return nil, nil, false, err
 			}
 			if len(out) > 0 && ((maxOps > 0 && len(out) >= maxOps) || (maxBytes > 0 && size+len(raw) > maxBytes)) {
 				rows.Close()
-				return out, true, nil
+				return out, last, true, nil
 			}
 			out = append(out, raw)
+			last[origin] = seq
 			size += len(raw)
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
-			return nil, false, err
+			return nil, nil, false, err
 		}
 	}
-	return out, false, nil
+	return out, last, false, nil
 }
 
 // Changes returns, sorted, the ids of records whose ops arrived after cursor, by any writer of
@@ -341,6 +352,12 @@ type Status struct {
 	Ahead    []string // origins whose clock ran more than an hour ahead
 	Shared   []string // origins two hosts share; their further ops are refused
 	Vector   Vector
+	// Restoring is the highest own seq a peer holds when this file holds less: it was restored
+	// from an older copy, and writes are refused until sync brings the ops back. 0 otherwise.
+	Restoring uint64
+	// Uncopied lists set-aside files of an older origin whose ops are not all copied in yet, as
+	// "name: why". gff-hab tries again at each start.
+	Uncopied []string
 }
 
 // Status reads the replica's counts and flags.
@@ -363,6 +380,15 @@ func (s *Store) Status(ctx context.Context) (Status, error) {
 	if st.Shared, err = queryStrings(ctx, s.db, `SELECT origin FROM origins WHERE shared = 1 ORDER BY origin`); err != nil {
 		return st, err
 	}
-	st.Vector, err = s.Vector(ctx)
+	if st.Vector, err = s.Vector(ctx); err != nil {
+		return st, err
+	}
+	var v string
+	if err := s.db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = 'own_seen'`).Scan(&v); err == nil {
+		if n, _ := strconv.ParseUint(v, 10, 64); n > st.Vector[s.origin] {
+			st.Restoring = n
+		}
+	}
+	st.Uncopied, err = s.uncopied(ctx)
 	return st, err
 }

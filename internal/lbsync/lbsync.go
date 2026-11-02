@@ -11,6 +11,7 @@ package lbsync
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"slices"
@@ -26,10 +27,9 @@ import (
 const Capability = "logbook"
 
 const (
-	minBackoff = time.Second
 	maxBackoff = time.Minute
-	// pageTime bounds one pull or push call over a link.
-	pageTime = 60 * time.Second
+	// minPageBytes is the smallest page a slow link shrinks to; one larger op still travels.
+	minPageBytes = 16 << 10
 )
 
 // Link is one peer link this hab dialed.
@@ -60,8 +60,21 @@ type Config struct {
 	Wake  func(device string) bool
 	Poll  time.Duration // the exchange round over every link; default 60 s (logbook.md 7.1)
 	Watch time.Duration // the file check; default 500 ms
-	Now   func() time.Time
-	Logf  func(string, ...any)
+	// PageTime is how long one pull or push call may take before the exchange gives up on it;
+	// default 60 s. A call slower than a quarter of it halves the link's page size, one faster
+	// than a sixteenth doubles it, up to logbook.PageBytes (logbook.md 7.6, Slow links).
+	PageTime time.Duration
+	// MinBackoff is the wait after a first failed exchange, doubled per failure in a row up to
+	// 60 s; default 1 s.
+	MinBackoff time.Duration
+	// StartHold is how long writes to the file wait at start, while the first exchange runs,
+	// when the peer list is not empty; default 10 s. A completed exchange ends it sooner.
+	StartHold time.Duration
+	Now       func() time.Time
+	Logf      func(string, ...any)
+
+	// checked, when set, runs after each look of the change loop (tests).
+	checked func()
 }
 
 // Service syncs one replica.
@@ -78,6 +91,11 @@ type Service struct {
 	again   map[string]bool           // links whose exchange runs once more when it ends
 	stats   map[string]Stats          // by link label
 	wanted  map[string]bool           // links whose peer sent mesh.changed with logbook
+	urgent  map[string]bool           // links whose next exchange runs past any backoff
+	nudge   map[string]chan struct{}  // by label: ends a backoff wait when a wake-up comes
+	page    map[string]int            // by label: the page size in bytes the link asks for
+	late    map[string]chan struct{}  // by label: closed when a call given up on has its answer
+	held    bool                      // the start hold is on
 
 	kick, changed, wake chan struct{}
 	done                chan struct{}
@@ -110,6 +128,15 @@ func New(cfg Config) (*Service, error) {
 	if cfg.Watch <= 0 {
 		cfg.Watch = 500 * time.Millisecond
 	}
+	if cfg.PageTime <= 0 {
+		cfg.PageTime = 60 * time.Second
+	}
+	if cfg.MinBackoff <= 0 {
+		cfg.MinBackoff = time.Second
+	}
+	if cfg.StartHold <= 0 {
+		cfg.StartHold = 10 * time.Second
+	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
@@ -123,8 +150,18 @@ func New(cfg Config) (*Service, error) {
 	s := &Service{cfg: cfg, last: v,
 		have: map[string]logbook.Vector{}, woken: map[string]bool{}, fails: map[string]*failure{},
 		online: map[string]bool{}, running: map[string]bool{}, again: map[string]bool{}, stats: map[string]Stats{}, wanted: map[string]bool{},
+		urgent: map[string]bool{}, nudge: map[string]chan struct{}{}, page: map[string]int{}, late: map[string]chan struct{}{},
 		kick: make(chan struct{}, 1), changed: make(chan struct{}, 1), wake: make(chan struct{}, 1), done: make(chan struct{})}
 	s.ctx, s.stop = context.WithCancel(context.Background())
+	// The start hold (logbook.md 7.6, Restored file): with peers listed, writes wait until the
+	// first exchange ends or the hold runs out, so a file restored from an older copy gets its
+	// own ops back before it writes. With none, a mesh of one, nothing waits.
+	if cfg.Peers != nil && len(cfg.Peers.Links()) > 0 {
+		if err := cfg.Store.HoldWrites(context.Background(), cfg.Now().Add(cfg.StartHold)); err != nil {
+			return nil, err
+		}
+		s.held = true
+	}
 	s.wg.Add(3)
 	go s.roundLoop()
 	go s.changeLoop()
@@ -142,6 +179,20 @@ func (s *Service) Close() {
 	close(s.done)
 	s.stop()
 	s.wg.Wait()
+	s.endHold()
+}
+
+// endHold ends the start hold once.
+func (s *Service) endHold() {
+	s.mu.Lock()
+	held := s.held
+	s.held = false
+	s.mu.Unlock()
+	if held {
+		if err := s.cfg.Store.HoldWrites(context.Background(), time.Time{}); err != nil {
+			s.cfg.Logf("logbook: ending the start hold: %v", err)
+		}
+	}
 }
 
 // Kick runs a round now: a peer's row changed, so a link may have come up.
@@ -179,7 +230,7 @@ func (s *Service) wakeLoop() {
 		}
 		for _, l := range s.cfg.Peers.Links() {
 			if wanted[l.Label] && s.up(l) {
-				s.start(l)
+				s.start(l, true)
 			}
 		}
 	}
@@ -207,13 +258,14 @@ func (s *Service) Pull(ctx context.Context, from api.PeerHello, p api.LogbookPul
 		return api.LogbookPullResult{}, err
 	}
 	have := fromSeqs(p.Have)
-	a, err := s.cfg.Store.ServePull(ctx, have, p.Skip)
+	a, err := s.cfg.Store.ServePull(ctx, have, p.Skip, logbook.Limits{Ops: p.MaxOps, Bytes: p.MaxBytes})
 	if err != nil {
 		return api.LogbookPullResult{}, err
 	}
 	s.mu.Lock()
-	// The caller pulls: ops this hab gains from now on wake it again.
-	s.have[from.DeviceID] = have
+	// The caller pulls: ops this hab gains from now on wake it again. It holds the page served
+	// too, once the answer lands, so those never count as ops it lacks.
+	s.have[from.DeviceID] = merged(have, a.Served)
 	delete(s.woken, from.DeviceID)
 	s.mu.Unlock()
 	return api.LogbookPullResult{Ops: a.Ops, Vector: toSeqs(a.Vector), More: a.More, Skip: a.Skip}, nil
@@ -231,6 +283,12 @@ func (s *Service) Push(ctx context.Context, from api.PeerHello, p api.LogbookPus
 	if err != nil {
 		return api.LogbookPushResult{}, err
 	}
+	s.mu.Lock()
+	// The pusher holds what it pushed: those ops never wake it (an echo of its own push).
+	if h, ok := s.have[from.DeviceID]; ok {
+		s.have[from.DeviceID] = merged(h, logbook.PageVector(p.Ops))
+	}
+	s.mu.Unlock()
 	if res.Stored > 0 {
 		s.Changed() // other links may lack them (7.2)
 	}
@@ -283,7 +341,7 @@ func (s *Service) round() {
 		backoff := f != nil && now.Before(f.next)
 		s.mu.Unlock()
 		if up && !backoff {
-			s.start(l)
+			s.start(l, false)
 		}
 	}
 }
@@ -294,15 +352,23 @@ func (s *Service) up(l Link) bool {
 }
 
 // start runs one exchange over l in the background. When one is in flight already, that one
-// runs once more after it ends instead, so a link never has two exchanges in flight.
-func (s *Service) start(l Link) {
+// runs once more after it ends instead, so a link never has two exchanges in flight. urgent (a
+// wake-up) runs that next exchange past any backoff, and ends a backoff wait at once.
+func (s *Service) start(l Link, urgent bool) {
 	s.mu.Lock()
 	if s.running[l.Label] {
 		s.again[l.Label] = true
+		if urgent {
+			s.urgent[l.Label] = true
+			signal(s.nudge[l.Label])
+		}
 		s.mu.Unlock()
 		return
 	}
 	s.running[l.Label] = true
+	nudge := make(chan struct{}, 1)
+	s.nudge[l.Label] = nudge
+	delete(s.urgent, l.Label)
 	s.mu.Unlock()
 	s.wg.Add(1)
 	go func() {
@@ -311,19 +377,23 @@ func (s *Service) start(l Link) {
 			ok := s.exchange(l)
 			s.mu.Lock()
 			again := s.again[l.Label] && s.ctx.Err() == nil
+			urgent := s.urgent[l.Label]
 			delete(s.again, l.Label)
+			delete(s.urgent, l.Label)
 			if !again {
 				delete(s.running, l.Label)
+				delete(s.nudge, l.Label)
 				s.mu.Unlock()
 				return
 			}
 			s.mu.Unlock()
-			if !ok {
-				// A wake-up or a change asked for another while this one failed: run it when the
-				// backoff ends.
-				if !s.sleepBackoff(l.Label) {
+			if !ok && !urgent {
+				// A change asked for another while this one failed: run it when the backoff
+				// ends, or at once when a wake-up comes meanwhile.
+				if !s.sleepBackoff(l.Label, nudge) {
 					s.mu.Lock()
 					delete(s.running, l.Label)
+					delete(s.nudge, l.Label)
 					s.mu.Unlock()
 					return
 				}
@@ -332,8 +402,8 @@ func (s *Service) start(l Link) {
 	}()
 }
 
-// sleepBackoff waits out the link's backoff; false when the service closed.
-func (s *Service) sleepBackoff(label string) bool {
+// sleepBackoff waits out the link's backoff, or until nudge; false when the service closed.
+func (s *Service) sleepBackoff(label string, nudge chan struct{}) bool {
 	s.mu.Lock()
 	var d time.Duration
 	if f := s.fails[label]; f != nil {
@@ -345,6 +415,8 @@ func (s *Service) sleepBackoff(label string) bool {
 	select {
 	case <-s.done:
 		return false
+	case <-nudge:
+		return true
 	case <-t.C:
 		return true
 	}
@@ -352,7 +424,7 @@ func (s *Service) sleepBackoff(label string) bool {
 
 // exchange runs Store.Sync over the link. It reports whether it ran to the end.
 func (s *Service) exchange(l Link) bool {
-	res, err := s.cfg.Store.Sync(s.ctx, linkRemote{c: api.Client{Caller: l.Caller}})
+	res, err := s.cfg.Store.Sync(s.ctx, &linkRemote{s: s, label: l.Label, c: api.Client{Caller: l.Caller}})
 	st := Stats{At: s.cfg.Now(), Pulled: res.Pulled.Stored, Pushed: res.Pushed}
 	if err != nil {
 		st.Err = err.Error()
@@ -368,7 +440,7 @@ func (s *Service) exchange(l Link) bool {
 				s.cfg.Logf("logbook: sync with %s: %v", l.Label, err)
 			}
 			f.n++
-			f.next = s.cfg.Now().Add(min(minBackoff<<min(f.n-1, 16), maxBackoff))
+			f.next = s.cfg.Now().Add(min(s.cfg.MinBackoff<<min(f.n-1, 16), maxBackoff))
 		}
 		s.mu.Unlock()
 		return false
@@ -378,8 +450,12 @@ func (s *Service) exchange(l Link) bool {
 		delete(s.fails, l.Label)
 	}
 	s.mu.Unlock()
+	s.endHold()
 	if res.Stalled != "" {
-		s.cfg.Logf("logbook: sync with %s: the %s stopped: a page moved no vector", l.Label, res.Stalled)
+		s.cfg.Logf("logbook: sync with %s: the %s stopped before the end: a page moved nothing, or the page bound; the next exchange goes on", l.Label, res.Stalled)
+	}
+	if len(res.Passed) > 0 {
+		s.cfg.Logf("logbook: sync with %s: passed over origins whose next op was refused: %v", l.Label, res.Passed)
 	}
 	if res.Pulled.Stored > 0 {
 		s.Changed() // ops from this peer go on to the others (7.2)
@@ -405,6 +481,9 @@ func (s *Service) changeLoop() {
 		case <-t.C:
 			now := s.fileSig()
 			if now == sig && !recheck {
+				if s.cfg.checked != nil {
+					s.cfg.checked()
+				}
 				continue
 			}
 			// A change seen while a commit was still being written may not show in the vector
@@ -414,6 +493,9 @@ func (s *Service) changeLoop() {
 			sig = now
 		}
 		s.onChange()
+		if s.cfg.checked != nil {
+			s.cfg.checked()
+		}
 	}
 }
 
@@ -461,7 +543,7 @@ func (s *Service) onChange() {
 			s.mu.Unlock()
 			if !backoff {
 				pushed[l.DeviceID] = true
-				s.start(l)
+				s.start(l, false)
 			}
 		}
 	}
@@ -499,26 +581,130 @@ func ahead(a, b logbook.Vector) bool {
 
 // --- The peer link as a logbook.Remote ---
 
-type linkRemote struct{ c api.Client }
+// linkRemote is one link as the exchange sees it. Each call waits until the answer to any
+// earlier call over the link that the exchange gave up on has come, or the link ended: the hab
+// at the other end writes every answer it makes, so a new call while one is still on the way
+// would queue a second page behind it and could pass the control connection's backlog, which
+// closes the link (logbook.md 7.6, Slow links).
+type linkRemote struct {
+	s     *Service
+	label string
+	c     api.Client
+}
 
-func (r linkRemote) Pull(ctx context.Context, have logbook.Vector, skip []string) (logbook.PullAnswer, error) {
-	ctx, cancel := context.WithTimeout(ctx, pageTime)
-	defer cancel()
-	res, err := r.c.LogbookPull(ctx, api.LogbookPullParams{Have: toSeqs(have), Skip: skip})
+func (r *linkRemote) Page() logbook.Limits {
+	return logbook.Limits{Bytes: r.s.pageBytes(r.label)}
+}
+
+func (r *linkRemote) Pull(ctx context.Context, have logbook.Vector, skip []string, lim logbook.Limits) (logbook.PullAnswer, error) {
+	var res api.LogbookPullResult
+	err := r.s.call(ctx, r.label, func(ctx context.Context) error {
+		var err error
+		res, err = r.c.LogbookPull(ctx, api.LogbookPullParams{Have: toSeqs(have), Skip: skip, MaxOps: lim.Ops, MaxBytes: lim.Bytes})
+		return err
+	})
 	if err != nil {
 		return logbook.PullAnswer{}, err
 	}
 	return logbook.PullAnswer{Ops: res.Ops, Vector: fromSeqs(res.Vector), More: res.More, Skip: res.Skip}, nil
 }
 
-func (r linkRemote) Push(ctx context.Context, ops [][]byte) (logbook.PushAnswer, error) {
-	ctx, cancel := context.WithTimeout(ctx, pageTime)
-	defer cancel()
-	res, err := r.c.LogbookPush(ctx, api.LogbookPushParams{Ops: ops})
+func (r *linkRemote) Push(ctx context.Context, ops [][]byte) (logbook.PushAnswer, error) {
+	var res api.LogbookPushResult
+	err := r.s.call(ctx, r.label, func(ctx context.Context) error {
+		var err error
+		res, err = r.c.LogbookPush(ctx, api.LogbookPushParams{Ops: ops})
+		return err
+	})
 	if err != nil {
 		return logbook.PushAnswer{}, err
 	}
 	return logbook.PushAnswer{Vector: fromSeqs(res.Vector), Skip: res.Skip}, nil
+}
+
+// pageBytes is the page size the link labelled label asks for now.
+func (s *Service) pageBytes(label string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if n, ok := s.page[label]; ok {
+		return n
+	}
+	return logbook.PageBytes
+}
+
+// call runs f over the link labelled label: after any answer still on the way, and for at most
+// PageTime. Past that it gives up, halves the link's page size, and leaves f running until its
+// answer comes, so the next call waits for it. f gets a context that only Close ends.
+func (s *Service) call(ctx context.Context, label string, f func(context.Context) error) error {
+	s.mu.Lock()
+	late := s.late[label]
+	s.mu.Unlock()
+	if late != nil {
+		select {
+		case <-late:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	done := make(chan struct{})
+	var err error
+	start := time.Now()
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		defer close(done)
+		err = f(s.ctx)
+	}()
+	t := time.NewTimer(s.cfg.PageTime)
+	defer t.Stop()
+	select {
+	case <-done:
+		s.adapt(label, time.Since(start))
+		return err
+	case <-t.C:
+		s.mu.Lock()
+		s.late[label] = done
+		s.mu.Unlock()
+		n := s.adapt(label, s.cfg.PageTime)
+		return fmt.Errorf("no answer within %v; the next pages hold at most %d bytes", s.cfg.PageTime, n)
+	case <-ctx.Done():
+		s.mu.Lock()
+		s.late[label] = done
+		s.mu.Unlock()
+		return ctx.Err()
+	}
+}
+
+// adapt sets the link's page size from how long a call took: slower than a quarter of PageTime
+// halves it, down to minPageBytes; faster than a sixteenth doubles it, up to the page limit. It
+// returns the new size.
+func (s *Service) adapt(label string, took time.Duration) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n, ok := s.page[label]
+	if !ok {
+		n = logbook.PageBytes
+	}
+	switch {
+	case took > s.cfg.PageTime/4:
+		n = max(n/2, minPageBytes)
+	case took < s.cfg.PageTime/16:
+		n = min(n*2, logbook.PageBytes)
+	}
+	s.page[label] = n
+	return n
+}
+
+// merged is a with every seq of b above it.
+func merged(a, b logbook.Vector) logbook.Vector {
+	out := maps.Clone(a)
+	if out == nil {
+		out = logbook.Vector{}
+	}
+	for o, n := range b {
+		out[o] = max(out[o], n)
+	}
+	return out
 }
 
 func toSeqs(v logbook.Vector) []api.LogbookSeq {

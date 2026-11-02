@@ -37,7 +37,7 @@ func (h *hab) Links() []Link {
 	return append([]Link(nil), h.links...)
 }
 
-func newHab(t *testing.T, name string) *hab {
+func newHab(t *testing.T, name string, opts ...func(*hab, *Config)) *hab {
 	t.Helper()
 	h := &hab{name: name, id: "SHA256:" + name, wakes: map[string]int{}}
 	path := filepath.Join(t.TempDir(), "logbook.db")
@@ -46,7 +46,7 @@ func newHab(t *testing.T, name string) *hab {
 		t.Fatal(err)
 	}
 	h.store = s
-	svc, err := New(Config{Self: h.id, Store: s, Path: path, Peers: h, Poll: time.Hour, Watch: 20 * time.Millisecond,
+	cfg := Config{Self: h.id, Store: s, Path: path, Peers: h, Poll: time.Hour, Watch: 20 * time.Millisecond,
 		Wake: func(device string) bool {
 			h.mu.Lock()
 			h.wakes[device]++
@@ -57,7 +57,11 @@ func newHab(t *testing.T, name string) *hab {
 			}
 			return true
 		},
-		Logf: t.Logf})
+		Logf: t.Logf}
+	for _, o := range opts {
+		o(h, &cfg)
+	}
+	svc, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,12 +78,26 @@ type caller struct {
 	from *hab
 	to   *hab
 	down atomic.Bool
+	// before runs before a call is served and may fail it; after runs once it is served,
+	// before the answer goes back. Either may block.
+	before atomic.Pointer[func(method string) error]
+	after  atomic.Pointer[func(method string)]
 }
 
 func (c *caller) Call(ctx context.Context, method string, params, result any) error {
 	if c.down.Load() {
 		return errors.New("link down")
 	}
+	if f := c.before.Load(); f != nil {
+		if err := (*f)(method); err != nil {
+			return err
+		}
+	}
+	defer func() {
+		if f := c.after.Load(); f != nil {
+			(*f)(method)
+		}
+	}()
 	from := api.PeerHello{DeviceID: c.from.id, Host: c.from.name}
 	b, err := json.Marshal(params)
 	if err != nil {

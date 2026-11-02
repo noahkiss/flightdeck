@@ -29,6 +29,11 @@ var ErrInvalid = errors.New("logbook: invalid")
 // share a device id. The replica refuses to write until the host gets a new device id.
 var ErrSharedOrigin = errors.New("logbook: this host's device id is shared with another host; give it a new device id")
 
+// ErrRestoring means a peer holds ops of this replica's own origin that its file lacks: the file
+// was restored from an older copy. A write now would reuse a seq the peers hold, so writes are
+// refused until sync brings those ops back (7.6). The error names the seqs.
+var ErrRestoring = errors.New("logbook: this file was restored from an older copy: a peer holds newer ops of this host; writes wait until sync brings them back")
+
 // ErrNoOrigin means the file has no origin yet and none was given.
 var ErrNoOrigin = errors.New("logbook: no origin: the file is new and Options.Origin is empty")
 
@@ -86,6 +91,8 @@ type Store struct {
 	logf   func(string, ...any)
 	mu     sync.Mutex // one write at a time per Store; SQLite's lock orders Stores and processes
 	stmts  stmts
+	// maxPages bounds the pages of one Sync in each direction; 0 means maxSyncPages. Tests lower it.
+	maxPages int
 }
 
 // Open opens or makes the replica at path, with owner-only permissions, in WAL mode.
@@ -265,6 +272,10 @@ type meta struct {
 	nextSeq     uint64
 	last        HLC
 	foldVersion int
+	// ownSeen is the highest seq of this replica's own origin that any peer said it holds (7.6,
+	// Restored file). Above the replica's own gap-free run, the file was restored from an older
+	// copy, and writes wait for the ops to come back.
+	ownSeen uint64
 }
 
 func readMeta(ctx context.Context, tx txn) (meta, error) {
@@ -291,6 +302,8 @@ func readMeta(ctx context.Context, tx txn) (meta, error) {
 			m.last.Counter = uint32(c)
 		case "fold_version":
 			m.foldVersion, _ = strconv.Atoi(v)
+		case "own_seen":
+			m.ownSeen, _ = strconv.ParseUint(v, 10, 64)
 		}
 	}
 	m.last.Origin = m.origin
@@ -299,10 +312,10 @@ func readMeta(ctx context.Context, tx txn) (meta, error) {
 
 func (m meta) write(ctx context.Context, tx txn) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES
-		('origin', ?), ('next_seq', ?), ('last_wall', ?), ('last_counter', ?), ('fold_version', ?), ('schema', '1')
+		('origin', ?), ('next_seq', ?), ('last_wall', ?), ('last_counter', ?), ('fold_version', ?), ('own_seen', ?), ('schema', '1')
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
 		m.origin, strconv.FormatUint(m.nextSeq, 10), strconv.FormatInt(m.last.Wall, 10),
-		strconv.FormatUint(uint64(m.last.Counter), 10), strconv.Itoa(m.foldVersion))
+		strconv.FormatUint(uint64(m.last.Counter), 10), strconv.Itoa(m.foldVersion), strconv.FormatUint(m.ownSeen, 10))
 	return err
 }
 

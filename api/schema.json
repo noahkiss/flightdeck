@@ -1874,8 +1874,24 @@
           }
         },
         {
+          "name": "max_bytes",
+          "description": "The most op bytes the answer may hold; one larger op still comes alone. 0, or above 1 MiB, means 1 MiB.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "max_ops",
+          "description": "The most ops the answer may hold. 0, or above 2,000, means 2,000.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
           "name": "skip",
-          "description": "Origins the caller refuses (two hosts share them, logbook.md 7.4); none of their ops are sent.",
+          "description": "Origins the caller refuses (two hosts share them, logbook.md 7.4), or passes over in this exchange; none of their ops are sent.",
           "schema": {
             "type": "array",
             "items": {
@@ -1901,7 +1917,7 @@
       "params": [
         {
           "name": "ops",
-          "description": "Op bytes as stored, per origin in seq order: at most 2,000 ops or 4 MiB, or one larger op.",
+          "description": "Op bytes as stored, per origin in seq order: at most 2,000 ops or 1 MiB, or one larger op.",
           "required": true,
           "schema": {
             "type": "array",
@@ -6705,9 +6721,19 @@
               "$ref": "#/components/schemas/LogbookSeq"
             }
           },
+          "max_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The most op bytes the answer may hold; one larger op still comes alone. 0, or above 1 MiB, means 1 MiB."
+          },
+          "max_ops": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The most ops the answer may hold. 0, or above 2,000, means 2,000."
+          },
           "skip": {
             "type": "array",
-            "description": "Origins the caller refuses (two hosts share them, logbook.md 7.4); none of their ops are sent.",
+            "description": "Origins the caller refuses (two hosts share them, logbook.md 7.4), or passes over in this exchange; none of their ops are sent.",
             "items": {
               "type": "string"
             }
@@ -6726,7 +6752,7 @@
           },
           "ops": {
             "type": "array",
-            "description": "Op bytes as stored, per origin in seq order: at most 2,000 ops or 4 MiB, or one larger op.",
+            "description": "Op bytes as stored, per origin in seq order: at most 2,000 ops or 1 MiB, or one larger op.",
             "items": {
               "type": "string",
               "contentEncoding": "base64"
@@ -6763,7 +6789,7 @@
         "properties": {
           "ops": {
             "type": "array",
-            "description": "Op bytes as stored, per origin in seq order: at most 2,000 ops or 4 MiB, or one larger op.",
+            "description": "Op bytes as stored, per origin in seq order: at most 2,000 ops or 1 MiB, or one larger op.",
             "items": {
               "type": "string",
               "contentEncoding": "base64"

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"regexp"
 	"slices"
@@ -59,6 +60,9 @@ func (s *Store) Write(ctx context.Context, b Batch) (WriteResult, error) {
 	if len(b.Steps) == 0 {
 		return res, invalid("", "an empty batch")
 	}
+	if err := s.waitHold(ctx); err != nil {
+		return res, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.begin(ctx)
@@ -74,6 +78,8 @@ func (s *Store) Write(ctx context.Context, b Batch) (WriteResult, error) {
 		return res, err
 	} else if g.shared {
 		return res, ErrSharedOrigin
+	} else if m.ownSeen > g.held {
+		return res, fmt.Errorf("%w (a peer holds up to seq %d, this file up to %d)", ErrRestoring, m.ownSeen, g.held)
 	}
 	stamp := tick(m.last, s.now().UnixMilli(), m.origin)
 	w := &writer{ctx: ctx, tx: tx, state: map[string]*folded{}, setInBatch: map[string]bool{}}
