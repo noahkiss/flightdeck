@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,12 +15,14 @@ import (
 )
 
 // The notice store's bounds (capcom.md 8.5): notice.get reads back the last noticeKeep notices
-// raised within noticeAge, title and body cut to noticeTitleMax and noticeBodyMax bytes.
+// raised within noticeAge, title and body cut to noticeTitleMax and noticeBodyMax bytes, and
+// the oldest go first while the saved file would pass noticeFileMax bytes.
 const (
 	noticeKeep     = 500
 	noticeAge      = 7 * 24 * time.Hour
 	noticeTitleMax = 1 << 10
 	noticeBodyMax  = 4 << 10
+	noticeFileMax  = 2 << 20
 )
 
 // noticesFile is the notice store's file in the state directory.
@@ -159,16 +162,30 @@ func (l *noticeLog) get(id string) (api.Notice, bool) {
 }
 
 // saveLocked writes the store through a temporary file and a rename, mode 0600.
+// Escapes (control characters, six bytes each) count toward noticeFileMax: the oldest notices
+// leave the store, in memory too, until the file fits.
 func (l *noticeLog) saveLocked() error {
-	f := noticeFile{Notices: make([]api.Notice, 0, len(l.order))}
-	for _, id := range l.order {
-		f.Notices = append(f.Notices, l.byID[id])
+	enc := make([][]byte, len(l.order))
+	total := len(`{"notices":[]}`) + 1
+	for i, id := range l.order {
+		var buf bytes.Buffer
+		e := json.NewEncoder(&buf)
+		e.SetEscapeHTML(false)
+		if err := e.Encode(l.byID[id]); err != nil {
+			return err
+		}
+		enc[i] = bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+		total += len(enc[i]) + 1
 	}
-	b, err := json.Marshal(f)
-	if err != nil {
-		return err
+	drop := 0
+	for drop < len(enc) && total > noticeFileMax {
+		total -= len(enc[drop]) + 1
+		delete(l.byID, l.order[drop])
+		drop++
 	}
-	return writeStateFile(l.path, append(b, '\n'))
+	l.order, enc = l.order[drop:], enc[drop:]
+	b := append([]byte(`{"notices":[`), bytes.Join(enc, []byte(","))...)
+	return writeStateFile(l.path, append(b, "]}\n"...))
 }
 
 // cutUTF8 cuts s to at most n bytes, on a character boundary.
@@ -184,7 +201,8 @@ func cutUTF8(s string, n int) string {
 }
 
 // writeStateFile writes p through a temporary file in its folder, synced, then renamed into
-// place, mode 0600. A file or link left at the temporary name is removed first and the new one
+// place, mode 0600. The folder is not synced, as with the other state files: a power loss may
+// bring back the file as it was before the rename. A file or link left at the temporary name is removed first and the new one
 // is made with O_EXCL, so a planted link is never written through.
 func writeStateFile(p string, b []byte) error {
 	tmp := p + ".tmp"

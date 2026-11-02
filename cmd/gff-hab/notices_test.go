@@ -68,6 +68,26 @@ func TestNoticeStore(t *testing.T) {
 		t.Errorf("reopened with %d notices, want %d", len(l.order), noticeKeep)
 	}
 
+	// The file size: escapes count, the oldest go first, and the newest stay. HTML characters
+	// are written as they are.
+	const big = 120 // 24 KiB each once escaped: past the file size
+	for i := range big {
+		l.add(api.Notice{ID: fmt.Sprintf("big%d", i), Title: "<b>", Body: strings.Repeat("\x01", noticeBodyMax), At: at(time.Second)})
+	}
+	b, err := os.ReadFile(filepath.Join(dir, noticesFile))
+	if err != nil || len(b) > noticeFileMax || !strings.Contains(string(b), `"<b>"`) {
+		t.Fatalf("file of %d bytes (max %d), err %v", len(b), noticeFileMax, err)
+	}
+	if _, ok := l.get(fmt.Sprintf("big%d", big-1)); !ok {
+		t.Error("the newest notice left the store")
+	}
+	if _, ok := l.get("big0"); ok {
+		t.Error("the oldest notice stayed past the file size")
+	}
+	if n := len(openNoticeLog(dir, clock, logf).order); n != len(l.order) || n >= big {
+		t.Errorf("reopened with %d notices, memory has %d", n, len(l.order))
+	}
+
 	// A broken file is set aside, and the log starts empty and works.
 	if err := os.WriteFile(filepath.Join(dir, noticesFile), []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
