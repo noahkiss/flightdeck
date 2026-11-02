@@ -29,6 +29,7 @@ const capcomFolders = "capcom"
 // catalog carries.
 type capcomService struct {
 	self       string // this hab's device id
+	host       string // this hab's host label, as the read tools name it
 	state      string // the state directory: capcom.json, and the folders under capcom/
 	configPath string // the hab's config file, with its [capcom] section
 	exe        string // gff-hab's own resolved path, for the MCP server entry
@@ -47,6 +48,7 @@ type capcomService struct {
 	complete func() bool
 	poke     func() // the catalog is built again
 	scope    func() capcom.ReadScope
+	res      capcomResolvers // what attached context reads (capcom.md 8.1)
 	now      func() time.Time
 	logf     func(string, ...any)
 
@@ -201,8 +203,67 @@ func (c *capcomService) Section() *api.CatalogCapcom {
 }
 
 // Open answers capcom.open: the standing conversation, started when there is none, resumed when
-// it exited; new starts a fresh one, which becomes the standing conversation.
+// it exited; new starts a fresh one, which becomes the standing conversation. Context is
+// attached to the returned session (capcom.md 8.1). Every item but a file is resolved before
+// the open, so a bad ref starts nothing; a file is resolved against the returned session.
 func (c *capcomService) Open(ctx context.Context, p api.CapcomOpenParams) (api.CapcomOpened, error) {
+	if len(p.Context) > capcom.MaxPending {
+		return api.CapcomOpened{}, control.Errorf(api.ErrorKindInvalid, "capcom.open takes at most %d context items, not %d", capcom.MaxPending, len(p.Context))
+	}
+	early := make([]*capcom.Item, len(p.Context))
+	for i, r := range p.Context {
+		if string(r.Kind) == capcom.KindFile {
+			continue
+		}
+		it, err := c.resolve(ctx, capcom.Session{}, r)
+		if err != nil {
+			return api.CapcomOpened{}, prefixErr(err, "context item %d", i+1)
+		}
+		early[i] = &it
+	}
+	res, err := c.open(ctx, p)
+	if err != nil {
+		return res, err
+	}
+	c.mu.Lock()
+	rec, ok := c.recordLocked(res.Session)
+	c.mu.Unlock()
+	if !ok {
+		return api.CapcomOpened{}, control.Errorf(api.ErrorKindUnavailable, "session %s has no Capcom record", res.Session)
+	}
+	items := make([]capcom.Item, 0, len(p.Context))
+	for i, r := range p.Context {
+		if early[i] != nil {
+			items = append(items, *early[i])
+			continue
+		}
+		it, err := c.resolve(ctx, *rec, r)
+		if err != nil {
+			return api.CapcomOpened{}, prefixErr(err, "Capcom session %s is open, but context item %d was not attached", res.Session, i+1)
+		}
+		items = append(items, it)
+	}
+	pending, err := c.addPending(res.Session, items)
+	if err != nil {
+		return api.CapcomOpened{}, prefixErr(err, "Capcom session %s is open, but its context was not attached", res.Session)
+	}
+	if len(pending) > 0 {
+		res.Pending = pending
+	}
+	return res, nil
+}
+
+// prefixErr puts a prefix before an error's message and keeps its kind.
+func prefixErr(err error, format string, args ...any) error {
+	var ce *control.Error
+	kind, msg := api.ErrorKindUnavailable, err.Error()
+	if errors.As(err, &ce) {
+		kind, msg = ce.Data.Kind, ce.Message
+	}
+	return control.Errorf(kind, "%s: %s", fmt.Sprintf(format, args...), msg)
+}
+
+func (c *capcomService) open(ctx context.Context, p api.CapcomOpenParams) (api.CapcomOpened, error) {
 	c.op.Lock()
 	defer c.op.Unlock()
 	c.mu.Lock()
@@ -427,22 +488,26 @@ func randHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-// capcomCmd is `gff-hab capcom assign <peer label|self>` and `gff-hab capcom open [-new]`.
+// capcomCmd is `gff-hab capcom assign <peer label|self>`, `gff-hab capcom open [-new]` and
+// `gff-hab capcom attach [-host h] <session> <kind> <ref>`.
 func capcomCmd(args []string, out io.Writer) error {
-	if len(args) == 0 || (args[0] != "assign" && args[0] != "open") {
-		return errors.New("usage: gff-hab capcom assign [-socket path | -via command] <peer label|self>, or gff-hab capcom open [-socket path | -via command] [-new]")
+	if len(args) == 0 || (args[0] != "assign" && args[0] != "open" && args[0] != "attach") {
+		return errors.New("usage: gff-hab capcom assign [-socket path | -via command] <peer label|self>, gff-hab capcom open [-socket path | -via command] [-new], or gff-hab capcom attach [-socket path | -via command] [-host h] <session> <kind> <ref>")
 	}
 	verb := args[0]
 	fs := flag.NewFlagSet("capcom "+verb, flag.ExitOnError)
 	sock := socketFlag(fs)
 	via := fs.String("via", "", "a command whose stdin and stdout reach a hab, such as: ssh host gff-hab connect")
 	fresh := fs.Bool("new", false, "open: start a fresh Capcom conversation")
+	host := fs.String("host", "", "attach: the host a notification was raised on (a peer label); absent: this hab")
 	fs.Parse(args[1:])
 	switch {
 	case verb == "assign" && fs.NArg() != 1:
 		return errors.New("capcom assign needs one host: a peer label, a device id, or self")
 	case verb == "open" && fs.NArg() != 0:
 		return errors.New("capcom open takes no arguments")
+	case verb == "attach" && fs.NArg() != 3:
+		return errors.New("capcom attach needs a session, a kind (notification, session, file, command, logbook) and a ref")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -455,6 +520,17 @@ func capcomCmd(args []string, out io.Writer) error {
 		return err
 	}
 	cl := api.Client{Caller: c}
+	if verb == "attach" {
+		r, err := cl.CapcomAttach(ctx, api.CapcomAttachParams{Session: fs.Arg(0), Kind: api.CapcomContextKind(fs.Arg(1)), Ref: fs.Arg(2), Host: *host})
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "%d waiting for the next message to %s:\n", len(r.Pending), r.Session)
+		for _, it := range r.Pending {
+			fmt.Fprintf(out, "%s %s on %s: %s\n", it.Kind, it.Ref, it.Host, it.Title)
+		}
+		return nil
+	}
 	if verb == "assign" {
 		r, err := cl.CapcomAssign(ctx, api.CapcomAssignParams{Host: fs.Arg(0)})
 		if err != nil {

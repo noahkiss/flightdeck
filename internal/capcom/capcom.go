@@ -98,6 +98,9 @@ type Session struct {
 	Harness string    `json:"harness"` // the harness it runs; a resume keeps it
 	Resume  string    `json:"resume,omitempty"`
 	Created time.Time `json:"created"`
+	// Pending is the context waiting for the session's next message (capcom.md 8.1), resolved
+	// when attached, so a gff-hab restart keeps it even where its source is gone.
+	Pending []Item `json:"pending,omitempty"`
 }
 
 // State is capcom.json: the assignment this hab believes, its standing conversation and its

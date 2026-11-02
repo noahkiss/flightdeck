@@ -16,6 +16,7 @@
 //	gff-hab worktree list|create|setup|remove [-socket path | -via command] [-project id | -dir path] ...
 //	gff-hab capcom assign [-socket path | -via command] <peer label|self>
 //	gff-hab capcom open   [-socket path | -via command] [-new]
+//	gff-hab capcom attach [-socket path | -via command] [-host h] <session> <kind> <ref>
 //	gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
 //	gff-hab manifests list    [-state dir]
 //	gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
@@ -138,6 +139,7 @@ const usage = `usage:
   gff-hab worktree remove [-socket path | -via command] [-project id | -dir path] [-force] <worktree>
   gff-hab capcom assign [-socket path | -via command] <peer label|self>
   gff-hab capcom open   [-socket path | -via command] [-new]
+  gff-hab capcom attach [-socket path | -via command] [-host h] <session> <kind> <ref>
   gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
   gff-hab manifests list    [-state dir]
   gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
@@ -789,6 +791,25 @@ func serve(args []string) error {
 			logf: logger.Printf,
 		})
 		sessionActs.resume = capcomSvc.Resume
+		capcomSvc.host = *hostID
+		capcomSvc.res.agent = agents.Get
+		if commands != nil {
+			capcomSvc.res.command = commandByID(commands)
+		}
+		if agentSvc != nil && agentSvc.attachments != nil {
+			store := agentSvc.attachments
+			capcomSvc.res.attachment = func(session, id string) (attach.Record, error) {
+				recs, err := store.Files(session, []string{id})
+				if err != nil {
+					return attach.Record{}, err
+				}
+				return recs[0], nil
+			}
+		}
+		if agentCalls != nil {
+			// The owner's next message carries the context attached to it (capcom.md 8.1).
+			agentCalls = capcomSender{Agents: agentCalls, cc: capcomSvc}
+		}
 		capcomCtl = capcomSvc
 		caps = append(caps, capcom.Capability)
 	}
@@ -899,6 +920,11 @@ func serve(args []string) error {
 	reads := newReads(readsSetup{self: key.Fingerprint(), host: *hostID, state: dir, configPath: cpath,
 		store: store, agents: agents, catalog: cs, peers: pm, notices: pushes.notices, getenv: os.Getenv, logf: logger.Printf})
 	caps = append(caps, readtools.Capability)
+	if capcomSvc != nil {
+		capcomSvc.res.notice = func(ctx context.Context, id, host string) (api.NoticeRecord, error) {
+			return reads.Notice(ctx, false, api.NoticeGetParams{ID: id, Host: host})
+		}
+	}
 	// Confirmations (capcom.md 6.1): starts an agent asks for, confirmed by the user while
 	// confirm.start_elsewhere is on, run by this hab with the confirmation id as the key.
 	cfSvc, err := confirm.New(confirm.Config{

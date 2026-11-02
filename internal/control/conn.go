@@ -1270,7 +1270,7 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		return c.dispatchCatalog(m, s)
 	case "settings.get", "settings.set":
 		return c.dispatchSettings(m, s)
-	case "capcom.open", "capcom.assign":
+	case "capcom.open", "capcom.attach", "capcom.assign":
 		return c.dispatchCapcom(m, s)
 	case "session.resume":
 		return c.dispatchResume(m, s)

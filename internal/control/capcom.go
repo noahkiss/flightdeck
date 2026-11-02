@@ -6,11 +6,23 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 )
 
-// Capcom serves capcom.open and capcom.assign (capcom.md 7, 8.3). gff-hab implements it. An
-// error that is an *Error keeps its kind.
+// Capcom serves capcom.open, capcom.attach and capcom.assign (capcom.md 7, 8.3). gff-hab
+// implements it. An error that is an *Error keeps its kind.
 type Capcom interface {
 	Open(ctx context.Context, p api.CapcomOpenParams) (api.CapcomOpened, error)
+	Attach(ctx context.Context, p api.CapcomAttachParams) (api.CapcomAttached, error)
 	Assign(ctx context.Context, p api.CapcomAssignParams) (api.CapcomAssigned, error)
+}
+
+// checkContext refuses a context ref with no ref or an unknown kind.
+func checkContext(method string, r api.CapcomContextRef) *Error {
+	if !isWord("CapcomContextKind", string(r.Kind)) {
+		return appErr(api.ErrorKindInvalid, "%s: kind %q is not one of %v", method, r.Kind, api.Enums["CapcomContextKind"])
+	}
+	if r.Ref == "" {
+		return appErr(api.ErrorKindInvalid, "%s: %s context needs a ref", method, r.Kind)
+	}
+	return nil
 }
 
 // Resumer resumes an exited session (session.resume). Actions may implement it; without it,
@@ -21,7 +33,7 @@ type Resumer interface {
 
 const hintNoCapcom = "%s needs the Capcom host, which this hab is running without; the capcom capability is absent"
 
-// dispatchCapcom answers capcom.open and capcom.assign.
+// dispatchCapcom answers capcom.open, capcom.attach and capcom.assign.
 func (c *conn) dispatchCapcom(m message, s api.Seq) (any, *Error) {
 	cc := c.s.cfg.Capcom
 	ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
@@ -34,6 +46,11 @@ func (c *conn) dispatchCapcom(m message, s api.Seq) (any, *Error) {
 		if cc == nil {
 			return nil, appErr(api.ErrorKindUnavailable, hintNoCapcom, m.Method)
 		}
+		for _, r := range p.Context {
+			if e := checkContext(m.Method, r); e != nil {
+				return nil, e
+			}
+		}
 		res, err := cc.Open(ctx, p)
 		if err != nil {
 			return nil, actionErr(m.Method, err)
@@ -43,6 +60,27 @@ func (c *conn) dispatchCapcom(m message, s api.Seq) (any, *Error) {
 		}
 		res.Seq = s
 		return res, nil
+	}
+	if m.Method == "capcom.attach" {
+		var p api.CapcomAttachParams
+		if e := c.decodeUp(m, &p); e != nil {
+			return nil, e
+		}
+		if cc == nil {
+			return nil, appErr(api.ErrorKindUnavailable, hintNoCapcom, m.Method)
+		}
+		if p.Session == "" {
+			return nil, appErr(api.ErrorKindInvalid, "capcom.attach needs a session")
+		}
+		if e := checkContext(m.Method, api.CapcomContextRef{Kind: p.Kind, Ref: p.Ref, Host: p.Host}); e != nil {
+			return nil, e
+		}
+		res, err := cc.Attach(ctx, p)
+		if err != nil {
+			return nil, actionErr(m.Method, err)
+		}
+		res.Seq = s
+		return api.NonNil(res), nil
 	}
 	var p api.CapcomAssignParams
 	if e := c.decodeUp(m, &p); e != nil {
