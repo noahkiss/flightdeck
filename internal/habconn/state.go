@@ -15,6 +15,7 @@ type state struct {
 	sessions map[string]api.Session
 	panes    map[string]api.Pane
 	agents   map[string]api.AgentState
+	rounds   map[string]api.Round
 	// revs holds the last revision seen per object, deleted ones included, so a late
 	// update after a delete is still ignored within the epoch.
 	revs map[string]uint64
@@ -26,6 +27,7 @@ func newState() *state {
 		sessions: map[string]api.Session{},
 		panes:    map[string]api.Pane{},
 		agents:   map[string]api.AgentState{},
+		rounds:   map[string]api.Round{},
 		revs:     map[string]uint64{},
 	}
 }
@@ -50,12 +52,19 @@ func (s *state) reset(st api.Structure) {
 		s.agents[a.Pane] = a
 		s.revs["agent/"+a.Pane] = a.Revision
 	}
+	for _, r := range st.Rounds {
+		s.rounds[r.ID] = r
+		s.revs["round/"+r.ID] = r.Revision
+	}
 }
 
 // apply merges one event and reports whether it changed the copy. An event whose revision is
 // not higher than the one held is ignored. Events this copy does not keep, the ephemeral ones
 // included, change nothing; the caller still hands them on.
 func (s *state) apply(e api.Event) bool {
+	if e.Type == api.EventRoundRunUpdated {
+		return s.applyRun(e)
+	}
 	key, ok := eventKey(e.Type)
 	if !ok {
 		return false
@@ -112,6 +121,20 @@ func (s *state) apply(e api.Event) bool {
 			}
 		}
 		s.agents[e.ID] = v
+	case api.EventRoundUpdated:
+		var v api.Round
+		if json.Unmarshal(e.Data, &v) != nil {
+			return false
+		}
+		if v.Deleted {
+			delete(s.rounds, e.ID)
+		} else {
+			if v.LastRun == nil {
+				// round.updated carries no run; the run events keep LastRun.
+				v.LastRun = s.rounds[e.ID].LastRun
+			}
+			s.rounds[e.ID] = v
+		}
 	case api.EventProjectDeleted:
 		delete(s.projects, e.ID)
 	case api.EventSessionDeleted:
@@ -137,8 +160,29 @@ func eventKey(t api.EventType) (string, bool) {
 		return "pane", true
 	case api.EventAgentState:
 		return "agent", true
+	case api.EventRoundUpdated:
+		return "round", true
 	}
 	return "", false
+}
+
+// applyRun merges a round.run_updated event into its round's LastRun: the same run, or a newer
+// one by number. The event is ephemeral; a later snapshot carries LastRun itself.
+func (s *state) applyRun(e api.Event) bool {
+	var v api.RoundRun
+	if json.Unmarshal(e.Data, &v) != nil {
+		return false
+	}
+	r, ok := s.rounds[v.Round]
+	if !ok {
+		return false
+	}
+	if l := r.LastRun; l != nil && l.ID != v.ID && l.Number > v.Number {
+		return false
+	}
+	r.LastRun = &v
+	s.rounds[v.Round] = r
+	return true
 }
 
 // structure returns a copy in the hab's own shape, every list sorted by id. Order within a
@@ -161,6 +205,9 @@ func (s *state) structure() api.Structure {
 	}
 	for _, id := range sortedKeys(s.agents) {
 		st.Agents = append(st.Agents, s.agents[id])
+	}
+	for _, id := range sortedKeys(s.rounds) {
+		st.Rounds = append(st.Rounds, s.rounds[id])
 	}
 	return st
 }
