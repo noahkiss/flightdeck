@@ -38,6 +38,29 @@ type Scope struct {
 	// Broken refuses every read: the config file did not parse and no good [read] section was
 	// read before, so the user's own deny entries are unknown.
 	Broken bool
+
+	resolved bool // Allow already holds each root as written and resolved
+}
+
+// Resolved returns the scope with each allowed root also in its resolved form, so a check
+// resolves no root again. Build it once per read that checks many paths.
+func (s Scope) Resolved() Scope {
+	if s.resolved {
+		return s
+	}
+	out := s
+	out.Allow = nil
+	seen := map[string]bool{}
+	for _, root := range s.Allow {
+		for _, r := range []string{root, resolve(root)} {
+			if !seen[r] {
+				seen[r] = true
+				out.Allow = append(out.Allow, r)
+			}
+		}
+	}
+	out.resolved = true
+	return out
 }
 
 // Check refuses a path the scope does not allow: one outside every allowed root, or one that
@@ -56,11 +79,11 @@ func (s Scope) Check(path string) (string, error) {
 		return "", s.refuse("it matches read.deny")
 	}
 	real := resolve(p)
-	if s.denied(real) {
-		return "", s.refuse("it matches read.deny")
-	}
 	if !s.allowed(real) {
 		return "", s.refuse("it is outside read.allow")
+	}
+	if s.denied(real) {
+		return "", s.refuse("it matches read.deny")
 	}
 	return real, nil
 }
@@ -112,10 +135,11 @@ func resolve(p string) string {
 
 func (s Scope) allowed(real string) bool {
 	for _, root := range s.Allow {
-		for _, r := range []string{root, resolve(root)} {
-			if within(real, r) {
-				return true
-			}
+		if within(real, root) {
+			return true
+		}
+		if !s.resolved && within(real, resolve(root)) {
+			return true
 		}
 	}
 	return false
@@ -132,7 +156,10 @@ func within(p, root string) bool {
 	return strings.HasPrefix(p, root+string(filepath.Separator))
 }
 
+// denied matches the deny list in any case: macOS and Windows file systems ignore case, so
+// .ENV opens .env. On Linux the guard also refuses a .ENV that is its own file.
 func (s Scope) denied(p string) bool {
+	p = strings.ToLower(p)
 	parts := strings.Split(strings.TrimPrefix(p, string(filepath.Separator)), string(filepath.Separator))
 	for _, pat := range s.Deny {
 		if pat == "" {
@@ -143,12 +170,12 @@ func (s Scope) denied(p string) bool {
 			if err != nil {
 				continue
 			}
-			if anchored(p, full) {
+			if anchored(p, strings.ToLower(full)) {
 				return true
 			}
 			continue
 		}
-		if sequence(parts, strings.Split(strings.Trim(pat, "/"), "/")) {
+		if sequence(parts, strings.Split(strings.Trim(strings.ToLower(pat), "/"), "/")) {
 			return true
 		}
 	}
@@ -264,7 +291,7 @@ func (s *ScopeSource) Scope() Scope {
 	}
 	sc.Allow = append(sc.Allow, c.Allow...)
 	sc.Deny = append(append(sc.Deny, DefaultDeny...), c.Deny...)
-	return sc
+	return sc.Resolved()
 }
 
 func (s *ScopeSource) config() (ScopeConfig, bool) {

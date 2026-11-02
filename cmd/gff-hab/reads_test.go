@@ -442,6 +442,14 @@ func TestReadToolsOverSSH(t *testing.T) {
 	if strings.Contains(text, "tokens") || strings.Contains(text, "Kept private") || !strings.Contains(text, "host bee: its read scope left out 1 transcripts") {
 		t.Errorf("b's denied transcript:\n%s", text)
 	}
+	// One hop: b answers for itself alone, though it lists a as a peer, so a's hits come once.
+	var hits api.TranscriptHits
+	if err := json.Unmarshal([]byte(run(t, "read", "-socket", sockA, "-json", "transcript_search", "cache")), &hits); err != nil {
+		t.Fatal(err)
+	}
+	if len(hits.Hosts) != 2 || len(hits.Hits) != 4 {
+		t.Errorf("one hop: %d host rows, %d hits: %+v", len(hits.Hosts), len(hits.Hits), hits)
+	}
 	// A file read on b goes to b's hab, under b's scope.
 	if r := c.tool("file_read", map[string]any{"host": "bee", "path": filepath.Join(homeB, "notes.txt")}); r.IsError || !strings.Contains(r.text(), "notes on b") {
 		t.Errorf("file on b: %s", r.text())

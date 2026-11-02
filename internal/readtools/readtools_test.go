@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -218,6 +220,9 @@ func TestScopeAllowDeny(t *testing.T) {
 		{filepath.Join(proj, "src", "main.go"), true, ""},
 		{"~/proj/src/main.go", true, ""},
 		{filepath.Join(proj, ".env"), false, "read.deny"},
+		{filepath.Join(proj, ".ENV"), false, "read.deny"},       // case-insensitive file systems open .env
+		{filepath.Join(proj, "server.PEM"), false, "read.deny"}, // and server.pem
+		{filepath.Join(home, ".SSH", "id_ed25519"), false, "read.deny"},
 		{filepath.Join(proj, "server.pem"), false, "read.deny"},
 		{filepath.Join(home, ".ssh", "id_ed25519"), false, "read.deny"},
 		{filepath.Join(secret, "notes.txt"), false, "read.deny"},        // the user's own deny entry
@@ -265,7 +270,7 @@ func TestScopeSourceConfig(t *testing.T) {
 	src := &ScopeSource{Host: "boxa", Home: home, Config: cfg, Roots: func() []string { return []string{filepath.Join(home, "proj")} }}
 	// No file: the defaults.
 	sc := src.Scope()
-	if sc.Broken || len(sc.Allow) != 1 || len(sc.Deny) != len(DefaultDeny) {
+	if sc.Broken || !slices.Contains(sc.Allow, filepath.Join(home, "proj")) || len(sc.Deny) != len(DefaultDeny) {
 		t.Fatalf("no file: %+v", sc)
 	}
 	// A file that does not parse at start: every read refused.
@@ -279,12 +284,13 @@ func TestScopeSourceConfig(t *testing.T) {
 	// A good file adds roots and patterns.
 	os.WriteFile(cfg, []byte("[read]\nallow = [\"~/extra\", \"relative\"]\ndeny = [\"*.sqlite\"]\n"), 0o644)
 	sc = src.Scope()
-	if sc.Broken || len(sc.Allow) != 2 || sc.Allow[1] != filepath.Join(home, "extra") || sc.Deny[len(sc.Deny)-1] != "*.sqlite" {
+	if sc.Broken || !slices.Contains(sc.Allow, filepath.Join(home, "extra")) || slices.ContainsFunc(sc.Allow, func(r string) bool { return strings.HasSuffix(r, "relative") }) ||
+		sc.Deny[len(sc.Deny)-1] != "*.sqlite" {
 		t.Fatalf("good config: %+v", sc)
 	}
 	// Then a broken one keeps the last good section.
 	os.WriteFile(cfg, []byte("[read\n"), 0o644)
-	if sc := src.Scope(); sc.Broken || len(sc.Allow) != 2 {
+	if sc := src.Scope(); sc.Broken || !slices.Contains(sc.Allow, filepath.Join(home, "extra")) {
 		t.Fatalf("broken after good: %+v", sc)
 	}
 }
@@ -524,6 +530,15 @@ func TestTranscriptRead(t *testing.T) {
 	if p, err := s.Transcript(context.Background(), false, api.TranscriptReadParams{Session: "demo-agent"}); err != nil || len(p.Messages) != 4 {
 		t.Errorf("by name: %v %+v", err, p)
 	}
+	// An archived Codex rollout: the list finds it, and so does a read.
+	arch := filepath.Join(f.codex, "archived_sessions")
+	os.MkdirAll(arch, 0o755)
+	b, _ := os.ReadFile("../transcript/testdata/codex-0.166.0.jsonl")
+	os.WriteFile(filepath.Join(arch, "rollout-2026-01-02T10-00-00-019a0000-0000-7000-8000-000000000002.jsonl"),
+		[]byte(strings.ReplaceAll(string(b), "019a0000-0000-7000-8000-000000000001", "019a0000-0000-7000-8000-000000000002")), 0o644)
+	if p, err := s.Transcript(context.Background(), false, api.TranscriptReadParams{Session: "019a0000-0000-7000-8000-000000000002", Harness: "codex"}); err != nil || len(p.Messages) == 0 {
+		t.Errorf("archived codex: %v %+v", err, p)
+	}
 	// A Codex rollout, found with no harness given.
 	if p, err := s.Transcript(context.Background(), false, api.TranscriptReadParams{Session: "019a0000-0000-7000-8000-000000000001"}); err != nil || p.Harness != Codex || len(p.Messages) == 0 {
 		t.Errorf("codex: %v %+v", err, p)
@@ -576,6 +591,24 @@ func TestFileRead(t *testing.T) {
 	}
 	if _, err := s.File(ctx, false, api.FileReadParams{Path: proj}); kindOf(err) != api.ErrorKindInvalid {
 		t.Errorf("folder: %v", err)
+	}
+	// A FIFO with no writer is refused at once, never opened.
+	fifo := filepath.Join(proj, "pipe")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.File(ctx, false, api.FileReadParams{Path: fifo})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if kindOf(err) != api.ErrorKindInvalid {
+			t.Errorf("fifo: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("file.read on a FIFO hangs")
 	}
 }
 

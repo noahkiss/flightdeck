@@ -309,7 +309,7 @@ has no implementation). Error kind `denied`. Doors: `gff-hab read <tool>`, the s
   not built yet. Until it is, `transcript.list` scans `projects/*/*.jsonl` under the Claude
   config folder, and `sessions/YYYY/MM/DD/rollout-*.jsonl` and `archived_sessions/` under the
   Codex home. It keeps each file's id, folder, start and title until the file's size or time
-  changes. `readtools.Transcripts` is the seam the index replaces. opencode writes no transcript
+  changes. `transcript.read` finds an archived rollout too. `readtools.Transcripts` is the seam the index replaces. opencode writes no transcript
   file we read (its conversation comes from its live server), so past opencode sessions are not
   listed or searched yet.
 - **Search.** Every word must appear in one message, in any case; double quotes keep a phrase
@@ -335,10 +335,11 @@ has no implementation). Error kind `denied`. Doors: `gff-hab read <tool>`, the s
   `.credentials.json`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `id_rsa*`, `id_dsa*`, `id_ecdsa*` and
   `id_ed25519*`. It cannot be turned off. A pattern with no slash matches any part of a path; one
   with a slash matches consecutive parts; one that starts with `/` or `~/` matches from the start
-  of the path. Each part is a glob.
+  of the path. Each part is a glob. Patterns match in any case: macOS and Windows file systems
+  ignore case, so `.ENV` opens `.env`.
 - **The check.** The hab cleans the path, checks the deny list, resolves every link (a missing
-  tail is kept as written), checks the deny list again, then checks the resolved path against
-  each root, as written and resolved. A missing path outside the scope is denied, not
+  tail is kept as written), checks the resolved path against each root, as written and
+  resolved, then checks the deny list again. A missing path outside the scope is denied, not
   `not_found`, so a read never shows what exists there. The denial names the host and the list
   that refused it (`read.allow` or `read.deny`), never the pattern.
 - **Config changes.** The hab reads the file again at the next read after its size or time
@@ -351,7 +352,8 @@ has no implementation). Error kind `denied`. Doors: `gff-hab read <tool>`, the s
   counts transcripts, not hits; counting hits would mean reading denied data.
 - **Files.** `file.read` opens the file read-only and returns text runs of at most 256 KiB
   (default 64 KiB). A run that ends inside a character drops it. A file with a NUL byte or
-  invalid UTF-8 returns `binary` and no bytes. A folder is refused.
+  invalid UTF-8 returns `binary` and no bytes. A folder, a FIFO or a device is refused before it
+  is opened.
 - **Notices.** The hab keeps the last 500 notices it raised, in memory, for `notice.get`. A
   restart forgets them.
 - **Read tools never write.** The MCP server and the CLI refuse any argument a tool does not

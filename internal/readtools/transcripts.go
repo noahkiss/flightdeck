@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -129,7 +130,23 @@ func (t *Transcripts) Find(harness, id string) (string, error) {
 		if t.CodexHome == "" {
 			return "", transcript.ErrNoTranscript
 		}
-		return transcript.FindCodex(t.CodexHome, id)
+		p, err := transcript.FindCodex(t.CodexHome, id)
+		if !errors.Is(err, transcript.ErrNoTranscript) {
+			return p, err
+		}
+		// Codex moves a rollout it archives to archived_sessions/, where the list finds it too.
+		ms, _ := filepath.Glob(filepath.Join(t.CodexHome, "archived_sessions", "rollout-*-"+id+".jsonl"))
+		var best string
+		var mod time.Time
+		for _, m := range ms {
+			if fi, err := os.Stat(m); err == nil && fi.Mode().IsRegular() && (best == "" || fi.ModTime().After(mod)) {
+				best, mod = m, fi.ModTime()
+			}
+		}
+		if best == "" {
+			return "", transcript.ErrNoTranscript
+		}
+		return best, nil
 	}
 	return "", transcript.ErrNoTranscript
 }

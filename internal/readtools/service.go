@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -286,7 +287,7 @@ func (s *Service) entries(ctx context.Context, f filter) (kept []Entry, projects
 	if s.cfg.Transcripts == nil {
 		return nil, nil, 0
 	}
-	sc := s.cfg.Scope()
+	sc := s.cfg.Scope().Resolved()
 	for _, e := range s.cfg.Transcripts.List(ctx) {
 		project := s.project(e.Folder)
 		if !f.keep(e, project) {
@@ -725,7 +726,11 @@ func (s *Service) File(ctx context.Context, local bool, p api.FileReadParams) (a
 		return api.FileData{}, err
 	}
 	clean, _ := sc.abs(p.Path)
-	f, err := os.OpenFile(real, os.O_RDONLY, 0)
+	// Refuse a FIFO or a device before the open: opening a FIFO with no writer never returns.
+	if fi, err := os.Stat(real); err == nil && !fi.Mode().IsRegular() {
+		return api.FileData{}, control.Errorf(api.ErrorKindInvalid, "%s: %s is not a regular file", s.cfg.Host, clean)
+	}
+	f, err := os.OpenFile(real, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return api.FileData{}, control.Errorf(api.ErrorKindNotFound, "%s: no file %s", s.cfg.Host, clean)
