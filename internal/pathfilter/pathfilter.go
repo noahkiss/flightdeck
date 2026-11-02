@@ -83,7 +83,8 @@ func globRegexp(glob string) string {
 			i++
 			b.WriteString(regexp.QuoteMeta(glob[i : i+1]))
 		default:
-			b.WriteString(regexp.QuoteMeta(string(c)))
+			// A slice, not string(c): a byte of 0x80 or above is part of a UTF-8 sequence.
+			b.WriteString(regexp.QuoteMeta(glob[i : i+1]))
 		}
 	}
 	b.WriteString("$")

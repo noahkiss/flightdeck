@@ -27,6 +27,9 @@ func TestGlobs(t *testing.T) {
 		{"v[12].txt", []string{"v1.txt", "v2.txt"}, []string{"v3.txt"}},
 		{`a\*b`, []string{"a*b"}, []string{"axb"}},
 		{"a.b", []string{"a.b"}, []string{"axb"}},
+		{"a/**/b", []string{"a/b", "a/x/b", "a/x/y/b"}, []string{"a/xb", "b", "a/b/c"}},
+		{"docs/é.txt", []string{"docs/é.txt"}, []string{"docs/e.txt"}},
+		{"*é*", []string{"café.md"}, []string{"cafe.md"}},
 	} {
 		f, err := Compile([]string{c.glob})
 		if err != nil {
