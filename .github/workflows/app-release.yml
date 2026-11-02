@@ -463,7 +463,14 @@ jobs:
             kind=$(file -b "$f")
             [[ "$kind" == *Mach-O* ]] || continue
             archs=$(lipo -archs "$f")
-            [ "$archs" = arm64 ] || { echo "::error::${f#"$APP"/} is $archs, not arm64 only."; exit 1; }
+            rel=${f#"$APP"/}
+            # Xcode embeds Apple's Swift back-deployment libraries as they ship (universal);
+            # they need only carry arm64. Our own code must be arm64 only.
+            if [[ "$rel" == Contents/Frameworks/libswift*.dylib ]]; then
+              [[ " $archs " == *" arm64 "* ]] || { echo "::error::$rel is $archs, with no arm64 slice."; exit 1; }
+            else
+              [ "$archs" = arm64 ] || { echo "::error::$rel is $archs, not arm64 only."; exit 1; }
+            fi
             n=$((n + 1))
           done < <(find "$APP" -type f -print0)
           echo "Flightdeck $VERSION ($BUILD): Developer ID, hardened runtime, timestamp, $n Mach-O files, arm64 only." | tee -a "$GITHUB_STEP_SUMMARY"

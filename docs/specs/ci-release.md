@@ -1097,7 +1097,7 @@ The `mac` job:
    `--timestamp` and `ARCHS=arm64`.
 7. Export with `method` `developer-id` and `notarize: false`. Verify:
    `codesign --verify --deep --strict` (the action), the Developer ID authority and the team,
-   the hardened runtime, a secure timestamp, no `get-task-allow`, every Mach-O arm64 only
+   the hardened runtime, a secure timestamp, no `get-task-allow`, every Mach-O arm64 only (Apple's embedded `libswift*.dylib` back-deployment libraries ship universal and need only an arm64 slice)
    (`lipo -archs`), and the bundle id and versions.
 
 Steps 8 and 9 are not built yet (10.1); they join with the Mac distribution step.
