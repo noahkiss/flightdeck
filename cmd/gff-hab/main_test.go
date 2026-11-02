@@ -472,3 +472,88 @@ func TestEventsFailsWithoutClosing(t *testing.T) {
 		t.Fatalf("stderr %q", stderr.String())
 	}
 }
+
+// TestServeWaitsForPrivateSocketDir: a socket folder other users can open makes gff-hab log one
+// line that names the folder and the chmod that fixes it, then wait without exiting (a
+// supervisor would restart it every second). Once the folder is private it starts; SIGTERM
+// during the wait ends it cleanly.
+func TestServeWaitsForPrivateSocketDir(t *testing.T) {
+	for _, fix := range []bool{true, false} {
+		t.Run(fmt.Sprintf("fixed=%v", fix), func(t *testing.T) {
+			d := shortDir(t)
+			run := filepath.Join(d, "run")
+			if err := os.Mkdir(run, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			os.Chmod(run, 0o755)
+			sock := filepath.Join(run, "hab.sock")
+			cmd := exec.Command(bin, "serve", "-socket", sock, "-state", filepath.Join(d, "state"), "-host-id", "test-host")
+			cmd.Env = append(os.Environ(), "GFF_HAB_CONFIG="+filepath.Join(d, "no-hab.toml"))
+			stderr, err := cmd.StderrPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			lines := make(chan string, 100)
+			go func() {
+				sc := bufio.NewScanner(stderr)
+				for sc.Scan() {
+					lines <- sc.Text()
+				}
+				close(lines)
+			}()
+			done := make(chan error, 1)
+			go func() { done <- cmd.Wait() }()
+			defer func() {
+				cmd.Process.Signal(syscall.SIGTERM)
+				select {
+				case <-done:
+				case <-time.After(10 * time.Second):
+					cmd.Process.Kill()
+				}
+			}()
+			select {
+			case l := <-lines:
+				if !strings.Contains(l, run) || !strings.Contains(l, "chmod 700") || !strings.Contains(l, "open to other users") {
+					t.Fatalf("first line: %q", l)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("no line about the socket folder")
+			}
+			// Two polls later it still runs and has said nothing more.
+			select {
+			case l := <-lines:
+				t.Fatalf("a second line while waiting: %q", l)
+			case err := <-done:
+				t.Fatalf("gff-hab exited while waiting: %v", err)
+			case <-time.After(2*socketDirPoll + 500*time.Millisecond):
+			}
+			if !fix {
+				cmd.Process.Signal(syscall.SIGTERM)
+				select {
+				case err := <-done:
+					if err != nil {
+						t.Fatalf("SIGTERM while waiting: %v", err)
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatal("gff-hab did not stop on SIGTERM while waiting")
+				}
+				return
+			}
+			os.Chmod(run, 0o700)
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				if c, err := control.Dial(sock); err == nil {
+					c.Close()
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("gff-hab did not start once the folder was private")
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+		})
+	}
+}

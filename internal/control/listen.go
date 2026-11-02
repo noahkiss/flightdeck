@@ -57,9 +57,30 @@ func checkPrivateDir(d string) error {
 		return fmt.Errorf("control: socket directory %s is not owned by this user", d)
 	}
 	if fi.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("control: socket directory %s is open to other users (mode %v)", d, fi.Mode().Perm())
+		return &OpenDirError{Dir: d, Mode: fi.Mode().Perm()}
 	}
 	return nil
+}
+
+// OpenDirError is a socket directory that other users can reach. Listen refuses it; chmod 700
+// fixes it.
+type OpenDirError struct {
+	Dir  string
+	Mode os.FileMode
+}
+
+func (e *OpenDirError) Error() string {
+	return fmt.Sprintf("control: socket directory %s is open to other users (mode %v)", e.Dir, e.Mode)
+}
+
+// CheckSocketDir reports whether Listen would refuse the directory of the socket at path, without
+// changing anything. A directory that is not there yet passes: Listen makes it 0700.
+func CheckSocketDir(path string) error {
+	err := checkPrivateDir(filepath.Dir(path))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 // CheckPeer refuses a caller that runs as another user (spec 4.1). The hook endpoint uses it

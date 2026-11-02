@@ -219,6 +219,41 @@ func socketPath(flagValue string) (string, error) {
 	return control.DefaultSocket(runtime.GOOS, os.Getenv, os.UserConfigDir)
 }
 
+// socketDirPoll is how often gff-hab looks again at a socket folder that is open to others.
+const socketDirPoll = 2 * time.Second
+
+// waitPrivateSocketDirs waits while the folder of any socket in paths is open to other users,
+// which Listen refuses. It logs one line per folder, naming the fix, and none while it waits, so
+// a supervisor that restarts gff-hab on exit sees no exit and no hot loop. It returns true when
+// SIGTERM or SIGINT came first, false once every folder is private or not there yet. Any other
+// fault in a folder is left to Listen.
+func waitPrivateSocketDirs(paths []string, sigs <-chan os.Signal, logf func(string, ...any), every time.Duration) (stopped bool) {
+	logged := map[string]bool{}
+	for {
+		var open *control.OpenDirError
+		for _, p := range paths {
+			if errors.As(control.CheckSocketDir(p), &open) {
+				break
+			}
+		}
+		if open == nil {
+			for d := range logged {
+				logf("socket folder %s is private now; starting", d)
+			}
+			return false
+		}
+		if !logged[open.Dir] {
+			logged[open.Dir] = true
+			logf("socket folder %s is open to other users (mode %v), and gff-hab will not listen there; waiting until it is private: run chmod 700 %q", open.Dir, open.Mode, open.Dir)
+		}
+		select {
+		case <-sigs:
+			return true
+		case <-time.After(every):
+		}
+	}
+}
+
 func stateDir(flagValue string) (string, error) {
 	if flagValue != "" {
 		return flagValue, nil
@@ -282,6 +317,15 @@ func serve(args []string) error {
 	path, err := socketPath(*sock)
 	if err != nil {
 		return err
+	}
+	hpath, err := hookSocketPath(*hookSock, path)
+	if err != nil {
+		return err
+	}
+	// A socket folder other users can open would fail Listen, and a supervisor would restart
+	// gff-hab every second. Wait for the fix instead, before anything starts.
+	if stopped := waitPrivateSocketDirs([]string{path, hpath}, sigs, logger.Printf, socketDirPoll); stopped {
+		return nil
 	}
 	dir, err := stateDir(*state)
 	if err != nil {
@@ -417,10 +461,6 @@ func serve(args []string) error {
 		},
 	}, store, agents)
 	defer pushes.Close()
-	hpath, err := hookSocketPath(*hookSock, path)
-	if err != nil {
-		return err
-	}
 	// A pane's hook token is a keyed hash of its uuid under the secret in the state directory, so
 	// it outlives a gff-hab restart. A token resolves only while the link follows the pane: a
 	// pane the link reports gone loses its token and its agent state.
