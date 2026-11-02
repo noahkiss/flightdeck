@@ -152,6 +152,12 @@ func TestFailedSpawnLeavesNoSession(t *testing.T) {
 		} else if json.Unmarshal(line, &e) != nil || e.Type == "" {
 			t.Fatalf("event line %s", line)
 		}
+		// Only the session events count here. Other events (catalog.updated after the hab
+		// publishes its catalog, project.updated) can arrive at any point and say nothing about
+		// the failed spawns.
+		if !strings.HasPrefix(string(e.Type), "session.") {
+			continue
+		}
 		if e.Type == "session.updated" {
 			var s api.Session
 			json.Unmarshal(e.Data, &s)
