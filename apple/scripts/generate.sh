@@ -16,4 +16,10 @@ if [ -z "$bin" ]; then
     unzip -qo "$dir/xcodegen.zip" -d "$dir"
   fi
 fi
-exec "$bin" generate --spec "$here/project.yml" --project "$here"
+"$bin" generate --spec "$here/project.yml" --project "$here"
+# The project's only package is FlightdeckKit, so its pins are the project's:
+# xcodebuild then resolves the same versions as `swift test`, and the CI cache
+# key (the Kit's Package.resolved) stays true.
+resolved="$here/Flightdeck.xcodeproj/project.xcworkspace/xcshareddata/swiftpm"
+mkdir -p "$resolved"
+cp "$here/FlightdeckKit/Package.resolved" "$resolved/Package.resolved"
