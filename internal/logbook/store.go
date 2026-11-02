@@ -32,7 +32,7 @@ var ErrSharedOrigin = errors.New("logbook: this host's device id is shared with 
 // ErrRestoring means a peer holds ops of this replica's own origin that its file lacks: the file
 // was restored from an older copy. A write now would reuse a seq the peers hold, so writes are
 // refused until sync brings those ops back (7.6). The error names the seqs.
-var ErrRestoring = errors.New("logbook: this file was restored from an older copy: a peer holds newer ops of this host; writes wait until sync brings them back")
+var ErrRestoring = errors.New("logbook: this file was restored from an older copy: a peer holds newer ops of this host; writes are refused until sync brings them back")
 
 // ErrNoOrigin means the file has no origin yet and none was given.
 var ErrNoOrigin = errors.New("logbook: no origin: the file is new and Options.Origin is empty")
