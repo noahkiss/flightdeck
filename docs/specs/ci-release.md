@@ -158,8 +158,8 @@ Two jobs.
 | `cache-path` | `build/libghostty-vt` |
 | `cache-key` | `${{ needs.plan.outputs.ghostty_key }}-Linux-X64-baseline` (section 5) |
 | `cancel-in-progress` | `${{ github.ref != 'refs/heads/main' }}` (E4) |
-| `commands`, full | `make check-pure`, `make vet`, `make test`, `make race` |
-| `commands`, fast | `make check-pure`, `make build` |
+| `commands`, full | `make ci-full` (`check-pure`, `vet`, `test`, `race`) |
+| `commands`, fast | `make ci-fast` (`check-pure`, `build`) |
 | `timeout-minutes` | `30` |
 
 `make test` runs every Go test with `-tags ghostty`, including the end-to-end tests over real
@@ -742,6 +742,24 @@ compile, or one that matches an empty line (it would hit every line). Any such r
 an error that names only the rule's number, never its text: `awk` prints a regex that fails to
 compile in its own message, so that message must never reach a log. A silently skipped rule
 would weaken the scan, so none is skipped. The scanner itself also runs with stderr silenced.
+
+**What the secret holds.** The built-in rules cannot know the maintainer's own names. The
+`HYGIENE_PATTERNS` secret holds one rule per class below; this spec names the classes, never a
+value:
+
+| Rule name | Class |
+|---|---|
+| `host-name` | The names of the maintainer's machines and servers, short and fully qualified |
+| `lan-domain` | The private DNS suffix of the home network |
+| `tailnet` | The tailnet's own name (the label in its `ts.net` domain) |
+| `user-name` | The maintainer's login names, where they appear outside a home path (`name@host`, `~name`) |
+| `public-ip` | Public addresses of the home and offsite networks, which the private ranges miss |
+| `vault` | Credential-store vault and item names (references by id are allowed, 6.2) |
+| `private-name` | Names of private repositories, projects and default session names |
+
+Each rule is a POSIX extended regex, anchored at word edges with `(^|[^A-Za-z0-9])...([^A-Za-z0-9]|$)`
+where a short name could match inside a longer word. The same file serves local runs through
+`$GFF_HYGIENE_PATTERNS_FILE`.
 
 ### 9.5 Allowed hits
 

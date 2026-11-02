@@ -41,10 +41,23 @@ online and offline, session. One word per concept; do not rotate synonyms.
 
 ## Build and test
 
-Local builds and tests are fine on any of the owner's machines for now. CI arrives later
-(shared workflows from `noahkiss/workflows`; macOS jobs run when Apple code or holder packages
-change, plus a nightly macOS end-to-end run). Which tests we keep, and why, is in
-`docs/testing.md`.
+Local builds and tests are fine on any of the owner's machines. Which tests we keep, and why, is
+in `docs/testing.md`.
+
+### CI
+
+GitHub Actions, through the shared workflows of `noahkiss/workflows`. What runs where, and why,
+is in `docs/specs/ci-release.md`. Run the same commands locally before you push; CI confirms.
+
+| Workflow | Runs | Same as locally |
+|---|---|---|
+| `ci.yml` | Pull requests and pushes to `main` that touch more than docs, on Linux: gofmt, the generate check, then the full or fast set | `gofmt -l .`, `make check-gen`, `make ci-full` (or `make ci-fast`) |
+| `macos-go.yml` | Holder package changes on macOS, plus nightly: the holder packages under `-race`, every test, and nightly the service check | `go test -race -count=3` over the holder packages, `make test`, `scripts/service-check.sh` |
+| `nightly.yml` | Linux, nightly: fuzz, the 200-cycle restart loop, the service check under systemd | `make fuzz`, `GFF_RESTART_LOOP=200 go test -tags ghostty -run TestRestartLoop ./internal/link/` (with the Makefile's `PKG_CONFIG_PATH`), `scripts/service-check.sh` |
+| `hygiene.yml` | Every push and pull request, docs included | `scripts/hygiene-scan.sh --staged`, or its hooks |
+
+Dependency updates come from Renovate with the shared preset (`renovate.json`); the libghostty
+module and zig move only by hand, with `GHOSTTY_COMMIT`.
 
 - Go code (hab, `gff`, modules runtime) is developed mostly on the Linux dev box.
 - Swift and SwiftUI work happens on a Mac, with Xcode and the simulator.
