@@ -150,13 +150,17 @@ public indirect enum ChatItem: Hashable, Sendable, Identifiable {
     case event(id: String, event: ChatEvent, text: String)
     /// A plan checklist. Only the latest plan shows its steps; earlier ones fold.
     case plan(id: String, steps: [PlanStep], latest: Bool)
+    /// Capcom's `hand_off` call, as a hand-off card (app.md 4.8).
+    case handOff(id: String, card: HandOffCard)
+    /// Capcom's `file_record` call, as a proposal line (app.md 4.8).
+    case proposal(id: String, line: ProposalLine)
     /// A message kind this app does not know.
     case unsupported(id: String, kind: String)
 
     public var id: String {
         switch self {
         case .user(let id, _, _, _), .agent(let id, _, _), .tool(let id, _), .event(let id, _, _),
-             .plan(let id, _, _), .unsupported(let id, _):
+             .plan(let id, _, _), .handOff(let id, _), .proposal(let id, _), .unsupported(let id, _):
             return id
         }
     }
@@ -211,8 +215,14 @@ public enum ChatRender {
             case .agent:
                 item = .agent(id: m.id, blocks: MarkdownBlock.parse(m.text ?? ""), sender: m.sender)
             case .tool:
-                let built = depth < 4 ? kids.map { build($0, depth: depth + 1) } : []
-                item = .tool(id: m.id, card: card(m.tool, children: built))
+                if kids.isEmpty, let t = m.tool, let h = HandOffCard.from(t) {
+                    item = .handOff(id: m.id, card: h)
+                } else if kids.isEmpty, let t = m.tool, let p = ProposalLine.from(t) {
+                    item = .proposal(id: m.id, line: p)
+                } else {
+                    let built = depth < 4 ? kids.map { build($0, depth: depth + 1) } : []
+                    item = .tool(id: m.id, card: card(m.tool, children: built))
+                }
             case .event:
                 let e = m.event ?? .unknown
                 item = .event(id: m.id, event: e, text: eventText(e, m.text))
@@ -357,6 +367,24 @@ public enum ChatRender {
                     body(mark + " " + s.text)
                 }
             }
+        case .handOff(_, let c):
+            var head = "HANDOFF [\(c.deliveryWord)]"
+            if let t = c.target {
+                head += " to \(t.address)" + (t.host.map { " on \($0)" } ?? "") + " (\(t.harness), \(t.state))"
+            } else if let n = c.named ?? c.project {
+                head += " for \(n)" + (c.host.map { " on \($0)" } ?? "")
+            }
+            add(head)
+            if let l = c.line { body(l) }
+            if let id = c.messageID { body("message \(id), \(c.channelState ?? "")") }
+            if let w = c.why { body("why: " + w) }
+            for o in c.others { body("also: \(o.address) (\(o.harness), \(o.state))") }
+            if let a = c.answer { body("answer:"); body(a) }
+            body("sent:")
+            body(c.message)
+        case .proposal(_, let p):
+            add("PROPOSAL [\(p.stateText)] \(p.type): \(p.title)" + (p.project.map { " (\($0))" } ?? "") + (p.proposal.map { " \($0)" } ?? ""))
+            if let a = p.answer { body(a) }
         case .unsupported(_, let kind):
             add("UNSUPPORTED \(kind)")
         }

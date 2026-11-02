@@ -299,6 +299,10 @@ public struct ChatItemView: View {
             EventLine(event: event, text: text)
         case .plan(_, let steps, let latest):
             PlanCard(steps: steps, latest: latest)
+        case .handOff(_, let card):
+            HandOffCardView(card: card)
+        case .proposal(_, let line):
+            ProposalLineView(line: line)
         case .unsupported(_, let kind):
             EventLine(event: .unknown, text: "Unsupported message (\(kind))")
         }

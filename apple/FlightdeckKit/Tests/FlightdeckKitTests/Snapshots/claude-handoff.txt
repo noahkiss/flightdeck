@@ -1,0 +1,41 @@
+USER
+    Ask the agent on orbit-api to raise the upload timeout to 60 seconds.
+HANDOFF [Delivered] to box-b/api-claude on box-b (claude, idle)
+    Delivered: box-b/api-claude (claude, idle, on box-b) has the message now.
+    message m-0001, delivered
+    why: idle, so it takes the message now; the most recently active of 1 agents that are
+    also: box-a/api-codex (codex, working)
+    sent:
+    Raise the upload timeout in the orbit-api client from 30 to 60 seconds.
+    The user saw uploads of large files fail at 30 s on a slow link.
+    Run the upload tests after the change.
+    Reply with the commit.
+AGENT
+    Handed to api-claude on box-b, which had it at once. api-codex on box-a also runs there.
+USER
+    Also tell api-codex to stop after its current step.
+HANDOFF [Queued] to box-a/api-codex on box-a (codex, working)
+    Queued: box-a/api-codex (codex, working, on box-a) is working; it gets the message when idle.
+    message m-0002, queued
+    why: the agent the user named
+    also: box-b/api-claude (claude, idle)
+    sent:
+    Stop after your current step; the timeout change is with api-claude.
+HANDOFF [Not sent] for star-docs
+    answer:
+    No agent is running on star-docs: nothing was sent. To start one, run suggest_host for the project, then start_session on the host it suggests.
+    sent:
+    Fix the broken link on the install page.
+HANDOFF [Failed] for orbit-api
+    answer:
+    hand_off needs to run from a session's pane: your session is the sender. Outside one, gff-hab send -from <session> sends as a named session
+    sent:
+    Check the CI run.
+USER
+    Note down that the upload timeout should be a setting.
+PROPOSAL [Waits for review] task: Make the upload timeout a setting (orbit-api) p-0001
+PROPOSAL [Not filed] finding: Uploads fail at 30 s on slow links
+    Logbook is not on this host yet, so the record was not filed and nothing was written. Tell the user, and keep the draft in this conversation
+HANDOFF [Sending] for orbit-api on box-a
+    sent:
+    Rebase onto main when the timeout change lands.
