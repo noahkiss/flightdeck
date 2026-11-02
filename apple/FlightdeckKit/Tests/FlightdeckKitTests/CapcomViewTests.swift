@@ -173,7 +173,8 @@ final class CapcomViewTests: XCTestCase {
         let a = await hab("bench")
         await a.addNotice(id: "n7", title: "Build failed")
         let f = await fleet([a])
-        await f.capcom.openStanding()
+        f.capcom.viewAppeared()
+        await eventually("open") { f.capcom.standing != nil }
         let old = try XCTUnwrap(f.capcom.standing)
         await eventually("capcom context") { old.context.isCapcom }
         let ok = await old.attach(CapcomContextRef(kind: .notification, ref: "n7"))
@@ -187,6 +188,7 @@ final class CapcomViewTests: XCTestCase {
         XCTAssertEqual(m.pending.map(\.title), ["Build failed"])
         XCTAssertTrue(old.pending.isEmpty, "detached from the old one")
         XCTAssertNil(f.capcom.openRequest, "the Capcom view swaps in place")
+        f.capcom.viewDisappeared()
         let opens = await a.capcomOpens
         XCTAssertEqual(opens.last?.new, true)
         await f.setActive(false)
@@ -201,11 +203,14 @@ final class CapcomViewTests: XCTestCase {
         let older = await f.capcom.open(habID: "bench", context: [], new: true)
         let o = try XCTUnwrap(older)
         f.capcom.shown()
-        XCTAssertTrue(f.capcom.standing === standing)
+        XCTAssertTrue(f.capcom.standing === o, "a new open is the hab's standing conversation")
+        XCTAssertFalse(o === standing)
+        // The owner went back to it from its board row; the view follows the hab anyway.
+        f.capcom.standing = standing
         let moved = await f.capcom.newConversation(from: o, draft: "")
         XCTAssertTrue(moved)
         XCTAssertEqual(f.capcom.openRequest?.session, "capcom-s3")
-        XCTAssertTrue(f.capcom.standing === standing, "the Capcom view keeps what it showed")
+        XCTAssertEqual(f.capcom.standing?.target.session, "capcom-s3", "the Capcom view follows the hab's standing conversation")
         await f.setActive(false)
     }
 
@@ -221,6 +226,60 @@ final class CapcomViewTests: XCTestCase {
         m.start()
         await eventually("messages") { m.messages.count == 4 }
         m.stop()
+        await f.setActive(false)
+    }
+
+    func testEveryHabOfflineAfterANoneAnswerIsNoHabOnline() async throws {
+        let a = await hab("bench")
+        await a.setCapcomHome(assignment: 0, home: nil)
+        let f = await fleet([a])
+        XCTAssertEqual(f.capcom.entry, .unassigned)
+        await f.setActive(false)
+        XCTAssertEqual(f.board.habs.first?.state.status, .stopped)
+        XCTAssertEqual(f.capcom.beliefs["bench"], CapcomBelief.none, "the answer is kept")
+        XCTAssertEqual(f.capcom.entry, .noHabOnline, "a kept answer from an offline hab is not 'no host assigned'")
+    }
+
+    func testOpenViewOpensByItselfWhenTheHomeComesBack() async throws {
+        let a = await hab("bench")
+        let b = await hab("attic")
+        await a.setCapcomHome(assignment: 1, home: b.deviceID)
+        await b.setCapcomHome(assignment: 1, home: b.deviceID)
+        let f = await fleet([a, b])
+        await b.setSilent(true)
+        await b.dropConnections()
+        await eventually("attic offline") { f.capcom.entry == .offline(habID: "attic") }
+        f.capcom.viewAppeared()
+        XCTAssertNil(f.capcom.standing)
+        await b.setSilent(false)
+        await eventually("opened by itself") { f.capcom.standing?.target.habID == "attic" }
+        let opens = await b.capcomOpens
+        XCTAssertEqual(opens, [CapcomOpenParams()])
+        f.capcom.viewDisappeared()
+        await f.setActive(false)
+    }
+
+    func testExitedStandingConversationResumesOncePerGap() async throws {
+        let a = await hab("bench")
+        let f = await fleet([a])
+        f.capcom.viewAppeared()
+        await eventually("open") { f.capcom.standing != nil }
+        let m = try XCTUnwrap(f.capcom.standing)
+        await eventually("context") { m.context.isCapcom && !m.context.sessionExited }
+        await a.exitCapcomSession("capcom-s1")
+        await eventually("resumed") { await a.capcomResumes == 1 }
+        await eventually("running again") { !m.context.sessionExited }
+        // A harness that exits at once is not restarted again within the gap.
+        await a.exitCapcomSession("capcom-s1")
+        await eventually("exited") { m.context.sessionExited }
+        XCTAssertFalse(f.capcom.standingCheck(), "no second resume within the gap")
+        f.capcom.resumeGap = 0
+        // A view that is not on screen resumes nothing.
+        f.capcom.viewDisappeared()
+        XCTAssertFalse(f.capcom.standingCheck())
+        f.capcom.viewAppeared()
+        await eventually("resumed again once on screen") { await a.capcomResumes == 2 }
+        f.capcom.viewDisappeared()
         await f.setActive(false)
     }
 

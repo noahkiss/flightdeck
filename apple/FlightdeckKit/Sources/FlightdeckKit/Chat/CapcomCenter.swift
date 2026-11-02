@@ -21,14 +21,23 @@ public final class CapcomCenter {
 
     /// What each hab's catalog says of the Capcom home, by hab id.
     public internal(set) var beliefs: [String: CapcomBelief] = [:]
-    /// Habs whose catalog read is on its way.
-    public internal(set) var reading: Set<String> = []
+    /// Habs whose catalog read is on its way, with the count of reads per hab.
+    public internal(set) var reading: [String: Int] = [:]
     /// The standing conversation's chat model, from the last `capcom.open` with no context.
     public internal(set) var standing: ChatModel?
     /// Why the last open of the standing conversation failed; nil after a success.
     public internal(set) var standingFailure: String?
     /// An open of the standing conversation is on its way.
     public internal(set) var opening = false
+    /// Capcom views on screen; while any is, the center opens the standing conversation by itself.
+    @ObservationIgnored var viewers = 0
+    /// The entry the views last saw, so a change opens again.
+    @ObservationIgnored var lastEntry: CapcomEntry?
+    /// The last time the center resumed an exited standing conversation by itself, per session.
+    @ObservationIgnored var lastResume: (session: String, at: Date)?
+    /// How long an exited standing conversation waits before the center resumes it again by
+    /// itself, so a harness that exits at once is not restarted in a loop.
+    @ObservationIgnored public var resumeGap: TimeInterval = 60
 
     /// The hooks into the fleet.
     public struct Habs {
@@ -97,7 +106,11 @@ public final class CapcomCenter {
     func run(habID: String, context: [CapcomContextRef], new: Bool, request: Bool = true) async throws -> ChatModel {
         guard let conn = habs.connection(habID) else { throw TransportError("that hab is no longer in the app") }
         let r = try await conn.call(HabMethods.capcomOpen, CapcomOpenParams(context: context.isEmpty ? nil : context, new: new ? true : nil))
-        guard request else { return model(habID: habID, opened: r) }
+        // Every open returns the home's standing conversation (capcom.md 7.6), a `new` one too,
+        // so the Capcom view follows it.
+        let m = model(habID: habID, opened: r)
+        standing = m
+        guard request else { return m }
         return show(habID: habID, opened: r)
     }
 
@@ -110,7 +123,7 @@ public final class CapcomCenter {
 
     /// Hands an open's result to its chat model and asks the board to open it.
     func show(habID: String, opened r: CapcomOpened) -> ChatModel {
-        let m = model(habID: habID, opened: r)
+        let m = habs.chat(SessionTarget(habID: habID, session: r.session, pane: r.pane))
         let target = SessionTarget(habID: habID, session: r.session, pane: r.pane)
         held = m
         openRequest = target
@@ -186,6 +199,7 @@ public final class CapcomCenter {
     /// The board changed: a waiting Ask looks for its hab again, and goes once it is online.
     /// With every hab online and none with the device id, it fails at once.
     public func boardChanged() {
+        standingCheck()
         guard var w = waiting else { return }
         if w.habID == nil {
             w.habID = habs.device(w.home)
@@ -219,11 +233,10 @@ public final class CapcomCenter {
         old.capcomBusy = true
         let m: ChatModel
         do {
-            // From the standing conversation, the Capcom view shows the new one in its place;
-            // from any other Capcom session, the board opens it.
-            let wasStanding = standing === old
-            m = try await run(habID: habID, context: refs, new: true, request: !wasStanding)
-            if wasStanding { standing = m }
+            // From the Capcom view, the view shows the new one in its place (run sets
+            // `standing`); from a Capcom session's board row, the board opens it.
+            let inView = viewers > 0 && standing === old
+            m = try await run(habID: habID, context: refs, new: true, request: !inView)
         } catch {
             old.capcomBusy = false
             old.notice = Self.message(error, label: habs.label(habID), doing: nil)

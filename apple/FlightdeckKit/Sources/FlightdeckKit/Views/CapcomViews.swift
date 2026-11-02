@@ -51,8 +51,10 @@ struct CapcomScreen: View {
                 state
             }
         }
-        // Opens on appearing, and again when the home comes online or moves.
-        .task(id: center.entry) { await center.openStanding() }
+        // Opens on appearing; the center opens again when the home comes online or moves,
+        // or the standing conversation exits.
+        .onAppear { center.viewAppeared() }
+        .onDisappear { center.viewDisappeared() }
     }
 
     @ViewBuilder

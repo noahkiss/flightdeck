@@ -49,10 +49,12 @@ extension CapcomCenter {
             return habs.online(id) ? .ready(habID: id) : .offline(habID: id)
         }
         let waiting = all.contains { h in
-            reading.contains(h.id) || h.status == .connecting || (h.status == .online && beliefs[h.id] == nil)
+            reading[h.id] != nil || h.status == .connecting || (h.status == .online && beliefs[h.id] == nil)
         }
         if waiting { return .loading }
-        if !all.contains(where: { $0.status == .online || beliefs[$0.id] != nil }) { return .noHabOnline }
+        // Only an online hab's answer says no host is assigned; a kept one from an offline
+        // hab may be stale, and Check again could read nothing.
+        if !all.contains(where: { $0.status == .online }) { return .noHabOnline }
         return .unassigned
     }
 
@@ -76,8 +78,12 @@ extension CapcomCenter {
             beliefs[habID] = CapcomBelief.none
             return
         }
-        reading.insert(habID)
-        defer { reading.remove(habID) }
+        reading[habID, default: 0] += 1
+        defer {
+            let n = (reading[habID] ?? 1) - 1
+            reading[habID] = n > 0 ? n : nil
+            standingCheck()
+        }
         let r = try? await conn.call(HabMethods.catalogGet, CatalogGetParams())
         guard habs.connection(habID) === conn else { return }
         if let c = r?.catalog?.capcom, let home = c.home, !home.isEmpty {
@@ -90,7 +96,7 @@ extension CapcomCenter {
     /// A hab left the app: its belief goes.
     public func forget(habID: String) {
         beliefs[habID] = nil
-        reading.remove(habID)
+        reading[habID] = nil
     }
 
     /// Reads every online hab's catalog again: "Check again", and an open the old home
@@ -109,14 +115,20 @@ extension CapcomCenter {
     public func openStanding() async {
         guard case .ready(let id) = entry, !opening else { return }
         opening = true
-        defer { opening = false }
+        await openStanding(on: id)
+        opening = false
+        // The home moved while the open was on its way: open there too. Each pass needs a
+        // new home, so this ends.
+        if case .ready(let now) = entry, now != id { await openStanding() }
+    }
+
+    private func openStanding(on id: String) async {
         do {
-            standing = try await run(habID: id, context: [], new: false, request: false)
+            _ = try await run(habID: id, context: [], new: false, request: false)
             standingFailure = nil
         } catch let e as RPCError where e.kind == .unavailable {
             await refreshHome()
-            if case .ready(let next) = entry, next != id, let m = try? await run(habID: next, context: [], new: false, request: false) {
-                standing = m
+            if case .ready(let next) = entry, next != id, (try? await run(habID: next, context: [], new: false, request: false)) != nil {
                 standingFailure = nil
                 return
             }
@@ -124,5 +136,40 @@ extension CapcomCenter {
         } catch {
             standingFailure = Self.message(error, label: habs.label(id), doing: nil)
         }
+    }
+
+    // MARK: - While a Capcom view is on screen
+
+    /// A Capcom view appeared: open the standing conversation, and keep it open while shown.
+    public func viewAppeared() {
+        viewers += 1
+        lastEntry = entry
+        Task { await openStanding() }
+    }
+
+    /// A Capcom view went away.
+    public func viewDisappeared() {
+        viewers = max(0, viewers - 1)
+    }
+
+    /// While a Capcom view is on screen: a changed entry (the home came online, moved, or was
+    /// found) opens the standing conversation again, and so does a standing conversation that
+    /// exited, at most once per `resumeGap` for the same session. The board and each catalog
+    /// read call it. Returns whether it started an open.
+    @discardableResult
+    func standingCheck() -> Bool {
+        guard viewers > 0 else { return false }
+        let e = entry
+        if e != lastEntry {
+            lastEntry = e
+            Task { await openStanding() }
+            return true
+        }
+        guard let m = standing, m.context.sessionExited, case .ready(let id) = e, m.target.habID == id,
+              !opening, let session = m.target.session else { return false }
+        if let last = lastResume, last.session == session, Date().timeIntervalSince(last.at) < resumeGap { return false }
+        lastResume = (session, Date())
+        Task { await openStanding() }
+        return true
     }
 }
