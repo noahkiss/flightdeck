@@ -593,7 +593,9 @@ The chat view stage. Code in `apple/FlightdeckKit` (`Chat/`, `Views/ChatViews.sw
 - **Layout.** Phone: a board row pushes the session; chat first, a segmented switch flips to
   the terminal. A session with no harness opens on the terminal. iPad and Mac: the board list
   stays on the left; the session fills the rest with chat and terminal at 50/50 under one header
-  (harness, host, model). The divider does not drag yet.
+  (harness, host, model). The list's width comes from the window: 300 to 380 pt, as wide as it may be while the session
+  keeps 640 pt (319 pt in the 960 pt minimum window), so the row never outgrows the window and
+  clips the list. The divider does not drag yet.
 - **Terminal slot.** The terminal half shows the pane's `TerminalScreen` (5), reached through
   the hab connection in the environment; a session with no pane shows a placeholder.
   `.terminalSlot { target in ... }` replaces the view. On the phone the switch shows one view at

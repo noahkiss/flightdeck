@@ -152,16 +152,14 @@ public struct BoardScreen: View {
                     }
                 }
             } else if fleet != nil, let row = opened {
-                HStack(spacing: 0) {
+                BoardSessionSplit {
                     NavigationStack {
                         BoardList(board: board, opened: $opened, openRequest: openRequest, heading: "Sessions")
                         .usageFooter(fleet?.usage)
                             .navigationTitle("Flightdeck")
                     }
-                    .frame(minWidth: 300, idealWidth: 340, maxWidth: 380)
-                    Divider()
+                } session: {
                     session(row, compact: false)
-                        .frame(minWidth: 640)
                 }
             } else {
                 // The session cards column (app.md 3.3) returns when live previews exist.
@@ -212,6 +210,38 @@ public struct BoardScreen: View {
         #if os(macOS)
         .frame(minWidth: fleet != nil && opened != nil ? 960 : 680, minHeight: 420)
         #endif
+    }
+}
+
+/// iPad and Mac with a session open: the board list on the left, the session
+/// on the right (app.md 4.6). The list gets a fixed width from the window: as
+/// wide as it may be while the session keeps its minimum. A plain HStack of
+/// flexible frames gave the list its maximum first, so at the 960 pt minimum
+/// window the row came out wider than the window, centered, and clipped the
+/// list's left edge.
+struct BoardSessionSplit<ListContent: View, SessionContent: View>: View {
+    static var listMin: CGFloat { 300 }
+    static var listMax: CGFloat { 380 }
+    static var sessionMin: CGFloat { 640 }
+
+    /// The list's width in a window `width` wide; the divider takes 1 pt.
+    static func listWidth(in width: CGFloat) -> CGFloat {
+        min(listMax, max(listMin, width - 1 - sessionMin))
+    }
+
+    @ViewBuilder var list: ListContent
+    @ViewBuilder var session: SessionContent
+
+    var body: some View {
+        GeometryReader { geo in
+            HStack(spacing: 0) {
+                list
+                    .frame(width: Self.listWidth(in: geo.size.width))
+                Divider()
+                session
+                    .frame(maxWidth: .infinity)
+            }
+        }
     }
 }
 
