@@ -56,6 +56,19 @@ func newNotifierRig(t *testing.T, opts ...func(*NotifierConfig)) *notifierRig {
 	return r
 }
 
+// held runs f while the notifier's goroutine waits inside a job, so every state f queues is
+// still pending when the goroutine next looks: two states of one pane coalesce.
+func (r *notifierRig) held(f func()) {
+	in, out := make(chan struct{}), make(chan struct{})
+	r.n.mu.Lock()
+	r.n.jobs = append(r.n.jobs, func() { close(in); <-out })
+	r.n.mu.Unlock()
+	r.n.signal()
+	<-in
+	f()
+	close(out)
+}
+
 func (r *notifierRig) connect(c string, on bool) { r.mu.Lock(); r.connected[c] = on; r.mu.Unlock() }
 
 func blocked(id, cmd string) api.AgentState {
@@ -143,8 +156,10 @@ func TestNotifierPermissionAndWithdraw(t *testing.T) {
 	}
 
 	// A second request answered in the terminal: no Answering record.
-	r.n.State(blocked("req-2", "go vet ./..."))
-	r.n.State(state(api.AgentStatusIdle)) // coalesced: answered before the push went out
+	r.held(func() { // coalesced: answered before the push went out
+		r.n.State(blocked("req-2", "go vet ./..."))
+		r.n.State(state(api.AgentStatusIdle))
+	})
 	r.n.Sync()
 	if n := len(alerts(r.prod.requests(), phone)); n != 2 {
 		t.Fatalf("a request resolved before its push still pushed: %d", n)
