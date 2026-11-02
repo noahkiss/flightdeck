@@ -24,7 +24,7 @@ let package = Package(
         // an in-memory backend). The version scheme is <major.minor>.<yyyymmdd>,
         // so pin it exactly and review the binary checksum on every bump.
         // 1.6.20260909 is commit 7e45d271, Ghostty 82938b633ba6.
-        .package(url: "https://github.com/Lakr233/libghostty-spm.git", exact: "1.6.20260909"),
+        .package(url: "https://github.com/Lakr233/libghostty-spm.git", exact: "2.2.2026103001"),
         // The in-app SSH carrier (transport.md 4.8). swift-nio-ssh is pre-1.0,
         // so pin it exactly; swift-nio follows semver.
         .package(url: "https://github.com/apple/swift-nio-ssh.git", exact: "0.15.1"),
