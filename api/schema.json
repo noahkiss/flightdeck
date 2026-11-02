@@ -31,7 +31,9 @@
     "channels",
     "speech",
     "attachments",
-    "settings"
+    "settings",
+    "read-tools",
+    "logbook"
   ],
   "methods": [
     {
@@ -2043,6 +2045,352 @@
       },
       "x-params": {
         "$ref": "#/components/schemas/WorktreeRemoveParams"
+      }
+    },
+    {
+      "name": "transcript.list",
+      "summary": "Past and current harness sessions from their native transcripts, newest first, on every host or one (capcom.md 4). Needs the read-tools capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "harness",
+          "description": "claude or codex.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "host",
+          "description": "A peer label or this hab's host id. Absent: every host.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "description": "Most sessions to return. Default 50, at most 200.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "project",
+          "description": "A project name, or a folder: sessions in it or under it.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "since",
+          "description": "RFC 3339 time: sessions written to at or after it.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "until",
+          "description": "RFC 3339 time: sessions started before it.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TranscriptSessions"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/TranscriptListParams"
+      }
+    },
+    {
+      "name": "transcript.search",
+      "summary": "Search past transcripts by words, newest first, at most 50 hits and 5 s per host; partial and offline hosts marked (capcom.md 4). Needs the read-tools capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "harness",
+          "description": "claude or codex.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "host",
+          "description": "A peer label or this hab's host id. Absent: every host.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "description": "Most hits to return. Default 50, at most 50.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "project",
+          "description": "A project name, or a folder.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "since",
+          "description": "RFC 3339 time: transcripts written to at or after it.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "words",
+          "description": "Words that must all appear in a message, any case. Double quotes keep a phrase together.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TranscriptHits"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/TranscriptSearchParams"
+      }
+    },
+    {
+      "name": "transcript.read",
+      "summary": "Read a page of a past or current session's messages, like chat.page (capcom.md 4). Needs the read-tools capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "before",
+          "description": "Message id: return the messages before it. Absent means the tail.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "harness",
+          "description": "claude or codex. Absent: found from the session.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "host",
+          "description": "A peer label or this hab's host id. Absent: this hab.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "description": "Most messages to return. Default 50, at most 200.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "session",
+          "description": "The harness's own session id, or a Flightdeck session id or name on that host.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TranscriptPage"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/TranscriptReadParams"
+      }
+    },
+    {
+      "name": "notice.get",
+      "summary": "Read a notice this hab raised, by id, with the session it is about (capcom.md 4). Needs the read-tools capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "host",
+          "description": "A peer label or this hab's host id. Absent: this hab.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "id",
+          "description": "The notice id, from notice.raise or a notice.raised event.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/NoticeRecord"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/NoticeGetParams"
+      }
+    },
+    {
+      "name": "file.read",
+      "summary": "Read a run of a text file inside the host's read scope (capcom.md 5). Needs the read-tools capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "host",
+          "description": "A peer label or this hab's host id. Absent: this hab.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "description": "Most bytes to return. Default 65536, at most 262144.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "offset",
+          "description": "Byte offset to start at.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "path",
+          "description": "An absolute path, or one under ~/ on that host.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/FileData"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/FileReadParams"
+      }
+    },
+    {
+      "name": "logbook.find",
+      "summary": "Search or list Logbook records (logbook.md 10.3). Needs the logbook capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "author",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "host",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        {
+          "name": "project",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "since",
+          "description": "RFC 3339 time.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "status",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "tag",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "type",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "words",
+          "description": "Words to search for. Absent: list records.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/LogbookRecords"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/LogbookFindParams"
+      }
+    },
+    {
+      "name": "logbook.get",
+      "summary": "Read one Logbook record (logbook.md 10.3). Needs the logbook capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/LogbookRecordResult"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/LogbookGetParams"
       }
     }
   ],
@@ -4599,6 +4947,7 @@
           "not_owner",
           "ticket_invalid",
           "locked",
+          "denied",
           "invalid"
         ]
       },
@@ -4653,6 +5002,76 @@
             "type": "string"
           }
         }
+      },
+      "FileData": {
+        "type": "object",
+        "properties": {
+          "binary": {
+            "type": "boolean",
+            "description": "The file is not UTF-8 text; no bytes are returned."
+          },
+          "host": {
+            "type": "string"
+          },
+          "more": {
+            "type": "boolean",
+            "description": "Bytes follow the run."
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "path": {
+            "type": "string",
+            "description": "The path as asked, cleaned."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "text": {
+            "type": "string",
+            "description": "The run, as UTF-8 text. Absent for a binary file."
+          }
+        },
+        "required": [
+          "seq",
+          "host",
+          "path",
+          "size",
+          "offset"
+        ]
+      },
+      "FileReadParams": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "A peer label or this hab's host id. Absent: this hab."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Most bytes to return. Default 65536, at most 262144."
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Byte offset to start at."
+          },
+          "path": {
+            "type": "string",
+            "description": "An absolute path, or one under ~/ on that host."
+          }
+        },
+        "required": [
+          "path"
+        ]
       },
       "HabStatsParams": {
         "type": "object"
@@ -4813,6 +5232,125 @@
         "required": [
           "device_id",
           "host"
+        ]
+      },
+      "LogbookFindParams": {
+        "type": "object",
+        "properties": {
+          "author": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "project": {
+            "type": "string"
+          },
+          "since": {
+            "type": "string",
+            "description": "RFC 3339 time."
+          },
+          "status": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "words": {
+            "type": "string",
+            "description": "Words to search for. Absent: list records."
+          }
+        }
+      },
+      "LogbookGetParams": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "LogbookRecord": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "Absent in a search result."
+          },
+          "id": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "updated": {
+            "type": "string",
+            "description": "RFC 3339 time."
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "title"
+        ]
+      },
+      "LogbookRecordResult": {
+        "type": "object",
+        "properties": {
+          "record": {
+            "$ref": "#/components/schemas/LogbookRecord"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "record"
+        ]
+      },
+      "LogbookRecords": {
+        "type": "object",
+        "properties": {
+          "more": {
+            "type": "boolean"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogbookRecord"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "records"
         ]
       },
       "MailItem": {
@@ -4984,6 +5522,22 @@
           "at"
         ]
       },
+      "NoticeGetParams": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "A peer label or this hab's host id. Absent: this hab."
+          },
+          "id": {
+            "type": "string",
+            "description": "The notice id, from notice.raise or a notice.raised event."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
       "NoticeLevel": {
         "type": "string",
         "x-known-values": [
@@ -5038,6 +5592,31 @@
           "seq",
           "id",
           "pushed"
+        ]
+      },
+      "NoticeRecord": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "notice": {
+            "$ref": "#/components/schemas/Notice"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session",
+            "description": "The session the notice is about, while its record exists."
+          }
+        },
+        "required": [
+          "seq",
+          "host",
+          "notice"
         ]
       },
       "OwnerReason": {
@@ -5698,6 +6277,49 @@
         "required": [
           "device_id",
           "token"
+        ]
+      },
+      "ReadHost": {
+        "type": "object",
+        "properties": {
+          "device_id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string",
+            "description": "This hab's label for the peer; this hab's own host id for itself."
+          },
+          "left_out": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Transcripts the host's read scope left out."
+          },
+          "own": {
+            "type": "boolean",
+            "description": "This hab."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the host is not ok, in a few words."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReadHostState",
+            "description": "ok; partial: it ran out of time and its results may be missing some; offline; update_needed: it has no read tools; error."
+          }
+        },
+        "required": [
+          "label",
+          "state"
+        ]
+      },
+      "ReadHostState": {
+        "type": "string",
+        "x-known-values": [
+          "ok",
+          "partial",
+          "offline",
+          "update_needed",
+          "error"
         ]
       },
       "RedrawMode": {
@@ -6389,6 +7011,321 @@
           "done",
           "error",
           "denied"
+        ]
+      },
+      "TranscriptHit": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "string"
+          },
+          "harness": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ChatKind"
+          },
+          "message": {
+            "type": "string",
+            "description": "The message id, as chat.page and transcript.read give it."
+          },
+          "project": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string",
+            "description": "The harness's own session id."
+          },
+          "snippet": {
+            "type": "string",
+            "description": "The text around the first match, at most 240 characters."
+          }
+        },
+        "required": [
+          "host",
+          "harness",
+          "session",
+          "message",
+          "kind",
+          "at",
+          "snippet"
+        ]
+      },
+      "TranscriptHits": {
+        "type": "object",
+        "properties": {
+          "hits": {
+            "type": "array",
+            "description": "Newest first, across every host.",
+            "items": {
+              "$ref": "#/components/schemas/TranscriptHit"
+            }
+          },
+          "hosts": {
+            "type": "array",
+            "description": "Every host the search asked, with how it answered.",
+            "items": {
+              "$ref": "#/components/schemas/ReadHost"
+            }
+          },
+          "more": {
+            "type": "boolean",
+            "description": "More hits matched than were returned."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "hits",
+          "hosts"
+        ]
+      },
+      "TranscriptListParams": {
+        "type": "object",
+        "properties": {
+          "harness": {
+            "type": "string",
+            "description": "claude or codex."
+          },
+          "host": {
+            "type": "string",
+            "description": "A peer label or this hab's host id. Absent: every host."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Most sessions to return. Default 50, at most 200."
+          },
+          "project": {
+            "type": "string",
+            "description": "A project name, or a folder: sessions in it or under it."
+          },
+          "since": {
+            "type": "string",
+            "description": "RFC 3339 time: sessions written to at or after it."
+          },
+          "until": {
+            "type": "string",
+            "description": "RFC 3339 time: sessions started before it."
+          }
+        }
+      },
+      "TranscriptLive": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string",
+            "description": "The Flightdeck session id on its host."
+          },
+          "state": {
+            "$ref": "#/components/schemas/AgentStatus"
+          }
+        },
+        "required": [
+          "session",
+          "name",
+          "state"
+        ]
+      },
+      "TranscriptPage": {
+        "type": "object",
+        "properties": {
+          "folder": {
+            "type": "string"
+          },
+          "harness": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            }
+          },
+          "more": {
+            "type": "boolean",
+            "description": "Older messages exist before the first one."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "type": "string",
+            "description": "The harness's own session id."
+          }
+        },
+        "required": [
+          "seq",
+          "host",
+          "harness",
+          "session",
+          "messages",
+          "more"
+        ]
+      },
+      "TranscriptReadParams": {
+        "type": "object",
+        "properties": {
+          "before": {
+            "type": "string",
+            "description": "Message id: return the messages before it. Absent means the tail."
+          },
+          "harness": {
+            "type": "string",
+            "description": "claude or codex. Absent: found from the session."
+          },
+          "host": {
+            "type": "string",
+            "description": "A peer label or this hab's host id. Absent: this hab."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Most messages to return. Default 50, at most 200."
+          },
+          "session": {
+            "type": "string",
+            "description": "The harness's own session id, or a Flightdeck session id or name on that host."
+          }
+        },
+        "required": [
+          "session"
+        ]
+      },
+      "TranscriptSearchParams": {
+        "type": "object",
+        "properties": {
+          "harness": {
+            "type": "string",
+            "description": "claude or codex."
+          },
+          "host": {
+            "type": "string",
+            "description": "A peer label or this hab's host id. Absent: every host."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Most hits to return. Default 50, at most 50."
+          },
+          "project": {
+            "type": "string",
+            "description": "A project name, or a folder."
+          },
+          "since": {
+            "type": "string",
+            "description": "RFC 3339 time: transcripts written to at or after it."
+          },
+          "words": {
+            "type": "string",
+            "description": "Words that must all appear in a message, any case. Double quotes keep a phrase together."
+          }
+        },
+        "required": [
+          "words"
+        ]
+      },
+      "TranscriptSession": {
+        "type": "object",
+        "properties": {
+          "device_id": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "string",
+            "description": "The working folder the transcript recorded."
+          },
+          "harness": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string",
+            "description": "As in ReadHost.label."
+          },
+          "id": {
+            "type": "string",
+            "description": "The harness's own session id: what transcript.read and the harness's resume take."
+          },
+          "live": {
+            "$ref": "#/components/schemas/TranscriptLive",
+            "description": "The session runs in a pane on its host now."
+          },
+          "project": {
+            "type": "string",
+            "description": "The name of the catalog project that holds the folder."
+          },
+          "started": {
+            "type": "string",
+            "description": "RFC 3339 time of the first record."
+          },
+          "title": {
+            "type": "string",
+            "description": "The first words the user typed, shortened."
+          },
+          "updated": {
+            "type": "string",
+            "description": "RFC 3339 time the transcript was last written."
+          }
+        },
+        "required": [
+          "host",
+          "harness",
+          "id",
+          "updated"
+        ]
+      },
+      "TranscriptSessions": {
+        "type": "object",
+        "properties": {
+          "hosts": {
+            "type": "array",
+            "description": "Every host the read asked, with how it answered.",
+            "items": {
+              "$ref": "#/components/schemas/ReadHost"
+            }
+          },
+          "more": {
+            "type": "boolean",
+            "description": "More sessions matched than were returned."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "sessions": {
+            "type": "array",
+            "description": "Newest written first.",
+            "items": {
+              "$ref": "#/components/schemas/TranscriptSession"
+            }
+          }
+        },
+        "required": [
+          "seq",
+          "sessions",
+          "hosts"
         ]
       },
       "TurnEnd": {

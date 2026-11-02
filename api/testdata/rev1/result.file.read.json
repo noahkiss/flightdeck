@@ -1,0 +1,19 @@
+{
+  "binary": true,
+  "host": "host-4",
+  "more": true,
+  "offset": 7,
+  "path": "path-5",
+  "seq": 3,
+  "size": 6,
+  "text": "text-8",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

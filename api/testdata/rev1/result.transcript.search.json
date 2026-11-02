@@ -1,0 +1,39 @@
+{
+  "hits": [
+    {
+      "at": "at-11",
+      "device_id": "device_id-5",
+      "folder": "folder-8",
+      "harness": "harness-6",
+      "host": "host-4",
+      "kind": "plan",
+      "message": "message-10",
+      "project": "project-9",
+      "session": "session-7",
+      "snippet": "snippet-12",
+      "x_unknown_field": "later"
+    }
+  ],
+  "hosts": [
+    {
+      "device_id": "device_id-14",
+      "label": "label-13",
+      "left_out": 16,
+      "own": true,
+      "reason": "reason-15",
+      "state": "error",
+      "x_unknown_field": "later"
+    }
+  ],
+  "more": true,
+  "seq": 3,
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

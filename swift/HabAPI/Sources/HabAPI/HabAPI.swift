@@ -10,7 +10,7 @@ public enum HabAPI {
     /// JSON-RPC error code of every application error.
     public static let errorCode = -32000
     /// Capability strings this revision knows.
-    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings"]
+    public static let capabilities: [String] = ["data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook"]
 }
 
 public struct AgentState: Codable, Sendable, Hashable {
@@ -2142,6 +2142,7 @@ public struct ErrorKind: RawRepresentable, Codable, Sendable, Hashable {
     public static let notOwner = ErrorKind(rawValue: "not_owner")
     public static let ticketInvalid = ErrorKind(rawValue: "ticket_invalid")
     public static let locked = ErrorKind(rawValue: "locked")
+    public static let denied = ErrorKind(rawValue: "denied")
     public static let invalid = ErrorKind(rawValue: "invalid")
 }
 
@@ -2198,6 +2199,69 @@ public struct ExitedFrame: Codable, Sendable, Hashable {
     public init(code: Int? = nil, signal: String? = nil) {
         self.code = code
         self.signal = signal
+    }
+}
+
+public struct FileData: Codable, Sendable, Hashable {
+    /// The file is not UTF-8 text; no bytes are returned.
+    public var binary: Bool?
+    public var host: String
+    /// Bytes follow the run.
+    public var more: Bool?
+    public var offset: Int
+    /// The path as asked, cleaned.
+    public var path: String
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    public var size: Int
+    /// The run, as UTF-8 text. Absent for a binary file.
+    public var text: String?
+
+    enum CodingKeys: String, CodingKey {
+        case binary = "binary"
+        case host = "host"
+        case more = "more"
+        case offset = "offset"
+        case path = "path"
+        case seq = "seq"
+        case size = "size"
+        case text = "text"
+    }
+
+    public init(binary: Bool? = nil, host: String, more: Bool? = nil, offset: Int, path: String, seq: UInt64, size: Int, text: String? = nil) {
+        self.binary = binary
+        self.host = host
+        self.more = more
+        self.offset = offset
+        self.path = path
+        self.seq = seq
+        self.size = size
+        self.text = text
+    }
+}
+
+public struct FileReadParams: Codable, Sendable, Hashable {
+    /// A peer label or this hab's host id. Absent: this hab.
+    public var host: String?
+    /// Most bytes to return. Default 65536, at most 262144.
+    public var limit: Int?
+    /// Byte offset to start at.
+    public var offset: Int?
+    /// An absolute path, or one under ~/ on that host.
+    public var path: String
+
+    enum CodingKeys: String, CodingKey {
+        case host = "host"
+        case limit = "limit"
+        case offset = "offset"
+        case path = "path"
+    }
+
+    public init(host: String? = nil, limit: Int? = nil, offset: Int? = nil, path: String) {
+        self.host = host
+        self.limit = limit
+        self.offset = offset
+        self.path = path
     }
 }
 
@@ -2347,6 +2411,123 @@ public struct LinkedPeer: Codable, Sendable, Hashable {
     public init(deviceId: String, host: String) {
         self.deviceId = deviceId
         self.host = host
+    }
+}
+
+public struct LogbookFindParams: Codable, Sendable, Hashable {
+    public var author: String?
+    public var host: String?
+    public var limit: Int?
+    public var project: String?
+    /// RFC 3339 time.
+    public var since: String?
+    public var status: String?
+    public var tag: String?
+    public var type: String?
+    /// Words to search for. Absent: list records.
+    public var words: String?
+
+    enum CodingKeys: String, CodingKey {
+        case author = "author"
+        case host = "host"
+        case limit = "limit"
+        case project = "project"
+        case since = "since"
+        case status = "status"
+        case tag = "tag"
+        case type = "type"
+        case words = "words"
+    }
+
+    public init(author: String? = nil, host: String? = nil, limit: Int? = nil, project: String? = nil, since: String? = nil, status: String? = nil, tag: String? = nil, type: String? = nil, words: String? = nil) {
+        self.author = author
+        self.host = host
+        self.limit = limit
+        self.project = project
+        self.since = since
+        self.status = status
+        self.tag = tag
+        self.type = type
+        self.words = words
+    }
+}
+
+public struct LogbookGetParams: Codable, Sendable, Hashable {
+    public var id: String
+
+    enum CodingKeys: String, CodingKey {
+        case id = "id"
+    }
+
+    public init(id: String) {
+        self.id = id
+    }
+}
+
+public struct LogbookRecord: Codable, Sendable, Hashable {
+    /// Absent in a search result.
+    public var body: String?
+    public var id: String
+    public var project: String?
+    public var status: String?
+    public var title: String
+    public var type: String
+    /// RFC 3339 time.
+    public var updated: String?
+
+    enum CodingKeys: String, CodingKey {
+        case body = "body"
+        case id = "id"
+        case project = "project"
+        case status = "status"
+        case title = "title"
+        case type = "type"
+        case updated = "updated"
+    }
+
+    public init(body: String? = nil, id: String, project: String? = nil, status: String? = nil, title: String, type: String, updated: String? = nil) {
+        self.body = body
+        self.id = id
+        self.project = project
+        self.status = status
+        self.title = title
+        self.type = type
+        self.updated = updated
+    }
+}
+
+public struct LogbookRecordResult: Codable, Sendable, Hashable {
+    public var record: LogbookRecord
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case record = "record"
+        case seq = "seq"
+    }
+
+    public init(record: LogbookRecord, seq: UInt64) {
+        self.record = record
+        self.seq = seq
+    }
+}
+
+public struct LogbookRecords: Codable, Sendable, Hashable {
+    public var more: Bool?
+    public var records: [LogbookRecord]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case more = "more"
+        case records = "records"
+        case seq = "seq"
+    }
+
+    public init(more: Bool? = nil, records: [LogbookRecord], seq: UInt64) {
+        self.more = more
+        self.records = records
+        self.seq = seq
     }
 }
 
@@ -2508,6 +2689,23 @@ public struct Notice: Codable, Sendable, Hashable {
     }
 }
 
+public struct NoticeGetParams: Codable, Sendable, Hashable {
+    /// A peer label or this hab's host id. Absent: this hab.
+    public var host: String?
+    /// The notice id, from notice.raise or a notice.raised event.
+    public var id: String
+
+    enum CodingKeys: String, CodingKey {
+        case host = "host"
+        case id = "id"
+    }
+
+    public init(host: String? = nil, id: String) {
+        self.host = host
+        self.id = id
+    }
+}
+
 /// An open word set: values outside the known list decode and round-trip unchanged.
 public struct NoticeLevel: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
@@ -2560,6 +2758,29 @@ public struct NoticeRaised: Codable, Sendable, Hashable {
         self.id = id
         self.pushed = pushed
         self.seq = seq
+    }
+}
+
+public struct NoticeRecord: Codable, Sendable, Hashable {
+    public var host: String
+    public var notice: Notice
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// The session the notice is about, while its record exists.
+    public var session: Session?
+
+    enum CodingKeys: String, CodingKey {
+        case host = "host"
+        case notice = "notice"
+        case seq = "seq"
+        case session = "session"
+    }
+
+    public init(host: String, notice: Notice, seq: UInt64, session: Session? = nil) {
+        self.host = host
+        self.notice = notice
+        self.seq = seq
+        self.session = session
     }
 }
 
@@ -3185,6 +3406,49 @@ public struct PushUnregisterParams: Codable, Sendable, Hashable {
         self.deviceId = deviceId
         self.token = token
     }
+}
+
+public struct ReadHost: Codable, Sendable, Hashable {
+    public var deviceId: String?
+    /// This hab's label for the peer; this hab's own host id for itself.
+    public var label: String
+    /// Transcripts the host's read scope left out.
+    public var leftOut: Int?
+    /// This hab.
+    public var own: Bool?
+    /// Why the host is not ok, in a few words.
+    public var reason: String?
+    /// ok; partial: it ran out of time and its results may be missing some; offline; update_needed: it has no read tools; error.
+    public var state: ReadHostState
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case label = "label"
+        case leftOut = "left_out"
+        case own = "own"
+        case reason = "reason"
+        case state = "state"
+    }
+
+    public init(deviceId: String? = nil, label: String, leftOut: Int? = nil, own: Bool? = nil, reason: String? = nil, state: ReadHostState) {
+        self.deviceId = deviceId
+        self.label = label
+        self.leftOut = leftOut
+        self.own = own
+        self.reason = reason
+        self.state = state
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct ReadHostState: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let ok = ReadHostState(rawValue: "ok")
+    public static let partial = ReadHostState(rawValue: "partial")
+    public static let offline = ReadHostState(rawValue: "offline")
+    public static let updateNeeded = ReadHostState(rawValue: "update_needed")
+    public static let error = ReadHostState(rawValue: "error")
 }
 
 /// An open word set: values outside the known list decode and round-trip unchanged.
@@ -3836,6 +4100,292 @@ public struct ToolStatus: RawRepresentable, Codable, Sendable, Hashable {
     public static let denied = ToolStatus(rawValue: "denied")
 }
 
+public struct TranscriptHit: Codable, Sendable, Hashable {
+    public var at: String
+    public var deviceId: String?
+    public var folder: String?
+    public var harness: String
+    public var host: String
+    public var kind: ChatKind
+    /// The message id, as chat.page and transcript.read give it.
+    public var message: String
+    public var project: String?
+    /// The harness's own session id.
+    public var session: String
+    /// The text around the first match, at most 240 characters.
+    public var snippet: String
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case deviceId = "device_id"
+        case folder = "folder"
+        case harness = "harness"
+        case host = "host"
+        case kind = "kind"
+        case message = "message"
+        case project = "project"
+        case session = "session"
+        case snippet = "snippet"
+    }
+
+    public init(at: String, deviceId: String? = nil, folder: String? = nil, harness: String, host: String, kind: ChatKind, message: String, project: String? = nil, session: String, snippet: String) {
+        self.at = at
+        self.deviceId = deviceId
+        self.folder = folder
+        self.harness = harness
+        self.host = host
+        self.kind = kind
+        self.message = message
+        self.project = project
+        self.session = session
+        self.snippet = snippet
+    }
+}
+
+public struct TranscriptHits: Codable, Sendable, Hashable {
+    /// Newest first, across every host.
+    public var hits: [TranscriptHit]
+    /// Every host the search asked, with how it answered.
+    public var hosts: [ReadHost]
+    /// More hits matched than were returned.
+    public var more: Bool?
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case hits = "hits"
+        case hosts = "hosts"
+        case more = "more"
+        case seq = "seq"
+    }
+
+    public init(hits: [TranscriptHit], hosts: [ReadHost], more: Bool? = nil, seq: UInt64) {
+        self.hits = hits
+        self.hosts = hosts
+        self.more = more
+        self.seq = seq
+    }
+}
+
+public struct TranscriptListParams: Codable, Sendable, Hashable {
+    /// claude or codex.
+    public var harness: String?
+    /// A peer label or this hab's host id. Absent: every host.
+    public var host: String?
+    /// Most sessions to return. Default 50, at most 200.
+    public var limit: Int?
+    /// A project name, or a folder: sessions in it or under it.
+    public var project: String?
+    /// RFC 3339 time: sessions written to at or after it.
+    public var since: String?
+    /// RFC 3339 time: sessions started before it.
+    public var until: String?
+
+    enum CodingKeys: String, CodingKey {
+        case harness = "harness"
+        case host = "host"
+        case limit = "limit"
+        case project = "project"
+        case since = "since"
+        case until = "until"
+    }
+
+    public init(harness: String? = nil, host: String? = nil, limit: Int? = nil, project: String? = nil, since: String? = nil, until: String? = nil) {
+        self.harness = harness
+        self.host = host
+        self.limit = limit
+        self.project = project
+        self.since = since
+        self.until = until
+    }
+}
+
+public struct TranscriptLive: Codable, Sendable, Hashable {
+    public var name: String
+    /// The Flightdeck session id on its host.
+    public var session: String
+    public var state: AgentStatus
+
+    enum CodingKeys: String, CodingKey {
+        case name = "name"
+        case session = "session"
+        case state = "state"
+    }
+
+    public init(name: String, session: String, state: AgentStatus) {
+        self.name = name
+        self.session = session
+        self.state = state
+    }
+}
+
+public struct TranscriptPage: Codable, Sendable, Hashable {
+    public var folder: String?
+    public var harness: String
+    public var host: String
+    public var messages: [ChatMessage]
+    /// Older messages exist before the first one.
+    public var more: Bool
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// The harness's own session id.
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case folder = "folder"
+        case harness = "harness"
+        case host = "host"
+        case messages = "messages"
+        case more = "more"
+        case seq = "seq"
+        case session = "session"
+    }
+
+    public init(folder: String? = nil, harness: String, host: String, messages: [ChatMessage], more: Bool, seq: UInt64, session: String) {
+        self.folder = folder
+        self.harness = harness
+        self.host = host
+        self.messages = messages
+        self.more = more
+        self.seq = seq
+        self.session = session
+    }
+}
+
+public struct TranscriptReadParams: Codable, Sendable, Hashable {
+    /// Message id: return the messages before it. Absent means the tail.
+    public var before: String?
+    /// claude or codex. Absent: found from the session.
+    public var harness: String?
+    /// A peer label or this hab's host id. Absent: this hab.
+    public var host: String?
+    /// Most messages to return. Default 50, at most 200.
+    public var limit: Int?
+    /// The harness's own session id, or a Flightdeck session id or name on that host.
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case before = "before"
+        case harness = "harness"
+        case host = "host"
+        case limit = "limit"
+        case session = "session"
+    }
+
+    public init(before: String? = nil, harness: String? = nil, host: String? = nil, limit: Int? = nil, session: String) {
+        self.before = before
+        self.harness = harness
+        self.host = host
+        self.limit = limit
+        self.session = session
+    }
+}
+
+public struct TranscriptSearchParams: Codable, Sendable, Hashable {
+    /// claude or codex.
+    public var harness: String?
+    /// A peer label or this hab's host id. Absent: every host.
+    public var host: String?
+    /// Most hits to return. Default 50, at most 50.
+    public var limit: Int?
+    /// A project name, or a folder.
+    public var project: String?
+    /// RFC 3339 time: transcripts written to at or after it.
+    public var since: String?
+    /// Words that must all appear in a message, any case. Double quotes keep a phrase together.
+    public var words: String
+
+    enum CodingKeys: String, CodingKey {
+        case harness = "harness"
+        case host = "host"
+        case limit = "limit"
+        case project = "project"
+        case since = "since"
+        case words = "words"
+    }
+
+    public init(harness: String? = nil, host: String? = nil, limit: Int? = nil, project: String? = nil, since: String? = nil, words: String) {
+        self.harness = harness
+        self.host = host
+        self.limit = limit
+        self.project = project
+        self.since = since
+        self.words = words
+    }
+}
+
+public struct TranscriptSession: Codable, Sendable, Hashable {
+    public var deviceId: String?
+    /// The working folder the transcript recorded.
+    public var folder: String?
+    public var harness: String
+    /// As in ReadHost.label.
+    public var host: String
+    /// The harness's own session id: what transcript.read and the harness's resume take.
+    public var id: String
+    /// The session runs in a pane on its host now.
+    public var live: TranscriptLive?
+    /// The name of the catalog project that holds the folder.
+    public var project: String?
+    /// RFC 3339 time of the first record.
+    public var started: String?
+    /// The first words the user typed, shortened.
+    public var title: String?
+    /// RFC 3339 time the transcript was last written.
+    public var updated: String
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case folder = "folder"
+        case harness = "harness"
+        case host = "host"
+        case id = "id"
+        case live = "live"
+        case project = "project"
+        case started = "started"
+        case title = "title"
+        case updated = "updated"
+    }
+
+    public init(deviceId: String? = nil, folder: String? = nil, harness: String, host: String, id: String, live: TranscriptLive? = nil, project: String? = nil, started: String? = nil, title: String? = nil, updated: String) {
+        self.deviceId = deviceId
+        self.folder = folder
+        self.harness = harness
+        self.host = host
+        self.id = id
+        self.live = live
+        self.project = project
+        self.started = started
+        self.title = title
+        self.updated = updated
+    }
+}
+
+public struct TranscriptSessions: Codable, Sendable, Hashable {
+    /// Every host the read asked, with how it answered.
+    public var hosts: [ReadHost]
+    /// More sessions matched than were returned.
+    public var more: Bool?
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// Newest written first.
+    public var sessions: [TranscriptSession]
+
+    enum CodingKeys: String, CodingKey {
+        case hosts = "hosts"
+        case more = "more"
+        case seq = "seq"
+        case sessions = "sessions"
+    }
+
+    public init(hosts: [ReadHost], more: Bool? = nil, seq: UInt64, sessions: [TranscriptSession]) {
+        self.hosts = hosts
+        self.more = more
+        self.seq = seq
+        self.sessions = sessions
+    }
+}
+
 public struct TurnEnd: Codable, Sendable, Hashable {
     /// Id of the turn's last agent message.
     public var finalMessage: String?
@@ -4383,6 +4933,20 @@ public enum HabMethods {
     public static let settingsSet = HabMethod<SettingsSetParams, SettingsResult>(name: "settings.set")
     /// Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).
     public static let worktreeRemove = HabMethod<WorktreeRemoveParams, WorktreeRemoved>(name: "worktree.remove")
+    /// Past and current harness sessions from their native transcripts, newest first, on every host or one (capcom.md 4). Needs the read-tools capability.
+    public static let transcriptList = HabMethod<TranscriptListParams, TranscriptSessions>(name: "transcript.list")
+    /// Search past transcripts by words, newest first, at most 50 hits and 5 s per host; partial and offline hosts marked (capcom.md 4). Needs the read-tools capability.
+    public static let transcriptSearch = HabMethod<TranscriptSearchParams, TranscriptHits>(name: "transcript.search")
+    /// Read a page of a past or current session's messages, like chat.page (capcom.md 4). Needs the read-tools capability.
+    public static let transcriptRead = HabMethod<TranscriptReadParams, TranscriptPage>(name: "transcript.read")
+    /// Read a notice this hab raised, by id, with the session it is about (capcom.md 4). Needs the read-tools capability.
+    public static let noticeGet = HabMethod<NoticeGetParams, NoticeRecord>(name: "notice.get")
+    /// Read a run of a text file inside the host's read scope (capcom.md 5). Needs the read-tools capability.
+    public static let fileRead = HabMethod<FileReadParams, FileData>(name: "file.read")
+    /// Search or list Logbook records (logbook.md 10.3). Needs the logbook capability.
+    public static let logbookFind = HabMethod<LogbookFindParams, LogbookRecords>(name: "logbook.find")
+    /// Read one Logbook record (logbook.md 10.3). Needs the logbook capability.
+    public static let logbookGet = HabMethod<LogbookGetParams, LogbookRecordResult>(name: "logbook.get")
 }
 
 public enum HabNotification {

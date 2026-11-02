@@ -123,6 +123,13 @@ var Methods = []Method{
 	{"settings.get", "Read every hab-side setting, or the named ones (app.md 20.5). Needs the settings capability.", SettingsGetParams{}, SettingsResult{}},
 	{"settings.set", "Write hab-side settings, all or nothing, each with the revision last seen (app.md 20.5). Needs the settings capability.", SettingsSetParams{}, SettingsResult{}},
 	{"worktree.remove", "Run the teardown script, then remove a linked worktree; its branch stays. Uncommitted changes need force (spec 3.10).", WorktreeRemoveParams{}, WorktreeRemoved{}},
+	{"transcript.list", "Past and current harness sessions from their native transcripts, newest first, on every host or one (capcom.md 4). Needs the read-tools capability.", TranscriptListParams{}, TranscriptSessions{}},
+	{"transcript.search", "Search past transcripts by words, newest first, at most 50 hits and 5 s per host; partial and offline hosts marked (capcom.md 4). Needs the read-tools capability.", TranscriptSearchParams{}, TranscriptHits{}},
+	{"transcript.read", "Read a page of a past or current session's messages, like chat.page (capcom.md 4). Needs the read-tools capability.", TranscriptReadParams{}, TranscriptPage{}},
+	{"notice.get", "Read a notice this hab raised, by id, with the session it is about (capcom.md 4). Needs the read-tools capability.", NoticeGetParams{}, NoticeRecord{}},
+	{"file.read", "Read a run of a text file inside the host's read scope (capcom.md 5). Needs the read-tools capability.", FileReadParams{}, FileData{}},
+	{"logbook.find", "Search or list Logbook records (logbook.md 10.3). Needs the logbook capability.", LogbookFindParams{}, LogbookRecords{}},
+	{"logbook.get", "Read one Logbook record (logbook.md 10.3). Needs the logbook capability.", LogbookGetParams{}, LogbookRecordResult{}},
 }
 
 // Notifications is every notification the server sends on a control connection.
@@ -186,7 +193,7 @@ var Enums = map[string][]string{
 	"BlockedKind":   {"permission", "question", "auth"},
 	"StateSource":   {"server", "hook", "osc", "screen", "spawn"},
 	"HookHealth":    {"missing"},
-	"ErrorKind":     {"not_found", "conflict", "unavailable", "revision_unsupported", "not_owner", "ticket_invalid", "locked", "invalid"},
+	"ErrorKind":     {"not_found", "conflict", "unavailable", "revision_unsupported", "not_owner", "ticket_invalid", "locked", "denied", "invalid"},
 	// Sets added for the clients' calls (spec 3.9).
 	"SendOrigin":      {"typed", "dictated", "voice"},
 	"ApprovalChoice":  {"allow", "deny", "answer"},
@@ -221,6 +228,8 @@ var Enums = map[string][]string{
 	"SpeechFormat": {"opus", "pcm16"},
 	// Sets added for hab-side settings (app.md 20.5).
 	"SettingSource": {"default", "client", "config"},
+	// Sets added for the read tools (capcom.md 4).
+	"ReadHostState": {"ok", "partial", "offline", "update_needed", "error"},
 }
 
 // Translator converts messages between revision To and To-1 (spec 3.3). The server keeps one per
@@ -255,5 +264,7 @@ var Translators = map[int]Translator{}
 // speech.transcribe work, though the model may still need its download (voice.md).
 // "attachments" means the attachment.* methods work and session.send takes attachment ids
 // (app.md 4.4). "settings" means settings.get, settings.set and the settings.updated event work,
-// and the host snapshot carries the settings (app.md 20.5).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings"}
+// and the host snapshot carries the settings (app.md 20.5). "read-tools" means transcript.list,
+// transcript.search, transcript.read, notice.get and file.read work (capcom.md 4). "logbook" means
+// the hab has a Logbook replica and the logbook.* methods work (logbook.md 10.3).
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook"}

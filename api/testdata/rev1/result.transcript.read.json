@@ -1,0 +1,52 @@
+{
+  "folder": "folder-7",
+  "harness": "harness-5",
+  "host": "host-4",
+  "messages": [
+    {
+      "at": "at-10",
+      "attachments": [
+        "attachments-19"
+      ],
+      "event": "unknown",
+      "id": "id-8",
+      "kind": "plan",
+      "parent": "parent-13",
+      "plan": [
+        {
+          "status": "done",
+          "text": "text-18",
+          "x_unknown_field": "later"
+        }
+      ],
+      "sender": "sender-12",
+      "session": "session-9",
+      "text": "text-11",
+      "tool": {
+        "input": {
+          "input": 16,
+          "x_unknown_field": "later"
+        },
+        "name": "name-14",
+        "output": "output-17",
+        "output_truncated": true,
+        "status": "denied",
+        "target": "target-15",
+        "x_unknown_field": "later"
+      },
+      "x_unknown_field": "later"
+    }
+  ],
+  "more": true,
+  "seq": 3,
+  "session": "session-6",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

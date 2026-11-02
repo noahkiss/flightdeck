@@ -128,6 +128,7 @@ const (
 	ErrorKindNotOwner            ErrorKind = "not_owner"
 	ErrorKindTicketInvalid       ErrorKind = "ticket_invalid"
 	ErrorKindLocked              ErrorKind = "locked"
+	ErrorKindDenied              ErrorKind = "denied"
 	ErrorKindInvalid             ErrorKind = "invalid"
 )
 
@@ -202,6 +203,14 @@ const (
 	PushKindError      PushKind = "error"
 	PushKindDone       PushKind = "done"
 	PushKindUsage      PushKind = "usage"
+)
+
+const (
+	ReadHostStateOk           ReadHostState = "ok"
+	ReadHostStatePartial      ReadHostState = "partial"
+	ReadHostStateOffline      ReadHostState = "offline"
+	ReadHostStateUpdateNeeded ReadHostState = "update_needed"
+	ReadHostStateError        ReadHostState = "error"
 )
 
 const (
@@ -829,5 +838,54 @@ func (c Client) SettingsSet(ctx context.Context, params SettingsSetParams) (Sett
 func (c Client) WorktreeRemove(ctx context.Context, params WorktreeRemoveParams) (WorktreeRemoved, error) {
 	var result WorktreeRemoved
 	err := c.Caller.Call(ctx, "worktree.remove", params, &result)
+	return result, err
+}
+
+// TranscriptList calls transcript.list. Past and current harness sessions from their native transcripts, newest first, on every host or one (capcom.md 4). Needs the read-tools capability.
+func (c Client) TranscriptList(ctx context.Context, params TranscriptListParams) (TranscriptSessions, error) {
+	var result TranscriptSessions
+	err := c.Caller.Call(ctx, "transcript.list", params, &result)
+	return result, err
+}
+
+// TranscriptSearch calls transcript.search. Search past transcripts by words, newest first, at most 50 hits and 5 s per host; partial and offline hosts marked (capcom.md 4). Needs the read-tools capability.
+func (c Client) TranscriptSearch(ctx context.Context, params TranscriptSearchParams) (TranscriptHits, error) {
+	var result TranscriptHits
+	err := c.Caller.Call(ctx, "transcript.search", params, &result)
+	return result, err
+}
+
+// TranscriptRead calls transcript.read. Read a page of a past or current session's messages, like chat.page (capcom.md 4). Needs the read-tools capability.
+func (c Client) TranscriptRead(ctx context.Context, params TranscriptReadParams) (TranscriptPage, error) {
+	var result TranscriptPage
+	err := c.Caller.Call(ctx, "transcript.read", params, &result)
+	return result, err
+}
+
+// NoticeGet calls notice.get. Read a notice this hab raised, by id, with the session it is about (capcom.md 4). Needs the read-tools capability.
+func (c Client) NoticeGet(ctx context.Context, params NoticeGetParams) (NoticeRecord, error) {
+	var result NoticeRecord
+	err := c.Caller.Call(ctx, "notice.get", params, &result)
+	return result, err
+}
+
+// FileRead calls file.read. Read a run of a text file inside the host's read scope (capcom.md 5). Needs the read-tools capability.
+func (c Client) FileRead(ctx context.Context, params FileReadParams) (FileData, error) {
+	var result FileData
+	err := c.Caller.Call(ctx, "file.read", params, &result)
+	return result, err
+}
+
+// LogbookFind calls logbook.find. Search or list Logbook records (logbook.md 10.3). Needs the logbook capability.
+func (c Client) LogbookFind(ctx context.Context, params LogbookFindParams) (LogbookRecords, error) {
+	var result LogbookRecords
+	err := c.Caller.Call(ctx, "logbook.find", params, &result)
+	return result, err
+}
+
+// LogbookGet calls logbook.get. Read one Logbook record (logbook.md 10.3). Needs the logbook capability.
+func (c Client) LogbookGet(ctx context.Context, params LogbookGetParams) (LogbookRecordResult, error) {
+	var result LogbookRecordResult
+	err := c.Caller.Call(ctx, "logbook.get", params, &result)
 	return result, err
 }
