@@ -95,6 +95,7 @@ final class LiveTests: XCTestCase {
         await fleet.setActive(false)
     }
 
+    #if os(macOS)
     func testLiveSSH() async throws {
         guard let host = env["FLIGHTDECK_LIVE_SSH_HOST"], !host.isEmpty else {
             throw XCTSkip("FLIGHTDECK_LIVE_SSH_HOST not set")
@@ -102,6 +103,7 @@ final class LiveTests: XCTestCase {
         let words = { (k: String) in (self.env[k] ?? "").split(separator: " ").map(String.init) }
         try await check(SSHTransport(host: host, remoteCommand: words("FLIGHTDECK_LIVE_SSH_COMMAND"), options: words("FLIGHTDECK_LIVE_SSH_OPTIONS")))
     }
+    #endif
 
     /// The chat view's path against a real hab: tail page, send through the
     /// composer's rules, the user record and the agent's reply as chat.message events.

@@ -259,10 +259,15 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(c.habs.count, 2)
         let t0 = try c.habs[0].transport(environment: [:]) as! UnixSocketTransport
         XCTAssertEqual(t0.path, "/tmp/x/hab.sock")
+        #if os(macOS)
         let t1 = try c.habs[1].transport(environment: [:]) as! SSHTransport
         XCTAssertEqual(try t1.arguments(), ["-p", "2222", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
                                             "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
                                             "--", "buildbox", "gff-hab", "connect"])
+        #else
+        // The ssh process transport is macOS-only; elsewhere the entry refuses.
+        XCTAssertThrowsError(try c.habs[1].transport(environment: [:]))
+        #endif
         XCTAssertEqual(c.habs[1].id(index: 1), "ssh:buildbox#1")
         XCTAssertNotEqual(c.habs[1].id(index: 1), c.habs[1].id(index: 2), "two entries for one host stay apart")
     }
@@ -285,13 +290,19 @@ final class ConfigTests: XCTestCase {
     func testDefaultSocketPath() {
         XCTAssertEqual(UnixSocketTransport.defaultPath(environment: ["GFF_HAB_SOCKET": "/tmp/s.sock"]), "/tmp/s.sock")
         let d = UnixSocketTransport.defaultPath(environment: [:])
+        #if os(macOS)
         XCTAssertTrue(d?.hasSuffix("Library/Application Support/gff/hab.sock") ?? false, d ?? "nil")
+        #else
+        XCTAssertNil(d, "no hab runs on this platform, so no default socket")
+        #endif
     }
 
+    #if os(macOS)
     func testSSHRefusesOptionLikeHost() {
         XCTAssertThrowsError(try SSHTransport(host: "-oProxyCommand=x").arguments())
         XCTAssertThrowsError(try SSHTransport(host: "a b").arguments())
     }
+    #endif
 }
 
 /// A tiny hab on a real Unix socket: answers hello and subscribe, counts closed connections.

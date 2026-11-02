@@ -94,7 +94,8 @@ final class VoiceAudioTests: XCTestCase {
 
     func testSystemOpusEncoderWritesOggOpus() throws {
         // 1 s of a 440 Hz tone.
-        let samples = (0..<16_000).map { Float(0.3 * sin(2 * .pi * 440 * Double($0) / 16_000)) }
+        let step: Double = 2 * Double.pi * 440 / 16_000
+        let samples: [Float] = (0..<16_000).map { (i: Int) -> Float in Float(0.3 * sin(step * Double(i))) }
         let data: Data
         do {
             data = try OpusEncoder.oggOpus(SpeechClip(samples: samples))
