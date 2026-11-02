@@ -1083,6 +1083,15 @@ and the always-on line, the badge and the filter, Open on a round banner, and th
 filter that keeps focus reports, mouse motion and the wheel out of a live run's pane. The
 catalog's other hosts are not listed yet (`app.md` 21.1); the `gff` client is stage 8.
 
+Built (stage 8, task-cpazgcsj): rounds in the `gff` client, with no hab change. The client's
+structure copy (`internal/habconn`) keeps the snapshot's rounds and follows `round.updated`
+and `round.run_updated`. Run sessions carry `↻`, and `R` (session mode, sidebar, board) hides
+those that do not need the owner. The board lists every host's rounds in one list in
+next-run order, with Run now (`r`) and Pause or Unpause (`p`). A host that is not online
+shows its last rounds, stale: its last snapshot's, or a newer copy from another hab's
+`catalog.list`. The trigger words moved to `rounds.TriggerWords`, so the catalog section, `ls
+-all` and the board share them. The calls are in `gff-client.md` 7.5.
+
 ---
 
 ## 14. Build stages

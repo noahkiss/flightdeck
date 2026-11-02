@@ -466,7 +466,8 @@ the bottom one line per host that is not online (`○ <label> offline 3m`, `conn
 a state mark (`!` blocked, `x` error, `*` done, `~` working, `-` idle, `_` exited), the name cut in the
 middle, and the host label. Keys while it has focus: arrows or `j`/`k` move, Enter opens, `t`
 opens in a new tab, `n` starts a session, `r` renames, `x` ends or removes, `/` filters by
-session, project or host name, `p` changes the grouping, Esc returns to the panes.
+session, project or host name, `p` changes the grouping, `R` hides or shows run sessions
+(7.5), Esc returns to the panes. A round's run session carries `↻` before its name.
 
 - **Open** focuses a view that shows the pane already, in any tab; else it adds a view to the
   current tab. An exited session, whose pane id stays on its record, opens no view: it says
@@ -497,7 +498,8 @@ already applied that offset. Tabs are not saved yet (5.1).
 order under plain section labels (Needs you, Working, Done, Other); each row shows the state
 mark, name, project, host, harness, the state with its kind, the time in state (from the hab's
 `at`) or "offline 3m", and the context: the pending command, else the request's title,
-description, last agent line or tool. Enter opens, `t` opens in a new tab, Esc returns.
+description, last agent line or tool. Enter opens, `t` opens in a new tab, Esc returns. Below
+the sessions, the Rounds list (7.5).
 
 **Seen.** Focusing a pane whose agent is `done` marks that done state seen in gff, so its row
 drops to rank 5, and sends `session.focus {active: true}` once per state. The hab answers
@@ -693,6 +695,71 @@ master plan owner decisions (a running agent stays on its host).
 Sources: `app.md` 3 and 7 (ranks, row content, approval flow, answered elsewhere);
 `harness-adapters.md` (Rule 2, Permission answers); `hab-logic-api.md` 6.4.
 
+### 7.5 Built choices: rounds (task-cpazgcsj)
+
+The terminal side of rounds (`rounds.md` 10.3), matched to the app's (`app.md` 21). Code:
+`internal/board/rounds.go` (the rows, the stale rule, the order), `internal/gffclient/rounds.go`
+(the keys, the catalog copies, the calls), `internal/habconn/state.go` (rounds in the structure
+copy), `internal/fakehab/rounds.go` (the fake hab's rounds and catalog).
+
+- **State.** The client's structure copy keeps the host snapshot's rounds, then each
+  `round.updated` above the held revision; a `deleted` one goes. `round.run_updated` sets the
+  round's last run when it is the same run or a newer one by number. A new epoch's snapshot
+  replaces them. A host's rounds stay while it is offline, as its sessions do.
+- **Badge.** A session with `Session.round` shows `↻` before its name, in the sidebar and on the
+  board. On the board its context, when it has no request, is "round <name>" ("round" when the
+  host no longer has the round).
+- **Filter.** `R` hides or shows run sessions: in session mode (Ctrl+O `R`), in the sidebar and
+  on the board. Shown at start, kept for the gff process. Hidden, a run session that needs the
+  owner (blocked, error, done and not seen) still shows. The sidebar and the board's heading say
+  "↻ run sessions hidden". Design call, as the app: a hidden approval would stall the run.
+  Call: `R` and not a lower-case key, since `r` is redraw in session mode and rename in the
+  sidebar; one key in all three places.
+- **Rounds list.** Below the board's sessions, one "Rounds" list across every host, one row per
+  round: name, mode, host, next run, the mark, the trigger. Design call: one list with a host
+  column, not one section per host as in the app. The terminal has the width for a column and
+  not the height for a heading per host, and the task asks for next-run order across hosts.
+- **Order.** As the app: rounds with a next slot, soonest first across hosts; then rounds with
+  none (by hand); then paused; then completed. Name, then host, break ties.
+- **Next run.** In this machine's zone: "today 09:00", "tomorrow 09:00", else "Mar 13 09:00",
+  with the round's own clock beside it when that differs ("tomorrow 15:00 (09:00
+  America/Chicago)"). A paused or completed round shows "-": it will not run then.
+- **Mark.** Completed, paused (with the hab's reason when it paused or completed itself), else
+  the last run's state word as the hab sends it, else "no runs yet". A stale row adds "· stale
+  3m".
+- **Trigger** in the catalog's words, from `rounds.TriggerWords`, which the catalog's rounds
+  section also uses, so the board and `gff-hab round ls -all` say the same. It is the last
+  column: a zone name is long, and a cut one is wrong.
+- **Stale rows.** A host that is not online shows its last rounds, dimmed, with no action:
+  either the rounds of its last snapshot or the copy in another hab's catalog
+  (`catalog.list`, `rounds.md` 9). The catalog copy wins when it was confirmed after gff lost
+  the host, or when gff never reached the host (found by its pinned device id). gff reads
+  `catalog.list` from each online hab whose welcome lists `catalog`, at connect and on each
+  `catalog.updated`, one read per hab at a time, and keeps each device's copy with the latest
+  seen time. A host that failed for good shows no rounds, as with sessions. Peers that are not
+  in gff's host list are not shown, as in the app (`app.md` 21.1).
+- **Keys on a round row.** `j`/`k` move from the session rows into the rounds and back. `r`
+  runs the round now (`round.run`), `p` pauses it or unpauses a paused one, Enter (or `t`)
+  opens its last run's session when that session is still listed. A stale row says "<host> is
+  offline" and calls nothing.
+- **Refusals** show on the bottom row in the hab's words: "run alpha: the round has a live
+  run". gff checks nothing the hab checks.
+- **Run now opens the run.** As the app: when the run's session shows with a pane within 2
+  minutes, gff opens it. Opening any session meanwhile cancels that, so a queued run does not
+  jump into view later.
+- **No editing.** Create, edit, delete and history stay with `gff-hab round` and the app.
+
+| Test | Proves |
+|---|---|
+| `habconn` `TestRoundsKept` | round.updated by revision, kept last run, an older run ignored, the same and a newer run applied, an unknown round's run ignored, delete and a late update after it |
+| `board` `TestRoundOrder`, `TestRoundsStale`, `TestRunSessionFilter` | Next-run order across two hosts with by hand, paused and completed after; trigger words; an offline host's held rounds, a newer catalog copy winning and an older one not, a never-reached host by its pin, none for a failed host; the filter keeping a run session that needs the owner; round names and "round" for a gone round |
+| `hosts` `TestRoundsAcrossHosts` | Two fake habs: the board's order from the snapshots, then from round.updated and round.run_updated; a stopped hab's rounds stale, live again after its restart |
+| `gffclient` `TestRunSessionBadge` | gff's screen: the badge; `R` in the sidebar hides run sessions; a blocked run session shows while hidden and goes when working; Ctrl+O `R` shows them again |
+| `gffclient` `TestBoardRounds` | Two fake habs on the board in next-run order, paused last; Run now on a round with a live run shows the hab's conflict and records no run; Run now calls `round.run` and the row shows running; `p` pauses and unpauses; the run's session opens when it shows |
+| `gffclient` `TestBoardRoundsStale` | A never-reached host's rounds from another hab's catalog, stale; a stopped hab's round stale; Run now on it says offline and calls nothing |
+| `gffclient` `TestBoardMatchesRoundLs` | Real holder and gff-hab: rounds made with `gff-hab round add` and one paused; the board lists exactly the rounds of `gff-hab round ls -all -json`, with the same trigger words and marks |
+| `gffclient` `TestNextText` | Today, tomorrow and a date in this machine's zone; the round's clock beside it when it differs |
+
 ---
 
 ## 8. Shortcut bar
@@ -804,7 +871,7 @@ owner's zellij mode keys, mapped to gff's actions; no zellij file is read.
 | normal | Ctrl+G lock, Ctrl+P pane mode, Ctrl+T tab mode, Ctrl+O session mode |
 | normal, session, pane, tab | Alt+h focus left, else the previous tab; Alt+l focus right, else the next tab; Alt+j focus down; Alt+k focus up; Alt+i move the tab left; Alt+o move the tab right |
 | locked | Ctrl+G unlock |
-| session (Ctrl+O, one key) | `w` sidebar, `g` board, `b` bars, `!` warnings, `r` redraw, `n` nudge, `f` fit, `d` detach, Esc back |
+| session (Ctrl+O, one key) | `w` sidebar, `g` board, `b` bars, `!` warnings, `r` redraw, `n` nudge, `f` fit, `d` detach, `R` run sessions, Esc back |
 | pane (Ctrl+P) | `p` or Tab focus the next pane (stays), `f` zoom, `s` split, `x` close view, Esc or Enter back |
 | tab (Ctrl+T) | `n` new tab, `h` `←` `k` `↑` previous tab (stays), `l` `→` `j` `↓` next tab (stays), `1` to `9` go to a tab, Esc or Enter back |
 | sidebar, board | As 4.3 and 7 |
