@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/holderclient"
 )
 
 // newRoundEnv is a holder and a gff-hab with rounds on a fast tick and no wake settle, and a
@@ -454,4 +456,255 @@ func TestRoundPaneDoor(t *testing.T) {
 		t.Errorf("target self outside a pane: %s", out)
 	}
 	call(t, c, "pane.close", api.PaneRef{Pane: made.Pane}, nil)
+}
+
+// gatedRound adds a manual command round whose program waits for the file gate, then exits 0,
+// and starts one run; it returns the run once its session is known.
+func gatedRound(t *testing.T, e *habEnv, c *control.Client, repo, name, gate string, extra ...string) api.RoundRun {
+	t.Helper()
+	args := append([]string{"add", name, "-manual", "-project", repo}, extra...)
+	args = append(args, "-command", "--", "/bin/sh", "-c", "while [ ! -e "+gate+" ]; do sleep 0.05; done; exit 0")
+	mustRound(t, e, args...)
+	mustRound(t, e, "run", name)
+	waitUntil(t, name+"'s session", func() bool { r := roundRuns(t, c, name); return len(r) > 0 && r[0].Session != "" })
+	return roundRuns(t, c, name)[0]
+}
+
+// TestRoundHolderDies: the holder dies while gff-hab runs; once a new holder is up and the link
+// has reached every holder, the run fails "host restarted" in seconds, not at its timeout.
+func TestRoundHolderDies(t *testing.T) {
+	e, repo := newRoundEnv(t)
+	c := e.control()
+	run := gatedRound(t, e, c, repo, "crash", filepath.Join(e.work, "never"), "-timeout", "10m")
+	e.holder.Process.Signal(syscall.SIGKILL)
+	<-e.holderDone
+	startHolder(t, e.hdir, "two")
+	got := waitRun(t, e, c, "crash", api.RoundRunStateFailed)
+	if got.ID != run.ID || got.Reason != reasonHostRestarted {
+		t.Fatalf("after the holder died: %+v", got)
+	}
+}
+
+// TestRoundHolderConnectionDrops: the link's connection to a living holder drops (another
+// client takes the holder) and comes back; the run goes on and ends by its exit.
+func TestRoundHolderConnectionDrops(t *testing.T) {
+	e, repo := newRoundEnv(t)
+	c := e.control()
+	gate := filepath.Join(e.work, "go")
+	run := gatedRound(t, e, c, repo, "blip", gate)
+	hc := holderclient.New(holderclient.Config{Dir: e.hdir, Build: "test"})
+	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(10*time.Second))
+	defer cancel()
+	if err := hc.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the run's session lost", func() bool {
+		ss, _ := runSessionOf(structureOf(t, c), run.Session)
+		return ss.State == api.SessionStateExited
+	})
+	hc.Close()
+	waitUntil(t, "the run's session back", func() bool {
+		ss, _ := runSessionOf(structureOf(t, c), run.Session)
+		return ss.State == api.SessionStateRunning
+	})
+	if r := roundRuns(t, c, "blip")[0]; r.State != api.RoundRunStateRunning {
+		t.Fatalf("a dropped connection ended the run: %+v", r)
+	}
+	writeFile(t, gate, "")
+	if got := waitRun(t, e, c, "blip", api.RoundRunStateSucceeded); got.ID != run.ID {
+		t.Fatalf("ended: %+v", got)
+	}
+}
+
+// TestRoundLostStart: gff-hab killed after the spawn and before the run saved its session; the
+// next gff-hab finds the session by its Session.round, watches it, refuses a second run, and
+// ends the run by its exit.
+func TestRoundLostStart(t *testing.T) {
+	e, repo := newRoundEnv(t)
+	gate := filepath.Join(e.work, "go")
+	mark := filepath.Join(e.work, "started")
+	mustRound(t, e, "add", "orphan", "-manual", "-project", repo, "-command", "--", "/bin/sh", "-c",
+		"touch "+mark+"; while [ ! -e "+gate+" ]; do sleep 0.05; done; exit 0")
+	e.stopHab(false)
+	base := e.env
+	e.env = append(append([]string{}, base...), "GFF_TEST_SPAWN_DELAY=4s")
+	e.serve()
+	done := make(chan struct{})
+	go func() { roundCLI(e, "", "run", "orphan"); close(done) }()
+	waitUntil(t, "the program running", func() bool { _, err := os.Stat(mark); return err == nil })
+	e.stopHab(true)
+	<-done
+	e.env = base
+	e.serve()
+	c := e.control()
+	r := waitRun(t, e, c, "orphan", api.RoundRunStateRunning)
+	if r.Session == "" {
+		t.Fatalf("the run did not get its session back: %+v", r)
+	}
+	if out, err := roundCLI(e, "", "run", "orphan"); err == nil {
+		t.Fatalf("a second run started beside the found one: %s", out)
+	}
+	writeFile(t, gate, "")
+	if got := waitRun(t, e, c, "orphan", api.RoundRunStateSucceeded); got.ID != r.ID {
+		t.Fatalf("ended: %+v", got)
+	}
+	live := 0
+	for _, ss := range structureOf(t, c).Sessions {
+		if ss.Round != nil {
+			live++
+		}
+	}
+	if live != 1 || len(roundRuns(t, c, "orphan")) != 1 {
+		t.Fatalf("run sessions %d, runs %+v", live, roundRuns(t, c, "orphan"))
+	}
+}
+
+// fakeAgentRun is a command that reports an idle agent through OSC 7501 and then reads input,
+// so session.send can deliver to it.
+const fakeAgentRun = `stty raw -echo; printf '\033]7501;state=idle:app=claude\033\\'; while :; do sleep 0.05; done`
+
+// TestRoundSendAndKeep: session.send delivered to a run session ends the run taken_over; a
+// send the adapter refuses takes nothing over; on_finish keep leaves a succeeded run's pane;
+// the second run sees GFF_ROUND_LAST_OK, the first run's start.
+func TestRoundSendAndKeep(t *testing.T) {
+	e, repo := newRoundEnv(t)
+	c := e.control()
+	mustRound(t, e, "add", "agent", "-manual", "-project", repo, "-command", "--", "/bin/sh", "-c", fakeAgentRun)
+	mustRound(t, e, "add", "plain", "-manual", "-project", repo, "-command", "--", "/bin/sh", "-c", "sleep 60")
+	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(20*time.Second))
+	defer cancel()
+
+	// A refused send: the pane has no agent.
+	mustRound(t, e, "run", "plain")
+	waitUntil(t, "plain's session", func() bool { return roundRuns(t, c, "plain")[0].Session != "" })
+	plain := roundRuns(t, c, "plain")[0]
+	if err := c.Call(ctx, "session.send", api.SessionSendParams{Session: plain.Session, Text: "hi"}, nil); err == nil {
+		t.Fatal("a send to a pane with no agent was taken")
+	}
+	time.Sleep(200 * time.Millisecond)
+	if r := roundRuns(t, c, "plain")[0]; r.State != api.RoundRunStateRunning {
+		t.Fatalf("a refused send took the run over: %+v", r)
+	}
+
+	mustRound(t, e, "run", "agent")
+	waitUntil(t, "agent's session", func() bool { return roundRuns(t, c, "agent")[0].Session != "" })
+	ag := roundRuns(t, c, "agent")[0]
+	ss, _ := runSessionOf(structureOf(t, c), ag.Session)
+	waitState(t, e.sock, ss.Pane, "the run's agent idle", func(s api.AgentState) bool { return s.State == api.AgentStatusIdle })
+	if err := c.Call(ctx, "session.send", api.SessionSendParams{Session: ag.Session, Text: "hello"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := waitRun(t, e, c, "agent", api.RoundRunStateTakenOver); got.Reason != reasonSent {
+		t.Errorf("reason %q", got.Reason)
+	}
+
+	envFile := filepath.Join(e.work, "env")
+	script := "env | grep '^GFF_ROUND_LAST_OK' > " + envFile + ".tmp; mv " + envFile + ".tmp " + envFile
+	mustRound(t, e, "add", "kept", "-manual", "-on-finish", "keep", "-project", repo, "-command", "--", "/bin/sh", "-c", script)
+	mustRound(t, e, "run", "kept")
+	first := waitRun(t, e, c, "kept", api.RoundRunStateSucceeded)
+	b, _ := os.ReadFile(envFile)
+	if len(b) != 0 {
+		t.Errorf("the first run has GFF_ROUND_LAST_OK: %s", b)
+	}
+	time.Sleep(300 * time.Millisecond)
+	st := structureOf(t, c)
+	if ss, ok := runSessionOf(st, first.Session); !ok || !paneIn(st, ss.Pane) {
+		t.Errorf("on_finish keep closed the pane: %+v", ss)
+	}
+	os.Remove(envFile)
+	mustRound(t, e, "run", "kept")
+	waitUntil(t, "the second run", func() bool {
+		r := roundRuns(t, c, "kept")
+		return len(r) == 2 && r[0].State == api.RoundRunStateSucceeded
+	})
+	waitUntil(t, "the second run's env", func() bool { _, err := os.Stat(envFile); return err == nil })
+	b, _ = os.ReadFile(envFile)
+	if want := "GFF_ROUND_LAST_OK=" + first.StartedAt + "\n"; string(b) != want {
+		t.Errorf("second run: %q, want %q", b, want)
+	}
+}
+
+// TestRoundCLIRefusals: add with -via and no -project names the problem; edit -paused points
+// at pause and unpause.
+func TestRoundCLIRefusals(t *testing.T) {
+	e, repo := newRoundEnv(t)
+	out, err := roundCLI(e, "", "add", "far", "-via", bin+" connect -socket "+e.sock, "-manual", "-command", "--", "true")
+	if err == nil || !strings.Contains(out, "needs -project") {
+		t.Errorf("add -via without -project: %v %s", err, out)
+	}
+	if out, err := roundCLI(e, "", "add", "far", "-via", bin+" connect -socket "+e.sock, "-manual", "-project", "app", "-command", "--", "true"); err == nil || !strings.Contains(out, "absolute") {
+		t.Errorf("add -via with a relative -project: %v %s", err, out)
+	}
+	mustRound(t, e, "add", "far", "-via", bin+" connect -socket "+e.sock, "-manual", "-project", repo, "-command", "--", "true")
+	out, err = roundCLI(e, "", "edit", "far", "-paused")
+	if err == nil || !strings.Contains(out, "round pause") {
+		t.Errorf("edit -paused: %v %s", err, out)
+	}
+}
+
+// TestRoundApplyReplans: a revision raised between the plan and the answer still applies, with
+// the new revisions; a plan that changed is shown again and asked again.
+func TestRoundApplyReplans(t *testing.T) {
+	e, repo := newRoundEnv(t)
+	c := e.control()
+	mustRound(t, e, "add", "steady", "-manual", "-project", repo, "-timeout", "5m", "-command", "--", "true")
+	file := filepath.Join(e.work, "rounds.toml")
+	writeFile(t, file, strings.Replace(mustRound(t, e, "export"), `timeout = "5m0s"`, `timeout = "7m0s"`, 1))
+
+	apply := func(between func(), answers ...string) string {
+		t.Helper()
+		cmd := exec.Command(bin, "round", "apply", file)
+		cmd.Env = append(os.Environ(), "GFF_HAB_SOCKET="+e.sock, "GFF_HAB=")
+		in, _ := cmd.StdinPipe()
+		outR, _ := cmd.StdoutPipe()
+		cmd.Stderr = cmd.Stdout
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		var buf strings.Builder
+		b := make([]byte, 4096)
+		for _, a := range answers {
+			for !strings.HasSuffix(buf.String(), "[y/N] ") {
+				n, err := outR.Read(b)
+				buf.Write(b[:n])
+				if err != nil {
+					t.Fatalf("apply ended early: %v\n%s", err, buf.String())
+				}
+			}
+			between()
+			between = func() {}
+			in.Write([]byte(a + "\n"))
+			buf.WriteString("<" + a + ">")
+		}
+		in.Close()
+		rest, _ := io.ReadAll(outR)
+		buf.Write(rest)
+		cmd.Wait()
+		return buf.String()
+	}
+
+	// Raise the round's revision while the prompt waits: the same plan applies.
+	out := apply(func() {
+		call(t, c, "round.pause", api.RoundRef{Name: "steady"}, nil)
+		call(t, c, "round.unpause", api.RoundRef{Name: "steady"}, nil)
+	}, "y")
+	if !strings.Contains(out, "applied 1 changes") || getRound(t, c, "steady").TimeoutMS != (7*time.Minute).Milliseconds() {
+		t.Fatalf("apply after a revision bump:\n%s", out)
+	}
+
+	// Change the plan while the prompt waits: the new plan is shown and asked again.
+	writeFile(t, file, strings.Replace(mustRound(t, e, "export"), `timeout = "7m0s"`, `timeout = "9m0s"`, 1))
+	out = apply(func() {
+		r := getRound(t, c, "steady")
+		up := r.RoundSpec
+		up.ProjectRemote, up.TimeoutMS = "", (8 * time.Minute).Milliseconds()
+		call(t, c, "round.update", api.RoundUpdateParams{ID: r.ID, Round: up}, nil)
+	}, "y", "n")
+	if !strings.Contains(out, "changed while you answered") || !strings.Contains(out, `timeout: "8m0s" -> "9m0s"`) || !strings.Contains(out, "nothing applied") {
+		t.Fatalf("apply after the plan changed:\n%s", out)
+	}
+	if got := getRound(t, c, "steady").TimeoutMS; got != (8 * time.Minute).Milliseconds() {
+		t.Fatalf("a refused new plan changed the round: %d", got)
+	}
 }

@@ -138,12 +138,12 @@ var Methods = []Method{
 	{"confirm.get", "One confirmation by id, open or closed (capcom.md 6.1). Needs the confirm capability.", ConfirmGetParams{}, ConfirmationResult{}},
 	{"round.list", "This hab's rounds with their next slot and newest run (rounds.md 13). Needs the rounds capability.", RoundListParams{}, RoundList{}},
 	{"round.get", "One round by id or name, with its definition (rounds.md 13). Needs the rounds capability.", RoundRef{}, RoundResult{}},
-	{"round.create", "Create a round; checks the trigger, mode and target. run_now also starts one run (rounds.md 3, 13). Needs the rounds capability.", RoundCreateParams{}, RoundCreated{}},
+	{"round.create", "Create a round; checks the trigger, mode and target. run_now also starts one run, and the call then answers after its spawn (rounds.md 3, 13). Needs the rounds capability.", RoundCreateParams{}, RoundCreated{}},
 	{"round.update", "Replace a round's definition; a changed trigger sets the next slot from now. A run in flight keeps its values (rounds.md 3). Needs the rounds capability.", RoundUpdateParams{}, RoundResult{}},
 	{"round.delete", "Delete a round and its ended runs; a live run goes on to its end (rounds.md 13). Needs the rounds capability.", RoundRef{}, Empty{}},
 	{"round.pause", "Pause a round: no new runs; a queued run ends skipped (rounds.md 13). Needs the rounds capability.", RoundRef{}, RoundResult{}},
 	{"round.unpause", "Unpause a round and clear its failure count (rounds.md 10.1). Needs the rounds capability.", RoundRef{}, RoundResult{}},
-	{"round.run", "Start a run now, outside the trigger. A round with a live run answers conflict (rounds.md 13). Needs the rounds capability.", RoundRef{}, RoundRunResult{}},
+	{"round.run", "Start a run now, outside the trigger. It answers after the run's session is spawned, or once the run is queued behind the host limit or the wake settle. A round with a live run answers conflict (rounds.md 13). Needs the rounds capability.", RoundRef{}, RoundRunResult{}},
 	{"round.runs", "A page of a round's runs, newest first (rounds.md 7.7). Needs the rounds capability.", RoundRunsParams{}, RoundRuns{}},
 }
 

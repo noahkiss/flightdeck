@@ -52,6 +52,7 @@ type roundDef struct {
 	mode, cron, tz, every, at, project, cwd, target, harness, model string
 	timeout, maxRuns, expires, catchUp, onFinish, notify            string
 	manual, paused, command                                         bool
+	via                                                             bool // the hab is reached through -via
 	harnessArgs                                                     stringList
 }
 
@@ -114,6 +115,9 @@ func (d *roundDef) apply(spec *api.RoundSpec, set map[string]bool, words []strin
 		spec.Trigger.Zone = d.tz
 	}
 	if set["project"] {
+		if d.via && !filepath.IsAbs(d.project) {
+			return fmt.Errorf("-project %q: with -via, give the absolute folder on the hab's host", d.project)
+		}
 		dir, err := filepath.Abs(d.project)
 		if err != nil {
 			return err
@@ -243,6 +247,7 @@ func roundCmd(args []string, stdin io.Reader, out io.Writer) error {
 	}
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	def.via = *via != ""
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	needName := func() error {
@@ -319,6 +324,10 @@ func roundCmd(args []string, stdin io.Reader, out io.Writer) error {
 			return err
 		}
 		if spec.Mode == api.RoundModeFresh && !set["project"] {
+			if *via != "" {
+				// This folder is on this machine, not on the hab's host.
+				return errors.New("round add with -via needs -project: the project folder on the hab's host")
+			}
 			wd, err := os.Getwd()
 			if err != nil {
 				return err
@@ -336,6 +345,9 @@ func roundCmd(args []string, stdin io.Reader, out io.Writer) error {
 			}
 		})
 	case "edit":
+		if set["paused"] {
+			return errors.New("round edit does not pause: use gff-hab round pause or gff-hab round unpause")
+		}
 		var r api.RoundResult
 		if err := c.Call(ctx, "round.get", ref, &r); err != nil {
 			return err
@@ -410,8 +422,13 @@ func orDash(s string) string {
 }
 
 func askYes(in io.Reader, out io.Writer, q string) bool {
+	return askLine(bufio.NewReader(in), out, q)
+}
+
+// askLine asks q and reads one answer line from in, which may be asked again.
+func askLine(in *bufio.Reader, out io.Writer, q string) bool {
 	fmt.Fprint(out, q)
-	line, _ := bufio.NewReader(in).ReadString('\n')
+	line, _ := in.ReadString('\n')
 	a := strings.ToLower(strings.TrimSpace(line))
 	return a == "y" || a == "yes"
 }
@@ -848,21 +865,49 @@ func applyRounds(ctx context.Context, c caller, path string, yes bool, stdin io.
 	if und := md.Undecoded(); len(und) > 0 {
 		return fmt.Errorf("%s: unknown key %s", path, und[0])
 	}
-	var l api.RoundList
-	if err := c.Call(ctx, "round.list", api.RoundListParams{}, &l); err != nil {
-		return err
+	readPlan := func() ([]roundChange, string, error) {
+		var l api.RoundList
+		if err := c.Call(ctx, "round.list", api.RoundListParams{}, &l); err != nil {
+			return nil, "", err
+		}
+		plan, err := planApply(file, l.Rounds)
+		if err != nil {
+			return nil, "", err
+		}
+		var b bytes.Buffer
+		printPlan(&b, plan)
+		return plan, b.String(), nil
 	}
-	plan, err := planApply(file, l.Rounds)
+	plan, text, err := readPlan()
 	if err != nil {
 		return err
 	}
-	if len(plan) == 0 {
-		fmt.Fprintln(out, "no changes")
-		return nil
-	}
-	printPlan(out, plan)
-	if !yes && !askYes(stdin, out, "Apply these changes? [y/N] ") {
-		return errors.New("nothing applied")
+	in := bufio.NewReader(stdin)
+	for {
+		if len(plan) == 0 {
+			fmt.Fprintln(out, "no changes")
+			return nil
+		}
+		fmt.Fprint(out, text)
+		if yes {
+			break
+		}
+		if !askLine(in, out, "Apply these changes? [y/N] ") {
+			return errors.New("nothing applied")
+		}
+		// The rounds may have changed while the user read the plan: a run ended, a slot
+		// passed, another client edited one. Apply only the plan the user saw, with the
+		// revisions read now; a different plan is shown and asked again.
+		again, againText, err := readPlan()
+		if err != nil {
+			return err
+		}
+		plan = again
+		if againText == text {
+			break
+		}
+		text = againText
+		fmt.Fprintln(out, "The rounds changed while you answered. The plan now:")
 	}
 	for _, ch := range plan {
 		var err error

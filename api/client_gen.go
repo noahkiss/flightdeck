@@ -1030,7 +1030,7 @@ func (c Client) RoundGet(ctx context.Context, params RoundRef) (RoundResult, err
 	return result, err
 }
 
-// RoundCreate calls round.create. Create a round; checks the trigger, mode and target. run_now also starts one run (rounds.md 3, 13). Needs the rounds capability.
+// RoundCreate calls round.create. Create a round; checks the trigger, mode and target. run_now also starts one run, and the call then answers after its spawn (rounds.md 3, 13). Needs the rounds capability.
 func (c Client) RoundCreate(ctx context.Context, params RoundCreateParams) (RoundCreated, error) {
 	var result RoundCreated
 	err := c.Caller.Call(ctx, "round.create", params, &result)
@@ -1065,7 +1065,7 @@ func (c Client) RoundUnpause(ctx context.Context, params RoundRef) (RoundResult,
 	return result, err
 }
 
-// RoundRun calls round.run. Start a run now, outside the trigger. A round with a live run answers conflict (rounds.md 13). Needs the rounds capability.
+// RoundRun calls round.run. Start a run now, outside the trigger. It answers after the run's session is spawned, or once the run is queued behind the host limit or the wake settle. A round with a live run answers conflict (rounds.md 13). Needs the rounds capability.
 func (c Client) RoundRun(ctx context.Context, params RoundRef) (RoundRunResult, error) {
 	var result RoundRunResult
 	err := c.Caller.Call(ctx, "round.run", params, &result)

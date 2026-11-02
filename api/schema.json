@@ -2652,7 +2652,7 @@
     },
     {
       "name": "round.create",
-      "summary": "Create a round; checks the trigger, mode and target. run_now also starts one run (rounds.md 3, 13). Needs the rounds capability.",
+      "summary": "Create a round; checks the trigger, mode and target. run_now also starts one run, and the call then answers after its spawn (rounds.md 3, 13). Needs the rounds capability.",
       "paramStructure": "by-name",
       "params": [
         {
@@ -2805,7 +2805,7 @@
     },
     {
       "name": "round.run",
-      "summary": "Start a run now, outside the trigger. A round with a live run answers conflict (rounds.md 13). Needs the rounds capability.",
+      "summary": "Start a run now, outside the trigger. It answers after the run's session is spawned, or once the run is queued behind the host limit or the wake settle. A round with a live run answers conflict (rounds.md 13). Needs the rounds capability.",
       "paramStructure": "by-name",
       "params": [
         {

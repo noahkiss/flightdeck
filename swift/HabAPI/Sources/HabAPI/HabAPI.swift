@@ -6055,7 +6055,7 @@ public enum HabMethods {
     public static let roundList = HabMethod<RoundListParams, RoundList>(name: "round.list")
     /// One round by id or name, with its definition (rounds.md 13). Needs the rounds capability.
     public static let roundGet = HabMethod<RoundRef, RoundResult>(name: "round.get")
-    /// Create a round; checks the trigger, mode and target. run_now also starts one run (rounds.md 3, 13). Needs the rounds capability.
+    /// Create a round; checks the trigger, mode and target. run_now also starts one run, and the call then answers after its spawn (rounds.md 3, 13). Needs the rounds capability.
     public static let roundCreate = HabMethod<RoundCreateParams, RoundCreated>(name: "round.create")
     /// Replace a round's definition; a changed trigger sets the next slot from now. A run in flight keeps its values (rounds.md 3). Needs the rounds capability.
     public static let roundUpdate = HabMethod<RoundUpdateParams, RoundResult>(name: "round.update")
@@ -6065,7 +6065,7 @@ public enum HabMethods {
     public static let roundPause = HabMethod<RoundRef, RoundResult>(name: "round.pause")
     /// Unpause a round and clear its failure count (rounds.md 10.1). Needs the rounds capability.
     public static let roundUnpause = HabMethod<RoundRef, RoundResult>(name: "round.unpause")
-    /// Start a run now, outside the trigger. A round with a live run answers conflict (rounds.md 13). Needs the rounds capability.
+    /// Start a run now, outside the trigger. It answers after the run's session is spawned, or once the run is queued behind the host limit or the wake settle. A round with a live run answers conflict (rounds.md 13). Needs the rounds capability.
     public static let roundRun = HabMethod<RoundRef, RoundRunResult>(name: "round.run")
     /// A page of a round's runs, newest first (rounds.md 7.7). Needs the rounds capability.
     public static let roundRuns = HabMethod<RoundRunsParams, RoundRuns>(name: "round.runs")
