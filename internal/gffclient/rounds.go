@@ -65,8 +65,14 @@ func (u *workspaceUI) listCatalog(hs *hostState) {
 			again := u.catBusy[label] == 2
 			delete(u.catBusy, label)
 			if err == nil {
+				ids := map[string]bool{}
+				for _, h := range c.cfg.Hosts.Hosts() {
+					if id := h.Identity(); id != "" {
+						ids[id] = true
+					}
+				}
 				for _, e := range res.Hosts {
-					u.keepCatalog(e)
+					u.keepCatalog(e, ids)
 				}
 				u.dirty = true
 			}
@@ -79,10 +85,13 @@ func (u *workspaceUI) listCatalog(hs *hostState) {
 	}()
 }
 
-// keepCatalog keeps a copy when it was confirmed later than the one held.
-func (u *workspaceUI) keepCatalog(e api.CatalogEntry) {
+// keepCatalog keeps a copy when it was confirmed later than the one held. It keeps only
+// copies of hosts in gff's host list (ids holds their identities), as only those show. It
+// skips the answering hab's own entry: gff is connected to that hab, so its snapshot is newer,
+// and the entry's time is by that hab's clock.
+func (u *workspaceUI) keepCatalog(e api.CatalogEntry, ids map[string]bool) {
 	id := e.Catalog.DeviceID
-	if id == "" {
+	if id == "" || e.Own || !ids[id] {
 		return
 	}
 	seen, err := time.Parse(time.RFC3339Nano, e.SeenAt)

@@ -76,6 +76,10 @@ func TestRoundsStale(t *testing.T) {
 	if n := name(RoundRows([]hosts.Host{held}, cats(drop.Add(-time.Minute)))); n != "mine" {
 		t.Fatalf("older catalog: %s", n)
 	}
+	// Inside the clock skew margin the held snapshot still wins.
+	if n := name(RoundRows([]hosts.Host{held}, cats(drop.Add(CatalogSkew)))); n != "mine" {
+		t.Fatalf("catalog inside the skew margin: %s", n)
+	}
 	rows := RoundRows([]hosts.Host{held}, cats(drop.Add(time.Minute)))
 	if n := name(rows); n != "theirs" || rows[0].Mark() != "failed" || !rows[0].Since.Equal(drop.Add(time.Minute)) {
 		t.Fatalf("newer catalog: %+v", rows[0])

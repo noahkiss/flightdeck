@@ -203,3 +203,30 @@ func TestBoardRoundsStale(t *testing.T) {
 		t.Fatalf("a stale round ran: %v", calls)
 	}
 }
+
+// TestKeepCatalog: gff keeps a peer's copy of a host in its own host list, the newest one; it
+// skips the answering hab's own entry (its snapshot is newer, its time another clock) and
+// copies of devices no host names.
+func TestKeepCatalog(t *testing.T) {
+	u := &workspaceUI{cats: map[string]catCopy{}}
+	ids := map[string]bool{"A": true, "B": true}
+	at := func(m int) string { return time.Date(2026, 1, 1, 10, m, 0, 0, time.UTC).Format(time.RFC3339) }
+	entry := func(id, seen string, own bool, name string) api.CatalogEntry {
+		return api.CatalogEntry{Own: own, SeenAt: seen,
+			Catalog: api.Catalog{DeviceID: id, Rounds: []api.CatalogRound{{ID: "r", Name: name}}}}
+	}
+	u.keepCatalog(entry("A", at(30), true, "own"), ids)
+	u.keepCatalog(entry("C", at(30), false, "unlisted"), ids)
+	if len(u.cats) != 0 {
+		t.Fatalf("kept %v", u.cats)
+	}
+	u.keepCatalog(entry("A", at(5), false, "first"), ids)
+	u.keepCatalog(entry("A", at(1), false, "older"), ids)
+	if c, ok := u.catalog("A"); !ok || c.Rounds[0].Name != "first" {
+		t.Fatalf("copy %+v %v", c, ok)
+	}
+	u.keepCatalog(entry("A", at(9), false, "newer"), ids)
+	if c, _ := u.catalog("A"); c.Rounds[0].Name != "newer" {
+		t.Fatalf("copy %+v", c)
+	}
+}

@@ -60,6 +60,10 @@ func (r RoundRow) Mark() string {
 	return "no runs yet"
 }
 
+// CatalogSkew is the margin a catalog copy's time must clear past the drop to win over the
+// snapshot gff held: the copy's time is by another hab's clock.
+const CatalogSkew = 10 * time.Second
+
 // CatalogCopy is one host's rounds as another hab's catalog holds them (rounds.md 9).
 type CatalogCopy struct {
 	Rounds []api.CatalogRound
@@ -106,7 +110,7 @@ func RoundRows(hs []hosts.Host, cats Catalogs) []RoundRow {
 			cp, ok = cats(id)
 		}
 		held := h.Welcome.DeviceID != ""
-		if ok && (!held || cp.SeenAt.After(h.Since)) {
+		if ok && (!held || cp.SeenAt.After(h.Since.Add(CatalogSkew))) {
 			for _, c := range cp.Rounds {
 				r := RoundRow{RoundKey: RoundKey{Host: h.Label, Round: c.ID}, Name: c.Name, Mode: c.Mode, Trigger: c.Trigger,
 					Project: c.Project, Paused: c.Paused, Completed: c.Completed, LastRun: c.LastRun,
