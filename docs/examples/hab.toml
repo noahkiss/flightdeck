@@ -29,15 +29,20 @@ name = "update"
 command = "make update"
 
 # The [read] section: the read scope of the agent kit's read tools (docs/specs/capcom.md 5).
-# Both lists add to the defaults. The default roots are this host's project folders, the
-# harnesses' transcript folders and Capcom's folder. The default deny list covers SSH and cloud
-# credential folders, .env files and private key files. Deny wins, after links are resolved.
+# The default roots are this host's project folders, the harnesses' transcript folders and
+# Capcom's folder. The default deny list covers SSH and cloud credential folders, .env files
+# (not .env.example, .env.sample or .env.template) and private key files. Deny wins, after links
+# are resolved.
 [read]
-# More roots the read tools may read under: absolute, or under ~/.
+# More roots the read tools may read under, added to the default roots: absolute, or under ~/.
 allow = ["~/notes"]
-# Paths or patterns refused even under a root. A word with no slash matches any part of a path;
-# one that starts with / or ~/ matches from the start.
-deny = ["~/code/payroll", "*.sqlite"]
+# Leave deny out to use the default deny list. A deny list replaces the default list: here only
+# these patterns are refused, so .env and *.pem become readable. A word with no slash matches any
+# part of a path; one that starts with / or ~/ matches from the start; one that starts with !
+# exempts a name from the slash-free words.
+# deny = ["~/code/payroll", "*.sqlite", ".env*", "!.env.example"]
+# An empty list turns the default deny list off.
+# deny = []
 
 # The [speech] section: the hab speech engine (docs/specs/voice.md, Hab speech engine).
 [speech]

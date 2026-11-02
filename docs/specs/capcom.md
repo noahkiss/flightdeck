@@ -252,7 +252,7 @@ Each hab has a read scope in Flightdeck's config file:
 | Key | Meaning | Default |
 |---|---|---|
 | `read.allow` | Roots the read tools may read under | The project folders this hab knows, each harness's transcript folders, and Capcom's own folder |
-| `read.deny` | Paths or patterns refused even under an allowed root | Common secret files: SSH and cloud credential folders, `.env` files, private key files |
+| `read.deny` | Paths or patterns refused even under an allowed root. A list set here replaces the default list | Common secret files: SSH and cloud credential folders, `.env` files (not the committed templates), private key files |
 
 Deny wins over allow. The scope is per hab, because each host has its own private paths. A hab
 with no scope set uses the defaults.
@@ -284,7 +284,8 @@ harness rules are a cheap guard on top.
 Capcom on one host reads another host's data only through that host's hab, under that host's
 scope. The home host never applies its own scope to a peer's data, and never keeps a peer's
 content past the conversation. Capcom reads every connected peer, within each peer's own scope,
-with the default deny list in 5.1 (owner, 2026-11-01; 11, O2). Logbook is readable everywhere,
+with the default deny list in 5.1 unless that peer's config sets its own (owner, 2026-11-01; 11,
+O2). Logbook is readable everywhere,
 since every hab holds a replica.
 
 ### 5.5 Built choices (task-m31qyr6v)
@@ -326,16 +327,24 @@ has no implementation). Error kind `denied`. Doors: `gff-hab read <tool>`, the s
   dialed it, so no forward was added. A peer whose only link is the one it dialed in cannot be
   called from here: it shows `offline`, "only its own link to this hab is up". herdr, Paseo and
   Rex read no other host's transcripts, so this is at the bar.
-- **The scope keys.** `[read]` in `hab.toml`. `allow` (absolute or `~/` roots) and `deny`
-  (patterns) both add to the defaults; a deny entry narrows a default root. Default roots: the
+- **The scope keys.** `[read]` in `hab.toml`. `allow` (absolute or `~/` roots) adds to the
+  default roots. `deny` (patterns) replaces the default deny list: with no `deny` key the hab
+  uses the default list, `deny = [...]` uses only the listed patterns, and `deny = []` turns
+  the default list off (lead, 2026-11-01: a power-user default; Paseo and Rex have no deny list
+  at all). A deny entry narrows a root, default or not. Default roots: the
   folders of this hab's catalog and structure projects, Claude's `projects/`, Codex's `sessions/`
   and `archived_sessions/`, and `<state>/capcom` for the session host stage (7.1). The default
   deny list is `readtools.DefaultDeny`: `.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube`, `.docker`,
-  `.config/gcloud`, `.oci`, `.env`, `.env.*`, `.netrc`, `.git-credentials`, `.pgpass`,
-  `.credentials.json`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `id_rsa*`, `id_dsa*`, `id_ecdsa*` and
-  `id_ed25519*`. It cannot be turned off. A pattern with no slash matches any part of a path; one
-  with a slash matches consecutive parts; one that starts with `/` or `~/` matches from the start
-  of the path. Each part is a glob. Patterns match in any case: macOS and Windows file systems
+  `.config/gcloud`, `.oci`, `.env`, `.env.*`, `!.env.example`, `!.env.sample`,
+  `!.env.template`, `.netrc`, `.git-credentials`, `.pgpass`, `.credentials.json`, `*.pem`,
+  `*.key`, `*.p12`, `*.pfx`, `id_rsa*`, `id_dsa*`, `id_ecdsa*` and `id_ed25519*`. So `.env` and
+  `.env.local` are refused, while the templates projects commit (`.env.example`, `.env.sample`,
+  `.env.template`) are readable. A pattern with no slash matches any part of a path; one with a
+  slash matches consecutive parts; one that starts with `/` or `~/` matches from the start of the
+  path. Each part is a glob. A pattern that starts with `!` is an exemption: a slash-free word
+  that exempts each part it matches from the other slash-free patterns. It never lifts a folder
+  pattern, so `.ssh/.env.example` and `.env/.env.example` stay refused. A configured list may
+  carry its own exemptions; copy the default list to keep the templates readable. Patterns match in any case: macOS and Windows file systems
   ignore case, so `.ENV` opens `.env`. Both sides are case folded, not only lower-cased, so
   `.ſsh` (long s) matches `.ssh` too.
 - **The check.** The hab cleans the path, checks the deny list, resolves every link (a missing
