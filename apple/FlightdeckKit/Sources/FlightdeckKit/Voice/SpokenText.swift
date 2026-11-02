@@ -18,6 +18,32 @@ public enum SpokenText {
         return String(text.dropLast(summaryRequest.count)).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// An agent reply as the chat view shows it: a closing "Spoken summary:"
+    /// line, and any prose after it, comes apart from the body. A marker
+    /// followed by a code fence, or with nothing after it, stays in the body.
+    public static func splittingSummary(_ text: String) -> (body: String, summary: String?) {
+        let lines = text.components(separatedBy: .newlines)
+        let key = summaryMarker.lowercased()
+        guard let i = lines.lastIndex(where: { markerPlain($0).lowercased().hasPrefix(key) }) else { return (text, nil) }
+        let after = lines[(i + 1)...]
+        guard !after.contains(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("```") || $0.trimmingCharacters(in: .whitespaces).hasPrefix("~~~") }) else {
+            return (text, nil)
+        }
+        let plain = markerPlain(lines[i])
+        let rest = ([String(plain.dropFirst(key.count))] + after)
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rest.isEmpty else { return (text, nil) }
+        let body = lines[..<i].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return (body, rest)
+    }
+
+    /// A line with Markdown marks around a marker taken off: "**Spoken summary:** ...".
+    static func markerPlain(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "[*_>#]", with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+    }
+
     /// The prompt as voice mode sends it.
     public static func prompt(_ spoken: String, askSummary: Bool) -> String {
         askSummary ? spoken + "\n\n" + summaryRequest : spoken

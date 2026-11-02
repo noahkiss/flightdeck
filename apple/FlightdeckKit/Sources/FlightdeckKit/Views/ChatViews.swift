@@ -405,11 +405,38 @@ struct MarkdownView: View {
                 .overlay(alignment: .leading) { Rectangle().fill(.tertiary).frame(width: 3) }
         case .rule:
             Divider()
+        case .spokenSummary(let t):
+            SpokenSummaryCaption(text: t)
         }
     }
 
     private func inline(_ t: String) -> AttributedString {
         (try? AttributedString(markdown: t, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(t)
+    }
+}
+
+/// The reply's spoken summary as a quiet caption, folded (app.md 13.7).
+struct SpokenSummaryCaption: View {
+    let text: String
+    @State private var open = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(.easeOut(duration: 0.15)) { open.toggle() }
+            } label: {
+                Label("Spoken summary", systemImage: open ? "chevron.down" : "speaker.wave.2")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(open ? "Shown" : "Hidden")
+            if open {
+                Text(text)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }
 

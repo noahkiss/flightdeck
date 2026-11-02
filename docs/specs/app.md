@@ -2366,6 +2366,10 @@ Code in `apple/FlightdeckKit` (`Voice/`, `Views/VoiceViews.swift`) and the
   of two sentences. The chat view hides it on the owner's message, also while the message is
   still outgoing. The transcript keeps it, so the TUI shows it. A setting turns the request
   off.
+- **The summary line in the chat.** The chat view folds the reply's closing "Spoken summary:"
+  line, and any prose after it, into a quiet "Spoken summary" caption under the reply; a tap opens
+  it. A marker with nothing after it, or with a code block after it, stays in the reply. The
+  terminal shows the line as the agent wrote it, and the speech reads it (`SpokenText.splittingSummary`).
 - **Send path.** A spoken turn goes through `ChatModel.send` with origin `dictated`, so the send
   gate, "sends after this turn" and the read-back are the composer's.
 - **Approvals.** The app reads the title and the command, muted, then listens. The read-back
@@ -3276,7 +3280,7 @@ Each candidate below is a fixed behaviour now.
 | Alert when free fires at once | A fresh reading with room fires the alert now (14.4) | The user asked to know when it is free |
 | Offline cached images | Content the app already holds shows while its hab is offline (4.7) | Showing what is in hand costs nothing; Paseo shows cached rows offline |
 | Changed-files scope | The list holds the session's own edits and the folder's git status, each marked (4.7) | The marks tell them apart. A filter in the list can come later; it is not a setting |
-| Spoken summary shown in chat | The chat hides the "Spoken summary:" request on the user's message (13.7) | The transcript and the TUI keep it; the request itself has its switch |
+| Spoken summary shown in chat | The chat hides the "Spoken summary:" request on the user's message, and folds the reply's summary line into a caption (13.7) | The transcript and the TUI keep it; the request itself has its switch |
 | Notification prompt timing | The app asks for notification permission when the first hab with `push` connects (8.7) | Asked in context; a user with no push never sees the prompt |
 | Keep photo location and camera data | Always stripped before upload (4.4) | No agent needs where a photo was taken |
 | Send the original photo | Downscaled to what the harness accepts (4.4) | The harness takes no more; a larger file only costs time |

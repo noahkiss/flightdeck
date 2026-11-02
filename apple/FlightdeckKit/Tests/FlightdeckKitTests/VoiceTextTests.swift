@@ -87,6 +87,31 @@ final class VoiceTextTests: XCTestCase {
         XCTAssertEqual(SpokenText.speakable(md), "I fixed the flaky test. It passes twenty times in a row now.")
     }
 
+    /// The chat view folds the closing summary line into a caption; the body
+    /// keeps everything else, and the speech still reads the summary.
+    func testChatFoldsTheSummaryLine() {
+        let md = """
+        All pass.
+        ```
+        ok link 0.3s
+        ```
+        **Spoken summary:** The link tests pass. Nothing else changed.
+        """
+        let split = SpokenText.splittingSummary(md)
+        XCTAssertEqual(split.body, "All pass.\n```\nok link 0.3s\n```")
+        XCTAssertEqual(split.summary, "The link tests pass. Nothing else changed.")
+        let items = ChatRender.items([msg("a", .agent, md)])
+        guard case .agent(_, let blocks, _)? = items.first else { return XCTFail("no agent row") }
+        XCTAssertEqual(blocks.last, .spokenSummary("The link tests pass. Nothing else changed."))
+        XCTAssertFalse(blocks.contains(.paragraph("**Spoken summary:** The link tests pass. Nothing else changed.")))
+        XCTAssertEqual(SpokenText.speakable(md), "The link tests pass. Nothing else changed.")
+
+        // No marker, an empty marker, or code after the marker: the text stays whole.
+        XCTAssertNil(SpokenText.splittingSummary("Just an answer.").summary)
+        XCTAssertNil(SpokenText.splittingSummary("Answer.\nSpoken summary:").summary)
+        XCTAssertNil(SpokenText.splittingSummary("Spoken summary: see\n```\nx\n```").summary)
+    }
+
     func testCapSaysTheRestIsInTheChat() {
         let text = (1...30).map { "Sentence number \($0) is here." }.joined(separator: " ")
         let s = SpokenText.speakable(text, capWords: 20)

@@ -12,6 +12,9 @@ public enum MarkdownBlock: Hashable, Sendable {
     case item(marker: String, level: Int, text: String)
     case quote(String)
     case rule
+    /// The reply's closing "Spoken summary:" line (app.md 13.7): a quiet
+    /// caption the owner can open, so the answer does not read twice.
+    case spokenSummary(String)
 
     /// Splits Markdown into blocks. Unclosed code fences run to the end.
     public static func parse(_ md: String) -> [MarkdownBlock] {
@@ -220,7 +223,8 @@ public enum ChatRender {
                     item = .user(id: m.id, text: SpokenText.hidingSummaryRequest(m.text ?? ""), sender: m.sender, attachments: m.attachments ?? [])
                 }
             case .agent:
-                item = .agent(id: m.id, blocks: MarkdownBlock.parse(m.text ?? ""), sender: m.sender)
+                let split = SpokenText.splittingSummary(m.text ?? "")
+                item = .agent(id: m.id, blocks: MarkdownBlock.parse(split.body) + (split.summary.map { [.spokenSummary($0)] } ?? []), sender: m.sender)
             case .tool:
                 if kids.isEmpty, let t = m.tool, let h = HandOffCard.from(t) {
                     item = .handOff(id: m.id, card: h)
@@ -352,6 +356,7 @@ public enum ChatRender {
                 case .item(let m, let l, let t): body(String(repeating: "  ", count: l) + m + " " + t)
                 case .quote(let t): body("> " + t)
                 case .rule: body("---")
+                case .spokenSummary(let t): body("(spoken summary, folded) " + t)
                 }
             }
         case .tool(_, let c):
