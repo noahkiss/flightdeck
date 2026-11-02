@@ -627,7 +627,9 @@ Capability strings name optional features: `data-streams`, `snapshot-vt`, `snaps
 `speech`. `speech` means the hab's speech engine is installed and turned on, so `speech.prepare`
 and `speech.transcribe` work, though the model may still need its download (`voice.md`).
 `idempotency-keys` means the hab honours `idempotency_key` on `session.create` and
-`session.send` (3.9). `mesh` means the hab keeps
+`session.send` (3.9). `confirm` means `confirm.request`, `confirm.answer`, `confirm.list`,
+`confirm.get`, the `confirm.requested` and `confirm.closed` events and the open confirmations in
+a `host` snapshot work, and that `session.create` takes `model` and `seed` (`capcom.md` 6.4). `mesh` means the hab keeps
 a peer list and serves peer links, `peers.list`, `peers.accept` and `peer.updated` (`mesh.md` 4).
 `catalog` means `catalog.get`, `catalog.put`, `catalog.list` and `catalog.updated` work (`mesh.md` 5).
 `channels` means `channel.send`, `channel.status`, `channel.wait`, `mail.push`, `mail.pull` and
@@ -647,7 +649,7 @@ for features that a host may lack. They are not a second versioning scheme.
 Built: with the holder link on, gff-hab sends `agent-state`, `data-streams`, `snapshot-vt`,
 `transcripts` and `detect-explain` (`detect.explain` works). It always sends `mesh`, `idempotency-keys`,
 `catalog`, `channels` and `usage` (`usage.list` and `usage.updated` work; readings arrive only through panes with the
-holder link), `settings` and `read-tools`. It sends `push` only when its push config loads and validates
+holder link), `settings`, `read-tools` and `confirm`. It sends `push` only when its push config loads and validates
 (3.9, Push), and `speech` only when the speech helper is found and the host setting leaves the
 engine on (`voice.md`, Built choices).
 
@@ -858,7 +860,8 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   always the pane's own. `project_dir` finds the project by the repository's remote (`origin`,
   else the first), else its root commit, and creates the project, named after the repository
   folder, when it is new. `project` and `project_dir` together are `invalid`. `harness` needs
-  the adapter: `codex` is built (`harness-adapters.md`, Codex, built choices); any other value
+  the adapter: `claude`, `codex` and `opencode` are built (`harness-adapters.md`, Codex, built
+  choices; `claude` starts `claude`, task-ph00sdci); any other value
   answers `unavailable`. Every input is checked first, the name
   rules and clashes (local and peer) among them. Then the hab files the session, and only then
   spawns, so the pane's `GFF_HAB` token names the session from the program's first byte: a
@@ -893,7 +896,12 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   makes it run again, and a later start with every holder reached drops it. A session without
   the mark is never dropped. `gff-client.md`
   proposed `command`; `argv` is that command, unparsed. The optional `idempotency_key` makes a
-  retried create start one session (Idempotency keys, below).
+  retried create start one session (Idempotency keys, below). With `harness`, the optional
+  `model` goes after the program's arguments as `--model <model>`, and the optional `seed` (at
+  most 8000 characters) is queued in the hab's channels inbox once the session is filed: it
+  reaches the agent as its first message when the agent can take one, in a start envelope that
+  names `seed_from` as the writer, on the owner's behalf (`capcom.md` 6.4). A seed that cannot
+  be queued after the spawn is logged, not answered, so a retry never starts a second session.
 - **`session.resume`** takes `{session}` and returns the same ids as `session.create`.
 - **`pane.close`** takes `{pane}` (the `PaneRef` of the size methods) and returns the seq only.
 - **`session.send`** returns the seq only, once the writes reached the program. Whether the

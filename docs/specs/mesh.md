@@ -973,8 +973,11 @@ Limits, at the bar of herdr, Rex and Paseo (hc has no outbox and no dedup):
   still applies to the command. The setting `confirm.start_elsewhere` (on at Safe; off at Balanced,
   the default, and at Bypass permissions, `app.md` 20.3) turns the card off; the action then runs at once and its card
   shows as a record (owner, 2026-11-01; section 11).
-- **No scoring, no automatic choice.** Flightdeck ranks nothing. `gff hosts --has <capability>`
-  filters; the agent reasons.
+- **No scoring, no automatic choice.** Flightdeck picks nothing. `gff hosts --has <capability>`
+  filters; the agent reasons. The agent kit's `suggest_host` (`capcom.md` 3.3, 6.4) orders the
+  hosts that pass the filters by fixed rules (project ready, the named host, the host used
+  last) and gives every reason; it scores nothing, and the agent still proposes and the user
+  still decides.
 - **A running agent stays on its host.** Nothing moves a session.
 - **Set up elsewhere** (task-j600w23a): the target hab clones or fetches by the project's remote,
   checks out a ref, runs the project's declared bootstrap, and its catalog then shows the project
@@ -1086,7 +1089,8 @@ The study recommended no extra gate (the harness's own tool prompt only, as in P
   action runs at once and the card shows as a record.
 - The level picker sets it: on at Safe, off at Balanced and Bypass permissions (`app.md` 20.3;
   owner, 2026-11-01, a later ruling that supersedes default on).
-- Built: gff-hab stores and serves the setting (task-yfmrj6yc); the card waits for Capcom.
+- Built: gff-hab stores and serves the setting (task-yfmrj6yc); confirmations read it
+  (task-ph00sdci, `capcom.md` 6.4).
 - Handing work to an agent already on a project needs no card (owner, 2026-11-01).
 
 ---

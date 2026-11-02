@@ -659,7 +659,9 @@ Built choices (`cmd/gff-hab/actions.go`, `internal/harness`, `internal/hook`):
 
 - **Start.** `session.create` with `harness: codex` runs `argv`, else `codex`, with
   `--no-daemon` inserted after the program name when `argv` lacks it, and adds
-  `AGENT_KIND=codex` to the pane's environment. Any other `harness` answers `unavailable`.
+  `AGENT_KIND=codex` to the pane's environment. `harness: claude` starts `claude` (argv when
+  given) with `AGENT_KIND=claude`, and `harness: opencode` its wrapper (task-ph00sdci). Any other
+  `harness` answers `unavailable`.
 - **State.** Codex's OSC 7501 reports and hooks go through the same store and rules as Claude
   Code's (see Claude Code, built choices). gff-hab answers the `?` query for every pane; whether
   Codex waits for that answer before it reports was not checked.

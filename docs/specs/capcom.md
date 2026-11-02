@@ -400,8 +400,8 @@ produces several, and a list is faster to judge than a string of interruptions.
   Balanced and Bypass permissions (owner, 2026-11-01, superseding the first ruling of default
   on) (`app.md` 20.3). The app writes it to every hab through
   `settings.set` (`app.md` 20.5).
-- Built: gff-hab stores and serves the setting, and the app writes it (task-yfmrj6yc). No
-  confirmation reads it yet; that waits for Capcom.
+- Built: gff-hab stores and serves the setting, and the app writes it (task-yfmrj6yc).
+  Confirmations read it (task-ph00sdci, 6.4).
 - With the setting on, a start or set-up tool does not act. It asks the hab for a confirmation
   and returns its id.
 - The hab raises a confirmation card in the Capcom view on every client (for another agent, in
@@ -440,6 +440,83 @@ produces several, and a list is faster to judge than a string of interruptions.
 | Session start | Host, project, folder, branch, harness, model if set, the seed |
 | Project set-up | Host, repository, branch, the bootstrap command the project declares |
 | Proposal | Kind, project, title, body, source quote |
+
+### 6.4 Built choices (task-ph00sdci)
+
+Package `internal/confirm` (the confirmations), package `internal/suggest` (the ranking), wired
+into `gff-hab serve`. Capability `confirm`. Methods `confirm.request`, `confirm.answer`,
+`confirm.list`, `confirm.get`; events `confirm.requested` and `confirm.closed`; the open
+confirmations in a `host` snapshot (`confirmations`); `model`, `seed` and `seed_from` on
+`session.create`. Doors: the tools `suggest_host` and `confirmation_read` (read tools) and
+`start_session` and `set_up_project` (action tools) in `gff-hab mcp`, `gff-hab read` and
+`gff-hab act`; the CLI fallback `gff-hab confirm list|show|answer`.
+
+- **Where a confirmation lives.** On the requesting agent's own hab, which raises the card to its
+  own clients and runs the action. A start on a peer goes over the link this hab dialed to it,
+  as `session.create` with the confirmation id as `idempotency_key`; the hab never forwards
+  the confirmation itself. A peer without `confirm`, offline, or reachable only by its own link
+  in is refused when the agent asks, before any card opens.
+- **When it asks.** With `confirm.start_elsewhere` on, a start on another host, or any start by a
+  Capcom session, opens a confirmation. Any other start runs at once as a record: the setting is
+  off, or a non-Capcom agent starts on its own host. Until session records carry kind
+  `capcom` (the session host stage), a Capcom session is one whose folder lies under
+  `<state>/capcom`. A request from outside a pane names no requester and follows the same rule.
+- **The card values.** The hab checks a start before the card opens and again after the user's
+  edits: a known harness (claude, codex, opencode), an absolute folder, a name in the channel
+  charset, a model that is not a flag, a seed of at most 8000 characters. It fills in the
+  host's label and the folder's project and branch from the catalog. A start with no name gets
+  one made from the harness and the first six hex digits of the confirmation id, such as
+  `claude-3fa9c2`: the card shows it, and after a lost answer the agent looks for that name on
+  the target. The user may change host (with its folder), folder, harness, model and seed; the
+  edited values run.
+- **The wait and the late answer.** `confirm.request` takes `wait_ms`, at most 120 s;
+  `start_session` waits the whole 120 s. The answer reaches the requesting session later as a
+  message from Flightdeck when no request returned it: the wait ended first, or the request
+  asked for none. The message goes through the channels inbox like any message, so it waits
+  until the agent can take it. It reads "[Flightdeck: a message from Flightdeck itself, not
+  from an agent]" and one line of outcome.
+- **The seed.** The target hab queues the seed in its own channels inbox as soon as the session
+  is filed. It waits there until the agent can take a message, and then arrives as one paste
+  in a start envelope: "the start message of this session, written by <host/session> on the
+  owner's behalf", with begin and end lines and the reply command. Markers inside the seed are
+  neutralised as in an agent message. A seed that cannot be queued after the spawn is logged
+  and the session keeps running, so a retry with the key never starts a second session.
+- **Outcomes.** `done` with the session id, name and pane; `failed` with the target's refusal; a
+  transport error or a lost answer on the peer link is `unknown`, and the text names the
+  session to look for; `cancelled`; `expired` after 60 minutes, which never runs. The first
+  answer wins: a second, or one after the expiry, gets `conflict`. `confirm.closed` goes out
+  once, at the final state, so every card withdraws.
+- **No tool answers.** `confirm.answer` is not on a pane's hook route, and a peer link cannot
+  send it. `gff-hab confirm answer` refuses to run where `$GFF_HAB` is set. These are cheap
+  guards, not a sandbox: an agent with the user's shell could still reach the control socket,
+  as in herdr, Paseo and Rex, which have no confirmation at all.
+- **In memory.** Confirmations are not saved. A gff-hab restart drops the open ones, which then
+  never run, and a client sees them gone in its next snapshot. The hab keeps the last 200
+  closed ones for `confirm.get`.
+- **Ranking.** `suggest_host` reads `catalog.list` and runs in the tool, not in the hab: it
+  leaves out offline hosts and hosts that lack a needed capability word or the harness, each
+  with its reason, then orders the rest by project ready (checked out on the right branch with
+  no changes), then on the right branch with changes, then on another branch, then not checked
+  out; then the host the user named; then the host used last for the project (the latest of its
+  running agents' start and its folder's last commit); then catalog order, this hab first.
+  With no host left it says why: every fitting host offline, or the missing capability, or no
+  host at all. When the project is on no fitting host it names the best fitting host for a
+  set-up. It scores nothing (`mesh.md` 7): the rules are fixed and every reason is shown.
+- **Set-up.** `set_up_project` and the `setup` kind exist; the hab answers `unavailable` until the
+  mesh's set-up stage (task-j600w23a) builds the action. The `ConfirmSetup` shape is reserved
+  for its card.
+- **`session.create` grew** `harness: claude` (it starts `claude`), `model` (passed as `--model`)
+  and `seed`. The tool table also gained the action tools; the manual is now
+  `flightdeck-tools`, with read and action tools in separate sections.
+
+Limits, at the bar of herdr, Paseo and Rex:
+
+- The idempotency table is in memory on the target: a target that restarted between a lost
+  answer and a retry with the same key starts a second session. Nothing retries on its own;
+  the agent checks the target first.
+- Confirmation cards and the late message go only to the requesting hab's clients and session.
+- A start Capcom asks for on its own host is confirmed only while Capcom's folder is under
+  `<state>/capcom`; a Capcom started elsewhere counts as any agent until kind `capcom` exists.
 
 ---
 
@@ -542,8 +619,9 @@ until its stage.
 | `capcom.assign {host}` | Make `host` the home host (7.3); the CLI's `capcom assign` |
 | `capcom.attach {session, kind, ref}` | Attach context (8.1) to the next message |
 | `session.send` | Send the user's message, as for any session |
-| `confirm.answer {id, choice, edits?}` | Answer a confirmation: `confirm` or `cancel`, with the user's edits |
-| event `confirm.requested`, `confirm.closed` | A confirmation opened, or was answered, cancelled or expired |
+| `confirm.answer {id, choice, edits?}` | Answer a confirmation: `confirm` or `cancel`, with the user's edits. Built (6.4) |
+| `confirm.request`, `confirm.list`, `confirm.get` | Ask for a start or set-up and wait for the answer; list or read confirmations. Built (6.4) |
+| event `confirm.requested`, `confirm.closed` | A confirmation opened, or was answered, cancelled or expired. Built (6.4) |
 | `proposal.list`, `proposal.answer` | List pending proposals; approve, edit or drop one. Shapes owned by Part 12 and Part 8 |
 | event `proposal.created`, `proposal.closed` | A proposal was filed, or answered |
 
@@ -596,6 +674,9 @@ Internal calls, taken here, each with its reason.
 | D13 | One standing conversation, plus "new conversation" | Matches how a front door session is used; old ones stay resumable |
 | D14 | No "off the record" mode | Nothing is written without review, so it adds nothing (design doc, deferred) |
 | D15 | The hab does not write the harness's global trust file | Part 8 owns writes to user-level harness files |
+| D16 | A confirmation lives on the requesting agent's hab, which runs the start over its own peer link | One place answers and runs it; the target needs only `session.create` with a key |
+| D17 | The seed waits in the target's channels inbox, not in the harness's argv | One path for every harness, delivered only when the agent can take it, saved across a restart |
+| D18 | A start with no name is named from its confirmation id | After a lost answer the agent knows which session to look for |
 
 ---
 
@@ -622,8 +703,8 @@ The Part 9 stages, with what this spec adds to each.
 | Tools (task-m31qyr6v) | Read tools in the agent kit (4) and the read scope (5). Built; see 5.5 | Tests on fake catalog, transcript and Logbook data; a write through a read tool is refused; a read outside scope is denied without the pattern; a search with an offline and a slow peer returns partial results marked |
 | Session host (task-aqw4iowl) | The Capcom folder, manual and settings (7.1), kind `capcom`, standing and new conversations, home host assignment (7.3) | A `gff-hab` restart keeps Capcom running; a plain-terminal resume works from the folder; the manual and settings are rewritten at start; `gff-hab capcom assign` moves the mark, the old conversation stays resumable, and a host offline during the change drops its mark on its next link |
 | Hand off and file (task-9n47i6l8) | 3.2 and 3.4, the hand-off card as a record, the hand-off and proposal tools | Hand-off to an idle fake agent delivers at once with no confirmation; to a working one queues; the card shows the exact text sent; a record lands as a proposal |
-| Suggest and start (task-ph00sdci) | 3.3, ranking, seed, the confirmation mechanism (6.1) and the start and set-up tools, start by confirmation id, `confirm.start_elsewhere` | A host without a needed capability is not suggested and the reason names it; with the setting on, no session starts without a confirm; with it off, the start runs at once and its card shows as a record; a repeated confirm id starts one session |
-| Approval (task-3387vxca) | Review (6.2), confirmations' expiry and first-answer-wins (6.1), CLI fallback | Three proposals, one approved: only it applies; closing without review leaves all pending; an expired confirmation never runs; a second answer gets `conflict` |
+| Suggest and start (task-ph00sdci) | 3.3, ranking, seed, the confirmation mechanism (6.1) and the start and set-up tools, start by confirmation id, `confirm.start_elsewhere`. Built; see 6.4, with the confirmations' expiry, first-answer-wins and the CLI fallback | A host without a needed capability is not suggested and the reason names it; with the setting on, no session starts without a confirm; with it off, the start runs at once and its card shows as a record; a repeated confirm id starts one session |
+| Approval (task-3387vxca) | Review (6.2), and the proposals' CLI fallback. Confirmations' expiry, first-answer-wins and CLI fallback came with "Suggest and start" (6.4) | Three proposals, one approved: only it applies; closing without review leaves all pending; an expired confirmation never runs; a second answer gets `conflict` |
 | Entry API (task-ilse43i7) | 8.3 calls and events, attached context blocks (8.1) | Open, send, attach and confirm against a stub Capcom; the schema compat test passes |
 | "Ask an agent" (task-3687ti3z) | 8.2 | The action payload carries the notification id and the hab resolves it; it lands in the standing conversation with the event attached; "New conversation" moves the event and draft to a fresh one; no reachable hab gives a clear message |
 
@@ -642,7 +723,11 @@ Notes for those stages:
   Until the index exists, the session list scans the native transcript files (5.5). Until
   Logbook exists, `logbook.find`, `logbook.get` and the Logbook tools answer `unavailable`; Part
   12 implements `control.Logbook` and owns the record shapes.
-- The set-up card belongs to the mesh's set-up stage; Capcom only calls it.
+- The set-up card belongs to the mesh's set-up stage; Capcom only calls it. `set_up_project`
+  answers `unavailable` until that stage (task-j600w23a) lands (6.4).
+- "Suggest and start" built the confirmations whole, expiry, first-answer-wins and the CLI
+  fallback included, since a confirmation without them could run late or twice (lead's
+  assignment, 2026-11-01). "Approval" keeps review and the proposals.
 
 ---
 

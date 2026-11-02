@@ -2759,9 +2759,10 @@ with the build stage:
 Built choices on the hab (task-yfmrj6yc, `internal/settings`):
 
 - **What each setting drives.** `hab.permission_wait` sets the blocking hook's wait for the next
-  hook; a hook already waiting keeps its wait. The other three are stored and served only: their
-  consumers are not built (`confirm.start_elsewhere` waits for Capcom, `approval.max_age` for the
-  request expiry of 7.4, `logbook.approval` for Logbook).
+  hook; a hook already waiting keeps its wait. `confirm.start_elsewhere` decides whether a start
+  asks for a confirmation (`capcom.md` 6.4, task-ph00sdci). The other two are stored and served
+  only: their consumers are not built (`approval.max_age` waits for the request expiry of 7.4,
+  `logbook.approval` for Logbook).
 - **The flag lock.** `-permission-wait` given on the command line, even as 0, or a non-empty
   `$GFF_HAB_PERMISSION_WAIT`, locks `hab.permission_wait` in whole seconds, rounded. A flag wins
   over the config file.
@@ -2860,8 +2861,8 @@ The page is `Views/SettingsViews.swift`.
 - **Today's pages as groups.** Notifications, Voice, SSH keys and the usage warnings open as
   pages linked from their group, not as rows inline. Their rows are in the registry, so search
   finds them and shows the link.
-- **The hab consumers** of `confirm.start_elsewhere` (Capcom), `approval.max_age` (the request
-  expiry of 7.4) and `logbook.approval` (Logbook). The hab stores and serves each, and the app
+- **The hab consumers** of `approval.max_age` (the request
+  expiry of 7.4) and `logbook.approval` (Logbook). The hab stores and serves both, and the app
   writes them.
 - **The Habs group** shows only the SSH page link. Each hab's push status stays on the
   Notifications page; the Capcom host picker waits for Capcom.
