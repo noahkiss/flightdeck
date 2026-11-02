@@ -202,6 +202,85 @@ public actor FakeHab {
         nextSpeechFailure = Failure(kind: kind, hint: hint)
     }
 
+    // MARK: - Confirmations
+
+    /// Open and running confirmations (capcom.md 6.1), in arrival order.
+    private var confirms: [Confirmation] = []
+    /// What `confirm.list` names as targets.
+    private var confirmTargets: [ConfirmTarget] = []
+    /// Every `confirm.answer` the hab took, answered or refused.
+    public private(set) var confirmAnswers: [ConfirmAnswerParams] = []
+    public private(set) var confirmLists = 0
+
+    public func setConfirmTargets(_ t: [ConfirmTarget]) { confirmTargets = t }
+
+    /// Stores a confirmation and sends `confirm.requested`.
+    public func requestConfirmation(_ c: Confirmation) async {
+        confirms.removeAll { $0.id == c.id }
+        confirms.append(c)
+        await emit(type: "confirm.requested", id: c.id, revision: nil, data: c)
+    }
+
+    /// Closes a confirmation and sends `confirm.closed`.
+    public func closeConfirmation(_ id: String, state: ConfirmState, reason: String? = nil, result: ConfirmResult? = nil, answeredBy: String? = nil) async {
+        guard let i = confirms.firstIndex(where: { $0.id == id }) else { return }
+        var c = confirms.remove(at: i)
+        c.state = state
+        c.reason = reason
+        c.result = result
+        c.answeredBy = answeredBy ?? c.answeredBy
+        c.closed = Fixture.stamp(Date())
+        await emit(type: "confirm.closed", id: c.id, revision: nil, data: c)
+    }
+
+    /// The real hab's rule (capcom.md 6.4): only an open question takes an
+    /// answer, and only the first; the edits run.
+    private func confirmAnswer(_ p: ConfirmAnswerParams, client: String) async throws -> Confirmation {
+        confirmAnswers.append(p)
+        guard let c = confirms.first(where: { $0.id == p.id }) else {
+            throw FakeFailure(kind: .conflict, hint: "confirmation \(p.id) was already answered")
+        }
+        guard c.state == .open, c.record != true else {
+            throw FakeFailure(kind: .conflict, hint: "confirmation \(p.id) is \(c.state.rawValue)")
+        }
+        if p.choice == .cancel {
+            await closeConfirmation(p.id, state: .cancelled, reason: "cancelled by the user", answeredBy: client)
+            return c
+        }
+        var start = c.start
+        var edited = false
+        if let e = p.edits, var st = start {
+            func apply(_ dst: inout String, _ v: String?) {
+                if let v, !v.isEmpty, v != dst { dst = v; edited = true }
+            }
+            func apply(_ dst: inout String?, _ v: String?) {
+                if let v, !v.isEmpty, v != dst { dst = v; edited = true }
+            }
+            if let h = e.host, !h.isEmpty, h != st.host, (e.folder ?? "").isEmpty {
+                throw FakeFailure(kind: .invalid, hint: "a new host needs its folder: give folder with host")
+            }
+            apply(&st.host, e.host)
+            apply(&st.folder, e.folder)
+            apply(&st.harness, e.harness)
+            apply(&st.model, e.model)
+            apply(&st.seed, e.seed)
+            start = st
+        }
+        if let i = confirms.firstIndex(where: { $0.id == p.id }) {
+            confirms[i].start = start
+            confirms[i].edited = edited
+        }
+        let res = ConfirmResult(host: start?.host ?? hostID, name: start?.name, pane: "%9", session: "s-" + p.id.prefix(6))
+        await closeConfirmation(p.id, state: .done, result: res, answeredBy: client)
+        var out = c
+        out.start = start
+        out.edited = edited
+        out.state = .done
+        out.result = res
+        out.answeredBy = client
+        return out
+    }
+
     /// Adds or drops a capability; the next hello carries the new list.
     public func setCapability(_ name: String, _ on: Bool) {
         capabilities.removeAll { $0 == name }
@@ -652,6 +731,22 @@ public actor FakeHab {
             }
             notices.append(p)
             await reply(c, id: id, result: NoticeRaised(id: "n\(notices.count)", pushed: 0, seq: c.seq))
+        case HabMethods.confirmAnswer.name where capabilities.contains(ConfirmBook.capability):
+            guard let p = try? params.decode(ConfirmAnswerParams.self) else {
+                await fail(c, id: id, kind: .invalid, hint: "bad confirm.answer params")
+                break
+            }
+            do {
+                let out = try await confirmAnswer(p, client: c.clientID)
+                await reply(c, id: id, result: ConfirmationResult(confirmation: out, seq: c.seq))
+            } catch let f as FakeFailure {
+                await fail(c, id: id, kind: f.kind, hint: f.hint)
+            } catch {
+                await fail(c, id: id, kind: .invalid, hint: String(describing: error))
+            }
+        case HabMethods.confirmList.name where capabilities.contains(ConfirmBook.capability):
+            confirmLists += 1
+            await reply(c, id: id, result: ConfirmList(confirmations: confirms, seq: c.seq, targets: confirmTargets))
         case HabMethods.approvalAnswer.name:
             guard let p = try? params.decode(ApprovalAnswerParams.self) else {
                 await fail(c, id: id, kind: .invalid, hint: "bad approval.answer params")
@@ -884,6 +979,7 @@ public actor FakeHab {
     private func snapshot(seq: UInt64) -> StructureResult {
         StructureResult(
             agents: agents.values.sorted { $0.pane < $1.pane },
+            confirmations: capabilities.contains(ConfirmBook.capability) && confirms.contains(where: \.asks) ? confirms.filter(\.asks) : nil,
             host: HostInfo(id: hostID),
             panes: panes.values.sorted { $0.id < $1.id },
             projects: projects.values.sorted { $0.id < $1.id },

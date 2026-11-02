@@ -71,6 +71,10 @@ public struct HabState: Sendable, Equatable {
     /// `settings.updated` by revision. Kept while offline; empty from a hab
     /// without the `settings` capability.
     public var settings: [String: Setting] = [:]
+    /// The hab's confirmations (capcom.md 6.1): the open ones from the host
+    /// snapshot, then `confirm.requested` and `confirm.closed`. Empty from a
+    /// hab without the `confirm` capability.
+    public var confirmations = ConfirmBook()
 }
 
 /// Timings of the control connection. The defaults follow hab-logic-api.md 3.5
@@ -146,6 +150,9 @@ public actor HabConnection {
     /// The seq of the last `usage.updated` per account on this connection, so
     /// an older `usage.list` answer does not undo a newer event.
     private var usageSeqs: [String: UInt64] = [:]
+    /// The last welcome brought another epoch than the one before (or was the
+    /// first): the next snapshot drops the closed confirmations held.
+    private var confirmEpochChanged = true
 
     public init(id: String, transport: Transport, timing: HabTiming = HabTiming(), clientLabel: String? = nil, clientVersion: String = "0") {
         self.id = id
@@ -387,6 +394,7 @@ public actor HabConnection {
         token = welcome.reconnectToken
         clientID = welcome.clientId
         if newEpoch { state.epochChanges += 1 }
+        confirmEpochChanged = epoch != welcome.epoch
         epoch = welcome.epoch
         state.welcome = welcome
         liveness = Task { await self.livenessLoop(r) }
@@ -451,6 +459,9 @@ public actor HabConnection {
         // newer than anything held; with a new epoch revisions may restart lower.
         state.store.reset(snap)
         state.settings = Dictionary((snap.settings ?? []).map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+        let confirm = state.welcome?.capabilities.contains(ConfirmBook.capability) ?? false
+        state.confirmations.reset(snap.confirmations, enabled: confirm, newEpoch: confirmEpochChanged)
+        confirmEpochChanged = false
         state.snapshots += 1
         lastSeq = snap.seq
         snapshotApplied = true
@@ -523,6 +534,10 @@ public actor HabConnection {
                 storeUsage(a)
                 publish()
             }
+            return
+        }
+        if e.type == "confirm.requested" || e.type == "confirm.closed" {
+            if state.confirmations.apply(e) { publish() }
             return
         }
         if e.type == "settings.updated" {
