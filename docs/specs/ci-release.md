@@ -201,23 +201,29 @@ steps in the same order.
 
 ### 3.4 `apple.yml`: the Apple build
 
-One job on macOS, through the shared Xcode workflow that stage 4 extracts (section 11.2). Until
-then, inline with the same steps:
+One job on macOS, a call of the shared `xcode-ci.yml` (E5, section 11.2), which runs these
+steps from its inputs:
 
-1. Check out. Select `<xcode>` by path, `/Applications/Xcode_27.1.app`; fail when it is missing
-   (never the image default, never a beta or release candidate). The runner is `xcode-27` (4).
+1. Check out. Select `/Applications/Xcode_27.1.app` by path (`xcode-app`, through
+   `DEVELOPER_DIR`); fail when it is missing (never the image default, never a beta or release
+   candidate). The runner is `xcode-27` (4).
 2. Write `~/.netrc` for `api.github.com` with `github.token`, so Swift Package Manager's binary
-   downloads (libghostty-spm) do not hit the anonymous rate limit.
+   downloads (libghostty-spm) do not hit the anonymous rate limit. Removed at the end.
 3. Restore the SwiftPM cache (section 5).
 4. `cd swift/HabAPI && swift test` (the Swift half of core test 5).
 5. `cd apple/FlightdeckKit && swift test`.
 6. `apple/scripts/generate.sh` (XcodeGen, pinned release).
-7. `xcodebuild ... -scheme FlightdeckiOS -destination 'generic/platform=iOS Simulator' build`.
+7. `xcodebuild -project apple/Flightdeck.xcodeproj -scheme FlightdeckiOS -destination 'generic/platform=iOS Simulator' build`.
 8. `xcodebuild ... -scheme FlightdeckMac -destination 'generic/platform=macOS' build` (ad hoc
    signed; no `Local.xcconfig` in CI).
-9. Filter each `xcodebuild` log to errors; upload the full logs as an artifact on failure.
+9. `xcodebuild -scheme FlightdeckKit-Package -destination <iPhone simulator> test` in
+   `apple/FlightdeckKit`: the Kit's tests on an iOS Simulator, the newest iOS runtime's first
+   available iPhone. Step 5 runs them on macOS; this catches iOS-only breaks.
+10. Each `xcodebuild` log is filtered to errors, signing warnings and failed tests; the full logs
+    are uploaded as an artifact on failure.
 
-No signing, no secrets. Timeout 60 minutes. The live tests (`LiveTests`, `ssh-live-check.sh`) do
+Every `xcodebuild` passes `-clonedSourcePackagesDirPath`, so the cache serves them. No signing, no
+secrets. Timeout 60 minutes. The live tests (`LiveTests`, `ssh-live-check.sh`) do
 not run in CI: they need a real hab or an sshd, and they skip when unset.
 
 ### 3.5 `macos-go.yml`: Go on macOS (owner decision, Q2)
@@ -300,7 +306,7 @@ build.
 | Go modules and build cache | `go.sum` | Built into go-ci (`setup-go`) | go-ci saves it on every run |
 | libghostty-vt | `libghostty-<GHOSTTY_COMMIT>-zig<version>-<os>-<arch>-baseline`, built by a `plan` step | `build/libghostty-vt` | Keyed on the two pins, not on a hash of the whole Makefile, which changes often. A pin change misses the cache, as it should. Needs the go-ci `cache-path` and `cache-key` inputs (11.2) |
 | zig | `mise.toml` | `jdx/mise-action` cache | Needs the go-ci `mise` input |
-| SwiftPM | `hashFiles('apple/FlightdeckKit/Package.resolved')` | `-clonedSourcePackagesDirPath` folder | Restore key without the hash, as the reference does |
+| SwiftPM | Runner OS and arch, the Xcode build version, and `hashFiles('apple/FlightdeckKit/Package.resolved')` | `~/Library/Caches/org.swift.swiftpm` (for `swift test`) and the `-clonedSourcePackagesDirPath` folder (for `xcodebuild`) | Built into `xcode-ci` (`spm-cache-key-file`). Restore key without the hash, as the reference does. Saved on a miss, also after a failed build; never from a tag. The Xcode project's own `Package.resolved` is not committed (the project is generated), so the Kit's is the key |
 | XcodeGen | Its pinned version in `generate.sh` | The download folder | Small; optional |
 | fastlane gems | None | `bundle install` in the job | Release jobs only. The Gemfile and its lock live under `.github/fastlane/`. No cache: a cache saved on a tag is visible to that tag only, and no `main` run installs these gems, so every release would save an entry nobody reads. A cold install costs about a minute |
 
@@ -993,13 +999,17 @@ stop the Mac release, and the reverse.
 
 ### 10.2 Steps of the signing jobs
 
+Steps 4 and 5 are `actions/xcode-match-signing`; steps 7 and 9 are `actions/xcode-archive-upload`,
+called twice (archive only, then export from its `archive-path` output) so step 8 runs between
+them; step 10 is `xcode-match-signing` with `cleanup: 'true'` (E6, section 11.2).
+
 The `ios` job:
 
 1. Check out the tag. Select `/Applications/Xcode_27.1.app` by path (4); fail when missing.
 2. Ruby and fastlane from `.github/fastlane/Gemfile` (bundler cache).
 3. `~/.netrc` for SwiftPM; restore the SwiftPM cache.
-4. A throwaway keychain with a random password; the API key written to a `0600` file under
-   `$RUNNER_TEMP`.
+4. A throwaway keychain with a random password. The API key goes to a `0600` file under
+   `$RUNNER_TEMP` only for the export step, which deletes it.
 5. `fastlane match appstore --readonly --git_url "$MATCH_GIT_URL" --git_branch main --skip_docs
    --team_id "$APPLE_TEAM_ID"` for the app, the
    notification service and the widget bundle ids (`<prefix>.flightdeck`, `.notification-service`,
@@ -1008,17 +1018,20 @@ The `ios` job:
    `--readonly --git_url --git_branch main --skip_docs`. Without `--git_branch main`, match reads
    `master`, finds an empty store and tries to create a certificate.
 6. `apple/scripts/generate.sh`.
-7. Archive `FlightdeckiOS` (Release) with a generated signing xcconfig: `CODE_SIGN_STYLE =
+7. Archive `FlightdeckiOS` (Release) with the generated signing xcconfig: `CODE_SIGN_STYLE =
    Manual`, `DEVELOPMENT_TEAM`, `Apple Distribution`, the keychain in `OTHER_CODE_SIGN_FLAGS`, and
-   `APP_IOS_PROFILE`, `APP_NSE_PROFILE`, `APP_WIDGET_PROFILE` set to match's profile names. Pass
-   `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION`. Filter the log to errors and signing
-   warnings.
+   `PROVISIONING_PROFILE_SPECIFIER` looked up by each target's bundle id from match's profile
+   names. A `-xcconfig` file outranks the project's settings, so it supersedes the
+   `APP_IOS_PROFILE`, `APP_NSE_PROFILE` and `APP_WIDGET_PROFILE` settings that a hand build sets in
+   `Local.xcconfig`. Pass `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION`. Filter the log to
+   errors and signing warnings.
 8. Check the archive: the app's `ITSAppUsesNonExemptEncryption` is `false` (export compliance,
    section 1); each bundle embeds the expected profile; `codesign -dv` shows the team.
 9. Export with `method` `app-store-connect`, `destination` `upload`, manual signing and a
    `provisioningProfiles` map per bundle id; authenticate with the API key. With the dispatch
    input `upload: false`, export with `destination` `export` instead and upload nothing.
-10. Always: delete the keychain, the key files and `~/.netrc`; upload the logs as an artifact.
+10. Always: delete the keychain, the key files and `~/.netrc`; upload the logs (the action's
+    `log-dir`) as an artifact.
 
 The internal TestFlight group receives every build without a step here. Its setup is a one-off
 owner step in the signing store's portal tool, outside the repo.
@@ -1027,7 +1040,8 @@ The `mac` job:
 
 1-4. As `ios`.
 5. `fastlane match developer_id --readonly --skip_provisioning_profiles`, with the store flags
-   of step 5 above, installs the Developer ID certificate. The Mac app needs no provisioning profile today: its only entitlement is audio
+   of step 5 above, installs the Developer ID certificate (the action's profiles line
+   `developer_id macos <prefix>.flightdeck certificates-only`). The Mac app needs no provisioning profile today: its only entitlement is audio
    input. A profile joins when an entitlement needs one (`Local.example.xcconfig`, step 3).
 6. Generate, then archive `FlightdeckMac` (Release) with `Developer ID Application`,
    `--timestamp` and `ARCHS=arm64`.
@@ -1070,8 +1084,8 @@ decision). Until then `app-release.yml` runs only with `upload: false`. The manu
 |---|---|---|
 | Go gate on Linux | `go-ci.yml` | Fits for pure Go. Needs `mise`, `cache-path`, `cache-key` for libghostty |
 | Go on macOS | `go-ci.yml` | Needs `runner` too |
-| Apple build (Swift tests, Xcode builds) | None yet | Stage 4 adds `xcode-ci.yml` (11.2) |
-| TestFlight upload and Mac notarization | None yet | Stage 4 adds composite actions (11.2); not a reusable workflow |
+| Apple build (Swift tests, Xcode builds) | `xcode-ci.yml` (E5) | Built in stage 4; `apple.yml` calls it |
+| TestFlight upload and Mac notarization | `actions/xcode-match-signing`, `actions/xcode-archive-upload` (E6) | Built in stage 4; composite, not a reusable workflow. `app-release.yml` (stage 8) uses them |
 | Sign and notarize the helper bundles | `actions/macos-sign-notarize` | Not used: it signs one item with a `.p12` secret, while `macos-bundle.sh` signs two bundles and a binary, compares requirements and staples. The script stays the one copy |
 | Tap bump | `dispatch-and-wait.yml` | Fits as it is |
 | Tap side | the tap's `bump.yml` | Fits since `tag_prefix` and the per-platform formula landed (8.2) |
@@ -1089,13 +1103,15 @@ keeps today's behaviour, so no existing caller changes. The owner reviews each b
 | E2 | `go-ci.yml` | `cache-path` and `cache-key` (strings): an `actions/cache` restore before the commands and a save after, on the default branch only (as `rust-ci` saves) | `''` (no step) |
 | E3 | `go-ci.yml` | `runner` (string), as `rust-ci` has | `ubuntu-latest` |
 | E4 | `go-ci.yml` | The job's concurrency group gains `${{ github.workflow }}` and the runner OS, so two workflows (or a Linux and a macOS call) on one ref no longer cancel each other; and a `cancel-in-progress` input (boolean expression), so a caller keeps `main` and scheduled runs from being cancelled (2) | `cancel-in-progress: true`, today's behaviour. The group name changes for every caller, but each caller's runs still share one group, so nothing else changes |
-| E5 | new `xcode-ci.yml` | Reusable workflow: Xcode by path (`xcode-app`), optional `generate` command, `swift-test-dirs` (one per line), `builds` (scheme and destination per line), `spm-cache-key-file`, `runner` (default `macos-26`; this repo passes `xcode-27`), `timeout-minutes`. No secrets | New file |
-| E6 | new composite actions | `actions/xcode-match-keychain` (throwaway keychain, API key file, match read-only per type and id list, cleanup outputs) and `actions/xcode-archive-export` (archive with a generated manual-signing xcconfig, export for `app-store-connect` upload or `developer-id`, optional notarize and staple). Composite, run as steps in the caller's job, because environment secrets do not reach a reusable workflow from another repo | New files |
+| E5 | new `xcode-ci.yml` | Reusable workflow: Xcode by path (`xcode-app`), optional `generate` command, `project`, `swift-test-dirs` (one per line), `builds` and `tests` (`scheme \| destination [\| package folder]` per line; the destination `ios-simulator` picks an iPhone), `xcodebuild-args`, `spm-cache-key-file`, `netrc`, `logs-name`, `runner` (default `macos-26`; this repo passes `xcode-27`), `timeout-minutes`, `cancel-in-progress`. No secrets | New file |
+| E6 | new composite actions | `actions/xcode-match-signing` (throwaway keychain, match read-only per type, platform and id list, a check that each profile arrived, a manual-signing xcconfig that looks up each target's profile by bundle id, outputs `xcconfig` and `profiles`; `cleanup: 'true'` in an `if: always()` step deletes the keychain and keys, since a composite action has no post step) and `actions/xcode-archive-upload` (archive with that xcconfig and the versions, export with a `provisioningProfiles` map for `app-store-connect` upload or export, or for `developer-id` with notarize and staple; it writes and deletes the API key file itself). Composite, run as steps in the caller's job, because environment secrets do not reach a reusable workflow from another repo | New files |
 | E7 | tap `bump.yml` | `tag_prefix` input (8.2) | `v` |
 | E8 | tap `bump.yml` | Per-platform formula: every url's sha from its `.sha256` asset, the top-level fallback included; a url with no such asset hashed directly (8.2) | Single-url path unchanged |
 
 E4 is needed for `ci.yml`, `nightly.yml` and `macos-go.yml` alike: without it they cancel each
-other's go-ci jobs on `main` (2). E5 and E6 are plan stage 4. All eight are approved (section 14).
+other's go-ci jobs on `main` (2). E5 and E6 are plan stage 4: noahkiss/workflows#16, with a
+selftest that builds a small XcodeGen fixture through `xcode-ci` and runs both actions with a
+stand-in fastlane. All eight are approved (section 14).
 
 ---
 
