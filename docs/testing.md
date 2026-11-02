@@ -22,6 +22,10 @@ Every stage's acceptance checks follow it.
   `cmd/gff-hab` build their gff-hab with it. Each seam is off until its variable is set:
   `GFF_TEST_SPAWN_DELAY` (a duration) holds a spawn between the holder's answer and the link
   following the pane.
+- Nothing a test makes outlives the test binary. A test puts its files in `t.TempDir()`; a
+  short socket path from `os.MkdirTemp` gets a `t.Cleanup` that removes it. What a `TestMain`
+  builds once and shares goes in `testtmp.MainDir`, removed with `testtmp.Exit` after `m.Run`.
+  A directory still there fails the run. The next run sweeps one a panic or timeout left.
 - No coverage targets and no benchmarks until a user-visible budget depends on one. Spec edge
   cases and review findings decide what gets a test.
 - Core functionality also gets a fresh-eyes review before its stage closes.
