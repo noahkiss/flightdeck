@@ -23,11 +23,14 @@ func Generate() (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string][]byte{
-		SchemaPath:   doc.JSON(),
-		GoClientPath: goSrc,
-		SwiftPath:    Swift(doc),
-	}, nil
+	files, err := moduleFiles()
+	if err != nil {
+		return nil, err
+	}
+	files[SchemaPath] = doc.JSON()
+	files[GoClientPath] = goSrc
+	files[SwiftPath] = Swift(doc)
+	return files, nil
 }
 
 // checkSwiftNames refuses a field whose Swift name is self. Backticks escape every other keyword,
