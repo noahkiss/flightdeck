@@ -87,8 +87,8 @@ type Client struct {
 // and a fresh HTTP/2 client.
 type ClientConfig struct {
 	Signer *Signer
-	// Keys, when set, gives the signer its key, and is asked to run the key command again when
-	// APNs refuses the provider token or a token cannot be signed.
+	// Keys, when set, is asked to run the key command again when APNs refuses the provider
+	// token or a token cannot be signed. Signer should then come from NewKeyringSigner(Keys).
 	Keys  *Keyring
 	Topic string
 	Hosts map[string]string
@@ -118,15 +118,13 @@ func NewClient(cfg ClientConfig) *Client {
 
 // Send posts one message. A refusal is an *Error. A provider token APNs calls expired is
 // signed again and the message sent once more. With a keyring, a provider token APNs calls
-// invalid, or one that cannot be signed, runs the key command again when its backoff allows;
-// a new key sends the message once more. Before the first key it returns ErrNoKey.
+// invalid, or one that cannot be signed, starts a run of the key command when its backoff
+// allows. The run goes on in the keyring's own context with the command's full timeout; when it
+// brings a new key while ctx still has time, the message is sent once more. Before the first
+// key it returns ErrNoKey.
 func (c *Client) Send(ctx context.Context, m Message) error {
-	if c.keys != nil {
-		k := c.keys.Key()
-		if k == nil {
-			return ErrNoKey
-		}
-		c.signer.SetKey(k)
+	if c.keys != nil && c.keys.Key() == nil {
+		return ErrNoKey
 	}
 	err := c.send(ctx, m)
 	if e, ok := err.(*Error); ok && e.Reason == "ExpiredProviderToken" {
@@ -134,9 +132,12 @@ func (c *Client) Send(ctx context.Context, m Message) error {
 		err = c.send(ctx, m)
 	}
 	if c.keys != nil && keyFailed(err) {
-		if changed, _ := c.keys.Load(ctx); changed {
-			c.signer.SetKey(c.keys.Key())
-			err = c.send(ctx, m)
+		select {
+		case res := <-c.keys.refresh():
+			if res.changed && ctx.Err() == nil {
+				err = c.send(ctx, m)
+			}
+		case <-ctx.Done():
 		}
 	}
 	return err

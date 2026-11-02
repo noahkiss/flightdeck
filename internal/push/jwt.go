@@ -17,7 +17,8 @@ const tokenLife = 40 * time.Minute
 // Signer makes the APNs provider token: an ES256 JWT with the key id in its header and the team
 // id and issue time in its claims. It reuses one token for tokenLife. Safe for concurrent use.
 type Signer struct {
-	key    *ecdsa.PrivateKey
+	key    *ecdsa.PrivateKey // the key of the cached token, or the fixed key
+	keys   *Keyring          // when set, the key comes from here at each Token
 	keyID  string
 	teamID string
 	now    func() time.Time
@@ -39,6 +40,12 @@ func NewSigner(key *ecdsa.PrivateKey, keyID, teamID string, now func() time.Time
 func (s *Signer) Token() (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.keys != nil {
+		// Read under mu, so a send that read the key earlier can never put an older one back.
+		if k := s.keys.Key(); k != s.key {
+			s.key, s.tok = k, ""
+		}
+	}
 	now := s.now()
 	if s.tok != "" && now.Sub(s.iat) < tokenLife && !now.Before(s.iat) {
 		return s.tok, nil
@@ -51,16 +58,12 @@ func (s *Signer) Token() (string, error) {
 	return tok, nil
 }
 
-// SetKey replaces the key, after the key command printed a new one, and drops the cached token.
-// The same key keeps the token.
-func (s *Signer) SetKey(k *ecdsa.PrivateKey) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.key == k || (s.key != nil && k != nil && s.key.Equal(k)) {
-		s.key = k
-		return
-	}
-	s.key, s.tok = k, ""
+// NewKeyringSigner returns a signer that takes its key from keys at each Token: a new key there
+// drops the cached token. With no key yet, Token returns ErrNoKey. now may be nil.
+func NewKeyringSigner(keys *Keyring, keyID, teamID string, now func() time.Time) *Signer {
+	s := NewSigner(nil, keyID, teamID, now)
+	s.keys = keys
+	return s
 }
 
 // Expire drops the cached token, after APNs called it expired.

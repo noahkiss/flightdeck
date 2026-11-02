@@ -81,6 +81,11 @@ func (k KeyCommand) Run(ctx context.Context) (*ecdsa.PrivateKey, error) {
 	name := k.Argv[0]
 	err := cmd.Run()
 	defer stdout.wipe()
+	// A program that exits 0 but leaves a child holding stdout (an agent it started) has
+	// printed all it will: WaitDelay closed the pipe, and the output stands.
+	if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+		err = nil
+	}
 	switch {
 	case stdout.over:
 		return nil, fmt.Errorf("push key_command %s printed more than %d bytes", name, limit)
@@ -89,7 +94,11 @@ func (k KeyCommand) Run(ctx context.Context) (*ecdsa.PrivateKey, error) {
 	case err != nil:
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
-			err = fmt.Errorf("exit status %d", ee.ExitCode())
+			if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+				err = fmt.Errorf("killed by signal %v", ws.Signal())
+			} else {
+				err = fmt.Errorf("exit status %d", ee.ExitCode())
+			}
 		}
 		if line := stderrHint(stderr.buf.Bytes()); line != "" {
 			return nil, fmt.Errorf("push key_command %s: %v: %s", name, err, line)
@@ -174,19 +183,28 @@ func (c *capBuffer) wipe() {
 	c.buf.Reset()
 }
 
-// Keyring holds the key the command printed, and decides when the command may run again. Safe
-// for concurrent use.
+// Keyring holds the key the command printed, and decides when the command may run again. One
+// run at a time; a caller that asks during a run shares its result. Runs use the keyring's own
+// context, ended by Close, with the command's own timeout: never a caller's shorter deadline.
+// Safe for concurrent use.
 type Keyring struct {
 	run  func(context.Context) (*ecdsa.PrivateKey, error)
 	now  func() time.Time
 	logf func(string, ...any)
+	ctx  context.Context
+	stop context.CancelFunc
 
 	mu      sync.Mutex
-	running bool
+	waiters []chan keyResult // nil: no run is on
 	key     *ecdsa.PrivateKey
 	next    time.Time     // the earliest next run
 	wait    time.Duration // the current failure backoff
 	failing bool          // a failure has been logged since the last good run
+}
+
+type keyResult struct {
+	changed bool
+	err     error
 }
 
 // NewKeyring returns a keyring for the command. now and logf may be nil.
@@ -201,8 +219,12 @@ func newKeyring(run func(context.Context) (*ecdsa.PrivateKey, error), now func()
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	return &Keyring{run: run, now: now, logf: logf}
+	ctx, stop := context.WithCancel(context.Background())
+	return &Keyring{run: run, now: now, logf: logf, ctx: ctx, stop: stop}
 }
+
+// Close ends a run that is on and refuses later ones. A run it ends logs nothing.
+func (r *Keyring) Close() { r.stop() }
 
 // Key returns the key, or nil before the command printed one.
 func (r *Keyring) Key() *ecdsa.PrivateKey {
@@ -218,24 +240,56 @@ func (r *Keyring) Next() time.Duration {
 	return max(r.next.Sub(r.now()), 0)
 }
 
-// Load runs the command when its backoff allows, and keeps the key it prints. It reports
-// whether the key changed. A run skipped for the backoff, or while another run is on, returns
-// errKeyWait. A failure keeps the key held before, logs one line for the first failure since
-// the last good run, and doubles the wait before the next run.
+// Load runs the command when its backoff allows, and waits for it, or for ctx. It reports
+// whether the key changed. A run skipped for the backoff returns errKeyWait; a call during a
+// run waits for that run. A failure keeps the key held before, logs one line for the first
+// failure since the last good run, and doubles the wait before the next run.
 func (r *Keyring) Load(ctx context.Context) (changed bool, err error) {
-	r.mu.Lock()
-	if r.running || r.now().Before(r.next) {
-		r.mu.Unlock()
-		return false, errKeyWait
+	select {
+	case res := <-r.refresh():
+		return res.changed, res.err
+	case <-ctx.Done():
+		return false, ctx.Err()
 	}
-	r.running = true
-	r.mu.Unlock()
+}
 
-	key, err := r.run(ctx)
+// refresh starts a run when the backoff allows, without waiting for it. The channel gets the
+// run's result; at once errKeyWait inside the backoff.
+func (r *Keyring) refresh() <-chan keyResult {
+	ch := make(chan keyResult, 1)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	switch {
+	case r.waiters != nil:
+		r.waiters = append(r.waiters, ch)
+	case r.ctx.Err() != nil:
+		ch <- keyResult{err: r.ctx.Err()}
+	case r.now().Before(r.next):
+		ch <- keyResult{err: errKeyWait}
+	default:
+		r.waiters = []chan keyResult{ch}
+		go r.runOnce()
+	}
+	return ch
+}
+
+func (r *Keyring) runOnce() {
+	key, err := r.run(r.ctx)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.running = false
+	res := r.settle(key, err)
+	for _, w := range r.waiters {
+		w <- res
+	}
+	r.waiters = nil
+}
+
+// settle records a run's outcome. Called with mu held.
+func (r *Keyring) settle(key *ecdsa.PrivateKey, err error) keyResult {
+	if r.ctx.Err() != nil {
+		return keyResult{err: r.ctx.Err()} // closing: no log, no backoff
+	}
 	if err != nil {
 		r.wait = min(max(2*r.wait, keyRetryFirst), keyRetryMax)
 		r.next = r.now().Add(r.wait)
@@ -247,14 +301,16 @@ func (r *Keyring) Load(ctx context.Context) (changed bool, err error) {
 			}
 			r.logf("%s: %v; trying again in %v, backing off to %v (docs/push.md)", state, err, r.wait, keyRetryMax)
 		}
-		return false, err
+		return keyResult{err: err}
 	}
 	if r.failing {
 		r.logf("push: the key command printed a key")
 	}
 	r.failing, r.wait = false, 0
 	r.next = r.now().Add(keyRerunAfter)
-	changed = r.key == nil || !r.key.Equal(key)
-	r.key = key
-	return changed, nil
+	changed := r.key == nil || !r.key.Equal(key)
+	if changed {
+		r.key = key
+	}
+	return keyResult{changed: changed}
 }

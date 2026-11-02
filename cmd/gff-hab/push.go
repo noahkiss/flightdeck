@@ -81,7 +81,7 @@ func newPushService(ps pushSetup, store *structure.Store, agents *harness.Store)
 	sender := ps.sender
 	if sender == nil {
 		s.keys = push.NewKeyring(push.KeyCommand{Argv: cfg.KeyCommand}, nil, ps.logf)
-		sender = push.NewClient(push.ClientConfig{Signer: push.NewSigner(nil, cfg.KeyID, cfg.TeamID, nil), Keys: s.keys, Topic: cfg.Topic})
+		sender = push.NewClient(push.ClientConfig{Signer: push.NewKeyringSigner(s.keys, cfg.KeyID, cfg.TeamID, nil), Keys: s.keys, Topic: cfg.Topic})
 	}
 	tokens, err := push.OpenStore(filepath.Join(ps.state, "push"), nil)
 	if err != nil {
@@ -107,7 +107,7 @@ func newPushService(ps pushSetup, store *structure.Store, agents *harness.Store)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	s.stop = func() { cancel(); <-done }
+	s.stop = func() { cancel(); s.keys.Close(); <-done }
 	go func() {
 		defer close(done)
 		for {

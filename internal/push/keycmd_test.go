@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -86,13 +88,45 @@ func TestKeyCommand(t *testing.T) {
 		}
 	}
 
+	// A timeout kills the whole group: the background child too, and at once, not after the
+	// 2 s WaitDelay that a child holding stdout would cost.
+	pidFile := filepath.Join(t.TempDir(), "pid")
 	start := time.Now()
-	_, err = KeyCommand{Argv: script(t, "sleep 20 &\nsleep 20\n"), Timeout: 300 * time.Millisecond}.Run(ctx)
+	_, err = KeyCommand{Argv: script(t, "sleep 20 &\necho $! > '"+pidFile+"'\nwait\n"), Timeout: 300 * time.Millisecond}.Run(ctx)
 	if err == nil || !strings.Contains(err.Error(), "ran past") {
 		t.Errorf("timeout: %v", err)
 	}
-	if d := time.Since(start); d > 5*time.Second {
+	if d := time.Since(start); d > 1500*time.Millisecond {
 		t.Errorf("timeout took %v", d)
+	}
+	b, _ := os.ReadFile(pidFile)
+	pid, perr := strconv.Atoi(strings.TrimSpace(string(b)))
+	if perr != nil {
+		t.Fatalf("pid file: %q", b)
+	}
+	gone := false
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if syscall.Kill(pid, 0) == syscall.ESRCH {
+			gone = true
+			break
+		}
+	}
+	if !gone {
+		syscall.Kill(pid, syscall.SIGKILL)
+		t.Error("the background child outlived the timeout")
+	}
+
+	// A command that exits 0 but leaves a child holding stdout (an agent it started): the key
+	// it printed stands.
+	got, err = KeyCommand{Argv: script(t, "sleep 4 &\ncat '"+keyPath+"'\n")}.Run(ctx)
+	if err != nil || got == nil || !got.Equal(k) {
+		t.Errorf("a child holding stdout: %v", err)
+	}
+
+	// A command killed by a signal says so.
+	_, err = KeyCommand{Argv: script(t, "kill -9 $$\n")}.Run(ctx)
+	if err == nil || !strings.Contains(err.Error(), "killed by signal") || strings.Contains(err.Error(), "-1") {
+		t.Errorf("signal: %v", err)
 	}
 
 	start = time.Now()
@@ -217,7 +251,7 @@ func TestClientReloadsRejectedKey(t *testing.T) {
 	keyPath := filepath.Join(dir, "k.pem")
 	logs := &logBuf{}
 	ring := NewKeyring(KeyCommand{Argv: []string{"/bin/cat", keyPath}}, r.clock.Now, logs.logf)
-	c := NewClient(ClientConfig{Signer: NewSigner(nil, testKeyID, testTeamID, r.clock.Now), Keys: ring, Topic: testTopic, HTTP: r.httpClient,
+	c := NewClient(ClientConfig{Signer: NewKeyringSigner(ring, testKeyID, testTeamID, r.clock.Now), Keys: ring, Topic: testTopic, HTTP: r.httpClient,
 		Hosts: map[string]string{Production: r.prod.srv.URL, Development: r.dev.srv.URL}})
 	tok := strings.Repeat("05", 32)
 	msg := Message{Token: tok, Environment: Production, Payload: []byte(`{}`)}
@@ -259,5 +293,128 @@ func TestClientReloadsRejectedKey(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "printed a key") {
 		t.Errorf("log: %q", logs.String())
+	}
+}
+
+// TestKeyringOwnContext: a run started for a send with a short deadline goes on past it in the
+// keyring's own context: the send gives up, the run ends, the key changes, nothing is logged as
+// a failure, and the next send uses the new key.
+func TestKeyringOwnContext(t *testing.T) {
+	k1, _ := testKey(t)
+	k2, _ := testKey(t)
+	logs := &logBuf{}
+	release := make(chan struct{})
+	first := true
+	r := newKeyring(func(ctx context.Context) (*ecdsa.PrivateKey, error) {
+		if first {
+			first = false
+			return k1, nil
+		}
+		select {
+		case <-release:
+			return k2, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}, nil, logs.logf)
+	defer r.Close()
+	if _, err := r.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	r.next = time.Time{} // past the 5-minute hold
+	r.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := r.Load(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("short deadline: %v", err)
+	}
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for r.Key().Equal(k1) && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !r.Key().Equal(k2) || logs.String() != "" {
+		t.Fatalf("after the run: new key %v, log %q", r.Key().Equal(k2), logs.String())
+	}
+}
+
+// TestKeyringCloseDuringRun: Close ends a run that is on; it logs nothing and sets no backoff.
+func TestKeyringCloseDuringRun(t *testing.T) {
+	logs := &logBuf{}
+	started := make(chan struct{})
+	r := newKeyring(func(ctx context.Context) (*ecdsa.PrivateKey, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, errors.New("push key_command x: killed by signal killed")
+	}, nil, logs.logf)
+	done := make(chan error, 1)
+	go func() { _, err := r.Load(context.Background()); done <- err }()
+	<-started
+	r.Close()
+	if err := <-done; err == nil {
+		t.Fatal("a closed run gave a key")
+	}
+	if logs.String() != "" || r.Next() != 0 {
+		t.Fatalf("log %q, next %v", logs.String(), r.Next())
+	}
+	if _, err := r.Load(context.Background()); err == nil {
+		t.Fatal("a run after Close")
+	}
+}
+
+// TestSignerFollowsKeyring: a keyring signer signs with the keyring's current key at each
+// Token. Sends racing a key change never put the older key back: once the change is in, every
+// token verifies with the new key.
+func TestSignerFollowsKeyring(t *testing.T) {
+	k1, _ := testKey(t)
+	k2, _ := testKey(t)
+	c := newClock()
+	var mu sync.Mutex
+	next := k1
+	r := newKeyring(func(context.Context) (*ecdsa.PrivateKey, error) { mu.Lock(); defer mu.Unlock(); return next, nil }, c.Now, nil)
+	defer r.Close()
+	s := NewKeyringSigner(r, testKeyID, testTeamID, c.Now)
+	if _, err := s.Token(); !errors.Is(err, ErrNoKey) {
+		t.Fatalf("before a key: %v", err)
+	}
+	r.Load(context.Background())
+	tok, err := s.Token()
+	if _, _, _, ok := checkJWT(&k1.PublicKey, tok); err != nil || !ok {
+		t.Fatalf("first key: %v", err)
+	}
+	var wg sync.WaitGroup
+	stopc := make(chan struct{})
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stopc:
+					return
+				default:
+					s.Token()
+				}
+			}
+		}()
+	}
+	mu.Lock()
+	next = k2
+	mu.Unlock()
+	c.Add(keyRerunAfter)
+	if changed, err := r.Load(context.Background()); !changed || err != nil {
+		t.Fatalf("second key: %v %v", changed, err)
+	}
+	for range 200 {
+		tok, _ := s.Token()
+		if _, _, _, ok := checkJWT(&k2.PublicKey, tok); !ok {
+			t.Fatal("a token signed with the older key after the change")
+		}
+	}
+	close(stopc)
+	wg.Wait()
+	if tok, _ := s.Token(); func() bool { _, _, _, ok := checkJWT(&k2.PublicKey, tok); return !ok }() {
+		t.Fatal("the older key came back")
 	}
 }
