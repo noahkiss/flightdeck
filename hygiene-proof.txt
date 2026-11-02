@@ -1,0 +1,3 @@
+Hygiene acceptance proof. Made-up values only.
+host 10.250.250.250
+name zzproof-test.ts.net
