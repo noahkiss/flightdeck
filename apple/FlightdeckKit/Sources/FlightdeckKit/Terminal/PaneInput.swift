@@ -29,9 +29,9 @@ public struct InputDropped: Error, CustomStringConvertible, Sendable {
 /// could reach the hab in either order.
 ///
 /// When a call fails, the input stops at the failed call: nothing queued behind it is
-/// sent, and the pump reports once. One exception: when the dropped bytes held the end
-/// of a bracketed paste, the end marker is kept and sent next, so the program does not
-/// stay in paste mode. A stray end marker is harmless.
+/// sent, and the pump reports once. One exception: when the pane may be left inside a
+/// bracketed paste (the hab took the failed call or not), an end marker is sent next, so
+/// the program does not stay in paste mode.
 public final class PaneInputPump: @unchecked Sendable {
     public typealias Send = @Sendable (Data) async throws -> Void
     public typealias OnError = @Sendable (InputDropped) -> Void
@@ -41,6 +41,10 @@ public final class PaneInputPump: @unchecked Sendable {
     private var running = false
     /// True while `pending` starts with an end marker the pump owes the pane.
     private var owesEnd = false
+    /// Whether the bytes the hab took so far leave the pane inside a bracketed paste, and
+    /// their last few bytes, so a marker cut by a batch boundary is still seen.
+    private var inPaste = false
+    private var carry = Data()
     private let send: Send
     private var onError: OnError
     /// Bytes per `pane.input` call at most.
@@ -97,14 +101,22 @@ public final class PaneInputPump: @unchecked Sendable {
             guard let next else { return }
             do {
                 try await send(next.batch)
+                lock.withLock {
+                    let seen = carry + next.batch
+                    inPaste = Self.inPaste(after: seen, from: inPaste)
+                    carry = Data(seen.suffix(Self.pasteEnd.count - 1))
+                }
             } catch {
                 // A failed call is not sent again: whether the hab wrote it is unknown.
                 // What waits behind it goes too, so nothing lands after a gap.
                 let (dropped, stop, report): (Int, Bool, OnError) = lock.withLock {
-                    // A marker cut by the batch boundary still counts.
-                    let tail = next.batch.suffix(Self.pasteEnd.count - 1) + pending
+                    // The hab took the failed call whole or not at all. If either way leaves
+                    // the pane inside a paste, the pump owes it an end marker.
+                    let after = Self.inPaste(after: carry + next.batch, from: inPaste)
+                    let endLost = next.owed || inPaste || after
+                    inPaste = false
+                    carry = Data()
                     let n = pending.count
-                    let endLost = next.owed || tail.range(of: Self.pasteEnd) != nil
                     pending = Data()
                     if endLost {
                         pending = Self.pasteEnd
@@ -122,6 +134,19 @@ public final class PaneInputPump: @unchecked Sendable {
                 }
                 if stop { return }
             }
+        }
+    }
+
+    /// Whether the pane is inside a bracketed paste after `data`, given whether it was
+    /// before: the last marker in `data` decides.
+    static func inPaste(after data: Data, from before: Bool) -> Bool {
+        let start = data.range(of: pasteStart, options: .backwards)?.lowerBound
+        let end = data.range(of: pasteEnd, options: .backwards)?.lowerBound
+        switch (start, end) {
+        case (nil, nil): return before
+        case (.some, nil): return true
+        case (nil, .some): return false
+        case let (s?, e?): return s > e
         }
     }
 }

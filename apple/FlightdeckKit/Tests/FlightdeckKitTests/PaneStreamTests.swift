@@ -331,6 +331,33 @@ final class PaneStreamTests: XCTestCase {
         XCTAssertEqual(TerminalModel.inputNoticeText(drops.withLock { $0[0] }), "Some input was not sent.")
     }
 
+    /// The last batch of a bracketed paste fails: the earlier batches opened the paste, so
+    /// the end marker goes next. A small paste that fails whole leaves nothing open, so no
+    /// marker follows it.
+    func testDropOwesEndMarkerOnlyForAnOpenPaste() async {
+        let sent = OSAllocatedUnfairLock<[Data]>(initialState: [])
+        let failOn = OSAllocatedUnfairLock<Set<Int>>(initialState: [3])
+        let pump = PaneInputPump(send: { d in
+            let n = sent.withLock { s -> Int in
+                s.append(d)
+                return s.count
+            }
+            if failOn.withLock({ $0.contains(n) }) { throw ConnectionClosed(detail: "gone") }
+        })
+        let body = Data(repeating: 0x41, count: 2 * PaneInputPump.maxBatch + 100)
+        pump.enqueue(PaneInputPump.pasteStart + body + PaneInputPump.pasteEnd)
+        await eventually("marker after the failed last batch") { sent.withLock { $0.count } == 4 }
+        XCTAssertTrue(sent.withLock { $0[2] }.range(of: PaneInputPump.pasteEnd) != nil, "the failed batch held the end")
+        XCTAssertEqual(sent.withLock { $0[3] }, PaneInputPump.pasteEnd)
+
+        failOn.withLock { $0 = [5] }
+        pump.enqueue(PaneInputPump.pasteStart + Data("hi".utf8) + PaneInputPump.pasteEnd)
+        await eventually("small paste sent") { sent.withLock { $0.count } == 5 }
+        pump.enqueue(Data("x".utf8))
+        await eventually("next input") { sent.withLock { $0.count } == 6 }
+        XCTAssertEqual(sent.withLock { $0[5] }, Data("x".utf8), "no marker after a paste that failed whole")
+    }
+
     /// A write that makes no progress still ends the connection after the liveness window.
     /// The pump drops what waits behind the failed call and reports once. The paste was
     /// bracketed, so its end marker is kept: after the reconnect it goes out first, then the
