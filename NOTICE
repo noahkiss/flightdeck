@@ -25,6 +25,7 @@ Contents
   github.com/remyoudompheng/bigfft
   go.mitchellh.com/libghostty
   golang.org/x/sys
+  golang.org/x/text
   modernc.org/libc
   modernc.org/mathutil
   modernc.org/memory
@@ -583,6 +584,19 @@ In: gff, gff-hab, gff-hab-holder
 (The same text as Go LICENSE above.)
 
 --- golang.org/x/sys/PATENTS
+(The same text as Go PATENTS above.)
+
+==============================================================================
+golang.org/x/text
+Version: v0.43.0
+Source: https://pkg.go.dev/golang.org/x/text
+Licence: see the text below
+In: gff
+
+--- golang.org/x/text/LICENSE
+(The same text as Go LICENSE above.)
+
+--- golang.org/x/text/PATENTS
 (The same text as Go PATENTS above.)
 
 ==============================================================================
