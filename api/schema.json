@@ -4455,10 +4455,6 @@
             "type": "string",
             "description": "The new session's pane id."
           },
-          "seed_problem": {
-            "type": "string",
-            "description": "Why the seed could not be queued; the session runs without it."
-          },
           "session": {
             "type": "string",
             "description": "The new session's id on the target hab."
@@ -7041,10 +7037,6 @@
           "pane": {
             "type": "string",
             "description": "Pane id."
-          },
-          "seed_problem": {
-            "type": "string",
-            "description": "Why the seed was not queued; the session runs without it."
           },
           "seq": {
             "type": "integer",

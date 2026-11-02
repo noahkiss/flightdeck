@@ -8,13 +8,12 @@
     "from": "from-4",
     "id": "id-3",
     "kind": "setup",
-    "reason": "reason-26",
+    "reason": "reason-25",
     "record": true,
     "result": {
       "host": "host-21",
       "name": "name-23",
       "pane": "pane-24",
-      "seed_problem": "seed_problem-25",
       "session": "session-22",
       "x_unknown_field": "later"
     },
@@ -39,9 +38,9 @@
     "state": "unknown",
     "x_unknown_field": "later"
   },
-  "id": "id-29",
-  "revision": 27,
-  "seq": 28,
+  "id": "id-28",
+  "revision": 26,
+  "seq": 27,
   "type": "confirm.closed",
   "x_unknown_field": "later",
   "x_unknown_object": {

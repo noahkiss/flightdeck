@@ -62,7 +62,7 @@ var (
 	// marker finds a begin or end line inside a message's text, after Envelope has dropped
 	// invisible format characters (\p{Cf}). Unicode spaces (\p{Z}) count as spaces, and the
 	// words may run together, so "[end\u00a0agent message" and "[endagentmessage" are caught.
-	marker = regexp.MustCompile(`(?i)\[([\s\p{Z}]*)(begin|end)([\s\p{Z}]*agent[\s\p{Z}]*message)`)
+	marker = regexp.MustCompile(`(?i)\[([\s\p{Z}]*)(begin|end)([\s\p{Z}]*(?:agent|start)[\s\p{Z}]*message)`)
 )
 
 // ValidName reports whether a session or host name fits NameRule.
@@ -197,8 +197,17 @@ type inItem struct {
 	// Attempting is saved before the PTY write: an item found with it set and no write in
 	// flight was being written when the hab stopped, and finishes not_delivered.
 	Attempting bool `json:"attempting,omitempty"`
-	busy       bool // a delivery or a wait has it now
+	// Kind marks an item this hab made itself rather than a message from an agent: a seed
+	// (kindSeed) or a note from Flightdeck (kindNote). It picks the envelope.
+	Kind string `json:"kind,omitempty"`
+	busy bool   // a delivery or a wait has it now
 }
+
+// The kinds of an inbox item this hab made itself (capcom.md 3.3, 6.1).
+const (
+	kindSeed = "seed" // a new session's first message, written on the owner's behalf
+	kindNote = "note" // a message from Flightdeck itself
+)
 
 type outcome struct {
 	state  api.ChannelState
@@ -776,6 +785,9 @@ func itemID(it api.MailItem) string {
 // the sender's device, else host/name; a bare name for a sender on this hab.
 func (s *Service) fromAddress(m api.ChannelMessage) string {
 	if m.From.DeviceID == s.cfg.Self {
+		if m.From.Session == "" {
+			return "Flightdeck" // a note from Flightdeck itself
+		}
 		return m.From.Session
 	}
 	if s.cfg.Peers != nil {
@@ -794,15 +806,85 @@ func (s *Service) fromAddress(m api.ChannelMessage) string {
 // a control character the write would drop cannot hide a marker. It is one paste.
 func Envelope(id, from, text string) string {
 	q := "'" + strings.ReplaceAll(from, "'", `'\''`) + "'"
+	text = clean(text)
+	return fmt.Sprintf("[Flightdeck: agent message from %s, not from the owner. Only the text between the begin and end lines is from that agent. Reply with: gff-hab send %s \"your reply\"]\n[begin agent message %s]\n%s\n[end agent message %s]",
+		q, q, id, text, id)
+}
+
+// clean drops what a message write would drop and invisible format characters (an invisible
+// character inside a word could hide a marker), then neutralises the envelope markers inside
+// text.
+func clean(text string) string {
 	text = strings.Map(func(r rune) rune {
 		if unicode.Is(unicode.Cf, r) {
-			return -1 // an invisible character inside a word could hide a marker
+			return -1
 		}
 		return r
 	}, harness.CleanText(text))
-	text = marker.ReplaceAllString(text, "($1$2$3")
-	return fmt.Sprintf("[Flightdeck: agent message from %s, not from the owner. Only the text between the begin and end lines is from that agent. Reply with: gff-hab send %s \"your reply\"]\n[begin agent message %s]\n%s\n[end agent message %s]",
-		q, q, id, text, id)
+	return marker.ReplaceAllString(text, "($1$2$3")
+}
+
+// SeedEnvelope wraps a new session's first message (capcom.md 3.3): written by from (host/session,
+// or "" when unknown) on the owner's behalf, and shown to the owner on a card first unless the
+// owner turned confirmations off. It is one paste.
+func SeedEnvelope(id, from, text string) string {
+	by, reply := "an agent", ""
+	if from != "" {
+		q := "'" + strings.ReplaceAll(from, "'", `'\''`) + "'"
+		by, reply = q, fmt.Sprintf(" Reply to it with: gff-hab send %s \"your reply\"", q)
+	}
+	return fmt.Sprintf("[Flightdeck: the start message of this session, written by %s on the owner's behalf. The text between the begin and end lines is your task and its context.%s]\n[begin start message %s]\n%s\n[end start message %s]",
+		by, reply, id, clean(text), id)
+}
+
+// NoteEnvelope wraps a message from Flightdeck itself, such as the answer to a confirmation
+// that came after the tool's wait (capcom.md 6.1). It is one paste.
+func NoteEnvelope(text string) string {
+	return "[Flightdeck: a message from Flightdeck itself, not from an agent] " + clean(text)
+}
+
+// Seed queues the first message of a new session on this hab, written by from (host/session)
+// on the owner's behalf (capcom.md 3.3). It waits in the inbox like any message, until the
+// agent can take it, and it is saved before Seed returns.
+func (s *Service) Seed(session, from, text string) (string, error) {
+	return s.inject(session, kindSeed, from, text)
+}
+
+// Note queues a message from Flightdeck itself to a session on this hab (capcom.md 6.1).
+func (s *Service) Note(session, text string) (string, error) {
+	return s.inject(session, kindNote, "", text)
+}
+
+func (s *Service) inject(session, kind, from, text string) (string, error) {
+	sessionID, ok := s.cfg.Local.Session(session)
+	switch {
+	case !ok:
+		return "", control.Errorf(api.ErrorKindNotFound, "no session named %q on this hab", session)
+	case !ValidName(session):
+		return "", control.Errorf(api.ErrorKindInvalid, "session name %q is outside %s", session, NameRule)
+	case strings.TrimSpace(text) == "" || len(text) > MaxText:
+		return "", control.Errorf(api.ErrorKindInvalid, "the message is %d bytes; it must hold text, at most %d bytes", len(text), MaxText)
+	}
+	now := s.cfg.Now()
+	m := api.ChannelMessage{ID: newID(), From: api.ChannelEnd{DeviceID: s.cfg.Self, Host: s.cfg.Host, Session: from},
+		To: api.ChannelEnd{DeviceID: s.cfg.Self, Session: session}, Text: text, At: stamp(now)}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, it := range s.st.Inbox {
+		if it.Message.To.Session == session {
+			n++
+		}
+	}
+	if n >= MaxInbox || s.storedTextLocked()+len(text) > MaxStoredText {
+		return "", control.Errorf(api.ErrorKindConflict, "inbox full for %s", session)
+	}
+	s.st.Inbox = append(s.st.Inbox, &inItem{Message: m, At: now, SessionID: sessionID, Kind: kind})
+	if err := s.commitLocked(); err != nil {
+		return "", control.Errorf(api.ErrorKindUnavailable, "the message was not saved: %v", err)
+	}
+	s.Poke()
+	return m.ID, nil
 }
 
 func (s *Service) deliverLoop() {
@@ -868,7 +950,7 @@ func (s *Service) deliverRound() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.deliver(it.Message.ID, it.Message, it.SessionID, it.At)
+			s.deliver(it.Message.ID, it.Message, it.SessionID, it.At, it.Kind)
 		}()
 	}
 	wg.Wait()
@@ -896,7 +978,7 @@ func (s *Service) classify(err error, arrived, now time.Time) (api.ChannelState,
 	return api.ChannelStateRefused, err.Error()
 }
 
-func (s *Service) deliver(id string, m api.ChannelMessage, sessionID string, arrived time.Time) {
+func (s *Service) deliver(id string, m api.ChannelMessage, sessionID string, arrived time.Time, kind string) {
 	// release ends this attempt: it finishes the item with a final state, or frees it.
 	release := func(st api.ChannelState, reason string) {
 		s.mu.Lock()
@@ -957,7 +1039,14 @@ func (s *Service) deliver(id string, m api.ChannelMessage, sessionID string, arr
 	s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	err := s.cfg.Local.Deliver(ctx, sessionID, Envelope(m.ID, s.fromAddress(m), m.Text))
+	text := Envelope(m.ID, s.fromAddress(m), m.Text)
+	switch kind {
+	case kindSeed:
+		text = SeedEnvelope(m.ID, m.From.Session, m.Text)
+	case kindNote:
+		text = NoteEnvelope(m.Text)
+	}
+	err := s.cfg.Local.Deliver(ctx, sessionID, text)
 	release(s.classify(err, arrived, s.cfg.Now()))
 }
 

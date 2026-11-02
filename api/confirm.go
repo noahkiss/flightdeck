@@ -36,11 +36,10 @@ type ConfirmSetup struct {
 
 // ConfirmResult is what a finished start made.
 type ConfirmResult struct {
-	Host        string `json:"host" doc:"The target hab, as this hab labels it."`
-	Session     string `json:"session" doc:"The new session's id on the target hab."`
-	Name        string `json:"name,omitempty" doc:"The new session's name."`
-	Pane        string `json:"pane" doc:"The new session's pane id."`
-	SeedProblem string `json:"seed_problem,omitempty" doc:"Why the seed could not be queued; the session runs without it."`
+	Host    string `json:"host" doc:"The target hab, as this hab labels it."`
+	Session string `json:"session" doc:"The new session's id on the target hab."`
+	Name    string `json:"name,omitempty" doc:"The new session's name."`
+	Pane    string `json:"pane" doc:"The new session's pane id."`
 }
 
 // Confirmation is one start or set-up an agent asked for: an open question to the user, or,

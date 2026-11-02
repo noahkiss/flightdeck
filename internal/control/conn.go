@@ -489,6 +489,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleReads(m)
 		return
 	}
+	if isConfirmMethod(m.Method) {
+		c.handleConfirm(m)
+		return
+	}
 	if strings.HasPrefix(m.Method, "worktree.") {
 		c.handleWorktree(m)
 		return
@@ -1304,22 +1308,14 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
 		defer cancel()
-		key, bare := p.IdempotencyKey, p
-		bare.IdempotencyKey, bare.Cols, bare.Rows = "", 0, 0 // a retry may come from a rotated screen
-		res, e := c.s.idem(ctx, m.Method, key, bare, func() (any, *Error) {
-			session, pane, err := c.s.cfg.Actions.CreateSession(ctx, p)
-			if err != nil {
-				return nil, actionErr(m.Method, err)
-			}
+		made, e := c.s.createIdem(ctx, p, func(pane string) {
 			if c.s.cfg.Size != nil {
 				c.s.cfg.Size.Created(c.clientID, pane) // the creator owns the new pane (spec 6.5)
 			}
-			return api.SessionCreated{Session: session, Pane: pane}, nil
 		})
 		if e != nil {
 			return nil, e
 		}
-		made := res.(api.SessionCreated)
 		made.Seq = s
 		return made, nil
 	case "command.list":

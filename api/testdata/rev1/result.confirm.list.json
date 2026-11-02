@@ -9,13 +9,12 @@
       "from": "from-5",
       "id": "id-4",
       "kind": "setup",
-      "reason": "reason-27",
+      "reason": "reason-26",
       "record": true,
       "result": {
         "host": "host-22",
         "name": "name-24",
         "pane": "pane-25",
-        "seed_problem": "seed_problem-26",
         "session": "session-23",
         "x_unknown_field": "later"
       },

@@ -29,9 +29,6 @@ type SessionCreated struct {
 	Seq
 	Session string `json:"session" doc:"Session id."`
 	Pane    string `json:"pane" doc:"Pane id."`
-	// SeedProblem is set when a create with a seed started the session but could not queue
-	// the seed.
-	SeedProblem string `json:"seed_problem,omitempty" doc:"Why the seed was not queued; the session runs without it."`
 }
 
 // SessionRef names one session.

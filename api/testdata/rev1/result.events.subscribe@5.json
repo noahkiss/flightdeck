@@ -51,13 +51,12 @@
       "from": "from-58",
       "id": "id-57",
       "kind": "setup",
-      "reason": "reason-80",
+      "reason": "reason-79",
       "record": true,
       "result": {
         "host": "host-75",
         "name": "name-77",
         "pane": "pane-78",
-        "seed_problem": "seed_problem-79",
         "session": "session-76",
         "x_unknown_field": "later"
       },

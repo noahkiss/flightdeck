@@ -1531,8 +1531,6 @@ public struct ConfirmResult: Codable, Sendable, Hashable {
     public var name: String?
     /// The new session's pane id.
     public var pane: String
-    /// Why the seed could not be queued; the session runs without it.
-    public var seedProblem: String?
     /// The new session's id on the target hab.
     public var session: String
 
@@ -1540,15 +1538,13 @@ public struct ConfirmResult: Codable, Sendable, Hashable {
         case host = "host"
         case name = "name"
         case pane = "pane"
-        case seedProblem = "seed_problem"
         case session = "session"
     }
 
-    public init(host: String, name: String? = nil, pane: String, seedProblem: String? = nil, session: String) {
+    public init(host: String, name: String? = nil, pane: String, session: String) {
         self.host = host
         self.name = name
         self.pane = pane
-        self.seedProblem = seedProblem
         self.session = session
     }
 }
@@ -3987,8 +3983,6 @@ public struct SessionCreateParams: Codable, Sendable, Hashable {
 public struct SessionCreated: Codable, Sendable, Hashable {
     /// Pane id.
     public var pane: String
-    /// Why the seed was not queued; the session runs without it.
-    public var seedProblem: String?
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
     /// Session id.
@@ -3996,14 +3990,12 @@ public struct SessionCreated: Codable, Sendable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case pane = "pane"
-        case seedProblem = "seed_problem"
         case seq = "seq"
         case session = "session"
     }
 
-    public init(pane: String, seedProblem: String? = nil, seq: UInt64, session: String) {
+    public init(pane: String, seq: UInt64, session: String) {
         self.pane = pane
-        self.seedProblem = seedProblem
         self.seq = seq
         self.session = session
     }
