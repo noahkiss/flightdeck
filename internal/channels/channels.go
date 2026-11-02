@@ -66,7 +66,7 @@ var (
 	// marker finds a begin or end line inside a message's text, after Envelope has dropped
 	// invisible format characters (\p{Cf}). Unicode spaces (\p{Z}) count as spaces, and the
 	// words may run together, so "[end\u00a0agent message" and "[endagentmessage" are caught.
-	marker = regexp.MustCompile(`(?i)\[([\s\p{Z}]*)(begin|end)([\s\p{Z}]*(?:agent|start)[\s\p{Z}]*message)`)
+	marker = regexp.MustCompile(`(?i)\[([\s\p{Z}]*)(begin|end)([\s\p{Z}]*(?:agent|start|round)[\s\p{Z}]*message)`)
 )
 
 // ValidName reports whether a session or host name fits NameRule.
@@ -829,6 +829,23 @@ func clean(text string) string {
 		return r
 	}, harness.CleanText(text))
 	return marker.ReplaceAllString(text, "($1$2$3")
+}
+
+// RoundEnvelope wraps a round's prompt for a resume or fork run (rounds.md 5, 5.1): the text
+// is from round name, run number, for slot (empty for a run by hand), sent on the owner's
+// behalf. vars are the GFF_ROUND_* values (NAME=value), which a live session's environment
+// cannot carry. id is the run id. It is one paste.
+func RoundEnvelope(id, name string, number int, slot string, vars []string, text string) string {
+	when := "run by hand"
+	if slot != "" {
+		when = "slot " + slot
+	}
+	v := ""
+	if len(vars) > 0 {
+		v = " Its values: " + strings.Join(vars, " ") + "."
+	}
+	return fmt.Sprintf("[Flightdeck: the prompt of round '%s', run %d, %s, sent by Flightdeck on the owner's schedule.%s The text between the begin and end lines is the round's prompt.]\n[begin round message %s]\n%s\n[end round message %s]",
+		name, number, when, v, id, clean(text), id)
 }
 
 // SeedEnvelope wraps a new session's first message (capcom.md 3.3): written by from (host/session,

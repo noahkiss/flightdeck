@@ -119,6 +119,21 @@ func (a *agentService) unclaim(pane string) {
 // conflict; the hab queues nothing. One send at a time per pane: a second one while the first
 // has not started its turn (sendStart) is refused with conflict too.
 func (a *agentService) Send(ctx context.Context, client string, p api.SessionSendParams) error {
+	return a.sendGuarded(ctx, client, p, nil)
+}
+
+// sendHeld reports whether a send holds the pane until its turn starts.
+func (a *agentService) sendHeld(pane string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.sending[pane]
+}
+
+// sendGuarded is Send with guard, which runs once the pane is claimed and the agent's state
+// allows the send, before any byte is written: an error from it refuses the send. A round's
+// lock checks there that nobody uses the session (rounds.md 6), so no other send can come
+// between its check and its paste.
+func (a *agentService) sendGuarded(ctx context.Context, client string, p api.SessionSendParams, guard func(pane string) error) error {
 	typed := p.Text
 	var images, others []string // stored paths: images the harness may take as images, other files
 	if len(p.Attachments) > 0 {
@@ -156,6 +171,11 @@ func (a *agentService) Send(ctx context.Context, client string, p api.SessionSen
 	st, err := a.agents.CheckSend(ss.Pane)
 	if err != nil {
 		return agentErr(err)
+	}
+	if guard != nil {
+		if err := guard(ss.Pane); err != nil {
+			return err
+		}
 	}
 	if c, ok := a.opencodeClient(ss.Pane, st.Harness); ok {
 		// opencode reads every path with its own tools, images too (harness-adapters.md).

@@ -224,19 +224,19 @@ func TestRoundServiceChecks(t *testing.T) {
 		rs, _ := svc.Runs(api.RoundRunsParams{RoundRef: api.RoundRef{Name: "r"}})
 		return len(rs.Runs) == 1 && rs.Runs[0].State == api.RoundRunStateFailed && strings.Contains(rs.Runs[0].Reason, "no holder")
 	})
-	// A resume round is stored; its run fails until the lock is built (stage 5).
+	// A resume round whose target runs no agent waits for it, then ends skipped (stage 5).
 	target, err := svc.cfg.store.CreateSession(structure.SessionSpec{Name: "target", Pane: newUUID().String(), Index: -1, NewPane: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ps := api.RoundSpec{Name: "asks", Mode: api.RoundModeResume, Trigger: api.RoundTrigger{Kind: api.RoundTriggerKindManual},
-		Target: target.ID, Prompt: "triage"}
+		Target: target.ID, Prompt: "triage", WaitMS: 300}
 	if _, err := svc.Create(ctx, api.RoundCreateParams{Round: ps, RunNow: true}, ""); err != nil {
 		t.Fatal(err)
 	}
-	waitUntil(t, "the resume run to fail", func() bool {
+	waitUntil(t, "the resume run to be skipped", func() bool {
 		rs, _ := svc.Runs(api.RoundRunsParams{RoundRef: api.RoundRef{Name: "asks"}})
-		return len(rs.Runs) == 1 && rs.Runs[0].State == api.RoundRunStateFailed && strings.Contains(rs.Runs[0].Reason, reasonNoHarnessRuns)
+		return len(rs.Runs) == 1 && rs.Runs[0].State == api.RoundRunStateSkipped && rs.Runs[0].Reason == lockNoAgent
 	})
 	if err := svc.Delete(api.RoundRef{Name: "asks"}); err != nil {
 		t.Fatal(err)

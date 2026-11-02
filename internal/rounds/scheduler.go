@@ -46,7 +46,12 @@ const (
 	ReasonOncePassed   = "once trigger passed while paused"
 	ReasonOnceMissed   = "once trigger missed, catch_up skip"
 	ReasonFailurePause = "5 failed runs in a row"
+	ReasonTargetGone   = "target session gone"
 )
+
+// ErrTargetGone is the start error of a resume or fork run whose target session's record was
+// removed (rounds.md 10.1): the run ends skipped and the round completes, with one notice.
+var ErrTargetGone = errors.New("the target session is gone")
 
 // Clock is the scheduler's time source. Now is the wall clock. Mono is a monotonic reading
 // that stops while the host sleeps, as Go's monotonic clock does on Linux and macOS
@@ -87,6 +92,7 @@ const (
 	NoticeRunSucceeded NoticeKind = "run_succeeded" // notify = always only
 	NoticePaused       NoticeKind = "paused"        // the round paused itself
 	NoticeSkips        NoticeKind = "skips"         // SkipsNotice skips in a row
+	NoticeTargetGone   NoticeKind = "target_gone"   // the round completed: its target is gone
 )
 
 // Notice is a notice the scheduler wants raised. The round's notify setting is already
@@ -119,6 +125,9 @@ type RunUpdate struct {
 	Result string
 	// Network is set when the harness reported a network or sign-in error (rounds.md 8.3).
 	Network bool
+	// TargetGone ends a resume or fork run whose target session's record was removed: the
+	// round completes with ReasonTargetGone and one notice; the run counts for nothing.
+	TargetGone bool
 }
 
 // SchedulerConfig configures NewScheduler.
@@ -482,6 +491,11 @@ func (s *Scheduler) Create(r Round, createdBy string, runNow bool) (Entry, *Run,
 	}
 	s.evaluateLocked(now, prev, wake)
 	s.startLocked(now)
+	if run != nil {
+		// A copy: the live run changes under s.mu once it starts.
+		c := *run
+		run = &c
+	}
 	s.unlockAndFlush()
 	return e, run, err
 }
@@ -614,6 +628,10 @@ func (s *Scheduler) unlockAndFlush() {
 			continue
 		}
 		sid, err := s.cfg.Starter.Start(e.Round, run)
+		if errors.Is(err, ErrTargetGone) {
+			s.UpdateRun(run.ID, RunUpdate{State: RunSkipped, Reason: err.Error(), TargetGone: true})
+			continue
+		}
 		if err != nil {
 			s.UpdateRun(run.ID, RunUpdate{State: RunFailed, Reason: "start failed: " + err.Error()})
 			continue
@@ -954,6 +972,17 @@ func (s *Scheduler) endLocked(run *Run, u RunUpdate, now time.Time, internal boo
 
 	e, ok := s.store.Get(run.RoundID)
 	if !ok || internal {
+		return
+	}
+	if u.TargetGone {
+		ne, ok := s.setState(run.RoundID, func(st *RoundState) {
+			st.Completed, st.CompletedReason, st.NextSlot = true, ReasonTargetGone, nil
+		})
+		if ok && e.Round.Notify != NotifyNever && !e.State.Completed {
+			r := *run
+			s.notice(Notice{Kind: NoticeTargetGone, Round: ne, Run: &r,
+				Text: fmt.Sprintf("round %s completed: its target session is gone", e.Round.Name)})
+		}
 		return
 	}
 

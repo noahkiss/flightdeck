@@ -3,6 +3,7 @@ package rounds
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -1552,5 +1553,48 @@ func TestSchedulerRunNowCompleted(t *testing.T) {
 	}
 	if _, err := h.s.RunNow(e.Round.ID); !errors.Is(err, ErrRoundCompleted) {
 		t.Errorf("run now of a completed round: %v", err)
+	}
+}
+
+// TestTargetGone: a run whose target session is gone, at its start or while it waits, ends
+// skipped and completes its round, with one notice; notify = never asks for none. The skip
+// does not count.
+func TestTargetGone(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:00:00Z")
+	resume := func(name string, notify Notify) func(*Round) {
+		return func(r *Round) {
+			r.Mode, r.Project, r.Command, r.Target, r.Prompt, r.Notify = ModeResume, "", nil, "sess-1", "check", notify
+		}
+	}
+	a := h.round("a", "0 * * * *", resume("a", NotifyFailures))
+	b := h.round("b", "0 * * * *", resume("b", NotifyNever))
+	h.start.mu.Lock()
+	h.start.err = fmt.Errorf("resume: %w", ErrTargetGone)
+	h.start.mu.Unlock()
+	h.awake("2026-03-02T10:00:30Z")
+	for _, e := range []Entry{a, b} {
+		runs := h.runs(e.Round.ID)
+		if len(runs) != 1 || runs[0].State != RunSkipped || runs[0].Reason != "resume: "+ErrTargetGone.Error() {
+			t.Fatalf("%s runs: %+v", e.Round.Name, runs)
+		}
+		st := h.entry(e.Round.ID).State
+		if !st.Completed || st.CompletedReason != ReasonTargetGone || st.Skips != 0 || st.NextSlot != nil {
+			t.Errorf("%s state: %+v", e.Round.Name, st)
+		}
+	}
+	h.sink.mu.Lock()
+	defer h.sink.mu.Unlock()
+	var gone []Notice
+	for _, n := range h.sink.notices {
+		if n.Kind == NoticeTargetGone {
+			gone = append(gone, n)
+		}
+	}
+	if len(gone) != 1 || gone[0].Round.Round.ID != a.Round.ID {
+		t.Errorf("notices: %+v", gone)
+	}
+	h.awake("2026-03-02T12:00:30Z")
+	if n := len(h.runs(a.Round.ID)); n != 1 {
+		t.Errorf("a completed round ran again: %d runs", n)
 	}
 }

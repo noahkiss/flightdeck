@@ -312,27 +312,33 @@ func TestRoundWatchAlreadyExited(t *testing.T) {
 func TestRoundPruneKeepsLiveSessions(t *testing.T) {
 	state := t.TempDir()
 	e := seedRound(t, state)
-	holder := structure.NewFakeHolder(hpane("p1"), hpane("p2"))
+	holder := structure.NewFakeHolder(hpane("p1"), hpane("p2"), hpane("p3"))
 	code := 0
 	holder.Exit("p2", api.ExitStatus{Code: &code})
+	holder.Exit("p3", api.ExitStatus{Code: &code})
 	st, err := structure.Open(structure.Config{Dir: state, Holders: holder})
 	if err != nil {
 		t.Fatal(err)
 	}
 	live, _ := st.CreateSession(structure.SessionSpec{Name: "live", Pane: "p1", Index: -1})
-	done, _ := st.CreateSession(structure.SessionSpec{Name: "done", Pane: "p2", Index: -1})
+	// Only a session a run made goes with it: a resume run's target is the user's.
+	doneRun := rounds.NewID("run")
+	done, _ := st.CreateSession(structure.SessionSpec{Name: "done", Pane: "p2", Index: -1, Round: &api.SessionRound{Round: e.Round.ID, Run: doneRun}})
+	target, _ := st.CreateSession(structure.SessionSpec{Name: "target", Pane: "p3", Index: -1})
 	st.Close()
-	// More ended runs than the retention keeps, all older than KeepFor; runs 1 and 2 go.
+	// More ended runs than the retention keeps, all older than KeepFor; runs 1 to 3 go.
 	old := time.Now().Add(-rounds.KeepFor - 24*time.Hour)
 	var runs []rounds.Run
-	for n := 1; n <= rounds.KeepRuns+2; n++ {
+	for n := 1; n <= rounds.KeepRuns+3; n++ {
 		r := rounds.Run{ID: rounds.NewID("run"), Number: n, RoundID: e.Round.ID, Trigger: rounds.TriggerManual,
 			State: rounds.RunSucceeded, Created: old, EndedAt: &old}
 		switch n {
 		case 1:
 			r.State, r.SessionID = rounds.RunTakenOver, live.ID
 		case 2:
-			r.SessionID = done.ID
+			r.ID, r.SessionID = doneRun, done.ID
+		case 3:
+			r.SessionID = target.ID
 		}
 		runs = append(runs, r)
 	}
@@ -344,6 +350,9 @@ func TestRoundPruneKeepsLiveSessions(t *testing.T) {
 	}
 	if _, ok := sst.Session(done.ID); ok {
 		t.Error("an exited session stayed after its run was dropped")
+	}
+	if _, ok := sst.Session(target.ID); !ok {
+		t.Error("a session the run did not make (a resume target) was removed")
 	}
 	if got, _, _ := svc.store.Runs().Page(e.Round.ID, 0, 1000); len(got) != rounds.KeepRuns {
 		t.Errorf("%d runs kept", len(got))

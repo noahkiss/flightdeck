@@ -12,7 +12,7 @@ import (
 )
 
 // RoundState is the scheduler's view of one round, kept beside its definition in the rounds
-// store (rounds.md 7.7). The scheduler alone writes it.
+// store (rounds.md 7.7). The scheduler alone writes it, but for Target.
 type RoundState struct {
 	// NextSlot is the next slot the round runs at; nil when it has none (manual, a spent once,
 	// a completed round).
@@ -33,6 +33,16 @@ type RoundState struct {
 	// Completed is set once the round will never run again, with the reason.
 	Completed       bool   `json:"completed,omitempty"`
 	CompletedReason string `json:"completed_reason,omitempty"`
+	// Target is what gff-hab last saw of a resume or fork round's target: its harness and the
+	// harness's own session id. gff-hab writes it (not the scheduler), so a run can resume or
+	// fork a target whose program exited, after a restart too.
+	Target *TargetSeen `json:"target,omitempty"`
+}
+
+// TargetSeen is a target session's harness and native session id, as last seen live.
+type TargetSeen struct {
+	Harness string `json:"harness"`
+	Native  string `json:"native,omitempty"`
 }
 
 // Entry is one round in the store: its definition and its scheduler state.

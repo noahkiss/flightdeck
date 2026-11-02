@@ -1011,6 +1011,7 @@ func serve(args []string) error {
 	// holder link: a run is a session.
 	var roundsSvc *roundsService
 	var roundsCtl control.Rounds
+	var pushCtl control.Push = pushes
 	if lk != nil {
 		rset, err := loadRoundsSettings(cpath)
 		if err != nil {
@@ -1057,8 +1058,18 @@ func serve(args []string) error {
 			logf: logger.Printf,
 
 			agent: agents.Get,
-			send: func(ctx context.Context, session, text string) error {
-				return agentSvc.Send(ctx, "round", api.SessionSendParams{Session: session, Text: text})
+			send: func(ctx context.Context, session, text string, guard func(string) error) error {
+				return agentSvc.sendGuarded(ctx, "round", api.SessionSendParams{Session: session, Text: text}, guard)
+			},
+			sendHeld: agentSvc.sendHeld,
+			folder: func(ctx context.Context, session string) string {
+				if c := contentRef.Load(); c != nil {
+					return c.Folder(ctx, session)
+				}
+				return ""
+			},
+			resume: func(ctx context.Context, session string, p api.SessionCreateParams, cwd string) (string, error) {
+				return resumeExited(ctx, sa, session, p, cwd)
 			},
 			interrupt: agentSvc.interruptTurn,
 			result: func(ctx context.Context, session, kind, native string) (string, error) {
@@ -1099,6 +1110,7 @@ func serve(args []string) error {
 		roundsRef.Store(roundsSvc)
 		roundsCtl = roundsSvc
 		acts = roundActions{actions: sa, rounds: roundsSvc}
+		pushCtl = roundPush{Push: pushes, rounds: roundsSvc}
 		input = roundInput{Input: input, rounds: roundsSvc}
 		agentCalls = roundAgents{Agents: agentCalls, rounds: roundsSvc}
 		caps = append(caps, "rounds")
@@ -1126,7 +1138,7 @@ func serve(args []string) error {
 		Detect:      explain,
 		Peers:       pm,
 		Catalog:     cs,
-		Push:        pushes,
+		Push:        pushCtl,
 		Usage:       usageStore,
 		Content:     contents,
 		Channels:    chSvc,

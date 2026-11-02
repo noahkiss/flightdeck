@@ -219,7 +219,7 @@ func TestHarnessBusyRetry(t *testing.T) {
 	var mu sync.Mutex
 	sends := 0
 	rig := newHarnessRig(t, func(c *roundsConfig) {
-		c.send = func(context.Context, string, string) error {
+		c.send = func(context.Context, string, string, func(string) error) error {
 			mu.Lock()
 			defer mu.Unlock()
 			sends++
@@ -245,7 +245,7 @@ func TestHarnessSendEndsWithRun(t *testing.T) {
 	sendErr := make(chan error, 1)
 	started := make(chan struct{})
 	rig := newHarnessRig(t, func(c *roundsConfig) {
-		c.send = func(ctx context.Context, _, _ string) error {
+		c.send = func(ctx context.Context, _, _ string, _ func(string) error) error {
 			close(started)
 			<-ctx.Done()
 			sendErr <- ctx.Err()
@@ -281,7 +281,7 @@ func TestHarnessSendEndsWithRun(t *testing.T) {
 func TestHarnessNothingAfterClose(t *testing.T) {
 	sent := make(chan struct{}, 1)
 	rig := newHarnessRig(t, func(c *roundsConfig) {
-		c.send = func(context.Context, string, string) error { sent <- struct{}{}; return nil }
+		c.send = func(context.Context, string, string, func(string) error) error { sent <- struct{}{}; return nil }
 	})
 	rig.watch(phaseStarting)
 	rig.svc.Close()
@@ -371,7 +371,10 @@ func TestHarnessTrustBlocks(t *testing.T) {
 	screen := "Quick safety check: Is this a project you created or one you trust?\n❯ 1. Yes, I trust this folder\n  2. No, exit"
 	rig := newHarnessRig(t, func(c *roundsConfig) {
 		c.screen = func(string) (string, bool) { mu.Lock(); defer mu.Unlock(); return screen, true }
-		c.send = func(context.Context, string, string) error { t.Error("a send during the dialog"); return nil }
+		c.send = func(context.Context, string, string, func(string) error) error {
+			t.Error("a send during the dialog")
+			return nil
+		}
 	})
 	h := rig.watch(phaseStarting)
 	if u := rig.next(t); u.State != rounds.RunBlocked || u.Reason != reasonTrust {
@@ -409,7 +412,7 @@ func TestAdoptedTurn(t *testing.T) {
 		{[]api.ChatMessage{user, agent}, true, true},
 		{[]api.ChatMessage{agent, user}, true, false},
 	} {
-		if d, e := adoptedTurn(tc.msgs); d != tc.delivered || e != tc.ended {
+		if d, e := adoptedTurn(tc.msgs, ""); d != tc.delivered || e != tc.ended {
 			t.Errorf("%+v: delivered %v ended %v", tc.msgs, d, e)
 		}
 	}

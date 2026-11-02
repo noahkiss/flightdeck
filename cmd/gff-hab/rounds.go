@@ -36,7 +36,6 @@ const (
 	reasonTyped         = "a client typed into the run session"
 	reasonSent          = "a client sent the run session a message"
 	reasonClosed        = "a client closed the run's pane"
-	reasonNoHarnessRuns = "resume and fork rounds need the session lock, which this hab does not have yet (rounds.md 14, stage 5)"
 )
 
 // roundsCheckEvery is how often a run whose pane is on a holder the link has not reached yet is
@@ -162,8 +161,10 @@ type roundsConfig struct {
 	// reads that conversation once, for a run adopted after a restart; argv reads a process's
 	// arguments; screen reads a pane's visible text; lookHarness finds a harness's program
 	// (default exec.LookPath). ready is the readiness limit (default roundReady).
-	agent       func(pane string) (api.AgentState, bool)
-	send        func(ctx context.Context, session, text string) error
+	agent func(pane string) (api.AgentState, bool)
+	// send's guard, when set, runs once the pane is claimed for the send, before any byte is
+	// written; its error refuses the send (a resume run's lock, roundlock.go).
+	send        func(ctx context.Context, session, text string, guard func(pane string) error) error
 	interrupt   func(ctx context.Context, pane string) error
 	result      func(ctx context.Context, session, harness, native string) (string, error)
 	messages    func(ctx context.Context, session, harness, native string) ([]api.ChatMessage, error)
@@ -171,6 +172,14 @@ type roundsConfig struct {
 	screen      func(pane string) (string, bool)
 	lookHarness func(name string) (string, error)
 	ready       time.Duration
+
+	// Resume and fork runs (roundlock.go). sendHeld says whether a send holds a pane until its
+	// turn starts; folder is the folder a session works in ("" when unknown); resume starts an
+	// exited session's harness again in a new pane of the same session, as session.resume
+	// does, and returns the pane.
+	sendHeld func(pane string) bool
+	folder   func(ctx context.Context, session string) string
+	resume   func(ctx context.Context, session string, p api.SessionCreateParams, cwd string) (string, error)
 }
 
 // roundsService runs the rounds of one gff-hab.
@@ -187,6 +196,10 @@ type roundsService struct {
 	watches map[string]*runWatch // run id to its watch
 	byPane  map[string]string    // pane id to run id
 	pending map[string]rounds.Run
+	// inputAt is when a client last typed into a pane or sent its session a message; focus is,
+	// per session and client, when the client last reported it in focus (roundlock.go).
+	inputAt map[string]time.Time
+	focus   map[string]map[string]time.Time
 	// recheck is closed to stop the loop that looks at pending runs again; nil while none runs.
 	recheck chan struct{}
 	closed  bool
@@ -214,8 +227,19 @@ func newRounds(cfg roundsConfig) (*roundsService, error) {
 	if cfg.agent == nil {
 		cfg.agent = func(string) (api.AgentState, bool) { return api.AgentState{}, false }
 	}
+	if cfg.sendHeld == nil {
+		cfg.sendHeld = func(string) bool { return false }
+	}
+	if cfg.folder == nil {
+		cfg.folder = func(context.Context, string) string { return "" }
+	}
+	if cfg.resume == nil {
+		cfg.resume = func(context.Context, string, api.SessionCreateParams, string) (string, error) {
+			return "", control.Errorf(api.ErrorKindUnavailable, "this hab cannot resume sessions")
+		}
+	}
 	if cfg.send == nil {
-		cfg.send = func(context.Context, string, string) error {
+		cfg.send = func(context.Context, string, string, func(string) error) error {
 			return control.Errorf(api.ErrorKindUnavailable, "this hab has no harness adapters")
 		}
 	}
@@ -239,7 +263,8 @@ func newRounds(cfg roundsConfig) (*roundsService, error) {
 			"The rounds state file did not parse. gff-hab kept it beside the new one and started with no rounds.")
 	}
 	s := &roundsService{cfg: cfg, store: st, revs: map[string]uint64{}, watches: map[string]*runWatch{},
-		byPane: map[string]string{}, pending: map[string]rounds.Run{}, done: make(chan struct{})}
+		byPane: map[string]string{}, pending: map[string]rounds.Run{}, inputAt: map[string]time.Time{},
+		focus: map[string]map[string]time.Time{}, done: make(chan struct{})}
 	s.attachLostStarts()
 	for _, e := range st.List() {
 		s.revs[e.Round.ID] = 1
@@ -335,15 +360,15 @@ func (s *roundsService) Close() {
 // pane's exit, or the agent's turn.
 func (s *roundsService) Start(r rounds.Round, run rounds.Run) (string, error) {
 	harnessRun := r.Mode == rounds.ModeFresh && len(r.Command) == 0 && r.Harness != ""
-	if !harnessRun && (r.Mode != rounds.ModeFresh || len(r.Command) == 0) {
-		return "", errors.New(reasonNoHarnessRuns)
+	if !harnessRun && r.Mode == rounds.ModeFresh && len(r.Command) == 0 {
+		return "", errors.New("the round has neither a command nor a harness")
 	}
-	env := []string{"GFF_ROUND=" + r.ID, "GFF_ROUND_RUN=" + run.ID}
-	if run.Slot != nil {
-		env = append(env, "GFF_ROUND_SLOT="+run.Slot.UTC().Format(time.RFC3339))
-	}
-	if e, ok := s.store.Get(r.ID); ok && e.State.LastOK != nil {
-		env = append(env, "GFF_ROUND_LAST_OK="+e.State.LastOK.UTC().Format(time.RFC3339))
+	env := s.runEnv(r, run)
+	switch r.Mode {
+	case rounds.ModeResume:
+		return s.startResume(r, run, env)
+	case rounds.ModeFork:
+		return s.startFork(r, run, env)
 	}
 	if harnessRun {
 		return s.startHarness(r, run, env)
@@ -387,13 +412,25 @@ func (s *roundsService) watchWith(run rounds.Run, r rounds.Round, session, pane 
 		return false
 	}
 	s.watches[run.ID] = w
-	s.byPane[pane] = run.ID
+	if h == nil || h.phase != phaseLock {
+		s.byPane[pane] = run.ID
+	}
 	w.timer = time.AfterFunc(max(left, 0), func() { s.goBg(func() { s.timedOut(run.ID) }) })
 	s.mu.Unlock()
-	if st, ok := s.cfg.pane(pane); ok && st.Exited {
+	if st, ok := s.cfg.pane(pane); ok && st.Exited && (h == nil || h.phase != phaseLock) {
 		s.exited(pane, st.Exit)
 	}
 	return true
+}
+
+// dropLocked forgets a run's watch: its pane is the run's no more, unless another run holds
+// it (two resume rounds on one target). The caller holds s.mu.
+func (s *roundsService) dropLocked(w *runWatch) {
+	delete(s.watches, w.run.ID)
+	if s.byPane[w.pane] == w.run.ID {
+		delete(s.byPane, w.pane)
+	}
+	w.stopLocked()
 }
 
 // finish ends a watched run once: the first end wins, and later ones (an exit after a hang-up)
@@ -421,9 +458,7 @@ func (s *roundsService) endRun(runID string, u rounds.RunUpdate, turn bool) bool
 	if !s.goLocked(func() { s.update(runID, u) }) {
 		return false
 	}
-	delete(s.watches, runID)
-	delete(s.byPane, w.pane)
-	w.stopLocked()
+	s.dropLocked(w)
 	return true
 }
 
@@ -432,9 +467,7 @@ func (s *roundsService) unwatch(w *runWatch) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.watches[w.run.ID] == w {
-		delete(s.watches, w.run.ID)
-		delete(s.byPane, w.pane)
-		w.stopLocked()
+		s.dropLocked(w)
 	}
 }
 
@@ -569,6 +602,10 @@ func (s *roundsService) takeOverSession(session, reason string) {
 // session's pane still runs on a holder, so it is watched again; it exited meanwhile, so the
 // run ends by its exit; or the holder no longer has it, so the host restarted.
 func (s *roundsService) adopt(run rounds.Run) {
+	if e, ok := s.store.Get(run.RoundID); ok && e.Round.Mode == rounds.ModeResume {
+		s.adoptResumeRun(run, e.Round)
+		return
+	}
 	ss, ok := s.cfg.store.Session(run.SessionID)
 	if !ok || ss.Pane == "" {
 		s.update(run.ID, rounds.RunUpdate{State: rounds.RunFailed, Reason: reasonSessionGone, SessionID: run.SessionID})
@@ -584,6 +621,17 @@ func (s *roundsService) adopt(run rounds.Run) {
 		// Whether the prompt went in before the restart is not kept: adoptHarness reads the
 		// run's conversation for it.
 		h = &harnessWatch{kind: r.Harness, prompt: r.Prompt, phase: phaseTurn, blocked: run.State == rounds.RunBlocked}
+	}
+	if r.Mode == rounds.ModeFork {
+		// The fork's harness is its target's; its prompt is in the envelope.
+		kind := ""
+		if st, ok := s.cfg.agent(ss.Pane); ok {
+			kind = st.Harness
+		} else if ts, ok := s.cfg.store.Session(r.Target); ok {
+			kind = s.targetSeen(r.ID, ts).Harness
+		}
+		h = &harnessWatch{kind: kind, prompt: envelope(r, run, s.runEnv(r, run)), marker: envelopeMarker(run.ID),
+			phase: phaseTurn, blocked: run.State == rounds.RunBlocked}
 	}
 	if st, ok := s.cfg.pane(ss.Pane); ok && !st.Lost {
 		if h != nil {
@@ -605,6 +653,23 @@ func (s *roundsService) adopt(run rounds.Run) {
 	// A holder the link has not reached yet may have the pane: look again when a pane comes
 	// back, and every few seconds, until every holder is reached.
 	s.wait(run)
+}
+
+// adoptResumeRun adopts a resume run: its target gone completes the round; a target whose
+// holder the link has not reached yet is looked at again later; else adoptResume.
+func (s *roundsService) adoptResumeRun(run rounds.Run, r rounds.Round) {
+	ss, ok := s.cfg.store.Session(run.SessionID)
+	if !ok {
+		s.update(run.ID, rounds.RunUpdate{State: rounds.RunSkipped, Reason: rounds.ErrTargetGone.Error(), TargetGone: true, SessionID: run.SessionID})
+		return
+	}
+	if ss.Pane != "" && ss.State != api.SessionStateExited {
+		if st, ok := s.cfg.pane(ss.Pane); (!ok || st.Lost) && !s.cfg.complete() {
+			s.wait(run)
+			return
+		}
+	}
+	s.adoptResume(run, r, ss)
 }
 
 // wait keeps a run whose pane the link does not list now, and looks at it again when a pane
@@ -700,9 +765,7 @@ func (s *roundsService) RunChanged(r rounds.Run) {
 	s.mu.Lock()
 	w := s.watches[r.ID]
 	if w != nil {
-		delete(s.watches, r.ID)
-		delete(s.byPane, w.pane)
-		w.stopLocked()
+		s.dropLocked(w)
 	}
 	s.mu.Unlock()
 	s.bg.Go(func() { s.prune(r.RoundID) })
@@ -744,7 +807,8 @@ func (s *roundsService) prune(roundID string) {
 		if r.SessionID == "" {
 			continue
 		}
-		if ss, ok := s.cfg.store.Session(r.SessionID); ok && ss.State == api.SessionStateExited {
+		// A resume run's session is its target, the user's: only a session the run made goes.
+		if ss, ok := s.cfg.store.Session(r.SessionID); ok && ss.State == api.SessionStateExited && ss.Round != nil && ss.Round.Run == r.ID {
 			if err := s.cfg.store.CloseSession(ss.ID); err != nil {
 				s.cfg.logf("rounds: run %s: remove session %s: %v", r.ID, ss.ID, err)
 			}
@@ -1011,6 +1075,7 @@ func (s *roundsService) Create(ctx context.Context, p api.RoundCreateParams, cre
 		// The round is stored; only its first run could not be queued. The answer says so.
 		return api.RoundCreated{}, control.Errorf(api.ErrorKindUnavailable, "round %s was created, but its run now was not queued: %v", r.Name, err)
 	}
+	s.rememberTarget(e.Round)
 	out := api.RoundCreated{}
 	if out.Round, err = s.round(e.Round.ID); err != nil {
 		return api.RoundCreated{}, err
@@ -1042,7 +1107,7 @@ func (s *roundsService) Update(ctx context.Context, p api.RoundUpdateParams) (ap
 	}
 	// A harness is checked when the edit names a new one; a round whose harness went away
 	// stays editable (its runs fail "harness not found").
-	if old.Round.Harness != r.Harness || old.Round.Mode != r.Mode {
+	if old.Round.Harness != r.Harness || old.Round.Mode != r.Mode || old.Round.Target != r.Target {
 		if err := s.checkHarness(r); err != nil {
 			return api.Round{}, err
 		}
@@ -1056,6 +1121,10 @@ func (s *roundsService) Update(ctx context.Context, p api.RoundUpdateParams) (ap
 	if _, err := s.sched.Update(r); err != nil {
 		return api.Round{}, roundErr(err)
 	}
+	if old.Round.Target != r.Target {
+		s.forgetTarget(r.ID)
+	}
+	s.rememberTarget(r)
 	return s.round(p.ID)
 }
 
@@ -1154,9 +1223,11 @@ type roundInput struct {
 }
 
 func (i roundInput) QueueInput(ctx context.Context, client, pane string, data []byte) func() error {
+	i.rounds.noteInput(canonicalPane(pane))
 	wait := i.Input.QueueInput(ctx, client, pane, data)
 	return func() error {
 		err := wait()
+		i.rounds.noteInput(canonicalPane(pane))
 		if err == nil {
 			i.rounds.takeOver(canonicalPane(pane), reasonTyped)
 		}
@@ -1172,7 +1243,10 @@ type roundAgents struct {
 }
 
 func (a roundAgents) Send(ctx context.Context, client string, p api.SessionSendParams) error {
-	if err := a.Agents.Send(ctx, client, p); err != nil {
+	a.rounds.noteSessionInput(p.Session)
+	err := a.Agents.Send(ctx, client, p)
+	a.rounds.noteSessionInput(p.Session)
+	if err != nil {
 		return err
 	}
 	a.rounds.takeOverSession(p.Session, reasonSent)
