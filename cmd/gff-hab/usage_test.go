@@ -199,9 +199,22 @@ func TestStatuslineOutsidePane(t *testing.T) {
 		"outside any pane": base,
 		"gff-hab stopped":  append(base, hook.Env+"="+hook.Addr(filepath.Join(dir, "hook.sock"), strings.Repeat("ab", 16))),
 	} {
-		out, code, d := run(env, "claude", "--", "head -c 5; echo")
-		if out != "{\"rat\n" || code != 0 || d > scaleTimeout(500*time.Millisecond) {
-			t.Errorf("%s: %q, exit %d after %v", name, out, code, d)
+		// "At once": no slower than the same command run with no post (harness opencode posts
+		// nothing), so the time spent starting processes does not count. A loaded machine slows
+		// some runs; a wait in the status line slows every one: the best of three pairs counts.
+		var over []time.Duration
+		for range 3 {
+			_, _, plain := run(env, "opencode", "--", "head -c 5; echo")
+			out, code, d := run(env, "claude", "--", "head -c 5; echo")
+			if out != "{\"rat\n" || code != 0 {
+				t.Fatalf("%s: %q, exit %d", name, out, code)
+			}
+			if over = append(over, d-plain); d-plain <= scaleTimeout(500*time.Millisecond) {
+				break
+			}
+		}
+		if d := over[len(over)-1]; d > scaleTimeout(500*time.Millisecond) {
+			t.Errorf("%s: the status line took %v longer than its command alone", name, over)
 		}
 		if out, code, _ := run(env, "claude"); out != "" || code != 0 {
 			t.Errorf("%s with no command: %q, exit %d", name, out, code)
