@@ -1,0 +1,35 @@
+id = "agents-waiting"
+name = "Agents waiting"
+summary = "A board card of the agents that wait for you, per project."
+version = "1.2.0-rc.1+build.5"
+blocks = 1
+bridge = 1
+powers = ["act", "exec", "fetch"]
+places = ["board", "host", "session", "sheet"]
+refresh = 30
+events = ["agent.state", "session.updated"]
+
+[[settings]]
+key = "project_filter"
+title = "Only this project"
+kind = "text"
+default = ""
+
+[[settings]]
+key = "max_rows"
+title = "Rows"
+kind = "number"
+default = 5
+
+[[settings]]
+key = "show_idle"
+title = "Show idle agents"
+kind = "toggle"
+default = false
+
+[[settings]]
+key = "sort"
+title = "Sort by"
+kind = "choice"
+choices = ["waiting time", "project"]
+default = "project"

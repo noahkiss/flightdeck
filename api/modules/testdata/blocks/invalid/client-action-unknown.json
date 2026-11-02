@@ -1,0 +1,1 @@
+{"type": "button", "title": "Open", "action": {"name": "client.open_file", "args": {"path": "/tmp/x"}}}

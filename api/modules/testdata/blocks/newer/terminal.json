@@ -1,0 +1,7 @@
+{
+  "type": "stack",
+  "children": [
+    {"type": "text", "text": "Build pane"},
+    {"type": "terminal", "id": "term", "pane": "p-1", "fallback": "Open the pane to see it"}
+  ]
+}

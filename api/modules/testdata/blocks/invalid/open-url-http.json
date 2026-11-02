@@ -1,0 +1,1 @@
+{"type": "button", "title": "Docs", "action": {"name": "client.open_url", "args": {"url": "http://example.com"}}}

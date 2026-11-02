@@ -1,0 +1,13 @@
+id = "hello"
+name = "Hello"
+version = "0.1.0"
+blocks = 1
+bridge = 1
+places = ["sheet"]
+
+[[settings]]
+key = "sort"
+title = "Sort"
+kind = "choice"
+choices = ["name", "time"]
+default = "size"

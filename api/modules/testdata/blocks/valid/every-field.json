@@ -1,0 +1,55 @@
+{
+  "type": "stack",
+  "id": "root",
+  "fallback": "A module view",
+  "stale_after": 300,
+  "axis": "vertical",
+  "gap": 0,
+  "children": [
+    {
+      "type": "section",
+      "id": "sec",
+      "title": "Every block",
+      "collapsed": false,
+      "children": [
+        {
+          "type": "row",
+          "id": "row",
+          "symbol": "circle.fill",
+          "title": "A row",
+          "body": "With a body",
+          "trailing": "now",
+          "tint": "#3A7BD5",
+          "action": {"name": "pick", "args": {"n": 1, "tags": ["a"], "on": true, "none": null}}
+        },
+        {"type": "text", "id": "t1", "text": "Body text", "style": "body"},
+        {"type": "text", "id": "t2", "text": "A caption", "style": "caption"},
+        {"type": "text", "id": "t3", "text": "  mono  text", "style": "mono"},
+        {"type": "text", "id": "t4", "text": "A title", "style": "title"},
+        {"type": "badge", "id": "badge", "text": "new", "tint": "done", "stale_after": 60},
+        {
+          "type": "metrics",
+          "id": "grid",
+          "children": [
+            {"type": "metric", "id": "m1", "label": "One", "value": "1", "unit": "x", "tint": "idle"},
+            {"type": "metric", "label": "Two", "value": "2", "tint": "error"}
+          ]
+        },
+        {"type": "progress", "id": "p", "steps": {"total": 2, "current": 2}, "ends_at": "2026-11-02T15:30:00+01:00"},
+        {
+          "type": "button",
+          "id": "b",
+          "title": "Go",
+          "symbol": "play",
+          "action": {"name": "client.open_pane", "args": {"id": "p-1"}},
+          "role": "normal",
+          "confirm": "Go now?"
+        },
+        {"type": "toggle", "id": "tg", "title": "Off", "value": false, "action": {"name": "flip"}},
+        {"type": "field", "id": "f", "action": {"name": "send"}},
+        {"type": "list", "id": "l", "children": [{"type": "text", "text": "Ünïcødé ✓"}]},
+        {"type": "log", "id": "lg", "lines": []}
+      ]
+    }
+  ]
+}

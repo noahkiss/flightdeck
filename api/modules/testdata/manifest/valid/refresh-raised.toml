@@ -1,0 +1,7 @@
+id = "fast"
+name = "Fast"
+version = "1.0.0"
+blocks = 1
+bridge = 1
+places = ["board"]
+refresh = 2

@@ -1,0 +1,6 @@
+id = "hello"
+name = "Hello"
+version = "0.1.0"
+blocks = 0
+bridge = 1
+places = ["sheet"]

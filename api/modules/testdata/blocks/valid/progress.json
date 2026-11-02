@@ -1,0 +1,10 @@
+{
+  "type": "stack",
+  "children": [
+    {"type": "progress", "id": "build", "value": 0.4},
+    {"type": "progress", "id": "done", "value": 1},
+    {"type": "progress", "id": "steps", "steps": {"total": 7, "current": 3}},
+    {"type": "progress", "id": "timer", "value": 0, "ends_at": "2026-11-02T15:30:00Z"},
+    {"type": "log", "id": "out", "follow": true, "lines": ["ok  ./api/modules 0.21s", "", "ok  ./internal/apigen 1.02s"]}
+  ]
+}

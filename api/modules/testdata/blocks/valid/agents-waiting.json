@@ -1,0 +1,26 @@
+{
+  "type": "list",
+  "id": "waiting",
+  "empty": "No agent is waiting",
+  "children": [
+    {
+      "type": "row",
+      "id": "s-1",
+      "symbol": "hand.raised",
+      "title": "example-app",
+      "body": "Wants to run: make test",
+      "trailing": "2m",
+      "tint": "blocked",
+      "action": {"name": "client.open_session", "args": {"id": "s-1"}}
+    },
+    {
+      "type": "row",
+      "id": "s-2",
+      "symbol": "gearshape.2",
+      "title": "docs-site",
+      "body": "Working",
+      "tint": "working",
+      "action": {"name": "client.open_session", "args": {"id": "s-2"}}
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "type": "stack",
+  "gap": 2,
+  "children": [
+    {"type": "toggle", "id": "watch", "title": "Watch the main branch", "value": true, "action": {"name": "set_watch"}},
+    {"type": "field", "id": "note", "placeholder": "Add a note", "action": {"name": "notes.add", "args": {"list": "today"}}},
+    {
+      "type": "stack",
+      "axis": "horizontal",
+      "children": [
+        {"type": "button", "id": "refresh", "title": "Refresh", "symbol": "arrow.clockwise", "action": {"name": "refresh"}},
+        {
+          "type": "button",
+          "id": "clear",
+          "title": "Clear all",
+          "symbol": "trash",
+          "role": "destructive",
+          "confirm": "Clear every note?",
+          "action": {"name": "notes.clear"}
+        },
+        {
+          "type": "button",
+          "id": "docs",
+          "title": "Docs",
+          "role": "normal",
+          "action": {"name": "client.open_url", "args": {"url": "https://example.com/docs"}}
+        },
+        {"type": "button", "id": "copy", "title": "Copy", "action": {"name": "client.copy", "args": {"text": "make test"}}}
+      ]
+    }
+  ]
+}

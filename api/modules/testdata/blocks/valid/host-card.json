@@ -1,0 +1,26 @@
+{
+  "type": "section",
+  "id": "host",
+  "title": "build-box",
+  "children": [
+    {
+      "type": "metrics",
+      "children": [
+        {"type": "metric", "label": "Load", "value": "0.42"},
+        {"type": "metric", "label": "Memory", "value": "61", "unit": "%", "tint": "warning"},
+        {"type": "metric", "label": "Disk", "value": "128", "unit": "GB free"}
+      ]
+    },
+    {
+      "type": "stack",
+      "axis": "horizontal",
+      "gap": 1,
+      "children": [
+        {"type": "badge", "text": "linux", "tint": "muted"},
+        {"type": "badge", "text": "go 1.27"},
+        {"type": "badge", "text": "always on", "tint": "accent"}
+      ]
+    },
+    {"type": "row", "id": "projects", "symbol": "folder", "title": "Projects", "trailing": "7"}
+  ]
+}
