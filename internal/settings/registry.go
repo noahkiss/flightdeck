@@ -29,14 +29,17 @@ type Def struct {
 	Default json.RawMessage
 	// check returns the canonical JSON of v, or an error saying why v is outside the type.
 	check func(v any) (json.RawMessage, error)
+	// integer marks a whole-number setting: CheckGo refuses a TOML float for it, as Check
+	// refuses a JSON 30.0.
+	integer bool
 }
 
 // Defs is every hab-side setting, in the order settings.get lists them.
 var Defs = []Def{
 	{ID: StartElsewhere, Default: json.RawMessage(`true`), check: checkBool},
-	{ID: ApprovalMaxAge, Default: json.RawMessage(`60`), check: checkInt(0, 1440)},
+	{ID: ApprovalMaxAge, Default: json.RawMessage(`60`), check: checkInt(0, 1440), integer: true},
 	{ID: LogbookApproval, Default: json.RawMessage(`"off"`), check: checkWord("off", "agents")},
-	{ID: PermissionWait, Default: json.RawMessage(`0`), check: checkInt(0, 120)},
+	{ID: PermissionWait, Default: json.RawMessage(`0`), check: checkInt(0, 120), integer: true},
 }
 
 // Lookup returns the setting with the id.
@@ -69,6 +72,9 @@ func (d Def) Check(raw json.RawMessage) (json.RawMessage, error) {
 
 // CheckGo checks a value decoded from TOML (bool, int64, float64, string).
 func (d Def) CheckGo(v any) (json.RawMessage, error) {
+	if _, isFloat := v.(float64); isFloat && d.integer {
+		return nil, fmt.Errorf("%s: want a whole number, not %v", d.ID, v)
+	}
 	b, err := json.Marshal(v)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v", d.ID, err)

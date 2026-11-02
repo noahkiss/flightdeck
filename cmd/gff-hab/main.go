@@ -689,6 +689,11 @@ func serve(args []string) error {
 				logger.Printf("settings: %s = %s", id, v)
 			}
 		},
+		Notify: func(title, body string) {
+			if _, err := pushes.Raise("", api.NoticeRaiseParams{Title: title, Body: body, Level: api.NoticeLevelActive}); err != nil {
+				logger.Printf("settings: notice: %v", err)
+			}
+		},
 		Logf: logger.Printf,
 	})
 	if err != nil {

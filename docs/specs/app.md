@@ -2768,9 +2768,13 @@ Built choices on the hab (task-yfmrj6yc, `internal/settings`):
   over the config file.
 - **The config file.** An entry of `[settings]` that names no hab-side setting, or holds a value
   outside its type, is logged and left out; it locks nothing. A file that does not parse stops
-  gff-hab at start, since it cannot enforce what it cannot read; at a later read it keeps the
-  locks from the last good read. A lock that appeared, changed or went while gff-hab was stopped
-  raises the revision at the next start (`settings.json` keeps the last lock it saw).
+  gff-hab at start, since it cannot enforce what it cannot read (owner, 2026-11-01). At a later
+  read it keeps the locks from the last good read and raises one notice, "hab.toml does not
+  parse", since the next start will fail; a good read clears it. A lock that appeared, changed or
+  went while gff-hab was stopped raises the revision at the next start (`settings.json` keeps the
+  last lock it saw).
+- **When a lock goes,** the value a client wrote before the lock comes back; with none, the
+  default. The hab keeps a client's value under a lock and enforces the lock while it stands.
 - **Checks, in order per row:** unknown id, lock, revision, value. A row named twice in one call
   is `invalid`. A save that fails is `unavailable`, names the first row and changes nothing. A
   written row's source becomes `client` even when its value did not change, so the new-hab check
@@ -2780,7 +2784,8 @@ Built choices on the hab (task-yfmrj6yc, `internal/settings`):
   absence as "not on this hab" without a failed call.
 - **A `settings.json` that does not parse** is logged and the settings start from the defaults at
   revision 1; a new epoch orders nothing across it.
-- **Integers** are whole JSON numbers in range; `30.0` and `1.5` are refused.
+- **Integers** are whole numbers in range; `30.0` and `1.5` are refused, in JSON and in the
+  config file alike.
 
 ### 20.6 Dropped, not settings
 

@@ -169,12 +169,33 @@ func TestClaudeAdapter(t *testing.T) {
 // an app client that subscribed is connected, and approval.answer reaches it as Claude's
 // structured decision, and returns once the harness goes on; no key reaches the pane.
 func TestBlockingPermissionHook(t *testing.T) {
+	t.Run("flag", func(t *testing.T) { blockingPermissionHook(t, false) })
+	// The hab-side setting hab.permission_wait, written by the app, turns the hook on with no
+	// flag and no restart (app.md 20.4, 20.5).
+	t.Run("setting", func(t *testing.T) { blockingPermissionHook(t, true) })
+}
+
+func blockingPermissionHook(t *testing.T, viaSetting bool) {
 	e := newHabEnv(t, 0)
 	e.srv.stop(t)
-	e.srv = startServeWith(t, e.sock, e.state, nil, "-holders", e.hdir, "-permission-wait", "20s")
+	if viaSetting {
+		e.srv = startServeWith(t, e.sock, e.state, []string{"GFF_HAB_PERMISSION_WAIT="}, "-holders", e.hdir)
+	} else {
+		e.srv = startServeWith(t, e.sock, e.state, nil, "-holders", e.hdir, "-permission-wait", "20s")
+	}
 	c := e.control()
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(30*time.Second))
 	defer cancel()
+	if viaSetting {
+		var got api.SettingsResult
+		if err := c.Call(ctx, "settings.get", api.SettingsGetParams{IDs: []string{"hab.permission_wait"}}, &got); err != nil || len(got.Settings) != 1 {
+			t.Fatalf("settings.get: %v %+v", err, got)
+		}
+		w := api.SettingWrite{ID: "hab.permission_wait", Value: json.RawMessage(`20`), Revision: got.Settings[0].Revision}
+		if err := c.Call(ctx, "settings.set", api.SettingsSetParams{Values: []api.SettingWrite{w}}, nil); err != nil {
+			t.Fatalf("settings.set: %v", err)
+		}
+	}
 	if _, err := (api.Client{Caller: c}).EventsSubscribe(ctx, api.SubscribeParams{Scope: api.Scope{Kind: api.ScopeKindHost}}); err != nil {
 		t.Fatal(err)
 	}

@@ -38,8 +38,11 @@ type Config struct {
 	// Apply hands a setting's value to the code that uses it: once for each setting at Open, then
 	// on every change. Called with the service's lock held; it must not call back.
 	Apply func(id string, value json.RawMessage)
-	Poll  time.Duration // default DefaultPoll
-	Logf  func(format string, args ...any)
+	// Notify raises one notice when the config file stops parsing at a reload: gff-hab keeps the
+	// last good locks, but its next start will fail. Called again only after a good read.
+	Notify func(title, body string)
+	Poll   time.Duration // default DefaultPoll
+	Logf   func(format string, args ...any)
 }
 
 // Service keeps the hab-side settings. It is safe for concurrent use.
@@ -53,6 +56,7 @@ type Service struct {
 	locks   map[string]json.RawMessage // id -> locked value, from the config file and Overrides
 	stamp   fileStamp
 	pending fileStamp
+	broken  bool // the config file did not parse at the last reload, and Notify ran
 }
 
 // row is one setting as stored.
@@ -99,6 +103,9 @@ func Open(cfg Config) (*Service, error) {
 	}
 	if cfg.Apply == nil {
 		cfg.Apply = func(string, json.RawMessage) {}
+	}
+	if cfg.Notify == nil {
+		cfg.Notify = func(string, string) {}
 	}
 	for id, v := range cfg.Overrides {
 		d, ok := Lookup(id)
@@ -281,13 +288,22 @@ func (s *Service) check() {
 func (s *Service) Reload() {
 	st := stampOf(s.cfg.ConfigPath)
 	locks, err := s.readLocks()
+	if err != nil {
+		s.cfg.Logf("%v; keeping the settings it set before", err)
+		s.mu.Lock()
+		s.stamp, s.pending = st, fileStamp{}
+		first := !s.broken
+		s.broken = true
+		s.mu.Unlock()
+		if first { // outside the lock: the notice path may push
+			s.cfg.Notify("hab.toml does not parse", "gff-hab keeps its last settings; its next start will fail until the file is fixed.")
+		}
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stamp, s.pending = st, fileStamp{}
-	if err != nil {
-		s.cfg.Logf("%v; keeping the settings it set before", err)
-		return
-	}
+	s.broken = false
 	var changed []Def
 	for _, d := range Defs {
 		if !bytes.Equal(s.locks[d.ID], locks[d.ID]) {
