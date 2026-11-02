@@ -116,6 +116,7 @@ func TestInvalidTrees(t *testing.T) {
 		"root-not-object.json": true, "type-not-string.json": true, "children-not-array.json": true,
 		"toggle-value-string.json": true, "log-line-not-string.json": true, "gap-not-whole.json": true,
 		"action-args-not-object.json": true, "no-type.json": true, "too-deep.json": true,
+		"duplicate-id.json": true,
 	}
 	for _, f := range files {
 		tree, err := os.ReadFile(f)
@@ -309,7 +310,7 @@ func TestTargetsSend(t *testing.T) {
 		t.Errorf("field sends %+v", a)
 	}
 	a, _ = v.Targets[2].Send("")
-	if !IsClient(a) || v.Targets[2].Ref != "#2" {
+	if !IsClient(a) || v.Targets[2].Ref != "#3:r:0" {
 		t.Errorf("row sends %+v ref %q", a, v.Targets[2].Ref)
 	}
 }
@@ -367,6 +368,97 @@ func TestCountdown(t *testing.T) {
 	} {
 		if got := Countdown(d); got != want {
 			t.Errorf("Countdown(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+// TestOneColumnPerRune: wide, zero-width, combining and format runes become U+FFFD, so a drawn
+// row never takes more columns than Width counts and never shifts the cells after it.
+func TestOneColumnPerRune(t *testing.T) {
+	v := render(t, `{"type":"stack","children":[
+		{"type":"row","title":"漢字テスト","body":"e\u0301 a\u200db","trailing":"9m"},
+		{"type":"text","text":"🙂👍🏽❤\ufe0f🇺🇸x"},
+		{"type":"text","text":"\u202eevil\u202c \u2066iso\u2069 \u200e\u200f\u061c\u2028\u2029\ufeff\u200b\u200c\u00ad\ue000"},
+		{"type":"badge","text":"ｆｕｌｌ"}]}`, Options{Width: 20})
+	// A heart keeps its one column; its emoji selector does not. The third line is cut at 20.
+	want := []string{"����� · e� a�b    9m", "���❤���x", "�evil� �iso� ������…", "[����]"}
+	got := texts(v)
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+	for _, l := range v.Lines {
+		for _, c := range l.Text() {
+			if !oneColumn(c) && c != '…' {
+				t.Errorf("rune %U is not one column in %q", c, l.Text())
+			}
+		}
+		if l.Width() > 20 {
+			t.Errorf("line %q is %d columns", l.Text(), l.Width())
+		}
+	}
+	// Plain text from many scripts that draws one column per rune stays as it is.
+	for _, s := range []string{"café naïve", "Ελληνικά", "кириллица", "→ ✓ ● …", "a\u00a0b"} {
+		if clean(s) != s {
+			t.Errorf("clean(%q) = %q", s, clean(s))
+		}
+	}
+}
+
+// TestTargetTextIsClean: a target's title and confirm, which the client shows in prompts, are
+// cleaned as drawn text is.
+func TestTargetTextIsClean(t *testing.T) {
+	v := render(t, `{"type":"stack","children":[
+		{"type":"button","title":"Go\u001b]0;x\u0007","confirm":"Sure\u009b2J\u202e?","action":{"name":"go"}},
+		{"type":"field","placeholder":"\u001b[31mname","action":{"name":"set"}}]}`, Options{})
+	if got := v.Targets[0].Title; got != "Go�]0;x�" {
+		t.Errorf("title %q", got)
+	}
+	if got := v.Targets[0].Confirm; got != "Sure�2J�?" {
+		t.Errorf("confirm %q", got)
+	}
+	if got := v.Targets[1].Title; got != "�[31mname" {
+		t.Errorf("placeholder %q", got)
+	}
+}
+
+// TestRefsByTitle: a target with no id keeps its ref when a target of another title is added
+// above it; two of one title are told apart by their order.
+func TestRefsByTitle(t *testing.T) {
+	btn := func(title string) string {
+		return `{"type":"button","title":"` + title + `","action":{"name":"` + title + `"}}`
+	}
+	a := render(t, `{"type":"stack","children":[`+btn("Stop")+`,`+btn("Stop")+`]}`, Options{})
+	b := render(t, `{"type":"stack","children":[`+btn("New")+`,`+btn("Stop")+`,`+btn("Stop")+`]}`, Options{})
+	if a.Targets[1].Ref != b.Targets[2].Ref || a.Targets[0].Ref == a.Targets[1].Ref {
+		t.Errorf("refs %q and %q", a.Targets[1].Ref, b.Targets[2].Ref)
+	}
+	if i := b.TargetByRef(a.Targets[0].Ref); i != 1 {
+		t.Errorf("first Stop is target %d", i)
+	}
+}
+
+func TestNoHints(t *testing.T) {
+	tree := `{"type":"stack","axis":"horizontal","children":[
+		{"type":"button","title":"Run","action":{"name":"a"}},
+		{"type":"button","title":"Kill","action":{"name":"b"}}]}`
+	v := render(t, tree, Options{NoHints: true})
+	if got := v.Lines[0].Text(); got != "› Run  › Kill" {
+		t.Errorf("line %q", got)
+	}
+	if v.TargetByKey('r') != 0 || v.TargetByKey('k') != 1 {
+		t.Error("NoHints dropped the keys")
+	}
+}
+
+func TestDuplicateIDs(t *testing.T) {
+	for _, tree := range []string{
+		`{"type":"stack","children":[{"type":"button","id":"x","title":"A","action":{"name":"a"}},{"type":"button","id":"x","title":"B","action":{"name":"b"}}]}`,
+		`{"type":"stack","id":"x","children":[{"type":"text","id":"x","text":"t"}]}`,
+		`{"type":"stack","children":[{"type":"button","id":"#0:A:0","title":"A","action":{"name":"a"}}]}`,
+	} {
+		v := Render([]byte(tree), Options{Width: 60})
+		if v.Err != "two blocks have the same id" || len(v.Lines) != 1 {
+			t.Errorf("%s: err %q lines %q", tree, v.Err, texts(v))
 		}
 	}
 }

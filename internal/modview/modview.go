@@ -12,6 +12,8 @@ import (
 	"time"
 	"unicode"
 
+	"golang.org/x/text/width"
+
 	"github.com/noahkiss/flightdeck/api/modules"
 )
 
@@ -25,7 +27,8 @@ type Style struct {
 	Focus bool // part of the focused target
 }
 
-// Span is a run of text in one style. Text holds no control characters.
+// Span is a run of text in one style. Text holds no control characters, and each rune takes
+// one column.
 type Span struct {
 	Text  string
 	Style Style
@@ -70,16 +73,16 @@ const (
 // Target is a block a key can act on, in tree order.
 type Target struct {
 	Kind Kind
-	// Ref keys the target's view state: the block's id, else "#<n>" by its place among the
-	// targets.
+	// Ref keys the target's view state: the block's id, else "#<kind>:<title>:<n>", n counting
+	// the earlier targets of that kind and title, so a target added above does not move it.
 	Ref string
 	// Key is a button's key hint, 0 for none.
 	Key rune
 	// Title is the button's, toggle's or row's title, the section's title, or a field's
-	// placeholder.
+	// placeholder, cleaned as drawn text is.
 	Title       string
 	Action      modules.Action
-	Confirm     string // the question to ask first, empty for none
+	Confirm     string // the question to ask first, cleaned; empty for none
 	Destructive bool
 	Value       bool // a toggle's value as drawn
 	Collapsed   bool // a section's state as drawn
@@ -154,6 +157,8 @@ type Options struct {
 	Reserved string
 	// LogLines is the most lines a log block shows. Zero: 8.
 	LogLines int
+	// NoHints draws every button with "›" instead of its key hint. The targets keep their keys.
+	NoHints bool
 }
 
 // Error texts the client shows.
@@ -192,7 +197,7 @@ func Render(tree []byte, opt Options) *View {
 	if err := json.Unmarshal(tree, &root); err != nil {
 		return fail("not a block tree: " + err.Error())
 	}
-	r := &renderer{opt: opt, used: map[rune]bool{}}
+	r := &renderer{opt: opt, used: map[rune]bool{}, ids: map[string]bool{}, refs: map[string]int{}}
 	for _, k := range opt.Reserved {
 		r.used[k] = true
 	}
@@ -213,10 +218,12 @@ type renderer struct {
 	used    map[rune]bool
 	keys    map[*modules.ButtonBlock]rune
 	blocks  int
+	ids     map[string]bool // block ids seen by check
+	refs    map[string]int  // targets with no id, by kind and title: how many so far
 }
 
 // check walks the tree once for what would make drawing it unsafe or meaningless: depth, block
-// count, a block with no type.
+// count, a block with no type, two blocks with one id (a key or Enter would act on the wrong one).
 func (r *renderer) check(b *modules.Block, depth int) string {
 	if depth > modules.MaxDepth {
 		return fmt.Sprintf("tree is deeper than %d", modules.MaxDepth)
@@ -227,6 +234,13 @@ func (r *renderer) check(b *modules.Block, depth int) string {
 	}
 	if b.Type == "" {
 		return "a block has no type"
+	}
+	if b.ID != "" {
+		// An id that starts with "#" could match a ref drawn for a target with no id.
+		if r.ids[b.ID] || strings.HasPrefix(b.ID, "#") {
+			return "two blocks have the same id"
+		}
+		r.ids[b.ID] = true
 	}
 	for i := range children(b) {
 		if s := r.check(&children(b)[i], depth+1); s != "" {
@@ -288,9 +302,12 @@ func (r *renderer) assignKeys(root *modules.Block) {
 }
 
 func (r *renderer) addTarget(id string, t Target) int {
+	t.Title, t.Confirm = clean(t.Title), clean(t.Confirm)
 	t.Ref = id
 	if t.Ref == "" {
-		t.Ref = "#" + strconv.Itoa(len(r.targets))
+		k := "#" + strconv.Itoa(int(t.Kind)) + ":" + t.Title
+		t.Ref = k + ":" + strconv.Itoa(r.refs[k])
+		r.refs[k]++
 	}
 	r.targets = append(r.targets, t)
 	return len(r.targets) - 1
@@ -607,7 +624,7 @@ func (r *renderer) button(b *modules.Block) Line {
 		ts.Tint = "error"
 	}
 	var l Line
-	if k != 0 {
+	if k != 0 && !r.opt.NoHints {
 		l = Line{Spans: []Span{{string(k), Style{Key: true, Bold: true}}, {" " + clean(bt.Title), ts}}, Target: i}
 	} else {
 		l = Line{Spans: []Span{{"›", Style{Key: true, Bold: true}}, {" " + clean(bt.Title), ts}}, Target: i}
@@ -695,13 +712,17 @@ func focus(l *Line) {
 	}
 }
 
-// clean makes module text safe for a terminal: a tab becomes a space, and every other control
-// character (C0, DEL, C1, which could start an escape sequence) becomes U+FFFD. A tree is data;
-// it never reaches the host terminal as control bytes.
+// clean makes module text safe for a terminal, one column per rune: a tab becomes a space, and
+// every rune that is not one plain column becomes U+FFFD. That covers controls (C0, DEL, C1,
+// which could start an escape sequence), format characters (bidi overrides and isolates, zero
+// width spaces and joiners, marks), line and paragraph separators, combining marks and variation
+// selectors (zero columns), wide and fullwidth runes and emoji (two columns), and private or
+// unassigned code points (terminals differ). A tree is data; it never reaches the host terminal as
+// control bytes, and a row never shifts the cells after it.
 func clean(s string) string {
 	ok := true
 	for _, c := range s {
-		if c < 0x20 || c == 0x7f || (c >= 0x80 && c < 0xa0) {
+		if !oneColumn(c) {
 			ok = false
 			break
 		}
@@ -713,11 +734,32 @@ func clean(s string) string {
 		switch {
 		case c == '\t':
 			return ' '
-		case c < 0x20 || c == 0x7f || (c >= 0x80 && c < 0xa0):
-			return '�'
+		case !oneColumn(c):
+			return '\uFFFD'
 		}
 		return c
 	}, s)
+}
+
+// oneColumn reports whether c draws as one plain column in every terminal.
+func oneColumn(c rune) bool {
+	if c >= 0x20 && c < 0x7f {
+		return true
+	}
+	if !unicode.IsGraphic(c) || unicode.In(c, unicode.Mn, unicode.Me) {
+		return false // controls, Cf, Zl, Zp, Co, Cn, surrogates; combining marks
+	}
+	switch {
+	case c >= 0x1160 && c <= 0x11ff: // Hangul medial vowels and final consonants join: zero columns
+		return false
+	case c >= 0x1f1e6 && c <= 0x1f1ff: // regional indicators pair into flags, two columns
+		return false
+	}
+	switch width.LookupRune(c).Kind() {
+	case width.EastAsianWide, width.EastAsianFullwidth:
+		return false
+	}
+	return true
 }
 
 func runes(s string) int { return len([]rune(s)) }
@@ -762,5 +804,6 @@ func trimRight(l Line) Line {
 	return l
 }
 
-// Clean is module text made safe for a terminal, as every drawn span is: no control characters.
+// Clean is module text made safe for a terminal, as every drawn span is: no control or format
+// characters, one column per rune.
 func Clean(s string) string { return clean(s) }
