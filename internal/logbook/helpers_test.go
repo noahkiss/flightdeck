@@ -225,6 +225,31 @@ func dump(t testing.TB, s *Store) string {
 	return b.String()
 }
 
+// dumpOps writes every stored op's bytes in op id order, so two replicas compare op by op: a
+// redaction one made and another did not shows here.
+func dumpOps(t testing.TB, s *Store) string {
+	t.Helper()
+	rows, err := s.db.QueryContext(context.Background(), `SELECT origin, seq, raw FROM ops ORDER BY origin, seq`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var b strings.Builder
+	for rows.Next() {
+		var origin string
+		var seq int64
+		var raw []byte
+		if err := rows.Scan(&origin, &seq, &raw); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(&b, "%d@%s %s\n", seq, origin, raw)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
+}
+
 // rawOp encodes an op as another build would send it.
 func rawOp(t testing.TB, o map[string]any) []byte {
 	t.Helper()

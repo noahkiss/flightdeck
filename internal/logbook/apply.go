@@ -9,6 +9,9 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // clockAheadLimit is how far ahead of the receiver's wall clock an op may be stamped before the
@@ -21,9 +24,12 @@ type ApplyResult struct {
 	Stored int
 	// Repeats counts ops the replica already held, unchanged.
 	Repeats int
-	// Refused counts ops not stored: an unreadable envelope, or an origin that two hosts share.
+	// Refused counts ops not stored: an unusable envelope (2.3's id shape and seqs below 2^63
+	// included), an origin that two hosts share, an op of this replica's own origin past a gap,
+	// or an op the file's constraints refuse. A refused op is not held: a peer may send it again.
 	Refused int
-	// Changed lists the ids of records whose folded state may have changed.
+	// Changed lists, sorted, the ids of records whose folded state may have changed: the ids
+	// they had before and after, so a record an id collision renames shows under both.
 	Changed []string
 }
 
@@ -44,6 +50,11 @@ func (s *Store) Apply(ctx context.Context, raws [][]byte) (ApplyResult, error) {
 	if err != nil {
 		return res, err
 	}
+	own, err := originRow(ctx, tx, m.origin)
+	if err != nil {
+		return res, err
+	}
+	ownHeld := own.held
 	nowMS := s.now().UnixMilli()
 	touched := map[string]bool{}
 	affected := map[string]bool{}
@@ -95,9 +106,25 @@ func (s *Store) Apply(ctx context.Context, raws [][]byte) (ApplyResult, error) {
 			res.Refused++
 			continue
 		}
-		red, err := s.insertOp(ctx, tx, o)
+		if o.Origin == m.origin {
+			// Our own ops come back from a peer only after this file lost them (a restore, 14).
+			// One that extends the gap-free run is stored and moves the next seq past it, so no
+			// seq is used twice. One past a gap is refused: stored, it would hold a seq a later
+			// local write needs, and local writes would stop folding behind the gap. A peer sends
+			// it again once the ops before it are here.
+			if o.Seq != ownHeld+1 {
+				res.Refused++
+				continue
+			}
+		}
+		red, ok, err := s.insertOpChecked(ctx, tx, o)
 		if err != nil {
 			return res, err
+		}
+		if !ok {
+			logs = append(logs, "op "+o.ID().String()+" refused by the file's constraints")
+			res.Refused++
+			continue
 		}
 		for r := range red {
 			affected[r] = true
@@ -106,9 +133,9 @@ func (s *Store) Apply(ctx context.Context, raws [][]byte) (ApplyResult, error) {
 		res.Stored++
 		touched[o.Origin] = true
 		m.last = observe(m.last, o.HLC())
-		if o.Origin == m.origin && o.Seq >= m.nextSeq {
-			// Our own ops came back from a peer, past what this file remembers: never reuse a seq.
-			m.nextSeq = o.Seq + 1
+		if o.Origin == m.origin {
+			ownHeld = o.Seq
+			m.nextSeq = max(m.nextSeq, o.Seq+1)
 		}
 		if o.Wall > nowMS+clockAheadLimit.Milliseconds() && !g.clockAhead {
 			if _, err := tx.ExecContext(ctx, `UPDATE origins SET clock_ahead = 1 WHERE origin = ?`, o.Origin); err != nil {
@@ -133,6 +160,10 @@ func (s *Store) Apply(ctx context.Context, raws [][]byte) (ApplyResult, error) {
 	if err := s.affectedBy(ctx, tx, fresh, affected); err != nil {
 		return res, err
 	}
+	before, err := idsOf(ctx, tx, affected)
+	if err != nil {
+		return res, err
+	}
 	skipped, err := s.refold(ctx, tx, affected)
 	if err != nil {
 		return res, err
@@ -151,17 +182,49 @@ func (s *Store) Apply(ctx context.Context, raws [][]byte) (ApplyResult, error) {
 	if err := m.write(ctx, tx); err != nil {
 		return res, err
 	}
-	res.Changed, err = idsOf(ctx, tx, affected)
+	after, err := idsOf(ctx, tx, affected)
 	if err != nil {
 		return res, err
 	}
+	res.Changed = sortedUnique(append(before, after...))
 	if err := tx.Commit(); err != nil {
 		return res, err
+	}
+	if forgot {
+		s.scrub(ctx)
 	}
 	for _, l := range logs {
 		s.logf("logbook: %s", l)
 	}
 	return res, nil
+}
+
+// insertOpChecked runs insertOp inside a savepoint. When the file's constraints refuse the op, the
+// savepoint undoes what it wrote and ok is false, so one bad op never fails the rest of a page.
+// Any other error is returned.
+func (s *Store) insertOpChecked(ctx context.Context, tx txn, o *Op) (map[string]bool, bool, error) {
+	if _, err := tx.ExecContext(ctx, `SAVEPOINT op`); err != nil {
+		return nil, false, err
+	}
+	red, err := s.insertOp(ctx, tx, o)
+	if err != nil {
+		var se *sqlite.Error
+		if !errors.As(err, &se) || se.Code()&0xff != sqlite3.SQLITE_CONSTRAINT {
+			return nil, false, err
+		}
+		if _, err := tx.ExecContext(ctx, `ROLLBACK TO op`); err != nil {
+			return nil, false, err
+		}
+		_, err = tx.ExecContext(ctx, `RELEASE op`)
+		return nil, false, err
+	}
+	_, err = tx.ExecContext(ctx, `RELEASE op`)
+	return red, true, err
+}
+
+func sortedUnique(ids []string) []string {
+	slices.Sort(ids)
+	return slices.Compact(ids)
 }
 
 // sameOp compares a stored op with a received one, after the redaction a forget made on either

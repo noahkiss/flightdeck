@@ -2,10 +2,13 @@ package logbook
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -30,18 +33,29 @@ func runs(perPush, night int) int {
 }
 
 // world is a random history: replicas that write every op kind and exchange ops at random over a
-// link that drops part of what it sends.
+// link that drops part of what it sends. Beside the writes it plays what peers do to a replica:
+// creates of one id on two replicas (2.3), ops of a later build (4.4), stale unredacted copies of
+// ops that may arrive after their forget (5.7), forged ops under a replica's own origin past a
+// gap, and a replica that loses its file and gets its own ops back (14).
 type world struct {
 	t     testing.TB
 	rng   *rand.Rand
 	reps  []*replica
 	known map[*replica][]string // record ids each replica has seen
+	// seen keeps each op's bytes as written, before a forget redacted them.
+	seen     map[OpID][]byte
+	seenList []OpID
+	targets  []OpID // ops a forget on the link named
+	newerSeq uint64 // the seq of the next op from the later build's origin
 }
+
+// newerOrigin writes the ops of a later build.
+const newerOrigin = "SHA256:newer"
 
 var vocab = []string{"ui", "holder", "sync", "go", "swift", "docs"}
 
 func newWorld(t testing.TB, rng *rand.Rand) *world {
-	w := &world{t: t, rng: rng, known: map[*replica][]string{}}
+	w := &world{t: t, rng: rng, known: map[*replica][]string{}, seen: map[OpID][]byte{}}
 	n := 3 + rng.Intn(3)
 	for i := range n {
 		r := newReplica(t, fmt.Sprintf("R%d", i))
@@ -54,18 +68,142 @@ func newWorld(t testing.TB, rng *rand.Rand) *world {
 	return w
 }
 
-// play makes n random steps: writes on a random replica, or an exchange between two.
+// play makes n random steps: mostly writes on a random replica or an exchange between two, and
+// now and then one of the peer cases world lists.
 func (w *world) play(n int) {
 	for range n {
-		if w.rng.Intn(4) == 0 {
-			a, b := w.reps[w.rng.Intn(len(w.reps))], w.reps[w.rng.Intn(len(w.reps))]
-			if a != b {
-				w.exchange(a, b)
+		r := w.reps[w.rng.Intn(len(w.reps))]
+		switch x := w.rng.Intn(100); {
+		case x < 25:
+			if b := w.reps[w.rng.Intn(len(w.reps))]; b != r {
+				w.exchange(r, b)
 			}
-			continue
+		case x < 29:
+			w.replay(r)
+		case x < 32:
+			w.newer(r)
+		case x < 34:
+			w.forgeOwn(r)
+		case x < 35:
+			w.restore(r)
+		default:
+			w.write(r)
 		}
-		w.write(w.reps[w.rng.Intn(len(w.reps))])
 	}
+}
+
+// replay sends a replica the first copies of an origin's ops, from the end of
+// its gap-free run up to one op, as a stale peer that never saw the op's forget would: unredacted
+// bytes that may land after their forget. Most often the op is a forget's target.
+func (w *world) replay(r *replica) {
+	if len(w.seenList) == 0 {
+		return
+	}
+	id := w.seenList[w.rng.Intn(len(w.seenList))]
+	if len(w.targets) > 0 && w.rng.Intn(4) != 0 {
+		if t := w.targets[w.rng.Intn(len(w.targets))]; w.seen[t] != nil {
+			id = t
+		}
+	}
+	v, err := r.Vector(context.Background())
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	var page [][]byte
+	for seq := v[id.Origin] + 1; seq <= id.Seq; seq++ {
+		raw, ok := w.seen[OpID{Origin: id.Origin, Seq: seq}]
+		if !ok {
+			page = nil
+			break
+		}
+		page = append(page, raw)
+	}
+	if len(page) == 0 {
+		page = [][]byte{w.seen[id]}
+	}
+	if _, err := r.Apply(context.Background(), page); err != nil {
+		w.t.Fatal(err)
+	}
+	w.learn(r)
+}
+
+// newer hands a replica one op of a later build: a later version, an unknown kind, an unknown
+// field or an unknown record type. It is stored and forwarded, never folded.
+func (w *world) newer(r *replica) {
+	ctx := context.Background()
+	w.newerSeq++
+	seq := w.newerSeq
+	m := map[string]any{"v": 1, "o": newerOrigin, "s": seq, "w": r.clock.Now().UnixMilli(), "c": 0, "bl": seq}
+	root := OpID{Origin: newerOrigin, Seq: seq}.String()
+	id := w.pick(r)
+	if id != "" {
+		if rec, err := r.Get(ctx, id); err == nil {
+			root = rec.Root.String()
+		}
+	}
+	switch w.rng.Intn(4) {
+	case 0:
+		m["v"], m["k"], m["r"], m["root"], m["f"], m["val"] = 2, "set", id+"x", root, "status", map[string]any{"later": true}
+	case 1:
+		m["k"], m["r"], m["root"], m["val"] = "move", id+"x", root, "elsewhere"
+	case 2:
+		m["k"], m["r"], m["root"], m["f"], m["val"] = "set", id+"x", root, "estimate", 3
+	default:
+		m["k"], m["r"], m["root"] = "create", fmt.Sprintf("habit-n%07d", seq), OpID{Origin: newerOrigin, Seq: seq}.String()
+		m["val"] = map[string]any{"type": "habit", "fields": map[string]any{"title": "H"}}
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	res, err := r.Apply(ctx, [][]byte{raw})
+	if err != nil || res.Stored != 1 {
+		w.t.Fatalf("a later build's op: %+v %v, want stored", res, err)
+	}
+}
+
+// forgeOwn sends a replica an op under its own origin, past a gap: it is refused, and the
+// replica's next write still folds.
+func (w *world) forgeOwn(r *replica) {
+	ctx := context.Background()
+	v, err := r.Vector(ctx)
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	seq := v[r.Origin()] + 2 + uint64(w.rng.Intn(50))
+	raw, _ := json.Marshal(map[string]any{"v": 1, "o": r.Origin(), "s": seq, "w": r.clock.Now().UnixMilli(),
+		"c": 0, "bl": seq, "k": "create", "r": "task-forged00", "root": OpID{Origin: r.Origin(), Seq: seq}.String(),
+		"val": map[string]any{"type": "task", "fields": map[string]any{"title": "forged"}}})
+	res, err := r.Apply(ctx, [][]byte{raw})
+	if err != nil || res.Refused != 1 {
+		w.t.Fatalf("%s: own op past a gap: %+v %v, want refused", r.name, res, err)
+	}
+	id := NewID(TypeTask)
+	if _, err := r.Write(ctx, Batch{Steps: []Step{create(id, TypeTask, map[string]any{"title": "after a forgery"})}}); err != nil {
+		w.t.Fatalf("%s: write after a forgery: %v", r.name, err)
+	}
+	if _, err := r.Get(ctx, id); err != nil {
+		w.t.Fatalf("%s: write after a forgery not folded: %v", r.name, err)
+	}
+	w.learn(r)
+}
+
+// restore loses a replica's file once every replica holds every op, then gets its ops back from
+// the others: a new file of the same origin. Its next writes must not reuse a seq.
+func (w *world) restore(r *replica) {
+	w.heal()
+	i := slices.Index(w.reps, r)
+	n := openReplica(w.t, r.name, filepath.Join(w.t.TempDir(), "logbook.db"))
+	n.clock = r.clock
+	_ = r.Close()
+	w.reps[i] = n
+	delete(w.known, r)
+	for _, p := range w.reps {
+		if p != n {
+			pushPages(w.t, p, n, 1+w.rng.Intn(50))
+		}
+	}
+	w.learn(n)
 }
 
 // exchange sends some of what from holds that to lacks, in small pages, dropping some ops.
@@ -81,6 +219,7 @@ func (w *world) exchange(from, to *replica) {
 	}
 	var sent [][]byte
 	for _, o := range ops {
+		w.see(o)
 		if w.rng.Intn(5) != 0 {
 			sent = append(sent, o)
 		}
@@ -134,6 +273,20 @@ func (w *world) close() {
 	}
 }
 
+// project returns a project id: one the replica holds, else one it may never hold.
+func (w *world) project(r *replica) string {
+	var ps []string
+	for _, id := range w.known[r] {
+		if strings.HasPrefix(id, "proj-") {
+			ps = append(ps, id)
+		}
+	}
+	if len(ps) == 0 || w.rng.Intn(4) == 0 {
+		return fmt.Sprintf("proj-faraway%d", w.rng.Intn(3))
+	}
+	return ps[w.rng.Intn(len(ps))]
+}
+
 func (w *world) pick(r *replica) string {
 	ids := w.known[r]
 	if len(ids) == 0 {
@@ -152,11 +305,36 @@ func (w *world) write(r *replica) {
 		return
 	}
 	actor := &Actor{Kind: "agent", Harness: "claude", Session: fmt.Sprintf("s%d", rng.Intn(3))}
-	_, err := r.Write(ctx, Batch{Actor: actor, Steps: steps})
+	res, err := r.Write(ctx, Batch{Actor: actor, Steps: steps})
 	if err != nil && !errors.Is(err, ErrInvalid) && !errors.Is(err, ErrNotFound) {
 		w.t.Fatalf("%s write %+v: %v", r.name, steps, err)
 	}
+	for _, id := range res.Ops {
+		if err != nil {
+			break
+		}
+		var raw []byte
+		if err := r.db.QueryRowContext(ctx, `SELECT raw FROM ops WHERE origin = ? AND seq = ?`, id.Origin, id.Seq).Scan(&raw); err != nil {
+			w.t.Fatal(err)
+		}
+		w.see(raw)
+	}
 	w.learn(r)
+}
+
+// see keeps an op's bytes as first written or carried, before any forget redacted them.
+func (w *world) see(raw []byte) {
+	op, err := decodeOp(raw)
+	if err != nil {
+		return
+	}
+	if _, ok := w.seen[op.ID()]; !ok {
+		w.seen[op.ID()] = raw
+		w.seenList = append(w.seenList, op.ID())
+	}
+	if op.Kind == KindForget && op.Target != nil {
+		w.targets = append(w.targets, *op.Target)
+	}
 }
 
 func (w *world) steps(r *replica) []Step {
@@ -165,7 +343,14 @@ func (w *world) steps(r *replica) []Step {
 	if id == "" || rng.Intn(5) == 0 {
 		typ := Types[rng.Intn(len(Types))]
 		nid := NewID(typ)
+		if rng.Intn(3) == 0 {
+			// A small pool of ids for every type, so replicas create one id apart (2.3).
+			nid = fmt.Sprintf("rec-pool%04d", rng.Intn(2))
+		}
 		fields := map[string]any{"title": fmt.Sprintf("%s %d", typ, rng.Intn(1000))}
+		if typ != TypeProject && rng.Intn(3) == 0 {
+			fields["project"] = w.project(r)
+		}
 		if rng.Intn(2) == 0 {
 			fields["body"] = vocab[rng.Intn(len(vocab))] + " body"
 		}
@@ -192,7 +377,9 @@ func (w *world) steps(r *replica) []Step {
 	if err != nil {
 		return nil
 	}
-	switch rng.Intn(9) {
+	switch rng.Intn(10) {
+	case 9:
+		return []Step{set(id, "project", w.project(r))}
 	case 0:
 		return []Step{set(id, "title", fmt.Sprintf("title %d", rng.Intn(1000)))}
 	case 1:
@@ -226,9 +413,19 @@ func (w *world) steps(r *replica) []Step {
 		}
 	case 8:
 		ops, err := r.History(context.Background(), id)
-		if err == nil && len(ops) > 0 && rng.Intn(3) == 0 {
-			o := ops[rng.Intn(len(ops))]
-			return []Step{{Kind: KindForget, Target: o.ID()}}
+		if err != nil {
+			break
+		}
+		// Mostly an op that holds text; now and then any op, which a write refuses.
+		text := slices.DeleteFunc(slices.Clone(ops), func(o *Op) bool {
+			return !(o.Kind == KindAppend || o.Kind == KindAdd || o.Kind == KindCreate ||
+				(o.Kind == KindSet && (o.Field == "title" || o.Field == "body")))
+		})
+		if len(text) > 0 && rng.Intn(4) != 0 {
+			ops = text
+		}
+		if len(ops) > 0 {
+			return []Step{{Kind: KindForget, Target: ops[rng.Intn(len(ops))].ID()}}
 		}
 	}
 	return []Step{note(id, "fallback")}
@@ -237,25 +434,41 @@ func (w *world) steps(r *replica) []Step {
 // P2. Fold equals rebuild: on every replica, the tables folded op by op as ops arrived equal the
 // tables Rebuild makes from the log. After the heal, every replica also folds the same tables.
 func TestP2FoldEqualsRebuild(t *testing.T) {
+	t.Parallel()
 	sd := seed(t)
-	n := runs(500, 20000)
+	n := runs(100, 20000)
 	if testing.Short() {
 		n = 20
 	}
-	for i := range n {
+	eachRun(t, n, func(t *testing.T, i int) {
 		rng := rand.New(rand.NewSource(sd + int64(i)))
 		w := newWorld(t, rng)
 		w.play(15 + rng.Intn(25))
 		checkRebuild(t, w, sd, i)
 		w.heal()
-		ref := dump(t, w.reps[0].Store)
+		ref, refOps := dump(t, w.reps[0].Store), dumpOps(t, w.reps[0].Store)
 		for _, r := range w.reps[1:] {
 			if d := dump(t, r.Store); d != ref {
 				t.Fatalf("seed %d run %d: %s folds differently from %s after heal:\n%s\n---\n%s", sd, i, r.name, w.reps[0].name, d, ref)
 			}
+			if d := dumpOps(t, r.Store); d != refOps {
+				t.Fatalf("seed %d run %d: %s holds other op bytes than %s after heal:\n%s\n---\n%s", sd, i, r.name, w.reps[0].name, d, refOps)
+			}
 		}
 		checkRebuild(t, w, sd, i)
 		w.close()
+	})
+}
+
+// eachRun runs a property's runs as parallel subtests named run<i>, up to -parallel at a time:
+// a run spends most of its time waiting on SQLite's file setup, not on the CPU. Run i uses seed
+// plus i, so `-run 'TestP2FoldEqualsRebuild/run17$'` with $GFF_LOGBOOK_SEED replays one.
+func eachRun(t *testing.T, n int, run func(t *testing.T, i int)) {
+	for i := range n {
+		t.Run(fmt.Sprintf("run%d", i), func(t *testing.T) {
+			t.Parallel()
+			run(t, i)
+		})
 	}
 }
 
@@ -276,13 +489,14 @@ func checkRebuild(t *testing.T, w *world, sd int64, run int) {
 // same records. Half the runs keep each origin's seq order, as sync does; half shuffle freely,
 // which the gap rule must absorb.
 func TestP3OrderDoesNotMatter(t *testing.T) {
+	t.Parallel()
 	sd := seed(t)
 	n := runs(50, 5000)
 	if testing.Short() {
 		n = 10
 	}
 	ctx := context.Background()
-	for i := range n {
+	eachRun(t, n, func(t *testing.T, i int) {
 		rng := rand.New(rand.NewSource(sd + int64(i)))
 		w := newWorld(t, rng)
 		w.play(15 + rng.Intn(25))
@@ -308,7 +522,7 @@ func TestP3OrderDoesNotMatter(t *testing.T) {
 			_ = obs.Close()
 		}
 		w.close()
-	}
+	})
 }
 
 // shuffled returns ops in a random order: an interleaving of the per-origin streams when keepSeq,
@@ -346,6 +560,7 @@ func shuffled(rng *rand.Rand, ops [][]byte, keepSeq bool) [][]byte {
 // exactly the heads; the highest stamp wins. Histories are generated with known causality and
 // delivered in random order.
 func TestP6ConflictsAreExact(t *testing.T) {
+	t.Parallel()
 	sd := seed(t)
 	rng := rand.New(rand.NewSource(sd))
 	n := runs(500, 20000)

@@ -24,6 +24,10 @@ var ErrNotFound = errors.New("logbook: not found")
 // ErrInvalid is the class of a refused write; the error is an *InvalidError with a hint.
 var ErrInvalid = errors.New("logbook: invalid")
 
+// ErrSharedOrigin means another host sent ops under this replica's own origin (7.4): two hosts
+// share a device id. The replica refuses to write until the host gets a new device id.
+var ErrSharedOrigin = errors.New("logbook: this host's device id is shared with another host; give it a new device id")
+
 // ErrNoOrigin means the file has no origin yet and none was given.
 var ErrNoOrigin = errors.New("logbook: no origin: the file is new and Options.Origin is empty")
 
@@ -93,12 +97,16 @@ func Open(ctx context.Context, path string, opts Options) (*Store, error) {
 	if busy <= 0 {
 		busy = 5 * time.Second
 	}
-	syncMode := "NORMAL"
+	// FULL: in WAL mode NORMAL can lose a commit after a power loss, and the next write would
+	// then reuse a seq that peers already hold.
+	syncMode := "FULL"
 	if opts.noSync {
 		syncMode = "OFF"
 	}
 	dsn := path + "?_pragma=busy_timeout(" + strconv.FormatInt(busy.Milliseconds(), 10) + ")" +
-		"&_pragma=journal_mode(WAL)&_pragma=synchronous(" + syncMode + ")&_txlock=immediate"
+		"&_pragma=synchronous(" + syncMode + ")&_pragma=journal_mode(WAL)" +
+		// secure_delete zeroes freed space, so a forgotten value leaves no copy in the page slack.
+		"&_pragma=secure_delete(1)&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -284,6 +292,19 @@ func (m meta) write(ctx context.Context, tx txn) error {
 		m.origin, strconv.FormatUint(m.nextSeq, 10), strconv.FormatInt(m.last.Wall, 10),
 		strconv.FormatUint(uint64(m.last.Counter), 10), strconv.Itoa(m.foldVersion))
 	return err
+}
+
+// scrub runs after a forget lands: a TRUNCATE checkpoint copies the redacted pages into the
+// file and empties the WAL, whose older frames still hold the forgotten text (5.7). With
+// secure_delete on, the file keeps no copy either. A reader that holds the WAL open makes the
+// checkpoint stop short; it is logged, and the next forget's checkpoint tries again.
+func (s *Store) scrub(ctx context.Context) {
+	var busy, frames, done int
+	if err := s.db.QueryRowContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &frames, &done); err != nil {
+		s.logf("logbook: checkpoint after a forget: %v", err)
+	} else if busy != 0 {
+		s.logf("logbook: checkpoint after a forget stopped short: a reader holds the log")
+	}
 }
 
 // Rebuild drops the folded tables and folds every op again (4.1). An op this build has learned

@@ -69,7 +69,8 @@ type folded struct {
 	Sets      map[string][]Member   `json:"sets"`
 	Notes     []Note                `json:"notes"`
 	Flags     []Flag                `json:"flags"`
-	// Revision counts the folded ops, the create included, so it never goes down.
+	// Revision counts the folded ops, the create included, and the forgets of them, so it never
+	// goes down and moves on a redaction.
 	Revision int `json:"revision"`
 	// Skipped lists ops on the record a rule kept out of the fold (a set of a finding's body).
 	Skipped []OpID `json:"-"`
@@ -123,7 +124,17 @@ func fold(create *Op, ops []*Op, collision int) *folded {
 	adds := map[string][]*Op{} // set field -> adds
 	removed := map[OpID]bool{} // adds named by a remove
 	var appends []*Op
+	mine := map[OpID]bool{f.Root: true}
 	for _, o := range ops {
+		if o.Root == f.Root {
+			mine[o.ID()] = true
+		}
+	}
+	for _, o := range ops {
+		if o.Root == f.Root && o.Kind == KindForget && o.Target != nil && mine[*o.Target] {
+			f.Revision++ // a redaction of one of the record's ops
+			continue
+		}
 		if o.Root != f.Root || o.Kind == KindCreate || o.Kind == KindForget {
 			continue
 		}

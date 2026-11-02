@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 )
@@ -121,6 +122,16 @@ func decodeOp(raw []byte) (*Op, error) {
 		o.Record == "" || o.Root.IsZero() {
 		return nil, errBadEnvelope
 	}
+	// SQLite stores integers as int64: a seq above that cannot be stored or looked up. Op ids in
+	// the root, the target and prev are held to the same bound by ParseOpID.
+	if o.Seq > math.MaxInt64 || o.BatchLast > math.MaxInt64 {
+		return nil, fmt.Errorf("%w: seq above 2^63-1", errBadEnvelope)
+	}
+	// A create claims an id of the shape 2.3 allows. That shape has one dash; a collision id
+	// (base-2, base-3) has two, so a peer can never claim an id a fold gives another record.
+	if o.Kind == KindCreate && !ValidID(o.Record) {
+		return nil, fmt.Errorf("%w: create of id %q", errBadEnvelope, o.Record)
+	}
 	o.raw = slices.Clone(raw)
 	return &o, nil
 }
@@ -192,6 +203,22 @@ func isForgotten(v json.RawMessage) bool {
 	return json.Unmarshal(v, &s) == nil && strings.HasPrefix(s, forgottenPrefix)
 }
 
+// forgettable reports whether a forget redacts an op of this kind and field: a create's text, a
+// set of a text field, an add, an append (5.7). A set of a field with no text, a remove and a
+// forget hold nothing to forget, so a forget of one, which a local write refuses, changes nothing
+// when a peer sends it. An op of a kind this build does not know is redacted whole: the newer
+// build that wrote the forget knows what it holds.
+func forgettable(kind Kind, field string) bool {
+	switch kind {
+	case KindRemove, KindForget:
+		return false
+	case KindSet:
+		spec, ok := fields[field]
+		return !ok || spec.text
+	}
+	return true
+}
+
 // redact returns raw with its value replaced by a hash and the word "forgotten". For a create,
 // each text field and the source are replaced and the rest kept, so the record still folds. It
 // is idempotent, so replicas that redact the same op in any order hold the same bytes.
@@ -206,6 +233,11 @@ func redact(raw []byte) ([]byte, error) {
 	}
 	var kind Kind
 	_ = json.Unmarshal(m["k"], &kind)
+	var field string
+	_ = json.Unmarshal(m["f"], &field)
+	if !forgettable(kind, field) {
+		return raw, nil
+	}
 	if kind == KindCreate {
 		var c map[string]json.RawMessage
 		if err := json.Unmarshal(val, &c); err != nil {

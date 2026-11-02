@@ -32,11 +32,13 @@ func NewID(typ string) string {
 // importedID is the shape an import may carry verbatim (2.3). Minted ids match it too.
 var importedID = regexp.MustCompile(`^[a-z]+-[a-z0-9]{3,16}$`)
 
-// ValidID reports whether s may be a new record's id.
+// ValidID reports whether s may be a new record's id: a local create's or one a peer's create
+// claims. It has exactly one dash.
 func ValidID(s string) bool { return importedID.MatchString(s) }
 
 // collisionID is the id a record gets when an earlier create holds its id: base-2, base-3 and so
-// on, by create order (2.3).
+// on, by create order (2.3). It has two dashes, so no create can claim it (ValidID), and the
+// folded ids of all records stay unique.
 func collisionID(base string, index int) string {
 	if index == 0 {
 		return base

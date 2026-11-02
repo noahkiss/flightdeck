@@ -7,6 +7,7 @@ package logbook
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -37,10 +38,14 @@ func (h HLC) Compare(o HLC) int {
 }
 
 // tick returns the stamp for a local write: wall = max(now, last wall); the counter rises when
-// the wall did not move, else it resets to 0.
+// the wall did not move, else it resets to 0. A counter at its top carries into the wall, so the
+// stamp still orders after last, also when last came from a peer (observe).
 func tick(last HLC, nowMS int64, origin string) HLC {
 	if nowMS > last.Wall {
 		return HLC{Wall: nowMS, Origin: origin}
+	}
+	if last.Counter == math.MaxUint32 {
+		return HLC{Wall: last.Wall + 1, Origin: origin}
 	}
 	return HLC{Wall: last.Wall, Counter: last.Counter + 1, Origin: origin}
 }
@@ -84,7 +89,7 @@ func ParseOpID(s string) (OpID, error) {
 		return OpID{}, fmt.Errorf("op id %q: want seq@origin", s)
 	}
 	n, err := strconv.ParseUint(s[:i], 10, 64)
-	if err != nil || n == 0 {
+	if err != nil || n == 0 || n > math.MaxInt64 {
 		return OpID{}, fmt.Errorf("op id %q: bad seq", s)
 	}
 	return OpID{Origin: s[i+1:], Seq: n}, nil

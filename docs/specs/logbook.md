@@ -353,8 +353,10 @@ and it lets an older hab carry a newer hab's ops without losing them.
 ### 4.5 Built (stage 2)
 
 `internal/logbook` (task-5v03ztrf). The driver is `modernc.org/sqlite`, pure Go, with FTS5 built
-in. The file opens with a 5 s busy timeout, WAL, `synchronous=NORMAL` and `BEGIN IMMEDIATE` for
-every write.
+in. The file opens with a 5 s busy timeout, WAL, `synchronous=FULL`, `secure_delete` and `BEGIN
+IMMEDIATE` for every write. FULL, because in WAL mode NORMAL can lose a commit after a power loss,
+and the next write would then reuse a seq that peers already hold. `secure_delete` zeroes freed
+space, so a forgotten value leaves no copy in the file (Forget below).
 
 Where this spec was silent, stage 2 decided:
 
@@ -362,21 +364,24 @@ Where this spec was silent, stage 2 decided:
 |---|---|
 | Op envelope | Every op carries `v`, `o` (origin), `s` (seq), `w` and `c` (the stamp), `bl`, `k` (kind), `r` (record id) and `root`. These keys never change between versions, so an older build can order, apply and forward any op |
 | `root` | Every op names its record's create op. Two creates of one id (2.3) stay apart, and later ops reach the right record. The second record shows as `<id>-2`, then `-3`, in create stamp order |
+| Claimed ids | A create, local or from a peer, claims an id of 2.3's shape, which has one dash. A collision id has two, so no create can claim an id a fold gives another record, and folded ids stay unique |
+| Refused ops | `Apply` refuses an op, stores nothing for it and counts it in `Refused` when: its envelope is unusable; a seq it carries or names (its own, its batch end, its root, its target, a `prev`) is above 2^63-1, which SQLite cannot store; a create claims an id of another shape; its origin is shared; it is this replica's own origin past a gap (Own ops back); or the file's constraints refuse it, undone by a savepoint. The rest of the page lands. A refused op is not remembered, so a peer may send it again |
 | Batches | Every op carries `bl`, the last seq of its batch. A replica folds an origin's ops up to the end of the last whole batch in its gap-free run. The version vector counts the gap-free run |
 | `prev` | A local `set` names every head of the field: the set ops no other set op on it saw. With no flag that is one op; where a conflict shows, it is every side |
 | Conflict flag | A field is flagged when it has two or more heads. So a set written where the flag shows clears it (5.2: resolve, or a later set that saw the winner), and a set written apart, that saw one side only, keeps it. P6 tests this rule. The create's value counts as the field's first set |
 | Delete | Local writes to a deleted record are refused, except a restore (`deleted` false) and `forget`. "Edited after delete" flags the record when `deleted` is true and another folded op on it has a later stamp than the winning delete |
-| Proposals | After create, only `status`, `decided_by` and `deleted` change. Decisions are `approved`, `edited`, `rejected` and `expired`. `decided_by` follows the batch of the decision that stands. These two fields raise "decided twice", never a last-writer conflict |
+| Proposals | After create, only `status`, `decided_by` and `deleted` change. Decisions are `approved`, `edited`, `rejected` and `expired`. `decided_by` follows the batch of the decision that stands. These two fields raise "decided twice", never a last-writer conflict. A writer that sees a decision cannot write `status` or `decided_by` again (`invalid`), so only decisions made apart raise "decided twice" |
 | Findings | `title`, `body` and `type` are fixed. An incoming set of them is kept, not folded, and logged once when it is applied |
 | Retype | Only a task and an issue change type, into each other |
 | Superseded twice | Derived when the record is read, from the `supersedes` links of records not deleted. Deleting one successor clears it |
 | Projects | Type `project`, ids `proj-<8>`, the title is its name, set field `identities`. On fold, projects that share an identity, directly or through others, join: the oldest by create stamp is canonical. `Record.Project` is the canonical id, and a list by either id finds both. Stage 5 adds identity detection, first sight, `project join` and the private flag |
-| Forget | Targets a create (its text fields and source), a set of a text field, an append or an add. The value becomes `forgotten sha256:<hex of its JSON>`. Redaction is idempotent; an op that a held forget names is redacted before it is stored; the FTS index is optimised after a redaction. A repeat compares after redaction |
-| Shared origin | A second, different op with a held op id marks its origin shared; its further ops are refused. `Status.Shared` lists it |
+| Forget | Targets a create (its text fields and source), a set of a text field, an append or an add. The value becomes `forgotten sha256:<hex of its JSON>`. Redaction is idempotent; an op that a held forget names is redacted before it is stored; the FTS index is optimised after a redaction. A repeat compares after redaction. A forget from a peer that names any other op (a set of a field with no text, a remove, a forget) changes nothing; an op of a kind this build does not know is redacted whole. Each forget of a record's op moves the record's revision. After a forget lands, a `TRUNCATE` checkpoint empties the WAL, whose older frames still hold the text; with `secure_delete` the file holds no copy either. A reader that holds the WAL open makes the checkpoint stop short, and the store logs it |
+| Shared origin | A second, different op with a held op id marks its origin shared; its further ops are refused. `Status.Shared` lists it. When the origin is this replica's own, `Write` refuses with `ErrSharedOrigin` until the host gets a new device id |
 | Clock ahead | An op stamped over 1 hour past the receiver's clock marks its origin, logs once, and shows in `Status.Ahead` |
-| Own ops back | Ops of this replica's own origin that arrive from a peer past its next seq move the next seq past them |
+| Counter top | A local stamp whose counter would pass 2^32-1 carries into the wall: wall + 1, counter 0. So a write still orders after a peer's op stamped with the top counter (5.1) |
+| Own ops back | This replica's own ops come back from a peer only after its file lost them (a restore, 14). One that extends the gap-free run of the origin is stored, and the next seq moves past it, so no seq is used twice. One past a gap is refused: stored, it would hold a seq a later local write needs, and local writes would stop folding behind the gap. The peer sends it again once the ops before it are here |
 | Limits | Title one line of 1 to 200 characters; body and note at most 256 KiB; a tag one word of at most 40 characters; other text fields at most 4 KiB; priority 0 (none) to 3; triage `new` or empty; an identity one line of at most 1 KiB |
-| Property test counts | Stage 2 has no P1, so P2 runs after each of its own random histories: 3 to 5 replicas writing every op kind and exchanging pages that drop ops. Per push: P2 500 runs, P3 50 runs of 3 orders, P6 500 histories, P10 2 processes of 2 goroutines with 100 writes each. Nightly (`GFF_LOGBOOK_NIGHTLY=1`): 20,000, 5,000, 20,000 and 2,000. Under `-race` the run counts drop to a twentieth: the race build checks for data races on the same paths at a tenth of the speed, and `make test` runs the full counts |
+| Property test counts | Stage 2 has no P1, so P2 runs after each of its own random histories: 3 to 5 replicas writing every op kind and exchanging pages that drop ops. The histories also hold creates of one id on two replicas, project fields, ops of a later build, stale unredacted copies of ops that may land after their forget, forged ops under a replica's own origin past a gap, and a replica that loses its file and gets its ops back. P2 compares the folded tables and the stored op bytes. Per push: P2 100 runs, P3 50 runs of 3 orders, P6 500 histories, P10 2 processes of 2 goroutines with 100 writes each. P2 runs 100 times, not 500, to keep the package under 15 s: a run's cost is mostly SQLite's file setup, and the runs go as parallel subtests. Nightly (`GFF_LOGBOOK_NIGHTLY=1`): 20,000, 5,000, 20,000 and 2,000. Under `-race` the run counts drop to a twentieth: the race build checks for data races on the same paths at a tenth of the speed, and `make test` runs the full counts |
 | Fold version | The file records the fold version. A build with another opens it with a rebuild, which also re-checks which ops it can fold (4.4) |
 
 Interfaces for the next stages:
@@ -385,13 +390,13 @@ Interfaces for the next stages:
   maxBytes)` returns the stored bytes of the ops `have` lacks, per origin in seq order, and whether
   more remain: a pull's answer and a push's source. `Apply(ops)` stores ops as their bytes came,
   folds what it can, and returns the counts stored, repeated and refused and the changed record
-  ids.
+  ids, sorted: the ids before and after, so a record an id collision renames shows under both.
 - **Stage 4 (CLI, API, MCP).** `Open(path, Options{Origin: ""})` takes the origin from the file,
   so the CLI writes while gff-hab is down. `Write(Batch{Actor, Steps})` returns op ids and record
   ids; a refusal is an `*InvalidError` with a hint (the API's `invalid`), a missing record
   `ErrNotFound`. Reads: `Get`, `History`, `List`, `Find`, `Status`. `Changes(cursor)` returns the
   records whose ops arrived after a cursor, by any writer of the file, so gff-hab can emit events
-  for the CLI's writes. Idempotency keys belong in stage 4, in a table of the same file, written
+  for the CLI's writes; a create also names every record that claims its id. Idempotency keys belong in stage 4, in a table of the same file, written
   in the write's transaction.
 
 ---
@@ -929,7 +934,7 @@ Each run logs its seed (`docs/testing.md`).
 | # | Property | Setup |
 |---|---|---|
 | P1 | **Convergence.** After every partition heals and sync goes quiet, all replicas have the same ops, the same folded records and the same conflict flags | 3 to 5 replicas, random writes of every op kind, random partitions, heal, compare. 500 runs per push, 20,000 nightly |
-| P2 | **Fold equals rebuild.** Folding ops as they arrive gives the same tables as `rebuild` from the log | After every P1 run |
+| P2 | **Fold equals rebuild.** Folding ops as they arrive gives the same tables as `rebuild` from the log | After every P1 run. Stage 2, before P1 exists, runs it after its own random histories: 100 runs per push, 20,000 nightly (4.5) |
 | P3 | **Order does not matter.** Any arrival order of the same ops, respecting per-origin seq, folds to the same records | Shuffle per-origin streams; compare |
 | P4 | **No lost write.** Every op a replica wrote is on every replica after heal, unless its disk was wiped before any sync | P1 with random crashes; check against a written-op ledger |
 | P5 | **Repeats are harmless.** Delivering any op or page twice changes nothing | Fake link repeats 10% of messages |

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -69,6 +70,11 @@ func (s *Store) Write(ctx context.Context, b Batch) (WriteResult, error) {
 	if err != nil {
 		return res, err
 	}
+	if g, err := originRow(ctx, tx, m.origin); err != nil {
+		return res, err
+	} else if g.shared {
+		return res, ErrSharedOrigin
+	}
 	stamp := tick(m.last, s.now().UnixMilli(), m.origin)
 	w := &writer{ctx: ctx, tx: tx, state: map[string]*folded{}, setInBatch: map[string]bool{}}
 	n := uint64(len(b.Steps))
@@ -105,9 +111,6 @@ func (s *Store) Write(ctx context.Context, b Batch) (WriteResult, error) {
 	if err := m.write(ctx, tx); err != nil {
 		return res, err
 	}
-	if _, err := originRow(ctx, tx, m.origin); err != nil {
-		return res, err
-	}
 	if _, _, err := advance(ctx, tx, m.origin); err != nil {
 		return res, err
 	}
@@ -122,7 +125,13 @@ func (s *Store) Write(ctx context.Context, b Batch) (WriteResult, error) {
 			return res, err
 		}
 	}
-	return res, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return res, err
+	}
+	if forgot {
+		s.scrub(ctx)
+	}
+	return res, nil
 }
 
 // writer checks a batch's steps against the folded state, with the batch's own earlier steps
@@ -197,6 +206,12 @@ func (w *writer) step(o *Op, st Step) error {
 		}
 		if err := checkScalar(f.Type, st.Field, spec, val); err != nil {
 			return err
+		}
+		if f.Type == TypeProposal && (st.Field == "status" || st.Field == "decided_by") &&
+			slices.Contains(decisions, f.str("status")) && !w.setInBatch[f.ID+" status"] {
+			// The first decision stands (5.6); a writer that sees it cannot add a second. Only
+			// decisions made apart raise "decided twice".
+			return invalid("a decided proposal does not change", "%s is %s", f.ID, f.str("status"))
 		}
 		key := f.ID + " " + st.Field
 		if w.setInBatch[key] {
@@ -319,6 +334,9 @@ func (w *writer) create(o *Op, st Step) error {
 }
 
 func (w *writer) forget(o *Op, st Step) error {
+	if st.Target.Seq > math.MaxInt64 {
+		return ErrNotFound
+	}
 	var raw []byte
 	var root string
 	err := w.tx.QueryRowContext(w.ctx, `SELECT raw, root FROM ops WHERE origin = ? AND seq = ?`, st.Target.Origin, st.Target.Seq).
@@ -344,8 +362,18 @@ func (w *writer) forget(o *Op, st Step) error {
 	}
 	target := st.Target
 	o.Target = &target
-	o.Record = t.Record
 	o.Root, _ = ParseOpID(root)
+	// Name the record by the id it folds to, which differs from the create's claim after an id
+	// collision (2.3), as every other step does.
+	o.Record = t.Record
+	var id string
+	err = w.tx.QueryRowContext(w.ctx, `SELECT id FROM records WHERE root = ?`, root).Scan(&id)
+	switch {
+	case err == nil:
+		o.Record = id
+	case !errors.Is(err, sql.ErrNoRows):
+		return err
+	}
 	return nil
 }
 

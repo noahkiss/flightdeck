@@ -18,6 +18,7 @@ import (
 // the CLI fallback (it takes the origin from the file), each with two goroutines writing, never
 // reuse a seq or lose a write (4.3). Under go test -race the writer processes are race builds too.
 func TestP10TwoWritersOneFile(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	per := envInt("GFF_LOGBOOK_P10_WRITES", map[bool]int{false: 100, true: 2000}[nightly()])
 	if testing.Short() {

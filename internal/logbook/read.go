@@ -279,29 +279,43 @@ func (s *Store) OpsAfter(ctx context.Context, have Vector, maxOps, maxBytes int)
 	return out, false, nil
 }
 
-// Changes returns the ids of records whose ops arrived after cursor, by any writer of the file,
-// and the new cursor. gff-hab polls it to emit events for ops the CLI wrote (4.3). Cursor 0
-// starts from the first op.
+// Changes returns, sorted, the ids of records whose ops arrived after cursor, by any writer of
+// the file, and the new cursor. gff-hab polls it to emit events for ops the CLI wrote (4.3). A
+// create also names every record that claims its id, since an id collision may have renamed them
+// (2.3). Cursor 0 starts from the first op.
 func (s *Store) Changes(ctx context.Context, cursor int64) ([]string, int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT rowid, root FROM ops WHERE rowid > ? ORDER BY rowid`, cursor)
+	rows, err := s.db.QueryContext(ctx, `SELECT rowid, root, kind, record FROM ops WHERE rowid > ? ORDER BY rowid`, cursor)
 	if err != nil {
 		return nil, cursor, err
 	}
 	roots := map[string]bool{}
+	claims := map[string]bool{}
 	next := cursor
 	for rows.Next() {
 		var rid int64
-		var root string
-		if err := rows.Scan(&rid, &root); err != nil {
+		var root, kind, record string
+		if err := rows.Scan(&rid, &root, &kind, &record); err != nil {
 			rows.Close()
 			return nil, cursor, err
 		}
 		roots[root] = true
+		if Kind(kind) == KindCreate {
+			claims[record] = true
+		}
 		next = rid
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, cursor, err
+	}
+	for _, c := range sortedKeys(claims) {
+		siblings, err := queryStrings(ctx, s.db, `SELECT root FROM ops WHERE kind = 'create' AND record = ?`, c)
+		if err != nil {
+			return nil, cursor, err
+		}
+		for _, r := range siblings {
+			roots[r] = true
+		}
 	}
 	var ids []string
 	for _, r := range sortedKeys(roots) {
@@ -315,7 +329,7 @@ func (s *Store) Changes(ctx context.Context, cursor int64) ([]string, int64, err
 		}
 		ids = append(ids, id)
 	}
-	return ids, next, nil
+	return sortedUnique(ids), next, nil
 }
 
 // Status is the replica's size and health.
