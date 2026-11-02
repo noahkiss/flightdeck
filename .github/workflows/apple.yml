@@ -3,8 +3,8 @@
 # Kit package's tests on an iOS Simulator. No signing, no secrets; the Mac app signs ad hoc (no
 # Local.xcconfig in CI). It runs only when the app, the Swift package, the schema it is generated
 # from, or the Go testdata the Swift tests read change. The live tests skip: they need a real hab.
-#
-# xcode-ci is pinned to the branch of noahkiss/workflows#16 until it merges; then back to @main.
+# app-release.yml calls it on an app tag (workflow_call), so the release tests the tagged commit
+# with these same inputs.
 name: Apple
 
 on:
@@ -21,6 +21,7 @@ on:
   pull_request:
     paths: *apple
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
   group: apple-${{ github.workflow }}-${{ github.ref }}
@@ -33,7 +34,6 @@ jobs:
     name: Apple
     permissions:
       contents: read
-    # TODO: repoint to @main once noahkiss/workflows#16 merges.
     uses: noahkiss/workflows/.github/workflows/xcode-ci.yml@main
     with:
       # Xcode 27.1 by path on the xcode-27 image; never the image default or a beta (spec 4).
@@ -52,5 +52,5 @@ jobs:
       # Resolve only the pinned versions; a drifted graph fails instead of floating (spec 5).
       xcodebuild-args: -onlyUsePackageVersionsFromResolvedFile
       spm-cache-key-file: apple/FlightdeckKit/Package.resolved
-      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
       timeout-minutes: 60

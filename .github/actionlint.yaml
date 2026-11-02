@@ -1,0 +1,5 @@
+# xcode-27 is a GitHub-hosted preview image (docs/specs/ci-release.md 4) that actionlint's
+# built-in label list does not know yet. Listing it here is actionlint's only way to accept it.
+self-hosted-runner:
+  labels:
+    - xcode-27
