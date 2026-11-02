@@ -165,6 +165,12 @@ public actor FakeHab {
     /// Runs before a `push.register` is answered: a test holds it open.
     private var pushRegisterHook: (@Sendable (PushRegisterParams) async -> Void)?
     public func setPushRegisterHook(_ hook: (@Sendable (PushRegisterParams) async -> Void)?) { pushRegisterHook = hook }
+    /// Push kinds this hab does not know: a `push.register` naming one is refused as
+    /// `invalid`, as a hab built before that kind refuses it.
+    private var unknownPushKinds: Set<PushKind> = []
+    public func setUnknownPushKinds(_ k: Set<PushKind>) { unknownPushKinds = k }
+    /// Every `push.register` refused for an unknown kind, oldest first.
+    public private(set) var refusedPushRegisters: [PushRegisterParams] = []
     /// Every `push.register_activity` received, oldest first.
     public private(set) var activityRegisters: [PushActivityParams] = []
     /// Every `push.unregister` received, oldest first.
@@ -952,6 +958,12 @@ public actor FakeHab {
                 break
             }
             if method == HabMethods.pushRegister.name, let p = try? params.decode(PushRegisterParams.self) {
+                if let k = p.kinds.first(where: { unknownPushKinds.contains($0) }) {
+                    refusedPushRegisters.append(p)
+                    let known = ["permission", "question", "auth", "error", "done"]
+                    await fail(c, id: id, kind: .invalid, hint: "kind \"\(k.rawValue)\" is not one of [\(known.joined(separator: " "))]")
+                    break
+                }
                 pushRegisters.append(p)
                 if let hook = pushRegisterHook { await hook(p) }
             } else if let p = try? params.decode(PushActivityParams.self) {

@@ -89,6 +89,28 @@ final class PushRegistrationTests: XCTestCase {
         await fleet.setActive(false)
     }
 
+    /// A hab built before the `round` kind refuses a registration naming it as `invalid`
+    /// (internal/control/push.go). The app registers there again without it, so that hab's
+    /// other pushes still come.
+    func testHabThatRefusesTheRoundKindGetsTheOtherKinds() async {
+        let (hab, fleet, reg) = await rig()
+        await hab.setUnknownPushKinds([.round])
+        reg.setDeviceToken(Data([0xAB]))
+        await fleet.setActive(true)
+        await eventually("registered") { reg.status["h"] == .registered }
+        XCTAssertTrue(reg.canPush("h"))
+        let refused = await hab.refusedPushRegisters
+        XCTAssertEqual(refused.map(\.kinds), [[.permission, .question, .auth, .error, .round]])
+        let calls = await hab.pushRegisters
+        XCTAssertEqual(calls.map(\.kinds), [[.permission, .question, .auth, .error]])
+        // A setting change asks for round again, and falls back again.
+        reg.doneBanners = true
+        await eventually("done kind") { await hab.pushRegisters.last?.kinds == [.permission, .question, .auth, .error, .done] }
+        await reg.settle()
+        XCTAssertEqual(reg.status["h"], .registered)
+        await fleet.setActive(false)
+    }
+
     /// A hab online before the token waits; the token then registers there.
     /// A new token, a reconnect and a setting change each register again.
     func testRegistersAgainOnTokenReconnectAndSettings() async {

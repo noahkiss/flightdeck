@@ -116,6 +116,7 @@ public final class PushRegistrar {
         var k: [PushKind] = [.permission, .question, .auth, .error]
         if doneBanners { k.append(.done) }
         // Round notifications (rounds.md 10.2); the round's own notify setting decides which.
+        // A hab that does not know the kind gets the call again without it (`register`).
         k.append(.round)
         return k
     }
@@ -218,7 +219,15 @@ public final class PushRegistrar {
         let t = Task { @MainActor [weak self] in
             await previous?.value
             do {
-                _ = try await conn.call(HabMethods.pushRegister, p)
+                do {
+                    _ = try await conn.call(HabMethods.pushRegister, p)
+                } catch let e as RPCError where e.kind == .invalid && p.kinds.contains(.round) {
+                    // A hab built before the `round` kind refuses the whole call as invalid.
+                    // Register the other kinds there, so its other pushes still come.
+                    var older = p
+                    older.kinds = p.kinds.filter { $0 != .round }
+                    _ = try await conn.call(HabMethods.pushRegister, older)
+                }
                 guard let self, !Task.isCancelled else { return }
                 self.status[id] = .registered
                 self.accepted.insert(id)
