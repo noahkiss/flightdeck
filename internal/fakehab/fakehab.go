@@ -41,6 +41,9 @@ type Hab struct {
 	next   int
 	hold   chan struct{} // while set, session.create waits for it to close
 	closes int           // pane.close calls
+
+	rounds roundBook        // rounds.go
+	cat    *api.CatalogList // what catalog.list answers; nil: unavailable
 }
 
 // New makes a hab with its socket and state under dir (keep it short: socket paths are limited
@@ -53,6 +56,7 @@ func New(dir, hostID string) (*Hab, error) {
 		holder:   structure.NewFakeHolder(),
 		dir:      filepath.Join(dir, hostID+".state"),
 		agents:   map[string]api.AgentState{},
+		rounds:   newRoundBook(),
 	}
 	return h, h.Start()
 }
@@ -79,6 +83,8 @@ func (h *Hab) Start() error {
 		Capabilities: append([]string{"agent-state"}, h.Capabilities...),
 		Source:       source{h, st},
 		Actions:      actions{h},
+		Rounds:       roundsAPI{h},
+		Catalog:      catalogAPI{h},
 	})
 	pub.Store(srv)
 	os.Remove(h.Sock)
@@ -147,6 +153,10 @@ func (h *Hab) AddSessionIn(project, name string) (session, pane string, err erro
 }
 
 func (h *Hab) create(name, project string) (string, string, error) {
+	return h.createRun(name, project, nil)
+}
+
+func (h *Hab) createRun(name, project string, round *api.SessionRound) (string, string, error) {
 	h.mu.Lock()
 	st := h.store
 	h.next++
@@ -168,7 +178,7 @@ func (h *Hab) create(name, project string) (string, string, error) {
 	var s api.Session
 	err := waitFor(func() error {
 		var err error
-		s, err = st.CreateSession(structure.SessionSpec{Name: name, Project: project, Pane: pane, Index: -1})
+		s, err = st.CreateSession(structure.SessionSpec{Name: name, Project: project, Pane: pane, Index: -1, Round: round})
 		return err
 	})
 	if err != nil {
@@ -270,6 +280,7 @@ func (s source) Snapshot(host api.HostInfo) api.Structure {
 		}
 		return 0
 	})
+	snap.Rounds = s.h.rounds.list()
 	return snap
 }
 

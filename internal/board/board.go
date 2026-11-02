@@ -71,7 +71,19 @@ type Row struct {
 	// Host status: rows of a host that is not online stay, dimmed, with no actions.
 	HostStatus hosts.Status
 	HostSince  time.Time
+	// Round marks a run session (rounds.md 7.2); nil for any other row.
+	Round *api.SessionRound
+	// RoundName is the run's round's name; "round" when the host no longer has the round.
+	RoundName string
 }
+
+// RunSession reports whether the row is a round's run session.
+func (r Row) RunSession() bool { return r.Round != nil }
+
+// ShowRuns reports whether a row shows while the run-session filter hides run sessions: every
+// row but a run session that does not need the owner (app.md 21.2: a hidden approval would
+// stall the run).
+func ShowRuns(r Row, show bool) bool { return show || !r.RunSession() || r.Rank.NeedsYou() }
 
 // Offline reports whether the row's host has no live connection.
 func (r Row) Offline() bool { return r.HostStatus != hosts.Online }
@@ -162,10 +174,21 @@ func Rows(hs []hosts.Host, seen Seen) []Row {
 		for i := range st.Agents {
 			agents[st.Agents[i].Pane] = &st.Agents[i]
 		}
+		roundNames := map[string]string{}
+		for _, x := range st.Rounds {
+			roundNames[x.ID] = x.Name
+		}
 		filed := map[string]bool{}
 		for _, s := range st.Sessions {
 			r := Row{Key: Key{Host: h.Label, Session: s.ID, Pane: s.Pane}, Name: s.Name, Title: s.Title,
 				Project: projects[s.Project], State: s.State, Exit: s.Exit, HostStatus: h.Status, HostSince: h.Since}
+			if s.Round != nil {
+				rr := *s.Round
+				r.Round, r.RoundName = &rr, roundNames[rr.Round]
+				if r.RoundName == "" {
+					r.RoundName = "round"
+				}
+			}
 			if s.Pane != "" {
 				filed[s.Pane] = true
 				r.Agent = agents[s.Pane]

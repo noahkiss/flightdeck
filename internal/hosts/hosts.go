@@ -102,6 +102,8 @@ type Host struct {
 	// Endpoint is the endpoint in use while online, else the one tried last. Empty when the
 	// spec gave a Transport.
 	Endpoint string
+	// Pinned is the device id the spec pins, empty when none (gff-client.md 11.4).
+	Pinned string
 }
 
 // Online reports whether the host has a live control connection.
@@ -109,6 +111,15 @@ func (h Host) Online() bool { return h.Status == Online }
 
 // DeviceID is the host's identity: the device id from its last welcome, empty before one.
 func (h Host) DeviceID() string { return h.Welcome.DeviceID }
+
+// Identity is the device id from the last welcome, else the pinned one: what names the host in
+// another hab's catalog before this client ever reached it.
+func (h Host) Identity() string {
+	if h.Welcome.DeviceID != "" {
+		return h.Welcome.DeviceID
+	}
+	return h.Pinned
+}
 
 // Problem says in a few words why a host is not online, for its row: "connecting", "offline",
 // "update needed" (no API revision fits), "host key changed" (the device id changed), or
@@ -297,7 +308,7 @@ func (s *Set) start(sp Spec) (*entry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("hosts: %s: %w", sp.Label, err)
 	}
-	return &entry{conn: c, spec: sp, eps: eps, model: Host{Label: sp.Label, Status: Connecting, Since: s.cfg.Now(), Conn: c}}, nil
+	return &entry{conn: c, spec: sp, eps: eps, model: Host{Label: sp.Label, Status: Connecting, Since: s.cfg.Now(), Conn: c, Pinned: sp.DeviceID}}, nil
 }
 
 // pump applies one host's updates to its model, then hands them on.
