@@ -566,7 +566,9 @@ change: `hand_off` uses `catalog.list`, `channel.send` and `channel.status`; `fi
 `logbook.find` and `logbook.write`.
 
 - **Finding the agent.** The tool reads `catalog.list` and resolves `project` as `suggest_host`
-  does: a project's name, key, remote or a folder of one of its checkouts. The candidates are
+  does: a project's name, key, remote or a folder of one of its checkouts. An absolute folder
+  that exists on the tool's host also matches with its links resolved, as the catalog stores a
+  checkout (on macOS `/var` is `/private/var`); `file_record` does the same. The candidates are
   the agents of every host where that project is checked out whose project name matches, in
   any state but `none` and `exited`. `host` keeps one host. A project the catalog does not list
   falls back to the agents' project name.

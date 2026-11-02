@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -54,7 +55,7 @@ func projectAgents(cl api.CatalogList, project, host string) (string, []handOffT
 	name := project
 	where := map[string]bool{} // device ids where the project is checked out; nil: not in the catalog
 	for _, p := range cl.Projects {
-		if !suggest.Matches(p, project) {
+		if !matchProject(p, project) {
 			continue
 		}
 		name = p.Name
@@ -86,6 +87,20 @@ func projectAgents(cl api.CatalogList, project, host string) (string, []handOffT
 		}
 	}
 	return name, out
+}
+
+// matchProject is suggest.Matches, and for an absolute folder on this host also the folder
+// with its links resolved, as the catalog names a checkout (on macOS /var is /private/var).
+func matchProject(p api.CatalogProjectGroup, want string) bool {
+	if suggest.Matches(p, want) {
+		return true
+	}
+	if filepath.IsAbs(want) {
+		if r, err := filepath.EvalSymlinks(want); err == nil && r != want {
+			return suggest.Matches(p, r)
+		}
+	}
+	return false
 }
 
 // pickTarget orders the candidates by capcom.md 3.2: the agent the user named; else an online
@@ -235,10 +250,10 @@ func runHandOff(ctx context.Context, c caller, a toolArgs) (any, string, error) 
 // logbookWrite is one batch of changes. Propose makes it a pending proposal whatever the hab's
 // logbook.approval says: Capcom files proposals by its own rule (logbook.md 9.1).
 type logbookWrite struct {
-	IdempotencyKey string           `json:"idempotency_key"`
-	Propose        bool             `json:"propose"`
-	Changes        []logbookChange  `json:"changes"`
-	Source         *logbookSource `json:"source,omitempty"`
+	IdempotencyKey string          `json:"idempotency_key"`
+	Propose        bool            `json:"propose"`
+	Changes        []logbookChange `json:"changes"`
+	Source         *logbookSource  `json:"source,omitempty"`
 }
 
 // logbookChange is one change; file_record makes only creates.
@@ -307,7 +322,7 @@ func runFileRecord(ctx context.Context, c caller, a toolArgs) (any, string, erro
 		}
 		key := ""
 		for _, p := range cl.Projects {
-			if suggest.Matches(p, project) {
+			if matchProject(p, project) {
 				key = p.Key
 				break
 			}
