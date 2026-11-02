@@ -32,6 +32,8 @@ public final class Fleet {
     public let files = SendFileCenter()
     /// Settings and levels (app.md 20).
     public var settings: SettingsCenter?
+    /// Confirmation cards (capcom.md 6.1).
+    public var confirms: ConfirmCenter?
     /// `session.focus` reports for the session views on screen (app.md 8.6).
     public private(set) lazy var focus = FocusReporter { [weak self] habID, params in
         guard let conn = self?.connections.first(where: { $0.id == habID }) else { return }

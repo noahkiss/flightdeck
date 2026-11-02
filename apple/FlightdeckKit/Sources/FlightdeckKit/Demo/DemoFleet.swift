@@ -66,7 +66,22 @@ public enum DemoFleet {
             ]
         )
         await hab.setUsage(demoUsage(Date()))
+        await addConfirmations(hab)
         return hab
+    }
+
+    /// One start that waits for the owner and one that ran at once (capcom.md 6.1).
+    static func addConfirmations(_ hab: FakeHab) async {
+        await hab.setCapability(ConfirmBook.capability, true)
+        await hab.setConfirmTargets([ConfirmTarget(host: "workbench", ready: true), ConfirmTarget(host: "attic", ready: true)])
+        let made = ago(3)
+        await hab.requestConfirmation(Confirmation(
+            created: Fixture.stamp(made), expiresAt: Fixture.stamp(made.addingTimeInterval(3600)), from: "claude-2",
+            id: "3fa9c2d81b0e4c6a9e5f7d2b1c0a8e64", kind: .start,
+            start: ConfirmStart(branch: "main", folder: "/srv/work/tide-tables", harness: "claude", host: "attic",
+                                name: "claude-3fa9c2", project: "tide-tables",
+                                seed: "Run the full test suite on this host and report which tests fail."),
+            state: .open))
     }
 
     static func makeAttic() async -> FakeHab {

@@ -24,6 +24,7 @@ public struct ChatView: View {
     public var body: some View {
         VStack(spacing: 0) {
             ChatBanners(context: model.context, load: model.load, openTerminal: openTerminal)
+            SessionConfirmCards(target: model.target)
             ChatTranscript(model: model)
             Divider()
             ComposerView(model: model, draft: $draft, attachments: $attachments, openTerminal: openTerminal, openVoice: openVoice, focusRequest: focusComposer)

@@ -69,6 +69,23 @@ public struct ConfirmDraft: Equatable, Sendable {
         return e == ConfirmEdits() ? nil : e
     }
 
+    /// The start as it will run with this draft. A new host or folder drops
+    /// the project and branch, which the hab fills in again.
+    public func applied(to s: ConfirmStart) -> ConfirmStart {
+        guard let e = edits(against: s) else { return s }
+        var out = s
+        if let v = e.host { out.host = v }
+        if let v = e.folder { out.folder = v }
+        if e.host != nil || e.folder != nil {
+            out.project = nil
+            out.branch = nil
+        }
+        if let v = e.harness { out.harness = v }
+        if let v = e.model { out.model = v }
+        if let v = e.seed { out.seed = v }
+        return out
+    }
+
     /// Why Confirm is off for this draft; nil when it can go.
     public func problem(against s: ConfirmStart) -> String? {
         if seed.count > Self.seedLimit { return "The seed is longer than \(Self.seedLimit) characters" }

@@ -12,6 +12,7 @@ public enum AppFleet {
         let log = Logger(subsystem: "com.flightdeck.app", category: "config")
         let demo = DemoFleet.isRequested(defaults)
         fleet.usage = usageCenter(demo: demo)
+        fleet.confirms = confirmCenter(fleet)
         if demo {
             log.info("demo mode")
             Task { await DemoFleet.populate(fleet) }
@@ -37,6 +38,27 @@ public enum AppFleet {
         addPush(to: fleet, environment: env)
         addSettings(to: fleet, defaults: defaults)
         return fleet
+    }
+
+    /// How long `confirm.answer` may take: a confirm returns once the hab ran
+    /// the start, which it gives 60 s (capcom.md 6.4).
+    static let confirmAnswerTimeout: Duration = .seconds(75)
+
+    /// Confirmation cards (capcom.md 6.1): answers and the target list go
+    /// through each hab's live connection.
+    @MainActor
+    static func confirmCenter(_ fleet: Fleet) -> ConfirmCenter {
+        ConfirmCenter(board: fleet.board, answer: { [weak fleet] habID, p in
+            guard let conn = fleet?.connections.first(where: { $0.id == habID }) else {
+                throw TransportError("that hab is no longer in the app")
+            }
+            return try await conn.call(HabMethods.confirmAnswer, p, timeout: confirmAnswerTimeout)
+        }, list: { [weak fleet] habID in
+            guard let conn = fleet?.connections.first(where: { $0.id == habID }) else {
+                throw TransportError("that hab is no longer in the app")
+            }
+            return try await conn.call(HabMethods.confirmList, ConfirmListParams())
+        })
     }
 
     /// Settings and levels (app.md 20): the hab-side writes go through each

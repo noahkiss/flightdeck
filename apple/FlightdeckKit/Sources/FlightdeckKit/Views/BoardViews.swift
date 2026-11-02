@@ -20,6 +20,7 @@ public struct FlightdeckRoot: View {
             .environment(\.sshSetup, fleet.ssh)
             .environment(\.voiceKit, fleet.voice)
             .environment(\.sendFiles, fleet.files)
+            .environment(\.confirmations, fleet.confirms)
             .sshSheets(fleet.ssh)
             .onAppear { fleet.windowOpened() }
             .onDisappear { fleet.windowClosed() }
@@ -31,6 +32,7 @@ public struct FlightdeckRoot: View {
             .environment(\.sshSetup, fleet.ssh)
             .environment(\.voiceKit, fleet.voice)
             .environment(\.sendFiles, fleet.files)
+            .environment(\.confirmations, fleet.confirms)
             .sshSheets(fleet.ssh)
         #endif
     }
@@ -252,6 +254,7 @@ struct BoardList: View {
     var openRequest: (BoardRow) -> Bool = { _ in false }
     /// A heading above the list, for the iPad and Mac columns.
     var heading: String? = nil
+    @Environment(\.confirmations) private var confirms
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -274,6 +277,12 @@ struct BoardList: View {
                     Label("\(h.label): \(h.updateText)", systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
                 }
+                // The approvals area's confirmations (capcom.md 6.1): starts other agents ask for.
+                if let confirms, case let cards = confirms.approvals, !cards.isEmpty {
+                    Section("Confirm") {
+                        ForEach(cards) { ConfirmCardView(center: confirms, card: $0) }
+                    }
+                }
                 ForEach(board.sections) { section in
                     Section(section.kind.rawValue) {
                         ForEach(section.rows) { row in
@@ -290,7 +299,7 @@ struct BoardList: View {
                 }
             }
             .overlay {
-                if board.sections.isEmpty {
+                if board.sections.isEmpty, confirms?.approvals.isEmpty ?? true {
                     ContentUnavailableView("No sessions", systemImage: "rectangle.stack",
                                            description: Text(board.habs.isEmpty ? "No habs configured." : "Sessions on your habs show here."))
                 }
