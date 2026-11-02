@@ -3,9 +3,6 @@
 # A pull request and a direct push to main run the full set; the push that merges a pull request
 # whose own run passed runs the fast set. Docs-only changes start nothing (docs/examples stays in:
 # tests read it). The scan for leaks is hygiene.yml.
-#
-# go-ci is pinned to the branch of noahkiss/workflows#15 (inputs mise, cache-path, cache-key,
-# cancel-in-progress) until it merges; then back to @main.
 name: CI
 
 on:
@@ -80,7 +77,7 @@ jobs:
     needs: plan
     permissions:
       contents: read
-    uses: noahkiss/workflows/.github/workflows/go-ci.yml@go-ci-runner-mise-cache
+    uses: noahkiss/workflows/.github/workflows/go-ci.yml@main
     with:
       generate-check: true
       mise: true

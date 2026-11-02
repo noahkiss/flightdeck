@@ -4,9 +4,6 @@
 # nightly run and a dispatch add core tests 2 and 13 under launchd (scripts/service-check.sh); a
 # scheduled run is skipped when main has not moved since the last passing nightly run. The paths
 # include the parser (internal/vt) and the build pins (Makefile, go.mod, go.sum, mise.toml).
-#
-# go-ci is pinned to the branch of noahkiss/workflows#15 (inputs runner, mise, cache-path,
-# cache-key, cancel-in-progress) until it merges; then back to @main.
 name: macOS Go
 
 on:
@@ -90,7 +87,7 @@ jobs:
     if: needs.plan.outputs.run == 'true'
     permissions:
       contents: read
-    uses: noahkiss/workflows/.github/workflows/go-ci.yml@go-ci-runner-mise-cache
+    uses: noahkiss/workflows/.github/workflows/go-ci.yml@main
     with:
       runner: macos-26
       fmt: false

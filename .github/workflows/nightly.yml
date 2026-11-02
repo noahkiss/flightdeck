@@ -4,8 +4,6 @@
 # under systemd (scripts/service-check.sh). A second job keeps the linux arm64 libghostty cache
 # warm for releases. A scheduled night when main has not moved since the last passing run costs
 # one short job; a dispatch always runs everything.
-#
-# go-ci is pinned to the branch of noahkiss/workflows#15 until it merges; then back to @main.
 name: Nightly
 
 on:
@@ -68,7 +66,7 @@ jobs:
     if: needs.plan.outputs.run == 'true'
     permissions:
       contents: read
-    uses: noahkiss/workflows/.github/workflows/go-ci.yml@go-ci-runner-mise-cache
+    uses: noahkiss/workflows/.github/workflows/go-ci.yml@main
     with:
       fmt: false
       mise: true
@@ -98,7 +96,7 @@ jobs:
     if: needs.plan.outputs.run == 'true'
     permissions:
       contents: read
-    uses: noahkiss/workflows/.github/workflows/go-ci.yml@go-ci-runner-mise-cache
+    uses: noahkiss/workflows/.github/workflows/go-ci.yml@main
     with:
       runner: ubuntu-24.04-arm
       fmt: false
