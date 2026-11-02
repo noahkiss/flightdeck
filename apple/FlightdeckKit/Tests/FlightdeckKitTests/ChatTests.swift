@@ -356,6 +356,30 @@ final class ChatTests: XCTestCase {
         XCTAssertEqual(w.dropLast().reduce(into: Data()) { $0.append($1) }, Data(("\u{1b}[200~" + text + "\u{1b}[201~").utf8))
     }
 
+    /// A typed paste that fails after its first write gets the end marker, then the error;
+    /// one that fails on its first write or on Enter gets none.
+    func testTypedPasteFailureClosesPaste() async {
+        struct Refused: Error {}
+        let writes = ChatModel.typedInput(String(repeating: "x", count: 200_000))
+        for failAt in [0, 2, writes.count - 1] {
+            var sent: [Data] = []
+            var n = 0
+            do {
+                try await ChatModel.type(writes) { d in
+                    defer { n += 1 }
+                    if n == failAt { throw Refused() }
+                    sent.append(d)
+                }
+                XCTFail("no error")
+            } catch {
+                XCTAssertTrue(error is Refused)
+            }
+            let marker = failAt > 0 && failAt < writes.count - 1
+            XCTAssertEqual(sent.count, failAt + (marker ? 1 : 0), "fail at \(failAt)")
+            XCTAssertEqual(sent.last == PaneInputPump.pasteEnd, marker, "fail at \(failAt)")
+        }
+    }
+
     func testRowCacheReusesUnchangedRows() {
         var cache = ChatRender.Cache()
         let ms = [msg(1, text: "# Hi"), msg(2, .user, text: "yo")]

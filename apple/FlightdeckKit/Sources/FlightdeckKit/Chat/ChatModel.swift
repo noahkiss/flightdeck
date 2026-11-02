@@ -491,7 +491,7 @@ public final class ChatModel {
             } catch let e as RPCError where e.kind == .unavailable && typesWithoutAdapter {
                 // The harness has no adapter on this hab yet: type it as the adapter would.
                 guard let pane = context.pane else { throw e }
-                for chunk in Self.typedInput(AttachmentText.message(text, paths: stored.map(\.path))) {
+                try await Self.type(Self.typedInput(AttachmentText.message(text, paths: stored.map(\.path)))) { chunk in
                     _ = try await conn.call(HabMethods.paneInput, InputParams(data: chunk, pane: pane))
                 }
             }
@@ -568,6 +568,21 @@ public final class ChatModel {
             start = end
         }
         return writes + [Data("\r".utf8)]
+    }
+
+    /// Sends `typedInput`'s writes in order. When one fails after the paste began and before
+    /// it ended, it tries once to send the paste's end marker, so the prompt does not stay
+    /// in paste mode, then throws the failure.
+    nonisolated static func type(_ writes: [Data], send: (Data) async throws -> Void) async throws {
+        for (i, w) in writes.enumerated() {
+            do {
+                try await send(w)
+            } catch {
+                // The last write is Enter, after the end marker.
+                if i > 0 && i < writes.count - 1 { try? await send(PaneInputPump.pasteEnd) }
+                throw error
+            }
+        }
     }
 
     private func readBackExpired(_ id: Int) {
