@@ -1,0 +1,90 @@
+# The Go gate on Linux (docs/specs/ci-release.md 3.2): gofmt, the generate check, then
+# `make ci-full` (check-pure, vet, every test with libghostty, the race list) or `make ci-fast`.
+# A pull request and a direct push to main run the full set; the push that merges a pull request
+# whose own run passed runs the fast set. Docs-only changes start nothing (docs/examples stays in:
+# tests read it). The scan for leaks is hygiene.yml.
+#
+# go-ci is pinned to the branch of noahkiss/workflows#15 (inputs mise, cache-path, cache-key,
+# cancel-in-progress) until it merges; then back to @main.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths: ['**', '!**/*.md', '!docs/**', 'docs/examples/**', '!apple/**', '!design/**', '!LICENSE', '!NOTICE']
+  pull_request:
+    paths: ['**', '!**/*.md', '!docs/**', 'docs/examples/**', '!apple/**', '!design/**', '!LICENSE', '!NOTICE']
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
+permissions: {}
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    outputs:
+      full: ${{ steps.mode.outputs.full }}
+      ghostty_key: ${{ steps.key.outputs.ghostty_key }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Keyed on the two pins, not on a hash of the whole Makefile, which changes often.
+      - name: libghostty cache key
+        id: key
+        run: |
+          set -euo pipefail
+          commit=$(sed -n 's/^GHOSTTY_COMMIT := //p' Makefile)
+          zig=$(sed -n 's/^zig = "\(.*\)"$/\1/p' mise.toml)
+          [ -n "$commit" ] && [ -n "$zig" ] || { echo "::error::cannot read GHOSTTY_COMMIT or the zig pin"; exit 1; }
+          echo "ghostty_key=libghostty-${commit}-zig${zig}" >> "$GITHUB_OUTPUT"
+
+      # Full unless this push merges a pull request whose own CI run passed. Any lookup that
+      # fails leaves it full.
+      - name: Full or fast
+        id: mode
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          full=true
+          if [ "$EVENT" = push ]; then
+            heads=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq '[.[] | select(.merged_at != null) | .head.sha] | join(" ")') || heads=""
+            for head in $heads; do
+              passed=$(gh run list -R "$REPO" --workflow ci.yml --commit "$head" --status success --limit 1 --json databaseId --jq 'length') || passed=0
+              if [ "$passed" = 1 ]; then
+                echo "This push merges a pull request whose run on $head passed: fast set."
+                full=false
+                break
+              fi
+            done
+          fi
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+
+  go:
+    name: Go
+    needs: plan
+    permissions:
+      contents: read
+    uses: noahkiss/workflows/.github/workflows/go-ci.yml@go-ci-runner-mise-cache
+    with:
+      generate-check: true
+      mise: true
+      cache-path: build/libghostty-vt
+      cache-key: ${{ needs.plan.outputs.ghostty_key }}-Linux-X64
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+      # A hosted runner is slower than a dev box; the scale raises every test's upper bound.
+      commands: GFF_TEST_TIMEOUT_SCALE=3 make ${{ needs.plan.outputs.full == 'true' && 'ci-full' || 'ci-fast' }}
+      timeout-minutes: 45

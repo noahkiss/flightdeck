@@ -58,7 +58,7 @@ endif
 SPEECH_ENV := PKG_CONFIG_PATH=$(if $(OPUS_STATIC),$(OPUS_STATIC):)$(SHERPA_PREFIX)/lib/pkgconfig$(if $(PKG_CONFIG_PATH),:$(PKG_CONFIG_PATH)) $(SPEECH_LDFLAGS) CGO_ENABLED=1
 
 .PHONY: gen test test-pure race fuzz check-gen check-pure release-schema libghostty build vet clean-libghostty \
-	sherpa-onnx speech-helper test-speech clean-sherpa-onnx opus-static
+	sherpa-onnx speech-helper test-speech clean-sherpa-onnx opus-static ci-full ci-fast
 
 # Regenerate api/schema.json, api/client_gen.go and the Swift package.
 gen:
@@ -169,6 +169,13 @@ check-pure:
 # Fail when a generated file is stale. CI runs this.
 check-gen: gen
 	git diff --exit-code -- api swift
+
+# What .github/workflows/ci.yml runs after go-ci's gofmt and generate checks (docs/specs/ci-release.md
+# 3.2): the full set on a pull request or a direct push, the fast set on the push that merges a
+# pull request whose own run passed. Run one before pushing.
+ci-full: check-pure vet test race
+
+ci-fast: check-pure build
 
 # Record the current schema as the released schema of its revision. Run at release time only.
 release-schema:
