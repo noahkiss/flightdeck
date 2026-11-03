@@ -145,13 +145,8 @@ public enum AnswerOutcome: Equatable, Sendable {
         }
     }
 
-    static var openToRetry: String {
-        #if os(iOS)
-        return "Open on iPhone to retry."
-        #else
-        return "Open Flightdeck to retry."
-        #endif
-    }
+    /// The same words on the phone and on its mirrored Watch banner (app.md 16.2).
+    static let openToRetry = "Open Flightdeck to retry."
 }
 
 /// Sends one `approval.answer`: on the live connection when the hab is online

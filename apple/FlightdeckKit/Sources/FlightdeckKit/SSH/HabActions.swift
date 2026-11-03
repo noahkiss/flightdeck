@@ -59,10 +59,11 @@ public final class HabActions: NSObject, UNUserNotificationCenterDelegate, @unch
         ]
     }
 
-    /// "Open on iPhone" reads right on a mirrored Watch banner (app.md 16.2).
+    /// "Open Flightdeck" reads right on the phone and on its mirrored Watch banner, where the
+    /// only Flightdeck is the phone's (app.md 16.1). "Open on iPhone" read wrong on the phone.
     static var openTitle: String {
         #if os(iOS)
-        return "Open on iPhone"
+        return "Open Flightdeck"
         #else
         return "Open"
         #endif

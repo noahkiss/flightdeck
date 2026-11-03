@@ -233,6 +233,23 @@ final class NotificationAnswerTests: XCTestCase {
         XCTAssertTrue(cats[PushCategory.question]?.actions.first is UNTextInputNotificationAction)
     }
 
+    /// Every category id the hab sends (internal/push/banner.go) is registered with at least one
+    /// action: iOS shows no actions for an id the app did not register. Open names the app, so
+    /// it reads right on the phone and on a mirrored Watch banner.
+    func testEveryHabCategoryHasActions() {
+        let cats = Dictionary(uniqueKeysWithValues: HabActions.categories().map { ($0.identifier, $0) })
+        for id in ["approval", "approval-deny", "open", "approval-ask", "approval-deny-ask", "open-ask", "ask"] {
+            XCTAssertFalse(cats[id]?.actions.isEmpty ?? true, id)
+        }
+        let open = cats[PushCategory.approvalDeny]!.actions.first { $0.identifier == PushCategory.openAction }!
+        #if os(iOS)
+        XCTAssertEqual(open.title, "Open Flightdeck")
+        #endif
+        XCTAssertFalse(open.title.contains("iPhone"))
+        XCTAssertTrue(open.options.contains(.foreground))
+        XCTAssertFalse(AnswerOutcome.openToRetry.contains("iPhone"))
+    }
+
     /// The service extension's expiry text, in the device's time zone.
     func testExpiryText() {
         let now = PushMeta.parseDate("2026-11-01T12:00:00Z")!
