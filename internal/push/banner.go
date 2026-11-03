@@ -377,11 +377,41 @@ func AuthBanner(w Where) Banner {
 // opens the session at its trust card.
 func TrustBanner(w Where, t *api.TrustPrompt) Banner {
 	body := "Open to answer."
-	if t != nil && t.Folder != "" {
-		body = Fit(t.Folder, 12, 0)
+	if t != nil && FolderText(t.Folder) != "" {
+		body = FolderText(t.Folder)
 	}
 	return Banner{Kind: KindTrust, Title: "Trust this folder?", Subtitle: w.place(), Body: body,
 		Level: LevelTimeSensitive, Category: CategoryOpen}
+}
+
+// TrustAnsweredBanner replaces a trust banner, same collapse id, once the prompt left the pane
+// (app.md 7.10): quiet, and saying whether the agent went on or ended.
+func TrustAnsweredBanner(w Where, folder string, ended bool) Banner {
+	title := "Trust prompt answered"
+	if ended {
+		title = "Session ended"
+	}
+	return Banner{Kind: KindAnswered, Title: title, Subtitle: w.place(), Body: FolderText(folder), Level: LevelPassive}
+}
+
+// folderMax is the most runes of a folder path a banner shows.
+const folderMax = 60
+
+// FolderText is a folder path as a banner shows it: control and bidi formatting characters
+// dropped, and a long path cut from the front, so the folder's own name at the end stays.
+func FolderText(p string) string {
+	var b strings.Builder
+	for _, r := range p {
+		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) || unicode.Is(unicode.Cf, r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	rs := []rune(strings.TrimSpace(b.String()))
+	if len(rs) > folderMax {
+		rs = append([]rune("…"), rs[len(rs)-folderMax+1:]...)
+	}
+	return string(rs)
 }
 
 // ErrorBanner is the banner for error: "Turn stopped: <project>", from hab and harness.

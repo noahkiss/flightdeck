@@ -70,20 +70,68 @@ var trustLabels = map[bool][]string{
 	false: {"no, exit"},
 }
 
-// TrustKeys returns the keys that pick the trust answer in harness's dialog, read from the
-// visible rows: Up or Down from the cursor row (❯) to the row with the chosen label, then
-// Enter. The dialog must show, with exactly one cursor row among its options and exactly one row
-// with the label; otherwise nothing is sent.
-func TrustKeys(harness string, rows []string, trust bool) ([]byte, error) {
+// The keys of Claude Code's trust dialog. Each goes to the pane as its own write: a terminal UI
+// may read one chunk of several keys as a paste.
+var (
+	KeyDown  = []byte("\x1b[B")
+	KeyUp    = []byte("\x1b[A")
+	KeyEnter = []byte("\r")
+	// KeyEsc answers the dialog with exit whatever row the cursor is on: Claude Code 2.1.317
+	// exits at Esc (checked live, 2026-11-02), and older builds say "Esc to exit".
+	KeyEsc = []byte("\x1b")
+)
+
+// TrustMoves returns the arrow keys that move the cursor of harness's trust dialog to the row
+// of the chosen answer, read from the visible rows, one key per entry; none when the cursor is
+// there. The dialog must show, with exactly one cursor row (❯) among its options and exactly one
+// row with the label; otherwise nothing is sent. The caller reads the screen again and sends
+// Enter only when TrustCursorOn says the cursor sits on the label: a key typed in the terminal
+// meanwhile must never turn one answer into the other.
+func TrustMoves(harness string, rows []string, trust bool) ([][]byte, error) {
+	cursor, target, err := trustLayout(harness, rows, trust)
+	if err != nil {
+		return nil, err
+	}
+	var keys [][]byte
+	for d := target - cursor; d != 0; {
+		if d > 0 {
+			keys = append(keys, KeyDown)
+			d--
+		} else {
+			keys = append(keys, KeyUp)
+			d++
+		}
+	}
+	return keys, nil
+}
+
+// TrustCursorOn reports whether the cursor of harness's trust dialog sits on the row of the
+// chosen answer.
+func TrustCursorOn(harness string, rows []string, trust bool) (bool, error) {
+	cursor, target, err := trustLayout(harness, rows, trust)
+	return err == nil && cursor == target, err
+}
+
+// TrustExitKey returns the key that answers harness's trust dialog with exit, whatever row
+// the cursor is on.
+func TrustExitKey(harness string) ([]byte, error) {
 	if harness != detect.KindClaude {
 		return nil, fmt.Errorf("%w: answering a trust prompt in %s", ErrUnsupported, harness)
 	}
-	if !TrustDialog(harness, strings.Join(rows, "\n")) {
-		return nil, ErrNoTrustDialog
+	return KeyEsc, nil
+}
+
+// trustLayout finds the cursor row and the chosen answer's row among the dialog's options.
+func trustLayout(harness string, rows []string, trust bool) (cursor, target int, err error) {
+	if harness != detect.KindClaude {
+		return 0, 0, fmt.Errorf("%w: answering a trust prompt in %s", ErrUnsupported, harness)
 	}
-	cursor, target := -1, -1
-	var options []int // rows that hold an option: every row with a label of either answer
-	for i, row := range rows {
+	if !TrustDialog(harness, strings.Join(rows, "\n")) {
+		return 0, 0, ErrNoTrustDialog
+	}
+	cursor, target = -1, -1
+	n := 0 // options seen: every row with a label of either answer
+	for _, row := range rows {
 		text, marked := trustOption(row)
 		if text == "" {
 			continue
@@ -92,34 +140,24 @@ func TrustKeys(harness string, rows []string, trust bool) ([]byte, error) {
 		if !yes && !no {
 			continue
 		}
-		options = append(options, i)
 		if marked {
 			if cursor >= 0 {
-				return nil, ErrTrustLayout
+				return 0, 0, ErrTrustLayout
 			}
-			cursor = len(options) - 1
+			cursor = n
 		}
 		if (trust && yes) || (!trust && no) {
 			if target >= 0 {
-				return nil, ErrTrustLayout
+				return 0, 0, ErrTrustLayout
 			}
-			target = len(options) - 1
+			target = n
 		}
+		n++
 	}
 	if cursor < 0 || target < 0 {
-		return nil, ErrTrustLayout
+		return 0, 0, ErrTrustLayout
 	}
-	var keys []byte
-	for d := target - cursor; d != 0; {
-		if d > 0 {
-			keys = append(keys, "\x1b[B"...)
-			d--
-		} else {
-			keys = append(keys, "\x1b[A"...)
-			d++
-		}
-	}
-	return append(keys, '\r'), nil
+	return cursor, target, nil
 }
 
 // trustOption returns an option row's text, lower case, without its cursor and number, and
@@ -188,4 +226,22 @@ func (s *Store) SetTrust(paneID, harness, folder string, shown bool) bool {
 func (s *Store) Trusting(paneID string) (api.AgentState, bool) {
 	st, ok := s.Get(paneID)
 	return st, ok && st.State == api.AgentStatusBlocked && st.Kind == api.BlockedKindTrust
+}
+
+// TrustStalled ends the starting state a trust prompt left: the prompt went, and the harness
+// has not reported since (no hook, no OSC 7501), so its hooks are likely missing. The pane shows
+// none with hooks missing, so a waiting message is refused with that reason rather than held as
+// busy. Only a pane still in that state changes. It reports whether the state changed.
+func (s *Store) TrustStalled(paneID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.panes[paneID]
+	if p == nil || p.bound || p.hooked != "" || p.st.Source != api.StateSourceScreen || p.st.State != api.AgentStatusWorking {
+		return false
+	}
+	next := p.st
+	next.State, next.Hooks = api.AgentStatusNone, api.HookHealthMissing
+	s.logf("pane %s: error: %s reported no state after its trust prompt; install its hook config (gff-hab hook -print %s)", paneID, p.st.Harness, p.st.Harness)
+	s.commitLocked(p, next)
+	return true
 }

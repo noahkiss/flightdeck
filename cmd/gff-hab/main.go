@@ -722,6 +722,7 @@ func serve(args []string) error {
 		defer trustSvc.Close()
 		sessionActs.started = trustSvc.watch
 		trustCtl = trustSvc
+		input = trustInput{Input: input, trust: trustSvc} // an answer waits until the pane is quiet
 		caps = append(caps, trustCapability)
 		// Why a pane shows its state (harness-adapters.md, Detection): read only.
 		// The manifests are parsed now, off the start path, and again only when the data
@@ -1259,6 +1260,9 @@ func serve(args []string) error {
 				agents.Forget(n.Pane.UUID.String())
 				pushes.forget(n.Pane.UUID.String())
 				mgr.Forget(n.Pane.UUID.String())
+				if trustSvc != nil {
+					trustSvc.forget(n.Pane.UUID.String())
+				}
 			case link.PaneExited:
 				ocs.forget(n.Pane.UUID.String()) // the wrapper is gone, and its server with it
 				agents.Exited(n.Pane.UUID.String())
@@ -1437,9 +1441,9 @@ func apiCall(args []string) error {
 		return errors.New("api call needs a method and optional JSON params")
 	}
 	method := fs.Arg(0)
-	if method == "confirm.answer" && os.Getenv(hook.Env) != "" {
-		// The same cheap guard as gff-hab confirm answer (capcom.md 6.4).
-		return errors.New("confirm.answer is the owner's answer; it does not run in an agent's pane")
+	if (method == "confirm.answer" || method == "trust.answer") && os.Getenv(hook.Env) != "" {
+		// The same cheap guard as gff-hab confirm answer (capcom.md 6.4; app.md 7.10).
+		return fmt.Errorf("%s is the owner's answer; it does not run in an agent's pane", method)
 	}
 	var params any = struct{}{}
 	if fs.NArg() == 2 {

@@ -947,11 +947,14 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
 - **`trust.answer`** `{pane, choice}`: `choice` is `trust` or `exit`. The pane must show
   `blocked:trust` (`agent.state` field `trust: {folder}`), and the screen must still show the
   dialog with one cursor row and one row with the chosen label; otherwise `conflict`, and nothing
-  is sent. The keys move the cursor to that row, then Enter. The call returns once the dialog
-  left the screen (3 s, else `unavailable`). The result is `{dropped}`: with `exit`, the channel
-  messages that waited for the session (its start message among them), now refused with the
-  reason "the owner did not trust the folder". A second call while one runs is `conflict`.
-  The keys are the hab's, so they are not a round's take over (`app.md` 7.10).
+  is sent. Client input to the pane in the last second is `conflict` too. `exit` sends Esc;
+  `trust` moves the cursor one key per write, reads the screen again, and sends Enter only with
+  the cursor on "Yes, I trust this folder". The call returns once the outcome shows (5 s, else
+  `unavailable`): the dialog gone with the agent running, or the session ended. The result is
+  `{dropped}`: with `exit`, the channel messages that waited for the session (its start message
+  among them), now refused with the reason "the owner did not trust the folder". A second call
+  while one runs is `conflict`; a peer link's call is `invalid`. The keys are the hab's, so they
+  are not a round's take over (`app.md` 7.10).
 - All three run off the connection's read loop, so a slow pane holds up no other call.
 - **`chat.page`** pages backwards by message id (`before`); `limit` defaults to 50, at most 200.
   The result holds `messages`, oldest first, and `more`. A message has `id`, `session`, `kind`

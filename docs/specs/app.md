@@ -1444,8 +1444,14 @@ see it with no new event:
   screen rule `claude_trust_folder`. The watch ends when the harness first reports a state by hook
   or OSC 7501, when the pane goes, or after 10 minutes with no dialog. While the dialog shows, the
   watch goes on without a limit.
-- When the dialog leaves the screen and the harness has not reported yet, the pane shows `working`
-  (source `screen`): the harness is starting. Its first hook or report replaces that.
+- The dialog counts as gone only after 3 reads in a row without it (1.5 s), so a frame read
+  mid-redraw does not clear it. The watch goes on after that: a dialog that comes back shows again.
+- When the dialog has gone and the harness has not reported yet, the pane shows `working`
+  (source `screen`): the harness is starting. Its first hook or report replaces that. With no
+  report within 60 s, the pane shows `none` with `hooks: missing`: its hooks are likely not
+  installed. A waiting message is then refused with that reason, not held.
+- For 2 s after an answer, and while one runs, the watch does not show the prompt again: a screen
+  read from before the answer's keys must not bring the card back.
 - A harness the owner starts by hand in a shell pane is not watched. Its dialog shows only in the
   terminal view, as before.
 
@@ -1453,16 +1459,28 @@ see it with no new event:
 `trust`:
 
 - The pane must show `blocked:trust`, or the call is refused with `conflict`.
+- Client input to the pane that is still being written, or that arrived in the last second,
+  refuses the call with `conflict`: a key typed in the terminal view could move the cursor.
 - gff-hab reads the screen at once. The dialog must still show, with exactly one cursor row
   (`❯`) and exactly one row that carries the chosen label: "Yes, I trust this folder" for
-  `trust`, "No, exit" for `exit`. Otherwise the call is refused with
-  `conflict` and nothing is sent. It never answers blind.
-- The keys are Up or Down from the cursor row to the chosen row, then Enter, in one write.
+  `trust`, "No, exit" for `exit`. Otherwise the call is refused with `conflict` and nothing is
+  sent. It never answers blind.
+- Each key goes to the pane as its own write: a terminal UI may read one chunk as a paste.
+- `exit` sends Esc. Claude Code 2.1.317 exits at Esc whatever row the cursor is on (checked live
+  2026-11-02), so a moved cursor cannot turn it into a trust.
+- `trust` sends Up or Down from the cursor row to "Yes, I trust this folder", one key at a time,
+  then reads the screen again. It sends Enter only when the cursor sits on that row and no client
+  input came meanwhile; otherwise `conflict`, with nothing chosen.
 - One answer at a time per pane: a second call while one runs is refused with `conflict`.
-- The call returns once the dialog has left the screen, within 3 s; else `unavailable`.
-- With `exit`, Claude Code exits, as its own "No, exit" does. gff-hab refuses each channel message
-  that waits for the session, the start message among them, with the reason "the owner did not
-  trust the folder". The result counts them: `{dropped}`.
+- The call returns once its outcome shows, within 5 s; else `unavailable`. For `trust`: the
+  dialog is off the screen for two reads in a row, and the agent still runs (an agent that
+  exited is `unavailable`). For `exit`: the session has ended.
+- With `exit`, Claude Code exits, as its own "No, exit" does. Once it has, gff-hab refuses each
+  channel message that waits for the session, the start message among them, with the reason
+  "the owner did not trust the folder". The result counts them: `{dropped}`. While the exit
+  runs, messages wait; if the agent does not exit, nothing is refused.
+- A peer link (client kind `hab`) cannot send it, as with `confirm.answer`, and
+  `gff-hab api call trust.answer` refuses to run in an agent's pane (`$GFF_HAB` set).
 - The keys go in as the hab, like `approval.answer`'s. They are not a take over of a round's run.
 
 **Card.** While the session shows `blocked:trust`, the chat view shows the trust card where the
@@ -1484,7 +1502,11 @@ board row shows "Trust this folder?" as its title, in rank 1 (3.1).
 **Push.** A trust prompt raises a banner, as an approval does: kind `trust`, time-sensitive,
 title "Trust this folder?", subtitle the session's place, body the folder. Collapse id
 `t-<pane>`. No actions: the choice needs the folder on screen, so a tap opens the session at
-the card. The app registers the kind `trust`. Hold-while-watched applies (8.3).
+the card. The app registers the kind `trust`; a hab that refuses the kind gets the call again
+without it, then without `round`. Hold-while-watched applies (8.3). The folder drops control and
+bidi characters, and a path over 60 characters keeps its end, where the folder's name is. When
+the pane leaves `blocked:trust`, a quiet banner with the same collapse id replaces it: "Trust
+prompt answered", or "Session ended" when the agent exited.
 
 **Rounds.** A round never answers the trust dialog (`rounds.md` 7.3). Its run shows `blocked`
 with the reason that names the dialog. The owner may answer it from the card; that is not a
@@ -1498,7 +1520,8 @@ reason above.
 
 | Case | Behaviour |
 |---|---|
-| The owner answers in the terminal | The dialog leaves the screen; the card goes at the next screen read (0.5 s) |
+| The owner answers in the terminal | The dialog leaves the screen; the card goes after 3 screen reads without it (1.5 s) |
+| The owner types in the terminal view as the card's answer goes | Input in the last second refuses the answer; a cursor moved after the keys gets no Enter (`trust`); Esc exits whatever the cursor (`exit`) |
 | The dialog went before the call arrived | `conflict`: "the pane no longer shows the trust dialog" |
 | The screen shows the dialog but the label is not there (a new wording) | `conflict`, nothing sent; the card says to answer in the terminal |
 | gff-hab restarts while the dialog shows | The new gff-hab does not watch the pane (the watch starts at the spawn). The terminal view still answers it. A known gap |

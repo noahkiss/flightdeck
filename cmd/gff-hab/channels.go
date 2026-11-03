@@ -59,8 +59,13 @@ func (l *channelLocal) ready(sessionID string) (api.Session, error) {
 	if !ok {
 		return ss, fmt.Errorf("session %s is gone", sessionID)
 	}
-	if l.trust != nil && ss.Pane != "" && l.trust.Declined(ss.Pane) {
-		return ss, errUntrusted
+	if l.trust != nil && ss.Pane != "" {
+		switch declined, pending := l.trust.Declined(ss.Pane); {
+		case declined:
+			return ss, errUntrusted
+		case pending:
+			return ss, fmt.Errorf("%w: the owner's answer to the trust prompt is on its way", channels.ErrBusy)
+		}
 	}
 	if ss.State == api.SessionStateExited || ss.Pane == "" {
 		return ss, errors.New("agent not running: the session has exited")
@@ -74,6 +79,9 @@ func (l *channelLocal) ready(sessionID string) (api.Session, error) {
 	}
 	switch st.State {
 	case api.AgentStatusNone, api.AgentStatusExited:
+		if st.Hooks == api.HookHealthMissing {
+			return ss, fmt.Errorf("agent not running: %s reported no state, so its hooks are likely missing (gff-hab hook -print %s)", st.Harness, st.Harness)
+		}
 		return ss, fmt.Errorf("agent not running: the pane shows %s", st.State)
 	}
 	// opencode takes messages through its server (agentService.Send), only when gff-hab follows

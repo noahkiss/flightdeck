@@ -983,6 +983,15 @@ func (c *conn) handleTrust(m message) {
 	if e == nil && !isWord("TrustChoice", string(p.Choice)) {
 		e = appErr(api.ErrorKindInvalid, "choice %q is not one of %v", p.Choice, api.Enums["TrustChoice"])
 	}
+	if e == nil {
+		c.mu.Lock()
+		kind := c.kind
+		c.mu.Unlock()
+		if kind == api.ClientKindHab {
+			// A peer link carries an agent's calls from another hab, never the owner's answer.
+			e = appErr(api.ErrorKindInvalid, "trust.answer is the owner's answer; a peer link cannot send it")
+		}
+	}
 	if e == nil && c.s.cfg.Trust == nil {
 		e = appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
 	}

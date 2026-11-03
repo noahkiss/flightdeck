@@ -134,6 +134,7 @@ type sent struct {
 	request  string
 	collapse string
 	req      *api.PermissionRequest
+	folder   string    // a trust prompt's folder (app.md 7.10)
 	expires  time.Time // the banner's apns-expiration; the withdrawal uses the same
 	to       []target
 }
@@ -602,7 +603,10 @@ func (n *Notifier) process(st api.AgentState) {
 		}
 		for _, t := range ob.to {
 			b := AnsweredBanner(w, by, allow, ob.req, t.hide)
-			if st.State == api.AgentStatusExited && by == "" {
+			switch {
+			case ob.kind == string(api.BlockedKindTrust):
+				b = TrustAnsweredBanner(w, ob.folder, st.State == api.AgentStatusExited)
+			case st.State == api.AgentStatusExited && by == "":
 				b = EndedBanner(w, ob.req, t.hide)
 			}
 			payload := AlertPayload(b, Meta{Hab: n.cfg.Hab, Session: w.Session, Pane: st.Pane, State: string(st.State), Request: ob.request}, w.Session)
@@ -672,8 +676,11 @@ func (n *Notifier) banner(st api.AgentState, w Where) {
 		hide = hide || (d.Token != "" && d.Wants(kind) && d.HideCommands)
 	}
 	var out *sent
-	if kind == KindPermission || kind == KindQuestion {
+	if kind == KindPermission || kind == KindQuestion || kind == KindTrust {
 		out = &sent{kind: string(st.Kind), request: requestID(st), collapse: collapse, req: st.Request, expires: expires}
+		if st.Trust != nil {
+			out.folder = st.Trust.Folder
+		}
 	}
 	for _, d := range n.cfg.Store.Devices() {
 		if d.Token == "" || !d.Wants(kind) {

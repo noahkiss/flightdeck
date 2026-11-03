@@ -691,4 +691,28 @@ func TestNotifierTrust(t *testing.T) {
 		b.Body["aps"].(map[string]any)["interruption-level"] != "time-sensitive" || b.Header.Get("apns-collapse-id") != "t-p1" {
 		t.Errorf("trust banner %v %v", b.Header, b.Body)
 	}
+	// The prompt leaves the pane: the banner is replaced, same collapse id, quietly.
+	r.n.State(state(api.AgentStatusWorking))
+	r.n.Sync()
+	pa = alerts(r.prod.requests(), phone)
+	if len(pa) != 2 {
+		t.Fatalf("phone %d after the answer", len(pa))
+	}
+	w := pa[1]
+	if alertField(w, "title") != "Trust prompt answered" || w.Header.Get("apns-collapse-id") != "t-p1" ||
+		w.Body["aps"].(map[string]any)["interruption-level"] != "passive" {
+		t.Errorf("withdrawal %v %v", w.Header, w.Body)
+	}
+}
+
+// TestFolderText: a folder in a banner drops control and bidi characters and keeps its tail.
+func TestFolderText(t *testing.T) {
+	if got := FolderText("/work/‮ppa\u0007"); got != "/work/ppa" {
+		t.Errorf("cleaned %q", got)
+	}
+	long := "/" + strings.Repeat("deep folder/", 10) + "my app"
+	got := FolderText(long)
+	if !strings.HasSuffix(got, "/my app") || !strings.HasPrefix(got, "…") || len([]rune(got)) != 60 {
+		t.Errorf("long %q", got)
+	}
 }

@@ -100,7 +100,7 @@ final class PushRegistrationTests: XCTestCase {
         await eventually("registered") { reg.status["h"] == .registered }
         XCTAssertTrue(reg.canPush("h"))
         let refused = await hab.refusedPushRegisters
-        XCTAssertEqual(refused.map(\.kinds), [[.permission, .question, .auth, .error, .round, .trust]])
+        XCTAssertEqual(refused.map(\.kinds), [[.permission, .question, .auth, .error, .round, .trust], [.permission, .question, .auth, .error, .round]])
         let calls = await hab.pushRegisters
         XCTAssertEqual(calls.map(\.kinds), [[.permission, .question, .auth, .error]])
         // A setting change asks for round again, and falls back again.
@@ -108,6 +108,21 @@ final class PushRegistrationTests: XCTestCase {
         await eventually("done kind") { await hab.pushRegisters.last?.kinds == [.permission, .question, .auth, .error, .done] }
         await reg.settle()
         XCTAssertEqual(reg.status["h"], .registered)
+        await fleet.setActive(false)
+    }
+
+    /// A hab that knows `round` but not `trust` (app.md 7.10) keeps its round pushes: the app
+    /// drops only `trust` there.
+    func testHabThatRefusesOnlyTheTrustKindKeepsRound() async {
+        let (hab, fleet, reg) = await rig()
+        await hab.setUnknownPushKinds([.trust])
+        reg.setDeviceToken(Data([0xAB]))
+        await fleet.setActive(true)
+        await eventually("registered") { reg.status["h"] == .registered }
+        let refused = await hab.refusedPushRegisters
+        XCTAssertEqual(refused.map(\.kinds), [[.permission, .question, .auth, .error, .round, .trust]])
+        let calls = await hab.pushRegisters
+        XCTAssertEqual(calls.map(\.kinds), [[.permission, .question, .auth, .error, .round]])
         await fleet.setActive(false)
     }
 

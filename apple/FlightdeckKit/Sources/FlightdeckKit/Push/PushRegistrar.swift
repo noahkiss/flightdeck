@@ -123,8 +123,9 @@ public final class PushRegistrar {
         return k
     }
 
-    /// Kinds a hab built before them refuses as `invalid`; `register` drops them there.
-    static let newerKinds: [PushKind] = [.round, .trust]
+    /// Kinds a hab built before them refuses as `invalid`, newest first; `register` drops them
+    /// there one at a time, so a hab that knows `round` but not `trust` keeps its round pushes.
+    static let newerKinds: [PushKind] = [.trust, .round]
 
     /// The params `push.register` sends, or nil with no token.
     public var params: PushRegisterParams? {
@@ -224,14 +225,18 @@ public final class PushRegistrar {
         let t = Task { @MainActor [weak self] in
             await previous?.value
             do {
-                do {
-                    _ = try await conn.call(HabMethods.pushRegister, p)
-                } catch let e as RPCError where e.kind == .invalid && p.kinds.contains(where: Self.newerKinds.contains) {
-                    // A hab built before the `round` or `trust` kind refuses the whole call as
-                    // invalid. Register the other kinds there, so its other pushes still come.
-                    var older = p
-                    older.kinds = p.kinds.filter { !Self.newerKinds.contains($0) }
-                    _ = try await conn.call(HabMethods.pushRegister, older)
+                // A hab built before a newer kind refuses the whole call as invalid. Drop the
+                // newest kind and try again, so its other pushes still come.
+                var params = p
+                var dropping = Self.newerKinds.filter { p.kinds.contains($0) }
+                while true {
+                    do {
+                        _ = try await conn.call(HabMethods.pushRegister, params)
+                        break
+                    } catch let e as RPCError where e.kind == .invalid && !dropping.isEmpty {
+                        let k = dropping.removeFirst()
+                        params.kinds.removeAll { $0 == k }
+                    }
                 }
                 guard let self, !Task.isCancelled else { return }
                 self.status[id] = .registered
