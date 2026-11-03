@@ -199,7 +199,7 @@ focus is stored on a hab.
 
 | Rank | State | Why |
 |---|---|---|
-| 1 | `blocked` (permission, question, auth) | The agent waits for the owner |
+| 1 | `blocked` (permission, question, auth, trust) | The agent waits for the owner |
 | 2 | `error` | The turn stopped |
 | 3 | `done`, not seen | A result waits to be read |
 | 4 | `working` | Running; nothing to do |
@@ -1420,6 +1420,90 @@ The cards of `capcom.md` 6.1 and 6.3: a start an agent asks for on another host,
 - **Not built.** No push or Live Activity for a confirmation. The set-up card shows its
   fields; the hab refuses set-ups until the mesh stage builds them.
 
+### 7.10 Folder trust card (task-8svbwckn)
+
+A harness may ask whether to trust a folder before it starts work there. Until now the owner
+had to open the terminal view and pick an option with the arrow keys. The trust card answers it
+in the chat view.
+
+**What the harnesses do (checked 2026-11-02).**
+
+| Harness | Prompt | Built |
+|---|---|---|
+| Claude Code 2.1.317 | "Accessing workspace: `<folder>`", "Quick safety check: Is this a project you created or one you trust? ...", "Claude Code'll be able to read, edit, and execute files here.", then two rows: "❯ No, exit" (first, and selected) and "Yes, I trust this folder"; "Enter to confirm · Esc to cancel". No digits. Earlier builds list "1. Yes, I trust this folder" first, then "2. No, exit". It reports no state, by hook or OSC 7501, until the dialog is answered | Yes |
+| Codex 0.166 | The vendored manifest's `trust_directory` rule knows two wordings: "Do you trust the contents of this directory?" and "Trust this folder? ... Codex can read, edit, and run files here ... Trust and continue". The prompt could not be drawn on the build machine (a fresh `CODEX_HOME` asks for a sign-in first), so its keys are not checked | No: follow-up |
+| opencode | No folder trust prompt; its manifest has no rule for one | Nothing to build |
+
+**Report.** gff-hab reports the prompt as an agent state, so every client, the board and push
+see it with no new event:
+
+- `agent.state` with `state: blocked`, `kind: trust`, `source: screen`, the pane's `harness`, and
+  `trust: {folder}`. `folder` is the folder the session started in.
+- gff-hab watches each pane it starts with a harness (`session.create` or `session.resume` with
+  `harness`, a round's run, a Capcom start). It reads the pane's screen every 0.5 s with the
+  screen rule `claude_trust_folder`. The watch ends when the harness first reports a state by hook
+  or OSC 7501, when the pane goes, or after 10 minutes with no dialog. While the dialog shows, the
+  watch goes on without a limit.
+- When the dialog leaves the screen and the harness has not reported yet, the pane shows `working`
+  (source `screen`): the harness is starting. Its first hook or report replaces that.
+- A harness the owner starts by hand in a shell pane is not watched. Its dialog shows only in the
+  terminal view, as before.
+
+**Answer.** `trust.answer {pane, choice}` with `choice` `trust` or `exit`, under capability
+`trust`:
+
+- The pane must show `blocked:trust`, or the call is refused with `conflict`.
+- gff-hab reads the screen at once. The dialog must still show, with exactly one cursor row
+  (`❯`) and exactly one row that carries the chosen label: "Yes, I trust this folder" for
+  `trust`, "No, exit" for `exit`. Otherwise the call is refused with
+  `conflict` and nothing is sent. It never answers blind.
+- The keys are Up or Down from the cursor row to the chosen row, then Enter, in one write.
+- One answer at a time per pane: a second call while one runs is refused with `conflict`.
+- The call returns once the dialog has left the screen, within 3 s; else `unavailable`.
+- With `exit`, Claude Code exits, as its own "No, exit" does. gff-hab refuses each channel message
+  that waits for the session, the start message among them, with the reason "the owner did not
+  trust the folder". The result counts them: `{dropped}`.
+- The keys go in as the hab, like `approval.answer`'s. They are not a take over of a round's run.
+
+**Card.** While the session shows `blocked:trust`, the chat view shows the trust card where the
+pending request card goes (above the composer, 4.2). Top to bottom:
+
+- Title "Trust this folder?", with a folder icon.
+- The folder path, monospaced.
+- One line: "<Harness> can read, edit and run files here."
+- Two buttons of equal size: "Don't trust" (destructive style) on the left, "Trust folder" on the
+  right.
+
+States: the buttons, or a spinner while the call runs; on a failure, the hab's reason in red and
+a "Retry" button that sends the same choice again, beside the two buttons. After "Don't trust"
+the composer's notice line shows "Not trusted. The agent exited.", plus "Start message
+dropped." when `dropped` is above 0. A hab without the `trust`
+capability shows "Trust the folder in the terminal." and the "Open terminal" button. The status
+board row shows "Trust this folder?" as its title, in rank 1 (3.1).
+
+**Push.** A trust prompt raises a banner, as an approval does: kind `trust`, time-sensitive,
+title "Trust this folder?", subtitle the session's place, body the folder. Collapse id
+`t-<pane>`. No actions: the choice needs the folder on screen, so a tap opens the session at
+the card. The app registers the kind `trust`. Hold-while-watched applies (8.3).
+
+**Rounds.** A round never answers the trust dialog (`rounds.md` 7.3). Its run shows `blocked`
+with the reason that names the dialog. The owner may answer it from the card; that is not a
+take over.
+
+**Start message (task-8svbwckn).** A started session's first message waits in the channels inbox
+until the agent can take it. `blocked:trust` holds it as busy, with no time limit, so it goes in
+after the owner trusts the folder and the agent reaches `idle`. Before this, a pane with no
+agent state held it only 30 s, then refused it. With `exit` it is refused at once, with the
+reason above.
+
+| Case | Behaviour |
+|---|---|
+| The owner answers in the terminal | The dialog leaves the screen; the card goes at the next screen read (0.5 s) |
+| The dialog went before the call arrived | `conflict`: "the pane no longer shows the trust dialog" |
+| The screen shows the dialog but the label is not there (a new wording) | `conflict`, nothing sent; the card says to answer in the terminal |
+| gff-hab restarts while the dialog shows | The new gff-hab does not watch the pane (the watch starts at the spawn). The terminal view still answers it. A known gap |
+| Two clients answer at once | The first one sends; the second gets `conflict` |
+
 ---
 
 ## 8. Push
@@ -1447,6 +1531,7 @@ service.
 | `blocked:permission` | Yes, with Allow and Deny | Time-sensitive | Update with buttons |
 | `blocked:question` | Yes, with options or reply | Time-sensitive | Update |
 | `blocked:auth` | Yes, "open to sign in" | Active | Update |
+| `blocked:trust` | Yes, "Trust this folder?", no actions (7.10) | Time-sensitive | Update |
 | `error` | Yes | Active | Update |
 | `done` | No by default (setting) | Passive when on | Update to finished |
 | `working` | No | — | Update, throttled |
@@ -2860,6 +2945,7 @@ stage that fills it.
 | capability `push` | The hab has push config that works |
 | `session.focus {session, active}` | Report focus: marks `done` seen, and feeds hold-while-watched (8.3) |
 | `approval.answer {pane, request, choice, text?}` | Answer a pending request by id; refuses a closed id with `conflict` |
+| `trust.answer {pane, choice}` | Answer a harness's folder trust prompt (`trust` or `exit`) from the screen it shows; refuses with `conflict` when the dialog is gone (7.10). Capability `trust` |
 | `session.interrupt {session}` | Stop the current turn through the adapter (the chat view's Stop button) |
 | `chat.page {session, before?, limit}` | Read a page of chat messages from the transcript reader |
 | events for chat | Chat messages appended or updated while subscribed |

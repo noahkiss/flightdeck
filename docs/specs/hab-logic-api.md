@@ -821,6 +821,7 @@ names the stage, and an event is defined but never sent.
 | `session.interrupt` | Stop the current turn through the adapter (the chat view's Stop) | Part 4 stage 4 |
 | `session.send` | Send a message through the adapter, under the input rules | Yes, Claude Code (Part 4 stage 4) |
 | `approval.answer` | Answer a pending request by id; a closed or expired id is refused with `conflict` | Yes, Claude Code permissions (Part 4 stage 4) |
+| `trust.answer` | Answer a harness's folder trust prompt, `trust` or `exit`, from the dialog on screen (capability `trust`; `app.md` 7.10) | Yes, Claude Code (task-8svbwckn) |
 | `chat.page` | Read a page of chat messages from the transcript reader (capability `transcripts`) | Yes, Claude Code (Part 4 stage 5) |
 | `attachment.put` | Start an upload of a file for a session (capability `attachments`; `app.md` 4.4) | Yes (task-mthck7r4) |
 | `attachment.write` | Send the next run of an upload's bytes; the last run checks the hash (capability `attachments`; API addition) | Yes (task-mthck7r4) |
@@ -943,7 +944,15 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   The call returns once the request is resolved; an answer the hook could not take, an exit,
   or a request still open past the read-back answers `unavailable` (`harness-adapters.md`,
   Permission answers).
-- Both run off the connection's read loop, so a slow pane holds up no other call.
+- **`trust.answer`** `{pane, choice}`: `choice` is `trust` or `exit`. The pane must show
+  `blocked:trust` (`agent.state` field `trust: {folder}`), and the screen must still show the
+  dialog with one cursor row and one row with the chosen label; otherwise `conflict`, and nothing
+  is sent. The keys move the cursor to that row, then Enter. The call returns once the dialog
+  left the screen (3 s, else `unavailable`). The result is `{dropped}`: with `exit`, the channel
+  messages that waited for the session (its start message among them), now refused with the
+  reason "the owner did not trust the folder". A second call while one runs is `conflict`.
+  The keys are the hab's, so they are not a round's take over (`app.md` 7.10).
+- All three run off the connection's read loop, so a slow pane holds up no other call.
 - **`chat.page`** pages backwards by message id (`before`); `limit` defaults to 50, at most 200.
   The result holds `messages`, oldest first, and `more`. A message has `id`, `session`, `kind`
   (`user`, `agent`, `tool`, `event`, `plan`; open), `at`, and the optional `text`, `sender`,

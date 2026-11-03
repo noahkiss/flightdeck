@@ -363,7 +363,7 @@ The model uses the OSC 7501 state set, so every source maps onto it without loss
 |---|---|
 | `idle` | At rest, waiting for input. Also set after the owner interrupts. |
 | `working` | A turn, tool call or compaction is running. |
-| `blocked` | Waiting for the owner. Carries `kind`: `permission`, `question` or `auth`. |
+| `blocked` | Waiting for the owner. Carries `kind`: `permission`, `question`, `auth` or `trust` (a folder trust prompt, read from the screen; `app.md` 7.10). |
 | `done` | The turn finished and the owner has not looked yet. |
 | `error` | The turn failed and stopped. |
 
@@ -388,6 +388,7 @@ Each `agent.state` event carries (built as `api.AgentState`; the event's id is t
 | `state` | enum | Above. |
 | `kind` | enum, optional | Only with `blocked`. |
 | `request` | object, optional | With `blocked:permission`: request id, tool name, exact command or file list, cwd. Copied from the structured payload, never summarised. |
+| `trust` | object, optional | With `blocked:trust`: `folder`, the folder the session started in. `trust.answer` answers it (`app.md` 7.10). |
 | `source` | enum | `server`, `hook`, `osc`, `screen`, `spawn`. |
 | `turn` | string, optional | Native turn or prompt id where the harness gives one (Claude `prompt_id`, Codex `turn_id`). |
 | `at` | time | When `gff-hab` accepted the event. |

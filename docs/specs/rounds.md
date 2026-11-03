@@ -858,7 +858,10 @@ Built (stage 4, task-kt363fw0): `fresh` runs with a harness and a prompt
 - **Trust dialog.** In a folder it has not trusted yet, Claude Code asks "Quick safety check
   ... Yes, I trust this folder" before it reports any state. While a Claude Code run waits
   for its first `idle`, gff-hab reads the pane's screen every 0.5 s with its own screen rule
-  (the detection manifest format; the vendored Claude manifest has no rule for the dialog).
+  (the detection manifest format; the vendored Claude manifest has no rule for the dialog). The
+  rule lives in `internal/harness`, shared with the trust card (`app.md` 7.10): the pane also
+  shows `blocked:trust`, and the owner may answer from the card with `trust.answer`, which is
+  not a take over.
   While the dialog shows, the run is `blocked` with a reason that names it, and the readiness
   limit waits. The user answers it in the pane: that input is not a take over, as an
   `approval.answer` is not, and neither is input up to 2 s after the dialog went. Rounds never
