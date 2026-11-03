@@ -2139,7 +2139,10 @@ Rules:
   reader. The terminal is one tap away.
 - **The switch stays on screen.** On the phone layout the Chat | Terminal switch holds the middle
   of the navigation bar in both views. The terminal's Fit and Redraw go in the More menu there, so
-  its controls never push the switch off; its microphone stays in the bar.
+  its controls never push the switch off; its microphone stays in the bar. Beside the switch the
+  phone's bar holds one control and the More menu: Voice in the chat, the pane's microphone in
+  the terminal. New conversation, and Voice in the terminal, go in the More menu (owner report
+  2026-11-02: four controls covered the switch). iPad and Mac keep their header as it is.
 - **The split is per device.** The iPad's divider position does not change the Mac's.
 - **Narrow iPad windows** (Slide Over, a third of the screen) use the phone layout.
 - **One session in two windows** is allowed. Each window opens its own data stream; only typing

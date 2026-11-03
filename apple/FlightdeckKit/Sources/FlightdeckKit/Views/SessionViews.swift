@@ -75,6 +75,9 @@ public struct SessionView: View {
     /// The content side panel (Mac, iPad) or sheet (iPhone), app.md 4.7.
     @State private var showFiles = Self.filesAtLaunch
     @State private var voiceShown = false
+    /// Voice from the More menu found the microphone off.
+    @State private var voiceDenied = false
+    @Environment(\.voiceKit) private var voiceKit
     /// Raised by voice mode's Keyboard control: focus the composer.
     @State private var focusComposer = 0
     /// The composer's draft, here so the Capcom toolbar's New conversation can carry it.
@@ -104,6 +107,12 @@ public struct SessionView: View {
         self.close = close
         // A session with no agent (a plain shell) opens in the terminal (app.md 11.1).
         _mode = State(initialValue: model.context.harness == nil && model.target.session != nil ? .terminal : .chat)
+        #if DEBUG
+        // Debug builds only: `-FlightdeckSessionMode Terminal` opens sessions in the terminal.
+        if let m = UserDefaults.standard.string(forKey: "FlightdeckSessionMode").flatMap(Mode.init(rawValue:)) {
+            _mode = State(initialValue: m)
+        }
+        #endif
     }
 
     public var body: some View {
@@ -132,12 +141,26 @@ public struct SessionView: View {
                     ToolbarItem(placement: .secondaryAction) {
                         Button("Files", systemImage: "doc.on.doc") { showFiles = true }
                     }
+                    // A phone's bar holds the back button, the switch, one control and the
+                    // More menu. More would cover the switch, so New conversation goes in
+                    // the More menu, and in the terminal, where the pane's dictation takes
+                    // the control's place, so does Voice.
                     if model.context.isCapcom {
-                        ToolbarItem(placement: .primaryAction) { newConversationButton }
+                        ToolbarItem(placement: .secondaryAction) { newConversationButton }
                     }
-                    ToolbarItem(placement: .primaryAction) {
-                        VoiceButton(model: model, shown: $voiceShown)
+                    if mode == .chat {
+                        ToolbarItem(placement: .primaryAction) {
+                            VoiceButton(model: model, shown: $voiceShown)
+                        }
+                    } else if voiceKit != nil {
+                        ToolbarItem(placement: .secondaryAction) { voiceMenuButton }
                     }
+                }
+                .alert("Microphone access is off", isPresented: $voiceDenied) {
+                    Button("Open Settings") { openPrivacySettings() }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Turn on microphone access for Flightdeck to use voice mode and dictation.")
                 }
                 .sheet(isPresented: $showFiles) {
                     ContentPanel(model: model.content)
@@ -234,6 +257,19 @@ public struct SessionView: View {
         }
         .disabled(model.capcom == nil || model.capcomBusy || !model.context.online)
         .help("Start a new Capcom conversation")
+    }
+
+    /// Voice as a More menu item (a phone in the terminal). An alert on a menu item never
+    /// shows, so the session view raises the microphone one.
+    private var voiceMenuButton: some View {
+        Button("Voice", systemImage: "waveform") {
+            if VoiceAudio.permissionDenied {
+                voiceDenied = true
+            } else {
+                voiceShown = true
+            }
+        }
+        .disabled(!VoiceButton.allowed(model))
     }
 
     /// Opens the session's console (app.md 6).
