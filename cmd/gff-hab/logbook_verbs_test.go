@@ -168,9 +168,13 @@ func TestLogbookServe(t *testing.T) {
 	if out, _ := lbOK(t, nil, "--socket", sock, "proposals"); !strings.Contains(out, filed.Proposal) {
 		t.Fatalf("proposals:\n%s", out)
 	}
+	// A person approves Capcom's proposal from the CLI outside a pane (logbook.md 9.4).
+	if out, errs := lbOK(t, nil, "--socket", sock, "approve", filed.Proposal); !strings.HasPrefix(out, "approved: "+filed.Proposal+"\n") || !strings.Contains(out, "task-") {
+		t.Fatalf("approve: %q %q", out, errs)
+	}
 	// Later stages' verbs say so.
-	if _, errs, code := lbRun(t, nil, "--socket", sock, "approve", filed.Proposal); code != 1 || !strings.Contains(errs, "stage 7") {
-		t.Fatalf("approve: %d %s", code, errs)
+	if _, errs, code := lbRun(t, nil, "--socket", sock, "brief"); code != 1 || !strings.Contains(errs, "stage 6") {
+		t.Fatalf("brief: %d %s", code, errs)
 	}
 	// An API error exits 3.
 	if _, errs, code := lbRun(t, nil, "--socket", sock, "show", "task-zzzzzzzz"); code != 3 || !strings.Contains(errs, "no such record") {

@@ -259,7 +259,7 @@ func fold(create *Op, ops []*Op, collision int, ov overrule) *folded {
 		var after []FlagValue
 		for _, o := range ops {
 			if o.Root != f.Root || o.Kind == KindCreate || o.Kind == KindForget ||
-				(o.Kind == KindSet && o.Field == "deleted") || slices.Contains(f.Skipped, o.ID()) {
+				(o.Kind == KindSet && o.Field == "deleted") || slices.Contains(f.Skipped, o.ID()) || ov[o.ID()] != nil {
 				continue
 			}
 			if deleteOp.HLC().Compare(o.HLC()) < 0 {

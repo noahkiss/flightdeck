@@ -194,3 +194,26 @@ func TestExpiresIsFixed(t *testing.T) {
 		t.Fatalf("expires %q", v)
 	}
 }
+
+// An overruled change to a deleted record is not folded, so it is no edit after the delete: the
+// record shows approval overruled, never edited after delete (5.6, 9.3).
+func TestOverruledEditNotEditedAfterDelete(t *testing.T) {
+	a, b, x, task := proposalHosts(t)
+	a.clock.Set(at("09:30"))
+	a.write(t, phone, set(task, "deleted", true))
+	a.clock.Set(at("09:58"))
+	reject(t, a, x)
+	// B has seen neither: its approve notes the task.
+	b.clock.Set(at("10:00"))
+	made := NewID(TypeTask)
+	b.write(t, approver, create(made, TypeTask, map[string]any{"title": "X"}), note(task, "from the draft"),
+		set(x, "status", "approved"), set(x, "decided_by", "SHA256:phone"))
+	link(t, a, b)
+	for _, r := range []*replica{a, b} {
+		tk := r.get(t, task)
+		if !tk.Deleted || len(tk.Notes) != 0 || len(flagsOf(tk, FlagApprovalOverruled)) != 1 || len(flagsOf(tk, FlagEditedAfterDelete)) != 0 {
+			t.Fatalf("%s: task deleted %v notes %d flags %+v", r.name, tk.Deleted, len(tk.Notes), tk.Flags)
+		}
+		refoldSame(t, r)
+	}
+}
