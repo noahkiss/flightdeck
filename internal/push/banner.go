@@ -6,6 +6,8 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/noahkiss/flightdeck/api"
 )
@@ -22,13 +24,13 @@ const (
 // Categories name the action sets the app registers (app.md 7.1, 16.2).
 const (
 	CategoryApproval = "approval"      // Approve, Deny
-	CategoryDeny     = "approval-deny" // Deny, Open on iPhone: the command does not fit, or is hidden
-	CategoryOpen     = "open"          // Open on iPhone
+	CategoryDeny     = "approval-deny" // Deny, Open Flightdeck: the command does not fit, or is hidden
+	CategoryOpen     = "open"          // Open Flightdeck
 	// The same sets with "Ask" last, sent while some host runs Capcom (capcom.md 8.5), and ask
 	// alone for a banner that had no actions.
 	CategoryApprovalAsk = "approval-ask"      // Approve, Deny, Ask
-	CategoryDenyAsk     = "approval-deny-ask" // Deny, Open on iPhone, Ask
-	CategoryOpenAsk     = "open-ask"          // Open on iPhone, Ask
+	CategoryDenyAsk     = "approval-deny-ask" // Deny, Open Flightdeck, Ask
+	CategoryOpenAsk     = "open-ask"          // Open Flightdeck, Ask
 	CategoryAsk         = "ask"               // Ask
 )
 
@@ -173,6 +175,37 @@ func inputField(r *api.PermissionRequest, key string) string {
 	return v
 }
 
+// maxDescription bounds the description read before it is fitted to a budget.
+const maxDescription = 200
+
+// commandDescription is the harness's own summary of a command request: Claude Code's Bash
+// `description` ("Check whether notes.txt exists"), else a `justification` (Codex asks for one
+// with an escalated command). It is model text, so it is display only: control and format
+// characters (bidi marks among them) become spaces, it is cut to maxDescription runes, and a
+// final full stop goes. "" when the request is not a command or has no summary.
+func commandDescription(r *api.PermissionRequest) string {
+	if r == nil || r.Command == "" {
+		return ""
+	}
+	d := inputField(r, "description")
+	if strings.TrimSpace(d) == "" {
+		d = inputField(r, "justification")
+	}
+	var b strings.Builder
+	n := 0
+	for _, c := range d {
+		if n == maxDescription {
+			break
+		}
+		if unicode.IsControl(c) || unicode.Is(unicode.Cf, c) || c == utf8.RuneError {
+			c = ' '
+		}
+		b.WriteRune(c)
+		n++
+	}
+	return strings.TrimRight(strings.Join(strings.Fields(b.String()), " "), ".")
+}
+
 // toolFetch is Claude Code's fetch tool. Only its url is the whole request; another tool with
 // a url (a browser or webhook MCP tool) has other arguments the banner would hide.
 const toolFetch = "WebFetch"
@@ -277,6 +310,10 @@ func permissionTitle(r *api.PermissionRequest) string {
 	}
 	switch {
 	case r.Command != "":
+		// The harness's summary of the command, when it fits whole: never a cut summary.
+		if d := strings.TrimRight(commandDescription(r), "?"); d != "" && Fits(d, 4, 27) {
+			return d + "?"
+		}
 		if obj := verbObject(ShortCommand(r.Command, r.Cwd)); obj != "" {
 			return Fit("Run "+obj, 3, 27) + "?"
 		}
@@ -373,6 +410,9 @@ func AnsweredBanner(w Where, by string, allow *bool, r *api.PermissionRequest, h
 	obj := ""
 	if r != nil && !hide {
 		switch {
+		case commandDescription(r) != "":
+			// What the command does, in the harness's words, reads better than its first word.
+			obj = commandDescription(r)
 		case r.Command != "":
 			obj = verbObject(ShortCommand(r.Command, r.Cwd))
 		case len(r.Files) == 1:

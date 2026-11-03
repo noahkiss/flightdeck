@@ -106,6 +106,108 @@ func TestBannerBudgets(t *testing.T) {
 	}
 }
 
+// TestCompoundCommandBanner: a command that opens with a shell keyword or a group names no
+// program, so its title and its answered body say "shell script", never "Run if?". Approve
+// still follows the whole-command rule.
+func TestCompoundCommandBanner(t *testing.T) {
+	w := Where{Hab: "laptop", Session: "s1", Project: "web-app", Harness: "claude"}
+	cases := []struct {
+		cmd     string
+		wantCat string
+	}{
+		{"if [ -e notes.txt ]; then echo yes; fi", CategoryApproval},
+		{"if [ -e watch-test.txt ]; then echo 'the file is there, so the watch test can go on'; else echo 'no file yet, try again later'; fi", CategoryDeny},
+		{"for f in *.go; do gofmt -l $f; done", CategoryApproval},
+		{"[[ -f go.mod ]] && go test ./...", CategoryApproval},
+		{"(cd sub && make)", CategoryApproval},
+		{"{ echo a; echo b; } > out.txt", CategoryApproval},
+		{"cd /srv/app && while true; do sleep 1; done", CategoryApproval},
+	}
+	for _, c := range cases {
+		r := &api.PermissionRequest{ID: "r1", Tool: "Bash", Command: c.cmd}
+		b := PermissionBanner(w, r, false)
+		if b.Title != "Run shell script?" || b.Category != c.wantCat {
+			t.Errorf("%q: title %q category %q, want %q %q", c.cmd, b.Title, b.Category, "Run shell script?", c.wantCat)
+		}
+		if a := AnsweredBanner(w, "phone", ptr(true), r, false); a.Body != "Allowed: shell script" {
+			t.Errorf("%q: answered body %q", c.cmd, a.Body)
+		}
+	}
+	// A program whose name only starts like a keyword keeps its name.
+	r := &api.PermissionRequest{ID: "r2", Tool: "Bash", Command: "iftop -i en0"}
+	if b := PermissionBanner(w, r, false); b.Title != "Run iftop?" {
+		t.Errorf("iftop title %q", b.Title)
+	}
+}
+
+// TestCommandDescription: the harness's summary of a command titles the banner when it fits
+// the title budget whole, and names what was answered; the body keeps the command, so Approve
+// still follows the whole-command rule. The summary is model text: control and bidi
+// characters go, it is cut, and hidden commands hide it too.
+func TestCommandDescription(t *testing.T) {
+	w := Where{Hab: "laptop", Session: "s1", Project: "web-app", Harness: "claude"}
+	req := func(cmd, input string) *api.PermissionRequest {
+		return &api.PermissionRequest{ID: "r1", Tool: "Bash", Command: cmd, Input: api.RawJSON(input)}
+	}
+	cases := []struct {
+		name                  string
+		r                     *api.PermissionRequest
+		title, body, answered string
+		cat                   string
+	}{
+		{"short summary", req("rm -rf build", `{"command":"rm -rf build","description":"Remove build output."}`),
+			"Remove build output?", "rm -rf build", "Allowed: Remove build output", CategoryApproval},
+		{"summary over the title budget", req("if [ -e notes.txt ]; then echo yes; fi", `{"command":"x","description":"Check whether watch-test.txt exists"}`),
+			"Run shell script?", "if [ -e notes.txt ]; then echo yes; fi", "Allowed: Check whether watch-test.txt exists", CategoryApproval},
+		{"long summary cut in the answered line", req("make test", `{"command":"make test","description":"Run the whole test suite of the project again after the fix to the login form"}`),
+			"Run make test?", "make test", "Allowed: Run the whole test suite of the…", CategoryApproval},
+		{"control and bidi characters", req("ls", "{\"command\":\"ls\",\"description\":\"List\\u001b[31m\\u202efiles\\nnow\"}"),
+			"List [31m files now?", "ls", "Allowed: List [31m files now", CategoryApproval},
+		{"codex justification", req("git push", `{"command":"git push","justification":"Push the fix"}`),
+			"Push the fix?", "git push", "Allowed: Push the fix", CategoryApproval},
+		{"blank summary", req("make test", `{"command":"make test","description":"  \n "}`),
+			"Run make test?", "make test", "Allowed: make test", CategoryApproval},
+		{"no summary", req("make test", `{"command":"make test"}`),
+			"Run make test?", "make test", "Allowed: make test", CategoryApproval},
+		{"summary on a tool with no command", &api.PermissionRequest{ID: "r1", Tool: "Task", Input: api.RawJSON(`{"description":"Explore the repo"}`)},
+			"Allow Task?", "", "Allowed: Task", CategoryDeny},
+	}
+	for _, c := range cases {
+		b := PermissionBanner(w, c.r, false)
+		if b.Title != c.title || b.Body != c.body || b.Category != c.cat {
+			t.Errorf("%s: %q / %q / %q, want %q / %q / %q", c.name, b.Title, b.Body, b.Category, c.title, c.body, c.cat)
+		}
+		if Words(b.Title) > 4 || utf8.RuneCountInString(b.Title) > 28 {
+			t.Errorf("%s: title %q over budget", c.name, b.Title)
+		}
+		a := AnsweredBanner(w, "phone", ptr(true), c.r, false)
+		if a.Body != c.answered {
+			t.Errorf("%s: answered %q, want %q", c.name, a.Body, c.answered)
+		}
+		if Words(a.Body) > 8 || utf8.RuneCountInString(a.Body) > 60 {
+			t.Errorf("%s: answered %q over budget", c.name, a.Body)
+		}
+		for _, s := range []string{b.Title, a.Body} {
+			if strings.ContainsAny(s, "\x1b‮\n") {
+				t.Errorf("%s: control character kept in %q", c.name, s)
+			}
+		}
+	}
+	// Hidden commands hide the summary too: it says what the command does.
+	r := cases[0].r
+	if b := PermissionBanner(w, r, true); strings.Contains(b.Title+b.Body, "build") {
+		t.Errorf("hidden banner shows the summary: %+v", b)
+	}
+	if a := AnsweredBanner(w, "phone", ptr(true), r, true); strings.Contains(a.Body, "build") {
+		t.Errorf("hidden answered banner shows the summary: %q", a.Body)
+	}
+	// A very long summary is cut before it is fitted.
+	long := req("ls", `{"command":"ls","description":"`+strings.Repeat("a", 5000)+`"}`)
+	if d := commandDescription(long); utf8.RuneCountInString(d) != maxDescription {
+		t.Errorf("long summary kept %d runes", utf8.RuneCountInString(d))
+	}
+}
+
 func ptr[T any](v T) *T { return &v }
 
 // TestToolBanners: plans, questions, MCP tools and fetches read in plain words on a Watch

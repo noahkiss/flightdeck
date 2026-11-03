@@ -140,12 +140,21 @@ func splitShell(s string) []string {
 
 var subcommand = regexp.MustCompile(`^[a-z][a-z0-9:-]*$`)
 
+// shellKeywords open a compound shell command. Such a command names no program, and "if" or
+// "for" as a banner's object reads as nonsense ("Run if?").
+var shellKeywords = map[string]bool{"if": true, "for": true, "while": true, "until": true, "case": true,
+	"select": true, "function": true, "[[": true}
+
 // verbObject builds a permission title's object from a shortened command: the program's base
-// name and its subcommand, when the second word is one ("wrangler deploy").
+// name and its subcommand, when the second word is one ("wrangler deploy"). A compound command
+// that opens with a shell keyword or a group is a "shell script".
 func verbObject(short string) string {
 	toks := splitShell(short)
 	if len(toks) == 0 {
 		return ""
+	}
+	if first := toks[0]; shellKeywords[first] || strings.HasPrefix(first, "(") || strings.HasPrefix(first, "{") {
+		return "shell script"
 	}
 	obj := path.Base(toks[0])
 	if len(toks) > 1 && subcommand.MatchString(toks[1]) {

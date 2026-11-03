@@ -1500,8 +1500,8 @@ relies on:
   id, passive, "Answered on <label>", where the label is the answering client's hello `label`.
   The Live Activity loses its buttons in the same step. A request closed in the TUI is replaced
   with "Answered in the terminal"; one whose pane's program exited with "Session ended".
-- **Categories.** `approval` (Approve, Deny), `approval-deny` (Deny, Open on iPhone) and `open`
-  (Open on iPhone). The app registers all three. Question banners use `open` until answering a
+- **Categories.** `approval` (Approve, Deny), `approval-deny` (Deny, Open Flightdeck) and `open`
+  (Open Flightdeck). The app registers all three. Question banners use `open` until answering a
   question through `approval.answer` is built. A permission request with no request id uses
   `open`: no answer can name it.
 - **Ask an agent** (task-3687ti3z, hab half; `capcom.md` 8.2, 8.5). While some host runs Capcom,
@@ -2717,7 +2717,7 @@ phone shows the same words.
   paths inside the project, then the middle of long quoted strings. The key part stays visible:
   "wrangler deploy --env prod", not "cd /srv/app && NODE_ENV=… wrangler…".
 - **Approve only what is shown.** The banner offers Approve only when the full command, after the
-  safe drops above, fits the body budget. Otherwise it offers Deny and "Open on iPhone". This
+  safe drops above, fits the body budget. Otherwise it offers Deny and "Open Flightdeck". This
   replaces the 256-character limit as the banner rule (7.8).
 - **Times as clock times.** A banner cannot count down. The push carries `expires_at`; the phone's
   notification service extension writes it as a local clock time, "Expires 14:05", before display
@@ -2734,22 +2734,22 @@ Budgets are maximums. The hab counts words and characters; it keeps to both.
 
 | Kind | Title | Subtitle | Body | Actions |
 |---|---|---|---|---|
-| Permission | 4 words, 28 chars: verb and object, "Run wrangler deploy?", "Edit sign-in.ts?", "Write 3 files?" | 4 words: "web-app · <hab>" | 16 words, 100 chars: the shortened command or file list, then "Expires 14:05" | Deny, Approve (or Deny, Open on iPhone; 16.4) |
-| Question | 8 words, 50 chars: the question, shortened | 4 words: project · hab | 16 words: the options, numbered, "1 Clerk · 2 Auth.js" | Up to three options as actions, plus Reply (dictation or Scribble on the Watch). More than three: the first two, then Open on iPhone |
-| Sign-in needed | 3 words: "Sign-in needed" | 4 words: project · hab | 10 words: "<harness> needs you to sign in on <hab>." | Open on iPhone |
-| Error | 4 words: "Turn stopped: <project>" | 4 words: hab · harness | 15 words: the first line of the error | Open on iPhone |
+| Permission | 4 words, 28 chars: verb and object, "Run wrangler deploy?", "Edit sign-in.ts?", "Write 3 files?", or the harness's summary when it fits whole (16.4) | 4 words: "web-app · <hab>" | 16 words, 100 chars: the shortened command or file list, then "Expires 14:05" | Deny, Approve (or Deny, Open Flightdeck; 16.4) |
+| Question | 8 words, 50 chars: the question, shortened | 4 words: project · hab | 16 words: the options, numbered, "1 Clerk · 2 Auth.js" | Up to three options as actions, plus Reply (dictation or Scribble on the Watch). More than three: the first two, then Open Flightdeck |
+| Sign-in needed | 3 words: "Sign-in needed" | 4 words: project · hab | 10 words: "<harness> needs you to sign in on <hab>." | Open Flightdeck |
+| Error | 4 words: "Turn stopped: <project>" | 4 words: hab · harness | 15 words: the first line of the error | Open Flightdeck |
 | Done (when on) | 5 words: "Done: <session title>" | 4 words: project · hab | 15 words: the first sentence of the last agent message | None |
-| Answered elsewhere | 4 words: "Answered on <client>" | 4 words: project · hab | 8 words: "Allowed: wrangler deploy" or "Denied: …" | None |
+| Answered elsewhere | 4 words: "Answered on <client>" | 4 words: project · hab | 8 words: "Allowed: wrangler deploy" or "Denied: …"; the harness's summary when there is one (16.4) | None |
 | Usage warning | 5 words: "Claude 5h at 90%" | 3 words: the plan label | 6 words: "Resets in 1h 58m" | None |
 | Usage free | 5 words: "Claude 5h window reset" | 3 words: the plan label | None | None |
 | Console command finished | 5 words: "<command> finished" | 4 words: project · hab | 6 words: "Exit 0 · 3m 12s" | None |
-| Could not reach | 4 words: "Could not reach <hab>" | None | 6 words: "Open on iPhone to retry." | None |
+| Could not reach | 4 words: "Could not reach <hab>" | None | 6 words: "Open Flightdeck to retry." | None |
 
 ### 16.3 Edge cases
 
 | Case | Behaviour |
 |---|---|
-| The command does not fit after safe drops | Body shows its start and "…"; actions are Deny and Open on iPhone |
+| The command does not fit after safe drops | Body shows its start and "…"; actions are Deny and Open Flightdeck |
 | The phone is out of reach of the Watch | The Watch shows the notification only if it was already delivered; an action there fails, and the phone posts "Could not reach" when it next runs |
 | The phone cannot reach the hab | The phone posts the "Could not reach" notification (7.8), which the Watch shows |
 | The request expires before the tap | The hab refuses it with `conflict`; the phone posts "Expired: answer in the terminal" |
@@ -2769,7 +2769,7 @@ unlock rule). Tests: `TestBannerBudgets`, `TestToolBanners`, `TestPlanApproveKey
 - **Already in place before this task.** The hab fits every banner to 16.2 (`Fit`,
   `ShortCommand`), offers Approve only for a command shown whole, and leaves the expiry to the
   phone's notification service extension. The app registers the categories of 8.7 and 8.8, with
-  "Open on iPhone" on iOS.
+  "Open Flightdeck" on iOS.
 - **Plans.** A Claude `ExitPlanMode` request reads "Approve plan?". The body is the plan in plain
   words: one Markdown mark at the start of each line dropped (heading, quote, bullet, list number,
   each followed by a space, so "--force" keeps its dashes), emphasis marks dropped, a heading that
@@ -2791,6 +2791,24 @@ unlock rule). Tests: `TestBannerBudgets`, `TestToolBanners`, `TestPlanApproveKey
 - **Answered.** The replacement names what was answered: "Allowed: plan", "Denied: github create
   issue", "Allowed: fetch docs.example.com". A question is answered, not allowed: its replacement
   body is the question, fitted.
+- **Compound commands** (owner report, 2026-11-02). A command that opens with a shell keyword
+  (`if`, `for`, `while`, `until`, `case`, `select`, `function`, `[[`) or a group (`(`, `{`) names
+  no program. Its title is "Run shell script?" and its answered line "Allowed: shell script",
+  never "Run if?". Approve still follows "Approve only what is shown".
+- **The harness's summary** (owner report, 2026-11-02). Claude Code's Bash input carries a
+  `description`, a short summary the model wrote ("Remove build output"). Codex's escalated
+  commands carry a `justification`; the hab reads that when there is no `description`. When a
+  command request has one, it is the title ("Remove build output?") if it fits the title budget
+  whole, else the title stays "Run <program>?": a cut summary never titles a banner. The answered
+  line names it, fitted to 8 words and 60 characters ("Allowed: Check whether notes.txt
+  exists"). The body keeps the command, so Approve still shows only for a command shown whole. The
+  summary is model text and display only: control and format characters (bidi marks among them)
+  become spaces, it is cut to 200 characters before fitting, and a final full stop goes. With
+  details hidden it is hidden too. No summary: the text of before.
+- **Open Flightdeck** (owner report, 2026-11-02). The open action read "Open on iPhone", which
+  is right on a Watch and wrong on the phone, where the owner saw it. One category serves both, so
+  the action now reads "Open Flightdeck" on iOS: on the Watch the only Flightdeck is the phone's.
+  "Could not reach" says "Open Flightdeck to retry." on every platform; the Mac keeps "Open".
 - **Hidden details.** With "Show details in notifications" off, a plan, a question and a URL are
   hidden too. A question banner then reads "Question waiting". Coordinator call (2026-11-02): the
   setting was "Show commands in notifications". The label changed, but the id

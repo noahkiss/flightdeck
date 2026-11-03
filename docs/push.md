@@ -186,6 +186,7 @@ the kept notice that `notice.get` and "Ask an agent" read, where the read scope 
 
 A push passes through Apple. In this release its text is plain: the title, the project and hab,
 and what the agent asks for, shortened. That is a command, file names, the start of a plan, a
-question and its options, or a fetched URL. The app's setting "Show details in notifications"
+question and its options, or a fetched URL. A command's title and answered line may be the
+harness's own summary of it, such as Claude Code's Bash `description` (`app.md` 16.4). The app's setting "Show details in notifications"
 turns all of that off: banners then say "Approval needed" (or "Question waiting") and offer no
 Approve. Sealed payloads are a later step (`app.md` 18.9).

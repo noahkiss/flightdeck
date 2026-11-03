@@ -1191,7 +1191,7 @@ a key it sends the same call again, and the hab runs it at most once. Built choi
 - **Answered elsewhere** (`app.md` 7.5). When an `approval.answer` reaches the harness, the
   notifier replaces the banner on every device that got it, same collapse id, passive, with
   "Answered on <label>" (the answering client's hello label, else its name) and "Allowed:
-  <program>" or "Denied: …". It does this at once: Claude Code keeps the request open until
+  <program>" (the harness's command summary when it sent one, `app.md` 16.4) or "Denied: …". It does this at once: Claude Code keeps the request open until
   the tool has run. The same blocked state arriving afterwards raises nothing. A request that
   closes with no answer through the hab (the TUI) is replaced with "Answered in the terminal".
   A request whose pane's program exits is replaced with "Session ended". A pane that closes with a banner open has it replaced with "Pane closed", and the notifier
