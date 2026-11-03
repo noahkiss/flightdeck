@@ -2268,7 +2268,8 @@ no wake word, no system assistant in the path.
 
 - A microphone in the chat composer and on the terminal keyboard bar (5.1) starts dictation: the
   same speech-to-text as voice mode (13.5), writing into the composer or the pane.
-- In the composer, words appear as heard and stay editable; the owner sends.
+- In the composer, words appear as heard and stay editable; the owner sends. Send while it
+  listens ends the dictation and drops the words not yet heard, so the sent text stays gone.
 - In the terminal, the text goes to the pane as one paste when the owner stops, without Enter.
 - The language follows the system; a setting picks another.
 

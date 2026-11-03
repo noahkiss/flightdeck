@@ -198,6 +198,27 @@ final class VoiceTextTests: XCTestCase {
         XCTAssertEqual(String(decoding: PaneDictationButton.paneText("ls\n-la\u{1b}[A\r"), as: UTF8.self), "ls -la [A ")
     }
 
+    /// Send while dictation listens: the composer clears, and neither later live words nor the
+    /// engine's final text may write the sent message back into it.
+    func testSendEndsDictationSoTheSentTextStaysGone() {
+        var d = DictationDraft()
+        let s = d.begin("please")
+        XCTAssertEqual(d.draft(heard: "fix the test", session: s), "please fix the test")
+        d.end() // Send
+        XCTAssertNil(d.draft(heard: "fix the test.", session: s), "a live revision after send")
+        XCTAssertNil(d.draft(heard: "Fix the test.", session: s), "the final text after send")
+    }
+
+    /// A stop that returns after a new dictation began writes nothing over the new one.
+    func testAnOldDictationWritesNothingIntoANewOne() {
+        var d = DictationDraft()
+        let old = d.begin("")
+        d.end()
+        let new = d.begin("next")
+        XCTAssertNil(d.draft(heard: "old words", session: old))
+        XCTAssertEqual(d.draft(heard: "new words", session: new), "next new words")
+    }
+
     // MARK: - Grammar
 
     func testCommandsMatchOnlyTheWholeUtterance() {

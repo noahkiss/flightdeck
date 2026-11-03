@@ -706,6 +706,34 @@ struct OutgoingView: View {
     }
 }
 
+/// Where the composer's dictation writes (app.md 13.4): heard words follow the draft as it was
+/// when the dictation began.
+struct DictationDraft: Equatable {
+    /// The draft before the dictation began.
+    private var base = ""
+    private var session = 0
+
+    /// Starts a dictation over `draft`; returns its session.
+    mutating func begin(_ draft: String) -> Int {
+        session += 1
+        base = draft
+        return session
+    }
+
+    /// The draft with `heard` after it, or nil when that dictation no longer writes.
+    func draft(heard: String, session s: Int) -> String? {
+        guard s == session else { return nil }
+        return ComposerView.join(base, heard)
+    }
+
+    /// Ends the dictation: its later words write nothing. Send calls it, so words heard after the
+    /// draft went out never write the sent message back.
+    mutating func end() {
+        session += 1
+        base = ""
+    }
+}
+
 /// The composer (app.md 4.2): text, a terminal button, Stop while working, and Send.
 struct ComposerView: View {
     let model: ChatModel
@@ -718,8 +746,10 @@ struct ComposerView: View {
     @Environment(\.voiceKit) private var voiceKit
     @Environment(\.habConnections) private var habs
     @State private var dictation: DictationModel?
-    /// The draft before dictation started; heard words follow it.
-    @State private var dictationBase = ""
+    /// Where heard words go: after the draft as it was when dictation started.
+    @State private var dictationDraft = DictationDraft()
+    /// The dictation session that writes into the draft now.
+    @State private var dictationSession = 0
     @State private var micDenied = false
     /// Why dictation did not start or wrote nothing.
     @State private var dictationNotice: String?
@@ -813,8 +843,9 @@ struct ComposerView: View {
         .padding(10)
         .onChange(of: focusRequest) { _, _ in focused = true }
         .onChange(of: dictation?.liveText) { _, live in
-            guard let live, dictation?.phase == .listening else { return }
-            draft = Self.join(dictationBase, live)
+            guard let live, dictation?.phase == .listening,
+                  let text = dictationDraft.draft(heard: live, session: dictationSession) else { return }
+            draft = text
         }
         .onDisappear {
             if let d = dictation { Task { await d.cancel() } }
@@ -826,6 +857,12 @@ struct ComposerView: View {
         model.send(draft, attachments: attachments)
         // A refusal (a file over the limit) keeps the draft as it was.
         guard model.notice == nil else { return }
+        // Send while dictating ends the dictation: its later words would write the sent text back.
+        dictationDraft.end()
+        if let d = dictation {
+            dictation = nil
+            Task { await d.cancel() }
+        }
         draft = ""
         attachments = []
         attachNotice = nil
@@ -840,25 +877,30 @@ struct ComposerView: View {
         }
         let d = kit.dictation(connection: habs.find(model.target.habID), session: model.target.session)
         dictation = d
-        dictationBase = draft
+        let session = dictationDraft.begin(draft)
+        dictationSession = session
         dictationNotice = nil
         Task {
             await d.start()
             // A refused microphone or no engine: the button works again.
-            if d.phase == .idle {
+            if d.phase == .idle, dictation === d {
                 dictationNotice = d.notice
                 dictation = nil
             }
         }
     }
 
-    /// Stops; the engine's text replaces the heard words.
+    /// Stops; the engine's text replaces the heard words. A send meanwhile ended the
+    /// dictation: the text then writes nothing.
     private func stopDictation() {
         guard let d = dictation else { return }
+        let session = dictationSession
         Task {
-            if let text = await d.stop() {
-                draft = Self.join(dictationBase, text)
-            } else {
+            let text = await d.stop()
+            guard dictation === d else { return }
+            if let text, let full = dictationDraft.draft(heard: text, session: session) {
+                draft = full
+            } else if text == nil {
                 dictationNotice = d.notice
             }
             dictation = nil
