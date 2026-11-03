@@ -811,6 +811,37 @@
       }
     },
     {
+      "name": "trust.answer",
+      "summary": "Answer the pane's folder trust prompt from the dialog on screen; refused with conflict when it is gone. Needs the trust capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "choice",
+          "description": "trust the folder, or exit the harness as its own No, exit does.",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/TrustChoice"
+          }
+        },
+        {
+          "name": "pane",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TrustAnswered"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/TrustAnswerParams"
+      }
+    },
+    {
       "name": "chat.page",
       "summary": "Read a page of the session's chat messages from the transcript reader. Needs the transcripts capability.",
       "paramStructure": "by-name",
@@ -3733,6 +3764,10 @@
           "state": {
             "$ref": "#/components/schemas/AgentStatus"
           },
+          "trust": {
+            "$ref": "#/components/schemas/TrustPrompt",
+            "description": "Only with state blocked and kind trust: the folder the harness asks to trust."
+          },
           "turn": {
             "type": "string",
             "description": "The harness's turn or prompt id, where it gives one."
@@ -4002,7 +4037,8 @@
         "x-known-values": [
           "permission",
           "question",
-          "auth"
+          "auth",
+          "trust"
         ]
       },
       "CapcomAssignParams": {
@@ -8900,7 +8936,8 @@
           "error",
           "done",
           "usage",
-          "round"
+          "round",
+          "trust"
         ]
       },
       "PushRegisterParams": {
@@ -10662,6 +10699,60 @@
           "seq",
           "sessions",
           "hosts"
+        ]
+      },
+      "TrustAnswerParams": {
+        "type": "object",
+        "properties": {
+          "choice": {
+            "$ref": "#/components/schemas/TrustChoice",
+            "description": "trust the folder, or exit the harness as its own No, exit does."
+          },
+          "pane": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pane",
+          "choice"
+        ]
+      },
+      "TrustAnswered": {
+        "type": "object",
+        "properties": {
+          "dropped": {
+            "type": "integer",
+            "format": "int64",
+            "description": "With choice exit: the channel messages that waited for the session, its start message among them, now refused."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "dropped"
+        ]
+      },
+      "TrustChoice": {
+        "type": "string",
+        "x-known-values": [
+          "trust",
+          "exit"
+        ]
+      },
+      "TrustPrompt": {
+        "type": "object",
+        "properties": {
+          "folder": {
+            "type": "string",
+            "description": "The folder the session started in, which the harness asks to trust."
+          }
+        },
+        "required": [
+          "folder"
         ]
       },
       "TurnEnd": {

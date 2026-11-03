@@ -564,6 +564,8 @@ func serve(args []string) error {
 	var chats *chatService
 	var agentCalls control.Agents
 	var agentSvc *agentService
+	var trustSvc *trustService
+	var trustCtl control.Trust
 	var explain control.Detect
 	var contents control.Content
 	var attachments control.Attachments
@@ -715,6 +717,12 @@ func serve(args []string) error {
 		agentSvc = &agentService{store: store, agents: agents, gate: gate, input: linkQueuer{lk}, logf: logger.Printf,
 			answering: pushes.answering, opencode: ocs, attachments: attachSvc, screen: linkScreen(lk)}
 		agentCalls = agentSvc
+		// The folder trust card (app.md 7.10): watch each new harness pane for its trust prompt.
+		trustSvc = newTrustService(agents, agentSvc.screen, func(ctx context.Context, pane string, b []byte) error { return agentSvc.write(ctx, pane, b) }, trustLive(store.SessionByPane), logger.Printf)
+		defer trustSvc.Close()
+		sessionActs.started = trustSvc.watch
+		trustCtl = trustSvc
+		caps = append(caps, trustCapability)
 		// Why a pane shows its state (harness-adapters.md, Detection): read only.
 		// The manifests are parsed now, off the start path, and again only when the data
 		// directory changes.
@@ -967,7 +975,7 @@ func serve(args []string) error {
 	}
 	caps = append(caps, catalog.Capability)
 	// Channels (mesh.md 6): agent messages by name, the outboxes and the inbox.
-	cl := &channelLocal{store: store, agents: agents, send: agentSvc}
+	cl := &channelLocal{store: store, agents: agents, send: agentSvc, trust: trustSvc}
 	chSvc, err := channels.New(channels.Config{
 		Self: key.Fingerprint(), Host: *hostID, State: dir,
 		Peers: channelPeers{pm}, Catalog: cs.List, Local: cl,
@@ -987,6 +995,15 @@ func serve(args []string) error {
 	}
 	defer chSvc.Close()
 	chs.Store(chSvc)
+	if trustSvc != nil {
+		trustSvc.refuse = func(pane, reason string) (int, error) {
+			ss, ok := store.SessionByPane(pane)
+			if !ok {
+				return 0, nil
+			}
+			return chSvc.Refuse(ss.ID, reason)
+		}
+	}
 	caps = append(caps, channels.Capability)
 	// The push capability is added at each hello while push is on (control.PushCapability):
 	// the key command may print its key after start.
@@ -1199,6 +1216,7 @@ func serve(args []string) error {
 		},
 		Logf:        logger.Printf,
 		Permissions: permissionService{perms},
+		Trust:       trustCtl,
 		Detect:      explain,
 		Peers:       pm,
 		Catalog:     cs,

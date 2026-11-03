@@ -462,6 +462,10 @@ func (c *conn) handleLine(line []byte) {
 		c.handleAgent(m)
 		return
 	}
+	if m.Method == "trust.answer" {
+		c.handleTrust(m)
+		return
+	}
 	if m.Method == "hab.permissions" {
 		c.handlePermissions(m)
 		return
@@ -964,6 +968,39 @@ func (c *conn) handleAgent(m message) {
 			return
 		}
 		c.reply(m, seq, api.Empty{Seq: api.Seq{Seq: seq}}, nil)
+	}()
+}
+
+// handleTrust runs trust.answer off the read loop: it waits for its keys to reach the program
+// and for the dialog to leave the screen (app.md 7.10).
+func (c *conn) handleTrust(m message) {
+	seq := c.currentSeq()
+	var p api.TrustAnswerParams
+	e := c.decodeUp(m, &p)
+	if e == nil && p.Pane == "" {
+		e = appErr(api.ErrorKindInvalid, "trust.answer needs a pane")
+	}
+	if e == nil && !isWord("TrustChoice", string(p.Choice)) {
+		e = appErr(api.ErrorKindInvalid, "choice %q is not one of %v", p.Choice, api.Enums["TrustChoice"])
+	}
+	if e == nil && c.s.cfg.Trust == nil {
+		e = appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
+	}
+	if e != nil {
+		c.reply(m, seq, nil, e)
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
+		defer cancel()
+		res, err := c.s.cfg.Trust.Answer(ctx, c.clientID, p)
+		seq := c.currentSeq()
+		if err != nil {
+			c.reply(m, seq, nil, actionErr(m.Method, err))
+			return
+		}
+		res.Seq = api.Seq{Seq: seq}
+		c.reply(m, seq, res, nil)
 	}()
 }
 

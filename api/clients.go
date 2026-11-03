@@ -78,6 +78,21 @@ type ApprovalAnswerParams struct {
 	Via     AnswerVia      `json:"via,omitempty"`
 }
 
+// TrustChoice is the answer to a folder trust prompt.
+type TrustChoice string
+
+// TrustAnswerParams answers a pane's folder trust prompt (app.md 7.10).
+type TrustAnswerParams struct {
+	Pane   string      `json:"pane"`
+	Choice TrustChoice `json:"choice" doc:"trust the folder, or exit the harness as its own No, exit does."`
+}
+
+// TrustAnswered is the result of trust.answer.
+type TrustAnswered struct {
+	Seq
+	Dropped int `json:"dropped" doc:"With choice exit: the channel messages that waited for the session, its start message among them, now refused."`
+}
+
 // --- Chat ---
 
 // ChatKind is the kind of a chat message. Clients show an unknown kind as unsupported.

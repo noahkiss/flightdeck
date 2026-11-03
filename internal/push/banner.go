@@ -63,6 +63,7 @@ const (
 	KindPermission = "permission"
 	KindQuestion   = "question"
 	KindAuth       = "auth"
+	KindTrust      = "trust"
 	KindError      = "error"
 	KindDone       = "done"
 	KindAnswered   = "answered"
@@ -369,6 +370,18 @@ func QuestionBanner(w Where) Banner {
 func AuthBanner(w Where) Banner {
 	return Banner{Kind: KindAuth, Title: "Sign-in needed", Subtitle: w.place(),
 		Body: Fit(harnessName(w.Harness)+" needs you to sign in on "+w.Hab+".", 10, 0), Level: LevelActive, Category: CategoryOpen}
+}
+
+// TrustBanner is the banner for blocked:trust (app.md 7.10): the harness asks to trust the
+// session's folder. It has no answer actions: the choice needs the folder on screen, so a tap
+// opens the session at its trust card.
+func TrustBanner(w Where, t *api.TrustPrompt) Banner {
+	body := "Open to answer."
+	if t != nil && t.Folder != "" {
+		body = Fit(t.Folder, 12, 0)
+	}
+	return Banner{Kind: KindTrust, Title: "Trust this folder?", Subtitle: w.place(), Body: body,
+		Level: LevelTimeSensitive, Category: CategoryOpen}
 }
 
 // ErrorBanner is the banner for error: "Turn stopped: <project>", from hab and harness.

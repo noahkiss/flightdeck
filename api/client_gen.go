@@ -35,6 +35,7 @@ const (
 	BlockedKindPermission BlockedKind = "permission"
 	BlockedKindQuestion   BlockedKind = "question"
 	BlockedKindAuth       BlockedKind = "auth"
+	BlockedKindTrust      BlockedKind = "trust"
 )
 
 const (
@@ -247,6 +248,7 @@ const (
 	PushKindDone       PushKind = "done"
 	PushKindUsage      PushKind = "usage"
 	PushKindRound      PushKind = "round"
+	PushKindTrust      PushKind = "trust"
 )
 
 const (
@@ -384,6 +386,11 @@ const (
 	ToolStatusDone    ToolStatus = "done"
 	ToolStatusError   ToolStatus = "error"
 	ToolStatusDenied  ToolStatus = "denied"
+)
+
+const (
+	TrustChoiceTrust TrustChoice = "trust"
+	TrustChoiceExit  TrustChoice = "exit"
 )
 
 // Event types.
@@ -713,6 +720,13 @@ func (c Client) SessionSend(ctx context.Context, params SessionSendParams) (Empt
 func (c Client) ApprovalAnswer(ctx context.Context, params ApprovalAnswerParams) (Empty, error) {
 	var result Empty
 	err := c.Caller.Call(ctx, "approval.answer", params, &result)
+	return result, err
+}
+
+// TrustAnswer calls trust.answer. Answer the pane's folder trust prompt from the dialog on screen; refused with conflict when it is gone. Needs the trust capability.
+func (c Client) TrustAnswer(ctx context.Context, params TrustAnswerParams) (TrustAnswered, error) {
+	var result TrustAnswered
+	err := c.Caller.Call(ctx, "trust.answer", params, &result)
 	return result, err
 }
 

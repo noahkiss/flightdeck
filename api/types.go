@@ -173,6 +173,11 @@ type PermissionRequest struct {
 	ExpiresAt   string `json:"expires_at,omitempty" doc:"RFC 3339 time after which the hab refuses a remote answer with conflict. Absent when no deadline applies."`
 }
 
+// TrustPrompt is a harness's folder trust prompt, read from the pane's screen (app.md 7.10).
+type TrustPrompt struct {
+	Folder string `json:"folder" doc:"The folder the session started in, which the harness asks to trust."`
+}
+
 // VersionWarning says the harness reported a version its adapter was not tested on.
 type VersionWarning struct {
 	Version string `json:"version"`
@@ -190,11 +195,14 @@ type AgentState struct {
 	Last     AgentStatus        `json:"last,omitempty" doc:"With state exited: the last done or error before the harness ended."`
 	Kind     BlockedKind        `json:"kind,omitempty" doc:"Only with state blocked."`
 	Request  *PermissionRequest `json:"request,omitempty" doc:"Only with state blocked and kind permission."`
-	Source   StateSource        `json:"source"`
-	Turn     string             `json:"turn,omitempty" doc:"The harness's turn or prompt id, where it gives one."`
-	At       string             `json:"at" doc:"RFC 3339 time gff-hab accepted the change."`
-	Version  string             `json:"version,omitempty" doc:"Harness version, once reported."`
-	Warning  *VersionWarning    `json:"warning,omitempty" doc:"Set while the harness version is outside the adapter's tested range."`
+	// Trust is added by the trust card (app.md 7.10). Optional, so a newer client reads an older
+	// hab.
+	Trust   *TrustPrompt    `json:"trust,omitempty" doc:"Only with state blocked and kind trust: the folder the harness asks to trust."`
+	Source  StateSource     `json:"source"`
+	Turn    string          `json:"turn,omitempty" doc:"The harness's turn or prompt id, where it gives one."`
+	At      string          `json:"at" doc:"RFC 3339 time gff-hab accepted the change."`
+	Version string          `json:"version,omitempty" doc:"Harness version, once reported."`
+	Warning *VersionWarning `json:"warning,omitempty" doc:"Set while the harness version is outside the adapter's tested range."`
 	// Hooks is added by the Codex adapter. Optional, so a newer client reads an older hab.
 	Hooks HookHealth `json:"hooks,omitempty" doc:"missing: the harness finished a turn and none of its hooks reached gff-hab. Its hook config is not installed, or (Codex) not trusted. Absent once a hook arrives."`
 	// Error is added by rounds stage 4. Optional, so a newer client reads an older hab.

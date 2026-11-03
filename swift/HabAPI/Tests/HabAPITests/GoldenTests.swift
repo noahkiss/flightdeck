@@ -80,6 +80,7 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.sessionInterrupt)
         result(HabMethods.sessionSend)
         result(HabMethods.approvalAnswer)
+        result(HabMethods.trustAnswer)
         result(HabMethods.chatPage)
         result(HabMethods.commandList)
         result(HabMethods.commandOutput)

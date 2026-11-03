@@ -118,8 +118,13 @@ public final class PushRegistrar {
         // Round notifications (rounds.md 10.2); the round's own notify setting decides which.
         // A hab that does not know the kind gets the call again without it (`register`).
         k.append(.round)
+        // Folder trust prompts (app.md 7.10).
+        k.append(.trust)
         return k
     }
+
+    /// Kinds a hab built before them refuses as `invalid`; `register` drops them there.
+    static let newerKinds: [PushKind] = [.round, .trust]
 
     /// The params `push.register` sends, or nil with no token.
     public var params: PushRegisterParams? {
@@ -221,11 +226,11 @@ public final class PushRegistrar {
             do {
                 do {
                     _ = try await conn.call(HabMethods.pushRegister, p)
-                } catch let e as RPCError where e.kind == .invalid && p.kinds.contains(.round) {
-                    // A hab built before the `round` kind refuses the whole call as invalid.
-                    // Register the other kinds there, so its other pushes still come.
+                } catch let e as RPCError where e.kind == .invalid && p.kinds.contains(where: Self.newerKinds.contains) {
+                    // A hab built before the `round` or `trust` kind refuses the whole call as
+                    // invalid. Register the other kinds there, so its other pushes still come.
                     var older = p
-                    older.kinds = p.kinds.filter { $0 != .round }
+                    older.kinds = p.kinds.filter { !Self.newerKinds.contains($0) }
                     _ = try await conn.call(HabMethods.pushRegister, older)
                 }
                 guard let self, !Task.isCancelled else { return }

@@ -670,3 +670,25 @@ func TestNotifierBackoff(t *testing.T) {
 		t.Fatalf("after the back-off: %d updates, want 2", n)
 	}
 }
+
+// TestNotifierTrust: a folder trust prompt (app.md 7.10) raises a time-sensitive banner with
+// the folder, collapsed by pane, only to a device that registered trust. It is read from the
+// screen alone, and still pushes on the pane's first sight.
+func TestNotifierTrust(t *testing.T) {
+	r := newNotifierRig(t)
+	r.store.Register("dev-phone", phone, Production, []string{KindPermission, KindTrust}, false)
+	r.store.Register("dev-mac", mac, Production, []string{KindPermission}, false)
+	st := state(api.AgentStatusBlocked)
+	st.Kind, st.Source, st.Trust = api.BlockedKindTrust, api.StateSourceScreen, &api.TrustPrompt{Folder: "/work/new-app"}
+	r.n.State(st)
+	r.n.Sync()
+	pa, ma := alerts(r.prod.requests(), phone), alerts(r.prod.requests(), mac)
+	if len(pa) != 1 || len(ma) != 0 {
+		t.Fatalf("phone %d, mac %d", len(pa), len(ma))
+	}
+	b := pa[0]
+	if alertField(b, "title") != "Trust this folder?" || alertField(b, "body") != "/work/new-app" ||
+		b.Body["aps"].(map[string]any)["interruption-level"] != "time-sensitive" || b.Header.Get("apns-collapse-id") != "t-p1" {
+		t.Errorf("trust banner %v %v", b.Header, b.Body)
+	}
+}

@@ -45,6 +45,7 @@ type channelLocal struct {
 	store  *structure.Store
 	agents *harness.Store
 	send   *agentService // nil without the holder link
+	trust  *trustService // nil without the holder link
 }
 
 func (l *channelLocal) Session(name string) (string, bool) {
@@ -57,6 +58,9 @@ func (l *channelLocal) ready(sessionID string) (api.Session, error) {
 	ss, ok := l.store.Session(sessionID)
 	if !ok {
 		return ss, fmt.Errorf("session %s is gone", sessionID)
+	}
+	if l.trust != nil && ss.Pane != "" && l.trust.Declined(ss.Pane) {
+		return ss, errUntrusted
 	}
 	if ss.State == api.SessionStateExited || ss.Pane == "" {
 		return ss, errors.New("agent not running: the session has exited")

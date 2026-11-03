@@ -52,6 +52,9 @@ type actions struct {
 	// startedIn hears the folder a new session started in (content and attachments, app.md
 	// 4.4 and 4.7). nil: none.
 	startedIn func(session, dir string)
+	// started hears each pane started with a harness, and the folder it runs in: the trust
+	// card watches it for a folder trust prompt (app.md 7.10). nil: none.
+	started func(pane, harness, dir string)
 	// seed queues a new session's first message in the channels inbox (capcom.md 3.3). nil: a
 	// create with a seed answers unavailable.
 	seed func(session, from, text string) (string, error)
@@ -193,6 +196,9 @@ func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, 
 	if a.startedIn != nil {
 		a.startedIn(ss.ID, cwd)
 	}
+	if a.started != nil && p.Harness != "" {
+		a.started(pane, p.Harness, cwd)
+	}
 	if p.Seed != "" {
 		// The session runs; a seed that cannot be queued is logged, not an error, so a retry
 		// with the same idempotency key never starts a second session.
@@ -224,6 +230,9 @@ func (a *actions) resumeSession(ctx context.Context, session string, p api.Sessi
 	}
 	if a.startedIn != nil {
 		a.startedIn(session, cwd)
+	}
+	if a.started != nil && p.Harness != "" {
+		a.started(pane, p.Harness, cwd)
 	}
 	return pane, nil
 }

@@ -36,6 +36,8 @@ public struct AgentState: Codable, Sendable, Hashable {
     public var session: String?
     public var source: StateSource
     public var state: AgentStatus
+    /// Only with state blocked and kind trust: the folder the harness asks to trust.
+    public var trust: TrustPrompt?
     /// The harness's turn or prompt id, where it gives one.
     public var turn: String?
     /// Harness version, once reported.
@@ -56,12 +58,13 @@ public struct AgentState: Codable, Sendable, Hashable {
         case session = "session"
         case source = "source"
         case state = "state"
+        case trust = "trust"
         case turn = "turn"
         case version = "version"
         case warning = "warning"
     }
 
-    public init(at: String, error: String? = nil, harness: String, hooks: HookHealth? = nil, kind: BlockedKind? = nil, last: AgentStatus? = nil, pane: String, request: PermissionRequest? = nil, revision: UInt64, session: String? = nil, source: StateSource, state: AgentStatus, turn: String? = nil, version: String? = nil, warning: VersionWarning? = nil) {
+    public init(at: String, error: String? = nil, harness: String, hooks: HookHealth? = nil, kind: BlockedKind? = nil, last: AgentStatus? = nil, pane: String, request: PermissionRequest? = nil, revision: UInt64, session: String? = nil, source: StateSource, state: AgentStatus, trust: TrustPrompt? = nil, turn: String? = nil, version: String? = nil, warning: VersionWarning? = nil) {
         self.at = at
         self.error = error
         self.harness = harness
@@ -74,6 +77,7 @@ public struct AgentState: Codable, Sendable, Hashable {
         self.session = session
         self.source = source
         self.state = state
+        self.trust = trust
         self.turn = turn
         self.version = version
         self.warning = warning
@@ -309,6 +313,7 @@ public struct BlockedKind: RawRepresentable, Codable, Sendable, Hashable {
     public static let permission = BlockedKind(rawValue: "permission")
     public static let question = BlockedKind(rawValue: "question")
     public static let auth = BlockedKind(rawValue: "auth")
+    public static let trust = BlockedKind(rawValue: "trust")
 }
 
 public struct CapcomAssignParams: Codable, Sendable, Hashable {
@@ -4875,6 +4880,7 @@ public struct PushKind: RawRepresentable, Codable, Sendable, Hashable {
     public static let done = PushKind(rawValue: "done")
     public static let usage = PushKind(rawValue: "usage")
     public static let round = PushKind(rawValue: "round")
+    public static let trust = PushKind(rawValue: "trust")
 }
 
 public struct PushRegisterParams: Codable, Sendable, Hashable {
@@ -6526,6 +6532,60 @@ public struct TranscriptSessions: Codable, Sendable, Hashable {
     }
 }
 
+public struct TrustAnswerParams: Codable, Sendable, Hashable {
+    /// trust the folder, or exit the harness as its own No, exit does.
+    public var choice: TrustChoice
+    public var pane: String
+
+    enum CodingKeys: String, CodingKey {
+        case choice = "choice"
+        case pane = "pane"
+    }
+
+    public init(choice: TrustChoice, pane: String) {
+        self.choice = choice
+        self.pane = pane
+    }
+}
+
+public struct TrustAnswered: Codable, Sendable, Hashable {
+    /// With choice exit: the channel messages that waited for the session, its start message among them, now refused.
+    public var dropped: Int
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case dropped = "dropped"
+        case seq = "seq"
+    }
+
+    public init(dropped: Int, seq: UInt64) {
+        self.dropped = dropped
+        self.seq = seq
+    }
+}
+
+/// An open word set: values outside the known list decode and round-trip unchanged.
+public struct TrustChoice: RawRepresentable, Codable, Sendable, Hashable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let trust = TrustChoice(rawValue: "trust")
+    public static let exit = TrustChoice(rawValue: "exit")
+}
+
+public struct TrustPrompt: Codable, Sendable, Hashable {
+    /// The folder the session started in, which the harness asks to trust.
+    public var folder: String
+
+    enum CodingKeys: String, CodingKey {
+        case folder = "folder"
+    }
+
+    public init(folder: String) {
+        self.folder = folder
+    }
+}
+
 public struct TurnEnd: Codable, Sendable, Hashable {
     /// Id of the turn's last agent message.
     public var finalMessage: String?
@@ -7001,6 +7061,8 @@ public enum HabMethods {
     public static let sessionSend = HabMethod<SessionSendParams, Empty>(name: "session.send")
     /// Answer a pending request by id. A closed or expired id is refused with conflict.
     public static let approvalAnswer = HabMethod<ApprovalAnswerParams, Empty>(name: "approval.answer")
+    /// Answer the pane's folder trust prompt from the dialog on screen; refused with conflict when it is gone. Needs the trust capability.
+    public static let trustAnswer = HabMethod<TrustAnswerParams, TrustAnswered>(name: "trust.answer")
     /// Read a page of the session's chat messages from the transcript reader. Needs the transcripts capability.
     public static let chatPage = HabMethod<ChatPageParams, ChatMessages>(name: "chat.page")
     /// Start an upload of a file for a session; the bytes follow in attachment.write runs (app.md 4.4). Needs the attachments capability.

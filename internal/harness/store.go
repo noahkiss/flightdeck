@@ -350,6 +350,9 @@ func (s *Store) paneLocked(paneID, harness string, src api.StateSource) *pane {
 // commitLocked stores next as the pane's state under a new revision, publishes it and wakes
 // the waiters on Changed. The caller holds s.mu.
 func (s *Store) commitLocked(p *pane, next api.AgentState) {
+	if next.State != api.AgentStatusBlocked || next.Kind != api.BlockedKindTrust {
+		next.Trust = nil // only blocked:trust carries the prompt
+	}
 	next.Revision = p.st.Revision + 1
 	next.At = s.now().UTC().Format(time.RFC3339Nano)
 	p.st = next
@@ -574,6 +577,9 @@ func (s *Store) Snapshot() []api.AgentState {
 func same(a, b api.AgentState) bool {
 	if a.Harness != b.Harness || a.Session != b.Session || a.State != b.State || a.Last != b.Last ||
 		a.Kind != b.Kind || a.Turn != b.Turn || a.Version != b.Version || a.Hooks != b.Hooks || a.Error != b.Error {
+		return false
+	}
+	if (a.Trust == nil) != (b.Trust == nil) || (a.Trust != nil && *a.Trust != *b.Trust) {
 		return false
 	}
 	if (a.Warning == nil) != (b.Warning == nil) || (a.Warning != nil && *a.Warning != *b.Warning) {

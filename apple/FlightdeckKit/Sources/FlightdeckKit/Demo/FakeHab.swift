@@ -181,6 +181,19 @@ public actor FakeHab {
     public private(set) var answers: [ApprovalAnswerParams] = []
     /// Every `notice.raise` received, oldest first.
     public private(set) var notices: [NoticeRaiseParams] = []
+    /// Every `trust.answer` received, oldest first, refused or not (app.md 7.10).
+    public private(set) var trustAnswers: [TrustAnswerParams] = []
+    /// The next `trust.answer` calls that fail, in order, before one is served again.
+    private var trustFailures: [Failure] = []
+    /// What a served `trust.answer` with `exit` reports as dropped.
+    private var trustDropped = 0
+
+    public func setTrustDropped(_ n: Int) { trustDropped = n }
+
+    /// Fails the next `trust.answer` with this kind and hint.
+    public func failNextTrust(_ kind: ErrorKind, _ hint: String) {
+        trustFailures.append(Failure(kind: kind, hint: hint))
+    }
 
     // MARK: Capcom (capcom.md 7.6, 8.4), with the capability `capcom`
 
@@ -1063,6 +1076,28 @@ public actor FakeHab {
             a.state = p.choice == .allow ? .working : .idle
             a.kind = nil
             a.request = nil
+            a.at = Fixture.stamp(Date())
+            await put(a)
+        case HabMethods.trustAnswer.name where capabilities.contains(TrustCard.capability):
+            guard let p = try? params.decode(TrustAnswerParams.self) else {
+                await fail(c, id: id, kind: .invalid, hint: "bad trust.answer params")
+                break
+            }
+            trustAnswers.append(p)
+            if !trustFailures.isEmpty {
+                let f = trustFailures.removeFirst()
+                await fail(c, id: id, kind: f.kind, hint: f.hint)
+                break
+            }
+            // The real hab's rule: only a pane that shows the prompt.
+            guard var a = agents[p.pane], a.state == .blocked, a.kind == .trust else {
+                await fail(c, id: id, kind: .conflict, hint: "pane \(p.pane) shows no folder trust prompt")
+                break
+            }
+            await reply(c, id: id, result: TrustAnswered(dropped: p.choice == .exit ? trustDropped : 0, seq: c.seq))
+            a.state = p.choice == .trust ? .working : .exited
+            a.kind = nil
+            a.trust = nil
             a.at = Fixture.stamp(Date())
             await put(a)
         case HabMethods.speechPrepare.name:

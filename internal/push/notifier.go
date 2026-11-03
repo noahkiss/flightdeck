@@ -486,6 +486,8 @@ func keptNotice(kind string, st api.AgentState, w Where, hide bool) Notice {
 		b = QuestionBanner(w)
 	case KindAuth:
 		b = AuthBanner(w)
+	case KindTrust:
+		b = TrustBanner(w, st.Trust)
 	case KindError:
 		b = ErrorBanner(w)
 	case KindDone:
@@ -494,6 +496,9 @@ func keptNotice(kind string, st api.AgentState, w Where, hide bool) Notice {
 	no := Notice{Title: b.Title, Body: b.Body, Level: b.Level, Session: w.Session}
 	if st.Request != nil {
 		no.Folder = st.Request.Cwd
+	}
+	if st.Trust != nil {
+		no.Folder = st.Trust.Folder
 	}
 	return no
 }
@@ -607,7 +612,8 @@ func (n *Notifier) process(st api.AgentState) {
 	// A pane first seen through a replayed screen report is old state: after a gff-hab restart
 	// the link replays each pane's last OSC 7501 report. Record it and update the Live
 	// Activity, but raise no banner.
-	if changed && !(!seen && st.Source == api.StateSourceScreen) {
+	// A trust prompt is read from the screen alone (app.md 7.10); the link replays none.
+	if changed && !(!seen && st.Source == api.StateSourceScreen && st.Kind != api.BlockedKindTrust) {
 		n.banner(st, w)
 	}
 	n.activity(st, w, changed)
@@ -637,6 +643,8 @@ func (n *Notifier) banner(st api.AgentState, w Where) {
 		kind, collapse = KindQuestion, collapseID("q-", st.Pane)
 	case st.State == api.AgentStatusBlocked && st.Kind == api.BlockedKindAuth:
 		kind, collapse = KindAuth, collapseID("a-", st.Pane)
+	case st.State == api.AgentStatusBlocked && st.Kind == api.BlockedKindTrust:
+		kind, collapse = KindTrust, collapseID("t-", st.Pane)
 	case st.State == api.AgentStatusError:
 		kind, collapse = KindError, collapseID("e-", st.Pane)
 	case st.State == api.AgentStatusDone:
@@ -686,6 +694,8 @@ func (n *Notifier) banner(st api.AgentState, w Where) {
 			b = QuestionBanner(w)
 		case KindAuth:
 			b = AuthBanner(w)
+		case KindTrust:
+			b = TrustBanner(w, st.Trust)
 		case KindError:
 			b = ErrorBanner(w)
 		case KindDone:

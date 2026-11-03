@@ -41,6 +41,7 @@ public struct OpenRequest: Identifiable, Equatable, Sendable {
         switch kind {
         case .question: return "\(Self.harnessName(harness)) asks a question"
         case .auth: return "Sign-in needed"
+        case .trust: return TrustCard.title
         default: break
         }
         guard let r = request else { return "Approval needed" }
@@ -62,6 +63,7 @@ public struct OpenRequest: Identifiable, Equatable, Sendable {
         case .permission: return form.isPlan ? "plan" : "permission"
         case .question: return "question"
         case .auth: return "sign-in"
+        case .trust: return "folder trust"
         default: return kind.rawValue
         }
     }

@@ -146,6 +146,7 @@ public enum BoardRows {
             if let t = r.title, !t.isEmpty { return t }
             if let tool = r.tool { return "Allow \(tool)?" }
         }
+        if let a = agent, a.state == .blocked, a.kind == .trust { return TrustCard.title }
         if let t = session.title, !t.isEmpty { return t }
         return session.name
     }

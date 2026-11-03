@@ -1,0 +1,112 @@
+{
+  "agent": {
+    "at": "at-21",
+    "error": "error-26",
+    "harness": "harness-7",
+    "hooks": "missing",
+    "kind": "trust",
+    "last": "exited",
+    "pane": "pane-5",
+    "request": {
+      "command": "command-11",
+      "context_line": "context_line-17",
+      "cwd": "cwd-13",
+      "description": "description-16",
+      "expires_at": "expires_at-18",
+      "files": [
+        "files-12"
+      ],
+      "id": "id-9",
+      "input": {
+        "input": 14,
+        "x_unknown_field": "later"
+      },
+      "input_truncated": true,
+      "title": "title-15",
+      "tool": "tool-10",
+      "x_unknown_field": "later"
+    },
+    "revision": 6,
+    "session": "session-8",
+    "source": "spawn",
+    "state": "exited",
+    "trust": {
+      "folder": "folder-19",
+      "x_unknown_field": "later"
+    },
+    "turn": "turn-20",
+    "version": "version-22",
+    "warning": {
+      "reason": "reason-25",
+      "tested": "tested-24",
+      "version": "version-23",
+      "x_unknown_field": "later"
+    },
+    "x_unknown_field": "later"
+  },
+  "manifest": {
+    "chosen_by": "chosen_by-42",
+    "from": "from-40",
+    "id": "id-38",
+    "path": "path-41",
+    "version": "version-39",
+    "x_unknown_field": "later"
+  },
+  "open_request": "open_request-27",
+  "owner_stop": true,
+  "pane": "pane-4",
+  "process": {
+    "error": "error-37",
+    "match": "match-34",
+    "match_name": "match_name-36",
+    "match_pid": 35,
+    "pgid": 28,
+    "processes": [
+      {
+        "args": [
+          "args-31"
+        ],
+        "leader": true,
+        "match": "match-33",
+        "name": "name-30",
+        "names": [
+          "names-32"
+        ],
+        "pid": 29,
+        "x_unknown_field": "later"
+      }
+    ],
+    "x_unknown_field": "later"
+  },
+  "screen": {
+    "cols": 43,
+    "lines": 45,
+    "rows": 44,
+    "rule": "rule-47",
+    "rules": [
+      {
+        "id": "id-48",
+        "matched": true,
+        "priority": 50,
+        "region": "region-51",
+        "state": "state-49",
+        "text": "text-52",
+        "truncated": true,
+        "x_unknown_field": "later"
+      }
+    ],
+    "state": "state-46",
+    "x_unknown_field": "later"
+  },
+  "seq": 3,
+  "turn_source": "spawn",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

@@ -1096,6 +1096,35 @@ func (s *Service) finishLocked(id string, st api.ChannelState, reason string, no
 	}
 }
 
+// Refuse ends every message that waits for the session with id sessionID as refused, with
+// reason: its agent will take none (the owner declined its folder trust prompt, app.md 7.10).
+// It returns how many waited. A message in a delivery attempt now is counted but left to that
+// attempt; Local.Check then refuses it with the same reason.
+func (s *Service) Refuse(sessionID, reason string) (int, error) {
+	now := s.cfg.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n, ended := 0, 0
+	for _, it := range slices.Clone(s.st.Inbox) {
+		if it.SessionID != sessionID {
+			continue
+		}
+		n++
+		if it.busy {
+			continue
+		}
+		s.finishLocked(it.Message.ID, api.ChannelStateRefused, reason, now)
+		s.cfg.Logf("channels: message %s for %s: %s %s", it.Message.ID, it.Message.To.Session, api.ChannelStateRefused, reason)
+		ended++
+	}
+	if ended > 0 {
+		if err := s.commitLocked(); err != nil {
+			return n, err
+		}
+	}
+	return n, nil
+}
+
 // --- Wait ---
 
 // Wait waits for a message to p.Session, or for p.Agent to reach a state in p.For (mesh.md

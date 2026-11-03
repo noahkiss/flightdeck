@@ -84,7 +84,7 @@ final class PushRegistrationTests: XCTestCase {
         XCTAssertEqual(calls.first?.token, "ab01ff")
         XCTAssertEqual(calls.first?.environment, .development)
         XCTAssertEqual(calls.first?.deviceId, reg.deviceID)
-        XCTAssertEqual(calls.first?.kinds, [.permission, .question, .auth, .error, .round])
+        XCTAssertEqual(calls.first?.kinds, [.permission, .question, .auth, .error, .round, .trust])
         XCTAssertNil(calls.first?.hideCommands)
         await fleet.setActive(false)
     }
@@ -100,7 +100,7 @@ final class PushRegistrationTests: XCTestCase {
         await eventually("registered") { reg.status["h"] == .registered }
         XCTAssertTrue(reg.canPush("h"))
         let refused = await hab.refusedPushRegisters
-        XCTAssertEqual(refused.map(\.kinds), [[.permission, .question, .auth, .error, .round]])
+        XCTAssertEqual(refused.map(\.kinds), [[.permission, .question, .auth, .error, .round, .trust]])
         let calls = await hab.pushRegisters
         XCTAssertEqual(calls.map(\.kinds), [[.permission, .question, .auth, .error]])
         // A setting change asks for round again, and falls back again.

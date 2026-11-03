@@ -760,7 +760,11 @@ struct ComposerView: View {
         let gate = model.gate
         VStack(alignment: .leading, spacing: 6) {
             if gate == .blocked, let a = model.context.agent {
-                PendingRequestView(agent: a, target: model.target, openTerminal: openTerminal)
+                if a.kind == .trust {
+                    TrustCardView(model: model, openTerminal: openTerminal)
+                } else {
+                    PendingRequestView(agent: a, target: model.target, openTerminal: openTerminal)
+                }
             }
             if gate == .noAgent {
                 HStack {

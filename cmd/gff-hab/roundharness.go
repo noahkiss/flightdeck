@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -448,7 +447,7 @@ func (s *roundsService) liveLocked(w *runWatch, state rounds.RunState) {
 		now := cur != nil && cur.h != nil && cur.h.liveState() == state
 		reason := ""
 		switch {
-		case now && state == rounds.RunBlocked && cur.h.trust:
+		case now && state == rounds.RunBlocked && (cur.h.trust || cur.h.kindOf == api.BlockedKindTrust):
 			reason = reasonTrust
 		case now && state == rounds.RunWaiting:
 			reason = cur.h.lockReason
@@ -568,7 +567,7 @@ func (s *roundsService) endTurn(runID, session, kind, native string, u rounds.Ru
 // ended keeps its end.
 func (s *roundsService) harnessTimedOut(w *runWatch) {
 	s.mu.Lock()
-	blocked, trust, kind, working := w.h.blocked, w.h.trust, w.h.kindOf, w.h.working
+	blocked, trust, kind, working := w.h.blocked, w.h.trust || w.h.kindOf == api.BlockedKindTrust, w.h.kindOf, w.h.working
 	locked, why := w.h.phase == phaseLock, w.h.lockReason
 	s.mu.Unlock()
 	if locked {
@@ -600,40 +599,10 @@ func (s *roundsService) harnessTimedOut(w *runWatch) {
 
 // --- Claude Code's workspace trust dialog ---
 
-// roundScreenRules are Flightdeck's own screen rules for harness runs, in the detection
-// manifest format. Claude Code asks whether to trust a folder it has not seen before it reports
-// any state; its vendored manifest has no rule for that dialog, and a refresh replaces the
-// vendored files, so the rule lives here.
-const roundScreenRules = `id = "flightdeck-rounds"
-version = "2026.11.2.1"
-min_engine_version = 2
-updated_at = "2026-11-02T00:00:00Z"
-
-[[rules]]
-id = "claude_trust_folder"
-state = "blocked"
-priority = 1000
-region = "whole_recent"
-visible_blocker = true
-contains = ["yes, i trust this folder"]
-any = [
-  { contains = ["quick safety check"] },
-  { contains = ["do you trust the files in this folder"] },
-]
-`
-
-var roundRules = sync.OnceValue(func() *detect.Manifest {
-	m, err := detect.Parse([]byte(roundScreenRules))
-	if err != nil {
-		panic("rounds: screen rules: " + err.Error())
-	}
-	return m
-})
-
-// trustDialog says whether screen shows Claude Code's workspace trust dialog.
+// trustDialog says whether screen shows Claude Code's workspace trust dialog. The screen rule
+// lives in internal/harness, shared with the trust card (app.md 7.10).
 func trustDialog(screen string) bool {
-	r := roundRules().Screen(detect.Input{Screen: screen})
-	return r.Matched && r.Rule == "claude_trust_folder"
+	return harness.TrustDialog(detect.KindClaude, screen)
 }
 
 // armTrustLocked schedules the next trust dialog check of a Claude Code run that waits for its

@@ -135,6 +135,12 @@ type Agents interface {
 	Answer(ctx context.Context, client string, p api.ApprovalAnswerParams) error
 }
 
+// Trust serves trust.answer (app.md 7.10): it answers a pane's folder trust prompt from the
+// dialog on screen. An error that is an *Error keeps its kind.
+type Trust interface {
+	Answer(ctx context.Context, client string, p api.TrustAnswerParams) (api.TrustAnswered, error)
+}
+
 // Permissions serves hab.permissions (macos-identity.md 7.2). A check may take tens of seconds,
 // so it runs off the connection's read loop. An error that is an *Error keeps its kind.
 type Permissions interface {
@@ -193,6 +199,7 @@ type Config struct {
 	Commands     Commands    // nil: command.list and command.output answer unavailable
 	Agents       Agents      // nil: session.send and approval.answer answer unavailable
 	Permissions  Permissions // nil: hab.permissions answers unavailable
+	Trust        Trust       // nil: trust.answer answers unavailable
 	Detect       Detect      // nil: detect.explain answers unavailable
 	Peers        Peers       // nil: peers.list and peers.accept answer unavailable
 	Catalog      Catalog     // nil: the catalog methods answer unavailable

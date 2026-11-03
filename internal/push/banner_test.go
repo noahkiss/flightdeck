@@ -74,6 +74,7 @@ func TestBannerBudgets(t *testing.T) {
 		{PermissionBanner(w, short, true), 4, 4, 16, 28, "Approval needed", CategoryDeny},
 		{QuestionBanner(w), 8, 4, 16, 50, "", CategoryOpen},
 		{AuthBanner(w), 3, 4, 10, 0, "Sign-in needed", CategoryOpen},
+		{TrustBanner(w, &api.TrustPrompt{Folder: "/work/web-app"}), 3, 4, 12, 0, "Trust this folder?", CategoryOpen},
 		{ErrorBanner(w), 4, 4, 15, 0, "Turn stopped: web-app", CategoryOpen},
 		{DoneBanner(w), 5, 4, 15, 0, "", ""},
 		{AnsweredBanner(w, "phone", ptr(true), short, false), 4, 4, 8, 0, "Answered on phone", ""},
