@@ -148,6 +148,25 @@ func TestDrift(t *testing.T) {
 	}
 }
 
+// TestSessionOwner: Claude Code 2.1.319 writes session-owner records (account and organization
+// ids) several times a turn. They are known bookkeeping: no chat message, no warning, no drift.
+func TestSessionOwner(t *testing.T) {
+	var l logs
+	r := NewClaude(Config{Path: "testdata/claude-2.1.319.jsonl", Session: "s1", Logf: l.logf})
+	msgs := readAll(t, r, 200)
+	for _, m := range msgs {
+		if m.Event == api.ChatEventUnknown {
+			t.Errorf("placeholder: %+v", m)
+		}
+	}
+	if len(msgs) != 3 {
+		t.Errorf("%d messages, want 3: %+v", len(msgs), msgs)
+	}
+	if r.Drift() != "" || len(l.lines) != 0 {
+		t.Errorf("drift %q, logs %q", r.Drift(), l.lines)
+	}
+}
+
 // fixtureLines returns the fixture's lines, each with its newline.
 func fixtureLines(t *testing.T) [][]byte {
 	t.Helper()

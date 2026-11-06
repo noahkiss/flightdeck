@@ -1,0 +1,9 @@
+USER
+    List the files in the demo folder.
+TOOL Bash [done] ls (folded)
+    $ ls
+    output:
+    main.go
+    README.md
+AGENT
+    The folder holds main.go and README.md.

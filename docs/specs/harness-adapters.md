@@ -583,7 +583,7 @@ Built choices for the transcript reader (`internal/transcript`, `cmd/gff-hab/cha
   `reset-<count>`, and none for the messages read again: its messages may be gone or moved, so
   it takes the tail again. A `reset` message is never in a page. A client that does not know
   the word shows it as a plain event line that says the transcript was replaced.
-- **Pinned versions.** The parser follows Claude Code 2.1.296 to 2.1.316. A record whose
+- **Pinned versions.** The parser follows Claude Code 2.1.296 to 2.1.319. A record whose
   `version` is outside that range still reads; the reader logs the drift once per version.
   Drift follows the newest record that names a version: a later record inside the range clears
   it, and so does a replacement.
@@ -606,7 +606,7 @@ Built choices for the transcript reader (`internal/transcript`, `cmd/gff-hab/cha
   | `system` `local_command` | kind `event`, event `command`; left out when it printed nothing or is the caveat |
   | `system` `informational`, `api_error`, `local_command` whose content is not text; `informational` or `api_error` with no text | kind `event`, event `unknown`, plus one warning per subtype |
   | `system` `turn_duration`, `stop_hook_summary`, `scheduled_task_fire` | left out |
-  | `attachment`, titles, modes, request and file-history records (the list in `claude.go`) | left out |
+  | `attachment`, titles, modes, request and file-history records, `session-owner` (account and organization ids, 2.1.319) (the list in `claude.go`) | left out |
   | records with `isSidechain` | left out (subagent transcripts are a later feature) |
   | any other type, system subtype or content block; a line that is not JSON | kind `event`, event `unknown`, text naming it, plus one warning per kind in the log |
 

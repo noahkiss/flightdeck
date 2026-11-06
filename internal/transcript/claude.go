@@ -17,7 +17,7 @@ import (
 // drift (harness-adapters.md, Edge cases: transcript format drift).
 const (
 	ClaudeTestedMin = "2.1.296"
-	ClaudeTestedMax = "2.1.316"
+	ClaudeTestedMax = "2.1.319"
 )
 
 // Limits on what one chat message carries (api.ChatTool).
@@ -29,7 +29,8 @@ const (
 
 // claudeSkipped lists the record types the parser knows and leaves out of the chat view. They
 // carry context (attachment: the context ledger reads them later), titles, modes, request
-// bookkeeping and file history. Every other unknown type becomes a placeholder message.
+// bookkeeping and file history. session-owner (2.1.319) holds only the account, organization
+// and session ids. Every other unknown type becomes a placeholder message.
 var claudeSkipped = map[string]bool{
 	"attachment": true, "summary": true, "custom-title": true, "ai-title": true,
 	"last-prompt": true, "mode": true, "permission-mode": true, "queue-operation": true,
@@ -37,7 +38,7 @@ var claudeSkipped = map[string]bool{
 	"api-request-blob": true, "api-request-shape": true, "bridge-session": true,
 	"atis-latch": true, "frame-link": true, "tools-used": true, "pr-link": true,
 	"cost-state": true, "artifact-autoreact-ledger": true, "artifact-comment-monitor": true,
-	"tag": true, "agent-name": true,
+	"tag": true, "agent-name": true, "session-owner": true,
 }
 
 // claudeSystemSkipped lists system subtypes that are bookkeeping, not conversation.
