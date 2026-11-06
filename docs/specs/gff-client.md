@@ -364,7 +364,6 @@ request, and a debounce timer the test fires.
 | With kitty key event types on, the release of the command key after the prefix reaches the pane | A release with no press before it; programs act on presses |
 | Entering pass-through redraws from the local snapshot without scrollback | The host's own scrollback keeps what scrolled while passing through |
 | A pane that starts passing through inside a long control string or a UTF-8 character may show a stray byte | Needs a frame cut there and a layout change at that moment; the next redraw clears it |
-| No saved workspace | Several habs and tabs are built (4.3), nested splits and stacks too (5.4); the saved workspace is a later stage (5.1) |
 | Output gff-hab has not parsed yet when it sends a resize is parsed at the new size (`hab-logic-api.md` 2.3) | Only bytes the program printed in the moment before the PTY resized; its redraw on SIGWINCH comes after them and is right. Terminal multiplexers do the same. `TestSplitsRedrawAfterResize` needs no nudge |
 
 ---
@@ -496,7 +495,7 @@ and go to the last tab (5.5). Pane mode's `x` closes the
 focused view (the program keeps running, and stays in the sidebar). A hidden tab's views close their data streams and keep their parsers and offsets;
 showing the tab reopens each stream from its offset, so the hab sends only what the view
 missed, or a snapshot (11.3). A hidden pane's `pane.output` event marks its tab, unless the view
-already applied that offset. Tabs are not saved yet (5.1).
+already applied that offset. The workspace is saved and restored (5.6).
 
 **The status board.** Ctrl+O `g`, over the panes, under the tab bar. Rows in the board's
 order under plain section labels (Needs you, Working, Done, Other); each row shows the state
@@ -545,7 +544,6 @@ the hab reaching a state.
 | Only a host's first endpoint is used. Trying endpoints in order with a stagger needs habconn to try the next at the hello, since ssh fails there and not at the dial | The merge layer and peer list stages own endpoints (11.7, `mesh.md` 4.1) |
 | Pinned device ids live in the config file only; a first contact is not written back, and there is no "accept the new id" flow in gff | `peers accept` and pin storage belong to the peer list stage (`mesh.md` 3.2) |
 | No wake-from-sleep detection; `Set.Retry` exists for it | 11.5; the bar is a reconnect within the 30 s backoff |
-| Tabs, splits and focus are not saved; no startup tabs | The workspace file is a later stage (5.1) |
 | No live preview beside the board's selected row; no approval answer keys | Preview needs an observer stream per selection; approvals wait for `approval.answer` (Part 4) |
 | Times in state use this machine's clock against the hab's `at`; habs with skewed clocks show skewed times | The welcome carries no hab time yet (`app.md` 3.2 wants the hab's own time) |
 | Rows across hosts order by `at` stamps from different clocks | Only rows in one rank are compared, and only by when they entered it |
@@ -705,6 +703,61 @@ shown before; the owner's tab bar shows the session's name.
 | `TestTabRenameCloseLast` | Over a fake hab: the workspace name beside the clock; `r` renames a tab and the bar shows it; a new tab is named after its place; Tab goes to the last tab and back, staying in tab mode; `x` closes a tab, its session stays in the sidebar; closing the only tab leaves an empty tab `1`; no `pane.close` |
 | `TestWorkspaceConfig` | `[workspace] name`, a bad name and an unknown key as problems on their lines, the name rule |
 | `TestDefaultKeymap` | Tab mode's bar with the new keys |
+
+### 5.6 Built choices (task-iijjqm8r: the saved workspace and startup tabs)
+
+zellij is the reference: a session keeps its tabs and panes, and every new window lands in it
+(1.6). gff has no server, so it keeps the workspace in a file and restores it at start.
+
+**The file.** `$GFF_WORKSPACE_DIR/<name>.json`, else `gff/workspaces/<name>.json` under the
+user config directory on macOS and under `$XDG_STATE_HOME` (or `~/.local/state`) elsewhere;
+`<name>` is the workspace's name (5.5). JSON, version 1: the current tab, and per tab its name,
+its own split, zoom, the focused view and its layout tree (5.4). A view is saved as its host
+label, hab pane id, session id and label. Mode 0600, written through a temporary file and a
+rename, its folder made 0700.
+
+- **When it is written.** At most once a second, on the workspace's tick, and only when the
+  workspace changed (the file's bytes differ); once more when gff ends, by a detach, a signal
+  or an error. A failed write shows once on the bottom row and is logged.
+- **Restore.** At start, the workspace (`gff` with no pane and no `-new`) reads the file and
+  builds its tabs, trees and focus. A view whose host is no longer configured is left out; a
+  split or stack left with one child gives way to it. The keys start on the panes when the
+  current tab has a view, else in the sidebar. A view's stream opens when its host comes
+  online, so a restored view on a host still connecting waits rather than failing.
+- **What a restored view shows.** The hab's state: a live pane draws; a session whose program
+  exited shows `exited <status> · Enter resume` (6.4); a session that runs in another pane now
+  (resumed elsewhere) moves the view to it; a pane whose session is gone shows `gone`, and Ctrl+P
+  `x` closes the view; a view on a host that is offline shows `offline` until it comes online.
+- **A file that does not read.** One that does not parse is set aside as `<name>.json.bad`, and
+  the workspace starts new, with a message on the bottom row. One that cannot be read for
+  another reason (permissions) is left alone: gff runs without saving, and says so.
+
+**Startup tabs.** `[[workspace.tabs]]` in gff's config file, made only when the workspace has
+no file yet:
+
+```toml
+[[workspace.tabs]]
+name = "code"
+host = "laptop"        # a host label; default the first host
+dir = "/work/src"   # absolute, on the host; with no dir and no command, an empty tab
+command = "make watch" # under /bin/sh -c; default the hab's shell
+```
+
+Each tab with a `dir` or a `command` starts its program as soon as its host is online, in that
+tab, at that tab's size; the first view to arrive in the shown tab takes the keys. A tab on a
+host gff does not have says so on the bottom row. A relative `dir` or an unknown key is a
+problem on its tab, and that tab is left out. Decided (implementer): `dir` is absolute, since
+gff cannot expand `~` on another host.
+
+**Tests.**
+
+| Test | Proves |
+|---|---|
+| `TestWorkspaceSaved` | Over two fake habs: a renamed tab with two views side by side and a second tab; detach and start again: the same tabs, names, views and focus (closing the focused view closes the one that had focus), the second tab's view; with one hab down at the next start, its view shows `offline` |
+| `TestWorkspaceSavedExited` | A view whose program exited while gff was not running shows `exited 0 · Enter resume` |
+| `TestStartupTabs` | A new workspace gets the three startup tabs, a shell in its folder and a command, and an empty tab; started again, the saved tabs come back and no program starts again |
+| `TestWorkspaceFile` | The file's path per system and with `$GFF_WORKSPACE_DIR`, a bad name; a file that does not parse set aside; a view of a host no longer configured left out and its split giving way |
+| `TestStartupTabsConfig` | `[[workspace.tabs]]` and its problems |
 
 ---
 

@@ -51,8 +51,11 @@
 // Esc back. docs/examples/gff-keys-prefix.toml is a one-prefix keymap instead (Ctrl+\).
 //
 // The config file's [keys.<mode>] tables change the keymap, [bar] the bars and [workspace] the
-// workspace's name (LoadSettings in internal/gffclient); -workspace names it for one run. The
-// name shows beside the clock.
+// workspace's name and its startup tabs (LoadSettings in internal/gffclient); -workspace names
+// it for one run. The name shows beside the clock. gff saves the workspace's tabs, layout and
+// focus to $GFF_WORKSPACE_DIR/<name>.json, else gff/workspaces/<name>.json under the user
+// config directory on macOS and under $XDG_STATE_HOME (or ~/.local/state) elsewhere, and
+// restores them at the next start; a new workspace starts with the startup tabs.
 //
 // `gff setup` checks and walks the permission grants of the hab's processes (setup.go,
 // docs/specs/macos-identity.md 7).
@@ -195,8 +198,12 @@ func run(args []string) error {
 			return err
 		}
 		defer set.Close()
+		state, err := gffclient.WorkspacePath(settings.Workspace.Name)
+		if err != nil {
+			return err
+		}
 		return runTerminal(ctx, in, out, gffclient.Config{Hosts: set, Split: sp, Keymap: settings.Keymap, Bar: &settings.Bar,
-			Workspace: settings.Workspace.Name})
+			Workspace: settings.Workspace.Name, StatePath: state, StartupTabs: settings.Workspace.Tabs})
 	}
 	octx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	conn, err := habconn.Connect(octx, habconn.Config{Transport: tr, Client: client})

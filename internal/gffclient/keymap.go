@@ -6,7 +6,9 @@ package gffclient
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -544,6 +546,8 @@ type Settings struct {
 type WorkspaceConfig struct {
 	// Name is the workspace gff opens; DefaultWorkspace when the file names none.
 	Name string
+	// Tabs are the startup tabs, [[workspace.tabs]]: made only in a new workspace (5.6).
+	Tabs []StartupTab
 }
 
 // DefaultWorkspace is the workspace's name when neither the config file nor -workspace names
@@ -635,6 +639,11 @@ func modeNamed(n string) Mode {
 //	info = ["cpu", "mem", "disk", "battery", "uptime"]
 //	[workspace]
 //	name = "work"             # the workspace gff opens; default "default"
+//	[[workspace.tabs]]        # a startup tab, made only in a new workspace
+//	name = "code"
+//	host = "laptop"           # a host label; default the first host
+//	dir = "/work/src"      # absolute, on the host; with no dir and no command, an empty tab
+//	command = "make watch"    # default the hab's shell
 //
 // An unknown mode, key or action, one a mode cannot take, or a value of the wrong type, is a
 // problem naming the file and line, and the rest still loads (8.3). A keymap that leaves a
@@ -877,6 +886,44 @@ func LoadSettings(path string) (Settings, []string, error) {
 				continue
 			}
 			s.Workspace.Name = n
+		case "tabs":
+			var tabs []map[string]toml.Primitive
+			if err := md.PrimitiveDecode(ws[k], &tabs); err != nil {
+				problems = append(problems, fmt.Sprintf("%s: [[workspace.tabs]]: want tables", atTable("workspace.tabs")))
+				continue
+			}
+			for i, tt := range tabs {
+				at := fmt.Sprintf("%s: [[workspace.tabs]] %d", path, i+1)
+				var st StartupTab
+				ok := true
+				for _, f := range slices.Sorted(maps.Keys(tt)) {
+					var v string
+					if err := md.PrimitiveDecode(tt[f], &v); err != nil {
+						problems = append(problems, at+": "+f+": want a string in quotes")
+						ok = false
+						continue
+					}
+					switch f {
+					case "name":
+						st.Name = strings.Join(strings.Fields(v), " ")
+					case "host":
+						st.Host = v
+					case "dir":
+						if v != "" && !filepath.IsAbs(v) {
+							problems = append(problems, at+": dir "+strconv.Quote(v)+": want an absolute path on the host")
+							ok = false
+						}
+						st.Dir = v
+					case "command":
+						st.Command = v
+					default:
+						problems = append(problems, at+": "+f+": unknown key")
+					}
+				}
+				if ok {
+					s.Workspace.Tabs = append(s.Workspace.Tabs, st)
+				}
+			}
 		default:
 			problems = append(problems, where("workspace", k)+": unknown key")
 		}

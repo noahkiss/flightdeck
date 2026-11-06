@@ -97,6 +97,11 @@ type Config struct {
 	// Workspace is the workspace's name, shown beside the clock (gff-client.md 5.5). Empty:
 	// none shows.
 	Workspace string
+	// StatePath is the workspace's file (WorkspacePath): gff restores the tabs from it at start
+	// and writes them back on each change (gff-client.md 5.6). Empty: nothing is saved.
+	StatePath string
+	// StartupTabs are the tabs a new workspace starts with: one with no file yet.
+	StartupTabs []StartupTab
 
 	// Modules gives the status board its module cards (gff-client.md 7.6). Nil: no module
 	// section; the hab does not serve module trees yet.
@@ -180,6 +185,10 @@ type client struct {
 	cur   int
 	last  *tab // the tab shown before the current one, for last-tab
 
+	restored   bool   // the workspace file was read (or is new), so writing it loses nothing
+	savedBytes []byte // what the file holds, as last written or read
+	saveErr    string // the last write's failure, shown once
+
 	w, h   int
 	canvas canvas
 	pass   *view // the view passing bytes through, or nil
@@ -251,6 +260,7 @@ func Run(ctx context.Context, cfg Config) (err error) {
 	c.ui.init(c)
 	c.tabs = []*tab{{name: "1", split: cfg.Split}}
 	defer func() {
+		c.saveWorkspace()
 		cancel()
 		c.debounce.Stop()
 		for _, t := range c.tabs {
@@ -280,6 +290,23 @@ func Run(ctx context.Context, cfg Config) (err error) {
 		}
 		c.addView(c.tabs[0], spec, hs)
 	}
+	if ws && len(cfg.Panes) == 0 && cfg.StatePath != "" {
+		existed, writable, err := c.restoreWorkspace()
+		if err != nil {
+			c.ui.msg = err.Error()
+			cfg.Logf("%v", err)
+		}
+		c.restored = writable
+		if !existed && writable {
+			c.startupTabs()
+		}
+		if len(c.tab().views) > 0 {
+			c.ui.mode = modePanes
+		}
+		for _, v := range c.tab().views {
+			c.openStream(v)
+		}
+	}
 
 	// Views open their streams off the loop, so the loop reads keys while they open: the
 	// session leader and d end a start that hangs with the host raw, and keys typed meanwhile go to the
@@ -307,6 +334,9 @@ func Run(ctx context.Context, cfg Config) (err error) {
 	c.w, c.h = c.hostSize()
 	c.canvas.resize(c.w, c.h)
 	c.sendSizes()
+	if ws {
+		c.ui.runPending() // startup tabs on hosts already online
+	}
 	defer func() {
 		c.restoreHost()
 		cfg.Out.Write(c.out.Bytes())
@@ -510,9 +540,10 @@ func (c *client) removeView(t *tab, v *view) {
 }
 
 // openStream opens the view's data stream off the loop: it resumes from the view's offset
-// when it has one (gff-client.md 11.3).
+// when it has one (gff-client.md 11.3). A view of a host that is not online waits: its stream
+// opens when the host comes online.
 func (c *client) openStream(v *view) {
-	if v.stream != nil || v.stop != nil || v.ended != nil || v.exited != nil {
+	if v.stream != nil || v.stop != nil || v.ended != nil || v.exited != nil || !v.h.online {
 		return
 	}
 	v.gen++
@@ -982,6 +1013,15 @@ func (c *client) update(u hosts.Update) error {
 			// A new hab process keeps no desired sizes and no owners: ask again.
 			views(func(v *view) { v.sentCols, v.sentRows = 0, 0 })
 			c.sendSizes()
+		}
+		// Views of the current tab that waited for the host open now (a restored workspace).
+		for _, v := range c.tab().views {
+			if v.h == hs && v.stream == nil && v.stop == nil && v.exited == nil && v.ended == nil {
+				c.openStream(v)
+			}
+		}
+		if c.ws {
+			c.ui.runPending()
 		}
 		views(func(v *view) { v.dirty = true })
 	case habconn.UpdateOffline, habconn.UpdateRetrying:

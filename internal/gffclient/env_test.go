@@ -43,10 +43,11 @@ func TestMain(m *testing.M) {
 	habBin = filepath.Join(d, "gff-hab")
 	holderBin = filepath.Join(d, "gff-hab-holder")
 	gffBin = filepath.Join(d, "gff")
-	os.Setenv("GFF_HOLDER_DIR", filepath.Join(d, "holders"))   // never the user's real holders
-	os.Setenv("GFF_HAB_PEERS", filepath.Join(d, "peers.toml")) // never the user's real peer list
-	os.Setenv("GFF_HAB_CONFIG", filepath.Join(d, "hab.toml"))  // never the user's real hab config
-	os.Setenv("GFF_HAB_DETECT", "off")                         // the catalog runs no program from PATH
+	os.Setenv("GFF_HOLDER_DIR", filepath.Join(d, "holders"))       // never the user's real holders
+	os.Setenv("GFF_HAB_PEERS", filepath.Join(d, "peers.toml"))     // never the user's real peer list
+	os.Setenv("GFF_HAB_CONFIG", filepath.Join(d, "hab.toml"))      // never the user's real hab config
+	os.Setenv("GFF_HAB_DETECT", "off")                             // the catalog runs no program from PATH
+	os.Setenv("GFF_WORKSPACE_DIR", filepath.Join(d, "workspaces")) // never the user's real workspace
 	for _, b := range []struct {
 		out, pkg string
 		tags     []string

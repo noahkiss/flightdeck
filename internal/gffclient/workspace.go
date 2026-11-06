@@ -65,6 +65,7 @@ type workspaceUI struct {
 	seen     map[string]string // host/pane -> the done state's time the owner saw
 	focusAt  map[string]string // host/session -> the last session.focus sent
 	resuming map[string]bool   // host/session -> a session.resume is out
+	pending  []pendingStart    // startup tabs' programs waiting for their hosts (saved.go)
 	msg      string            // one line on the bottom bar until the next key
 	prompt   *prompt
 
@@ -117,6 +118,7 @@ func (u *workspaceUI) tick() {
 	}
 	u.c.eachView(func(_ *tab, v *view) { v.dirty = true })
 	u.readStats()
+	u.c.saveWorkspace() // at most once a second, and only when the workspace changed
 }
 
 // refresh rebuilds the rows when the hosts changed.
@@ -911,6 +913,11 @@ func (u *workspaceUI) newPane(how place) {
 // returns, even if another tab shows by then. The keys move to it only from that tab's sidebar,
 // or from its panes when the anchor still has focus; a prompt or the board keep them.
 func (u *workspaceUI) start(host string, p api.SessionCreateParams, label string, anchor *view, how place) {
+	u.startIn(u.c.tab(), host, p, label, anchor, how)
+}
+
+// startIn is start into tab t.
+func (u *workspaceUI) startIn(t *tab, host string, p api.SessionCreateParams, label string, anchor *view, how place) {
 	c := u.c
 	// The same source as the tab bar and the host prompt: the host set's model. The client's
 	// own hostState can trail it by one queued update.
@@ -920,7 +927,6 @@ func (u *workspaceUI) start(host string, p api.SessionCreateParams, label string
 		return
 	}
 	hs := c.host(hm)
-	t := c.tab()
 	r := c.paneArea()
 	p.Cols, p.Rows = t.sizeIfPut(anchor, how, r.w, r.h)
 	u.msg = "starting on " + host
