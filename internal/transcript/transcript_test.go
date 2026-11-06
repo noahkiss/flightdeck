@@ -197,6 +197,16 @@ func TestChannelEnvelope(t *testing.T) {
 	if _, _, ok := channelMessage("<pasted_content id=\"1\">\n" + env + "\n</pasted_content id=\"2\">"); ok {
 		t.Error("a wrapper whose ids differ read as a channel message")
 	}
+	// The user's own words between two copies of one envelope, bare or between two pastes, are
+	// never read as the agent's text.
+	for _, s := range []string{
+		env + "\nmy own words\n" + env,
+		"<pasted_content id=\"1\">\n" + env + "\n</pasted_content>\nmy own words\n<pasted_content id=\"2\">\n" + env + "\n</pasted_content>",
+	} {
+		if _, b, ok := channelMessage(s); ok {
+			t.Errorf("two envelopes with words between read as one channel message: %q", b)
+		}
+	}
 	for _, n := range []string{"3", "5", "6"} {
 		m := id(n)
 		if m.Kind != api.ChatKindUser || m.Sender != "" || !strings.Contains(m.Text, "<pasted_content id=") {

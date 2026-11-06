@@ -594,7 +594,7 @@ Built choices for the transcript reader (`internal/transcript`, `cmd/gff-hab/cha
   | Record | Chat message |
   |---|---|
   | `user`, text (string or text blocks; images as `[image]`) | kind `user` |
-  | `user`, text that is one whole Flightdeck agent-message envelope (`mesh.md` 6.5), bare or in one `<pasted_content id="..">` wrapper with nothing around it | kind `user`, `sender` the envelope's sender, text only what is between the begin and end lines. A paste with the user's own words around it, any other paste, and an envelope whose begin and end ids differ stay as written |
+  | `user`, text that is one whole Flightdeck agent-message envelope (`mesh.md` 6.5), bare or in one `<pasted_content id="..">` wrapper with nothing around it | kind `user`, `sender` the envelope's sender, text only what is between the begin and end lines. A paste with the user's own words around it, any other paste, an envelope whose begin and end ids differ, and one whose text holds an envelope marker or a paste tag (two envelopes with words between) stay as written |
   | `user`, `<command-name>` or `<local-command-stdout>` text | kind `event`, event `command` |
   | `user` with no `message` | kind `event`, event `unknown`, plus one warning |
   | `user`, `[Request interrupted by user…` | kind `event`, event `interrupt` |
