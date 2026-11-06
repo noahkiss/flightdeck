@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -314,40 +312,6 @@ func TestRequestDuringExchange(t *testing.T) {
 	a.svc.Woken("b")
 	open()
 	waitFor(t, "a gets the op in the exchange run once more", func() bool { return seqOf(t, a, b.id) == 1 })
-}
-
-// The file check looks once more after a change: a commit seen half written, whose last write
-// moves neither size nor time, still goes out.
-func TestRecheckAfterFileChange(t *testing.T) {
-	var arm atomic.Bool
-	var store atomic.Pointer[logbook.Store]
-	dummy := filepath.Join(t.TempDir(), "watched")
-	if err := os.WriteFile(dummy, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	a := newHab(t, "a", func(h *hab, c *Config) {
-		c.Path = dummy // the check watches this file; the store is elsewhere
-		c.checked = func() {
-			if arm.CompareAndSwap(true, false) {
-				// The look that saw the file change found no new op yet; the commit lands now,
-				// before the next look, and moves nothing the check sees.
-				if _, err := store.Load().Write(context.Background(), logbook.Batch{Steps: []logbook.Step{
-					logbook.Create(logbook.TypeTask, map[string]any{"title": "late commit"})}}); err != nil {
-					t.Error(err)
-				}
-			}
-		}
-	})
-	store.Store(a.store)
-	b := newHab(t, "b")
-	dial(a, b)
-	waitFor(t, "first exchange", func() bool { _, ok := a.svc.LinkStats()["b"]; return ok })
-	arm.Store(true)
-	future := time.Now().Add(time.Hour)
-	if err := os.Chtimes(dummy, future, future); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, "b gets the late commit", func() bool { return seqOf(t, b, a.id) == 1 })
 }
 
 // The start hold: with a peer listed, a write waits until the first exchange ends; with none,

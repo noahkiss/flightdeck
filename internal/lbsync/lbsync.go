@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
 	"slices"
 	"sync"
 	"time"
@@ -50,7 +49,7 @@ type Peers interface {
 type Config struct {
 	Self  string         // this hab's device id
 	Store *logbook.Store // this hab's replica
-	// Path is the store's file. Its size and time, and its WAL's, are checked every Watch, so
+	// Path is the store's file. A pinned SQLite connection checks data_version every Watch, so
 	// ops another process wrote (the CLI while gff-hab was busy, logbook.md 4.3) go out too.
 	// Empty: only Changed and peers' ops start a send.
 	Path  string
@@ -474,46 +473,43 @@ func (s *Service) changeLoop() {
 	defer s.wg.Done()
 	t := time.NewTicker(s.cfg.Watch)
 	defer t.Stop()
-	sig := s.fileSig()
-	recheck := false
+	watch, err := openWatcher(s.ctx, s.cfg.Path)
+	if err != nil {
+		s.cfg.Logf("logbook: change watcher: %v; checking the vector each tick", err)
+	}
+	if watch != nil {
+		defer watch.Close()
+	}
+	var version int64
+	// Check once even if a commit landed while the watcher was opening.
+	s.onChange()
 	for {
 		select {
 		case <-s.done:
 			return
 		case <-s.changed:
 		case <-t.C:
-			now := s.fileSig()
-			if now == sig && !recheck {
-				if s.cfg.checked != nil {
-					s.cfg.checked()
-				}
+			if s.cfg.Path == "" {
 				continue
 			}
-			// A change seen while a commit was still being written may not show in the vector
-			// yet, and the commit's last write need not move the size or the coarse file time
-			// again. So a change is looked at once more on the next check.
-			recheck = now != sig
-			sig = now
+			if watch != nil {
+				now, err := watch.Version(s.ctx)
+				if err == nil && now == version {
+					if s.cfg.checked != nil {
+						s.cfg.checked()
+					}
+					continue
+				}
+				if err == nil {
+					version = now
+				}
+			}
 		}
 		s.onChange()
 		if s.cfg.checked != nil {
 			s.cfg.checked()
 		}
 	}
-}
-
-// fileSig is the size and time of the store's file and its WAL: a commit changes it.
-func (s *Service) fileSig() [4]int64 {
-	var sig [4]int64
-	if s.cfg.Path == "" {
-		return sig
-	}
-	for i, p := range []string{s.cfg.Path, s.cfg.Path + "-wal"} {
-		if fi, err := os.Stat(p); err == nil {
-			sig[2*i], sig[2*i+1] = fi.Size(), fi.ModTime().UnixNano()
-		}
-	}
-	return sig
 }
 
 // onChange pushes over every link this hab dialed, and wakes each hab that pulls from this one
