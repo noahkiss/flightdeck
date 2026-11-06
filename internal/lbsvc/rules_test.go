@@ -57,7 +57,7 @@ func TestPaneNeverDecidesProposal(t *testing.T) {
 	if _, err := r.svc.WritePane(ctx, pane, api.LogbookWriteParams{Changes: []api.LogbookChange{set(task.IDs[0], "status", "doing")}}); err != nil {
 		t.Fatalf("a task's status: %v", err)
 	}
-	if _, err := r.svc.Write(ctx, person, api.LogbookWriteParams{Changes: []api.LogbookChange{set(prop, "status", "rejected"), set(prop, "decided_by", "phone")}}); err != nil {
+	if _, err := r.svc.Decide(ctx, person, api.LogbookDecideParams{ID: prop, Decision: api.LogbookDecisionReject}); err != nil {
 		t.Fatalf("a person decides: %v", err)
 	}
 }

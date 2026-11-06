@@ -172,7 +172,10 @@ func TestApproveWithEditsAndReject(t *testing.T) {
 	if _, err := r.svc.Dispatch(ctx, person, &pane, "logbook.decide", raw); kindOf(err) != api.ErrorKindInvalid || !strings.Contains(err.Error(), "only a person") {
 		t.Fatalf("decide from a pane: %v", err)
 	}
-	if _, err := r.svc.Decide(ctx, PaneActor(pane), api.LogbookDecideParams{ID: z, Decision: api.LogbookDecisionApprove}); kindOf(err) != api.ErrorKindInvalid {
+	// The agent has a device, so only the agent check refuses it, not the missing device.
+	agent := PaneActor(pane)
+	agent.Device = "phone"
+	if _, err := r.svc.Decide(ctx, agent, api.LogbookDecideParams{ID: z, Decision: api.LogbookDecisionApprove}); kindOf(err) != api.ErrorKindInvalid || !strings.Contains(err.Error(), "only a person") {
 		t.Fatalf("decide as an agent: %v", err)
 	}
 	if pr, _ := r.svc.Get(ctx, api.LogbookGetParams{ID: z}); pr.Record.Status != "pending" {
@@ -228,5 +231,91 @@ func TestMemoryProposalExpiry(t *testing.T) {
 	g, _ := r.svc.Get(ctx, api.LogbookGetParams{ID: soon})
 	if g.Record.Status != "approved" || g.Record.Expires == "" {
 		t.Fatalf("memory proposal %+v", g.Record)
+	}
+}
+
+// An agent cannot smuggle through a proposal what it may not write itself (10.5): a forget of an
+// op this replica does not hold yet, such as the person's next write, or a set of the status of
+// a record it does not hold, is refused at filing; and an approve re-runs the pane rules as the
+// proposing session over what it would apply, so a person's own op is never forgotten by it.
+func TestProposalSmugglesNothing(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	tw, err := r.svc.Write(ctx, person, api.LogbookWriteParams{Changes: []api.LogbookChange{create("task", "first")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	last, err := logbook.ParseOpID(tw.Ops[len(tw.Ops)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The proposal takes the next seq, the person's next write the one after.
+	guess := logbook.OpID{Origin: last.Origin, Seq: last.Seq + 2}.String()
+	pane := Pane{ID: "pane-1", Session: "sess-1", Harness: "claude", Host: "box-a", Propose: true}
+	for name, ch := range map[string]api.LogbookChange{
+		"forget of an op not held":        {Op: api.LogbookChangeOpForget, OpID: guess},
+		"status of a record not held":     set("proposal-zz9zz9zz", "status", "approved"),
+		"decided_by of a record not held": set("proposal-zz9zz9zz", "decided_by", "phone"),
+	} {
+		_, err := r.svc.WritePane(ctx, pane, api.LogbookWriteParams{Changes: []api.LogbookChange{create("task", "cover"), ch}})
+		if kindOf(err) != api.ErrorKindInvalid {
+			t.Fatalf("%s filed as a proposal: %v", name, err)
+		}
+	}
+	// A proposal an older build filed with such a forget: the approve refuses it, and the
+	// person's title stays.
+	x := logbook.NewID(logbook.TypeProposal)
+	draft := map[string]any{"changes": []api.LogbookChange{create("task", "cover"), {Op: api.LogbookChangeOpForget, OpID: tw.Ops[0]}}}
+	if _, err := r.svc.Store().Write(ctx, logbook.Batch{Actor: &logbook.Actor{Kind: "agent", Session: "sess-1"}, Steps: []logbook.Step{{
+		Kind: logbook.KindCreate, Record: x, Type: logbook.TypeProposal,
+		Fields: map[string]any{"title": "cover", "target": "record", "draft": draft}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.svc.Decide(ctx, person, api.LogbookDecideParams{ID: x, Decision: api.LogbookDecisionApprove}); kindOf(err) != api.ErrorKindInvalid || !strings.Contains(err.Error(), "forget") {
+		t.Fatalf("approve of a draft that forgets a person's op: %v", err)
+	}
+	// Nor through the person's edits: a person forgets with gff lb forget, not by an approve.
+	y := propose(t, r, create("task", "plain"))
+	if _, err := r.svc.Decide(ctx, person, api.LogbookDecideParams{ID: y, Decision: api.LogbookDecisionApprove,
+		Edits: []api.LogbookChange{{Op: api.LogbookChangeOpForget, OpID: tw.Ops[0]}}}); kindOf(err) != api.ErrorKindInvalid {
+		t.Fatalf("approve with edits that forget a person's op: %v", err)
+	}
+	if g, _ := r.svc.Get(ctx, api.LogbookGetParams{ID: tw.IDs[0]}); g.Record.Title != "first" {
+		t.Fatalf("the person's title: %q", g.Record.Title)
+	}
+	for _, id := range []string{x, y} {
+		if g, _ := r.svc.Get(ctx, api.LogbookGetParams{ID: id}); g.Record.Status != "pending" {
+			t.Fatalf("%s after a refused approve: %q", id, g.Record.Status)
+		}
+	}
+	// The draft as filed still approves.
+	if _, err := r.svc.Decide(ctx, person, api.LogbookDecideParams{ID: y, Decision: api.LogbookDecisionApprove}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Only a decision changes a proposal's status (9.4): a plain write or resolve of it, from anyone,
+// is refused and names the verbs that decide.
+func TestPlainWriteNeverDecides(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	x := propose(t, r, create("task", "t"))
+	for _, ch := range []api.LogbookChange{set(x, "status", "approved"), set(x, "status", "pending"), set(x, "decided_by", "phone")} {
+		_, err := r.svc.Write(ctx, person, api.LogbookWriteParams{Changes: []api.LogbookChange{ch}})
+		if kindOf(err) != api.ErrorKindInvalid || !strings.Contains(err.Error(), "gff lb approve") {
+			t.Fatalf("a person's write of %s: %v", ch.Field, err)
+		}
+	}
+	raw, _ := json.Marshal(api.LogbookResolveParams{ID: x, Field: "status", Value: api.RawJSON(`"approved"`)})
+	if _, err := r.svc.Dispatch(ctx, person, nil, "logbook.resolve", raw); kindOf(err) != api.ErrorKindInvalid {
+		t.Fatalf("a person's resolve of status: %v", err)
+	}
+	// Nor through an approve's edits.
+	if _, err := r.svc.Decide(ctx, person, api.LogbookDecideParams{ID: x, Decision: api.LogbookDecisionApprove,
+		Edits: []api.LogbookChange{set(x, "status", "rejected")}}); kindOf(err) != api.ErrorKindInvalid {
+		t.Fatalf("edits that set the proposal's status: %v", err)
+	}
+	if g, _ := r.svc.Get(ctx, api.LogbookGetParams{ID: x}); g.Record.Status != "pending" || g.Record.DecidedBy != "" {
+		t.Fatalf("the proposal changed: %+v", g.Record)
 	}
 }

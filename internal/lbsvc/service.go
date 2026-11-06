@@ -252,10 +252,11 @@ type Pane struct {
 // WritePane is a write through a pane's token: the hab records the pane's harness, session and
 // host, sets the source's session to the pane's, and refuses past the pane write limit. An agent
 // never decides a proposal (9.2): a pane's write refuses a create of type proposal and a set of a
-// proposal's status or decided_by. It forgets only ops its own session wrote (10.5).
+// proposal's status or decided_by. It forgets only ops its own session wrote (10.5). A write
+// filed as a proposal is checked strictly: what the rules cannot check now is refused (paneChecks).
 func (s *Service) WritePane(ctx context.Context, pn Pane, p api.LogbookWriteParams) (api.LogbookWritten, error) {
 	hash := hashOf("logbook.write", p) // the request as sent, before the pane's fields go in
-	if err := s.paneChecks(ctx, pn, p.Changes); err != nil {
+	if err := s.paneChecks(ctx, pn.Session, p.Changes, p.Propose || pn.Propose); err != nil {
 		return api.LogbookWritten{}, err
 	}
 	if err := s.allow(pn.ID, len(p.Changes)); err != nil {
@@ -278,9 +279,13 @@ func PaneActor(pn Pane) api.LogbookActor {
 	return api.LogbookActor{Kind: "agent", Harness: pn.Harness, Session: pn.Session, Pane: pn.ID, Host: pn.Host}
 }
 
-// paneChecks refuses what an agent may not write (10.5): a decision on a proposal, and a forget
-// of an op its own session did not write.
-func (s *Service) paneChecks(ctx context.Context, pn Pane, changes []api.LogbookChange) error {
+// paneChecks refuses what an agent of session may not write (10.5): a decision on a proposal,
+// and a forget of an op its own session did not write. With strict, for a write that lands
+// later (a proposal's draft, 9.2), it also refuses what it cannot check against this replica: a
+// forget of an op the replica does not hold, and a set of the status of a record it does not
+// hold. Else the store would see them only at the approve, where an op id guessed now (the
+// person's next write) may name another writer's op.
+func (s *Service) paneChecks(ctx context.Context, session string, changes []api.LogbookChange, strict bool) error {
 	created := map[string]bool{}
 	for i, c := range changes {
 		switch c.Op {
@@ -292,7 +297,7 @@ func (s *Service) paneChecks(ctx context.Context, pn Pane, changes []api.Logbook
 				created[c.ID] = true
 			}
 		case api.LogbookChangeOpSet:
-			if err := s.paneSet(ctx, c.ID, c.Field, created[c.ID]); err != nil {
+			if err := s.paneSet(ctx, c.ID, c.Field, created[c.ID], strict); err != nil {
 				return invalid("change %d: %v", i+1, err)
 			}
 		case api.LogbookChangeOpForget:
@@ -302,12 +307,15 @@ func (s *Service) paneChecks(ctx context.Context, pn Pane, changes []api.Logbook
 			}
 			o, err := s.st.Op(ctx, id)
 			if errors.Is(err, logbook.ErrNotFound) {
+				if strict {
+					return invalid("change %d: this hab holds no op %s, so a proposal cannot forget it: a proposal forgets only ops this hab holds that the pane's own session wrote", i+1, c.OpID)
+				}
 				continue // the store refuses it with its reason
 			}
 			if err != nil {
 				return err
 			}
-			if pn.Session == "" || o.Actor == nil || o.Actor.Session != pn.Session {
+			if session == "" || o.Actor == nil || o.Actor.Session != session {
 				return invalid("change %d: a pane forgets only ops its own session wrote, and %s is not one of them. A person can forget it: gff lb forget %s, run outside a pane", i+1, c.OpID, c.OpID)
 			}
 		}
@@ -316,7 +324,9 @@ func (s *Service) paneChecks(ctx context.Context, pn Pane, changes []api.Logbook
 }
 
 // paneSet refuses a pane's set of a proposal's decision fields: only a person decides (9.2).
-func (s *Service) paneSet(ctx context.Context, id, field string, created bool) error {
+// With strict, a set of the status of a record this replica does not hold is refused too: it
+// may be a proposal that arrives before the set lands.
+func (s *Service) paneSet(ctx context.Context, id, field string, created, strict bool) error {
 	if field == "decided_by" {
 		return errors.New("only a person decides a proposal: decided_by is not an agent's to set")
 	}
@@ -324,6 +334,9 @@ func (s *Service) paneSet(ctx context.Context, id, field string, created bool) e
 		return nil
 	}
 	r, err := s.st.Get(ctx, id)
+	if errors.Is(err, logbook.ErrNotFound) && strict {
+		return fmt.Errorf("this hab holds no record %s, so a proposal cannot set its status", id)
+	}
 	if err != nil {
 		return nil // the store refuses a missing record with its reason
 	}
@@ -403,6 +416,9 @@ func (s *Service) write(ctx context.Context, a api.LogbookActor, p api.LogbookWr
 		return api.LogbookWritten{}, err
 	}
 	p.Changes = changes
+	if err := s.noDecision(ctx, p.Changes); err != nil {
+		return api.LogbookWritten{}, err
+	}
 	steps, err := Steps(p.Changes, p.Source)
 	if err != nil {
 		return api.LogbookWritten{}, err
@@ -431,6 +447,37 @@ func (s *Service) write(ctx context.Context, a api.LogbookActor, p api.LogbookWr
 		out.Note = ProposedNote(out.Proposal)
 	}
 	return out, nil
+}
+
+// decideHint names the doors that decide a proposal.
+const decideHint = "decide it with gff lb approve or gff lb reject, or logbook.decide"
+
+// noDecision refuses a set of a proposal's status or decided_by in a plain write, from anyone
+// (9.4): only Decide decides, so every decision carries its approve's draft and approved_by. A
+// peer's ops from other builds still fold as they come; this guards local writes.
+func (s *Service) noDecision(ctx context.Context, changes []api.LogbookChange) error {
+	proposals := map[string]bool{}
+	for i, c := range changes {
+		switch c.Op {
+		case api.LogbookChangeOpCreate:
+			if c.ID != "" && c.Type == logbook.TypeProposal {
+				proposals[c.ID] = true
+			}
+		case api.LogbookChangeOpSet:
+			if c.Field != "status" && c.Field != "decided_by" {
+				continue
+			}
+			isProp := proposals[c.ID]
+			if !isProp {
+				r, err := s.st.Get(ctx, c.ID)
+				isProp = err == nil && r.Type == logbook.TypeProposal
+			}
+			if isProp {
+				return invalid("change %d: a proposal's %s changes only by a decision: %s", i+1, c.Field, decideHint)
+			}
+		}
+	}
+	return nil
 }
 
 // ProposedNote is what a writer whose change became a proposal reads (9.1): it waits for the
@@ -494,7 +541,7 @@ func (s *Service) Decide(ctx context.Context, a api.LogbookActor, p api.LogbookD
 			status = "edited"
 		}
 		if target := str(r.Fields["target"].Value); target == "" || target == "record" {
-			steps, who, err = s.draftSteps(r, p.Edits, device)
+			steps, who, err = s.draftSteps(ctx, r, p.Edits, device)
 			if err != nil {
 				return api.LogbookWritten{}, err
 			}
@@ -525,8 +572,12 @@ func (s *Service) Decide(ctx context.Context, a api.LogbookActor, p api.LogbookD
 
 // draftSteps turns a proposal's draft, or the person's edits in its place, into the approve
 // batch's steps, and returns the batch's actor: the proposing agent, with approved_by the
-// deciding device (9.2). Each record the batch makes links to the proposal with from.
-func (s *Service) draftSteps(r *logbook.Record, edits []api.LogbookChange, device string) ([]logbook.Step, *logbook.Actor, error) {
+// deciding device (9.2). Each record the batch makes links to the proposal with from. The
+// changes never decide a proposal (noDecision), and when an agent filed the proposal they pass
+// the pane rules as its session, against this replica now: an approve never applies what the
+// agent could not write itself, whatever was filed or edited. A person who wants a forget
+// writes it themselves.
+func (s *Service) draftSteps(ctx context.Context, r *logbook.Record, edits []api.LogbookChange, device string) ([]logbook.Step, *logbook.Actor, error) {
 	var draft struct {
 		Changes []api.LogbookChange `json:"changes"`
 		Source  *api.LogbookSource  `json:"source,omitempty"`
@@ -548,6 +599,19 @@ func (s *Service) draftSteps(r *logbook.Record, edits []api.LogbookChange, devic
 	}
 	if len(changes) == 0 {
 		return nil, nil, invalid("%s's draft holds no changes: reject it, or approve it with edits", r.ID)
+	}
+	if err := s.noDecision(ctx, changes); err != nil {
+		return nil, nil, err
+	}
+	if who.Kind == "agent" {
+		if err := s.paneChecks(ctx, who.Session, changes, true); err != nil {
+			var ce *control.Error
+			msg := err.Error()
+			if errors.As(err, &ce) {
+				msg = ce.Message
+			}
+			return nil, nil, invalid("%s cannot be approved as it stands: the agent that filed it may not write this (%s). Reject it, or approve it with edits that leave this out; a forget you want, write yourself with gff lb forget", r.ID, msg)
+		}
 	}
 	steps, err := Steps(changes, draft.Source)
 	if err != nil {
@@ -609,6 +673,11 @@ func (s *Service) Resolve(ctx context.Context, a api.LogbookActor, p api.Logbook
 	}
 	if (len(p.Value) == 0) == (p.Op == "") {
 		return api.LogbookWritten{}, invalid("logbook.resolve takes a value or an op, one of them")
+	}
+	if p.Field == "status" || p.Field == "decided_by" {
+		if r, err := s.st.Get(ctx, p.ID); err == nil && r.Type == logbook.TypeProposal {
+			return api.LogbookWritten{}, invalid("a proposal's %s changes only by a decision: %s", p.Field, decideHint)
+		}
 	}
 	val := json.RawMessage(p.Value)
 	if p.Op != "" {
