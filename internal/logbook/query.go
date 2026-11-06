@@ -2,6 +2,9 @@ package logbook
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"slices"
 	"strings"
 )
 
@@ -29,7 +32,10 @@ type Query struct {
 	Deleted bool // include deleted records
 	// Hide leaves out the records of these projects, by canonical id, and the project records
 	// themselves: a private project in an agent's read outside it (12.1).
-	Hide  []string
+	Hide []string
+	// IDs, when not nil, keeps only these records, in this order: a ranking made elsewhere,
+	// such as a semantic search (13), filtered by the rest of the query.
+	IDs   []string
 	Limit int // default 50
 }
 
@@ -108,6 +114,12 @@ func (s *Store) Search(ctx context.Context, q Query) ([]Item, bool, error) {
 		add(`coalesce((SELECT canonical FROM aliases WHERE project = r.project), r.project) != ?
 			AND NOT (r.type = 'project' AND coalesce((SELECT canonical FROM aliases WHERE project = r.id), r.id) = ?)`, h, h)
 	}
+	if q.IDs != nil {
+		if len(q.IDs) == 0 {
+			return nil, false, nil
+		}
+		add(`r.id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(q.IDs)), ",")+`)`, anys(q.IDs)...)
+	}
 	if q.SinceMS > 0 {
 		add(`coalesce((SELECT max(o.wall) FROM ops o WHERE o.root = r.root AND o.known = 1), r.created_wall) >= ?`, q.SinceMS)
 	}
@@ -116,7 +128,11 @@ func (s *Store) Search(ctx context.Context, q Query) ([]Item, bool, error) {
 		query += ` WHERE ` + strings.Join(where, ` AND `)
 	}
 	query += order + ` LIMIT ?`
-	args = append(args, limit+1)
+	if q.IDs != nil {
+		args = append(args, len(q.IDs)+1)
+	} else {
+		args = append(args, limit+1)
+	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, false, err
@@ -135,6 +151,15 @@ func (s *Store) Search(ctx context.Context, q Query) ([]Item, bool, error) {
 	}
 	if err := rows.Err(); err != nil {
 		return nil, false, err
+	}
+	if q.IDs != nil {
+		rank := map[string]int{}
+		for i, id := range q.IDs {
+			if _, ok := rank[id]; !ok {
+				rank[id] = i
+			}
+		}
+		slices.SortStableFunc(out, func(a, b Item) int { return rank[a.ID] - rank[b.ID] })
 	}
 	more := len(out) > limit
 	if more {
@@ -165,4 +190,35 @@ func (s *Store) Cursor(ctx context.Context) (int64, error) {
 	var c int64
 	err := s.db.QueryRowContext(ctx, `SELECT coalesce(max(rowid), 0) FROM ops`).Scan(&c)
 	return c, err
+}
+
+func anys(ss []string) []any {
+	out := make([]any, len(ss))
+	for i, s := range ss {
+		out[i] = s
+	}
+	return out
+}
+
+// IDs lists the id of every record this replica folded, deleted ones included, sorted.
+func (s *Store) IDs(ctx context.Context) ([]string, error) {
+	return queryStrings(ctx, s.db, `SELECT id FROM records ORDER BY id`)
+}
+
+// Backup writes a consistent copy of the replica to path, which must not exist, with
+// owner-only permissions (13). SQLite makes the file with the process umask before the chmod, so
+// callers write into a folder only the owner can open. The copy is a whole replica: opened with this origin, it
+// serves and takes writes, and peers send back any op it lacks (7.6).
+func (s *Store) Backup(ctx context.Context, path string) error {
+	if strings.ContainsAny(path, "?#") {
+		return fmt.Errorf("logbook: backup path %q holds ? or #", path)
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return fmt.Errorf("logbook: backup %s exists", path)
+	}
+	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, path); err != nil {
+		os.Remove(path)
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }

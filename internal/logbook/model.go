@@ -88,9 +88,13 @@ var fields = map[string]fieldSpec{
 	"identities": {kind: setField, types: []string{TypeProject}},
 	// private hides a project from agents outside it (12.1, stage 5).
 	"private": {kind: scalarBool, types: []string{TypeProject}},
-	"tags":    {kind: setField},
-	"links":   {kind: setField},
-	"notes":   {kind: logField},
+	// created and imported mark a record an import wrote (13.1): its original creation time
+	// (RFC 3339) and true. Both are fixed at create.
+	"created":  {kind: scalarString},
+	"imported": {kind: scalarBool},
+	"tags":     {kind: setField},
+	"links":    {kind: setField},
+	"notes":    {kind: logField},
 }
 
 // fieldFor reports the field's spec when this build knows it for the type.
@@ -109,6 +113,9 @@ func fieldFor(typ, name string) (fieldSpec, bool) {
 // mutable reports whether a local set may change the field on a record of this type (2.2, 5.6).
 // The fold applies the same rule to incoming ops.
 func mutable(createType, field string) bool {
+	if field == "created" || field == "imported" {
+		return false
+	}
 	switch createType {
 	case TypeFinding:
 		return field == "project" || field == "deleted"
