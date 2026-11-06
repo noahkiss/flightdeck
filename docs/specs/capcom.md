@@ -135,6 +135,10 @@ The same read scope (5) and the same confirmation rule (6) apply to every agent 
 them. The mesh spec (Part 3) uses this confirmation for any agent that starts work on another
 host.
 
+One more action tool acts only on the caller itself: `compact`, which compacts the agent's own
+conversation and sends its follow-up after (`harness-adapters.md`, Self-compact). It needs no
+confirmation.
+
 ---
 
 ## 3. The four jobs
