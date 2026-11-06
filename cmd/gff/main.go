@@ -5,6 +5,11 @@
 //	gff [-config path] [-socket path | -via command | -ssh host] [-new command]...
 //	    [-split columns|rows] [-observe] [-prefix ctrl-<key>] [pane...]
 //	gff lb [--json] [--socket path] [--state dir] <verb> [args]
+//	gff agent compact [-json] [follow-up... | -]
+//
+// `gff agent compact` runs in an agent's pane: it asks gff-hab to compact the agent's own
+// conversation once its turn ends, then send the follow-up (internal/agentcli,
+// docs/specs/harness-adapters.md, Self-compact). `gff-hab agent` is the same command.
 //
 // `gff lb` (long form `gff logbook`) is the Logbook CLI (docs/specs/logbook.md 10.2,
 // internal/lbcli). `gff-hab lb` is the same command, for panes that have only gff-hab.
@@ -75,6 +80,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/agentcli"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/gffclient"
 	"github.com/noahkiss/flightdeck/internal/habconn"
@@ -104,6 +110,9 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "setup" {
 		os.Exit(setupMain(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "agent" {
+		os.Exit(agentcli.Run("gff", os.Args[2:], os.Stdin, os.Stdout, os.Stderr, os.Getenv))
 	}
 	if len(os.Args) > 1 && (os.Args[1] == "lb" || os.Args[1] == "logbook") {
 		os.Exit(lbcli.Main(lbcli.Env{Args: os.Args[2:], Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr, Getenv: os.Getenv,

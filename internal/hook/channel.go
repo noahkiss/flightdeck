@@ -44,6 +44,10 @@ var ConfirmMethods = []string{"confirm.request", "confirm.get", "confirm.list"}
 var RoundMethods = []string{"round.list", "round.get", "round.create", "round.update", "round.delete",
 	"round.pause", "round.unpause", "round.run", "round.runs"}
 
+// AgentMethods are the methods an agent calls about itself (harness-adapters.md, Self-compact).
+// The pane's token names the agent: it can act only on its own pane.
+var AgentMethods = []string{"agent.compact"}
+
 // ReadHandler answers one read tool call from a pane. An error that is a *control.Error keeps
 // its kind; any other is unavailable.
 type ReadHandler func(ctx context.Context, method string, params json.RawMessage) (result any, err error)
@@ -110,6 +114,14 @@ func (s *Server) SetLogbook(h ChannelHandler) {
 	s.mu.Unlock()
 }
 
+// SetAgent sets the handler of the agent methods on the route. With none, each answers
+// unavailable.
+func (s *Server) SetAgent(h ChannelHandler) {
+	s.mu.Lock()
+	s.agent = h
+	s.mu.Unlock()
+}
+
 // SetChannels sets the handler of the channel route. With none, every call answers unavailable.
 func (s *Server) SetChannels(h ChannelHandler) {
 	s.mu.Lock()
@@ -149,7 +161,7 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		fail(api.ErrorKindInvalid, "not a channel call: %v", err)
 		return
 	}
-	known, read, conf, round, lb := false, false, false, false, false
+	known, read, conf, round, lb, ag := false, false, false, false, false, false
 	for _, m := range ChannelMethods {
 		known = known || m == call.Method
 	}
@@ -164,6 +176,9 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 	}
 	for _, m := range LogbookMethods {
 		lb = lb || m == call.Method
+	}
+	for _, m := range AgentMethods {
+		ag = ag || m == call.Method
 	}
 	if read {
 		s.mu.Lock()
@@ -200,8 +215,8 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		fail(api.ErrorKindInvalid, "only a person decides a proposal (logbook.md 9.2): logbook.decide is not on a pane's route. The user approves or rejects it with gff lb approve or reject, run outside a pane, or in the app")
 		return
 	}
-	if !known && !conf && !round && !lb {
-		fail(api.ErrorKindInvalid, "%q is not one of %v, %v, %v, %v or %v", call.Method, ChannelMethods, ReadMethods, ConfirmMethods, RoundMethods, LogbookMethods)
+	if !known && !conf && !round && !lb && !ag {
+		fail(api.ErrorKindInvalid, "%q is not one of %v, %v, %v, %v, %v or %v", call.Method, ChannelMethods, ReadMethods, ConfirmMethods, RoundMethods, LogbookMethods, AgentMethods)
 		return
 	}
 	s.mu.Lock()
@@ -213,6 +228,8 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request, token stri
 		h = s.rounds
 	case lb:
 		h = s.logbook
+	case ag:
+		h = s.agent
 	}
 	s.mu.Unlock()
 	if h == nil && lb {

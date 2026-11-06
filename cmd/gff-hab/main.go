@@ -89,6 +89,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/agentcli"
 	"github.com/noahkiss/flightdeck/internal/attach"
 	"github.com/noahkiss/flightdeck/internal/capcom"
 	"github.com/noahkiss/flightdeck/internal/catalog"
@@ -163,7 +164,8 @@ const usage = `usage:
   gff-hab round ls|show|add|edit|rm|pause|unpause|run|runs|export|apply [-socket path | -via command] ...
   gff-hab mcp [serve] [-socket path] [--skill]
   gff-hab instructions render -config file [-state dir] [-host-id id] [-dry-run | -write target]
-  gff-hab hook [-t ms] <harness> [event] < payload
+  gff-hab agent compact [-json] [follow-up... | -]   (the same as gff agent; in an agent's pane)
+  gff-hab hook [-t ms] [-wait] <harness> [event] < payload
   gff-hab hook -print <harness> [-command name]
   gff-hab statusline claude [-timeout d] [-- command...] < status-line input
   gff-hab statusline -print claude [-command name] [-wrap command]
@@ -243,6 +245,8 @@ func main() {
 		err = roundCmd(os.Args[2:], os.Stdin, os.Stdout)
 	case "mcp":
 		err = mcpCmd(os.Args[2:], os.Stdin, os.Stdout)
+	case "agent":
+		os.Exit(agentcli.Run("gff-hab", os.Args[2:], os.Stdin, os.Stdout, os.Stderr, os.Getenv))
 	case "lb", "logbook":
 		os.Exit(lbcli.Main(lbcli.Env{Args: os.Args[2:], Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr,
 			Getenv: os.Getenv, Client: cliClient, Name: "gff-hab lb"}))
@@ -1281,6 +1285,22 @@ func serve(args []string) error {
 		l.Close()
 		return err
 	}
+	// Self-compact and the context nudge (harness-adapters.md, Self-compact and the context
+	// nudge): each hears every hook of a pane.
+	nudges := newNudgeService(setSvc.Value)
+	var compacts *compactService
+	if agentSvc != nil {
+		compacts = newCompactService(agents, func(pane string) (string, bool) {
+			ss, ok := store.SessionByPane(pane)
+			return ss.ID, ok
+		}, func(ctx context.Context, session, text string) error {
+			return agentSvc.Send(ctx, "compact", api.SessionSendParams{Session: session, Text: text})
+		}, func(e structure.Event) {
+			if s := srv.Load(); s != nil {
+				s.Publish(e)
+			}
+		}, logger.Printf)
+	}
 	if lk != nil {
 		escaped := newEscapedSweeps(tokens, logger.Printf)
 		defer escaped.Close()
@@ -1298,6 +1318,10 @@ func serve(args []string) error {
 				agents.Forget(n.Pane.UUID.String())
 				pushes.forget(n.Pane.UUID.String())
 				mgr.Forget(n.Pane.UUID.String())
+				nudges.Forget(n.Pane.UUID.String())
+				if compacts != nil {
+					compacts.Forget(n.Pane.UUID.String())
+				}
 				if trustSvc != nil {
 					trustSvc.forget(n.Pane.UUID.String())
 				}
@@ -1330,21 +1354,30 @@ func serve(args []string) error {
 		off: &habits.OffFile{Path: cpath}, logf: logger.Printf}
 	ocs.SetBrief(habitSvc.OpencodeBrief) // the brief for opencode goes through its server (logbook.md 11.4)
 	hooks := hook.NewServer(tokens, func(pane string, env harness.Envelope) string {
+		nudges.Observe(pane, env)
 		if usages.Hook(env) {
 			return "" // a status-line input: usage only
 		}
 		habitSvc.Hook(pane, env)
 		_, opened := agents.Hook(pane, env)
+		if compacts != nil {
+			compacts.Observe(pane, env)
+		}
 		// A hook from a pane in a project may follow a commit or a checkout: read the project's
 		// repository again, debounced.
 		repos.Refresh(store.ProjectOfPane(pane))
 		return opened
 	}, logger.Printf)
 	hooks.SetChannels(channelHook(store, chSvc))
+	if compacts != nil {
+		hooks.SetAgent(compactHook(compacts))
+	}
 	hooks.SetReads(readHook(reads, cs, pm))
 	hooks.SetConfirm(confirmHook(store, cfSvc))
 	hooks.SetLogbook(logbookHook(lbVerbs, store, agents, *hostID, approvalAgents(setSvc.Value), habitSvc.Wrote))
-	hooks.SetContext(habitSvc.Context)
+	// One context handler: the Logbook habit and the context nudge, joined when both are due
+	// (harness-adapters.md, Context nudge).
+	hooks.SetContext(joinContext(habitSvc.Context, nudges.Context))
 	if roundsSvc != nil {
 		hooks.SetRounds(roundHook(store, roundsSvc))
 	}

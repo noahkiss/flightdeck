@@ -22,9 +22,10 @@ import (
 // native payload on stdin. It always exits 0, so it can never fail a turn, and the whole run is
 // capped at hook.Budget. `-print <harness>` prints the hook config for that harness instead.
 //
-// At a context event (hook.ContextEvent: a session's start, a prompt, a stop) it prints what
-// gff-hab adds for the agent in the harness's hook output shape: the Logbook brief, the reminder
-// or the closeout (logbook.md 11.3). When gff-hab does not answer at the brief's event, it builds
+// At a context event (hook.ContextEvent: a session's start, a prompt, a stop, and Claude Code's
+// PostToolUse) it prints what gff-hab adds for the agent in the harness's hook output shape: the
+// Logbook brief, the reminder or the closeout (logbook.md 11.3), and on Claude Code's prompt and
+// tool hooks the context nudge (harness-adapters.md), joined when both are due. When gff-hab does not answer at the brief's event, it builds
 // the brief from the Logbook file itself; the reminder and the closeout are then skipped. At
 // every other event it prints nothing.
 //

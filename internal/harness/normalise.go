@@ -138,6 +138,12 @@ func normaliseHookJSON(env Envelope) (Update, error) {
 			return Update{}, fmt.Errorf("%w %s %s", ErrUnknownEvent, env.Harness, env.Event)
 		}
 		u.State, u.Failure = api.AgentStatusError, p.Error
+	case "PreCompact":
+		// Compaction starts (harness-adapters.md, Self-compact): no state change; gff-hab's
+		// self-compact and context nudge watch for it.
+		if !claude {
+			return Update{}, fmt.Errorf("%w %s %s", ErrUnknownEvent, env.Harness, env.Event)
+		}
 	case "Interrupt":
 		if claude {
 			return Update{}, fmt.Errorf("%w %s %s", ErrUnknownEvent, env.Harness, env.Event)

@@ -241,10 +241,12 @@ func PermissionDecision(answer []byte) ([]byte, error) {
 	return append(b, '\n'), nil
 }
 
-// ContextEvent names the habit a harness's event carries (logbook.md 11.3): the brief at a
-// session's start (Claude Code and Codex SessionStart, which also fires after a compaction and on
-// resume), the reminder at a prompt and the closeout at a stop. opencode carries none: gff-hab
-// adds its brief through the pane's server (logbook.md 11.4).
+// ContextEvent reports whether a harness's event asks gff-hab for context, and names the
+// Logbook habit it carries (logbook.md 11.3): the brief at a session's start (Claude Code and
+// Codex SessionStart, which also fires after a compaction and on resume), the reminder at a prompt
+// and the closeout at a stop. Claude Code's PostToolUse carries no habit ("") but asks too: the
+// context nudge (harness-adapters.md) rides on it and on UserPromptSubmit. opencode carries none:
+// gff-hab adds its brief through the pane's server (logbook.md 11.4).
 func ContextEvent(harness, event string) (habit string, ok bool) {
 	switch harness {
 	case detect.KindClaude, detect.KindCodex:
@@ -255,14 +257,16 @@ func ContextEvent(harness, event string) (habit string, ok bool) {
 			return "reminder", true
 		case "Stop":
 			return "closeout", true
+		case "PostToolUse":
+			return "", harness == detect.KindClaude
 		}
 	}
 	return "", false
 }
 
 // ContextOutput is the hook output that hands text to the agent in harness's shape (logbook.md
-// 11.3). Claude Code and Codex share it: SessionStart and UserPromptSubmit add context with
-// hookSpecificOutput.additionalContext; Stop blocks once with the text as the reason, so the
+// 11.3). Claude Code and Codex share it: SessionStart, UserPromptSubmit and Claude Code's
+// PostToolUse add context with hookSpecificOutput.additionalContext; Stop blocks once with the text as the reason, so the
 // agent takes one more turn. opencode's plugin reads the text as it is.
 func ContextOutput(harness, event, text string) []byte {
 	var v any

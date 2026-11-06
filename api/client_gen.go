@@ -414,6 +414,7 @@ const (
 	EventPaneOutput       EventType = "pane.output"
 	EventChatMessage      EventType = "chat.message"
 	EventSessionTurnEnd   EventType = "session.turn_end"
+	EventAgentCompact     EventType = "agent.compact"
 	EventUsageUpdated     EventType = "usage.updated"
 	EventCommandUpdated   EventType = "command.updated"
 	EventPeerUpdated      EventType = "peer.updated"
@@ -485,6 +486,10 @@ func (e Event) DecodeData() (any, error) {
 		return v, err
 	case EventSessionTurnEnd:
 		var v TurnEnd
+		err := json.Unmarshal(e.Data, &v)
+		return v, err
+	case EventAgentCompact:
+		var v Compaction
 		err := json.Unmarshal(e.Data, &v)
 		return v, err
 	case EventUsageUpdated:
