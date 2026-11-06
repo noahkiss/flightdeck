@@ -173,8 +173,8 @@ func TestLogbookServe(t *testing.T) {
 		t.Fatalf("approve: %q %q", out, errs)
 	}
 	// Later stages' verbs say so.
-	if _, errs, code := lbRun(t, nil, "--socket", sock, "brief"); code != 1 || !strings.Contains(errs, "stage 6") {
-		t.Fatalf("brief: %d %s", code, errs)
+	if _, errs, code := lbRun(t, nil, "--socket", sock, "export", "x"); code != 1 || !strings.Contains(errs, "stage 9") {
+		t.Fatalf("export: %d %s", code, errs)
 	}
 	// An API error exits 3.
 	if _, errs, code := lbRun(t, nil, "--socket", sock, "show", "task-zzzzzzzz"); code != 3 || !strings.Contains(errs, "no such record") {

@@ -9,9 +9,9 @@ import (
 	"github.com/noahkiss/flightdeck/internal/control"
 )
 
-// Methods are the logbook.* methods the service serves (10.3). logbook.brief comes with the
-// habits (stage 6), logbook.pull and logbook.push with sync (stage 3).
-var Methods = []string{"logbook.find", "logbook.get", "logbook.list", "logbook.ready", "logbook.history",
+// Methods are the logbook.* methods the service serves (10.3). logbook.pull and logbook.push come
+// with sync (stage 3).
+var Methods = []string{"logbook.brief", "logbook.find", "logbook.get", "logbook.list", "logbook.ready", "logbook.history",
 	"logbook.write", "logbook.resolve", "logbook.decide", "logbook.projects", "logbook.status"}
 
 // IsMethod reports whether m is one of Methods.
@@ -19,7 +19,8 @@ func IsMethod(m string) bool { return slices.Contains(Methods, m) }
 
 // Dispatch answers one call by name, for the doors that carry raw params: the pane route and the
 // CLI when it opens the file itself. With pane set, writes count against the pane's limit and
-// record the pane as the actor; else a is the actor.
+// record the pane as the actor; else a is the actor. A pane's brief, list and ready cover the
+// pane's project unless the call names a project, general or all: the default view (12.1).
 func (s *Service) Dispatch(ctx context.Context, a api.LogbookActor, pane *Pane, method string, params json.RawMessage) (any, error) {
 	if len(params) == 0 {
 		params = json.RawMessage("{}")
@@ -37,7 +38,20 @@ func (s *Service) Dispatch(ctx context.Context, a api.LogbookActor, pane *Pane, 
 		}
 		return nil
 	}
+	project := ""
+	if pane != nil {
+		project = pane.Project
+	}
 	switch method {
+	case "logbook.brief":
+		var p api.LogbookBriefParams
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		if p.Project == "" {
+			p.Project = project
+		}
+		return s.brief(ctx, p.Project, hide)
 	case "logbook.find":
 		var p api.LogbookFindParams
 		if err := decode(&p); err != nil {
@@ -55,11 +69,17 @@ func (s *Service) Dispatch(ctx context.Context, a api.LogbookActor, pane *Pane, 
 		if err := decode(&p); err != nil {
 			return nil, err
 		}
+		if DefaultProject(p.Project, p.General, p.All) {
+			p.Project = project
+		}
 		return s.search(ctx, hide, "", p.LogbookFilter, false)
 	case "logbook.ready":
 		var p api.LogbookReadyParams
 		if err := decode(&p); err != nil {
 			return nil, err
+		}
+		if DefaultProject(p.Project, false, p.All) {
+			p.Project = project
 		}
 		return s.ready(ctx, p, hide)
 	case "logbook.history":

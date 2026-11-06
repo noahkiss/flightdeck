@@ -164,3 +164,54 @@ func TestPaneFileHidesPrivate(t *testing.T) {
 		t.Fatalf("a person does not read the private project:\n%s", out)
 	}
 }
+
+// TestCurrentProject: outside a pane, brief, ls and ready cover the working folder's project
+// (10.2, 12.1) unless --all, --project or --general says otherwise; outside a repository they
+// cover every project. find searches every project.
+func TestCurrentProject(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	state := newState(t)
+	ps, ts := fileProjects(t, state, "git@example.com:o/app.git", "git@example.com:o/other.git")
+	app := t.TempDir()
+	for _, args := range [][]string{{"init", "-q", app}, {"-C", app, "remote", "add", "origin", "https://example.com/o/app"}} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	run := func(dir string, args ...string) string {
+		t.Helper()
+		var out, errb bytes.Buffer
+		env := map[string]string{"GFF_HAB_SOCKET": filepath.Join(t.TempDir(), "none.sock")}
+		if code := Main(Env{Args: append([]string{"--state", state}, args...), Stdin: strings.NewReader(""), Stdout: &out, Stderr: &errb,
+			Getenv: func(k string) string { return env[k] }, Name: "gff lb", Dir: dir}); code != 0 {
+			t.Fatalf("%v in %s: %d %s", args, dir, code, errb.String())
+		}
+		return out.String()
+	}
+	both := func(out string) bool { return strings.Contains(out, ts[0]) && strings.Contains(out, ts[1]) }
+	for _, verb := range []string{"ls", "ready"} {
+		if out := run(app, verb); !strings.Contains(out, ts[0]) || strings.Contains(out, ts[1]) {
+			t.Fatalf("%s in app:\n%s", verb, out)
+		}
+		if out := run(app, verb, "--all"); !both(out) {
+			t.Fatalf("%s --all in app:\n%s", verb, out)
+		}
+		if out := run(app, verb, "--project", ps[1]); !strings.Contains(out, ts[1]) || strings.Contains(out, ts[0]) {
+			t.Fatalf("%s --project other in app:\n%s", verb, out)
+		}
+		if out := run(t.TempDir(), verb); !both(out) {
+			t.Fatalf("%s outside a repository:\n%s", verb, out)
+		}
+	}
+	if out := run(app, "find", "work"); !both(out) {
+		t.Fatalf("find in app:\n%s", out)
+	}
+	if out := run(app, "brief"); !strings.HasPrefix(out, "Logbook brief for app ("+ps[0]+")") || !strings.Contains(out, ts[0]) || strings.Contains(out, ts[1]) {
+		t.Fatalf("brief in app:\n%s", out)
+	}
+	if out := run(t.TempDir(), "brief"); !strings.HasPrefix(out, "Logbook brief: no project") {
+		t.Fatalf("brief outside a repository:\n%s", out)
+	}
+}

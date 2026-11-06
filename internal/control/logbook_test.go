@@ -15,6 +15,9 @@ type fakeLogbook struct {
 	actors []api.LogbookActor
 }
 
+func (f *fakeLogbook) Brief(context.Context, api.LogbookBriefParams) (api.LogbookBrief, error) {
+	return api.LogbookBrief{Text: "brief\n", Records: 0}, nil
+}
 func (f *fakeLogbook) Find(context.Context, api.LogbookFindParams) (api.LogbookRecords, error) {
 	return api.LogbookRecords{Records: []api.LogbookRecord{{ID: "task-k3m9q2xz", Type: "task", Title: "t"}}}, nil
 }

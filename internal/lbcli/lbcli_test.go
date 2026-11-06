@@ -120,8 +120,8 @@ func TestFileFallback(t *testing.T) {
 	if out, _, _ := runCLI(t, state, "", "status"); !strings.Contains(out, "origin SHA256:hab") {
 		t.Fatalf("status:\n%s", out)
 	}
-	if _, errs, code := runCLI(t, state, "", "brief"); code != 1 || !strings.Contains(errs, "stage 6") {
-		t.Fatalf("brief: %d %s", code, errs)
+	if out, _, code := runCLI(t, state, "", "brief"); code != 0 || !strings.Contains(out, "Logbook brief") {
+		t.Fatalf("brief: %d %s", code, out)
 	}
 	if _, _, code := runCLI(t, state, "", "ls", "--nope", "x"); code != 64 {
 		t.Fatalf("an unknown flag: %d", code)

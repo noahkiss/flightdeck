@@ -3130,6 +3130,52 @@ public struct LogbookActor: Codable, Sendable, Hashable {
     }
 }
 
+public struct LogbookBrief: Codable, Sendable, Hashable {
+    /// Record lines left out at the 8 KB cap, lowest rank first; text then ends with a more line.
+    public var dropped: Int?
+    /// The project's name.
+    public var name: String?
+    /// The project the brief covers, or absent for none.
+    public var project: String?
+    /// The record lines in text.
+    public var records: Int
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// The brief as the agent gets it.
+    public var text: String
+
+    enum CodingKeys: String, CodingKey {
+        case dropped = "dropped"
+        case name = "name"
+        case project = "project"
+        case records = "records"
+        case seq = "seq"
+        case text = "text"
+    }
+
+    public init(dropped: Int? = nil, name: String? = nil, project: String? = nil, records: Int, seq: UInt64, text: String) {
+        self.dropped = dropped
+        self.name = name
+        self.project = project
+        self.records = records
+        self.seq = seq
+        self.text = text
+    }
+}
+
+public struct LogbookBriefParams: Codable, Sendable, Hashable {
+    /// A project id. Absent: on the pane route, the pane's project; else no project, and the brief holds only the records tagged everywhere.
+    public var project: String?
+
+    enum CodingKeys: String, CodingKey {
+        case project = "project"
+    }
+
+    public init(project: String? = nil) {
+        self.project = project
+    }
+}
+
 public struct LogbookChange: Codable, Sendable, Hashable {
     public var assignee: String?
     public var body: String?
@@ -3438,6 +3484,8 @@ public struct LogbookLink: Codable, Sendable, Hashable {
 }
 
 public struct LogbookListParams: Codable, Sendable, Hashable {
+    /// Every project. Without it, a list on the pane route with no project, general or all covers the pane's project, the default view (logbook.md 12.1).
+    public var all: Bool?
     /// Records created by this session id, client device id or harness.
     public var author: String?
     /// Include deleted records.
@@ -3462,6 +3510,7 @@ public struct LogbookListParams: Codable, Sendable, Hashable {
     public var type: String?
 
     enum CodingKeys: String, CodingKey {
+        case all = "all"
         case author = "author"
         case deleted = "deleted"
         case flagged = "flagged"
@@ -3476,7 +3525,8 @@ public struct LogbookListParams: Codable, Sendable, Hashable {
         case type = "type"
     }
 
-    public init(author: String? = nil, deleted: Bool? = nil, flagged: Bool? = nil, general: Bool? = nil, host: String? = nil, limit: Int? = nil, project: String? = nil, session: String? = nil, since: String? = nil, status: String? = nil, tag: String? = nil, type: String? = nil) {
+    public init(all: Bool? = nil, author: String? = nil, deleted: Bool? = nil, flagged: Bool? = nil, general: Bool? = nil, host: String? = nil, limit: Int? = nil, project: String? = nil, session: String? = nil, since: String? = nil, status: String? = nil, tag: String? = nil, type: String? = nil) {
+        self.all = all
         self.author = author
         self.deleted = deleted
         self.flagged = flagged
@@ -3715,16 +3765,20 @@ public struct LogbookPushResult: Codable, Sendable, Hashable {
 }
 
 public struct LogbookReadyParams: Codable, Sendable, Hashable {
+    /// Every project, also on the pane route.
+    public var all: Bool?
     public var limit: Int?
-    /// A project id. Absent: every project.
+    /// A project id. Absent: every project, except on the pane route, where it is the pane's project unless all is set (logbook.md 12.1).
     public var project: String?
 
     enum CodingKeys: String, CodingKey {
+        case all = "all"
         case limit = "limit"
         case project = "project"
     }
 
-    public init(limit: Int? = nil, project: String? = nil) {
+    public init(all: Bool? = nil, limit: Int? = nil, project: String? = nil) {
+        self.all = all
         self.limit = limit
         self.project = project
     }
@@ -7242,6 +7296,8 @@ public enum HabMethods {
     public static let logbookGet = HabMethod<LogbookGetParams, LogbookRecordResult>(name: "logbook.get")
     /// List Logbook records, newest change first, with filters: type, status, project, tag, host, author, session, since (logbook.md 10.3). Needs the logbook capability.
     public static let logbookList = HabMethod<LogbookListParams, LogbookRecords>(name: "logbook.list")
+    /// The session brief for a project: tasks in doing and blocked, handed over and ready ones, pinned guides, recent findings, open plans, records tagged everywhere, the untriaged and flagged counts, at most 8 KB (logbook.md 11.2, 11.4). On the pane route the pane's project is the default, and a private project outside the pane's answers not_found. Needs the logbook capability.
+    public static let logbookBrief = HabMethod<LogbookBriefParams, LogbookBrief>(name: "logbook.brief")
     /// Open tasks and issues with no open blocker, newest change first (logbook.md 10.2). Needs the logbook capability.
     public static let logbookReady = HabMethod<LogbookReadyParams, LogbookRecords>(name: "logbook.ready")
     /// Every op on one record, losers and ops this build does not fold included, in stamp order (logbook.md 10.2). Needs the logbook capability.

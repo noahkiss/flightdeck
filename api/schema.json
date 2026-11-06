@@ -2761,6 +2761,13 @@
       "paramStructure": "by-name",
       "params": [
         {
+          "name": "all",
+          "description": "Every project. Without it, a list on the pane route with no project, general or all covers the pane's project, the default view (logbook.md 12.1).",
+          "schema": {
+            "type": "boolean"
+          }
+        },
+        {
           "name": "author",
           "description": "Records created by this session id, client device id or harness.",
           "schema": {
@@ -2855,10 +2862,40 @@
       }
     },
     {
+      "name": "logbook.brief",
+      "summary": "The session brief for a project: tasks in doing and blocked, handed over and ready ones, pinned guides, recent findings, open plans, records tagged everywhere, the untriaged and flagged counts, at most 8 KB (logbook.md 11.2, 11.4). On the pane route the pane's project is the default, and a private project outside the pane's answers not_found. Needs the logbook capability.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "project",
+          "description": "A project id. Absent: on the pane route, the pane's project; else no project, and the brief holds only the records tagged everywhere.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/LogbookBrief"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/LogbookBriefParams"
+      }
+    },
+    {
       "name": "logbook.ready",
       "summary": "Open tasks and issues with no open blocker, newest change first (logbook.md 10.2). Needs the logbook capability.",
       "paramStructure": "by-name",
       "params": [
+        {
+          "name": "all",
+          "description": "Every project, also on the pane route.",
+          "schema": {
+            "type": "boolean"
+          }
+        },
         {
           "name": "limit",
           "schema": {
@@ -2868,7 +2905,7 @@
         },
         {
           "name": "project",
-          "description": "A project id. Absent: every project.",
+          "description": "A project id. Absent: every project, except on the pane route, where it is the pane's project unless all is set (logbook.md 12.1).",
           "schema": {
             "type": "string"
           }
@@ -7103,6 +7140,52 @@
           }
         }
       },
+      "LogbookBrief": {
+        "type": "object",
+        "properties": {
+          "dropped": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Record lines left out at the 8 KB cap, lowest rank first; text then ends with a more line."
+          },
+          "name": {
+            "type": "string",
+            "description": "The project's name."
+          },
+          "project": {
+            "type": "string",
+            "description": "The project the brief covers, or absent for none."
+          },
+          "records": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The record lines in text."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "text": {
+            "type": "string",
+            "description": "The brief as the agent gets it."
+          }
+        },
+        "required": [
+          "seq",
+          "text",
+          "records"
+        ]
+      },
+      "LogbookBriefParams": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "description": "A project id. Absent: on the pane route, the pane's project; else no project, and the brief holds only the records tagged everywhere."
+          }
+        }
+      },
       "LogbookChange": {
         "type": "object",
         "properties": {
@@ -7425,6 +7508,10 @@
       "LogbookListParams": {
         "type": "object",
         "properties": {
+          "all": {
+            "type": "boolean",
+            "description": "Every project. Without it, a list on the pane route with no project, general or all covers the pane's project, the default view (logbook.md 12.1)."
+          },
           "author": {
             "type": "string",
             "description": "Records created by this session id, client device id or harness."
@@ -7740,13 +7827,17 @@
       "LogbookReadyParams": {
         "type": "object",
         "properties": {
+          "all": {
+            "type": "boolean",
+            "description": "Every project, also on the pane route."
+          },
           "limit": {
             "type": "integer",
             "format": "int64"
           },
           "project": {
             "type": "string",
-            "description": "A project id. Absent: every project."
+            "description": "A project id. Absent: every project, except on the pane route, where it is the pane's project unless all is set (logbook.md 12.1)."
           }
         }
       },

@@ -1,0 +1,17 @@
+{
+  "dropped": 8,
+  "name": "name-5",
+  "project": "project-4",
+  "records": 7,
+  "seq": 3,
+  "text": "text-6",
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

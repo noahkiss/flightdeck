@@ -1093,6 +1093,13 @@ func (c Client) LogbookList(ctx context.Context, params LogbookListParams) (Logb
 	return result, err
 }
 
+// LogbookBrief calls logbook.brief. The session brief for a project: tasks in doing and blocked, handed over and ready ones, pinned guides, recent findings, open plans, records tagged everywhere, the untriaged and flagged counts, at most 8 KB (logbook.md 11.2, 11.4). On the pane route the pane's project is the default, and a private project outside the pane's answers not_found. Needs the logbook capability.
+func (c Client) LogbookBrief(ctx context.Context, params LogbookBriefParams) (LogbookBrief, error) {
+	var result LogbookBrief
+	err := c.Caller.Call(ctx, "logbook.brief", params, &result)
+	return result, err
+}
+
 // LogbookReady calls logbook.ready. Open tasks and issues with no open blocker, newest change first (logbook.md 10.2). Needs the logbook capability.
 func (c Client) LogbookReady(ctx context.Context, params LogbookReadyParams) (LogbookRecords, error) {
 	var result LogbookRecords

@@ -10,6 +10,7 @@ import (
 // internal/lbsvc over its Logbook replica. A write's actor is the client: a person by the
 // client's label (logbook.md 2.5). An error that is an *Error keeps its kind.
 type Logbook interface {
+	Brief(ctx context.Context, p api.LogbookBriefParams) (api.LogbookBrief, error)
 	Find(ctx context.Context, p api.LogbookFindParams) (api.LogbookRecords, error)
 	Get(ctx context.Context, p api.LogbookGetParams) (api.LogbookRecordResult, error)
 	List(ctx context.Context, p api.LogbookListParams) (api.LogbookRecords, error)
@@ -30,7 +31,7 @@ const (
 
 func isLogbookMethod(m string) bool {
 	switch m {
-	case "logbook.find", "logbook.get", "logbook.list", "logbook.ready", "logbook.history", "logbook.write",
+	case "logbook.brief", "logbook.find", "logbook.get", "logbook.list", "logbook.ready", "logbook.history", "logbook.write",
 		"logbook.resolve", "logbook.decide", "logbook.projects", "logbook.status":
 		return true
 	}
@@ -49,6 +50,11 @@ func (c *conn) handleLogbook(m message) {
 	var e *Error
 	write := m.Method == "logbook.write" || m.Method == "logbook.resolve" || m.Method == "logbook.decide"
 	switch m.Method {
+	case "logbook.brief":
+		var p api.LogbookBriefParams
+		if e = c.decodeUp(m, &p); e == nil && lb != nil {
+			call = func(ctx context.Context) (any, error) { return lb.Brief(ctx, p) }
+		}
 	case "logbook.find":
 		var p api.LogbookFindParams
 		if e = c.decodeUp(m, &p); e == nil && lb != nil {
@@ -124,6 +130,9 @@ func (c *conn) handleLogbook(m message) {
 		}
 		s := api.Seq{Seq: seq}
 		switch r := res.(type) {
+		case api.LogbookBrief:
+			r.Seq = s
+			res = api.NonNil(r)
 		case api.LogbookRecords:
 			r.Seq = s
 			res = api.NonNil(r)

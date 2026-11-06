@@ -277,7 +277,7 @@ func TestPrivateHidden(t *testing.T) {
 		}
 	}
 	for name, pn := range map[string]*Pane{"inside": inside, "person": nil} {
-		res, _ := call(pn, "logbook.list", map[string]any{})
+		res, _ := call(pn, "logbook.list", map[string]any{"all": true})
 		if got := ids(res); !slices.Contains(got, secretTask) || !slices.Contains(got, openTask) {
 			t.Fatalf("%s list %v", name, got)
 		}

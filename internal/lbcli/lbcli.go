@@ -52,9 +52,10 @@ type Caller interface {
 
 const usage = `usage: %[1]s [--json] [--socket path] [--state dir] <verb> [args]
 
-  find <words> [filters]          search: best match first
-  ls [filters]                    list records: id, type, status, title
-  ready [--project p]             open tasks and issues with no open blocker
+  brief [--project p]             the session brief: what to know about the project now
+  find <words> [filters]          search every project: best match first
+  ls [filters] [--all]            list records: id, type, status, title
+  ready [--project p] [--all]     open tasks and issues with no open blocker
   show <id>                       the record, its links both ways, notes and flags
   history <id>                    every op on the record, losers included
   new <type> <title> [--body text|-] [--tag t]... [--link kind:id]... [--project p]
@@ -85,6 +86,8 @@ const usage = `usage: %[1]s [--json] [--socket path] [--state dir] <verb> [args]
 
 filters: --type t --status s --project p --tag t --host h --author a --session s
          --since <RFC 3339 time> --general --flagged --deleted --limit n
+brief, ls and ready cover the current project unless --project, --general or
+--all says otherwise: in a pane the pane's session's, else the working folder's.
 In a pane the hab records the pane's harness, session and host as the writer.
 When gff-hab is down, reads open logbook.db in the state directory
 (--state, else $GFF_HAB_STATE, else the default) and say so; so do writes
@@ -93,13 +96,12 @@ outside a pane. A write from a pane waits up to 15 s for gff-hab, then fails.
 
 // later names the verbs of later stages (logbook.md 18).
 var later = map[string]string{
-	"brief":  "the brief comes with Logbook stage 6 (habits)",
 	"export": "export comes with Logbook stage 9",
 	"import": "import comes with Logbook stage 9",
 }
 
 // bools are the flags that take no value.
-var bools = map[string]bool{"json": true, "general": true, "deleted": true, "yes": true, "propose": true, "flagged": true, "help": true, "h": true}
+var bools = map[string]bool{"all": true, "json": true, "general": true, "deleted": true, "yes": true, "propose": true, "flagged": true, "help": true, "h": true}
 
 // args is one command line: flags anywhere, values in order, the rest positional.
 type args struct {
@@ -457,20 +459,16 @@ func (d *door) openLocal(ctx context.Context, why error) error {
 // paneProject is the project of the working folder's repository, by its identity (3.1), or ""
 // when it has none on this replica.
 func (d *door) paneProject(ctx context.Context) string {
-	dir := d.env.Dir
-	if dir == "" {
-		dir, _ = os.Getwd()
-	}
-	if dir == "" {
+	identity := folderIdentity(ctx, d.env.Dir)
+	if identity == "" {
 		return ""
 	}
-	f, ok := catalog.ReadFolder(ctx, dir)
-	if !ok {
-		return ""
-	}
-	id, _ := d.local.Lookup(ctx, lbsvc.Identity(f.Remote, f.RootCommit))
+	id, _ := d.local.Lookup(ctx, identity)
 	return id
 }
+
+// inPaneEnv reports whether the CLI runs in a pane: $GFF_HAB is set.
+func (d *door) inPaneEnv() bool { return d.env.Getenv(hook.Env) != "" }
 
 // actor is who writes through the file: a person at this host's shell. A pane never writes the
 // file (Call), so the actor is never an agent.
@@ -497,7 +495,7 @@ var verbs map[string]verbFunc
 
 func init() {
 	verbs = map[string]verbFunc{
-		"find": find, "ls": list, "ready": ready, "show": show, "history": history,
+		"brief": brief, "find": find, "ls": list, "ready": ready, "show": show, "history": history,
 		"new": newRecord, "edit": edit, "note": note, "mark": mark, "done": done, "claim": claim,
 		"link": link, "unlink": link, "supersede": supersede, "delete": del, "restore": del,
 		"forget": forget, "conflicts": conflicts, "resolve": resolve, "proposals": proposals,
@@ -548,6 +546,66 @@ func lines(r api.LogbookRecords) string {
 	return b.String()
 }
 
+// brief prints the session brief (11.2) of the current project, or of --project.
+func brief(ctx context.Context, c *cli) (any, string, error) {
+	if err := c.a.allow("brief", "project"); err != nil {
+		return nil, "", usageError{err}
+	}
+	p := api.LogbookBriefParams{Project: c.a.str("project")}
+	if p.Project == "" {
+		var err error
+		if p.Project, err = c.current(ctx); err != nil {
+			return nil, "", err
+		}
+	}
+	var r api.LogbookBrief
+	if err := c.d.Call(ctx, "logbook.brief", p, &r); err != nil {
+		return nil, "", err
+	}
+	return r, r.Text, nil
+}
+
+// current is the current project outside a pane: the project that holds the working folder's
+// identity (10.2), or "" when it has none. In a pane it is "": the hab takes the pane's
+// session's project, and the file's reads take the working folder's (Call).
+func (c *cli) current(ctx context.Context) (string, error) {
+	if c.d.inPaneEnv() {
+		return "", nil
+	}
+	identity := folderIdentity(ctx, c.env.Dir)
+	if identity == "" {
+		return "", nil
+	}
+	var r api.LogbookProjects
+	if err := c.d.Call(ctx, "logbook.projects", api.LogbookProjectsParams{}, &r); err != nil {
+		return "", err
+	}
+	for _, p := range r.Projects {
+		if slices.Contains(p.Identities, identity) {
+			if p.JoinedInto != "" {
+				return p.JoinedInto, nil
+			}
+			return p.ID, nil
+		}
+	}
+	return "", nil
+}
+
+// folderIdentity is the identity of dir's repository (3.1), or "" (dir empty: the process's).
+func folderIdentity(ctx context.Context, dir string) string {
+	if dir == "" {
+		dir, _ = os.Getwd()
+	}
+	if dir == "" {
+		return ""
+	}
+	f, ok := catalog.ReadFolder(ctx, dir)
+	if !ok {
+		return ""
+	}
+	return lbsvc.Identity(f.Remote, f.RootCommit)
+}
+
 func find(ctx context.Context, c *cli) (any, string, error) {
 	if err := c.a.allow("find", filterFlags...); err != nil {
 		return nil, "", usageError{err}
@@ -569,12 +627,18 @@ func find(ctx context.Context, c *cli) (any, string, error) {
 }
 
 func list(ctx context.Context, c *cli) (any, string, error) {
-	if err := c.a.allow("ls", filterFlags...); err != nil {
+	if err := c.a.allow("ls", append(filterFlags, "all")...); err != nil {
 		return nil, "", usageError{err}
 	}
 	f, err := c.filter()
 	if err != nil {
 		return nil, "", err
+	}
+	f.All = c.a.has("all")
+	if lbsvc.DefaultProject(f.Project, f.General, f.All) {
+		if f.Project, err = c.current(ctx); err != nil {
+			return nil, "", err
+		}
 	}
 	return c.listWith(ctx, f)
 }
@@ -588,15 +652,21 @@ func (c *cli) listWith(ctx context.Context, f api.LogbookFilter) (any, string, e
 }
 
 func ready(ctx context.Context, c *cli) (any, string, error) {
-	if err := c.a.allow("ready", "project", "limit"); err != nil {
+	if err := c.a.allow("ready", "project", "limit", "all"); err != nil {
 		return nil, "", usageError{err}
 	}
 	f, err := c.filter()
 	if err != nil {
 		return nil, "", err
 	}
+	all := c.a.has("all")
+	if lbsvc.DefaultProject(f.Project, false, all) {
+		if f.Project, err = c.current(ctx); err != nil {
+			return nil, "", err
+		}
+	}
 	var r api.LogbookRecords
-	if err := c.d.Call(ctx, "logbook.ready", api.LogbookReadyParams{Project: f.Project, Limit: f.Limit}, &r); err != nil {
+	if err := c.d.Call(ctx, "logbook.ready", api.LogbookReadyParams{Project: f.Project, Limit: f.Limit, All: all}, &r); err != nil {
 		return nil, "", err
 	}
 	return r, lines(r), nil
@@ -611,6 +681,7 @@ func conflicts(ctx context.Context, c *cli) (any, string, error) {
 		return nil, "", err
 	}
 	f.Flagged = true
+	f.All = f.Project == ""
 	return c.listWith(ctx, f)
 }
 
@@ -626,6 +697,7 @@ func proposals(ctx context.Context, c *cli) (any, string, error) {
 	if f.Status == "" {
 		f.Status = "pending"
 	}
+	f.All = f.Project == "" && !f.General
 	return c.listWith(ctx, f)
 }
 
@@ -1241,4 +1313,20 @@ func status(ctx context.Context, c *cli) (any, string, error) {
 		fmt.Fprintf(&b, "  %s  %d\n", v.Origin, v.Seq)
 	}
 	return r, b.String(), nil
+}
+
+// FileBrief builds a pane's brief from the hab's file, for `gff-hab hook` when gff-hab does not
+// answer (11.3): the state directory from $GFF_HAB_STATE (env.Getenv), the project from the
+// working folder env.Dir, private projects but that one left out (12.1). It never writes.
+func FileBrief(ctx context.Context, env Env) (api.LogbookBrief, error) {
+	d := &door{env: env, inPane: true, picked: true}
+	defer d.close()
+	if err := d.openLocal(ctx, errors.New("gff-hab did not answer")); err != nil {
+		return api.LogbookBrief{}, err
+	}
+	res, err := d.local.Dispatch(ctx, d.actor(), &lbsvc.Pane{Project: d.paneProject(ctx)}, "logbook.brief", nil)
+	if err != nil {
+		return api.LogbookBrief{}, err
+	}
+	return res.(api.LogbookBrief), nil
 }

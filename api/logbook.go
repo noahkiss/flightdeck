@@ -18,6 +18,8 @@ type LogbookFilter struct {
 	Flagged bool   `json:"flagged,omitempty" doc:"Only records with a flag: a conflict, decided twice and the like (logbook.md 10.2 conflicts)."`
 	Deleted bool   `json:"deleted,omitempty" doc:"Include deleted records."`
 	Limit   int    `json:"limit,omitempty" doc:"At most this many; default 50, at most 500."`
+	// Added by stage 6 (logbook.md 11.4).
+	All bool `json:"all,omitempty" doc:"Every project. Without it, a list on the pane route with no project, general or all covers the pane's project, the default view (logbook.md 12.1)."`
 }
 
 type LogbookFindParams struct {
@@ -41,8 +43,26 @@ type LogbookListParams struct {
 }
 
 type LogbookReadyParams struct {
-	Project string `json:"project,omitempty" doc:"A project id. Absent: every project."`
+	Project string `json:"project,omitempty" doc:"A project id. Absent: every project, except on the pane route, where it is the pane's project unless all is set (logbook.md 12.1)."`
 	Limit   int    `json:"limit,omitempty"`
+	// Added by stage 6 (logbook.md 11.4).
+	All bool `json:"all,omitempty" doc:"Every project, also on the pane route."`
+}
+
+// LogbookBriefParams asks for a session brief (logbook.md 11.2).
+type LogbookBriefParams struct {
+	Project string `json:"project,omitempty" doc:"A project id. Absent: on the pane route, the pane's project; else no project, and the brief holds only the records tagged everywhere."`
+}
+
+// LogbookBrief is a session brief: what an agent should know about its project now, one line per
+// record, at most 8 KB (logbook.md 11.2, 11.4).
+type LogbookBrief struct {
+	Seq
+	Project string `json:"project,omitempty" doc:"The project the brief covers, or absent for none."`
+	Name    string `json:"name,omitempty" doc:"The project's name."`
+	Text    string `json:"text" doc:"The brief as the agent gets it."`
+	Records int    `json:"records" doc:"The record lines in text."`
+	Dropped int    `json:"dropped,omitempty" doc:"Record lines left out at the 8 KB cap, lowest rank first; text then ends with a more line."`
 }
 
 // LogbookRecord is one Logbook record as a read returns it. A search or list fills the summary
