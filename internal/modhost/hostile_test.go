@@ -224,7 +224,9 @@ exports.act = function (name) {
 			logs = append(logs, l)
 			mu.Unlock()
 		}},
-		Limits: Limits{Memory: 0, Render: time.Second, Act: 5 * time.Second},
+		// This test measures allocations, not speed. Building three large JS values can
+		// exceed the default one-second load budget while other suites use the CPU.
+		Limits: Limits{Memory: 0, Load: 10 * time.Second, Render: 5 * time.Second, Act: 5 * time.Second},
 	})
 	const bound = 64 << 20 // the probe allocated 422 MiB before the fix
 	ctx := context.Background()

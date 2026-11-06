@@ -97,12 +97,19 @@ sleep 30`)
 	runtime.GC()
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
-	end := time.Now().Add(1500 * time.Millisecond)
-	for time.Now().Before(end) {
+	sample := func() bool {
 		p.mu.Lock()
 		maxN, maxQ = max(maxN, p.ansN), max(maxQ, len(p.inq))
 		dropped = dropped || p.ansDropped > 0
 		p.mu.Unlock()
+		return dropped
+	}
+	// Under load, starting the producer can consume the sampling window. Wait
+	// for saturation, then retain the full stress interval and its heap bound.
+	waitFor(t, "the query flood to reach the answer bound", sample)
+	end := time.Now().Add(1500 * time.Millisecond)
+	for time.Now().Before(end) {
+		sample()
 		time.Sleep(time.Millisecond)
 	}
 	if maxN > maxAnswers || maxQ > maxAnswers {

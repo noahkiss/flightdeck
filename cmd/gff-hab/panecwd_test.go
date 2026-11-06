@@ -30,7 +30,9 @@ func TestCreateCwdOf(t *testing.T) {
 	if err := os.MkdirAll(sub, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	first := e.spawn(c, `cd "$DIR/sub dir" && touch "$DIR/in" && exec sleep 600`)
+	// Keep the shell PID stable after publishing readiness. A marker before exec
+	// lets macOS lsof race the exec transition and fall back to the original cwd.
+	first := e.spawn(c, `cd "$DIR/sub dir" && printf ready > "$DIR/in" && read -r keep_open`)
 	waitUntil(t, "the first pane in its folder", func() bool { _, err := os.Stat(filepath.Join(e.work, "in")); return err == nil })
 	ctx, cancel := context.WithTimeout(context.Background(), scaleTimeout(20*time.Second))
 	defer cancel()

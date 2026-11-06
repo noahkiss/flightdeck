@@ -80,7 +80,9 @@ func TestWorkspaceSaved(t *testing.T) {
 	hst := newHost(t, 160, 30, false)
 	done := runWS(t, hst, withState, specsOf(a.Sock, b.Sock)...)
 	hst.waitScreen("both rows", func(s string) bool { return line(s, "job") > 0 && line(s, "other") > 0 })
-	hst.typ("\r") // job: first by name
+	// The first host to arrive owns the initial selection. Once both rows exist,
+	// move to the first row explicitly instead of assuming job arrived first.
+	hst.typ("k\r") // job: first by name
 	hst.waitScreen("job in tab 1", func(s string) bool { return strings.Contains(s, " job · one") })
 	hst.typ("\x10l")
 	hst.waitScreen("a new pane beside job", func(s string) bool {
