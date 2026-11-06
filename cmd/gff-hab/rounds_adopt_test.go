@@ -359,6 +359,81 @@ func TestRoundPruneKeepsLiveSessions(t *testing.T) {
 	}
 }
 
+// TestRoundDropFinishedAtStart: at start, gff-hab removes the exited session records of
+// succeeded runs whose round closes on a good run, left by a gff-hab that stopped before the
+// drop (rounds.md 7.6). A failed run's session, a live one and a session the run did not make
+// stay; so do a keep round's.
+func TestRoundDropFinishedAtStart(t *testing.T) {
+	state := t.TempDir()
+	e := seedRound(t, state)
+	rst, _, err := rounds.Open(state, rounds.Options{Zone: "UTC"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keep, err := rst.Create(rounds.Round{Name: "kept", Mode: rounds.ModeFresh, Project: "p-1", Command: []string{"true"},
+		OnFinish: rounds.OnFinishKeep, Trigger: rounds.Trigger{Kind: rounds.TriggerManual}}, "", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder := structure.NewFakeHolder(hpane("p1"), hpane("p2"), hpane("p3"), hpane("p4"))
+	code, one := 0, 1
+	for _, p := range []string{"p1", "p3", "p4"} {
+		holder.Exit(p, api.ExitStatus{Code: &code})
+	}
+	holder.Exit("p2", api.ExitStatus{Code: &one})
+	st, err := structure.Open(structure.Config{Dir: state, Holders: holder})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := [4]string{rounds.NewID("run"), rounds.NewID("run"), rounds.NewID("run"), rounds.NewID("run")}
+	mk := func(name, pane, round, run string) api.Session {
+		t.Helper()
+		ss, err := st.CreateSession(structure.SessionSpec{Name: name, Pane: pane, Index: -1, Round: &api.SessionRound{Round: round, Run: run}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ss
+	}
+	good := mk("good", "p1", e.Round.ID, ids[0])
+	failed := mk("failed", "p2", e.Round.ID, ids[1])
+	other := mk("other", "p3", e.Round.ID, "run-elsewhere")
+	kept := mk("kept", "p4", keep.Round.ID, ids[3])
+	st.Close()
+	now := time.Now()
+	run := func(n int, id, session string, state rounds.RunState, round string) rounds.Run {
+		return rounds.Run{ID: id, Number: n, RoundID: round, Trigger: rounds.TriggerManual, State: state,
+			SessionID: session, Created: now, EndedAt: &now}
+	}
+	writeRuns(t, state, e.Round.ID, []rounds.Run{
+		run(1, ids[0], good.ID, rounds.RunSucceeded, e.Round.ID),
+		run(2, ids[1], failed.ID, rounds.RunFailed, e.Round.ID),
+		run(3, ids[2], other.ID, rounds.RunSucceeded, e.Round.ID),
+	})
+	b, _ := os.ReadFile(filepath.Join(state, "rounds", "state.json"))
+	var f map[string]json.RawMessage
+	_ = json.Unmarshal(b, &f)
+	var all map[string][]rounds.Run
+	_ = json.Unmarshal(f["runs"], &all)
+	all[keep.Round.ID] = []rounds.Run{run(1, ids[3], kept.ID, rounds.RunSucceeded, keep.Round.ID)}
+	f["runs"], _ = json.Marshal(all)
+	b, _ = json.Marshal(f)
+	writeFile(t, filepath.Join(state, "rounds", "state.json"), string(b))
+
+	svc, sst := fakeRoundsServiceWith(t, state, holder, nil)
+	svc.dropFinished()
+	if _, ok := sst.Session(good.ID); ok {
+		t.Error("a succeeded run's exited session stayed")
+	}
+	for name, id := range map[string]string{"failed": failed.ID, "other": other.ID, "kept": kept.ID} {
+		if _, ok := sst.Session(id); !ok {
+			t.Errorf("the %s session was removed", name)
+		}
+	}
+	if got, _, _ := svc.store.Runs().Page(e.Round.ID, 0, 10); len(got) != 3 {
+		t.Errorf("the run log changed: %d runs", len(got))
+	}
+}
+
 // writeRuns puts runs in the rounds state file directly: many runs in one write.
 func writeRuns(t *testing.T, state, roundID string, runs []rounds.Run) {
 	t.Helper()

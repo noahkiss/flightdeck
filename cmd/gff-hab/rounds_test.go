@@ -125,7 +125,7 @@ func paneIn(st api.Structure, id string) bool {
 }
 
 // TestRoundEveryMinute: a -every 1m command round runs at its slot in a visible pane with the
-// GFF_ROUND_* variables, ends succeeded, its pane closes and its session stays exited; the
+// GFF_ROUND_* variables, ends succeeded, its pane closes and its session record goes; the
 // events carry rising revisions and one run_updated per state change.
 func TestRoundEveryMinute(t *testing.T) {
 	t.Parallel()
@@ -190,12 +190,16 @@ func TestRoundEveryMinute(t *testing.T) {
 	if string(b) != want {
 		t.Errorf("run environment:\n%s\nwant:\n%s", b, want)
 	}
-	// on_finish close: the pane goes, the session record stays, exited.
-	waitUntil(t, "the run's pane closed", func() bool {
+	// on_finish close: the pane and the session record go, so an every-minute round leaves no
+	// trail of exited sessions (rounds.md 7.6); the run log keeps the run.
+	waitUntil(t, "the run's pane and session removed", func() bool {
 		st := structureOf(t, c)
-		ss, ok := runSessionOf(st, run.Session)
-		return ok && ss.State == api.SessionStateExited && !paneIn(st, ss.Pane)
+		_, ok := runSessionOf(st, run.Session)
+		return !ok && !paneIn(st, ss.Pane)
 	})
+	if got := roundRuns(t, c, "minutely")[0]; got.ID != run.ID || got.Session != run.Session || got.State != api.RoundRunStateSucceeded {
+		t.Errorf("the run log after the session went: %+v", got)
+	}
 	if r := getRound(t, c, "minutely"); r.LastOK == "" || r.LastRun == nil || r.LastRun.State != api.RoundRunStateSucceeded {
 		t.Errorf("after the run: %+v", r)
 	}
@@ -559,18 +563,26 @@ func TestRoundLostStart(t *testing.T) {
 	if out, err := roundCLI(e, "", "run", "orphan"); err == nil {
 		t.Fatalf("a second run started beside the found one: %s", out)
 	}
+	runSessions := func() int {
+		n := 0
+		for _, ss := range structureOf(t, c).Sessions {
+			if ss.Round != nil {
+				n++
+			}
+		}
+		return n
+	}
+	if n := runSessions(); n != 1 {
+		t.Fatalf("run sessions %d while the run runs", n)
+	}
 	writeFile(t, gate, "")
 	if got := waitRun(t, e, c, "orphan", api.RoundRunStateSucceeded); got.ID != r.ID {
 		t.Fatalf("ended: %+v", got)
 	}
-	live := 0
-	for _, ss := range structureOf(t, c).Sessions {
-		if ss.Round != nil {
-			live++
-		}
-	}
-	if live != 1 || len(roundRuns(t, c, "orphan")) != 1 {
-		t.Fatalf("run sessions %d, runs %+v", live, roundRuns(t, c, "orphan"))
+	// The succeeded run's session record goes (rounds.md 7.6).
+	waitUntil(t, "the run's session removed", func() bool { return runSessions() == 0 })
+	if runs := roundRuns(t, c, "orphan"); len(runs) != 1 {
+		t.Fatalf("runs %+v", runs)
 	}
 }
 

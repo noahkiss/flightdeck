@@ -372,9 +372,13 @@ func testRoundFork(t *testing.T, app string) {
 	if run.Session == tgt.Session || run.Result != "Round reply." {
 		t.Errorf("fork run: %+v", run)
 	}
-	ss, _ := runSessionOf(structureOf(t, c), run.Session)
-	if ss.Name != "next" || ss.Round == nil || ss.Round.Run != run.ID {
-		t.Errorf("fork session: %+v", ss)
+	// on_finish close: the fork's own session record goes (rounds.md 7.6); the target stays.
+	waitUntil(t, "the fork's session removed", func() bool {
+		_, ok := runSessionOf(structureOf(t, c), run.Session)
+		return !ok
+	})
+	if ss, ok := runSessionOf(structureOf(t, c), tgt.Session); !ok || ss.Round != nil {
+		t.Errorf("the target after the fork: %+v", ss)
 	}
 	want := "--fake next --resume " + sid + " --fork-session"
 	if app == "codex" {
