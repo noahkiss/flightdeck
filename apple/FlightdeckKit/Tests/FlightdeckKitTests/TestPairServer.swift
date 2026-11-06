@@ -1,3 +1,5 @@
+// Process and the real /bin/sh exist only on macOS; the iOS Simulator run skips these.
+#if os(macOS)
 import Foundation
 import NIOCore
 import NIOPosix
@@ -180,3 +182,4 @@ final class TestPairServer: @unchecked Sendable {
         }
     }
 }
+#endif

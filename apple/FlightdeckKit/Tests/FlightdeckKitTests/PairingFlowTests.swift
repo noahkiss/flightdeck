@@ -1,3 +1,5 @@
+// Process and the real /bin/sh exist only on macOS; the iOS Simulator run skips these.
+#if os(macOS)
 import Foundation
 import NIOSSH
 import XCTest
@@ -472,3 +474,4 @@ func XCTAssertThrowsAsync<T>(_ body: @autoclosure () async throws -> T, file: St
         check(error)
     }
 }
+#endif
