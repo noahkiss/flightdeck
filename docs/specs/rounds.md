@@ -200,9 +200,11 @@ Rules:
   `secrets` for `watch` only. Any mode takes any trigger: a `cron` round in `capcom` mode is a
   morning brief from Capcom.
 - **Field rules (Capcom jobs).** `actions` is for `capcom` rounds only, from the closed set of
-  `capcom-service.md` 9.6. A create or update from a pane route that sets a non-empty `actions`
-  or adds a word is refused `denied`; only a person grants Capcom an action. Removing words is
-  allowed from anywhere.
+  `capcom-service.md` 9.6. A create, update or apply from any agent route (a pane's, or
+  Capcom's own) that sets a non-empty `actions` or adds a word is refused `denied`; only a
+  person grants Capcom an action. Removing words is allowed from anywhere. While `actions` is
+  not empty, an agent route may only remove words: any other edit, a pause or a delete from it
+  is `denied`, and a person's grant clears `created_by`.
 
 Decision: rounds live in the runner's state and are edited by the API, with export and apply for
 a file. Reason: the app and agents must create and edit rounds, as in Paseo, and a store the hab
@@ -437,10 +439,17 @@ The `watch` trigger takes `module` in place of `argv`:
 
 `argv` and `module` are exclusive; `cwd` is for `argv` only.
 
-**What the module provides.** `main.js` exports `watch(ctx)` beside `render` (`modules.md` 5).
-The bridge gains it as an additive function, so no bridge version changes (`modules.md` 9).
+**What the module provides.** `main.js` exports `watch(ctx)` beside `render` (`modules.md` 5),
+and the manifest says so with `watch = true`.
 
-- `ctx` holds the usual fields (`modules.md` 7.3), with `place` set to `watch`, plus `round` (the
+- **The manifest field.** `watch` is a new manifest key, so it comes with the next bridge version
+  (`modules.md` 5: an unknown key is refused; 9). A module that sets it names that bridge. The
+  install and every update show "can serve as a round's watcher, and then receives the round's
+  secret set" beside the powers; an update that adds `watch` counts as a change of powers and
+  waits for the user's accept (`modules.md` 7.2). `round.create` checks the manifest field and
+  the export.
+- `ctx` holds the usual fields (`modules.md` 7.3) with `place` absent, since nothing is drawn,
+  and `call` set to `watch`, plus `round` (the
   round id and name), `cursor` (the round's stored cursor, or absent), `args` (`watch.args`) and
   `secrets` (the secret set's variables as a frozen object of strings, or absent).
 - It returns `{events: [...], cursor?: "<text>"}`, or a promise of it (`modules.md` 7.3). Each
@@ -451,8 +460,9 @@ The bridge gains it as an additive function, so no bridge version changes (`modu
   keeps its read list. `fd.state.set` works as in `refresh`, in the module's one state store.
 - The cursor belongs to the round, not the module, so one module can serve several rounds. Two
   rounds that use one module with different `watch.args` keep apart.
-- A module with no `watch` export is refused at `round.create` and `round.update` (`invalid`,
-  "module <id> has no watch function"). So is a module not installed on the runner.
+- A module with no `watch` export, or without `watch = true`, is refused at `round.create` and
+  `round.update` (`invalid`, "module <id> is not a watcher"). So is a module not installed on
+  the runner.
 
 **How it runs.**
 
@@ -791,6 +801,7 @@ Interface shared with Part 14 (A1) and Part 15 (B1), in one place:
 | The service's actor id (its session id) on its notices and Logbook ops | Part 14, `capcom-service.md` 9.5 | The no-loop rule (4.3) |
 | The group's coordinator address and state in the catalog `groups` section | Part 15, `groups.md` 5.1, 12.5 | Address a `group` message; complete the round |
 | The `round` mark and the `round-lock` capability | Rounds (stage 9), in channels | Deliver under the lock |
+| The `watch(ctx)` export, the manifest's `watch = true` with its bridge version, `ctx.call`, `act` refused in `watch`, watch calls going on while the module's card is paused after errors, the secret set in `ctx.secrets` and its line at install | Part 7, `modules.md` 5, 7.1, 7.2, 7.3, 8.3, 9; written here (4.4), and stage 12 adds them to `modules.md` | Module watchers (4.4) |
 
 ---
 
@@ -1710,7 +1721,7 @@ fresh-eyes reviewer before they close.
 | 9 | Event triggers, `capcom` and `group` modes (the swarm study's D2) | The six events in 4.3 with their filters, `hab.woke`, the event batch (4.5), no self-loops; the `capcom` and `group` modes (5.2); the channel `round` mark and the lock on the receiving hab | task-awkgh5h1 |
 | 10 | Agent kit | `gff round` verbs and MCP tools; a round on another host under `confirm.start_elsewhere` | task-ybb4c3ed |
 | 11 | Watchers (the swarm study's D3) | The `watch` trigger: `gff-hab watch-pane`, supervision, backoff, the exit pause, restart at wake, event lines, the cursor, dedup keys, secret sets; `--watch`, export and apply; the watcher's state on the round; a mail watcher example | task-qhdhg0x2 |
-| 12 | Module watchers (owner, 2026-11-06, W3) | `watch.module`, `every`, `args`; the `watch(ctx)` export in the module runtime and the module host's call loop; `act` refused in `watch`; the cursor, events, failures, pause, wake and removal rules of 4.4; the round page's call log; `--watch-module`, export, apply and `move` | task-3yn2kc07 |
+| 12 | Module watchers (owner, 2026-11-06, W3) | `watch.module`, `every`, `args`; the manifest's `watch = true` (a new bridge version) and its install line; the `watch(ctx)` export and `ctx.call` in the module runtime and the module host's call loop; the `modules.md` changes of the 5.2 interface table; `act` refused in `watch`; the cursor, events, failures, pause, wake and removal rules of 4.4; the round page's call log; `--watch-module`, export, apply and `move` | task-3yn2kc07 |
 | — | Later ideas | Worktree isolation for `fresh` runs (on `worktree.create`, `hab-logic-api.md` 3.10); skip when a harness usage window is above a threshold; a Logbook run log (7.7) that files each run as a Logbook record (Part 12) | Planned when Logbook is built |
 
 Stages 1 to 3 run in order. Stages 4 and 6 can run side by side after 3; 5 follows 4. Stages 7
@@ -1747,7 +1758,9 @@ Stage 9, with `go test -race` over a real gff-hab and holder and fake harnesses:
   it and the run skips with its batch kept. A notice or op with the service's actor id never
   triggers the round. An `outcome` status item after `accepted` sets `RoundRun.outcome` once,
   emits one `round.run_updated` and leaves the run's state; a second one for the same message is
-  dropped; one from a peer arrives after the runner wakes; an older runner ignores it.
+  dropped; one from a peer arrives after the runner wakes; an older runner ignores it; a
+  `duplicate` or `declined` run gets none; a run with no outcome after 7 days (fake clock) shows
+  "outcome unknown".
 - `group` against a fake group record and two habs: delivered to the coordinator on the other
   hab; held under the round lock while a client typed into it, then `expired` at the deadline
   and the run `skipped`, "in use", with the batch kept; a message that reaches the far hab after
@@ -1789,8 +1802,9 @@ bundles (in the style of `internal/modhost/testdata/bundles/`), on a fake clock 
   `args`, the stored cursor and the secret set's variables.
 - The returned cursor reaches the next call, also after a gff-hab restart and a module host
   kill; a call that fails keeps the old cursor and drops its events.
-- A module with no `watch` export, or not installed, is refused at create (`invalid`); `argv`
-  with `module` is refused.
+- A module with no `watch` export, without `watch = true`, or not installed, is refused at
+  create (`invalid`); `argv` with `module` is refused. An update that adds `watch = true` waits
+  for the user's accept, and the install shows the watcher line.
 - `fd.hab.act` in `watch` throws `PowerError` even with the `act` power; `fetch` and `exec` work
   when declared; a declared power reaches its backend.
 - A call that throws, returns the wrong shape or loops past 30 s is a failure: the backoff

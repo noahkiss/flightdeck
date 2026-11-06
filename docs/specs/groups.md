@@ -404,8 +404,9 @@ not have the project checked out (the lane needs it); is the current home (a no-
    and goes back to `ready` at the front of the queue. One past step 4 finishes its land, at most
    10 minutes; at that limit it goes back to `ready` and the new home starts it again at step 1,
    which marks it `landed` when its saved head is already on the target (14).
-3. **Adopt.** The current home sends `group.adopt {record, generation + 1}` over its link to the
-   new hab. The new hab checks the project again, writes the record (synced, then renamed) with
+3. **Adopt.** The current home sends `group.adopt {record, generation}` over its link to the
+   new hab. Each attempt takes a new generation, one above any the old home has used for the
+   group, so two attempts never share a number. The new hab checks the project again, writes the record (synced, then renamed) with
    itself as `home` and the mark `pending`, and answers. A pending copy is not published and runs
    nothing.
 4. **Commit.** On the answer, the old home writes its copy as a tombstone, `moved {to,
@@ -416,10 +417,15 @@ not have the project checked out (the lane needs it); is the current home (a no-
 5. **No answer.** When the adopt gets no answer in 60 s, or a refusal, the old home clears
    `moving`, keeps the group and says why on the card. It writes no tombstone, so a late answer
    commits nothing.
-6. **Crashes.** The old home, at its start, sends `group.adopt_commit` again for each tombstone
-   younger than 10 minutes. The new hab keeps a pending copy until a commit arrives, or until
-   its catalog copy of the old home shows the group live (no tombstone) with `moving` cleared;
-   then it drops the copy.
+6. **Commit from the catalog.** The tombstone is the commit, so the new hab does not need the
+   message. When any catalog copy of the old home shows the tombstone `moved {to: <this hab>,
+   generation}` matching its pending copy, the new hab commits by itself, as at step 4. A home
+   that wrote its tombstone and then slept or crashed therefore never strands the group. The
+   old home also sends `group.adopt_commit` again at its start for each tombstone the new home
+   has not acknowledged.
+7. **A stale pending copy.** The new hab drops a pending copy when a catalog copy shows the
+   group live anywhere (no tombstone, `moving` cleared), or a tombstone whose `to` is another
+   hab or whose generation is not the pending copy's.
 
 **How members and the coordinator re-point.**
 
@@ -439,9 +445,11 @@ not have the project checked out (the lane needs it); is the current home (a no-
 **The sleeping laptop.**
 
 - A move needs the current home awake: it holds the only writable record. Nothing moves a group
-  off a home that is already asleep or offline; the move is refused, "<label> is offline; the
-  group moves when it is back", and the app offers to queue it: the request waits on the
-  user's devices and runs when the home is online again. The mesh has no election (`mesh.md`),
+  off a home that is already asleep or offline. The move is then queued on the target hab,
+  which says so: "<label> is offline; the group moves when it is back". The target hab keeps
+  the request (one per group; a later request replaces it, and the user can cancel it from the
+  card), watches its catalog copy of the old home, and sends `group.move` over its link once
+  the old home is online. A queued move older than 7 days is dropped with one notice. The mesh has no election (`mesh.md`),
   so no other hab may take the record over by itself.
 - **At creation.** When the coordinator's hab is not marked `always_on` (`mesh.md` 8) and an
   always-on peer has the project, the plan's card says so in one line and offers that peer as
@@ -458,11 +466,12 @@ has Capcom's home host as its home (12.1). When the mark moves (`capcom.assign`)
   conversation does not move (`capcom.md` 7.3); the new Capcom reads the group with
   `group_status`.
 - **The old home asleep during the re-assignment** (the earlier open case of 12.1): the group
-  stays home on the old hab while it sleeps. Reports and lane results for the coordinator go to
-  the address `capcom`, which resolves to the new Capcom home (`capcom-service.md` 2.4), so
-  Capcom still hears them; the lane waits, as for any sleeping home. When the old home links
-  again it drops the mark (`capcom.md` 7.3) and, in the same step, moves its Capcom groups to the
-  new home.
+  stays home on the old hab while it sleeps, as any group with a sleeping home does (2.2, 14).
+  Reports go through the home (5.5), so they wait in the member habs' outboxes, and the lane
+  waits. Members keep working. A member's own `channel_send` to `capcom` reaches the new
+  Capcom home, as any channel message does. When the old home links again it drops the mark
+  (`capcom.md` 7.3) and, in the same step, moves its Capcom groups to the new home; the waiting
+  reports then reach the new Capcom.
 - **The new Capcom home lacks the project.** The move is refused by the check above. The group
   stays on the old home with Capcom as coordinator, and the new thread gets one note: "Group
   <title> stays on <label>: set up the project here to move it."
@@ -712,7 +721,7 @@ When a member reaches `group.compact_at`, its own hab:
    again at each of its turn ends; supervision never skips for good.
 2. Sends one message from Flightdeck: "context is at N%: send your progress with
    `group_note`, then end your turn." The hab writes that text as a note on the item's task
-   (Q5). The member's turn ends.
+   (13 Q5). The member's turn ends.
 3. Runs a compaction for the member's pane with the follow-up "continue item <title>; your notes
    are on task <id>". This is self-compact's machinery started by the hab (12.4).
 4. Counts the compact on the member's record.
@@ -805,7 +814,8 @@ defines the internals. Each row is **shared**: a change on either side updates b
   down (`capcom-service.md` 9.1), so reports to a Capcom coordinator go in at once and never
   wait in the record's inbox (5.5).
 - Capcom's tool list includes the coordinator's group tools of 15.2 (`capcom-service.md` 5.1).
-  An event turn may not call them (`capcom-service.md` 9.4).
+  An event turn may not call them (`capcom-service.md` 9.4), except under a Capcom job's `group`
+  action (`capcom-service.md` 9.6).
 - The group card links from Capcom's thread, and Capcom sums up the result there.
 - A group whose coordinator is Capcom has Capcom's home host as its home hab. When the Capcom
   mark moves, the group moves with it, also when the old home slept through the re-assignment
@@ -897,9 +907,9 @@ The owner answered this spec's open questions on 2026-11-06 (plan-xagejg31 (q)).
 | gff-hab restarts while the plan waits for its confirmation | The confirmation is gone; the group becomes `dropped` and the coordinator is told (3.2) |
 | The user moves the home while an item is landing | Before its push the item goes back to the front of the queue; after it, the land finishes first, at most 10 minutes (5.7) |
 | The new home goes offline mid-move | No commit: the old home keeps the group after 60 s and says why on the card (5.7) |
-| The old home crashes after its tombstone | At its start it sends the commit again; until then calls get `unavailable` and are retried (5.7) |
-| A move asked while the home sleeps | Refused; the app can queue it to run when the home is back (5.7) |
-| The Capcom mark moves while a Capcom group's home sleeps | Capcom hears reports at its new home through `capcom`; the group moves when the old home links again (5.7) |
+| The old home crashes or sleeps after its tombstone | The new home commits from the tombstone in its catalog copy; until then calls get `unavailable` and are retried (5.7) |
+| A move asked while the home sleeps | Queued on the target hab, which runs it when the home is back (5.7) |
+| The Capcom mark moves while a Capcom group's home sleeps | Reports wait in member outboxes and the lane waits; the group moves, and the reports reach the new Capcom, when the old home links again (5.7) |
 | The home hab is offline when a lead submits | The submit waits in the member hab's outbox; the reviewer starts when the home hab is back |
 | A heavy run's CLI is killed with SIGKILL | Its connection drops; the lock goes to the next waiter |
 | Disk low while the lane's checks wait | The lane waits like any heavy run; the card shows it |
@@ -987,7 +997,7 @@ fresh-eyes reviewer before they close.
 | B4 | Stacking and lane | Worktrees per lead with `fetch` (12.7), stacking, the lane from `ready` through its seven steps, back to the lead, the end of a group | B3, B7 | task-ur5zmuah |
 | B6 | Supervision | `context_pct` from Claude Code and Codex; compact, fresh session, sibling actions, the settings; the hab-started compaction and the nudge off for members (12.4); messages across a swap (12.8) | B3, task-f2fhhr6p | task-humtiqof |
 | B8 | Capcom coordinates | Group tools for Capcom, the card from its thread | Part 14 A2, B3 | task-itwl1sbg |
-| B9 | Move the home hab | `group.move`, the hand-over (freeze, drain, adopt, commit, crashes), `home` and `generation` in the record and catalog, forwarding and `moved` refusals, re-pointing by generation, the queued move, the always-on line at creation; moving Capcom groups with the Capcom mark | B3, B4; its Capcom rows after B8 | task-3vwhq3dn |
+| B9 | Move the home hab | `group.move`, the hand-over (freeze, drain, adopt, commit, commit from the catalog, stale pending copies), the queued move on the target hab, `home` and `generation` in the record and catalog, forwarding and `moved` refusals, re-pointing by generation, the queued move, the always-on line at creation; moving Capcom groups with the Capcom mark | B3, B4; its Capcom rows after B8 | task-3vwhq3dn |
 
 Order: B2 and B5; then B3; then B7 and B6; then B4; then B9; B8 after Part 14 A2, and B9's
 Capcom rows after B8. Usage pacing (10) lands with
@@ -1019,9 +1029,9 @@ over OSC 7501 and hooks.
 | B3 | A three-member plan raises one confirmation, a plan on one host too; nothing starts before it; with `confirm.group_plan` off it starts at once; the level picker writes true at Safe and Balanced and false at Bypass; with it off and `confirm.start_elsewhere` on, a plan with a member elsewhere asks once. A worker inside the envelope asks nothing, also with the home hab stopped; a new host asks once through `group_amend`. A restart during `confirming` drops the group and tells the coordinator. Reports to an exited coordinator wait and arrive at its resume. A user pause outlives a usage resume. A member resumes from a plain terminal. The record survives a gff-hab restart. Swift and Go tests over a fake hab: the card lists items, members and states |
 | B5 | Three runs on one host take the lock in arrival order; a killed CLI releases it; a CLI that reconnects after a gff-hab restart keeps its place; a hold past the limit raises one notice |
 | B7 | The reviewer is in another harness than the lead; with only one harness, the card says "same harness"; a `fix_needed` moves the item to `fix` and reaches the lead; a pass with fixes names a review head that descends from the submitted head, and one that does not is ignored; the coordinator gets one line, not the review |
-| B4 | After a land the lead and the reviewer keep running, their worktrees stay until their sessions end, and the item does not stall when the user closes them; the group's end closes them when idle; a project with no `lane.ci` lands on its checks and the card says "no CI"; a `fix_needed` item never lands; a pass with fixes lands the review head; a stacked item lands after the item it stacks on with the earlier commits out of its diff; a target that moves during CI makes the lane start again; three moves send it back; a protected-branch refusal stops the lane; an item branch that empties `lane.checks` still runs the target's checks; a restart after the land push marks the item landed; the end lists leftovers and removes nothing with uncommitted changes |
+| B4 | After a land the lead and the reviewer keep running and hold no lead slot (a queued item starts), their worktrees stay until their sessions end, and the item does not stall when the user closes them; the group's end closes them when idle; a project with no `lane.ci` lands on its checks and the card says "no CI"; a `fix_needed` item never lands; a pass with fixes lands the review head; a stacked item lands after the item it stacks on with the earlier commits out of its diff; a target that moves during CI makes the lane start again; three moves send it back; a protected-branch refusal stops the lane; an item branch that empties `lane.checks` still runs the target's checks; a restart after the land push marks the item landed; the end lists leftovers and removes nothing with uncommitted changes |
 | B6 | A sibling action against a session in use waits, then skips after 10 minutes; a Codex member with a fake rollout reading goes straight to a fresh session at 60%; a member with no `context_pct` is supervised by size; a member gets no context nudge, and its own compaction counts |
-| B9 | Two habs over the ssh stand-in, real git and fake harnesses: `gff group move` moves the record, the lane and the catalog entry; the coordinator gets one line; a member on a third hab sends its next report and `lane_submit` to the new home after one catalog pull, and one sent to the old home is forwarded; the old home's lane worktree goes. An item before its push goes back to the front of the queue; one after it lands first. The new home killed before its answer: the old home keeps the group after 60 s. The old home killed after its tombstone: at its start the commit goes again and the new home runs the lane; calls meanwhile are retried. A move to a hab without the project, a move of an `ended` group and a move from a pane are refused. A move asked while the home is stopped is refused, and the queued move runs when it is back. With Capcom as coordinator (a fake service): `capcom.assign` to the other hab moves the group with the mark, and the new thread gets the note; with the old home stopped during the assignment, reports reach the new Capcom, and the group moves when the old home links again. Swift and Go over a fake hab: the card's "Move home" and the new home label |
+| B9 | Two habs over the ssh stand-in, real git and fake harnesses: `gff group move` moves the record, the lane and the catalog entry; the coordinator gets one line; a member on a third hab sends its next report and `lane_submit` to the new home after one catalog pull, and one sent to the old home is forwarded; the old home's lane worktree goes. An item before its push goes back to the front of the queue; one after it lands first. The new home killed before its answer: the old home keeps the group after 60 s. The old home killed after its tombstone and kept stopped past 10 minutes: the new home commits from the tombstone in its catalog copy and runs the lane; calls meanwhile are retried. A move to B that times out, then a move to C: B drops its pending copy when C's commit shows. A move to a hab without the project, a move of an `ended` group and a move from a pane are refused. A move asked while the home is stopped is queued on the target, runs once when the home is back, and a second request replaces the first. With Capcom as coordinator (a fake service): `capcom.assign` to the other hab moves the group with the mark, and the new thread gets the note; with the old home stopped during the assignment, reports wait in the member's outbox, and when the old home links again the group moves and the reports reach the new Capcom. Swift and Go over a fake hab: the card's "Move home" and the new home label |
 | B8 | Live check of `swarm-study.md` 2.4 scenario 2: Capcom finds the project, starts a group across two hosts after one confirmation, and replies with the summary |
 
 ---
