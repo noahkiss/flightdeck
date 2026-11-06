@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/internal/logbook"
+	"github.com/noahkiss/flightdeck/internal/push"
 )
 
 // Engine turns texts into vectors (13, vector search). The hab ships no model: an engine is a
@@ -29,37 +30,188 @@ type Engine interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 }
 
+// Engine call and key command bounds. The key command's backoff is that of [summaries]
+// (app.md 16.5) and push (docs/push.md): after a failed run the next waits 30 s, doubling to
+// 30 minutes; after a good run, a re-run on a refused key waits 5 minutes.
+const (
+	engineTimeout = 60 * time.Second
+	maxKeyOutput  = 4 << 10
+	keyRetryFirst = 30 * time.Second
+	keyRetryMax   = 30 * time.Minute
+	keyRerunAfter = 5 * time.Minute
+)
+
+// ErrNoKey reports that key_command has not printed a key yet.
+var ErrNoKey = errors.New("logbook vectors: the key command has not printed a key")
+
+// EngineOptions are an HTTPEngine's seams. All may be zero.
+type EngineOptions struct {
+	HTTP *http.Client // nil: a client with a 60 s timeout
+	Now  func() time.Time
+	Logf func(string, ...any)
+	// KeyRun replaces running key_command; for tests.
+	KeyRun func(ctx context.Context) (string, error)
+}
+
 // HTTPEngine asks an embeddings server that speaks the OpenAI-compatible
-// `POST {"model", "input": [...]}` shape, such as a local model server, for vectors.
+// `POST <base_url>/embeddings {"model", "input": [...]}` shape, such as a local model server,
+// for vectors. With a key_command it sends the key the command printed as a bearer token; the
+// key stays in memory only. Safe for concurrent use.
 type HTTPEngine struct {
-	URL    string
-	Model  string
-	Client *http.Client
+	endpoint string
+	model    string
+	hc       *http.Client
+	now      func() time.Time
+	logf     func(string, ...any)
+	keyRun   func(ctx context.Context) (string, error)
+
+	ctx  context.Context
+	stop context.CancelFunc
+
+	mu       sync.Mutex
+	key      string
+	keyBusy  bool
+	keyNext  time.Time
+	keyWait  time.Duration
+	keyFails bool
+}
+
+// NewHTTPEngine returns an engine for <baseURL>/embeddings and starts loading the key in the
+// background when keyCommand is not nil.
+func NewHTTPEngine(baseURL, model string, keyCommand []string, o EngineOptions) *HTTPEngine {
+	if o.HTTP == nil {
+		o.HTTP = &http.Client{Timeout: engineTimeout}
+	}
+	if o.Now == nil {
+		o.Now = time.Now
+	}
+	if o.Logf == nil {
+		o.Logf = func(string, ...any) {}
+	}
+	e := &HTTPEngine{endpoint: strings.TrimRight(baseURL, "/") + "/embeddings", model: model, hc: o.HTTP, now: o.Now, logf: o.Logf, keyRun: o.KeyRun}
+	e.ctx, e.stop = context.WithCancel(context.Background())
+	if e.keyRun == nil && keyCommand != nil {
+		argv := keyCommand
+		e.keyRun = func(ctx context.Context) (string, error) {
+			var key string
+			err := push.RunSecret(ctx, "logbook.vectors key_command", argv, 0, maxKeyOutput, func(out []byte) error {
+				for _, l := range strings.Split(string(out), "\n") {
+					if l = strings.TrimSpace(l); l != "" {
+						key = strings.Clone(l)
+						return nil
+					}
+				}
+				return errors.New("printed no key")
+			})
+			if err != nil {
+				// The command can put its secret anywhere on stderr, including short tokens.
+				return "", errors.New("logbook.vectors key_command failed")
+			}
+			return key, nil
+		}
+	}
+	if e.keyRun != nil {
+		e.mu.Lock()
+		e.loadKeyLocked()
+		e.mu.Unlock()
+	}
+	return e
+}
+
+// Close ends a key command run that is on; later calls fail at once.
+func (e *HTTPEngine) Close() { e.stop() }
+
+// loadKeyLocked starts a key command run when none is on and the backoff allows. Called with
+// mu held.
+func (e *HTTPEngine) loadKeyLocked() {
+	if e.keyBusy || e.ctx.Err() != nil || e.now().Before(e.keyNext) {
+		return
+	}
+	e.keyBusy = true
+	go func() {
+		key, err := e.keyRun(e.ctx)
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		e.keyBusy = false
+		if e.ctx.Err() != nil {
+			return
+		}
+		if err != nil || key == "" {
+			if err == nil {
+				err = errors.New("logbook.vectors key_command printed no key")
+			}
+			e.keyWait = min(max(2*e.keyWait, keyRetryFirst), keyRetryMax)
+			e.keyNext = e.now().Add(e.keyWait)
+			if !e.keyFails {
+				e.keyFails = true
+				e.logf("logbook vectors are off: %v; trying again in %v, backing off to %v", err, e.keyWait, keyRetryMax)
+			}
+			return
+		}
+		if e.keyFails {
+			e.logf("logbook vectors: the key command printed a key")
+		}
+		e.key, e.keyFails, e.keyWait = key, false, 0
+		e.keyNext = e.now().Add(keyRerunAfter)
+	}()
+}
+
+// StatusError is an answer with a status other than 200.
+type StatusError struct{ Code int }
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("embeddings server: answered HTTP %d", e.Code)
 }
 
 // Embed sends one request for every text.
-func (e HTTPEngine) Embed(ctx context.Context, texts []string) ([][]float32, error) {
-	body, _ := json.Marshal(map[string]any{"model": e.Model, "input": texts})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.URL, bytes.NewReader(body))
-	if err != nil {
+func (e *HTTPEngine) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	e.mu.Lock()
+	key := e.key
+	if e.keyRun != nil && key == "" {
+		e.loadKeyLocked()
+		e.mu.Unlock()
+		return nil, ErrNoKey
+	}
+	e.mu.Unlock()
+	if err := e.ctx.Err(); err != nil {
 		return nil, err
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(e.ctx, cancel)()
+	vs, err := e.call(ctx, key, texts)
+	var se *StatusError
+	if errors.As(err, &se) && (se.Code == 401 || se.Code == 403) && e.keyRun != nil {
+		// A refused key: run the key command again (within its backoff), as [summaries] does.
+		// The key held stays until a new one is printed.
+		e.mu.Lock()
+		e.loadKeyLocked()
+		e.mu.Unlock()
+	}
+	return vs, err
+}
+
+func (e *HTTPEngine) call(ctx context.Context, key string, texts []string) ([][]float32, error) {
+	body, _ := json.Marshal(map[string]any{"model": e.model, "input": texts})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, errors.New("embeddings server: a bad base_url")
 	}
 	req.Header.Set("Content-Type", "application/json")
-	c := e.Client
-	if c == nil {
-		c = &http.Client{Timeout: 60 * time.Second}
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
 	}
-	resp, err := c.Do(req)
+	resp, err := e.hc.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, transportError(ctx, err)
 	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 256<<20))
 	if err != nil {
-		return nil, err
+		return nil, transportError(ctx, err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("embeddings server: %s", resp.Status)
+		return nil, &StatusError{Code: resp.StatusCode}
 	}
 	var out struct {
 		Data []struct {
@@ -81,6 +233,22 @@ func (e HTTPEngine) Embed(ctx context.Context, texts []string) ([][]float32, err
 		vs[d.Index] = d.Embedding
 	}
 	return vs, nil
+}
+
+// transportError names a failed exchange by its kind only, as [summaries] does: a url.Error's
+// text holds the URL, which may carry a query the owner typed.
+func transportError(ctx context.Context, err error) error {
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("embeddings server: %w", context.DeadlineExceeded)
+	case ctx.Err() != nil:
+		return ctx.Err()
+	}
+	var ne interface{ Timeout() bool }
+	if errors.As(err, &ne) && ne.Timeout() {
+		return fmt.Errorf("embeddings server: %w", context.DeadlineExceeded)
+	}
+	return errors.New("embeddings server: could not be reached")
 }
 
 // FakeEngine embeds by hashed words: texts that share words land close. Tests use it; it is

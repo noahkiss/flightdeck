@@ -944,6 +944,7 @@ func serve(args []string) error {
 	if err != nil {
 		return fmt.Errorf("logbook: %w", err)
 	}
+	defer lbSemantic.close()
 	if lbSemantic.index != nil {
 		caps = append(caps, vectorsCapability)
 	}
