@@ -90,6 +90,21 @@ func (c *client) input(p []byte) error {
 	}
 	start := 0
 	for i := 0; i < len(p); i++ {
+		// Let the key reader enter or leave paste mode before inspecting the rest of
+		// this read. Pasted text can contain mouse reports and scroll key sequences.
+		marker := pasteStart
+		if c.keys.paste {
+			marker = pasteEnd
+		}
+		if len(c.keys.held) == 0 && bytes.HasPrefix(p[i:], marker) {
+			end := i + len(marker)
+			if err := c.keyInput(p[start:end]); err != nil {
+				return err
+			}
+			i = end - 1
+			start = end
+			continue
+		}
 		if p[i] != 0x1b || !c.takesMouse() || c.keys.paste || len(c.keys.held) > 0 {
 			continue
 		}

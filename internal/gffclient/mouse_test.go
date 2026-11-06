@@ -94,6 +94,14 @@ func TestWheelScrollsLocally(t *testing.T) {
 		t.Fatalf("scroll keys reached the program: %q", b)
 	}
 
+	// Pasted control sequences are data, even when the entire paste arrives in one read.
+	paste := "\x1b[200~\x1b[<64;60;10M\x1b[5;2~\x1b[201~"
+	hst.typ(paste)
+	waitUntil(t, "paste at the program", func() bool { b, _ := os.ReadFile(typed); return string(b) == "zz"+paste })
+	if strings.Contains(hst.screen(), "scrolled") {
+		t.Fatal("pasted mouse report scrolled the view")
+	}
+
 	// A program that asks for the mouse gets the wheel; one on the alternate screen with no
 	// mouse mode gets arrow keys.
 	call(t, other, "pane.close", api.PaneRef{Pane: pane}, &empty)
