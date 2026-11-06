@@ -329,7 +329,7 @@ Where this spec was silent, stage 5 decided. Each is a default the owner may rev
 | Folder identities | Not built: a session outside a repository has no project in the structure, so Logbook files none for it (`folder:` of 3.1) |
 | A different repository in a filed folder | Counts as a remote change when its identity is new: the new identity joins the old project. There is no split. A user who reuses a folder for another repository can rename the folder first |
 | Peer-link reads | Unfiltered: no agent read goes over a peer link in this build. A read over one is a hab's |
-| Not built | The current project as the default view of `ls`, `ready` and the brief (12.1, 10.2): stage 6 builds it with the brief. The CLI's current project outside a pane (10.2). Unjoining |
+| Not built | Unjoining. Stage 6 built the current project as the default view of `ls`, `ready` and the brief (12.1, 10.2), and the CLI's current project outside a pane (11.4) |
 
 ---
 
@@ -846,13 +846,13 @@ shapes are in `api/logbook.go`.
 
 | Item | Built |
 |---|---|
-| Methods | `logbook.find`, `.get`, `.list`, `.ready`, `.history`, `.write`, `.resolve`, `.projects`, `.status`. `logbook.pull` and `logbook.push` are stage 3's (7.6), `logbook.decide` stage 7's (9.4). `logbook.brief` (stage 6) is not in the schema yet |
+| Methods | `logbook.find`, `.get`, `.list`, `.ready`, `.history`, `.write`, `.resolve`, `.projects`, `.status`. `logbook.pull` and `logbook.push` are stage 3's (7.6), `logbook.decide` stage 7's (9.4), `logbook.brief` stage 6's (11.4) |
 | Events | `logbook.updated {id, revision, type, project, deleted}` and `logbook.conflict {id, revision, flags}`, host scope only, not in the snapshot. The revision is the record's count of folded ops |
 | Capability | `logbook`, one capability for sync and the verbs, sent when `<state>/logbook.db` opens with the hab's device id as origin. A corrupt file, or one of another origin, is set aside first (7.6); a file that still does not open stops gff-hab with the reason |
 | Sync | Each write through the verbs nudges sync, which sends the new ops at once (7.2). Writes wait out the start hold, and a restored file refuses them with `unavailable` (7.6); the CLI's own store honours both, since both live in the file |
 | Pane route | Every method above. `logbook.find` and `logbook.get` moved from the read methods to `hook.LogbookMethods`, whose handler knows the pane |
-| CLI | `gff lb` (long form `gff logbook`), and `gff-hab lb`, the same code. Verbs of 10.2 that later stages own (`brief`, `export`, `import`) say which stage builds them. `approve` and `reject` are stage 7's (9.4); `project join`, `project rename` and `project private` stage 5's (3.3) |
-| MCP | `logbook_search` and `logbook_read` (read tools, built with Capcom's tools), `logbook_write` (an action tool). `logbook_brief` waits for stage 6 |
+| CLI | `gff lb` (long form `gff logbook`), and `gff-hab lb`, the same code. Verbs of 10.2 that later stages own (`export`, `import`) say which stage builds them; `brief` is stage 6's (11.4). `approve` and `reject` are stage 7's (9.4); `project join`, `project rename` and `project private` stage 5's (3.3) |
+| MCP | `logbook_search` and `logbook_read` (read tools, built with Capcom's tools), `logbook_write` (an action tool). `logbook_brief` is stage 6's (11.4) |
 
 Where this spec was silent, stage 4 decided:
 
@@ -877,7 +877,7 @@ Where this spec was silent, stage 4 decided:
 | Lists | `logbook.list` and `find` without words go newest change first; `find` with words best match first. Filters: type, status, project (through joins), tag, host (the actor's host or the create's origin), author (the actor's session, device or harness), session (the actor's or the source's: Capcom lists one conversation's proposals with it), since, general, flagged, deleted. Default 50, at most 500, with `more` |
 | Events for other writers | gff-hab reads `Changes` after each of its own writes and every second, so the CLI's writes to the file reach clients within a second. Events start from the file's end at gff-hab's start: a client takes a fresh read on a new epoch |
 | `logbook.conflict` | Sent when a record's set of flag kinds changes, any kind; an empty list means the last one went |
-| Not built | `--host <label>` over SSH (10.1); the current project as the default view (10.2). Stage 5 finds a pane's project for the private rule (3.3) |
+| Not built | `--host <label>` over SSH (10.1). Stage 5 finds a pane's project for the private rule (3.3); stage 6 makes it the default view (11.4) |
 
 ---
 
@@ -931,6 +931,45 @@ from one place, with no extra process per hook.
 Decision: habits in the hook endpoint, each with a setting. Reason: the study in 1.1 shows hooks
 carry the habit; one endpoint serves all three harnesses; the owner's rule gives every friction a
 setting.
+
+### 11.4 Built (stage 6)
+
+The brief's query is `Store.Brief` in `internal/logbook` (`brief.go`), its text `BriefText` in
+`internal/lbsvc` (`brief.go`). The habits' rules are in `internal/habits`. gff-hab answers them in
+`habitService` (`cmd/gff-hab/habits.go`). The hook side is in `internal/hook` (`ContextEvent`,
+`ContextOutput`, the `?context=1` post).
+
+| Item | Built |
+|---|---|
+| Brief | `logbook.brief {project}` answers `{project, name, text, records, dropped}`. The text opens with the project's name, id, untriaged and flagged counts, and how to read a record. Then one section per kind, in rank order: doing and blocked (doing first), handed over, ready, pinned guides, findings from the last 7 days, open plans, records for every project. One line per record: id, status, title; a record with no status shows id and title. A record shows once, in its highest section |
+| What each section holds | Handed over: an open task or issue with triage `new` and a `from` link. Ready: as `ready`, priority 1 first, no priority after 3, then newest. Pinned guides: `current` ones. Findings: created in the last 7 days, not superseded. Open plans: `open` with a stage that is not done or dropped. For every project: no project, tagged `everywhere`, not closed, not superseded. Untriaged counts open tasks and issues with triage `new`; flagged counts records with a flag |
+| The cap | 8 KB. Lines go in by rank until the next would pass the cap with room kept for the more line; every line after is dropped. The text then ends with "more: `gff lb ready`". Each section reads at most 500 records, enough for any cap |
+| No project | A brief with no project holds only the records for every project, under a line that says the folder has no project |
+| Default view | On the pane route, `logbook.brief`, `logbook.list` and `logbook.ready` with no `project` cover the pane's project. `all: true` (new on list and ready) covers every project; `general` and a named project work as before. A pane with no project, and a person on the control connection, see every project. `find` always searches every project. The CLI's `conflicts` and `proposals` ask for every project |
+| Current project outside a pane | `gff lb brief`, `ls` and `ready` take the project that holds the working folder's identity (3.1), found through `logbook.projects`, unless `--project`, `--general` or `--all`. Outside a repository there is none: `ls` and `ready` cover every project |
+| Private projects | A pane's brief of a private project outside its own answers `not_found`, as a read of it (3.3). Its own brief shows its own private project |
+| Context mode | `gff-hab hook` posts a habit's event with `?context=1`. gff-hab's sink takes the envelope first, then the habit answers: 200 with `{"text"}`, or 204 for nothing. The command prints the text in the harness's shape. It keeps the 900 ms budget |
+| Claude Code and Codex | One shape for both. `SessionStart` (every source: startup, resume, compact, clear) prints `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":<brief>}}`. `UserPromptSubmit` prints the same shape with the reminder. `Stop` prints `{"decision":"block","reason":<closeout>}`. Codex is taken to read Claude Code's shapes, as its PermissionRequest output already does; that waits for a check against a real Codex (11.3 *(gk)*) |
+| opencode | The printed plugin pipes `gff-hab hook`'s stdout at `session.created` and adds the brief to the new session with `client.session.prompt`, `noReply: true` and a synthetic text part. Not checked against a real opencode yet *(gk)*. No reminder and no closeout (11.3) |
+| gff-hab down | At the brief's event, when nothing answers at the socket, the command opens `logbook.db` in `$GFF_HAB_STATE` and builds the brief itself: the payload's `cwd` gives the project by identity, and private projects but that one stay hidden. The reminder and the closeout print nothing |
+| Reminder | Counted per Flightdeck session (a pane outside a session counts as its own). A file change starts the clock: a PostToolUse of Write, Edit, MultiEdit, NotebookEdit or apply_patch, or a shell tool (Bash, shell, exec_command, local_shell) whose command runs `git commit`. A prompt 30 minutes after that change, or the 20th prompt since it, gets the reminder, at most once an hour. A Logbook write from the session's pane (`logbook.write` or `logbook.resolve`, proposals included) starts the count again |
+| Closeout | The first `Stop` after a file change or a commit, in a session that made no Logbook write, gets the closeout. Never twice per session, whatever happens after. Not for a round's run session: its run ends at the turn's end (rounds.md 7) |
+| Settings | Hab-side settings `logbook.habits.brief`, `.reminder` and `.closeout`, bools, on by default (15.2 option A). `[settings]` in the hab's config file can lock them (`app.md` 20.5) |
+| Per project | `[logbook.habits_off]` in the hab's config file maps a project, by its Logbook id or an identity, to the habits it turns off: `"github.com/owner/repo" = ["closeout"]`. gff-hab reads the table again when the file changes; a table that does not parse keeps the last good one. An unknown habit is refused by name |
+| MCP | `logbook_brief` (a read tool) with an optional `project` |
+| Prompt counting | A prompt counts toward the reminder whether or not the reminder is on, so turning it on later does not reset the count |
+
+Where this spec was silent, stage 6 decided. Each is a default the owner may revisit:
+
+| Point | Decision |
+|---|---|
+| Per-project setting | In the hab's config file, not in Logbook. Reason: a setting is a hab's, like the others; a Logbook field would sync a host's preference to every host |
+| What counts as a change | Edit tools and `git commit` through a shell tool, read from the PostToolUse payload. A file written by a shell command is not seen |
+| "No Logbook write" | For the reminder, since the last write; for the closeout, in the whole session |
+| Rank across sections | Sections in the order above; within one, its own order. A lower section loses all its lines before a higher one loses any |
+| The tracker | In memory: a gff-hab restart starts each session's counts again, and a session may get a second closeout after one |
+| A blocked stop | The `Stop` that carries the closeout still reaches the agent state, so the session shows done, then working, as the agent takes its extra turn |
+| Not built | Ledger entries for each injection (11.1): the flight rules ledger (`instructions-mcp-flight-rules.md` 11) is not built yet. Claude Code records hook context in its transcript, where the ledger's reader will find it. The printed agent skill's recording advice (11.1) |
 
 ---
 
@@ -1045,6 +1084,8 @@ Recommendation: **A.** The Capcom review is one batch at the end, not a prompt p
 
 Recommendation: **A**, with the per-project setting to turn it off.
 
+Stage 6 builds A, the default, with the per-project switch (11.4).
+
 ### 15.3 Cross-project reads
 
 | Option | For | Against |
@@ -1126,7 +1167,7 @@ Each stage gets a fresh-eyes review before it closes (core functionality).
 | 3 | Sync | `logbook.pull` and `logbook.push` on the peer link, version vectors, paging, wake-ups (7) | P1, P4, P5, P7, P8, P9 pass; an end-to-end test with two real habs over `ssh localhost` (skips without it) syncs 10,000 records and then a write in under 2 s; a hab rebuilt with a new key gets its old ops back |
 | 4 | CLI, API and MCP | `gff lb` verbs (10.2), `logbook.*` methods and events (10.3), the four MCP tools in `gff-hab mcp serve`, idempotency keys, the pane write limit. Built: 10.5 | Golden messages for every new method and event (core test 5); the CLI writes while gff-hab is stopped and the hab syncs those ops after start; a repeated write key applies once; a write through a pane token records harness, session and host |
 | 5 | Projects | Identity set, first sight, join, remote change, private flag (3, 12.1). Built: 3.3 | SSH and HTTPS remotes of one repository match; two worktrees share a project; a remote rename keeps records; E9 holds across two habs |
-| 6 | Habits | Context mode in `gff-hab hook`, brief, reminder, closeout per harness (11), ledger entries | Fixture tests per harness give the exact injected text; the brief stays under 8 KB with 1,000 open tasks; with gff-hab stopped the brief still prints from the file within the 900 ms budget; closeout fires at most once per session; each habit's setting turns it off |
+| 6 | Habits | Context mode in `gff-hab hook`, brief, reminder, closeout per harness (11), ledger entries. Built: 11.4 | Fixture tests per harness give the exact injected text; the brief stays under 8 KB with 1,000 open tasks; with gff-hab stopped the brief still prints from the file within the 900 ms budget; closeout fires at most once per session; each habit's setting turns it off |
 | 7 | Approval | `logbook.approval`, proposals, decide, first-writer-wins, overruled approvals (9); memory proposals from Part 8 stored here. Built: 9.4 | Under `agents`, an agent write returns `proposed` and lands only on approval; E10 holds across two habs; a reject that wins hides the approved record and flags it |
 | 8 | App views (Part 6) | A Logbook view: projects, lists with filters, record view with history and conflict banner, resolve; proposals in approvals; untriaged count on the status board; quick capture | The device smoke adds: create a task on the phone offline, see it on the Mac after reconnect; resolve a seeded conflict from the phone |
 | 9 | Always-on extras and export | Backup, git export, vector search (13); `export` and `import` | A backup restores to a working replica; the git export has one file per record and no forgotten text after a forget; with no vector hab the semantic flag answers the stated message; an import keeps ids |

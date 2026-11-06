@@ -1,5 +1,5 @@
 {
-  "note": "Written by hand. Codex hook payloads (0.166) for the three habits of logbook.md 11.3. Codex reads the same hook output shape as Claude Code: additionalContext at SessionStart and UserPromptSubmit, a block decision with a reason at Stop, which Codex takes as one more turn.",
+  "note": "Written by hand. Codex hook payloads (0.166) for the three habits of logbook.md 11.3. gff-hab hook prints Claude Code's hook output shape for Codex too, as for PermissionRequest: additionalContext at SessionStart and UserPromptSubmit, a block decision with a reason at Stop. Not yet checked against a real Codex.",
   "cases": [
     {"event": "SessionStart", "payload": {"session_id": "019a-codex-1", "cwd": "/work/app", "hook_event_name": "SessionStart", "model": "gpt-5", "source": "startup"},
      "text": "Logbook brief: no project for this folder; records for every project only.\n",

@@ -158,3 +158,11 @@ func TestOff(t *testing.T) {
 		t.Fatalf("a bad file replaced the last good table: %v %v", off, f.Err())
 	}
 }
+
+// TestOffExample: the example config's table parses and turns nothing off.
+func TestOffExample(t *testing.T) {
+	off, err := LoadOff(filepath.Join("..", "..", "docs", "examples", "hab.toml"))
+	if err != nil || len(off) != 0 {
+		t.Fatalf("example: %v %v", off, err)
+	}
+}

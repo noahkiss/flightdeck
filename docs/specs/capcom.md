@@ -299,7 +299,8 @@ Package `internal/readtools`, wired into `gff-hab serve`. Capability `read-tools
 `gff-hab mcp --skill`.
 
 - **Ten tools, one table.** `hosts`, `projects`, `agents`, `sessions`, `transcript_search`,
-  `transcript_read`, `notice_read`, `file_read`, `logbook_search`, `logbook_read`. The MCP
+  `transcript_read`, `notice_read`, `file_read`, `logbook_search`, `logbook_read`; Logbook
+  stage 6 adds `logbook_brief` (`logbook.md` 11.4). The MCP
   server, the CLI and the manual come from one table in `cmd/gff-hab/tools.go`. A test checks
   that the manual names exactly the listed tools and their arguments. The catalog tools read
   `catalog.list` and `peers.list`; they need no new method.

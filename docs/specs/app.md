@@ -3477,6 +3477,7 @@ picker never changes them.
 | `widget.hide_titles` | Hide titles on the Lock Screen | Widgets | bool | Off | App Group | 15.2 |
 | `mac.keep_connected` | Stay connected in the background | Connection | bool | Off | App (Mac) | 12.1 |
 | `hab.permission_wait` | Answer permissions from the app (blocking hook) | Approvals | integer seconds, 0 = off, else 1 to 120 | 0; the switch sets 30 | Hab, this hab only | 7.4, `harness-adapters.md` (blocking hook) |
+| `logbook.habits.brief`, `logbook.habits.reminder`, `logbook.habits.closeout` | Brief at session start; remind to record; ask to record before stopping | Agents | bool | On | Hab, every hab; `[logbook.habits_off]` in the hab's config file turns one off per project | `logbook.md` 11.1, 11.4 |
 | `voice.*` | Engines (hab, Parakeet, Apple), summary request, spoken commands, confirm before send, barge-in, noisy room, pause | Voice | As 13.7 | As 13.7 | App | 13.7 |
 | `voice.language` | Dictation language | Voice | a language tag, or system | System | App (not built) | 13.4 |
 

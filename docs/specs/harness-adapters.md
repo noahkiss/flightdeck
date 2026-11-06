@@ -58,8 +58,8 @@ Every claim about a harness names its source in [Sources](#sources).
    rewrite or copy them. `claude --resume <id>`, `codex resume <id>` and
    `opencode --session <id>` must keep working from a plain terminal.
 5. **Hooks never slow a turn.** A hook command exits fast and prints nothing on stdout, except
-   the one opt-in blocking permission hook. On Claude's `UserPromptSubmit`, hook stdout lands in
-   the prompt.
+   the one opt-in blocking permission hook and the Logbook habits (`logbook.md` 11.3, 11.4). On
+   Claude's `UserPromptSubmit`, hook stdout lands in the prompt.
 6. **Fail visibly.** An unknown record type, a parse error or a missing hook shows as a degraded
    adapter in the status board. It never shows as a wrong state.
 7. **The server answers terminal queries once.** `gff-hab` answers terminal queries, including
@@ -273,7 +273,7 @@ endpoint, which takes an optional `harness` field that defaults to `claude`.
 - **Caller.** One small command, `gff-hab hook <harness> <event>`, reads the harness's hook JSON on
   stdin once, adds our envelope, posts it, and exits. The post is synchronous, with a cap under
   one second, so a dead `gff-hab` costs the turn nothing. It never writes to stdout, except in
-  blocking permission mode.
+  blocking permission mode and at the Logbook habits' events (`logbook.md` 11.4).
 - **Envelope.** `harness`, `event` (the native event name), `t` (client clock, ms since epoch),
   `n` (a per-process counter from the hook command, see ordering), `payload` (the native JSON,
   untouched).
@@ -319,9 +319,11 @@ Built choices (`internal/hook`, `internal/harness`, `gff-hab hook`):
 - The welcome lists the `agent-state` capability whenever the holder link is on.
 - **Answers.** `POST /hooks/<token>` answers 204 when accepted, 400 for a bad envelope, 404
   for an unknown token (logged once per token) and 413 above 8 MiB. A post with no `t` gets the
-  server's clock.
+  server's clock. A post with `?context=1` (a Logbook habit's event, `logbook.md` 11.4) answers
+  200 with `{"text": ...}` when gff-hab adds context for the agent, else 204.
 - **The command.** `gff-hab hook <harness> [event]` reads stdin, wraps it and posts it, then
-  exits 0, always, and never writes to stdout. With no event argument it takes
+  exits 0, always. It writes to stdout only for the blocking hook and the Logbook habits
+  (`logbook.md` 11.4). With no event argument it takes
   `hook_event_name` (Claude Code, Codex) or `type` (opencode) from the payload. The post is
   synchronous with a 900 ms budget for the whole run, enforced by a timer that exits 0: a
   stopped gff-hab fails at dial in a few milliseconds, and a hung one costs at most the budget.
@@ -1281,7 +1283,8 @@ Built (option B, off until the owner turns it on):
 - **Output.** With a decision, the command prints the harness's hook output (Claude Code and
   Codex share one shape),
   `{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{...}}}`. With none it
-  prints nothing, and Claude shows its own dialog. The command never prints for any other event.
+  prints nothing, and Claude shows its own dialog. The command prints for no other event but the
+  Logbook habits' (`logbook.md` 11.4).
 - **Answer.** `approval.answer` hands the decision to the waiting hook when one waits on that
   request; otherwise it falls back to keys.
 - **Wait first.** The hook's state change and its wait are one step, done before the 200, so an
