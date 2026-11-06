@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/lbsvc"
 	"github.com/noahkiss/flightdeck/internal/logbook"
+	"github.com/noahkiss/flightdeck/internal/settings"
 )
 
 // fileProjects files projects for remotes in state's file, as gff-hab's first sight does, and
@@ -214,4 +216,73 @@ func TestCurrentProject(t *testing.T) {
 	if out := run(t.TempDir(), "brief"); !strings.HasPrefix(out, "Logbook brief: no project") {
 		t.Fatalf("brief outside a repository:\n%s", out)
 	}
+}
+
+// TestFileBriefHabits: the hook's file brief honours the switches gff-hab would (11.1): with no
+// settings and no config file the brief shows; logbook.habits.brief off in settings.json turns it
+// off; a [settings] lock in the config file wins over settings.json; [logbook.habits_off] turns it
+// off for the project by its identity or its id and leaves another project's on; a broken file
+// counts as none.
+func TestFileBriefHabits(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	state := newState(t)
+	ps, ts := fileProjects(t, state, "git@example.com:o/app.git", "git@example.com:o/other.git")
+	folder := func(remote string) string {
+		dir := t.TempDir()
+		for _, args := range [][]string{{"init", "-q", dir}, {"-C", dir, "remote", "add", "origin", remote}} {
+			if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v %s", args, err, out)
+			}
+		}
+		return dir
+	}
+	app, other := folder("https://example.com/o/app"), folder("https://example.com/o/other")
+	cfg := filepath.Join(t.TempDir(), "hab.toml")
+	brief := func(dir string) string {
+		t.Helper()
+		env := map[string]string{"GFF_HAB_STATE": state}
+		b, err := FileBrief(context.Background(), Env{Getenv: func(k string) string { return env[k] }, Dir: dir}, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b.Text
+	}
+	shown := func(what, dir, task string) {
+		t.Helper()
+		if out := brief(dir); !strings.Contains(out, task) {
+			t.Fatalf("%s: no brief: %q", what, out)
+		}
+	}
+	hidden := func(what, dir string) {
+		t.Helper()
+		if out := brief(dir); out != "" {
+			t.Fatalf("%s: brief shown:\n%s", what, out)
+		}
+	}
+	write := func(p, s string) {
+		t.Helper()
+		if err := os.WriteFile(p, []byte(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	shown("no files", app, ts[0])
+	settingsFile := filepath.Join(state, settings.StateFile)
+	write(settingsFile, `{"settings":{"logbook.habits.brief":{"revision":2,"value":false}}}`)
+	hidden("brief off in settings.json", app)
+	write(cfg, "[settings]\n\"logbook.habits.brief\" = true\n")
+	shown("a lock over settings.json", app, ts[0])
+	write(cfg, "[settings]\n\"logbook.habits.brief\" = true\n[logbook.habits_off]\n\"example.com/o/app\" = [\"brief\"]\n")
+	hidden("off for the project by identity", app)
+	shown("another project", other, ts[1])
+	write(cfg, "[settings]\n\"logbook.habits.brief\" = true\n[logbook.habits_off]\n\""+ps[1]+"\" = [\"closeout\", \"brief\"]\n")
+	shown("the first project", app, ts[0])
+	hidden("off for the project by id", other)
+	write(cfg, "[settings]\n\"logbook.habits.brief\" = false\n")
+	write(settingsFile, `{"settings":{"logbook.habits.brief":{"revision":2,"value":true}}}`)
+	hidden("a lock off over settings.json on", app)
+	write(cfg, "[settings\n")
+	write(settingsFile, "{")
+	shown("broken files", app, ts[0])
 }

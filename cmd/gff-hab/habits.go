@@ -9,7 +9,6 @@ import (
 	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/lbsvc"
-	"github.com/noahkiss/flightdeck/internal/settings"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
@@ -24,12 +23,6 @@ type habitService struct {
 	value   func(id string) json.RawMessage // the hab-side settings; nil: every habit on
 	off     *habits.OffFile
 	logf    func(string, ...any)
-}
-
-var habitSettings = map[string]string{
-	habits.Brief:    settings.HabitBrief,
-	habits.Reminder: settings.HabitReminder,
-	habits.Closeout: settings.HabitCloseout,
 }
 
 // key is the tracker's key for a pane: its session, else the pane.
@@ -57,13 +50,7 @@ func (h *habitService) Wrote(pane string) {
 // on reports whether habit is on: its setting, then the project's switch by the Logbook project
 // id or the session's identity.
 func (h *habitService) on(habit, project, identity string) bool {
-	if h.value != nil {
-		var v bool
-		if json.Unmarshal(h.value(habitSettings[habit]), &v) == nil && !v {
-			return false
-		}
-	}
-	return !h.off.Get().Has(habit, project, identity)
+	return habits.On(habit, h.value, h.off.Get(), project, identity)
 }
 
 // Context is the hook server's ContextHandler.

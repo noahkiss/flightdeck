@@ -128,8 +128,10 @@ func openOnly(cs []api.Confirmation) []api.Confirmation {
 var errHookServe = errors.New("hook endpoint stopped")
 
 // fileBrief is the brief from the Logbook file, for a hook that finds gff-hab down (logbook.md
-// 11.3): the state directory from $GFF_HAB_STATE, which gff-hab sets in its panes.
+// 11.3): the state directory from $GFF_HAB_STATE, which gff-hab sets in its panes, and the
+// habit switches from the hab's config file, $GFF_HAB_CONFIG or the default.
 func fileBrief(ctx context.Context, cwd string) (string, error) {
-	b, err := lbcli.FileBrief(ctx, lbcli.Env{Getenv: os.Getenv, Dir: cwd})
+	cpath, _ := habConfigPath("") // unknown: no file, so the defaults
+	b, err := lbcli.FileBrief(ctx, lbcli.Env{Getenv: os.Getenv, Dir: cwd}, cpath)
 	return b.Text, err
 }

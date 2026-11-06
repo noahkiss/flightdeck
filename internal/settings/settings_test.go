@@ -371,3 +371,40 @@ func TestSaveFailureChangesNothing(t *testing.T) {
 		t.Fatalf("a failed save sent events: %+v", ev)
 	}
 }
+
+// TestRead: the values for a caller while gff-hab is down: defaults with no files, a client
+// value from settings.json, a [settings] lock over it, and a broken file counting as none.
+func TestRead(t *testing.T) {
+	state := t.TempDir()
+	cfg := filepath.Join(t.TempDir(), "hab.toml")
+	if v := string(Read(state, cfg)(HabitBrief)); v != "true" {
+		t.Fatalf("default: %s", v)
+	}
+	if err := os.WriteFile(filepath.Join(state, StateFile), []byte(`{"settings":{"logbook.habits.brief":{"revision":3,"value":false}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if v := string(Read(state, cfg)(HabitBrief)); v != "false" {
+		t.Fatalf("client value: %s", v)
+	}
+	if err := os.WriteFile(cfg, []byte("[settings]\n\"logbook.habits.brief\" = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if v := string(Read(state, cfg)(HabitBrief)); v != "true" {
+		t.Fatalf("lock: %s", v)
+	}
+	if err := os.WriteFile(cfg, []byte("[settings"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if v := string(Read(state, cfg)(HabitBrief)); v != "false" {
+		t.Fatalf("broken config: %s", v)
+	}
+	if err := os.WriteFile(filepath.Join(state, StateFile), []byte(`{`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if v := string(Read(state, cfg)(HabitBrief)); v != "true" {
+		t.Fatalf("broken state file: %s", v)
+	}
+	if v := Read(state, cfg)("no.such"); v != nil {
+		t.Fatalf("unknown id: %s", v)
+	}
+}

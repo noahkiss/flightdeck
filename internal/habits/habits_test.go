@@ -166,3 +166,19 @@ func TestOffExample(t *testing.T) {
 		t.Fatalf("example: %v %v", off, err)
 	}
 }
+
+// TestOn: a habit's setting first, then the project's switch by any key; nil values: on.
+func TestOn(t *testing.T) {
+	vals := map[string]json.RawMessage{"logbook.habits.brief": json.RawMessage("false"), "logbook.habits.closeout": json.RawMessage("true")}
+	value := func(id string) json.RawMessage { return vals[id] }
+	off := Off{"example.com/o/app": {Closeout}}
+	if On(Brief, value, nil) || !On(Brief, nil, nil) {
+		t.Fatal("brief's setting")
+	}
+	if On(Closeout, value, off, "proj-1", "example.com/o/app") || !On(Closeout, value, off, "proj-2", "example.com/o/other") {
+		t.Fatal("closeout's project switch")
+	}
+	if !On(Reminder, value, off, "example.com/o/app") {
+		t.Fatal("reminder with no setting value")
+	}
+}

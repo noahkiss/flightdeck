@@ -491,3 +491,24 @@ func writeSynced(p string, b []byte) error {
 	}
 	return nil
 }
+
+// Read returns the values a hab with this state directory and config file enforces, for a
+// caller that runs while gff-hab is down: the client writes in <state>/settings.json, the
+// [settings] locks over them, the defaults for the rest. It reads each file once, writes
+// nothing and watches nothing. A missing or broken file counts as none, as at gff-hab's start
+// for settings.json.
+func Read(state, configPath string) func(id string) json.RawMessage {
+	s := &Service{cfg: Config{State: state, ConfigPath: configPath, Logf: func(string, ...any) {}}, rows: map[string]*row{}}
+	if s.load() != nil {
+		s.rows = map[string]*row{}
+	}
+	if locks, err := s.readLocks(); err == nil {
+		s.locks = locks
+	}
+	for _, d := range Defs {
+		if s.rows[d.ID] == nil {
+			s.rows[d.ID] = &row{Revision: 1}
+		}
+	}
+	return s.Value
+}

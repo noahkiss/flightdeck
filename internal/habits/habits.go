@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/noahkiss/flightdeck/internal/settings"
 )
 
 // The habits, by the word their settings and the config use (11.1).
@@ -193,6 +195,23 @@ func Changes(payload json.RawMessage) bool {
 		}
 	}
 	return gitCommit.MatchString(cmd)
+}
+
+// Setting names each habit's hab-side setting.
+var Setting = map[string]string{Brief: settings.HabitBrief, Reminder: settings.HabitReminder, Closeout: settings.HabitCloseout}
+
+// On reports whether habit is on for a project: its hab-side setting (value, as the settings
+// service or settings.Read gives it; nil: every setting on), then the project's switch in off by
+// any of keys, a Logbook project id or a project identity. gff-hab and the hook's file fallback
+// both decide through it.
+func On(habit string, value func(id string) json.RawMessage, off Off, keys ...string) bool {
+	if value != nil {
+		var v bool
+		if json.Unmarshal(value(Setting[habit]), &v) == nil && !v {
+			return false
+		}
+	}
+	return !off.Has(habit, keys...)
 }
 
 // Off is the per-project switch (11.1): for each project, by a project id or an identity, the

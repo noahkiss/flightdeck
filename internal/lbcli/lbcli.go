@@ -26,9 +26,11 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/catalog"
 	"github.com/noahkiss/flightdeck/internal/control"
+	"github.com/noahkiss/flightdeck/internal/habits"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/lbsvc"
 	"github.com/noahkiss/flightdeck/internal/logbook"
+	"github.com/noahkiss/flightdeck/internal/settings"
 )
 
 // Env is what the CLI reads from its process. Tests fill it.
@@ -429,15 +431,9 @@ func unreachable(err error) bool {
 // openLocal opens the hab's file. It never makes one: a hab that never ran has no origin to
 // write as.
 func (d *door) openLocal(ctx context.Context, why error) error {
-	dir := d.state
-	if dir == "" {
-		dir = d.env.Getenv("GFF_HAB_STATE")
-	}
-	if dir == "" {
-		var err error
-		if dir, err = control.DefaultState(); err != nil {
-			return fmt.Errorf("gff-hab is not reachable (%v), and the state directory is unknown: %w", why, err)
-		}
+	dir, err := d.stateDir()
+	if err != nil {
+		return fmt.Errorf("gff-hab is not reachable (%v), and the state directory is unknown: %w", why, err)
 	}
 	d.path = filepath.Join(dir, "logbook.db")
 	if _, err := os.Stat(d.path); err != nil {
@@ -456,15 +452,32 @@ func (d *door) openLocal(ctx context.Context, why error) error {
 	return nil
 }
 
+// stateDir is the hab's state directory: --state, else $GFF_HAB_STATE, else the default.
+func (d *door) stateDir() (string, error) {
+	if d.state != "" {
+		return d.state, nil
+	}
+	if dir := d.env.Getenv("GFF_HAB_STATE"); dir != "" {
+		return dir, nil
+	}
+	return control.DefaultState()
+}
+
 // paneProject is the project of the working folder's repository, by its identity (3.1), or ""
 // when it has none on this replica.
 func (d *door) paneProject(ctx context.Context) string {
+	id, _ := d.paneProjectIdentity(ctx)
+	return id
+}
+
+// paneProjectIdentity is paneProject and the folder's identity.
+func (d *door) paneProjectIdentity(ctx context.Context) (string, string) {
 	identity := folderIdentity(ctx, d.env.Dir)
 	if identity == "" {
-		return ""
+		return "", ""
 	}
 	id, _ := d.local.Lookup(ctx, identity)
-	return id
+	return id, identity
 }
 
 // inPaneEnv reports whether the CLI runs in a pane: $GFF_HAB is set.
@@ -1317,14 +1330,33 @@ func status(ctx context.Context, c *cli) (any, string, error) {
 
 // FileBrief builds a pane's brief from the hab's file, for `gff-hab hook` when gff-hab does not
 // answer (11.3): the state directory from $GFF_HAB_STATE (env.Getenv), the project from the
-// working folder env.Dir, private projects but that one left out (12.1). It never writes.
-func FileBrief(ctx context.Context, env Env) (api.LogbookBrief, error) {
+// working folder env.Dir, private projects but that one left out (12.1). The brief honours the
+// switches gff-hab would (habits.On): logbook.habits.brief from <state>/settings.json under the
+// [settings] locks of the hab's config file configPath, and that file's [logbook.habits_off]; a
+// missing or broken file counts as none. Turned off, the brief is empty. It never writes.
+func FileBrief(ctx context.Context, env Env, configPath string) (api.LogbookBrief, error) {
 	d := &door{env: env, inPane: true, picked: true}
 	defer d.close()
+	dir, err := d.stateDir()
+	if err != nil {
+		return api.LogbookBrief{}, err
+	}
+	value := settings.Read(dir, configPath)
+	if !habits.On(habits.Brief, value, nil) {
+		return api.LogbookBrief{}, nil // off everywhere: the file is not opened
+	}
 	if err := d.openLocal(ctx, errors.New("gff-hab did not answer")); err != nil {
 		return api.LogbookBrief{}, err
 	}
-	res, err := d.local.Dispatch(ctx, d.actor(), &lbsvc.Pane{Project: d.paneProject(ctx)}, "logbook.brief", nil)
+	project, identity := d.paneProjectIdentity(ctx)
+	off, err := habits.LoadOff(configPath)
+	if err != nil {
+		off = nil
+	}
+	if !habits.On(habits.Brief, value, off, project, identity) {
+		return api.LogbookBrief{}, nil
+	}
+	res, err := d.local.Dispatch(ctx, d.actor(), &lbsvc.Pane{Project: project}, "logbook.brief", nil)
 	if err != nil {
 		return api.LogbookBrief{}, err
 	}

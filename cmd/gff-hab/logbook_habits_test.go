@@ -49,8 +49,8 @@ func setHabit(t *testing.T, c *control.Client, id string, on bool) {
 // shape; 20 prompts after an edit bring the reminder; the first stop after an edit with no
 // Logbook write brings the closeout once, and a session that wrote gets none; each habit's
 // setting turns it off, and so does [logbook.habits_off] for the project; with gff-hab stopped
-// the brief still prints from the file within the hook's budget, and the reminder and closeout
-// print nothing.
+// the brief still prints from the file within the hook's budget, under the same switches, and
+// the reminder and closeout print nothing.
 func TestLogbookHabits(t *testing.T) {
 	g := newGitRepos(t)
 	e := newHolderEnv(t, 0)
@@ -63,7 +63,8 @@ func TestLogbookHabits(t *testing.T) {
 	pane := startIn(t, e, "main", app)
 	p := waitProject(t, c, "example.com/o/app", nil)
 	task := lbTask(t, c, p.ID, "Fix the cart")
-	inPane := []string{"GFF_HAB=" + pane, "GFF_HAB_STATE=" + e.state, "CLAUDE_CODE_ENTRYPOINT=cli"}
+	// The pane's env as the hab's: the config file named, so the file brief reads its switches.
+	inPane := []string{"GFF_HAB=" + pane, "GFF_HAB_STATE=" + e.state, "GFF_HAB_CONFIG=" + cfg, "CLAUDE_CODE_ENTRYPOINT=cli"}
 	start := `{"session_id":"s1","cwd":"` + app + `","hook_event_name":"SessionStart","source":"startup"}`
 
 	var brief api.LogbookBrief
@@ -157,7 +158,18 @@ func TestLogbookHabits(t *testing.T) {
 		var w api.LogbookWritten
 		call(t, c, "logbook.write", api.LogbookWriteParams{Changes: chs}, &w)
 	}
+	// The file brief honours the same switches (habits.On): the setting gff-hab saved in
+	// settings.json, a [settings] lock over it, the project's [logbook.habits_off].
+	setHabit(t, c, "logbook.habits.brief", false)
 	e.stopHab(false)
+	if out, _ := habitHook(t, inPane, "claude", "SessionStart", start); out != "" {
+		t.Fatalf("brief from the file with its setting off: %q", out)
+	}
+	writeFile(t, cfg, "[settings]\n\"logbook.habits.brief\" = true\n[logbook.habits_off]\n\"example.com/o/app\" = [\"brief\"]\n")
+	if out, _ := habitHook(t, inPane, "claude", "SessionStart", start); out != "" {
+		t.Fatalf("brief from the file turned off for the project: %q", out)
+	}
+	writeFile(t, cfg, "[settings]\n\"logbook.habits.brief\" = true\n")
 	out, took := habitHook(t, inPane, "claude", "SessionStart", start)
 	var got struct {
 		HookSpecificOutput struct {
