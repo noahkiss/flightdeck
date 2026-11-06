@@ -508,8 +508,10 @@ What happens:
 4. The batch opens. Two more mails come within 30 s; they join it.
 5. At 30 s the run is made. It hands Capcom one message: the prompt and three events, marked as
    data. Capcom answers `accepted`; the run `succeeded`.
-6. Illustrative only; Part 14 decides how. Capcom looks in a turn of its own. Two mails are routine; it says nothing about them. The
-   invoice is due soon; it writes one line to the owner, unless quiet hours hold it (Part 14).
+6. Capcom looks in an event turn of its own (`capcom-service.md` 9): it batches the message
+   with other events, and the small model takes the first look. Two mails are routine; it says
+   nothing about them. The invoice is due soon; it writes one line to the owner, unless quiet
+   hours hold it (`capcom-service.md` 9.2).
 7. The laptop sleeps for the night. At wake gff-hab hangs `mailwatch` up and starts it again
    after 30 s. It reads the cursor, reports the night's four mails in one burst, and goes back
    to IDLE. One run hands Capcom the four.
@@ -526,8 +528,8 @@ the prompt, or type into a session the owner uses.
 | `fresh` | Starts a new session in the project with the harness, the model and the prompt. Or runs `command` | `session.create` |
 | `resume` | Sends the prompt into the target session. A live target gets it under the lock (6). An exited target is resumed first, then gets it | `session.send`; `session.resume` when exited |
 | `fork` | Starts a new session that branches from the target's conversation, then sends the prompt. The target is untouched | Claude Code `--resume <id> --fork-session`; Codex `codex fork <id>`; opencode *(unverified)* |
-| `capcom` | Hands the prompt and the event batch to the Capcom service as a proactive turn (5.2) | The proactive-turn call shared with Part 14 |
-| `group` | Sends the prompt and the event batch to a group's coordinator as a channel message (5.2) | Channels (`mesh.md` 6), the coordinator from Part 15 |
+| `capcom` | Hands the prompt and the event batch to the Capcom service as a round message (5.2) | The round message of `capcom-service.md` 9.5 |
+| `group` | Sends the prompt and the event batch to a group's coordinator as a channel message (5.2) | Channels (`mesh.md` 6), the coordinator from `groups.md` 12.5 |
 
 - **`fresh`** suits daily triage, reports and sweeps: each run starts clean (Paseo's schedule).
 - **`resume`** suits "check the deploy every hour in this conversation": context carries over
@@ -596,22 +598,26 @@ shared with them, and a change to it changes both specs.
   no session. A reply to it is refused, "a round takes no replies"; the envelope gives no reply
   command.
 - **The actor mark.** For the no-loop rule (4.3) the destination must be recognisable in what it
-  writes. A coordinator is a session, so its session id serves. The Capcom service has no session
-  (`swarm-study.md` 2.7): Part 14 must mark the notices it raises and the Logbook ops it writes
-  with one actor id for the service, and say what it is. That mark is part of this interface.
+  writes. A coordinator is a session, so its session id serves. The Capcom service has a session
+  record with no pane (`capcom-service.md` 2.1), and its id is the service's actor id: its
+  Logbook ops carry it as the actor's session, its notices carry it as `session`, and the home
+  hab's catalog `capcom` section carries it (`capcom-service.md` 9.5). That mark is part of this
+  interface.
 
 **`capcom` mode.**
 
 - **Is there a service?** The Capcom home host publishes a `capcom-service` capability in its
-  catalog entry while the service runs (`mesh.md` 5). The runner reads it from its catalog
+  catalog entry while it holds the Capcom mark with the service set up (`mesh.md` 5,
+  `capcom-service.md` 9.5). The runner reads it from its catalog
   copies. A `capcom` round is refused at creation (`unavailable`) while no catalog copy shows
   it. A run that finds no home host, or no `capcom-service` on it, is `skipped`, "no Capcom
   service", and its batch goes back to the pending batch (4.5).
-- **The call.** The run hands the message to the service as a proactive turn: the call Part 14's
-  service spec defines for it (A1, task-n6qh2sqb). The service answers once: `accepted` (stored;
-  Capcom looks at it in a turn of its own), `duplicate` (that message id was already accepted),
-  or `declined` with a reason word from an open set (Capcom's proactive turns are off, its daily
-  turn budget is spent). The run waits for no turn.
+- **The call.** The run hands the message to the service as a round message
+  (`capcom-service.md` 9.5). The service answers once: `accepted` (stored; Capcom looks at it in
+  an event turn of its own), `duplicate` (that message id was already accepted), or `declined`
+  with a reason word from an open set (today `off`: the user turned Capcom's round messages off).
+  Quiet hours and the daily turn budget never decline: the message is accepted and waits. The
+  run waits for no turn.
 - **Where Capcom runs.** The service runs on the Capcom home host (`capcom.md` 7.3). On the
   runner the call is local. On a peer, the message travels as a channel message to the service
   (`mesh.md` 6), so the outbox holds it while that host sleeps. The home host's hab hands it to
@@ -628,6 +634,7 @@ shared with them, and a change to it changes both specs.
   | `declined` | `skipped`, with the reason | Dropped: Capcom chose not to look |
   | No home host, or no `capcom-service` | `skipped`, "no Capcom service" | Back to pending |
   | Refused by channels: no peer entry for the home host (`mesh.md` 6.3), outbox full | `skipped`, with channels' reason | Back to pending |
+  | `refused` by the host: it no longer holds the Capcom mark ("Capcom moved to <label>") | `skipped`, with that reason | Back to pending |
   | `expired` after 7 days in the outbox | Nothing: the run ended long ago. The runner logs it | Lost |
 
 - **What rounds leave to Capcom.** Quiet hours, the daily turn budget, batching several items into
@@ -641,9 +648,10 @@ shared with them, and a change to it changes both specs.
 
 **`group` mode.**
 
-- **The coordinator.** The run asks Part 15's group record for the group's coordinator: its
-  address (`label/name`) and whether the group still runs. Part 15 defines the record (B1,
-  task-5ntfv32q); rounds read only those two facts, at the start of each run. A new coordinator
+- **The coordinator.** The run reads the group's coordinator from the catalog `groups` section:
+  its address (`label/name`) and the group's state (`groups.md` 5.1, 12.5). Any state but
+  `ended` and `dropped` counts as running. Rounds read only those two facts, at the start of
+  each run. A new coordinator
   (after a hand-off) gets the next run.
 - **The message.** A channel message from the round to that address, in the round envelope (5)
   with the event block. It carries a new `round` mark (13): the round and run ids, and a
@@ -672,6 +680,9 @@ shared with them, and a change to it changes both specs.
 - **Group ended.** A group that no longer runs completes the round, as a gone target does
   (10.1), with the `target_gone` notice, body "Its group ended."
 - **The coordinator's turn** belongs to the group. The run does not wait for it.
+- **Capcom as coordinator.** When the coordinator is the Capcom service (`groups.md` 12.1), the
+  run hands its message over as a round message, with the `capcom` answers and run states
+  above, and no lock (`capcom-service.md` 9.5).
 
 Decision: a `capcom` run ends at Capcom's answer, not at its turn. Reason: quiet hours and the
 budget can hold an item for hours, longer than any run timeout; the run's job is a durable
@@ -685,10 +696,10 @@ Interface shared with Part 14 (A1) and Part 15 (B1), in one place:
 
 | Item | Owner | Rounds use |
 |---|---|---|
-| The proactive-turn call and its answers `accepted`, `duplicate`, `declined` | Part 14 | Hand over a `capcom` message; map the answer (above) |
-| The `capcom-service` catalog capability | Part 14 | Refuse at create; skip a run |
-| The service's actor id on its notices and Logbook ops | Part 14 | The no-loop rule (4.3) |
-| The group record's coordinator address and running mark | Part 15 | Address a `group` message; complete the round |
+| The round message and its answers `accepted`, `duplicate`, `declined` | Part 14, `capcom-service.md` 9.5 | Hand over a `capcom` message; map the answer (above) |
+| The `capcom-service` catalog capability | Part 14, `capcom-service.md` 9.5 | Refuse at create; skip a run |
+| The service's actor id (its session id) on its notices and Logbook ops | Part 14, `capcom-service.md` 9.5 | The no-loop rule (4.3) |
+| The group's coordinator address and state in the catalog `groups` section | Part 15, `groups.md` 5.1, 12.5 | Address a `group` message; complete the round |
 | The `round` mark and the `round-lock` capability | Rounds (stage 9), in channels | Deliver under the lock |
 
 ---
@@ -1245,7 +1256,7 @@ them all at once (`mesh.md` 6.5 did the same for channels).
 Export and apply carry the new fields: `[rounds.trigger]` holds `on` and its `where` table, or a
 `[rounds.watch]` table holds `argv`, `cwd` and `kinds`; `secrets`, `debounce`, `cooldown` and
 `group` are plain keys. A group named by id cannot move between meshes; apply refuses a `group`
-the hab's group records do not hold.
+that no catalog copy lists (`groups.md` 5.1).
 
 Built (stage 3, task-ams092is). Where this spec left a choice open:
 
@@ -1615,14 +1626,16 @@ Stage 9, with `go test -race` over a real gff-hab and holder and fake harnesses:
   from the run id; each row of the 5.2 table, `accepted`, `duplicate` and `declined` coming back
   as status items from a peer; no `capcom-service` refuses the create and skips a run; a home
   host on a peer that is offline queues the message, which arrives once after the link comes up,
-  also when the runner sends it again after a restart. A notice or op with the service's actor
-  id never triggers the round.
+  also when the runner sends it again after a restart; a host that lost the Capcom mark refuses
+  it and the run skips with its batch kept. A notice or op with the service's actor id never
+  triggers the round.
 - `group` against a fake group record and two habs: delivered to the coordinator on the other
   hab; held under the round lock while a client typed into it, then `expired` at the deadline
   and the run `skipped`, "in use", with the batch kept; a message that reaches the far hab after
   its deadline is never delivered; a coordinator not running skips and keeps the batch; a far hab
   without `round-lock` gets no message; a reply to `round:<name>` is refused; an ended group
-  completes the round with one notice.
+  completes the round with one notice; a group whose coordinator is Capcom gets a round message
+  and its `accepted` answer.
 - Export then apply with every new field gives no diff.
 
 Stage 11, with `go test -race` over a real gff-hab and holder and fake watcher programs:
@@ -1646,7 +1659,7 @@ Stage 11, with `go test -race` over a real gff-hab and holder and fake watcher p
 - The mail watcher example against a local fake IMAP server (no real mail service): one new mail
   from a listed sender makes one event line; a mail from another sender makes none; a restart with
   the cursor reports a mail that came while it was stopped, once.
-- Live check, after Part 14 A7 (task-hj8cnr5v): a mail reaches Capcom's thread as one proactive
+- Live check, after Part 14 A7 (task-hj8cnr5v): a mail reaches Capcom's thread as one round
   message.
 
 ---
@@ -1684,5 +1697,5 @@ owner, or an agreement with the Part 14 and Part 15 specs:
 | # | Question | Default until answered |
 |---|---|---|
 | W1 | Should Capcom report back what it did with a round's message (`told` or `quiet`), so the round's history shows it? It needs a second answer in the Part 14 interface | No: the run ends at `accepted`; Capcom's thread is the record |
-| W2 | For Part 14, with no effect on rounds: may an event with `level = time-sensitive` let Capcom write during quiet hours? | Rounds pass the level either way |
+| W2 | For Part 14, with no effect on rounds: may an event with `level = time-sensitive` let Capcom write during quiet hours? | Yes, as `capcom-service.md` 9.2 now builds it: such a round message runs at once. Rounds pass the level either way |
 | W3 | Are module watchers (4.4) worth a stage, or does a plain program cover every watcher the owner wants? | A later idea after stage 11 |

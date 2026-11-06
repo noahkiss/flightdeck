@@ -20,7 +20,8 @@ describes behaviour in our own words and copies no code.
 | Pane token route (`GFF_HAB`), agent state, the agent kit | `harness-adapters.md` |
 | Uploads, the Capcom view, approvals, push, usage, settings | `app.md` 4.4, 4.10, 7, 8, 14, 20 |
 | Logbook records, proposals, the brief | `logbook.md` 2.2, 9, 11.2 |
-| Rounds and the `capcom` target of watchers | `rounds.md` 4.3, task-awkgh5h1 |
+| Rounds in `capcom` mode, their message and its answers | `rounds.md` 5.2 |
+| Agent groups, with Capcom as a coordinator | `groups.md` 12.1 |
 
 Owner decisions this spec builds on (plan-xagejg31 (p), 2026-11-06; `swarm-study.md` 8). Each is
 cited as "decision n". They are settled, not open:
@@ -139,7 +140,8 @@ hab, through its route (3.3), and to the model provider.
 | SDK session | One session of the engine's SDK. The thread spans many |
 | turn | One run of the agent loop, from the first input it takes to its result |
 | user turn | A turn that takes at least one message the user wrote |
-| event turn | A turn that takes only events: notices, watcher events, round results, agent reports |
+| event turn | A turn that takes only events: notices, round messages, round results, agent reports |
+| round message | One run's message from a round in `capcom` mode: its prompt and event batch (9.5) |
 | re-seed | Ending the SDK session and starting a fresh one from the summary (6.2) |
 | summary | The engine's short account of the thread so far, kept by the hab |
 | divider | A quiet thread item that marks a re-seed, a compaction or a new conversation |
@@ -346,6 +348,7 @@ From the engine to gff-hab:
 | Read tools, `suggest_host`, `confirmation_read` | `gff-hab mcp` (`capcom.md` 4, 5.5) | Unchanged |
 | `hand_off`, `start_session`, `set_up_project`, `file_record`, `logbook_write` | `gff-hab mcp` (`capcom.md` 6.4, 6.5) | Refused in an event turn, unless Q3 (16) says otherwise |
 | `channel_send` | `gff-hab mcp` (`mesh.md` 6.6) | Through the token route (3.3). `channel_wait` is not offered: every message to Capcom arrives as an input (9.1) |
+| The coordinator's group tools: `group_create`, `group_status`, `group_amend`, `group_close`, `group_retry`, `member_compact`, `member_handoff` | `gff-hab mcp` (`groups.md` 15.2, from stage B8) | Refused in an event turn, as `start_session` is (9.4) |
 | Personal tools (8) | `gff-hab mcp`, only on a Capcom route | Refused on any pane's route |
 | `WebSearch`, `WebFetch` | The SDK's own | Web fetch rules in 5.3 |
 
@@ -515,6 +518,7 @@ stays native").
 | `message` (capcom) | A bubble on the left; "wrote first" mark when from an event turn (9.3); weather attribution when a weather result fed it (8.3) | `reply` |
 | `tools` | One quiet line per turn, "read 3 transcripts, searched the web"; tap lists each call | `tool` |
 | `agent` | A quiet line "Report from <address>", tap for the text | A channel message to `capcom` |
+| `round` | A quiet line "Round <name>: 3 events", tap for the prompt and the events, shown as data from outside | A round message (9.5) |
 | `card` | Hand-off record, confirmation, approval, calendar or reminder card, proposal line | The hab's cards (`capcom.md` 6.3, `app.md` 4.8, 7.9) and 8.5 |
 | `note` | A one-line Flightdeck note: "Noted: …", "Pacing usage until 14:00", "Capcom restarted" | gff-hab |
 | `divider` | A thin rule with "Earlier messages summarised" or "New conversation"; tap shows the summary | 6.2, 6.3, 7.5 |
@@ -696,7 +700,7 @@ Decision 2: Capcom may write first about anything useful, with quiet hours.
 |---|---|
 | A Flightdeck notice on any host (`notice.raised`), active or time-sensitive | An event |
 | A round run's end, for rounds with `notify` other than `never` | An event |
-| A watcher's event line, for a round whose target is `capcom` (task-awkgh5h1, D2) | An event |
+| A round message: one run of a round in `capcom` mode, with its prompt and event batch (`rounds.md` 5.2; 9.5) | One event |
 | A channel message to `capcom` (an agent Capcom dispatched reports back) | An agent input. It starts a turn at once, with no batch and no quiet hours, since the user is waiting on that work. For 9.4 the turn counts as an event turn |
 | A confirmation outcome or card answer | A note |
 
@@ -704,10 +708,12 @@ Decision 2: Capcom may write first about anything useful, with quiet hours.
   thread as an `agent` item (mesh state `handed`), and marks it `delivered` at the engine's
   `input.taken`. The pane rules of `mesh.md` 6.2 (deliver when idle, hold while blocked, refuse
   while not running) do not apply: the thread takes mail while the engine is busy, blocked on a
-  card, or offline, and the engine takes it when it can. No read-back step applies.
+  card, or offline, and the engine takes it when it can. No read-back step applies. A round
+  message (9.5) is the exception: it becomes a `round` item and gets its own answer.
 
 Passive notices do not reach Capcom. The user turns a source off per kind in Capcom settings
-(`capcom.events.notices`, `.rounds`, `.watchers`, each on; hab-side settings, `app.md` 20.5).
+(`capcom.events.notices`, `.rounds` for round run ends, `.round_messages` for round messages,
+each on; hab-side settings, `app.md` 20.5).
 
 ### 9.2 Batching and quiet hours
 
@@ -721,27 +727,61 @@ Passive notices do not reach Capcom. The user turns a source off per kind in Cap
   in the time zone the app last shared, else the host's; stored as `app.md` 20.5 says, on the
   home hab). During quiet hours no event turn
   starts; events wait and run as one batch at the end. An event marked urgent by its source runs
-  at once and pushes time-sensitive: a time-sensitive notice, or a watcher event line with
-  `urgent: true`.
+  at once and pushes time-sensitive: a time-sensitive notice, or a round message whose `level`
+  is `time-sensitive` (`rounds.md` 5.2: the highest level in its batch).
 - Messages the user writes are never held by quiet hours.
 
-### 9.3 Budget
+### 9.3 The daily turn budget
 
-- A daily cap on event turns: `capcom.events.daily_turns` (hab-side, as quiet hours), default
-  20, counted from midnight in the same time zone. The count is saved with the time zone. Past it, events wait for the next day's first batch, and the thread gets one note.
+- The daily turn budget caps event turns: `capcom.events.daily_turns` (hab-side, as quiet
+  hours), default 20, counted from midnight in the same time zone. The count is saved with the time zone. Past it, events wait for the next day's first batch, and the thread gets one note.
 - The governor (10.1) applies on top. An event turn is the first to wait.
 - A message from an event turn carries the "wrote first" mark.
 
 ### 9.4 What an event turn may do
 
 - It may read, search, and message the user. It may write a note to Logbook only as a proposal.
-- It may not hand off, start a session, set up a project, create a card, or fetch a URL it did
-  not see (5.3). gff-hab refuses those tool calls from the Capcom route while the current turn's
+- It may not hand off, start a session or a group, set up a project, create a card, or fetch a
+  URL it did not see (5.3). gff-hab refuses those tool calls from the Capcom route while the current turn's
   origin is `event`, with "ask the user first". This is open question Q3 (16).
 - A user message that joins an event turn mid-way makes it a user turn from that point.
 
 Reason: an event's text comes from outside (a mail, a web page a watcher read). The user has not
 asked for anything yet, so nothing acts on their behalf until they answer.
+
+### 9.5 Round messages
+
+A round in `capcom` mode hands Capcom one message per run (`rounds.md` 5.2). This section is
+the service's side of that interface; rounds own the message's fields and the run states.
+
+- **Is there a service?** The home hab lists the `capcom-service` capability in its catalog
+  entry (`mesh.md` 5) while it holds the Capcom mark and `[capcom] engine` is set (12.4). The
+  capability does not depend on a connected engine: the thread takes messages while the engine
+  is down (4.3). A hab that loses the mark drops it in the same step that renames its record
+  (2.4).
+- **The hand-over.** A round message is a channel message to `capcom` from the sender
+  `round:<round name>`, with the round fields of `rounds.md` 5.2. On the home hab the runner
+  hands it over locally; from a peer it travels over channels and waits in the outbox while the
+  home host sleeps. It is not an agent report (9.1): it starts no turn at once.
+- **The answer.** The home hab answers once, as the message's final state (`mesh.md` 6.2), sent back as a status item (`mesh.md` 6.3):
+
+  | Answer | When |
+  |---|---|
+  | `accepted` | gff-hab appended a `round` item to the thread. Capcom looks at it in an event turn: batched (9.2), held by quiet hours and the daily turn budget (9.3), on the small model first |
+  | `duplicate` | The thread already holds a `round` item with that channel message id. Nothing is added |
+  | `declined`, with a reason word | Capcom will not look at it. Reasons are an open set; today only `off`: the user turned `capcom.events.round_messages` off |
+
+  Quiet hours, the daily turn budget, the governor's `wait` and a down engine never decline: the
+  message is accepted and waits. A hab that does not hold the mark refuses the message
+  (`refused`, "Capcom moved to <label>", 14), as for any message to `capcom`.
+- **The actor id.** The service's actor id is the session id of its session record (2.1). The
+  engine's Logbook ops carry it as the actor's session (3.3). Every notice gff-hab raises about
+  the service (a crash, a damaged thread file) carries it as `session`. The home hab's catalog
+  `capcom` section (`mesh.md` 5) carries it beside the assignment, so a runner on any hab can
+  tell Capcom's own writes from others' (`rounds.md` 4.3, no loops).
+- **A group round to Capcom.** When a group's coordinator is Capcom (`groups.md` 12.1), a round
+  in `group` mode hands its message over as a round message too, with these answers
+  (`rounds.md` 5.2).
 
 ---
 
@@ -751,6 +791,8 @@ asked for anything yet, so nothing acts on their behalf until they answer.
 
 The usage governor (task-k0ydtgae, stage G) owns the pacing rules. This spec fixes Capcom's side.
 
+- Capcom is one consumer of the governor, `capcom`, as each group is `group:<id>`
+  (`groups.md` 10).
 - Before each turn the engine has a `pace` from gff-hab: `ok` (main model), `small` (the small
   model), or `wait` until a time.
 - Defaults the governor applies to Capcom: a daily share of the weekly window, about 15% a day,
@@ -868,12 +910,13 @@ Made by the stages named, not by this study.
 | `capcom.md` 6.2 | Review opens at "New conversation" or from the thread's pinned line (6.4) | A4 |
 | `mesh.md` 6.1, 6.2 | `capcom` is reserved and resolved by the Capcom belief; delivery to the service goes to the thread (2.4, 9.1) | A2 |
 | `app.md` 7.4, 7.2 | A Capcom approval expires after 10 minutes, whatever `approval.max_age` says; the "Allow this site" answer (5.3) | A2, A3 |
-| `app.md` 20.5 | `capcom.quiet_hours`, `capcom.events.notices`, `.rounds`, `.watchers`, `.daily_turns` as hab-side settings on the home hab | A7 |
+| `app.md` 20.5 | `capcom.quiet_hours`, `capcom.events.notices`, `.rounds`, `.round_messages`, `.daily_turns` as hab-side settings on the home hab | A7 |
 | `capcom.md` 12 | Part 14 stages added | A1 (this change links it) |
 | `app.md` 4.10 | Thread items, marks, Stop, no Terminal switch, communication notification | A3 |
 | `app.md` 20.4 | `capcom.share_location`, `capcom.share_calendar` (app preferences) | A5 |
 | `logbook.md` 15.1 | Settled by Q2 | When the owner answers |
-| `rounds.md` 4.3 | The `capcom` target | D1 (Part 13) |
+| `rounds.md` 5.2 | The `capcom` mode, the round message and its answers (9.5) | Written in D1; built in rounds stage 9 and A7 |
+| `mesh.md` 5, 6.2 | The `capcom-service` capability; the service session's id in the catalog `capcom` section; final states `accepted`, `duplicate`, `declined` for a round message (9.5) | A7, rounds stage 9 |
 | `hab-logic-api.md` | `capcom-thread` capability and calls (7.4) | A2, A3 |
 | AGENTS.md command table | `gff-hab capcom say|thread|stop|pause|resume`, the engine's tests, the Node dependency | A2, A8 |
 
@@ -1004,7 +1047,7 @@ Each stage ends with a fresh-eyes review where marked core.
 | A3 (task-cp5tvo4d): the thread in the app and gff | 7.2 to 7.6 app side, 7.7 gff | Swift tests over a fake hab: typing, delivered, read, a folded tool line, a divider with the summary it opened with, an image sent and shown, Stop, "Earlier threads" from another host, the pinned proposals line. Live on a device: a reply from the communication notification while the app is closed reaches the engine and the answer shows. Study scenario 3 (a flyer photo) answered with its details |
 | A4 (task-0vh4b8jz): context and memory | 6 | Fake model: a thread past 60% re-seeds once at the turn end, never mid-turn, and waits for an open approval card; a fact stated before the re-seed is answered after it; a forced compaction updates the summary first and adds one divider; "New conversation" adds one divider and an empty summary; a preference becomes a `capcom` guide per Q2, a task stays a proposal; the seed stays under its caps |
 | A5 (task-j2xf34ld): personal tools | 8 | Study scenario 1 on a device: one location read, weather and places calls, ranked picks naming the preference, an Add card that writes one event. Tests: a question with no place in it reads no location; with no Google key `source: google` is refused and Apple answers; a weather reply carries the attribution; no calendar write without a tap; the device-context store is empty after a gff-hab restart and writes no file but the time zone; a tool line names the place and never coordinates |
-| A7 (task-hj8cnr5v): Capcom writes first | 9 | Fake clock: an event in quiet hours waits and runs in one batch at the end; an urgent one runs at once; ten events in 2 minutes make one turn; the 21st event turn of a day waits; after a gff-hab restart quiet hours use the saved time zone; an event turn's `hand_off` is refused (per Q3); a passive notice reaches nothing. Live: a watcher event reaches the phone as one Capcom message marked "wrote first" |
+| A7 (task-hj8cnr5v): Capcom writes first | 9 | A round message answers `accepted` and adds one `round` item; the same message id again answers `duplicate`; with `capcom.events.round_messages` off it answers `declined` `off`; a round message in quiet hours is accepted and waits; `capcom-service` shows in the catalog only while this hab holds the mark. Fake clock: an event in quiet hours waits and runs in one batch at the end; an urgent one runs at once; ten events in 2 minutes make one turn; the 21st event turn of a day waits; after a gff-hab restart quiet hours use the saved time zone; an event turn's `hand_off` is refused (per Q3); a passive notice reaches nothing; a round message with `level` `time-sensitive` runs at once in quiet hours. Live: a watcher event reaches the phone as one Capcom message marked "wrote first" |
 | A8 (task-6knreo9n): remove the pane Capcom | 12, 13 | `engine` defaults to `claude`; pane-era records are renamed `capcom-term-<n>`; `gff-hab capcom open` and the app's Capcom entry reach the service; pending context from a pane-era `capcom.json` reaches the first message; an old pane conversation reads in the chat view with no Resume; no test or doc describes the pane form; CI passes on Linux and macOS |
 | A6 (task-y8ogoq4d): Codex SDK engine | 4 on the Codex SDK; `[capcom] engine = codex` | The A2 and A4 tests pass against both engines, with each capability the Codex engine lacks taking its fallback (4.1); switching engines keeps the thread and Logbook memory (the switch is a re-seed); the plain-terminal check with `codex resume` |
 
@@ -1021,7 +1064,7 @@ Each stage ends with a fresh-eyes review where marked core.
 - Codex SDK, https://learn.chatgpt.com/docs/codex-sdk, read 2026-11-06.
 - `swarm-study.md` 2, 5, 7, 8; plan-xagejg31 decisions (m), (n), (p).
 - `capcom.md`, `app.md` 4.4, 4.10, 7, 8, 14, 20; `logbook.md` 2.2, 9, 11, 15.1; `mesh.md` 6;
-  `harness-adapters.md`, environment contract; `rounds.md` 4.3.
+  `harness-adapters.md`, environment contract; `rounds.md` 4.3, 5.2; `groups.md` 10, 12.1, 15.2.
 
 Facts marked *(gk)* come from general knowledge, not from a page opened for this spec. The stage
 that builds on them confirms them.

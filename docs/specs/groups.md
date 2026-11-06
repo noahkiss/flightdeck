@@ -288,8 +288,9 @@ so a gff-hab restart loses nothing.
 | `waits` | What holds the group now: usage, disk, a lock, an open trust card, an open approval, a setup that waits for a yes |
 | `leftovers` | At the end: worktrees, branches and build folders left (7.5) |
 
-The home hab publishes a short form (id, title, state, counts) in its catalog's `groups` section,
-as rounds do (`rounds.md` 9), so every hab and client can list every group.
+The home hab publishes a short form (id, title, state, counts, the coordinator's address) in its
+catalog's `groups` section, as rounds do (`rounds.md` 9), so every hab and client can list every
+group, and a round on any hab can address the coordinator (12.5).
 
 ### 5.2 Group states
 
@@ -677,9 +678,13 @@ defines the internals. Each row is **shared**: a change on either side updates b
 
 ### 12.1 Capcom as coordinator (Part 14 A1, A2; stage B8) — shared
 
-- The Capcom engine holds a channel address, so members and the lane reach it as they reach any
-  coordinator.
-- Capcom's tool list includes the group tools of 15.2.
+- The Capcom service holds the channel address `capcom` (`capcom-service.md` 2.4), so members
+  and the lane reach it as they reach any coordinator.
+- **Capcom always counts as running.** Its thread takes messages while the engine is busy or
+  down (`capcom-service.md` 9.1), so reports to a Capcom coordinator go in at once and never
+  wait in the record's inbox (5.5).
+- Capcom's tool list includes the coordinator's group tools of 15.2 (`capcom-service.md` 5.1).
+  An event turn may not call them (`capcom-service.md` 9.4).
 - The group card links from Capcom's thread, and Capcom sums up the result there.
 - A group whose coordinator is Capcom has Capcom's home host as its home hab.
 - Capcom has no shell. The heavy-run lock and the lane do not need one from the coordinator.
@@ -701,13 +706,20 @@ by the hab for a member's pane, with a follow-up the hab writes. The states and 
 (`agent.compact`) stay as built. Supervision also needs the context nudge turned off per session
 (group members), and `agent.compact` events for every compaction, so it can count them.
 
-### 12.5 The `group` round target (Part 13 D1) — shared
+### 12.5 The `group` round mode (Part 13 D1) — shared
 
-A round or watcher with target `group` sends its prompt as a message to the group's coordinator.
-Groups provide: `group.get {group}` → the coordinator's address and the group's state. The run
-hands its prompt to the home hab as a report (5.5), so a coordinator that is not running gets it
-at resume. A target group that is `ended` or `dropped` makes the run `skipped` with "group
-ended".
+A round in `group` mode, with any trigger (a watcher's included), sends its prompt and event batch
+as a message to the group's coordinator (`rounds.md` 5.2). Groups provide the coordinator's
+address and the group's state, in the catalog `groups` section (5.1) and in `group.get`. A round
+on any hab reads them from its catalog copies at the start of each run.
+
+- The message is a channel message with the rounds `round` mark, delivered under the round lock
+  on the coordinator's hab (`rounds.md` 5.2, 6). It is not a report (5.5): a coordinator that is
+  not running makes the run `skipped`, and the next run carries the batch.
+- A group in any state but `ended` and `dropped` counts as running. A group that is `ended` or
+  `dropped` completes the round, with the `target_gone` notice, "Its group ended"
+  (`rounds.md` 10.1, 10.2).
+- A Capcom coordinator gets the message as a round message (`capcom-service.md` 9.5).
 
 ### 12.6 Trust cover on a start (`app.md` 7.10, B2) — shared
 
@@ -785,7 +797,7 @@ to 3.6.
 | `group.pause`, `group.resume`, `group.close {group}` | → the record | B3 |
 | `group.retry {group, member}` | Start a failed member again | B3 |
 | event `group.updated` | `id`, `revision`, `data` the record; host scope | B3 |
-| catalog section `groups` | The short form per group | B3 |
+| catalog section `groups` | The short form per group, with the coordinator's address (5.1) | B3 |
 | `lane.submit {group, item}` | From the item's lead only; starts the review | B7 |
 | `review.verdict {group, item, verdict, findings, fixed}` | From the reviewer's pane only | B7 |
 | `heavy.take {ticket?}`, `heavy.release {ticket}` | The lock, on a held connection | B5 |
