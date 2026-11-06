@@ -1,8 +1,11 @@
 package control
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"net"
 	"runtime"
 	"strings"
@@ -102,4 +105,69 @@ func TestClientCloseStopsPump(t *testing.T) {
 	c.Close()
 	for range c.Notifications() {
 	}
+}
+
+// TestClientDeadAfter: a connection on which nothing arrives for the dead window ends with
+// ErrDead (spec 3.5), so a stream the hab stopped feeding never sits silent forever. One that
+// answers the client's pings stays open well past the window.
+func TestClientDeadAfter(t *testing.T) {
+	const window = 200 * time.Millisecond
+	// serve reads the client's lines; with answer set it answers each request.
+	serve := func(b net.Conn, answer bool) {
+		br := bufio.NewReader(b)
+		for {
+			line, err := br.ReadBytes('\n')
+			if err != nil {
+				return
+			}
+			var m message
+			if json.Unmarshal(line, &m) != nil || !answer {
+				continue
+			}
+			out, _ := json.Marshal(message{JSONRPC: "2.0", ID: m.ID, Result: json.RawMessage(`{"seq":0}`)})
+			if _, err := b.Write(append(out, '\n')); err != nil {
+				return
+			}
+		}
+	}
+
+	t.Run("silent", func(t *testing.T) {
+		a, b := net.Pipe()
+		defer b.Close()
+		go serve(b, false)
+		c := NewClient(a)
+		defer c.Close()
+		c.KeepAlive(window / 4)
+		c.DeadAfter(window)
+		start := time.Now()
+		select {
+		case <-c.Done():
+		case <-time.After(10 * time.Second):
+			t.Fatal("a connection that delivers nothing stayed open")
+		}
+		if d := time.Since(start); d < window {
+			t.Fatalf("ended after %v, before the %v window", d, window)
+		}
+		if err := c.Err(); !errors.Is(err, ErrDead) {
+			t.Fatalf("err %v, want ErrDead", err)
+		}
+		// The notifications channel closes, so a reader such as `gff-hab events` ends.
+		for range c.Notifications() {
+		}
+	})
+
+	t.Run("answering", func(t *testing.T) {
+		a, b := net.Pipe()
+		defer b.Close()
+		go serve(b, true)
+		c := NewClient(a)
+		defer c.Close()
+		c.KeepAlive(window / 4)
+		c.DeadAfter(window)
+		select {
+		case <-c.Done():
+			t.Fatalf("a connection that answers pings ended: %v", c.Err())
+		case <-time.After(4 * window):
+		}
+	})
 }

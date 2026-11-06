@@ -1654,7 +1654,7 @@ func parseScope(s string) (api.Scope, error) {
 
 // events subscribes and prints the snapshot, then every notification, one JSON line each:
 // {"method":..., "params":...}. It ends when the hab closes the connection; a closing other
-// than shutdown is an error.
+// than shutdown is an error, and so is a connection on which nothing arrives for 45 s.
 func events(args []string) error {
 	fs := flag.NewFlagSet("events", flag.ExitOnError)
 	sock := socketFlag(fs)
@@ -1680,6 +1680,7 @@ func events(args []string) error {
 		return err
 	}
 	c.KeepAlive(control.DefaultHeartbeat)
+	c.DeadAfter(control.DefaultDeadAfter) // a stream that stops is an error, never a silent wait
 	r, err := api.Client{Caller: c}.EventsSubscribe(ctx, api.SubscribeParams{Scope: sc})
 	if err != nil {
 		return err
