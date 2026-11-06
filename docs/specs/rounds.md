@@ -1,7 +1,9 @@
 # Rounds: behaviour spec
 
 Status: accepted for build. Part 13. Written 2026-11-01; questions settled and build stages
-planned 2026-11-01 (section 12, section 14).
+planned 2026-11-01 (section 12, section 14). Watchers added 2026-11-06 from the swarm study
+(`swarm-study.md` 5, 8): the `watch` trigger, the `capcom` and `group` modes, and the
+`notice.raised`, `logbook.updated` and `hab.woke` events (4.3 to 4.6, 5.2, 14.1, 16).
 
 A round is a scheduled agent job. Each run is an ordinary visible session: you can watch it,
 type into it and take it over. This spec covers the job definition, triggers, session modes,
@@ -41,6 +43,7 @@ user-visible questions were settled with defaults under the owner's power-user r
 13. [API and CLI additions](#13-api-and-cli-additions)
 14. [Build stages](#14-build-stages)
 15. [Sources](#15-sources)
+16. [Open questions: watchers](#16-open-questions-watchers)
 
 ---
 
@@ -110,19 +113,30 @@ runs beside it.
 | run | One attempt to serve a slot, an event or a manual request | Random id, plus a run number per round |
 | run session | The session a run starts or uses | An ordinary session id (`hab-logic-api.md` 2.2) |
 | target | For `resume` and `fork`: the existing session a round works on | Session id |
+| watcher | For `watch`: the long-lived program whose lines are events (4.4) | The round id; one per round |
+| event batch | The events one event run serves (4.5) | Part of the run |
+| destination | For `capcom` and `group`: where the run's message goes (5.2) | Capcom's service, or a group's coordinator |
 
 Words. One word per concept:
 
 - **round**: the definition. Never "schedule" or "job" in the product.
 - **run**: one execution of a round.
-- **mode**: `fresh`, `resume` or `fork` (5).
-- **trigger**: what asks for a run: `cron`, `once`, `event` or `manual` (4).
+- **mode**: `fresh`, `resume`, `fork`, `capcom` or `group` (5).
+- **trigger**: what asks for a run: `cron`, `once`, `event`, `watch` or `manual` (4).
+- **watcher**: the program of a `watch` trigger. Never "daemon" or "listener".
+- **event**: one hab event (4.3) or one line from a watcher (4.4).
+- **event run**: a run a batch of events made, from an `event` or a `watch` trigger. "Event
+  round" means a round with either trigger.
 - **take over**: the user types into a run session; the round stops treating it as automatic
   (7.5).
 
 Decision: landscape idea 4.6 ("heartbeats") is `resume` mode, not a new word. Reason: "heartbeat"
 already means the API's keepalive notification (`hab-logic-api.md` 3.5). Two meanings for one
 word would break the one-word rule.
+
+Decision: the swarm study's `capcom` and `group` "targets" are modes here. Reason: in this spec
+"target" is the session a `resume` or `fork` round works on, and a mode is what a run does. A run
+that hands a message to Capcom or to a coordinator is a new thing a run does.
 
 ---
 
@@ -131,9 +145,12 @@ word would break the one-word rule.
 | Field | Required | Meaning |
 |---|---|---|
 | `name` | Yes | Unique on the runner. Letters, digits, `-` and `_` |
-| `mode` | Yes | `fresh`, `resume` or `fork` (5) |
-| `trigger` | Yes | One trigger (4) |
-| `prompt` | Yes, unless `command` | Text the agent receives each run |
+| `mode` | Yes | `fresh`, `resume`, `fork`, `capcom` or `group` (5) |
+| `trigger` | Yes | One trigger (4). An `event` trigger holds the event and its filter (4.3); a `watch` trigger holds `watch` (4.4) |
+| `prompt` | Yes, unless `command` | Text the agent receives each run. In `capcom` and `group` mode, the instruction that goes with the events (5.2) |
+| `group` | `group` | The group, by id (5.2) |
+| `debounce`, `cooldown` | No | `event` and `watch` only: default 30 s and 5 minutes (4.5) |
+| `secrets` | No | `watch` only: the name of a secret set in the hab's config (4.4) |
 | `harness` | `fresh` with a prompt | `claude`, `codex`, `opencode`, or a later adapter |
 | `model`, `harness_args` | No | Passed to the harness at start, as `session.create` does. Permission modes go here; the hab adds none of its own |
 | `command` | No | `fresh` only: a plain program (`argv`) instead of a harness and a prompt. Success is exit status 0 |
@@ -143,7 +160,7 @@ word would break the one-word rule.
 | `max_runs` | No | The round completes after this many finished runs |
 | `expires_at` | No | The round completes at this time |
 | `timeout` | No | Longest run, default 60 minutes (7.3) |
-| `wait` | No | `resume` only: how long a run may wait for the lock (6.3), default 10 minutes |
+| `wait` | No | `resume` and `group`: how long a run may wait for the lock (6.3) or its delivery (5.2), default 10 minutes |
 | `catch_up` | No | `once` (default) or `skip` (8.2) |
 | `on_finish` | No | `close` (default) or `keep`, for `fresh` and `fork` (7.6, Q2) |
 | `notify` | No | `failures` (default), `always` or `never` (10.2) |
@@ -161,7 +178,7 @@ Rules:
   works on any host that has them.
 - **Secrets.** A round holds no secrets. The run inherits the runner hab's environment, as any
   session does. A secret the job needs comes from the harness's own login or the host's
-  environment.
+  environment, or, for a watcher, a secret set in the hab's config (4.4).
 - **Edits.** An edit takes effect from the next run. A run already in flight keeps the values it
   started with. Changing the trigger recomputes the next slot from now. A changed trigger also
   re-arms a completed round (a spent `once` given a new instant, a round past `max_runs` or
@@ -174,6 +191,11 @@ Rules:
   no prompt, harness, model or harness arguments. An `expires_at` in the past is refused, as a
   past `once` instant is. Both checks apply at creation and when the value changes, so an edit
   to another field never fails on a time that has passed since.
+- **Field rules (watchers).** A `capcom` or `group` round takes a prompt and no `harness`,
+  `model`, `harness_args`, `command`, `project`, `cwd`, `target` or `on_finish`. `group` is for
+  `group` rounds only. `debounce` and `cooldown` are for `event` and `watch` triggers only,
+  `secrets` for `watch` only. Any mode takes any trigger: a `cron` round in `capcom` mode is a
+  morning brief from Capcom.
 
 Decision: rounds live in the runner's state and are edited by the API, with export and apply for
 a file. Reason: the app and agents must create and edit rounds, as in Paseo, and a store the hab
@@ -189,6 +211,7 @@ users who want it in git.
 | `cron` | A 5-field cron expression and an IANA time zone |
 | `once` | One instant. The round completes after that run |
 | `event` | A hab event that matches a filter (4.3). Later stage |
+| `watch` | A line from the round's watcher, a program gff-hab keeps running (4.4). Later stage |
 | `manual` | Only `gff round run`, the app's Run now, or the API. Any round can also be run by hand |
 
 ### 4.1 Cron
@@ -237,16 +260,262 @@ Events come from the runner's own hab only. No hab triggers a round on another h
 | `agent.state` | Project or session; the new state: `done`, `error` | Summarise when any agent in a project finishes |
 | `command.updated` | Session; command ended with a non-zero status | Explain a failed build in the console |
 | `hab.woke` | None | A morning sweep after the laptop opens |
+| `notice.raised` | Lowest `level`; session or project; `text`, a case-insensitive part of the title or body | Ask Capcom about each active notice a script raises |
+| `logbook.updated` | Record `type`; project; `change`: `created` (the default), `status`, `deleted` or `any`; for `status`, the new statuses; `tags` (any of); `by`: `person`, `agent`, `hab` or `any` (the default) | Triage each task a person files; tell a group's coordinator when a task in its project is `done` |
 
-- **Debounce.** Events that match within 30 s make one run.
-- **Cooldown.** At least 5 minutes between event runs of one round, by default. Events in the
-  cooldown are coalesced into one run at its end.
-- **No loops.** An event caused by the round's own run session never triggers that round.
+- **`hab.woke`** is a new event. The scheduler raises it once for each wake it detects from the
+  clock gap (8.1), after the wake settle (8.3). It carries how long the host slept. The first
+  reading after gff-hab starts is not a wake for this event: a restart is not a sleep the user
+  saw.
+- **`notice.raised`** is the event of `notice.raise` (`hab-logic-api.md` 3.9):
+  notices from scripts, `gff-hab notify`, rounds and gff-hab itself. The banners of agent states
+  raise no such event (`capcom.md` 8.5), so a round cannot match a permission request this way.
+  A notice about the round itself (its `round` field names this round) never triggers it, nor
+  one whose `session` is the round's run session (the no-loop rule below).
+- **`logbook.updated`** carries only the record's id, revision, type, project and `deleted`
+  (`logbook.md` 10.5). The matcher tests `type`, project and `deleted` on the event. Only then
+  does it read the ops this replica folded for the record since the last one it handled, and it
+  matches `change`, the statuses, `tags` and `by` on those ops. `by` is the op's actor kind
+  (`logbook.md` 3.3: a person, an agent, or the hab itself).
+- **Folded since, not revision.** The revision counts folded ops, but a peer's op can fold into
+  the middle of a record's history by its HLC, so "the last N ops" is not "the new ops". Stage 9
+  adds an optional `folded_after` to `logbook.history`: a local fold sequence number the replica
+  gives each op as it folds it, never synced. The matcher keeps the highest number it handled, in
+  memory. At gff-hab start it begins at the replica's current number: only ops folded after the
+  start count, a peer's op that arrives later included, whenever it was written.
+- **Logbook changes from peers count.** An op that sync brings from a peer folds into this hab's
+  replica and raises the event here, so it matches. Reason: the replica is this hab's own state;
+  the rule above is about events, not about who wrote the record.
+- **Private projects.** A record in a private project (`logbook.md` 3.3) goes into a run's event
+  batch only when the run's session belongs to that project. Elsewhere the batch says "1 record
+  in a private project" with no id or title. A `group` run follows the same rule with the
+  coordinator's project. A `capcom` run always gets the count line: the service has no project
+  (5.2).
+- **Not replayed.** A change made while gff-hab was stopped raises no event, as for every hab
+  event. A round that must see every change sweeps on `cron` with `GFF_ROUND_LAST_OK` (5.1).
+- **Batches.** Debounce, cooldown and coalescing are in 4.5.
+- **No loops.** An event caused by the round's own run session never triggers that round. In
+  `capcom` and `group` mode the destination counts as the run session (5.2): Capcom's own
+  writes never trigger a `capcom` round, and the coordinator's never trigger a `group` round.
 - **No webhooks.** The hab listens on no TCP port (`hab-logic-api.md` 4). An outside system
-  triggers a round with `gff-hab api call round.run` over SSH.
+  triggers a round with `gff-hab api call round.run` over SSH, or a watcher dials out to it
+  (4.4).
 
 Decision: events in a later stage, with this fixed list. Reason: Paseo's event triggers live in its
 paid Hub; cron covers the bar. The list uses events the hab already sends, so each is cheap.
+`hab.woke` is the one new event, and the scheduler already detects the wake.
+
+Decision: the Logbook event filters on the ops, not on the record as it is now. Reason: "a task
+became `done`" is a change, and only the ops say what changed; the event alone names no field.
+
+### 4.4 Watch
+
+A `watch` trigger names a **watcher**: a long-lived program that gff-hab keeps running. Each JSON
+line the watcher prints is an event. Events make runs through the same batch rules as hab events
+(4.5). The watcher reaches outside systems by dialling out: IMAP IDLE for mail, a feed, a status
+page. The hab still listens on no port.
+
+| Field | Required | Meaning |
+|---|---|---|
+| `watch.argv` | Yes | The program and its arguments. No shell |
+| `watch.cwd` | No | An absolute folder. Default: `<state>/rounds/watchers/<round id>/`, made 0700 |
+| `watch.kinds` | No | Event kinds that count; others are dropped quietly. Default: every kind |
+| `secrets` | No | The name of a secret set in the hab's config file (below). Never a value |
+
+**How it runs.**
+
+- **In a pane, visible.** The watcher runs in a holder pane, as every run does, under a wrapper:
+  `gff-hab watch-pane`, as `gff-hab opencode-pane` wraps opencode. The wrapper starts the
+  program with its stdout on a pipe, reads the event lines, and sends them to gff-hab through
+  the pane's `$GFF_HAB` endpoint (`round.watch_event`, 13). The program's stderr and one line
+  per event ("event: <title>") show in the pane. Reason: the holder keeps the pane through a
+  gff-hab restart, so an update never drops a mail connection, and the user can open the pane
+  and see what the watcher does.
+- **Its session.** Each `watch` round has one watcher session, named `<round name>-watch` (with
+  the usual `-2` suffix rule), apart from its runs' sessions. It carries `Session.round` with the
+  round id, no run id, and `watcher: true`. It is not a run. It holds no place under the host
+  limit (7.2). Badges and the run-session filter treat it as a run session. Each start, after a
+  backoff or a wake, is a new pane in the same session, as `session.resume` makes. The resume
+  book does not record it, and a client's Resume on it is refused: gff-hab starts watchers.
+  Deleting the round removes the session once its pane has exited. The secret set's values go
+  into the pane's environment only, never into the session record.
+- **Typing into it** takes nothing over. Closing the pane counts as an exit; to stop the
+  watcher, pause the round.
+- **Environment.** The runner hab's environment, as for any session. Then the secret set, then
+  `GFF_ROUND` (the round id), `GFF_ROUND_LAST_OK` (5.1) and `GFF_WATCH_CURSOR` (below).
+- **Start.** gff-hab starts the watcher when the round is created or unpaused, and at its own
+  start when no watcher pane of the round survives. At start it first waits until the link has
+  reached every registered holder, as run adoption does (8.4), so a watcher in a slow holder is
+  adopted, never started twice. An edit to `watch` or `secrets` restarts
+  it; an edit to any other field does not.
+- **Stop.** A pause, a delete or a completed round hangs up the watcher, as `pane.close` does.
+- **gff-hab's own hang-ups** (a wake, an edit of `watch` or `secrets`) count neither toward the
+  backoff nor toward the exit pause: the next start is at once, or after the settle.
+- **Restart with backoff.** Any other exit restarts the watcher: after 1 s, doubling to 5 minutes. A
+  watcher that ran 10 minutes resets the backoff. Exit status 0 is not special: a watcher runs at
+  all times. A watcher that cannot start (the program is missing) backs off the same way.
+- **Pause after repeated exits.** 5 exits in a row, each less than 60 s after its start, pause
+  the round with the `paused` notice (10.2), whose body names the last exit and whose action
+  opens the watcher session. It is a self-pause, so `notify = never` keeps it. Unpause clears
+  the exit count and the backoff. Reason: the same
+  cheap guard as the failure pause (10.1), with the count of systemd's default start limit
+  (5 starts).
+- **Sleep and wake.** Nothing can run before the host sleeps, and gff-hab has no sleep hook
+  without cgo (8.1). The watcher freezes with the host. At a detected wake gff-hab hangs it up
+  and starts it again after the wake settle (8.3). The first reading after gff-hab starts is not
+  such a wake, though 8.1 counts it as one for slots: a gff-hab restart leaves the watcher
+  running (below). Reason: its connections died in the sleep,
+  and a blocked read may take many minutes to notice. A host reboot is the same: the watcher
+  starts after gff-hab's start settle.
+- **A gff-hab restart** leaves the watcher running. While `$GFF_HAB` does not answer, the
+  wrapper keeps up to 1,000 lines or 1 MiB, drops the oldest past that, counts the drops, and
+  sends the rest when gff-hab answers again.
+- **One per round, 16 per hab.** `rounds.max_watchers` in the hab's config sets the cap. A
+  create, an unpause or an update that makes a round a `watch` round past it is refused with
+  `conflict`.
+
+**Event lines.** One JSON object per line on stdout:
+
+| Field | Required | Meaning |
+|---|---|---|
+| `title` | Yes | One line, at most 200 characters |
+| `kind` | No | A word the watcher picks, such as `mail`. Matched by `watch.kinds` |
+| `key` | No | A dedup key. A key the round saw in the last 24 hours is dropped quietly. The round keeps its last 1,000 keys |
+| `level` | No | `passive`, `active` or `time-sensitive`. A hint for the run and for Capcom |
+| `at` | No | When it happened, RFC 3339. Default: when gff-hab read the line |
+| `data` | No | A JSON object, at most 16 KiB encoded |
+
+- **The cursor.** A line `{"cursor": "<text>"}` is no event. gff-hab stores the text (at most
+  1 KiB) with the round and passes the latest one as `GFF_WATCH_CURSOR` at each start. A mail
+  watcher stores the last message it reported, so after a sleep it reports what came in the
+  meantime and starts IDLE from there. gff-hab saves the cursor at most once per 10 s and with
+  each new run. Reason: the rounds store writes its whole file (7.7); a crash then repeats at
+  most 10 s of events, and the `key` drops the repeats.
+- **Bounds.** A line is at most 64 KiB. At most 60 events per minute per watcher, in a bucket
+  that allows a burst of 60. A line that is not a JSON object, lacks `title`, breaks a bound or
+  comes over the rate is dropped. The wrapper writes the reason in the pane, at most once per
+  10 s with a count. The round shows its drop count since the watcher started.
+- **Untrusted.** An event's text comes from outside: anyone can write a mail's subject. Runs
+  get it as marked data (4.5), never as the prompt.
+
+**Secrets.** A round holds no secrets (3). A watcher that needs one names a set from the hab's
+config file:
+
+```toml
+[rounds.secrets.mail]
+vars = { IMAP_HOST = "imap.example.com", IMAP_USER = "me@example.com" }
+command = ["/usr/local/bin/print-mail-secrets"]
+```
+
+- `vars` are plain values. `command` is an argv, no shell. gff-hab runs it at each watcher start,
+  with stdin `/dev/null` and a 30 s timeout, as it runs the push `key_command`. Each output line
+  `NAME=value` sets one variable. Its output is never logged and never stored. A failing
+  command counts as a watcher exit and backs off.
+- `round.create` and `round.update` refuse a `secrets` name the hab's config lacks (`invalid`).
+  The export carries the name only, so a file in git holds no secret.
+
+**Module watchers.** A module may later serve as a watcher: gff-hab calls its `watch(ctx)` on the
+manifest's `refresh` schedule and takes the events it returns, with the cursor in the module's
+state. A module's `refresh` has a 30 s limit (`modules.md` 8.1), so it can poll a feed but not
+hold a connection. Not in the first watcher stage (14).
+
+Two deviations from `swarm-study.md` 5, for the owner to see: the study's "a command or module"
+builds the command first and leaves modules for later (16, W3); its "stops it on sleep" becomes
+"restarts it at wake", since no sleep signal reaches gff-hab without cgo.
+
+Decision: a watcher is a plain program in a pane, under a wrapper. Reason: the owner's rules want
+every run visible and sessions that outlive updates; a pane gives both. A program can hold IMAP
+IDLE, which a module call cannot. Reading a pipe keeps the terminal's line discipline out of
+the event lines.
+
+Decision: restart the watcher at every wake. Reason: there is no cheap sleep signal, and a stale
+connection is the common failure after a sleep. The cursor makes a restart lose nothing.
+
+### 4.5 Event batches
+
+Hab events (4.3) and watcher events (4.4) reach a run the same way.
+
+- **Debounce.** A first matching event opens a batch. The run is made 30 s after it (`debounce`,
+  5 s to 1 hour), with every event that matched by then.
+- **Cooldown.** At least 5 minutes (`cooldown`, 1 minute to 24 hours) from the start of one event
+  run to the start of the next. Events in the cooldown join the next batch, which runs at the
+  cooldown's end.
+- **Coalescing.** Events that match while the round's run is live join a pending batch. It makes
+  one run, at most one, at the later of that run's end and the cooldown's end.
+- **Runs by hand.** Run now on an `event` or `watch` round takes the pending batch, or runs with
+  none. It starts no cooldown.
+- **Kept across restarts.** The pending batch is saved with the round's state, at most once per
+  10 s and in the write that makes a run (7.7). It holds at most 200 events or 256 KiB; past
+  that the oldest go, and the batch says how many. Reason: a watcher's mail must not be lost to
+  an update of gff-hab.
+- **The run sees the batch.** The run record keeps the event count. `GFF_ROUND_EVENTS` names a
+  JSON file with the whole batch, for `fresh` and `fork` runs and command runs. gff-hab keeps the
+  files of the last 20 ended runs per round and removes older ones, so they use at most about
+  5 MiB per round, whatever 7.6 keeps of the records. A harness run also gets the events in its first message, in a
+  block before the prompt: `[begin round events <run id>]`, one line per event (time, kind,
+  title, the `data` cut to 1 KiB), `[end round events <run id>]`, with markers neutralised as
+  the envelope's are (5). The block holds at most 50 events or 32 KiB; the rest are counted,
+  and the file has them. In `resume` mode the block is part of the envelope. In `capcom` and
+  `group` mode the batch goes with the message (5.2).
+- **Marked as data.** The block's first line says the events come from outside and are not
+  instructions. The chat view shows the block as data from Flightdeck, as it shows the envelope.
+- **A skipped run keeps its batch** when its destination was not there (5.2): the events go back
+  into the pending batch, and the next run carries them.
+- **No catch-up.** `catch_up` applies to slots only. A wake makes no event run of its own, apart
+  from `hab.woke`.
+
+### 4.6 Worked example: a mail watcher
+
+The owner wants Capcom to say something only when a mail from a few senders needs him. The
+addresses and hosts here are invented.
+
+The hab's config file holds the secret set (4.4). Its `command` prints `IMAP_PASSWORD=...` from
+the user's own credential store:
+
+```toml
+[rounds.secrets.mail]
+vars = { IMAP_HOST = "imap.example.com", IMAP_USER = "me@example.com" }
+command = ["/usr/local/bin/print-mail-secrets"]
+```
+
+The round, as `gff round export` prints it:
+
+```toml
+[[rounds]]
+name = "mail"
+mode = "capcom"
+prompt = "New mail from a watched sender. Tell me only if one needs me today, in one line each."
+secrets = "mail"
+debounce = "30s"
+cooldown = "5m0s"
+
+[rounds.watch]
+argv = ["mailwatch", "--from", "billing@example.com,alerts@example.net"]
+```
+
+What happens:
+
+1. gff-hab starts `gff-hab watch-pane -round <id> -- mailwatch ...` in the session `mail-watch`, with
+   the set's variables and `GFF_WATCH_CURSOR`.
+2. `mailwatch` logs in, asks the server for messages after the cursor, then holds IMAP IDLE.
+3. A mail from `billing@example.com` arrives. `mailwatch` prints:
+
+   ```json
+   {"kind":"mail","key":"1700000000:4521","title":"Invoice 1042 from billing@example.com","level":"active","data":{"from":"billing@example.com","subject":"Invoice 1042","snippet":"Your invoice is due on 12 November."}}
+   {"cursor":"1700000000:4521"}
+   ```
+
+4. The batch opens. Two more mails come within 30 s; they join it.
+5. At 30 s the run is made. It hands Capcom one message: the prompt and three events, marked as
+   data. Capcom answers `accepted`; the run `succeeded`.
+6. Illustrative only; Part 14 decides how. Capcom looks in a turn of its own. Two mails are routine; it says nothing about them. The
+   invoice is due soon; it writes one line to the owner, unless quiet hours hold it (Part 14).
+7. The laptop sleeps for the night. At wake gff-hab hangs `mailwatch` up and starts it again
+   after 30 s. It reads the cursor, reports the night's four mails in one burst, and goes back
+   to IDLE. One run hands Capcom the four.
+
+What the example never does: open a port, store the password in the round, put a mail's text in
+the prompt, or type into a session the owner uses.
 
 ---
 
@@ -257,6 +526,8 @@ paid Hub; cron covers the bar. The list uses events the hab already sends, so ea
 | `fresh` | Starts a new session in the project with the harness, the model and the prompt. Or runs `command` | `session.create` |
 | `resume` | Sends the prompt into the target session. A live target gets it under the lock (6). An exited target is resumed first, then gets it | `session.send`; `session.resume` when exited |
 | `fork` | Starts a new session that branches from the target's conversation, then sends the prompt. The target is untouched | Claude Code `--resume <id> --fork-session`; Codex `codex fork <id>`; opencode *(unverified)* |
+| `capcom` | Hands the prompt and the event batch to the Capcom service as a proactive turn (5.2) | The proactive-turn call shared with Part 14 |
+| `group` | Sends the prompt and the event batch to a group's coordinator as a channel message (5.2) | Channels (`mesh.md` 6), the coordinator from Part 15 |
 
 - **`fresh`** suits daily triage, reports and sweeps: each run starts clean (Paseo's schedule).
 - **`resume`** suits "check the deploy every hour in this conversation": context carries over
@@ -283,21 +554,149 @@ The run session's environment carries these variables, beside the `GFF_HAB` cont
 | `GFF_ROUND_RUN` | The run id |
 | `GFF_ROUND_SLOT` | The slot this run serves, RFC 3339; absent for a manual or event run |
 | `GFF_ROUND_LAST_OK` | When the last successful run started, RFC 3339; absent before the first |
+| `GFF_ROUND_EVENTS` | An event run's batch: the path of a JSON file (4.5); absent for other runs |
+| `GFF_WATCH_CURSOR` | The watcher only: the last cursor it printed (4.4); absent before the first |
 
-`GFF_ROUND_LAST_OK` is the round's cursor. A prompt can say "triage what changed since
-`$GFF_ROUND_LAST_OK`", so a run after a long sleep covers the whole gap and a repeated run does
-no harm. In `resume` mode the variables are in the envelope, because a live session's environment
-cannot change.
+`GFF_ROUND_LAST_OK` marks where the last good run left off. A prompt can say "triage what changed
+since `$GFF_ROUND_LAST_OK`", so a run after a long sleep covers the whole gap and a repeated run
+does no harm. In `resume` mode the variables are in the envelope, because a live session's
+environment cannot change.
 
 Decision: give the agent the last success time, not a stored cursor of its own. Reason: a time
 covers most sweeps, needs no new storage, and makes catch-up once safe: one run sees every missed
-change.
+change. A watcher is the exception (4.4): only its program knows its source's positions, such as
+a mail server's message ids, so gff-hab stores the cursor the watcher prints, as opaque text.
+
+### 5.2 Capcom and group modes
+
+These two modes start no session of their own. A run hands one message to a destination: the
+Capcom service (Part 14) or a group's coordinator (Part 15). The run is visible where the message
+lands: in Capcom's thread, or in the coordinator's session. This section says only what rounds
+send and what they expect back. The other side belongs to those parts' specs; the interface is
+shared with them, and a change to it changes both specs.
+
+**What the message holds**, in both modes:
+
+| Field | Meaning |
+|---|---|
+| `round`, `name`, `run` | The round id and name, and the run id |
+| `trigger` | `cron`, `once`, `event`, `watch` or `manual`, with the slot for a slot run |
+| `prompt` | The round's prompt: what to do with the events, such as "tell me only if a mail needs me today" |
+| `events` | The batch (4.5), at most 50 events or 32 KiB, with the count of the rest. Marked as data from outside |
+| `level` | The highest `level` in the batch, or absent. A hint, never a push of its own |
+| `last_ok` | `GFF_ROUND_LAST_OK` (5.1) |
+
+- **Size.** The whole message fits the channel limit of 64 KiB (`mesh.md` 6.3); the event block is
+  cut first, with the count of what it left out.
+- **One message per run.** Its channel message id is derived from the run id (a hash of it), not
+  drawn at random as `mesh.md` 6.2 does for an agent's send. The runner never sends a run's
+  message twice under another id, so the receiver's dedup by message id (`mesh.md` 6.3) drops
+  any repeat.
+- **The sender.** The sender's name is `round:<round name>` on the runner's device id. It names
+  no session. A reply to it is refused, "a round takes no replies"; the envelope gives no reply
+  command.
+- **The actor mark.** For the no-loop rule (4.3) the destination must be recognisable in what it
+  writes. A coordinator is a session, so its session id serves. The Capcom service has no session
+  (`swarm-study.md` 2.7): Part 14 must mark the notices it raises and the Logbook ops it writes
+  with one actor id for the service, and say what it is. That mark is part of this interface.
+
+**`capcom` mode.**
+
+- **Is there a service?** The Capcom home host publishes a `capcom-service` capability in its
+  catalog entry while the service runs (`mesh.md` 5). The runner reads it from its catalog
+  copies. A `capcom` round is refused at creation (`unavailable`) while no catalog copy shows
+  it. A run that finds no home host, or no `capcom-service` on it, is `skipped`, "no Capcom
+  service", and its batch goes back to the pending batch (4.5).
+- **The call.** The run hands the message to the service as a proactive turn: the call Part 14's
+  service spec defines for it (A1, task-n6qh2sqb). The service answers once: `accepted` (stored;
+  Capcom looks at it in a turn of its own), `duplicate` (that message id was already accepted),
+  or `declined` with a reason word from an open set (Capcom's proactive turns are off, its daily
+  turn budget is spent). The run waits for no turn.
+- **Where Capcom runs.** The service runs on the Capcom home host (`capcom.md` 7.3). On the
+  runner the call is local. On a peer, the message travels as a channel message to the service
+  (`mesh.md` 6), so the outbox holds it while that host sleeps. The home host's hab hands it to
+  the service, and the service's answer goes back as the message's status item (`mesh.md` 6.3,
+  control items), with three new final states for a message to the service: `accepted`,
+  `duplicate` and `declined` (with its reason).
+- **Run states.**
+
+  | What happened | Run state | Batch |
+  |---|---|---|
+  | `accepted` or `duplicate` | `succeeded`, "accepted by Capcom" | Sent |
+  | `queued` in the outbox for a sleeping home host | `succeeded`, "queued for Capcom on <label>". The outbox delivers it later (7 days at most) | Sent |
+  | `handed`, then no answer by `timeout` | `timed_out` | Back to pending |
+  | `declined` | `skipped`, with the reason | Dropped: Capcom chose not to look |
+  | No home host, or no `capcom-service` | `skipped`, "no Capcom service" | Back to pending |
+  | Refused by channels: no peer entry for the home host (`mesh.md` 6.3), outbox full | `skipped`, with channels' reason | Back to pending |
+  | `expired` after 7 days in the outbox | Nothing: the run ended long ago. The runner logs it | Lost |
+
+- **What rounds leave to Capcom.** Quiet hours, the daily turn budget, batching several items into
+  one turn, the small model for a first look, and whether to write to the user at all. Owner
+  decision 2 (`swarm-study.md` 8): Capcom may write first about anything useful, with quiet hours.
+  The round only delivers.
+- **No pane fallback.** Owner decision 1 replaces the pane Capcom with the service outright, so a
+  `capcom` round never targets the pane Capcom. Until the service runs, a `resume` round on the
+  pane Capcom's session does the job under the lock.
+- **No lock.** The service never counts as busy: messages queue (`swarm-study.md` 2.7).
+
+**`group` mode.**
+
+- **The coordinator.** The run asks Part 15's group record for the group's coordinator: its
+  address (`label/name`) and whether the group still runs. Part 15 defines the record (B1,
+  task-5ntfv32q); rounds read only those two facts, at the start of each run. A new coordinator
+  (after a hand-off) gets the next run.
+- **The message.** A channel message from the round to that address, in the round envelope (5)
+  with the event block. It carries a new `round` mark (13): the round and run ids, and a
+  deadline, the run's start plus `wait`, in UTC.
+- **The lock on the far side.** A hab that delivers a message with the `round` mark applies the
+  round lock (6.1) instead of channels' two-second rule. Reason: a coordinator may be the user's
+  own session, and a round must never type into a session in use. A message still undelivered
+  at its deadline, by the receiving hab's clock, ends `expired`, "in use: <reason>" when the lock
+  held it, and is never delivered later. Two hosts' clocks may differ by a few seconds; at worst
+  the coordinator then gets a message the run already gave up on, and the next run repeats its
+  events.
+- **Only to a hab that knows the mark.** The runner sends a `group` message only to a hab whose
+  catalog entry lists the `round-lock` capability. An older hab would deliver under the two-second
+  rule. The run is `skipped`, "the coordinator's hab is too old", and keeps its batch.
+- **Run states.**
+
+  | Message state (`mesh.md` 6.2) | Run state | Batch |
+  |---|---|---|
+  | `delivered` | `succeeded` | Sent |
+  | `expired` at the deadline, the lock held it | `skipped`, "in use: <reason>" | Back to pending |
+  | `queued` or `handed` at `wait` | `skipped`, "not delivered in <wait>: <state>". The far side drops it at the deadline | Back to pending |
+  | `refused`: the coordinator is not running | `skipped`, "coordinator not running" | Back to pending |
+  | `not_delivered`: written, with no sign the agent took it | `failed` | Dropped: it may have been read |
+  | Refused by channels at send (no peer entry, outbox full) | `skipped`, with channels' reason | Back to pending |
+
+- **Group ended.** A group that no longer runs completes the round, as a gone target does
+  (10.1), with the `target_gone` notice, body "Its group ended."
+- **The coordinator's turn** belongs to the group. The run does not wait for it.
+
+Decision: a `capcom` run ends at Capcom's answer, not at its turn. Reason: quiet hours and the
+budget can hold an item for hours, longer than any run timeout; the run's job is a durable
+hand-over. What Capcom did shows in its thread.
+
+Decision: both modes travel over channels, with the round lock on the receiving hab for a
+`group` message. Reason: channels already cross hosts, queue for a sleeping host and deduplicate;
+the lock is the one rule channels lack for a session the user may be typing in.
+
+Interface shared with Part 14 (A1) and Part 15 (B1), in one place:
+
+| Item | Owner | Rounds use |
+|---|---|---|
+| The proactive-turn call and its answers `accepted`, `duplicate`, `declined` | Part 14 | Hand over a `capcom` message; map the answer (above) |
+| The `capcom-service` catalog capability | Part 14 | Refuse at create; skip a run |
+| The service's actor id on its notices and Logbook ops | Part 14 | The no-loop rule (4.3) |
+| The group record's coordinator address and running mark | Part 15 | Address a `group` message; complete the round |
+| The `round` mark and the `round-lock` capability | Rounds (stage 9), in channels | Deliver under the lock |
 
 ---
 
 ## 6. The lock: never type into a session in use
 
-The lock matters in `resume` mode, the only mode that writes into an existing live session.
+The lock matters in `resume` mode, the only mode that writes into an existing live session on the
+runner. A `group` message gets the same lock on the coordinator's hab (5.2).
 
 ### 6.1 When a session is in use
 
@@ -339,13 +738,13 @@ thing this feature must never do.
 | State | Meaning |
 |---|---|
 | `queued` | Due, waiting for a run slot on the host (7.2) or the wake settle (8.3) |
-| `waiting` | `resume` only: waiting for the lock (6.3) |
-| `running` | The session is live and the agent works on the run's turn |
+| `waiting` | `resume`: waiting for the lock (6.3). `group`: waiting for the message's delivery (5.2) |
+| `running` | The session is live and the agent works on the run's turn. `capcom`: the hand-over is under way |
 | `blocked` | The agent waits for the user: a permission, a question or a sign-in |
-| `succeeded` | The turn ended `done`, or `command` exited 0 |
+| `succeeded` | The turn ended `done`, or `command` exited 0. `capcom`: accepted, a duplicate, or queued for the home host; `group`: delivered (5.2) |
 | `failed` | Spawn failed, the turn ended `error`, the harness exited before the turn ended, or `command` exited non-zero |
 | `timed_out` | The run passed `timeout` |
-| `skipped` | The lock never cleared, or the project folder is missing for one run |
+| `skipped` | The lock never cleared, the project folder is missing for one run, or a `capcom` or `group` destination was not there or declined (5.2) |
 | `taken_over` | The user typed into the run session (7.5) |
 
 ### 7.2 Start
@@ -356,6 +755,12 @@ thing this feature must never do.
   config). Others wait as `queued`, oldest slot first; equal slots go by when the run was made.
   Built rule: every live run that is not `queued` holds a place, `waiting` and `blocked`
   included. Reason: a blocked run still holds a session and an agent.
+- **What holds no place.** A `capcom` or `group` run and a watcher hold no place under the host
+  limit, and do not wait for one. Reason: they start no harness on the runner; the limit guards
+  the host's agents. A `group` run's delivery is still one at a time per pane on the far side.
+- **Event runs.** An event run is made when its batch is due (4.5): it carries no slot, its
+  trigger kind is `event` or `watch`, and it takes the batch. It then waits for the host limit
+  and the wake settle as a slot run does; a `capcom` or `group` run waits for the settle only.
 - **The scheduler owns `queued`.** Only the scheduler starts a queued run. A run update from
   outside (the run session, stage 3) cannot move a run out of `queued`, or into it.
 - **Start returns at the spawn.** The scheduler saves the run as `running`, then asks the run
@@ -373,6 +778,9 @@ thing this feature must never do.
 - **A harness run ends** at the first `session.turn_end` after the run's prompt was delivered and
   read back. `done` is a success; `error` is a failure.
 - **A command run ends** when the program exits.
+- **A `capcom` or `group` run ends** at its destination's answer (5.2). A `capcom` run that has
+  no answer at its `timeout` ends `timed_out`, and its batch goes back to the pending batch. A
+  `group` run ends at `wait` or earlier (5.2), so its `timeout` matters only when set shorter.
 - **Timeout.** At `timeout` the hab interrupts the turn (`session.interrupt`) and marks the run
   `timed_out`. A command run gets a hang-up, as `pane.close` does.
 - **Result.** The run keeps the final agent message (first 4 KiB), the session id and the
@@ -431,7 +839,9 @@ The plan has rounds use Logbook (Part 12) for job state and results. Logbook is 
 rounds, so rounds keep their own state now.
 
 - **Own store.** `<state>/rounds/state.json` holds every round, its next slot, its last served
-  slot, its failure and skip counts, and its run records. It is saved whole through a synced
+  slot, its failure and skip counts, and its run records. For `event` and `watch` rounds it
+  also holds the pending batch (4.5), the watcher's cursor and its last 1,000 dedup keys (4.4).
+  The batch files of `GFF_ROUND_EVENTS` live beside it in `<state>/rounds/events/`. It is saved whole through a synced
   temporary file and one rename, as the channels state is (`mesh.md` 6.5). A file that does not
   parse, or that names no version (`null` included), is set aside as
   `state.json.bad-<unix seconds>` (with `-2`, `-3` when that name is taken; an earlier
@@ -450,7 +860,8 @@ rounds, so rounds keep their own state now.
   decision must never wait on a store that syncs between hosts.
 - **The run record.** Run id, run number, round id, slot, trigger kind, `missed`, state, reason,
   session id, when it was made (`created`), start and end times, and the first 4 KiB of the
-  final agent message. Logbook gets the same fields.
+  final agent message. Logbook gets the same fields. An event run adds its event count; a
+  `capcom` or `group` run adds the destination and, for `group`, the channel message id.
 - **One write per new run.** The scheduler saves a new queued run and its round's state (the
   run number, the last served slot, the next slot) in one write. A failed write leaves neither,
   so the slot stays due and the next tick tries again. A slot is never marked served without
@@ -597,6 +1008,18 @@ lose runs for reasons the user never sees. A restart is treated like a short sle
   name, mode, trigger, project, next slot, last run state). Clients and agents read the merged
   view, so one list shows every round on every host, with "host asleep since <time>" for an
   offline runner.
+- **Watchers and destinations.** A `watch` round's watcher runs on its runner, and an `event`
+  round hears only its runner's events (4.3). A `capcom` or `group` round may run on any hab: its
+  message reaches Capcom's home host or the coordinator's hab over channels (5.2). A mail watcher
+  on a laptop works: its cursor reports at wake what came during the sleep (4.4). The app's
+  always-on line applies to `watch` rounds too, since a sleeping runner hears nothing.
+- **Moving these rounds.** `move` takes `capcom`, `group` and `event` rounds, and `watch` rounds
+  whose `secrets` set the new runner's config holds; the new runner refuses the create
+  otherwise, and the move rolls back. A `capcom` or `group` round names no project, so the
+  remote rule does not apply to it. An event filter that names a session cannot move (the
+  session lives on one host); one that names a project names it by remote in the move, as the
+  round's project is. The move carries the cursor and the pending batch in its create, as it
+  carries the pause mark; the dedup keys stay behind.
 
 Decision: one runner per round, chosen by the user, with no failover. Reason: the mesh has no
 election and no shared state (`mesh.md`); two habs running one round would need both. Paseo runs a
@@ -629,6 +1052,9 @@ coordinator.
   end such a run the same way. Slots that pass while a round is paused never run; unpause sets
   the next slot from now and clears both counts. A pause also drops a planned retry and an
   owed slot (8.2, 8.3). Unpause on a round that is not paused does nothing.
+- **Event and watch rounds** follow the same counts. A watcher's exits are not runs: they count
+  only toward the watcher's own pause (4.4). A `capcom` or `group` destination that is not there
+  is a skip, so 5 in a row raise the skips notice ("Capcom's service is not running").
 - **`notify = never`** is applied by the scheduler: it asks for no notice but the self-pause.
 
 Decision: pause after 5 failures in a row. Reason: a broken unattended job costs tokens each slot;
@@ -646,11 +1072,15 @@ devices, and the app's in-app notices. A new push kind `round` is added to `push
 | Run `succeeded` | Only with `notify = always`; shows the first line of the final message | Passive |
 | Round paused after failures | Yes | Active |
 | 5 skips in a row | Yes | Passive |
-| Round completed because its target is gone | Yes | Passive |
+| Round completed because its target is gone, or its group ended | Yes | Passive |
+| Round paused because its watcher keeps exiting (4.4) | Yes, the `paused` row with the last exit | Active |
 
 - `notify = never` silences every row except the self-pause.
 - Each round's notifications collapse by round id, so a failing hourly round shows one banner,
   updated.
+- An event run's notices are the same rows. The run's batch is not in the banner; the kept
+  notice's body gives the event count and the first event's title, under the read scope rule of
+  stage 6 (13).
 - "Ask an agent" on a round notification works as for any notification (`capcom.md` 8.2): the
   event, with the run's result, is attached to the Capcom conversation.
 
@@ -662,6 +1092,10 @@ devices, and the app's in-app notices. A new push kind `round` is added to `push
 - A round's page shows its run history: slot, state, `missed`, duration, the first line of the
   result, and a link to the session.
 - Actions: Run now, Pause or Unpause, Edit, Delete. Delete asks first.
+- An `event` or `watch` round shows its trigger in plain words (`on logbook.updated`, `watch
+  mailwatch`), its pending event count, and for a watcher its state (`running`, `backoff` until
+  <time>, `stopped`), restarts, the drop count and the last exit. A link opens the watcher's pane.
+  Run now on an event round runs with the pending batch, or with none (4.5).
 
 ---
 
@@ -685,6 +1119,17 @@ devices, and the app's in-app notices. A new push kind `round` is added to `push
 | The prompt is longer than 64 KiB | Refused at creation, the channel message limit (`mesh.md` 6.3) |
 | An agent creates a round that triggers itself every minute | Allowed within the 1-minute floor, with no card (Q1); the agent can stop it with `gff round rm "$GFF_ROUND"`, and the failure pause (10.1) caps a broken one |
 | A cron expression that never matches (`0 0 31 2 *`) | Refused at creation: "never runs" |
+| A watcher prints a thousand lines in a second | 60 make the batch, the rest are dropped and counted; one run follows the debounce (4.4, 4.5) |
+| A watcher prints its password to stderr | It shows in the watcher's pane, as any program's output does. gff-hab never logs the secret set's values (4.4); what the program prints is the program's business |
+| gff-hab restarts while a watcher holds IMAP IDLE | The watcher keeps running in its pane; the wrapper holds its lines until gff-hab answers (4.4) |
+| The laptop sleeps for a night with a mail watcher | At wake the watcher is restarted after the settle, reads `GFF_WATCH_CURSOR`, and reports the night's mails in one burst: one run (4.4, 4.5) |
+| A `capcom` round fires while Capcom's home host sleeps | The message waits in the outbox; the run succeeds, "queued for Capcom on <label>" (5.2) |
+| A `capcom` run times out, but Capcom had accepted it | The batch goes back to the pending batch, so the next run may repeat events Capcom already has. Capcom's own dedup by event `key` is its call |
+| A `group` round's coordinator is the user's own session, and the user is typing | The coordinator's hab holds the message under the round lock; past `wait` the run is `skipped`, "in use" (5.2) |
+| A Logbook round on `created` tasks, whose own run files a task | The run session's op never triggers the round (4.3). A task filed by another agent in reaction does; the cooldown and the failure pause cap such a chain |
+| A notice round whose run raises a notice | A notice whose `round` field names this round never triggers it, nor one whose `session` is the run session (4.3). A notice the run raises with no session does trigger it once; the cooldown spaces such a chain and the failure pause caps a broken one |
+| An event names a record in a private project, and the run is in another project | The batch says "1 record in a private project", with no id or title (4.3) |
+| A watcher round is moved to another host | The watcher starts there with the cursor and the pending batch the move carried; the dedup keys stay behind, so the `key` cannot drop a repeat of an event from just before the move (9) |
 
 ---
 
@@ -755,6 +1200,20 @@ it.
 | `Session.round` | Optional field | Round id and run id for a run session |
 | catalog `rounds` | Catalog section | Name, mode, trigger, project, next slot, last run state (`mesh.md` 5) |
 | push kind `round` | Word | Round notifications (10.2) |
+| `RoundSpec.trigger` | Field values | Kind `event` with `event` (an event name of 4.3) and `filter` (an object of that event's filter fields); kind `watch` with `watch` (`argv`, `cwd`, `kinds`). Stage 9, stage 11 |
+| `RoundSpec` | New fields | `group`, `debounce_ms`, `cooldown_ms`, `secrets`; modes `capcom` and `group` |
+| `Round.pending`, `Round.watcher` | Read-only fields | The pending event count; the watcher's state (`starting`, `running`, `backoff` with its next start, `stopped`), restarts, drops since start, last exit, its session id |
+| `RoundRun.events`, `RoundRun.destination`, `RoundRun.message` | Read-only fields | An event run's count; a `capcom` or `group` run's destination and channel message id |
+| `Session.round.watcher` | Optional field | True on a watcher's session (4.4) |
+| `round.watch_event` | Method, pane route only | The wrapper's call: a page of event and cursor lines from the watcher pane that names the round. Answers which were taken and which dropped, with reasons. Any other pane is refused with `denied` |
+| `hab.woke` | Event | A detected wake (4.3), with `slept_s`. Host scope |
+| Channel message `round` | Optional field | Round id, run id and the deadline. The target hab delivers it under the round lock and expires it at the deadline (5.2) |
+| `round-lock` | Capability | The hab honours the channel `round` mark (5.2) |
+| `capcom-service` | Capability (Part 14) | The Capcom service runs on this hab (5.2) |
+| Message states `accepted`, `duplicate`, `declined` | Words | Final states of a channel message to the Capcom service (5.2) |
+| `logbook.history` `folded_after` | Optional parameter | Ops this replica folded after a local fold number (4.3) |
+| `[rounds] max_watchers`, `[rounds.secrets.<name>]` | Hab config | The watcher cap (default 16) and the secret sets (4.4) |
+| notice `round.kind` `paused` | Body | Gains the watcher's last exit when the watcher's pause raised it (10.2) |
 
 CLI (`gff round`, also the agent kit's MCP tools with the same verbs). Until the agent kit
 (Part 4) gives agents the `gff` verbs, the same commands ship as `gff-hab round`, beside
@@ -776,8 +1235,17 @@ them all at once (`mesh.md` 6.5 did the same for channels).
 | `gff round pause\|unpause <name>` | Pause or unpause |
 | `gff round run <name>` | Run now |
 | `gff round runs <name>` | Run history |
-| `gff round move <name> --host <label>` | Move a `fresh` round to another runner (9) |
+| `gff round move <name> --host <label>` | Move a `fresh`, `capcom` or `group` round, or an event round, to another runner (9) |
 | `gff round export`, `gff round apply <file>` | Print as TOML, or make the hab match a file (3) |
+| `gff round add <name> --mode capcom\|group [--group <id>] ... <prompt>` | Create a round whose runs message Capcom or a group's coordinator (5.2) |
+| `gff round add <name> ... --on <event> [--where key=value]... [--debounce d] [--cooldown d]` | Create an event round (4.3). Each `--where` is one filter field; a list is comma-separated (`--where status=done,dropped`) |
+| `gff round add <name> ... --watch [--secrets <set>] [--kinds k,...] [--watch-cwd dir] -- <program> [args...]` | Create a watch round (4.4). The words after `--` are the watcher's argv |
+| `gff-hab watch-pane -round <id> -- <program> [args...]` | What a watcher's pane runs (4.4). Not for people: gff-hab starts it |
+
+Export and apply carry the new fields: `[rounds.trigger]` holds `on` and its `where` table, or a
+`[rounds.watch]` table holds `argv`, `cwd` and `kinds`; `secrets`, `debounce`, `cooldown` and
+`group` are plain keys. A group named by id cannot move between meshes; apply refuses a `group`
+the hab's group records do not hold.
 
 Built (stage 3, task-ams092is). Where this spec left a choice open:
 
@@ -1115,13 +1583,71 @@ fresh-eyes reviewer before they close.
 | 6 | Notifications, catalog, other hosts | Push kind `round` and the rows in 10.2; the catalog `rounds` section; `--host`, `move` and `ls --all` | task-00cqxbrf |
 | 7 | App | Rounds list, round page, history, badges, actions, round notifications (Swift; the app lead) | task-xhpsgzkr |
 | 8 | gff client | Badges, the filter and the board's Rounds list | task-cpazgcsj |
-| 9 | Event triggers | The four events in 4.3, debounce, cooldown, no self-loops | task-awkgh5h1 |
+| 9 | Event triggers, `capcom` and `group` modes (the swarm study's D2) | The six events in 4.3 with their filters, `hab.woke`, the event batch (4.5), no self-loops; the `capcom` and `group` modes (5.2); the channel `round` mark and the lock on the receiving hab | task-awkgh5h1 |
 | 10 | Agent kit | `gff round` verbs and MCP tools; a round on another host under `confirm.start_elsewhere` | task-ybb4c3ed |
-| — | Later ideas | Worktree isolation for `fresh` runs (on `worktree.create`, `hab-logic-api.md` 3.10); skip when a harness usage window is above a threshold; a Logbook run log (7.7) that files each run as a Logbook record (Part 12) | Planned when Logbook is built |
+| 11 | Watchers (the swarm study's D3) | The `watch` trigger: `gff-hab watch-pane`, supervision, backoff, the exit pause, restart at wake, event lines, the cursor, dedup keys, secret sets; `--watch`, export and apply; the watcher's state on the round; a mail watcher example | task-qhdhg0x2 |
+| — | Later ideas | Worktree isolation for `fresh` runs (on `worktree.create`, `hab-logic-api.md` 3.10); skip when a harness usage window is above a threshold; a Logbook run log (7.7) that files each run as a Logbook record (Part 12); module watchers (4.4) | Planned when Logbook is built; module watchers after stage 11 |
 
 Stages 1 to 3 run in order. Stages 4 and 6 can run side by side after 3; 5 follows 4. Stages 7
 and 8 need 3 and 6. Stage 9 waits for 5 and 6; stage 10 waits for the agent kit and Capcom's
-confirmation cards.
+confirmation cards. Stage 9 waits for this spec (watchers, task-pt6pnli6); its `capcom` mode
+needs the Capcom service (Part 14 A2, task-vz6mxa3f) and its `group` mode the group record (Part
+15 B3, task-nz4aglbr). Each mode answers `unavailable` until its other side exists, so the rest
+of stage 9 can land first. Stage 11 follows stage 9.
+
+### 14.1 Acceptance for the watcher stages
+
+Stage 9, with `go test -race` over a real gff-hab and holder and fake harnesses:
+
+- Each of the six events triggers one run per debounce window; a burst inside the cooldown makes
+  one run at its end, with the whole batch in `GFF_ROUND_EVENTS` and in the first message's block.
+- A round's own run session never triggers it: an op it writes, a notice it raises, its own
+  agent state. A notice whose `round` field names the round never triggers it.
+- A `logbook.updated` round on `status=done` runs when a task becomes `done` (also through sync
+  from a peer, over the ssh stand-in, for an op written before this hab started and synced
+  after), not when its title changes; on `created`, once per new record. A peer's op that folds
+  into the middle of a record's history is matched once, through `folded_after`. A record in a
+  private project reaches a run outside it as the count line only.
+- `hab.woke` on a fake clock: once per wake, not at gff-hab start.
+- The pending batch survives a gff-hab restart (planned and killed) and makes one run.
+- A forged `[end round events` line in an event's title is neutralised.
+- `capcom` against a fake service: one message per run with the fields of 5.2 and an id derived
+  from the run id; each row of the 5.2 table, `accepted`, `duplicate` and `declined` coming back
+  as status items from a peer; no `capcom-service` refuses the create and skips a run; a home
+  host on a peer that is offline queues the message, which arrives once after the link comes up,
+  also when the runner sends it again after a restart. A notice or op with the service's actor
+  id never triggers the round.
+- `group` against a fake group record and two habs: delivered to the coordinator on the other
+  hab; held under the round lock while a client typed into it, then `expired` at the deadline
+  and the run `skipped`, "in use", with the batch kept; a message that reaches the far hab after
+  its deadline is never delivered; a coordinator not running skips and keeps the batch; a far hab
+  without `round-lock` gets no message; a reply to `round:<name>` is refused; an ended group
+  completes the round with one notice.
+- Export then apply with every new field gives no diff.
+
+Stage 11, with `go test -race` over a real gff-hab and holder and fake watcher programs:
+
+- A watcher runs in the session `<round>-watch` with `Session.round.watcher`; its stderr shows
+  there; the session holds no place under the host limit; each restart is a new pane in that
+  session; Resume on it is refused.
+- A crash restarts it after 1 s, then 2 s, 4 s; 5 quick exits pause the round with one notice
+  naming the last exit; a watcher that ran past the reset time starts again at 1 s.
+- A fake clock wake hangs the watcher up and starts it once after the settle.
+- A gff-hab restart leaves the watcher's process (same pid) running, with a holder that connects
+  late too; lines printed meanwhile arrive once after the restart. gff-hab's own hang-ups (wake,
+  edit) start no backoff and count toward no pause.
+- A burst of lines makes one run; a malformed, untitled, oversize or over-rate line is dropped,
+  shown in the pane and counted; a repeated `key` is dropped quietly.
+- The cursor reaches the next start as `GFF_WATCH_CURSOR`, also after a gff-hab restart.
+- A secret set's `vars` and `command` output reach the watcher's environment; neither appears in
+  gff-hab's log, the rounds store, the export, the catalog, the session record or the resume
+  book. A missing set is refused at create.
+- Pause, delete and an edit of `watch` stop or restart the watcher; an edit of the prompt does not.
+- The mail watcher example against a local fake IMAP server (no real mail service): one new mail
+  from a listed sender makes one event line; a mail from another sender makes none; a restart with
+  the cursor reports a mail that came while it was stopped, once.
+- Live check, after Part 14 A7 (task-hj8cnr5v): a mail reaches Capcom's thread as one proactive
+  message.
 
 ---
 
@@ -1140,3 +1666,23 @@ confirmation cards.
 - Ours: `AGENTS.md`; `landscape.md` 2.14 and idea 4.6; `mesh.md` 2, 5, 6.3, 8;
   `hab-logic-api.md` 2.2, 3.3, 3.5, 3.9, 4; `harness-adapters.md` (rules, environment contract,
   input delivery); `capcom.md` 6 and 8.2; `app.md` 7 and 8.
+- Watchers (2026-11-06): `swarm-study.md` 2.6, 2.7, 5 and 8 (owner decisions 1 and 2);
+  `logbook.md` 2.2, 3.3 and 10.5 (the `logbook.updated` fields, private projects); `mesh.md` 6.2
+  and 6.3 (delivery, outbox, dedup, the 64 KiB limit); `capcom.md` 7.3 and 8.5;
+  `hab-logic-api.md` 3.9 (`notice.raise`); `modules.md` 7 and 8.1 (the call limits that rule out
+  a module holding a connection). systemd: `systemd.service(5)` `Restart=`, `RestartSec=`, and
+  `systemd.unit(5)` `StartLimitBurst=` (default 5). launchd: `launchd.plist(5)` `KeepAlive`,
+  `ThrottleInterval`. IMAP IDLE: RFC 2177.
+
+---
+
+## 16. Open questions: watchers
+
+Owner decisions 1 and 2 of the swarm study are settled and are not repeated here. These need the
+owner, or an agreement with the Part 14 and Part 15 specs:
+
+| # | Question | Default until answered |
+|---|---|---|
+| W1 | Should Capcom report back what it did with a round's message (`told` or `quiet`), so the round's history shows it? It needs a second answer in the Part 14 interface | No: the run ends at `accepted`; Capcom's thread is the record |
+| W2 | For Part 14, with no effect on rounds: may an event with `level = time-sensitive` let Capcom write during quiet hours? | Rounds pass the level either way |
+| W3 | Are module watchers (4.4) worth a stage, or does a plain program cover every watcher the owner wants? | A later idea after stage 11 |
