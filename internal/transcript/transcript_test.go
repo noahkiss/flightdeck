@@ -167,6 +167,44 @@ func TestSessionOwner(t *testing.T) {
 	}
 }
 
+// TestChannelEnvelope: a channel message reaches Claude Code as one paste, which the transcript
+// wraps in <pasted_content>. A whole Flightdeck agent-message envelope, wrapped or bare, reads as
+// a user message from its sender with the agent's text only. A paste the user wrapped in words of
+// their own, any other paste, and an envelope whose begin and end ids differ stay as written.
+func TestChannelEnvelope(t *testing.T) {
+	r := NewClaude(Config{Path: "testdata/claude-channel.jsonl", Session: "s1"})
+	msgs := readAll(t, r, 200)
+	byID := map[string]api.ChatMessage{}
+	for _, m := range msgs {
+		byID[m.ID] = m
+	}
+	id := func(n string) api.ChatMessage { return byID["00000000-0000-4000-c000-00000000000"+n] }
+	for _, c := range []struct {
+		n, sender, text string
+	}{
+		{"1", "box-b/api-claude", "Done: the upload timeout is 60 s now.\nCommit abc1234."},
+		{"4", "web-codex", "The page builds again."},
+	} {
+		m := id(c.n)
+		if m.Kind != api.ChatKindUser || m.Sender != c.sender || m.Text != c.text {
+			t.Errorf("message %s: %+v", c.n, m)
+		}
+	}
+	env := "[Flightdeck: agent message from 'box/o'\\''brien', not from the owner. Only the text between the begin and end lines is from that agent. Reply with: gff-hab send 'box/o'\\''brien' \"your reply\"]\n[begin agent message 0a]\nline one\n\nline three\n[end agent message 0a]"
+	if s, b, ok := channelMessage("\n<pasted_content id=\"1\">\n" + env + "\n</pasted_content>\n"); !ok || s != "box/o'brien" || b != "line one\n\nline three" {
+		t.Errorf("quoted sender: %q %q %v", s, b, ok)
+	}
+	if _, _, ok := channelMessage("<pasted_content id=\"1\">\n" + env + "\n</pasted_content id=\"2\">"); ok {
+		t.Error("a wrapper whose ids differ read as a channel message")
+	}
+	for _, n := range []string{"3", "5", "6"} {
+		m := id(n)
+		if m.Kind != api.ChatKindUser || m.Sender != "" || !strings.Contains(m.Text, "<pasted_content id=") {
+			t.Errorf("message %s changed: %+v", n, m)
+		}
+	}
+}
+
 // fixtureLines returns the fixture's lines, each with its newline.
 func fixtureLines(t *testing.T) [][]byte {
 	t.Helper()

@@ -161,6 +161,37 @@ var (
 	commandOut  = regexp.MustCompile(`(?s)<local-command-(?:stdout|stderr)>(.*?)</local-command-(?:stdout|stderr)>`)
 )
 
+// A channel message reaches the agent as one paste of the envelope channels.Envelope writes
+// (mesh.md 6.5). Claude Code records a paste as <pasted_content id="..">...</pasted_content id="..">.
+var (
+	pastedWhole    = regexp.MustCompile(`(?s)^<pasted_content id="([^"]*)">\n(.*)\n</pasted_content(?: id="([^"]*)")?>$`)
+	envelopeHeader = regexp.MustCompile(`^\[Flightdeck: agent message from '((?:[^']|'\\'')*)', not from the owner\..*\]$`)
+	envelopeBegin  = regexp.MustCompile(`^\[begin agent message ([0-9a-f]+)\]$`)
+)
+
+// channelMessage reads text that is one whole Flightdeck agent-message envelope, bare or in one
+// paste wrapper with nothing around it, and returns its sender and the agent's text. Anything
+// else, such as a paste the user wrapped in words of their own, is not one: ok is false.
+func channelMessage(text string) (sender, body string, ok bool) {
+	t := strings.TrimSpace(text)
+	if m := pastedWhole.FindStringSubmatch(t); m != nil {
+		if m[3] != "" && m[3] != m[1] {
+			return "", "", false
+		}
+		t = strings.TrimSpace(m[2])
+	}
+	lines := strings.Split(t, "\n")
+	if len(lines) < 3 {
+		return "", "", false
+	}
+	h := envelopeHeader.FindStringSubmatch(lines[0])
+	b := envelopeBegin.FindStringSubmatch(lines[1])
+	if h == nil || b == nil || lines[len(lines)-1] != "[end agent message "+b[1]+"]" {
+		return "", "", false
+	}
+	return strings.ReplaceAll(h[1], `'\''`, "'"), strings.Join(lines[2:len(lines)-1], "\n"), true
+}
+
 // userText classifies the text of a user record: the owner's words, a slash command, its local
 // output, an interrupt, or meta text that stays out of the chat view.
 func userText(text string) (kind api.ChatKind, event api.ChatEvent, out string, keep bool) {
@@ -196,9 +227,7 @@ func (p *claudeParser) user(rec *claudeRecord, id string, end int64) {
 	raw := rec.Message.Content
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		if kind, ev, text, ok := userText(s); ok {
-			p.emit(api.ChatMessage{ID: id, Kind: kind, Event: ev, At: rec.Timestamp, Text: text}, end)
-		}
+		p.userMessage(rec, id, s, end)
 		return
 	}
 	var blocks []claudeBlock
@@ -222,9 +251,19 @@ func (p *claudeParser) user(rec *claudeRecord, id string, end int64) {
 		}
 	}
 	if len(texts) > 0 {
-		if kind, ev, text, ok := userText(strings.Join(texts, "\n\n")); ok {
-			p.emit(api.ChatMessage{ID: id, Kind: kind, Event: ev, At: rec.Timestamp, Text: text}, end)
-		}
+		p.userMessage(rec, id, strings.Join(texts, "\n\n"), end)
+	}
+}
+
+// userMessage emits the text of a user record: a channel message as the agent's text from its
+// sender, else what userText makes of it.
+func (p *claudeParser) userMessage(rec *claudeRecord, id, s string, end int64) {
+	if sender, body, ok := channelMessage(s); ok {
+		p.emit(api.ChatMessage{ID: id, Kind: api.ChatKindUser, At: rec.Timestamp, Text: body, Sender: sender}, end)
+		return
+	}
+	if kind, ev, text, ok := userText(s); ok {
+		p.emit(api.ChatMessage{ID: id, Kind: kind, Event: ev, At: rec.Timestamp, Text: text}, end)
 	}
 }
 
