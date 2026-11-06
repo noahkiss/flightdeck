@@ -58,17 +58,25 @@ func (s *roundsService) runEnv(r rounds.Round, run rounds.Run) []string {
 	if e, ok := s.store.Get(r.ID); ok && e.State.LastOK != nil {
 		env = append(env, "GFF_ROUND_LAST_OK="+e.State.LastOK.UTC().Format(time.RFC3339))
 	}
+	if run.Events > 0 {
+		env = append(env, "GFF_ROUND_EVENTS="+s.store.EventsPath(r.ID, run.ID))
+	}
 	return env
 }
 
 // envelope is a resume or fork run's prompt in its envelope, with the run's values in it: a
-// live session's environment cannot carry them.
-func envelope(r rounds.Round, run rounds.Run, env []string) string {
+// live session's environment cannot carry them. An event run's block follows it in the same
+// paste (rounds.md 4.5).
+func (s *roundsService) envelope(r rounds.Round, run rounds.Run, env []string) string {
 	slot := ""
 	if run.Slot != nil {
 		slot = run.Slot.UTC().Format(time.RFC3339)
 	}
-	return channels.RoundEnvelope(run.ID, r.Name, run.Number, slot, env, r.Prompt)
+	text := channels.RoundEnvelope(run.ID, r.Name, run.Number, slot, env, r.Prompt)
+	if run.Events > 0 {
+		text += "\n\n" + s.eventBlockOf(run)
+	}
+	return text
 }
 
 // envelopeMarker is the begin line of a run's envelope.
@@ -175,7 +183,7 @@ func (s *roundsService) startFork(r rounds.Round, run rounds.Run, env []string) 
 	}
 	argv := forkArgv(seen.Harness, seen.Native, r.HarnessArgs)
 	p := api.SessionCreateParams{Harness: seen.Harness, Model: r.Model, Argv: argv, Project: ss.Project, Cwd: cwd, Env: env}
-	return s.spawnHarness(r, run, p, &harnessWatch{kind: seen.Harness, prompt: envelope(r, run, env), marker: envelopeMarker(run.ID)})
+	return s.spawnHarness(r, run, p, &harnessWatch{kind: seen.Harness, prompt: s.envelope(r, run, env), marker: envelopeMarker(run.ID)})
 }
 
 // forkArgv is the start of a fork of native: Claude Code `claude <args> --resume <id>
@@ -207,7 +215,7 @@ func (s *roundsService) startResume(r rounds.Round, run rounds.Run, env []string
 		return "", rounds.ErrTargetGone
 	}
 	seen := s.targetSeen(r.ID, ss)
-	h := &harnessWatch{kind: seen.Harness, native: seen.Native, prompt: envelope(r, run, env), resume: true,
+	h := &harnessWatch{kind: seen.Harness, native: seen.Native, prompt: s.envelope(r, run, env), resume: true,
 		marker: envelopeMarker(run.ID), phase: phaseLock}
 	s.lockWatch(run, r, ss, h)
 	return ss.ID, nil
@@ -552,7 +560,7 @@ func (s *roundsService) resumeTarget(w *runWatch, ss api.Session) {
 func (s *roundsService) adoptResume(run rounds.Run, r rounds.Round, ss api.Session) {
 	env := s.runEnv(r, run)
 	seen := s.targetSeen(r.ID, ss)
-	h := &harnessWatch{kind: seen.Harness, native: seen.Native, prompt: envelope(r, run, env), resume: true,
+	h := &harnessWatch{kind: seen.Harness, native: seen.Native, prompt: s.envelope(r, run, env), resume: true,
 		marker: envelopeMarker(run.ID), phase: phaseLock}
 	if run.State == rounds.RunWaiting || ss.Pane == "" || ss.State == api.SessionStateExited {
 		s.lockWatch(run, r, ss, h)

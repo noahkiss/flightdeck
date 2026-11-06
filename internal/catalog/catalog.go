@@ -86,6 +86,12 @@ type Config struct {
 	// Heavy returns the own catalog's heavy section (groups.md 8). Nil, or a nil result: no
 	// section.
 	Heavy func() *api.CatalogHeavy
+	// Words returns capability words this hab's own features add, such as round-lock
+	// (rounds.md 5.2). Nil: none.
+	Words func() []string
+	// Groups returns the own catalog's groups section (groups.md 5.1). Nil, or an empty result:
+	// no section.
+	Groups func() []api.CatalogGroup
 	// OnCopy hears each peer copy that changed, after it is stored. Nil: none.
 	OnCopy func(api.Catalog)
 	// Detect reads the host's facts. Default Detect.
@@ -587,6 +593,14 @@ func (s *Service) build(first bool) {
 	if s.cfg.Heavy != nil {
 		heavy = s.cfg.Heavy()
 	}
+	var extra []string
+	if s.cfg.Words != nil {
+		extra = s.cfg.Words()
+	}
+	var groups []api.CatalogGroup
+	if s.cfg.Groups != nil {
+		groups = s.cfg.Groups()
+	}
 	s.mu.Lock()
 	var watches []string
 	for _, id := range peerIDs {
@@ -600,7 +614,7 @@ func (s *Service) build(first bool) {
 		System:       s.facts.System,
 		Toolchains:   slices.Clone(s.facts.Toolchains),
 		Harnesses:    slices.Clone(s.facts.Harnesses),
-		Capabilities: words(s.facts.Capabilities, s.declared.Capabilities),
+		Capabilities: words(append(slices.Clone(s.facts.Capabilities), extra...), s.declared.Capabilities),
 		Services:     slices.Clone(s.declared.Services),
 		Actions:      slices.Clone(s.declared.Actions),
 		Projects:     projects(s.cfg.Self, st, dirs, s.folders),
@@ -611,6 +625,7 @@ func (s *Service) build(first bool) {
 		Capcom:       capcom,
 		Rounds:       rounds,
 		Heavy:        heavy,
+		Groups:       groups,
 	}
 	c = api.NonNil(c)
 	prev := s.own

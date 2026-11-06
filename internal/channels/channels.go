@@ -66,8 +66,13 @@ var (
 	// marker finds a begin or end line inside a message's text, after Envelope has dropped
 	// invisible format characters (\p{Cf}). Unicode spaces (\p{Z}) count as spaces, and the
 	// words may run together, so "[end\u00a0agent message" and "[endagentmessage" are caught.
-	marker = regexp.MustCompile(`(?i)\[([\s\p{Z}]*)(begin|end)([\s\p{Z}]*(?:agent|start|round)[\s\p{Z}]*message)`)
+	// "round events" is the event block of a run (rounds.md 4.5).
+	marker = regexp.MustCompile(`(?i)\[([\s\p{Z}]*)(begin|end)([\s\p{Z}]*(?:agent|start|round)[\s\p{Z}]*(?:message|events))`)
 )
+
+// Neutralise cleans text as an envelope does and turns every begin or end marker inside it
+// into plain text, so the text cannot close an envelope or an event block early.
+func Neutralise(text string) string { return clean(text) }
 
 // ValidName reports whether a session or host name fits NameRule.
 func ValidName(s string) bool { return validName.MatchString(s) }
@@ -129,8 +134,15 @@ type Config struct {
 	// Wake sends mesh.changed to every peer link that the hab with this device id dialed to
 	// this one, and reports whether any link took it (mesh.md 6.5). Nil: no wake-ups, and a
 	// peer that only pulls sees new mail at its next mail round.
-	Wake  func(device string) bool
-	Poll  time.Duration // the mail round; default 15 s
+	Wake func(device string) bool
+	// Capcom answers a round message to the Capcom service on this hab (capcom-service.md 9.5):
+	// accepted, duplicate, declined with a reason, or refused. It is called with the service's
+	// lock held and must not call back into it. Nil: such a message is refused.
+	Capcom func(api.ChannelMessage) (api.ChannelState, string)
+	// Outcome hears Capcom's second answer to a round message this hab sent (rounds.md 5.2).
+	// It is called with the service's lock held and must not block or call back into it.
+	Outcome func(id, word, at string)
+	Poll    time.Duration // the mail round; default 15 s
 	Retry time.Duration // the delivery round; default 1 s
 	Now   func() time.Time
 	Logf  func(string, ...any)
@@ -194,6 +206,10 @@ type record struct {
 type seenID struct {
 	At     time.Time      `json:"at"`
 	Result api.MailResult `json:"result"`
+	// From is the sender hab's device id, and Outcome marks a round message whose outcome went
+	// back to it (rounds.md 5.2).
+	From    string `json:"from,omitempty"`
+	Outcome bool   `json:"outcome,omitempty"`
 }
 
 type inItem struct {
@@ -207,6 +223,8 @@ type inItem struct {
 	// (kindSeed) or a note from Flightdeck (kindNote). It picks the envelope.
 	Kind string `json:"kind,omitempty"`
 	busy bool   // a delivery or a wait has it now
+	// lockWhy is why the round lock last held a round message (rounds.md 5.2), for its expiry.
+	lockWhy string
 }
 
 // The kinds of an inbox item this hab made itself (capcom.md 3.3, 6.1).
@@ -352,6 +370,8 @@ func (s *Service) Send(ctx context.Context, p api.ChannelSendParams) (api.Channe
 		return api.ChannelSent{}, control.Errorf(api.ErrorKindInvalid, "the message is empty")
 	case len(p.Text) > MaxText:
 		return api.ChannelSent{}, control.Errorf(api.ErrorKindInvalid, "the message is %d bytes; at most %d", len(p.Text), MaxText)
+	case strings.HasPrefix(p.To, roundPrefix) || strings.Contains(p.To, "/"+roundPrefix):
+		return api.ChannelSent{}, control.Errorf(api.ErrorKindInvalid, "%s", NoReplies)
 	case p.ReplyTo != "" && !validID.MatchString(p.ReplyTo):
 		return api.ChannelSent{}, control.Errorf(api.ErrorKindInvalid, "reply_to %q is not a message id", p.ReplyTo)
 	case !ValidName(s.cfg.Host):
@@ -642,15 +662,17 @@ func (s *Service) acceptLocked(from string, m api.ChannelMessage, now time.Time)
 		}
 	}
 	sessionID, ok := s.cfg.Local.Session(m.To.Session)
+	fromOK := ValidName(m.From.Session) || (m.Round != nil && roundSender(m.From.Session))
 	switch {
 	case m.From.DeviceID != from:
 		refuse("the message is from %s, the link is %s: habs hand over only their own mail", m.From.DeviceID, from)
 	case m.To.DeviceID != s.cfg.Self:
 		refuse("the message is for %s, not this hab", m.To.DeviceID)
-	case !ValidName(m.From.Session) || !ValidName(m.From.Host):
+	case !fromOK || !ValidName(m.From.Host):
 		refuse("the sender's name %q on host %q is outside %s", m.From.Session, m.From.Host, NameRule)
 	case strings.TrimSpace(m.Text) == "" || len(m.Text) > MaxText:
 		refuse("the message is %d bytes; it must hold text, at most %d bytes", len(m.Text), MaxText)
+	case s.roundAcceptLocked(m, &res, now):
 	case !ok:
 		refuse("no session named %s on this host", m.To.Session)
 	case !ValidName(m.To.Session):
@@ -665,7 +687,7 @@ func (s *Service) acceptLocked(from string, m api.ChannelMessage, now time.Time)
 	// A message from this hab is never sent again, so its id protects nothing; keeping it would
 	// push remote ids, still retried, out of the capped list.
 	if from != s.cfg.Self {
-		s.st.Seen[m.ID] = seenID{At: now, Result: res}
+		s.st.Seen[m.ID] = seenID{At: now, Result: res, From: from}
 	}
 	return res
 }
@@ -693,6 +715,10 @@ func (s *Service) receive(from string, items []api.MailItem) ([]api.MailResult, 
 		case it.Kind == api.MailKindStatus && it.Status != nil:
 			st := it.Status
 			s.setStateLocked(st.ID, from, st.State, st.Reason, now)
+			if r := s.st.Records[st.ID]; st.Outcome != "" && r != nil && r.ToDevice == from &&
+				r.State == api.ChannelStateAccepted && s.cfg.Outcome != nil {
+				s.cfg.Outcome(st.ID, st.Outcome, st.At)
+			}
 			out = append(out, api.MailResult{Kind: api.MailKindStatus, ID: st.ID, State: st.State})
 		default:
 			out = append(out, api.MailResult{Kind: it.Kind, ID: itemID(it), State: api.ChannelStateRefused, Reason: fmt.Sprintf("unknown item kind %q", it.Kind)})
@@ -961,6 +987,11 @@ func (s *Service) deliverRound() {
 			}
 		}
 	}
+	if s.expireRoundsLocked(now) {
+		if err := s.commitLocked(); err != nil {
+			s.cfg.Logf("channels: save: %v", err)
+		}
+	}
 	var heads []*inItem
 	taken := map[string]bool{}
 	for _, it := range slices.Clone(s.st.Inbox) {
@@ -1046,7 +1077,26 @@ func (s *Service) deliver(id string, m api.ChannelMessage, sessionID string, arr
 		release(api.ChannelStateRefused, fmt.Sprintf("session %s was replaced or renamed since the message arrived", m.To.Session))
 		return
 	}
-	if err := s.cfg.Local.Check(sessionID); err != nil {
+	check := s.cfg.Local.Check
+	rl, roundLock := s.cfg.Local.(RoundLocal)
+	if roundLock && m.Round != nil {
+		// A round's message waits for the round lock, never past its deadline (rounds.md 5.2).
+		if d, ok := roundDeadline(m); ok && !s.cfg.Now().Before(d) {
+			release("", "") // the expiry sweep ends it with its reason
+			s.Poke()
+			return
+		}
+		check = rl.CheckRound
+	}
+	if err := check(sessionID); err != nil {
+		if m.Round != nil && errors.Is(err, ErrBusy) {
+			why := strings.TrimPrefix(strings.TrimPrefix(err.Error(), ErrBusy.Error()), ": ")
+			s.mu.Lock()
+			if it := s.findLocked(id); it != nil {
+				it.lockWhy = why
+			}
+			s.mu.Unlock()
+		}
 		release(s.classify(err, arrived, s.cfg.Now()))
 		return
 	}
@@ -1071,10 +1121,12 @@ func (s *Service) deliver(id string, m api.ChannelMessage, sessionID string, arr
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	text := Envelope(m.ID, s.fromAddress(m), m.Text)
-	switch kind {
-	case kindSeed:
+	switch {
+	case m.Round != nil:
+		text = RoundMessageEnvelope(m, m.From.Host)
+	case kind == kindSeed:
 		text = SeedEnvelope(m.ID, m.From.Session, m.Text)
-	case kindNote:
+	case kind == kindNote:
 		text = NoteEnvelope(m.Text)
 	}
 	err := s.cfg.Local.Deliver(ctx, sessionID, text)

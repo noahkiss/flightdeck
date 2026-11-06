@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,28 +20,59 @@ import (
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/link"
 	"github.com/noahkiss/flightdeck/internal/push"
+	"github.com/noahkiss/flightdeck/internal/rounds"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
 func TestRoundSettings(t *testing.T) {
 	d := t.TempDir()
 	p := filepath.Join(d, "hab.toml")
-	if s, err := loadRoundsSettings(p); err != nil || s != (roundsSettings{}) {
-		t.Fatalf("no file: %+v %v", s, err)
+	def, err := loadRoundsSettings(p, nil)
+	if err != nil || def.MaxRunning != 0 || def.WakeSettle != 0 || def.BlockMaxEvents != 50 || def.BlockDataMax != 1024 ||
+		def.OutcomeWait != 7*24*time.Hour || def.Limits.BatchMaxEvents != 200 || def.Limits.EventFilesKeep != 20 {
+		t.Fatalf("no file: %+v %v", def, err)
 	}
 	writeFile(t, p, "[rounds]\nmax_running = 3\nwake_settle = \"10s\"\n")
-	if s, err := loadRoundsSettings(p); err != nil || s.MaxRunning != 3 || s.WakeSettle != 10*time.Second {
+	if s, err := loadRoundsSettings(p, nil); err != nil || s.MaxRunning != 3 || s.WakeSettle != 10*time.Second {
 		t.Fatalf("set: %+v %v", s, err)
 	}
 	writeFile(t, p, "[rounds]\nwake_settle = \"0s\"\n")
-	if s, err := loadRoundsSettings(p); err != nil || s.WakeSettle >= 0 {
+	if s, err := loadRoundsSettings(p, nil); err != nil || s.WakeSettle >= 0 {
 		t.Fatalf("0s must mean no settle: %+v %v", s, err)
 	}
 	for _, bad := range []string{"[rounds]\nmax_running = 0\n", "[rounds]\nwake_settle = \"soon\"\n", "[rounds]\nwake_settle = \"-1s\"\n", "[rounds\n"} {
 		writeFile(t, p, bad)
-		if _, err := loadRoundsSettings(p); err == nil {
+		if _, err := loadRoundsSettings(p, nil); err == nil {
 			t.Errorf("%q was taken", bad)
 		}
+	}
+}
+
+// The limits of rounds.md 4.7 that stage 9 adds: a good value is taken; a value outside its
+// range or of the wrong type is logged once and the default runs.
+func TestRoundLimitSettings(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "hab.toml")
+	writeFile(t, p, "[rounds]\nbatch_max_events = 5\nbatch_max_bytes = 20000\nevent_files_keep = 0\nblock_max_events = 2\n"+
+		"block_max_bytes = 2048\nblock_data_max = 0\nstate_save_every = \"1s\"\noutcome_wait = \"1d\"\n")
+	var logs []string
+	logf := func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }
+	s, err := loadRoundsSettings(p, logf)
+	if err != nil || len(logs) != 0 {
+		t.Fatalf("%v %v", err, logs)
+	}
+	if s.Limits.BatchMaxEvents != 5 || s.Limits.BatchMaxBytes != 20000 || s.Limits.EventFilesKeep != rounds.KeepNoFiles ||
+		s.BlockMaxEvents != 2 || s.BlockMaxBytes != 2048 || s.BlockDataMax != 0 || s.Limits.StateSaveEvery != time.Second ||
+		s.OutcomeWait != 24*time.Hour {
+		t.Fatalf("%+v", s)
+	}
+	writeFile(t, p, "[rounds]\nbatch_max_events = 0\nblock_max_bytes = \"big\"\noutcome_wait = \"31d\"\nstate_save_every = 5\n")
+	logs = nil
+	s, err = loadRoundsSettings(p, logf)
+	if err != nil || len(logs) != 4 {
+		t.Fatalf("%v: %d lines: %v", err, len(logs), logs)
+	}
+	if s.Limits.BatchMaxEvents != 200 || s.BlockMaxBytes != 32<<10 || s.OutcomeWait != 7*24*time.Hour || s.Limits.StateSaveEvery != 10*time.Second {
+		t.Fatalf("defaults did not run: %+v", s)
 	}
 }
 

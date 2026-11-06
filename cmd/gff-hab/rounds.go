@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,13 +49,64 @@ type roundsSettings struct {
 	MaxRunning int
 	// WakeSettle is the settle after a wake or a start; negative: none (rounds.md 8.3).
 	WakeSettle time.Duration
+	// The stage 9 limits of rounds.md 4.7, each with its default filled.
+	Limits         rounds.Limits
+	BlockMaxEvents int
+	BlockMaxBytes  int
+	BlockDataMax   int
+	OutcomeWait    time.Duration
+}
+
+// Defaults of the stage 9 limits of rounds.md 4.7 that gff-hab applies itself.
+const (
+	defaultBlockMaxEvents = 50
+	defaultBlockMaxBytes  = 32 << 10
+	defaultBlockDataMax   = 1 << 10
+	defaultOutcomeWait    = 7 * 24 * time.Hour
+)
+
+// roundLimitKeys are the [rounds] keys of rounds.md 4.7 that stage 9 adds: each an integer in
+// its range, or a duration ("10s", "7d") in its range. A value outside its range, or of the
+// wrong type, is logged once and its default runs.
+var roundLimitKeys = []struct {
+	key      string
+	min, max int64 // for a duration, in nanoseconds
+	duration bool
+}{
+	{"batch_max_events", 1, 10000, false},
+	{"batch_max_bytes", 16 << 10, 16 << 20, false},
+	{"event_files_keep", 0, 1000, false},
+	{"block_max_events", 1, 500, false},
+	{"block_max_bytes", 1 << 10, 256 << 10, false},
+	{"block_data_max", 0, 16 << 10, false},
+	{"state_save_every", int64(time.Second), int64(5 * time.Minute), true},
+	{"outcome_wait", int64(24 * time.Hour), int64(30 * 24 * time.Hour), true},
+}
+
+// parseLongDuration reads a Go duration, or a whole number of days such as "7d".
+func parseLongDuration(s string) (time.Duration, error) {
+	if n, ok := strings.CutSuffix(s, "d"); ok {
+		d, err := strconv.Atoi(n)
+		if err != nil || d < 0 || d > 10000 {
+			return 0, fmt.Errorf("%q is not a number of days", s)
+		}
+		return time.Duration(d) * 24 * time.Hour, nil
+	}
+	return time.ParseDuration(s)
 }
 
 // loadRoundsSettings reads [rounds] from the hab's config file: max_running, a whole number
-// from 1, and wake_settle, a Go duration ("0s" for none). A missing file or section takes the
-// defaults.
-func loadRoundsSettings(path string) (roundsSettings, error) {
-	var out roundsSettings
+// from 1, and wake_settle, a Go duration ("0s" for none), which refuse the start when bad; and
+// the limits of rounds.md 4.7, which logf reports once when bad, their defaults running. A
+// missing file or section takes the defaults.
+func loadRoundsSettings(path string, logf func(string, ...any)) (roundsSettings, error) {
+	out := roundsSettings{BlockMaxEvents: defaultBlockMaxEvents, BlockMaxBytes: defaultBlockMaxBytes,
+		BlockDataMax: defaultBlockDataMax, OutcomeWait: defaultOutcomeWait,
+		Limits: rounds.Limits{BatchMaxEvents: rounds.DefaultBatchMaxEvents, BatchMaxBytes: rounds.DefaultBatchMaxBytes,
+			EventFilesKeep: rounds.DefaultEventFilesKeep, StateSaveEvery: rounds.DefaultStateSaveEvery}}
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
 	if path == "" {
 		return out, nil
 	}
@@ -73,6 +125,64 @@ func loadRoundsSettings(path string) (roundsSettings, error) {
 	}
 	if _, err := toml.Decode(string(b), &fc); err != nil {
 		return out, fmt.Errorf("%s: %w", path, err)
+	}
+	var raw struct {
+		Rounds map[string]any `toml:"rounds"`
+	}
+	toml.Decode(string(b), &raw) // it parsed above
+	for _, k := range roundLimitKeys {
+		v, ok := raw.Rounds[k.key]
+		if !ok {
+			continue
+		}
+		var n int64
+		bad := ""
+		if k.duration {
+			s, isStr := v.(string)
+			d, err := parseLongDuration(s)
+			switch {
+			case !isStr || err != nil:
+				bad = fmt.Sprintf("%v is not a duration such as 10s or 7d", v)
+			default:
+				n = int64(d)
+			}
+		} else if i, isInt := v.(int64); isInt {
+			n = i
+		} else {
+			bad = fmt.Sprintf("%v is not a whole number", v)
+		}
+		if bad == "" && (n < k.min || n > k.max) {
+			if k.duration {
+				bad = fmt.Sprintf("%s is outside %s to %s", time.Duration(n), time.Duration(k.min), time.Duration(k.max))
+			} else {
+				bad = fmt.Sprintf("%d is outside %d to %d", n, k.min, k.max)
+			}
+		}
+		if bad != "" {
+			logf("%s: rounds: %s: %s; the default runs", path, k.key, bad)
+			continue
+		}
+		switch k.key {
+		case "batch_max_events":
+			out.Limits.BatchMaxEvents = int(n)
+		case "batch_max_bytes":
+			out.Limits.BatchMaxBytes = int(n)
+		case "event_files_keep":
+			out.Limits.EventFilesKeep = int(n)
+			if n == 0 {
+				out.Limits.EventFilesKeep = rounds.KeepNoFiles
+			}
+		case "block_max_events":
+			out.BlockMaxEvents = int(n)
+		case "block_max_bytes":
+			out.BlockMaxBytes = int(n)
+		case "block_data_max":
+			out.BlockDataMax = int(n)
+		case "state_save_every":
+			out.Limits.StateSaveEvery = time.Duration(n)
+		case "outcome_wait":
+			out.OutcomeWait = time.Duration(n)
+		}
 	}
 	if v := fc.Rounds.MaxRunning; v != nil {
 		if *v < 1 {
@@ -192,6 +302,15 @@ type roundsConfig struct {
 	quiet    time.Duration
 	folder   func(ctx context.Context, session string) string
 	resume   func(ctx context.Context, session string, p api.SessionCreateParams, cwd string) (string, error)
+
+	// Event triggers and the capcom and group modes (roundevents.go, roundmsg.go). self is this
+	// hab's device id; catalog the merged catalog; channels sends round messages; peerOnline
+	// says whether a peer link is up; logbook is the Logbook the matcher reads (nil: none).
+	self       string
+	catalog    func() api.CatalogList
+	channels   roundChannels
+	peerOnline func(label string) bool
+	logbook    roundLogbook
 }
 
 // roundsService runs the rounds of one gff-hab.
@@ -216,6 +335,9 @@ type roundsService struct {
 	// recheck is closed to stop the loop that looks at pending runs again; nil while none runs.
 	recheck chan struct{}
 	closed  bool
+	// msgRuns holds the live capcom and group runs, by channel message id (roundmsg.go).
+	msgRuns map[string]*msgWatch
+	matcher *roundMatcher
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -279,13 +401,13 @@ func newRounds(cfg roundsConfig) (*roundsService, error) {
 	}
 	s := &roundsService{cfg: cfg, store: st, revs: map[string]uint64{}, watches: map[string]*runWatch{},
 		byPane: map[string]string{}, pending: map[string]rounds.Run{}, inputAt: map[string]time.Time{},
-		focus: map[string]map[string]time.Time{}, done: make(chan struct{}), started: time.Now()}
+		focus: map[string]map[string]time.Time{}, done: make(chan struct{}), started: time.Now(), msgRuns: map[string]*msgWatch{}}
 	s.attachLostStarts()
 	for _, e := range st.List() {
 		s.revs[e.Round.ID] = 1
 	}
 	sc := rounds.SchedulerConfig{Store: st, Starter: s, Sink: s, MaxRunning: cfg.settings.MaxRunning,
-		WakeSettle: cfg.settings.WakeSettle, Logf: cfg.logf}
+		WakeSettle: cfg.settings.WakeSettle, Logf: cfg.logf, Limits: cfg.settings.Limits}
 	if cfg.tick > 0 {
 		sc.NewTicker = func() (<-chan time.Time, func()) {
 			t := time.NewTicker(cfg.tick)
@@ -296,6 +418,9 @@ func newRounds(cfg roundsConfig) (*roundsService, error) {
 		return nil, err
 	}
 	s.updateRun = s.sched.UpdateRun
+	// The matcher hears events from now on; its loop runs until Close (rounds.md 4.3).
+	s.matcher = newRoundMatcher(s, cfg.logbook)
+	go s.matcher.run()
 	return s, nil
 }
 
@@ -336,10 +461,14 @@ func (s *roundsService) start() {
 		s.cfg.logf("rounds: live runs: %v", err)
 	}
 	for _, r := range live {
-		if r.State != rounds.RunQueued && r.SessionID != "" {
+		switch {
+		case r.State != rounds.RunQueued && r.SessionID != "":
 			s.adopt(r)
+		case r.State != rounds.RunQueued && r.Message != "":
+			s.adoptMessage(r)
 		}
 	}
+
 	for _, e := range s.store.List() {
 		s.prune(e.Round.ID)
 	}
@@ -358,10 +487,19 @@ func (s *roundsService) Close() {
 		s.cancel()
 		<-s.done
 	}
+	if s.matcher != nil {
+		s.matcher.stop()
+	}
+	s.sched.Close() // the pending batches reach the disk
 	s.mu.Lock()
 	s.closed = true
 	for _, w := range s.watches {
 		w.stopLocked()
+	}
+	for _, w := range s.msgRuns {
+		if w.timer != nil {
+			w.timer.Stop()
+		}
 	}
 	s.stopRecheckLocked()
 	s.mu.Unlock()
@@ -374,6 +512,9 @@ func (s *roundsService) Close() {
 // a new pane. It returns at the spawn, with the session id; the end comes back through the
 // pane's exit, or the agent's turn.
 func (s *roundsService) Start(r rounds.Round, run rounds.Run) (string, error) {
+	if r.Mode.Messages() {
+		return s.startMessage(r, run)
+	}
 	harnessRun := r.Mode == rounds.ModeFresh && len(r.Command) == 0 && r.Harness != ""
 	if !harnessRun && r.Mode == rounds.ModeFresh && len(r.Command) == 0 {
 		return "", errors.New("the round has neither a command nor a harness")
@@ -665,7 +806,7 @@ func (s *roundsService) adopt(run rounds.Run) {
 		} else if ts, ok := s.cfg.store.Session(r.Target); ok {
 			kind = s.targetSeen(r.ID, ts).Harness
 		}
-		h = &harnessWatch{kind: kind, prompt: envelope(r, run, s.runEnv(r, run)), marker: envelopeMarker(run.ID),
+		h = &harnessWatch{kind: kind, prompt: s.envelope(r, run, s.runEnv(r, run)), marker: envelopeMarker(run.ID),
 			phase: phaseTurn, blocked: run.State == rounds.RunBlocked}
 	}
 	if st, ok := s.cfg.pane(ss.Pane); ok && !st.Lost {
@@ -802,7 +943,7 @@ func (s *roundsService) RoundDeleted(e rounds.Entry) {
 // of a round with on_finish close has its pane closed: the session record stays, exited
 // (7.6). A run that failed, timed out or was taken over keeps its pane.
 func (s *roundsService) RunChanged(r rounds.Run) {
-	s.cfg.publish(structure.Event{Type: control.EventRoundRunUpdated, ID: r.ID, Data: api.NonNil(apiRun(r))})
+	s.cfg.publish(structure.Event{Type: control.EventRoundRunUpdated, ID: r.ID, Data: api.NonNil(s.apiRun(r))})
 	s.poke()
 	if !r.State.Final() {
 		return
@@ -929,6 +1070,9 @@ func roundEvent(n rounds.Notice) (push.RoundEvent, bool) {
 		ev.Since = since.In(loc).Format("Jan 2 15:04 MST")
 	case rounds.NoticeTargetGone:
 		ev.Kind = push.RoundTargetGone
+		if n.Round.State.CompletedReason != rounds.ReasonTargetGone {
+			ev.Reason = n.Round.State.CompletedReason // a group round: its group ended
+		}
 	default:
 		return ev, false
 	}
@@ -952,10 +1096,20 @@ func (s *roundsService) apiRoundLocked(e rounds.Entry) api.Round {
 		r.TriggerError = err.Error()
 	}
 	if runs, _, err := s.store.Runs().Page(e.Round.ID, 0, 1); err == nil && len(runs) > 0 {
-		lr := apiRun(runs[0])
+		lr := s.apiRun(runs[0])
 		r.LastRun = &lr
 	}
+	if s.sched != nil {
+		r.Pending = s.sched.Pending(e.Round.ID)
+	}
 	return r
+}
+
+// apiRun is a run for the API, with its outcome, or unknown past outcome_wait (rounds.md 5.2).
+func (s *roundsService) apiRun(r rounds.Run) api.RoundRun {
+	ar := apiRun(r)
+	ar.Outcome = s.runOutcome(r, time.Now())
+	return ar
 }
 
 func rfc(t *time.Time) string {
@@ -971,12 +1125,14 @@ func apiRound(e rounds.Entry) api.Round {
 		ID: r.ID,
 		RoundSpec: api.RoundSpec{
 			Name: r.Name, Mode: api.RoundMode(r.Mode),
-			Trigger: api.RoundTrigger{Kind: api.RoundTriggerKind(r.Trigger.Kind), Cron: r.Trigger.Cron, Zone: r.Trigger.Zone, At: rfc(r.Trigger.At)},
+			Trigger: api.RoundTrigger{Kind: api.RoundTriggerKind(r.Trigger.Kind), Cron: r.Trigger.Cron, Zone: r.Trigger.Zone, At: rfc(r.Trigger.At),
+				Event: r.Trigger.Event, Filter: apiFilter(r.Trigger.Filter)},
 			Prompt:  r.Prompt, Harness: r.Harness, Model: r.Model, HarnessArgs: r.HarnessArgs, Command: r.Command,
 			Project: r.Project, Cwd: r.Cwd, Target: r.Target, MaxRuns: r.MaxRuns, ExpiresAt: rfc(r.ExpiresAt),
 			TimeoutMS: time.Duration(r.Timeout).Milliseconds(), WaitMS: time.Duration(r.Wait).Milliseconds(),
 			CatchUp: api.RoundCatchUp(r.CatchUp), OnFinish: api.RoundOnFinish(r.OnFinish), Notify: api.RoundNotify(r.Notify),
-			Paused: r.Paused,
+			Paused: r.Paused, Group: r.Group,
+			DebounceMS: time.Duration(r.Debounce).Milliseconds(), CooldownMS: time.Duration(r.Cooldown).Milliseconds(),
 		},
 		CreatedBy: r.CreatedBy, CreatedAt: rfc(&r.CreatedAt), UpdatedAt: rfc(&r.UpdatedAt),
 		NextSlot: rfc(st.NextSlot), LastSlot: rfc(st.LastSlot), LastOK: rfc(st.LastOK),
@@ -990,7 +1146,16 @@ func apiRun(r rounds.Run) api.RoundRun {
 		ID: r.ID, Number: r.Number, Round: r.RoundID, Slot: rfc(r.Slot), Trigger: api.RoundTriggerKind(r.Trigger),
 		Missed: r.Missed, State: api.RoundRunState(r.State), Reason: r.Reason, Session: r.SessionID,
 		Created: rfc(&r.Created), StartedAt: rfc(r.StartedAt), EndedAt: rfc(r.EndedAt), Result: r.Result,
+		Events: r.Events, Destination: r.Destination, Message: r.Message,
 	}
+}
+
+func apiFilter(f *rounds.EventFilter) *api.RoundEventFilter {
+	if f == nil {
+		return nil
+	}
+	a := api.RoundEventFilter(*f)
+	return &a
 }
 
 // CatalogSection is the catalog's rounds section (rounds.md 9): every round, by name.
@@ -1090,7 +1255,24 @@ func (s *roundsService) definition(ctx context.Context, p api.RoundSpec) (rounds
 		MaxRuns: p.MaxRuns, Timeout: rounds.Duration(time.Duration(p.TimeoutMS) * time.Millisecond),
 		Wait: rounds.Duration(time.Duration(p.WaitMS) * time.Millisecond), CatchUp: rounds.CatchUp(p.CatchUp),
 		OnFinish: rounds.OnFinish(p.OnFinish), Notify: rounds.Notify(p.Notify), Paused: p.Paused,
-		Trigger: rounds.Trigger{Kind: rounds.TriggerKind(p.Trigger.Kind), Cron: p.Trigger.Cron, Zone: p.Trigger.Zone},
+		Trigger: rounds.Trigger{Kind: rounds.TriggerKind(p.Trigger.Kind), Cron: p.Trigger.Cron, Zone: p.Trigger.Zone, Event: p.Trigger.Event},
+		Group: p.Group, Debounce: rounds.Duration(time.Duration(p.DebounceMS) * time.Millisecond),
+		Cooldown: rounds.Duration(time.Duration(p.CooldownMS) * time.Millisecond),
+	}
+	if f := p.Trigger.Filter; f != nil {
+		rf := rounds.EventFilter(*f)
+		if rf.Project != "" && filepath.IsAbs(rf.Project) {
+			// A folder names its project, as project_dir does.
+			id, err := s.cfg.projectFor(ctx, rf.Project)
+			if err != nil {
+				return r, err
+			}
+			rf.Project = id
+		}
+		r.Trigger.Filter = &rf
+	}
+	if p.DebounceMS < 0 || p.CooldownMS < 0 {
+		return r, bad("debounce_ms", "must not be negative")
 	}
 	t := p.Trigger
 	if t.Every != "" {
@@ -1223,6 +1405,9 @@ func (s *roundsService) Create(ctx context.Context, p api.RoundCreateParams, cre
 	if err := s.checkHarness(r); err != nil {
 		return api.RoundCreated{}, err
 	}
+	if err := s.checkMessageRound(r); err != nil {
+		return api.RoundCreated{}, err
+	}
 	s.editMu.Lock()
 	defer s.editMu.Unlock()
 	e, run, err := s.sched.Create(r, createdBy, p.RunNow)
@@ -1239,9 +1424,9 @@ func (s *roundsService) Create(ctx context.Context, p api.RoundCreateParams, cre
 		return api.RoundCreated{}, err
 	}
 	if run != nil {
-		ar := apiRun(*run)
+		ar := s.apiRun(*run)
 		if runs, _, err := s.store.Runs().Page(e.Round.ID, run.Number+1, 1); err == nil && len(runs) == 1 && runs[0].ID == run.ID {
-			ar = apiRun(runs[0])
+			ar = s.apiRun(runs[0])
 		}
 		out.Run = &ar
 	}
@@ -1267,6 +1452,11 @@ func (s *roundsService) Update(ctx context.Context, p api.RoundUpdateParams) (ap
 	// stays editable (its runs fail "harness not found").
 	if old.Round.Harness != r.Harness || old.Round.Mode != r.Mode || old.Round.Target != r.Target {
 		if err := s.checkHarness(r); err != nil {
+			return api.Round{}, err
+		}
+	}
+	if old.Round.Mode != r.Mode || old.Round.Group != r.Group {
+		if err := s.checkMessageRound(r); err != nil {
 			return api.Round{}, err
 		}
 	}
@@ -1334,7 +1524,7 @@ func (s *roundsService) Run(ref api.RoundRef) (api.RoundRun, error) {
 	if runs, _, err := s.store.Runs().Page(e.Round.ID, run.Number+1, 1); err == nil && len(runs) == 1 && runs[0].ID == run.ID {
 		run = runs[0]
 	}
-	return apiRun(run), nil
+	return s.apiRun(run), nil
 }
 
 // Runs pages a round's runs, newest first: 50 by default, at most 200.
@@ -1358,7 +1548,7 @@ func (s *roundsService) Runs(p api.RoundRunsParams) (api.RoundRuns, error) {
 	}
 	out := api.RoundRuns{Runs: make([]api.RoundRun, 0, len(runs)), More: more}
 	for _, r := range runs {
-		out.Runs = append(out.Runs, apiRun(r))
+		out.Runs = append(out.Runs, s.apiRun(r))
 	}
 	return out, nil
 }

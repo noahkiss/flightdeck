@@ -995,7 +995,7 @@ func serve(args []string) error {
 			if capcomSvc == nil {
 				return nil
 			}
-			return capcomSvc.Section()
+			return withServiceActor(capcomSvc.Section(), key.Fingerprint())
 		},
 		Rounds: func() []api.CatalogRound {
 			if r := roundsRef.Load(); r != nil {
@@ -1009,6 +1009,13 @@ func serve(args []string) error {
 			}
 			return nil
 		},
+		Words: func() []string {
+			if roundsRef.Load() == nil {
+				return nil
+			}
+			return roundWords()
+		},
+		Groups: roundGroups,
 		OnCopy: func(c api.Catalog) {
 			if capcomSvc != nil {
 				capcomSvc.Observe(c)
@@ -1030,7 +1037,13 @@ func serve(args []string) error {
 	}
 	caps = append(caps, catalog.Capability)
 	// Channels (mesh.md 6): agent messages by name, the outboxes and the inbox.
-	cl := &channelLocal{store: store, agents: agents, send: agentSvc, trust: trustSvc}
+	cl := &channelLocal{store: store, agents: agents, send: agentSvc, trust: trustSvc, lock: func(ss api.Session) string {
+		if r := roundsRef.Load(); r != nil {
+			return r.roundLock(ss)
+		}
+		return ""
+	}}
+	var chRef atomic.Pointer[channels.Service] // for the fake Capcom service's outcome
 	chSvc, err := channels.New(channels.Config{
 		Self: key.Fingerprint(), Host: *hostID, State: dir,
 		Peers: channelPeers{pm}, Catalog: cs.List, Local: cl,
@@ -1038,7 +1051,16 @@ func serve(args []string) error {
 			if s := srv.Load(); s != nil {
 				s.Publish(structure.Event{Type: control.EventChannelMessage, ID: r.ID, Data: r})
 			}
+			if rs := roundsRef.Load(); rs != nil {
+				rs.channelRecord(r)
+			}
 		},
+		Outcome: func(id, word, at string) {
+			if rs := roundsRef.Load(); rs != nil {
+				rs.outcome(id, word, at)
+			}
+		},
+		Capcom: roundCapcomService(func() *channels.Service { return chRef.Load() }, logger.Printf),
 		Wake: func(device string) bool {
 			s := srv.Load()
 			return s != nil && s.NotifyLink(device, structure.Event{Type: api.EventMeshChanged, ID: key.Fingerprint(), Data: api.MeshChanged{Reasons: []api.MeshReason{api.MeshReasonMail}}}) > 0
@@ -1050,6 +1072,7 @@ func serve(args []string) error {
 	}
 	defer chSvc.Close()
 	chs.Store(chSvc)
+	chRef.Store(chSvc)
 	if trustSvc != nil {
 		trustSvc.refuse = func(pane, reason string) (int, error) {
 			ss, ok := store.SessionByPane(pane)
@@ -1181,7 +1204,7 @@ func serve(args []string) error {
 	var roundsCtl control.Rounds
 	var pushCtl control.Push = pushes
 	if lk != nil {
-		rset, err := loadRoundsSettings(cpath)
+		rset, err := loadRoundsSettings(cpath, logger.Printf)
 		if err != nil {
 			return err
 		}
@@ -1284,6 +1307,19 @@ func serve(args []string) error {
 			},
 			ready: roundReadySeam,
 			quiet: roundQuietSeam,
+
+			self:     key.Fingerprint(),
+			catalog:  cs.List,
+			channels: chSvc,
+			peerOnline: func(label string) bool {
+				for _, l := range pm.Links() {
+					if l.Label == label {
+						return l.Online
+					}
+				}
+				return false
+			},
+			logbook: lbVerbs,
 		})
 		if err != nil {
 			return err
@@ -1296,13 +1332,18 @@ func serve(args []string) error {
 		pushCtl = roundPush{Push: pushes, rounds: roundsSvc}
 		input = roundInput{Input: input, rounds: roundsSvc}
 		agentCalls = roundAgents{Agents: agentCalls, rounds: roundsSvc}
-		caps = append(caps, "rounds")
+		caps = append(caps, "rounds", capRoundLock)
 	}
 	s := control.New(control.Config{
 		Build:        build,
 		Host:         api.HostInfo{ID: *hostID},
 		DeviceID:     key.Fingerprint(),
 		Source:       agentSource{store: store, agents: agents, settings: setSvc, confirms: cfSvc, rounds: roundsSvc},
+		Observe: func(e structure.Event) {
+			if r := roundsRef.Load(); r != nil {
+				r.matcher.observe(e)
+			}
+		},
 		Capabilities: caps,
 		Actions:      acts,
 		Data:         data,

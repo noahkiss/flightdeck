@@ -237,6 +237,9 @@ type Config struct {
 	CloseGrace     time.Duration // how long a closing connection may take to flush
 	Now            func() time.Time
 	Logf           func(format string, args ...any)
+	// Observe hears every event Publish sends, before any client: the event triggers of
+	// rounds (rounds.md 4.3). It must not block. Nil: none.
+	Observe func(structure.Event)
 }
 
 // Server serves control connections. Its epoch is new for every Server.
@@ -420,6 +423,9 @@ func (s *Server) Approvers(pane string) int {
 // Publish hands one structure change to every subscribed connection. It never blocks on a
 // client, so it is safe to call from structure.Config.OnEvent, under the store lock.
 func (s *Server) Publish(e structure.Event) {
+	if s.cfg.Observe != nil {
+		s.cfg.Observe(e)
+	}
 	data, err := json.Marshal(e.Data)
 	if err != nil {
 		s.cfg.Logf("event %s %s: %v", e.Type, e.ID, err)

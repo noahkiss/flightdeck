@@ -46,6 +46,25 @@ type channelLocal struct {
 	agents *harness.Store
 	send   *agentService // nil without the holder link
 	trust  *trustService // nil without the holder link
+	// lock is the round lock's in-use reason for a session, "" when free (rounds.md 5.2, 6.1).
+	lock func(api.Session) string
+}
+
+var _ channels.RoundLocal = (*channelLocal)(nil)
+
+// CheckRound is Check under the round lock, for a message with the round mark (rounds.md 5.2):
+// a session in use holds it with the lock's reason.
+func (l *channelLocal) CheckRound(sessionID string) error {
+	ss, err := l.ready(sessionID)
+	if err != nil {
+		return err
+	}
+	if l.lock != nil {
+		if why := l.lock(ss); why != "" {
+			return fmt.Errorf("%w: %s", channels.ErrBusy, why)
+		}
+	}
+	return nil
 }
 
 func (l *channelLocal) Session(name string) (string, bool) {

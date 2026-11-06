@@ -302,7 +302,7 @@ func (s *roundsService) startHarness(r rounds.Round, run rounds.Run, env []strin
 		argv = append(argv, "--session-id", native)
 	}
 	p := api.SessionCreateParams{Harness: r.Harness, Model: r.Model, Argv: argv, Project: r.Project, Cwd: r.Cwd, Env: env}
-	return s.spawnHarness(r, run, p, &harnessWatch{kind: r.Harness, native: native, prompt: r.Prompt})
+	return s.spawnHarness(r, run, p, &harnessWatch{kind: r.Harness, native: native, prompt: s.firstMessage(r, run, r.Prompt)})
 }
 
 // spawnHarness makes a harness run's new session with p, as the round's run, and watches it
