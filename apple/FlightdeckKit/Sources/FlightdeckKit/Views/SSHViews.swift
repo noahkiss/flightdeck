@@ -506,7 +506,9 @@ struct PairingView: View {
         .onAppear {
             setup.loadKey()
             if name.isEmpty { name = PairingDevice.name }
-            if let r = resume, step == .ready { probeHost(r) }
+            if let r = resume, step == .ready {
+                if r.hostKeyFingerprint.isEmpty { probeHost(r) } else { finish(r) }
+            }
         }
         .onDisappear { task?.cancel() }
     }

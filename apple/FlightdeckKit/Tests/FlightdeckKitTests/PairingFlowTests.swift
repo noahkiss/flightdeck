@@ -115,7 +115,6 @@ final class PairingFlowTests: XCTestCase {
         let s = TestPairServer()
         let entry = try Pairing.entry(from: answer(paired(s, device: "SHA256:dev")), code: code(s), deviceFingerprint: "SHA256:dev", keyID: "device").entry
         let setup = SSHSetup(keys: DeviceKeys(store: MemorySecretStore(), preferEnclave: false), listURL: nil, fleet: nil)
-        setup.unfinishedPairing = entry
         do {
             try await setup.finishPairing(entry)
             XCTFail("save should fail")
