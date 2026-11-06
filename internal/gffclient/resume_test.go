@@ -2,6 +2,7 @@ package gffclient
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -163,7 +164,9 @@ func TestResumeAfterHolderLoss(t *testing.T) {
 
 	holder.Process.Kill()
 	<-holderDone
-	if err := os.Remove(holderreg.Path(hdir, "one")); err != nil {
+	// The running gff-hab may already have removed the dead holder's registry file as stale
+	// (hab-holder.md 4.2); either way it must be gone before the new holder and gff-hab start.
+	if err := os.Remove(holderreg.Path(hdir, "one")); err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatal(err)
 	}
 	startHolderProc(t, hdir, "two")
