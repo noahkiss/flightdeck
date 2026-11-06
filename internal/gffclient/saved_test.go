@@ -80,9 +80,9 @@ func TestWorkspaceSaved(t *testing.T) {
 	hst := newHost(t, 160, 30, false)
 	done := runWS(t, hst, withState, specsOf(a.Sock, b.Sock)...)
 	hst.waitScreen("both rows", func(s string) bool { return line(s, "job") > 0 && line(s, "other") > 0 })
-	// The first host to arrive owns the initial selection. Once both rows exist,
-	// move to the first row explicitly instead of assuming job arrived first.
-	hst.typ("k\r") // job: first by name
+	// Rows sort newest first, so their order depends on which hab answered first. Filter to
+	// job and open it, whatever the order.
+	hst.typ("/job\r\r")
 	hst.waitScreen("job in tab 1", func(s string) bool { return strings.Contains(s, " job · one") })
 	hst.typ("\x10l")
 	hst.waitScreen("a new pane beside job", func(s string) bool {
@@ -95,6 +95,7 @@ func TestWorkspaceSaved(t *testing.T) {
 	hst.waitScreen("the name", func(s string) bool { return strings.Contains(s, " 1:work ") })
 	hst.typ(tabKey + "n")
 	hst.waitScreen("tab 2", func(s string) bool { return strings.Contains(s, " 2:2 ") })
+	hst.typ("/\x7f\x7f\x7f\r") // clear the job filter
 	hst.waitScreen("other in the sidebar", func(s string) bool { return line(s, "other") > 0 })
 	hst.typ("/other\r\r") // filter to other, then open it
 	hst.waitScreen("other in tab 2", func(s string) bool { return strings.Contains(s, " other · two") })

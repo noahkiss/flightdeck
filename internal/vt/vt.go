@@ -8,7 +8,10 @@
 // package that needs cgo. Fake is a small implementation for tests.
 package vt
 
-import "errors"
+import (
+	"errors"
+	"unicode/utf8"
+)
 
 // Encoding names a snapshot format. The values match the snapshot capability words in the API.
 type Encoding string
@@ -180,4 +183,27 @@ type Parser interface {
 	Restore(enc Encoding, snapshot []byte, cfg Config) (Terminal, error)
 	// Encodings lists the encodings that Snapshot and Restore support, baseline first.
 	Encodings() []Encoding
+}
+
+// maxTitleBytes bounds the title a snapshot carries. Clients cap a title well below it.
+const maxTitleBytes = 4096
+
+// TitleSeq returns the OSC 2 sequence that sets title, for the start of an EncodingVT snapshot
+// (spec 5.5: the snapshot carries the title), or nil for an empty title. Control characters and
+// invalid UTF-8 are left out, so the title cannot end the sequence early or start another one.
+func TitleSeq(title string) []byte {
+	var b []byte
+	for _, r := range title {
+		if r == utf8.RuneError || r < 0x20 || (r >= 0x7f && r < 0xa0) {
+			continue
+		}
+		if len(b)+utf8.RuneLen(r) > maxTitleBytes {
+			break
+		}
+		b = utf8.AppendRune(b, r)
+	}
+	if len(b) == 0 {
+		return nil
+	}
+	return append(append([]byte("\x1b]2;"), b...), "\x1b\\"...)
 }

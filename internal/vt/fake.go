@@ -8,8 +8,9 @@ import (
 
 // Fake is a Parser for tests that must run without cgo. It keeps a plain grid of runes: it moves the
 // cursor, wraps, scrolls into a scrollback, switches to the alternate screen, and counts wide
-// characters as two cells. It ignores colours, styles, titles and most modes. Its only snapshot
-// encoding is EncodingVT, which holds the text and the cursor position alone.
+// characters as two cells. It ignores colours, styles and most modes, and keeps the last OSC 0 or 2
+// title. Its only snapshot encoding is EncodingVT, which holds the title, the text and the cursor
+// position alone.
 type Fake struct{}
 
 var _ Parser = Fake{}
@@ -71,6 +72,8 @@ type fakeTerm struct {
 	pendingWrap  bool
 	state        parseState
 	csi          []byte
+	osc          []byte // the OSC body so far, bounded
+	title        string // the last OSC 0 or 2 title
 	partial      []byte // an incomplete UTF-8 sequence carried to the next Write
 	closed       bool
 }
@@ -133,7 +136,7 @@ func (t *fakeTerm) byte(b byte) {
 		case '[':
 			t.state, t.csi = stCSI, t.csi[:0]
 		case ']':
-			t.state = stOSC
+			t.state, t.osc = stOSC, t.osc[:0]
 		case '(', ')', '*', '+':
 			t.state = stEscCharset
 		case '7':
@@ -157,12 +160,20 @@ func (t *fakeTerm) byte(b byte) {
 		switch b {
 		case 0x07:
 			t.state = stGround
+			t.endOSC()
 		case 0x1b:
 			t.state = stOSCEsc
+		default:
+			if len(t.osc) < maxTitleBytes+2 {
+				t.osc = append(t.osc, b)
+			}
 		}
 		return
 	case stOSCEsc:
 		t.state = stGround // ESC \ ends the string; any other byte is dropped with it
+		if b == '\\' {
+			t.endOSC()
+		}
 		return
 	}
 	switch b {
@@ -183,6 +194,14 @@ func (t *fakeTerm) byte(b byte) {
 		if b >= 0x20 && b < 0x7f {
 			t.print(rune(b))
 		}
+	}
+}
+
+// endOSC keeps the title of a complete OSC 0 or 2.
+func (t *fakeTerm) endOSC() {
+	cmd, title, ok := strings.Cut(string(t.osc), ";")
+	if ok && (cmd == "0" || cmd == "2") {
+		t.title = title
 	}
 }
 
@@ -480,6 +499,7 @@ func (t *fakeTerm) Snapshot(enc Encoding, opts SnapshotOptions) ([]byte, error) 
 	}
 	// The primary screen goes first, so leaving the alternate screen after a restore shows it.
 	var b strings.Builder
+	b.Write(TitleSeq(t.title)) // first: the client's pass-through filter keeps it as the pane's title
 	lines := rowText(append(append([][]rune{}, sb...), t.primary...))
 	if len(sb) > 0 {
 		// Every row of the screen is written, blank ones too, so exactly the scrollback rows
