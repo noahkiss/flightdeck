@@ -166,6 +166,8 @@ func (d *adopter) sessionName(id string) string {
 type outsideView struct {
 	registry []transcript.ClaudeRunning
 	procs    []outsideProc
+	// err is why the process list did not read: the view cannot prove a conversation is free.
+	err error
 }
 
 func (d *adopter) view(ctx context.Context) outsideView {
@@ -179,7 +181,7 @@ func (d *adopter) view(ctx context.Context) outsideView {
 	if err != nil && d.logf != nil {
 		d.logf("adopt: the process list: %v", err)
 	}
-	v.procs = procs
+	v.procs, v.err = procs, err
 	return v
 }
 
@@ -229,7 +231,13 @@ func (d *adopter) Adopt(ctx context.Context, p api.SessionAdoptParams) (api.Sess
 	if name := d.holder(c.Harness, c.ID); name != "" {
 		return api.SessionAdopted{}, control.Errorf(api.ErrorKindConflict, "session %s holds %s conversation %s: resume that session", name, c.Harness, c.ID)
 	}
-	if pid := d.runner(d.view(ctx), c.Harness, c.ID); pid != 0 {
+	v := d.view(ctx)
+	if v.err != nil {
+		// Without the list, a terminal that runs the conversation stays unseen: never start a
+		// second writer on a guess.
+		return api.SessionAdopted{}, control.Errorf(api.ErrorKindUnavailable, "the process list did not read (%v): cannot tell whether a process outside the hab runs %s", v.err, c.ID)
+	}
+	if pid := d.runner(v, c.Harness, c.ID); pid != 0 {
 		return api.SessionAdopted{}, control.Errorf(api.ErrorKindConflict, "a %s process outside the hab runs conversation %s (pid %d): quit it there first", c.Harness, c.ID, pid)
 	}
 	cwd := p.Cwd

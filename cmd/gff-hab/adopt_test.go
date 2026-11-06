@@ -111,6 +111,11 @@ func TestAdoptLive(t *testing.T) {
 	if _, err := d.Adopt(context.Background(), api.SessionAdoptParams{ID: "c1"}); errKind(err) != api.ErrorKindConflict || !strings.Contains(err.Error(), "pid 42") {
 		t.Fatalf("argv: %v", err)
 	}
+	// A process list that fails proves nothing free: adopt refuses rather than guess.
+	d.procs = func(context.Context) ([]outsideProc, error) { return nil, context.DeadlineExceeded }
+	if _, err := d.Adopt(context.Background(), api.SessionAdoptParams{ID: "c1"}); errKind(err) != api.ErrorKindUnavailable {
+		t.Fatalf("ps failed: %v", err)
+	}
 	d.procs = func(context.Context) ([]outsideProc, error) { return nil, nil }
 	d.book.started("s1", api.SessionCreateParams{Harness: "claude"})
 	d.book.adopted("s1", "claude", "c1")
