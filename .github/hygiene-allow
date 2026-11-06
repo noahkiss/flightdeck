@@ -7,3 +7,5 @@ internal/pairing/offer.go	cgnat-ipv4
 internal/pairing/offer_test.go	private-ipv4
 internal/pairing/offer_test.go	cgnat-ipv4
 internal/pairing/offer_test.go	tailnet-ipv6
+internal/summary/summary_test.go	private-ipv4
+internal/summary/summary_test.go	cgnat-ipv4
