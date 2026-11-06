@@ -235,17 +235,19 @@ then B8, D3; A6 last.
 
 ## 8. Decisions for the owner
 
-| # | Question | Suggested default |
+Decided by the owner on 2026-11-06.
+
+| # | Question | Decision |
 |---|---|---|
-| 1 | Replace the pane Capcom with the service? | Yes; keep the pane form one release |
-| 2 | May Capcom write first? | Yes, only for what needs you, batched, with quiet hours |
-| 3 | Location shared with Capcom | With each message only, as a place name; no background tracking |
-| 4 | Places and weather source | Apple (WeatherKit, Apple Maps Server API); Google only with your own key |
+| 1 | Replace the pane Capcom with the service? | Yes, outright: the pane form goes when the service ships |
+| 2 | May Capcom write first? | Yes, about anything useful, with quiet hours |
+| 3 | Location shared with Capcom | The app shares location in the background; Capcom queries it when a question needs it, and it never enters the context by default |
+| 4 | Places and weather source | Apple (WeatherKit, Apple Maps Server API); Google only with the owner's own key |
 | 5 | Calendar writes | A card with one "Add" tap, never silent |
-| 6 | A group's starts on other hosts | One confirmation for the group plan, not one per member |
-| 7 | Where the merge lane lands | On the group branch; merging to main asks you |
+| 6 | A group's starts on other hosts | One confirmation for the group plan; an app setting turns confirmation off |
+| 7 | Where the merge lane lands | On main, once review and CI pass |
 | 8 | Show "earlier messages summarised" | Yes, as a quiet divider |
-| 9 | iMessage bridge | Not until the app thread ships; then an email-only Apple ID |
+| 9 | iMessage bridge | Not now; kept as a future idea |
 
 ## Sources
 
