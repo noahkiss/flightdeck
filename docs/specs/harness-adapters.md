@@ -1144,7 +1144,7 @@ compaction id) at each step.
 
 | State | Means | Next when |
 |---|---|---|
-| `queued` | Waits for the turn to end | The agent is `idle`, `done` or `error`, with no permission request open and no send holding the pane |
+| `queued` | Waits for the turn to end | The agent is `idle`, `done` or `error`, with no permission request open, no send holding the pane and no client input to the pane in the last 30 seconds |
 | `sent` | `/compact` was delivered through `session.send`'s path: paste, then Enter | Compaction starts |
 | `compacting` | Claude Code is compacting | Compaction ends |
 | `done` | Compaction ended, and the follow-up, if any, was delivered | — |
@@ -1157,7 +1157,11 @@ compaction id) at each step.
   `compact_boundary` record. A record seen first counts as start and end at once.
 - **Follow-up delivery.** At the end, gff-hab sends the follow-up through `session.send`'s path
   as soon as the agent is at its prompt. `/compact` holds the pane like any send (up to 3
-  seconds while no turn starts), so a refused try is made again once a second. A message pasted while compaction runs would rely on
+  seconds while no turn starts), so a refused try is made again once a second.
+- **Typing.** A draft in the prompt would take the paste, and Enter would submit the draft with
+  it. So `/compact` and the follow-up each wait while a client typed into the pane, or sent its
+  session a message, in the last 30 seconds. The check runs under the send's claim, before any
+  byte goes in. A draft left untouched for longer is not seen. A message pasted while compaction runs would rely on
   the TUI's own input queue; after the end it is the compacted agent's first message, which
   is what the follow-up is for.
 - **Limits.** The turn must end within 60 minutes, compaction must start within 2 minutes of

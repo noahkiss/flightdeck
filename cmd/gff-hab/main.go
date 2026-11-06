@@ -1293,13 +1293,16 @@ func serve(args []string) error {
 		compacts = newCompactService(agents, func(pane string) (string, bool) {
 			ss, ok := store.SessionByPane(pane)
 			return ss.ID, ok
-		}, func(ctx context.Context, session, text string) error {
-			return agentSvc.Send(ctx, "compact", api.SessionSendParams{Session: session, Text: text})
+		}, func(ctx context.Context, session, text string, guard func(string) error) error {
+			return agentSvc.sendGuarded(ctx, "compact", api.SessionSendParams{Session: session, Text: text}, guard)
 		}, func(e structure.Event) {
 			if s := srv.Load(); s != nil {
 				s.Publish(e)
 			}
 		}, logger.Printf)
+		if roundsSvc != nil {
+			compacts.typing = func(pane string) bool { return roundsSvc.typedWithin(pane, compactTypingWindow) }
+		}
 	}
 	if lk != nil {
 		escaped := newEscapedSweeps(tokens, logger.Printf)

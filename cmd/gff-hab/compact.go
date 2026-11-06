@@ -47,6 +47,10 @@ type compactLimits struct {
 	poll   time.Duration // how often the transcript is read for compact_boundary
 }
 
+// compactTypingWindow is how long a client's input to the pane holds a send back: a person may
+// be writing a draft in the prompt.
+const compactTypingWindow = 30 * time.Second
+
 var defaultCompactLimits = compactLimits{turn: 60 * time.Minute, start: 2 * time.Minute, end: 15 * time.Minute,
 	prompt: 2 * time.Minute, poll: time.Second}
 
@@ -61,8 +65,13 @@ type compactService struct {
 	agents compactAgents
 	// session names the gff-hab session in a pane.
 	session func(pane string) (string, bool)
-	// send delivers text to a session through session.send's path.
-	send    func(ctx context.Context, session, text string) error
+	// send delivers text to a session through session.send's path. guard runs once the pane is
+	// claimed and before any byte goes in; its error refuses the send.
+	send func(ctx context.Context, session, text string, guard func(pane string) error) error
+	// typing reports whether a client typed into the pane, or sent its session a message,
+	// within compactTypingWindow. Nil: never. A draft in the prompt would take the paste and
+	// Enter would submit it, so the send waits while it is true.
+	typing  func(pane string) bool
 	publish func(structure.Event)
 	logf    func(string, ...any)
 	limits  compactLimits
@@ -84,7 +93,7 @@ type compactJob struct {
 	eOnce    sync.Once
 }
 
-func newCompactService(agents compactAgents, session func(string) (string, bool), send func(context.Context, string, string) error,
+func newCompactService(agents compactAgents, session func(string) (string, bool), send func(context.Context, string, string, func(string) error) error,
 	publish func(structure.Event), logf func(string, ...any)) *compactService {
 	if logf == nil {
 		logf = func(string, ...any) {}
@@ -235,7 +244,7 @@ func (s *compactService) waitAndSend(j *compactJob, text string, limit time.Dura
 				before()
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			err := s.send(ctx, j.c.Session, text)
+			err := s.send(ctx, j.c.Session, text, s.guard)
 			cancel()
 			if err == nil {
 				return nil
@@ -253,6 +262,15 @@ func (s *compactService) waitAndSend(j *compactJob, text string, limit time.Dura
 			return errors.New(what)
 		}
 	}
+}
+
+// guard refuses a send with conflict while a client types into the pane: waitAndSend then
+// tries again. It runs under the send's claim, so no input check races the paste.
+func (s *compactService) guard(pane string) error {
+	if s.typing != nil && s.typing(pane) {
+		return control.Errorf(api.ErrorKindConflict, "a client typed into pane %s in the last %s", pane, compactTypingWindow)
+	}
+	return nil
 }
 
 // run moves one compaction through its steps.
