@@ -504,7 +504,7 @@ func (c *client) openStream(v *view) {
 		off := v.offset
 		opts.Offset = &off
 	}
-	conn := v.h.conn
+	conn, pane := v.h.conn, v.spec.ID
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
@@ -516,7 +516,7 @@ func (c *client) openStream(v *view) {
 				return false
 			}
 		}
-		s, err := openPane(ctx, conn, v.spec.ID, opts)
+		s, err := openPane(ctx, conn, pane, opts)
 		if err != nil {
 			send(paneFrame{v: v, gen: gen, ended: true, err: err})
 			return
