@@ -408,3 +408,26 @@ func TestRead(t *testing.T) {
 		t.Fatalf("unknown id: %s", v)
 	}
 }
+
+// TestHeavyRows: the heavy-run lock's rows (groups.md 15.3) take their ranges and refuse
+// values outside them.
+func TestHeavyRows(t *testing.T) {
+	for id, cases := range map[string]map[string]bool{
+		HeavySlots:       {"1": true, "8": true, "0": false, "9": false, "1.5": false},
+		HeavyDiskMinFree: {"0": true, "10": true, "4096": true, "-1": false, "4097": false},
+		HeavyLongHold:    {"5": true, "1440": true, "4": false, "1441": false, "true": false},
+	} {
+		d, ok := Lookup(id)
+		if !ok {
+			t.Fatalf("%s is not registered", id)
+		}
+		if _, err := d.Check(d.Default); err != nil {
+			t.Errorf("%s default %s: %v", id, d.Default, err)
+		}
+		for v, want := range cases {
+			if _, err := d.Check(json.RawMessage(v)); (err == nil) != want {
+				t.Errorf("%s = %s: err %v, want ok %v", id, v, err, want)
+			}
+		}
+	}
+}

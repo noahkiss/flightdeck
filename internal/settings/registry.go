@@ -31,6 +31,10 @@ const (
 	ContextNudge     = "agent.context_nudge"
 	ContextNudgeStep = "agent.context_nudge_step"
 	ContextNudgeText = "agent.context_nudge_text"
+	// The heavy-run lock and disk watch (groups.md 8, 15.3), each for this hab only.
+	HeavySlots       = "heavy.slots"
+	HeavyDiskMinFree = "heavy.disk_min_free" // GiB; 0 never holds runs for disk
+	HeavyLongHold    = "heavy.long_hold"     // minutes
 )
 
 // DefaultNudgeText is the context nudge's built-in note; {percent} becomes the percentage.
@@ -60,6 +64,9 @@ var Defs = []Def{
 	{ID: ContextNudge, Default: json.RawMessage(`0`), check: checkInt(0, 99), integer: true},
 	{ID: ContextNudgeStep, Default: json.RawMessage(`10`), check: checkInt(1, 100), integer: true},
 	{ID: ContextNudgeText, Default: mustJSON(DefaultNudgeText), check: checkText(1, 1000)},
+	{ID: HeavySlots, Default: json.RawMessage(`1`), check: checkInt(1, 8), integer: true},
+	{ID: HeavyDiskMinFree, Default: json.RawMessage(`10`), check: checkInt(0, 4096), integer: true},
+	{ID: HeavyLongHold, Default: json.RawMessage(`60`), check: checkInt(5, 1440), integer: true},
 }
 
 func mustJSON(v any) json.RawMessage {

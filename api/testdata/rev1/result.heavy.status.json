@@ -1,0 +1,48 @@
+{
+  "disk_low": true,
+  "hold_until": "hold_until-21",
+  "holders": [
+    {
+      "command": "command-6",
+      "granted": "granted-10",
+      "pane": "pane-8",
+      "session": "session-7",
+      "since": "since-9",
+      "state": "waiting",
+      "ticket": "ticket-5",
+      "x_unknown_field": "later"
+    }
+  ],
+  "min_free_bytes": 17,
+  "seq": 3,
+  "slots": 4,
+  "volumes": [
+    {
+      "free_bytes": 19,
+      "path": "path-18",
+      "total_bytes": 20,
+      "x_unknown_field": "later"
+    }
+  ],
+  "waiters": [
+    {
+      "command": "command-12",
+      "granted": "granted-16",
+      "pane": "pane-14",
+      "session": "session-13",
+      "since": "since-15",
+      "state": "waiting",
+      "ticket": "ticket-11",
+      "x_unknown_field": "later"
+    }
+  ],
+  "x_unknown_field": "later",
+  "x_unknown_object": {
+    "flag": true,
+    "list": [
+      1,
+      "two",
+      null
+    ]
+  }
+}

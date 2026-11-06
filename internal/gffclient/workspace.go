@@ -81,8 +81,9 @@ type workspaceUI struct {
 	onRound  bool             // the board's selection is on a round row
 	boardTop int              // the first board line under the head, so the selection shows
 	selRound board.RoundKey
-	cats     map[string]catCopy // device id -> the newest catalog copy
-	catBusy  map[string]int     // host -> 1 a catalog read is out, 2 and another is due
+	cats     map[string]catCopy   // device id -> the newest catalog copy
+	catBusy  map[string]int       // host -> 1 a catalog read is out, 2 and another is due
+	heavy    map[string]heavyCopy // device id -> the heavy-run lock's section (heavy.go)
 	pendRun  pendingRun
 
 	// Modules (modules.go).
@@ -101,6 +102,7 @@ func (u *workspaceUI) init(c *client) {
 	u.resuming = map[string]bool{}
 	u.showRuns = true
 	u.cats, u.catBusy = map[string]catCopy{}, map[string]int{}
+	u.heavy = map[string]heavyCopy{}
 	u.order.Now = func() time.Time { return c.cfg.Now() }
 	if c.ws && len(c.cfg.Panes) == 0 {
 		u.mode = modeSidebar // nothing on screen yet: start where sessions are picked
@@ -1338,6 +1340,12 @@ func (u *workspaceUI) drawBoard(a rect) {
 				st = selStyle
 			}
 			line(roundText(now, r), st)
+		}
+	}
+	if hl := u.heavyLines(); len(hl) > 0 {
+		line(" Heavy runs", boldStyle)
+		for _, l := range hl {
+			line(l, vt.Style{})
 		}
 	}
 	u.drawCards(a.w, line, spans)

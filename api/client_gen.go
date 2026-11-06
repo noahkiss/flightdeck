@@ -162,6 +162,11 @@ const (
 )
 
 const (
+	HeavyStateHolding HeavyState = "holding"
+	HeavyStateWaiting HeavyState = "waiting"
+)
+
+const (
 	HookHealthMissing HookHealth = "missing"
 )
 
@@ -1256,5 +1261,26 @@ func (c Client) RoundRun(ctx context.Context, params RoundRef) (RoundRunResult, 
 func (c Client) RoundRuns(ctx context.Context, params RoundRunsParams) (RoundRuns, error) {
 	var result RoundRuns
 	err := c.Caller.Call(ctx, "round.runs", params, &result)
+	return result, err
+}
+
+// HeavyTake calls heavy.take. Ask for the host's heavy-run lock, or take over a ticket: first come, first served, heavy.slots at once (groups.md 8.1). The calling connection holds the ticket: it is released when the connection drops, or when the pane named by pane_token closes. Answers at once, or with wait_ms once the lock is held or the wait ends. Needs the heavy capability.
+func (c Client) HeavyTake(ctx context.Context, params HeavyTakeParams) (HeavyTaken, error) {
+	var result HeavyTaken
+	err := c.Caller.Call(ctx, "heavy.take", params, &result)
+	return result, err
+}
+
+// HeavyRelease calls heavy.release. Give back a heavy-run ticket, holding or waiting. An unknown ticket is not an error (groups.md 8.1). Needs the heavy capability.
+func (c Client) HeavyRelease(ctx context.Context, params HeavyReleaseParams) (Empty, error) {
+	var result Empty
+	err := c.Caller.Call(ctx, "heavy.release", params, &result)
+	return result, err
+}
+
+// HeavyStatus calls heavy.status. Who holds the heavy-run lock, who waits, and the disk watch's state (groups.md 8). Needs the heavy capability.
+func (c Client) HeavyStatus(ctx context.Context, params HeavyStatusParams) (HeavyStatus, error) {
+	var result HeavyStatus
+	err := c.Caller.Call(ctx, "heavy.status", params, &result)
 	return result, err
 }

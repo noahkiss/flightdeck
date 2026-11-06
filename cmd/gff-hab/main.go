@@ -103,6 +103,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/habits"
 	"github.com/noahkiss/flightdeck/internal/habkey"
 	"github.com/noahkiss/flightdeck/internal/harness"
+	"github.com/noahkiss/flightdeck/internal/heavy"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/hoststats"
@@ -159,6 +160,7 @@ const usage = `usage:
   gff-hab detect explain [-socket path | -via command] [-json] [-all] <pane|session>
   gff-hab read [-socket path] [-json] <tool> [-arg value]... [words]
   gff-hab lb [--json] [--socket path] [--state dir] <verb> [args]   (the same as gff lb)
+  gff-hab heavy [--socket path] [--] <command> [args...]   (the same as gff heavy)
   gff-hab act  [-socket path] [-json] <tool> [-arg value]... [words]
   gff-hab confirm list   [-socket path] [-all] [-json]
   gff-hab confirm show   [-socket path] [-json] <id>
@@ -251,6 +253,8 @@ func main() {
 		err = mcpCmd(os.Args[2:], os.Stdin, os.Stdout)
 	case "agent":
 		os.Exit(agentcli.Run("gff-hab", os.Args[2:], os.Stdin, os.Stdout, os.Stderr, os.Getenv))
+	case "heavy":
+		os.Exit(heavyMain(os.Args[2:]))
 	case "lb", "logbook":
 		os.Exit(lbcli.Main(lbcli.Env{Args: os.Args[2:], Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr,
 			Getenv: os.Getenv, Client: cliClient, Name: "gff-hab lb"}))
@@ -494,6 +498,7 @@ func serve(args []string) error {
 	var pushes *pushService // set before anything publishes an agent state
 	// Harness runs of rounds follow their agents' states (roundharness.go); set once rounds run.
 	var roundsRef atomic.Pointer[roundsService]
+	var heavyRef atomic.Pointer[heavy.Lock] // set once the lock runs; the catalog reads its section
 	agents := harness.NewStore(harness.Config{
 		Publish: func(e structure.Event) {
 			if s := srv.Load(); s != nil {
@@ -998,6 +1003,12 @@ func serve(args []string) error {
 			}
 			return nil
 		},
+		Heavy: func() *api.CatalogHeavy {
+			if h := heavyRef.Load(); h != nil {
+				return h.Section()
+			}
+			return nil
+		},
 		OnCopy: func(c api.Catalog) {
 			if capcomSvc != nil {
 				capcomSvc.Observe(c)
@@ -1049,6 +1060,53 @@ func serve(args []string) error {
 		}
 	}
 	caps = append(caps, channels.Capability)
+	// The heavy-run lock and the disk watch (groups.md 8): in memory, for this host's build and
+	// test runs; the free space of the state and worktree volumes in the catalog.
+	heavyCfg := loadHeavySettings(cpath, logger.Printf)
+	hv := heavyValues{value: setSvc.Value}
+	heavyVolumes := []string{dir}
+	if abs, err := filepath.Abs(dir); err == nil {
+		heavyVolumes[0] = abs
+	}
+	if h, err := os.UserHomeDir(); err == nil {
+		if root, err := worktreeRoot(*wtRoot, os.Getenv, h); err == nil {
+			heavyVolumes = append(heavyVolumes, root)
+		}
+	}
+	heavyLock := heavy.New(heavy.Config{
+		Host: *hostID, Slots: hv.slots, MinFree: hv.minFree, LongHold: hv.longHold,
+		RestartHold: heavyCfg.RestartHold, ResumeMargin: heavyCfg.ResumeMargin,
+		Volumes: heavyVolumes, Free: heavyFreeSeam, DiskEvery: heavyDiskEverySeam,
+		PaneOf: func(token string) (string, string, bool) {
+			pane, ok := tokens.Pane(token)
+			if !ok {
+				return "", "", false
+			}
+			name := ""
+			if ss, ok := store.SessionByPane(pane); ok {
+				name = ss.Name
+			}
+			return pane, name, true
+		},
+		// Groups come in a later stage (groups.md 16, B3): until then no session coordinates,
+		// and a low-disk episode raises one notice.
+		Coordinators: heavyCoordSeam,
+		Message: func(session, text string) error {
+			_, err := chSvc.Note(session, text)
+			return err
+		},
+		Notice: func(title, body string) {
+			if _, err := pushes.Raise("", api.NoticeRaiseParams{Title: title, Body: body, Level: api.NoticeLevelActive}); err != nil {
+				logger.Printf("heavy: notice: %v", err)
+			}
+		},
+		Changed: cs.Poke,
+		Logf:    logger.Printf,
+	})
+	defer heavyLock.Close()
+	heavyRef.Store(heavyLock)
+	cs.Poke() // the catalog's heavy section
+	caps = append(caps, heavy.Capability)
 	// The push capability is added at each hello while push is on (control.PushCapability):
 	// the key command may print its key after start.
 	// The read tools (capcom.md 4): sessions and search over the native transcripts, transcript,
@@ -1278,6 +1336,7 @@ func serve(args []string) error {
 		Confirm:     cfSvc,
 		Capcom:      capcomCtl,
 		Rounds:      roundsCtl,
+		Heavy:       heavyLock,
 		Logbook:     lbVerbs,
 	})
 	srv.Store(s)
@@ -1322,6 +1381,7 @@ func serve(args []string) error {
 			case link.PaneAdded: // a holder reached late: its opencode panes are followed now
 				ocs.added(n.Pane.UUID.String())
 			case link.PaneGone:
+				heavyLock.ReleasePane(n.Pane.UUID.String())
 				ocs.forget(n.Pane.UUID.String())
 				agents.Forget(n.Pane.UUID.String())
 				pushes.forget(n.Pane.UUID.String())
@@ -1334,6 +1394,8 @@ func serve(args []string) error {
 					trustSvc.forget(n.Pane.UUID.String())
 				}
 			case link.PaneExited:
+				// A heavy run's ticket follows its pane (groups.md 8.1).
+				heavyLock.ReleasePane(n.Pane.UUID.String())
 				ocs.forget(n.Pane.UUID.String()) // the wrapper is gone, and its server with it
 				agents.Exited(n.Pane.UUID.String())
 			case link.PaneReport: // OSC 7501 from the program; a replayed one applies as screen

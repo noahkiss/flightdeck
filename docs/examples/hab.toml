@@ -96,6 +96,12 @@ harness = "claude"
 # "logbook.habits.brief" = true
 # "logbook.habits.reminder" = true
 # "logbook.habits.closeout" = true
+# The heavy-run lock (docs/specs/groups.md 8): heavy runs at once on this host, 1 to 8.
+# "heavy.slots" = 1
+# Hold heavy runs while a volume has less than this many GiB free: 0 for never, else to 4096.
+# "heavy.disk_min_free" = 10
+# Notify when one heavy run holds the lock longer than this many minutes: 5 to 1440.
+# "heavy.long_hold" = 60
 
 # The [logbook.habits_off] table: turn a recording habit off for one project (docs/specs/logbook.md
 # 11.4). Keys are a Logbook project id or an identity, the git remote as the catalog prints it;
@@ -110,3 +116,13 @@ harness = "claude"
 max_running = 2
 # How long due runs wait after a wake or a gff-hab start; "0s" for none.
 wake_settle = "30s"
+
+# The [heavy] section: the heavy-run lock that `gff heavy -- <command>` takes (docs/specs/groups.md
+# 8). A value outside its range is logged and the default runs.
+[heavy]
+# After a gff-hab start, grant nothing for this long, so runs from before the restart come back
+# first: "0s" to "60s".
+restart_hold = "10s"
+# Once free space was low, grant again only when it is this many GiB above heavy.disk_min_free:
+# 0 to 100.
+disk_resume_margin = 2
