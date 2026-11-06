@@ -1029,6 +1029,13 @@ copy), `internal/fakehab/rounds.go` (the fake hab's rounds and catalog).
 | `gffclient` `TestPrefixKeymapSample` | The one-prefix sample binds `R`, and on the board `r` and `p` |
 | `gffclient` `TestNextText` | Today, tomorrow and a date in this machine's zone; the round's clock beside it when it differs |
 
+**Heavy runs** (`groups.md` 8, stage B5). Below the Rounds list, a "Heavy runs" list has one line
+per host whose heavy-run lock is in use or whose disk is low: runs holding, runs waiting, and
+"disk low" with the least free space of its volumes. It reads the catalog's `heavy` section from
+the same `catalog.list` reads as the Rounds list; the answering hab's own entry wins over a
+peer's copy. Lines are not selectable. Tests: `TestBoardHeavy` (two fake habs: the line for a
+busy, low host and none for an idle one) and `TestKeepHeavy`.
+
 ### 7.6 Built choices: module cards (task-kgr80lau)
 
 Modules placed on the `board` (`modules.md` 5) show on the status board as cards. The drawing is

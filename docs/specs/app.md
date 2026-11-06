@@ -3481,6 +3481,9 @@ picker never changes them.
 | `agent.context_nudge` | Remind agents about context, from | Agents | integer percent, 0 = off, else 1 to 99 | 0 | Hab, this hab only | `harness-adapters.md` (context nudge) |
 | `agent.context_nudge_step` | Remind again every | Agents | integer percent, 1 to 100 | 10 | Hab, this hab only | `harness-adapters.md` (context nudge) |
 | `agent.context_nudge_text` | Reminder text | Agents | text, 1 to 1000 characters; `{percent}` is the percentage | The built-in note | Hab, this hab only | `harness-adapters.md` (context nudge) |
+| `heavy.slots` | Heavy runs at once on this host | Agents | integer 1 to 8 | 1 | Hab, this hab only | `groups.md` 8.1 |
+| `heavy.disk_min_free` | Hold heavy runs below this free space | Agents | integer GiB, 0 = never, else 1 to 4096 | 10 | Hab, this hab only | `groups.md` 8.2 |
+| `heavy.long_hold` | Notify when a heavy run holds the lock longer than | Agents | integer minutes 5 to 1440 | 60 | Hab, this hab only | `groups.md` 8.1 |
 | `voice.*` | Engines (hab, Parakeet, Apple), summary request, spoken commands, confirm before send, barge-in, noisy room, pause | Voice | As 13.7 | As 13.7 | App | 13.7 |
 | `voice.language` | Dictation language | Voice | a language tag, or system | System | App (not built) | 13.4 |
 
@@ -3565,6 +3568,9 @@ Built choices on the hab (task-yfmrj6yc, `internal/settings`):
   asks for a confirmation (`capcom.md` 6.4, task-ph00sdci). The other two are stored and served
   only: their consumers are not built (`approval.max_age` waits for the request expiry of 7.4,
   `logbook.approval` for Logbook).
+- **The heavy-run lock** (`groups.md` 8, stage B5) reads `heavy.slots`, `heavy.disk_min_free`
+  and `heavy.long_hold` at each grant, disk reading and long-hold check, so a change applies at
+  once; a raised `heavy.slots` grants at the next check.
 - **The flag lock.** `-permission-wait` given on the command line, even as 0, or a non-empty
   `$GFF_HAB_PERMISSION_WAIT`, locks `hab.permission_wait` in whole seconds, rounded. A flag wins
   over the config file.
