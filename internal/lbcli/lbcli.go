@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/catalog"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/lbsvc"
@@ -39,6 +40,9 @@ type Env struct {
 	Getenv func(string) string
 	Client api.ClientInfo // the hello's client, for the control socket
 	Name   string         // the command name in messages: "gff lb"
+	// Dir is the working folder: in a pane, the file's reads hide the private projects but the
+	// one it belongs to (logbook.md 12.1). Empty: the process's.
+	Dir string
 }
 
 // Caller makes one call to the hab, or to the file.
@@ -72,7 +76,11 @@ const usage = `usage: %[1]s [--json] [--socket path] [--state dir] <verb> [args]
                                   and --body change its first new record, --changes
                                   replaces its changes (a JSON list, as logbook.write's)
   reject <id>                     decide a proposal: nothing it holds lands
-  projects                        projects and their identities
+  projects                        projects, their identities, and which are private or joined
+  project join <a> <b>            make two projects one: b's identities join a's; the older id
+                                  stays, and the records of both show under it
+  project rename <p> <name>       rename a project
+  project private <p> [on|off]    hide a project from agents outside it, or show it again
   status                          replica size, version vector, waiting ops
 
 filters: --type t --status s --project p --tag t --host h --author a --session s
@@ -85,10 +93,9 @@ outside a pane. A write from a pane waits up to 15 s for gff-hab, then fails.
 
 // later names the verbs of later stages (logbook.md 18).
 var later = map[string]string{
-	"brief":   "the brief comes with Logbook stage 6 (habits)",
-	"project": "joining and renaming projects come with Logbook stage 5 (projects)",
-	"export":  "export comes with Logbook stage 9",
-	"import":  "import comes with Logbook stage 9",
+	"brief":  "the brief comes with Logbook stage 6 (habits)",
+	"export": "export comes with Logbook stage 9",
+	"import": "import comes with Logbook stage 9",
 }
 
 // bools are the flags that take no value.
@@ -295,7 +302,13 @@ func (d *door) Call(ctx context.Context, method string, params, result any) erro
 	if err != nil {
 		return err
 	}
-	res, err := d.local.Dispatch(ctx, d.actor(), nil, method, raw)
+	var pn *lbsvc.Pane
+	if d.inPane {
+		// A pane reads the file only while gff-hab is down: it still sees no private project
+		// but its own (12.1).
+		pn = &lbsvc.Pane{Project: d.paneProject(ctx)}
+	}
+	res, err := d.local.Dispatch(ctx, d.actor(), pn, method, raw)
 	if err != nil {
 		return err
 	}
@@ -441,6 +454,24 @@ func (d *door) openLocal(ctx context.Context, why error) error {
 	return nil
 }
 
+// paneProject is the project of the working folder's repository, by its identity (3.1), or ""
+// when it has none on this replica.
+func (d *door) paneProject(ctx context.Context) string {
+	dir := d.env.Dir
+	if dir == "" {
+		dir, _ = os.Getwd()
+	}
+	if dir == "" {
+		return ""
+	}
+	f, ok := catalog.ReadFolder(ctx, dir)
+	if !ok {
+		return ""
+	}
+	id, _ := d.local.Lookup(ctx, lbsvc.Identity(f.Remote, f.RootCommit))
+	return id
+}
+
 // actor is who writes through the file: a person at this host's shell. A pane never writes the
 // file (Call), so the actor is never an agent.
 func (d *door) actor() api.LogbookActor {
@@ -470,7 +501,7 @@ func init() {
 		"new": newRecord, "edit": edit, "note": note, "mark": mark, "done": done, "claim": claim,
 		"link": link, "unlink": link, "supersede": supersede, "delete": del, "restore": del,
 		"forget": forget, "conflicts": conflicts, "resolve": resolve, "proposals": proposals,
-		"approve": decide, "reject": decide, "projects": projects, "status": status,
+		"approve": decide, "reject": decide, "projects": projects, "project": project, "status": status,
 	}
 }
 
@@ -1062,12 +1093,126 @@ func projects(ctx context.Context, c *cli) (any, string, error) {
 	}
 	var b strings.Builder
 	for _, p := range r.Projects {
-		fmt.Fprintf(&b, "%s  %s  %s\n", p.ID, p.Name, strings.Join(p.Identities, ", "))
+		fmt.Fprintf(&b, "%s  %s  %s", p.ID, p.Name, strings.Join(p.Identities, ", "))
+		if p.Private {
+			b.WriteString("  private")
+		}
+		if p.JoinedInto != "" {
+			fmt.Fprintf(&b, "  joined into %s", p.JoinedInto)
+		}
+		b.WriteByte('\n')
 	}
 	if len(r.Projects) == 0 {
 		b.WriteString("no projects\n")
 	}
 	return r, b.String(), nil
+}
+
+// project runs the project verbs (logbook.md 3.3): join, rename, private.
+func project(ctx context.Context, c *cli) (any, string, error) {
+	if err := c.a.allow("project"); err != nil {
+		return nil, "", usageError{err}
+	}
+	if len(c.a.pos) == 0 {
+		return nil, "", usageError{errors.New("project needs join, rename or private")}
+	}
+	sub, rest := c.a.pos[0], c.a.pos[1:]
+	get := func(id string) (api.LogbookRecord, error) {
+		var r api.LogbookRecordResult
+		if err := c.d.Call(ctx, "logbook.get", api.LogbookGetParams{ID: id}, &r); err != nil {
+			return r.Record, err
+		}
+		if r.Record.Type != logbook.TypeProject {
+			return r.Record, fmt.Errorf("%s is a %s, not a project", id, r.Record.Type)
+		}
+		return r.Record, nil
+	}
+	shown := func(r api.LogbookRecord) string {
+		if r.JoinedInto != "" {
+			return r.JoinedInto
+		}
+		return r.ID
+	}
+	switch sub {
+	case "join":
+		if len(rest) != 2 {
+			return nil, "", usageError{errors.New("project join needs two projects")}
+		}
+		a, err := get(rest[0])
+		if err != nil {
+			return nil, "", err
+		}
+		b, err := get(rest[1])
+		if err != nil {
+			return nil, "", err
+		}
+		if shown(a) == shown(b) {
+			return nil, "", fmt.Errorf("%s and %s are one project already, shown as %s", a.ID, b.ID, shown(a))
+		}
+		// b's identities join a's set, and both get one identity of their own, so projects with
+		// no identity join too. The fold joins projects that share one (5.6).
+		var chs []api.LogbookChange
+		for _, id := range append(slices.Clone(b.Identities), "project:"+b.ID) {
+			chs = append(chs, api.LogbookChange{Op: api.LogbookChangeOpAdd, ID: a.ID, Identity: id})
+		}
+		chs = append(chs, api.LogbookChange{Op: api.LogbookChangeOpAdd, ID: b.ID, Identity: "project:" + b.ID})
+		w, _, err := c.write(ctx, api.LogbookWriteParams{Changes: chs})
+		if err != nil {
+			return nil, "", err
+		}
+		if w.State == api.LogbookWriteStateProposed {
+			return w, fmt.Sprintf("proposed: %s waits for review\n", w.Proposal), nil
+		}
+		after, err := get(a.ID)
+		if err != nil {
+			return nil, "", err
+		}
+		return w, fmt.Sprintf("joined: %s and %s are one project, shown as %s\n", a.ID, b.ID, shown(after)), nil
+	case "rename":
+		if len(rest) < 2 {
+			return nil, "", usageError{errors.New("project rename needs a project and a name")}
+		}
+		if _, err := get(rest[0]); err != nil {
+			return nil, "", err
+		}
+		w, text, err := c.write(ctx, api.LogbookWriteParams{Changes: []api.LogbookChange{setTo(rest[0], "title", strings.Join(rest[1:], " "))}})
+		return w, text, err
+	case "private":
+		if len(rest) < 1 || len(rest) > 2 || (len(rest) == 2 && rest[1] != "on" && rest[1] != "off") {
+			return nil, "", usageError{errors.New("project private needs a project, then on (the default) or off")}
+		}
+		p, err := get(rest[0])
+		if err != nil {
+			return nil, "", err
+		}
+		if len(rest) == 1 || rest[1] == "on" {
+			w, _, err := c.write(ctx, api.LogbookWriteParams{Changes: []api.LogbookChange{setTo(p.ID, "private", true)}})
+			if err != nil {
+				return nil, "", err
+			}
+			return w, fmt.Sprintf("private: %s is hidden from agents outside it\n", shown(p)), nil
+		}
+		// Off clears the mark on every project joined with it: one mark keeps the group private.
+		var all api.LogbookProjects
+		if err := c.d.Call(ctx, "logbook.projects", api.LogbookProjectsParams{}, &all); err != nil {
+			return nil, "", err
+		}
+		var chs []api.LogbookChange
+		for _, x := range all.Projects {
+			if x.Marked && (x.ID == shown(p) || x.JoinedInto == shown(p)) {
+				chs = append(chs, setTo(x.ID, "private", false))
+			}
+		}
+		if len(chs) == 0 {
+			return all, fmt.Sprintf("%s is not private\n", shown(p)), nil
+		}
+		w, _, err := c.write(ctx, api.LogbookWriteParams{Changes: chs})
+		if err != nil {
+			return nil, "", err
+		}
+		return w, fmt.Sprintf("not private: agents read %s again\n", shown(p)), nil
+	}
+	return nil, "", usageError{fmt.Errorf("no project verb %q: join, rename or private", sub)}
 }
 
 func status(ctx context.Context, c *cli) (any, string, error) {
