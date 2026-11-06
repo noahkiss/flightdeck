@@ -22,10 +22,12 @@ const (
 // Key command bounds: an API key is one line, well under 4 KiB.
 const maxKeyOutput = 4 << 10
 
-// Key command backoff, as push's (docs/push.md).
+// Key command backoff, as push's (docs/push.md): after a failed run the next waits 30 s,
+// doubling to 30 minutes; after a good run, a re-run on a refused key waits 5 minutes.
 const (
 	keyRetryFirst = 30 * time.Second
 	keyRetryMax   = 30 * time.Minute
+	keyRerunAfter = 5 * time.Minute
 )
 
 // ErrNoKey reports that the key command has not printed a key yet.
@@ -146,6 +148,7 @@ func (v *Service) loadKeyLocked() {
 			v.logf("summaries are on: model %s", v.s.Model)
 		}
 		v.key, v.keyFails, v.keyWait = key, false, 0
+		v.keyNext = v.now().Add(keyRerunAfter)
 	}()
 }
 
@@ -184,6 +187,12 @@ func (v *Service) Summarize(ctx context.Context, in Input) (string, error) {
 		if errors.Is(err, context.Canceled) {
 			return "", err // the caller gave up, or the hab closes: not the endpoint's fault
 		}
+		// A refused key: run the key command again (within its backoff), as push does on
+		// InvalidProviderToken. The key held stays until a new one is printed.
+		var se *StatusError
+		if errors.As(err, &se) && (se.Code == 401 || se.Code == 403) && v.keyRun != nil {
+			v.loadKeyLocked()
+		}
 		if !v.failing {
 			v.failing = true
 			v.logf("summaries: %v; banners use their plain text until it works again", describe(err))
@@ -202,6 +211,10 @@ func (v *Service) Summarize(ctx context.Context, in Input) (string, error) {
 func describe(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "the endpoint did not answer within " + CallTimeout.String()
+	}
+	var se *StatusError
+	if errors.As(err, &se) && se.Code == 400 {
+		return err.Error() + ` (an endpoint that refuses reasoning_effort or max_tokens: try thinking = "default")`
 	}
 	return err.Error()
 }

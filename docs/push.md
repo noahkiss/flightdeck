@@ -178,7 +178,7 @@ model = "qwen3:4b"
 | `base_url` | The API root; the hab posts to `<base_url>/chat/completions`. A local server (Ollama, LM Studio) keeps the text on your network. Anthropic's OpenAI-compatible root is `https://api.anthropic.com/v1/`, with an API key |
 | `model` | The model name the endpoint knows. Pick a small, fast one |
 | `key_command` | Optional. The command that prints the API key, as an argv, run like push's key command above: no shell, stdin from `/dev/null`, 30 s at most, memory only, never logged. The first line of its output is the key. Leave it out for a server that needs no key |
-| `thinking` | `off` (the default) sends `reasoning_effort: "none"`; `minimal`, `low`, `medium` or `high` send that; `default` sends no `reasoning_effort`, for a model that refuses the field |
+| `thinking` | `off` (the default) sends `reasoning_effort: "none"` and a 64-token limit; `minimal`, `low`, `medium` or `high` send that effort and a 1024-token limit; `default` sends neither, for an endpoint that refuses one. OpenAI's own models need `default`. An HTTP 400 in the log says to try it |
 | `timeout` | Optional: how long a banner waits for its title, `0.2s` to `5s`. Default `1.5s` |
 
 Restart gff-hab after an edit. Its log says `summaries are on: model <model>` once the key
@@ -186,10 +186,12 @@ command (if any) printed a key, `summaries are off: <reason>` for a bad section,
 when a call first fails and when it works again.
 
 - **What leaves the host.** For each approval: the command, the file names (base names), the
-  fetched URL or the tool input, the harness's own summary and the project name. Never a
-  transcript, a folder path or a key. A request in a folder the read scope (`[read]`) denies is
-  never sent. A device with "Show details in notifications" off gets no model title, and when
-  every device hides details, nothing is sent.
+  fetched URL or the tool input (never a file tool's, which holds file contents), the harness's
+  own summary and the project name. A command or tool input can hold paths of its own; nothing
+  else is added: no transcript, no working folder, no key. A request in a folder the read scope
+  (`[read]`) denies is never sent, nor one with no folder to check. A device with "Show details in notifications" off gets no model title, and when
+  every device hides details, nothing is sent. A refused key (HTTP 401 or 403) runs `key_command`
+  again, at most every 5 minutes.
 - **When it fails.** An error, a timeout, a malformed reply or a reply that does not fit the
   4-word title leaves the banner as it would be with no `[summaries]`.
 - **Actions.** The model writes the title only. Approve still shows only when the whole command

@@ -75,20 +75,30 @@ func (n *Notifier) wantsSummary(st api.AgentState) bool {
 }
 
 // prefetch starts the summary call for a new permission request, before the worker gets to
-// its banner: the wait then runs from arrival, and requests that arrive together wait
-// together. Nothing goes to the model when every device that would get the banner hides
-// details. Worker goroutine only.
-func (n *Notifier) prefetch(st api.AgentState) {
+// its banner. arrived is when State first queued it: the wait runs from then, so requests that
+// arrive together, or while the worker waits on another, never wait one after the other.
+// Nothing goes to the model for a state that raises no banner (a replayed screen report),
+// or when every device that would get the banner hides details or is held by presence.
+// Worker goroutine only.
+func (n *Notifier) prefetch(st api.AgentState, arrived time.Time) {
 	if !n.wantsSummary(st) {
+		return
+	}
+	if _, seen := n.last[st.Pane]; !seen && st.Source == api.StateSourceScreen {
 		return
 	}
 	k := sumKey(st)
 	if _, ok := n.sums[k]; ok {
 		return
 	}
+	w := n.cfg.Where(st.Pane, "")
+	w.Hab = n.cfg.Hab
+	if w.Harness == "" {
+		w.Harness = st.Harness
+	}
 	shows := false
 	for _, d := range n.cfg.Store.Devices() {
-		shows = shows || (d.Token != "" && d.Wants(KindPermission) && !d.HideCommands)
+		shows = shows || (d.Token != "" && d.Wants(KindPermission) && !d.HideCommands && n.tier(d.ID, w.Session) == TierPush)
 	}
 	if !shows {
 		return
@@ -99,12 +109,10 @@ func (n *Notifier) prefetch(st api.AgentState) {
 			delete(n.sums, key)
 		}
 	}
-	w := n.cfg.Where(st.Pane, "")
-	w.Hab = n.cfg.Hab
-	if w.Harness == "" {
-		w.Harness = st.Harness
+	if arrived.IsZero() || arrived.After(now) {
+		arrived = now
 	}
-	p := &pendingSummary{pane: st.Pane, start: now, done: make(chan struct{})}
+	p := &pendingSummary{pane: st.Pane, start: arrived, done: make(chan struct{})}
 	n.sums[k] = p
 	req := st.Request
 	desc := commandDescription(req)

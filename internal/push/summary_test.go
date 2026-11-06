@@ -18,6 +18,7 @@ type summarizer struct {
 	line  string
 	err   error
 	delay time.Duration
+	gate  chan struct{} // non-nil: the answer waits for it to close
 	calls atomic.Int32
 	descs []string
 }
@@ -25,9 +26,16 @@ type summarizer struct {
 func (s *summarizer) fn(ctx context.Context, r *api.PermissionRequest, w Where, desc string) (string, error) {
 	s.calls.Add(1)
 	s.mu.Lock()
-	line, err, delay := s.line, s.err, s.delay
+	line, err, delay, gate := s.line, s.err, s.delay, s.gate
 	s.descs = append(s.descs, desc)
 	s.mu.Unlock()
+	if gate != nil {
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
 	if delay > 0 {
 		t := time.NewTimer(delay)
 		defer t.Stop()
@@ -217,7 +225,8 @@ func TestSummaryWaitFromArrival(t *testing.T) {
 // same collapse id and actions, and names the answered line. One that lands after the
 // request resolved replaces nothing.
 func TestSummaryLate(t *testing.T) {
-	s := &summarizer{line: "Run the tests?", delay: 300 * time.Millisecond}
+	gate := make(chan struct{})
+	s := &summarizer{line: "Run the tests?", gate: gate}
 	r := summaryRig(t, s, 50*time.Millisecond)
 	r.store.Register("dev-phone", phone, Production, allKinds, false)
 	r.n.State(blocked("req-1", "make test"))
@@ -226,6 +235,7 @@ func TestSummaryLate(t *testing.T) {
 	if len(pa) != 1 || alertField(pa[0], "title") != "Run make test?" {
 		t.Fatalf("first banner %v", pa)
 	}
+	close(gate)
 	waitFor(t, func() bool { r.n.Sync(); return len(alerts(r.prod.requests(), phone)) == 2 })
 	pa = alerts(r.prod.requests(), phone)
 	late := pa[1]
@@ -247,14 +257,54 @@ func TestSummaryLate(t *testing.T) {
 	}
 
 	// Resolved before the summary lands: no replacement.
+	gate2 := make(chan struct{})
+	s.mu.Lock()
+	s.gate = gate2
+	s.mu.Unlock()
 	r.n.State(blocked("req-2", "go vet ./..."))
 	r.n.Sync()
 	r.n.State(state(api.AgentStatusIdle))
 	r.n.Sync()
 	before := len(alerts(r.prod.requests(), phone))
-	time.Sleep(400 * time.Millisecond)
+	close(gate2)
+	waitFor(t, func() bool { return s.calls.Load() == 2 })
+	time.Sleep(100 * time.Millisecond)
 	r.n.Sync()
 	if n := len(alerts(r.prod.requests(), phone)); n != before {
 		t.Fatalf("a resolved request was replaced: %d alerts, want %d", n, before)
+	}
+}
+
+// TestSummaryWaitMidBatch: a request that arrives while the notifier waits on another's
+// summary waits its own time from its arrival, not after the first wait ends.
+func TestSummaryWaitMidBatch(t *testing.T) {
+	s := &summarizer{line: "Run tests?", delay: time.Minute}
+	const wait = 400 * time.Millisecond
+	r := summaryRig(t, s, wait)
+	r.store.Register("dev-phone", phone, Production, allKinds, false)
+	r.n.State(blocked("req-a", "make test"))
+	time.Sleep(wait / 2)
+	b := blocked("req-b", "go vet ./...")
+	b.Pane = "p2"
+	sentB := time.Now()
+	r.n.State(b)
+	waitFor(t, func() bool { return len(alerts(r.prod.requests(), phone)) == 2 })
+	if el := time.Since(sentB); el > wait+wait/4 {
+		t.Fatalf("the second banner came %v after its request, with a %v wait", el, wait)
+	}
+}
+
+// TestSummaryHeldDevice: no summary is asked for a banner presence holds back.
+func TestSummaryHeldDevice(t *testing.T) {
+	s := &summarizer{line: "Run tests?"}
+	r := summaryRig(t, s, time.Second)
+	r.store.Register("dev-phone", phone, Production, allKinds, false)
+	r.n.Bind("c-phone", "dev-phone")
+	r.connect("c-phone", true)
+	r.n.Focus("c-phone", "s1", true)
+	r.n.State(blocked("req-1", "make test"))
+	r.n.Sync()
+	if s.calls.Load() != 0 || len(alerts(r.prod.requests(), phone)) != 0 {
+		t.Fatalf("calls %d, alerts %d", s.calls.Load(), len(alerts(r.prod.requests(), phone)))
 	}
 }

@@ -375,12 +375,16 @@ func notifyCmd(args []string) error {
 var scriptClient = api.ClientInfo{Name: "gff-hab notify", Version: build, Kind: api.ClientKindScript}
 
 // errSummaryDenied refuses a summary for a request the read scope denies.
-var errSummaryDenied = errors.New("the read scope denies the request's folder")
+var errSummaryDenied = errors.New("the read scope denies the request's folder, or it has none")
 
 // summarize asks svc for a request's summary (app.md 16.5), unless the read scope denies its
-// folder or one of its files: that text never leaves the host.
+// folder or one of its files: that text never leaves the host. A request with no folder (an
+// opencode plugin's) cannot be checked, so it is never sent either.
 func summarize(svc *summary.Service, denied func(string) bool) push.Summarize {
 	return func(ctx context.Context, r *api.PermissionRequest, w push.Where, description string) (string, error) {
+		if r.Cwd == "" {
+			return "", errSummaryDenied
+		}
 		if denied != nil {
 			if denied(r.Cwd) {
 				return "", errSummaryDenied

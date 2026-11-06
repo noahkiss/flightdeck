@@ -108,6 +108,7 @@ func TestClean(t *testing.T) {
 		"Open https://evil.example?":          "",
 		"Visit www.example.com?":              "",
 		"I can't help with that":              "",
+		"\"I’m sorry, I can't\"":              "",
 		"Sorry, no":                           "",
 		strings.Repeat("word ", 30):           "",
 		"***":                                 "",
@@ -133,6 +134,10 @@ func TestFromRequest(t *testing.T) {
 	in = FromRequest(&api.PermissionRequest{Tool: "WebFetch", Input: api.RawJSON(`{"url":"https://docs.example.com/a","prompt":"p"}`)}, "claude", "", "")
 	if in.URL != "https://docs.example.com/a" || in.ToolInput != nil {
 		t.Fatalf("fetch: %+v", in)
+	}
+	in = FromRequest(&api.PermissionRequest{Tool: "apply_patch", Input: api.RawJSON(`{"patch":"secret body"}`)}, "codex", "", "")
+	if in.ToolInput != nil {
+		t.Fatalf("file tool input sent: %+v", in)
 	}
 	in = FromRequest(&api.PermissionRequest{Tool: "mcp__github__create_issue", Input: api.RawJSON(`{"title":"t"}`)}, "claude", "", "")
 	if string(in.ToolInput) != `{"title":"t"}` {
@@ -229,7 +234,7 @@ func TestRequestShape(t *testing.T) {
 	for _, c := range []struct {
 		thinking, effort string
 		tokens           float64
-	}{{ThinkingOff, "none", 64}, {"low", "low", 1024}, {"high", "high", 1024}, {ThinkingDefault, "", 1024}} {
+	}{{ThinkingOff, "none", 64}, {"low", "low", 1024}, {"high", "high", 1024}, {ThinkingDefault, "", 0}} {
 		v := New(Settings{BaseURL: f.srv.URL + "/v1/", Model: "small-model", Thinking: c.thinking}, Options{})
 		got, err := v.Summarize(context.Background(), cmdInput)
 		v.Close()
@@ -244,7 +249,11 @@ func TestRequestShape(t *testing.T) {
 		if (c.effort == "") == has || (has && effort != c.effort) {
 			t.Fatalf("%s: reasoning_effort %v", c.thinking, r.body["reasoning_effort"])
 		}
-		if r.body["model"] != "small-model" || r.body["max_tokens"] != c.tokens || r.body["temperature"] != 0.0 || r.body["stream"] != false {
+		tokens, _ := r.body["max_tokens"].(float64)
+		if _, has := r.body["max_tokens"]; has != (c.tokens != 0) {
+			t.Fatalf("%s: max_tokens %v", c.thinking, r.body["max_tokens"])
+		}
+		if r.body["model"] != "small-model" || tokens != c.tokens || r.body["temperature"] != 0.0 || r.body["stream"] != false {
 			t.Fatalf("%s: body %v", c.thinking, r.body)
 		}
 		msgs := r.body["messages"].([]any)
@@ -495,5 +504,54 @@ func TestCache(t *testing.T) {
 	v.Summarize(context.Background(), Input{Command: fmt.Sprint("cmd ", cacheSize+9)})
 	if f.count() != before+1 {
 		t.Fatalf("eviction: %d calls, want %d", f.count(), before+1)
+	}
+}
+
+// TestStatusHints: a 400 names the thinking setting in the log; a 401 runs the key command
+// again, past the re-run wait, and the new key goes out.
+func TestStatusHints(t *testing.T) {
+	f := newFake(t)
+	f.set(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(400) })
+	l := &logs{}
+	v := New(Settings{BaseURL: f.srv.URL, Model: "m"}, Options{Logf: l.logf})
+	v.Summarize(context.Background(), cmdInput)
+	v.Close()
+	if !strings.Contains(l.all(), `thinking = "default"`) {
+		t.Fatalf("log %q", l.all())
+	}
+
+	var now atomic.Int64
+	now.Store(time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC).UnixNano())
+	var runs atomic.Int32
+	ran := make(chan struct{}, 10)
+	v = New(Settings{BaseURL: f.srv.URL, Model: "m", KeyCommand: []string{"x"}}, Options{Now: func() time.Time { return time.Unix(0, now.Load()) }, Logf: l.logf,
+		KeyRun: func(context.Context) (string, error) {
+			defer func() { ran <- struct{}{} }()
+			return fmt.Sprint("key-", runs.Add(1)), nil
+		}})
+	defer v.Close()
+	<-ran
+	waitFor := func(cond func() bool) {
+		for range 200 {
+			if cond() {
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		t.Fatal("timed out")
+	}
+	waitFor(func() bool { v.mu.Lock(); defer v.mu.Unlock(); return v.key == "key-1" && !v.keyBusy })
+	f.set(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(401) })
+	v.Summarize(context.Background(), cmdInput)
+	if runs.Load() != 1 {
+		t.Fatal("re-ran the key command inside the re-run wait")
+	}
+	now.Add(int64(6 * time.Minute))
+	v.Summarize(context.Background(), cmdInput)
+	<-ran
+	waitFor(func() bool { v.mu.Lock(); defer v.mu.Unlock(); return v.key == "key-2" && !v.keyBusy })
+	f.set(func(w http.ResponseWriter, r *http.Request) { reply(w, "Run the tests?") })
+	if _, err := v.Summarize(context.Background(), cmdInput); err != nil || f.last().auth != "Bearer key-2" {
+		t.Fatalf("%v auth %q", err, f.last().auth)
 	}
 }

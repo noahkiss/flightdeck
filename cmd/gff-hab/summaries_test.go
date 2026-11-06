@@ -47,6 +47,7 @@ func TestPushSummaries(t *testing.T) {
 		{"on", fmt.Sprintf("[summaries]\nbase_url = %q\nmodel = \"m\"\nkey_command = [\"/bin/echo\", %q]\n", srv.URL+"/v1", secret), "/work/app", "Run the test suite?", 1},
 		{"denied", fmt.Sprintf("[summaries]\nbase_url = %q\nmodel = \"m\"\n", srv.URL+"/v1"), "/work/secret", "Run make test?", 0},
 		{"off", "[speech]\nenabled = false\n", "/work/app", "Run make test?", 0},
+		{"no folder", fmt.Sprintf("[summaries]\nbase_url = %q\nmodel = \"m\"\n", srv.URL+"/v1"), "", "Run make test?", 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			before := calls()

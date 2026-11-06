@@ -100,6 +100,7 @@ type Notifier struct {
 	mu      sync.Mutex
 	pending map[string]api.AgentState // latest unprocessed state per pane
 	order   []string                  // panes in pending, in arrival order
+	arrived map[string]time.Time      // pane -> when its first pending state came, for a summary's wait
 	jobs    []func()
 	wake    chan struct{}
 	closed  bool
@@ -185,6 +186,7 @@ func NewNotifier(cfg NotifierConfig) *Notifier {
 	n := &Notifier{
 		cfg:     cfg,
 		pending: map[string]api.AgentState{},
+		arrived: map[string]time.Time{},
 		wake:    make(chan struct{}, 1),
 		done:    make(chan struct{}),
 		focus:   map[string]map[string]time.Time{},
@@ -232,6 +234,7 @@ func (n *Notifier) State(st api.AgentState) {
 	n.mu.Lock()
 	if _, ok := n.pending[st.Pane]; !ok {
 		n.order = append(n.order, st.Pane)
+		n.arrived[st.Pane] = time.Now()
 	}
 	n.pending[st.Pane] = st
 	n.mu.Unlock()
@@ -525,8 +528,8 @@ func (n *Notifier) run() {
 	defer close(n.done)
 	for {
 		n.mu.Lock()
-		order, pending, jobs, closed := n.order, n.pending, n.jobs, n.closed
-		n.order, n.pending, n.jobs = nil, map[string]api.AgentState{}, nil
+		order, pending, arrived, jobs, closed := n.order, n.pending, n.arrived, n.jobs, n.closed
+		n.order, n.pending, n.arrived, n.jobs = nil, map[string]api.AgentState{}, map[string]time.Time{}, nil
 		n.mu.Unlock()
 		if closed {
 			return
@@ -534,7 +537,7 @@ func (n *Notifier) run() {
 		// Start every summary of the batch first: each banner's wait then runs from its
 		// arrival, never one after the other (app.md 16.5).
 		for _, p := range order {
-			n.prefetch(n.effective(pending[p]))
+			n.prefetch(n.effective(pending[p]), arrived[p])
 		}
 		for _, p := range order {
 			if n.ctx.Err() != nil {
