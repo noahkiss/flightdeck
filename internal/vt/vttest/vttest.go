@@ -300,6 +300,42 @@ func Run(t *testing.T, p vt.Parser, golden string) {
 		})
 	}
 
+	t.Run("snapshot-vt carries the title", func(t *testing.T) {
+		// A client that opens a stream after the program set its title still sees it (spec 5.5).
+		term := newTerm(t)
+		term.Write([]byte("text\r\n"))
+		snap, err := term.Snapshot(vt.EncodingVT, all)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(snap, []byte("\x1b]2;")) || bytes.Contains(snap, []byte("\x1b]0;")) {
+			t.Errorf("snapshot with no title sets one: %q", snap)
+		}
+		want := []byte("\x1b]2;second title\x1b\\")
+		for _, set := range []string{"\x1b]0;first title\x07", "\x1b]2;second title\x1b\\"} {
+			term.Write([]byte(set))
+		}
+		term.Write([]byte("more"))
+		if snap, err = term.Snapshot(vt.EncodingVT, all); err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.HasPrefix(snap, want) {
+			t.Errorf("snapshot-vt starts %q, want the title %q", snap[:min(len(snap), 40)], want)
+		}
+		restored, err := p.Restore(vt.EncodingVT, snap, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer restored.Close()
+		again, err := restored.Snapshot(vt.EncodingVT, all)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.HasPrefix(again, want) {
+			t.Errorf("a restored terminal's snapshot-vt starts %q, want the title %q", again[:min(len(again), 40)], want)
+		}
+	})
+
 	t.Run("scrollback bound", func(t *testing.T) {
 		term := newTerm(t)
 		for i := range FixtureRows + 20 {

@@ -170,14 +170,23 @@ func (t *terminal) Snapshot(enc vt.Encoding, opts vt.SnapshotOptions) ([]byte, e
 // snapshotVT formats the terminal as VT bytes. The formatter writes only the active screen, so
 // on the alternate screen it formats a copy that has left the alternate screen first: the
 // snapshot then carries the primary screen, then switches to the alternate screen and draws it.
+// The title goes first (spec 5.5), since the formatter leaves it out.
 func (t *terminal) snapshotVT(scrollback int) ([]byte, error) {
+	title, err := t.t.Title()
+	if err != nil {
+		return nil, fmt.Errorf("ghostty: title: %w", err)
+	}
+	out := vt.TitleSeq(title)
 	screen, err := t.t.ActiveScreen()
 	if err != nil {
 		return nil, fmt.Errorf("ghostty: active screen: %w", err)
 	}
 	active, err := t.formatVT(scrollback)
-	if err != nil || screen != libghostty.ScreenAlternate {
-		return active, err
+	if err != nil {
+		return nil, err
+	}
+	if screen != libghostty.ScreenAlternate {
+		return append(out, active...), nil
 	}
 	cp, err := t.primaryCopy()
 	if err != nil {
@@ -188,7 +197,7 @@ func (t *terminal) snapshotVT(scrollback int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := append(primary, "\x1b[?1049h\x1b[H\x1b[2J"...)
+	out = append(append(out, primary...), "\x1b[?1049h\x1b[H\x1b[2J"...)
 	return append(out, active...), nil
 }
 

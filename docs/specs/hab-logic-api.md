@@ -1616,6 +1616,8 @@ in-band nonce is decided: frames (Q3).
   the Go client's pass-through view. `snapshot-ghostty` is libghostty's own format, which keeps more
   state. `snapshot-vt` is the baseline; `snapshot-ghostty` is offered as a capability (Q6).
 - A snapshot never contains a terminal query.
+- A `snapshot-vt` starts with an OSC 2 that sets the pane's last OSC 0 or 2 title, when it has
+  one, so a client that opens a stream after the program set its title still shows it.
 - A `snapshot-vt` never sets the palette (OSC 4) or the working directory (OSC 7). On a
   pass-through client those would change the user's own terminal.
 - On the alternate screen, a `snapshot-vt` draws the primary screen first, then switches to the
