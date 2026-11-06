@@ -262,23 +262,6 @@ func TestStartOpensInItsTab(t *testing.T) {
 	})
 }
 
-// TestOpenExited: Enter on an exited session opens no view of its dead pane; it says resume is
-// not built yet. The row carries the exited mark.
-func TestOpenExited(t *testing.T) {
-	d := shortDir(t)
-	a := fakeHab(t, d, "a")
-	_, pane, _ := a.AddSession("job")
-	hst := newHost(t, 120, 30, false)
-	startWorkspace(t, hst, a.Sock)
-	hst.waitScreen("the running row", func(s string) bool { return line(s, "   job") > 0 })
-	a.ExitPane(pane)
-	hst.waitScreen("the exited mark", func(s string) bool { return line(s, " _ job") > 0 })
-	hst.typ("\r")
-	hst.waitScreen("the message", func(s string) bool {
-		return strings.Contains(s, "job has exited; resume is not built yet") && strings.Contains(s, "empty tab")
-	})
-}
-
 // TestEndAfterExit: the program ends while "end job?" is up. The yes sends no pane.close: the
 // session has ended already.
 func TestEndAfterExit(t *testing.T) {

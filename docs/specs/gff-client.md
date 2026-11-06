@@ -470,8 +470,9 @@ session, project or host name, `p` changes the grouping, `R` hides or shows run 
 (7.5), Esc returns to the panes. A round's run session carries `↻` before its name.
 
 - **Open** focuses a view that shows the pane already, in any tab; else it adds a view to the
-  current tab. An exited session, whose pane id stays on its record, opens no view: it says
-  resume is not built yet. An offline host's row says so.
+  current tab. On an exited session it resumes the session (6.4) and opens the new pane the
+  same way. An exited unfiled pane has no session to resume: it says so. An offline host's
+  row says so.
 - **Start** asks for the host (Tab cycles the online hosts, the selected row's host first) and
   a project directory, then a command (empty: the hab's shell). The hab starts it with
   `session.create` at the size of its view in the current tab, and the new view opens in that
@@ -525,7 +526,7 @@ behind starts again from now, and the gap counts as output.
 | `gffclient` `TestBoardBlockedAboveWorking` | The board puts a blocked session on one hab above a working one on the other, under Needs you and Working; the tab bar counts one |
 | `gffclient` `TestSidebarStartRenameClose` | From the sidebar: start a session (host, directory, command), rename it, end its program after a yes, see the exited mark, remove its record after a yes; each reaches the hab and the screen |
 | `gffclient` `TestStartKeepsPrompt`, `TestStartOpensInItsTab` | A start still in flight: a rename prompt opened meanwhile keeps the keys when the new view arrives; a tab made meanwhile stays empty and the view opens in the tab it was sized for |
-| `gffclient` `TestOpenExited`, `TestEndAfterExit` | An exited session shows `_` and Enter opens no view; a program that ends while "end?" is up gets no `pane.close` after the yes |
+| `gffclient` `TestEndAfterExit` | A program that ends while "end?" is up gets no `pane.close` after the yes |
 | `gffclient` `TestTabsKeepPanes` | Real holder and gff-hab: open two sessions in two tabs; the hidden tab gets `~` from `pane.output`; showing it again shows what its program printed while hidden; opening a session on screen focuses it |
 | `cmd/gff-hab` `TestActivityEvents`, `TestBellScanner` | Two bells and a burst of output give the bell count and one or a few `pane.output` events ending at the pane's offset, with no revision; BEL inside OSC, DCS and APC strings does not ring, from every split |
 | `habconn` `TestStartWhileDown` | `Start` with the hab down: retrying updates with an error, calls refused offline, online once the hab starts; Close while down ends with no failure |
@@ -548,7 +549,6 @@ the hab reaching a state.
 | The sidebar has no mouse, no width setting, no idle folding, and does not hide rows of a hab whose revision does not fit until the hab refuses the hello | Keys cover every action; later stages (4.1) |
 | Desktop notifications (7.3) and the bell on the host terminal are not sent | Off by default anyway (15.8) |
 | `session.focus` answers `unavailable`, so "seen" is per gff process | Its stage builds it (Part 6 stage 7) |
-| A session whose pane exited cannot be resumed from the sidebar | `session.resume` is Part 4 stage 4 |
 
 ---
 
@@ -648,6 +648,67 @@ Sources: zellij tabs, stacks and modes (1.1); the owner's setup (1.6); `hab-logi
 
 Sources: Rex hosts and endpoints (1.3, `r1b`); `transport.md` 4.1, 6.4; `hab-logic-api.md` 7.9;
 master plan owner decisions (a running agent stays on its host).
+
+### 6.4 Built choices (task-4i9uv0ai: resume)
+
+zellij is the reference: after a session is resurrected, each command pane shows its command
+with "Press ENTER to run" and runs nothing until then. gff does the same per session.
+
+**gff.**
+
+- A view remembers the session it shows (`PaneSpec.Session`), not only the pane. A view whose
+  session is exited, on a host that is online, is resumable. Its frame note is
+  `exited <status> · Enter resume`; the status comes from the view's last exit frame, else
+  from the hab's record (none after a holder loss: `exited`).
+- **Enter resumes.** In a resumable view, Enter calls `session.resume`; every other key goes
+  nowhere, as it does in an exited pane. In the sidebar and the board, Open (Enter, or `t` for a
+  new tab) on an exited session resumes it. Nothing resumes on its own: after a reboot or a
+  holder loss every view shows Resume and waits.
+- **The view follows the session.** When `session.resume` answers, every view of that session,
+  in any tab, moves to the new pane: its stream, parser, offset and input sender go with the
+  old pane, and it keeps its tab, place and focus. With no view of the session, the new pane
+  opens as Open does. A prompt that has the keys keeps them; the view then goes in the
+  current tab. Views also follow a resume another client made: when the hab's record names
+  a running pane other than the view's, the view moves to it.
+- One `session.resume` per session at a time; a second Enter while one is out says
+  "resuming <name> on <host>". A refusal shows on the bottom row as `resume <name> on <host>:
+  <the hab's error>` and opens nothing.
+
+**gff-hab: the resume book.** `session.resume` served Capcom sessions only. gff-hab now keeps
+`<state>/resume.json`, one entry per session: how `session.create` was asked to start it
+(harness, model and argv; for a plain command, the argv gff-hab ran, the hab's shell when none
+was given), and the harness last seen in its pane with its native session id, from the
+adapters' agent states (only `claude`, `codex` and `opencode`). A later state with no id keeps
+the id known; another harness replaces it. The entry goes with the session record. A file that
+does not read is set aside as `resume.json.bad` and the book starts empty.
+
+Resume of a session that is not Capcom's:
+
+1. Refused with `conflict` while the session runs, and with `unavailable` while it is exited
+   with no status and a holder is not reached yet: its program may still run there (as
+   Capcom's resume, `capcom.md` 7.6).
+2. With a harness seen and its id: `claude --resume <id>` (or `claude --session-id <id>` while
+   Claude Code has no transcript for it), `codex resume <id>`, `opencode --session <id>`. The
+   model goes along when the session was created with that harness.
+3. Else the start it was created with, again.
+4. Else `unavailable`: "how it started is not known" (a session from before the book).
+5. It runs in the session's folder (the content service's record), released old pane first,
+   as a round's resume does. No folder known: `unavailable`.
+
+Decided (implementer): the harness seen wins over the command the session was created with,
+so a shell in which the owner ran Claude Code resumes Claude Code. That is what the owner's
+current setup restores after a reboot (1.6, 12 row 26). Decided (implementer): Enter, not a new
+key, as zellij's "Press ENTER to run".
+
+**Tests.**
+
+| Test | Proves |
+|---|---|
+| `gffclient` `TestResumeFromSidebar` | Over a fake hab: two exited sessions; no resume before a key; Enter resumes the first and opens its new pane in a view; a refused resume shows the hab's reason and opens no view |
+| `gffclient` `TestResumeInView` | A view whose program exits shows `exited 0 · Enter resume`; typed keys resume nothing; Enter resumes in the same view; a resume by another client moves the view too |
+| `gffclient` `TestResumeAfterHolderLoss` | Real holder and gff-hab, a stand-in `claude` on gff-hab's PATH: a Claude Code session in a view; the holder is killed, a new one starts, gff-hab restarts; the view shows `exited · Enter resume` and nothing ran; Enter starts `claude --resume <id>` and its output shows in the same view |
+| `cmd/gff-hab` `TestResumeStart`, `TestResumeBook` | The start for each harness, with and without a transcript, the model rule, a shell, nothing known; the book kept across a reopen, an id kept, a harness replaced, a detection id with no adapter ignored, a forgotten session, a bad file set aside |
+| `cmd/gff-hab` `TestSessionResumeAfterHolderLoss` | A Claude Code session and a shell; the holder dies for good, gff-hab restarts; nothing starts on its own; resume refuses a running session, starts Claude Code with `--session-id` while it has no transcript and `--resume` once it has one, and the shell again in its folder |
 
 ---
 

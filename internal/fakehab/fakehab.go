@@ -33,14 +33,16 @@ type Hab struct {
 	holder *structure.FakeHolder
 	dir    string
 
-	mu     sync.Mutex
-	store  *structure.Store
-	srv    *control.Server
-	served chan struct{}
-	agents map[string]api.AgentState
-	next   int
-	hold   chan struct{} // while set, session.create waits for it to close
-	closes int           // pane.close calls
+	mu       sync.Mutex
+	store    *structure.Store
+	srv      *control.Server
+	served   chan struct{}
+	agents   map[string]api.AgentState
+	next     int
+	hold     chan struct{} // while set, session.create waits for it to close
+	closes   int           // pane.close calls
+	resumes  int           // session.resume calls answered
+	noResume error         // set: session.resume answers it
 
 	rounds roundBook        // rounds.go
 	cat    *api.CatalogList // what catalog.list answers; nil: unavailable
@@ -306,6 +308,60 @@ func (a actions) ClosePane(_ context.Context, pane string) error {
 	a.h.mu.Unlock()
 	a.h.holder.Remove(pane) // released: the pane is gone and its session exited
 	return nil
+}
+
+// ResumeSession starts an exited session again in a new fake pane, as gff-hab's session.resume
+// does: the old pane is released first.
+func (a actions) ResumeSession(_ context.Context, session string) (string, error) {
+	a.h.mu.Lock()
+	st, fail := a.h.store, a.h.noResume
+	a.h.resumes++
+	a.h.next++
+	pane := fmt.Sprintf("%s-p%d-%s", a.h.HostID, a.h.next, randHex())
+	a.h.mu.Unlock()
+	if fail != nil {
+		return "", fail
+	}
+	ss, ok := st.Session(session)
+	if !ok {
+		return "", control.Errorf(api.ErrorKindNotFound, "session %s does not exist", session)
+	}
+	if ss.State != api.SessionStateExited {
+		return "", control.Errorf(api.ErrorKindConflict, "session %s is running", session)
+	}
+	if ss.Pane != "" {
+		a.h.holder.Remove(ss.Pane)
+	}
+	if _, err := st.ResumeSession(session, pane); err != nil {
+		return "", kindOf(err)
+	}
+	a.h.holder.Add(structure.HolderPane{ID: pane, HolderID: "h1", HolderBuild: "test", Cols: 80, Rows: 24})
+	return pane, nil
+}
+
+// Resumes counts the session.resume calls the hab has answered.
+func (h *Hab) Resumes() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.resumes
+}
+
+// FailResumes makes session.resume answer err; nil answers again.
+func (h *Hab) FailResumes(err error) {
+	h.mu.Lock()
+	h.noResume = err
+	h.mu.Unlock()
+}
+
+// Session returns one session record.
+func (h *Hab) Session(id string) (api.Session, bool) {
+	h.mu.Lock()
+	st := h.store
+	h.mu.Unlock()
+	if st == nil {
+		return api.Session{}, false
+	}
+	return st.Session(id)
 }
 
 func (a actions) RenameSession(session, name string) error {

@@ -261,11 +261,12 @@ func TestCapcomHost(t *testing.T) {
 		return cc != nil && len(cc.Sessions) == 2 && !cc.Sessions[0].Standing && cc.Sessions[1].Standing
 	})
 
-	// session.resume of a session that is not Capcom's is not built yet.
+	// session.resume of a session that is not Capcom's goes through the resume book: it runs
+	// its command again (resume.go).
 	other := e.spawn(c, "exit 0")
 	if s, ok := sessionByPane(t, c, other); ok {
 		waitSession(t, c, s.ID, "the shell exited", func(s api.Session) bool { return s.State == api.SessionStateExited })
-		if _, err := resume(t, c, s.ID); errKind(err) != api.ErrorKindUnavailable {
+		if _, err := resume(t, c, s.ID); err != nil {
 			t.Fatalf("resume of a plain session: %v", err)
 		}
 	}

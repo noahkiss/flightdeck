@@ -437,6 +437,7 @@ func serve(args []string) error {
 	}
 	var contentRef atomic.Pointer[content.Service] // set once the content service exists
 	var attachRef atomic.Pointer[attach.Service]   // set once the attachment store exists
+	var resumeRef atomic.Pointer[resumeBook]       // set once the store is open
 	store, err := structure.Open(structure.Config{
 		Dir:     dir,
 		Holders: hs,
@@ -449,6 +450,9 @@ func serve(args []string) error {
 				if c := contentRef.Load(); c != nil {
 					c.Forget(e.ID)
 				}
+				if b := resumeRef.Load(); b != nil {
+					b.forget(e.ID)
+				}
 			}
 			pokeCatalog()
 		},
@@ -460,6 +464,14 @@ func serve(args []string) error {
 	if h := store.Health(); h.Problem != "" {
 		logger.Printf("state: %s", h.Problem)
 	}
+	// How each session started and the harness last seen in it, for session.resume
+	// (gff-client.md 6.2).
+	resumes := openResumeBook(dir, func(pane string) (string, bool) {
+		ss, ok := store.SessionByPane(pane)
+		return ss.ID, ok
+	}, logger.Printf)
+	defer resumes.Close()
+	resumeRef.Store(resumes)
 	logManifestDrift(dir, logger.Printf)
 	// Repository state per project (hab-logic-api.md 3.9): reads run off the event loop, with a
 	// timeout, and change a project only when a value changed.
@@ -486,6 +498,9 @@ func serve(args []string) error {
 				if n := pushes.live(); n != nil {
 					n.State(st) // never blocks
 				}
+			}
+			if st, ok := e.Data.(api.AgentState); ok {
+				resumes.agent(st) // never blocks
 			}
 			if e.Type == api.EventAgentState {
 				pokeCatalog() // pokes channels too
@@ -701,6 +716,10 @@ func serve(args []string) error {
 		attachments = attachSvc
 		attachRef.Store(attachSvc)
 		sessionActs.startedIn = contentSvc.NoteFolder
+		sessionActs.created = resumes.started
+		general := &generalResumer{acts: sessionActs, book: resumes, folder: contentSvc.Folder,
+			complete: func() bool { return structure.Complete(hs) }, claudeTranscript: claudeTranscriptExists}
+		sessionActs.general = general.Resume
 		caps = append(caps, "attachments")
 		// Commands from OSC 133 marks (hab-logic-api.md 2.5): command.updated events are read
 		// from the link and sent at a bounded rate.
@@ -846,15 +865,8 @@ func serve(args []string) error {
 		capcomSvc = newCapcomService(&capcomService{
 			self: key.Fingerprint(), state: dir, configPath: cpath, exe: exe,
 			acts: sessionActs, store: store, links: catalogPeers{pm}.Links,
-			complete: func() bool { return structure.Complete(hs) },
-			claudeTranscript: func(id string) bool {
-				d, err := transcript.ClaudeConfigDir(os.Getenv)
-				if err != nil {
-					return true
-				}
-				_, err = transcript.FindClaude(d, id)
-				return !errors.Is(err, transcript.ErrNoTranscript)
-			},
+			complete:         func() bool { return structure.Complete(hs) },
+			claudeTranscript: claudeTranscriptExists,
 			native: func(pane string) string {
 				if st, ok := agents.Get(pane); ok {
 					return st.Session
@@ -1535,4 +1547,15 @@ func events(args []string) error {
 	default:
 		return fmt.Errorf("hab closed the connection: %s", reason)
 	}
+}
+
+// claudeTranscriptExists reports whether Claude Code wrote a transcript for a session id; true
+// when it cannot tell.
+func claudeTranscriptExists(id string) bool {
+	d, err := transcript.ClaudeConfigDir(os.Getenv)
+	if err != nil {
+		return true
+	}
+	_, err = transcript.FindClaude(d, id)
+	return !errors.Is(err, transcript.ErrNoTranscript)
 }

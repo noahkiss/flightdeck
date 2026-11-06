@@ -64,6 +64,7 @@ type workspaceUI struct {
 	dirty    bool
 	seen     map[string]string // host/pane -> the done state's time the owner saw
 	focusAt  map[string]string // host/session -> the last session.focus sent
+	resuming map[string]bool   // host/session -> a session.resume is out
 	msg      string            // one line on the bottom bar until the next key
 	prompt   *prompt
 
@@ -96,6 +97,7 @@ func (u *workspaceUI) init(c *client) {
 	u.group = board.GroupProject
 	u.seen = map[string]string{}
 	u.focusAt = map[string]string{}
+	u.resuming = map[string]bool{}
 	u.showRuns = true
 	u.cats, u.catBusy = map[string]catCopy{}, map[string]int{}
 	u.order.Now = func() time.Time { return c.cfg.Now() }
@@ -128,6 +130,7 @@ func (u *workspaceUI) refresh() {
 	u.order.Sort(u.rows)
 	u.rounds = board.RoundRows(hs, u.catalog)
 	board.SortRounds(u.rounds)
+	u.follow()
 	u.markSeen()
 	u.openPending()
 }
@@ -406,11 +409,14 @@ func (u *workspaceUI) open(r board.Row, newTab bool) {
 	c := u.c
 	u.pendRun = pendingRun{} // the owner opened a session: a Run now's run no longer jumps into view
 	switch {
-	case r.Pane == "" || r.State == api.SessionStateExited:
-		u.msg = r.Name + " has exited; resume is not built yet"
-		return
 	case r.Offline():
 		u.msg = r.Host + " is offline"
+		return
+	case (r.Pane == "" || r.State == api.SessionStateExited) && r.Session == "":
+		u.msg = r.Name + " has exited"
+		return
+	case r.Pane == "" || r.State == api.SessionStateExited:
+		u.resume(r, newTab)
 		return
 	}
 	if !newTab {
@@ -436,12 +442,126 @@ func (u *workspaceUI) open(r board.Row, newTab bool) {
 		u.switchTab(len(c.tabs) - 1)
 	}
 	t := c.tab()
-	c.addView(t, PaneSpec{ID: r.Pane, Label: r.Name, Host: r.Host}, hs)
+	c.addView(t, PaneSpec{ID: r.Pane, Label: r.Name, Host: r.Host, Session: r.Session}, hs)
 	t.focus = len(t.views) - 1
 	t.zoom = false
 	u.mode = modePanes
 	c.layoutChanged()
 	u.dirty = true
+}
+
+// resumable reports whether a view shows a session that has exited and can be resumed: its
+// host is online and the hab keeps its record (gff-client.md 6.2).
+func (u *workspaceUI) resumable(v *view) bool {
+	if v.spec.Session == "" || v.spec.Observe {
+		return false
+	}
+	r, ok := rowOf(u.rows, v)
+	return ok && !r.Offline() && (r.State == api.SessionStateExited || r.Pane == "")
+}
+
+// exitedWord is the frame note of a resumable view: "exited" and the status, from the view's
+// last frame, else from the hab's record.
+func (u *workspaceUI) exitedWord(v *view) string {
+	if v.exited != nil {
+		return "exited" + exitText(v.exited)
+	}
+	if r, ok := rowOf(u.rows, v); ok && r.Exit != nil {
+		return "exited" + exitText(&api.ExitedFrame{Code: r.Exit.Code, Signal: r.Exit.Signal})
+	}
+	return "exited"
+}
+
+// resumeView resumes the session a focused view shows, on Enter.
+func (u *workspaceUI) resumeView(v *view) {
+	if r, ok := rowOf(u.rows, v); ok {
+		u.resume(r, false)
+	}
+}
+
+// resume asks the session's hab to start it again (session.resume): the harness with its
+// resume id, or the command it was started with. Nothing resumes on its own; the owner asks.
+// Every view of the session follows it to the new pane; with none, the new pane opens as Open
+// would.
+func (u *workspaceUI) resume(r board.Row, newTab bool) {
+	c := u.c
+	hs := c.hosts[r.Host]
+	if hs == nil {
+		return
+	}
+	k := r.Host + "/" + r.Session
+	if u.resuming[k] {
+		u.msg = "resuming " + r.Name + " on " + r.Host
+		return
+	}
+	u.resuming[k] = true
+	u.msg = "resuming " + r.Name + " on " + r.Host
+	conn := hs.conn
+	go func() {
+		ctx, cancel := context.WithTimeout(c.ctx, callTimeout)
+		defer cancel()
+		res, err := conn.API().SessionResume(ctx, api.SessionRef{Session: r.Session})
+		c.run(func() {
+			delete(u.resuming, k)
+			if err != nil {
+				u.msg = "resume " + r.Name + " on " + r.Host + ": " + callErr(err)
+				return
+			}
+			if u.msg == "resuming "+r.Name+" on "+r.Host {
+				u.msg = ""
+			}
+			r.Pane, r.State, r.Exit = res.Pane, api.SessionStateRunning, nil
+			shown := u.repointSession(r.Host, r.Session, res.Pane)
+			switch {
+			case u.mode == modePrompt && !shown:
+				// A prompt has the keys: the view goes in the current tab, the keys stay.
+				if hs := c.hosts[r.Host]; hs != nil {
+					c.addView(c.tab(), PaneSpec{ID: res.Pane, Label: r.Name, Host: r.Host, Session: r.Session}, hs)
+					c.layoutChanged()
+				}
+			case u.mode != modePrompt:
+				u.open(r, newTab && !shown)
+			}
+			u.dirty = true
+		})
+	}()
+}
+
+// repointSession moves every view of a session on host to pane, and reports whether any view
+// shows the session.
+func (u *workspaceUI) repointSession(host, session, pane string) bool {
+	c := u.c
+	shown := false
+	for _, t := range c.tabs {
+		for _, v := range t.views {
+			if v.h.label != host || v.spec.Session != session {
+				continue
+			}
+			shown = true
+			if v.spec.ID != pane {
+				c.repoint(t, v, pane)
+			}
+		}
+	}
+	return shown
+}
+
+// follow moves each view of a session to the session's current pane, when it runs in another
+// one: a resume from another client, or one whose answer this client missed.
+func (u *workspaceUI) follow() {
+	type move struct{ host, session, pane string }
+	var moves []move
+	u.c.eachView(func(_ *tab, v *view) {
+		if v.spec.Session == "" {
+			return
+		}
+		if r, ok := rowOf(u.rows, v); ok && r.Pane != "" && r.Pane != v.spec.ID && r.State != api.SessionStateExited {
+			moves = append(moves, move{v.h.label, v.spec.Session, r.Pane})
+		}
+	})
+	for _, m := range moves {
+		u.repointSession(m.host, m.session, m.pane)
+	}
 }
 
 // keys handles input while the sidebar, the board or a prompt has the keys. A bracketed paste
@@ -723,7 +843,7 @@ func (u *workspaceUI) create(host, dir, cmd string) {
 				// The size was for t, so the view goes there even when another tab shows now.
 				// The keys move to it only from the sidebar of that tab: a prompt, the board
 				// or the panes keep them.
-				c.addView(t, PaneSpec{ID: res.Pane, Label: label, Host: host}, hs)
+				c.addView(t, PaneSpec{ID: res.Pane, Label: label, Host: host, Session: res.Session}, hs)
 				if t == c.tab() && u.mode == modeSidebar {
 					t.focus = len(t.views) - 1
 					u.mode = modePanes

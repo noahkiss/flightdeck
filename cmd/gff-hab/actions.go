@@ -61,11 +61,16 @@ type actions struct {
 	// resume serves session.resume for the sessions it knows (Capcom's); ok false for others.
 	// nil: none.
 	resume func(ctx context.Context, session string) (pane string, ok bool, err error)
+	// general serves session.resume for every other session (resume.go). nil: unavailable.
+	general func(ctx context.Context, session string) (string, error)
+	// created hears how a new session was asked to start, for its resume. nil: none.
+	created func(session string, p api.SessionCreateParams)
 }
 
 var _ control.Resumer = (*actions)(nil)
 
-// ResumeSession serves session.resume. Only Capcom sessions resume yet (capcom.md 7.4).
+// ResumeSession serves session.resume: Capcom's sessions through Capcom (capcom.md 7.4), the
+// rest through the resume book (gff-client.md 6.2).
 func (a *actions) ResumeSession(ctx context.Context, session string) (string, error) {
 	if a.resume != nil {
 		pane, ok, err := a.resume(ctx, session)
@@ -73,11 +78,13 @@ func (a *actions) ResumeSession(ctx context.Context, session string) (string, er
 			return pane, err
 		}
 	}
+	if a.general != nil {
+		return a.general(ctx, session)
+	}
 	if _, ok := a.store.Session(session); !ok {
 		return "", control.Errorf(api.ErrorKindNotFound, "session %s does not exist", session)
 	}
-	return "", control.Errorf(api.ErrorKindUnavailable,
-		"session.resume is built for Capcom sessions only; Part 4 stage 4 (harness adapters: state and input) builds it for the rest")
+	return "", control.Errorf(api.ErrorKindUnavailable, "this hab cannot resume session %s", session)
 }
 
 // onPeer returns where name is in use on a peer, or "".
@@ -118,6 +125,7 @@ func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, 
 			return "", "", err
 		}
 	}
+	asked := p // before prepare fills in the harness's start
 	p, l, err := a.prepare(p)
 	if err != nil {
 		return "", "", err
@@ -193,6 +201,12 @@ func (a *actions) createSession(ctx context.Context, p api.SessionCreateParams, 
 		return "", "", err
 	}
 	a.noteDir(ctx, project, projectTop, p.Project != "" && p.Cwd != "", cwd)
+	if a.created != nil && kind == "" {
+		if asked.Harness == "" {
+			asked.Argv = argv // the shell when none was asked for
+		}
+		a.created(ss.ID, asked)
+	}
 	if a.startedIn != nil {
 		a.startedIn(ss.ID, cwd)
 	}

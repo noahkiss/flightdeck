@@ -817,7 +817,7 @@ names the stage, and an event is defined but never sent.
 | `pane.close` | Release a pane; a running program gets a hang-up first | Yes (this stage) |
 | `session.rename` | Give a session a new name; a taken name is `conflict`, one outside the name charset `invalid` | Yes (task-98qp7he5) |
 | `session.close` | Remove a session record; a live pane keeps running, unfiled (2.2) | Yes (task-98qp7he5) |
-| `session.resume` | Start an exited session's harness again in a new pane, with its resume id | Capcom sessions (task-aqw4iowl, `capcom.md` 7.6); the rest Part 4 stage 4 |
+| `session.resume` | Start an exited session's harness again in a new pane, with its resume id | Capcom sessions (task-aqw4iowl, `capcom.md` 7.6); every other session (task-4i9uv0ai, `gff-client.md` 6.2) |
 | `session.interrupt` | Stop the current turn through the adapter (the chat view's Stop) | Part 4 stage 4 |
 | `session.send` | Send a message through the adapter, under the input rules | Yes, Claude Code (Part 4 stage 4) |
 | `approval.answer` | Answer a pending request by id; a closed or expired id is refused with `conflict` | Yes, Claude Code permissions (Part 4 stage 4) |
@@ -927,8 +927,14 @@ Shapes the specs left open, and the choice taken (the smallest that serves both 
   names `seed_from` as the writer, on the owner's behalf (`capcom.md` 6.4). A seed that cannot
   be queued after the spawn is logged, not answered, so a retry never starts a second session.
 - **`session.resume`** takes `{session}` and returns the same ids as `session.create`. The
-  session keeps its id and gets a new pane; it must be exited (else `conflict`). Built for
-  Capcom sessions (task-aqw4iowl); any other session answers `unavailable` until Part 4 stage 4.
+  session keeps its id and gets a new pane; it must be exited (else `conflict`). A Capcom
+  session resumes through Capcom (task-aqw4iowl, `capcom.md` 7.6). Any other session resumes
+  from gff-hab's resume book (task-4i9uv0ai, `gff-client.md` 6.2): the harness last seen in it
+  with its native session id (`claude --resume <id>`, or `--session-id <id>` while Claude Code
+  has no transcript; `codex resume <id>`; `opencode --session <id>`), else the start
+  `session.create` was asked for, in the session's folder. A session the book knows nothing of,
+  or whose folder is not known, answers `unavailable`; so does one exited with no status while
+  a holder is not reached yet, since its program may still run there.
   A session record carries the optional `kind` (`capcom`, an open word set) and `dir` (a Capcom
   session's folder).
 - **`pane.close`** takes `{pane}` (the `PaneRef` of the size methods) and returns the seq only.

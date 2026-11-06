@@ -43,6 +43,9 @@ type PaneSpec struct {
 	Label string // shown in the pane's frame; default the pane id
 	// Host is the host's label in the workspace; empty means the first host.
 	Host string
+	// Session is the hab session the pane belongs to, when known. A view of a session follows
+	// it to the new pane a resume starts (gff-client.md 6.2).
+	Session string
 	// Observe opens an observer stream (hab-logic-api.md 6.4): it never sends a size, never
 	// takes ownership and never sends input.
 	Observe bool
@@ -419,17 +422,45 @@ func (c *client) addView(t *tab, spec PaneSpec, hs *hostState) *view {
 		spec.Label = spec.ID
 	}
 	v := &view{spec: spec, h: hs}
-	ictx, quit := context.WithCancel(c.ctx)
-	v.quit = quit
-	host, pane := hs.label, spec.ID
-	v.in = newInputSender(hs.conn, pane, func(msg string) { c.postNote(host, pane, msg) })
-	c.wg.Add(1)
-	go func() { defer c.wg.Done(); v.in.run(ictx) }()
+	c.startInput(v)
 	t.views = append(t.views, v)
 	if t == c.tab() {
 		c.openStream(v)
 	}
 	return v
+}
+
+// startInput starts the view's input sender for its pane.
+func (c *client) startInput(v *view) {
+	ictx, quit := context.WithCancel(c.ctx)
+	v.quit = quit
+	host, pane := v.h.label, v.spec.ID
+	v.in = newInputSender(v.h.conn, pane, func(msg string) { c.postNote(host, pane, msg) })
+	c.wg.Add(1)
+	go func() { defer c.wg.Done(); v.in.run(ictx) }()
+}
+
+// repoint makes v show another pane of its session: the pane a resume started (gff-client.md
+// 6.2). The view keeps its tab, place and focus; its parser, offset and input sender go with
+// the old pane.
+func (c *client) repoint(t *tab, v *view, pane string) {
+	c.closeStream(v)
+	v.quit()
+	if v.term != nil {
+		v.term.Close()
+		v.term = nil
+	}
+	v.spec.ID = pane
+	v.exited, v.ended, v.note, v.owner = nil, nil, "", ""
+	v.offset, v.haveOffset, v.opens = 0, false, 0
+	v.cols, v.rows, v.sentCols, v.sentRows = 0, 0, 0, 0
+	v.filter.reset()
+	v.dirty = true
+	c.startInput(v)
+	if t == c.tab() {
+		c.openStream(v)
+		c.layoutChanged()
+	}
 }
 
 // removeView takes a view out of its tab; the program keeps running (gff-client.md 5.2).
@@ -693,6 +724,10 @@ func (c *client) typeKeys(p []byte) {
 	case v == nil:
 	case v.spec.Observe:
 		v.note, v.dirty = "observer: input off", true
+	case c.ws && c.ui.resumable(v):
+		if isEnter(p) {
+			c.ui.resumeView(v)
+		}
 	case v.exited != nil || v.ended != nil:
 	case !v.h.online:
 		v.note, v.dirty = "offline: input dropped", true
@@ -1151,6 +1186,8 @@ func (c *client) frameText(v *view, s slot) string {
 		}
 	}
 	switch {
+	case c.ws && c.ui.resumable(v):
+		notes = append(notes, c.ui.exitedWord(v), "Enter resume")
 	case v.exited != nil:
 		notes = append(notes, "exited"+exitText(v.exited))
 	case v.ended != nil:
@@ -1215,14 +1252,27 @@ func short(id string) string {
 	return id
 }
 
-// rowOf finds the board row of a view, if the hab knows its pane.
+// rowOf finds the board row of a view: its session's, when the view knows its session, else
+// its pane's, if the hab knows it.
 func rowOf(rows []board.Row, v *view) (board.Row, bool) {
 	for _, r := range rows {
-		if r.Host == v.h.label && r.Pane == v.spec.ID {
+		if r.Host != v.h.label {
+			continue
+		}
+		if v.spec.Session != "" && r.Session == v.spec.Session || v.spec.Session == "" && r.Pane == v.spec.ID {
 			return r, true
 		}
 	}
 	return board.Row{}, false
+}
+
+// isEnter reports whether p is one Enter key: CR, LF, or kitty's form.
+func isEnter(p []byte) bool {
+	switch string(p) {
+	case "\r", "\n", "\x1b[13u", "\x1b[13;1u":
+		return true
+	}
+	return false
 }
 
 type realTimer struct{ t *time.Timer }

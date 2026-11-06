@@ -958,8 +958,9 @@ this spec left a choice open:
   = close` the same check applies, and a round that is gone (deleted mid-run) keeps the pane:
   a run never closes a session it did not make. A timeout
   sends Esc only to a turn this gff-hab started with the prompt.
-- **Exited target.** `session.resume` serves Capcom sessions only, so gff-hab starts the
-  target's harness again itself, as Capcom's resume does: the exited pane is released, then
+- **Exited target.** gff-hab starts the target's harness again itself, from what the round
+  remembers of its target, as Capcom's resume does (`session.resume` was built for Capcom only
+  when rounds came; it now serves every session from the resume book, `gff-client.md` 6.2): the exited pane is released, then
   `claude <harness_args> --resume <id>` or `codex resume <id> <harness_args>` runs in a new pane
   of the same session, in the target's folder. The prompt goes in at the first `idle`, under
   the readiness limit, with the same check under the claim. opencode's resume is not built:
