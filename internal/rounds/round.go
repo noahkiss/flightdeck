@@ -361,6 +361,14 @@ func (s RunState) Final() bool {
 	return false
 }
 
+// DropsSession reports whether a run's session record goes once its program exited (rounds.md
+// 7.6): the run succeeded, the round closes on a good run, and the session is one the run made
+// (a fresh or fork run). A resume run's session is its target, the user's, and always stays.
+// Every other run's session stays until retention, so the user sees what happened.
+func DropsSession(r Run, mode Mode, f OnFinish) bool {
+	return r.State == RunSucceeded && r.SessionID != "" && mode != ModeResume && f == OnFinishClose
+}
+
 // MaxResultBytes bounds the final agent message a run keeps (rounds.md 7.3).
 const MaxResultBytes = 4 << 10
 

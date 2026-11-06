@@ -1639,3 +1639,51 @@ func TestTargetGoneRetargeted(t *testing.T) {
 		t.Errorf("a re-targeted round completed: %+v", st)
 	}
 }
+
+// TestSchedulerDropsSucceededSessions follows an every-minute round on the fake clock: each
+// run's final event says whether its session record goes at once (rounds.md 7.6). Only a
+// succeeded run of a round that closes on a good run drops it; a failed, timed out or taken
+// over run, a round with on_finish keep, and a resume round's target stay.
+func TestSchedulerDropsSucceededSessions(t *testing.T) {
+	h := newHarness(t, "2026-03-02T09:59:30Z")
+	e := h.round("tick", "* * * * *", nil)
+	if e.Round.OnFinish != OnFinishClose {
+		t.Fatalf("on_finish default = %q", e.Round.OnFinish)
+	}
+	h.s.Tick()
+	ends := []RunState{RunSucceeded, RunFailed, RunSucceeded, RunTimedOut, RunTakenOver, RunSucceeded}
+	for i, st := range ends {
+		h.awake(utc("2026-03-02T10:00:10Z").Add(time.Duration(i) * time.Minute).Format(time.RFC3339))
+		h.endLatest(e.Round.ID, st)
+	}
+	var drops []bool
+	h.sink.mu.Lock()
+	for _, r := range h.sink.runs {
+		if r.State.Final() {
+			if r.SessionID == "" {
+				t.Errorf("run %d ended with no session", r.Number)
+			}
+			drops = append(drops, DropsSession(r, e.Round.Mode, e.Round.OnFinish))
+		}
+	}
+	h.sink.mu.Unlock()
+	if want := []bool{true, false, true, false, false, true}; fmt.Sprint(drops) != fmt.Sprint(want) {
+		t.Errorf("drops = %v, want %v", drops, want)
+	}
+	if n := len(h.runs(e.Round.ID)); n != len(ends) {
+		t.Errorf("the run log holds %d runs, want %d", n, len(ends))
+	}
+	ok := Run{State: RunSucceeded, SessionID: "sess-1"}
+	if DropsSession(ok, ModeFresh, OnFinishKeep) {
+		t.Error("on_finish keep dropped the session")
+	}
+	if DropsSession(ok, ModeResume, OnFinishClose) {
+		t.Error("a resume run dropped its target")
+	}
+	if !DropsSession(ok, ModeFork, OnFinishClose) {
+		t.Error("a fork run's own session stayed")
+	}
+	if DropsSession(Run{State: RunSucceeded}, ModeFresh, OnFinishClose) {
+		t.Error("a run with no session dropped one")
+	}
+}

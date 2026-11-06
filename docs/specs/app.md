@@ -3736,6 +3736,8 @@ the badge), `Demo/FakeRounds.swift` (the fake hab). Tests: `RoundTests`,
   newest first, 50 per page with Older runs: the run number, its slot (or "by hand"), state,
   missed count, duration, reason, the first line of the result, and Open session. The page
   merges `round.run_updated` events into its page, so a run's state moves while it is open.
+  A succeeded run of an `on_finish close` round has no session record left (`rounds.md` 7.6):
+  its Open session finds no board row and opens nothing.
 - **Refusals.** An action's refusal shows under the actions in the hab's words as a sentence:
   "The round has a live run." for Run now during a run, "The round is paused." and so on. The
   next action clears it. The app checks nothing the hab checks.

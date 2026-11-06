@@ -253,9 +253,11 @@ func TestRoundHarnessEnds(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(work, "prompt-success")); string(b) != "\x1b[200~"+roundPrompt+"\x1b[201~\r" {
 		t.Errorf("prompt as delivered: %q", b)
 	}
-	waitUntil(t, "the succeeded run's pane closed", func() bool {
-		ss, found := runSessionOf(structureOf(t, c), ok.Session)
-		return found && ss.State == api.SessionStateExited
+	// on_finish close: the pane closes and the session record goes (rounds.md 7.6); the run
+	// log keeps the result and the transcript stays.
+	waitUntil(t, "the succeeded run's session removed", func() bool {
+		_, found := runSessionOf(structureOf(t, c), ok.Session)
+		return !found
 	})
 	wantCwd, _ := filepath.EvalSymlinks(repo)
 	if b, _ := os.ReadFile(filepath.Join(work, "cwd-success")); strings.TrimSpace(string(b)) != wantCwd {
@@ -273,8 +275,8 @@ func TestRoundHarnessEnds(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(work, "claude", "projects", "-work-app", id+".jsonl")); err != nil {
 		t.Errorf("the transcript must stay for a resume: %v", err)
 	}
-	if ss, _ := runSessionOf(structureOf(t, c), ok.Session); ss.Name != "ok" || ss.Round == nil || ss.Round.Run != ok.ID {
-		t.Errorf("run session record: %+v", ss)
+	if got := roundRuns(t, c, "ok")[0]; got.ID != ok.ID || got.Session != ok.Session || got.Result != ok.Result {
+		t.Errorf("the run log after the session went: %+v", got)
 	}
 
 	runRound(t, c, "bad")

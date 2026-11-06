@@ -473,6 +473,7 @@ func (s *roundsService) start() {
 	for _, e := range s.store.List() {
 		s.prune(e.Round.ID)
 	}
+	s.dropFinished()
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	go func() {
@@ -941,8 +942,9 @@ func (s *roundsService) RoundDeleted(e rounds.Entry) {
 }
 
 // RunChanged sends round.run_updated. A run that ended is no longer watched; a succeeded run
-// of a round with on_finish close has its pane closed: the session record stays, exited
-// (7.6). A run that failed, timed out or was taken over keeps its pane.
+// of a round with on_finish close has its pane closed and, once it exited, its session record
+// removed (7.6): the run log keeps the result. A run that failed, timed out or was taken over
+// keeps its pane and its record.
 func (s *roundsService) RunChanged(r rounds.Run) {
 	s.cfg.publish(structure.Event{Type: control.EventRoundRunUpdated, ID: r.ID, Data: api.NonNil(s.apiRun(r))})
 	s.poke()
@@ -960,27 +962,93 @@ func (s *roundsService) RunChanged(r rounds.Run) {
 		return
 	}
 	// A round that is gone keeps the pane: what it wanted is not known.
-	onFinish := rounds.OnFinishKeep
+	onFinish, mode := rounds.OnFinishKeep, rounds.ModeFresh
 	if w != nil {
-		onFinish = w.round.OnFinish
+		onFinish, mode = w.round.OnFinish, w.round.Mode
 	} else if e, ok := s.store.Get(r.RoundID); ok {
-		onFinish = e.Round.OnFinish
+		onFinish, mode = e.Round.OnFinish, e.Round.Mode
 	}
-	if onFinish != rounds.OnFinishClose {
+	if !rounds.DropsSession(r, mode, onFinish) {
 		return
 	}
 	// Only a session the run made is closed: a resume run's session is its target, the user's.
 	ss, ok := s.cfg.store.Session(r.SessionID)
-	if !ok || ss.Pane == "" || ss.Round == nil || ss.Round.Run != r.ID {
+	if !ok || ss.Round == nil || ss.Round.Run != r.ID {
 		return
 	}
 	s.bg.Go(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if err := s.cfg.closePane(ctx, ss.Pane); err != nil {
-			s.cfg.logf("rounds: run %s: close pane %s: %v", r.ID, ss.Pane, err)
+		if ss.Pane != "" {
+			if err := s.cfg.closePane(ctx, ss.Pane); err != nil {
+				s.cfg.logf("rounds: run %s: close pane %s: %v", r.ID, ss.Pane, err)
+				return
+			}
 		}
+		s.dropSession(ctx, r.ID, ss.ID)
 	})
+}
+
+// dropSession removes the session record of a succeeded run once its program exited (7.6), so
+// a frequent round leaves no trail of exited sessions in the sidebar and the board. It waits for
+// the exit the pane close brings; a record that never exits stays until retention. Only a
+// record the run made goes. Transcripts are not touched.
+func (s *roundsService) dropSession(ctx context.Context, runID, session string) {
+	t := time.NewTicker(20 * time.Millisecond)
+	defer t.Stop()
+	for {
+		ss, ok := s.cfg.store.Session(session)
+		if !ok || ss.Round == nil || ss.Round.Run != runID {
+			return
+		}
+		if ss.State == api.SessionStateExited {
+			if err := s.cfg.store.CloseSession(ss.ID); err != nil {
+				s.cfg.logf("rounds: run %s: remove session %s: %v", runID, ss.ID, err)
+			}
+			return
+		}
+		select {
+		case <-ctx.Done():
+			s.cfg.logf("rounds: run %s: session %s did not exit; it stays until retention", runID, ss.ID)
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// dropFinished removes, at start, the exited session records of succeeded runs whose round
+// closes on a good run: one a gff-hab that stopped before the drop left, or an older build's.
+func (s *roundsService) dropFinished() {
+	byRound := map[string][]api.Session{}
+	for _, ss := range s.cfg.store.Snapshot(api.HostInfo{}).Sessions {
+		if ss.Round != nil && ss.State == api.SessionStateExited {
+			byRound[ss.Round.Round] = append(byRound[ss.Round.Round], ss)
+		}
+	}
+	for roundID, sessions := range byRound {
+		e, ok := s.store.Get(roundID)
+		if !ok {
+			continue // a deleted round's sessions go with retention
+		}
+		runs, _, err := s.store.Runs().Page(roundID, 0, rounds.MaxKeepRuns)
+		if err != nil {
+			s.cfg.logf("rounds: round %s: runs: %v", roundID, err)
+			continue
+		}
+		byID := make(map[string]rounds.Run, len(runs))
+		for _, r := range runs {
+			byID[r.ID] = r
+		}
+		for _, ss := range sessions {
+			r, ok := byID[ss.Round.Run]
+			if !ok || r.SessionID != ss.ID || !rounds.DropsSession(r, e.Round.Mode, e.Round.OnFinish) {
+				continue
+			}
+			if err := s.cfg.store.CloseSession(ss.ID); err != nil {
+				s.cfg.logf("rounds: run %s: remove session %s: %v", r.ID, ss.ID, err)
+			}
+		}
+	}
 }
 
 // prune applies the retention rule to a round's runs (rounds.md 7.6) and removes the session
