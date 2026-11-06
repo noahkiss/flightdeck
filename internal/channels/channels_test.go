@@ -171,6 +171,7 @@ type linkCaller struct {
 	to    func() *Service
 	down  *atomic.Bool
 	calls *atomic.Int32
+	waits *atomic.Int32 // channel.wait calls only: mail rounds run beside them
 }
 
 func (c linkCaller) Call(ctx context.Context, method string, params, result any) error {
@@ -193,6 +194,9 @@ func (c linkCaller) Call(ctx context.Context, method string, params, result any)
 		json.Unmarshal(b, &p)
 		out, err = c.to().Pull(c.from, p)
 	case "channel.wait": // as the control connection serves a peer link (mesh.md 6.6)
+		if c.waits != nil {
+			c.waits.Add(1)
+		}
 		var p api.ChannelWaitParams
 		json.Unmarshal(b, &p)
 		out, err = c.to().Wait(control.WithPeerCall(ctx), p)
@@ -1484,7 +1488,14 @@ func TestWaitPeerAgent(t *testing.T) {
 	a := newHab(t, "dev-a", "hosta", "", la)
 	b := newHab(t, "dev-b", "hostb", "", lb)
 	down := &atomic.Bool{}
-	calls := link(a, b, "bee", down)
+	link(a, b, "bee", down)
+	// Count the forwards alone: the mail rounds call the same link at any time.
+	calls := &atomic.Int32{}
+	a.peers.mu.Lock()
+	lc := a.peers.links[0].Caller.(linkCaller)
+	lc.waits = calls
+	a.peers.links[0].Caller = lc
+	a.peers.mu.Unlock()
 	link(b, a, "ay", nil)
 	a.peers.mu.Lock()
 	a.peers.list.Peers = append(a.peers.list.Peers, api.Peer{Label: "sea", DeviceID: "dev-c"})
@@ -1550,6 +1561,8 @@ func TestWaitPeerAgent(t *testing.T) {
 		t.Fatalf("unknown label: %v", err)
 	}
 	// A message to the waiter comes first and ends the forward.
+	// alice waits in a tool call, so she is working: the message goes to the wait, not her PTY.
+	la.set(func() { la.busy["alice"] = true })
 	lb.set(func() { lb.busy["bob"] = true })
 	res := make(chan api.ChannelWaitResult, 1)
 	go func() {
