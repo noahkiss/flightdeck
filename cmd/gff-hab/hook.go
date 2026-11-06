@@ -13,14 +13,20 @@ import (
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/hook"
+	"github.com/noahkiss/flightdeck/internal/lbcli"
 	"github.com/noahkiss/flightdeck/internal/settings"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
 // hookCmd is what each harness's hook config runs: `gff-hab hook <harness> [event]` with the
-// native payload on stdin. It always exits 0 and never writes to stdout, so it can neither fail
-// nor slow a turn: the whole run is capped at hook.Budget. `-print <harness>` prints the hook
-// config for that harness instead.
+// native payload on stdin. It always exits 0, so it can never fail a turn, and the whole run is
+// capped at hook.Budget. `-print <harness>` prints the hook config for that harness instead.
+//
+// At a context event (hook.ContextEvent: a session's start, a prompt, a stop) it prints what
+// gff-hab adds for the agent in the harness's hook output shape: the Logbook brief, the reminder
+// or the closeout (logbook.md 11.3). When gff-hab does not answer at the brief's event, it builds
+// the brief from the Logbook file itself; the reminder and the closeout are then skipped. At
+// every other event it prints nothing.
 //
 // `-wait` is the blocking permission hook, for the PermissionRequest of Claude Code and Codex. gff-hab
 // answers at once unless the owner turned it on (`serve -permission-wait`); then the command
@@ -58,10 +64,8 @@ func hookCmd(args []string, stdin io.Reader, stdout io.Writer) int {
 	defer timer.Stop()
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
-	inv := hook.Invocation{Harness: fs.Arg(0), Event: fs.Arg(1), T: *stamp, Stdin: stdin, Getenv: os.Getenv}
-	if *wait {
-		inv.Wait, inv.Stdout = true, stdout
-	}
+	inv := hook.Invocation{Harness: fs.Arg(0), Event: fs.Arg(1), T: *stamp, Stdin: stdin, Getenv: os.Getenv, Stdout: stdout,
+		Wait: *wait, FileBrief: fileBrief}
 	err := hook.Run(ctx, inv)
 	if err != nil && os.Getenv("GFF_HOOK_DEBUG") != "" {
 		fmt.Fprintf(os.Stderr, "gff-hab hook: %v\n", err)
@@ -122,3 +126,10 @@ func openOnly(cs []api.Confirmation) []api.Confirmation {
 }
 
 var errHookServe = errors.New("hook endpoint stopped")
+
+// fileBrief is the brief from the Logbook file, for a hook that finds gff-hab down (logbook.md
+// 11.3): the state directory from $GFF_HAB_STATE, which gff-hab sets in its panes.
+func fileBrief(ctx context.Context, cwd string) (string, error) {
+	b, err := lbcli.FileBrief(ctx, lbcli.Env{Getenv: os.Getenv, Dir: cwd})
+	return b.Text, err
+}

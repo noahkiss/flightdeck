@@ -50,8 +50,9 @@ func startLogbookVerbs(ctx context.Context, st *logbook.Store, synced func(), pu
 // this host are the writer (logbook.md 2.5), and the pane's writes count against its limit (14).
 // A Capcom session's writes are stored as proposals (capcom.md D3, D14), and so is every pane's
 // while approval reports true: logbook.approval is agents (9.1). It is read at each call, so a
-// change of the setting holds from the next write.
-func logbookHook(svc *lbsvc.Service, store *structure.Store, agents *harness.Store, host string, approval func() bool) hook.ChannelHandler {
+// change of the setting holds from the next write. wrote, when set, hears of each write that
+// went through: the recording habits count it (11.1).
+func logbookHook(svc *lbsvc.Service, store *structure.Store, agents *harness.Store, host string, approval func() bool, wrote func(pane string)) hook.ChannelHandler {
 	return func(ctx context.Context, pane, method string, params json.RawMessage) (any, func(error), error) {
 		pn := lbsvc.Pane{ID: pane, Host: host}
 		if s, ok := store.SessionByPane(pane); ok {
@@ -68,6 +69,9 @@ func logbookHook(svc *lbsvc.Service, store *structure.Store, agents *harness.Sto
 			}
 		}
 		res, err := svc.Dispatch(ctx, lbsvc.PaneActor(pn), &pn, method, params)
+		if err == nil && wrote != nil && (method == "logbook.write" || method == "logbook.resolve") {
+			wrote(pane)
+		}
 		return res, nil, err
 	}
 }

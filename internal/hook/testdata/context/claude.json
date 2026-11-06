@@ -1,0 +1,21 @@
+{
+  "note": "Written by hand. Claude Code hook payloads (2.1) for the three habits of logbook.md 11.3, the text gff-hab answers, and the exact hook output gff-hab hook prints: SessionStart and UserPromptSubmit add context, Stop blocks once with a reason. A compact start and a resume carry the brief too. Events that are no context event print nothing.",
+  "cases": [
+    {"event": "SessionStart", "payload": {"session_id": "s-claude-1", "cwd": "/work/app", "hook_event_name": "SessionStart", "source": "startup"},
+     "text": "Logbook brief for app (proj-aaaaaaaa): 0 untriaged, 0 flagged.\n\n## Ready\ntask-aaaaaaaa  open  fix \"the\" build\n",
+     "output": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"Logbook brief for app (proj-aaaaaaaa): 0 untriaged, 0 flagged.\\n\\n## Ready\\ntask-aaaaaaaa  open  fix \\\"the\\\" build\\n\"}}\n"},
+    {"event": "SessionStart", "payload": {"session_id": "s-claude-1", "cwd": "/work/app", "hook_event_name": "SessionStart", "source": "compact"},
+     "text": "brief again",
+     "output": "{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"brief again\"}}\n"},
+    {"event": "UserPromptSubmit", "payload": {"session_id": "s-claude-1", "cwd": "/work/app", "hook_event_name": "UserPromptSubmit", "prompt": "go on"},
+     "text": "Nothing recorded yet this session. Record findings and task changes with `gff lb`.",
+     "output": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"Nothing recorded yet this session. Record findings and task changes with `gff lb`.\"}}\n"},
+    {"event": "UserPromptSubmit", "payload": {"session_id": "s-claude-1", "cwd": "/work/app", "hook_event_name": "UserPromptSubmit", "prompt": "and again"},
+     "text": "", "output": ""},
+    {"event": "Stop", "payload": {"session_id": "s-claude-1", "cwd": "/work/app", "hook_event_name": "Stop", "stop_hook_active": false},
+     "text": "Before you stop: this session changed files and recorded nothing in Logbook. Record what you learned with `gff lb` (a finding, a task's status, a note), or say there is nothing to record.",
+     "output": "{\"decision\":\"block\",\"reason\":\"Before you stop: this session changed files and recorded nothing in Logbook. Record what you learned with `gff lb` (a finding, a task's status, a note), or say there is nothing to record.\"}\n"},
+    {"event": "PostToolUse", "payload": {"session_id": "s-claude-1", "cwd": "/work/app", "hook_event_name": "PostToolUse", "tool_name": "Edit", "tool_input": {"file_path": "/work/app/a.go"}},
+     "text": "never asked", "output": ""}
+  ]
+}

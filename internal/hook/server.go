@@ -53,8 +53,21 @@ type Server struct {
 	confirm  ChannelHandler
 	rounds   ChannelHandler
 	logbook  ChannelHandler
+	context  ContextHandler
 	reads    ReadHandler
 	http     *http.Server
+}
+
+// ContextHandler answers a context event (ContextEvent) posted with ?context=1, after the sink
+// took the envelope: the text the hab adds for the agent, or "" for none (logbook.md 11.3). It
+// must answer within the hook's budget.
+type ContextHandler func(ctx context.Context, pane string, env harness.Envelope) string
+
+// SetContext sets the handler of context events. With none, they answer 204 like any post.
+func (s *Server) SetContext(h ContextHandler) {
+	s.mu.Lock()
+	s.context = h
+	s.mu.Unlock()
 }
 
 // SetHolder sets the holder for posts with ?wait=1. With none, they answer at once like any post.
@@ -132,8 +145,25 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		env.T = s.now().UnixMilli()
 	}
 	s.mu.Lock()
-	holder := s.holder
+	holder, ctxh := s.holder, s.context
 	s.mu.Unlock()
+	if r.URL.Query().Get("context") == "1" {
+		s.sink(pane, env)
+		text := ""
+		if ctxh != nil {
+			text = ctxh(r.Context(), pane, env)
+		}
+		if text == "" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		b, _ := json.Marshal(struct {
+			Text string `json:"text"`
+		}{text})
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(b)
+		return
+	}
 	if r.URL.Query().Get("wait") != "1" || holder == nil {
 		s.sink(pane, env)
 		w.WriteHeader(http.StatusNoContent)

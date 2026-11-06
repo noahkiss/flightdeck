@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"syscall"
 	"time"
 
 	"github.com/noahkiss/flightdeck/internal/detect"
@@ -37,7 +39,32 @@ func PostWait(ctx context.Context, addr string, env harness.Envelope) ([]byte, e
 	return post(ctx, addr, env, true)
 }
 
+// PostContext sends one envelope of a context event (ContextEvent) and returns the text the hab
+// adds for the agent, or "" for none (logbook.md 11.3). The hab answers 204 for none, else 200
+// with {"text": ...}.
+func PostContext(ctx context.Context, addr string, env harness.Envelope) (string, error) {
+	b, err := postQuery(ctx, addr, env, "?context=1")
+	if err != nil || b == nil {
+		return "", err
+	}
+	var a struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(b, &a); err != nil {
+		return "", fmt.Errorf("hab answer: %w", err)
+	}
+	return a.Text, nil
+}
+
 func post(ctx context.Context, addr string, env harness.Envelope, wait bool) ([]byte, error) {
+	q := ""
+	if wait {
+		q = "?wait=1"
+	}
+	return postQuery(ctx, addr, env, q)
+}
+
+func postQuery(ctx context.Context, addr string, env harness.Envelope, query string) ([]byte, error) {
 	sock, token, err := ParseAddr(addr)
 	if err != nil {
 		return nil, err
@@ -55,10 +82,7 @@ func post(ctx context.Context, addr string, env harness.Envelope, wait bool) ([]
 		ResponseHeaderTimeout: Budget,
 	}
 	defer tr.CloseIdleConnections()
-	url := "http://hab/hooks/" + token
-	if wait {
-		url += "?wait=1"
-	}
+	url := "http://hab/hooks/" + token + query
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -73,7 +97,7 @@ func post(ctx context.Context, addr string, env harness.Envelope, wait bool) ([]
 	case resp.StatusCode == http.StatusNoContent:
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return nil, nil
-	case resp.StatusCode == http.StatusOK && wait:
+	case resp.StatusCode == http.StatusOK && query != "":
 		return io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	}
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
@@ -91,8 +115,12 @@ type Invocation struct {
 	// Wait asks the hab to hold a permission request until the app answers (PostWait). Only
 	// the PermissionRequest of Claude Code and Codex waits; any other event posts as usual.
 	Wait bool
-	// Stdout receives the harness's hook output when a wait ends with a decision.
+	// Stdout receives the harness's hook output: a wait's decision, or the context the hab adds
+	// at a context event (ContextEvent). Nil prints nothing, and context events post as others.
 	Stdout io.Writer
+	// FileBrief builds the brief from the hab's file when gff-hab does not answer at the brief
+	// event (logbook.md 11.3), for the working folder cwd (the payload's, else ""). Nil: none.
+	FileBrief func(ctx context.Context, cwd string) (string, error)
 }
 
 // Run reads the payload, wraps it and posts it. It returns why nothing was sent, or the post
@@ -141,6 +169,21 @@ func Run(ctx context.Context, in Invocation) error {
 		t = now().UnixMilli()
 	}
 	env := harness.Envelope{Harness: in.Harness, Event: event, T: t, N: 1, Payload: payload}
+	if habit, ok := ContextEvent(in.Harness, event); ok && in.Stdout != nil {
+		text, err := PostContext(ctx, addr, env)
+		if err != nil && habit == "brief" && in.FileBrief != nil && Unreachable(err) {
+			var p struct {
+				Cwd string `json:"cwd"`
+			}
+			json.Unmarshal(payload, &p)
+			text, err = in.FileBrief(ctx, p.Cwd)
+		}
+		if err != nil || text == "" {
+			return err
+		}
+		_, err = in.Stdout.Write(ContextOutput(in.Harness, event, text))
+		return err
+	}
 	if !in.Wait || !Waits(in.Harness) || event != "PermissionRequest" || in.Stdout == nil {
 		return Post(ctx, addr, env)
 	}
@@ -196,4 +239,60 @@ func PermissionDecision(answer []byte) ([]byte, error) {
 		return nil, err
 	}
 	return append(b, '\n'), nil
+}
+
+// ContextEvent names the habit a harness's event carries (logbook.md 11.3): the brief at a
+// session's start (Claude Code and Codex SessionStart, which also fires after a compaction and on
+// resume; opencode's session.created), the reminder at a prompt and the closeout at a stop
+// (Claude Code and Codex only).
+func ContextEvent(harness, event string) (habit string, ok bool) {
+	switch harness {
+	case detect.KindClaude, detect.KindCodex:
+		switch event {
+		case "SessionStart":
+			return "brief", true
+		case "UserPromptSubmit":
+			return "reminder", true
+		case "Stop":
+			return "closeout", true
+		}
+	case detect.KindOpencode:
+		if event == "session.created" {
+			return "brief", true
+		}
+	}
+	return "", false
+}
+
+// ContextOutput is the hook output that hands text to the agent in harness's shape (logbook.md
+// 11.3). Claude Code and Codex share it: SessionStart and UserPromptSubmit add context with
+// hookSpecificOutput.additionalContext; Stop blocks once with the text as the reason, so the
+// agent takes one more turn. opencode's plugin reads the text as it is.
+func ContextOutput(harness, event, text string) []byte {
+	var v any
+	switch {
+	case harness == detect.KindOpencode:
+		return []byte(text)
+	case event == "Stop":
+		v = struct {
+			Decision string `json:"decision"`
+			Reason   string `json:"reason"`
+		}{"block", text}
+	default:
+		type specific struct {
+			HookEventName     string `json:"hookEventName"`
+			AdditionalContext string `json:"additionalContext"`
+		}
+		v = struct {
+			HookSpecificOutput specific `json:"hookSpecificOutput"`
+		}{specific{event, text}}
+	}
+	b, _ := json.Marshal(v)
+	return append(b, '\n')
+}
+
+// Unreachable reports whether err means nothing answers at the hab's socket: nothing listens on
+// it, or there is no socket file. Only then is gff-hab down.
+func Unreachable(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOENT)
 }

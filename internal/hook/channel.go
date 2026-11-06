@@ -31,7 +31,7 @@ var ReadMethods = []string{"catalog.list", "peers.list", "transcript.list", "tra
 // and writes. The pane's token names the writer: the hab records its harness, session and host
 // (2.5), and limits its writes (14). logbook.decide is never on the route: an agent does not
 // decide a proposal.
-var LogbookMethods = []string{"logbook.find", "logbook.get", "logbook.list", "logbook.ready", "logbook.history",
+var LogbookMethods = []string{"logbook.brief", "logbook.find", "logbook.get", "logbook.list", "logbook.ready", "logbook.history",
 	"logbook.write", "logbook.resolve", "logbook.projects", "logbook.status"}
 
 // ConfirmMethods are the confirmation methods the route takes (capcom.md 6.1): an agent asks

@@ -99,6 +99,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/datastream"
 	"github.com/noahkiss/flightdeck/internal/detect"
 	"github.com/noahkiss/flightdeck/internal/gitstatus"
+	"github.com/noahkiss/flightdeck/internal/habits"
 	"github.com/noahkiss/flightdeck/internal/habkey"
 	"github.com/noahkiss/flightdeck/internal/harness"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
@@ -1319,10 +1320,13 @@ func serve(args []string) error {
 			agents.Report(n.Pane.UUID.String(), n.Report, time.Now().UnixMilli(), false)
 		}
 	}
+	habitSvc := &habitService{svc: lbVerbs, store: store, host: *hostID, tracker: habits.New(nil), value: setSvc.Value,
+		off: &habits.OffFile{Path: cpath}, logf: logger.Printf}
 	hooks := hook.NewServer(tokens, func(pane string, env harness.Envelope) string {
 		if usages.Hook(env) {
 			return "" // a status-line input: usage only
 		}
+		habitSvc.Hook(pane, env)
 		_, opened := agents.Hook(pane, env)
 		// A hook from a pane in a project may follow a commit or a checkout: read the project's
 		// repository again, debounced.
@@ -1332,7 +1336,8 @@ func serve(args []string) error {
 	hooks.SetChannels(channelHook(store, chSvc))
 	hooks.SetReads(readHook(reads, cs, pm))
 	hooks.SetConfirm(confirmHook(store, cfSvc))
-	hooks.SetLogbook(logbookHook(lbVerbs, store, agents, *hostID, approvalAgents(setSvc.Value)))
+	hooks.SetLogbook(logbookHook(lbVerbs, store, agents, *hostID, approvalAgents(setSvc.Value), habitSvc.Wrote))
+	hooks.SetContext(habitSvc.Context)
 	if roundsSvc != nil {
 		hooks.SetRounds(roundHook(store, roundsSvc))
 	}

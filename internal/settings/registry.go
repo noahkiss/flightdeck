@@ -20,6 +20,10 @@ const (
 	ApprovalMaxAge  = "approval.max_age"
 	LogbookApproval = "logbook.approval"
 	PermissionWait  = "hab.permission_wait"
+	// The recording habits (logbook.md 11.1, 11.4): each on unless turned off.
+	HabitBrief    = "logbook.habits.brief"
+	HabitReminder = "logbook.habits.reminder"
+	HabitCloseout = "logbook.habits.closeout"
 )
 
 // Def is one hab-side setting: its id, its built-in value (the Balanced column, app.md 20.1)
@@ -40,6 +44,9 @@ var Defs = []Def{
 	{ID: ApprovalMaxAge, Default: json.RawMessage(`60`), check: checkInt(0, 1440), integer: true},
 	{ID: LogbookApproval, Default: json.RawMessage(`"off"`), check: checkWord("off", "agents")},
 	{ID: PermissionWait, Default: json.RawMessage(`0`), check: checkInt(0, 120), integer: true},
+	{ID: HabitBrief, Default: json.RawMessage(`true`), check: checkBool},
+	{ID: HabitReminder, Default: json.RawMessage(`true`), check: checkBool},
+	{ID: HabitCloseout, Default: json.RawMessage(`true`), check: checkBool},
 }
 
 // Lookup returns the setting with the id.

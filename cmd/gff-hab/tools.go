@@ -154,6 +154,8 @@ var readTools = []kitTool{
 	{Name: "file_read", Doc: "Read a text file on a host, inside that host's read scope. Returns at most 256 KiB per call; pass offset to read on.",
 		Args: []toolArg{{Name: "path", Type: "string", Doc: "An absolute path, or one under ~/ on that host.", Required: true}, argHostOne,
 			{Name: "offset", Type: "integer", Doc: "Byte offset to start at."}, {Name: "limit", Type: "integer", Doc: "Most bytes to return."}}, run: runFile},
+	{Name: "logbook_brief", Doc: "The Logbook brief: what to know about a project now. Tasks in doing and blocked, handed over and ready ones, pinned guides, findings from the last 7 days, open plans and records for every project, one line each, at most 8 KB. In a pane its project is the default.",
+		Args: []toolArg{{Name: "project", Type: "string", Doc: "A Logbook project id. Absent: the pane's project."}}, run: runLogbookBrief},
 	{Name: "logbook_search", Doc: "Search or list Logbook records: tasks, findings, issues, plans, guides and proposals, on every host (each hab holds them all). With words, best match first; without, newest change first.",
 		Args: []toolArg{{Name: "words", Type: "string", Doc: "Words to search for. Absent: list records."}, {Name: "type", Type: "string", Doc: "A record type."},
 			{Name: "status", Type: "string", Doc: "A status."}, {Name: "project", Type: "string", Doc: "A Logbook project id."}, {Name: "tag", Type: "string", Doc: "A tag."},
@@ -577,6 +579,14 @@ func runFile(ctx context.Context, c caller, a toolArgs) (any, string, error) {
 		}
 	}
 	return r, b.String(), nil
+}
+
+func runLogbookBrief(ctx context.Context, c caller, a toolArgs) (any, string, error) {
+	var r api.LogbookBrief
+	if err := c.Call(ctx, "logbook.brief", api.LogbookBriefParams{Project: a.str("project")}, &r); err != nil {
+		return nil, "", err
+	}
+	return r, r.Text, nil
 }
 
 func runLogbookSearch(ctx context.Context, c caller, a toolArgs) (any, string, error) {
