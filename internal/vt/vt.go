@@ -84,6 +84,12 @@ type Terminal interface {
 	Mode(n int, ansi bool) (set, known bool)
 	// KeyboardFlags returns the keyboard protocol flags the program set (CSI > u), 0 for none.
 	KeyboardFlags() int
+	// ScrollView moves the view delta rows into the primary screen's scrollback (negative:
+	// older rows, up; positive: back down) and returns how many rows above the bottom the view
+	// is now; 0 is the live screen. Output that arrives while the view is up leaves it on the
+	// same rows. On the alternate screen it moves nothing and returns 0. ReadScreen reads the
+	// view, with no cursor while it is up (gff-client.md 5.7).
+	ScrollView(delta int) int
 	// ReadScreen fills dst with the active screen's cells and the cursor, for a client that
 	// draws the screen into part of its own (gff's composed view, gff-client.md 3.2). dst's
 	// slices are reused when they are large enough.

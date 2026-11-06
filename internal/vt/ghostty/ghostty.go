@@ -330,6 +330,27 @@ func (t *terminal) MemoryUsage() (resident, virtual uint64, err error) {
 	return uint64(tot.ResidentBytes), uint64(tot.VirtualBytes), nil
 }
 
+// ScrollView moves libghostty's viewport, which keeps its rows while output arrives.
+func (t *terminal) ScrollView(delta int) int {
+	if t.t == nil || delta == 0 && t.viewBottom() == 0 {
+		return 0
+	}
+	if screen, err := t.t.ActiveScreen(); err != nil || screen == libghostty.ScreenAlternate {
+		return 0
+	}
+	t.t.ScrollViewportDelta(delta)
+	return t.viewBottom()
+}
+
+// viewBottom is how many rows the viewport is above the bottom.
+func (t *terminal) viewBottom() int {
+	sb, err := t.t.Scrollbar()
+	if err != nil || sb.Total < sb.Offset+sb.Len {
+		return 0
+	}
+	return int(sb.Total - sb.Offset - sb.Len)
+}
+
 // ReadScreen reads the active screen through libghostty's render state.
 func (t *terminal) ReadScreen(dst *vt.Screen) error {
 	if t.t == nil {

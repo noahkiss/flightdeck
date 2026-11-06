@@ -62,6 +62,8 @@ type fakeTerm struct {
 	cols, rows   int
 	primary, alt [][]rune // 0 marks the second cell of a wide character; ' ' is blank
 	scrollback   [][]rune
+	view         int          // rows the view is above the bottom (ScrollView)
+	modes        map[int]bool // the DEC private modes of fakeModes the program set
 	altActive    bool
 	x, y         int
 	savedX       int
@@ -193,6 +195,9 @@ func (t *fakeTerm) lineFeed() {
 	g := t.grid()
 	if !t.altActive {
 		t.scrollback = append(t.scrollback, g[0])
+		if t.view > 0 {
+			t.view++ // the view stays on its rows
+		}
 	}
 	copy(g, g[1:])
 	g[len(g)-1] = blankRow(t.cols)
@@ -237,6 +242,12 @@ func (t *fakeTerm) dispatchCSI(final byte) {
 	switch {
 	case private && (final == 'h' || final == 'l'):
 		for _, m := range nums {
+			if fakeModes[m] {
+				if t.modes == nil {
+					t.modes = map[int]bool{}
+				}
+				t.modes[m] = final == 'h'
+			}
 			if m == 1049 || m == 1047 || m == 47 {
 				t.setAlt(final == 'h', m == 1049)
 			}
@@ -298,7 +309,7 @@ func (t *fakeTerm) eraseDisplay(mode int) {
 			g[y] = blankRow(t.cols)
 		}
 	case 3:
-		t.scrollback = nil
+		t.scrollback, t.view = nil, 0
 	}
 }
 
@@ -357,10 +368,17 @@ func (t *fakeTerm) Size() (int, int) { return t.cols, t.rows }
 
 func (t *fakeTerm) Cursor() (int, int) { return t.x, t.y }
 
-// Mode knows the alternate screen modes only.
+// fakeModes are the DEC private modes the fake tracks besides the alternate screen: cursor
+// keys and the mouse modes.
+var fakeModes = map[int]bool{1: true, 1000: true, 1002: true, 1003: true, 1006: true}
+
+// Mode knows the alternate screen modes, cursor keys and the mouse modes.
 func (t *fakeTerm) Mode(n int, ansi bool) (bool, bool) {
 	if !ansi && (n == 1049 || n == 1047 || n == 47) {
 		return t.altActive, true
+	}
+	if !ansi && fakeModes[n] {
+		return t.modes[n], true
 	}
 	return false, false
 }
@@ -402,12 +420,35 @@ func (t *fakeTerm) PlainText() (string, error) {
 
 // ReadScreen returns the text of the active screen in the default style; the fake keeps no
 // colours. The cursor is always visible.
+// ScrollView moves the view into the scrollback, clamped to it.
+func (t *fakeTerm) ScrollView(delta int) int {
+	if t.closed || t.altActive {
+		return 0
+	}
+	t.view = min(max(t.view-delta, 0), len(t.scrollback))
+	return t.view
+}
+
 func (t *fakeTerm) ReadScreen(dst *Screen) error {
 	if t.closed {
 		return ErrClosed
 	}
 	dst.Reset(t.cols, t.rows)
-	for y, row := range t.grid() {
+	rows := t.grid()
+	if t.view > 0 && !t.altActive {
+		// The view: the last t.view scrollback rows, then the top of the screen.
+		v := min(t.view, len(t.scrollback))
+		rows = append(append([][]rune(nil), t.scrollback[len(t.scrollback)-v:]...), t.grid()...)[:t.rows]
+		for i, r := range rows {
+			if len(r) != t.cols {
+				// A scrollback row from before a resize: fit it to the width.
+				fit := blankRow(t.cols)
+				copy(fit, r)
+				rows[i] = fit
+			}
+		}
+	}
+	for y, row := range rows {
 		for x, r := range row {
 			c := &dst.Cells[y*t.cols+x]
 			switch {
@@ -420,6 +461,9 @@ func (t *fakeTerm) ReadScreen(dst *Screen) error {
 		}
 	}
 	dst.CursorX, dst.CursorY = t.x, t.y
+	if t.view > 0 && !t.altActive {
+		dst.CursorVisible = false
+	}
 	return nil
 }
 

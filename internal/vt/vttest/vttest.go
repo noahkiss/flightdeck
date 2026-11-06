@@ -133,6 +133,53 @@ func Run(t *testing.T, p vt.Parser, golden string) {
 		}
 	})
 
+	t.Run("scroll view", func(t *testing.T) {
+		// gff's local scrollback (gff-client.md 5.7): the view moves into the scrollback, stays
+		// on its rows while output arrives, comes back down, and does nothing on the alternate
+		// screen.
+		term, err := p.New(vt.Config{Cols: 20, Rows: 5})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { term.Close() })
+		for i := 1; i <= 30; i++ {
+			fmt.Fprintf(term, "line %d\r\n", i)
+		}
+		top := func() string {
+			t.Helper()
+			var s vt.Screen
+			if err := term.ReadScreen(&s); err != nil {
+				t.Fatal(err)
+			}
+			var b strings.Builder
+			for x := 0; x < s.Cols; x++ {
+				if c := s.Cells[x]; c.Text == "" {
+					b.WriteByte(' ')
+				} else {
+					b.WriteString(c.Text)
+				}
+			}
+			return strings.TrimSpace(b.String())
+		}
+		if got := top(); got != "line 27" {
+			t.Fatalf("live top row %q", got)
+		}
+		if n := term.ScrollView(-3); n != 3 || top() != "line 24" {
+			t.Fatalf("up 3: %d, top %q", n, top())
+		}
+		term.Write([]byte("line 31\r\nline 32\r\n"))
+		if got := top(); got != "line 24" {
+			t.Fatalf("output moved the view: top %q", got)
+		}
+		if n := term.ScrollView(100); n != 0 || top() != "line 29" {
+			t.Fatalf("back down: %d, top %q", n, top())
+		}
+		term.Write([]byte("\x1b[?1049h"))
+		if n := term.ScrollView(-3); n != 0 {
+			t.Fatalf("alternate screen: %d", n)
+		}
+	})
+
 	t.Run("cursor and modes", func(t *testing.T) {
 		// gff-hab answers terminal queries from these (spec 5.6).
 		term := newTerm(t)

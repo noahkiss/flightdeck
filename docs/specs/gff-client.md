@@ -759,6 +759,46 @@ gff cannot expand `~` on another host.
 | `TestWorkspaceFile` | The file's path per system and with `$GFF_WORKSPACE_DIR`, a bad name; a file that does not parse set aside; a view of a host no longer configured left out and its split giving way |
 | `TestStartupTabsConfig` | `[[workspace.tabs]]` and its problems |
 
+### 5.7 Built choices (task-1sbbnaa4: scrollback and the mouse)
+
+zellij is the reference: the wheel scrolls a pane's own scrollback with no scroll mode, goes
+to a program that asked for the mouse, and is arrow keys on an alternate screen; typing while
+scrolled keeps the view where it is.
+
+- **Mouse reports.** While composed, gff asks the host for button reports in the SGR form
+  (`CSI ? 1000 h`, `CSI ? 1006 h`) and turns them off when it leaves the composed view (pass
+  through, detach). While a pane passes its bytes through, the reports are the pane's: gff
+  reads none. The host's own text selection then needs its bypass modifier (Shift in most
+  terminals), as in zellij; gff's own selection (5.2) is not built yet.
+- **The wheel over a view**, by where the pointer is, focused or not:
+  - its program asked for the mouse (mode 1000, 1002 or 1003): the report goes to the program
+    at the pane's own cell, in SGR form when it asked for 1006, else the legacy form;
+  - on an alternate screen with no mouse mode: three Up or Down arrow keys, in the
+    application form when the program set cursor keys mode;
+  - else the view scrolls three rows in the local parser's scrollback. Nothing goes to the
+    hab. The frame shows `scrolled <rows>` while the view is up; it shows no cursor.
+- **Typing while scrolled.** Keys go to the program as always; the view stays on the same rows
+  while the program prints (the parser's view keeps its rows). The wheel down to the bottom,
+  or Shift+End, brings back the live screen. A new snapshot (a redraw, a reconnect that needs
+  one) shows the live screen.
+- **Keys.** In normal mode, while the panes have the keys and the view is composed, Shift+PageUp
+  and Shift+PageDown scroll the focused view a page (its rows less one), and Shift+End goes to
+  the bottom. They never reach the program. Decided (implementer): fixed keys, not keymap
+  actions, since the keymap's normal mode takes only Ctrl and Alt keys (8.4); they are the keys
+  most terminals scroll with.
+- **The wheel over the sidebar or the board** moves the selection. A click on a view focuses
+  it and gives the panes the keys, and goes on to a program that asked for the mouse.
+- A scrolled view never passes through, so the host shows the scrolled rows.
+- `vt.Terminal.ScrollView` moves the view: libghostty's viewport, and the fake parser's own.
+
+**Tests.**
+
+| Test | Proves |
+|---|---|
+| `TestWheelScrollsLocally` | Real holder and gff-hab: the wheel up shows earlier lines with `scrolled 3` and the program gets nothing; typed keys reach the program and the view stays; the wheel down goes back; Shift+PageUp scrolls a page, Shift+End goes back, neither reaching the program; a program with mouse modes on gets the wheel as an SGR report at its own cell; one on the alternate screen gets three Up arrows |
+| `TestParseMouse` | SGR reports, a report cut at a read, a lone Esc never held; the scroll keys |
+| `vttest` "scroll view" (fake and libghostty) | The view moves into the scrollback, keeps its rows while output arrives, comes back down, and does nothing on the alternate screen |
+
 ---
 
 ## 6. Sessions across hosts

@@ -141,6 +141,7 @@ type view struct {
 	offset     uint64 // after the last applied byte, to resume (gff-client.md 11.3)
 	haveOffset bool
 	bellUntil  time.Time
+	scroll     int // rows the view is up in its scrollback (mouse.go); 0 is the live screen
 
 	filter passFilter
 	screen vt.Screen
@@ -200,10 +201,12 @@ type client struct {
 	modes    map[int]bool // modes mirrored on the host while composed
 	out      bytes.Buffer
 	keys     *keyReader
-	notes    chan paneNote
-	frames   chan paneFrame
-	later    chan func()
-	debounce Timer
+	// mouseHeld is the start of a mouse report or scroll key cut at a read boundary.
+	mouseHeld []byte
+	notes     chan paneNote
+	frames    chan paneFrame
+	later     chan func()
+	debounce  Timer
 	// What the host shows besides the canvas, so an unchanged screen writes nothing.
 	cursorX, cursorY int
 	cursorOn         bool
@@ -511,7 +514,7 @@ func (c *client) repoint(t *tab, v *view, pane string) {
 	}
 	v.spec.ID = pane
 	v.exited, v.ended, v.note, v.owner = nil, nil, "", ""
-	v.offset, v.haveOffset, v.opens = 0, false, 0
+	v.offset, v.haveOffset, v.opens, v.scroll = 0, false, 0, 0
 	v.cols, v.rows, v.sentCols, v.sentRows = 0, 0, 0, 0
 	v.filter.reset()
 	v.dirty = true
@@ -717,6 +720,7 @@ func (c *client) frame(pf paneFrame) {
 			return
 		}
 		v.term, v.cols, v.rows = t, cfg.Cols, cfg.Rows
+		v.scroll = 0 // a new screen: the live one
 		v.offset, v.haveOffset = f.Offset, true
 		v.filter.reset()
 		if c.pass == v {
@@ -748,24 +752,6 @@ func (c *client) frame(pf paneFrame) {
 		}
 	}
 	v.dirty = true
-}
-
-// input handles host input.
-func (c *client) input(p []byte) error {
-	for _, ev := range c.keys.feed(p) {
-		if ev.act == "" {
-			if c.ws && c.ui.mode != modePanes {
-				c.ui.keys(ev.data)
-				continue
-			}
-			c.typeKeys(ev.data)
-			continue
-		}
-		if err := c.command(ev); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // typeKeys sends bytes to the focused pane. Before the pane's first snapshot the keys still
@@ -1048,8 +1034,10 @@ const (
 	resetPaneModes = "\x1b[?2026l\x1b[0m\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1016l" +
 		"\x1b[?1004l\x1b[?2004l\x1b[?1l\x1b>\x1b[=0;1u\x1b[4l\x1b[?6l\x1b[r\x1b[?7h\x1b[ q\x1b[?25h" +
 		"\x1b[>4m\x1b(B\x0f"
-	enterCompose = "\x1b[?1049h\x1b[?7l\x1b[?25l"
-	leaveCompose = "\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l"
+	// The composed view asks for mouse reports (button events, SGR form) for the wheel and
+	// clicks (gff-client.md 5.7), and turns them off as it leaves.
+	enterCompose = "\x1b[?1049h\x1b[?7l\x1b[?25l\x1b[?1000h\x1b[?1006h"
+	leaveCompose = "\x1b[0m\x1b[?1006l\x1b[?1000l\x1b[?7h\x1b[?25h\x1b[?1049l"
 )
 
 // HostReset sets the host terminal back from anything gff or a pane can leave on it: the pane
@@ -1084,7 +1072,7 @@ func (c *client) render() {
 		if v.term == nil && v.ended == nil {
 			return // wait for the first snapshot: it may pass straight through
 		}
-		if v.live() && v.h.online && r.w == c.w && r.h == c.h && v.cols == c.w && v.rows == c.h {
+		if v.live() && v.h.online && v.scroll == 0 && r.w == c.w && r.h == c.h && v.cols == c.w && v.rows == c.h {
 			if c.pass != v {
 				c.enterPass(v)
 			}
@@ -1270,6 +1258,9 @@ func (c *client) frameText(v *view, s slot) string {
 	}
 	if v.spec.Observe {
 		notes = append(notes, "observer")
+	}
+	if v.scroll > 0 {
+		notes = append(notes, "scrolled "+strconv.Itoa(v.scroll))
 	}
 	if v.term != nil && (v.cols != s.content.w || v.rows != s.content.h) {
 		if v.owner != "" && v.owner != v.h.me {
