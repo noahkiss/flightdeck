@@ -1,4 +1,4 @@
-package gffclient
+package hoststats
 
 import (
 	"os"

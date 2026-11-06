@@ -168,12 +168,9 @@ func TestStatsHost(t *testing.T) {
 	}
 }
 
-// Disk use as df counts it: the blocks kept for root are neither used nor free.
-func TestDiskFigures(t *testing.T) {
-	used, total := diskFigures(1000, 400, 350, 4096)
-	if used != 600*4096 || total != 950*4096 {
-		t.Errorf("used %d total %d", used, total)
-	}
+// Disk figures render as the percentage an ordinary user sees in df.
+func TestDiskInfoText(t *testing.T) {
+	used, total := uint64(600*4096), uint64(950*4096)
 	if got := infoText(api.HostStats{DiskUsed: used, DiskTotal: total}, []string{"disk"}); got != "disk 63%" {
 		t.Errorf("disk %q, want df's 63%%", got)
 	}

@@ -103,6 +103,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/harness"
 	hp "github.com/noahkiss/flightdeck/internal/holderproto"
 	"github.com/noahkiss/flightdeck/internal/hook"
+	"github.com/noahkiss/flightdeck/internal/hoststats"
 	"github.com/noahkiss/flightdeck/internal/lbcli"
 	"github.com/noahkiss/flightdeck/internal/lbsync"
 	"github.com/noahkiss/flightdeck/internal/link"
@@ -578,7 +579,7 @@ func serve(args []string) error {
 	}, nil)
 	usages := newUsageService(&usageService{store: usageStore, host: *hostID, logf: logger.Printf})
 	defer usages.Close()
-	caps := []string{"usage"}
+	caps := []string{"usage", "host-stats"}
 	var acts control.Actions
 	var wts control.Worktrees
 	var data control.Data
@@ -1246,6 +1247,7 @@ func serve(args []string) error {
 		Catalog:     cs,
 		Push:        pushCtl,
 		Usage:       usageStore,
+		Stats:       &hoststats.Reader{Battery: true, DiskPath: dir},
 		Content:     contents,
 		Channels:    chSvc,
 		LogbookSync: lbSvc,

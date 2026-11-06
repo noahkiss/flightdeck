@@ -5,14 +5,13 @@ package gffclient
 // host-stats capability; otherwise gff reads this machine's own, unlabelled.
 
 import (
-	"os"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/hoststats"
 )
 
 // statsEvery is the shortest time between two readings (9.2).
@@ -68,48 +67,5 @@ func upText(d time.Duration) string {
 // hasCap reports whether a welcome lists a capability.
 func hasCap(w api.Welcome, c string) bool { return slices.Contains(w.Capabilities, c) }
 
-// LocalStats reads this machine's figures. Each call measures CPU since the last call; the
-// first measures since boot.
-type LocalStats struct {
-	// Battery reads the battery too. On macOS that runs pmset, so gff sets it only when the
-	// bar shows the battery.
-	Battery bool
-
-	mu   sync.Mutex
-	prev cpuSample
-}
-
-// cpuSample is the CPU time counters at one moment, where the system gives them.
-type cpuSample struct{ busy, total uint64 }
-
-// Read returns this machine's figures. Figures the system does not give stay zero, and CPU and
-// the battery stay absent.
-func (l *LocalStats) Read() (api.HostStats, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	s := api.HostStats{At: time.Now().UTC().Format(time.RFC3339)}
-	readLocal(&s, &l.prev, l.Battery)
-	if home, err := os.UserHomeDir(); err == nil {
-		s.DiskUsed, s.DiskTotal = diskUse(home)
-	}
-	return s, nil
-}
-
-// diskFigures is a file system's used and total bytes as df counts them: used is every block
-// not free, and total is used plus what an ordinary user may still write, so the blocks kept
-// for root count as neither.
-func diskFigures(blocks, bfree, bavail, bsize uint64) (used, total uint64) {
-	if bfree > blocks {
-		return 0, 0
-	}
-	used = (blocks - bfree) * bsize
-	return used, used + bavail*bsize
-}
-
-// cpuPct is the busy share between two samples, in whole percent.
-func cpuPct(prev, cur cpuSample) int {
-	if cur.total <= prev.total || cur.busy < prev.busy {
-		return 0
-	}
-	return int(min((cur.busy-prev.busy)*100/(cur.total-prev.total), 100))
-}
+// LocalStats reads this machine through the shared host resource reader.
+type LocalStats = hoststats.Reader

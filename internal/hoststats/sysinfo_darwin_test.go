@@ -1,4 +1,4 @@
-package gffclient
+package hoststats
 
 import (
 	"testing"
@@ -15,7 +15,7 @@ func TestReadLocalDarwin(t *testing.T) {
 	battMu.Unlock()
 	var s api.HostStats
 	readLocal(&s, &cpuSample{}, false)
-	if s.CPUPct == nil || *s.CPUPct < 0 || *s.CPUPct > 100 || s.MemTotal == 0 || s.MemUsed > s.MemTotal || s.UptimeS == 0 {
+	if s.CPUPct != nil || s.MemTotal == 0 || s.MemUsed > s.MemTotal || s.UptimeS == 0 {
 		t.Errorf("figures %+v", s)
 	}
 	battMu.Lock()

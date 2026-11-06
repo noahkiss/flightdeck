@@ -1400,7 +1400,7 @@ usage row); `hab-logic-api.md` 3.4 (capabilities for features a host may lack).
 
 ### 9.3 Built choices (task-8qy9nrvj: system info, the usage row, the warnings)
 
-Packages: `internal/gffclient` (`bars.go`, `sysinfo*.go`, `usage.go`).
+Packages: `internal/gffclient` (`bars.go`, `sysinfo.go`, `usage.go`) and the shared `internal/hoststats` reader.
 
 **System info.** The right end of the shortcut bar: `cpu 12% mem 51% disk 61% bat 80% up 3d
 4h`. `[bar] info` lists the items and their order; an item left out is hidden. An item the host
@@ -1419,11 +1419,10 @@ width; the hints get the rest.
 - **This machine.** Linux: CPU from `/proc/stat` since the last reading, memory in use as
   MemTotal less MemAvailable, uptime, the first supply of type `Battery` under
   `/sys/class/power_supply` whose scope is not `Device` (a wireless mouse or keyboard reports
-  its own battery with that scope). macOS, with no cgo: CPU as the one-minute load over the
-  core count (sysctl gives no CPU time counters), memory in use as all but the free pages (it
+  its own battery with that scope). macOS, with no cgo: CPU absent until a CPU-time reader exists, memory in use as all but the free pages (it
   counts the file cache), uptime from `kern.boottime`, the battery from `pmset -g batt` at most
   once a minute. The battery is read only while `[bar] info` lists it, so pmset never runs
-  otherwise. Disk: the file system of the home directory, as df counts it: used is every block
+  otherwise for the local fallback. The hab caches readings across clients for two seconds and reads the battery. Disk: the home directory for the local fallback, or the hab state directory for `hab.stats`, as df counts it: used is every block
   not free, total is used plus what a user may still write, so blocks kept for root count as
   neither. Other systems: disk only.
 
@@ -1481,15 +1480,14 @@ claude Max 5x · 5h 42% resets 1h 58m · 7d 61% resets 4d 23h · over pace on 7d
 | `TestUsageBookNewestWins` | An older reading of one account from another host does not replace a newer one |
 | `TestInfoText` | The figures' text; the battery item hides with no battery; this machine's reader returns a reading |
 
-**Gaps in the API and the hab (reported, not built).**
+`hab.stats` now ships with `host-stats` (task-bw97v7dk). gff labels the focused hab's figures;
+older habs keep the local fallback. Usage window length/start, degraded usage and hab time also ship.
+
+**Remaining gap in the API and the hab.**
 
 | Gap | Effect now |
 |---|---|
-| gff-hab does not serve `hab.stats` yet (it answers `unavailable`, `internal/control`) and no hab lists `host-stats` | gff shows this machine's figures, unlabelled |
-| `UsageWindow` has no length or start | Pace only for windows whose name gives the length; a model's window has none |
-| No "usage degraded" mark on an account (app.md 14.5 "usage unavailable") | The row shows the last reading, greyed when stale |
 | No field says a hab or holder build is superseded (9.1 warnings) | The warnings list hosts that are not online only |
-| The welcome carries no hab time | Reset and age times use this machine's clock against the hab's absolute times |
 
 ---
 

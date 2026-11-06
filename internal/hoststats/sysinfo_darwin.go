@@ -1,11 +1,9 @@
-package gffclient
+package hoststats
 
 import (
 	"context"
-	"encoding/binary"
 	"os/exec"
 	"regexp"
-	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -16,19 +14,9 @@ import (
 )
 
 // readLocal fills CPU, memory, battery (when battery is set) and uptime from sysctl, with no
-// cgo. macOS gives no CPU time counters through sysctl, so CPU is the one-minute load over the
-// core count. Memory in use is all but the free pages, so it counts the file cache. The
+// cgo. CPU is absent until a CPU-time reader exists; load average is not CPU usage. Memory in use is all but the free pages, so it counts the file cache. The
 // battery comes from pmset, run only when the bar shows the battery.
 func readLocal(s *api.HostStats, _ *cpuSample, battery bool) {
-	if b, err := unix.SysctlRaw("vm.loadavg"); err == nil && len(b) >= 24 {
-		// struct loadavg { fixpt_t ldavg[3]; long fscale; }: three uint32, padding, an int64.
-		load := binary.LittleEndian.Uint32(b[0:4])
-		scale := binary.LittleEndian.Uint64(b[16:24])
-		if scale > 0 {
-			pct := min(int(uint64(load)*100/scale)/max(runtime.NumCPU(), 1), 100)
-			s.CPUPct = &pct
-		}
-	}
 	if total, err := unix.SysctlUint64("hw.memsize"); err == nil {
 		s.MemTotal = total
 		if free, err := unix.SysctlUint32("vm.page_free_count"); err == nil {
