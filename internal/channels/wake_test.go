@@ -246,6 +246,13 @@ func TestWakeStatus(t *testing.T) {
 func TestWakeAfterFailedExchange(t *testing.T) {
 	w := newOneWay(t, time.Hour, 0)
 	entered, release := make(chan struct{}, 1), make(chan struct{})
+	var released atomic.Bool
+	open := func() {
+		if released.CompareAndSwap(false, true) {
+			close(release)
+		}
+	}
+	defer open() // a failed assertion must not leave service cleanup waiting on the gate
 	gate := func(method string) {
 		if method == "mail.push" {
 			entered <- struct{}{}
@@ -253,9 +260,14 @@ func TestWakeAfterFailedExchange(t *testing.T) {
 		}
 	}
 	w.gate.Store(&gate)
-	w.down.Store(true)
 	send(t, w.a.s, "bob", "bee/alice", "from a") // a's round pushes it, and waits at the gate
-	<-entered
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("push did not reach the gate")
+	}
+	// The push is paused before the caller checks down; startup pulls stay healthy.
+	w.down.Store(true)
 	w.gate.Store(nil)
 	send(t, w.b.s, "alice", "ay/bob", "from b") // the wake-up comes during that exchange
 	waitFor(t, "the wake-up held for the running exchange", func() bool {
@@ -263,7 +275,7 @@ func TestWakeAfterFailedExchange(t *testing.T) {
 		defer w.a.s.mu.Unlock()
 		return w.a.s.again["bee"]
 	})
-	close(release) // the push fails: the link is down
+	open() // the push fails: the link is down
 	waitFor(t, "the failed exchange", func() bool {
 		w.a.s.mu.Lock()
 		defer w.a.s.mu.Unlock()
