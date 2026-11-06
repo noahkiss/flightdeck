@@ -164,7 +164,7 @@ func (s *Scheduler) evaluateEvents(e Entry, now time.Time, live *Run) {
 // saved.
 func (s *Scheduler) takeBatchLocked(roundID string, run *Run) (bool, error) {
 	p := s.pend[roundID]
-	if p == nil || p.Len() == 0 {
+	if e, ok := s.store.Get(roundID); p == nil || p.Len() == 0 || !ok || e.Round.Trigger.Kind != TriggerEvent {
 		return false, nil
 	}
 	if err := s.store.WriteEvents(roundID, run.ID, p.Batch); err != nil {

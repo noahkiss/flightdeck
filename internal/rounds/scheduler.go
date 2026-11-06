@@ -571,6 +571,11 @@ func (s *Scheduler) Update(r Round) (Entry, error) {
 	}
 	r.Paused = old.Round.Paused
 	e, err := s.store.Update(r, now)
+	if err == nil && e.Round.Trigger.Kind != TriggerEvent {
+		// A trigger changed away from events drops the pending batch, as the store does.
+		delete(s.pend, r.ID)
+		delete(s.pendDirty, r.ID)
+	}
 	if err == nil {
 		c := e
 		s.events = append(s.events, event{round: &c})
@@ -891,7 +896,9 @@ func (s *Scheduler) evaluateRound(e Entry, now, prev time.Time, wake bool) {
 		delete(s.owed, id)
 		delete(s.retry, id)
 		if notStarted(live) {
-			s.endLocked(live, RunUpdate{State: RunSkipped, Reason: ReasonPaused}, now, true)
+			// A queued event run's events go back to the pending batch: a pause, or a move
+			// that pauses first, keeps them (rounds.md 4.5, 9).
+			s.endLocked(live, RunUpdate{State: RunSkipped, Reason: ReasonPaused, KeepBatch: true}, now, true)
 		}
 		if st.NextSlot != nil && !st.NextSlot.After(now) {
 			s.setState(id, func(st *RoundState) { st.NextSlot = nextAfter(c.sched, now, st.LastSlot) })
