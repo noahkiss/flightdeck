@@ -700,7 +700,9 @@ when the command dies.
   `wait_ms` (at most 600 s) once the ticket holds or the wait ends. A ticket is 32 hex digits the
   hab makes. The connection that last took a ticket holds it; its close releases it. A
   `pane_token` (the pane's `GFF_HAB` token, as `content.show` takes it) names the pane: the pane's
-  exit or close releases the ticket, and `heavy.status` names the pane's session.
+  exit or close releases the ticket, and `heavy.status` names the pane's session. A token
+  that names no pane yet (its holder not attached after a restart) is no error: the ticket goes
+  on without a pane, and a later take with the token binds it.
   `heavy.release` of an unknown ticket is no error. Capability `heavy`.
 - **A restart.** The CLI keeps the last answer and sends it back with its ticket on a new
   connection: a ticket the hab does not know holds again at once when it held, else it waits in
@@ -710,7 +712,8 @@ when the command dies.
   again until the command ends.
 - **Signals.** SIGINT and SIGQUIT reach the command from the terminal, as with any foreground
   job; the CLI passes SIGTERM and SIGHUP on. A signal while waiting releases the ticket and
-  exits with 128 plus the signal. A command that is not found exits 127.
+  exits with 128 plus the signal, also while the CLI dials a gff-hab that is down. A command
+  that is not found exits 127.
 - **The disk watch** reads both volumes every 30 s. Any volume below the threshold makes the
   host low; grants come back when every volume has the threshold plus the margin free.
   `heavy.disk_min_free` 0 never holds runs. The catalog section `heavy` carries `slots`,

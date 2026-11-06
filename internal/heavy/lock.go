@@ -241,15 +241,11 @@ func (l *Lock) Take(owner context.Context, p api.HeavyTakeParams) (api.HeavyTake
 	if p.WaitMS < 0 || time.Duration(p.WaitMS)*time.Millisecond > MaxWait {
 		return api.HeavyTaken{}, control.Errorf(api.ErrorKindInvalid, "wait_ms must be from 0 to %d", MaxWait.Milliseconds())
 	}
+	// A token that names no pane yet (its holder not attached after a restart) is no error:
+	// the connection still holds the ticket, and a later take with the token binds the pane.
 	var pane, session string
-	if p.PaneToken != "" {
-		ok := false
-		if l.cfg.PaneOf != nil {
-			pane, session, ok = l.cfg.PaneOf(p.PaneToken)
-		}
-		if !ok {
-			return api.HeavyTaken{}, control.Errorf(api.ErrorKindNotFound, "pane_token names no pane on this hab")
-		}
+	if p.PaneToken != "" && l.cfg.PaneOf != nil {
+		pane, session, _ = l.cfg.PaneOf(p.PaneToken)
 	}
 	now := l.cfg.Now()
 	l.mu.Lock()

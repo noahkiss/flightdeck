@@ -188,9 +188,14 @@ func (r *runner) take(ctx context.Context, c *control.Client, wait time.Duration
 	return res, err
 }
 
+// signalled is a signal that ended a wait for gff-hab.
+type signalled struct{ sig syscall.Signal }
+
+func (s signalled) Error() string { return "stopped by " + s.sig.String() }
+
 // reconnect dials again until it reaches gff-hab and the take answers, or patience runs out
-// (0: until stop closes). It returns the new client.
-func (r *runner) reconnect(stop <-chan struct{}, patience time.Duration) (*control.Client, api.HeavyTaken, error) {
+// (0: until stop closes), or a signal comes on sigs (nil: none read). It returns the new client.
+func (r *runner) reconnect(stop <-chan struct{}, sigs <-chan os.Signal, patience time.Duration) (*control.Client, api.HeavyTaken, error) {
 	var deadline time.Time
 	if patience > 0 {
 		deadline = time.Now().Add(patience)
@@ -218,6 +223,8 @@ func (r *runner) reconnect(stop <-chan struct{}, patience time.Duration) (*contr
 		select {
 		case <-stop:
 			return nil, api.HeavyTaken{}, errors.New("stopped")
+		case sg := <-sigs:
+			return nil, api.HeavyTaken{}, signalled{sg.(syscall.Signal)}
 		case <-time.After(r.env.Retry):
 		}
 	}
@@ -293,7 +300,12 @@ func (r *runner) run() int {
 			return 1
 		}
 		c.Close()
-		c, res, err = r.reconnect(nil, r.env.Patience)
+		c, res, err = r.reconnect(nil, sigs, r.env.Patience)
+		var sg signalled
+		if errors.As(err, &sg) {
+			// A signal while waiting ends the wait; the hab, when it is back, holds no ticket.
+			return 128 + int(sg.sig)
+		}
 		if err != nil {
 			r.say("gff-hab did not come back (%v); running without the heavy-run lock", err)
 			return r.exec(sigs, nil)
@@ -396,7 +408,7 @@ func (r *runner) hold(c *control.Client, exited <-chan struct{}) {
 		case <-c.Done():
 		}
 		c.Close()
-		nc, _, err := r.reconnect(exited, 0)
+		nc, _, err := r.reconnect(exited, nil, 0)
 		if err != nil {
 			r.mu.Lock()
 			r.client = nil
