@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -216,5 +217,48 @@ func TestSessionResumeAfterHolderLoss(t *testing.T) {
 	waitUntil(t, "claude started a third time", func() bool { return len(readLines(t, log)) == 3 })
 	if got := readLines(t, log)[2]; got != "claude --resume "+native {
 		t.Fatalf("third start %q", got)
+	}
+}
+
+// An agent can report its native id before session.create records the start.
+func TestResumeBookAgentBeforeStart(t *testing.T) {
+	d := t.TempDir()
+	b := openResumeBook(d, func(string) (string, bool) { return "s1", true }, t.Logf)
+	b.agent(api.AgentState{Pane: "p1", Harness: "claude", Session: "native"})
+	if e, _ := b.get("s1"); e.Native != "native" {
+		t.Fatalf("agent state: %+v", e)
+	}
+	b.started("s1", api.SessionCreateParams{Harness: "claude", Model: "opus"})
+	b.Close()
+	b = openResumeBook(d, func(string) (string, bool) { return "s1", true }, t.Logf)
+	defer b.Close()
+	if e, _ := b.get("s1"); e.Native != "native" || e.Seen != "claude" || e.Model != "opus" {
+		t.Fatalf("reopened: %+v", e)
+	}
+}
+
+// Concurrent starts and agent states must all survive the final write.
+func TestResumeBookConcurrentSaves(t *testing.T) {
+	d := t.TempDir()
+	b := openResumeBook(d, func(p string) (string, bool) { return p, true }, t.Logf)
+	var wg sync.WaitGroup
+	for i := 0; i < 40; i++ {
+		id := fmt.Sprintf("s%d", i)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			b.started(id, api.SessionCreateParams{Harness: "claude"})
+			b.agent(api.AgentState{Pane: id, Harness: "claude", Session: id})
+		}()
+	}
+	wg.Wait()
+	b.Close()
+	b = openResumeBook(d, func(p string) (string, bool) { return p, true }, t.Logf)
+	defer b.Close()
+	for i := 0; i < 40; i++ {
+		id := fmt.Sprintf("s%d", i)
+		if e, ok := b.get(id); !ok || e.Harness != "claude" || e.Native != id {
+			t.Fatalf("%s: %+v %v", id, e, ok)
+		}
 	}
 }

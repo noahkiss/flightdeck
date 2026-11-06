@@ -50,14 +50,16 @@ type resumeBook struct {
 	// sessionOf maps a pane to its session id.
 	sessionOf func(pane string) (string, bool)
 
-	mu    sync.Mutex
-	m     map[string]resumeEntry
-	pend  map[string]api.AgentState // pane -> the latest state not yet applied
-	gone  []string                  // sessions to forget
-	kick  chan struct{}
-	done  chan struct{}
-	quit  chan struct{}
-	saves int // for tests
+	applyMu sync.Mutex // preserve the order of pending states across worker and get
+	saveMu  sync.Mutex // serialize snapshots and writes
+	mu      sync.Mutex
+	m       map[string]resumeEntry
+	pend    map[string]api.AgentState // pane -> the latest state not yet applied
+	gone    []string                  // sessions to forget
+	kick    chan struct{}
+	done    chan struct{}
+	quit    chan struct{}
+	saves   int // for tests
 }
 
 // openResumeBook reads the book from dir. A file that does not read is set aside and the book
@@ -112,6 +114,8 @@ func (b *resumeBook) run() {
 
 // apply maps pending states to sessions and writes the file when anything changed.
 func (b *resumeBook) apply() {
+	b.applyMu.Lock()
+	defer b.applyMu.Unlock()
 	b.mu.Lock()
 	pend, gone := b.pend, b.gone
 	b.pend, b.gone = map[string]api.AgentState{}, nil
@@ -153,6 +157,8 @@ func (b *resumeBook) apply() {
 }
 
 func (b *resumeBook) save() {
+	b.saveMu.Lock()
+	defer b.saveMu.Unlock()
 	b.mu.Lock()
 	data, err := json.Marshal(resumeFileV1{Version: 1, Sessions: b.m})
 	b.saves++
@@ -190,7 +196,9 @@ func writeFileAtomic(path string, data []byte) error {
 // started notes how session.create started a session. It writes at once: the session is new.
 func (b *resumeBook) started(session string, p api.SessionCreateParams) {
 	b.mu.Lock()
-	b.m[session] = resumeEntry{Harness: p.Harness, Model: p.Model, Argv: slices.Clone(p.Argv)}
+	e := b.m[session]
+	e.Harness, e.Model, e.Argv = p.Harness, p.Model, slices.Clone(p.Argv)
+	b.m[session] = e
 	b.mu.Unlock()
 	b.save()
 }
