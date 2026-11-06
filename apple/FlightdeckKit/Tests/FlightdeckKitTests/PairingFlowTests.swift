@@ -123,6 +123,18 @@ final class PairingFlowTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testPairingProbeTriesOtherEndpoints() async throws {
+        let server = TestPairServer()
+        try await server.start()
+        defer { server.stop() }
+        let setup = SSHSetup(keys: DeviceKeys(store: MemorySecretStore(), preferEnclave: false), listURL: nil, fleet: nil, timing: fastSSH())
+        var entry = try Pairing.entry(from: answer(paired(server, device: "SHA256:dev", hostKeys: [])), code: code(server), deviceFingerprint: "SHA256:dev", keyID: DeviceKeys.defaultID).entry
+        entry.endpoints = [SSHEndpoint(host: "127.0.0.1", port: 1), server.endpoint]
+        let key = try await setup.probePairing(entry)
+        XCTAssertEqual(SSHFingerprint.of(key), server.hostKeyFingerprint)
+    }
+
     func testEntryRefusals() throws {
         let s = TestPairServer()
         let c = code(s)

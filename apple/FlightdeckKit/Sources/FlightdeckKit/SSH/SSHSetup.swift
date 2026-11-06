@@ -401,6 +401,20 @@ public final class SSHSetup {
     /// spent, so Settings offers to finish it. Kept in memory only.
     public var unfinishedPairing: SSHHabEntry?
 
+    /// Probes each paired endpoint until one presents a host key.
+    public func probePairing(_ entry: SSHHabEntry) async throws -> NIOSSHPublicKey {
+        var last: Error = TransportError("the hab has no SSH address")
+        for endpoint in entry.endpoints {
+            do {
+                return try await probe(SSHDestination(user: entry.user, endpoint: endpoint), keyID: entry.keyID)
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+                last = error
+            }
+        }
+        throw last
+    }
+
     /// Stores a paired entry and connects it, then tests it with one
     /// `hab.ping`. The entry is stored first: the hab already admitted the key,
     /// so a failed first connection must not lose it (the hab refuses to pair

@@ -654,7 +654,7 @@ struct PairingView: View {
         step = .connecting
         task = Task {
             do {
-                let key = try await setup.probe(SSHDestination(user: e.user, endpoint: e.endpoints[0]), keyID: e.keyID)
+                let key = try await setup.probePairing(e)
                 step = .hostKey(e, SSHFingerprint.of(key), String(openSSHPublicKey: key))
             } catch {
                 if Task.isCancelled { return }
