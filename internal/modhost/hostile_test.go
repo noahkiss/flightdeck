@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -188,6 +189,16 @@ func totalAlloc(f func()) uint64 {
 // TestNoValueAmplification: String objects, typed arrays and the like are refused before the
 // host lists their keys, which allocated about 140 times their size in Go.
 func TestNoValueAmplification(t *testing.T) {
+	// Other tests allocate concurrently. Run these per-call measurements in a fresh
+	// test process so those allocations cannot enter the process-wide counter.
+	if os.Getenv("GFF_TEST_AMPLIFICATION_CHILD") == "" {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestNoValueAmplification$", "-test.count=1")
+		cmd.Env = append(os.Environ(), "GFF_TEST_AMPLIFICATION_CHILD=1", "GORACE=atexit_sleep_ms=0")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("isolated allocation test: %v\n%s", err, out)
+		}
+		return
+	}
 	var logs []string
 	var mu sync.Mutex
 	m := newModule(t, writeBundle(t, "amplify", `"exec", "fetch"`, `
