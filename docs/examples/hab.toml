@@ -194,11 +194,16 @@ keep = 30
 [logbook.export]
 # git = "~/logbook-export"
 
-# Vector search: an embeddings server you run, that speaks the OpenAI-compatible
-# POST {"model", "input"} shape. With it, this hab answers semantic finds for its peers.
+# Vector search: an embeddings server you run. Off unless base_url and model are set. With it
+# on, this hab answers semantic finds for its peers, and each record's text goes to this server.
 [logbook.vectors]
-# url = "http://127.0.0.1:2780/v1/embeddings"
-# model = "an-embedding-model"
+# An OpenAI-compatible API root; the hab posts to <base_url>/embeddings. A local server
+# (Ollama, LM Studio) keeps the text on this network.
+# base_url = "http://127.0.0.1:11434/v1"
+# model = "nomic-embed-text"
+# The command that prints the API key, as an argv with no shell (as push's key_command,
+# docs/push.md). Leave it out for a local server that needs no key.
+# key_command = ["pass", "show", "flightdeck/embeddings-key"]
 # Where the index lives; default: logbook-vectors.gob in the state folder.
 # index = "~/logbook-vectors.gob"
 
