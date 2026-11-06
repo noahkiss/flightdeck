@@ -433,6 +433,13 @@ func TestClosePane(t *testing.T) {
 	startHolder(t, hdir, "one", 0)
 	l := openLink(t, Config{HolderDir: hdir, Rescan: 50 * time.Millisecond})
 	waitFor(t, "a current holder", func() bool { return l.client.Current() != nil })
+	releases := make(chan hp.UUID, 4)
+	stop := l.Watch(func(n Notice) {
+		if n.Released {
+			releases <- n.Pane.UUID
+		}
+	})
+	defer stop()
 	running, ended := uuidN(70), uuidN(71)
 	pidFile := filepath.Join(shortDir(t), "pid")
 	ctx, cancel := context.WithTimeout(context.Background(), waitLong)
@@ -458,6 +465,14 @@ func TestClosePane(t *testing.T) {
 	for _, u := range []hp.UUID{running, ended} {
 		if err := l.ClosePane(ctx, u); err != nil {
 			t.Fatalf("close %s: %v", u, err)
+		}
+		select {
+		case released := <-releases:
+			if released != u {
+				t.Fatalf("release %s, want %s", released, u)
+			}
+		case <-ctx.Done():
+			t.Fatal("no successful release notice")
 		}
 		if st, _ := paneStatus(l, u); !st.Gone {
 			t.Errorf("pane %s after close: %+v, want gone", u, st)

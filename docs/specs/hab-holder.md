@@ -746,7 +746,26 @@ environments from the OS. Keeping it out of the holder keeps policy out of the p
 not change.
 
 Ruling (coordinator, 2026-11-01): take the recommendation. hc sweeps by a scope token too
-(`landscape.md` 2.1); we keep the same behaviour but run it in gff-hab. Not built yet.
+(`landscape.md` 2.1); we keep the same behaviour but run it in gff-hab.
+
+Built (task-54so77hs): after an observed successful holder release, gff-hab queues a process sweep outside the
+link's event loop. This includes release from a draining holder. A lost holder connection or
+an ordinary program exit starts no sweep. Neither replacement nor replay errors start a sweep. The existing `GFF_HAB` environment carries the pane's
+stable token; the socket path may change without changing its match.
+
+The sweep lists only this user's processes and sends SIGKILL to exact token matches. It checks
+the process start identity and environment twice before signalling each PID; it never signals
+a process group or gff-hab itself. Linux reads procfs; macOS reads kernel process records and
+`kern.procargs2`. Unreadable environments, zombies and Linux processes in uninterruptible sleep
+are skipped. A process that clears or replaces its token is outside this scope.
+
+Release attempts are not persisted. A hab crash before its sweep can leave processes behind.
+
+One scan runs at a time with a two-second caller budget. A stuck kernel memory read cannot
+hold release or shutdown; it occupies that one scan slot until it returns. A later release
+logs an unavailable scan rather than starting another stuck reader. Tokens never appear in
+logs. The scan is best effort, not a security boundary: fork or exec can race inspection,
+and neither OS offers an atomic signal-if-environment-matches operation.
 
 ### Q5. A Mac without a graphical login. **Decision: refuse by default; a flagged `Background` holder later, by explicit option (coordinator, 2026-11-01)**
 

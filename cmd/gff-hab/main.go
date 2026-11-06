@@ -1272,11 +1272,14 @@ func serve(args []string) error {
 		return err
 	}
 	if lk != nil {
+		escaped := newEscapedSweeps(tokens, logger.Printf)
+		defer escaped.Close()
 		if roundsSvc != nil {
 			stopRounds := lk.Watch(roundsSvc.notice)
 			defer stopRounds()
 		}
 		stopWatch := lk.Watch(func(n link.Notice) {
+			escaped.notice(n)
 			switch n.Kind {
 			case link.PaneAdded: // a holder reached late: its opencode panes are followed now
 				ocs.added(n.Pane.UUID.String())

@@ -91,6 +91,8 @@ const (
 type Notice struct {
 	Kind NoticeKind
 	Pane PaneStatus
+	// Released proves a successful holder Release, rather than loss or replacement.
+	Released bool
 	// Report and Live are set for PaneReport. Live is false for a report in replayed bytes,
 	// which the program sent before this gff-hab followed the pane.
 	Report progstatus.Report

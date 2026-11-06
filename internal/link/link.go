@@ -462,6 +462,7 @@ func (l *Link) releaseEnded(p *pane) {
 			if n, ok := p.lose(ErrGone); ok {
 				removeCheckpoint(l.cfg.StateDir, p.uuid)
 				l.retire(p.uuid)
+				n.Released = true
 				l.notify([]Notice{n})
 			}
 		})
@@ -908,6 +909,7 @@ func (l *Link) ClosePane(ctx context.Context, u hp.UUID) error {
 		if n, ok := p.lose(ErrGone); ok {
 			removeCheckpoint(l.cfg.StateDir, p.uuid)
 			l.retire(p.uuid)
+			n.Released = true
 			l.notify([]Notice{n})
 		}
 	}) {
