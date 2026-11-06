@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"time"
 
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"golang.org/x/sys/unix"
@@ -36,7 +37,7 @@ func Sweep(ctx context.Context, token string) (int, error) {
 	done := make(chan result, 1)
 	go func() {
 		defer func() { <-flight }()
-		n, err := sweep(ctx, token, listProcesses, inspectProcess, unix.Kill)
+		n, err := sweep(ctx, token, listProcesses, inspectProcess, unix.Kill, 2*time.Second)
 		done <- result{n, err}
 	}()
 	select {
@@ -53,12 +54,13 @@ type process struct {
 }
 type inspector func(int, string) (process, bool)
 
-func sweep(ctx context.Context, token string, list func() ([]int, error), inspect inspector, kill func(int, unix.Signal) error) (int, error) {
+func sweep(ctx context.Context, token string, list func() ([]int, error), inspect inspector, kill func(int, unix.Signal) error, grace time.Duration) (int, error) {
 	pids, err := list()
 	if err != nil {
 		return 0, err
 	}
 	n := 0
+	var remaining []process
 	for _, pid := range pids {
 		if err := ctx.Err(); err != nil {
 			return n, err
@@ -76,8 +78,32 @@ func sweep(ctx context.Context, token string, list func() ([]int, error), inspec
 		if !ok || p != q || ctx.Err() != nil {
 			continue
 		}
-		if err := kill(pid, unix.SIGKILL); err == nil {
+		if err := kill(pid, unix.SIGTERM); err == nil {
 			n++
+			remaining = append(remaining, p)
+		}
+	}
+	if len(remaining) == 0 {
+		return n, nil
+	}
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return n, ctx.Err()
+	case <-timer.C:
+	}
+	for _, p := range remaining {
+		if ctx.Err() != nil {
+			return n, ctx.Err()
+		}
+		q, ok := inspect(p.pid, token)
+		if !ok || q != p {
+			continue
+		}
+		r, ok := inspect(p.pid, token)
+		if ok && r == p && ctx.Err() == nil {
+			_ = kill(p.pid, unix.SIGKILL)
 		}
 	}
 	return n, nil

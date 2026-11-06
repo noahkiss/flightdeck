@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"golang.org/x/sys/unix"
@@ -75,17 +76,49 @@ func TestSweepRevalidates(t *testing.T) {
 				return p, true
 			}, func(pid int, sig unix.Signal) error {
 				kills++
-				if pid != 42 || sig != unix.SIGKILL {
+				if pid != 42 || sig != unix.SIGTERM && sig != unix.SIGKILL {
 					t.Errorf("signal %d %v", pid, sig)
 				}
 				return nil
-			})
+			}, time.Millisecond)
 			want := 1
 			if tc.changed || tc.cleared || tc.canceled {
 				want = 0
 			}
-			if n != want || kills != want || err != nil {
+			if n != want || kills != 2*want || err != nil {
 				t.Fatalf("n %d kills %d err %v", n, kills, err)
+			}
+		})
+	}
+}
+
+func TestSweepGraceRevalidates(t *testing.T) {
+	for _, mode := range []string{"survived", "exited", "reused", "cleared"} {
+		t.Run(mode, func(t *testing.T) {
+			calls := 0
+			var signals []unix.Signal
+			_, err := sweep(context.Background(), "token", func() ([]int, error) { return []int{42}, nil }, func(pid int, token string) (process, bool) {
+				calls++
+				p := process{pid: pid, born: "first"}
+				if calls >= 3 {
+					if mode == "exited" || mode == "cleared" {
+						return p, false
+					}
+					if mode == "reused" {
+						p.born = "new"
+					}
+				}
+				return p, true
+			}, func(pid int, sig unix.Signal) error { signals = append(signals, sig); return nil }, time.Millisecond)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := 1
+			if mode == "survived" {
+				want = 2
+			}
+			if len(signals) != want || signals[0] != unix.SIGTERM || want == 2 && signals[1] != unix.SIGKILL {
+				t.Fatalf("signals %v", signals)
 			}
 		})
 	}

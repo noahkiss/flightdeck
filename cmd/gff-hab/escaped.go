@@ -12,7 +12,7 @@ import (
 )
 
 // escapedSweeps keeps process inspection off the link's event loop. One worker
-// deduplicates queued pane releases and each OS scan has a two-second budget.
+// deduplicates queued pane releases and each OS scan has a six-second budget, including its two-second grace.
 type escapedSweeps struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -69,13 +69,13 @@ func (s *escapedSweeps) run() {
 			if s.ctx.Err() != nil {
 				return
 			}
-			ctx, cancel := context.WithTimeout(s.ctx, 2*time.Second)
+			ctx, cancel := context.WithTimeout(s.ctx, 6*time.Second)
 			n, err := s.sweep(ctx, s.tokens.Token(u))
 			cancel()
 			if err != nil {
 				s.logf("pane %s: escaped process sweep: %v", u, err)
 			} else if n > 0 {
-				s.logf("pane %s: ended %d escaped processes", u, n)
+				s.logf("pane %s: signalled %d escaped processes", u, n)
 			}
 		}
 	}

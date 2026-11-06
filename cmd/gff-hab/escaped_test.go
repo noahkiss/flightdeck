@@ -71,6 +71,18 @@ func TestEscapedProcessRelease(t *testing.T) {
 	}
 	var pid int
 	waitUntil(t, "the escaped child", func() bool { b, _ := os.ReadFile(pidFile); pid, _ = strconv.Atoi(string(b)); return pid > 0 })
+	var graceful int
+	waitUntil(t, "the graceful escaped child", func() bool {
+		b, _ := os.ReadFile(pidFile + ".graceful")
+		graceful, _ = strconv.Atoi(string(b))
+		return graceful > 0
+	})
+	gracefulClean := false
+	defer func() {
+		if !gracefulClean {
+			_ = syscall.Kill(graceful, syscall.SIGKILL)
+		}
+	}()
 	ended := false
 	defer func() {
 		if !ended {
@@ -78,10 +90,16 @@ func TestEscapedProcessRelease(t *testing.T) {
 		}
 	}()
 	var empty api.Empty
+	started := time.Now()
 	if err := c.Call(ctx, "pane.close", api.PaneRef{Pane: res.Pane}, &empty); err != nil {
 		t.Fatal(err)
 	}
+	waitUntil(t, "TERM cleanup", func() bool { _, err := os.Stat(pidFile + ".graceful.term"); return err == nil })
+	gracefulClean = true
 	waitUntil(t, "the escaped child ended", func() bool { return syscall.Kill(pid, 0) == syscall.ESRCH })
+	if time.Since(started) < 2*time.Second {
+		t.Fatal("TERM-ignoring child died before grace elapsed")
+	}
 	ended = true
 	if err := other.Process.Signal(syscall.Signal(0)); err != nil {
 		t.Fatalf("unrelated child ended: %v", err)
