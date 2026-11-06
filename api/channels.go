@@ -108,7 +108,7 @@ type ChannelStatusResult struct {
 
 type ChannelWaitParams struct {
 	Session   string        `json:"session,omitempty" doc:"Wait for a message to this session on this hab. The hook endpoint fills it from the pane's token."`
-	Agent     string        `json:"agent,omitempty" doc:"Wait for this session's agent on this hab to reach a state in for."`
+	Agent     string        `json:"agent,omitempty" doc:"Wait for this agent to reach a state in for: a name on this hab, or label/name or a bare name on a peer (mesh.md 6.6). The answer names it by its full address."`
 	For       []AgentStatus `json:"for,omitempty" doc:"The states that end the wait for agent; empty means any change."`
 	TimeoutMS int           `json:"timeout_ms,omitempty" doc:"Default 180000, at most 600000."`
 }

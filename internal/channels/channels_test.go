@@ -173,7 +173,7 @@ type linkCaller struct {
 	calls *atomic.Int32
 }
 
-func (c linkCaller) Call(_ context.Context, method string, params, result any) error {
+func (c linkCaller) Call(ctx context.Context, method string, params, result any) error {
 	if c.down != nil && c.down.Load() {
 		return errors.New("link down")
 	}
@@ -192,6 +192,10 @@ func (c linkCaller) Call(_ context.Context, method string, params, result any) e
 		var p api.MailPullParams
 		json.Unmarshal(b, &p)
 		out, err = c.to().Pull(c.from, p)
+	case "channel.wait": // as the control connection serves a peer link (mesh.md 6.6)
+		var p api.ChannelWaitParams
+		json.Unmarshal(b, &p)
+		out, err = c.to().Wait(control.WithPeerCall(ctx), p)
 	default:
 		return fmt.Errorf("no method %s", method)
 	}
@@ -1468,5 +1472,97 @@ func TestSeedAndNote(t *testing.T) {
 	}
 	if _, err := a.s.Note("capcom", " "); err == nil {
 		t.Fatal("an empty note was taken")
+	}
+}
+
+// TestWaitPeerAgent: a wait on an agent on a peer goes over the link this hab dialed, by
+// label/name or a bare name the catalog resolves, and answers with the full address; a wait
+// that came over a peer link never forwards again; no link refuses at once (mesh.md 6.6).
+func TestWaitPeerAgent(t *testing.T) {
+	la, lb := newLocal("alice"), newLocal("bob", "carol")
+	lb.busy["bob"] = true
+	a := newHab(t, "dev-a", "hosta", "", la)
+	b := newHab(t, "dev-b", "hostb", "", lb)
+	down := &atomic.Bool{}
+	calls := link(a, b, "bee", down)
+	link(b, a, "ay", nil)
+	a.peers.mu.Lock()
+	a.peers.list.Peers = append(a.peers.list.Peers, api.Peer{Label: "sea", DeviceID: "dev-c"})
+	a.peers.links = append(a.peers.links, Link{Label: "sea", DeviceID: "dev-c", Caps: []string{Capability}})
+	a.peers.mu.Unlock()
+	a.cat = api.CatalogList{Hosts: []api.CatalogEntry{
+		{Label: "bee", Catalog: api.Catalog{DeviceID: "dev-b", Host: "hostb", Agents: []api.CatalogAgent{{Session: "bob"}, {Session: "loopy"}, {Session: "twin"}}}},
+		{Label: "sea", Catalog: api.Catalog{DeviceID: "dev-c", Host: "hostc", Agents: []api.CatalogAgent{{Session: "twin"}, {Session: "far"}}}},
+	}}
+	// b's copy of a names loopy too: a forward that forwarded again would go back and forth.
+	b.cat = api.CatalogList{Hosts: []api.CatalogEntry{
+		{Label: "ay", Catalog: api.Catalog{DeviceID: "dev-a", Host: "hosta", Agents: []api.CatalogAgent{{Session: "loopy"}}}},
+	}}
+	ctx := context.Background()
+	idle := []api.AgentStatus{api.AgentStatusIdle}
+
+	for _, name := range []string{"bee/bob", "bob"} {
+		lb.set(func() { lb.busy["bob"] = true })
+		go func() {
+			time.Sleep(30 * time.Millisecond)
+			lb.set(func() { lb.busy["bob"] = false })
+		}()
+		r, err := a.s.Wait(ctx, api.ChannelWaitParams{Agent: name, For: idle, TimeoutMS: 10000})
+		if err != nil || r.Agent == nil || r.Agent.Session != "bee/bob" || r.Agent.State != api.AgentStatusIdle {
+			t.Fatalf("%s: %+v %v", name, r, err)
+		}
+	}
+	// Any change, with no states named.
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		lb.set(func() { lb.busy["bob"] = true })
+	}()
+	if r, err := a.s.Wait(ctx, api.ChannelWaitParams{Agent: "bee/bob", TimeoutMS: 10000}); err != nil || r.Agent == nil || r.Agent.State != api.AgentStatusWorking {
+		t.Fatalf("any change: %+v %v", r, err)
+	}
+	// The peer's time runs out: timed out, not an error.
+	if r, err := a.s.Wait(ctx, api.ChannelWaitParams{Agent: "bee/bob", For: idle, TimeoutMS: 50}); err != nil || !r.TimedOut {
+		t.Fatalf("timeout: %+v %v", r, err)
+	}
+	// b does not hold loopy and does not send the wait back to a: loopy is gone there.
+	n := calls.Load()
+	r, err := a.s.Wait(ctx, api.ChannelWaitParams{Agent: "loopy", For: []api.AgentStatus{api.AgentStatusExited}, TimeoutMS: 10000})
+	if err != nil || r.Agent == nil || r.Agent.Session != "bee/loopy" || r.Agent.State != api.AgentStatusExited || calls.Load() != n+1 {
+		t.Fatalf("loopy: %+v %v, %d calls", r, err, calls.Load()-n)
+	}
+	// This hab's own name and its own host id wait here, with no call.
+	n = calls.Load()
+	if r, err := a.s.Wait(ctx, api.ChannelWaitParams{Agent: "hosta/alice", For: idle, TimeoutMS: 1000}); err != nil || r.Agent == nil || r.Agent.Session != "alice" || calls.Load() != n {
+		t.Fatalf("own host id: %+v %v", r, err)
+	}
+	// A name no host lists waits here, as before: gone.
+	if r, err := a.s.Wait(ctx, api.ChannelWaitParams{Agent: "ghost", For: []api.AgentStatus{api.AgentStatusExited}, TimeoutMS: 1000}); err != nil || r.Agent == nil || r.Agent.Session != "ghost" {
+		t.Fatalf("ghost: %+v %v", r, err)
+	}
+	// Refusals: two hosts, no link up, an unknown label.
+	if _, err := a.s.Wait(ctx, api.ChannelWaitParams{Agent: "twin", TimeoutMS: 1000}); kind(err) != api.ErrorKindConflict {
+		t.Fatalf("twin: %v", err)
+	}
+	if _, err := a.s.Wait(ctx, api.ChannelWaitParams{Agent: "far", TimeoutMS: 1000}); kind(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "sea is not online") {
+		t.Fatalf("far: %v", err)
+	}
+	if _, err := a.s.Wait(ctx, api.ChannelWaitParams{Agent: "nope/bob", TimeoutMS: 1000}); kind(err) != api.ErrorKindNotFound {
+		t.Fatalf("unknown label: %v", err)
+	}
+	// A message to the waiter comes first and ends the forward.
+	lb.set(func() { lb.busy["bob"] = true })
+	res := make(chan api.ChannelWaitResult, 1)
+	go func() {
+		r, _ := a.s.Wait(ctx, api.ChannelWaitParams{Session: "alice", Agent: "bee/bob", For: idle, TimeoutMS: 10000})
+		res <- r
+	}()
+	sent := send(t, b.s, "carol", "ay/alice", "first")
+	if r := <-res; r.Message == nil || r.Message.ID != sent.ID || r.Agent != nil {
+		t.Fatalf("message first: %+v", r)
+	}
+	// A link that fails ends the wait with unavailable.
+	down.Store(true)
+	if _, err := a.s.Wait(ctx, api.ChannelWaitParams{Agent: "bee/bob", For: idle, TimeoutMS: 10000}); kind(err) != api.ErrorKindUnavailable || !strings.Contains(err.Error(), "the wait on bee/bob ended") {
+		t.Fatalf("link down: %v", err)
 	}
 }

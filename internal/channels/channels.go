@@ -1156,6 +1156,23 @@ func (s *Service) WaitTake(ctx context.Context, p api.ChannelWaitParams, def tim
 	if p.TimeoutMS > 0 {
 		wait = min(time.Duration(p.TimeoutMS)*time.Millisecond, MaxWait)
 	}
+	var remote <-chan remoteAnswer
+	if p.Agent != "" && !control.PeerCall(ctx) {
+		at, err := s.agentTarget(p.Agent)
+		if err != nil {
+			return api.ChannelWaitResult{}, nil, err
+		}
+		if at.device != s.cfg.Self {
+			l, err := s.linkTo(at)
+			if err != nil {
+				return api.ChannelWaitResult{}, nil, err
+			}
+			rctx, cancel := context.WithCancel(ctx)
+			defer cancel() // a message that comes first ends the forward
+			remote = s.forwardWait(rctx, l, at, p.For, wait)
+		}
+		p.Agent = at.session
+	}
 	t := time.NewTimer(wait)
 	defer t.Stop()
 	var first api.AgentStatus
@@ -1184,7 +1201,7 @@ func (s *Service) WaitTake(ctx context.Context, p api.ChannelWaitParams, def tim
 		}
 		s.mu.Unlock()
 		var agentCh <-chan struct{}
-		if p.Agent != "" {
+		if p.Agent != "" && remote == nil {
 			st, ok, changed := s.cfg.Local.Agent(p.Agent)
 			if !ok {
 				st = api.AgentStatusExited
@@ -1203,12 +1220,82 @@ func (s *Service) WaitTake(ctx context.Context, p api.ChannelWaitParams, def tim
 		select {
 		case <-ch:
 		case <-agentCh:
+		case r := <-remote:
+			return r.res, nil, r.err
 		case <-t.C:
 			return api.ChannelWaitResult{TimedOut: true}, nil, nil
 		case <-ctx.Done():
 			return api.ChannelWaitResult{TimedOut: true}, nil, nil
 		}
 	}
+}
+
+// agentTarget resolves the agent of a wait (mesh.md 6.6): a bare name this hab holds is here;
+// else the address resolves as a send's does, and a bare name no host lists stays here, gone.
+func (s *Service) agentTarget(name string) (target, error) {
+	bare := !strings.Contains(name, "/")
+	if bare {
+		if _, ok := s.cfg.Local.Session(name); ok {
+			return target{device: s.cfg.Self, session: name, address: name}, nil
+		}
+	}
+	t, err := s.resolve(name)
+	if err != nil {
+		var ce *control.Error
+		if bare && errors.As(err, &ce) && ce.Data.Kind == api.ErrorKindNotFound {
+			return target{device: s.cfg.Self, session: name, address: name}, nil
+		}
+		return target{}, err
+	}
+	return t, nil
+}
+
+// linkTo returns the link this hab dialed to the peer of t, or why a wait cannot use it.
+func (s *Service) linkTo(t target) (Link, error) {
+	if s.cfg.Peers != nil {
+		for _, l := range s.cfg.Peers.Links() {
+			if l.Label != t.label {
+				continue
+			}
+			switch {
+			case !l.Online || l.Caller == nil:
+				return Link{}, control.Errorf(api.ErrorKindUnavailable, "peer %s is not online from this hab, so a wait on %s cannot reach it; wait again once it is online", t.label, t.address)
+			case !slices.Contains(l.Caps, Capability):
+				return Link{}, control.Errorf(api.ErrorKindUnavailable, "peer %s runs without channels, so it cannot wait on %s", t.label, t.address)
+			}
+			return l, nil
+		}
+	}
+	return Link{}, control.Errorf(api.ErrorKindUnavailable, "this hab has no link to %s, so a wait on %s cannot reach it", t.label, t.address)
+}
+
+// remoteAnswer is the end of a wait forwarded to a peer.
+type remoteAnswer struct {
+	res api.ChannelWaitResult
+	err error
+}
+
+// forwardWait asks the peer over l to wait on its agent t.session, and sends the answer on the
+// channel it returns: the agent's state under its full address, the end of the time, or why the
+// wait failed. Nothing is sent once ctx ends.
+func (s *Service) forwardWait(ctx context.Context, l Link, t target, states []api.AgentStatus, wait time.Duration) <-chan remoteAnswer {
+	out := make(chan remoteAnswer, 1)
+	go func() {
+		var r api.ChannelWaitResult
+		err := l.Caller.Call(ctx, "channel.wait", api.ChannelWaitParams{Agent: t.session, For: states, TimeoutMS: int(wait / time.Millisecond)}, &r)
+		if ctx.Err() != nil {
+			return
+		}
+		switch {
+		case err != nil:
+			out <- remoteAnswer{err: control.Errorf(api.ErrorKindUnavailable, "the wait on %s ended: %v", t.address, err)}
+		case r.Agent != nil:
+			out <- remoteAnswer{res: api.ChannelWaitResult{Agent: &api.ChannelAgent{Session: t.address, State: r.Agent.State}}}
+		default:
+			out <- remoteAnswer{res: api.ChannelWaitResult{TimedOut: true}}
+		}
+	}()
+	return out
 }
 
 // oldestLocked returns the oldest inbox item for a session name.

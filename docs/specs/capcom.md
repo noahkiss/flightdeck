@@ -569,7 +569,8 @@ Limits, at the bar of herdr, Paseo and Rex:
 ### 6.5 Built choices (task-9n47i6l8)
 
 Two action tools in `cmd/gff-hab/handoff.go`, in the same table as `start_session`: `hand_off`
-(3.2) and `file_record` (3.4). Doors: `gff-hab mcp`, `gff-hab act` and the manual. No API
+(3.2) and `file_record` (3.4). The channel tools `channel_send` and `channel_wait`, which an
+agent uses to message and wait on another agent itself, are in `mesh.md` 6.6. Doors: `gff-hab mcp`, `gff-hab act` and the manual. No API
 change: `hand_off` uses `catalog.list`, `channel.send` and `channel.status`; `file_record` uses
 `logbook.find` and `logbook.write`.
 

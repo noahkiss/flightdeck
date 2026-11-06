@@ -943,8 +943,9 @@ the rest of client kind `hab`.
 
 **`channel.wait`** (6.4):
 
-- Waits for a message to `session`, or, with `agent`, for that agent on this hab to reach one of
-  the states in `for` (any change when `for` is empty; `exited` also when the session goes).
+- Waits for a message to `session`, or, with `agent`, for that agent to reach one of the
+  states in `for` (any change when `for` is empty; `exited` also when the session goes). The
+  agent may be on a peer (6.6).
   Whichever comes first returns. `timeout_ms` is at most 600 000. With none, a client waits
   180 s and a pane 110 s, under the 2 minute limit a harness puts on one tool command. The end of
   the time returns `timed_out`, not an error.
@@ -952,9 +953,7 @@ the rest of client kind `hab`.
 
 Not built in this stage:
 
-- `gff-hab wait -agent` for an agent on another host; `-for` reads this hab's agents only.
 - The read back and its `not_delivered`; the two-second typing pause (both Part 4).
-- An MCP tool and the printed skill (agent kit, task-6ho9972u).
 - Revocations as control items (`transport.md` 6.6): the outbox takes only messages and status
   items.
 - A name clash for a session with no agent: the catalog lists agents only, so a shell session's
@@ -969,6 +968,59 @@ Limits, at the bar of herdr, Rex and Paseo (hc has no outbox and no dedup):
 - A name clash made while a peer was offline is not shown on the status board yet.
 - Each save writes the whole state. The bounds above keep it to a few MiB in normal use and
   about 20 MiB at worst; an append-only log is the next step if that proves slow.
+
+### 6.6 Built choices: the MCP tools and a wait on a peer's agent (task-dokhx3sg, task-mz98sb7l)
+
+**A wait on a peer's agent.** `channel.wait` with `agent` takes the same addresses as a send
+(6.5), with one difference for a bare name.
+
+- **A bare name** names this hab's session when it has one, as before, with no catalog check.
+  Else it resolves through the catalog copies as a send does: one host is that peer; two or more
+  are `conflict` with the full addresses; a host outside the peer list is `unavailable` "add
+  <host id> as a peer". A name no copy lists waits on this hab, as before: it counts as gone
+  (`exited`).
+- **`label/name`** with this hab's own label or host id waits here. Any other label waits on
+  that peer.
+- **The forward.** The hab calls `channel.wait` with `agent` (the bare name), `for` and the
+  wait's time over the peer link it dialed, the link mail uses. The peer waits on its own agent
+  as for a local wait and answers. The answer names the agent by its full address
+  (`label/name`).
+- **A forward never forwards.** A `channel.wait` that arrives over a peer link (client kind
+  `hab` with the hello's `peer` field) waits on that hab's own agents only. So two habs that
+  each find the name in the other's copy cannot send a wait back and forth.
+- **A message and a peer's agent** wait together: whichever comes first returns, and the
+  forward is cancelled. The peer's wait then ends at its own time limit at the latest.
+- **No link, no wait.** The peer must be online over a link this hab dialed, with the
+  `channels` capability. Else the wait is refused at once with `unavailable`, naming the label
+  and why (offline, never reached, no `channels`). A link that drops during the wait ends it
+  with `unavailable`. The caller waits again; nothing is held.
+
+  Decision: forward the wait over the peer link, not read the catalog copies. Reason: a copy
+  is pulled every 15 s, so a short state (`done` between two turns) would be missed and every
+  answer would lag; the peer's own wait sees each change at once, and the peer link already
+  serves `channel.wait` (6.5). The cost is that a hab only the peer can dial cannot wait on
+  that peer's agents. The same holds for the read tools (`capcom.md` 4).
+
+**The MCP tools.** `gff-hab mcp` serves two channel tools beside the read and action tools,
+and the manual (`gff-hab mcp --skill`) lists them in their own section. Both reach the hab
+through the pane route (`GFF_HAB`), so the pane's session is the sender and the waiter (6.5).
+Outside a pane they refuse at once, before any call, pointing at `gff-hab send -from` and
+`gff-hab wait -session`.
+
+| Tool | Arguments | Calls | Answer |
+|---|---|---|---|
+| `channel_send` | `to` (required: `label/name` or a name), `text` (required), `reply_to` | `channel.send` | The message id, the full address and the state (`handed` or `queued`) |
+| `channel_wait` | `agent` (`label/name` or a name), `for` (states, comma separated), `timeout_seconds` (default 110, at most 600) | `channel.wait` | A message in the envelope (6.5), or the agent's state, or "nothing within" the time |
+
+- A message `channel_wait` returns counts as delivered once the tool's answer is written, as
+  for `gff-hab wait` from a pane.
+- The tools are action tools in the MCP annotations (not read-only): a send writes mail, and a
+  wait takes a message.
+- The manual's shell lines are `gff-hab send` and `gff-hab wait`, the commands they match.
+- One MCP call may last the longest wait plus 10 s.
+
+Limits, at the bar of herdr and hc: hc's wait reads one host; herdr has none across hosts. A
+wait on a peer ends when the link drops, rather than waiting for it to come back.
 
 ---
 

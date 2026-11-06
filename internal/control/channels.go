@@ -22,6 +22,21 @@ type Channels interface {
 	Pull(from api.PeerHello, p api.MailPullParams) (api.MailPullResult, error)
 }
 
+// peerCallKey marks the context of a channel call that came over a peer link.
+type peerCallKey struct{}
+
+// WithPeerCall marks ctx as a call that came over a peer link (mesh.md 6.6).
+func WithPeerCall(ctx context.Context) context.Context {
+	return context.WithValue(ctx, peerCallKey{}, true)
+}
+
+// PeerCall reports whether ctx is a call that came over a peer link: a channel.wait there waits
+// on this hab's own agents only, so a wait is never forwarded twice (mesh.md 6.6).
+func PeerCall(ctx context.Context) bool {
+	v, _ := ctx.Value(peerCallKey{}).(bool)
+	return v
+}
+
 // maxChannelTime bounds one channel call: the longest wait plus a margin.
 const maxChannelTime = 610 * time.Second
 
@@ -86,9 +101,13 @@ func (c *conn) handleChannels(m message) {
 		c.reply(m, seq, nil, e)
 		return
 	}
+	fromPeer := c.peer != nil
 	go func() {
 		ctx, cancel := context.WithTimeout(c.ctx, maxChannelTime)
 		defer cancel()
+		if fromPeer {
+			ctx = WithPeerCall(ctx)
+		}
 		res, err := call(ctx)
 		seq := c.currentSeq()
 		if err != nil {

@@ -1801,7 +1801,7 @@
       "params": [
         {
           "name": "agent",
-          "description": "Wait for this session's agent on this hab to reach a state in for.",
+          "description": "Wait for this agent to reach a state in for: a name on this hab, or label/name or a bare name on a peer (mesh.md 6.6). The answer names it by its full address.",
           "schema": {
             "type": "string"
           }
@@ -5167,7 +5167,7 @@
         "properties": {
           "agent": {
             "type": "string",
-            "description": "Wait for this session's agent on this hab to reach a state in for."
+            "description": "Wait for this agent to reach a state in for: a name on this hab, or label/name or a bare name on a peer (mesh.md 6.6). The answer names it by its full address."
           },
           "for": {
             "type": "array",
