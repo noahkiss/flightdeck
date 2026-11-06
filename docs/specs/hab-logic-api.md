@@ -732,6 +732,11 @@ Built choices (`internal/control`):
   reads state again.
 - Heartbeats start after the welcome. A connection that sends nothing for 45 s is closed with no
   message.
+- Clients apply the 45 s rule: `gff` through `habconn` (`DeadAfter`), the app through
+  `HabConnection.deadAfter`, and `gff-hab events` through `control.Client.DeadAfter`. `gff-hab
+  events` then exits 1 with "no message from the hab", so a
+  stream that stops is an error, never a silent wait. A ping's answer counts as hearing from the
+  hab: it restarts the hab's heartbeat timer too.
 
 ### 3.6 Errors
 

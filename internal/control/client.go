@@ -10,6 +10,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
@@ -17,6 +18,13 @@ import (
 
 // ErrClosed is returned by calls on a client whose connection has closed.
 var ErrClosed = errors.New("control: connection closed")
+
+// DefaultDeadAfter is the window of spec 3.5: a client that hears nothing for this long treats
+// the connection as dead.
+const DefaultDeadAfter = 45 * time.Second
+
+// ErrDead ends a connection on which nothing arrived for the window DeadAfter set.
+var ErrDead = errors.New("control: no message from the hab; connection presumed dead")
 
 // Client speaks the control protocol over any byte stream: the Unix socket, or the stdio of
 // `gff-hab connect` run through ssh. It implements api.Caller, so api.Client{Caller: c} gives
@@ -27,6 +35,9 @@ type Client struct {
 	wmu      sync.Mutex
 	w        *bufio.Writer
 	lastSend time.Time
+
+	lastRead atomic.Int64 // unix nanos when the last line from the server arrived
+	dead     atomic.Bool  // DeadAfter's window ran out
 
 	mu      sync.Mutex
 	nextID  uint64
@@ -63,6 +74,7 @@ func NewClient(rw io.ReadWriteCloser) *Client {
 		done:    make(chan struct{}),
 		stop:    make(chan struct{}),
 	}
+	c.lastRead.Store(time.Now().UnixNano())
 	go c.readLoop()
 	go c.pump()
 	return c
@@ -117,6 +129,32 @@ func (c *Client) KeepAlive(interval time.Duration) {
 					ctx, cancel := context.WithTimeout(context.Background(), interval)
 					_ = c.Call(ctx, "hab.ping", api.PingParams{}, nil)
 					cancel()
+				}
+			}
+		}
+	}()
+}
+
+// DeadAfter ends the connection with ErrDead when nothing arrives from the server for window
+// (spec 3.5: a client that hears nothing for 45 s treats the connection as dead). A healthy
+// hab sends a heartbeat or another message at least every 15 s, and answers KeepAlive's pings,
+// so only a stalled or lost connection reaches the window. Without it, a stream the hab stopped
+// feeding stays open and silent.
+func (c *Client) DeadAfter(window time.Duration) {
+	go func() {
+		t := time.NewTicker(window / 4)
+		defer t.Stop()
+		for {
+			select {
+			case <-c.done:
+				return
+			case <-c.stop:
+				return
+			case <-t.C:
+				if time.Since(time.Unix(0, c.lastRead.Load())) > window {
+					c.dead.Store(true)
+					c.rw.Close() // the read loop ends with ErrDead
+					return
 				}
 			}
 		}
@@ -258,6 +296,9 @@ func (c *Client) readLoop() {
 	for {
 		var line []byte
 		line, err = readLine(br)
+		if len(line) > 0 {
+			c.lastRead.Store(time.Now().UnixNano())
+		}
 		if len(line) > 0 && line[0] == '{' {
 			var m message
 			if jerr := json.Unmarshal(line, &m); jerr != nil {
@@ -272,6 +313,9 @@ func (c *Client) readLoop() {
 	}
 	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 		err = ErrClosed
+	}
+	if c.dead.Load() {
+		err = ErrDead
 	}
 	c.mu.Lock()
 	if c.reason != "" {
