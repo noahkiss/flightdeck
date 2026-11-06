@@ -220,6 +220,12 @@ func TestRoundMatcherLogbook(t *testing.T) {
 
 	created := eventRound(t, svc, "lb-created", rounds.EventLogbookUpdated, &api.RoundEventFilter{Type: "task"})
 	done := eventRound(t, svc, "lb-done", rounds.EventLogbookUpdated, &api.RoundEventFilter{Change: "status", Status: []string{"done"}})
+	// A project Logbook has not filed: a general record is not in it.
+	unfiled, err := svc.cfg.store.CreateProject("unfiled", "example.com/team/unfiled", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inProject := eventRound(t, svc, "lb-project", rounds.EventLogbookUpdated, &api.RoundEventFilter{Project: unfiled.ID})
 	person := api.LogbookActor{Kind: "person", Device: "phone"}
 	w, err := lb.Write(ctx, person, api.LogbookWriteParams{Changes: []api.LogbookChange{{Op: api.LogbookChangeOpCreate, Type: "task", Title: "ship it"}}})
 	if err != nil {
@@ -241,6 +247,9 @@ func TestRoundMatcherLogbook(t *testing.T) {
 	}
 	if n := svc.sched.Pending(done); n != 1 {
 		t.Errorf("status done: %d events, want 1 (the title change is not one)", n)
+	}
+	if n := svc.sched.Pending(inProject); n != 0 {
+		t.Errorf("a general record reached a round on an unfiled project: %d events", n)
 	}
 	if b := svc.sched.PendingBatch(done); len(b.Events) != 1 || !strings.Contains(b.Events[0].Title, "ship it today") {
 		t.Errorf("event %+v", b.Events)

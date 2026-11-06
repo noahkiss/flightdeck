@@ -1,103 +1,121 @@
 {
+  "batch": {
+    "dropped": 74,
+    "events": [
+      {
+        "at": "at-69",
+        "data": {
+          "data": 73,
+          "x_unknown_field": "later"
+        },
+        "kind": "kind-70",
+        "level": "level-72",
+        "title": "title-71",
+        "x_unknown_field": "later"
+      }
+    ],
+    "x_unknown_field": "later"
+  },
   "round": {
     "catch_up": "skip",
     "command": [
-      "command-27"
+      "command-28"
     ],
     "completed": true,
-    "completed_reason": "completed_reason-49",
-    "cooldown_ms": 39,
-    "created_at": "created_at-41",
-    "created_by": "created_by-40",
-    "cwd": "cwd-31",
-    "debounce_ms": 38,
+    "completed_reason": "completed_reason-50",
+    "cooldown_ms": 40,
+    "created_at": "created_at-42",
+    "created_by": "created_by-41",
+    "cwd": "cwd-32",
+    "debounce_ms": 39,
     "deleted": true,
-    "expires_at": "expires_at-34",
-    "failures": 46,
-    "group": "group-37",
-    "harness": "harness-24",
+    "expires_at": "expires_at-35",
+    "failures": 47,
+    "group": "group-38",
+    "harness": "harness-25",
     "harness_args": [
-      "harness_args-26"
+      "harness_args-27"
     ],
     "id": "id-4",
-    "last_ok": "last_ok-45",
+    "last_ok": "last_ok-46",
     "last_run": {
-      "created": "created-58",
-      "destination": "destination-63",
-      "ended_at": "ended_at-60",
-      "events": 62,
-      "id": "id-51",
-      "message": "message-64",
-      "missed": 55,
-      "number": 52,
+      "created": "created-59",
+      "destination": "destination-64",
+      "ended_at": "ended_at-61",
+      "events": 63,
+      "id": "id-52",
+      "message": "message-65",
+      "missed": 56,
+      "number": 53,
       "outcome": {
-        "at": "at-66",
-        "word": "word-65",
+        "at": "at-67",
+        "word": "word-66",
         "x_unknown_field": "later"
       },
-      "reason": "reason-56",
-      "result": "result-61",
-      "round": "round-53",
-      "session": "session-57",
-      "slot": "slot-54",
-      "started_at": "started_at-59",
+      "reason": "reason-57",
+      "result": "result-62",
+      "round": "round-54",
+      "session": "session-58",
+      "slot": "slot-55",
+      "started_at": "started_at-60",
       "state": "taken_over",
       "trigger": "manual",
       "x_unknown_field": "later"
     },
-    "last_slot": "last_slot-44",
-    "max_runs": 33,
+    "last_slot": "last_slot-45",
+    "max_runs": 34,
     "mode": "group",
-    "model": "model-25",
+    "model": "model-26",
     "name": "name-6",
-    "next_slot": "next_slot-43",
+    "next_slot": "next_slot-44",
     "notify": "never",
     "on_finish": "keep",
     "paused": true,
-    "paused_reason": "paused_reason-48",
-    "pending": 67,
-    "project": "project-28",
-    "project_dir": "project_dir-29",
-    "project_remote": "project_remote-30",
-    "prompt": "prompt-23",
+    "paused_reason": "paused_reason-49",
+    "pending": 68,
+    "project": "project-29",
+    "project_dir": "project_dir-30",
+    "project_remote": "project_remote-31",
+    "prompt": "prompt-24",
     "revision": 5,
-    "skips": 47,
-    "target": "target-32",
-    "timeout_ms": 35,
+    "skips": 48,
+    "target": "target-33",
+    "timeout_ms": 36,
     "trigger": {
       "at": "at-10",
       "cron": "cron-7",
       "event": "event-11",
       "every": "every-8",
       "filter": {
-        "by": "by-22",
-        "change": "change-19",
+        "by": "by-23",
+        "change": "change-20",
         "field": [
-          "field-14"
+          "field-15"
         ],
-        "level": "level-16",
+        "level": "level-17",
         "project": "project-12",
-        "session": "session-13",
+        "project_remote": "project_remote-13",
+        "session": "session-14",
         "state": [
-          "state-15"
+          "state-16"
         ],
         "status": [
-          "status-20"
+          "status-21"
         ],
         "tags": [
-          "tags-21"
+          "tags-22"
         ],
-        "text": "text-17",
-        "type": "type-18",
+        "text": "text-18",
+        "type": "type-19",
         "x_unknown_field": "later"
       },
       "kind": "manual",
       "x_unknown_field": "later",
       "zone": "zone-9"
     },
-    "trigger_error": "trigger_error-50",
-    "updated_at": "updated_at-42",
-    "wait_ms": 36,
+    "trigger_error": "trigger_error-51",
+    "updated_at": "updated_at-43",
+    "wait_ms": 37,
     "x_unknown_field": "later"
   },
   "seq": 3,

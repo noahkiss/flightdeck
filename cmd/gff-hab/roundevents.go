@@ -63,6 +63,13 @@ func newRoundMatcher(svc *roundsService, lb roundLogbook) *roundMatcher {
 	for _, p := range svc.cfg.store.Snapshot(api.HostInfo{}).Projects {
 		m.projects[p.ID] = p
 	}
+	// The agents' states as of now: a state published again after a gff-hab start is no new
+	// end of a turn.
+	if svc.cfg.agents != nil {
+		for _, st := range svc.cfg.agents() {
+			m.agents[st.Pane] = agentSeen{state: st.State, turn: st.Turn}
+		}
+	}
 	if lb != nil {
 		if n, err := lb.Store().LastFold(context.Background()); err == nil {
 			m.start = n
@@ -447,11 +454,16 @@ func byKind(a *api.LogbookActor) string {
 func (m *roundMatcher) logbookProject(ctx context.Context, project string) string {
 	if p, ok := m.svc.cfg.store.Project(project); ok {
 		for _, ident := range []string{p.Remote, p.RootCommit} {
+			if ident == "" {
+				continue
+			}
 			if id, ok, err := m.lb.Store().ProjectByIdentity(ctx, ident); err == nil && ok {
 				return id
 			}
 		}
-		return ""
+		// Logbook has not filed the project yet: no record is in it. Never "", which a general
+		// record's project would match.
+		return "unfiled:" + project
 	}
 	if c, err := m.lb.Store().Canonical(ctx, project); err == nil {
 		return c

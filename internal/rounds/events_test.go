@@ -360,3 +360,62 @@ func TestOutcomeOnce(t *testing.T) {
 		t.Fatalf("by message %+v", r)
 	}
 }
+
+// TestEventPauseKeepsQueuedBatch: a queued event run that a pause ends gives its events back
+// to the pending batch, so a pause, or a move that pauses first, loses none.
+func TestEventPauseKeepsQueuedBatch(t *testing.T) {
+	h := newHarness(t, "2026-03-02T10:00:00Z")
+	h.settle, h.max = -1, 1
+	h.reopen()
+	a := h.eventRound("a", EventNoticeRaised, nil)
+	b := h.eventRound("b", EventNoticeRaised, nil)
+	h.add(a.Round.ID, "x1", "x2")
+	h.add(b.Round.ID, "x1", "x2")
+	h.tickAfter(30 * time.Second)
+	// One runs; the other waits queued behind it under max_running 1.
+	if r := h.runs(b.Round.ID); len(r) != 1 || r[0].State != RunQueued {
+		a, b = b, a
+	}
+	if r := h.runs(b.Round.ID); len(r) != 1 || r[0].State != RunQueued {
+		t.Fatalf("runs %+v %+v, want one queued", h.runs(a.Round.ID), r)
+	}
+	if err := h.s.Pause(b.Round.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n := h.s.Pending(b.Round.ID); n != 2 {
+		t.Fatalf("pending %d after the pause, want 2", n)
+	}
+	if got := titles(h.s.PendingBatch(b.Round.ID)); fmt.Sprint(got) != "[x1 x2]" {
+		t.Fatalf("batch %v", got)
+	}
+}
+
+// TestEventTriggerChangedDropsBatch: an event round edited to a cron trigger keeps no batch,
+// in memory or on disk, and its run by hand takes none.
+func TestEventTriggerChangedDropsBatch(t *testing.T) {
+	h := newHarness(t, "2026-03-02T10:00:00Z")
+	h.settle = -1
+	h.reopen()
+	e := h.eventRound("ev", EventNoticeRaised, nil)
+	h.add(e.Round.ID, "a")
+	r := e.Round
+	r.Trigger = Trigger{Kind: TriggerCron, Cron: "0 * * * *", Zone: "UTC"}
+	r.Debounce, r.Cooldown = 0, 0
+	if _, err := h.s.Update(r); err != nil {
+		t.Fatal(err)
+	}
+	h.s.FlushPending()
+	if n := h.s.Pending(e.Round.ID); n != 0 {
+		t.Fatalf("pending %d on a cron round", n)
+	}
+	if got, ok := h.store.Get(e.Round.ID); !ok || got.State.Pending != nil {
+		t.Fatalf("stored pending %+v", got.State.Pending)
+	}
+	run, err := h.s.RunNow(e.Round.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Events != 0 {
+		t.Fatalf("a run by hand took %d old events", run.Events)
+	}
+}
