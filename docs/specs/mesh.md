@@ -724,7 +724,8 @@ resolution order of 6.1, the expiry of control items in 6.3, and the `--for exit
   `{"error": {"kind", "message"}}`. The route takes `channel.send`, `channel.status` and
   `channel.wait`. A pane with no session cannot send.
 - **From a client.** The control connection takes the same three methods. `channel.send` names
-  the sending session in `from`; `channel.wait` names the waiting session in `session`.
+  the sending session in `from`, by name or id (the envelope always carries the name);
+  `channel.wait` names the waiting session in `session`.
 - **The command picks the door.** With `-socket` or `-via`, the control connection, and `-from`
   or `-session` is needed. Else, with `GFF_HAB` set, the hook endpoint. Else the default
   control socket.

@@ -1726,7 +1726,7 @@
       "params": [
         {
           "name": "from",
-          "description": "The sending session's name on this hab. The hook endpoint fills it from the pane's token.",
+          "description": "The sending session on this hab: its name or its id. The hook endpoint fills it from the pane's token.",
           "schema": {
             "type": "string"
           }
@@ -5049,7 +5049,7 @@
         "properties": {
           "from": {
             "type": "string",
-            "description": "The sending session's name on this hab. The hook endpoint fills it from the pane's token."
+            "description": "The sending session on this hab: its name or its id. The hook endpoint fills it from the pane's token."
           },
           "reply_to": {
             "type": "string"
@@ -7100,6 +7100,10 @@
           },
           "session": {
             "type": "string"
+          },
+          "session_name": {
+            "type": "string",
+            "description": "The session's name when the write was made, for display; session stays the id."
           }
         }
       },

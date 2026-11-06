@@ -53,6 +53,11 @@ func (l *channelLocal) Session(name string) (string, bool) {
 	return ss.ID, ok
 }
 
+func (l *channelLocal) Name(id string) (string, bool) {
+	ss, ok := l.store.Session(id)
+	return ss.Name, ok
+}
+
 // ready checks, writing nothing, that the session's agent may take a message now.
 func (l *channelLocal) ready(sessionID string) (api.Session, error) {
 	ss, ok := l.store.Session(sessionID)
@@ -262,7 +267,7 @@ func sendCmd(args []string, stdin io.Reader, out io.Writer) error {
 	fs := flag.NewFlagSet("send", flag.ExitOnError)
 	sock := socketFlag(fs)
 	via := fs.String("via", "", "run this command and speak over its stdio, e.g. \"ssh <host> gff-hab connect\"")
-	from := fs.String("from", "", "the sending session on this hab (outside a pane only)")
+	from := fs.String("from", "", "the sending session on this hab, by name or id (outside a pane only)")
 	replyTo := fs.String("reply-to", "", "the id of the message this one answers")
 	wait := fs.Duration("wait", 0, "wait up to this long for delivered or another final state")
 	fs.Parse(args)

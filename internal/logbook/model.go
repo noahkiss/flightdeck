@@ -152,9 +152,11 @@ type Actor struct {
 	Kind    string `json:"kind,omitempty"` // "agent" or "person"
 	Harness string `json:"harness,omitempty"`
 	Session string `json:"session,omitempty"`
-	Pane    string `json:"pane,omitempty"`
-	Host    string `json:"host,omitempty"`
-	Device  string `json:"device,omitempty"`
+	// SessionName is the session's name at the write, for display only; Session stays the id.
+	SessionName string `json:"session_name,omitempty"`
+	Pane        string `json:"pane,omitempty"`
+	Host        string `json:"host,omitempty"`
+	Device      string `json:"device,omitempty"`
 	// ApprovedBy is the device that approved the proposal this change came from (9.2): the
 	// actor stays the proposing agent. Only an approve batch sets it.
 	ApprovedBy string `json:"approved_by,omitempty"`

@@ -54,6 +54,13 @@ func (l *fakeLocal) Session(name string) (string, bool) {
 	return id, ok
 }
 
+func (l *fakeLocal) Name(id string) (string, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := l.nameOf(id)
+	return n, n != ""
+}
+
 func (l *fakeLocal) nameOf(id string) string {
 	for n, i := range l.sessions {
 		if i == id {
@@ -437,6 +444,25 @@ func TestLocalSend(t *testing.T) {
 	}
 	if got := a.local.got("alice"); len(got) != 0 {
 		t.Fatalf("alice got her own message: %q", got)
+	}
+}
+
+// TestSendFromID: from takes the sending session's id as well as its name; the message names
+// the sender by its name. A session never sends to itself by id either.
+func TestSendFromID(t *testing.T) {
+	a := newHab(t, "dev-a", "hosta", t.TempDir(), newLocal("alice", "bob"))
+	sent := send(t, a.s, "id-alice", "bob", "hi")
+	if r := final(t, a.s, sent.ID); r.From != "alice" || r.State != api.ChannelStateDelivered {
+		t.Fatalf("record %+v", r)
+	}
+	if got := a.local.got("bob"); len(got) != 1 || got[0] != Envelope(sent.ID, "alice", "hi") {
+		t.Fatalf("delivered %q", got)
+	}
+	if _, err := a.s.Send(context.Background(), api.ChannelSendParams{From: "id-alice", To: "alice", Text: "x"}); kind(err) != api.ErrorKindInvalid {
+		t.Errorf("id-alice to alice: %v", err)
+	}
+	if _, err := a.s.Send(context.Background(), api.ChannelSendParams{From: "id-ghost", To: "bob", Text: "x"}); kind(err) != api.ErrorKindNotFound {
+		t.Errorf("an unknown id: %v", err)
 	}
 }
 

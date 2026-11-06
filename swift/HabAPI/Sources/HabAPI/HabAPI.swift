@@ -1174,7 +1174,7 @@ public struct ChannelRecord: Codable, Sendable, Hashable {
 }
 
 public struct ChannelSendParams: Codable, Sendable, Hashable {
-    /// The sending session's name on this hab. The hook endpoint fills it from the pane's token.
+    /// The sending session on this hab: its name or its id. The hook endpoint fills it from the pane's token.
     public var from: String?
     public var replyTo: String?
     public var text: String
@@ -3108,6 +3108,8 @@ public struct LogbookActor: Codable, Sendable, Hashable {
     public var kind: String?
     public var pane: String?
     public var session: String?
+    /// The session's name when the write was made, for display; session stays the id.
+    public var sessionName: String?
 
     enum CodingKeys: String, CodingKey {
         case approvedBy = "approved_by"
@@ -3117,9 +3119,10 @@ public struct LogbookActor: Codable, Sendable, Hashable {
         case kind = "kind"
         case pane = "pane"
         case session = "session"
+        case sessionName = "session_name"
     }
 
-    public init(approvedBy: String? = nil, device: String? = nil, harness: String? = nil, host: String? = nil, kind: String? = nil, pane: String? = nil, session: String? = nil) {
+    public init(approvedBy: String? = nil, device: String? = nil, harness: String? = nil, host: String? = nil, kind: String? = nil, pane: String? = nil, session: String? = nil, sessionName: String? = nil) {
         self.approvedBy = approvedBy
         self.device = device
         self.harness = harness
@@ -3127,6 +3130,7 @@ public struct LogbookActor: Codable, Sendable, Hashable {
         self.kind = kind
         self.pane = pane
         self.session = session
+        self.sessionName = sessionName
     }
 }
 

@@ -103,6 +103,8 @@ type Peers interface {
 type Local interface {
 	// Session returns the id of the session with this name on this hab.
 	Session(name string) (id string, ok bool)
+	// Name returns the name of the session with this id on this hab.
+	Name(id string) (name string, ok bool)
 	// Check says whether the session's agent may take a message now, writing nothing: nil, or
 	// an error wrapping ErrBusy or ErrNoState, or any other error to refuse the message.
 	Check(sessionID string) error
@@ -356,7 +358,12 @@ func (s *Service) Send(ctx context.Context, p api.ChannelSendParams) (api.Channe
 		return api.ChannelSent{}, control.Errorf(api.ErrorKindUnavailable, "this hab's host id %q is outside %s; start gff-hab with a -host-id that fits to send channel mail", s.cfg.Host, NameRule)
 	}
 	if _, ok := s.cfg.Local.Session(p.From); !ok {
-		return api.ChannelSent{}, control.Errorf(api.ErrorKindNotFound, "no session named %q on this hab to send from", p.From)
+		// from may name the session by its id; the message names the sender by its name.
+		name, ok := s.cfg.Local.Name(p.From)
+		if !ok {
+			return api.ChannelSent{}, control.Errorf(api.ErrorKindNotFound, "no session named %q, or with that id, on this hab to send from", p.From)
+		}
+		p.From = name
 	}
 	if !ValidName(p.From) {
 		return api.ChannelSent{}, control.Errorf(api.ErrorKindInvalid, "session name %q is outside %s; rename the session to send channel mail", p.From, NameRule)

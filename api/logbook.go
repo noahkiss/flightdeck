@@ -89,9 +89,11 @@ type LogbookActor struct {
 	Kind    string `json:"kind,omitempty" doc:"agent or person."`
 	Harness string `json:"harness,omitempty"`
 	Session string `json:"session,omitempty"`
-	Pane    string `json:"pane,omitempty"`
-	Host    string `json:"host,omitempty"`
-	Device  string `json:"device,omitempty"`
+	// SessionName is added after stage 7: an older op has none, so a client shows the session id.
+	SessionName string `json:"session_name,omitempty" doc:"The session's name when the write was made, for display; session stays the id."`
+	Pane        string `json:"pane,omitempty"`
+	Host        string `json:"host,omitempty"`
+	Device      string `json:"device,omitempty"`
 	// Added by stage 7 (logbook.md 9.2).
 	ApprovedBy string `json:"approved_by,omitempty" doc:"A change an approved proposal made: the device that approved it. The actor stays the proposing agent."`
 }

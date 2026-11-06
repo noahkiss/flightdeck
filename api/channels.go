@@ -72,7 +72,7 @@ type MailPullResult struct {
 type ChannelSendParams struct {
 	To      string `json:"to" doc:"An address: label/name, or a bare name (mesh.md 6.5)."`
 	Text    string `json:"text"`
-	From    string `json:"from,omitempty" doc:"The sending session's name on this hab. The hook endpoint fills it from the pane's token."`
+	From    string `json:"from,omitempty" doc:"The sending session on this hab: its name or its id. The hook endpoint fills it from the pane's token."`
 	ReplyTo string `json:"reply_to,omitempty"`
 }
 

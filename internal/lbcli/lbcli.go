@@ -730,7 +730,11 @@ func who(a *api.LogbookActor) string {
 		return "unknown"
 	}
 	var parts []string
-	for _, p := range []string{a.Kind, a.Harness, a.Session, a.Device, a.Host} {
+	session := a.Session // an op written before session_name shows the id
+	if a.SessionName != "" {
+		session = a.SessionName
+	}
+	for _, p := range []string{a.Kind, a.Harness, session, a.Device, a.Host} {
 		if p != "" {
 			parts = append(parts, p)
 		}

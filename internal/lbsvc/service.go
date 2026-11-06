@@ -311,8 +311,10 @@ func (s *Service) Status(ctx context.Context) (api.LogbookStatus, error) {
 type Pane struct {
 	ID      string
 	Session string // the Flightdeck session the pane belongs to, or ""
-	Harness string
-	Host    string
+	// SessionName is that session's name, which the actor carries for display.
+	SessionName string
+	Harness     string
+	Host        string
 	// Project is the project the pane's session works in, by any of its ids, or "" for none
 	// (3.3). The pane's reads leave out every private project but this one (12.1).
 	Project string
@@ -356,7 +358,7 @@ func (s *Service) WritePane(ctx context.Context, pn Pane, p api.LogbookWritePara
 
 // PaneActor is the actor of a write through a pane.
 func PaneActor(pn Pane) api.LogbookActor {
-	return api.LogbookActor{Kind: "agent", Harness: pn.Harness, Session: pn.Session, Pane: pn.ID, Host: pn.Host}
+	return api.LogbookActor{Kind: "agent", Harness: pn.Harness, Session: pn.Session, SessionName: pn.SessionName, Pane: pn.ID, Host: pn.Host}
 }
 
 // paneChecks refuses what an agent of session may not write (10.5): a decision on a proposal,
@@ -979,7 +981,7 @@ func storeActor(a api.LogbookActor) *logbook.Actor {
 	if a == (api.LogbookActor{}) {
 		return nil
 	}
-	return &logbook.Actor{Kind: a.Kind, Harness: a.Harness, Session: a.Session, Pane: a.Pane, Host: a.Host, Device: a.Device, ApprovedBy: a.ApprovedBy}
+	return &logbook.Actor{Kind: a.Kind, Harness: a.Harness, Session: a.Session, SessionName: a.SessionName, Pane: a.Pane, Host: a.Host, Device: a.Device, ApprovedBy: a.ApprovedBy}
 }
 
 // --- events ---
@@ -1057,7 +1059,7 @@ func actor(a *logbook.Actor) *api.LogbookActor {
 	if a == nil {
 		return nil
 	}
-	return &api.LogbookActor{Kind: a.Kind, Harness: a.Harness, Session: a.Session, Pane: a.Pane, Host: a.Host, Device: a.Device, ApprovedBy: a.ApprovedBy}
+	return &api.LogbookActor{Kind: a.Kind, Harness: a.Harness, Session: a.Session, SessionName: a.SessionName, Pane: a.Pane, Host: a.Host, Device: a.Device, ApprovedBy: a.ApprovedBy}
 }
 
 // Record is the API shape of a folded record. updated is its last change in ms.

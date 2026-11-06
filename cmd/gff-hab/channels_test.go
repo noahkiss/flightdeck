@@ -407,6 +407,18 @@ func TestChannelsWaitCommand(t *testing.T) {
 	if out := run(t, "send", "-socket", e.sock, "-from", "alice", "bob", "x"); !strings.Contains(out, "handed") {
 		t.Fatalf("send -from: %q", out)
 	}
+	// -from takes the session's id too.
+	var s api.StructureResult
+	call(t, e.control(), "events.subscribe", api.SubscribeParams{Scope: api.Scope{Kind: api.ScopeKindHost}}, &s)
+	aliceID := ""
+	for _, ss := range s.Structure.Sessions {
+		if ss.Name == "alice" {
+			aliceID = ss.ID
+		}
+	}
+	if out := run(t, "send", "-socket", e.sock, "-from", aliceID, "bob", "x"); aliceID == "" || !strings.Contains(out, "handed") {
+		t.Fatalf("send -from %q: %q", aliceID, out)
+	}
 }
 
 func TestWaitTimeoutDefault(t *testing.T) {
