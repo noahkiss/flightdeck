@@ -391,3 +391,28 @@ func TestSharedOrigin(t *testing.T) {
 		t.Fatalf("the first op did not stay: %+v", rec)
 	}
 }
+
+// A file an older build folded holds records whose actors lack session_name, though their ops
+// carry it: that build's Actor had no such field. Opening it with this build rebuilds the
+// folded tables, so the fold equals a rebuild (4.1, 4.4).
+func TestSessionNameRefoldedFromOlderFold(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "logbook.db")
+	a := openReplica(t, "a", path)
+	actor := &Actor{Kind: "agent", Harness: "claude", Session: "s-1", SessionName: "worker"}
+	id := a.write(t, actor, create("task-abcdefgh", TypeTask, map[string]any{"title": "T"})).Records[0]
+	// What the build before session_name wrote: the field gone from the folded data, its fold version.
+	if _, err := a.db.ExecContext(ctx, `UPDATE records SET data = json_remove(data, '$.created_by.session_name')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.db.ExecContext(ctx, `UPDATE meta SET value = '4' WHERE key = 'fold_version'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+	b := openReplica(t, "a", path)
+	if by := b.get(t, id).CreatedBy; by == nil || by.SessionName != "worker" {
+		t.Fatalf("created by %+v after open, want the session name back from the op", by)
+	}
+}
