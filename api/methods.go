@@ -367,7 +367,9 @@ var Translators = map[int]Translator{}
 // transcript.search, transcript.read, notice.get and file.read work (capcom.md 4). "logbook" means
 // the hab has a Logbook replica, serves logbook.pull and logbook.push to peer links and sends
 // them mesh.changed with logbook when ops wait (logbook.md 7), and the logbook.* methods for
-// clients work (logbook.md 10.3). "confirm" means
+// clients work (logbook.md 10.3). "logbook-vectors" means this hab
+// keeps a vector index of its Logbook replica and answers logbook.find with semantic (logbook.md
+// 13). "confirm" means
 // the confirm.* methods and events work, the host snapshot carries the open confirmations, and
 // session.create takes model and seed (capcom.md 6.1). "capcom" means capcom.open, capcom.assign
 // and session.resume of a Capcom session work, and the catalog carries the capcom section
@@ -385,4 +387,4 @@ var Translators = map[int]Translator{}
 // (capcom-service.md 7.4). It is sent only while [capcom] engine is set (12.4). "device-context"
 // means device.context.put works and the hab serves Capcom's personal tools; it is sent with
 // capcom-thread (capcom-service.md 8).
-var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context"}
+var Capabilities = []string{"data-streams", "snapshot-vt", "snapshot-ghostty", "agent-state", "transcripts", "devices", "push", "host-stats", "commands", "permissions", "mesh", "idempotency-keys", "detect-explain", "catalog", "usage", "content", "channels", "speech", "attachments", "settings", "read-tools", "logbook", "logbook-vectors", "confirm", "capcom", "rounds", "heavy", "round-lock", "capcom-thread", "groups", "device-context"}

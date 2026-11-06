@@ -25,12 +25,17 @@ const logbookWatch = time.Second
 // startLogbookVerbs starts the service that serves the Logbook verbs (logbook.md 10) over the
 // store openLogbook opened, the one Logbook sync also serves. Every write through it calls
 // synced, so sync sends the new ops at once (7.2). publish emits the Logbook events. It runs the
-// watch for other writers until the returned stop is called.
-func startLogbookVerbs(ctx context.Context, st *logbook.Store, synced func(), publish func(structure.Event), logf func(string, ...any)) (*lbsvc.Service, func(), error) {
-	svc, err := lbsvc.New(ctx, lbsvc.Config{Store: st, Logf: logf, Wrote: synced,
+// watch for other writers until the returned stop is called. opts, when set, fills in more of
+// the service's config: vector search (13).
+func startLogbookVerbs(ctx context.Context, st *logbook.Store, opts func(*lbsvc.Config), synced func(), publish func(structure.Event), logf func(string, ...any)) (*lbsvc.Service, func(), error) {
+	cfg := lbsvc.Config{Store: st, Logf: logf, Wrote: synced,
 		Publish: func(t api.EventType, id string, rev uint64, data any) {
 			publish(structure.Event{Type: t, ID: id, Revision: rev, Data: data})
-		}})
+		}}
+	if opts != nil {
+		opts(&cfg)
+	}
+	svc, err := lbsvc.New(ctx, cfg)
 	if err != nil {
 		return nil, nil, err
 	}

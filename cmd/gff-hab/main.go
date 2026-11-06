@@ -117,6 +117,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/hook"
 	"github.com/noahkiss/flightdeck/internal/hoststats"
 	"github.com/noahkiss/flightdeck/internal/lbcli"
+	"github.com/noahkiss/flightdeck/internal/lbextra"
 	"github.com/noahkiss/flightdeck/internal/lbsync"
 	"github.com/noahkiss/flightdeck/internal/link"
 	"github.com/noahkiss/flightdeck/internal/opencode"
@@ -937,7 +938,20 @@ func serve(args []string) error {
 	caps = append(caps, lbsync.Capability)
 	// The Logbook verbs (logbook.md 10) over the same store: every write tells sync at once, and
 	// a watch turns other writers' ops into events.
-	lbVerbs, closeVerbs, err := startLogbookVerbs(context.Background(), lbStore, lbSvc.Changed, func(e structure.Event) {
+	cpath, err := habConfigPath(*habConfig)
+	if err != nil {
+		return err
+	}
+	// Vector search (logbook.md 13): this hab's own index when its config names an embeddings
+	// server, else a forward to a peer that has one.
+	lbSemantic, err := newLogbookSemantic(cpath, dir, pm, logger.Printf)
+	if err != nil {
+		return fmt.Errorf("logbook: %w", err)
+	}
+	if lbSemantic.index != nil {
+		caps = append(caps, vectorsCapability)
+	}
+	lbVerbs, closeVerbs, err := startLogbookVerbs(context.Background(), lbStore, lbSemantic.options, lbSvc.Changed, func(e structure.Event) {
 		if s := srv.Load(); s != nil {
 			s.Publish(e)
 		}
@@ -947,10 +961,6 @@ func serve(args []string) error {
 	}
 	defer closeVerbs()
 	// The catalog (mesh.md 5): this host's facts, projects and agents, and the peers' copies.
-	cpath, err := habConfigPath(*habConfig)
-	if err != nil {
-		return err
-	}
 	// The Capcom session host (capcom.md 7): with the holder link, this hab can run Capcom.
 	var capcomSvc *capcomService
 	var capcomCtl control.Capcom
@@ -1193,6 +1203,23 @@ func serve(args []string) error {
 		return err
 	}
 	defer cs.Close()
+	// Logbook's always-on extras (logbook.md 13): the backup on a hab marked always on, the git
+	// export where the config names one, and the vector index.
+	extrasCtx, stopExtras := context.WithCancel(context.Background())
+	var extrasWG sync.WaitGroup
+	defer func() {
+		stopExtras()
+		extrasWG.Wait()
+	}()
+	extrasWG.Add(2)
+	go func() {
+		defer extrasWG.Done()
+		(&lbextra.Runner{Store: lbStore, State: dir, Config: cpath, AlwaysOn: catalogAlwaysOn(cs), Logf: logger.Printf}).Run(extrasCtx)
+	}()
+	go func() {
+		defer extrasWG.Done()
+		lbSemantic.run(extrasCtx, lbStore, logger.Printf)
+	}()
 	cat.Store(cs)
 	govCatalog.Store(cs)
 	if capcomSvc != nil {

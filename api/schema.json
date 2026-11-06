@@ -34,6 +34,7 @@
     "settings",
     "read-tools",
     "logbook",
+    "logbook-vectors",
     "confirm",
     "capcom",
     "rounds",
@@ -2992,6 +2993,13 @@
           "name": "project",
           "schema": {
             "type": "string"
+          }
+        },
+        {
+          "name": "semantic",
+          "description": "Rank by meaning through vector search, on this hab when it has the logbook-vectors capability, else on an online peer that has it; with none, unavailable: no always-on host with vector search. Needs words.",
+          "schema": {
+            "type": "boolean"
           }
         },
         {
@@ -10253,6 +10261,10 @@
           },
           "project": {
             "type": "string"
+          },
+          "semantic": {
+            "type": "boolean",
+            "description": "Rank by meaning through vector search, on this hab when it has the logbook-vectors capability, else on an online peer that has it; with none, unavailable: no always-on host with vector search. Needs words."
           },
           "session": {
             "type": "string",
