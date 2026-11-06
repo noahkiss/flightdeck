@@ -88,6 +88,8 @@ func (w *world) play(n int) {
 			w.restore(r)
 		case x < 39:
 			w.decideApart()
+		case x < 41:
+			w.crossApprove()
 		default:
 			w.write(r)
 		}
@@ -304,8 +306,9 @@ func (w *world) write(r *replica) {
 
 // approve is an approve batch of proposal id (9.2): the draft's record, linked from the
 // proposal, a change to another record, and the decision. writeSteps gives it an approve's actor.
-// A third of the time the draft's record is itself a proposal, whose fold waits for this one's
-// standing decision whatever the two roots' order.
+// A third of the time the draft's record is itself a proposal, whose fold depends on this one's
+// standing decision whatever the two roots' order. Half the time the other record is a proposal,
+// so two approves often touch each other's proposals, a cycle no fold order serves.
 func (w *world) approve(r *replica, id, status string) []Step {
 	typ, fields := TypeTask, map[string]any{"title": "made"}
 	if w.rng.Intn(3) == 0 {
@@ -313,12 +316,50 @@ func (w *world) approve(r *replica, id, status string) []Step {
 	}
 	made := NewID(typ)
 	st := []Step{create(made, typ, fields), add(made, "links", Link{Kind: LinkFrom, To: id})}
-	if other := w.pick(r); other != "" && other != id {
+	other := w.pick(r)
+	if w.rng.Intn(2) == 0 {
+		var props []string
+		for _, k := range w.known[r] {
+			if rec, err := r.Get(context.Background(), k); err == nil && rec.Type == TypeProposal && k != id {
+				props = append(props, k)
+			}
+		}
+		if len(props) > 0 {
+			other = props[w.rng.Intn(len(props))]
+		}
+	}
+	if other != "" && other != id {
 		if rec, err := r.Get(context.Background(), other); err == nil && !rec.Deleted {
 			st = append(st, note(other, "from an approve"))
 		}
 	}
 	return append(st, set(id, "status", status), set(id, "decided_by", r.name))
+}
+
+// crossApprove files proposals X and Y on one replica and syncs them to a second. Apart, the
+// first rejects Y and approves X with a note on Y; the second approves Y with a note on X (each
+// approve batch, as writeSteps sees one, starts with its draft's create). Each
+// approve touches the other's proposal, and Y's approve is overruled once they link.
+func (w *world) crossApprove() {
+	rng := w.rng
+	a, b := w.reps[rng.Intn(len(w.reps))], w.reps[rng.Intn(len(w.reps))]
+	if a == b {
+		return
+	}
+	x, y := NewID(TypeProposal), NewID(TypeProposal)
+	for _, id := range []string{x, y} {
+		w.writeSteps(a, []Step{create(id, TypeProposal, map[string]any{"title": "crossed", "target": "record"})})
+	}
+	push(w.t, a, b)
+	w.learn(b)
+	w.writeSteps(a, []Step{set(y, "status", "rejected"), set(y, "decided_by", a.name)})
+	crossed := func(r *replica, id, other string) []Step {
+		made := NewID(TypeTask)
+		return []Step{create(made, TypeTask, map[string]any{"title": "made"}), add(made, "links", Link{Kind: LinkFrom, To: id}),
+			note(other, "from an approve"), set(id, "status", approvals[rng.Intn(len(approvals))]), set(id, "decided_by", r.name)}
+	}
+	w.writeSteps(a, crossed(a, x, y))
+	w.writeSteps(b, crossed(b, y, x))
 }
 
 // decideApart has two replicas decide one proposal both hold pending, with no link between the

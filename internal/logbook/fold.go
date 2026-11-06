@@ -147,7 +147,10 @@ func fold(create *Op, ops []*Op, collision int, ov overrule) *folded {
 		if o.Root != f.Root || o.Kind == KindCreate || o.Kind == KindForget {
 			continue
 		}
-		if win, ok := ov[o.ID()]; ok {
+		// A proposal's decision fields are never overruled: its standing decision is the first
+		// decision among all its status sets (standing), so it never waits on another proposal's.
+		decision := createType == TypeProposal && o.Kind == KindSet && (o.Field == "status" || o.Field == "decided_by")
+		if win, ok := ov[o.ID()]; ok && !decision {
 			// A change an overruled approve made: counted, so the revision never goes down, but
 			// not folded.
 			f.Revision++

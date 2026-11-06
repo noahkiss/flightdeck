@@ -276,3 +276,44 @@ func TestOnlyPersonRestoresOverruled(t *testing.T) {
 		refoldSame(t, r)
 	}
 }
+
+// Two approves that each touch the other's proposal (9.4, Fold order): X's approve on A notes Y,
+// and Y's approve on B, which a reject on A beat, notes X. Each proposal's fold reads the other's
+// standing decision, so no fold order serves both; the standing decision comes from the
+// proposal's own ops instead. On A, Y's overruled note on X must be hidden and X flagged, as a
+// fresh replica folds it.
+func TestApprovesTouchingEachOther(t *testing.T) {
+	a, b := newReplica(t, "A"), newReplica(t, "B")
+	a.clock.Set(at("09:00"))
+	b.clock.Set(at("09:00"))
+	fields := map[string]any{"title": "P", "target": "record", "draft": map[string]any{"changes": []any{}}}
+	x, y := NewID(TypeProposal), NewID(TypeProposal)
+	a.write(t, nil, create(x, TypeProposal, fields))
+	a.write(t, nil, create(y, TypeProposal, fields))
+	link(t, a, b)
+	if xr, yr := a.get(t, x).Root.String(), a.get(t, y).Root.String(); xr >= yr {
+		t.Fatalf("X's root %s does not sort before Y's %s", xr, yr)
+	}
+	a.clock.Set(at("09:30"))
+	reject(t, a, y)
+	a.clock.Set(at("09:40"))
+	a.write(t, approver, note(y, "from X's approve"), set(x, "status", "approved"), set(x, "decided_by", "SHA256:phone"))
+	b.clock.Set(at("10:00"))
+	b.write(t, approver, note(x, "from Y's approve"), set(y, "status", "approved"), set(y, "decided_by", "SHA256:phone"))
+	link(t, a, b)
+	obs := newReplica(t, "obs")
+	push(t, a, obs)
+	for _, r := range []*replica{a, b, obs} {
+		p := r.get(t, x)
+		if len(p.Notes) != 0 || len(flagsOf(p, FlagApprovalOverruled)) != 1 {
+			t.Fatalf("%s: X notes %+v flags %+v, want Y's overruled note hidden and X flagged", r.name, p.Notes, p.Flags)
+		}
+		if q := r.get(t, y); len(q.Notes) != 1 || len(flagsOf(q, FlagApprovalOverruled)) != 0 {
+			t.Fatalf("%s: Y notes %+v flags %+v, want X's note kept", r.name, q.Notes, q.Flags)
+		}
+		refoldSame(t, r)
+	}
+	if dump(t, a.Store) != dump(t, b.Store) || dump(t, a.Store) != dump(t, obs.Store) {
+		t.Fatal("A, B and a fresh replica folded differently")
+	}
+}
