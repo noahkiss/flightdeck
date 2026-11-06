@@ -179,6 +179,29 @@ harness = "claude"
 [logbook.habits_off]
 # "github.com/owner/repo" = ["closeout"]
 
+# Logbook's always-on extras (docs/specs/logbook.md 13). gff-hab reads these sections every
+# minute; [logbook.vectors] only at start.
+# The nightly backup runs only on a hab marked always on ([catalog] always_on): after 03:00
+# local time, or once on waking from a sleep, a copy of logbook.db and a JSONL export.
+[logbook.backup]
+# Where the backups go; default: logbook-backups in the state folder.
+# path = "~/logbook-backups"
+# How many backups to keep.
+keep = 30
+
+# The git export: one Markdown file per record, by project, committed at most hourly into a
+# local repository. Set it on one hab only. Edits there are not read back.
+[logbook.export]
+# git = "~/logbook-export"
+
+# Vector search: an embeddings server you run, that speaks the OpenAI-compatible
+# POST {"model", "input"} shape. With it, this hab answers semantic finds for its peers.
+[logbook.vectors]
+# url = "http://127.0.0.1:2780/v1/embeddings"
+# model = "an-embedding-model"
+# Where the index lives; default: logbook-vectors.gob in the state folder.
+# index = "~/logbook-vectors.gob"
+
 # The [rounds] section: scheduled runs (docs/specs/rounds.md 7.2, 8.3).
 [rounds]
 # At most this many runs at once on this host; others wait as queued.

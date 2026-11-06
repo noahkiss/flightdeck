@@ -310,3 +310,10 @@ func TestHTTPEngine(t *testing.T) {
 		t.Fatal("a 400 answered")
 	}
 }
+
+func TestExampleConfig(t *testing.T) {
+	c, err := LoadConfig(filepath.Join("..", "..", "docs", "examples", "hab.toml"), "/work/state")
+	if err != nil || c.Backup.Keep != 30 || c.Export.Git != "" || c.VectorsOn() {
+		t.Fatalf("%+v %v", c, err)
+	}
+}

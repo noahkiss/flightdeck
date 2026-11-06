@@ -854,7 +854,7 @@ shapes are in `api/logbook.go`.
 | Capability | `logbook`, one capability for sync and the verbs, sent when `<state>/logbook.db` opens with the hab's device id as origin. A corrupt file, or one of another origin, is set aside first (7.6); a file that still does not open stops gff-hab with the reason |
 | Sync | Each write through the verbs nudges sync, which sends the new ops at once (7.2). Writes wait out the start hold, and a restored file refuses them with `unavailable` (7.6); the CLI's own store honours both, since both live in the file |
 | Pane route | Every method above. `logbook.find` and `logbook.get` moved from the read methods to `hook.LogbookMethods`, whose handler knows the pane |
-| CLI | `gff lb` (long form `gff logbook`), and `gff-hab lb`, the same code. Verbs of 10.2 that later stages own (`export`, `import`) say which stage builds them; `brief` is stage 6's (11.4). `approve` and `reject` are stage 7's (9.4); `project join`, `project rename` and `project private` stage 5's (3.3) |
+| CLI | `gff lb` (long form `gff logbook`), and `gff-hab lb`, the same code. `export` and `import` are stage 9's (13.2); `brief` is stage 6's (11.4). `approve` and `reject` are stage 7's (9.4); `project join`, `project rename` and `project private` stage 5's (3.3) |
 | MCP | `logbook_search` and `logbook_read` (read tools, built with Capcom's tools), `logbook_write` (an action tool). `logbook_brief` is stage 6's (11.4) |
 
 Where this spec was silent, stage 4 decided:
@@ -1037,6 +1037,41 @@ no running agent on the other side; channels stay for the urgent case.
 Decision: extras by explicit config, backup on every marked hab. Reason: backups are safe to run
 twice; an export or an index is not, and the user knows which machine should hold them.
 
+### 13.2 Built (stage 9)
+
+The extras are in `internal/lbextra`. gff-hab runs them in `cmd/gff-hab/logbook_extra.go`. The
+store side (`Export`, `Import`, `Backup`) is in `internal/logbook` (`export.go`, `query.go`).
+The verbs are in `internal/lbcli`.
+
+| Item | Built |
+|---|---|
+| Config | `[logbook.backup]` (`path`, `keep`), `[logbook.export]` (`git`) and `[logbook.vectors]` (`url`, `model`, `index`) in the hab's config file. Paths are absolute or start with `~/`. gff-hab reads the backup and export sections every minute, and the vectors section at start |
+| Backup | On a hab whose own catalog carries the always-on mark (`mesh.md` 8). The slot is 03:00 local time. A backup is due when the newest one is older than the last slot. So a hab that slept through several nights makes one backup on waking, and a first start makes one at once. Each backup is `logbook-<UTC time>.db`, a `VACUUM INTO` copy, and `logbook-<UTC time>.jsonl`, the export. The folder is 0700 and the files 0600. Default folder `<state>/logbook-backups`. The oldest past `keep` go |
+| Restore | Stop gff-hab and copy a backup's `.db` to `<state>/logbook.db`. It opens as the same origin. Peers send back the own ops it lacks, and its next write uses a seq past them (4.5, Own ops back) |
+| Export format | One JSON object per line: `id`, `type`, `title`, `body`, `status`, `project`, `fields` (the other scalars), `tags`, `identities`, `links`, `notes` (`time`, `text`, `actor`), `created` (RFC 3339, UTC), `created_by`, `source`, `deleted`, `imported`. Projects first, then the rest, each by id. Deleted records are included |
+| Import | One create batch per line, from the importing hab, with the id verbatim. The batch sets the fields `created` (the line's date, else the import's time) and `imported` (true), adds tags, identities and links, and appends the notes' text. Both fields are fixed after create. The fold version is 5: an older file is rebuilt at open, and an older build stores these creates but does not fold them (4.4). The API's record shows `imported`, and `created` is the original date |
+| Import rules | An id the replica holds is skipped and counted, so a second run writes nothing. A proposal is skipped: it is the filing hab's review item. The import stops at the first line it cannot write, and names the line; the lines before it stay written. A line is at most 16 MiB |
+| CLI | `gff lb export [--format jsonl\|markdown] <path\|->` and `gff lb import <file\|->` open `logbook.db` as a person, whether or not gff-hab runs. gff-hab sees the import's ops as another writer's: events within a second, and sync sends them. Both refuse to run in a pane. JSONL goes to a new file, never over one. `forget` asks with "Older backups and git exports keep it" |
+| Markdown tree | One file per record that is not deleted: `<project id>/<record id>.md`, `general/` for no project, a project's own file in its folder. A front matter of JSON values (valid YAML), then the title, body, links and notes. A project id that is not a plain id goes to `general/`. The tree writes a `.logbook-export` marker and refuses a folder that holds other files without it. A file whose record is gone, moved or deleted is removed. An unchanged file is not rewritten |
+| Git export | Where `[logbook.export] git` names a folder. gff-hab makes the folder and runs `git init` when needed, writes the tree, then `git add -A` and one commit, when anything changed and the last commit is an hour old. The commit's author is "Flightdeck Logbook", with signing and hooks off, so it needs no git identity. The repository has no remote; pushing it is the user's choice |
+| Forget in the git export | The next export commit holds no forgotten text in its files. History is not rewritten: commits made before the forget keep it, as 5.7 says of exports made before a forget |
+| Vector search | `logbook.find {words, semantic: true}`. A hab with `[logbook.vectors]` keeps an index of every record that is not deleted (title, body, tags and notes) and ranks by cosine similarity. It sends the welcome capability `logbook-vectors`. A hab without one forwards the call to the first online peer whose welcome lists it, in peer file order. A call that came over a peer link is never forwarded. The ranked ids then pass this replica's filters and private rule (3.3), so a record not synced here yet is left out. With no hab to ask: `unavailable`, "no always-on host with vector search". Words are required |
+| The engine | No model ships with Flightdeck. The engine is an embeddings server the user runs, which takes the OpenAI-compatible `POST {"model", "input": [...]}` and answers `data[].embedding`. The index is a file (`index`, default `<state>/logbook-vectors.gob`). It embeds the records whose text changed, 32 per call, every 30 s. A forget changes a record's text, so its vector is made again from what is left |
+
+Where this spec was silent, stage 9 decided. Each is a default the owner may revisit:
+
+| Point | Decision |
+|---|---|
+| Backup without a path | The mark alone turns backups on, into `<state>/logbook-backups`. Reason: 13 says backups run on every marked hab |
+| The nightly time | 03:00 local, not configurable |
+| Export and import door | The file, as a person, not the API. Reason: no new method; the file is the replica, and gff-hab already serves another writer's ops |
+| Export from a pane | Refused, with import. Reason: an export holds every private project (3.3) |
+| Proposals in an import | Skipped |
+| Git history after a forget | Kept. Rewriting it would break the user's clones of the export |
+| Which peer runs a semantic find | Any online peer with the capability, not only one marked always on. The answer's words stay those of 13 |
+| Vector model | Not chosen. The owner picks the server and the model; the tests use a fake engine of hashed words |
+| Not built | A size or time cap per backup, a restore command, a backup on a hab without the mark, pushing the export repository, and a property test that an export round trip folds to the same records |
+
 ---
 
 ## 14. Edge cases
@@ -1181,7 +1216,7 @@ Each stage gets a fresh-eyes review before it closes (core functionality).
 | 6 | Habits | Context mode in `gff-hab hook`, brief, reminder, closeout per harness (11), ledger entries. Built: 11.4 | Fixture tests per harness give the exact injected text; the brief stays under 8 KB with 1,000 open tasks; with gff-hab stopped the brief still prints from the file within the 900 ms budget; closeout fires at most once per session; each habit's setting turns it off |
 | 7 | Approval | `logbook.approval`, proposals, decide, first-writer-wins, overruled approvals (9); memory proposals from Part 8 stored here. Built: 9.4 | Under `agents`, an agent write returns `proposed` and lands only on approval; E10 holds across two habs; a reject that wins hides the approved record and flags it |
 | 8 | App views (Part 6) | A Logbook view: projects, lists with filters, record view with history and conflict banner, resolve; proposals in approvals; untriaged count on the status board; quick capture | The device smoke adds: create a task on the phone offline, see it on the Mac after reconnect; resolve a seeded conflict from the phone |
-| 9 | Always-on extras and export | Backup, git export, vector search (13); `export` and `import` | A backup restores to a working replica; the git export has one file per record and no forgotten text after a forget; with no vector hab the semantic flag answers the stated message; an import keeps ids |
+| 9 | Always-on extras and export | Backup, git export, vector search (13); `export` and `import`. Built: 13.2 | A backup restores to a working replica; the git export has one file per record and no forgotten text after a forget; with no vector hab the semantic flag answers the stated message; an import keeps ids |
 
 Order: 2, then 3 and 4 in parallel, then 5, 6 and 7 in parallel, then 8 and 9. Capcom's tools stage
 answers `unavailable` for Logbook until stage 4 lands (`capcom.md` 12).
