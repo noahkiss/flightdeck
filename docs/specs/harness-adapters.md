@@ -320,11 +320,14 @@ Built choices (`internal/hook`, `internal/harness`, `gff-hab hook`):
 - The welcome lists the `agent-state` capability whenever the holder link is on.
 - **Answers.** `POST /hooks/<token>` answers 204 when accepted, 400 for a bad envelope, 404
   for an unknown token (logged once per token) and 413 above 8 MiB. A post with no `t` gets the
-  server's clock. A post with `?context=1` (a Logbook habit's event, `logbook.md` 11.4) answers
-  200 with `{"text": ...}` when gff-hab adds context for the agent, else 204.
+  server's clock. A post with `?context=1` (a context event: a Logbook habit's, `logbook.md`
+  11.4, or Claude Code's `PostToolUse` for the context nudge) answers 200 with `{"text": ...}`
+  when gff-hab adds context for the agent, else 204. One handler answers it: the habit's text, then
+  the nudge's, joined by a blank line when both are due.
 - **The command.** `gff-hab hook <harness> [event]` reads stdin, wraps it and posts it, then
-  exits 0, always. It writes to stdout only for the blocking hook and the Logbook habits
-  (`logbook.md` 11.4). With no event argument it takes
+  exits 0, always. It writes to stdout only for the blocking hook and the context events:
+  the Logbook habits (`logbook.md` 11.4) and the [Context nudge](#context-nudge). With no
+  event argument it takes
   `hook_event_name` (Claude Code, Codex) or `type` (opencode) from the payload. The post is
   synchronous with a 900 ms budget for the whole run, enforced by a timer that exits 0: a
   stopped gff-hab fails at dial in a few milliseconds, and a hung one costs at most the budget.
@@ -336,7 +339,11 @@ Built choices (`internal/hook`, `internal/harness`, `gff-hab hook`):
 - **`gff-hab hook -print <harness>`.** Claude Code and Codex get a JSON object in their shared
   hooks shape (`{"hooks": {"<Event>": [{"hooks": [{"type": "command", ...}]}]}}`), one entry per
   event the adapter uses, with a 5 second timeout (2 seconds for Codex's `SessionEnd` and
-  `Interrupt`, which Codex caps at three). opencode gets a JavaScript plugin that spawns
+  `Interrupt`, which Codex caps at three). Claude Code's list includes `PreCompact`. Its
+  context events (`SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`) need no flag: the
+  command asks on those events by itself. A flag would make an older gff-hab refuse the line and
+  post nothing; `-context`, which an earlier build printed, is still accepted and ignored.
+  opencode gets a JavaScript plugin that spawns
   `gff-hab hook -t <ms> opencode <event type>` with the event JSON on stdin. The plugin stamps
   `Date.now()` itself, because each event spawns its own process and those may run out of
   order. `-t` sets the envelope's `t`; without it the command stamps its own clock. `-command`
@@ -1149,7 +1156,8 @@ compaction id) at each step.
 - **End.** Claude Code's `SessionStart` hook with `source` `compact`, or the
   `compact_boundary` record. A record seen first counts as start and end at once.
 - **Follow-up delivery.** At the end, gff-hab sends the follow-up through `session.send`'s path
-  as soon as the agent is at its prompt. A message pasted while compaction runs would rely on
+  as soon as the agent is at its prompt. `/compact` holds the pane like any send (up to 3
+  seconds while no turn starts), so a refused try is made again once a second. A message pasted while compaction runs would rely on
   the TUI's own input queue; after the end it is the compacted agent's first message, which
   is what the follow-up is for.
 - **Limits.** The turn must end within 60 minutes, compaction must start within 2 minutes of
@@ -1185,18 +1193,21 @@ gff agent compact with a follow-up that points at it."
   record's `usage` in the transcript the hook payload names (input, cache creation and cache
   read tokens) over the context window size from the pane's last status line, else 200,000.
   It reads at most the last 256 KiB of the transcript.
-- **Delivery.** Claude Code's `UserPromptSubmit` and `PostToolUse` hooks run
-  `gff-hab hook -context`. The command posts as usual with `?context=1`; gff-hab answers 204,
-  or 200 with `{"context": "<note>"}` when a note is due. The command prints the note as the
-  hook output, `{"hookSpecificOutput": {"hookEventName": "<event>", "additionalContext":
-  "<note>"}}`. The hook keeps its 900 ms budget; gff-hab works out the answer from memory and
-  at most that one transcript read.
+- **Delivery.** Claude Code's `UserPromptSubmit` and `PostToolUse` are context events
+  (`hook.ContextEvent`), the same path as the Logbook habits (`logbook.md` 11.4): `gff-hab hook`
+  posts with `?context=1`, with no flag, so a hook config from before the nudge gets it with no
+  reinstall. gff-hab has one context handler. It asks the Logbook habit, then the nudge, and
+  answers 204 when neither has text, else 200 with `{"text": ...}`: both texts joined by a blank
+  line when both are due (a reminder and a note at one prompt). The command prints the text as
+  the hook output, `{"hookSpecificOutput": {"hookEventName": "<event>", "additionalContext":
+  "<text>"}}`. The hook keeps its 900 ms budget; the nudge works out its part from memory and at
+  most that one transcript read.
 - **When.** Levels are the first level, then each step above it, below 100. A note is due when
   the percentage reached a level the pane has not had a note for: one note, with the
   percentage now, for every level passed at once. A subagent's hook gets none.
 - **Reset.** A compaction (`PreCompact`, `SessionStart` with `source` `compact`), a new native
   session in the pane, or a percentage back under the first level clears the levels noted.
-- **Off.** With `agent.context_nudge` at 0 the hab answers 204 to every `-context` post.
+- **Off.** With `agent.context_nudge` at 0 the nudge adds nothing to a context event's answer.
 
 ## Permission answers
 

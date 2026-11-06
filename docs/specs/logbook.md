@@ -937,7 +937,10 @@ setting.
 The brief's query is `Store.Brief` in `internal/logbook` (`brief.go`), its text `BriefText` in
 `internal/lbsvc` (`brief.go`). The habits' rules are in `internal/habits`. gff-hab answers them in
 `habitService` (`cmd/gff-hab/habits.go`). The hook side is in `internal/hook` (`ContextEvent`,
-`ContextOutput`, the `?context=1` post).
+`ContextOutput`, the `?context=1` post). The same path carries the context nudge
+(`harness-adapters.md`, Context nudge) on Claude Code's `UserPromptSubmit` and `PostToolUse`:
+gff-hab's one context handler asks the habit first, then the nudge, and joins both texts by a
+blank line when both are due.
 
 | Item | Built |
 |---|---|
