@@ -100,3 +100,27 @@ func TestWorkspaceConfig(t *testing.T) {
 		}
 	}
 }
+
+// TestCloseTabDuringStart keeps the started session in the sidebar after its tab closes.
+func TestCloseTabDuringStart(t *testing.T) {
+	d := shortDir(t)
+	a := fakeHab(t, d, "a")
+	hst := newHost(t, 120, 30, false)
+	startWorkspace(t, hst, a.Sock)
+	hst.waitScreen("host online", func(s string) bool { return strings.Contains(s, "1/1 hosts") })
+	release := a.HoldCreates()
+	defer release()
+	hst.typ("n")
+	hst.waitScreen("directory prompt", func(s string) bool { return strings.Contains(s, "new session") })
+	hst.typ("\r")
+	hst.waitScreen("command prompt", func(s string) bool { return strings.Contains(s, "command on one") })
+	hst.typ("\r")
+	hst.waitScreen("starting", func(s string) bool { return strings.Contains(s, "starting on one") })
+	hst.typ(tabKey + "x")
+	hst.waitScreen("closed", func(s string) bool { return strings.Contains(s, "empty tab") })
+	release()
+	hst.waitScreen("session in sidebar", func(s string) bool { return line(s, "sh") > 0 && strings.Contains(s, "started after its tab closed") })
+	if !strings.Contains(hst.screen(), "empty tab") {
+		t.Fatal("start reopened the closed tab")
+	}
+}

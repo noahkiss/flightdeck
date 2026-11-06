@@ -441,8 +441,8 @@ func (u *workspaceUI) closeTab() {
 		c.removeView(t, v)
 	}
 	if len(c.tabs) == 1 {
-		t.root, t.views, t.focus, t.zoom, t.name = nil, nil, 0, false, ""
-		t.name = c.freeTabName(1)
+		c.tabs[0] = &tab{name: "1", split: c.cfg.Split}
+		c.last = nil
 		u.mode = modeSidebar
 		c.layoutChanged()
 		u.dirty = true
@@ -935,6 +935,17 @@ func (u *workspaceUI) start(host string, p api.SessionCreateParams, label string
 				return
 			}
 			u.msg = ""
+			found := false
+			for _, open := range c.tabs {
+				if open == t {
+					found = true
+					break
+				}
+			}
+			if !found {
+				u.msg = label + " on " + host + " started after its tab closed"
+				return
+			}
 			hs := c.hosts[host]
 			if hs == nil {
 				return
