@@ -125,6 +125,9 @@ type RunUpdate struct {
 	Result string
 	// Network is set when the harness reported a network or sign-in error (rounds.md 8.3).
 	Network bool
+	// GoneReason, with TargetGone, is the round's completed reason and its notice's text in place
+	// of the target's: a group round whose group ended (rounds.md 5.2).
+	GoneReason string
 	// Destination and Message name a capcom or group run's destination and its channel message
 	// (rounds.md 5.2); empty leaves them as they are.
 	Destination string
@@ -1075,13 +1078,16 @@ func (s *Scheduler) endLocked(run *Run, u RunUpdate, now time.Time, internal boo
 		return
 	}
 	if u.TargetGone && (run.SessionID == "" || run.SessionID == e.Round.Target) {
+		reason, text := ReasonTargetGone, fmt.Sprintf("round %s completed: its target session is gone", e.Round.Name)
+		if u.GoneReason != "" {
+			reason, text = u.GoneReason, fmt.Sprintf("round %s completed: %s", e.Round.Name, u.GoneReason)
+		}
 		ne, ok := s.setState(run.RoundID, func(st *RoundState) {
-			st.Completed, st.CompletedReason, st.NextSlot = true, ReasonTargetGone, nil
+			st.Completed, st.CompletedReason, st.NextSlot = true, reason, nil
 		})
 		if ok && e.Round.Notify != NotifyNever && !e.State.Completed {
 			r := *run
-			s.notice(Notice{Kind: NoticeTargetGone, Round: ne, Run: &r,
-				Text: fmt.Sprintf("round %s completed: its target session is gone", e.Round.Name)})
+			s.notice(Notice{Kind: NoticeTargetGone, Round: ne, Run: &r, Text: text})
 		}
 		return
 	}

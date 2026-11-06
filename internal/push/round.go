@@ -103,6 +103,9 @@ func RoundNotice(e RoundEvent) Notice {
 	case RoundTargetGone:
 		no.Title, no.Level = "Round completed: "+e.Name, LevelPassive
 		no.Body = "Its target session is gone."
+		if e.Reason != "" {
+			no.Body = e.Reason
+		}
 		no.Session, no.Category = "", "" // nothing left to open
 	case RoundStateSetAside:
 		no.Title, no.Level = "Rounds state set aside", LevelActive

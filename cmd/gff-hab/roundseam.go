@@ -17,3 +17,13 @@ var roundReadySeam time.Duration
 // 6.1): roundInputWindow, unless a build with the testseam tag sets it from
 // $GFF_TEST_ROUND_QUIET.
 var roundQuietSeam = roundInputWindow
+
+// roundCapcomSeam and roundGroupsSeam, when set, make this hab a fake far side of the capcom
+// and group modes (rounds.md 5.2) for end-to-end tests: the first is a file whose first line is
+// the Capcom service's answer to a round message and whose second line may name an outcome
+// (roundfake.go); the second is a JSON file of the catalog's groups section. Only a build with
+// the testseam tag sets them, from $GFF_TEST_CAPCOM_SERVICE and $GFF_TEST_GROUPS.
+var (
+	roundCapcomSeam string
+	roundGroupsSeam string
+)
