@@ -1,0 +1,893 @@
+# Agent groups: behaviour spec
+
+Status: draft for the owner. Part 15, stage B1 (task-5ntfv32q). Written 2026-11-06.
+
+An agent group is one task worked by several agents at once: a coordinator, leads, workers and a
+reviewer, on any host and in any harness. Members are ordinary sessions. Flightdeck starts them,
+wires them on channels, watches their context, usage and disk, reviews their work and lands it.
+The user sees one group card. This spec covers the roles, the group record, the confirmation,
+the merge lane, the heavy-run lock and the disk watch, context supervision, usage pacing, and the
+build stages. It describes behaviour in our own words and copies no code from other tools.
+
+Rules this spec works within:
+
+- **Groups are first-class and optional** (master plan decision (o), 2026-11-06). The model is the
+  coordinator workflow that builds Flightdeck, productised.
+- **One confirmation per group plan; an app setting turns it off** (owner decision 6, (p),
+  `swarm-study.md` 8).
+- **The merge lane lands straight on main once review and CI pass** (owner decision 7). This
+  replaces the study's "group branch" (`swarm-study.md` 3.2).
+- **Members are ordinary sessions.** Each opens, resumes from a plain terminal and shows like any
+  session (AGENTS.md, "Native data stays native").
+- **Nothing types into a session in use.** Every action on a member goes through the rounds lock
+  (`rounds.md` 6).
+- **The bar is herdr, Rex and Paseo** for robustness; we add only cheap guards.
+- **Hands-off defaults, few settings** (power-user rule). Supervision, pacing, the lock and the
+  disk watch run by default.
+
+Sections that settle a question end with a **Decision** line and its reason. Questions only the
+owner can settle are in [section 13](#13-open-questions-for-the-owner).
+
+## Contents
+
+1. [Words](#1-words)
+2. [Model](#2-model)
+3. [The group plan and its confirmation](#3-the-group-plan-and-its-confirmation)
+4. [Starting members](#4-starting-members)
+5. [The group record and the group card](#5-the-group-record-and-the-group-card)
+6. [Review](#6-review)
+7. [Worktrees, stacking and the merge lane](#7-worktrees-stacking-and-the-merge-lane)
+8. [The heavy-run lock and the disk watch](#8-the-heavy-run-lock-and-the-disk-watch)
+9. [Context supervision and sibling actions](#9-context-supervision-and-sibling-actions)
+10. [Usage pacing](#10-usage-pacing)
+11. [When a group is the wrong tool](#11-when-a-group-is-the-wrong-tool)
+12. [Shared interfaces with other parts](#12-shared-interfaces-with-other-parts)
+13. [Open questions for the owner](#13-open-questions-for-the-owner)
+14. [Edge cases](#14-edge-cases)
+15. [API, CLI and settings](#15-api-cli-and-settings)
+16. [Build stages and acceptance](#16-build-stages-and-acceptance)
+17. [Sources](#17-sources)
+
+---
+
+## 1. Words
+
+| Word | Meaning |
+|---|---|
+| Group | One task, its plan, its members and its items. Lives on its home hab |
+| Home hab | The hab of the coordinator's session when the group was made. It keeps the group record and runs the merge lane |
+| Coordinator | The session that made the plan and reads the results. Any session the user picks, or Capcom |
+| Item | One separable piece of the task. One lead owns it. A Logbook task holds it |
+| Lead | A member that owns one item, in its own worktree and branch |
+| Worker | A member a lead starts for a sub-task |
+| Reviewer | A member that reviews one item, in another harness than the item's lead |
+| Member | Any session the group started: lead, worker or reviewer. The coordinator is not a member |
+| Plan | The list of items and members the coordinator proposes. The confirmation covers it |
+| Envelope | The limits a confirmed plan sets: hosts, harnesses, folders, member caps (3.3) |
+| Lane | The merge lane: lands one item's branch at a time on main (7) |
+| Heavy run | A build or test command that takes the host's heavy-run lock (8) |
+
+One word per concept: "member", never "agent" or "teammate", for a session the group started.
+"Item", never "sub-task", for what a lead owns.
+
+## 2. Model
+
+### 2.1 Roles
+
+| Role | Does | Default | Count |
+|---|---|---|---|
+| Coordinator | Splits the task into items, proposes the plan, dispatches leads, reads verdicts and lane results, answers members' questions | The session that calls `group_create` | One per group |
+| Lead | Works its item's Logbook task in its own worktree and branch, may start workers, submits its branch to the lane | One per item | At most 3 working at once (`group.max_leads`); more items wait |
+| Worker | Does a sub-task for a lead and reports back to it over channels | The lead's choice | At most 2 per lead (`group.max_workers`) |
+| Reviewer | Reviews one item's diff against its brief, reports a verdict and its top findings, may fix in place | On for every item (6.1) | One per item under review |
+
+- **A role is a field of the member, not a kind of session.** The session record gains
+  `group: {id, role, item}`. Everything else about the session is unchanged.
+- **The coordinator stays the user's session.** Flightdeck never starts the coordinator. A
+  coordinator that exits does not end the group (14).
+- **Capcom can coordinate** through the same tools (12.1).
+- **Harness sub-agents** (Claude Code's Task tool, Codex's own agents) run inside a member's
+  process. They are not members, and the group does not see them.
+
+Decision: three leads at once by default. Reason: the workflow this models runs well with three;
+more leads mean more conflicts and more usage, and the study's research shows parallel agents make
+conflicting implicit decisions.
+
+### 2.2 What runs where
+
+| Piece | Runs on | Why |
+|---|---|---|
+| Group record, card data, events | Home hab | One writer, no election (`mesh.md`) |
+| Members | Any host the plan names | Each member is a session on its host's hab |
+| Item queue | Logbook (tasks with `claim`), synced to every hab | It already exists, survives restarts and syncs (`logbook.md` 7) |
+| Merge lane | Home hab, in a lane worktree of its own | One lane per repository per hab (7.3) |
+| Heavy-run lock, disk watch | Every hab, for its own host | Disk and CPU are per host |
+| Context supervision | Each member's own hab | It reads that hab's `context_pct` and types through that hab's lock |
+| Envelope checks for later starts | The hab that starts the member | Each member's `session.create` carries the envelope (3.3), so a member hab decides alone while the home hab sleeps |
+| Usage governor | Part 14 G (12.2) | Shared with Capcom |
+
+- **How the home hab learns member state.** From the catalog copies it pulls from each peer every
+  15 s (`mesh.md` 5): each member's agent state, `context_pct` and compact count. The card shows
+  a member's state with the copy's age, as rounds do for a stale peer.
+- **While the home hab sleeps or is offline,** the lane, new leads and reviewers on other hosts
+  wait. Starts inside the envelope on a member's own host (workers, fresh sessions) go on, and
+  so does supervision. A group meant to run overnight should have an always-on home: Capcom's
+  home host, or a coordinator session on an always-on host. Moving the home is Q6.
+
+Decision: the group record lives in gff-hab, and the items live in Logbook. Reason: members,
+states and the lane queue change by the second and belong to one hab; items are durable records
+that every agent reads with `gff lb`, and Logbook already gives `claim` and sync.
+
+---
+
+## 3. The group plan and its confirmation
+
+### 3.1 What a plan holds
+
+The coordinator writes the plan and calls `group_create` (15). A plan holds:
+
+| Field | Meaning |
+|---|---|
+| `title` | The task, one line |
+| `brief` | The task in full, the shared context every member's seed carries |
+| `project` | The project (by id or remote). A group works on one repository |
+| `items` | Each: title, brief, `touches` (paths or item ids it overlaps), `after` (an item whose branch it stacks on, 7.2), `review` (`on` or `off`, 6.1) |
+| `members` | Each: role, item, host, harness alias, model, name. Folders come from the worktrees the hab makes (7.1) |
+| `lane` | Target branch (the project's default branch, `main` in this spec), and whether the reviewer may fix in place |
+
+The hab checks the plan before any card: a known harness and a reachable host for each member,
+the project checked out on each member's host (the catalog), at most `group.max_workers` workers
+per lead, names in the channel charset and free on every host (`mesh.md` 6.1), item ids unique,
+no `after` cycle, and the `logbook` capability on the home hab. A check that fails refuses the
+call with the item or member it names; a host without the project gets "set up the project on
+<label> first". `group.max_leads` is not a plan limit: it caps how many leads work at once
+(4.3). An automatic name follows `capcom.md` 6.4: harness and six hex digits of the group id,
+then the role and the item's position in the plan, such as `codex-3fa9c2-review-2` for the
+reviewer of the second item.
+
+The hab files one Logbook plan record for the group and one task per item, linked as stages
+(`logbook.md` 2.4). Each item's task carries the item brief. The group id is on the plan record
+as a tag.
+
+### 3.2 The confirmation
+
+- **One confirmation for the whole plan.** The card shows the task, each item, each member (role,
+  host, harness, model, folder or "new worktree", branch), the lane target, review on or off per
+  item, and the trust rule: which new worktrees the confirmation answers the trust prompt for (4.2).
+- **The setting.** `confirm.group_plan`, a hab-side setting (`app.md` 20.5): true asks, false
+  starts at once and shows the card as a record. Default true, per owner decision 6
+  ("otherwise one confirmation per group plan"). Its level column and its scope (every plan, or
+  only a plan that touches another host) are open question Q1.
+- **With `confirm.start_elsewhere` on and `confirm.group_plan` off**, a plan with any member on
+  another host still asks, once. The plan never asks once per member.
+- **Mechanics are the confirmations of `capcom.md` 6.1 and 6.4**: kind `group`, on the home hab,
+  first answer wins, 60-minute expiry, no tool answers, edits allowed. The user may edit hosts,
+  harnesses, models and names, drop an item or a member, and turn review off for an item. The
+  hab checks the edited plan again (3.1).
+- **Nothing starts before the answer.** On `cancelled` or `expired` the plan record and its tasks
+  are marked `dropped`, and the coordinator gets one message from Flightdeck.
+- **The tool waits** as `start_session` does (45 s), then says "still waiting"; the answer
+  reaches the coordinator later as a message from Flightdeck (`capcom.md` 6.4).
+- **A gff-hab restart drops open confirmations** (`capcom.md` 6.4, "In memory"). At start, a
+  group in `confirming` whose confirmation is gone becomes `dropped`, and the coordinator gets one
+  message: "the hab restarted before you answered; propose the plan again".
+
+Decision: one card for the whole plan. Reason: the friction was one prompt per start and per
+folder; the owner asked for one (decision 6).
+
+### 3.3 The envelope: starts after the plan
+
+A confirmed plan sets an envelope: its project, its hosts, its harnesses, the worktrees the hab
+makes for it, and the member caps. The home hab copies the envelope into every member's
+`session.create`, so each member hab checks a later start on its own host with no call home.
+Later starts inside the envelope ask nothing:
+
+| Later start | Asks? |
+|---|---|
+| A worker a lead starts, within `group.max_workers`, on a plan host, in a plan harness | No |
+| A reviewer for an item, in a plan harness, on a plan host | No |
+| A fresh session that replaces a member (9.3) | No |
+| A member started again after its host came back | No |
+| A new item, a new host, a new harness, or another project | Yes: the coordinator calls `group_amend`, which raises one card for the change (same setting rules) |
+
+A start outside the envelope that is not an amend follows the normal start rules
+(`confirm.start_elsewhere`) and is not a member.
+
+---
+
+## 4. Starting members
+
+### 4.1 The spawn verb
+
+Members start through the spawn verb (task-6iwat66b, extended by stage B2). This spec needs from
+it, and does not define its internals (12.3):
+
+- **Arguments:** host, harness alias or harness, model, folder, name, seed, and the group fields
+  `{group, role, item}`.
+- **Returns:** the session id, its name and its channel address (`label/name` as the spawner's
+  hab sees it).
+- **The seed** goes through the channels inbox as a start envelope (`capcom.md` 6.4), which names
+  the spawner's address. So both sides know each other's address with no extra step.
+- **A start on a peer** goes over the link the home hab dialed, as `session.create` with an
+  idempotency key, as confirmed starts do today.
+
+### 4.2 Folder trust
+
+A harness may ask to trust a new folder (`app.md` 7.10). A group starts most members in new
+worktrees, so most starts would show the prompt.
+
+- **What a confirmed plan covers.** Every worktree a hab makes for the group: on a plan host, of
+  the group's project, on a `group/<group id>/` branch, for a harness in the plan. That includes
+  reviewers' and workers' worktrees made later. The card states this rule and the hosts and
+  harnesses; it does not list folders, since most do not exist yet. Confirming the plan is the
+  user's trust answer for them.
+- **Who answers.** The member's own hab, for its own pane. `trust.answer` never crosses a peer
+  link (`app.md` 7.10). The home hab hands the cover to the member hab inside the spawn's
+  `session.create`: `trust_cover {group, confirmation, harness, branch_prefix}` (12.6). The
+  member hab answers only a folder that matches it.
+- **No card for a covered folder.** While a covered pane shows the dialog, the member hab holds
+  the `blocked:trust` report, its board row and its push for up to 10 s and answers with
+  `trust`. All of `trust.answer`'s checks apply: it never answers blind, and a client typing in
+  the pane refuses it. If the answer fails or the 10 s pass, the report goes out and the card
+  shows as today.
+- **A plan that started with no confirmation** (setting off) answers the prompt only for a folder
+  that is a worktree gff-hab made of a project folder the user trusted through Flightdeck before,
+  for the same harness on the same host. gff-hab keeps those trust answers in
+  `<state>/trust.json`. Any other folder raises the trust card as today. See Q2.
+- **The seed waits** in the inbox while `blocked:trust`, as today, and goes in once the agent is
+  idle.
+- **A failed pre-answer** (`conflict`, `unavailable`) leaves the card for the user and tells the
+  coordinator once.
+- **Codex.** Its trust rule is not built (`app.md` 7.10: keys not checked). Stage B2 builds and
+  checks it; until then a Codex member's prompt raises the card.
+
+Decision: the confirmation is the trust answer. Reason: the user saw every folder on one card;
+asking again per folder is the friction this part removes. Without a confirmation, app levels must
+not answer a harness's own prompt (`app.md` 20.2, "What Bypass never touches"), so trust carries
+only from a folder the user trusted.
+
+### 4.3 Order of starts
+
+1. The hab picks items in plan order, up to `group.max_leads` working at once. A stacked item
+   waits until the item it stacks on reaches `review` (7.2). Items beyond the cap wait as
+   `queued`; a lead whose item lands or drops frees a slot.
+2. On the lead's host, the hab fetches the project's remote, makes the worktree (7.1) and waits
+   for its setup script to end. A setup that waits for the user's yes (`hab-logic-api.md` 3.10,
+   a foreign checkout) keeps the item `queued` and shows on the card's waits line.
+3. It starts the lead and writes the claim itself: assignee the lead's session, status `doing`.
+   A hab write, not an agent write, so it lands under `logbook.approval = agents` too (Q5).
+4. Reviewers start when their item is submitted (6.2), not before: a reviewer idle for hours costs
+   context and a pane.
+
+A start that fails (host offline, harness missing, spawn refused, setup failed) marks the member
+`failed` with the reason, tells the coordinator, and moves the item to `stalled`. The queue skips
+a `stalled` item until the coordinator calls `group_retry` or edits the plan.
+
+---
+
+## 5. The group record and the group card
+
+### 5.1 The record
+
+The home hab keeps one record per group in `<state>/groups/<id>.json`, synced before its rename,
+so a gff-hab restart loses nothing.
+
+| Field | Content |
+|---|---|
+| `id` | Random, 64 bits, hex |
+| `title`, `project`, `plan_record` | The task, its project, its Logbook plan record id |
+| `coordinator` | Session id, name and address |
+| `inbox` | Reports for the coordinator that wait while it is not running (5.5) |
+| `state` | See 5.2 |
+| `confirmation` | Id and outcome, or `none` when the setting was off |
+| `items` | Each: id, Logbook task id, lead, branch, `after`, state (5.3), the reviewer's verdict and findings, lane attempts |
+| `members` | Each: session id, name, host, harness, role, item, state (from `agent.state`), `context_pct`, compacts so far, the session it replaced |
+| `lane` | The queue in order and the item landing now |
+| `usage` | The governor's share and use for this group (10) |
+| `pause` | `user`, `usage`, both, or none, each with since when (5.2) |
+| `waits` | What holds the group now: usage, disk, a lock, an open trust card, an open approval, a setup that waits for a yes |
+| `leftovers` | At the end: worktrees, branches and build folders left (7.5) |
+
+The home hab publishes a short form (id, title, state, counts) in its catalog's `groups` section,
+as rounds do (`rounds.md` 9), so every hab and client can list every group.
+
+### 5.2 Group states
+
+| State | Meaning | Next |
+|---|---|---|
+| `confirming` | The plan waits for the user | `running`, or `dropped` on cancel or expiry |
+| `running` | Members work; the lane lands | `paused`, `ending` |
+| `paused` | The user paused it, or usage is at its cap (10). No new turns start; working members finish their turn | `running` when no pause reason is left; `ending` on close |
+| `ending` | Every item is landed or dropped, or the coordinator or the user closed it; the hab cleans up (7.5) | `ended` |
+| `ended` | Done. The record stays 30 days | — |
+| `dropped` | The confirmation was cancelled or expired | — |
+
+### 5.3 Item states
+
+| State | Meaning |
+|---|---|
+| `queued` | Waiting for a lead slot, for the item it stacks on to reach `review`, or for a setup yes |
+| `stalled` | Its lead failed to start or was closed; skipped until `group_retry` (4.3) |
+| `working` | The lead works |
+| `review` | Submitted; the reviewer reviews |
+| `fix` | The verdict was "fix needed", or the lane sent it back; the lead works |
+| `ready` | Review passed; in the lane queue |
+| `landing` | The lane rebases, checks and waits for CI |
+| `landed` | On main |
+| `dropped` | The coordinator or the user dropped it |
+
+### 5.4 The card
+
+The app and gff show one card per group: in the app on the status board and in the coordinator's
+session view; in gff on the status board, below the sessions.
+
+- **Header:** title, state, home hab, elapsed time, the waits line ("waiting: disk on <label>").
+- **Items:** one row each: title, state, lead, branch, the verdict with up to 3 findings (6.3), the
+  lane result.
+- **Members:** one row each, as a session row (state, host, harness, context use). A tap opens the
+  session. Approvals and trust cards of members show here and in the approvals area, as for any
+  session.
+- **Lane:** the queue in order, the item landing now and its step.
+- **Usage:** the group's share and use (10).
+- **Actions:** pause, resume, close; per item: drop, land now (skips nothing: it only moves the
+  item to the front of the queue); per member: open, compact, hand off (9.4).
+
+Members stay in the normal session list too. The list marks them with the group's title.
+
+### 5.5 Reports to the coordinator
+
+Members, the lane and supervision report to the coordinator through the home hab, not straight
+over channels, because channels refuse a message to an exited session (`mesh.md` 6.2).
+
+- **The `group_report` tool** sends one line or a short text to the coordinator. The lane,
+  review verdicts and supervision use the same path.
+- **A running coordinator** gets each report as a channel message from Flightdeck, delivered
+  when idle like any message.
+- **A coordinator that is not running** (exited, its host asleep) gets nothing typed. The reports
+  wait in the record's `inbox` (at most 200, 7 days) and show on the card. At `session.resume`
+  of the coordinator the hab delivers them as one message, oldest first.
+- Members may still use `channel_send` to the coordinator's address; that follows the channel
+  rules unchanged.
+
+### 5.6 A pause
+
+- **Two reasons, kept apart.** A user pause (card or `group.pause`) and a usage pause (10) are
+  separate fields. A usage resume never lifts a user pause.
+- **Where it holds.** The home hab publishes the pause in the group's catalog entry and pushes it
+  over each member link at once. Each member's hab then holds, for members of that group: channel
+  messages into them (from any sender), supervision's messages and new starts. Working members
+  finish their turn. A member hab that has not heard of the pause yet delivers; the next catalog
+  pull (15 s) corrects it.
+- A paused group can be closed.
+
+---
+
+## 6. Review
+
+### 6.1 When an item is reviewed
+
+- Every item is reviewed unless the plan or the user set `review: off` for it. The card shows
+  "no review" on such an item.
+- The lane lands an item only with a `pass` verdict, or with review off.
+
+Decision: review on for every item by default. Reason: owner decision 7 lands on main "once review
+and CI pass", with no branch of its own to catch a bad merge; the study's "on for core changes" is
+the coordinator's to narrow per item.
+
+### 6.2 Choosing and briefing the reviewer
+
+- **Another harness than the lead's, picked at plan time.** The hab picks, per item, the first
+  harness in the fixed order Codex, Claude Code, opencode that is not the lead's and is installed
+  on a plan host. The plan, and so the card and the envelope, name it. With none, it uses the
+  lead's harness in a fresh session and the card says "same harness".
+- **Started when the lead submits** (`lane_submit`): the hab fetches, makes a review worktree on
+  the submitted head, on the reviewer's host, and starts the reviewer with the item brief, the
+  diff against the merge base, and the review rules below.
+- **One review at a time per item.** A second submit while a review runs restarts it on the new
+  head and tells the reviewer.
+
+### 6.3 The verdict
+
+The reviewer ends its review with the `review_verdict` tool:
+
+| Field | Content |
+|---|---|
+| `verdict` | `pass` or `fix_needed` |
+| `findings` | At most 5, each `severity` (`high` or `medium`), title, place (file and line), one paragraph. The brief asks for the top 3 |
+| `fixed` | Commits the reviewer pushed to the branch (6.4), if any |
+
+- Low findings are not reported. The brief says so: reviewers nearly always find something
+  (HN 50380658), so only high and medium findings reach the card.
+- The card shows the verdict and the findings. The full review stays in the reviewer's
+  transcript.
+- `fix_needed` moves the item to `fix` and sends the findings to the lead over channels. After the
+  lead submits again, the same reviewer reviews the new diff.
+- A reviewer that exits or stays idle 30 minutes with no verdict is reported to the coordinator;
+  the item stays in `review`.
+- The verdict goes to the coordinator as one report line ("item 2: fix needed, 2 findings"), never
+  the review text.
+
+### 6.4 Fix in place
+
+When the plan allows it (`lane.reviewer_fixes`, default true), the reviewer may fix its own
+findings. The hab has no gate on the git remote, so the reviewer never pushes to the lead's
+branch:
+
+- The reviewer commits in its review worktree on top of the submitted head and pushes to its own
+  branch, `group/<group id>/<item id>-review`.
+- The verdict names the fix commits and the review branch head. The hab checks that head is a
+  descendant of the submitted head; otherwise the fixes are ignored and the card says so.
+- A `pass` with fixes lands the review branch head: the lane takes it in place of the submitted
+  head. Its checks and CI run on that result, as for any land.
+- The lead's next `lane_submit` waits until the verdict. After a pass with fixes, the hab tells
+  the lead to fast-forward to the review branch before any new change.
+
+---
+
+## 7. Worktrees, stacking and the merge lane
+
+### 7.1 Worktrees and branches
+
+- **Each lead gets one worktree and one branch**, made with `worktree.create` (`hab-logic-api.md`
+  3.10) on the lead's host. Branch name: `group/<group id>/<item id>`.
+- **Workers** that write get their own worktree on a branch off the lead's; the lead merges their
+  work. Read-only workers run in the lead's folder.
+- **Leads push their branch to the project's remote** (the `origin` the catalog knows). The lane
+  reads branches from the remote, so a lead on another host needs no file path the home hab can
+  see.
+- **gff-hab fetches before it makes a group worktree.** `worktree.create` does not fetch today
+  (`hab-logic-api.md` 3.10); groups need a `fetch` option on it (12.7). A branch the hab made
+  from the remote under `group/` is not foreign, so its setup needs no yes.
+
+### 7.2 Stacking
+
+When an item `touches` another item's paths, or the plan sets `after`, the later item stacks:
+
+- It starts when the earlier item reaches `review`, so the earlier branch has its work. Its
+  worktree starts from the earlier item's submitted head, not from main.
+- The lane lands the earlier item first. The later item's lane run rebases on main, which
+  already holds the earlier commits, so they drop out of its diff.
+- If the earlier item goes back to `fix`, the later one waits in the queue behind it.
+- If the earlier item is dropped, the later one is rebased on main by the lane; a conflict goes
+  back to its lead.
+
+### 7.3 The lane
+
+One lane per repository per hab. It lands one item at a time, in the order items reach `ready`,
+except that an item never lands before an item it stacks on.
+
+For each item:
+
+1. **Fetch** the item's branch and the target branch from the remote.
+2. **Rebase** the item on the target in the lane's own worktree. A conflict stops here (7.4).
+3. **Checks.** Run the project's `lane.checks` under the heavy-run lock (8). A failure stops here.
+   The lane reads `lane.checks`, `lane.ci` and `lane.build_folders` from `flightdeck.json` as
+   committed on the target branch it fetched in step 1, never from the item's branch, so an item
+   cannot change its own gate.
+4. **Push the rebased branch** to the item's branch with `--force-with-lease`, and save the
+   rebased head in the item's lane attempts before step 5.
+5. **CI.** Run the project's `lane.ci` command with the branch name and the commit id, and wait
+   for its exit: 0 passes, any other code fails. The command is the project's own, such as one
+   that watches the CI run for that commit. The project's CI must run on pushes to `group/**`
+   branches; this repository's `ci.yml` runs only on pull requests and on main today and needs
+   that trigger. A project with no `lane.ci` has no CI step; the card says "no CI". See Q3.
+6. **Land.** Push the commit to the target as a fast-forward. If the target moved, start again
+   at step 1. After 3 tries the item goes back to the coordinator with "main keeps moving".
+7. **After the land:** mark the item `landed`, the Logbook task `done`, remove the lead's and the
+   reviewer's worktrees, and close the lead and the reviewer if they are idle (their
+   conversations stay resumable).
+
+- **The lane never lands without a pass.** A review verdict of `pass` (or review off) and a
+  passing check and CI step are required for every land. No setting turns this off.
+- **The lane does not merge with a merge commit** and does not squash. The item's commits land
+  as the lead wrote them, rebased.
+- **The lane runs on the home hab.** If the home hab sleeps, the lane waits. Members on other
+  hosts keep working and submit; their items wait in `ready`.
+
+Decision: land straight on the target, one at a time, after review and CI. Reason: owner decision
+7; one at a time keeps every land tested on the exact tree it lands on.
+
+### 7.4 Back to the lead
+
+A conflict, a failed check, a failed CI or a refused push moves the item to `fix` and sends the
+lead one channel message: the step, the first 40 lines of output, and what to do ("rebase on main
+and submit again"). The coordinator gets a one-line note. The lane goes on with the next item.
+
+A push the remote refuses for a rule, not a race (a protected branch, no permission) stops the
+lane for the whole repository and tells the coordinator, since every item would fail the same way.
+
+### 7.5 The end of a group
+
+When every item is landed or dropped, or the coordinator calls `group_close`:
+
+- The hab removes the worktrees of landed items (7.3 step 7 did most of them).
+- It lists the leftovers on the card and in one message to the coordinator: worktrees of dropped
+  items (with uncommitted changes or not), branches not landed, and per-run build folders the
+  project names in `flightdeck.json`. It removes nothing with uncommitted changes.
+- It closes idle members (`group.close_members`, default true). A working member is left running
+  and listed.
+- It marks the Logbook plan record `done` (or `dropped` when nothing landed).
+
+---
+
+## 8. The heavy-run lock and the disk watch
+
+### 8.1 The lock
+
+One lock per host for build and test runs. It stops three agents from running three full test
+suites on one laptop at once.
+
+- **How a run takes it.** The agent wraps its command: `gff heavy -- make test` (`gff-hab heavy`
+  is the same command). The CLI asks its hab for the lock, waits in order, runs the command,
+  and gives the lock back when the command exits. The command's output and exit code pass
+  through unchanged.
+- **Order.** First come, first served, per host. `heavy.slots` sets how many runs hold it at
+  once (default 1).
+- **Release.** On the command's exit, on the CLI's death (its connection to the hab drops), and on
+  the pane's close. A process that outlives the CLI is not the hab's concern: the release follows
+  the CLI.
+- **gff-hab restart.** The lock lives in memory. A running CLI reconnects with its ticket and keeps
+  its place (holding or waiting). For 10 s after a start gff-hab grants nothing, so earlier
+  holders can come back first.
+- **Long holds.** A hold past 60 minutes raises one notice and
+  tells the coordinator of any group with a member waiting. The hab does not kill the run.
+- **Who uses it.** Any session on the host, in a group or not, and the lane's checks. The group's
+  seeds and the agent kit's manual tell members to wrap builds and tests. A run that does not
+  wrap is not held back: the lock is a convention, as in the workflow it models.
+- **Waiting shows.** A waiting CLI prints one line ("waiting for the heavy-run lock: 2 ahead") to
+  stderr. The card's waits line and the status board show who holds it and who waits.
+
+Decision: a wrapper command, not an MCP tool. Reason: the run is a shell command the agent's own
+shell tool starts; only a wrapper can hold the lock for exactly the command's life and release it
+when the command dies.
+
+### 8.2 The disk watch
+
+- **Free space per host** joins the catalog: the volume of the hab's state directory and the
+  volume of the worktree root, each `{path, free_bytes, total_bytes}`, from the host stats the hab
+  already reads.
+- **Threshold.** `heavy.disk_min_free` (default 10 GiB). Below it on a host, that host's heavy
+  runs wait: the lock grants nothing. Runs already holding it go on.
+- **Recovery.** Grants start again when free space is 2 GiB above the threshold, so a run that
+  frees a little does not flap the lock.
+- **Who hears.** The coordinator of each group with a member on that host gets one channel message
+  per low-disk episode: host, free space, the largest leftovers the hab knows (7.5). The card's
+  waits line shows it. Hosts with no group get one notice.
+
+---
+
+## 9. Context supervision and sibling actions
+
+Supervision is hab-side and on by default for members (`swarm-study.md` 3.2). The coordinator does
+not remind anyone.
+
+### 9.1 Thresholds
+
+| Value | Default | Kind | Meaning |
+|---|---|---|---|
+| `group.compact_at` | 40 | Setting | Compact a member at this `context_pct` |
+| `group.fresh_after_compacts` | 4 | Setting | After this many compacts, the next trigger starts a fresh session |
+| Transcript size | 4 MB | Fixed | A transcript this large starts a fresh session at the next trigger |
+| Hand-off level | 60 | Fixed | For a harness the hab cannot compact (9.2), the `context_pct` that starts a fresh session |
+
+- **Where `context_pct` comes from.** `Session.context_pct` (`hab-logic-api.md` 2.2) is specified
+  but no adapter fills it yet. Claude Code: the status-line input and the transcript's usage, as
+  self-compact's nudge reads them. Codex: the rollout's `token_count` events, when they carry the
+  model's window (to verify in B6). opencode: none. Stage B6 wires these into `context_pct`
+  first.
+- A member with no `context_pct` is supervised by transcript size only. That covers opencode,
+  and Codex until its reading exists.
+- SDK members manage their own context (`swarm-study.md` 2.2) and are not supervised.
+- **The context nudge is off for members.** Self-compact's `agent.context_nudge` would tell a
+  member to compact itself on top of supervision. Supervision suppresses it for group members,
+  and counts every `agent.compact` of a member, its own included, toward
+  `group.fresh_after_compacts`.
+
+### 9.2 A compact
+
+When a member reaches `group.compact_at`, its own hab:
+
+1. Waits until the member is not in use (`rounds.md` 6.1). A member that stays in use is checked
+   again at each of its turn ends; supervision never skips for good.
+2. Sends one message from Flightdeck: "context is at N%: send your progress with
+   `group_note`, then end your turn." The hab writes that text as a note on the item's task
+   (Q5). The member's turn ends.
+3. Runs a compaction for the member's pane with the follow-up "continue item <title>; your notes
+   are on task <id>". This is self-compact's machinery started by the hab (12.4).
+4. Counts the compact on the member's record.
+
+Self-compact covers Claude Code only today. A member in another harness skips steps 2 and 3: it
+goes straight to a fresh session at the hand-off level (9.3).
+
+### 9.3 A fresh session
+
+When a member passes `group.fresh_after_compacts` or the transcript size, or a harness the hab
+cannot compact reaches the hand-off level:
+
+1. Wait until not in use, as in 9.2.
+2. Message: "send a hand-off with `group_note`: what is done, what is next, open questions; then
+   end your turn." The hab writes it as a note on the item's task.
+3. When the turn ends and the note is there (or after 10 minutes with no note, which the card
+   flags), the hab holds new channel deliveries to the old session, renames it `<name>-<n>`,
+   closes it, and starts a new member with the old name, in the same worktree, harness and
+   model. Its seed is the item brief plus "read the notes on task <id> and continue".
+4. **Messages carry over.** Messages held for the old session move to the new one in their order
+   (12.8). Without that, channels would refuse them as sent to a renamed session (`mesh.md` 6.5).
+5. The new member keeps the old one's address, so the coordinator and siblings need nothing new.
+   The record keeps `replaced: <old session id>`. The old conversation stays resumable.
+
+Decision: the hand-off is a note on the item's Logbook task, written by the hab from the member's
+`group_note`. Reason: the note is durable, synced to every host, and sits beside the item the
+fresh session reads anyway; no new record kind is needed. The hab writes it so that
+`logbook.approval = agents` does not turn it into a proposal the fresh session cannot read (Q5).
+
+### 9.4 Sibling actions
+
+Any member, the coordinator, or the user from the card can ask for a compact or a fresh session
+for another member: tools `member_compact` and `member_handoff`.
+
+- The member's hab runs it as in 9.2 or 9.3, under the rounds lock: never into a session in use.
+  It waits up to 10 minutes, then ends as `skipped` with the reason, as a round run does
+  (`rounds.md` 6.3), and tells the asker.
+- One supervision action per member at a time. A second request while one runs gets `conflict`.
+- An agent cannot act on a member outside its own group.
+
+---
+
+## 10. Usage pacing
+
+Groups spend several times a chat's tokens (11). The usage governor (Part 14 G, task-k0ydtgae)
+gives each group a share of the plan window. This spec needs from it (12.2):
+
+- **A consumer per group,** `group:<id>`, with a share the governor's settings set.
+- **A check before a new turn:** may a member of this group start a turn now? Answer: yes, or wait
+  until a time, with the reason.
+- **An event** when the answer changes.
+
+What a group does with it:
+
+- **At the cap the group is `paused`** with reason `usage` (5.6). Member habs hold what starts
+  new turns: channel messages into members (from the coordinator, siblings, the lane and
+  supervision) and new starts. Working members finish their current turn. The card says
+  "paused: usage, until <time>".
+- **The coordinator hears once** per pause, and once at resume.
+- **A harness with no usage readings** (opencode) is unpaced, not blocked, as the governor task
+  says. The card marks such members "unpaced".
+
+---
+
+## 11. When a group is the wrong tool
+
+- **Use a group** for many separable items, or for work that needs a review in another harness.
+  Its value is cross-host, cross-harness and visible.
+- **Do not use a group for one change.** Multi-agent work costs several times a chat's tokens:
+  Anthropic's research system spends about 15 times a chat; Claude Code agent teams about 7 times
+  in plan mode (`swarm-study.md` 3.3).
+- **The card warns.** A plan with one item shows "one item: a single session costs less" on its
+  confirmation card. A plan whose items all touch the same paths shows "these items overlap and
+  will land one after another".
+- **The agent kit's manual** tells agents when to propose a group and when to work alone.
+
+---
+
+## 12. Shared interfaces with other parts
+
+Groups depend on pieces other specs own. This section states what groups need. The owning spec
+defines the internals. Each row is **shared**: a change on either side updates both specs.
+
+### 12.1 Capcom as coordinator (Part 14 A1, A2; stage B8) — shared
+
+- The Capcom engine holds a channel address, so members and the lane reach it as they reach any
+  coordinator.
+- Capcom's tool list includes the group tools of 15.2.
+- The group card links from Capcom's thread, and Capcom sums up the result there.
+- A group whose coordinator is Capcom has Capcom's home host as its home hab.
+- Capcom has no shell. The heavy-run lock and the lane do not need one from the coordinator.
+
+### 12.2 The usage governor (Part 14 G) — shared
+
+As in section 10: a consumer per group, a check before a new turn, an event on change, and
+"unpaced" for a harness with no readings.
+
+### 12.3 The spawn verb (task-6iwat66b, stage B2) — shared
+
+As in 4.1: host, harness alias, model, folder, name, seed and the group fields in; session id,
+name and address out; the seed as a start envelope naming the spawner.
+
+### 12.4 Self-compact (task-f2fhhr6p) — shared
+
+Self-compact compacts only the caller's own pane today. Supervision needs the same steps started
+by the hab for a member's pane, with a follow-up the hab writes. The states and events
+(`agent.compact`) stay as built. Supervision also needs the context nudge turned off per session
+(group members), and `agent.compact` events for every compaction, so it can count them.
+
+### 12.5 The `group` round target (Part 13 D1) — shared
+
+A round or watcher with target `group` sends its prompt as a message to the group's coordinator.
+Groups provide: `group.get {group}` → the coordinator's address and the group's state. The run
+hands its prompt to the home hab as a report (5.5), so a coordinator that is not running gets it
+at resume. A target group that is `ended` or `dropped` makes the run `skipped` with "group
+ended".
+
+### 12.6 Trust cover on a start (`app.md` 7.10, B2) — shared
+
+`session.create` from a peer link gains `trust_cover {group, confirmation, harness,
+branch_prefix}`. The member hab answers its own pane's trust dialog only for a folder that
+matches the cover (4.2), and holds the `blocked:trust` report up to 10 s while it does. This is an
+exception `app.md` 7.10 must state: the hab answers, the user does not, because the user
+confirmed the plan.
+
+### 12.7 Worktrees (`hab-logic-api.md` 3.10, B4) — shared
+
+`worktree.create` gains a `fetch` option: fetch the project's remote before the branch is made.
+A `group/` branch made from the remote is not foreign.
+
+### 12.8 Channels across a member swap (`mesh.md` 6.5, B6) — shared
+
+Today a held message to a session renamed or replaced since it arrived is refused. A group's
+fresh-session swap (9.3) needs one exception: the hab moves held messages for the old session to
+its named successor, in order, and the sender sees them delivered to the same address.
+
+---
+
+## 13. Open questions for the owner
+
+Settled decisions are cited above and are not repeated here.
+
+| # | Question | Proposed default |
+|---|---|---|
+| Q1 | Is `confirm.group_plan` a levelled setting, and which plans ask? Decision 6 implies confirmation on unless turned off, but `app.md` 20.2 says Balanced adds no confirmation, and decision 6 was asked about "a group's starts on other hosts", while own-host starts never ask (`capcom.md` 6.4) | (a) Levelled: Safe true, Balanced true, Bypass false, every plan asks; `app.md` 20.2 gains this one exception. Or (b) follow `confirm.start_elsewhere`'s column, ask once per plan, only for a plan that touches another host. Proposed: (a), since the card also answers trust for every folder |
+| Q2 | With confirmation off, may the hab answer the trust prompt for a group's new worktrees? `app.md` 20.2 keeps levels away from a harness's own prompts | Only for worktrees of a folder the user trusted through Flightdeck (4.2) |
+| Q3 | A project with no `lane.ci`: may the lane land on its local checks alone? | Yes, and the card says "no CI" |
+| Q4 | Does the lane close a lead and its reviewer after a land? | Yes, when idle; the conversations stay resumable |
+| Q5 | Under `logbook.approval = agents` (Safe), agent writes become proposals (`logbook.md` 9.1). May the hab write a group's claims and hand-off notes on the members' behalf, so they land at once? | Yes: the hab writes them as the group, with the member as the source session; the confirmed plan is the user's authority. Other member writes stay proposals |
+| Q6 | May the user move a group's home hab (for a laptop that will sleep)? | Not in the first build; start the group from an always-on host instead |
+
+---
+
+## 14. Edge cases
+
+| Case | Behaviour |
+|---|---|
+| The coordinator exits | The group runs on. Reports wait in the record's inbox (5.5) and go in when it is resumed; the card shows them meanwhile |
+| The coordinator's host sleeps | The lane and the record wait. Members on other hosts keep working; their messages wait in outboxes (`mesh.md` 6.3) |
+| A member's host goes offline | The member shows stale on the card. Its item stays in its state. Nothing is restarted elsewhere |
+| A member's session is closed by the user | The item goes to `stalled`; the coordinator is told and may call `group_retry` (inside the envelope) |
+| The user types into a member | Allowed. The member is in use, so supervision and sibling actions wait (9) |
+| A member asks a permission | An ordinary approval: card, push, answer. The group card lists it under waits |
+| Two groups on one repository on one hab | One lane serves both, in `ready` order |
+| Two habs land on one repository | The fast-forward push fails for the later one; it rebases and tries again (7.3 step 6) |
+| A plan edit drops a member that already runs | `group_amend` asks once; the dropped member is closed when idle |
+| gff-hab restarts mid-land | The lane starts the item again at step 1. When the saved rebased head (7.3 step 4) is already on the target, the item is marked `landed` |
+| gff-hab restarts while the plan waits for its confirmation | The confirmation is gone; the group becomes `dropped` and the coordinator is told (3.2) |
+| The home hab is offline when a lead submits | The submit waits in the member hab's outbox; the reviewer starts when the home hab is back |
+| A heavy run's CLI is killed with SIGKILL | Its connection drops; the lock goes to the next waiter |
+| Disk low while the lane's checks wait | The lane waits like any heavy run; the card shows it |
+| The lead pushes while the reviewer fixes | The reviewer pushes to its own branch (6.4). A new lead commit after the submit makes the review branch no longer a fast-forward for the lead; the lead's next submit restarts the review on the new head |
+| A Logbook write fails (no Logbook on the home hab) | `group_create` is refused with "groups need Logbook" before any card |
+
+---
+
+## 15. API, CLI and settings
+
+Names and shapes; the schema comes with each build stage. Calls follow `hab-logic-api.md` 3.3
+to 3.6.
+
+### 15.1 Hab API
+
+| Call or event | Shape | Stage |
+|---|---|---|
+| capability `groups` | — | B3 |
+| `group.create {plan}` | → `{group, confirmation?}`; the plan as in 3.1 | B3 |
+| `group.amend {group, change}` | → `{confirmation?}`; one card for the change | B3 |
+| `group.get {group}`, `group.list {state?}` | → the record (5.1), or the short forms. The tool `group_status` calls `group.get` | B3 |
+| `group.report {group, text}`, `group.note {group, item, text}` | A report to the coordinator (5.5); a note the hab writes on the item's task (9) | B3 |
+| `group.pause`, `group.resume`, `group.close {group}` | → the record | B3 |
+| `group.retry {group, member}` | Start a failed member again | B3 |
+| event `group.updated` | `id`, `revision`, `data` the record; host scope | B3 |
+| catalog section `groups` | The short form per group | B3 |
+| `lane.submit {group, item}` | From the item's lead only; starts the review | B7 |
+| `review.verdict {group, item, verdict, findings, fixed}` | From the reviewer's pane only | B7 |
+| `heavy.take {ticket?}`, `heavy.release {ticket}` | The lock, on a held connection | B5 |
+| `heavy.status` | Holders, waiters, disk state | B5 |
+| `member.compact`, `member.handoff {group, member}` | Sibling actions | B6 |
+
+### 15.2 Agent kit
+
+| Tool (MCP and `gff-hab act`) | Who | What |
+|---|---|---|
+| `group_create` | Coordinator | Propose the plan; waits 45 s for the confirmation |
+| `group_status` | Any member, the coordinator | The record |
+| `group_amend`, `group_close`, `group_retry` | Coordinator | As in 15.1 |
+| `group_report` | Any member | A report to the coordinator (5.5) |
+| `group_note` | Any member | A progress or hand-off note on its item (9) |
+| `lane_submit` | Lead | Submit the item's branch |
+| `review_verdict` | Reviewer | The verdict |
+| `member_compact`, `member_handoff` | Any member, the coordinator | Sibling actions |
+
+CLI: `gff group ls|show|pause|resume|close`, `gff heavy [--] <command...>`.
+
+### 15.3 Settings
+
+All hab-side (`app.md` 20.5), stored on every hab, unless the row says otherwise.
+
+| Id | Title | Type | Default |
+|---|---|---|---|
+| `confirm.group_plan` | Confirm a group's plan before it starts | bool | true (level: Q1) |
+| `group.max_leads` | Leads at once | integer 1 to 10 | 3 |
+| `group.max_workers` | Workers per lead | integer 0 to 5 | 2 |
+| `group.compact_at` | Compact members at context | percent, 0 = off | 40 |
+| `group.fresh_after_compacts` | Start fresh after this many compacts | integer 1 to 20 | 4 |
+| `heavy.slots` | Heavy runs at once on this host | integer 1 to 8 | 1; this hab only |
+| `heavy.disk_min_free` | Hold heavy runs below this free space | GiB | 10; this hab only |
+| `group.close_members` | Close idle members at the end | bool | true |
+
+Fixed values, not settings: the reviewer harness order (6.2), the transcript size and hand-off
+level (9.1), the 60-minute long-hold notice (8.1).
+
+The project's `flightdeck.json` gains `lane.checks`, `lane.ci` and `lane.build_folders`, read
+from the target branch (7.3).
+
+---
+
+## 16. Build stages and acceptance
+
+Each stage is a task in the Part 15 plan (plan-vu079jrc). Core stages (B3, B4, B6) get a
+fresh-eyes reviewer before they close.
+
+| # | Stage | Builds | Depends on | Task |
+|---|---|---|---|---|
+| B1 | This spec | — | Spawn verb spec | task-5ntfv32q |
+| B2 | Spawn and trust | The spawn verb's group fields; `trust_cover` and the held trust report (12.6); the Codex trust rule and its keys; the trust ledger (4.2); addresses to both sides | task-6iwat66b | task-7kzvfcna |
+| B3 | Record, card, confirmation | `group.*`, the record and its file, the Logbook plan and tasks with hab-written claims and notes, the envelope in each start, `confirm.group_plan`, reports and the inbox (5.5), pause (5.6), the card in the app and gff, the catalog section | B2 | task-nz4aglbr |
+| B5 | Lock and disk | `gff heavy`, `heavy.*`, the disk fields in the catalog, the threshold and the messages | B1 | task-aagbyg89 |
+| B7 | Review | `lane_submit` up to the verdict (item states `review`, `fix`, `ready`), reviewer choice, `review_verdict`, findings on the card, fix in place on the review branch | B2, B3 | task-3eez53r6 |
+| B4 | Stacking and lane | Worktrees per lead with `fetch` (12.7), stacking, the lane from `ready` through its seven steps, back to the lead, the end of a group | B3, B7 | task-ur5zmuah |
+| B6 | Supervision | `context_pct` from Claude Code and Codex; compact, fresh session, sibling actions, the settings; the hab-started compaction and the nudge off for members (12.4); messages across a swap (12.8) | B3, task-f2fhhr6p | task-humtiqof |
+| B8 | Capcom coordinates | Group tools for Capcom, the card from its thread | Part 14 A2, B3 | task-itwl1sbg |
+
+Order: B2 and B5; then B3; then B7 and B6; then B4; B8 after Part 14 A2. Usage pacing (10) lands with
+Part 14 G and wires into B3's `paused` state.
+
+### 16.1 Acceptance: the friction table
+
+The friction of `swarm-study.md` 4 is the acceptance of Part 15. Each row passes when the user
+never opens a pane, answers a trust prompt or reminds an agent. Every row is an end-to-end test
+with the real holder and gff-hab, two habs over the ssh stand-in, and fake harnesses that report
+over OSC 7501 and hooks.
+
+| Friction | Test passes when | Stage |
+|---|---|---|
+| The owner opened the Codex pane | A Claude Code coordinator's `group_create` with a Codex lead on the other hab starts it there after one confirmation; no client opens or types into any pane | B2, B3 |
+| The owner approved Codex's folder trust | The fake Codex draws the trust prompt in its new worktree; gff-hab answers it; no trust card is raised; the seed goes in after | B2 |
+| The owner told the coordinator where the pane was | The member's first reply reaches the coordinator by name, with no address typed by anyone | B2 |
+| Reminders about context | A member at 41% gets one compact with no message from the coordinator; the fifth trigger starts a fresh session from the task's hand-off note, under the old name; a sibling's message held at the swap reaches the new session; the same at the Safe level (`logbook.approval = agents`) | B6 |
+| Reminders about usage | With usage readings at the group's cap, the group is `paused`, no message goes into a member, and it resumes when the window moves (fake clock) | G, B3 |
+| Reminders about disk | Free space below the threshold makes a heavy run wait and sends the coordinator exactly one message | B5 |
+| Reviews read in full by the coordinator | A Claude Code lead gets a Codex reviewer; the card and the lane get the verdict and at most 5 findings; the coordinator receives the verdict line, not the review | B7 |
+| Merges done by hand in order | Two items land on main in order with real git and a fake CI; a third that conflicts goes back to its lead; a failed CI blocks its land; nothing lands without a pass | B4 |
+
+### 16.2 Acceptance: per stage
+
+| Stage | Test |
+|---|---|
+| B2 | A spawn outside a confirmed group still raises the trust card. A covered folder on the other hab is answered by that hab with no card and no push. A pre-answer that meets client input in the last second leaves the card after the hold |
+| B3 | A three-member plan raises one confirmation; nothing starts before it; with `confirm.group_plan` off it starts at once; with it off and `confirm.start_elsewhere` on, a plan with a member elsewhere asks once. A worker inside the envelope asks nothing, also with the home hab stopped; a new host asks once through `group_amend`. A restart during `confirming` drops the group and tells the coordinator. Reports to an exited coordinator wait and arrive at its resume. A user pause outlives a usage resume. A member resumes from a plain terminal. The record survives a gff-hab restart. Swift and Go tests over a fake hab: the card lists items, members and states |
+| B5 | Three runs on one host take the lock in arrival order; a killed CLI releases it; a CLI that reconnects after a gff-hab restart keeps its place; a hold past the limit raises one notice |
+| B7 | The reviewer is in another harness than the lead; with only one harness, the card says "same harness"; a `fix_needed` moves the item to `fix` and reaches the lead; a pass with fixes names a review head that descends from the submitted head, and one that does not is ignored; the coordinator gets one line, not the review |
+| B4 | A `fix_needed` item never lands; a pass with fixes lands the review head; a stacked item lands after the item it stacks on with the earlier commits out of its diff; a target that moves during CI makes the lane start again; three moves send it back; a protected-branch refusal stops the lane; an item branch that empties `lane.checks` still runs the target's checks; a restart after the land push marks the item landed; the end lists leftovers and removes nothing with uncommitted changes |
+| B6 | A sibling action against a session in use waits, then skips after 10 minutes; a Codex member with a fake rollout reading goes straight to a fresh session at 60%; a member with no `context_pct` is supervised by size; a member gets no context nudge, and its own compaction counts |
+| B8 | Live check of `swarm-study.md` 2.4 scenario 2: Capcom finds the project, starts a group across two hosts after one confirmation, and replies with the summary |
+
+---
+
+## 17. Sources
+
+- `docs/specs/swarm-study.md` 2.6, 3, 4, 7 and 8; master plan decisions (o) and (p).
+- `rounds.md` 5 and 6 (the lock); `capcom.md` 6 (confirmations); `app.md` 7.10 (trust card),
+  20.2 to 20.5 (settings); `mesh.md` 6 (channels); `hab-logic-api.md` 3.10 (worktrees);
+  `logbook.md` 2.2, 2.4 and 10 (records, links, `claim`); `harness-adapters.md`, Usage.
+- Self-compact and the context nudge (task-f2fhhr6p).
+- Hacker News item 50380658 (reviewers nearly always find something);
+  https://www.anthropic.com/engineering/multi-agent-research-system;
+  https://code.claude.com/docs/en/agent-teams; https://cognition.com/blog/dont-build-multi-agents.

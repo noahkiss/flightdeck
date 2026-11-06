@@ -7,6 +7,7 @@ sets the scope:
 - **B. Agent groups** are a first-class, optional capability, modelled on the coordinator
   workflow that builds Flightdeck (section 3). Section 4 maps the friction that workflow has today
   to the pieces that remove it.
+  The behaviour spec is `groups.md`.
 - **D. Watchers** are long-lived, event-driven rounds (section 5).
 - **E. iMessage** is optional and minor (section 6).
 
