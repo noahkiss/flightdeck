@@ -116,6 +116,21 @@ harness = "claude"
 max_running = 2
 # How long due runs wait after a wake or a gff-hab start; "0s" for none.
 wake_settle = "30s"
+# Event rounds (rounds.md 4.5): a pending batch keeps at most this many events and bytes,
+# dropping the oldest and counting them.
+batch_max_events = 200
+batch_max_bytes = 262144
+# Keep the event files of this many ended runs per round; 0 keeps none.
+event_files_keep = 20
+# The events block in a run's first message: at most this many events, this many bytes, and
+# this many bytes of each event's data.
+block_max_events = 50
+block_max_bytes = 32768
+block_data_max = 1024
+# How often a changed pending batch is saved.
+state_save_every = "10s"
+# How long a capcom run waits for Capcom's outcome before it reads unknown.
+outcome_wait = "7d"
 
 # The [heavy] section: the heavy-run lock that `gff heavy -- <command>` takes (docs/specs/groups.md
 # 8). A value outside its range is logged and the default runs.

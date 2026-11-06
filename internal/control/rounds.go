@@ -19,6 +19,8 @@ const (
 type Rounds interface {
 	List() []api.Round
 	Get(ref api.RoundRef) (api.Round, error)
+	// Batch returns an event round's pending batch, nil when it has none (round.get with batch).
+	Batch(ref api.RoundRef) (*api.RoundBatch, error)
 	// Create stores a new round. createdBy is the calling session when an agent creates it from
 	// its pane; the control connection passes "", a user.
 	Create(ctx context.Context, p api.RoundCreateParams, createdBy string) (api.RoundCreated, error)
@@ -62,15 +64,26 @@ func (c *conn) handleRounds(m message) {
 				return api.RoundList{Seq: now(), Rounds: rs.List()}, nil
 			}
 		}
-	case "round.get", "round.pause", "round.unpause":
+	case "round.get":
+		var p api.RoundGetParams
+		if e = c.decodeUp(m, &p); e == nil && rs != nil {
+			call = func(_ context.Context, now func() api.Seq) (any, error) {
+				r, err := rs.Get(p.RoundRef)
+				res := api.RoundResult{Round: r}
+				if err == nil && p.Batch {
+					res.Batch, err = rs.Batch(p.RoundRef)
+				}
+				res.Seq = now()
+				return res, err
+			}
+		}
+	case "round.pause", "round.unpause":
 		p := ref()
 		if e == nil && rs != nil {
 			call = func(_ context.Context, now func() api.Seq) (any, error) {
 				var r api.Round
 				var err error
 				switch m.Method {
-				case "round.get":
-					r, err = rs.Get(p)
 				case "round.pause":
 					r, err = rs.Pause(p)
 				default:

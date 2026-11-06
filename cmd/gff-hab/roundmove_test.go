@@ -288,3 +288,105 @@ func TestRoundHostRefusals(t *testing.T) {
 		}
 	}
 }
+
+// TestRoundMoveStage9: capcom, group and event rounds move (rounds.md 9, Moving these rounds):
+// no project needed, an event filter's project by remote, a filter that names a session
+// refused, and the pending batch read after the pause and carried in the create.
+func TestRoundMoveStage9(t *testing.T) {
+	notFound := fail(control.Errorf(api.ErrorKindNotFound, "no round nightly on this hab"))
+	event := func() api.Round {
+		return api.Round{ID: "r1", Pending: 2, RoundSpec: api.RoundSpec{Name: "nightly", Mode: api.RoundModeCapcom,
+			Trigger: api.RoundTrigger{Kind: api.RoundTriggerKindEvent, Event: "agent.state",
+				Filter: &api.RoundEventFilter{Project: "p1", ProjectRemote: "example.com/team/app", State: []string{"done"}}},
+			Prompt: "look"}}
+	}
+	batch := &api.RoundBatch{Events: []api.RoundEvent{{At: "2026-11-03T09:00:00Z", Kind: "agent.state", Title: "a done"}}, Dropped: 1}
+
+	t.Run("an event capcom round carries its filter by remote and its batch", func(t *testing.T) {
+		r := event()
+		var sent api.RoundCreateParams
+		create := func(_ context.Context, p any) (any, error) {
+			sent = p.(api.RoundCreateParams)
+			return api.RoundCreated{Round: moved(r)}, nil
+		}
+		from, to := moveHabs(r, create, notFound)
+		var asked api.RoundGetParams
+		gets := 0
+		from.handlers["round.get"] = func(_ context.Context, p any) (any, error) {
+			gets++
+			if gets == 1 {
+				return api.RoundResult{Round: r}, nil
+			}
+			asked = p.(api.RoundGetParams)
+			return api.RoundResult{Round: r, Batch: batch}, nil
+		}
+		if out, err := runMove(t, from, to); err != nil || !strings.Contains(out, "moved nightly to bee") {
+			t.Fatalf("%v %s", err, out)
+		}
+		if m := from.methods(); m != "round.get,round.pause,round.get,round.delete" {
+			t.Errorf("source calls %s: the batch is read after the pause", m)
+		}
+		if !asked.Batch || asked.ID != "r1" {
+			t.Errorf("batch read %+v", asked)
+		}
+		f := sent.Round.Trigger.Filter
+		if f == nil || f.Project != "" || f.ProjectRemote != "example.com/team/app" || len(f.State) != 1 {
+			t.Errorf("filter sent %+v", f)
+		}
+		if sent.Batch == nil || len(sent.Batch.Events) != 1 || sent.Batch.Dropped != 1 {
+			t.Errorf("batch sent %+v", sent.Batch)
+		}
+	})
+
+	t.Run("a group round with no project moves", func(t *testing.T) {
+		r := api.Round{ID: "r1", RoundSpec: api.RoundSpec{Name: "nightly", Mode: api.RoundModeGroup, Group: "g1",
+			Trigger: api.RoundTrigger{Kind: api.RoundTriggerKindCron, Cron: "0 9 * * *", Zone: "UTC"}, Prompt: "sum up"}}
+		from, to := moveHabs(r, answer(api.RoundCreated{Round: moved(r)}), notFound)
+		if out, err := runMove(t, from, to); err != nil || !strings.Contains(out, "moved nightly to bee") {
+			t.Fatalf("%v %s", err, out)
+		}
+		if m := from.methods(); m != "round.get,round.pause,round.delete" {
+			t.Errorf("source calls %s: no batch read for a cron round", m)
+		}
+	})
+
+	for _, c := range []struct {
+		name string
+		edit func(*api.Round)
+		want string
+	}{
+		{"a filter on a session stays", func(r *api.Round) { r.Trigger.Filter = &api.RoundEventFilter{Session: "s1"} }, "names session s1"},
+		{"a filter project with no remote stays", func(r *api.Round) { r.Trigger.Filter = &api.RoundEventFilter{Project: "p1"} }, "has no remote"},
+		{"a resume round stays", func(r *api.Round) { r.Mode = api.RoundModeResume }, "target session lives on this host"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := event()
+			c.edit(&r)
+			from, to := moveHabs(r, answer(api.RoundCreated{Round: moved(r)}), notFound)
+			if _, err := runMove(t, from, to); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("%v", err)
+			}
+			if m := from.methods() + "|" + to.methods(); m != "round.get|" {
+				t.Errorf("calls %s", m)
+			}
+		})
+	}
+
+	t.Run("a logbook filter's project goes as it is", func(t *testing.T) {
+		r := event()
+		r.Trigger.Event = "logbook.updated"
+		r.Trigger.Filter = &api.RoundEventFilter{Project: "lbp-1"}
+		var sent api.RoundCreateParams
+		create := func(_ context.Context, p any) (any, error) {
+			sent = p.(api.RoundCreateParams)
+			return api.RoundCreated{Round: moved(r)}, nil
+		}
+		from, to := moveHabs(r, create, notFound)
+		if _, err := runMove(t, from, to); err != nil {
+			t.Fatal(err)
+		}
+		if f := sent.Round.Trigger.Filter; f == nil || f.Project != "lbp-1" {
+			t.Errorf("filter sent %+v", f)
+		}
+	})
+}

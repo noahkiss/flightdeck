@@ -244,3 +244,50 @@ func (s *Scheduler) SetOutcome(runID string, o Outcome) (Run, bool) {
 	s.unlockAndFlush()
 	return r, true
 }
+
+// PendingBatch returns a copy of a round's pending batch: what a move carries (rounds.md 9).
+func (s *Scheduler) PendingBatch(roundID string) Batch {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.pend[roundID]
+	if p == nil {
+		return Batch{}
+	}
+	return Batch{Events: append([]Event(nil), p.Events...), Dropped: p.Dropped}
+}
+
+// SeedPending gives a new event round the pending batch a move carried (rounds.md 9): it joins
+// the round's batch, which opens now, so its debounce starts at the create. A paused round takes
+// it too: the move carries the pause mark and the batch both. A round that is gone answers
+// ErrNotFound; one whose trigger is no event trigger takes none.
+func (s *Scheduler) SeedPending(roundID string, b Batch) error {
+	s.mu.Lock()
+	now, prev, wake := s.observeLocked()
+	e, ok := s.store.Get(roundID)
+	var err error
+	switch {
+	case !ok:
+		err = ErrNotFound
+	case b.Len() == 0, e.State.Completed, e.Round.Trigger.Kind != TriggerEvent:
+	default:
+		p := s.pend[roundID]
+		if p == nil {
+			p = &Pending{}
+			s.pend[roundID] = p
+		}
+		if p.Opened == nil {
+			t := now
+			p.Opened = &t
+		}
+		p.Events = append(append([]Event(nil), b.Events...), p.Events...)
+		p.Dropped += b.Dropped
+		p.Cap(s.cfg.Limits.BatchMaxEvents, s.cfg.Limits.BatchMaxBytes)
+		s.pendDirty[roundID] = true
+		// A move's batch is saved at once: the old runner deletes its copy next.
+		s.flushPendingLocked(now, true)
+	}
+	s.evaluateLocked(now, prev, wake)
+	s.startLocked(now)
+	s.unlockAndFlush()
+	return err
+}

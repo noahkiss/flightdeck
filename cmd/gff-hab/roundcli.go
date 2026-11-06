@@ -784,17 +784,19 @@ type fileRound struct {
 
 // fileFilter is an event trigger's filter in an exported file.
 type fileFilter struct {
-	Project string   `toml:"project,omitempty"`
-	Session string   `toml:"session,omitempty"`
-	Field   []string `toml:"field,omitempty"`
-	State   []string `toml:"state,omitempty"`
-	Level   string   `toml:"level,omitempty"`
-	Text    string   `toml:"text,omitempty"`
-	Type    string   `toml:"type,omitempty"`
-	Change  string   `toml:"change,omitempty"`
-	Status  []string `toml:"status,omitempty"`
-	Tags    []string `toml:"tags,omitempty"`
-	By      string   `toml:"by,omitempty"`
+	Project string `toml:"project,omitempty"`
+	// ProjectRemote names the project by remote, as a round's project_remote does.
+	ProjectRemote string   `toml:"project_remote,omitempty"`
+	Session       string   `toml:"session,omitempty"`
+	Field         []string `toml:"field,omitempty"`
+	State         []string `toml:"state,omitempty"`
+	Level         string   `toml:"level,omitempty"`
+	Text          string   `toml:"text,omitempty"`
+	Type          string   `toml:"type,omitempty"`
+	Change        string   `toml:"change,omitempty"`
+	Status        []string `toml:"status,omitempty"`
+	Tags          []string `toml:"tags,omitempty"`
+	By            string   `toml:"by,omitempty"`
 }
 
 type roundsFile struct {
@@ -819,6 +821,9 @@ func toFile(r api.Round) fileRound {
 		f.On = r.Trigger.Event
 		if r.Trigger.Filter != nil && whereText(r.Trigger.Filter) != "" {
 			ff := fileFilter(*r.Trigger.Filter)
+			if ff.ProjectRemote != "" {
+				ff.Project = ""
+			}
 			f.Filter = &ff
 		}
 		f.Debounce = (time.Duration(r.DebounceMS) * time.Millisecond).String()

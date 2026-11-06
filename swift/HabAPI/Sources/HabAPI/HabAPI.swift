@@ -5794,6 +5794,21 @@ public struct Round: Codable, Sendable, Hashable {
     }
 }
 
+public struct RoundBatch: Codable, Sendable, Hashable {
+    public var dropped: Int?
+    public var events: [RoundEvent]?
+
+    enum CodingKeys: String, CodingKey {
+        case dropped = "dropped"
+        case events = "events"
+    }
+
+    public init(dropped: Int? = nil, events: [RoundEvent]? = nil) {
+        self.dropped = dropped
+        self.events = events
+    }
+}
+
 /// An open word set: values outside the known list decode and round-trip unchanged.
 public struct RoundCatchUp: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
@@ -5803,16 +5818,20 @@ public struct RoundCatchUp: RawRepresentable, Codable, Sendable, Hashable {
 }
 
 public struct RoundCreateParams: Codable, Sendable, Hashable {
+    /// Event triggers: a pending batch the new round starts with, as a move carries it; its debounce starts at the create. Refused on the pane route.
+    public var batch: RoundBatch?
     public var round: RoundSpec
     /// Also start one run now. It does not move the next slot.
     public var runNow: Bool?
 
     enum CodingKeys: String, CodingKey {
+        case batch = "batch"
         case round = "round"
         case runNow = "run_now"
     }
 
-    public init(round: RoundSpec, runNow: Bool? = nil) {
+    public init(batch: RoundBatch? = nil, round: RoundSpec, runNow: Bool? = nil) {
+        self.batch = batch
         self.round = round
         self.runNow = runNow
     }
@@ -5873,6 +5892,8 @@ public struct RoundEventFilter: Codable, Sendable, Hashable {
     public var level: String?
     /// A project id: project.updated, agent.state, notice.raised, logbook.updated. In a create or update, an absolute folder is taken as its project.
     public var project: String?
+    /// In a create or update, instead of project: a git remote; the hab takes its project with that remote. In a round read back: the remote of project, when it is a project on this hab with one, so a move names it on any host.
+    public var projectRemote: String?
     /// A session id: agent.state, command.updated, notice.raised.
     public var session: String?
     /// agent.state: the new states that count: done, error. Absent: both.
@@ -5892,6 +5913,7 @@ public struct RoundEventFilter: Codable, Sendable, Hashable {
         case field = "field"
         case level = "level"
         case project = "project"
+        case projectRemote = "project_remote"
         case session = "session"
         case state = "state"
         case status = "status"
@@ -5900,18 +5922,38 @@ public struct RoundEventFilter: Codable, Sendable, Hashable {
         case type = "type"
     }
 
-    public init(by: String? = nil, change: String? = nil, field: [String]? = nil, level: String? = nil, project: String? = nil, session: String? = nil, state: [String]? = nil, status: [String]? = nil, tags: [String]? = nil, text: String? = nil, type: String? = nil) {
+    public init(by: String? = nil, change: String? = nil, field: [String]? = nil, level: String? = nil, project: String? = nil, projectRemote: String? = nil, session: String? = nil, state: [String]? = nil, status: [String]? = nil, tags: [String]? = nil, text: String? = nil, type: String? = nil) {
         self.by = by
         self.change = change
         self.field = field
         self.level = level
         self.project = project
+        self.projectRemote = projectRemote
         self.session = session
         self.state = state
         self.status = status
         self.tags = tags
         self.text = text
         self.type = type
+    }
+}
+
+public struct RoundGetParams: Codable, Sendable, Hashable {
+    /// Also return the pending batch's events, as a move carries them (rounds.md 9).
+    public var batch: Bool?
+    public var id: String?
+    public var name: String?
+
+    enum CodingKeys: String, CodingKey {
+        case batch = "batch"
+        case id = "id"
+        case name = "name"
+    }
+
+    public init(batch: Bool? = nil, id: String? = nil, name: String? = nil) {
+        self.batch = batch
+        self.id = id
+        self.name = name
     }
 }
 
@@ -5992,16 +6034,20 @@ public struct RoundRef: Codable, Sendable, Hashable {
 }
 
 public struct RoundResult: Codable, Sendable, Hashable {
+    /// round.get with batch, for an event round: its pending batch.
+    public var batch: RoundBatch?
     public var round: Round
     /// Seq of the last event queued for this connection before the request ran.
     public var seq: UInt64
 
     enum CodingKeys: String, CodingKey {
+        case batch = "batch"
         case round = "round"
         case seq = "seq"
     }
 
-    public init(round: Round, seq: UInt64) {
+    public init(batch: RoundBatch? = nil, round: Round, seq: UInt64) {
+        self.batch = batch
         self.round = round
         self.seq = seq
     }
@@ -8010,8 +8056,8 @@ public enum HabMethods {
     public static let confirmGet = HabMethod<ConfirmGetParams, ConfirmationResult>(name: "confirm.get")
     /// This hab's rounds with their next slot and newest run (rounds.md 13). Needs the rounds capability.
     public static let roundList = HabMethod<RoundListParams, RoundList>(name: "round.list")
-    /// One round by id or name, with its definition (rounds.md 13). Needs the rounds capability.
-    public static let roundGet = HabMethod<RoundRef, RoundResult>(name: "round.get")
+    /// One round by id or name, with its definition (rounds.md 13); with batch, also an event round's pending batch (rounds.md 9). Needs the rounds capability.
+    public static let roundGet = HabMethod<RoundGetParams, RoundResult>(name: "round.get")
     /// Create a round; checks the trigger, mode and target. run_now also starts one run, and the call then answers after its spawn (rounds.md 3, 13). Needs the rounds capability.
     public static let roundCreate = HabMethod<RoundCreateParams, RoundCreated>(name: "round.create")
     /// Replace a round's definition; a changed trigger sets the next slot from now. A run in flight keeps its values (rounds.md 3). Needs the rounds capability.

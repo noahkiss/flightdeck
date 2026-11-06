@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1092,6 +1093,11 @@ func (s *roundsService) apiRoundLocked(e rounds.Entry) api.Round {
 	if p, ok := s.cfg.store.Project(e.Round.Project); ok {
 		r.ProjectRemote = p.Remote
 	}
+	if f := r.Trigger.Filter; f != nil && f.Project != "" {
+		if p, ok := s.cfg.store.Project(f.Project); ok {
+			f.ProjectRemote = p.Remote
+		}
+	}
 	if _, err := e.Round.Trigger.Schedule(); err != nil {
 		r.TriggerError = err.Error()
 	}
@@ -1154,8 +1160,8 @@ func apiFilter(f *rounds.EventFilter) *api.RoundEventFilter {
 	if f == nil {
 		return nil
 	}
-	a := api.RoundEventFilter(*f)
-	return &a
+	return &api.RoundEventFilter{Project: f.Project, Session: f.Session, Field: f.Field, State: f.State, Level: f.Level,
+		Text: f.Text, Type: f.Type, Change: f.Change, Status: f.Status, Tags: f.Tags, By: f.By}
 }
 
 // CatalogSection is the catalog's rounds section (rounds.md 9): every round, by name.
@@ -1236,6 +1242,59 @@ func (s *roundsService) Get(ref api.RoundRef) (api.Round, error) {
 	return s.round(e.Round.ID)
 }
 
+// Batch returns an event round's pending batch, as a move carries it (rounds.md 9); nil for
+// another round or an empty batch.
+func (s *roundsService) Batch(ref api.RoundRef) (*api.RoundBatch, error) {
+	e, err := s.entry(ref)
+	if err != nil {
+		return nil, err
+	}
+	b := s.sched.PendingBatch(e.Round.ID)
+	if b.Len() == 0 {
+		return nil, nil
+	}
+	return &api.RoundBatch{Events: apiEvents(b.Events), Dropped: b.Dropped}, nil
+}
+
+// roundsBatch turns a carried batch back into the scheduler's, checking each event.
+func roundsBatch(b api.RoundBatch) (rounds.Batch, error) {
+	out := rounds.Batch{Dropped: b.Dropped}
+	if b.Dropped < 0 {
+		return out, control.Errorf(api.ErrorKindInvalid, "batch: dropped must not be negative")
+	}
+	for i, ev := range b.Events {
+		at, err := time.Parse(time.RFC3339, ev.At)
+		if err != nil {
+			return out, control.Errorf(api.ErrorKindInvalid, "batch: event %d: at %q is not an RFC 3339 time", i, ev.At)
+		}
+		if !slices.Contains(rounds.Events, ev.Kind) {
+			return out, control.Errorf(api.ErrorKindInvalid, "batch: event %d: %q is not an event a round takes", i, ev.Kind)
+		}
+		if len(ev.Data) > 0 && !json.Valid(ev.Data) {
+			return out, control.Errorf(api.ErrorKindInvalid, "batch: event %d: data is not JSON", i)
+		}
+		out.Events = append(out.Events, rounds.Event{At: at, Kind: ev.Kind, Title: ev.Title, Level: ev.Level, Data: json.RawMessage(ev.Data)})
+	}
+	return out, nil
+}
+
+// projectByRemote is the project with a git remote: one the structure holds, else a checkout
+// the catalog found under a project root, which no session used yet, whose folder becomes the
+// project, as project_dir does (rounds.md 9, a round on another host).
+func (s *roundsService) projectByRemote(ctx context.Context, remote string) (string, error) {
+	if pr, ok := s.cfg.store.ProjectByIdentity(remote, ""); ok {
+		return pr.ID, nil
+	}
+	dir := ""
+	if s.cfg.remoteDir != nil {
+		dir = s.cfg.remoteDir(remote)
+	}
+	if dir == "" {
+		return "", control.Errorf(api.ErrorKindNotFound, "no project on this hab has the remote %s", remote)
+	}
+	return s.cfg.projectFor(ctx, dir)
+}
+
 // definition turns a spec into a round's definition, finding its project (rounds.md 3).
 func (s *roundsService) definition(ctx context.Context, p api.RoundSpec) (rounds.Round, error) {
 	bad := func(field, format string, a ...any) error {
@@ -1260,8 +1319,19 @@ func (s *roundsService) definition(ctx context.Context, p api.RoundSpec) (rounds
 		Cooldown: rounds.Duration(time.Duration(p.CooldownMS) * time.Millisecond),
 	}
 	if f := p.Trigger.Filter; f != nil {
-		rf := rounds.EventFilter(*f)
-		if rf.Project != "" && filepath.IsAbs(rf.Project) {
+		rf := rounds.EventFilter{Project: f.Project, Session: f.Session, Field: f.Field, State: f.State, Level: f.Level,
+			Text: f.Text, Type: f.Type, Change: f.Change, Status: f.Status, Tags: f.Tags, By: f.By}
+		switch {
+		case f.ProjectRemote != "" && f.Project != "":
+			return r, bad("filter", "give project or project_remote, not both")
+		case f.ProjectRemote != "":
+			// A remote names its project, as a round's project_remote does: a moved round.
+			id, err := s.projectByRemote(ctx, f.ProjectRemote)
+			if err != nil {
+				return r, err
+			}
+			rf.Project = id
+		case rf.Project != "" && filepath.IsAbs(rf.Project):
 			// A folder names its project, as project_dir does.
 			id, err := s.cfg.projectFor(ctx, rf.Project)
 			if err != nil {
@@ -1328,21 +1398,7 @@ func (s *roundsService) definition(ctx context.Context, p api.RoundSpec) (rounds
 		}
 		r.Project = id
 	case p.ProjectRemote != "":
-		pr, ok := s.cfg.store.ProjectByIdentity(p.ProjectRemote, "")
-		if ok {
-			r.Project = pr.ID
-			break
-		}
-		// A checkout the catalog found under a project root, which no session used yet: its
-		// folder becomes the project, as project_dir does (rounds.md 9, a round on another host).
-		dir := ""
-		if s.cfg.remoteDir != nil {
-			dir = s.cfg.remoteDir(p.ProjectRemote)
-		}
-		if dir == "" {
-			return r, control.Errorf(api.ErrorKindNotFound, "no project on this hab has the remote %s", p.ProjectRemote)
-		}
-		id, err := s.cfg.projectFor(ctx, dir)
+		id, err := s.projectByRemote(ctx, p.ProjectRemote)
 		if err != nil {
 			return r, err
 		}
@@ -1408,11 +1464,26 @@ func (s *roundsService) Create(ctx context.Context, p api.RoundCreateParams, cre
 	if err := s.checkMessageRound(r); err != nil {
 		return api.RoundCreated{}, err
 	}
+	var seed rounds.Batch
+	if b := p.Batch; b != nil {
+		if r.Trigger.Kind != rounds.TriggerEvent {
+			return api.RoundCreated{}, control.Errorf(api.ErrorKindInvalid, "batch: only an event round has a pending batch")
+		}
+		var err error
+		if seed, err = roundsBatch(*b); err != nil {
+			return api.RoundCreated{}, err
+		}
+	}
 	s.editMu.Lock()
 	defer s.editMu.Unlock()
 	e, run, err := s.sched.Create(r, createdBy, p.RunNow)
 	if err != nil && e.Round.ID == "" {
 		return api.RoundCreated{}, roundErr(err)
+	}
+	if err == nil && seed.Len() > 0 {
+		if serr := s.sched.SeedPending(e.Round.ID, seed); serr != nil {
+			return api.RoundCreated{}, control.Errorf(api.ErrorKindUnavailable, "round %s was created, but its pending batch was not kept: %v", r.Name, serr)
+		}
 	}
 	if err != nil {
 		// The round is stored; only its first run could not be queued. The answer says so.
@@ -1678,6 +1749,9 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 			if err := target(&p.Round); err != nil {
 				return nil, nil, err
 			}
+			if p.Batch != nil {
+				return nil, nil, control.Errorf(api.ErrorKindDenied, "from a pane, a round is created with no pending batch: only a move carries one")
+			}
 			by := ""
 			if filed {
 				by = ss.ID
@@ -1709,8 +1783,16 @@ func roundHook(store *structure.Store, svc *roundsService) hook.ChannelHandler {
 			return nil, nil, bad(err)
 		}
 		if method == "round.get" {
+			var gp api.RoundGetParams
+			if err := json.Unmarshal(params, &gp); err != nil {
+				return nil, nil, bad(err)
+			}
 			r, err := svc.Get(ref)
-			return api.RoundResult{Round: r}, nil, err
+			if err != nil || !gp.Batch {
+				return api.RoundResult{Round: r}, nil, err
+			}
+			b, err := svc.Batch(ref)
+			return api.RoundResult{Round: r, Batch: b}, nil, err
 		}
 		if err := own(ref); err != nil {
 			return nil, nil, err
