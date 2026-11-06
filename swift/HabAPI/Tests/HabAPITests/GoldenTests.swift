@@ -73,6 +73,8 @@ final class GoldenTests: XCTestCase {
         result(HabMethods.devicesRevoke)
         result(HabMethods.sessionCreate)
         result(HabMethods.sessionResume)
+        result(HabMethods.sessionAdopt)
+        result(HabMethods.sessionOutside)
         result(HabMethods.paneClose)
         result(HabMethods.sessionRename)
         result(HabMethods.sessionClose)

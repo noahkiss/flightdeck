@@ -226,6 +226,31 @@ func (b *resumeBook) forget(session string) {
 	b.poke()
 }
 
+// adopted notes the harness and native id of a session adopt started (gff-client.md 6.5), so
+// session.resume works before the agent reports a state. It writes at once.
+func (b *resumeBook) adopted(session, harness, native string) {
+	b.mu.Lock()
+	e := b.m[session]
+	e.Seen, e.Native = harness, native
+	b.m[session] = e
+	b.mu.Unlock()
+	b.save()
+}
+
+// holder returns the session whose entry names a harness's native id, with pending states
+// applied.
+func (b *resumeBook) holder(harness, native string) (string, bool) {
+	b.apply()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for s, e := range b.m {
+		if e.Seen == harness && e.Native == native {
+			return s, true
+		}
+	}
+	return "", false
+}
+
 // get returns what the book knows of a session, with pending states applied.
 func (b *resumeBook) get(session string) (resumeEntry, bool) {
 	b.apply()

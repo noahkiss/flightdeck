@@ -33,6 +33,46 @@ type SessionCreated struct {
 	Pane    string `json:"pane" doc:"Pane id."`
 }
 
+// SessionAdoptParams names a conversation started outside Flightdeck to bring into a new pane
+// (gff-client.md 6.5).
+type SessionAdoptParams struct {
+	ID      string `json:"id" doc:"The harness's own session id, as its resume command takes it: letters, digits, - and _."`
+	Harness string `json:"harness,omitempty" doc:"claude or codex. Default: the harness whose transcripts hold the id."`
+	Name    string `json:"name,omitempty" doc:"Session name, unique on the host. Default: the harness name, with -2, -3 and so on when taken."`
+	Cwd     string `json:"cwd,omitempty" doc:"Absolute folder to resume in. Default: the folder the transcript records."`
+}
+
+// SessionAdopted names the session and pane an adopt made, and how it started.
+type SessionAdopted struct {
+	Seq
+	Session string `json:"session" doc:"Session id."`
+	Pane    string `json:"pane" doc:"Pane id."`
+	Harness string `json:"harness" doc:"The harness that resumed the conversation."`
+	Cwd     string `json:"cwd" doc:"The folder it resumed in."`
+}
+
+// SessionOutsideParams asks for recent conversations started outside Flightdeck.
+type SessionOutsideParams struct {
+	Harness string `json:"harness,omitempty" doc:"claude or codex. Default: both."`
+	Limit   int    `json:"limit,omitempty" doc:"At most this many per harness; default 20, at most 100."`
+}
+
+// OutsideConversations lists conversations on the hab's host that no session of the hab holds.
+type OutsideConversations struct {
+	Seq
+	Conversations []OutsideConversation `json:"conversations" doc:"Newest first."`
+}
+
+// OutsideConversation is one conversation a harness wrote on the hab's host.
+type OutsideConversation struct {
+	Harness string `json:"harness" doc:"claude or codex."`
+	ID      string `json:"id" doc:"The id session.adopt takes."`
+	Cwd     string `json:"cwd" doc:"The folder the transcript records."`
+	Title   string `json:"title,omitempty" doc:"The first line the owner typed, at most 80 characters."`
+	Updated string `json:"updated" doc:"RFC 3339 time the transcript was last written."`
+	Live    bool   `json:"live,omitempty" doc:"A process outside the hab runs it; adopt refuses until it ends."`
+}
+
 // SessionRef names one session.
 type SessionRef struct {
 	Session string `json:"session"`

@@ -80,6 +80,8 @@ var Methods = []Method{
 	{"devices.revoke", "Revoke a device and close its connections (transport.md 6.6). Needs the devices capability.", DevicesRevokeParams{}, Empty{}},
 	{"session.create", "Start a program in a new pane and file it as a session (spec 3.9).", SessionCreateParams{}, SessionCreated{}},
 	{"session.resume", "Start an exited session's harness again in a new pane, with its resume id.", SessionRef{}, SessionCreated{}},
+	{"session.adopt", "Resume a Claude Code or Codex conversation started outside Flightdeck in a new pane, by its id; refused with conflict while it runs elsewhere (gff-client.md 6.5).", SessionAdoptParams{}, SessionAdopted{}},
+	{"session.outside", "List recent conversations on this host that no session of the hab holds, newest first (gff-client.md 6.5). Read-only.", SessionOutsideParams{}, OutsideConversations{}},
 	{"pane.close", "Release a pane: a running program gets a hang-up first (spec 3.9).", PaneRef{}, Empty{}},
 	{"session.rename", "Give a session a new name. A name another session holds is refused with conflict.", SessionRenameParams{}, Empty{}},
 	{"session.close", "Remove a session record. A live pane keeps running, unfiled; pane.close ends a program.", SessionRef{}, Empty{}},

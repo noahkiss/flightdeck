@@ -50,6 +50,54 @@ type Resumer interface {
 	ResumeSession(ctx context.Context, session string) (pane string, err error)
 }
 
+// Adopter brings a conversation started outside Flightdeck into a new pane (session.adopt) and
+// lists the ones it could (session.outside), gff-client.md 6.5. Actions may implement it;
+// without it, both answer unavailable. An error that is an *Error keeps its kind.
+type Adopter interface {
+	AdoptSession(ctx context.Context, p api.SessionAdoptParams) (api.SessionAdopted, error)
+	OutsideConversations(ctx context.Context, p api.SessionOutsideParams) ([]api.OutsideConversation, error)
+}
+
+// dispatchAdopt answers session.adopt and session.outside.
+func (c *conn) dispatchAdopt(m message, s api.Seq) (any, *Error) {
+	a, ok := c.s.cfg.Actions.(Adopter)
+	if !ok {
+		return nil, appErr(api.ErrorKindUnavailable, hintNoActions, m.Method)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), c.s.cfg.ActionTimeout)
+	defer cancel()
+	if m.Method == "session.outside" {
+		var p api.SessionOutsideParams
+		if e := c.decodeUp(m, &p); e != nil {
+			return nil, e
+		}
+		list, err := a.OutsideConversations(ctx, p)
+		if err != nil {
+			return nil, actionErr(m.Method, err)
+		}
+		if list == nil {
+			list = []api.OutsideConversation{}
+		}
+		return api.OutsideConversations{Seq: s, Conversations: list}, nil
+	}
+	var p api.SessionAdoptParams
+	if e := c.decodeUp(m, &p); e != nil {
+		return nil, e
+	}
+	if p.ID == "" {
+		return nil, appErr(api.ErrorKindInvalid, "session.adopt needs an id")
+	}
+	res, err := a.AdoptSession(ctx, p)
+	if err != nil {
+		return nil, actionErr(m.Method, err)
+	}
+	if c.s.cfg.Size != nil {
+		c.s.cfg.Size.Created(c.clientID, res.Pane)
+	}
+	res.Seq = s
+	return res, nil
+}
+
 const hintNoCapcom = "%s needs the Capcom host, which this hab is running without; the capcom capability is absent"
 
 // dispatchCapcom answers capcom.open, capcom.attach, capcom.detach, capcom.pending and capcom.assign.

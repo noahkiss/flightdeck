@@ -4468,6 +4468,56 @@ public struct NoticeRound: Codable, Sendable, Hashable {
     }
 }
 
+public struct OutsideConversation: Codable, Sendable, Hashable {
+    /// The folder the transcript records.
+    public var cwd: String
+    /// claude or codex.
+    public var harness: String
+    /// The id session.adopt takes.
+    public var id: String
+    /// A process outside the hab runs it; adopt refuses until it ends.
+    public var live: Bool?
+    /// The first line the owner typed, at most 80 characters.
+    public var title: String?
+    /// RFC 3339 time the transcript was last written.
+    public var updated: String
+
+    enum CodingKeys: String, CodingKey {
+        case cwd = "cwd"
+        case harness = "harness"
+        case id = "id"
+        case live = "live"
+        case title = "title"
+        case updated = "updated"
+    }
+
+    public init(cwd: String, harness: String, id: String, live: Bool? = nil, title: String? = nil, updated: String) {
+        self.cwd = cwd
+        self.harness = harness
+        self.id = id
+        self.live = live
+        self.title = title
+        self.updated = updated
+    }
+}
+
+public struct OutsideConversations: Codable, Sendable, Hashable {
+    /// Newest first.
+    public var conversations: [OutsideConversation]
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case conversations = "conversations"
+        case seq = "seq"
+    }
+
+    public init(conversations: [OutsideConversation], seq: UInt64) {
+        self.conversations = conversations
+        self.seq = seq
+    }
+}
+
 /// An open word set: values outside the known list decode and round-trip unchanged.
 public struct OwnerReason: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
@@ -5859,6 +5909,60 @@ public struct Session: Codable, Sendable, Hashable {
     }
 }
 
+public struct SessionAdoptParams: Codable, Sendable, Hashable {
+    /// Absolute folder to resume in. Default: the folder the transcript records.
+    public var cwd: String?
+    /// claude or codex. Default: the harness whose transcripts hold the id.
+    public var harness: String?
+    /// The harness's own session id, as its resume command takes it: letters, digits, - and _.
+    public var id: String
+    /// Session name, unique on the host. Default: the harness name, with -2, -3 and so on when taken.
+    public var name: String?
+
+    enum CodingKeys: String, CodingKey {
+        case cwd = "cwd"
+        case harness = "harness"
+        case id = "id"
+        case name = "name"
+    }
+
+    public init(cwd: String? = nil, harness: String? = nil, id: String, name: String? = nil) {
+        self.cwd = cwd
+        self.harness = harness
+        self.id = id
+        self.name = name
+    }
+}
+
+public struct SessionAdopted: Codable, Sendable, Hashable {
+    /// The folder it resumed in.
+    public var cwd: String
+    /// The harness that resumed the conversation.
+    public var harness: String
+    /// Pane id.
+    public var pane: String
+    /// Seq of the last event queued for this connection before the request ran.
+    public var seq: UInt64
+    /// Session id.
+    public var session: String
+
+    enum CodingKeys: String, CodingKey {
+        case cwd = "cwd"
+        case harness = "harness"
+        case pane = "pane"
+        case seq = "seq"
+        case session = "session"
+    }
+
+    public init(cwd: String, harness: String, pane: String, seq: UInt64, session: String) {
+        self.cwd = cwd
+        self.harness = harness
+        self.pane = pane
+        self.seq = seq
+        self.session = session
+    }
+}
+
 public struct SessionCreateParams: Codable, Sendable, Hashable {
     /// Program and arguments. Default: the hab's $SHELL, else /bin/sh.
     public var argv: [String]?
@@ -5966,6 +6070,23 @@ public struct SessionKind: RawRepresentable, Codable, Sendable, Hashable {
     public var rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
     public static let capcom = SessionKind(rawValue: "capcom")
+}
+
+public struct SessionOutsideParams: Codable, Sendable, Hashable {
+    /// claude or codex. Default: both.
+    public var harness: String?
+    /// At most this many per harness; default 20, at most 100.
+    public var limit: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case harness = "harness"
+        case limit = "limit"
+    }
+
+    public init(harness: String? = nil, limit: Int? = nil) {
+        self.harness = harness
+        self.limit = limit
+    }
 }
 
 public struct SessionRef: Codable, Sendable, Hashable {
@@ -7219,6 +7340,10 @@ public enum HabMethods {
     public static let sessionCreate = HabMethod<SessionCreateParams, SessionCreated>(name: "session.create")
     /// Start an exited session's harness again in a new pane, with its resume id.
     public static let sessionResume = HabMethod<SessionRef, SessionCreated>(name: "session.resume")
+    /// Resume a Claude Code or Codex conversation started outside Flightdeck in a new pane, by its id; refused with conflict while it runs elsewhere (gff-client.md 6.5).
+    public static let sessionAdopt = HabMethod<SessionAdoptParams, SessionAdopted>(name: "session.adopt")
+    /// List recent conversations on this host that no session of the hab holds, newest first (gff-client.md 6.5). Read-only.
+    public static let sessionOutside = HabMethod<SessionOutsideParams, OutsideConversations>(name: "session.outside")
     /// Release a pane: a running program gets a hang-up first (spec 3.9).
     public static let paneClose = HabMethod<PaneRef, Empty>(name: "pane.close")
     /// Give a session a new name. A name another session holds is refused with conflict.

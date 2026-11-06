@@ -68,6 +68,8 @@ type actions struct {
 	folderOf func(ctx context.Context, session string) string
 	// created hears how a new session was asked to start, for its resume. nil: none.
 	created func(session string, p api.SessionCreateParams)
+	// adopt serves session.adopt and session.outside (adopt.go). nil: unavailable.
+	adopt *adopter
 }
 
 var _ control.Resumer = (*actions)(nil)

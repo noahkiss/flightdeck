@@ -581,6 +581,82 @@
       }
     },
     {
+      "name": "session.adopt",
+      "summary": "Resume a Claude Code or Codex conversation started outside Flightdeck in a new pane, by its id; refused with conflict while it runs elsewhere (gff-client.md 6.5).",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "cwd",
+          "description": "Absolute folder to resume in. Default: the folder the transcript records.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "harness",
+          "description": "claude or codex. Default: the harness whose transcripts hold the id.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "id",
+          "description": "The harness's own session id, as its resume command takes it: letters, digits, - and _.",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "name",
+          "description": "Session name, unique on the host. Default: the harness name, with -2, -3 and so on when taken.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SessionAdopted"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/SessionAdoptParams"
+      }
+    },
+    {
+      "name": "session.outside",
+      "summary": "List recent conversations on this host that no session of the hab holds, newest first (gff-client.md 6.5). Read-only.",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "harness",
+          "description": "claude or codex. Default: both.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "description": "At most this many per harness; default 20, at most 100.",
+          "schema": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/OutsideConversations"
+        }
+      },
+      "x-params": {
+        "$ref": "#/components/schemas/SessionOutsideParams"
+      }
+    },
+    {
       "name": "pane.close",
       "summary": "Release a pane: a running program gets a hang-up first (spec 3.9).",
       "paramStructure": "by-name",
@@ -8599,6 +8675,62 @@
           "kind"
         ]
       },
+      "OutsideConversation": {
+        "type": "object",
+        "properties": {
+          "cwd": {
+            "type": "string",
+            "description": "The folder the transcript records."
+          },
+          "harness": {
+            "type": "string",
+            "description": "claude or codex."
+          },
+          "id": {
+            "type": "string",
+            "description": "The id session.adopt takes."
+          },
+          "live": {
+            "type": "boolean",
+            "description": "A process outside the hab runs it; adopt refuses until it ends."
+          },
+          "title": {
+            "type": "string",
+            "description": "The first line the owner typed, at most 80 characters."
+          },
+          "updated": {
+            "type": "string",
+            "description": "RFC 3339 time the transcript was last written."
+          }
+        },
+        "required": [
+          "harness",
+          "id",
+          "cwd",
+          "updated"
+        ]
+      },
+      "OutsideConversations": {
+        "type": "object",
+        "properties": {
+          "conversations": {
+            "type": "array",
+            "description": "Newest first.",
+            "items": {
+              "$ref": "#/components/schemas/OutsideConversation"
+            }
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          }
+        },
+        "required": [
+          "seq",
+          "conversations"
+        ]
+      },
       "OwnerReason": {
         "type": "string",
         "x-known-values": [
@@ -10064,6 +10196,63 @@
           "state"
         ]
       },
+      "SessionAdoptParams": {
+        "type": "object",
+        "properties": {
+          "cwd": {
+            "type": "string",
+            "description": "Absolute folder to resume in. Default: the folder the transcript records."
+          },
+          "harness": {
+            "type": "string",
+            "description": "claude or codex. Default: the harness whose transcripts hold the id."
+          },
+          "id": {
+            "type": "string",
+            "description": "The harness's own session id, as its resume command takes it: letters, digits, - and _."
+          },
+          "name": {
+            "type": "string",
+            "description": "Session name, unique on the host. Default: the harness name, with -2, -3 and so on when taken."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "SessionAdopted": {
+        "type": "object",
+        "properties": {
+          "cwd": {
+            "type": "string",
+            "description": "The folder it resumed in."
+          },
+          "harness": {
+            "type": "string",
+            "description": "The harness that resumed the conversation."
+          },
+          "pane": {
+            "type": "string",
+            "description": "Pane id."
+          },
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Seq of the last event queued for this connection before the request ran."
+          },
+          "session": {
+            "type": "string",
+            "description": "Session id."
+          }
+        },
+        "required": [
+          "seq",
+          "session",
+          "pane",
+          "harness",
+          "cwd"
+        ]
+      },
       "SessionCreateParams": {
         "type": "object",
         "properties": {
@@ -10177,6 +10366,20 @@
         "x-known-values": [
           "capcom"
         ]
+      },
+      "SessionOutsideParams": {
+        "type": "object",
+        "properties": {
+          "harness": {
+            "type": "string",
+            "description": "claude or codex. Default: both."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "At most this many per harness; default 20, at most 100."
+          }
+        }
       },
       "SessionRef": {
         "type": "object",

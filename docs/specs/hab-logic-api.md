@@ -818,6 +818,8 @@ names the stage, and an event is defined but never sent.
 | `session.rename` | Give a session a new name; a taken name is `conflict`, one outside the name charset `invalid` | Yes (task-98qp7he5) |
 | `session.close` | Remove a session record; a live pane keeps running, unfiled (2.2) | Yes (task-98qp7he5) |
 | `session.resume` | Start an exited session's harness again in a new pane, with its resume id | Capcom sessions (task-aqw4iowl, `capcom.md` 7.6); every other session (task-4i9uv0ai, `gff-client.md` 6.2) |
+| `session.adopt` | Resume a Claude Code or Codex conversation started outside Flightdeck in a new pane, by its id; `conflict` while it runs elsewhere | Yes (task-ip98o12o, `gff-client.md` 6.5) |
+| `session.outside` | List recent conversations on the host that no session holds, newest first | Yes (task-ip98o12o, `gff-client.md` 6.5) |
 | `session.interrupt` | Stop the current turn through the adapter (the chat view's Stop) | Part 4 stage 4 |
 | `session.send` | Send a message through the adapter, under the input rules | Yes, Claude Code (Part 4 stage 4) |
 | `approval.answer` | Answer a pending request by id; a closed or expired id is refused with `conflict` | Yes, Claude Code permissions (Part 4 stage 4) |

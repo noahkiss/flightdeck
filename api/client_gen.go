@@ -685,6 +685,20 @@ func (c Client) SessionResume(ctx context.Context, params SessionRef) (SessionCr
 	return result, err
 }
 
+// SessionAdopt calls session.adopt. Resume a Claude Code or Codex conversation started outside Flightdeck in a new pane, by its id; refused with conflict while it runs elsewhere (gff-client.md 6.5).
+func (c Client) SessionAdopt(ctx context.Context, params SessionAdoptParams) (SessionAdopted, error) {
+	var result SessionAdopted
+	err := c.Caller.Call(ctx, "session.adopt", params, &result)
+	return result, err
+}
+
+// SessionOutside calls session.outside. List recent conversations on this host that no session of the hab holds, newest first (gff-client.md 6.5). Read-only.
+func (c Client) SessionOutside(ctx context.Context, params SessionOutsideParams) (OutsideConversations, error) {
+	var result OutsideConversations
+	err := c.Caller.Call(ctx, "session.outside", params, &result)
+	return result, err
+}
+
 // PaneClose calls pane.close. Release a pane: a running program gets a hang-up first (spec 3.9).
 func (c Client) PaneClose(ctx context.Context, params PaneRef) (Empty, error) {
 	var result Empty

@@ -1359,6 +1359,8 @@ func (c *conn) dispatch(m message, seq uint64) (any, *Error) {
 		return c.dispatchCapcom(m, s)
 	case "session.resume":
 		return c.dispatchResume(m, s)
+	case "session.adopt", "session.outside":
+		return c.dispatchAdopt(m, s)
 	case "peers.list":
 		var p api.PeersListParams
 		if e := c.decodeUp(m, &p); e != nil {

@@ -906,6 +906,72 @@ key, as zellij's "Press ENTER to run".
 | `cmd/gff-hab` `TestResumeStart`, `TestResumeBook` | The start for each harness, with and without a transcript, the model rule, a shell, nothing known; the book kept across a reopen, an id kept, a harness replaced, a detection id with no adapter ignored, a forgotten session, a bad file set aside |
 | `cmd/gff-hab` `TestSessionResumeAfterHolderLoss` | A Claude Code session and a shell; the holder dies for good, gff-hab restarts; nothing starts on its own; resume refuses a running session, starts Claude Code with `--session-id` while it has no transcript and `--resume` once it has one, and the shell again in its folder |
 
+### 6.5 Built choices (task-ip98o12o: adopt)
+
+Paseo is the reference (`landscape.md` idea 4.10): an owner moving in keeps the conversations
+they started in a plain terminal. Adopt brings one into a gff-hab pane by its resume id. It
+then shows in the sidebar, the chat view and the board like any other session.
+
+**What adopt does.** `session.adopt` takes the resume id and, optionally, the harness, a
+session name and a folder. gff-hab starts the harness's own resume command in a new pane and
+files it as a new session:
+
+| Harness | Command | Folder |
+|---|---|---|
+| Claude Code | `claude --resume <id>` | The `cwd` of the transcript's records. Claude Code files a transcript under `projects/<folder with each character other than a letter or digit as ->`, and `--resume` finds it from that folder, so the `cwd` that names the transcript's directory wins |
+| Codex | `codex --no-daemon resume <id>` | The `cwd` of the rollout's `session_meta` line |
+
+- The transcript stays where the harness wrote it. gff-hab reads it and never writes, moves or
+  copies it. Resuming from a plain terminal works afterwards, as before.
+- With no harness given, gff-hab looks for the id under Claude Code's config folder, then under
+  Codex's home. An id found under both is refused with `invalid`: give the harness.
+- `cwd` overrides the recorded folder. A recorded folder that no longer exists is refused with
+  `invalid`, naming it, so the owner can give `cwd`.
+- A folder inside a git repository files the session in that repository's project, as
+  `project_dir` does on `session.create`.
+- The resume book (6.4) records the start and the harness with its id at once, so a later
+  `session.resume` works before the agent reports any state.
+- opencode is not adopted yet: its conversations live in its server's database, not in a file
+  by id. A request for it answers `unavailable`.
+
+**Refusals.**
+
+| Case | Answer |
+|---|---|
+| No transcript holds the id | `not_found` |
+| The id is not a session id (letters, digits, `-` and `_` only) | `invalid` |
+| A session on this hab holds the conversation (its book entry names the id, or an agent in one of its panes reports it) | `conflict`, naming the session: resume that session instead |
+| A Claude Code process outside the hab runs it: its `sessions/<pid>.json` in the config folder names the id, and that pid is alive | `conflict`, naming the pid: quit it there first |
+| A process whose arguments hold the id as a word, beside a `claude` or `codex` word | `conflict`, naming the pid |
+
+Known gap: a Codex conversation started as plain `codex` and still open in a terminal shows
+no id in its arguments, and Codex keeps no registry of running sessions. gff-hab does not see
+it, and both programs would then write the same rollout. The CLI says to quit it first.
+
+**Listing.** `session.outside` lists recent conversations on this host that no session of this
+hab holds, newest first: harness, id, folder, the last write, the first line the owner typed
+(cut to 80 characters) and whether a process outside runs it (the same checks as above). It
+reads only the newest files by modification time (`limit`, default 20, at most 100) and the
+first 256 KiB of each. Claude Code transcripts that `claude -p` wrote (entrypoint `sdk-*`) are
+left out of the list; adopt takes them by id.
+
+**CLI.** `gff-hab adopt [-socket path | -via command] [-harness h] [-name n] [-cwd dir] <id>`
+adopts and prints the session, pane, harness and folder. `gff-hab adopt -list [-harness h]
+[-limit n] [-json]` prints the list, one conversation per line.
+
+Decided (implementer): the verb is a new method, not a `session.create` field, because adopt
+checks for a live conversation and reads the folder from the transcript; `session.create`
+checks neither. Decided (implementer): no gff sidebar entry yet; the CLI and the API come
+first.
+
+**Tests.**
+
+| Test | Proves |
+|---|---|
+| `transcript` `TestOutside*` | Over hand-written transcripts in a temporary config folder and Codex home: the folder from Claude's records (the one that names the directory wins) and from Codex's `session_meta`, the first typed line (wrappers and tool results skipped), a missing id, the newest-first list with its limit, `sdk-*` transcripts left out of the list, Claude's running-session registry |
+| `cmd/gff-hab` `TestAdoptPlan`, `TestAdoptLive`, `TestAdoptParseProcs` | The harness found by id, an id under both, a bad id, opencode, another harness, a folder gone, a relative `cwd`; the registry with a live and a dead pid, a process whose arguments hold the id, gff-hab's own processes and a `grep` never counted; the book's holder; ps output |
+| `cmd/gff-hab` `TestSessionAdopt` | Real holder and gff-hab, a stand-in `claude` on gff-hab's PATH and hand-written transcripts: the list shows the conversation with its folder and title, and one the registry shows live as live; adopt of the live one is `conflict`, of an unknown id `not_found`; adopt starts `claude --resume <id>` in the recorded folder under the given name; a second adopt is refused with `conflict` naming the session; the list leaves it out; after the pane closes, `session.resume` starts it again with `--resume`; the transcript is byte-identical |
+
 ---
 
 ## 7. Status board

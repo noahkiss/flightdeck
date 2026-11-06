@@ -151,6 +151,8 @@ const usage = `usage:
   gff-hab worktree remove [-socket path | -via command] [-project id | -dir path] [-force] <worktree>
   gff-hab capcom assign [-socket path | -via command] <peer label|self>
   gff-hab capcom open   [-socket path | -via command] [-new]
+  gff-hab adopt [-socket path | -via command] [-harness h] [-name n] [-cwd dir] [-json] <id>
+  gff-hab adopt -list [-socket path | -via command] [-harness h] [-limit n] [-json]
   gff-hab capcom attach|detach [-socket path | -via command] [-host h] <session> <kind> <ref>
   gff-hab manifests refresh [-state dir] [-from url|path] [-dry-run]
   gff-hab manifests list    [-state dir]
@@ -231,6 +233,8 @@ func main() {
 		err = worktreeCmd(os.Args[2:])
 	case "capcom":
 		err = capcomCmd(os.Args[2:], os.Stdout)
+	case "adopt":
+		err = adoptCmd(os.Args[2:], os.Stdout)
 	case "manifests":
 		err = manifests(os.Args[2:], os.Stdout)
 	case "detect":
@@ -743,6 +747,7 @@ func serve(args []string) error {
 		general := &generalResumer{acts: sessionActs, book: resumes, folder: contentSvc.Folder,
 			complete: func() bool { return structure.Complete(hs) }, claudeTranscript: claudeTranscriptExists}
 		sessionActs.general = general.Resume
+		sessionActs.adopt = newAdopter(sessionActs, resumes, agents.Snapshot, logger.Printf)
 		caps = append(caps, "attachments")
 		// Commands from OSC 133 marks (hab-logic-api.md 2.5): command.updated events are read
 		// from the link and sent at a bounded rate.
