@@ -2,6 +2,9 @@
 
 Status: draft for review. Part 9, study stage.
 
+Part 14 replaces the pane form below with an always-on service: see
+[`capcom-service.md`](capcom-service.md). Its section 13 lists what changes here.
+
 Capcom is the conversation that needs no project folder. A user opens it from any client and
 asks anything: a question about any project, "where should this run?", "tell the agent on the
 API repo to rebase", "write that down as a task". Capcom answers, hands off, suggests or files.
@@ -961,6 +964,9 @@ The Part 9 stages, with what this spec adds to each.
 | Approval (task-3387vxca) | Review (6.2) over Logbook's `logbook.list` and `logbook.decide`, with `gff lb proposals` as the CLI; blocked on Logbook stage 7. Confirmations' expiry, first-answer-wins and CLI fallback came with "Suggest and start" (6.4) | Three proposals, one approved: only it applies; closing without review leaves all pending; an expired confirmation never runs; a second answer gets `conflict` |
 | Entry API (task-ilse43i7) | 8.3 calls and events, attached context blocks (8.1). Built; see 8.4 | Open, send, attach and confirm against a stub Capcom; the schema compat test passes |
 | "Ask an agent" (task-3687ti3z) | 8.2 | The action payload carries the notification id and the hab resolves it; it lands in the standing conversation with the event attached; "New conversation" moves the event and draft to a fresh one; no reachable hab gives a clear message |
+
+Part 14 (Capcom as an always-on service) adds stages A2 to A8 and G; they are listed with
+their acceptance tests in `capcom-service.md` 18.
 
 Notes for those stages:
 
