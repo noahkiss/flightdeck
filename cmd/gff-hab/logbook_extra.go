@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"math"
 	"os"
 	"slices"
@@ -32,8 +33,9 @@ func init() {
 // [logbook.vectors] names an embeddings server, else a forward to an online peer whose welcome
 // lists logbook-vectors. The config is read once, at start.
 type logbookSemantic struct {
-	index *lbextra.Vectors
-	links func() []peers.Link
+	index  *lbextra.Vectors
+	engine *lbextra.HTTPEngine
+	links  func() []peers.Link
 }
 
 func newLogbookSemantic(cpath, state string, pm *peers.Manager, logf func(string, ...any)) (*logbookSemantic, error) {
@@ -46,10 +48,18 @@ func newLogbookSemantic(cpath, state string, pm *peers.Manager, logf func(string
 		ls.links = pm.Links
 	}
 	if cfg.VectorsOn() {
-		ls.index = &lbextra.Vectors{Engine: lbextra.HTTPEngine{URL: cfg.Vectors.URL, Model: cfg.Vectors.Model}, Path: cfg.Vectors.Index}
-		logf("logbook: vector search on, index %s", cfg.Vectors.Index)
+		ls.engine = lbextra.NewHTTPEngine(cfg.Vectors.BaseURL, cfg.Vectors.Model, cfg.Vectors.KeyCommand, lbextra.EngineOptions{Logf: logf})
+		ls.index = &lbextra.Vectors{Engine: ls.engine, Path: cfg.Vectors.Index}
+		logf("logbook: vector search on, model %s, index %s", cfg.Vectors.Model, cfg.Vectors.Index)
 	}
 	return ls, nil
+}
+
+// close ends the engine's key command run, if one is on.
+func (ls *logbookSemantic) close() {
+	if ls.engine != nil {
+		ls.engine.Close()
+	}
 }
 
 // options fills the service's semantic hooks.
@@ -88,7 +98,8 @@ func (ls *logbookSemantic) run(ctx context.Context, st *logbook.Store, logf func
 	last := ""
 	for {
 		if _, err := ls.index.Sync(ctx, st); err != nil && ctx.Err() == nil {
-			if err.Error() != last {
+			// A key not printed yet: the engine logs its key command's failures itself.
+			if !errors.Is(err, lbextra.ErrNoKey) && err.Error() != last {
 				logf("logbook vectors: %v", err)
 				last = err.Error()
 			}

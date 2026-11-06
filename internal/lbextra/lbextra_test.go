@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -232,20 +235,41 @@ func TestRunnerAlwaysOnOnly(t *testing.T) {
 func TestLoadConfig(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "hab.toml")
-	os.WriteFile(p, []byte("[logbook.backup]\nkeep = 7\n[logbook.export]\ngit = \"/work/export\"\n[logbook.vectors]\nurl = \"http://127.0.0.1:1/v1/embeddings\"\nmodel = \"m\"\n"), 0o600)
+	os.WriteFile(p, []byte("[logbook.backup]\nkeep = 7\n[logbook.export]\ngit = \"/work/export\"\n[logbook.vectors]\nbase_url = \"http://127.0.0.1:1/v1\"\nmodel = \"m\"\nkey_command = [\"printf\", \"k\"]\n"), 0o600)
 	c, err := LoadConfig(p, "/work/state")
 	if err != nil || c.Backup.Keep != 7 || c.Backup.Path != "/work/state/"+BackupDir || c.Export.Git != "/work/export" ||
-		!c.VectorsOn() || c.Vectors.Index != "/work/state/"+VectorIndex {
+		!c.VectorsOn() || c.Vectors.Index != "/work/state/"+VectorIndex || c.Vectors.BaseURL != "http://127.0.0.1:1/v1" ||
+		c.Vectors.Model != "m" || !slices.Equal(c.Vectors.KeyCommand, []string{"printf", "k"}) {
 		t.Fatalf("%+v %v", c, err)
 	}
 	if c, err := LoadConfig(filepath.Join(dir, "none.toml"), "/work/state"); err != nil || c.Backup.Keep != DefaultKeep || c.Export.Git != "" || c.VectorsOn() {
 		t.Fatalf("missing file: %+v %v", c, err)
 	}
-	for _, bad := range []string{"[logbook.export]\ngit = \"relative\"\n", "[logbook.vectors]\nurl = \"http://x\"\n", "[logbook.backup]\nkeep = -1\n"} {
+	for bad, want := range map[string]string{
+		"[logbook.export]\ngit = \"relative\"\n": "git",
+		"[logbook.backup]\nkeep = -1\n":          "keep",
+		// The old key is refused, naming its replacement, so an old config is noticed.
+		"[logbook.vectors]\nurl = \"http://127.0.0.1:1/v1/embeddings\"\nmodel = \"m\"\n":                        "base_url",
+		"[logbook.vectors]\nbase_url = \"http://127.0.0.1:1/v1\"\n":                                             "model",
+		"[logbook.vectors]\nmodel = \"m\"\n":                                                                    "base_url",
+		"[logbook.vectors]\nbase_url = \"ftp://127.0.0.1/v1\"\nmodel = \"m\"\n":                                 "http or https",
+		"[logbook.vectors]\nbase_url = \"http:///v1\"\nmodel = \"m\"\n":                                         "http or https",
+		"[logbook.vectors]\nbase_url = \"not a url\"\nmodel = \"m\"\n":                                          "http or https",
+		"[logbook.vectors]\nbase_url = \"http://u:p@127.0.0.1/v1\"\nmodel = \"m\"\n":                            "use key_command",
+		"[logbook.vectors]\nbase_url = \"http://127.0.0.1/v1\"\nmodel = \"m\"\nkey_command = []\n":              "no program",
+		"[logbook.vectors]\nbase_url = \"http://127.0.0.1/v1\"\nmodel = \"m\"\nkey_command = [\"\"]\n":          "no program",
+		"[logbook.vectors]\nbase_url = \"http://127.0.0.1/v1\"\nmodel = \"m\"\nkey_command = [\"  \", \"x\"]\n": "no program",
+		"[logbook.vectors]\nbase_url = \"http://127.0.0.1/v1\"\nmodel = \"m\"\nkey_command = \"printf k\"\n":    "key_command",
+	} {
 		os.WriteFile(p, []byte(bad), 0o600)
-		if _, err := LoadConfig(p, "/work/state"); err == nil {
-			t.Fatalf("accepted %q", bad)
+		if _, err := LoadConfig(p, "/work/state"); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("%q: %v, want an error naming %q", bad, err, want)
 		}
+	}
+	// A section with neither base_url nor model is off, as [summaries] is.
+	os.WriteFile(p, []byte("[logbook.vectors]\nindex = \"/work/v.gob\"\n"), 0o600)
+	if c, err := LoadConfig(p, "/work/state"); err != nil || c.VectorsOn() || c.Vectors.Index != "/work/v.gob" {
+		t.Fatalf("index only: %+v %v", c, err)
 	}
 }
 
@@ -278,8 +302,33 @@ func TestVectors(t *testing.T) {
 	}
 }
 
-func TestHTTPEngine(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// embedServer is a fake OpenAI-compatible embeddings server: it answers POST /v1/embeddings
+// only, refuses a key other than want ("" wants no Authorization header), and records each
+// Authorization header it saw.
+type embedServer struct {
+	*httptest.Server
+	mu    sync.Mutex
+	want  string
+	auths []string
+	paths []string
+}
+
+func newEmbedServer(t *testing.T, want string) *embedServer {
+	es := &embedServer{want: want}
+	es.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		es.mu.Lock()
+		es.auths = append(es.auths, r.Header.Get("Authorization"))
+		es.paths = append(es.paths, r.URL.Path)
+		want := es.want
+		es.mu.Unlock()
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/embeddings" {
+			http.NotFound(w, r)
+			return
+		}
+		if got := r.Header.Get("Authorization"); (want == "" && got != "") || (want != "" && got != "Bearer "+want) {
+			http.Error(w, "key", http.StatusUnauthorized)
+			return
+		}
 		var req struct {
 			Model string   `json:"model"`
 			Input []string `json:"input"`
@@ -301,13 +350,168 @@ func TestHTTPEngine(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(out)
 	}))
-	defer srv.Close()
-	vs, err := HTTPEngine{URL: srv.URL, Model: "m"}.Embed(context.Background(), []string{"a", "abc"})
-	if err != nil || len(vs) != 2 || vs[0][0] != 1 || vs[1][0] != 3 {
+	t.Cleanup(es.Close)
+	return es
+}
+
+func (es *embedServer) seen() (auths, paths []string) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	return slices.Clone(es.auths), slices.Clone(es.paths)
+}
+
+// logs collects log lines for a test.
+type logs struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (l *logs) logf(format string, a ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.lines = append(l.lines, fmt.Sprintf(format, a...))
+}
+
+func (l *logs) all() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.lines)
+}
+
+// embedSoon calls Embed until the key has loaded (ErrNoKey) or the deadline passes.
+func embedSoon(t *testing.T, e *HTTPEngine, texts []string) ([][]float32, error) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		vs, err := e.Embed(context.Background(), texts)
+		if !errors.Is(err, ErrNoKey) || time.Now().After(deadline) {
+			return vs, err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestHTTPEngine(t *testing.T) {
+	es := newEmbedServer(t, "")
+	// The base URL with a trailing slash still reaches <base_url>/embeddings.
+	for _, base := range []string{es.URL + "/v1", es.URL + "/v1/"} {
+		e := NewHTTPEngine(base, "m", nil, EngineOptions{})
+		vs, err := e.Embed(context.Background(), []string{"a", "abc"})
+		if err != nil || len(vs) != 2 || vs[0][0] != 1 || vs[1][0] != 3 {
+			t.Fatalf("%s: %v %v", base, vs, err)
+		}
+		e.Close()
+	}
+	if auths, paths := es.seen(); !slices.Equal(paths, []string{"/v1/embeddings", "/v1/embeddings"}) || auths[0] != "" {
+		t.Fatalf("paths %q auths %q", paths, auths)
+	}
+	e := NewHTTPEngine(es.URL+"/v1", "x", nil, EngineOptions{})
+	defer e.Close()
+	if _, err := e.Embed(context.Background(), []string{"a"}); err == nil {
+		t.Fatal("a 400 answered")
+	}
+	// A server that cannot be reached is named without its URL.
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+	e2 := NewHTTPEngine(gone.URL+"/v1?token=secret-query", "m", nil, EngineOptions{})
+	defer e2.Close()
+	if _, err := e2.Embed(context.Background(), []string{"a"}); err == nil || strings.Contains(err.Error(), "secret-query") {
+		t.Fatalf("unreachable: %v", err)
+	}
+}
+
+// TestHTTPEngineKeyCommand: key_command's output goes in the Authorization header, and the
+// key is in no log or error.
+func TestHTTPEngineKeyCommand(t *testing.T) {
+	es := newEmbedServer(t, "k-secret-123")
+	var l logs
+	e := NewHTTPEngine(es.URL+"/v1", "m", []string{"printf", "\\nk-secret-123\\n"}, EngineOptions{Logf: l.logf})
+	defer e.Close()
+	vs, err := embedSoon(t, e, []string{"abc"})
+	if err != nil || len(vs) != 1 || vs[0][0] != 3 {
 		t.Fatalf("%v %v", vs, err)
 	}
-	if _, err := (HTTPEngine{URL: srv.URL, Model: "x"}).Embed(context.Background(), []string{"a"}); err == nil {
-		t.Fatal("a 400 answered")
+	if auths, _ := es.seen(); len(auths) != 1 || auths[0] != "Bearer k-secret-123" {
+		t.Fatalf("auths %q", auths)
+	}
+	for _, line := range l.all() {
+		if strings.Contains(line, "k-secret-123") {
+			t.Fatalf("key in log: %q", line)
+		}
+	}
+}
+
+// TestHTTPEngineKeyCommandFails: a failing key_command sends nothing, fails each call cleanly,
+// logs one line for the streak, and keeps its stderr (which may hold a secret) out of the log
+// and the error.
+func TestHTTPEngineKeyCommandFails(t *testing.T) {
+	es := newEmbedServer(t, "k")
+	var l logs
+	e := NewHTTPEngine(es.URL+"/v1", "m", []string{"sh", "-c", "echo stderr-secret-456 >&2; exit 3"}, EngineOptions{Logf: l.logf})
+	defer e.Close()
+	waitUntil(t, func() bool { return len(l.all()) > 0 })
+	for range 3 {
+		if _, err := e.Embed(context.Background(), []string{"a"}); !errors.Is(err, ErrNoKey) || strings.Contains(err.Error(), "stderr-secret-456") {
+			t.Fatalf("embed: %v", err)
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+	if lines := l.all(); len(lines) != 1 || strings.Contains(lines[0], "stderr-secret-456") || !strings.Contains(lines[0], "key_command") {
+		t.Fatalf("logs %q", lines)
+	}
+	if auths, _ := es.seen(); len(auths) != 0 {
+		t.Fatalf("a request went out: %q", auths)
+	}
+}
+
+// TestHTTPEngineKeyRefused: a 401 runs the key command again once its backoff allows, and the
+// new key is used.
+func TestHTTPEngineKeyRefused(t *testing.T) {
+	es := newEmbedServer(t, "new-key")
+	var mu sync.Mutex
+	now := time.Unix(1_000_000, 0)
+	keys := []string{"old-key", "new-key"}
+	runs := 0
+	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	e := NewHTTPEngine(es.URL+"/v1", "m", nil, EngineOptions{Now: clock, KeyRun: func(context.Context) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		k := keys[min(runs, len(keys)-1)]
+		runs++
+		return k, nil
+	}})
+	defer e.Close()
+	if _, err := embedSoon(t, e, []string{"a"}); err == nil {
+		t.Fatal("the old key was accepted")
+	}
+	// Within the 5-minute wait after a good run, a refusal runs nothing.
+	e.Embed(context.Background(), []string{"a"})
+	time.Sleep(50 * time.Millisecond)
+	mu.Lock()
+	if runs != 1 {
+		mu.Unlock()
+		t.Fatalf("runs %d within the wait", runs)
+	}
+	now = now.Add(6 * time.Minute)
+	mu.Unlock()
+	e.Embed(context.Background(), []string{"a"}) // refused: starts a run
+	waitUntil(t, func() bool {
+		_, err := e.Embed(context.Background(), []string{"a"})
+		return err == nil
+	})
+	if auths, _ := es.seen(); auths[len(auths)-1] != "Bearer new-key" {
+		t.Fatalf("auths %q", auths)
+	}
+}
+
+func waitUntil(t *testing.T, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !ok() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

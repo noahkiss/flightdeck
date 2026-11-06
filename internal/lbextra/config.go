@@ -6,6 +6,7 @@ package lbextra
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,14 +35,17 @@ type Config struct {
 		Git string `toml:"git"`
 	} `toml:"export"`
 	Vectors struct {
-		URL   string `toml:"url"`
-		Model string `toml:"model"`
-		Index string `toml:"index"`
+		BaseURL    string   `toml:"base_url"`
+		Model      string   `toml:"model"`
+		KeyCommand []string `toml:"key_command"` // nil: no Authorization header
+		Index      string   `toml:"index"`
+		// URL is the key before base_url; LoadConfig refuses it so an old config is noticed.
+		URL string `toml:"url"`
 	} `toml:"vectors"`
 }
 
 // VectorsOn reports whether the config turns vector search on.
-func (c Config) VectorsOn() bool { return c.Vectors.URL != "" }
+func (c Config) VectorsOn() bool { return c.Vectors.BaseURL != "" && c.Vectors.Model != "" }
 
 // LoadConfig reads the sections from the hab's config file, with paths made absolute (a leading
 // ~/ is the home folder) and the defaults filled in under state. A missing file is no config.
@@ -77,10 +81,39 @@ func LoadConfig(path, state string) (Config, error) {
 	if c.Vectors.Index, err = absPath(c.Vectors.Index, filepath.Join(state, VectorIndex)); err != nil {
 		return Config{}, fmt.Errorf("%s: [logbook.vectors] index: %v", path, err)
 	}
-	if c.VectorsOn() && c.Vectors.Model == "" {
-		return Config{}, fmt.Errorf("%s: [logbook.vectors] needs a model with its url", path)
+	if err := checkVectors(&c); err != nil {
+		return Config{}, fmt.Errorf("%s: [logbook.vectors] %v", path, err)
 	}
 	return c, nil
+}
+
+// checkVectors checks base_url, model and key_command with the rules of [summaries]
+// (app.md 16.5): neither is off, one without the other is an error.
+func checkVectors(c *Config) error {
+	v := &c.Vectors
+	if v.URL != "" {
+		return errors.New("url is replaced by base_url (without /embeddings) and model")
+	}
+	v.BaseURL, v.Model = strings.TrimSpace(v.BaseURL), strings.TrimSpace(v.Model)
+	switch {
+	case v.BaseURL == "" && v.Model == "":
+		return nil
+	case v.BaseURL == "":
+		return errors.New("model is set but base_url is not")
+	case v.Model == "":
+		return errors.New("base_url is set but model is not")
+	}
+	u, err := url.Parse(v.BaseURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("base_url %q is not an http or https URL", v.BaseURL)
+	}
+	if u.User != nil {
+		return errors.New("base_url must not hold a user or password; use key_command")
+	}
+	if v.KeyCommand != nil && (len(v.KeyCommand) == 0 || strings.TrimSpace(v.KeyCommand[0]) == "") {
+		return errors.New("key_command names no program")
+	}
+	return nil
 }
 
 func absPath(p, def string) (string, error) {

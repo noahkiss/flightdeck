@@ -17,9 +17,21 @@ import (
 	"github.com/noahkiss/flightdeck/internal/lbsvc"
 )
 
-// fakeEmbeddings serves the embeddings shape with lbextra.FakeEngine's vectors.
+// fakeEmbeddingsKey is the bearer key fakeEmbeddings wants, printed by the test's key_command.
+const fakeEmbeddingsKey = "test-embeddings-key"
+
+// fakeEmbeddings serves the embeddings shape with lbextra.FakeEngine's vectors at
+// <url>/v1/embeddings, to a request with the bearer key fakeEmbeddingsKey.
 func fakeEmbeddings(t *testing.T) string {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/embeddings" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer "+fakeEmbeddingsKey {
+			http.Error(w, "key", http.StatusUnauthorized)
+			return
+		}
 		var req struct {
 			Input []string `json:"input"`
 		}
@@ -65,7 +77,7 @@ func TestLogbookSemanticTwoHabs(t *testing.T) {
 	writePeers(t, filesA, "bee", "hab-b")
 	writePeers(t, filesB, "ay", "hab-nowhere")
 	cfgB := filepath.Join(d, "hab-b.toml")
-	if err := os.WriteFile(cfgB, []byte("[logbook.vectors]\nurl = \""+fakeEmbeddings(t)+"\"\nmodel = \"fake\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(cfgB, []byte("[logbook.vectors]\nbase_url = \""+fakeEmbeddings(t)+"/v1\"\nmodel = \"fake\"\nkey_command = [\"printf\", \""+fakeEmbeddingsKey+"\"]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
