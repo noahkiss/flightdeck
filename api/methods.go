@@ -184,6 +184,7 @@ var Events = []EventDef{
 	{"pane.output", "A pane printed; at most once per second per pane, for activity marks. Ephemeral.", PaneOutput{}},
 	{"chat.message", "A chat message was appended or changed; the id is the message id. Ephemeral.", ChatMessage{}},
 	{"session.turn_end", "The agent's turn ended; the id is the session id. Ephemeral.", TurnEnd{}},
+	{"agent.compact", "A self-compact moved a step; the id is the compaction id (harness-adapters.md, Self-compact). Goes where its session goes. Ephemeral.", Compaction{}},
 	{"usage.updated", "An account's usage reading changed; the id is the account key. Ephemeral.", UsageAccount{}},
 	{"command.updated", "A pane's command started or ended; the id is the pane id (spec 2.5). Ephemeral.", Command{}},
 	{"peer.updated", "A peer's link state changed; the id is the peer's label (mesh.md 4.3). Host scope only. Ephemeral.", Peer{}},

@@ -1707,6 +1707,43 @@ public struct CommandState: RawRepresentable, Codable, Sendable, Hashable {
     public static let unknown = CommandState(rawValue: "unknown")
 }
 
+public struct Compaction: Codable, Sendable, Hashable {
+    /// RFC 3339 time of this step.
+    public var at: String
+    /// True when a follow-up was given; its text stays on the hab.
+    public var followUp: Bool
+    public var harness: String
+    public var id: String
+    public var pane: String
+    /// Why it failed.
+    public var reason: String?
+    public var session: String?
+    /// queued, sent, compacting, done or failed.
+    public var state: String
+
+    enum CodingKeys: String, CodingKey {
+        case at = "at"
+        case followUp = "follow_up"
+        case harness = "harness"
+        case id = "id"
+        case pane = "pane"
+        case reason = "reason"
+        case session = "session"
+        case state = "state"
+    }
+
+    public init(at: String, followUp: Bool, harness: String, id: String, pane: String, reason: String? = nil, session: String? = nil, state: String) {
+        self.at = at
+        self.followUp = followUp
+        self.harness = harness
+        self.id = id
+        self.pane = pane
+        self.reason = reason
+        self.session = session
+        self.state = state
+    }
+}
+
 public struct ConfirmAnswerParams: Codable, Sendable, Hashable {
     public var choice: ConfirmChoice
     /// With choice confirm: the user's changes.
@@ -7378,6 +7415,8 @@ public enum HabEvent: Sendable, Hashable {
     case chatMessage(ChatMessage)
     /// The agent's turn ended; the id is the session id. Ephemeral.
     case sessionTurnEnd(TurnEnd)
+    /// A self-compact moved a step; the id is the compaction id (harness-adapters.md, Self-compact). Goes where its session goes. Ephemeral.
+    case agentCompact(Compaction)
     /// An account's usage reading changed; the id is the account key. Ephemeral.
     case usageUpdated(UsageAccount)
     /// A pane's command started or ended; the id is the pane id (spec 2.5). Ephemeral.
@@ -7425,6 +7464,7 @@ public enum HabEvent: Sendable, Hashable {
         case "pane.output": self = .paneOutput(try event.data.decode(PaneOutput.self))
         case "chat.message": self = .chatMessage(try event.data.decode(ChatMessage.self))
         case "session.turn_end": self = .sessionTurnEnd(try event.data.decode(TurnEnd.self))
+        case "agent.compact": self = .agentCompact(try event.data.decode(Compaction.self))
         case "usage.updated": self = .usageUpdated(try event.data.decode(UsageAccount.self))
         case "command.updated": self = .commandUpdated(try event.data.decode(Command.self))
         case "peer.updated": self = .peerUpdated(try event.data.decode(Peer.self))

@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/agentcli"
 	"github.com/noahkiss/flightdeck/internal/confirm"
+	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/suggest"
 )
 
@@ -18,6 +20,19 @@ const startWait = 45 * time.Second
 
 // actionCallTime bounds one action tool call: the longest wait for the user, then a start's run.
 const actionCallTime = confirm.MaxWait + confirm.RunTime + 10*time.Second
+
+// runCompact asks the hab to compact the calling agent's own conversation (harness-adapters.md,
+// Self-compact). Only from a pane: the pane's token names the agent.
+func runCompact(ctx context.Context, c caller, a toolArgs) (any, string, error) {
+	if p, ok := c.(paneDoor); !ok || !p.fromPane() {
+		return nil, "", control.Errorf(api.ErrorKindInvalid, "compact runs from your own Flightdeck pane: it compacts the agent in that pane")
+	}
+	var r api.Compaction
+	if err := c.Call(ctx, "agent.compact", api.CompactParams{FollowUp: a.str("follow_up")}, &r); err != nil {
+		return nil, "", err
+	}
+	return r, agentcli.Text(r), nil
+}
 
 // runSuggest ranks the hosts from the merged catalog (capcom.md 3.3). It reads only.
 func runSuggest(ctx context.Context, c caller, a toolArgs) (any, string, error) {

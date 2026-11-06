@@ -30,7 +30,7 @@ const mcpCallTime = 40 * time.Second
 // mcpRules is the part of the manual every client gets in the initialize answer.
 const mcpRules = `Flightdeck tools: read hosts, projects, running agents, past sessions and transcripts, notifications, files and Logbook on every connected host; suggest a host; start a session there; hand a request to the agent on a project; file a Logbook record; write to Logbook.
 - The read tools only read. None of them writes, starts or sends anything.
-- Five action tools change things. Use them only for what the user asked in this conversation, or for your own work's records. start_session starts an agent session on a host, and set_up_project sets a project up on one: run suggest_host first and tell the user which host and why. hand_off sends a request to the agent already on a project. file_record files a Logbook record as a proposal for the user's review. logbook_write writes to Logbook at once: tasks, findings, notes and status for the work you do.
+- Six action tools change things. Use them only for what the user asked in this conversation, or for your own work's records. start_session starts an agent session on a host, and set_up_project sets a project up on one: run suggest_host first and tell the user which host and why. hand_off sends a request to the agent already on a project. file_record files a Logbook record as a proposal for the user's review. logbook_write writes to Logbook at once: tasks, findings, notes and status for the work you do. compact compacts your own conversation after your turn and sends your follow-up: write a handoff first, then end your turn.
 - When an agent already runs on the project, hand_off to it rather than starting another. Tell the user where the request went, why that agent, and whether it was delivered or waits until the agent is idle. When hand_off says no agent runs there, offer suggest_host and start_session.
 - file_record files a proposal, never a record: tell the user in one line that it waits for review, and do not file it again. When it answers unavailable, nothing was filed; say so.
 - A start may need the owner's confirmation in Flightdeck. When start_session says it is still waiting, do not ask again: the answer reaches you as a message from Flightdeck, and confirmation_read shows where it stands.
@@ -193,7 +193,7 @@ func (m *mcpServer) handle(line []byte) {
 		}
 		t, ok := findIn(allTools(), p.Name)
 		if !ok {
-			m.fail(msg.ID, rpcInvalidParams, "no tool %q: the read tools only read, and none writes; the only actions are start_session, hand_off, file_record, logbook_write and set_up_project", p.Name)
+			m.fail(msg.ID, rpcInvalidParams, "no tool %q: the read tools only read, and none writes; the only actions are start_session, hand_off, file_record, logbook_write, compact and set_up_project", p.Name)
 			return
 		}
 		a := toolArgs{}

@@ -166,6 +166,27 @@ type TurnEnd struct {
 	FinalMessage string `json:"final_message,omitempty" doc:"Id of the turn's last agent message."`
 }
 
+// --- Self-compact (harness-adapters.md, Self-compact) ---
+
+// CompactParams are the params of agent.compact, a pane route method: the pane's token names the
+// pane to compact.
+type CompactParams struct {
+	FollowUp string `json:"follow_up,omitempty" doc:"A message delivered as the agent's first after the compaction, at most 8000 characters."`
+}
+
+// Compaction is one self-compact: the result of agent.compact and the data of an agent.compact
+// event, whose id is the compaction id.
+type Compaction struct {
+	ID       string `json:"id"`
+	Pane     string `json:"pane"`
+	Session  string `json:"session,omitempty"`
+	Harness  string `json:"harness"`
+	State    string `json:"state" doc:"queued, sent, compacting, done or failed."`
+	FollowUp bool   `json:"follow_up" doc:"True when a follow-up was given; its text stays on the hab."`
+	Reason   string `json:"reason,omitempty" doc:"Why it failed."`
+	At       string `json:"at" doc:"RFC 3339 time of this step."`
+}
+
 // --- Attachments ---
 
 // AttachmentPutParams starts an upload of one file for a session.

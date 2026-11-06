@@ -10,7 +10,7 @@ import (
 
 // Events each harness's hook config subscribes, in the order printed.
 var (
-	ClaudeEvents   = []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Notification", "Stop", "StopFailure", "SessionEnd"}
+	ClaudeEvents   = []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Notification", "PreCompact", "Stop", "StopFailure", "SessionEnd"}
 	CodexEvents    = []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Stop", "Interrupt", "SessionEnd"}
 	OpencodeEvents = []string{"session.created", "session.deleted", "session.status", "session.idle", "session.error", "permission.asked", "permission.updated", "permission.replied"}
 )
@@ -37,6 +37,8 @@ func Config(harness, command string) (string, error) {
 	case detect.KindClaude:
 		// PermissionRequest runs with -wait: it returns at once unless the owner turned the
 		// blocking permission hook on in gff-hab, and its timeout covers the longest wait.
+		// The context events (ContextEvent) need no flag: the command asks gff-hab for context
+		// on those events, so an older gff-hab never meets an unknown flag.
 		return hooksJSON(command, harness, ClaudeEvents, map[string]int{"PermissionRequest": PermissionTimeout}, map[string]string{"PermissionRequest": "-wait "})
 	case detect.KindCodex:
 		// Codex caps its end hooks at three seconds. PermissionRequest waits as Claude's does.

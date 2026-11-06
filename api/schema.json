@@ -3637,6 +3637,13 @@
       }
     },
     {
+      "type": "agent.compact",
+      "summary": "A self-compact moved a step; the id is the compaction id (harness-adapters.md, Self-compact). Goes where its session goes. Ephemeral.",
+      "data": {
+        "$ref": "#/components/schemas/Compaction"
+      }
+    },
+    {
       "type": "usage.updated",
       "summary": "An account's usage reading changed; the id is the account key. Ephemeral.",
       "data": {
@@ -5650,6 +5657,47 @@
           "running",
           "done",
           "unknown"
+        ]
+      },
+      "Compaction": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "RFC 3339 time of this step."
+          },
+          "follow_up": {
+            "type": "boolean",
+            "description": "True when a follow-up was given; its text stays on the hab."
+          },
+          "harness": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "pane": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why it failed."
+          },
+          "session": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "queued, sent, compacting, done or failed."
+          }
+        },
+        "required": [
+          "id",
+          "pane",
+          "harness",
+          "state",
+          "follow_up",
+          "at"
         ]
       },
       "ConfirmAnswerParams": {

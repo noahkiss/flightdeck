@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Capability is the capability string of the hab-side settings (hab-logic-api.md 3.4).
@@ -24,7 +26,15 @@ const (
 	HabitBrief    = "logbook.habits.brief"
 	HabitReminder = "logbook.habits.reminder"
 	HabitCloseout = "logbook.habits.closeout"
+	// The context nudge (harness-adapters.md, Context nudge): the first level in percent (0 is
+	// off), the step to each later level, and the note's text.
+	ContextNudge     = "agent.context_nudge"
+	ContextNudgeStep = "agent.context_nudge_step"
+	ContextNudgeText = "agent.context_nudge_text"
 )
+
+// DefaultNudgeText is the context nudge's built-in note; {percent} becomes the percentage.
+const DefaultNudgeText = "Context is at {percent}%. Write a handoff for your work so far, then run gff agent compact with a follow-up that points at it."
 
 // Def is one hab-side setting: its id, its built-in value (the Balanced column, app.md 20.1)
 // and the check of its type.
@@ -47,6 +57,17 @@ var Defs = []Def{
 	{ID: HabitBrief, Default: json.RawMessage(`true`), check: checkBool},
 	{ID: HabitReminder, Default: json.RawMessage(`true`), check: checkBool},
 	{ID: HabitCloseout, Default: json.RawMessage(`true`), check: checkBool},
+	{ID: ContextNudge, Default: json.RawMessage(`0`), check: checkInt(0, 99), integer: true},
+	{ID: ContextNudgeStep, Default: json.RawMessage(`10`), check: checkInt(1, 100), integer: true},
+	{ID: ContextNudgeText, Default: mustJSON(DefaultNudgeText), check: checkText(1, 1000)},
+}
+
+func mustJSON(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }
 
 // Lookup returns the setting with the id.
@@ -116,6 +137,26 @@ func checkWord(words ...string) func(any) (json.RawMessage, error) {
 		s, ok := v.(string)
 		if !ok || !slices.Contains(words, s) {
 			return nil, fmt.Errorf("want one of %q", words)
+		}
+		return json.Marshal(s)
+	}
+}
+
+// checkText takes a string of lo to hi characters with no control character but newline and
+// tab.
+func checkText(lo, hi int) func(any) (json.RawMessage, error) {
+	return func(v any) (json.RawMessage, error) {
+		s, ok := v.(string)
+		if !ok || !utf8.ValidString(s) {
+			return nil, fmt.Errorf("want text of %d to %d characters", lo, hi)
+		}
+		if n := utf8.RuneCountInString(s); n < lo || n > hi {
+			return nil, fmt.Errorf("want text of %d to %d characters", lo, hi)
+		}
+		for _, r := range s {
+			if unicode.IsControl(r) && r != '\n' && r != '\t' {
+				return nil, fmt.Errorf("want text with no control characters")
+			}
 		}
 		return json.Marshal(s)
 	}

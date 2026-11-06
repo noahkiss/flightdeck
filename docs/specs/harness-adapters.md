@@ -23,11 +23,12 @@ Every claim about a harness names its source in [Sources](#sources).
 9. [opencode](#opencode)
 10. [Usage](#usage)
 11. [Input delivery](#input-delivery)
-12. [Permission answers](#permission-answers)
-13. [Edge cases](#edge-cases)
-14. [Fixtures](#fixtures)
-15. [Open decisions](#open-decisions)
-16. [Sources](#sources)
+12. [Self-compact and the context nudge](#self-compact-and-the-context-nudge)
+13. [Permission answers](#permission-answers)
+14. [Edge cases](#edge-cases)
+15. [Fixtures](#fixtures)
+16. [Open decisions](#open-decisions)
+17. [Sources](#sources)
 
 ## Terms
 
@@ -1100,6 +1101,102 @@ Built choices (`session.send`, `internal/harness`, `cmd/gff-hab`):
   `chat.message` can give a user message its ids: from trailing paths left as text, or by
   matching a message whose paths became images to its send (`app.md` 4.4).
 - Not built yet: the two-second typing pause, the read back and its "not delivered" event.
+
+## Self-compact and the context nudge
+
+An agent that runs for hours fills its context. Two parts let it manage that itself: the agent
+asks gff-hab to compact its own conversation and continue, and gff-hab reminds the agent when
+its context passes a level the owner set.
+
+### Self-compact
+
+**Callers.** `gff agent compact [follow-up | -]` (`gff-hab agent compact` is the same command)
+and the agent kit's action tool `compact` (`gff-hab mcp`, `gff-hab act compact`). Each runs in
+the agent's own pane and reaches gff-hab through `$GFF_HAB`, as method `agent.compact` on the
+pane route. The pane's token names the pane to compact: an agent can compact only itself.
+Outside a pane the command is refused. `-` reads the follow-up from stdin.
+
+**Follow-up.** An optional message, at most 8000 characters, delivered as the first message after
+the compaction. The typical one points at a handoff the agent wrote just before: "read
+`<path>` and continue".
+
+**Refusals, at the call.**
+
+| Case | Answer |
+|---|---|
+| No agent state in the pane, or `none` or `exited` | `unavailable`: no supported harness |
+| A harness other than Claude Code | `unavailable`, naming the harness |
+| A permission request open | `conflict` |
+| A compaction already pending for the pane | `conflict`, naming its id |
+| A follow-up over 8000 characters | `invalid` |
+
+**Steps.** The call answers at once with the compaction's id and state `queued`: the agent that
+calls is mid-turn, and nothing happens until that turn ends. gff-hab then moves the compaction
+through these states, and sends one `agent.compact` event (host scope, ephemeral, the id is the
+compaction id) at each step.
+
+| State | Means | Next when |
+|---|---|---|
+| `queued` | Waits for the turn to end | The agent is `idle`, `done` or `error`, with no permission request open and no send holding the pane |
+| `sent` | `/compact` was delivered through `session.send`'s path: paste, then Enter | Compaction starts |
+| `compacting` | Claude Code is compacting | Compaction ends |
+| `done` | Compaction ended, and the follow-up, if any, was delivered | — |
+| `failed` | It stopped; `reason` says where. No later step runs | — |
+
+- **Start.** Claude Code's `PreCompact` hook for the pane, or a `compact_boundary` record that
+  the pane's transcript gained after `/compact` went in. The record is the fallback for a hook
+  config without `PreCompact`.
+- **End.** Claude Code's `SessionStart` hook with `source` `compact`, or the
+  `compact_boundary` record. A record seen first counts as start and end at once.
+- **Follow-up delivery.** At the end, gff-hab sends the follow-up through `session.send`'s path
+  as soon as the agent is at its prompt. A message pasted while compaction runs would rely on
+  the TUI's own input queue; after the end it is the compacted agent's first message, which
+  is what the follow-up is for.
+- **Limits.** The turn must end within 60 minutes, compaction must start within 2 minutes of
+  `sent`, and end within 15 minutes of its start. A pane that exits, or an agent that leaves
+  it, fails the compaction too. A failure after `compacting` names that the follow-up was not
+  delivered.
+- **One per pane.** A second call while one is pending is refused.
+- **In memory.** A gff-hab restart drops a pending compaction with no event.
+
+**Data.** `Compaction`: `id`, `pane`, `session`, `harness`, `state`, `follow_up` (true when one
+was given; the text stays on the hab), `reason`, `at` (RFC 3339, the step's time).
+
+**Not built.** Codex (`/compact` exists; its hooks report no compaction to wait for) and
+opencode answer `unavailable`.
+
+### Context nudge
+
+A hab-side setting (`app.md` 20.3) makes gff-hab add a short note to the agent's context when
+its context passes a level.
+
+| Setting | Type | Default | Means |
+|---|---|---|---|
+| `agent.context_nudge` | integer percent, 0 = off, else 1 to 99 | 0 | The first level |
+| `agent.context_nudge_step` | integer percent, 1 to 100 | 10 | The distance to each later level |
+| `agent.context_nudge_text` | text, 1 to 1000 characters | below | The note; `{percent}` becomes the context percentage |
+
+The default text: "Context is at {percent}%. Write a handoff for your work so far, then run
+gff agent compact with a follow-up that points at it."
+
+- **Context percentage.** Per pane, Claude Code only. The source is the status-line input's
+  `context_window.used_percentage` (posted by `gff-hab statusline claude`, see
+  [Usage](#usage)). With no status line for the pane, gff-hab reads the last `assistant`
+  record's `usage` in the transcript the hook payload names (input, cache creation and cache
+  read tokens) over the context window size from the pane's last status line, else 200,000.
+  It reads at most the last 256 KiB of the transcript.
+- **Delivery.** Claude Code's `UserPromptSubmit` and `PostToolUse` hooks run
+  `gff-hab hook -context`. The command posts as usual with `?context=1`; gff-hab answers 204,
+  or 200 with `{"context": "<note>"}` when a note is due. The command prints the note as the
+  hook output, `{"hookSpecificOutput": {"hookEventName": "<event>", "additionalContext":
+  "<note>"}}`. The hook keeps its 900 ms budget; gff-hab works out the answer from memory and
+  at most that one transcript read.
+- **When.** Levels are the first level, then each step above it, below 100. A note is due when
+  the percentage reached a level the pane has not had a note for: one note, with the
+  percentage now, for every level passed at once. A subagent's hook gets none.
+- **Reset.** A compaction (`PreCompact`, `SessionStart` with `source` `compact`), a new native
+  session in the pane, or a percentage back under the first level clears the levels noted.
+- **Off.** With `agent.context_nudge` at 0 the hab answers 204 to every `-context` post.
 
 ## Permission answers
 

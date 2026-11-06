@@ -55,6 +55,7 @@ type Server struct {
 	logbook  ChannelHandler
 	context  ContextHandler
 	reads    ReadHandler
+	agent    ChannelHandler
 	http     *http.Server
 }
 
