@@ -43,6 +43,10 @@ func (f *fakeRounds) Get(r api.RoundRef) (api.Round, error) {
 	err := f.note("get " + r.Name)
 	return api.Round{ID: "round-1"}, err
 }
+func (f *fakeRounds) Batch(r api.RoundRef) (*api.RoundBatch, error) {
+	err := f.note("batch " + r.Name)
+	return nil, err
+}
 func (f *fakeRounds) Create(_ context.Context, p api.RoundCreateParams, by string) (api.RoundCreated, error) {
 	err := f.note("create " + p.Round.Name + " by " + by)
 	return api.RoundCreated{Round: api.Round{ID: "round-1"}}, err
@@ -84,7 +88,7 @@ func TestRoundMethods(t *testing.T) {
 	if _, err := cl.RoundCreate(ctx(t), api.RoundCreateParams{Round: api.RoundSpec{Name: "a"}}); err != nil {
 		t.Fatal(err)
 	}
-	cl.RoundGet(ctx(t), api.RoundRef{Name: "a"})
+	cl.RoundGet(ctx(t), api.RoundGetParams{RoundRef: api.RoundRef{Name: "a"}})
 	cl.RoundUpdate(ctx(t), api.RoundUpdateParams{ID: "round-1"})
 	cl.RoundPause(ctx(t), api.RoundRef{ID: "round-1"})
 	cl.RoundUnpause(ctx(t), api.RoundRef{ID: "round-1"})

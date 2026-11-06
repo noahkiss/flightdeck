@@ -36,17 +36,19 @@ type RoundTrigger struct {
 
 // RoundEventFilter is an event trigger's filter (rounds.md 4.3).
 type RoundEventFilter struct {
-	Project string   `json:"project,omitempty" doc:"A project id: project.updated, agent.state, notice.raised, logbook.updated. In a create or update, an absolute folder is taken as its project."`
-	Session string   `json:"session,omitempty" doc:"A session id: agent.state, command.updated, notice.raised."`
-	Field   []string `json:"field,omitempty" doc:"project.updated: the changed fields that count: head, branch, behind. Absent: any."`
-	State   []string `json:"state,omitempty" doc:"agent.state: the new states that count: done, error. Absent: both."`
-	Level   string   `json:"level,omitempty" doc:"notice.raised: the lowest level: passive, active or time-sensitive."`
-	Text    string   `json:"text,omitempty" doc:"notice.raised: a case-insensitive part of the title or body."`
-	Type    string   `json:"type,omitempty" doc:"logbook.updated: the record type."`
-	Change  string   `json:"change,omitempty" doc:"logbook.updated: created (the default), status, deleted or any."`
-	Status  []string `json:"status,omitempty" doc:"logbook.updated with change status: the new statuses that count. Absent: any."`
-	Tags    []string `json:"tags,omitempty" doc:"logbook.updated: the record holds any of these tags."`
-	By      string   `json:"by,omitempty" doc:"logbook.updated: who wrote the change: person, agent, hab or any (the default)."`
+	Project string `json:"project,omitempty" doc:"A project id: project.updated, agent.state, notice.raised, logbook.updated. In a create or update, an absolute folder is taken as its project."`
+	// ProjectRemote was added for round move (rounds.md 9, Moving these rounds).
+	ProjectRemote string   `json:"project_remote,omitempty" doc:"In a create or update, instead of project: a git remote; the hab takes its project with that remote. In a round read back: the remote of project, when it is a project on this hab with one, so a move names it on any host."`
+	Session       string   `json:"session,omitempty" doc:"A session id: agent.state, command.updated, notice.raised."`
+	Field         []string `json:"field,omitempty" doc:"project.updated: the changed fields that count: head, branch, behind. Absent: any."`
+	State         []string `json:"state,omitempty" doc:"agent.state: the new states that count: done, error. Absent: both."`
+	Level         string   `json:"level,omitempty" doc:"notice.raised: the lowest level: passive, active or time-sensitive."`
+	Text          string   `json:"text,omitempty" doc:"notice.raised: a case-insensitive part of the title or body."`
+	Type          string   `json:"type,omitempty" doc:"logbook.updated: the record type."`
+	Change        string   `json:"change,omitempty" doc:"logbook.updated: created (the default), status, deleted or any."`
+	Status        []string `json:"status,omitempty" doc:"logbook.updated with change status: the new statuses that count. Absent: any."`
+	Tags          []string `json:"tags,omitempty" doc:"logbook.updated: the record holds any of these tags."`
+	By            string   `json:"by,omitempty" doc:"logbook.updated: who wrote the change: person, agent, hab or any (the default)."`
 }
 
 // RoundSpec is what a user or an agent writes of a round: create and update send it, and a
@@ -161,11 +163,28 @@ type RoundList struct {
 type RoundResult struct {
 	Seq
 	Round Round `json:"round"`
+	// Batch was added for round move (rounds.md 9, Moving these rounds).
+	Batch *RoundBatch `json:"batch,omitempty" doc:"round.get with batch, for an event round: its pending batch."`
 }
 
 type RoundCreateParams struct {
 	Round  RoundSpec `json:"round"`
 	RunNow bool      `json:"run_now,omitempty" doc:"Also start one run now. It does not move the next slot."`
+	// Batch was added for round move (rounds.md 9, Moving these rounds).
+	Batch *RoundBatch `json:"batch,omitempty" doc:"Event triggers: a pending batch the new round starts with, as a move carries it; its debounce starts at the create. Refused on the pane route."`
+}
+
+// RoundGetParams names the round of round.get.
+type RoundGetParams struct {
+	RoundRef
+	Batch bool `json:"batch,omitempty" doc:"Also return the pending batch's events, as a move carries them (rounds.md 9)."`
+}
+
+// RoundBatch is an event round's pending batch (rounds.md 4.5): its events, oldest first, and
+// how many older ones were dropped to keep it inside its bounds.
+type RoundBatch struct {
+	Events  []RoundEvent `json:"events,omitempty"`
+	Dropped int          `json:"dropped,omitempty"`
 }
 
 // RoundCreated answers round.create.

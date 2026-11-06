@@ -3355,9 +3355,16 @@
     },
     {
       "name": "round.get",
-      "summary": "One round by id or name, with its definition (rounds.md 13). Needs the rounds capability.",
+      "summary": "One round by id or name, with its definition (rounds.md 13); with batch, also an event round's pending batch (rounds.md 9). Needs the rounds capability.",
       "paramStructure": "by-name",
       "params": [
+        {
+          "name": "batch",
+          "description": "Also return the pending batch's events, as a move carries them (rounds.md 9).",
+          "schema": {
+            "type": "boolean"
+          }
+        },
         {
           "name": "id",
           "schema": {
@@ -3378,7 +3385,7 @@
         }
       },
       "x-params": {
-        "$ref": "#/components/schemas/RoundRef"
+        "$ref": "#/components/schemas/RoundGetParams"
       }
     },
     {
@@ -3386,6 +3393,13 @@
       "summary": "Create a round; checks the trigger, mode and target. run_now also starts one run, and the call then answers after its spawn (rounds.md 3, 13). Needs the rounds capability.",
       "paramStructure": "by-name",
       "params": [
+        {
+          "name": "batch",
+          "description": "Event triggers: a pending batch the new round starts with, as a move carries it; its debounce starts at the create. Refused on the pane route.",
+          "schema": {
+            "$ref": "#/components/schemas/RoundBatch"
+          }
+        },
         {
           "name": "round",
           "required": true,
@@ -10230,6 +10244,21 @@
           "updated_at"
         ]
       },
+      "RoundBatch": {
+        "type": "object",
+        "properties": {
+          "dropped": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoundEvent"
+            }
+          }
+        }
+      },
       "RoundCatchUp": {
         "type": "string",
         "x-known-values": [
@@ -10240,6 +10269,10 @@
       "RoundCreateParams": {
         "type": "object",
         "properties": {
+          "batch": {
+            "$ref": "#/components/schemas/RoundBatch",
+            "description": "Event triggers: a pending batch the new round starts with, as a move carries it; its debounce starts at the create. Refused on the pane route."
+          },
           "round": {
             "$ref": "#/components/schemas/RoundSpec"
           },
@@ -10322,6 +10355,10 @@
             "type": "string",
             "description": "A project id: project.updated, agent.state, notice.raised, logbook.updated. In a create or update, an absolute folder is taken as its project."
           },
+          "project_remote": {
+            "type": "string",
+            "description": "In a create or update, instead of project: a git remote; the hab takes its project with that remote. In a round read back: the remote of project, when it is a project on this hab with one, so a move names it on any host."
+          },
           "session": {
             "type": "string",
             "description": "A session id: agent.state, command.updated, notice.raised."
@@ -10354,6 +10391,21 @@
           "type": {
             "type": "string",
             "description": "logbook.updated: the record type."
+          }
+        }
+      },
+      "RoundGetParams": {
+        "type": "object",
+        "properties": {
+          "batch": {
+            "type": "boolean",
+            "description": "Also return the pending batch's events, as a move carries them (rounds.md 9)."
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
           }
         }
       },
@@ -10430,6 +10482,10 @@
       "RoundResult": {
         "type": "object",
         "properties": {
+          "batch": {
+            "$ref": "#/components/schemas/RoundBatch",
+            "description": "round.get with batch, for an event round: its pending batch."
+          },
           "round": {
             "$ref": "#/components/schemas/Round"
           },

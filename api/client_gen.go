@@ -1219,8 +1219,8 @@ func (c Client) RoundList(ctx context.Context, params RoundListParams) (RoundLis
 	return result, err
 }
 
-// RoundGet calls round.get. One round by id or name, with its definition (rounds.md 13). Needs the rounds capability.
-func (c Client) RoundGet(ctx context.Context, params RoundRef) (RoundResult, error) {
+// RoundGet calls round.get. One round by id or name, with its definition (rounds.md 13); with batch, also an event round's pending batch (rounds.md 9). Needs the rounds capability.
+func (c Client) RoundGet(ctx context.Context, params RoundGetParams) (RoundResult, error) {
 	var result RoundResult
 	err := c.Caller.Call(ctx, "round.get", params, &result)
 	return result, err

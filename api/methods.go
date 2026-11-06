@@ -154,7 +154,7 @@ var Methods = []Method{
 	{"confirm.list", "The open confirmations, and with all the closed ones the hab keeps (capcom.md 6.1). Needs the confirm capability.", ConfirmListParams{}, ConfirmList{}},
 	{"confirm.get", "One confirmation by id, open or closed (capcom.md 6.1). Needs the confirm capability.", ConfirmGetParams{}, ConfirmationResult{}},
 	{"round.list", "This hab's rounds with their next slot and newest run (rounds.md 13). Needs the rounds capability.", RoundListParams{}, RoundList{}},
-	{"round.get", "One round by id or name, with its definition (rounds.md 13). Needs the rounds capability.", RoundRef{}, RoundResult{}},
+	{"round.get", "One round by id or name, with its definition (rounds.md 13); with batch, also an event round's pending batch (rounds.md 9). Needs the rounds capability.", RoundGetParams{}, RoundResult{}},
 	{"round.create", "Create a round; checks the trigger, mode and target. run_now also starts one run, and the call then answers after its spawn (rounds.md 3, 13). Needs the rounds capability.", RoundCreateParams{}, RoundCreated{}},
 	{"round.update", "Replace a round's definition; a changed trigger sets the next slot from now. A run in flight keeps its values (rounds.md 3). Needs the rounds capability.", RoundUpdateParams{}, RoundResult{}},
 	{"round.delete", "Delete a round and its ended runs; a live run goes on to its end (rounds.md 13). Needs the rounds capability.", RoundRef{}, Empty{}},

@@ -184,21 +184,25 @@ var (
 	moveSettleTimeout = 15 * time.Second
 )
 
-// moveRound moves a fresh round from the hab behind from to the peer behind to (rounds.md 9),
+// moveRound moves a fresh, capcom, group or event round from the hab behind from to the peer
+// behind to (rounds.md 9),
 // after the user confirms: it pauses the round here, so no slot runs on both hosts, creates it
 // on the peer with the same definition and pause mark, its project named by remote, then
 // deletes it here. A create the peer refused unpauses it here again. A create whose answer was
 // lost asks the peer: a round there finishes the move; no round unpauses it here; no answer
 // leaves it paused here and says what to check. Resume and fork rounds stay: their target
-// session lives on this host. A completed round stays: its counts stay behind, so it would run
-// again on the peer. The run history stays behind, and goes with the delete.
+// session lives on this host, and so does an event round whose filter names a session. An event
+// filter's project goes by remote, as the round's does; an event round's pending batch goes in
+// the create, read after the pause so no event joins it here after. A completed round stays: its
+// counts stay behind, so it would run again on the peer. The run history stays behind, and goes
+// with the delete.
 func moveRound(ctx context.Context, from, to caller, name, label string, yes, asJSON bool, stdin io.Reader, out io.Writer) error {
 	var got api.RoundResult
 	if err := from.Call(ctx, "round.get", api.RoundRef{Name: name}, &got); err != nil {
 		return err
 	}
 	r := got.Round
-	if r.Mode != api.RoundModeFresh {
+	if r.Mode == api.RoundModeResume || r.Mode == api.RoundModeFork {
 		return fmt.Errorf("round %s is a %s round: its target session lives on this host, so it cannot move", name, r.Mode)
 	}
 	if r.Completed {
@@ -218,6 +222,20 @@ func moveRound(ctx context.Context, from, to caller, name, label string, yes, as
 		}
 		spec.Project, spec.ProjectDir = "", ""
 	}
+	if f := r.Trigger.Filter; r.Trigger.Kind == api.RoundTriggerKindEvent && f != nil {
+		if f.Session != "" {
+			return fmt.Errorf("round %s: its event filter names session %s, which lives on this host, so it cannot move", name, f.Session)
+		}
+		ff := *f
+		switch {
+		case ff.ProjectRemote != "":
+			ff.Project = ""
+		case ff.Project != "" && r.Trigger.Event != "logbook.updated":
+			return fmt.Errorf("round %s: its event filter's project has no remote, so the other host cannot name it", name)
+		}
+		// A logbook.updated filter with no remote names a Logbook project, the same on every hab.
+		spec.Trigger.Filter = &ff
+	}
 	if !yes && !askYes(stdin, out, fmt.Sprintf("Move round %s to %s? It is created there and deleted here, with its run history. [y/N] ", name, label)) {
 		return errors.New("not moved")
 	}
@@ -229,8 +247,20 @@ func moveRound(ctx context.Context, from, to caller, name, label string, yes, as
 			return fmt.Errorf("pause round %s here: %w", name, err)
 		}
 	}
+	create := api.RoundCreateParams{Round: spec}
+	if r.Trigger.Kind == api.RoundTriggerKindEvent {
+		// Read after the pause: a paused round takes no more events here.
+		var b api.RoundResult
+		if err := from.Call(ctx, "round.get", api.RoundGetParams{RoundRef: api.RoundRef{ID: r.ID}, Batch: true}, &b); err != nil {
+			if !r.Paused {
+				from.Call(ctx, "round.unpause", api.RoundRef{ID: r.ID}, nil)
+			}
+			return fmt.Errorf("read round %s's pending events here: %w", name, err)
+		}
+		create.Batch = b.Batch
+	}
 	var made api.RoundCreated
-	if err := to.Call(ctx, "round.create", api.RoundCreateParams{Round: spec}, &made); err != nil {
+	if err := to.Call(ctx, "round.create", create, &made); err != nil {
 		var ce *control.Error
 		refused := errors.As(err, &ce)
 		sctx, scancel := context.WithTimeout(context.Background(), moveSettleTimeout)
@@ -292,6 +322,6 @@ func finishMove(from caller, r api.Round, made api.RoundCreated, name, label str
 // the same mode, trigger, command, prompt and harness.
 func sameRound(have api.Round, sent api.RoundSpec) bool {
 	return have.Mode == sent.Mode && have.Trigger.Kind == sent.Trigger.Kind && have.Trigger.Cron == sent.Trigger.Cron &&
-		have.Trigger.Zone == sent.Trigger.Zone && have.Trigger.At == sent.Trigger.At && have.Prompt == sent.Prompt &&
-		have.Harness == sent.Harness && slices.Equal(have.Command, sent.Command)
+		have.Trigger.Zone == sent.Trigger.Zone && have.Trigger.At == sent.Trigger.At && have.Trigger.Event == sent.Trigger.Event &&
+		have.Prompt == sent.Prompt && have.Harness == sent.Harness && have.Group == sent.Group && slices.Equal(have.Command, sent.Command)
 }
