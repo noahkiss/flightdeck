@@ -1532,6 +1532,8 @@ Each row is a behaviour the owner relies on in the current terminal workspace. T
 layer that proves the behaviour. "Screen test" means `gff` runs against a fake hab and its output is
 read back through a terminal parser.
 
+Results of the review, with a mark and evidence per row and the ranked gaps: `gff-parity.md`.
+
 | Behaviour | How the owner uses it today | gff equivalent | Test that proves it |
 |---|---|---|---|
 | Workspace opens on launch | Every new terminal window lands in the same long-lived workspace, already holding its tabs | `gff` opens the default workspace and restores its tabs (5.1) | Screen test: start, add a tab, quit, start; the tab is back with the same panes |
