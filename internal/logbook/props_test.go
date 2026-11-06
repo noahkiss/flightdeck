@@ -86,6 +86,8 @@ func (w *world) play(n int) {
 			w.forgeOwn(r)
 		case x < 35:
 			w.restore(r)
+		case x < 39:
+			w.decideApart()
 		default:
 			w.write(r)
 		}
@@ -297,10 +299,84 @@ func (w *world) pick(r *replica) string {
 
 // write tries one random batch; a refused one is fine.
 func (w *world) write(r *replica) {
+	w.writeSteps(r, w.steps(r))
+}
+
+// approve is an approve batch of proposal id (9.2): the draft's record, linked from the
+// proposal, a change to another record, and the decision. writeSteps gives it an approve's actor.
+// A third of the time the draft's record is itself a proposal, whose fold waits for this one's
+// standing decision whatever the two roots' order.
+func (w *world) approve(r *replica, id, status string) []Step {
+	typ, fields := TypeTask, map[string]any{"title": "made"}
+	if w.rng.Intn(3) == 0 {
+		typ, fields["target"] = TypeProposal, "record"
+	}
+	made := NewID(typ)
+	st := []Step{create(made, typ, fields), add(made, "links", Link{Kind: LinkFrom, To: id})}
+	if other := w.pick(r); other != "" && other != id {
+		if rec, err := r.Get(context.Background(), other); err == nil && !rec.Deleted {
+			st = append(st, note(other, "from an approve"))
+		}
+	}
+	return append(st, set(id, "status", status), set(id, "decided_by", r.name))
+}
+
+// decideApart has two replicas decide one proposal both hold pending, with no link between the
+// writes (9.3): one approves with a batch that makes a record, the other rejects or approves too.
+// One decision is overruled once they link. With no such proposal, a new one is filed on the
+// first and synced whole to the second first.
+func (w *world) decideApart() {
+	rng := w.rng
+	a, b := w.reps[rng.Intn(len(w.reps))], w.reps[rng.Intn(len(w.reps))]
+	if a == b {
+		return
+	}
+	pending := func(r *replica, id string) bool {
+		rec, err := r.Get(context.Background(), id)
+		return err == nil && rec.Type == TypeProposal && rec.Status == "pending" && !rec.Deleted
+	}
+	ids := w.known[a]
+	for _, k := range rng.Perm(len(ids)) {
+		id := ids[k]
+		if !pending(a, id) || !pending(b, id) {
+			continue
+		}
+		w.writeSteps(a, w.approve(a, id, approvals[rng.Intn(len(approvals))]))
+		if rng.Intn(2) == 0 {
+			w.writeSteps(b, w.approve(b, id, approvals[rng.Intn(len(approvals))]))
+		} else {
+			w.writeSteps(b, []Step{set(id, "status", "rejected"), set(id, "decided_by", b.name)})
+		}
+		return
+	}
+	// The replica further along its own seqs files, the other approves: the approve's records
+	// then mostly get roots that sort before the proposal's ("3@R1" before "7@R0"), the order a
+	// fold must not depend on.
+	own := func(r *replica) uint64 {
+		v, err := r.Vector(context.Background())
+		if err != nil {
+			w.t.Fatal(err)
+		}
+		return v[r.Origin()]
+	}
+	if own(a) < own(b) {
+		a, b = b, a
+	}
+	x := NewID(TypeProposal)
+	w.writeSteps(a, []Step{create(x, TypeProposal, map[string]any{"title": "apart", "target": "record"})})
+	push(w.t, a, b)
+	w.learn(b)
+	if pending(a, x) && pending(b, x) {
+		w.writeSteps(b, w.approve(b, x, approvals[rng.Intn(len(approvals))]))
+		w.writeSteps(a, []Step{set(x, "status", "rejected"), set(x, "decided_by", a.name)})
+	}
+}
+
+// writeSteps tries one batch on r; a refused one is fine.
+func (w *world) writeSteps(r *replica, steps []Step) {
 	ctx := context.Background()
 	rng := w.rng
 	r.clock.Advance(time.Duration(rng.Intn(3000)) * time.Millisecond)
-	steps := w.steps(r)
 	if len(steps) == 0 {
 		return
 	}
@@ -390,19 +466,12 @@ func (w *world) steps(r *replica) []Step {
 	case 2:
 		if list := statuses[rec.Type]; len(list) > 0 {
 			status := list[rng.Intn(len(list))]
+			if rec.Type == TypeProposal && slices.Contains(approvals, status) && rng.Intn(2) == 0 {
+				return w.approve(r, id, status)
+			}
 			st := []Step{set(id, "status", status)}
 			if rec.Type == TypeProposal {
 				st = append(st, set(id, "decided_by", r.name))
-				if slices.Contains(approvals, status) && rng.Intn(2) == 0 {
-					// An approve batch (9.2): the draft's record, linked from the proposal, and a
-					// change to another record. write gives it an approve's actor.
-					made := NewID(TypeTask)
-					st = append([]Step{create(made, TypeTask, map[string]any{"title": "made"}),
-						add(made, "links", Link{Kind: LinkFrom, To: id})}, st...)
-					if other := w.pick(r); other != "" && other != id {
-						st = append(st, note(other, "from an approve"))
-					}
-				}
 			}
 			return st
 		}

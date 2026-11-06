@@ -217,3 +217,33 @@ func TestOverruledEditNotEditedAfterDelete(t *testing.T) {
 		refoldSame(t, r)
 	}
 }
+
+// A proposal N that an overruled approve of X made, whose root sorts before X's ("10@A" before
+// "1@A"): N folds after X's standing decision whatever the roots' order, so every replica hides
+// and flags it, and a rebuild agrees with the incremental fold.
+func TestProposalMadeByOverruledApprove(t *testing.T) {
+	a, b, x, task := proposalHosts(t)
+	b.clock.Set(at("09:58"))
+	reject(t, b, x)
+	a.clock.Set(at("10:00"))
+	for i := 0; i < 7; i++ { // seqs 3 to 9 on A, so N's create is seq 10
+		a.write(t, phone, note(task, "filler"))
+	}
+	n := NewID(TypeProposal)
+	res := a.write(t, approver, create(n, TypeProposal, map[string]any{"title": "N", "target": "record",
+		"draft": map[string]any{"changes": []any{}}}), set(x, "status", "approved"), set(x, "decided_by", "SHA256:phone"))
+	if s := res.Ops[0].String(); s >= a.get(t, x).Root.String() {
+		t.Fatalf("N's root %s does not sort before X's %s", s, a.get(t, x).Root)
+	}
+	link(t, a, b)
+	for _, r := range []*replica{a, b} {
+		p := r.get(t, n)
+		if !p.Deleted || len(flagsOf(p, FlagApprovalOverruled)) != 1 {
+			t.Fatalf("%s: N deleted %v flags %+v, want hidden and approval overruled", r.name, p.Deleted, p.Flags)
+		}
+		refoldSame(t, r)
+	}
+	if dump(t, a.Store) != dump(t, b.Store) {
+		t.Fatal("A and B folded differently")
+	}
+}
