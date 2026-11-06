@@ -219,8 +219,8 @@ type Scheduler struct {
 	// pendN is each round's pending count as of the last unlock, under its own leaf lock: the
 	// sink reads it while it handles an event, with s.mu free or held by another caller that
 	// waits for emitMu.
-	pendNMu sync.Mutex
-	pendN   map[string]int
+	pendNMu   sync.Mutex
+	pendN     map[string]int
 	pendSaved time.Time
 	pendTimer *time.Timer
 	dueTimer  *time.Timer

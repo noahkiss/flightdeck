@@ -87,7 +87,9 @@ func TestRoundMatcher(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := &eventProber{t: t, svc: svc, probe: eventRound(t, svc, "probe", rounds.EventHabWoke, nil)}
-	obs := func(typ, id string, data any) { svc.matcher.observe(structure.Event{Type: api.EventType(typ), ID: id, Data: data}) }
+	obs := func(typ, id string, data any) {
+		svc.matcher.observe(structure.Event{Type: api.EventType(typ), ID: id, Data: data})
+	}
 
 	t.Run("project.updated", func(t *testing.T) {
 		anyField := eventRound(t, svc, "proj-any", rounds.EventProjectUpdated, nil)
