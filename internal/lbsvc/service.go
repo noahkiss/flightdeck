@@ -1143,6 +1143,10 @@ func Record(r *logbook.Record, updated int64) api.LogbookRecord {
 	}
 	out.Assignee, out.Triage, out.Component, out.Target, out.DecidedBy = str("assignee"), str("triage"), str("component"), str("target"), str("decided_by")
 	out.Expires = str("expires")
+	if c := str("created"); c != "" {
+		out.Created = c
+	}
+	_ = json.Unmarshal(r.Fields["imported"].Value, &out.Imported)
 	_ = json.Unmarshal(r.Fields["priority"].Value, &out.Priority)
 	_ = json.Unmarshal(r.Fields["pinned"].Value, &out.Pinned)
 	_ = json.Unmarshal(r.Fields["private"].Value, &out.Marked)

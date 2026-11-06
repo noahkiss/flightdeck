@@ -5592,7 +5592,7 @@ public struct LogbookRecord: Codable, Sendable, Hashable {
     public var body: String?
     /// An issue: the tool, file or service that misbehaves.
     public var component: String?
-    /// RFC 3339 time of the create.
+    /// RFC 3339 time of the create; an imported record's original date (logbook.md 13.1).
     public var created: String?
     public var createdBy: LogbookActor?
     /// A decided proposal: the deciding device.
@@ -5607,6 +5607,8 @@ public struct LogbookRecord: Codable, Sendable, Hashable {
     public var id: String
     /// A project: its identities (logbook.md 3.1).
     public var identities: [String]?
+    /// An import wrote the record; created is its original date.
+    public var imported: Bool?
     /// A project joined with an older one: the project it shows as (logbook.md 5.6).
     public var joinedInto: String?
     /// This record's links.
@@ -5651,6 +5653,7 @@ public struct LogbookRecord: Codable, Sendable, Hashable {
         case flags = "flags"
         case id = "id"
         case identities = "identities"
+        case imported = "imported"
         case joinedInto = "joined_into"
         case links = "links"
         case marked = "marked"
@@ -5671,7 +5674,7 @@ public struct LogbookRecord: Codable, Sendable, Hashable {
         case updated = "updated"
     }
 
-    public init(assignee: String? = nil, backlinks: [LogbookLink]? = nil, body: String? = nil, component: String? = nil, created: String? = nil, createdBy: LogbookActor? = nil, decidedBy: String? = nil, deleted: Bool? = nil, draft: JSONValue? = nil, expires: String? = nil, flags: [LogbookFlag]? = nil, id: String, identities: [String]? = nil, joinedInto: String? = nil, links: [LogbookLink]? = nil, marked: Bool? = nil, notes: [LogbookNote]? = nil, pinned: Bool? = nil, priority: Int? = nil, `private`: Bool? = nil, project: String? = nil, revision: Int? = nil, source: LogbookSource? = nil, status: String? = nil, supersededBy: [String]? = nil, tags: [String]? = nil, target: String? = nil, title: String, triage: String? = nil, type: String, updated: String? = nil) {
+    public init(assignee: String? = nil, backlinks: [LogbookLink]? = nil, body: String? = nil, component: String? = nil, created: String? = nil, createdBy: LogbookActor? = nil, decidedBy: String? = nil, deleted: Bool? = nil, draft: JSONValue? = nil, expires: String? = nil, flags: [LogbookFlag]? = nil, id: String, identities: [String]? = nil, imported: Bool? = nil, joinedInto: String? = nil, links: [LogbookLink]? = nil, marked: Bool? = nil, notes: [LogbookNote]? = nil, pinned: Bool? = nil, priority: Int? = nil, `private`: Bool? = nil, project: String? = nil, revision: Int? = nil, source: LogbookSource? = nil, status: String? = nil, supersededBy: [String]? = nil, tags: [String]? = nil, target: String? = nil, title: String, triage: String? = nil, type: String, updated: String? = nil) {
         self.assignee = assignee
         self.backlinks = backlinks
         self.body = body
@@ -5685,6 +5688,7 @@ public struct LogbookRecord: Codable, Sendable, Hashable {
         self.flags = flags
         self.id = id
         self.identities = identities
+        self.imported = imported
         self.joinedInto = joinedInto
         self.links = links
         self.marked = marked

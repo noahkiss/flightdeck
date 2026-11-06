@@ -28,6 +28,7 @@ import (
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/habits"
 	"github.com/noahkiss/flightdeck/internal/hook"
+	"github.com/noahkiss/flightdeck/internal/lbextra"
 	"github.com/noahkiss/flightdeck/internal/lbsvc"
 	"github.com/noahkiss/flightdeck/internal/logbook"
 	"github.com/noahkiss/flightdeck/internal/settings"
@@ -85,6 +86,11 @@ const usage = `usage: %[1]s [--json] [--socket path] [--state dir] <verb> [args]
   project rename <p> <name>       rename a project
   project private <p> [on|off]    hide a project from agents outside it, or show it again
   status                          replica size, version vector, waiting ops
+  export [--format jsonl|markdown] <path|->
+                                  every record: JSONL to a file (- for stdout), or one
+                                  Markdown file per record into an empty folder
+  import <file.jsonl|->           write each record of an export as a create, ids kept,
+                                  dated created and marked imported; ids held are skipped
 
 filters: --type t --status s --project p --tag t --host h --author a --session s
          --since <RFC 3339 time> --general --flagged --deleted --limit n
@@ -97,10 +103,7 @@ outside a pane. A write from a pane waits up to 15 s for gff-hab, then fails.
 `
 
 // later names the verbs of later stages (logbook.md 18).
-var later = map[string]string{
-	"export": "export comes with Logbook stage 9",
-	"import": "import comes with Logbook stage 9",
-}
+var later = map[string]string{}
 
 // bools are the flags that take no value.
 var bools = map[string]bool{"all": true, "json": true, "general": true, "deleted": true, "yes": true, "propose": true, "flagged": true, "help": true, "h": true}
@@ -212,7 +215,11 @@ func run(env Env) error {
 	if !ok {
 		return usageError{fmt.Errorf("no verb %q; %s --help lists them", verb, env.Name)}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	limit := 60 * time.Second
+	if verb == "export" || verb == "import" {
+		limit = 30 * time.Minute // a whole replica, one batch per record
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	d := &door{env: env, socket: a.str("socket"), state: a.str("state")}
 	defer d.close()
@@ -513,6 +520,7 @@ func init() {
 		"link": link, "unlink": link, "supersede": supersede, "delete": del, "restore": del,
 		"forget": forget, "conflicts": conflicts, "resolve": resolve, "proposals": proposals,
 		"approve": decide, "reject": decide, "projects": projects, "project": project, "status": status,
+		"export": export, "import": importVerb,
 	}
 }
 
@@ -1137,7 +1145,7 @@ func forget(ctx context.Context, c *cli) (any, string, error) {
 	}
 	op := c.a.pos[0]
 	if !c.a.has("yes") {
-		fmt.Fprintf(c.env.Stderr, "Forget the value of op %s on every replica? Older backups keep it. [y/N] ", op)
+		fmt.Fprintf(c.env.Stderr, "Forget the value of op %s on every replica? Older backups and git exports keep it. [y/N] ", op)
 		line, _ := bufio.NewReader(c.env.Stdin).ReadString('\n')
 		if a := strings.ToLower(strings.TrimSpace(line)); a != "y" && a != "yes" {
 			return nil, "", errors.New("nothing was forgotten")
@@ -1365,4 +1373,100 @@ func FileBrief(ctx context.Context, env Env, configPath string) (api.LogbookBrie
 		return api.LogbookBrief{}, err
 	}
 	return res.(api.LogbookBrief), nil
+}
+
+// openFile opens the hab's file for export and import, which use it whether or not gff-hab
+// runs (logbook.md 13.1): a person's verbs, refused in a pane.
+func (c *cli) openFile(ctx context.Context) (*logbook.Store, error) {
+	if c.d.inPaneEnv() {
+		return nil, fmt.Errorf("%s runs outside a pane: it reads or writes the hab's file as a person", c.verb)
+	}
+	dir, err := c.d.stateDir()
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, "logbook.db")
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("no Logbook file at %s: start gff-hab once to make it, or name its state directory with --state", path)
+	}
+	return logbook.Open(ctx, path, logbook.Options{})
+}
+
+func export(ctx context.Context, c *cli) (any, string, error) {
+	if err := c.a.allow("export", "format"); err != nil {
+		return nil, "", usageError{err}
+	}
+	if err := c.need("export", 1, "a path, or - for stdout"); err != nil {
+		return nil, "", err
+	}
+	format := c.a.str("format")
+	if format == "" {
+		format = "jsonl"
+	}
+	if format != "jsonl" && format != "markdown" {
+		return nil, "", usageError{errors.New("--format is jsonl or markdown")}
+	}
+	path := c.a.pos[0]
+	if path == "-" && (format != "jsonl" || c.a.has("json")) {
+		return nil, "", usageError{errors.New("- is stdout for --format jsonl without --json")}
+	}
+	st, err := c.openFile(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	defer st.Close()
+	if format == "markdown" {
+		res, err := lbextra.WriteTree(ctx, st, path)
+		if err != nil {
+			return nil, "", err
+		}
+		return res, fmt.Sprintf("%d records in %s (%d written, %d removed)\n", res.Records, path, res.Written, res.Removed), nil
+	}
+	if path == "-" {
+		_, err := st.Export(ctx, c.env.Stdout)
+		return nil, "", err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, "", err
+	}
+	n, err := st.Export(ctx, f)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(path)
+		return nil, "", err
+	}
+	return map[string]any{"records": n, "path": path}, fmt.Sprintf("%d records in %s\n", n, path), nil
+}
+
+func importVerb(ctx context.Context, c *cli) (any, string, error) {
+	if err := c.a.allow("import"); err != nil {
+		return nil, "", usageError{err}
+	}
+	if err := c.need("import", 1, "a JSONL file, or - for stdin"); err != nil {
+		return nil, "", err
+	}
+	in := c.env.Stdin
+	if p := c.a.pos[0]; p != "-" {
+		f, err := os.Open(p)
+		if err != nil {
+			return nil, "", err
+		}
+		defer f.Close()
+		in = f
+	}
+	st, err := c.openFile(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	defer st.Close()
+	a := c.d.actor()
+	res, err := st.Import(ctx, in, &logbook.Actor{Kind: a.Kind, Device: a.Device, Host: a.Host})
+	text := fmt.Sprintf("%d written, %d already here, %d proposals skipped\n", res.Written, res.Exists, res.Skipped)
+	if err != nil {
+		return nil, "", fmt.Errorf("%s; stopped at %w", strings.TrimSuffix(text, "\n"), err)
+	}
+	return res, text, nil
 }
