@@ -360,10 +360,12 @@ page. The hab still listens on no port.
 - **Stop.** A pause, a delete or a completed round hangs up the watcher, as `pane.close` does.
 - **gff-hab's own hang-ups** (a wake, an edit of `watch` or `secrets`) count neither toward the
   backoff nor toward the exit pause: the next start is at once, or after the settle.
-- **Restart with backoff.** Any other exit restarts the watcher: after 1 s, doubling to 5 minutes. A
-  watcher that ran 10 minutes resets the backoff. Exit status 0 is not special: a watcher runs at
+- **Restart with backoff.** Any other exit restarts the watcher: after 1 s, doubling to
+  `watch_backoff_max` (5 minutes; 4.7). A watcher that ran `watch_backoff_reset` (10 minutes)
+  resets the backoff. Exit status 0 is not special: a watcher runs at
   all times. A watcher that cannot start (the program is missing) backs off the same way.
-- **Pause after repeated exits.** 5 exits in a row, each less than 60 s after its start, pause
+- **Pause after repeated exits.** `watch_pause_after` (5) exits in a row, each less than
+  `watch_quick_exit` (60 s) after its start, pause
   the round with the `paused` notice (10.2), whose body names the last exit and whose action
   opens the watcher session. It is a self-pause, so `notify = never` keeps it. Unpause clears
   the exit count and the backoff. Reason: the same
@@ -377,9 +379,10 @@ page. The hab still listens on no port.
   and a blocked read may take many minutes to notice. A host reboot is the same: the watcher
   starts after gff-hab's start settle.
 - **A gff-hab restart** leaves the watcher running. While `$GFF_HAB` does not answer, the
-  wrapper keeps up to 1,000 lines or 1 MiB, drops the oldest past that, counts the drops, and
+  wrapper keeps up to `watch_buffer_lines` (1,000) lines or `watch_buffer_bytes` (1 MiB), drops
+  the oldest past that, counts the drops, and
   sends the rest when gff-hab answers again.
-- **One per round, 16 per hab.** `rounds.max_watchers` in the hab's config sets the cap. A
+- **One per round, 16 per hab.** `[rounds] max_watchers` in the hab's config sets the cap (4.7). A
   create, an unpause or an update that makes a round a `watch` round past it is refused with
   `conflict`.
 
@@ -387,21 +390,21 @@ page. The hab still listens on no port.
 
 | Field | Required | Meaning |
 |---|---|---|
-| `title` | Yes | One line, at most 200 characters |
+| `title` | Yes | One line, at most `event_title_max` (200) characters |
 | `kind` | No | A word the watcher picks, such as `mail`. Matched by `watch.kinds` |
-| `key` | No | A dedup key. A key the round saw in the last 24 hours is dropped quietly. The round keeps its last 1,000 keys |
+| `key` | No | A dedup key. A key the round saw in the last `event_key_window` (24 hours) is dropped quietly. The round keeps its last `event_keys_max` (1,000) keys |
 | `level` | No | `passive`, `active` or `time-sensitive`. A hint for the run and for Capcom |
 | `at` | No | When it happened, RFC 3339. Default: when gff-hab read the line |
-| `data` | No | A JSON object, at most 16 KiB encoded |
+| `data` | No | A JSON object, at most `event_data_max` (16 KiB) encoded |
 
 - **The cursor.** A line `{"cursor": "<text>"}` is no event. gff-hab stores the text (at most
-  1 KiB) with the round and passes the latest one as `GFF_WATCH_CURSOR` at each start. A mail
+  `cursor_max`, 1 KiB) with the round and passes the latest one as `GFF_WATCH_CURSOR` at each start. A mail
   watcher stores the last message it reported, so after a sleep it reports what came in the
-  meantime and starts IDLE from there. gff-hab saves the cursor at most once per 10 s and with
-  each new run. Reason: the rounds store writes its whole file (7.7); a crash then repeats at
-  most 10 s of events, and the `key` drops the repeats.
-- **Bounds.** A line is at most 64 KiB. At most 60 events per minute per watcher, in a bucket
-  that allows a burst of 60. A line that is not a JSON object, lacks `title`, breaks a bound or
+  meantime and starts IDLE from there. gff-hab saves the cursor at most once per `state_save_every`
+  (10 s) and with each new run. Reason: the rounds store writes its whole file (7.7); a crash then
+  repeats at most that much of the events, and the `key` drops the repeats.
+- **Bounds.** A line is at most 64 KiB, a fixed ceiling (4.7). At most `watch_rate` (60) events
+  per minute per watcher, in a bucket that allows a burst of `watch_burst` (60). A line that is not a JSON object, lacks `title`, breaks a bound or
   comes over the rate is dropped. The wrapper writes the reason in the pane, at most once per
   10 s with a count. The round shows its drop count since the watcher started.
 - **Untrusted.** An event's text comes from outside: anyone can write a mail's subject. Runs
@@ -417,7 +420,7 @@ command = ["/usr/local/bin/print-mail-secrets"]
 ```
 
 - `vars` are plain values. `command` is an argv, no shell. gff-hab runs it at each watcher start,
-  with stdin `/dev/null` and a 30 s timeout, as it runs the push `key_command`. Each output line
+  with stdin `/dev/null` and a `secrets_timeout` (30 s) timeout, as it runs the push `key_command`. Each output line
   `NAME=value` sets one variable. Its output is never logged and never stored. A failing
   command counts as a watcher exit and backs off.
 - `round.create` and `round.update` refuse a `secrets` name the hab's config lacks (`invalid`).
@@ -434,7 +437,7 @@ The `watch` trigger takes `module` in place of `argv`:
 |---|---|---|
 | `watch.module` | Yes, instead of `argv` | The id of a module installed on the runner hab (`modules.md` 10.6) |
 | `watch.every` | No | Time between calls: 30 s to 24 hours, default 5 minutes |
-| `watch.args` | No | A JSON object, at most 4 KiB, passed to the module as `ctx.args`, such as a feed URL |
+| `watch.args` | No | A JSON object, at most `watch_args_max` (4 KiB), passed to the module as `ctx.args`, such as a feed URL |
 | `watch.kinds`, `secrets` | No | As for a program watcher |
 
 `argv` and `module` are exclusive; `cwd` is for `argv` only.
@@ -454,7 +457,8 @@ and the manifest says so with `watch = true`.
   `secrets` (the secret set's variables as a frozen object of strings, or absent).
 - It returns `{events: [...], cursor?: "<text>"}`, or a promise of it (`modules.md` 7.3). Each
   event has the fields of a program watcher's event line (title, kind, key, level, at, data),
-  with the same bounds. At most 60 events per call; the rest are dropped and counted.
+  with the same bounds. At most `module_events_max` (60) events per call; the rest are dropped
+  and counted.
 - Its time limit is `refresh`'s, 30 s. It may use the powers the manifest declares, except `act`:
   in `watch`, `fd.hab.act` throws `PowerError`. A watcher reports; it never acts. `fd.hab.get`
   keeps its read list. `fd.state.set` works as in `refresh`, in the module's one state store.
@@ -473,17 +477,17 @@ and the manifest says so with `watch = true`.
   the next call starts at the interval from gff-hab's start.
 - **No session.** A module watcher has no session and no pane. What it does shows on the round's
   page: the watcher's state, the last call's time, result (`ok` with an event count, or the
-  error) and duration, and the last 20 lines its calls wrote with `fd.log`, which the module log
+  error) and duration, and the last `module_log_lines` (20) lines its calls wrote with `fd.log`, which the module log
   (`modules.md` 8.3) also keeps. Reason: a module owns no PTY; the page shows what a pane would.
 - **States.** `Round.watcher` reads `waiting` (with the next call's time), `calling`, `backoff`
   or `stopped`, in place of a program watcher's `running`.
 - **Events** take the same path as a program watcher's lines: `kinds`, the `key` dedup, the rate
-  bucket, then the batch (4.5). The cursor follows the same save rule (at most once per 10 s, and
-  with each new run).
+  bucket, then the batch (4.5). The cursor follows the same save rule (at most once per
+  `state_save_every`, and with each new run).
 - **Failures.** A call that throws, returns a value of the wrong shape, or passes its limit is a
   failure; its events are dropped and its cursor is not kept. The next call follows the backoff
-  of a program watcher (1 s doubling to 5 minutes, but never sooner than `watch.every`). Five
-  failures in a row pause the round with the `paused` notice, its body naming the last error. A
+  of a program watcher (1 s doubling to `watch_backoff_max`, but never sooner than
+  `watch.every`). `watch_pause_after` (5) failures in a row pause the round with the `paused` notice, its body naming the last error. A
   success clears the count. These counts are the round's; the module's own failure pause for its
   card (`modules.md` 8.3) is apart, and a paused card does not stop the watcher.
 - **Sleep and wake.** A call due during sleep runs once after the wake settle (8.3), not once per
@@ -494,7 +498,7 @@ and the manifest says so with `watch = true`.
   unpausing the round starts it again. An update of the module takes effect at the next call; a
   change of its powers waits for the user's accept, as every module update does (`modules.md`
   7.2), and the watcher keeps calling the version it has until then.
-- **Caps.** A module watcher counts toward `rounds.max_watchers` (16).
+- **Caps.** A module watcher counts toward `[rounds] max_watchers` (16).
 - **Secrets.** The set's command runs once per call, as for a program watcher's start; its
   output reaches `ctx.secrets` and nothing else. Reason: a module with `fetch` can send a secret
   anywhere, as a program can; the user picked both the module and the set.
@@ -534,16 +538,18 @@ Hab events (4.3) and watcher events (4.4) reach a run the same way.
 - **Runs by hand.** Run now on an `event` or `watch` round takes the pending batch, or runs with
   none. It starts no cooldown.
 - **Kept across restarts.** The pending batch is saved with the round's state, at most once per
-  10 s and in the write that makes a run (7.7). It holds at most 200 events or 256 KiB; past
+  `state_save_every` (10 s) and in the write that makes a run (7.7). It holds at most
+  `batch_max_events` (200) events or `batch_max_bytes` (256 KiB); past
   that the oldest go, and the batch says how many. Reason: a watcher's mail must not be lost to
   an update of gff-hab.
 - **The run sees the batch.** The run record keeps the event count. `GFF_ROUND_EVENTS` names a
   JSON file with the whole batch, for `fresh` and `fork` runs and command runs. gff-hab keeps the
-  files of the last 20 ended runs per round and removes older ones, so they use at most about
-  5 MiB per round, whatever 7.6 keeps of the records. A harness run also gets the events in its first message, in a
+  files of the last `event_files_keep` (20) ended runs per round and removes older ones, so at the
+  defaults they use at most about 5 MiB per round, whatever 7.6 keeps of the records. A harness run also gets the events in its first message, in a
   block before the prompt: `[begin round events <run id>]`, one line per event (time, kind,
-  title, the `data` cut to 1 KiB), `[end round events <run id>]`, with markers neutralised as
-  the envelope's are (5). The block holds at most 50 events or 32 KiB; the rest are counted,
+  title, the `data` cut to `block_data_max`, 1 KiB), `[end round events <run id>]`, with markers
+  neutralised as the envelope's are (5). The block holds at most `block_max_events` (50) events
+  or `block_max_bytes` (32 KiB); the rest are counted,
   and the file has them. In `resume` mode the block is part of the envelope. In `capcom` and
   `group` mode the batch goes with the message (5.2).
 - **Marked as data.** The block's first line says the events come from outside and are not
@@ -607,6 +613,61 @@ What happens:
 
 What the example never does: open a port, store the password in the round, put a mail's text in
 the prompt, or type into a session the owner uses.
+
+
+### 4.7 Watcher and batch limits
+
+Owner, 2026-11-06 (plan-xagejg31 (r)): every cap is configurable. Each limit of 4.4, 4.5 and 5.2
+is a key of `[rounds]` in the hab's config file, as `max_running` and `wake_settle` are (13),
+with its earlier fixed value as the default. They are tuning with no row in the app. A value
+outside its range, or of the wrong type, is logged once and the default runs. The runner hab's
+keys rule its rounds; gff-hab hands the wrapper's keys to `gff-hab watch-pane` at each watcher
+start, so a change reaches a program watcher at its next start and everything else at once.
+
+| Key | Default | Range | Section |
+|---|---|---|---|
+| `max_watchers` | 16 | 0 to 256 | 4.4 |
+| `watch_backoff_max` | 5 minutes | 10 s to 1 hour; the backoff starts at 1 s | 4.4 |
+| `watch_backoff_reset` | 10 minutes | 1 minute to 24 hours | 4.4 |
+| `watch_pause_after`, `watch_quick_exit` | 5 exits or failures, 60 s | 1 to 100; 5 s to 1 hour | 4.4 |
+| `watch_buffer_lines`, `watch_buffer_bytes` | 1,000 lines, 1 MiB | 0 to 100,000; 0 to 64 MiB | 4.4 |
+| `watch_rate`, `watch_burst` | 60 events a minute, burst 60 | 1 to 6,000 each | 4.4 |
+| `event_title_max` | 200 characters | 20 to 2,000 | 4.4 |
+| `event_key_window`, `event_keys_max` | 24 hours, 1,000 keys | 1 minute to 30 days; 0 to 100,000 | 4.4 |
+| `event_data_max` | 16 KiB | 0 to 32 KiB, so an event fits the 64 KiB line | 4.4 |
+| `cursor_max` | 1 KiB | 64 bytes to 16 KiB | 4.4 |
+| `state_save_every` | 10 s | 1 s to 5 minutes; the cursor and the pending batch | 4.4, 4.5 |
+| `secrets_timeout` | 30 s | 1 s to 5 minutes | 4.4 |
+| `watch_args_max` | 4 KiB | 0 to 16 KiB | 4.4 |
+| `module_events_max` | 60 events a call | 1 to 1,000 | 4.4 |
+| `module_log_lines` | 20 lines | 0 to 500 | 4.4 |
+| `batch_max_events`, `batch_max_bytes` | 200 events, 256 KiB | 1 to 10,000; 16 KiB to 16 MiB | 4.5 |
+| `event_files_keep` | 20 ended runs a round | 0 to 1,000 | 4.5 |
+| `block_max_events`, `block_max_bytes` | 50 events, 32 KiB | 1 to 500; 1 KiB to 256 KiB. In `capcom` and `group` mode the 64 KiB channel ceiling cuts the block further (5.2) | 4.5, 5.2 |
+| `block_data_max` | 1 KiB of `data` per event | 0 to 16 KiB | 4.5 |
+| `outcome_wait` | 7 days | 1 to 30 days | 5.2 |
+
+A lowered limit applies to what comes next: a stored cursor, key list or pending batch over a new
+bound is cut at its next write, oldest first, and the batch says how many went.
+
+The per-round fields keep their ranges, which bound the field, not a hab-wide cap: `debounce`
+(5 s to 1 hour), `cooldown` (1 minute to 24 hours) and `watch.every` (30 s to 24 hours).
+
+**Fixed ceilings kept.**
+
+| Value | Why it is not a setting |
+|---|---|
+| A channel message is at most 64 KiB (5.2) | `mesh.md` 6.3's frame bound, on every hab of the mesh. One hab's setting could not raise it on its peers |
+| An event line is at most 64 KiB (4.4) | The wrapper's read buffer. A line past it could never travel as one event, since the round message has the same 64 KiB bound |
+| A module watcher's call has 30 s (4.4) | The module runtime's call limit (`modules.md` 8.1), its guard against a module that never returns. Modules own it |
+| The wrapper prints a drop reason at most once per 10 s (4.4) | Not a limit on events: it only paces a line in the pane, and the round's drop count holds every drop |
+| The backoff's first step, 1 s | Not a cap: `watch_backoff_max` sets how far it grows |
+
+**Changes to other specs.** None in `app.md` 20: these keys are hab config, not hab-side
+settings. Stage 9 adds `batch_*`, `block_*`, `event_files_keep`, `state_save_every` and
+`outcome_wait`, stage 11 the `watch_*`, `event_*`, `cursor_max` and `secrets_timeout` keys, and
+stage 12 `watch_args_max`, `module_events_max` and `module_log_lines`, each to
+`docs/examples/hab.toml`.
 
 ---
 
@@ -673,13 +734,13 @@ shared with them, and a change to it changes both specs.
 | `round`, `name`, `run` | The round id and name, and the run id |
 | `trigger` | `cron`, `once`, `event`, `watch` or `manual`, with the slot for a slot run |
 | `prompt` | The round's prompt: what to do with the events, such as "tell me only if a mail needs me today" |
-| `events` | The batch (4.5), at most 50 events or 32 KiB, with the count of the rest. Marked as data from outside |
+| `events` | The batch (4.5), at most `block_max_events` (50) events or `block_max_bytes` (32 KiB), with the count of the rest. Marked as data from outside |
 | `level` | The highest `level` in the batch, or absent. A hint, never a push of its own |
 | `last_ok` | `GFF_ROUND_LAST_OK` (5.1) |
 | `actions` | `capcom` only, from stage A9: the round's `actions` (3), or absent. The home hab caps them by its level (`capcom-service.md` 9.6) |
 
-- **Size.** The whole message fits the channel limit of 64 KiB (`mesh.md` 6.3); the event block is
-  cut first, with the count of what it left out.
+- **Size.** The whole message fits the channel limit of 64 KiB (`mesh.md` 6.3), a fixed ceiling
+  (4.7); the event block is cut first, with the count of what it left out.
 - **One message per run.** Its channel message id is derived from the run id (a hash of it), not
   drawn at random as `mesh.md` 6.2 does for an agent's send. The runner never sends a run's
   message twice under another id, so the receiver's dedup by message id (`mesh.md` 6.3) drops
@@ -714,8 +775,8 @@ shared with them, and a change to it changes both specs.
   (`capcom-service.md` 9.5). It arrives as a status item after the final state, maybe hours
   later, through the outbox while the runner sleeps. The runner records it on the run as
   `outcome` with its time, and emits `round.run_updated`. The run's state never changes: an
-  ended run gains this one field, once. A run with no outcome after 7 days shows "outcome
-  unknown". The round's page shows it beside the state: "accepted by Capcom · told 07:02".
+  ended run gains this one field, once. A run with no outcome after `outcome_wait` (7 days; 4.7)
+  shows "outcome unknown". The round's page shows it beside the state: "accepted by Capcom · told 07:02".
 - **Where Capcom runs.** The service runs on the Capcom home host (`capcom.md` 7.3). On the
   runner the call is local. On a peer, the message travels as a channel message to the service
   (`mesh.md` 6), so the outbox holds it while that host sleeps. The home host's hab hands it to
@@ -1264,13 +1325,14 @@ differ. These are the coordinator's calls on that rule, not owner decisions.
 | Q2. Does a successful fresh or fork run close its pane? | Yes: `on_finish = close` by default. Failed, timed-out, blocked and taken-over runs stay open | Matches Paseo; daily rounds would leave idle harnesses. The session record and transcript stay, so the chat view shows the run and resume is one tap |
 | Q3. Does a successful run notify? | No: `notify = failures` by default, `always` per round | Success shows on the status board and in the history; the `done` banner is off by default too (`app.md` 8.2) |
 
-**Owner decisions on watchers** (2026-11-06, plan-xagejg31 (q)). These were W1 to W3 of the
+**Owner decisions on watchers** (2026-11-06, plan-xagejg31 (q); W4 and the W2 budget rule from (r)). These were W1 to W3 of the
 watcher study; the owner answered them.
 
 | # | Question | Decision | Where |
 |---|---|---|---|
 | W1 | Should Capcom report back what it did with a round's message, so the round's history shows it? | Yes (owner, 2026-11-06). Capcom answers each round message a second time, `told` or `quiet` (and `acted` or `unseen`), recorded on the run | 5.2; `capcom-service.md` 9.5 |
-| W2 | May an event with `level = time-sensitive` let Capcom write during quiet hours? | Yes (owner, 2026-11-06). Such a round message runs at once in quiet hours. Rounds pass the level either way | `capcom-service.md` 9.2 |
+| W2 | May an event with `level = time-sensitive` let Capcom write during quiet hours? | Yes (owner, 2026-11-06). Such a round message runs at once in quiet hours. It does not bypass Capcom's daily turn budget (plan-xagejg31 (r)). Rounds pass the level either way | `capcom-service.md` 9.2, 9.3 |
+| W4 | Are the watcher and batch limits settings? | Yes (plan-xagejg31 (r)): every cap is a setting with its earlier value as the default | 4.7 |
 | W3 | Are module watchers worth a stage of their own? | Yes (owner, 2026-11-06): stage 12 | 4.4, 14, 14.1 |
 
 The study's options and recommendations for Q1 to Q3 follow, for the record.
@@ -1344,7 +1406,7 @@ it.
 | `capcom-service` | Capability (Part 14) | The Capcom service runs on this hab (5.2) |
 | Message states `accepted`, `duplicate`, `declined` | Words | Final states of a channel message to the Capcom service (5.2) |
 | `logbook.history` `folded_after` | Optional parameter | Ops this replica folded after a local fold number (4.3) |
-| `[rounds] max_watchers`, `[rounds.secrets.<name>]` | Hab config | The watcher cap (default 16) and the secret sets (4.4) |
+| `[rounds] max_watchers`, the other limit keys of 4.7, `[rounds.secrets.<name>]` | Hab config | The watcher cap (default 16), the watcher and batch limits (4.7) and the secret sets (4.4) |
 | notice `round.kind` `paused` | Body | Gains the watcher's last exit when the watcher's pause raised it (10.2) |
 
 CLI (`gff round`, also the agent kit's MCP tools with the same verbs). Until the agent kit
@@ -1769,6 +1831,10 @@ Stage 9, with `go test -race` over a real gff-hab and holder and fake harnesses:
   completes the round with one notice; a group whose coordinator is Capcom gets a round message
   and its `accepted` answer.
 - Export then apply with every new field gives no diff.
+- The 4.7 keys of this stage: `batch_max_events` at 5 keeps the newest 5 and says how many went;
+  `block_max_events` at 2 puts 2 events in the block and the rest in the file; `event_files_keep`
+  at 1 keeps one file; `outcome_wait` at 1 day shows "outcome unknown" after a day (fake clock);
+  a value outside its range is logged once and the default runs.
 
 Stage 11, with `go test -race` over a real gff-hab and holder and fake watcher programs:
 
@@ -1776,13 +1842,18 @@ Stage 11, with `go test -race` over a real gff-hab and holder and fake watcher p
   there; the session holds no place under the host limit; each restart is a new pane in that
   session; Resume on it is refused.
 - A crash restarts it after 1 s, then 2 s, 4 s; 5 quick exits pause the round with one notice
-  naming the last exit; a watcher that ran past the reset time starts again at 1 s.
+  naming the last exit; a watcher that ran past the reset time starts again at 1 s. With
+  `watch_backoff_max` at 10 s the delay stops growing at 10 s, and with `watch_pause_after` at 2
+  two quick exits pause the round.
 - A fake clock wake hangs the watcher up and starts it once after the settle.
 - A gff-hab restart leaves the watcher's process (same pid) running, with a holder that connects
   late too; lines printed meanwhile arrive once after the restart. gff-hab's own hang-ups (wake,
   edit) start no backoff and count toward no pause.
 - A burst of lines makes one run; a malformed, untitled, oversize or over-rate line is dropped,
-  shown in the pane and counted; a repeated `key` is dropped quietly.
+  shown in the pane and counted; a repeated `key` is dropped quietly. With `watch_rate` and
+  `watch_burst` at 5, the sixth line in a second is dropped; `event_title_max`, `event_data_max`
+  and `cursor_max` set lower drop or refuse what passes them; the wrapper buffer keeps
+  `watch_buffer_lines` lines while gff-hab is down.
 - The cursor reaches the next start as `GFF_WATCH_CURSOR`, also after a gff-hab restart.
 - A secret set's `vars` and `command` output reach the watcher's environment; neither appears in
   gff-hab's log, the rounds store, the export, the catalog, the session record or the resume
@@ -1811,7 +1882,8 @@ bundles (in the style of `internal/modhost/testdata/bundles/`), on a fake clock 
   doubles from 1 s but never comes sooner than `every`; five in a row pause the round with one
   `paused` notice naming the error; a success clears the count. The module's card pause does
   not stop the watcher.
-- More than 60 events in one call: 60 taken, the rest counted; a bad event (no title, too long,
+- More than 60 events in one call: 60 taken, the rest counted (and 10 with `module_events_max`
+  at 10); a bad event (no title, too long,
   oversize `data`) dropped and counted; a repeated `key` dropped quietly.
 - Fake clock: a sleep over ten intervals makes one call after the wake settle; a call in flight
   at sleep ends at its limit and counts no failure.

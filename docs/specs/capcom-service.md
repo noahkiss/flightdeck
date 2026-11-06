@@ -1,7 +1,7 @@
 # Capcom service: behaviour spec
 
 Status: draft for review. Part 14, study stage A1. The owner's answers of 2026-11-06 are applied
-(15, E19 to E23).
+(15, E19 to E25; every limit is a setting, 19).
 
 Part 14 turns Capcom from a harness in a holder pane into an always-on service. `gff-hab-capcom`
 runs an agent loop on the Claude Agent SDK as its own job on the home host. The user talks to it
@@ -58,7 +58,8 @@ Decisions 6, 7 and 9 concern agent groups and iMessage; this spec does not use t
 16. [Open questions for the owner](#16-open-questions-for-the-owner)
 17. [Owner approval needed: AGENTS.md exception](#17-owner-approval-needed-agentsmd-exception)
 18. [Build stages](#18-build-stages)
-19. [Sources](#19-sources)
+19. [Limits and settings](#19-limits-and-settings)
+20. [Sources](#20-sources)
 
 ---
 
@@ -159,7 +160,8 @@ hab, through its route (3.3), and to the model provider.
   host's scope.
 - **Confirmations** (`capcom.md` 6.1). `confirm.start_elsewhere` governs starts as before.
 - **Proposals** (`capcom.md` 6.2). Tasks and findings Capcom files wait for review; 6.4 says
-  when review opens. Facts and preferences the user states land at once, outside Safe and outside an event turn (6.4, E20).
+  when review opens. Facts and preferences land at once, in any turn, except at Safe (6.4,
+  E20).
 - **Attached context and "Ask an agent"** (`capcom.md` 8). The blocks now reach the engine as
   message content, not as a paste.
 
@@ -205,8 +207,8 @@ The engine runs as its own init job (launchd or systemd), as each holder does
 | gff-hab starts and holds the mark | gff-hab starts the engine job, or adopts one that runs |
 | This hab gets the mark (`capcom.assign`) | gff-hab starts the engine job |
 | This hab loses the mark | gff-hab asks the engine to stop after its turn (`shutdown`, 4.2), then stops the job. A turn is bounded by `max_turns` and `max_turn_usd` (3.5), so the wait is too. The thread stays here, read-only (7.1, 14). Groups Capcom coordinates move their home to the new Capcom home when it has their project (`groups.md` 5.7) |
-| gff-hab restarts | The engine keeps running. Its route drops; it reconnects with backoff (1 s doubling to 30 s) and replays what it has not had acknowledged (4.3) |
-| The engine exits or crashes | The init job has no restart rule of its own: gff-hab watches the job and starts it again after 5 s. The engine resumes its last SDK session by id (3.4). gff-hab counts crashes; five in 10 minutes stop the restarts, the session record shows `error` with the last stderr line, and the thread gets a note. `gff-hab capcom resume` clears the count. While gff-hab is down, nobody restarts a crashed engine; gff-hab does at its start |
+| gff-hab restarts | The engine keeps running. Its route drops; it reconnects with backoff (1 s doubling to `route_backoff_max`, 30 s; 19.2) and replays what it has not had acknowledged (4.3) |
+| The engine exits or crashes | The init job has no restart rule of its own: gff-hab watches the job and starts it again after `restart_delay` (5 s; 19.2). The engine resumes its last SDK session by id (3.4). gff-hab counts crashes; `crash_limit` crashes (5) in `crash_window` (10 minutes) stop the restarts, the session record shows `error` with the last stderr line, and the thread gets a note. `gff-hab capcom resume` clears the count. While gff-hab is down, nobody restarts a crashed engine; gff-hab does at its start |
 | An install of a new build | The running engine is never interrupted. gff-hab sends `shutdown`; the engine finishes its turn, exits, and gff-hab starts the new build's engine, which resumes the same SDK session. Messages sent meanwhile join that turn or wait. The old build's files stay until its engine exits, as a drained holder's build does (`hab-holder.md`) |
 | The host sleeps | Nothing runs. At wake the engine's model calls resume; a call that failed during sleep is retried once (14) |
 
@@ -254,16 +256,15 @@ a person's write (`logbook.md` 10.5). Capcom must write as an agent, with an age
 ### 3.5 Configuration
 
 The `[capcom]` section of the hab's config file (example in `docs/examples/hab.toml`, from A2).
-An unknown key is logged once and ignored. A bad value is logged and the default runs.
+An unknown key is logged once and ignored. A bad value is logged and the default runs. The keys
+below choose the engine and its login; every limit key, with its range, is in 19.2.
 
 | Key | Default | Applies | Meaning |
 |---|---|---|---|
 | `engine` | none until A8 (12.4); `claude` after | At the next engine start | `claude` runs the service; `codex` from A6. Any other word: logged, the default runs |
 | `model` | The SDK's default | At the next turn | The main model |
 | `small_model` | The provider's smallest current model | At the next turn | Event turns' first look, the summary, pacing (10.1) |
-| `max_turns` | 50 | At the next turn | Passed as the SDK's turn limit per loop |
-| `max_turn_usd` | 2 | At the next turn | Passed as `maxBudgetUsd` per loop |
-| `daily_usd` | none | At once | A daily dollar cap under an API key (10.1) |
+| `max_turns`, `max_turn_usd`, `daily_usd` | 50, 2, none | At the next turn; `daily_usd` at once | The SDK's turn limit and `maxBudgetUsd` per loop, and a daily dollar cap under an API key (10.1). Ranges in 19.2 |
 | `auth` | `oauth_token` | At the next engine start | `oauth_token` (the user's subscription, through the token `claude setup-token` makes) or `api_key` (10.2, decision E19) |
 | `oauth_token_command` | none | At the next engine start | An argv that prints the OAuth token. The source an installed hab uses (10.2) |
 | `api_key_command` | none | At the next engine start | An argv that prints an API key |
@@ -272,8 +273,8 @@ The config file holds commands, never a token or a key: an `oauth_token` or `api
 refused with a line that names the command key. Where the credential comes from, and how it
 stays in memory, is in 10.2.
 
-The hab-side settings of 9 (`capcom.quiet_hours`, `capcom.events.*`) live in `app.md` 20.5's
-store, not here. Personal tool keys are in `[capcom.weather]`, `[capcom.maps]` and
+The hab-side settings (`capcom.quiet_hours`, `capcom.events.*`, `capcom.approval_max_age`,
+`capcom.event_actions*`) live in `app.md` 20.5's store, not here; 19.1 lists them. Personal tool keys are in `[capcom.weather]`, `[capcom.maps]` and
 `[capcom.places]` (8).
 
 ---
@@ -396,8 +397,9 @@ request makes (`app.md` 7).
   Live Activity (`app.md` 7, 8.2).
 - `approval.answer` (Allow, Deny) comes from `approval.answer` on the API, first answer wins
   (`app.md` 7.5). The engine resolves the callback with it.
-- Expiry: 10 minutes, fixed, whatever `approval.max_age` says (`app.md` 20.3; 0 there would hold
-  a re-seed behind the card for ever). An expired request is denied, the model is told "the user
+- Expiry: `capcom.approval_max_age` (default 10 minutes; 19.1), whatever `approval.max_age` says
+  (`app.md` 20.3). Its range has no 0: an open card holds a re-seed (6.2), so a card that never
+  expires would hold it for ever. An expired request is denied, the model is told "the user
   did not answer", and the card shows "Expired". There is no terminal to answer in, unlike a
   pane's request (`app.md` 7.4).
 - **Web fetch.** A `WebFetch` call is allowed with no card when its URL, or the URL it
@@ -420,8 +422,9 @@ context fit; the user sees one thread.
 ### 6.1 The summary
 
 - **What it is.** A short account of the thread so far: open questions, what the user asked for
-  and was promised, decisions, names and places in play. At most 6,000 characters.
-- **When it updates.** When the thread has been quiet for 10 minutes after a turn, before every
+  and was promised, decisions, names and places in play. At most `summary_max_chars` (6,000
+  characters; 19.2).
+- **When it updates.** When the thread has been quiet for `summary_quiet` (10 minutes) after a turn, before every
   re-seed, and before a compaction (6.3). Each update covers the items since the last one.
 - **How.** One model call with the small model (10.1): the old summary and the new items in,
   the new summary out. The engine sends `summary`; gff-hab stores it with the last item id it
@@ -438,8 +441,8 @@ The engine ends the SDK session and starts a fresh one.
 
 | Trigger | Rule |
 |---|---|
-| Size | Context use at a turn's end above 60% of the model's window |
-| Quiet hour | No turn for 60 minutes, and context use above 25% |
+| Size | Context use at a turn's end above `reseed_at` (60%) of the model's window |
+| Quiet hour | No turn for `reseed_quiet` (60 minutes), and context use above `reseed_quiet_at` (25%) |
 | New conversation | The user's "New conversation" (7.5) |
 | Restart failure | The last SDK session will not resume (3.4) |
 
@@ -450,8 +453,8 @@ The engine ends the SDK session and starts a fresh one.
   1. a header that says this is a continued conversation;
   2. the summary (empty for "New conversation");
   3. the Logbook part of 6.4;
-  4. the last 6 thread items that are messages, in thread order; when they pass 8,000
-     characters, the oldest are dropped first;
+  4. the last `seed_messages` (6) thread items that are messages, in thread order; when they pass
+     `seed_messages_chars` (8,000 characters), the oldest are dropped first;
   5. what is still open: confirmations, cards and approvals with their ids.
 - **The divider.** gff-hab adds one divider item, "Earlier messages summarised" (decision 8), or
   "New conversation" for 7.5. One divider per re-seed. The divider item stores the summary text
@@ -462,7 +465,8 @@ The engine ends the SDK session and starts a fresh one.
 
 - SDK compaction stays on. If a turn grows past the window before a re-seed can happen, the SDK
   compacts.
-- The engine's `PreCompact` hook updates the summary first (6.1), within 30 s; on a timeout the
+- The engine's `PreCompact` hook updates the summary first (6.1), within `precompact_timeout`
+  (30 s); on a timeout the
   compaction goes ahead with the old summary.
 - On `compact_boundary` the engine sends `compacted`, and gff-hab adds a divider, "Earlier
   messages summarised", with the summary at that moment.
@@ -470,7 +474,7 @@ The engine ends the SDK session and starts a fresh one.
 
 ### 6.4 Memory in Logbook
 
-- **Reading.** Each seed carries, at most 8 KB: records with no project tagged `capcom` (facts
+- **Reading.** Each seed carries, at most `seed_logbook_bytes` (8 KB): records with no project tagged `capcom` (facts
   and preferences about the user), then the general brief of records tagged `everywhere`
   (`logbook.md` 11.2), then open tasks Capcom filed. The manual tells Capcom to search Logbook
   with the read tools when a question needs more.
@@ -485,10 +489,11 @@ The engine ends the SDK session and starts a fresh one.
   `logbook.approval` is `off`. Any other write from Capcom stays a proposal. At Safe
   (`logbook.approval = agents`, `app.md` 20.3) the user asked to review every agent memory, so a
   `capcom` guide is a proposal there too; the note line then reads "Noted, waiting for review"
-  and its Undo rejects the proposal.
-- **Not in an event turn.** An event turn's text comes from outside (9.4), so a guide it writes
-  stays a proposal at every level. A mail must not be able to plant a "preference". The note
-  line reads "Noted, waiting for review".
+  and its Undo rejects the proposal. Safe is the only level where a `capcom` guide waits.
+- **Event turns too.** An event turn writes a `capcom` guide as any other turn does: it lands at
+  once outside Safe, with the same "Noted" line and Undo, and is a proposal at Safe (owner,
+  2026-11-06, plan-xagejg31 (r)). The guide's actor is still the Capcom session, so the Undo and
+  Logbook's history name it.
 - **Tasks and findings.** Proposals, as today (`capcom.md` 6.2). The thread never ends, so
   "the end of a conversation" becomes: "New conversation" (7.5) opens the review list when
   proposals wait, and a pinned line at the foot of the thread, "3 proposals to review", opens
@@ -552,7 +557,8 @@ stays native").
 - A message sent during a turn joins it at the next model call when the engine has
   `mid_turn_input`, as typing in Claude Code does; it is read then. Otherwise it waits for the
   next turn.
-- Typing stops at `turn.ended` and after 10 minutes with no engine message, whichever is first.
+- Typing stops at `turn.ended` and after `typing_timeout` (10 minutes) with no engine message,
+  whichever is first.
 
 ### 7.4 API
 
@@ -561,7 +567,7 @@ Added under the API revision rules (`hab-logic-api.md` 3.3), capability `capcom-
 | Call or event | Purpose |
 |---|---|
 | `session.send` to the Capcom session | The user's message, with attachments, pending context (`capcom.md` 8.4) and an idempotency key. Never refused as busy |
-| `capcom.thread.page {before?, limit}` | Items, newest first, at most 200 per page, folded |
+| `capcom.thread.page {before?, limit}` | Items, newest first, at most 200 per page (a fixed ceiling, 19.3), folded |
 | `capcom.interrupt` | Stop the current turn. `unavailable` when the engine lacks `interrupt` |
 | `capcom.open {new?, context?}` | As built (`capcom.md` 8.3). Returns the Capcom session. `new: true` now means 7.5 |
 | `capcom.card.answer {item, choice}` | Answer a calendar or reminder card: `added` or `dismissed`. First answer wins; the second gets `conflict` |
@@ -628,7 +634,7 @@ read only when needed, never in the context by default.
 |---|---|---|
 | Location: latitude, longitude, accuracy, time of fix, place name | CoreLocation significant-change updates in the background; a fresh fix while the app is open; the place name from the phone's reverse geocoder | On each update, when it can reach the home hab within the background time it gets; otherwise at its next connection |
 | Time zone | The system | With every `device.context.put` and every message |
-| Calendar | EventKit read access: the next 7 days of events from the calendars the user picks (title, start, end, location, all-day) | When the app opens, and with each location update |
+| Calendar | EventKit read access: the next `capcom.calendar_days` (7, an app preference; 19.1) days of events from the calendars the user picks (title, start, end, location, all-day) | When the app opens, and with each location update |
 
 - **On the hab:** the latest value of each field only, in gff-hab's memory. The store keeps no
   history, writes no file, and is empty after a gff-hab restart until the app sends again.
@@ -657,7 +663,7 @@ read only when needed, never in the context by default.
 | `calendar_read {from?, to?, query?}` | Events in the window (default today and tomorrow), from the latest snapshot, with the snapshot's age |
 
 - The manual says: call `device_location` only when the question depends on where the user is,
-  and say how old the fix is when it is older than 30 minutes.
+  and say how old the fix is when it is older than `location_stale` (30 minutes; 19.2).
 - Each call shows in the turn's tool line, so the user sees when Capcom read their location.
 
 ### 8.3 Weather
@@ -668,7 +674,8 @@ read only when needed, never in the context by default.
   `[capcom.weather]` in the hab's config file: `key_command` (an argv that prints the key, as
   push's `key_command`, `docs/push.md`), `key_id`, `team_id`, `service_id`. The key stays in
   memory only.
-- Results are cached for 10 minutes per rounded location (2 decimal places) and kind.
+- Results are cached for `[capcom.weather] cache` (10 minutes; 19.2) per rounded location (2
+  decimal places) and kind.
 - **Attribution.** WeatherKit requires the Apple Weather mark and a link to its data sources
   where its data shows. A reply whose turn used `weather` carries the attribution line in the
   thread and in its push's expanded view. *(gk; A5 confirms the exact rule.)*
@@ -735,8 +742,8 @@ each on; hab-side settings, `app.md` 20.5).
 
 ### 9.2 Batching and quiet hours
 
-- **Batch.** Events that arrive within 2 minutes make one event turn, at most 20 events; more
-  start a second batch.
+- **Batch.** Events that arrive within `capcom.events.batch_window` (2 minutes) make one event
+  turn, at most `capcom.events.batch_max` (20) events; more start a second batch (19.1).
 - **First look.** An event turn runs on the small model (10.1). Its manual part says: write to
   the user only when the user would want to know now; otherwise do nothing visible. It may
   escalate to the main model with one tool call (`escalate`), which the engine handles by
@@ -754,13 +761,20 @@ each on; hab-side settings, `app.md` 20.5).
 ### 9.3 The daily turn budget
 
 - The daily turn budget caps event turns: `capcom.events.daily_turns` (hab-side, as quiet
-  hours), default 20, counted from midnight in the same time zone. The count is saved with the time zone. Past it, events wait for the next day's first batch, and the thread gets one note.
+  hours), default 20 (range in 19.1), counted from midnight in the same time zone. The count is
+  saved with the time zone. Past it, events wait for the next day's first batch, and the thread
+  gets one note.
+- **Time-sensitive events count too.** A time-sensitive event breaks quiet hours (9.2), not the
+  budget: its turn counts toward `capcom.events.daily_turns`, and past the budget it waits for
+  the next day like any event (owner, 2026-11-06, plan-xagejg31 (r)). A user who wants more
+  urgent events through raises the budget.
 - The governor (10.1) applies on top. An event turn is the first to wait.
 - A message from an event turn carries the "wrote first" mark.
 
 ### 9.4 What an event turn may do
 
-- It may read, search, and message the user. It may write a note to Logbook only as a proposal.
+- It may read, search, and message the user. It writes to Logbook as a user turn does: a
+  `capcom` guide lands at once outside Safe (6.4), and every other write is a proposal.
 - It may not hand off, start a session or a group, set up a project, create a card, or fetch a
   URL it did not see (5.3). gff-hab refuses those tool calls from the Capcom route while the current turn's
   origin is `event`, with "ask the user first". Owner decision, 2026-11-06 (E21): the first build
@@ -847,7 +861,7 @@ it, `actions`: the action words this job's round messages may use.
 | `fetch` | A `WebFetch` of a URL the turn did not see | The approval card (5.3), instead of a refusal |
 
 - **The set is closed.** An unknown word is refused at `round.create` and `round.update`
-  (`invalid`). `logbook_write` and `file_record` need no word: an event turn files proposals
+  (`invalid`). `logbook_write` and `file_record` need no word: an event turn writes to Logbook
   already (9.4).
 - **Default: none.** A round with no `actions` behaves as in A7. Acting on an event is always the
   user's choice for one job.
@@ -871,8 +885,10 @@ it, `actions`: the action words this job's round messages may use.
   | `allow` | An allowed action runs as it would in a user turn, under its own gates (table above) | | Yes | Yes |
 
   `off` is never a level's value; a user picks it by hand (Custom). `ask` uses the confirmation
-  mechanics of `capcom.md` 6.1: first answer wins, 60-minute expiry, the model told the outcome
-  as a note.
+  mechanics of `capcom.md` 6.1: first answer wins, the model told the outcome as a note. Its
+  expiry is `capcom.event_action_max_age` (default 60 minutes, as `capcom.md` 6.1; 19.1).
+  These defaults are settled (owner, 2026-11-06, plan-xagejg31 (r); E24): a job still has no
+  actions until the user grants them.
 - **How it reaches the turn.** The round message carries `actions` (`rounds.md` 5.2). The home
   hab copies the words onto the `round` item. When an event turn takes items, the actions
   allowed in that turn are the union of its `round` items' words, capped by
@@ -880,7 +896,8 @@ it, `actions`: the action words this job's round messages may use.
   reports) allows none. A user message that joins the turn makes it a user turn (9.4), and the
   user-turn rules apply from then on.
 - **Guards.**
-  - At most 3 actions per event turn; a fourth call is refused with "ask the user first".
+  - At most `capcom.event_actions_per_turn` (3; 19.1) actions per event turn; the next call is
+    refused with "ask the user first".
   - Each action shows in the thread as a card that names the job: "Capcom started a session for
     round mail".
   - The daily turn budget (9.3) and the governor (10.1) apply as before.
@@ -929,7 +946,7 @@ The usage governor (task-k0ydtgae, stage G) owns the pacing rules. This spec fix
   model), or `wait` until a time.
 - Defaults the governor applies to Capcom: a daily share of the weekly window, about 15% a day,
   cumulative (`swarm-study.md` 2.6). Event turns stop at 80% of the share; user turns go to the
-  small model at 100% and wait at 120%.
+  small model at 100% and wait at 120%. Each of the four numbers is a `[capcom]` key (19.2).
 - At `wait`, gff-hab adds a note, "Pacing usage until <time>", and the message waits. No model
   call is made for it. "Send now" in the send button's long-press menu runs that one message
   on the small model anyway.
@@ -939,6 +956,7 @@ The usage governor (task-k0ydtgae, stage G) owns the pacing rules. This spec fix
   reading, the governor counts Capcom's tokens and lists it unpaced (task-k0ydtgae).
 - Settings: `[capcom] model` (default the SDK's default), `small_model` (default the provider's
   smallest current model), `max_turn_usd` (passed as `maxBudgetUsd` per turn, default 2).
+  Ranges in 19.2.
 
 ### 10.2 Terms
 
@@ -951,7 +969,7 @@ The usage governor (task-k0ydtgae, stage G) owns the pacing rules. This spec fix
 - **Where the token comes from.** Two sources, in this order:
   1. `[capcom] oauth_token_command`: an argv, no shell, that prints the token, such as a call to
      the user's own credential store. gff-hab runs it in the background at its start and before
-     each engine start, with stdin `/dev/null` and a 30 s timeout, as the push `key_command`
+     each engine start, with stdin `/dev/null` and a `command_timeout` (30 s; 19.2) timeout, as the push `key_command`
      runs (`docs/push.md`). This is the source for an installed hab: `gff-hab install` writes
      the job with the config file's path, and the config holds the command, not the token.
   2. `CLAUDE_CODE_OAUTH_TOKEN` in gff-hab's own environment, for a hand-run `gff-hab serve`.
@@ -971,7 +989,7 @@ The usage governor (task-k0ydtgae, stage G) owns the pacing rules. This spec fix
   [capcom] oauth_token_command". The thread still takes messages (4.3).
 - **A refused credential.** When the model provider refuses the token (expired or revoked), the
   engine reports it and the turn ends `error` with a note. gff-hab runs the command once more
-  after 5 minutes and starts the engine with the new value. A second refusal leaves the engine
+  after `token_retry` (5 minutes; 19.2) and starts the engine with the new value. A second refusal leaves the engine
   stopped, with the row's error and one active notice naming `claude setup-token`. A change to
   the config file, or `gff-hab capcom resume`, reads the source again and starts the engine. An
   environment value does not change while gff-hab runs, so with that source the user restarts
@@ -1069,19 +1087,19 @@ Made by the stages named, not by this study.
 | `capcom.md` 9 | "The Capcom harness fills its context" becomes 6.2 and 6.3 | A4 |
 | `capcom.md` 6.2 | Review opens at "New conversation" or from the thread's pinned line (6.4) | A4 |
 | `mesh.md` 6.1, 6.2 | `capcom` is reserved and resolved by the Capcom belief; delivery to the service goes to the thread (2.4, 9.1) | A2 |
-| `app.md` 7.4, 7.2 | A Capcom approval expires after 10 minutes, whatever `approval.max_age` says; the "Allow this site" answer (5.3) | A2, A3 |
-| `app.md` 20.5 | `capcom.quiet_hours`, `capcom.events.notices`, `.rounds`, `.round_messages`, `.daily_turns` as hab-side settings on the home hab | A7 |
+| `app.md` 7.4, 7.2 | A Capcom approval expires after `capcom.approval_max_age` (default 10 minutes), whatever `approval.max_age` says; the "Allow this site" answer (5.3) | A2, A3 |
+| `app.md` 20.5 | `capcom.quiet_hours`, `capcom.events.notices`, `.rounds`, `.round_messages`, `.daily_turns`, `.batch_window`, `.batch_max` as hab-side settings on the home hab, with the ranges of 19.1; `capcom.approval_max_age` at A2. This spec does not edit `app.md` 20.x; the stages do | A7, A2 |
 | `capcom.md` 12 | Part 14 stages added | A1 (this change links it) |
 | `app.md` 4.10 | Thread items, marks, Stop, no Terminal switch, communication notification | A3 |
-| `app.md` 20.4 | `capcom.share_location`, `capcom.share_calendar` (app preferences) | A5 |
-| `logbook.md` 15.1, `capcom.md` 6.2 | Capcom's `capcom` guides land at once outside Safe; tasks and findings stay proposals (6.4, E20) | A4 |
+| `app.md` 20.4 | `capcom.share_location`, `capcom.share_calendar`, `capcom.calendar_days` (app preferences) | A5 |
+| `logbook.md` 15.1, `capcom.md` 6.2 | Capcom's `capcom` guides land at once outside Safe, from user and event turns alike; tasks and findings stay proposals (6.4, E20) | A4 |
 | `rounds.md` 5.2 | The `capcom` mode, the round message and its answers (9.5) | Written in D1; built in rounds stage 9 and A7 |
 | `mesh.md` 5, 6.2 | The `capcom-service` capability; the service session's id in the catalog `capcom` section; final states `accepted`, `duplicate`, `declined` for a round message (9.5) | A7, rounds stage 9 |
 | `hab-logic-api.md` | `capcom-thread` capability and calls (7.4) | A2, A3 |
 | `mesh.md` 6.3 | The `outcome` status item after a round message's final state (9.5) | A7, rounds stage 9 |
 | `rounds.md` 3, 5.2, 13 | `RoundRun.outcome` (written in this change); the `actions` field on `capcom` rounds and in the round message (9.6) | Rounds stage 9 (outcome), A9 (actions) |
-| `app.md` 20.3 | The levelled setting `capcom.event_actions` (Safe `ask`, Balanced and Bypass `allow`) | A9 |
-| `docs/examples/hab.toml` | `[capcom] auth`, `oauth_token_command` and `api_key_command`, with a placeholder command; no token or key value | A2 |
+| `app.md` 20.3, 20.5 | The levelled setting `capcom.event_actions` (Safe `ask`, Balanced and Bypass `allow`; settled, E24), and `capcom.event_actions_per_turn` and `capcom.event_action_max_age` (19.1) | A9 |
+| `docs/examples/hab.toml` | `[capcom] auth`, `oauth_token_command` and `api_key_command`, with a placeholder command; no token or key value; each limit key of 19.2 with its default, added by the stage that reads it | A2, A4, A5, G |
 | AGENTS.md command table | `gff-hab capcom say|thread|stop|pause|resume`, the engine's tests, the Node dependency | A2, A8 |
 
 ---
@@ -1094,7 +1112,7 @@ Made by the stages named, not by this study.
 | A message arrives while the engine is down | Delivered, not read; the row shows offline with the reason; the engine reads it when it starts |
 | gff-hab restarts during a turn | The turn goes on. Replies wait in the engine until it reconnects, then show in order |
 | The engine crashes mid-turn | The turn ends `error`. After the restart the engine resumes the SDK session; items the model had not taken are sent again; a note says "Capcom restarted" |
-| A model call fails after wake (no network yet) | Retried once after 10 s; then the turn ends `error` with a note, and the message can be sent again |
+| A model call fails after wake (no network yet) | Retried once after `wake_retry` (10 s; 19.2); then the turn ends `error` with a note, and the message can be sent again |
 | The user sends five messages in one turn | Each joins the turn at the next model call, in order, each marked read when taken |
 | The user taps Stop | `capcom.interrupt`; the turn ends `interrupted`; messages not taken stay for the next turn |
 | Capcom is re-assigned to another host | The old engine finishes its turn and stops; the old record becomes `capcom-earlier-<n>` (2.4); its thread stays there, read-only, under "Earlier threads". The new home starts a fresh thread whose seed reads Logbook. Re-assigning moves no conversation (`capcom.md` 7.3) |
@@ -1102,7 +1120,7 @@ Made by the stages named, not by this study.
 | Two devices answer one card | First wins; the other gets `conflict` and shows who answered |
 | An approval card expires | Denied; the model is told the user did not answer |
 | Location is older than 30 minutes | The tool returns its age; Capcom says "as of <time>" |
-| An approval card waits while a re-seed is due | The re-seed waits until the card is answered or expires (10 minutes, 5.3) |
+| An approval card waits while a re-seed is due | The re-seed waits until the card is answered or expires (`capcom.approval_max_age`, 5.3) |
 | Location sharing is off | `device_location` says so; Capcom asks the user where they are |
 | A question needs no location | No `device_location` call. A5 tests this |
 | WeatherKit or Maps is not set up, or fails | The tool says so; Capcom answers without it and names what is missing |
@@ -1116,7 +1134,7 @@ Made by the stages named, not by this study.
 
 ## 15. Decisions
 
-Internal calls taken here, and the owner's answers of 2026-11-06 (E19 to E23), each with its reason.
+Internal calls taken here, and the owner's answers of 2026-11-06 (E19 to E25), each with its reason.
 
 | # | Decision | Reason |
 |---|---|---|
@@ -1134,12 +1152,14 @@ Internal calls taken here, and the owner's answers of 2026-11-06 (E19 to E23), e
 | E12 | Personal tools are served only on a Capcom route | A project agent has no reason to read the user's location |
 | E13 | Weather and places run on the hab with keys from a key command | Keys stay off the phone and out of config files, as push does |
 | E14 | Calendar and reminder cards return at once; the answer comes later as a note | A tap may come hours later; a turn must not wait |
-| E15 | Event turns batch over 2 minutes, start on the small model, cap at 20 a day | The study's guardrails (2.6) |
+| E15 | Event turns batch over 2 minutes, start on the small model, cap at 20 a day; each number is a setting (19.1) | The study's guardrails (2.6) |
 | E16 | Agent reports start a turn at once, but act only as an event turn may | The user is waiting on that work; the report's text comes from an agent, not the user |
 | E17 | Passive notices never reach Capcom | Their level already says nobody needs to look |
 | E18 | Old pane conversations stay readable, never resumed by Flightdeck | Decision 1 with no data loss |
 | E19 | The engine logs in with the user's subscription through the long-lived OAuth token `claude setup-token` makes (`CLAUDE_CODE_OAUTH_TOKEN`), from a key command (the installed hab's source) or gff-hab's environment, held in memory only and handed to the engine over its route; an API key stays an option (3.5, 10.2). Formerly Q1 | Owner, 2026-11-06: the owner researched the terms and holds that subscription use is fine; it runs on the plan the user already pays for |
-| E20 | Capcom's facts and preferences (`capcom` guides) land at once with a "Noted" line and Undo; tasks and findings stay proposals; at Safe and in an event turn a guide stays a proposal (6.4). Formerly Q2 | Owner, 2026-11-06. No review list for "I'm vegetarian"; Undo is one tap. Safe keeps its meaning (`app.md` 20.3), and outside text cannot plant a preference |
+| E20 | Capcom's facts and preferences (`capcom` guides) land at once with a "Noted" line and Undo, in user and event turns alike; tasks and findings stay proposals; only at Safe does a guide wait as a proposal (6.4). Formerly Q2 | Owner, 2026-11-06 (plan-xagejg31 (q), (r)). No review list for "I'm vegetarian"; Undo is one tap. Safe keeps its meaning (`app.md` 20.3): it is where the user asked to review every agent memory |
+| E24 | `capcom.event_actions` defaults: Safe `ask`, Balanced and Bypass `allow`; a job still has no actions until the user grants them (9.6). Settled | Owner, 2026-11-06 (plan-xagejg31 (r)) |
+| E25 | Every limit in this spec is a setting with its former fixed value as the default (20); only the ceilings in 20.2 stay fixed | Owner, 2026-11-06 (plan-xagejg31 (r)): "any cap should be" |
 | E21 | The first build's event turns read and message only (9.4). Formerly Q3 | Owner, 2026-11-06. Outside text (a mail, a page) cannot start work until a person allows it |
 | E22 | Capcom acts on events through Capcom jobs: rounds in `capcom` mode with a per-job `actions` list a person sets, capped by the levelled `capcom.event_actions`; the dashboard is the Rounds list filtered to `capcom` (9.6, stage A9). Formerly Q3 | Owner, 2026-11-06, asked for tunable acting with a per-job list and a dashboard, and to consider rounds. Rounds already hold every trigger, the store and the list; a second scheduler would duplicate them (9.6) |
 | E23 | Capcom answers each round message a second time, `told`, `quiet`, `acted` or `unseen`, after the turn that took it (9.5) | Owner, 2026-11-06 (`rounds.md` 12 W1): the round's history shows what Capcom did |
@@ -1178,19 +1198,101 @@ Each stage ends with a fresh-eyes review where marked core.
 
 | Stage | Builds | Acceptance tests |
 |---|---|---|
-| A2 (task-vz6mxa3f): engine and hab half. Core | 3, 4, 5, 7.1 to 7.4 hab side, 7.7, 11; the session record kind `capcom` with no pane; `[capcom] engine` (`claude`); the engine job in `gff-hab install` on macOS and Linux; Node.js check | With a fake model endpoint: two messages sent during a turn are taken in order and each marked read; Stop ends the turn and the next message runs; a `start_session` raises a confirmation and starts nothing before the answer; a dispatched session's `channel_send` to `capcom` starts a turn; a built-in tool outside 5.1 is never offered to the model; a `WebFetch` of an unseen URL raises an approval card and a seen one does not; a gff-hab restart mid-turn loses no reply; an engine kill mid-turn resumes the SDK session and resends untaken items; a tool call on the engine route records the Capcom session as the actor and files a proposal; personal tools are refused on a pane route; the start check refuses an SDK whose `init` lists a tool outside 5.1; a crash after an input was handed but before its echo resumes with that input taken once; five crashes in 10 minutes stop the restarts and `capcom resume` clears them; a gff-hab start adopts a running engine; each engine start gets a new token and the old one is refused; the OAuth token from `oauth_token_command` and from `CLAUDE_CODE_OAUTH_TOKEN` in gff-hab's environment each reach the bundled binary as `CLAUDE_CODE_OAUTH_TOKEN`, the command first, through `hello` and not the job's environment file; a planted value appears in no file under the state directory, the unit or plist `gff-hab install` writes, a log, a session record, a thread item, a notice or the catalog; an `oauth_token` key in the config file is refused naming the command key; an installed hab with only the environment variable gives the one line; `auth = "api_key"` passes `ANTHROPIC_API_KEY` instead; no token leaves the engine stopped with the row's "no Claude token" line; a refused token runs the command again once after 5 minutes; a second refusal stops the engine with one notice, and `capcom resume` reads the source again; losing the mark lets the turn finish, renames the record `capcom-earlier-1`, and a bare `capcom` from a peer reaches the new home; an install mid-turn interrupts nothing; Node.js missing and an unknown `engine` word each give one clear line; with `engine` unset the pane Capcom runs as before (12.4). Live: `claude --resume <id>` in a plain terminal opens an engine session after `gff-hab capcom pause` (11; if not, report for 17). Live: study scenario 4 on two hosts |
-| G (task-k0ydtgae): usage governor. Core | 10.1 (Capcom's side; the governor itself per its task) | Fake clock and hand-written readings: the share accumulates; at the cap a user turn goes to the small model, then waits with a note; event turns stop first; with no reading Capcom is listed unpaced |
+| A2 (task-vz6mxa3f): engine and hab half. Core | 3, 4, 5, 7.1 to 7.4 hab side, 7.7, 11; the session record kind `capcom` with no pane; `[capcom] engine` (`claude`); the engine job in `gff-hab install` on macOS and Linux; Node.js check | With a fake model endpoint: two messages sent during a turn are taken in order and each marked read; Stop ends the turn and the next message runs; a `start_session` raises a confirmation and starts nothing before the answer; a dispatched session's `channel_send` to `capcom` starts a turn; a built-in tool outside 5.1 is never offered to the model; a `WebFetch` of an unseen URL raises an approval card and a seen one does not; a gff-hab restart mid-turn loses no reply; an engine kill mid-turn resumes the SDK session and resends untaken items; a tool call on the engine route records the Capcom session as the actor and files a proposal; personal tools are refused on a pane route; the start check refuses an SDK whose `init` lists a tool outside 5.1; a crash after an input was handed but before its echo resumes with that input taken once; five crashes in 10 minutes stop the restarts and `capcom resume` clears them; a gff-hab start adopts a running engine; each engine start gets a new token and the old one is refused; the OAuth token from `oauth_token_command` and from `CLAUDE_CODE_OAUTH_TOKEN` in gff-hab's environment each reach the bundled binary as `CLAUDE_CODE_OAUTH_TOKEN`, the command first, through `hello` and not the job's environment file; a planted value appears in no file under the state directory, the unit or plist `gff-hab install` writes, a log, a session record, a thread item, a notice or the catalog; an `oauth_token` key in the config file is refused naming the command key; an installed hab with only the environment variable gives the one line; `auth = "api_key"` passes `ANTHROPIC_API_KEY` instead; no token leaves the engine stopped with the row's "no Claude token" line; a refused token runs the command again once after 5 minutes; a second refusal stops the engine with one notice, and `capcom resume` reads the source again; losing the mark lets the turn finish, renames the record `capcom-earlier-1`, and a bare `capcom` from a peer reaches the new home; an install mid-turn interrupts nothing; Node.js missing and an unknown `engine` word each give one clear line; with `engine` unset the pane Capcom runs as before (12.4); `max_turns`, `restart_delay`, `crash_limit` and `crash_window`, `route_backoff_max`, `command_timeout` and `token_retry` each change the behaviour they name, and a value outside its range is logged once and the default runs; `capcom.approval_max_age` set to 2 minutes expires a card at 2 minutes, and `settings.set` refuses 0 with `invalid`. Live: `claude --resume <id>` in a plain terminal opens an engine session after `gff-hab capcom pause` (11; if not, report for 17). Live: study scenario 4 on two hosts |
+| G (task-k0ydtgae): usage governor. Core | 10.1 (Capcom's side; the governor itself per its task) | Fake clock and hand-written readings: the share accumulates; at the cap a user turn goes to the small model, then waits with a note; event turns stop first; with no reading Capcom is listed unpaced; the `pace_*` keys move each step, and a set out of order runs the three defaults with one log line |
 | A3 (task-cp5tvo4d): the thread in the app and gff | 7.2 to 7.6 app side, 7.7 gff | Swift tests over a fake hab: typing, delivered, read, a folded tool line, a divider with the summary it opened with, an image sent and shown, Stop, "Earlier threads" from another host, the pinned proposals line. Live on a device: a reply from the communication notification while the app is closed reaches the engine and the answer shows. Study scenario 3 (a flyer photo) answered with its details |
-| A4 (task-0vh4b8jz): context and memory | 6 | Fake model: a thread past 60% re-seeds once at the turn end, never mid-turn, and waits for an open approval card; a fact stated before the re-seed is answered after it; a forced compaction updates the summary first and adds one divider; "New conversation" adds one divider and an empty summary; a preference becomes a `capcom` guide that lands at once with a "Noted" line, and its Undo deletes it; under `logbook.approval = agents` the same preference is a proposal and Undo rejects it; a guide with a project, or without the `capcom` tag, stays a proposal; a `capcom` guide from an event turn stays a proposal at every level, with "Noted, waiting for review"; Undo after the record was edited elsewhere deletes the edited record and says so; a task stays a proposal; the seed stays under its caps |
-| A5 (task-j2xf34ld): personal tools | 8 | Study scenario 1 on a device: one location read, weather and places calls, ranked picks naming the preference, an Add card that writes one event. Tests: a question with no place in it reads no location; with no Google key `source: google` is refused and Apple answers; a weather reply carries the attribution; no calendar write without a tap; the device-context store is empty after a gff-hab restart and writes no file but the time zone; a tool line names the place and never coordinates |
-| A7 (task-hj8cnr5v): Capcom writes first | 9 | A round message answers `accepted` and adds one `round` item; the same message id again answers `duplicate`; with `capcom.events.round_messages` off it answers `declined` `off`; a round message in quiet hours is accepted and waits; `capcom-service` shows in the catalog only while this hab holds the mark. Fake clock: an event in quiet hours waits and runs in one batch at the end; an urgent one runs at once; ten events in 2 minutes make one turn; the 21st event turn of a day waits; after a gff-hab restart quiet hours use the saved time zone; an event turn's `hand_off` is refused (9.4, E21); a passive notice reaches nothing; a round message with `level` `time-sensitive` runs at once in quiet hours, and still counts toward the daily turn budget; after the turn that took a round item, the runner gets one `outcome` status item: `told` when the turn wrote to the user, `quiet` when it did not, the same outcome for two items one turn took, `unseen` for an item left untaken by a mark move, and one outcome from a peer runner that was asleep, delivered at its wake. Live: a watcher event reaches the phone as one Capcom message marked "wrote first" |
+| A4 (task-0vh4b8jz): context and memory | 6 | Fake model: a thread past 60% re-seeds once at the turn end, never mid-turn, and waits for an open approval card; a fact stated before the re-seed is answered after it; a forced compaction updates the summary first and adds one divider; "New conversation" adds one divider and an empty summary; a preference becomes a `capcom` guide that lands at once with a "Noted" line, and its Undo deletes it; under `logbook.approval = agents` the same preference is a proposal and Undo rejects it; a guide with a project, or without the `capcom` tag, stays a proposal; a `capcom` guide from an event turn lands at once with a "Noted" line outside Safe, and is a proposal with "Noted, waiting for review" at Safe; Undo after the record was edited elsewhere deletes the edited record and says so; a task stays a proposal; the seed stays under its caps, with the defaults and with `seed_messages`, `seed_messages_chars`, `seed_logbook_bytes`, `reseed_at` and `summary_max_chars` set lower in the config; a value outside its range is logged and the default runs |
+| A5 (task-j2xf34ld): personal tools | 8 | Study scenario 1 on a device: one location read, weather and places calls, ranked picks naming the preference, an Add card that writes one event. Tests: a question with no place in it reads no location; with no Google key `source: google` is refused and Apple answers; a weather reply carries the attribution; no calendar write without a tap; the device-context store is empty after a gff-hab restart and writes no file but the time zone; a tool line names the place and never coordinates; `[capcom.weather] cache` set to 0 makes every call reach the endpoint (a fake WeatherKit); `capcom.calendar_days` set to 3 sends 3 days |
+| A7 (task-hj8cnr5v): Capcom writes first | 9 | A round message answers `accepted` and adds one `round` item; the same message id again answers `duplicate`; with `capcom.events.round_messages` off it answers `declined` `off`; a round message in quiet hours is accepted and waits; `capcom-service` shows in the catalog only while this hab holds the mark. Fake clock: an event in quiet hours waits and runs in one batch at the end; an urgent one runs at once; ten events in 2 minutes make one turn; the 21st event turn of a day waits; after a gff-hab restart quiet hours use the saved time zone; an event turn's `hand_off` is refused (9.4, E21); a passive notice reaches nothing; a round message with `level` `time-sensitive` runs at once in quiet hours, and still counts toward the daily turn budget; with the budget spent, a time-sensitive event waits for the next day like any event, in quiet hours or not; `capcom.events.daily_turns`, `.batch_window` and `.batch_max` set to other values move each limit, and `settings.set` refuses a value outside its range with `invalid`; after the turn that took a round item, the runner gets one `outcome` status item: `told` when the turn wrote to the user, `quiet` when it did not, the same outcome for two items one turn took, `unseen` for an item left untaken by a mark move, and one outcome from a peer runner that was asleep, delivered at its wake. Live: a watcher event reaches the phone as one Capcom message marked "wrote first" |
 | A8 (task-6knreo9n): remove the pane Capcom | 12, 13 | `engine` defaults to `claude`; pane-era records are renamed `capcom-term-<n>`; `gff-hab capcom open` and the app's Capcom entry reach the service; pending context from a pane-era `capcom.json` reaches the first message; an old pane conversation reads in the chat view with no Resume; no test or doc describes the pane form; CI passes on Linux and macOS |
-| A9 (task-pp4c1qq4): Capcom jobs act on events | 9.6; `rounds.md` 3 and 5.2 `actions`; `capcom.event_actions`; the "Capcom jobs" filter in the app and gff | Fake model and a fake runner: a `capcom` round with no `actions` gets its `hand_off` refused as in A7; with `hand_off` allowed and `capcom.event_actions = allow`, the event turn's `hand_off` runs and shows a card naming the job, and the outcome is `acted`; under `ask` the same call raises one confirmation and nothing runs before the tap; under `off` it is refused; a word the job does not list is refused; a fourth action in one turn is refused; a notice-only event turn allows nothing; two round items in one turn allow the union of their words; `start_session` under `allow` still raises the `confirm.start_elsewhere` card when that is on; `round.create` with `actions` from a pane or the Capcom route is refused `denied`, and removing a word from a pane works; an agent creates a `capcom` round, a person grants `hand_off`, and the agent's later prompt edit, pause and delete are refused; a channel message to `capcom` from a pane that carries `actions` fields gets no action allowed; under `ask` the turn's outcome is `acted` at its end, before the tap; an unknown word is `invalid`; export then apply keeps `actions`. Swift over a fake hab: the Capcom jobs list shows only `capcom` rounds with their actions and last outcome, and the switches edit `actions`. gff: the board's filter shows only `capcom` rounds. Live: a mail watcher job with `hand_off` hands a mail's task to the agent on its project, with one card |
+| A9 (task-pp4c1qq4): Capcom jobs act on events | 9.6; `rounds.md` 3 and 5.2 `actions`; `capcom.event_actions`; the "Capcom jobs" filter in the app and gff | Fake model and a fake runner: a `capcom` round with no `actions` gets its `hand_off` refused as in A7; with `hand_off` allowed and `capcom.event_actions = allow`, the event turn's `hand_off` runs and shows a card naming the job, and the outcome is `acted`; under `ask` the same call raises one confirmation and nothing runs before the tap; under `off` it is refused; a word the job does not list is refused; a fourth action in one turn is refused, and with `capcom.event_actions_per_turn` at 1 the second is; at 0 none runs; the level picker writes `ask` at Safe and `allow` at Balanced and Bypass; an `ask` card expires at `capcom.event_action_max_age`; a notice-only event turn allows nothing; two round items in one turn allow the union of their words; `start_session` under `allow` still raises the `confirm.start_elsewhere` card when that is on; `round.create` with `actions` from a pane or the Capcom route is refused `denied`, and removing a word from a pane works; an agent creates a `capcom` round, a person grants `hand_off`, and the agent's later prompt edit, pause and delete are refused; a channel message to `capcom` from a pane that carries `actions` fields gets no action allowed; under `ask` the turn's outcome is `acted` at its end, before the tap; an unknown word is `invalid`; export then apply keeps `actions`. Swift over a fake hab: the Capcom jobs list shows only `capcom` rounds with their actions and last outcome, and the switches edit `actions`. gff: the board's filter shows only `capcom` rounds. Live: a mail watcher job with `hand_off` hands a mail's task to the agent on its project, with one card |
 | A6 (task-y8ogoq4d): Codex SDK engine | 4 on the Codex SDK; `[capcom] engine = codex` | The A2 and A4 tests pass against both engines, with each capability the Codex engine lacks taking its fallback (4.1); switching engines keeps the thread and Logbook memory (the switch is a re-seed); the plain-terminal check with `codex resume` |
 
 ---
 
-## 19. Sources
+## 19. Limits and settings
+
+Owner, 2026-11-06 (plan-xagejg31 (r)): every cap is configurable. Each limit this spec names is
+a setting, with its earlier fixed value as the default (E25). Two homes, by who tunes it:
+
+- **Hab-side settings** (`app.md` 20.5) for what the user tunes in Capcom settings. Stored and
+  enforced on the home hab, as quiet hours are (9.2). A value outside its range: `settings.set`
+  refuses the call with `invalid` and `data.id`, and the stored value stays. A `[settings]` entry
+  outside its range is logged and left out, and locks nothing (`app.md` 20.5, built choices).
+- **`[capcom]` keys** in the hab's config file for tuning with no row in the app. A value
+  outside its range, or of the wrong type, is logged once and the default runs (3.5). A key
+  read "at once" applies from the next check that uses it; the rest at the next turn, unless the
+  row says so.
+
+### 19.1 Hab-side settings
+
+All on the home hab, no level unless the row says so.
+
+| Id | Default | Range | Section |
+|---|---|---|---|
+| `capcom.quiet_hours` | 22:00 to 07:00 | A start and an end time of day; the same time twice means no quiet hours | 9.2 |
+| `capcom.events.notices`, `.rounds`, `.round_messages` | on | bool | 9.1 |
+| `capcom.events.daily_turns` | 20 | 1 to 1,000 event turns a day | 9.3 |
+| `capcom.events.batch_window` | 2 minutes | 10 s to 1 hour | 9.2 |
+| `capcom.events.batch_max` | 20 events | 1 to 200 | 9.2 |
+| `capcom.approval_max_age` | 10 minutes | 1 minute to 24 hours; no 0 (5.3) | 5.3 |
+| `capcom.event_actions` | Levelled: Safe `ask`, Balanced and Bypass `allow`; `off` by hand only. Settled (E24) | `off`, `ask`, `allow` | 9.6 |
+| `capcom.event_actions_per_turn` | 3 | 0 to 20; 0 allows no action whatever the jobs say | 9.6 |
+| `capcom.event_action_max_age` | 60 minutes | 1 minute to 24 hours | 9.6 |
+
+One app preference (`app.md` 20.4), since the app decides what it sends:
+`capcom.calendar_days`, default 7, 1 to 31 days (8.1).
+
+### 19.2 `[capcom]` keys
+
+| Key | Default | Range | Section |
+|---|---|---|---|
+| `max_turns` | 50 | 1 to 500 | 3.5 |
+| `max_turn_usd` | 2 | above 0 | 3.5, 10.1 |
+| `daily_usd` | none | above 0, or none; at once | 10.1 |
+| `restart_delay` | 5 s | 1 s to 10 minutes | 3.2 |
+| `crash_limit`, `crash_window` | 5 crashes in 10 minutes | 1 to 100; 1 minute to 24 hours | 3.2 |
+| `route_backoff_max` | 30 s | 1 s to 10 minutes; the backoff starts at 1 s | 3.2 |
+| `summary_max_chars` | 6,000 | 1,000 to 50,000 | 6.1 |
+| `summary_quiet` | 10 minutes | 1 minute to 24 hours | 6.1 |
+| `reseed_at` | 60% | 20% to 90% | 6.2 |
+| `reseed_quiet`, `reseed_quiet_at` | 60 minutes, 25% | 10 minutes to 24 hours; 0% to `reseed_at` | 6.2 |
+| `seed_messages`, `seed_messages_chars` | 6 messages, 8,000 characters | 0 to 50; 0 to 64,000 | 6.2 |
+| `seed_logbook_bytes` | 8 KB | 0 to 64 KB | 6.4 |
+| `precompact_timeout` | 30 s | 5 s to 5 minutes | 6.3 |
+| `typing_timeout` | 10 minutes | 1 minute to 1 hour | 7.3 |
+| `location_stale` | 30 minutes | 1 minute to 24 hours | 8.2 |
+| `[capcom.weather] cache` | 10 minutes | 0 (no cache) to 24 hours | 8.3 |
+| `command_timeout` | 30 s | 1 s to 5 minutes; for `oauth_token_command` and `api_key_command` | 10.2 |
+| `token_retry` | 5 minutes | 30 s to 24 hours | 10.2 |
+| `wake_retry` | 10 s | 1 s to 5 minutes; one retry | 14 |
+| `pace_daily_share` | 15% of the weekly window a day | 1% to 100% | 10.1 |
+| `pace_event_stop`, `pace_small_at`, `pace_wait_at` | 80%, 100%, 120% of the share | 10% to 500% each, in that order; a set out of order is logged and all three defaults run | 10.1 |
+
+The four `pace_*` keys are Capcom's inputs to the usage governor (task-k0ydtgae, stage G), which
+reads them; the governor's own rules stay in its task.
+
+### 19.3 Fixed values kept
+
+| Value | Why it is not a setting |
+|---|---|
+| `capcom.thread.page` returns at most 200 items | A ceiling on one API reply: a reply is one JSON line (`hab-logic-api.md` 3.1), and a bound keeps it small. A client asks for fewer and pages; it never limits what the thread holds |
+| The weather cache key rounds to 2 decimal places | Not a limit: it is the cache key, and it keeps the exact fix out of the cache |
+| The SDK's own limits (context window, compaction) | The SDK's, not Flightdeck's |
+
+Limits other specs own stay there and are not changed here: the outbox's 7 days (`mesh.md` 6.3),
+attachment expiry (`app.md` 4.4), the push budget (`app.md` 16.2), and the 60-minute expiry of
+`capcom.md` 6.1's confirmations for `start_session` and `set_up_project`.
+
+**Changes to other specs.** `app.md` 20.3 to 20.5 is not edited by this spec. Stage A7 adds the
+rows of 19.1 for quiet hours, the event switches, the daily turn budget and the batch settings;
+A2 adds `capcom.approval_max_age`; A9 adds the three `capcom.event_action*` rows; A5 adds the
+`capcom.calendar_days` preference (13). Each stage that reads a key of 19.2 adds it to
+`docs/examples/hab.toml`.
+
+---
+
+## 20. Sources
 
 - Claude Agent SDK docs, read 2026-11-06: `agent-sdk/overview`, `agent-sdk/agent-loop`,
   `agent-sdk/streaming-vs-single-mode`, `agent-sdk/sessions`, `agent-sdk/permissions`
