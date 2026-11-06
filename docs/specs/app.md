@@ -3257,7 +3257,8 @@ What the app builds for QR pairing:
    hab could not save the key: see its terminal"; `request` "Pairing failed". A host-key mismatch
    says the code does not match the hab at that address.
 6. **No host keys** in the answer: the app falls back to the compare-and-trust step of Add a hab
-   by address.
+   by address. It probes each returned address until one answers, then names that address beside
+   the key for comparison.
 
 The hidden password setup (`transport.md` 6.1.6) sits under Add a hab by address as "Set up with
 a password", a small button at the end of the form.
