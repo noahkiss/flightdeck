@@ -308,3 +308,82 @@ func TestSummaryHeldDevice(t *testing.T) {
 		t.Fatalf("calls %d, alerts %d", s.calls.Load(), len(alerts(r.prod.requests(), phone)))
 	}
 }
+
+// A late worker must not extend the replacement window past the request's arrival.
+func TestSummaryLateAfterArrivalDeadline(t *testing.T) {
+	gate := make(chan struct{})
+	s := &summarizer{line: "Run tests?", gate: gate}
+	r := summaryRig(t, s, 20*time.Millisecond)
+	r.store.Register("dev-phone", phone, Production, allKinds, false)
+	st := blocked("req-1", "make test")
+	r.n.State(st)
+	r.n.Sync()
+	r.n.mu.Lock()
+	r.n.jobs = append(r.n.jobs, func() { r.n.sums[sumKey(st)].start = time.Now().Add(-summaryLate - time.Second) })
+	r.n.mu.Unlock()
+	r.n.signal()
+	r.n.Sync()
+	close(gate)
+	waitFor(t, func() bool { r.n.Sync(); return readyForTest(r.n, st) })
+	r.n.Sync()
+	if n := len(alerts(r.prod.requests(), phone)); n != 1 {
+		t.Fatalf("late replacement sent: %d alerts", n)
+	}
+	r.n.State(state(api.AgentStatusWorking))
+	r.n.Sync()
+	pa := alerts(r.prod.requests(), phone)
+	if alertField(pa[1], "body") != "Run tests" {
+		t.Fatalf("answered line %v", pa[1].Body)
+	}
+}
+
+// readyForTest observes completion through a worker job, avoiding access to the worker's map.
+func readyForTest(n *Notifier, st api.AgentState) bool {
+	result := make(chan bool, 1)
+	n.mu.Lock()
+	n.jobs = append(n.jobs, func() { result <- n.readySummary(st) != "" })
+	n.mu.Unlock()
+	n.signal()
+	return <-result
+}
+
+// An unchanged state never sends its request to the model after a device changes its setting.
+func TestSummaryUnchangedState(t *testing.T) {
+	s := &summarizer{line: "Run tests?"}
+	r := summaryRig(t, s, time.Second)
+	r.store.Register("dev-phone", phone, Production, allKinds, true)
+	st := blocked("req-1", "make test")
+	r.n.State(st)
+	r.n.Sync()
+	r.store.Register("dev-phone", phone, Production, allKinds, false)
+	st.Request.Command = "make test changed"
+	r.n.State(st)
+	r.n.Sync()
+	if n := s.calls.Load(); n != 0 {
+		t.Fatalf("unchanged state sent %d requests", n)
+	}
+}
+
+// A device that hides details while a summary is pending receives no detailed replacement.
+func TestSummaryHideWhilePending(t *testing.T) {
+	gate := make(chan struct{})
+	s := &summarizer{line: "Run tests?", gate: gate}
+	r := summaryRig(t, s, 20*time.Millisecond)
+	r.store.Register("dev-phone", phone, Production, allKinds, false)
+	st := blocked("req-1", "make test")
+	r.n.State(st)
+	r.n.Sync()
+	r.store.Register("dev-phone", phone, Production, allKinds, true)
+	close(gate)
+	waitFor(t, func() bool { r.n.Sync(); return readyForTest(r.n, st) })
+	r.n.Sync()
+	if n := len(alerts(r.prod.requests(), phone)); n != 1 {
+		t.Fatalf("detailed replacement sent: %d alerts", n)
+	}
+	r.n.State(state(api.AgentStatusWorking))
+	r.n.Sync()
+	pa := alerts(r.prod.requests(), phone)
+	if body, _ := alertField(pa[1], "body").(string); strings.Contains(body, "test") {
+		t.Fatalf("details in answered line: %q", body)
+	}
+}

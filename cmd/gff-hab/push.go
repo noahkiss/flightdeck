@@ -49,13 +49,15 @@ type pushSetup struct {
 	capcom func() string
 	// notices is the notice store; denied reports a folder the read scope denies. Both are set
 	// before the notifier starts.
-	notices   *noticeLog
-	denied    func(folder string) bool
-	getenv    func(string) string
-	connected func(client string) bool
-	label     func(client string) string
-	publish   func(structure.Event)
-	logf      func(string, ...any)
+	notices *noticeLog
+	denied  func(folder string) bool
+	// summaryDenied checks both the allowed roots and deny list.
+	summaryDenied func(path string) bool
+	getenv        func(string) string
+	connected     func(client string) bool
+	label         func(client string) string
+	publish       func(structure.Event)
+	logf          func(string, ...any)
 	// sender replaces the APNs client; for tests.
 	sender push.Sender
 	// habConfig is the hab's config file, whose [summaries] section turns on model-written
@@ -107,7 +109,7 @@ func newPushService(ps pushSetup, store *structure.Store, agents *harness.Store)
 	}
 	if ps.habConfig != "" {
 		if s.sums = newSummaries(ps.habConfig, ps.summaryOptions, ps.logf); s.sums != nil {
-			ncfg.Summarize, ncfg.SummaryWait = summarize(s.sums, ps.denied), s.sums.Wait()
+			ncfg.Summarize, ncfg.SummaryWait = summarize(s.sums, ps.summaryDenied), s.sums.Wait()
 		}
 	}
 	s.notifier = push.NewNotifier(ncfg)
@@ -382,7 +384,7 @@ var errSummaryDenied = errors.New("the read scope denies the request's folder, o
 // opencode plugin's) cannot be checked, so it is never sent either.
 func summarize(svc *summary.Service, denied func(string) bool) push.Summarize {
 	return func(ctx context.Context, r *api.PermissionRequest, w push.Where, description string) (string, error) {
-		if r.Cwd == "" {
+		if r.Cwd == "" || denied == nil {
 			return "", errSummaryDenied
 		}
 		if denied != nil {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/noahkiss/flightdeck/api"
 	"github.com/noahkiss/flightdeck/internal/harness"
+	"github.com/noahkiss/flightdeck/internal/readtools"
 	"github.com/noahkiss/flightdeck/internal/structure"
 )
 
@@ -45,7 +46,7 @@ func TestPushSummaries(t *testing.T) {
 		calls         int
 	}{
 		{"on", fmt.Sprintf("[summaries]\nbase_url = %q\nmodel = \"m\"\nkey_command = [\"/bin/echo\", %q]\n", srv.URL+"/v1", secret), "/work/app", "Run the test suite?", 1},
-		{"denied", fmt.Sprintf("[summaries]\nbase_url = %q\nmodel = \"m\"\n", srv.URL+"/v1"), "/work/secret", "Run make test?", 0},
+		{"outside root", fmt.Sprintf("[summaries]\nbase_url = %q\nmodel = \"m\"\n", srv.URL+"/v1"), "/work/secret", "Run make test?", 0},
 		{"off", "[speech]\nenabled = false\n", "/work/app", "Run make test?", 0},
 		{"no folder", fmt.Sprintf("[summaries]\nbase_url = %q\nmodel = \"m\"\n", srv.URL+"/v1"), "", "Run make test?", 0},
 	} {
@@ -73,7 +74,9 @@ func TestPushSummaries(t *testing.T) {
 			pushes = newPushService(pushSetup{
 				state: state, hab: "laptop", getenv: func(string) string { return "" }, logf: logs.logf, sender: sent,
 				connected: func(string) bool { return false }, label: func(string) string { return "" }, publish: func(structure.Event) {},
-				denied:    func(f string) bool { return strings.HasPrefix(f, "/work/secret") },
+				summaryDenied: readtools.New(readtools.Config{Scope: func() readtools.Scope {
+					return readtools.Scope{Allow: []string{"/work/app"}, Deny: readtools.DefaultDeny}
+				}}).ScopeDenied,
 				habConfig: cfg,
 			}, st, agents)
 			defer pushes.Close()

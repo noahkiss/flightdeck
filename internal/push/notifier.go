@@ -324,7 +324,7 @@ func (n *Notifier) Forget(pane string) {
 			w.Hab = n.cfg.Hab
 			sum := n.openSummary(ob)
 			for _, t := range ob.to {
-				b := closedBanner(w, ob.req, t.hide, sum)
+				b := closedBanner(w, ob.req, n.hideTarget(t), sum)
 				payload := AlertPayload(b, Meta{Hab: n.cfg.Hab, Session: w.Session, Pane: pane, State: string(api.AgentStatusExited), Request: ob.request}, w.Session)
 				n.send(Message{Token: t.token, Environment: t.env, Type: TypeAlert, Priority: 5, CollapseID: ob.collapse, Expiration: ob.expires, Payload: payload}, true)
 			}
@@ -631,12 +631,12 @@ func (n *Notifier) process(st api.AgentState) {
 			delete(n.sums, ob.sumKey)
 		}
 		for _, t := range ob.to {
-			b := answeredBanner(w, by, allow, ob.req, t.hide, sum)
+			b := answeredBanner(w, by, allow, ob.req, n.hideTarget(t), sum)
 			switch {
 			case ob.kind == string(api.BlockedKindTrust):
 				b = TrustAnsweredBanner(w, ob.folder, st.State == api.AgentStatusExited)
 			case st.State == api.AgentStatusExited && by == "":
-				b = endedBanner(w, ob.req, t.hide, sum)
+				b = endedBanner(w, ob.req, n.hideTarget(t), sum)
 			}
 			payload := AlertPayload(b, Meta{Hab: n.cfg.Hab, Session: w.Session, Pane: st.Pane, State: string(st.State), Request: ob.request}, w.Session)
 			n.send(Message{Token: t.token, Environment: t.env, Type: TypeAlert, Priority: 5, CollapseID: ob.collapse, Expiration: ob.expires, Payload: payload}, true)

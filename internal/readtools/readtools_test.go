@@ -238,7 +238,11 @@ func TestScopeAllowDeny(t *testing.T) {
 		{filepath.Join(proj, "src", "..", "..", ".ssh", "x"), false, "read.deny"},
 		{filepath.Join(root, "outside", "missing.txt"), false, "read.allow"}, // no file: still refused, not "not found"
 	}
+	svc := New(Config{Scope: func() Scope { return sc }})
 	for _, c := range cases {
+		if denied := svc.ScopeDenied(c.path); denied == c.ok {
+			t.Errorf("ScopeDenied(%s) = %v, want %v", c.path, denied, !c.ok)
+		}
 		_, err := sc.Check(c.path)
 		if c.ok {
 			if err != nil {

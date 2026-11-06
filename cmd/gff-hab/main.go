@@ -526,6 +526,10 @@ func serve(args []string) error {
 			r := readsRef.Load()
 			return r == nil || r.FolderDenied(folder) // before the read tools exist: hidden
 		},
+		summaryDenied: func(path string) bool {
+			r := readsRef.Load()
+			return r == nil || r.ScopeDenied(path)
+		},
 		configPath: *pushConfig, state: dir, hab: *hostID, getenv: os.Getenv, logf: logger.Printf,
 		self: key.Fingerprint(),
 		capcom: func() string {

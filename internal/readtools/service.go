@@ -670,6 +670,15 @@ func (s *Service) Transcript(ctx context.Context, local bool, p api.TranscriptRe
 
 // --- notice.get ---
 
+// ScopeDenied reports whether the read scope refuses a path, including allowed roots.
+func (s *Service) ScopeDenied(path string) bool {
+	if path == "" || s.cfg.Scope == nil {
+		return true
+	}
+	_, err := s.cfg.Scope().Check(path)
+	return err != nil
+}
+
 // FolderDenied reports whether folder matches this hab's read deny list (capcom.md 5.2). An
 // empty folder is not denied.
 func (s *Service) FolderDenied(folder string) bool {

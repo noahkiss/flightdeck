@@ -84,7 +84,8 @@ func (n *Notifier) prefetch(st api.AgentState, arrived time.Time) {
 	if !n.wantsSummary(st) {
 		return
 	}
-	if _, seen := n.last[st.Pane]; !seen && st.Source == api.StateSourceScreen {
+	prev, seen := n.last[st.Pane]
+	if seen && key(prev) == key(st) || !seen && st.Source == api.StateSourceScreen {
 		return
 	}
 	k := sumKey(st)
@@ -191,14 +192,14 @@ func (n *Notifier) openSummary(ob *sent) string {
 // request is still open: same collapse id, a passive alert with no sound (app.md 16.5).
 func (n *Notifier) lateSummary(k string, p *pendingSummary) {
 	ob := n.open[p.pane]
-	if ob == nil || ob.sumKey != k || ob.summary != "" {
+	if ob == nil || ob.sumKey != k || ob.summary != "" || time.Since(p.start) > summaryLate {
 		return
 	}
 	ob.summary = p.line
 	w := n.cfg.Where(p.pane, "")
 	w.Hab = n.cfg.Hab
 	for _, t := range ob.to {
-		if t.hide {
+		if n.hideTarget(t) {
 			continue
 		}
 		b := permissionBanner(w, ob.req, false, p.line)
@@ -206,4 +207,17 @@ func (n *Notifier) lateSummary(k string, p *pendingSummary) {
 		payload := AlertPayload(b, ob.meta, w.Session)
 		n.send(Message{Token: t.token, Environment: t.env, Type: TypeAlert, Priority: priority(b.Level), CollapseID: ob.collapse, Expiration: ob.expires, Payload: payload}, true)
 	}
+}
+
+// hideTarget respects both the banner's original setting and the device's current setting.
+func (n *Notifier) hideTarget(t target) bool {
+	if t.hide {
+		return true
+	}
+	for _, d := range n.cfg.Store.Devices() {
+		if d.ID == t.device && d.Token == t.token {
+			return d.HideCommands
+		}
+	}
+	return true
 }

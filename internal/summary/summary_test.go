@@ -301,8 +301,8 @@ func TestBearerKey(t *testing.T) {
 func TestKeyCommandFailure(t *testing.T) {
 	f := newFake(t)
 	l := &logs{}
-	secret := "fake" + strings.Repeat("Zy8", 12)
-	// The command prints the key on stderr and fails: the log keeps it out.
+	secret := "short-secret"
+	// Even a short or punctuated key on stderr must not reach the log.
 	v := New(Settings{BaseURL: f.srv.URL, Model: "m", KeyCommand: []string{"/bin/sh", "-c", "echo " + secret + " >&2; exit 3"}}, Options{Logf: l.logf})
 	defer v.Close()
 	deadline := time.Now().Add(5 * time.Second)
@@ -315,7 +315,7 @@ func TestKeyCommandFailure(t *testing.T) {
 	if f.count() != 0 {
 		t.Fatal("a request went out with no key")
 	}
-	if !strings.Contains(l.all(), "exit status 3") || strings.Contains(l.all(), secret) {
+	if !strings.Contains(l.all(), "key_command failed") || strings.Contains(l.all(), secret) {
 		t.Fatalf("log %q", l.all())
 	}
 }

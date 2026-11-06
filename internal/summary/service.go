@@ -100,7 +100,11 @@ func New(s Settings, o Options) *Service {
 				}
 				return errors.New("printed no key")
 			})
-			return key, err
+			if err != nil {
+				// The command can put its secret anywhere on stderr, including short tokens.
+				return "", errors.New("summaries key_command failed")
+			}
+			return key, nil
 		}
 	}
 	if v.keyRun != nil {

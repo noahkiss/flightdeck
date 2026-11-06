@@ -3027,12 +3027,14 @@ input to 2 KiB, the rest to 200 characters.
   the harness's summary and the project name. Never a path outside them, a transcript, the
   session's history or a key. A local endpoint keeps it on the LAN; a hosted one is the owner's
   choice.
-- A request in a folder the read scope denies (`[read]`, capcom.md 4), or whose files it denies,
+- A request in a folder outside the read scope’s allowed roots or matching its deny list
+  (`[read]`, capcom.md 4), or whose files it denies,
   is never sent. Nor is a request with no folder to check (an opencode plugin's).
 - A device with "Show details in notifications" off gets no summary: its banner reads as 16.1
   says. When every device that would get the banner hides details or is held by presence (8.3),
   or the state raises no banner (a pane's last state replayed after a restart), the hab sends
-  nothing to the model.
+  nothing to the model. A device that starts hiding details while a summary is pending gets no
+  detailed replacement or answered line.
 - The key and the reply body are never logged. A failure logs the status code, or the kind of
   error, never the body.
 
@@ -3042,16 +3044,17 @@ a real provider): the path, the model, `reasoning_effort` per setting, `max_toke
 key; fallback on a 4xx and a 5xx, a body that is not JSON, no choices, null content, a reply too
 long, a refusal, two lines, an oversized body, a timeout, an unreachable host and the hab
 closing, with one log line per streak and no body or key in it; the key command (a key, a failure
-whose stderr key stays out of the log, the backoff); the cache (one call per input, a failure not
+whose stderr, including a short key, stays out of the log, the backoff); the cache (one call per input, a failure not
 kept, the TTL, the bound). `go test -race -run TestSummary ./internal/push/`: the title and
 answered line with the body and actions unchanged; none for a hiding device, a plan or a
 question; nothing sent when every device hides details; a summary that does not fit, holds a
 control character or fails leaves the title of before; the harness's summary passed on; three
 requests in one batch waiting together, and one arriving mid-wait waiting from its own arrival;
-none asked for a device presence holds; the late replacement once, passive, same collapse id and
-actions, and none after the request resolved. `go test -race -run TestPushSummaries
+none asked for a device presence holds or an unchanged state; a device that hides details
+  while a summary is pending gets no detailed replacement or answered line; the late replacement once, passive, same collapse id and
+actions, and none after ten seconds from arrival or after the request resolved. `go test -race -run TestPushSummaries
 ./cmd/gff-hab`: gff-hab with a fake endpoint: the title, the bearer key from the key command and
-in no log line, and a denied folder, a request with no folder and a config with no section
+in no log line, and a folder outside the allowed roots, a request with no folder and a config with no section
 sending nothing.
 
 **Built choices.** Code: `internal/summary` (config, client, cache, key), `internal/push/summary.go`
