@@ -64,7 +64,17 @@ func TestNormalizeRefused(t *testing.T) {
 		{"once now", func(r *Round) { now := testNow; r.Trigger = Trigger{Kind: TriggerOnce, At: &now} }, "trigger", "in the past"},
 		{"at on cron", func(r *Round) { r.Trigger.At = &future }, "trigger", "once trigger only"},
 		{"cron on manual", func(r *Round) { r.Trigger = Trigger{Kind: TriggerManual, Cron: "* * * * *"} }, "trigger", "cron trigger only"},
-		{"event", func(r *Round) { r.Trigger = Trigger{Kind: TriggerEvent} }, "trigger", "not supported"},
+		{"event with no name", func(r *Round) { r.Trigger = Trigger{Kind: TriggerEvent} }, "trigger", "event: required"},
+		{"debounce on cron", func(r *Round) { r.Debounce = Duration(time.Minute) }, "debounce", "event triggers only"},
+		{"debounce too short", func(r *Round) {
+			r.Trigger = Trigger{Kind: TriggerEvent, Event: EventHabWoke}
+			r.Debounce = Duration(time.Second)
+		}, "debounce", "want 5s"},
+		{"cooldown too long", func(r *Round) {
+			r.Trigger = Trigger{Kind: TriggerEvent, Event: EventHabWoke}
+			r.Cooldown = Duration(25 * time.Hour)
+		}, "cooldown", "want 1m0s"},
+		{"group on fresh", func(r *Round) { r.Group = "g1" }, "group", "group rounds only"},
 		{"prompt over 64 KiB", func(r *Round) { r.Prompt = strings.Repeat("x", 64<<10+1) }, "prompt", "65537 bytes"},
 		{"prompt not UTF-8", func(r *Round) { r.Prompt = "\xff" }, "prompt", "UTF-8"},
 		{"fresh without project", func(r *Round) { r.Project = "" }, "project", "required"},
@@ -91,7 +101,7 @@ func TestNormalizeRefused(t *testing.T) {
 		{"resume with on_finish", func(r *Round) {
 			r.Mode, r.Target, r.Harness, r.Project, r.OnFinish = ModeResume, "s", "", "", OnFinishKeep
 		}, "on_finish", "fresh and fork"},
-		{"wait on fresh", func(r *Round) { r.Wait = Duration(time.Minute) }, "wait", "resume rounds only"},
+		{"wait on fresh", func(r *Round) { r.Wait = Duration(time.Minute) }, "wait", "resume and group rounds only"},
 		{"negative timeout", func(r *Round) { r.Timeout = -1 }, "timeout", "positive"},
 		{"negative max_runs", func(r *Round) { r.MaxRuns = -1 }, "max_runs", "negative"},
 		{"past expiry", func(r *Round) { r.ExpiresAt = &past }, "expires_at", "in the past"},

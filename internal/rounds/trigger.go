@@ -13,7 +13,7 @@ type TriggerKind string
 const (
 	TriggerCron   TriggerKind = "cron"
 	TriggerOnce   TriggerKind = "once"
-	TriggerEvent  TriggerKind = "event" // a later stage (rounds.md 4.3); refused for now
+	TriggerEvent  TriggerKind = "event" // a hab event that matches a filter (rounds.md 4.3)
 	TriggerManual TriggerKind = "manual"
 )
 
@@ -26,17 +26,21 @@ type Trigger struct {
 	Zone string `json:"zone,omitempty"`
 	// At is the instant of a once trigger, in UTC.
 	At *time.Time `json:"at,omitempty"`
+	// Event and Filter are an event trigger's event name and filter (rounds.md 4.3).
+	Event  string       `json:"event,omitempty"`
+	Filter *EventFilter `json:"filter,omitempty"`
 }
 
 // Equal reports whether two triggers ask for the same slots.
 func (t Trigger) Equal(u Trigger) bool {
-	if t.Kind != u.Kind || t.Cron != u.Cron || t.Zone != u.Zone || (t.At == nil) != (u.At == nil) {
+	if t.Kind != u.Kind || t.Cron != u.Cron || t.Zone != u.Zone || (t.At == nil) != (u.At == nil) ||
+		t.Event != u.Event || !equalFilter(t.Filter, u.Filter) {
 		return false
 	}
 	return t.At == nil || t.At.Equal(*u.At)
 }
 
-// Schedule computes a trigger's slots. A manual trigger has none.
+// Schedule computes a trigger's slots. A manual or event trigger has none.
 type Schedule struct {
 	kind TriggerKind
 	cron *Cron
@@ -45,7 +49,7 @@ type Schedule struct {
 }
 
 // Schedule compiles the trigger. A cron expression that never matches is refused with
-// ErrNeverRuns; an event trigger is refused until its stage is built.
+// ErrNeverRuns; an event trigger checks its event and filter.
 func (t Trigger) Schedule() (*Schedule, error) {
 	switch t.Kind {
 	case TriggerCron:
@@ -77,7 +81,10 @@ func (t Trigger) Schedule() (*Schedule, error) {
 	case TriggerManual:
 		return &Schedule{kind: t.Kind}, nil
 	case TriggerEvent:
-		return nil, errors.New("event triggers are not supported yet")
+		if err := checkFilter(t.Event, t.Filter); err != nil {
+			return nil, err
+		}
+		return &Schedule{kind: t.Kind}, nil
 	default:
 		return nil, fmt.Errorf("unknown trigger kind %q", t.Kind)
 	}
@@ -183,7 +190,7 @@ func PresetName(cron string) string {
 // "once at <time>" or "by hand". A preset of an hour or more gives its zone too: its slots fall
 // at clock times in that zone. kind is the trigger kind's word; an unknown one is given back.
 // The catalog's rounds section and every client use these words (rounds.md 10.3).
-func TriggerWords(kind, cron, zone, at string) string {
+func TriggerWords(kind, cron, zone, at, event string) string {
 	switch kind {
 	case "cron":
 		if p := PresetName(cron); p != "" {
@@ -200,6 +207,8 @@ func TriggerWords(kind, cron, zone, at string) string {
 		return "once at " + at
 	case "manual":
 		return "by hand"
+	case "event":
+		return "on " + event
 	}
 	return kind
 }

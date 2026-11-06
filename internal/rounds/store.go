@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -37,6 +38,11 @@ type RoundState struct {
 	// harness's own session id. gff-hab writes it (not the scheduler), so a run can resume or
 	// fork a target whose program exited, after a restart too.
 	Target *TargetSeen `json:"target,omitempty"`
+	// Pending is an event round's pending batch (rounds.md 4.5). The scheduler saves it at most
+	// once per state_save_every, and in the write that makes a run.
+	Pending *Pending `json:"pending,omitempty"`
+	// LastEventStart is when the last event run started: the cooldown counts from it.
+	LastEventStart *time.Time `json:"last_event_start,omitempty"`
 }
 
 // TargetSeen is a target session's harness and native session id, as last seen live. Session
@@ -406,6 +412,9 @@ func (s *Store) Update(r Round, now time.Time) (Entry, error) {
 		}
 		e.State.NextSlot = nextSlot(sched, now)
 		e.State.Completed, e.State.CompletedReason = false, ""
+		if r.Trigger.Kind != TriggerEvent {
+			e.State.Pending, e.State.LastEventStart = nil, nil
+		}
 	}
 	if err := s.commitLocked(); err != nil {
 		return Entry{}, err
@@ -433,6 +442,53 @@ func (s *Store) SetState(id string, fn func(*RoundState)) (Entry, error) {
 		return Entry{}, err
 	}
 	return cloneEntry(s.st.Rounds[id]), nil
+}
+
+// SetPending saves the pending batches of several rounds in one write. A round that is gone is
+// left out; a nil or empty batch clears the round's.
+func (s *Store) SetPending(p map[string]*Pending) ([]Entry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var ids []string
+	for id, b := range p {
+		e := s.st.Rounds[id]
+		if e == nil {
+			continue
+		}
+		if b == nil || b.Len() == 0 {
+			e.State.Pending = nil
+		} else {
+			c := clonePending(b)
+			e.State.Pending = &c
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if err := s.commitLocked(); err != nil {
+		return nil, err
+	}
+	sort.Strings(ids)
+	out := make([]Entry, 0, len(ids))
+	for _, id := range ids {
+		if e := s.st.Rounds[id]; e != nil {
+			out = append(out, cloneEntry(e))
+		}
+	}
+	return out, nil
+}
+
+func clonePending(p *Pending) Pending {
+	b, err := json.Marshal(p)
+	if err != nil {
+		panic("rounds: " + err.Error())
+	}
+	var c Pending
+	if err := json.Unmarshal(b, &c); err != nil {
+		panic("rounds: " + err.Error())
+	}
+	return c
 }
 
 // QueueRun adds a new run and changes its round's scheduler state through fn, in one save: a
@@ -484,6 +540,114 @@ func (s *Store) dropEndedLocked(id string) []Run {
 		s.st.Runs[id] = kept
 	}
 	return removed
+}
+
+// Run returns one run by its id, under any round.
+func (s *Store) Run(id string) (Run, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, runs := range s.st.Runs {
+		for _, r := range runs {
+			if r.ID == id {
+				return r, true
+			}
+		}
+	}
+	return Run{}, false
+}
+
+// RunByMessage returns the run whose channel message has this id (rounds.md 5.2).
+func (s *Store) RunByMessage(msg string) (Run, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if msg == "" {
+		return Run{}, false
+	}
+	for _, runs := range s.st.Runs {
+		for _, r := range runs {
+			if r.Message == msg {
+				return r, true
+			}
+		}
+	}
+	return Run{}, false
+}
+
+// --- Event files (rounds.md 4.5) ---
+
+// EventsPath is the file that holds a run's event batch: GFF_ROUND_EVENTS.
+func (s *Store) EventsPath(roundID, runID string) string {
+	return filepath.Join(filepath.Dir(s.path), "events", roundID, runID+".json")
+}
+
+// WriteEvents saves a run's batch to its file before the run is queued, so a run never exists
+// without its events.
+func (s *Store) WriteEvents(roundID, runID string, b Batch) error {
+	p := s.EventsPath(roundID, runID)
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	if b.Events == nil {
+		b.Events = []Event{}
+	}
+	data, err := json.Marshal(b)
+	if err != nil {
+		return err
+	}
+	return writeSynced(p, data)
+}
+
+// ReadEvents reads a run's batch from its file.
+func (s *Store) ReadEvents(roundID, runID string) (Batch, error) {
+	var b Batch
+	data, err := os.ReadFile(s.EventsPath(roundID, runID))
+	if err != nil {
+		return b, err
+	}
+	err = json.Unmarshal(data, &b)
+	return b, err
+}
+
+// RemoveEvents removes a run's event file.
+func (s *Store) RemoveEvents(roundID, runID string) {
+	os.Remove(s.EventsPath(roundID, runID))
+}
+
+// PruneEvents keeps the event files of a round's live runs and of its keep newest ended runs,
+// and removes the rest; a round that is gone with no live run loses its folder.
+func (s *Store) PruneEvents(roundID string, keep int) {
+	dir := filepath.Dir(s.EventsPath(roundID, "x"))
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	runs := append([]Run(nil), s.st.Runs[roundID]...)
+	_, alive := s.st.Rounds[roundID]
+	s.mu.Unlock()
+	sort.Slice(runs, func(i, j int) bool { return runs[i].Number > runs[j].Number })
+	kept := map[string]bool{}
+	ended := 0
+	for _, r := range runs {
+		if !r.State.Final() {
+			kept[r.ID] = true
+		} else if ended < keep {
+			kept[r.ID] = true
+			ended++
+		}
+	}
+	left := 0
+	for _, de := range ents {
+		id, ok := strings.CutSuffix(de.Name(), ".json")
+		if ok && kept[id] {
+			left++
+			continue
+		}
+		os.Remove(filepath.Join(dir, de.Name()))
+	}
+	if left == 0 && !alive {
+		os.Remove(dir)
+	}
 }
 
 // Get returns one round by id.

@@ -66,6 +66,7 @@ type fakeSink struct {
 	runs    []Run
 	notices []Notice
 	deleted []Entry
+	woke    []time.Duration
 }
 
 func (f *fakeSink) RoundChanged(e Entry) { f.mu.Lock(); f.rounds = append(f.rounds, e); f.mu.Unlock() }
@@ -100,6 +101,7 @@ type harness struct {
 	max   int
 	// settle is the wake settle; 0 takes the default.
 	settle time.Duration
+	limits Limits
 }
 
 func newHarness(t *testing.T, at string) *harness {
@@ -119,9 +121,28 @@ func (h *harness) reopen() {
 	h.store = st
 	h.start = &fakeStarter{}
 	h.sink = &fakeSink{}
-	h.s, err = NewScheduler(SchedulerConfig{Store: st, Starter: h.start, Sink: h.sink, Clock: h.clock, MaxRunning: h.max, WakeSettle: h.settle})
+	if h.s != nil {
+		h.s.stopTimers() // the old scheduler's timers must not tick the new store
+	}
+	h.s, err = NewScheduler(SchedulerConfig{Store: st, Starter: h.start, Sink: h.sink, Clock: h.clock, MaxRunning: h.max,
+		WakeSettle: h.settle, Limits: h.limits})
 	if err != nil {
 		h.t.Fatal(err)
+	}
+	s := h.s
+	h.t.Cleanup(s.stopTimers)
+}
+
+// stopTimers stops the scheduler's timers without saving anything: a process that was killed.
+func (s *Scheduler) stopTimers() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	if s.pendTimer != nil {
+		s.pendTimer.Stop()
+	}
+	if s.dueTimer != nil {
+		s.dueTimer.Stop()
 	}
 }
 

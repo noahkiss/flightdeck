@@ -222,7 +222,13 @@ func TestScheduleRefused(t *testing.T) {
 		{Trigger{Kind: TriggerCron, Cron: "0 0 * * *", Zone: "Mars/Olympus"}, "Mars/Olympus"},
 		{Trigger{Kind: TriggerCron, Cron: "0 0 * * *"}, "IANA zone"},
 		{Trigger{Kind: TriggerOnce}, "no instant"},
-		{Trigger{Kind: TriggerEvent}, "not supported yet"},
+		{Trigger{Kind: TriggerEvent}, "event: required"},
+		{Trigger{Kind: TriggerEvent, Event: "pane.output"}, "want one of"},
+		{Trigger{Kind: TriggerEvent, Event: EventHabWoke, Filter: &EventFilter{Project: "p"}}, "takes no filter"},
+		{Trigger{Kind: TriggerEvent, Event: EventCommandUpdated, Filter: &EventFilter{Level: "active"}}, "not a field of command.updated"},
+		{Trigger{Kind: TriggerEvent, Event: EventAgentState, Filter: &EventFilter{State: []string{"idle"}}}, `state "idle"`},
+		{Trigger{Kind: TriggerEvent, Event: EventLogbookUpdated, Filter: &EventFilter{Status: []string{"done"}}}, "for change status only"},
+		{Trigger{Kind: TriggerEvent, Event: EventNoticeRaised, Filter: &EventFilter{Level: "loud"}}, `level "loud"`},
 		{Trigger{Kind: "hourly"}, "unknown trigger"},
 	}
 	for _, tt := range tests {
