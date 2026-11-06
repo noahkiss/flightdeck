@@ -952,8 +952,11 @@ func serve(args []string) error {
 		return err
 	}
 	host := api.HostInfo{ID: *hostID}
+	sightCtx, stopSight := context.WithCancel(context.Background())
+	defer stopSight()
+	sighter := newLogbookSighter(sightCtx, lbVerbs, store, *hostID, logger.Printf)
 	cs, err := catalog.New(catalog.Config{
-		Self: key.Fingerprint(), Host: *hostID, State: dir, ConfigPath: cpath, Detect: detectFacts,
+		Self: key.Fingerprint(), Host: *hostID, State: dir, ConfigPath: cpath, Detect: detectFacts, Scanned: sighter.Scanned,
 		Structure:   func() api.Structure { return agentSource{store: store, agents: agents}.Snapshot(host) },
 		ProjectDirs: store.ProjectDirs,
 		Peers:       catalogPeers{pm},

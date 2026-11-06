@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/noahkiss/flightdeck/api"
+	"github.com/noahkiss/flightdeck/internal/catalog"
 	"github.com/noahkiss/flightdeck/internal/control"
 	"github.com/noahkiss/flightdeck/internal/harness"
 	"github.com/noahkiss/flightdeck/internal/hook"
@@ -54,6 +57,7 @@ func logbookHook(svc *lbsvc.Service, store *structure.Store, agents *harness.Sto
 		if s, ok := store.SessionByPane(pane); ok {
 			pn.Session = s.ID
 			pn.Propose = s.Kind == api.SessionKindCapcom
+			pn.Project = logbookProject(ctx, svc, store, host, s.Project)
 		}
 		if approval != nil && approval() {
 			pn.Propose = true
@@ -65,6 +69,99 @@ func logbookHook(svc *lbsvc.Service, store *structure.Store, agents *harness.Sto
 		}
 		res, err := svc.Dispatch(ctx, lbsvc.PaneActor(pn), &pn, method, params)
 		return res, nil, err
+	}
+}
+
+// logbookProject is the Logbook project of a session's project (logbook.md 3.3), by its git
+// identity, or "" for a session with none. A project Logbook has not filed yet is filed now,
+// first sight, under the folder the session works in.
+func logbookProject(ctx context.Context, svc *lbsvc.Service, store *structure.Store, host, project string) string {
+	pr, ok := store.Project(project)
+	if !ok {
+		return ""
+	}
+	identity := lbsvc.Identity(pr.Remote, pr.RootCommit)
+	if identity == "" {
+		return ""
+	}
+	if id, ok := svc.Lookup(ctx, identity); ok {
+		return id
+	}
+	dir := ""
+	for _, pd := range store.ProjectDirs() {
+		if pd.ID == pr.ID && len(pd.Dirs) > 0 {
+			dir = pd.Dirs[0]
+		}
+	}
+	id, err := svc.Sight(ctx, lbsvc.Sighting{Dir: dir, Identity: identity, Host: host})
+	if err != nil {
+		return ""
+	}
+	return id
+}
+
+// logbookSighter files the folders the catalog reads (logbook.md 3.3): each folder a session
+// works in, at first sight, and each folder filed before, whose remote may have changed. It
+// takes the catalog's folders on the catalog's loop without blocking, and files them one scan
+// at a time on its own goroutine: a write may wait out Logbook's start hold. A scan that comes
+// while one is filed replaces any that waits.
+type logbookSighter struct {
+	svc   *lbsvc.Service
+	store *structure.Store
+	host  string
+	logf  func(string, ...any)
+	next  chan map[string]catalog.Folder
+}
+
+func newLogbookSighter(ctx context.Context, svc *lbsvc.Service, store *structure.Store, host string, logf func(string, ...any)) *logbookSighter {
+	ls := &logbookSighter{svc: svc, store: store, host: host, logf: logf, next: make(chan map[string]catalog.Folder, 1)}
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case fs := <-ls.next:
+				ls.sight(ctx, fs)
+			}
+		}
+	}()
+	return ls
+}
+
+// Scanned is catalog.Config's Scanned.
+func (ls *logbookSighter) Scanned(fs map[string]catalog.Folder) {
+	for {
+		select {
+		case ls.next <- fs:
+			return
+		default:
+		}
+		select {
+		case <-ls.next: // drop the older scan that waits
+		default:
+		}
+	}
+}
+
+func (ls *logbookSighter) sight(ctx context.Context, fs map[string]catalog.Folder) {
+	session := map[string]bool{}
+	for _, pd := range ls.store.ProjectDirs() {
+		for _, d := range pd.Dirs {
+			session[d] = true
+		}
+	}
+	dirs := slices.Sorted(maps.Keys(fs))
+	for _, d := range dirs {
+		if ctx.Err() != nil {
+			return
+		}
+		identity := lbsvc.Identity(fs[d].Remote, fs[d].RootCommit)
+		if identity == "" || (!session[d] && !ls.svc.Known(ctx, d)) {
+			continue
+		}
+		if _, err := ls.svc.Sight(ctx, lbsvc.Sighting{Dir: d, Identity: identity, Host: ls.host}); err != nil && ctx.Err() == nil {
+			ls.logf("logbook: file the project of %s: %v", d, err)
+		}
 	}
 }
 

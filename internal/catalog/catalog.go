@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -88,13 +89,17 @@ type Config struct {
 	Detect func(context.Context) Facts
 	// ReadFolder reads one repository folder. Default ReadFolder.
 	ReadFolder func(context.Context, string) (Folder, bool)
-	Pull       time.Duration // how often each peer link pulls and puts. Default DefaultPull
-	Rescan     time.Duration // how often project folders and the config are read. Default DefaultRescan
-	Redetect   time.Duration // how often the host's facts are read. Default DefaultRedetect
-	Debounce   time.Duration // how long Poke waits for more changes. Default DefaultDebounce
-	Now        func() time.Time
-	Home       func() (string, error)
-	Logf       func(format string, args ...any)
+	// Scanned hears every folder read so far, by path, after each scan and each read of new
+	// folders: Logbook files each one's project from it, and sees a remote change (logbook.md
+	// 3.3). It runs on the catalog's loop and must not block. Nil: none.
+	Scanned  func(map[string]Folder)
+	Pull     time.Duration // how often each peer link pulls and puts. Default DefaultPull
+	Rescan   time.Duration // how often project folders and the config are read. Default DefaultRescan
+	Redetect time.Duration // how often the host's facts are read. Default DefaultRedetect
+	Debounce time.Duration // how long Poke waits for more changes. Default DefaultDebounce
+	Now      func() time.Time
+	Home     func() (string, error)
+	Logf     func(format string, args ...any)
 }
 
 // copyRec is a peer's catalog as this hab holds it.
@@ -503,6 +508,18 @@ func (s *Service) scan(ctx context.Context) {
 	s.mu.Lock()
 	s.folders, s.scanned = got, tried
 	s.mu.Unlock()
+	s.tellScanned()
+}
+
+// tellScanned hands a copy of the folders read to Scanned.
+func (s *Service) tellScanned() {
+	if s.cfg.Scanned == nil {
+		return
+	}
+	s.mu.Lock()
+	fs := maps.Clone(s.folders)
+	s.mu.Unlock()
+	s.cfg.Scanned(fs)
 }
 
 // readNew reads only the folders the last scan did not try: a project the structure gained.
@@ -529,6 +546,9 @@ func (s *Service) readNew(ctx context.Context) {
 			s.folders[d] = f
 		}
 		s.mu.Unlock()
+	}
+	if len(fresh) > 0 {
+		s.tellScanned()
 	}
 }
 
