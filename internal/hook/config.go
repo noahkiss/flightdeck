@@ -60,7 +60,7 @@ func hooksJSON(command, harness string, events []string, timeouts map[string]int
 		if v, ok := timeouts[ev]; ok {
 			t = v
 		}
-		g, err := json.Marshal([]hookGroup{{Hooks: []hookCmd{{Type: "command", Command: shellQuote(command) + " hook " + flags[ev] + harness + " " + ev, Timeout: t}}}})
+		g, err := json.Marshal([]hookGroup{{Hooks: []hookCmd{{Type: "command", Command: guardedCommand(command, "exit 0") + `exec "$h" hook ` + flags[ev] + harness + " " + ev, Timeout: t}}}})
 		if err != nil {
 			return "", err
 		}
@@ -73,6 +73,11 @@ func hooksJSON(command, harness string, events []string, timeouts map[string]int
 	}
 	b.WriteString("  }\n}\n")
 	return b.String(), nil
+}
+
+// guardedCommand checks both paths and commands found on PATH before running gff-hab.
+func guardedCommand(command, fallback string) string {
+	return "h=" + shellQuote(command) + `; command -v "$h" >/dev/null 2>&1 || { ` + fallback + "; }; "
 }
 
 // shellQuote quotes a command path for a POSIX shell when it needs it.
@@ -121,7 +126,11 @@ func StatusLineConfig(command, wrap string) (string, error) {
 	if command == "" {
 		command = "gff-hab"
 	}
-	cmd := shellQuote(command) + " statusline claude"
+	fallback := "exit 0"
+	if wrap != "" {
+		fallback = "exec /bin/sh -c " + shellQuote(wrap)
+	}
+	cmd := guardedCommand(command, fallback) + `exec "$h" statusline claude`
 	if wrap != "" {
 		cmd += " -- " + shellQuote(wrap)
 	}

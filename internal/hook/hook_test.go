@@ -230,9 +230,9 @@ func TestConfig(t *testing.T) {
 		}
 		for _, ev := range h.events {
 			g := cfg.Hooks[ev]
-			want := "gff-hab hook " + h.name + " " + ev
+			want := `h=gff-hab; command -v "$h" >/dev/null 2>&1 || { exit 0; }; exec "$h" hook ` + h.name + " " + ev
 			if ev == "PermissionRequest" {
-				want = "gff-hab hook -wait " + h.name + " PermissionRequest"
+				want = `h=gff-hab; command -v "$h" >/dev/null 2>&1 || { exit 0; }; exec "$h" hook -wait ` + h.name + " PermissionRequest"
 				if g[0].Hooks[0].Timeout != PermissionTimeout {
 					t.Errorf("%s PermissionRequest timeout %d", h.name, g[0].Hooks[0].Timeout)
 				}
@@ -244,7 +244,7 @@ func TestConfig(t *testing.T) {
 		}
 	}
 	out, _ := Config("claude", "/opt/my tools/gff-hab")
-	if !strings.Contains(out, `"'/opt/my tools/gff-hab' hook claude Stop"`) {
+	if !strings.Contains(out, `h='/opt/my tools/gff-hab'`) {
 		t.Errorf("command with a space is not quoted:\n%s", out)
 	}
 	js, err := Config("opencode", "")

@@ -337,7 +337,8 @@ Built choices (`internal/hook`, `internal/harness`, `gff-hab hook`):
   `gff-hab hook -t <ms> opencode <event type>` with the event JSON on stdin. The plugin stamps
   `Date.now()` itself, because each event spawns its own process and those may run out of
   order. `-t` sets the envelope's `t`; without it the command stamps its own clock. `-command`
-  sets how the harness runs gff-hab. Claude's `PermissionRequest` entry runs
+  sets how the harness runs gff-hab. Claude Code and Codex commands exit quietly when
+  that executable is missing. Claude's `PermissionRequest` entry runs
   `gff-hab hook -wait claude PermissionRequest` with a 130 second timeout; see the blocking
   permission hook under [Open decisions](#claude-blocking-permissionrequest-hook).
 - **Permission input.** A permission request copies the tool input only up to 64 KiB. A larger
@@ -791,7 +792,8 @@ Built choices (`internal/usage`, `cmd/gff-hab/usage.go`, `cmd/gff-hab/statusline
   is. That command's output, errors and exit code are the status line's (127 when it cannot
   start). With none, the status line prints nothing. Outside a gff-hab pane it posts nothing.
   `gff-hab statusline -print claude [-wrap <command>]` prints the setting; writing it into
-  settings is the owner's step, as for hooks. A `StatusLine` envelope is usage only: it never
+  settings is the owner's step, as for hooks. If gff-hab is missing, the printed command runs
+  the wrapped command directly, or exits quietly when there is none. A `StatusLine` envelope is usage only: it never
   changes the agent state.
 - **The status line never waits on gff-hab.** Claude Code refreshes the status line many times a
   turn and waits for each run. The post is capped at 200 ms, dial and answer, from the start of

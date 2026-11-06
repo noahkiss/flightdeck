@@ -225,7 +225,7 @@ func TestStatuslineOutsidePane(t *testing.T) {
 		StatusLine struct{ Type, Command string } `json:"statusLine"`
 	}
 	if code != 0 || json.Unmarshal([]byte(out), &cfg) != nil || cfg.StatusLine.Type != "command" ||
-		cfg.StatusLine.Command != `gff-hab statusline claude -- '~/bin/my status'` {
+		cfg.StatusLine.Command != `h=gff-hab; command -v "$h" >/dev/null 2>&1 || { exec /bin/sh -c '~/bin/my status'; }; exec "$h" statusline claude -- '~/bin/my status'` {
 		t.Errorf("-print: %q, exit %d", out, code)
 	}
 	if _, code, _ := run(base, "-print", "opencode"); code != 2 {
